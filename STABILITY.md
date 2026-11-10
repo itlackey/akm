@@ -53,7 +53,7 @@ an integer `schemaVersion`, and rejects `ok: false`.
 **Failure.** A failed command prints `{ "ok": false, "error", "code"?, "hint" }`
 to stderr and exits non-zero. Exit codes: `0` success, `1` general or not found,
 `2` usage, `4` health warn (`akm health` only), `70` internal, `75` busy (another
-akm process holds a lock or is writing `state.db`; retry shortly), `78` config.
+akm process holds a lock or is writing `state.db`; retry shortly), `78` config (a missing or failing OS scheduler is `SCHEDULER_UNAVAILABLE`).
 
 **Plugin call set.** The akm plugins call only these: `info`, `curate`, `search`
 (`--type`, `--by-usage`, `--project`), `show`, `feedback`, `remember`, `proposal
@@ -253,7 +253,7 @@ covers beyond the table.
   | `4` | Health warning (`akm health` only) |
   | `70` | Internal / unclassified |
   | `75` | Transient — retry shortly (`TransientError`, sysexits `EX_TEMPFAIL`); another akm process holds a lock or is writing `state.db` or `index.db` right now |
-  | `78` | Configuration error |
+  | `78` | Configuration or environment error (`ConfigError`), including `SCHEDULER_UNAVAILABLE` |
 
 - **Install scripts** — the `install.sh` and `install.ps1` URLs and the
   `AKM_INSTALL_DIR` environment override.

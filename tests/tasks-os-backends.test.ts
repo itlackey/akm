@@ -621,3 +621,43 @@ describe("decodeCommandOutput: Task Scheduler writes UTF-16", () => {
     expect((await reader.inspect()).entry).toEqual({ launcher: ["C:\\akm.exe"] });
   });
 });
+
+describe("a failing OS scheduler carries SCHEDULER_UNAVAILABLE, not INVALID_CONFIG_FILE", () => {
+  const code = { code: "SCHEDULER_UNAVAILABLE", kind: "config" };
+  const apply = { entry: { launcher: LAUNCHER }, removeLegacy: [] };
+
+  test("cron: a missing binary, a refused read and a failed write", async () => {
+    const missing = cron({ read: () => ({ status: 1, stdout: "", stderr: "", enoent: true }), write: () => ok() });
+    await expect(settle(() => missing.apply(apply))).rejects.toMatchObject(code);
+    const refused = cron({ read: () => ({ status: 1, stdout: "", stderr: "crontab: permission denied" }), write: ok });
+    await expect(settle(() => refused.inspect())).rejects.toMatchObject(code);
+    const exec = memoryCron();
+    exec.failNextWrite();
+    await expect(settle(() => cron(exec).apply(apply))).rejects.toMatchObject(code);
+  });
+
+  test("cron: a malformed akm block is still a config error", async () => {
+    const exec = memoryCron("# akm:task broken BEGIN\n0 2 * * * /bin/true\n");
+    await expect(settle(() => cron(exec).apply(apply))).rejects.toMatchObject({ code: "INVALID_CONFIG_FILE" });
+  });
+
+  test("launchd: a failed launchctl command", async () => {
+    const { backend } = fakeLaunchd({}, { failBootstrap: true });
+    await expect(
+      settle(() => backend.apply({ entry: { launcher: ["/opt/akm"] }, removeLegacy: [] })),
+    ).rejects.toMatchObject(code);
+  });
+
+  test("schtasks: a failed schtasks command", async () => {
+    const exec: SchtasksExec = { run: () => ({ status: 1, stdout: "", stderr: "ERROR: Access is denied." }) };
+    const fs: SchtasksFs = { ensureDir() {}, writeFile() {}, removeFile() {}, tmpdir: () => "C:\\Temp" };
+    const backend = SCHTASKS_BACKEND({ exec, fs, userSid: "S-1-5-21-1-2-3-1001" });
+    await expect(
+      settle(() => backend.apply({ entry: { launcher: ["C:\\akm.exe"] }, removeLegacy: [] })),
+    ).rejects.toMatchObject(code);
+  });
+});
+
+function ok(): CronExecResult {
+  return { status: 0, stdout: "", stderr: "" };
+}

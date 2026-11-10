@@ -103,7 +103,7 @@ export interface ThrowIfNotOkOptions {
 }
 
 /**
- * Throw a `ConfigError` (code `INVALID_CONFIG_FILE`) when `result` doesn't
+ * Throw a `ConfigError` (code `SCHEDULER_UNAVAILABLE`) when `result` doesn't
  * satisfy `isOk` (default: `status === 0`); otherwise return `result`
  * unchanged: the "run a native scheduler command, throw a formatted error on
  * a bad exit" idiom shared by the cron/launchd/schtasks backends.
@@ -111,7 +111,7 @@ export interface ThrowIfNotOkOptions {
 export function throwIfNotOk(result: ExecResult, options: ThrowIfNotOkOptions): ExecResult {
   const ok = options.isOk ? options.isOk(result) : result.status === 0;
   if (!ok) {
-    throw new ConfigError(options.message(result), "INVALID_CONFIG_FILE", options.hint);
+    throw new ConfigError(options.message(result), "SCHEDULER_UNAVAILABLE", options.hint);
   }
   return result;
 }

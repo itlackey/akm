@@ -335,7 +335,7 @@ function readCrontab(exec: CronExec, options: { missingBinaryIsEmpty: boolean })
     if (options.missingBinaryIsEmpty) return "";
     throw new ConfigError(
       "crontab -l failed: the `crontab` binary was not found on PATH.",
-      "INVALID_CONFIG_FILE",
+      "SCHEDULER_UNAVAILABLE",
       "Install the `crontab` binary (e.g. cron/cronie/vixie-cron) or add one to PATH.",
     );
   }
@@ -355,13 +355,13 @@ function readCrontab(exec: CronExec, options: { missingBinaryIsEmpty: boolean })
       "crontab -l could not read the crontab spool (permission denied). `crontab` reads it through its setgid " +
         "(or setuid) bit, which this process, started with no-new-privileges (an agent sandbox, a container, " +
         "systemd NoNewPrivileges=), does not grant; run this from a normal shell to see the installed tasks.",
-      "INVALID_CONFIG_FILE",
+      "SCHEDULER_UNAVAILABLE",
       "Run the command from a normal login shell or terminal, not from a sandboxed process.",
     );
   }
   throw new ConfigError(
     `crontab -l failed (exit ${result.status}): ${result.stderr || result.stdout || "no output"}.`,
-    "INVALID_CONFIG_FILE",
+    "SCHEDULER_UNAVAILABLE",
     "The `crontab` binary ran but did not report success; check its output above.",
   );
 }
