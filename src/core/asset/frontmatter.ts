@@ -525,33 +525,6 @@ export function rewriteFrontmatterListValue(
   return changed ? out.join("\n") : null;
 }
 
-/**
- * Parse a YAML scalar value (string, boolean, or number).
- *
- * For quoted strings (single or double), delegates to the `yaml` library so
- * escape sequences are handled correctly per spec. The previous hand-rolled
- * `slice(1, -1)` only stripped one layer of quoting and left inner quotes and
- * escape sequences as literal characters in the stored value, causing visible
- * corruption when `yaml.stringify` re-quoted them on the next write.
- */
-export function parseYamlScalar(value: string): unknown {
-  if (value === "") return "";
-  if (value === "true") return true;
-  if (value === "false") return false;
-  const asNumber = Number(value);
-  if (!Number.isNaN(asNumber)) return asNumber;
-  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-    try {
-      const parsed = yamlParse(value) as unknown;
-      if (typeof parsed === "string") return parsed;
-    } catch {
-      // Fall through to raw slice on malformed YAML — better than throwing.
-    }
-    return value.slice(1, -1);
-  }
-  return value;
-}
-
 // ── Bookkeeping-insensitive freshness (STALE, R20) ────────────────────────────
 
 /**

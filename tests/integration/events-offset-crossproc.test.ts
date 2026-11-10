@@ -7,7 +7,7 @@
 // SEPARATE process. An in-process harness cannot express this — there is no
 // second process, so the exec boundary (fresh module state, fresh env-derived
 // XDG paths, fresh SQLite connection) would not be exercised. Moved here from
-// tests/commands/events.test.ts as part of the spawn-allowlist drain.
+// tests/integration/commands/events.test.ts as part of the spawn-allowlist drain.
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";

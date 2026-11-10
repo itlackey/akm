@@ -38,7 +38,6 @@ describe("decodeFrozenRunnerSpec", () => {
 function makeConfig(): AkmConfig {
   return {
     semanticSearchMode: "auto",
-    configVersion: "0.9.0",
     connections: {
       default: { endpoint: "https://api.openai.com/v1", models: { fast: "gpt-4o-mini", balanced: "gpt-4o" } },
     },

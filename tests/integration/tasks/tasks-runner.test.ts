@@ -37,14 +37,21 @@ type FakeRunAgent = (...args: unknown[]) => Promise<AgentRunResult>;
 const tasksRunnerSandbox = makeSandboxDir("akm-tasks-runner");
 const tmpRoot = tasksRunnerSandbox.dir;
 const bundleDir = path.join(tmpRoot, "stash");
-const cacheDir = path.join(tmpRoot, "cache");
-const dataDir = path.join(tmpRoot, "data");
-const stateDir = path.join(tmpRoot, "state");
+// The XDG roots this suite points akm at; akm keeps its own files in the `akm` folder of each.
+const xdgRoots = {
+  XDG_CACHE_HOME: path.join(tmpRoot, "cache"),
+  XDG_DATA_HOME: path.join(tmpRoot, "data"),
+  XDG_STATE_HOME: path.join(tmpRoot, "state"),
+  XDG_CONFIG_HOME: path.join(tmpRoot, "cfg"),
+};
+const cacheDir = path.join(xdgRoots.XDG_CACHE_HOME, "akm");
+const dataDir = path.join(xdgRoots.XDG_DATA_HOME, "akm");
+const stateDir = path.join(xdgRoots.XDG_STATE_HOME, "akm");
 const logDir = path.join(cacheDir, "tasks", "logs");
 const tasksDir = path.join(bundleDir, "tasks");
-const configDir = path.join(tmpRoot, "cfg");
+const configDir = path.join(xdgRoots.XDG_CONFIG_HOME, "akm");
 
-const TRACKED_ENV_KEYS = ["AKM_CONFIG_DIR", "AKM_CACHE_DIR", "AKM_BUNDLE_DIR", "AKM_DATA_DIR", "AKM_STATE_DIR"];
+const TRACKED_ENV_KEYS = Object.keys(xdgRoots);
 const PRESERVED_ENV: Record<string, string | undefined> = {};
 
 beforeEach(() => {
@@ -63,12 +70,7 @@ beforeEach(() => {
     "utf8",
   );
   // Point state.db to an isolated data dir so tests don't share history.
-  process.env.AKM_DATA_DIR = dataDir;
-  process.env.AKM_CONFIG_DIR = configDir;
-  process.env.AKM_CACHE_DIR = cacheDir;
-  // Pair AKM_BUNDLE_DIR with AKM_STATE_DIR so the test-isolation guard in
-  // src/core/paths.ts (getDataDir) stays inert.
-  process.env.AKM_STATE_DIR = stateDir;
+  Object.assign(process.env, xdgRoots);
 });
 
 afterEach(() => {
@@ -291,7 +293,7 @@ describe("runTask — workflow target", () => {
   // The runner used to call `runWorkflowSteps({ target, params })` with no
   // signal, no maxSteps and no maxRetries: a scheduled run had no abort path
   // at all, so one wedged agent unit hung the task indefinitely. It now wires
-  // an AbortController + timer exactly like `akm workflow run --timeout`
+  // an AbortController + timer exactly like `akm workflow run --timeout-ms`
   // (src/commands/workflow-cli.ts) and threads the run bounds the task file
   // declares.
 
@@ -537,7 +539,7 @@ describe("runTask — workflow target", () => {
   });
 
   test("threads declared maxSteps / maxRetries into the orchestrator", async () => {
-    // P4 (docs/plans/specs/p4-deletions-closeout.md §3.2, row B-28) retired
+    // P4 retired
     // this test's v3 fixture along with task source v3 acceptance itself —
     // the `with:` -> child-run-params path it exercised on a
     // `uses: workflows/<ref>` target is now UNREACHABLE (task source v4
@@ -733,7 +735,9 @@ describe("runTask — command target", () => {
     async () => {
       writeTask("bare-current-install", ["version: 4", "run: akm --version", ""].join("\n"));
 
-      const result = await withEnv({ PATH: "/usr/bin:/bin" }, () =>
+      // The harness's crontab/launchctl stubs stay first, so the shell that runs akm cannot reach the real scheduler binary.
+      const stubs = (process.env.PATH ?? "").split(path.delimiter)[0] ?? "";
+      const result = await withEnv({ PATH: [stubs, "/usr/bin", "/bin"].join(path.delimiter) }, () =>
         runTask("bare-current-install", { bundleDir, logDir, scheduled: true }),
       );
 
@@ -773,13 +777,13 @@ describe("runTask — command target", () => {
     expect(fs.readFileSync(result.log, "utf8")).toContain(`cwd=${bundleDir}`);
   });
 
-  test("the command sees akm's own environment and the directories this akm resolved", async () => {
+  test("the command sees akm's own environment and the config file this akm resolved", async () => {
     writeTask(
       "env-probe",
       shellTask([
         process.execPath,
         "-e",
-        "console.log('probe=' + JSON.stringify([process.env.TASK_ENV_PROBE, process.env.AKM_STATE_DIR, process.env.AKM_EVENT_SOURCE]))",
+        "console.log('probe=' + JSON.stringify([process.env.TASK_ENV_PROBE, process.env.AKM_CONFIG_FILE, process.env.AKM_EVENT_SOURCE]))",
       ]),
     );
 
@@ -788,7 +792,9 @@ describe("runTask — command target", () => {
     );
 
     expect(result.status).toBe("completed");
-    expect(fs.readFileSync(result.log, "utf8")).toContain(`probe=${JSON.stringify(["bar", stateDir, "task"])}`);
+    expect(fs.readFileSync(result.log, "utf8")).toContain(
+      `probe=${JSON.stringify(["bar", path.join(configDir, "config.json"), "task"])}`,
+    );
   });
 
   test("a command that ignores SIGINT and SIGTERM is SIGKILLed on timeout, logging timed_out + exit 143", async () => {
@@ -938,7 +944,6 @@ describe("runTask — command target", () => {
     fs.writeFileSync(
       path.join(configDir, "config.json"),
       JSON.stringify({
-        configVersion: "0.9.0",
         connections: {
           main: {
             endpoint: "https://api.example.com/v1/chat/completions",
@@ -1042,7 +1047,7 @@ describe("runTask — command target", () => {
 });
 
 describe("runTask — prompt target", () => {
-  test("forwards scheduled AKM directory context to an agent without trusting task or caller overrides", async () => {
+  test("a scheduled run treats the task's env like a manual run: nothing pins the config file (dispatch inherits it)", async () => {
     writeTask(
       "scheduled-agent-context",
       [
@@ -1051,9 +1056,9 @@ describe("runTask — prompt target", () => {
         "with:",
         "  content: keep nested akm calls in this scheduled installation",
         "env:",
-        "  AKM_BUNDLE_DIR: /authored-override",
+        "  AKM_CONFIG_FILE: /authored-override",
         "  TASK_FLAG: retained",
-        "engine: opencode",
+        "harness: opencode",
         "",
       ].join("\n"),
     );
@@ -1061,45 +1066,38 @@ describe("runTask — prompt target", () => {
     fs.writeFileSync(
       path.join(configDir, "config.json"),
       JSON.stringify({
-        configVersion: "0.9.0",
         harnesses: { opencode: { platform: "opencode" } },
       }),
     );
     const schedulerContext = {
-      AKM_BUNDLE_DIR: path.join(tmpRoot, "scheduled-bundle"),
-      AKM_CONFIG_DIR: configDir,
-      AKM_DATA_DIR: path.join(tmpRoot, "scheduled-data"),
-      AKM_CACHE_DIR: path.join(tmpRoot, "scheduled-cache"),
-      AKM_STATE_DIR: path.join(tmpRoot, "scheduled-state"),
+      AKM_CONFIG_FILE: path.join(configDir, "config.json"),
     };
-    for (const directory of Object.values(schedulerContext)) fs.mkdirSync(directory, { recursive: true });
-    let childEnv: Record<string, string> | undefined;
 
-    const result = await withEnv(schedulerContext, () =>
-      runTask("scheduled-agent-context", {
-        bundleDir,
-        logDir,
-        scheduled: true,
-        runAgentImpl: async (_profile, options) => {
-          childEnv = options.env;
-          return { ok: true, exitCode: 0, stdout: "ok", stderr: "", durationMs: 1 };
-        },
-      }),
-    );
+    for (const scheduled of [true, false]) {
+      let childEnv: Record<string, string> | undefined;
+      const result = await withEnv(schedulerContext, () =>
+        runTask("scheduled-agent-context", {
+          bundleDir,
+          logDir,
+          scheduled,
+          runAgentImpl: async (_profile, options) => {
+            childEnv = options.env;
+            return { ok: true, exitCode: 0, stdout: "ok", stderr: "", durationMs: 1 };
+          },
+        }),
+      );
 
-    expect(result.status).toBe("completed");
-    expect(childEnv).toMatchObject({ ...schedulerContext, TASK_FLAG: "retained" });
-    expect(childEnv?.AKM_BUNDLE_DIR).toBe(schedulerContext.AKM_BUNDLE_DIR);
-    expect(childEnv?.AKM_STATE_DIR).toBe(schedulerContext.AKM_STATE_DIR);
+      expect(result.status).toBe("completed");
+      // The task's own `env:` is the task's: a scheduled run no longer overrides it with the process's directories.
+      expect(childEnv).toMatchObject({ AKM_CONFIG_FILE: "/authored-override", TASK_FLAG: "retained" });
+    }
   });
 
   test("a command task gets the 6-hour scheduled default timeout unless the task sets one", async () => {
-    process.env.AKM_CONFIG_DIR = configDir;
     fs.mkdirSync(configDir, { recursive: true });
     fs.writeFileSync(
       path.join(configDir, "config.json"),
       JSON.stringify({
-        configVersion: "0.9.0",
         harnesses: { opencode: { platform: "opencode" } },
       }),
     );
@@ -1138,12 +1136,10 @@ describe("runTask — prompt target", () => {
     };
 
     // The prompt task resolves this named harness before dispatch.
-    process.env.AKM_CONFIG_DIR = configDir;
     fs.mkdirSync(configDir, { recursive: true });
     fs.writeFileSync(
       path.join(configDir, "config.json"),
       JSON.stringify({
-        configVersion: "0.9.0",
         harnesses: { opencode: { platform: "opencode" } },
       }),
     );
@@ -1191,7 +1187,6 @@ describe("runTask — prompt target", () => {
     fs.writeFileSync(
       path.join(configDir, "config.json"),
       JSON.stringify({
-        configVersion: "0.9.0",
         harnesses: {
           reviewer: {
             platform: "opencode",
@@ -1222,12 +1217,11 @@ describe("runTask — prompt target", () => {
     fs.writeFileSync(
       path.join(configDir, "config.json"),
       JSON.stringify({
-        configVersion: "0.9.0",
         harnesses: { opencode: { platform: "opencode" } },
       }),
     );
 
-    const result = await withEnv({ AKM_CONFIG_DIR: configDir, OPENCODE_API_KEY: sentinel }, () =>
+    const result = await withEnv({ OPENCODE_API_KEY: sentinel }, () =>
       runTask("redacted", {
         bundleDir,
         logDir,
@@ -1250,12 +1244,10 @@ describe("runTask — prompt target", () => {
   test("agent failure surfaces as failed status with reason", async () => {
     writeTask("fail", promptTask("boom", { harness: "opencode" }));
 
-    process.env.AKM_CONFIG_DIR = configDir;
     fs.mkdirSync(configDir, { recursive: true });
     fs.writeFileSync(
       path.join(configDir, "config.json"),
       JSON.stringify({
-        configVersion: "0.9.0",
         harnesses: { opencode: { platform: "opencode" } },
       }),
     );
@@ -1300,12 +1292,10 @@ describe("runTask — prompt target", () => {
   test("agent timeout surfaces as failed status with reason timeout", async () => {
     writeTask("timed-out", promptTask("content", { harness: "opencode", timeout: 50 }));
 
-    process.env.AKM_CONFIG_DIR = configDir;
     fs.mkdirSync(configDir, { recursive: true });
     fs.writeFileSync(
       path.join(configDir, "config.json"),
       JSON.stringify({
-        configVersion: "0.9.0",
         harnesses: { opencode: { platform: "opencode" } },
       }),
     );
@@ -1338,8 +1328,7 @@ describe("runTask — prompt target", () => {
   });
 });
 
-// P4 (docs/plans/specs/p4-deletions-closeout.md §3.2.7, row B-22, F-A2.17)
-// DELETED src/tasks/run/run-task.ts's shouldSkipUnactivatedTask call and the
+// P4 DELETED src/tasks/run/run-task.ts's shouldSkipUnactivatedTask call and the
 // helper itself, along with prepare-support.ts's source-owned `enabled`
 // derivation — task source v4 has no enablement field. Host-local
 // `scheduler.enabled` is checked both while reconciling bindings and when a

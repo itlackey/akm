@@ -46,8 +46,7 @@ describe("workflow force publication safety", () => {
     fs.symlinkSync(real, linked);
     writeSandboxConfig({
       bundles: { stash: { path: storage.stashDir }, linked: { path: linked } },
-      defaultBundle: "stash",
-      defaultWriteTarget: "linked",
+      defaultBundle: "linked",
     });
 
     const created = createWorkflowAsset({ name: "release" });

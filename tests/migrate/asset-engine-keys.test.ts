@@ -14,6 +14,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
+import { rememberEngineTargets, rememberedEngineTargets } from "../../scripts/akm-migrate/config/retired-engines";
 import { applyEngineKeysPlan, inspectEngineKeyFiles } from "../../scripts/akm-migrate/migrate/engine-key-files";
 import {
   planEngineKeyFile,
@@ -21,11 +22,8 @@ import {
   type ResolveEngineKey,
 } from "../../scripts/akm-migrate/migrate/engine-key-planner";
 import { runMigration } from "../../scripts/akm-migrate/run-migrate";
-import { selectionFromArgs } from "../../src/cli/selection";
 import { executionDefaultsFromFrontmatter } from "../../src/core/adapter/execution-source";
 import { loadUserConfig, resetConfigCache } from "../../src/core/config/config";
-import { rememberEngineTargets, rememberedEngineTargets } from "../../src/core/config/retired-engines";
-import { executionDefaultsOf } from "../../src/execution/source";
 import { resolveTarget } from "../../src/integrations/agent/resolution";
 import { freezeWorkflow } from "../../src/workflows/freeze/freeze";
 import { loadWorkflowAsset } from "../../src/workflows/runtime/workflow-asset-loader";
@@ -207,7 +205,7 @@ describe("the step", () => {
   const stash = (): string => storage.stashDir;
 
   beforeEach(() => {
-    storage = withIsolatedAkmStorage();
+    storage = withIsolatedAkmStorage({}, { bundle: false });
     resetConfigCache();
   });
   afterEach(() => {
@@ -461,7 +459,7 @@ describe("the step", () => {
     expect(third.assetEngineKeys).toMatchObject({ changed: 0, skipped: 0 });
   });
 
-  test("a selector in a skipped asset, and the retired flag, keep their meaning between the migration and the retry", async () => {
+  test("a selector in a skipped asset is rewritten, on the retry, to the name it always meant", async () => {
     const A = "http://old:8080/v1/chat/completions";
     const B = "http://lab:8080/v1/chat/completions";
     writeSandboxConfig({
@@ -488,20 +486,13 @@ describe("the step", () => {
       const frontmatter = parseYaml(frontmatterBlock(fs.readFileSync(command, "utf8"))) as Record<string, unknown>;
       return where([executionDefaultsFromFrontmatter(frontmatter, { kind: "command" })]);
     };
-    const flagSays = (engine: string): string => where([executionDefaultsOf(selectionFromArgs({ engine }))]);
-
-    // Before the migration the old `default` is service A.
-    expect(assetSays()).toBe(A);
 
     const first = await runMigration({ apply: true });
     expect(first.assetEngineKeys).toMatchObject({ changed: 0, skipped: 1 });
     resetConfigCache();
 
-    // The config now calls B `default`, and the asset still says `engine: default`: it still means A.
+    // The config now calls B `default`, and the asset still says `engine: default`, which the runtime does not read.
     expect(loadUserConfig().connections?.default?.endpoint).toBe(B);
-    expect(assetSays()).toBe(A);
-    expect(flagSays("default")).toBe(A);
-    expect(flagSays("lab")).toBe(B);
 
     // Once the asset can be rewritten it is, to the name it always meant; nothing remembers the old names after.
     const configPath = path.join(process.env.XDG_CONFIG_HOME ?? "", "akm", "config.json");
@@ -594,7 +585,7 @@ describe("the step", () => {
     rememberLabAsDefault();
     const file = write("commands/large.md", `---\nname: large\nengine: lab\n---\n${"text ".repeat(450_000)}`);
     expect(fs.statSync(file).size).toBeGreaterThan(2 * 1024 * 1024);
-    expect(commandSelects(file)).toBe("default");
+    expect(() => commandSelects(file)).toThrow("akm migrate apply");
 
     const plan = await runMigration({ apply: true });
 
@@ -611,7 +602,7 @@ describe("the step", () => {
     const link = path.join(stash(), "commands", "review.md");
     fs.mkdirSync(path.dirname(link), { recursive: true });
     fs.symlinkSync("../review-source.md", link);
-    expect(commandSelects(link)).toBe("default");
+    expect(() => commandSelects(link)).toThrow("akm migrate apply");
 
     const first = await runMigration({ apply: true });
 
@@ -623,7 +614,7 @@ describe("the step", () => {
     expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
     expect(fs.readFileSync(target, "utf8")).toContain("engine: lab");
     expect(rememberedEngineTargets()).toEqual({ lab: { connection: "default" } });
-    expect(commandSelects(link)).toBe("default");
+    expect(() => commandSelects(link)).toThrow("akm migrate apply");
 
     // The user rewrites the file the link leads to: a run that finds nothing pending forgets the old names.
     fs.writeFileSync(target, "---\nname: review\nconnection: default\n---\nReview.\n");
@@ -696,9 +687,10 @@ describe("the step", () => {
     return target?.kind === "command" ? target.runner.name : undefined;
   };
 
-  test("a standalone workflow bundle's workflow is rewritten under a backup, and still freezes to the connection it named", async () => {
+  test("a standalone workflow bundle's workflow is rewritten under a backup, and then freezes to the connection it named", async () => {
     const file = workflowBundle(true);
-    expect(await workflowRunsOn()).toBe("default");
+    // Not rewritten yet: the runtime does not read `engine`, and says which command does.
+    await expect(workflowRunsOn()).rejects.toThrow(/akm migrate apply/);
 
     const plan = await runMigration({ apply: true });
 
@@ -716,7 +708,7 @@ describe("the step", () => {
     expect(await workflowRunsOn()).toBe("default");
   });
 
-  test("a read-only standalone workflow bundle is skipped and keeps the old names, so its workflow still freezes", async () => {
+  test("a read-only standalone workflow bundle is skipped and keeps the old names, and its workflow is refused until it is rewritten", async () => {
     const file = workflowBundle(false);
 
     const plan = await runMigration({ apply: true });
@@ -728,7 +720,7 @@ describe("the step", () => {
     expect(plan.assetEngineKeys?.notes).toBeUndefined();
     expect(fs.readFileSync(file, "utf8")).toBe(STANDALONE_WORKFLOW);
     expect(rememberedEngineTargets()).toEqual({ lab: { connection: "default" } });
-    expect(await workflowRunsOn()).toBe("default");
+    await expect(workflowRunsOn()).rejects.toThrow(/akm migrate apply/);
   });
 
   test("a Claude or OpenCode bundle's command has its akm.engine rewritten, and a top-level key it does not read is left", async () => {
@@ -755,7 +747,6 @@ describe("the step", () => {
       harnesses: {},
     });
     rememberEngineTargets({ lab: { connection: "gpu" } });
-    for (const file of files) expect(commandSelects(file, false)).toBe("gpu");
 
     const plan = await runMigration({ apply: true });
 
@@ -788,7 +779,7 @@ describe("the step", () => {
     expect(fs.readFileSync(file, "utf8")).toContain("engine: lab");
   });
 
-  test("the default stash is rewritten too when neither a bundle nor AKM_BUNDLE_DIR names it", async () => {
+  test("the default stash is rewritten too when no bundle names it", async () => {
     // The runtime reads `~/akm` in this case, so an `engine:` there must not outlive the retired-name map.
     const home = path.join(storage.root, "home");
     const file = path.join(home, "akm", FILES.command[0]);
@@ -799,7 +790,7 @@ describe("the step", () => {
       harnesses: { claude: {} },
     });
 
-    const plan = await withEnv({ HOME: home, AKM_BUNDLE_DIR: undefined }, () => runMigration({ apply: true }));
+    const plan = await withEnv({ HOME: home }, () => runMigration({ apply: true }));
 
     expect(plan.failedSteps).toBeUndefined();
     expect(plan.assetEngineKeys).toMatchObject({ changed: 1, applied: 1 });
@@ -829,58 +820,13 @@ describe("the step", () => {
       connections: { lab: { endpoint: "http://lab:8080/v1", models: { fast: "m" } } },
     });
 
-    const plan = await withEnv({ HOME: home, AKM_BUNDLE_DIR: undefined }, () => runMigration({ apply: true }));
+    const plan = await withEnv({ HOME: home }, () => runMigration({ apply: true }));
 
     expect(plan.failedSteps).toBeUndefined();
     expect(plan.assetEngineKeys).toMatchObject({ changed: 1, applied: 1 });
     expect(plan.assetEngineKeys?.files.map((row) => row.filePath)).toEqual([other.file]);
     expect(fs.readFileSync(file, "utf8")).toBe(FILES.command[1]);
     expect(fs.readFileSync(other.file, "utf8")).toContain("connection: lab");
-  });
-
-  test("a disabled bundle AKM_BUNDLE_DIR names, under any spelling of its path, is left as written", async () => {
-    const file = write(FILES.command[0], FILES.command[1]);
-    const other = otherBundle();
-    const alias = path.join(storage.root, "stash-alias");
-    fs.symlinkSync(stash(), alias, "dir");
-    writeSandboxConfig({
-      bundles: {
-        dormant: { path: stash(), enabled: false, components: { main: { root: ".", adapter: "akm" } } },
-        active: { path: other.root, components: { main: { root: ".", adapter: "akm" } } },
-      },
-      connections: { lab: { endpoint: "http://lab:8080/v1", models: { fast: "m" } } },
-    });
-
-    for (const spelling of [stash(), alias]) {
-      const plan = await withEnv({ AKM_BUNDLE_DIR: spelling }, () => runMigration({ apply: false }));
-      expect(plan.failedSteps).toBeUndefined();
-      expect(plan.assetEngineKeys?.files.map((row) => row.filePath)).toEqual([other.file]);
-    }
-    const plan = await withEnv({ AKM_BUNDLE_DIR: alias }, () => runMigration({ apply: true }));
-    expect(plan.assetEngineKeys).toMatchObject({ changed: 1, applied: 1 });
-    expect(fs.readFileSync(file, "utf8")).toBe(FILES.command[1]);
-  });
-
-  test("a read-only bundle AKM_BUNDLE_DIR names under another spelling keeps its policy", async () => {
-    const file = write(FILES.command[0], FILES.command[1]);
-    const alias = path.join(storage.root, "stash-alias");
-    fs.symlinkSync(stash(), alias, "dir");
-    configure({
-      bundles: {
-        primary: {
-          path: stash(),
-          writable: false,
-          components: { main: { root: ".", adapter: "akm", writable: false } },
-        },
-      },
-    });
-
-    const plan = await withEnv({ AKM_BUNDLE_DIR: alias }, () => runMigration({ apply: true }));
-
-    expect(plan.failedSteps).toBeUndefined();
-    expect(plan.assetEngineKeys).toMatchObject({ changed: 0, skipped: 1 });
-    expect(plan.assetEngineKeys?.files[0]?.reason).toContain("read-only");
-    expect(fs.readFileSync(file, "utf8")).toBe(FILES.command[1]);
   });
 
   test("a bundle with no engine keys is current, and a config with no bundle is no error", async () => {

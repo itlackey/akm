@@ -23,7 +23,7 @@ import { closeDatabase, openExistingDatabase } from "../../../src/storage/reposi
 import { getEntryCount } from "../../../src/storage/repositories/index-entries-repository";
 import {
   type Cleanup,
-  sandboxEnvDir,
+  sandboxAkmDir,
   sandboxStashDir,
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
@@ -53,8 +53,8 @@ beforeEach(async () => {
   stashDir = stash.dir;
   let chain = sandboxXdgConfigHome(stash.cleanup).cleanup;
   chain = sandboxXdgCacheHome(chain).cleanup;
-  chain = sandboxEnvDir("akm-zdp-data", "AKM_DATA_DIR", chain).cleanup;
-  chain = sandboxEnvDir("akm-zdp-state", "AKM_STATE_DIR", chain).cleanup;
+  chain = sandboxAkmDir("akm-zdp-data", "data", chain).cleanup;
+  chain = sandboxAkmDir("akm-zdp-state", "state", chain).cleanup;
   cleanup = chain;
   writeSandboxConfig({ semanticSearchMode: "off" });
   writeMemory("seed-memory", "Seed body for the preflight regression.");

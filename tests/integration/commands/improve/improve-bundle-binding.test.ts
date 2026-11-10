@@ -24,7 +24,7 @@ import { NotFoundError } from "../../../../src/core/errors";
 import { appendEvent } from "../../../../src/core/events";
 import { akmIndex } from "../../../../src/indexer/indexer";
 import { withTestImproveLlm } from "../../../_helpers/improve-config";
-import { type IsolatedAkmStorage, mutateScopedEnv, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
+import { type IsolatedAkmStorage, useBundleConfig, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
 let primary: string;
@@ -34,7 +34,7 @@ beforeEach(() => {
   storage = withIsolatedAkmStorage();
   primary = path.join(storage.root, "primary-bundle");
   team = path.join(storage.root, "team-bundle");
-  mutateScopedEnv("AKM_BUNDLE_DIR", primary);
+  useBundleConfig(primary);
 });
 
 afterEach(() => {
@@ -53,7 +53,7 @@ function writeMemory(root: string, name: string): void {
   fs.writeFileSync(file, `---\ndescription: ${name}\n---\n\n${name} body.\n`, "utf8");
 }
 
-/** Two writable bundles; `primary` is where the run writes. No judge is configured, so proposals queue unjudged. */
+/** Two writable bundles; `primary` is where the run writes unless a caller names another default. No judge is configured, so proposals queue unjudged. */
 function twoBundleConfig(defaultBundle = "primary"): AkmConfig {
   return withTestImproveLlm({
     semanticSearchMode: "off",
@@ -62,7 +62,6 @@ function twoBundleConfig(defaultBundle = "primary"): AkmConfig {
       team: { path: team, writable: true },
     },
     defaultBundle,
-    defaultWriteTarget: "primary",
     improve: {
       strategies: {
         default: {

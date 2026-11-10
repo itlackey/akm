@@ -4,16 +4,15 @@
 
 /**
  * #733 — orphan-GC pass for unresolvable `asset_salience` / `asset_outcome`
- * state rows (Workstream C, docs/architecture/specs/0.9.0-close-out-plan.md).
+ * state rows.
  *
  * The pass is deliberately lean: one maintenance pass (`runOrphanStateGcPass`),
  * one additive migration (`021-asset-state-missing-since`), one event type
- * (`asset_state_gc`), one config gate (`improve.stateGc.collect`, default
- * false). These tests exercise `runOrphanStateGcPass` directly — the same
+ * (`asset_state_gc`). The pass never deletes a row. These tests exercise `runOrphanStateGcPass` directly — the same
  * "focused unit coverage, injected db handles, no LLM" style as
- * `tests/commands/improve/improve-maintenance-passes.test.ts` — rather than
+ * `tests/integration/commands/improve/improve-maintenance-passes.test.ts` — rather than
  * driving a full `akmImprove()` run, so the correctness of the resolution
- * logic and the grace/collect gate is asserted without indexer/LLM overhead.
+ * logic and the never-delete rule is asserted without indexer/LLM overhead.
  *
  * `entries` rows are inserted directly (bypassing `akmIndex`) so each test
  * controls precisely which refs resolve — a real `akmIndex` run would still
@@ -21,7 +20,7 @@
  * parts (markdown parsing, embeddings) that add nothing to what's under test
  * here.
  *
- * The grace-window test seeds an
+ * The old-stamp test seeds an
  * OLD `missing_since` value directly instead of sleeping — no wall-clock
  * dependency.
  */
@@ -32,7 +31,6 @@ import {
   type IndexDbCell,
   type MaintenanceCtx,
   runOrphanStateGcPass,
-  STATE_GC_GRACE_MS,
 } from "../../../../src/commands/improve/loop-stages";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { readEvents } from "../../../../src/core/events";
@@ -41,7 +39,12 @@ import { getStateDbPath, openStateDatabase, withStateDb } from "../../../../src/
 import type { Database } from "../../../../src/storage/database";
 import { closeDatabase, openIndexDatabase } from "../../../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../../../src/storage/repositories/index-entries-repository";
-import { countAssetOutcomeMissing, upsertAssetOutcome } from "../../../../src/storage/repositories/outcome-repository";
+import {
+  countAssetOutcomeMissing,
+  listAssetOutcomeMissingState,
+  stampAssetOutcomeMissing,
+  upsertAssetOutcome,
+} from "../../../../src/storage/repositories/outcome-repository";
 import {
   countAssetSalienceMissing,
   listAssetSalienceMissingState,
@@ -124,19 +127,16 @@ function makeCtx(overrides: Partial<MaintenanceCtx> = {}): MaintenanceCtx {
   };
 }
 
-/** `makeCtx` with `improve.stateGc.collect` pinned to `collect`. */
-function ctxWithCollect(collect: boolean): MaintenanceCtx {
-  return makeCtx({ config: { improve: { stateGc: { collect } } } as AkmConfig });
-}
+/** A stamp older than the 7-day window the retired delete path used. */
+const OLD_STAMP_MS = 7 * 24 * 60 * 60 * 1000 + 60_000;
 
 describe("runOrphanStateGcPass", () => {
   test("an orphaned ref is stamped, not deleted, on first sighting", () => {
     withStateDb((db) => upsertAssetSalience(db, "memories/gone", FIXTURE_VECTOR));
     const indexDb = openIndex(); // no entries row at all for memories/gone — a genuine orphan
     try {
-      const out = runOrphanStateGcPass(ctxWithCollect(false), { current: indexDb });
+      const out = runOrphanStateGcPass(makeCtx(), { current: indexDb });
       expect(out.pending).toBe(1);
-      expect(out.collected).toBe(0);
       expect(out.warnings).toEqual([]);
 
       withStateDb((db) => {
@@ -161,9 +161,8 @@ describe("runOrphanStateGcPass", () => {
     const indexDb = openIndex();
     indexDb.exec("DROP TABLE entries");
     try {
-      const out = runOrphanStateGcPass(ctxWithCollect(false), { current: indexDb });
+      const out = runOrphanStateGcPass(makeCtx(), { current: indexDb });
       expect(out.pending).toBe(0);
-      expect(out.collected).toBe(0);
       expect(out.warnings).toHaveLength(1);
       expect(out.warnings[0]).toContain("orphan state GC failed");
     } finally {
@@ -171,67 +170,29 @@ describe("runOrphanStateGcPass", () => {
     }
   });
 
-  test("a stamped orphan is deleted only after the grace window elapses AND collect is true", () => {
+  test("an orphan stamped more than 7 days ago stays in place, is still counted, and is reported on the event", () => {
     const ref = "memories/gone-stale";
+    const oldStamp = Date.now() - OLD_STAMP_MS;
     withStateDb((db) => {
       upsertAssetSalience(db, ref, FIXTURE_VECTOR);
-      // Seed an OLD missing_since (grace + 1 minute ago) directly — no sleep.
-      stampAssetSalienceMissing(db, [ref], Date.now() - STATE_GC_GRACE_MS - 60_000);
+      upsertAssetOutcome(db, fixtureOutcomeValues(ref));
+      stampAssetSalienceMissing(db, [ref], oldStamp);
+      stampAssetOutcomeMissing(db, [ref], oldStamp);
     });
     const indexDb = openIndex(); // still unresolved this run
 
     try {
-      const out = runOrphanStateGcPass(ctxWithCollect(true), { current: indexDb });
-      expect(out.collected).toBe(1);
-      expect(out.pending).toBe(0);
+      const out = runOrphanStateGcPass(makeCtx(), { current: indexDb });
+      expect(out.pending).toBe(2);
+      expect(out.warnings).toEqual([]);
 
       withStateDb((db) => {
-        expect(listAssetSalienceMissingState(db).find((r) => r.asset_ref === ref)).toBeUndefined();
+        expect(listAssetSalienceMissingState(db).find((r) => r.asset_ref === ref)?.missing_since).toBe(oldStamp);
+        expect(listAssetOutcomeMissingState(db).find((r) => r.asset_ref === ref)?.missing_since).toBe(oldStamp);
       });
-    } finally {
-      closeDatabase(indexDb);
-    }
-  });
-
-  test("a stamped orphan INSIDE the grace window is left alone even with collect: true", () => {
-    const ref = "memories/gone-fresh";
-    withStateDb((db) => {
-      upsertAssetSalience(db, ref, FIXTURE_VECTOR);
-      // Stamped one minute ago — well inside the 7-day grace window.
-      stampAssetSalienceMissing(db, [ref], Date.now() - 60_000);
-    });
-    const indexDb = openIndex();
-
-    try {
-      const out = runOrphanStateGcPass(ctxWithCollect(true), { current: indexDb });
-      expect(out.collected).toBe(0);
-      expect(out.pending).toBe(1);
-
-      withStateDb((db) => {
-        expect(listAssetSalienceMissingState(db).find((r) => r.asset_ref === ref)).toBeDefined();
-      });
-    } finally {
-      closeDatabase(indexDb);
-    }
-  });
-
-  test("default config (collect absent) never deletes, even past the grace window — counts are still reported", () => {
-    const ref = "memories/gone-default";
-    withStateDb((db) => {
-      upsertAssetSalience(db, ref, FIXTURE_VECTOR);
-      stampAssetSalienceMissing(db, [ref], Date.now() - STATE_GC_GRACE_MS - 60_000);
-    });
-    const indexDb = openIndex();
-
-    try {
-      // config.improve.stateGc is entirely absent — the documented default.
-      const out = runOrphanStateGcPass(makeCtx({ config: {} as AkmConfig }), { current: indexDb });
-      expect(out.collected).toBe(0);
-      expect(out.pending).toBe(1);
-
-      withStateDb((db) => {
-        expect(countAssetSalienceMissing(db)).toBe(1);
-      });
+      const { events } = readEvents({ type: "asset_state_gc" }, { dbPath: getStateDbPath() });
+      expect(events).toHaveLength(1);
+      expect(events[0]?.metadata?.pending).toBe(2);
     } finally {
       closeDatabase(indexDb);
     }
@@ -254,9 +215,8 @@ describe("runOrphanStateGcPass", () => {
       insertLiveEntry(indexDb, bundleQualifiedItemRef);
       expect(bundleQualifiedItemRef).not.toBe(legacyBareForm); // sanity: genuinely different spellings
 
-      const out = runOrphanStateGcPass(ctxWithCollect(true), { current: indexDb });
+      const out = runOrphanStateGcPass(makeCtx(), { current: indexDb });
       expect(out.pending).toBe(0);
-      expect(out.collected).toBe(0);
 
       withStateDb((db) => {
         const row = listAssetSalienceMissingState(db).find((r) => r.asset_ref === legacyBareForm);
@@ -278,9 +238,8 @@ describe("runOrphanStateGcPass", () => {
     try {
       insertLiveEntry(indexDb, ref); // the asset is live again this run — auto-qualified to a durable item_ref
 
-      const out = runOrphanStateGcPass(ctxWithCollect(true), { current: indexDb });
+      const out = runOrphanStateGcPass(makeCtx(), { current: indexDb });
       expect(out.pending).toBe(0);
-      expect(out.collected).toBe(0);
 
       withStateDb((db) => {
         const row = listAssetSalienceMissingState(db).find((r) => r.asset_ref === ref);
@@ -308,9 +267,8 @@ describe("runOrphanStateGcPass", () => {
     try {
       insertLiveEntry(indexDb, ref);
 
-      const out = runOrphanStateGcPass(ctxWithCollect(true), { current: indexDb });
+      const out = runOrphanStateGcPass(makeCtx(), { current: indexDb });
       expect(out.pending).toBe(0);
-      expect(out.collected).toBe(0);
     } finally {
       closeDatabase(indexDb);
     }
@@ -322,7 +280,7 @@ describe("runOrphanStateGcPass", () => {
     const indexDb = openIndex();
 
     try {
-      const out = runOrphanStateGcPass(ctxWithCollect(false), { current: indexDb });
+      const out = runOrphanStateGcPass(makeCtx(), { current: indexDb });
       expect(out.pending).toBe(1);
 
       withStateDb((db) => {
@@ -366,7 +324,6 @@ describe("runOrphanStateGcPass", () => {
     const out = runOrphanStateGcPass(makeCtx(), {} as IndexDbCell);
     expect(out.warnings.length).toBeGreaterThan(0);
     expect(out.pending).toBe(0);
-    expect(out.collected).toBe(0);
   });
 
   // R78: the pass used to call `getEntryByRef` (two indexDb statements, with
@@ -390,7 +347,7 @@ describe("runOrphanStateGcPass", () => {
       });
 
       try {
-        const out = runOrphanStateGcPass(ctxWithCollect(false), { current: indexDb });
+        const out = runOrphanStateGcPass(makeCtx(), { current: indexDb });
         expect(out.pending).toBe(orphanCount);
       } finally {
         prepareSpy.mockRestore();
@@ -413,12 +370,11 @@ describe("runOrphanStateGcPass", () => {
 });
 
 describe("asset_state_gc event", () => {
-  test("a clean run (nothing pending, nothing collected) emits no event", () => {
+  test("a clean run (nothing pending) emits no event", () => {
     const indexDb = openIndex(); // empty state.db, empty index.db
     try {
-      const out = runOrphanStateGcPass(ctxWithCollect(false), { current: indexDb });
+      const out = runOrphanStateGcPass(makeCtx(), { current: indexDb });
       expect(out.pending).toBe(0);
-      expect(out.collected).toBe(0);
 
       const { events } = readEvents({ type: "asset_state_gc" }, { dbPath: getStateDbPath() });
       expect(events).toHaveLength(0);
@@ -433,7 +389,7 @@ describe("asset_state_gc event", () => {
     const indexDb = openIndex();
 
     try {
-      const out = runOrphanStateGcPass(ctxWithCollect(false), { current: indexDb });
+      const out = runOrphanStateGcPass(makeCtx(), { current: indexDb });
       expect(out.pending).toBe(1);
 
       const { events } = readEvents({ type: "asset_state_gc" }, { dbPath: getStateDbPath() });
@@ -441,32 +397,10 @@ describe("asset_state_gc event", () => {
       const evt = events.at(0);
       expect(evt?.ref).toBe("asset_state/_gc");
       expect(evt?.metadata?.pending).toBe(1);
-      expect(evt?.metadata?.collected).toBe(0);
       expect(evt?.metadata?.byTable).toBeDefined();
-      const byTable = evt?.metadata?.byTable as Record<string, { pending: number; collected: number }>;
+      const byTable = evt?.metadata?.byTable as Record<string, { pending: number }>;
       expect(byTable.salience?.pending).toBe(1);
       expect(byTable.outcome?.pending).toBe(0);
-    } finally {
-      closeDatabase(indexDb);
-    }
-  });
-
-  test("collection counts are reported on the event once the grace window elapses", () => {
-    const ref = "memories/reported-collected";
-    withStateDb((db) => {
-      upsertAssetSalience(db, ref, FIXTURE_VECTOR);
-      stampAssetSalienceMissing(db, [ref], Date.now() - STATE_GC_GRACE_MS - 60_000);
-    });
-    const indexDb = openIndex();
-
-    try {
-      const out = runOrphanStateGcPass(ctxWithCollect(true), { current: indexDb });
-      expect(out.collected).toBe(1);
-
-      const { events } = readEvents({ type: "asset_state_gc" }, { dbPath: getStateDbPath() });
-      expect(events).toHaveLength(1);
-      expect(events[0]?.metadata?.collected).toBe(1);
-      expect(events[0]?.metadata?.pending).toBe(0);
     } finally {
       closeDatabase(indexDb);
     }

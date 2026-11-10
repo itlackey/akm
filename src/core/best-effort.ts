@@ -18,11 +18,10 @@
  *     At the default (non-verbose) verbosity this emits nothing — no new
  *     stdout, no new stderr, no changed control flow.
  *
- * It deliberately does NOT add a test-isolation rethrow or any other handling:
- * the contract is "centralize the existing silent swallow + add opt-in verbose
- * visibility", nothing more. Sites that need `rethrowIfTestIsolationError` or
- * any real handling already bind the error and are out of scope for this
- * helper.
+ * It deliberately does NOT add any other handling: the contract is
+ * "centralize the existing silent swallow + add opt-in verbose visibility",
+ * nothing more. Sites that need real handling already bind the error and are
+ * out of scope for this helper.
  */
 
 import { isVerbose, warnVerbose } from "./warn";
@@ -40,23 +39,6 @@ import { isVerbose, warnVerbose } from "./warn";
 export function bestEffort<T>(fn: () => T, context?: string): T | undefined {
   try {
     return fn();
-  } catch (err) {
-    if (isVerbose()) {
-      warnVerbose(`[akm:best-effort] ${context ? `${context}: ` : ""}swallowed error`, err);
-    }
-    return undefined;
-  }
-}
-
-/**
- * Async variant of {@link bestEffort}. Awaits `fn()`, swallowing any rejection
- * and resolving to `undefined` on failure — byte-identical to a bare
- * `try { await … } catch {}` at the default verbosity level. Surfaces the
- * swallowed error on the verbose seam only when verbose output is enabled.
- */
-export async function bestEffortAsync<T>(fn: () => Promise<T>, context?: string): Promise<T | undefined> {
-  try {
-    return await fn();
   } catch (err) {
     if (isVerbose()) {
       warnVerbose(`[akm:best-effort] ${context ? `${context}: ` : ""}swallowed error`, err);

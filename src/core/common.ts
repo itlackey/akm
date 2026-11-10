@@ -6,13 +6,16 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { ConfigError } from "./errors";
-import { getConfigPath, getDefaultStashDir, getRegistryCacheDir, getRegistryIndexCacheDir } from "./paths";
+import { stripJsonComments } from "./jsonc";
+import { getConfigPath, getRegistryCacheDir, getRegistryIndexCacheDir, resolveConfiguredBundlePath } from "./paths";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
 // Moved to the platform leaf so paths.ts can use it without a common↔paths
 // cycle (chunk-8 WI-8.6, DoD 11); re-exported here for the existing surface.
 export { IS_WINDOWS } from "./platform";
+// Moved to the `jsonc` / `paths` leaves so `paths.ts` can use them without a common↔paths cycle; re-exported for the existing surface.
+export { resolveConfiguredBundlePath, stripJsonComments };
 export const MAX_LOCK_METADATA_BYTES = 64 * 1024;
 
 export function isHttpUrl(value: string | undefined): boolean {
@@ -95,52 +98,6 @@ export function readTextFile(filePath: string, label = "File"): string {
  *      don't fail on those mounts. Windows does not support opening a
  *      directory for fsync, so the directory-sync step is skipped there.
  */
-/**
- * Strip JavaScript-style comments from a JSON string (JSONC support).
- * Handles `//` line comments, which end at a line feed or a carriage return,
- * and `/* *​/` block comments while preserving comment-like sequences inside
- * quoted strings.
- */
-export function stripJsonComments(text: string): string {
-  let result = "";
-  let i = 0;
-  let inString = false;
-  while (i < text.length) {
-    if (inString) {
-      if (text[i] === "\\") {
-        result += text[i] + (text[i + 1] ?? "");
-        i += 2;
-        continue;
-      }
-      if (text[i] === '"') {
-        inString = false;
-      }
-      result += text[i];
-      i++;
-      continue;
-    }
-    if (text[i] === '"') {
-      inString = true;
-      result += text[i];
-      i++;
-      continue;
-    }
-    if (text[i] === "/" && text[i + 1] === "/") {
-      while (i < text.length && text[i] !== "\n" && text[i] !== "\r") i++;
-      continue;
-    }
-    if (text[i] === "/" && text[i + 1] === "*") {
-      i += 2;
-      while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) i++;
-      i += 2;
-      continue;
-    }
-    result += text[i];
-    i++;
-  }
-  return result;
-}
-
 /**
  * The mode to rewrite an existing USER-owned file with.
  *
@@ -240,35 +197,19 @@ export function writeFileAtomic(target: string, content: string | Buffer, mode?:
   }
 }
 
-/**
- * Resolve the stash directory using a three-level fallback chain:
- *   1. AKM_BUNDLE_DIR environment variable (override for CI/scripts)
- *   2. The configured default bundle path
- *   3. Platform default (~/akm or ~/Documents/akm on Windows)
- *
- * Throws if no valid stash directory is found.
- */
-export function resolveStashDir(env: NodeJS.ProcessEnv = process.env): string {
-  // 1. Env var override (for CI, scripts, testing)
-  const envDir = env.AKM_BUNDLE_DIR?.trim();
-  if (envDir) {
-    return validateStashDir(envDir);
-  }
+/** The one message for "there is no working bundle": reads and writes say the same thing. */
+export const NO_DEFAULT_BUNDLE_MESSAGE =
+  'No default bundle is configured. Run "akm bundle create" to create one, or set `defaultBundle`.';
 
-  // 2. Configured default bundle path
+/**
+ * Resolve the working stash directory: the configured default bundle's path.
+ * Throws if there is none or it is not a valid directory. There is no implicit `~/akm`.
+ */
+export function resolveStashDir(): string {
   const configStashDir = readStashDirFromConfig();
   if (configStashDir) return validateStashDir(configStashDir);
 
-  // 3. Platform default — use it if it exists
-  const defaultDir = getDefaultStashDir(env);
-  if (isValidDirectory(defaultDir)) {
-    return defaultDir;
-  }
-
-  throw new ConfigError(
-    `No bundle directory found. Run "akm bundle create" to create one at ${defaultDir}.`,
-    "STASH_DIR_NOT_FOUND",
-  );
+  throw new ConfigError(NO_DEFAULT_BUNDLE_MESSAGE, "STASH_DIR_NOT_FOUND");
 }
 
 function validateStashDir(raw: string): string {
@@ -283,19 +224,6 @@ function validateStashDir(raw: string): string {
     throw new ConfigError(`Bundle path must point to a directory: "${stashDir}".`, "STASH_DIR_NOT_A_DIRECTORY");
   }
   return stashDir;
-}
-
-function isValidDirectory(dir: string): boolean {
-  try {
-    return fs.statSync(dir).isDirectory();
-  } catch (error) {
-    // Genuinely absent — the caller's "not found" fallback applies. Any other
-    // stat failure (e.g. EACCES) is not "doesn't exist"; treating it as such
-    // produced the wrong message ("Run akm bundle create") for a directory
-    // that exists but cannot be read.
-    if (hasErrnoCode(error, "ENOENT")) return false;
-    throw new ConfigError(`Unable to read bundle directory at "${dir}".`, "STASH_DIR_UNREADABLE");
-  }
 }
 
 /**
@@ -326,7 +254,8 @@ function readStashDirFromConfig(): string | undefined {
     const selectedBundlePath = typeof selectedBundle?.path === "string" ? selectedBundle.path : undefined;
     if (bundles && typeof bundles === "object" && typeof defaultBundle === "string" && selectedBundlePath?.trim()) {
       const bundle = selectedBundle as { path: string; components?: unknown };
-      const bundlePath = bundle.path.trim();
+      const bundlePath = resolveConfiguredBundlePath(bundle.path.trim(), configPath);
+      if (bundlePath === undefined) return undefined;
       if (bundle.components !== undefined) {
         if (typeof bundle.components !== "object" || bundle.components === null) {
           throw new ConfigError("A bundle components map must contain exactly one component.", "INVALID_CONFIG_FILE");
@@ -354,7 +283,7 @@ function readStashDirFromConfig(): string | undefined {
     }
   } catch (err) {
     // An unsupported-shape refusal must reach the caller; genuine missing/invalid
-    // config (read or JSON-parse failure) falls through to the platform default.
+    // config (read or JSON-parse failure) reads as no default bundle.
     if (err instanceof ConfigError) throw err;
   }
   return undefined;

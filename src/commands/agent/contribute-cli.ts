@@ -25,7 +25,7 @@
 import fs from "node:fs";
 import { defineCommand } from "citty";
 import { getStringArg, parsePositiveIntFlag } from "../../cli/parse-args";
-import { RETIRED_ENGINE_ARG, SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
+import { SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
 import { EXIT_CODES, GLOBAL_OUTPUT_ARGS, output, runWithJsonErrors } from "../../cli/shared";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
@@ -43,7 +43,7 @@ export const agentCommand = defineCommand({
   meta: {
     name: "agent",
     description:
-      "Dispatch an agent CLI (opencode, claude, …) with an optional agent persona and model defaults. Use --prompt for work; without one the harness starts interactively. Stored commands run through akm command run.",
+      "Dispatch an agent CLI (opencode, claude, …) with an optional agent persona and model defaults. Use --prompt for work; without one the harness starts interactively. Stored commands run through akm command.",
   },
   args: {
     ...GLOBAL_OUTPUT_ARGS,
@@ -59,7 +59,6 @@ export const agentCommand = defineCommand({
       default: false,
     },
     ...SELECTION_ARGS,
-    ...RETIRED_ENGINE_ARG,
     model: {
       ...SELECTION_ARGS.model,
       description: `${SELECTION_ARGS.model.description}. Overrides the model specified in the agent asset.`,
@@ -138,18 +137,6 @@ export const lintCommand = defineCommand({
       description: "Apply auto-fixes in place",
       default: false,
     },
-    // Declared as its own arg rather than `alias: "auto-fix"`: citty's alias
-    // handling (node:util parseArgs `short` options) only supports
-    // SINGLE-character aliases. A
-    // multi-char alias rendered in help as `-auto-fix` (one dash) and parsed
-    // as a pile of junk single-char flags, so BOTH advertised spellings —
-    // `-auto-fix` and `--auto-fix` — silently ran a plain lint while claiming
-    // to fix. Two real boolean args, OR'd at the call site, work and render.
-    "auto-fix": {
-      type: "boolean",
-      description: "Apply auto-fixes in place (same as --fix)",
-      default: false,
-    },
     dir: { type: "string", description: "Override bundle root directory (default: from config)" },
     "fail-on-flagged": {
       type: "boolean",
@@ -175,7 +162,7 @@ export const lintCommand = defineCommand({
   async run({ args }) {
     await runWithJsonErrors(async () => {
       const result = await akmLint({
-        fix: args.fix === true || getHyphenatedBoolean(args, "auto-fix"),
+        fix: args.fix === true,
         dir: getStringArg(args, "dir"),
         typeFilter: getStringArg(args, "type"),
         pruneDanglingEdges: getHyphenatedBoolean(args, "prune-dangling-edges"),

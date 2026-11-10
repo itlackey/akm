@@ -275,7 +275,7 @@ The triage drain's judgment tier (`processes.triage.judgment`, off in every
 built-in strategy) may accept only a consolidate promotion, a memory proposed as
 a new knowledge note. A retirement or a reflect revision it would
 accept is left for a person (`judgment-not-promotion`); it may still reject.
-Measured on the nightly eval with `experimental.improveAutonomy` (#1132, #1094),
+Measured on the nightly eval with `experimental.improveAutonomy`,
 judging every kind solved 0.49 (gpt-5.6-terra) and 0.53 (qwen3.8-27b) of the
 items, harmed 14 and 11, and changed 18 and 21 notes outside the planted set.
 Judging promotions alone: precision 0.87, recall 0.78 and 4.8% of bad promotions
@@ -289,7 +289,7 @@ drain, whether a deterministic gate (a staged quality-judge pass), the judgment
 tier or an accept staged by an earlier drain would take it. It is left for a
 person with reason `proactive-needs-review`, and the judgment tier does not see
 it. An empty diff is still rejected. Proposals driven by feedback (`signal-delta`,
-`scope`) follow the one rule unchanged (#1147).
+`scope`) follow the one rule unchanged.
 
 ### Retirement continuity
 
@@ -330,8 +330,7 @@ old proposals and events still decode; nothing assigns or emits it any more.
 Dry and live improve runs call the same selectors for signal-delta eligibility,
 the proactive-maintenance lane, the retrieval scope, salience ranking, disk presence, and the
 final cap, and resolve the bundle they plan the same way: `--bundle`, else
-`defaultWriteTarget`, else the working bundle (`AKM_BUNDLE_DIR`, else
-`defaultBundle`). Each invocation reports a best-effort observation assembled
+the working bundle (`defaultBundle`). Each invocation reports a best-effort observation assembled
 while it runs; it is not an atomic cross-store snapshot, a reservation, or a
 durable frozen plan. A later live invocation re-inspects mutable index, state,
 filesystem, and session-log inputs and can therefore differ from an earlier
@@ -354,7 +353,7 @@ yields an explicit empty `plan.snapshot` (`missing` or `incompatible`) rather
 than creating or migrating the database.
 
 `plan.limits.effective` is the cap on the refs a run dispatches, resolved from
-`--limit`, then the reflect process's `limit`, then the strategy's `limit`. The
+`--limit`, then the reflect process's `limit`. The
 replay lane is retired, so `additiveReplayAllowance` is always `0` (the field
 stays so the schema-v2 plan shape keeps validating) and a finite `totalCeiling`
 equals `effective`. When the run is unbounded, `totalCeiling` is omitted.
@@ -374,7 +373,7 @@ lane only when its judgment tier is on; see below):
 | memory cleanup | Belief-state frontmatter rewrites, archive moves | analyzed but not applied |
 | `triage` `applyMode: "promote"` **with judgment on** | The judgment tier auto-accepts consolidate promotions into the bundle | downgraded to `queue` — triage still runs, it just does not auto-accept |
 
-A deterministic-only `promote` (triage with judgment off) is not gated (#1143):
+A deterministic-only `promote` (triage with judgment off) is not gated:
 the `default` strategy drains the queue through the deterministic gates, up to
 `maxAcceptsPerRun` (200) per run, with no opt-in. The nightly eval's baseline is
 exactly this path (`proposal drain --promote` without judgment): 0.91 (terra) and
@@ -460,7 +459,7 @@ whose archive directory is entirely git-tracked and clean (`git ls-files`
 plus `git status --porcelain -uall`, checked once per sweep, not once per
 directory). A `.git` directory alone does not mean a retirement was committed:
 an accept commits its own paths, once per process (`commitAcceptedPaths` in
-`src/core/write-source.ts`), on a `kind: "filesystem"` source with a `.git`
+`src/sources/write-source.ts`), on a `kind: "filesystem"` source with a `.git`
 directory too, but a commit that failed only warns. A directory with even one
 untracked or modified file (the tombstone included) is left whole for a later
 sweep, so the purge removes only bytes git can recover. If git cannot report
@@ -502,7 +501,7 @@ A session with a failed write other than a validator refusal keeps a null
 content hash in its seen-session row, so the next run re-extracts it:
 candidates that persisted are held by their `proposed` ledger window, or as
 accepted from this session, and only the failed ones are written again. A
-refusal recurs on the same content, so it alone records the hash (#1224).
+refusal recurs on the same content, so it alone records the hash.
 Unavailable or malformed model output retains its distinct skip/failure result.
 Older events without `dryRun` have unknown preview status; their historical
 `candidates_queued` label cannot establish persistence. Proposal metrics use

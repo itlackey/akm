@@ -2,12 +2,15 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import { describe, expect, test } from "bun:test";
+import { TransientError, UsageError, type UsageErrorCode } from "../../src/core/errors";
+
 /**
  * Unit coverage for the five new `UsageErrorCode` members added in P1a (D7)
  * and their `USAGE_HINTS` entries.
  *
- * See docs/plans/specs/p1a-with-rejection-classifier.md §2.1 (the exact hint
- * strings, reproduced verbatim below), §10 acceptance criterion 1
+ * The exact hint
+ * strings are reproduced verbatim below; acceptance criterion 1
  * ("src/core/errors.ts declares all five new UsageErrorCode members and a
  * USAGE_HINTS entry for each, with the §2.1 strings"), and behavior row B-24
  * ("`new UsageError('x', '<new code>').hint()` for each of the five returns
@@ -31,9 +34,6 @@
  * `.hint()` returns `undefined` today) until the implementer also adds the
  * five `USAGE_HINTS` entries.
  */
-
-import { describe, expect, test } from "bun:test";
-import { UsageError, type UsageErrorCode } from "../../src/core/errors";
 
 /**
  * The five new codes from spec §2.1, paired with their required USAGE_HINTS
@@ -87,5 +87,40 @@ describe("D7 diagnostics — five new UsageErrorCode members + USAGE_HINTS (spec
     const error = new UsageError("x");
     expect(error.code).toBe("INVALID_FLAG_VALUE");
     expect(error.hint()).toBe("Run `akm <command> --help` to see accepted values.");
+  });
+});
+
+/**
+ * `RUN_LEASE_HELD` is the dedicated `TransientErrorCode` a workflow run-lease
+ * refusal carries (#948 addendum, dev-team field review 2026-09-09 — moved
+ * off `UsageError`/exit 2 onto `TransientError`/exit 75 so a cron wrapper can
+ * retry instead of alerting), distinct from the generic `INVALID_FLAG_VALUE`
+ * `UsageErrorCode` default — a caller branching on `code` can retry this one,
+ * unlike a bad flag.
+ */
+
+describe("RUN_LEASE_HELD", () => {
+  test("constructible, kind transient, code round-trips, and carries its own default hint", () => {
+    const error = new TransientError("Workflow run x is already being driven by engine y.", "RUN_LEASE_HELD");
+    expect(error).toBeInstanceOf(TransientError);
+    expect(error).toBeInstanceOf(Error);
+    expect(error.kind).toBe("transient");
+    expect(error.code).toBe("RUN_LEASE_HELD");
+    expect(error.hint()).toBeDefined();
+    expect(error.hint()).not.toBe(new UsageError("x").hint());
+  });
+
+  test("an explicit constructor hint still overrides the default", () => {
+    const error = new TransientError("x", "RUN_LEASE_HELD", "explicit override");
+    expect(error.hint()).toBe("explicit override");
+  });
+
+  test("distinct from the default INVALID_FLAG_VALUE UsageError code a caller might otherwise conflate it with", () => {
+    expect(new TransientError("x", "RUN_LEASE_HELD").code).not.toBe(new UsageError("x").code);
+  });
+
+  test("not a UsageError — it must not classify as exit 2 (#948 addendum)", () => {
+    const error = new TransientError("x", "RUN_LEASE_HELD");
+    expect(error).not.toBeInstanceOf(UsageError);
   });
 });

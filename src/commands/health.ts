@@ -6,9 +6,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { daysToMs, resolveStashDir } from "../core/common";
 import { loadConfig } from "../core/config/config";
-import { ConfigError, rethrowIfTestIsolationError, UsageError } from "../core/errors";
+import { ConfigError, UsageError } from "../core/errors";
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
-import { getConfigPath, getDataDir, getDbPath, getStateDbPathInDataDir } from "../core/paths";
+import { getDataDir, getDbPath, getStateDbPathInDataDir } from "../core/paths";
 import {
   listExistingTableNames,
   listPendingStateMigrations,
@@ -35,12 +35,12 @@ import {
   runPendingStateMigrationsCheck,
   SESSION_EXTRACTION_LEDGER_WINDOW_DAYS,
 } from "./health/checks";
-import { collectConfigSkewAdvisory } from "./health/config-skew";
 import { runConnectionsAndHarnessesCheck } from "./health/connections-and-harnesses-check";
 import { collectDataDirUsageAdvisory } from "./health/data-dir-usage";
 import { collectEgressAdvisory, type EgressConfigView } from "./health/egress";
 import { emptyImproveMetrics, roundRate } from "./health/improve-metrics";
 import { emptyLlmUsageAggregate, readLlmUsageAggregate } from "./health/llm-usage";
+import { readMetricsDbState } from "./health/metrics-db-check";
 import { collectPluginStalenessAdvisories } from "./health/plugin-staleness";
 import { collectSchedulerBinaryAdvisory } from "./health/scheduler-binary";
 import { readSemanticSearchState } from "./health/semantic-search-check";
@@ -56,6 +56,7 @@ import {
   type WindowResult,
   type WindowSpec,
 } from "./health/types";
+import { collectUnrunnableTasksAdvisory } from "./health/unrunnable-tasks";
 import { collectVersionDriftAdvisory } from "./health/version-drift";
 import {
   buildImproveWindowSummary,
@@ -213,7 +214,6 @@ export function probeStateDbRoundTrip(stateDbPath: string): {
       { path: stateDbPath },
     );
   } catch (err) {
-    rethrowIfTestIsolationError(err);
     return { ok: false, durationMs: Date.now() - started, error: err instanceof Error ? err.message : String(err) };
   }
 }
@@ -370,8 +370,7 @@ function gatherSessionExtractionLedgerPhase(
 
 /**
  * The best-effort advisory groups beyond the health-check registry: the
- * `stash-git-exposure` probe, the 08 surfaces group (binary-config-skew,
- * egress-endpoints), `type-directory-disagreement` (#831), `data-dir-usage`
+ * `stash-git-exposure` probe, the 08 surfaces group (egress-endpoints), `type-directory-disagreement` (#831), `data-dir-usage`
  * (#896), and `plugin-version` (itlackey/akm#832). Order matches emission
  * order in the returned array. A probe/filesystem failure in any try/catch
  * must not abort the health report — each group degrades to "no advisory"
@@ -416,12 +415,10 @@ function gatherAncillaryAdvisories(
     }
   }
 
-  // 08 surfaces: the remaining read-only advisory group (binary-config-skew,
-  // egress-endpoints). Best-effort — a filesystem probe failure must not abort
+  // 08 surfaces: the remaining read-only advisory group
+  // (egress-endpoints). Best-effort — a filesystem probe failure must not abort
   // the health report.
   try {
-    const configSkew = collectConfigSkewAdvisory(getConfigPath());
-    if (configSkew) advisories.push(configSkew);
     const egress = collectEgressAdvisory(egressConfigView);
     if (egress) advisories.push(egress);
   } catch {
@@ -677,7 +674,7 @@ function unreadableStateDbCheck(detail: string): HealthCheckResult {
     message:
       `state.db exists but is not readable: ${detail}. Every other health check is skipped because ` +
       "none of them can read it. Check the owner and mode of the data directory, or point " +
-      "AKM_DATA_DIR / XDG_DATA_HOME at a location this user owns.",
+      "XDG_DATA_HOME (or `paths.data` in the config file) at a location this user owns.",
     evidence: { detail },
   };
 }
@@ -717,7 +714,7 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
   // instead of dying before any check runs. The open itself applies every
   // pending migration; `state-db-migrations` reports what it applied.
   const readOnly = options.readOnly === true;
-  let opened: { db: Database; applied: string[]; backupPath?: string };
+  let opened: { db: Database; applied: string[] };
   try {
     if (readOnly) {
       const unavailable = readOnlyStateDbUnavailable(stateDbPath);
@@ -811,7 +808,8 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
       probe,
       stateDbIntegrity: taskHistory.stateDbIntegrity,
       stateDbFreelist: taskHistory.stateDbFreelist,
-      stateDbMigrations: { applied: opened.applied, ...(opened.backupPath ? { backupPath: opened.backupPath } : {}) },
+      stateDbMigrations: { applied: opened.applied },
+      metricsDb: readMetricsDbState(db, stateDbPath, now()),
       taskRowCount: taskHistory.taskRowCount,
       taskFailRate: taskHistory.taskFailRate,
       stuckActiveRuns: taskHistory.stuckActiveRuns,
@@ -825,6 +823,7 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
       semanticSearch: readSemanticSearchState(gatherSemanticSearchMode()),
       versionDrift,
       schedulerBinaryDrift,
+      unrunnableTasks: collectUnrunnableTasksAdvisory(),
     };
     for (const check of HEALTH_CHECKS) {
       const result = check.run(checkContext);

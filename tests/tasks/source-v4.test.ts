@@ -4,8 +4,7 @@
 
 /**
  * Tests-first contract for P2a's task source v4 GRAMMAR and its version
- * ROUTER (spec docs/plans/specs/p2a-task-source-v4.md §1.2 D2, §1.5
- * D2-N1..D2-N7, §3). Lane A TESTS — this file owns the grammar/router half;
+ * ROUTER. Lane A TESTS — this file owns the grammar/router half;
  * tests/tasks/source-v4-adapter.test.ts owns the prepare-seam projection.
  *
  * RED phase: `src/tasks/source/task-source-v4.ts` and
@@ -47,7 +46,7 @@
  * deleted (together with the namespace indirection, which Implement is free
  * to replace with ordinary named imports once real).
  *
- * Real, already-implemented modules (`src/tasks/source-v3.ts`,
+ * Real, already-implemented modules (`src/tasks/task-source.ts`,
  * `src/core/json-schema.ts`, `src/core/errors.ts`, `src/core/warn.ts`,
  * `src/workflows/resource-limits.ts`, `src/workflows/program/schema.ts`,
  * `src/workflows/exec/param-secrets.ts`, `src/execution/limits.ts`) are
@@ -59,8 +58,7 @@
  * produce — the derivation ties this file's pins to real, already-shipped
  * behavior instead of speculative prose.
  *
- * D2-N2/B-16 routing (P4 docs/plans/specs/p4-deletions-closeout.md §3.2.2
- * closed the P2a-era wart this paragraph used to record): task source v3
+ * D2-N2/B-16 routing (P4 closed the P2a-era wart this paragraph used to record): task source v3
  * acceptance is retired from `src` entirely (§3.2). `version: 2` AND
  * `version: 3` both raise TASK_SCHEMA_VERSION_UNSUPPORTED now, with the SAME
  * migrate hint (rows B-14/B-15) — the migrator runs both the v2->v3 and
@@ -92,10 +90,9 @@ import {
 } from "../../src/core/json-schema";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 import { EXECUTION_MAX_TIMEOUT_MS } from "../../src/execution/limits";
-import { TASK_V3_MAX_REDACT_NAMES } from "../../src/tasks/source/bounded-document";
+import { TASK_MAX_REDACT_NAMES, TASK_MAX_SCHEDULES } from "../../src/tasks/source/bounded-document";
 import * as ParseTaskSourceModule from "../../src/tasks/source/parse-task-source";
 import * as TaskSourceV4Module from "../../src/tasks/source/task-source-v4";
-import { TASK_V3_MAX_SCHEDULES } from "../../src/tasks/source-v3";
 import {
   TASK_RUN_BOOLEAN_FLAGS,
   TASK_RUN_RESERVED_FLAG_NAMES,
@@ -123,7 +120,7 @@ type TaskSourceV4Document = TaskSourceV4Module.TaskSourceV4Document;
 const ROOT = path.resolve(import.meta.dir, "../..");
 const FIXTURES_DIR = path.join(ROOT, "tests/fixtures/execution-contracts/tasks/v4");
 
-/** No default target/schedule — every call site supplies exactly the keys it means to exercise, mirroring source-v3.test.ts's `scheduled()` helper (which also defaults nothing but `version`/`akm.schedule`). */
+/** No default target/schedule — every call site supplies exactly the keys it means to exercise. */
 function v4Doc(overrides: Record<string, unknown>): Record<string, unknown> {
   return { version: TASK_SOURCE_V4_VERSION, ...overrides };
 }
@@ -155,7 +152,7 @@ function expectTaskSourceInvalid(fn: () => unknown, pattern: RegExp | readonly R
  * path `field` — not nested under `akm.` — per `sourceError`'s
  * `${dotted} ${detail}` rendering (D2-N4). A v4 implementation that reuses
  * v3's `parseAkm` wholesale (nesting every execution control under
- * `["akm", key]`, `source-v3.ts:375,384,450,471,475,480,490`) would still
+ * `["akm", key]`, `task-source.ts:375,384,450,471,475,480,490`) would still
  * satisfy a loose `/timeout/i`-style substring match on
  * `"akm.timeout must be …"`; this pins the field path itself so that
  * regression class fails loudly instead of passing vacuously (test-review
@@ -466,7 +463,7 @@ describe("task source v4 — akm:/on: removal (B-11, B-12)", () => {
   test("an akm: key is TASK_SOURCE_INVALID, naming the removal and pointing at the top-level spellings", () => {
     // B-11 requires the detail to NAME THE REMOVAL, not merely mention "akm"
     // — `checkKeys`' generic unknown-field wording ("akm is an unsupported
-    // field.", src/tasks/source-v3.ts:333) also matches a bare `/akm/`, so a
+    // field.", src/tasks/task-source.ts:333) also matches a bare `/akm/`, so a
     // pattern-only check here is satisfiable by routing `akm:` through the
     // SAME generic closed-key rejection every other unrecognized top-level
     // key gets — exactly the regression class this test must catch (test-
@@ -604,18 +601,18 @@ describe("task source v4 — version router (spec §3.4, D2-N2's exact routing t
         "version: 2\nschedule: '0 2 * * *'\ncommand:\n  - /usr/local/bin/backup.sh\n  - --force\n",
         2,
       ],
-    ] as const)("%s raises TASK_SCHEMA_VERSION_UNSUPPORTED naming `akm migrate apply`, without converting it", (_label, yaml, version) => {
+    ] as const)("%s raises TASK_SCHEMA_VERSION_UNSUPPORTED naming the 0.9.32 recipe, without converting it", (_label, yaml, version) => {
       const filePath = "/bundle/tasks/legacy.yml";
       const error = refusal(yaml, filePath);
       expect(error.code).toBe("TASK_SCHEMA_VERSION_UNSUPPORTED");
       expect(error.message).toBe(
-        `TASK_SCHEMA_VERSION_UNSUPPORTED: Task at ${filePath} uses task schema version ${version}; this release reads only version 4. Run \`akm migrate apply\` to convert it.`,
+        `TASK_SCHEMA_VERSION_UNSUPPORTED: Task at ${filePath} uses task schema version ${version}; this release reads only version 4 and does not convert older files: run \`npm i -g akm-cli@0.9.32 && akm migrate apply && akm task sync\`, then upgrade.`,
       );
-      expect(error.hint()).toContain("akm migrate apply --dry-run");
+      expect(error.hint()).toContain("akm-cli@0.9.32");
       expect(warnCalls).toEqual([]);
     });
 
-    test("a v4 document with a retired schedule[].enabled raises TASK_SOURCE_INVALID naming `akm migrate apply`, whatever the value", () => {
+    test("a v4 document with a retired schedule[].enabled raises TASK_SOURCE_INVALID naming the 0.9.32 recipe, whatever the value", () => {
       for (const value of ["false", "true", "yes"]) {
         const filePath = `/bundle/tasks/retired-${value}.yml`;
         const error = refusal(
@@ -624,9 +621,18 @@ describe("task source v4 — version router (spec §3.4, D2-N2's exact routing t
         );
         expect(error.code).toBe("TASK_SOURCE_INVALID");
         expect(error.message).toBe(
-          `Invalid task source v4 at ${filePath}: schedule[].enabled was removed (scheduler activation is host-local config). Run \`akm migrate apply\` to rewrite it.`,
+          `Invalid task source v4 at ${filePath}: schedule[].enabled was removed (scheduler activation is host-local config); run \`npm i -g akm-cli@0.9.32 && akm migrate apply && akm task sync\`, then upgrade.`,
         );
       }
+      expect(warnCalls).toEqual([]);
+    });
+
+    test("a v4 document with a retired top-level engine raises TASK_SOURCE_INVALID naming `akm migrate apply`, never ignoring it", () => {
+      const filePath = "/bundle/tasks/engine.yml";
+      const error = refusal("version: 4\nuses: commands/review\nengine: lab\n", filePath);
+      expect(error.code).toBe("TASK_SOURCE_INVALID");
+      expect(error.message).toContain(`Invalid task source v4 at ${filePath}: engine is retired`);
+      expect(error.message).toContain("akm migrate apply");
       expect(warnCalls).toEqual([]);
     });
 
@@ -733,16 +739,16 @@ describe("task source v4 — optional schedule (D2-N6, D2-N5, B-06..B-10, B-38)"
     );
   });
 
-  test("schedule count is bounded by TASK_V3_MAX_SCHEDULES, reused (B-09)", () => {
-    const atBound = Array.from({ length: TASK_V3_MAX_SCHEDULES }, (_, i) => ({ cron: `${i % 60} * * * *` }));
+  test("schedule count is bounded by TASK_MAX_SCHEDULES, reused (B-09)", () => {
+    const atBound = Array.from({ length: TASK_MAX_SCHEDULES }, (_, i) => ({ cron: `${i % 60} * * * *` }));
     expect(() =>
       parseTaskSourceV4Document(v4Doc({ uses: "commands/review", schedule: atBound }), { filePath: "/x.yml" }),
     ).not.toThrow();
 
-    const overBound = Array.from({ length: TASK_V3_MAX_SCHEDULES + 1 }, (_, i) => ({ cron: `${i % 60} * * * *` }));
+    const overBound = Array.from({ length: TASK_MAX_SCHEDULES + 1 }, (_, i) => ({ cron: `${i % 60} * * * *` }));
     expectTaskSourceInvalid(
       () => parseTaskSourceV4Document(v4Doc({ uses: "commands/review", schedule: overBound }), { filePath: "/x.yml" }),
-      new RegExp(String(TASK_V3_MAX_SCHEDULES)),
+      new RegExp(String(TASK_MAX_SCHEDULES)),
     );
   });
 
@@ -835,20 +841,16 @@ describe("task source v4 — inputs: names that collide with akm task's own flag
 // ── Every schedule binding must be independently runnable (0.9.2 review) ────
 
 /**
- * A scheduled firing supplies NO input flags — `compileTaskSchedulerBindings`
- * appends only the entry's own `schedule[i].inputs` to the invocation tail
- * (`src/tasks/scheduler-binding.ts`) — so an entry's literals PLUS the
+ * A scheduled firing supplies NO input flags — `akm task dispatch` passes only
+ * the entry's own `schedule[i].inputs` as flags to `akm task run` — so an entry's literals PLUS the
  * declared defaults are the complete value set the run will see. A
  * `required: true` declaration may not carry a `default` (D2-N3), so a
  * schedule entry that names no value for it can never satisfy the contract.
  *
  * Before this gate, only an entry that AUTHORED an `inputs:` mapping was
  * checked at parse time; the string shorthand and a list entry with no
- * `inputs:` key parsed clean and deferred to `akm task sync`'s own
- * projectability proof (`src/tasks/scheduler-sync.ts`) — which does reject
- * the desired set before mutation, so no unrunnable schedule was ever
- * installed, but the author only learned at sync time and only for the
- * install path. The source document alone knows both the contract and the
+ * `inputs:` key parsed clean and deferred to the first firing, so the author
+ * only learned when the task failed to run. The source document alone knows both the contract and the
  * schedule, so the contradiction is a grammar error (p2a review log:
  * "The natural P2b fix is a sync-time warn (or a parse-time rejection) when a
  * scheduled v4 task declares a required input that no schedule entry or
@@ -1103,7 +1105,7 @@ describe("task source v4 — top-level execution controls", () => {
         }),
       /timeout/i,
     );
-    // v3's parseTimeout hardcodes ["akm", "timeout"] (source-v3.ts:396) — a v4
+    // v3's parseTimeout hardcodes ["akm", "timeout"] (task-source.ts:396) — a v4
     // implementation that reuses it unmodified would render "akm.timeout …",
     // which /timeout/i alone cannot distinguish from the correct top-level
     // "timeout …" (test-review finding, tests/tasks/source-v4.test.ts:130).
@@ -1121,7 +1123,7 @@ describe("task source v4 — top-level execution controls", () => {
     expect(ok.execution.model).toBeNull();
     expect(ok.execution.agent).toBeNull();
 
-    // v3's nullableSelector hardcodes ["akm", key] (source-v3.ts:375) for
+    // v3's nullableSelector hardcodes ["akm", key] (task-source.ts:375) for
     // every one of these selectors — pin each field path individually
     // (test-review finding, tests/tasks/source-v4.test.ts:130).
     for (const key of ["connection", "harness", "engine"]) {
@@ -1145,7 +1147,7 @@ describe("task source v4 — top-level execution controls", () => {
     expectTopLevelFieldPath(agentError.message, "agent");
   });
 
-  test("redact rejects duplicate names and more than TASK_V3_MAX_REDACT_NAMES entries, at the TOP-LEVEL field path (not akm.redact)", () => {
+  test("redact rejects duplicate names and more than TASK_MAX_REDACT_NAMES entries, at the TOP-LEVEL field path (not akm.redact)", () => {
     const ok = parseTaskSourceV4Document(v4Doc({ uses: "commands/review", redact: ["TOKEN"] }), {
       filePath: "/x.yml",
     });
@@ -1158,13 +1160,13 @@ describe("task source v4 — top-level execution controls", () => {
       /duplicate/i,
     );
     // v3's redact duplicate/bound checks hardcode ["akm", "redact"]
-    // (source-v3.ts:471,475) — pin the top-level field path (test-review
+    // (task-source.ts:471,475) — pin the top-level field path (test-review
     // finding, tests/tasks/source-v4.test.ts:130).
     expectTopLevelFieldPath(duplicateError.message, "redact");
-    const tooMany = Array.from({ length: TASK_V3_MAX_REDACT_NAMES + 1 }, (_, i) => `TOKEN_${i}`);
+    const tooMany = Array.from({ length: TASK_MAX_REDACT_NAMES + 1 }, (_, i) => `TOKEN_${i}`);
     const tooManyError = expectTaskSourceInvalid(
       () => parseTaskSourceV4Document(v4Doc({ uses: "commands/review", redact: tooMany }), { filePath: "/x.yml" }),
-      new RegExp(String(TASK_V3_MAX_REDACT_NAMES)),
+      new RegExp(String(TASK_MAX_REDACT_NAMES)),
     );
     expectTopLevelFieldPath(tooManyError.message, "redact");
   });
@@ -1187,7 +1189,7 @@ describe("task source v4 — top-level execution controls", () => {
       () => parseTaskSourceV4Document(v4Doc({ uses: "commands/review", maxSteps: 0 }), { filePath: "/x.yml" }),
       /maxSteps/i,
     );
-    // v3 hardcodes ["akm", "maxSteps"] (source-v3.ts:480) — test-review
+    // v3 hardcodes ["akm", "maxSteps"] (task-source.ts:480) — test-review
     // finding, tests/tasks/source-v4.test.ts:130.
     expectTopLevelFieldPath(error.message, "maxSteps");
   });
@@ -1226,7 +1228,7 @@ describe("task source v4 — top-level execution controls", () => {
   });
 
   test("an invalid tags: value is TASK_SOURCE_INVALID at the TOP-LEVEL field path 'tags' (not akm.tags, D2-N7)", () => {
-    // v3 hardcodes ["akm", "tags"] (source-v3.ts:450) — test-review finding,
+    // v3 hardcodes ["akm", "tags"] (task-source.ts:450) — test-review finding,
     // tests/tasks/source-v4.test.ts:130.
     const error = expectTaskSourceInvalid(
       () => parseTaskSourceV4Document(v4Doc({ uses: "commands/review", tags: "not-an-array" }), { filePath: "/x.yml" }),

@@ -25,7 +25,12 @@ import { akmIndex } from "../../../src/indexer/indexer";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { rekeyEntryInPlace, renameEntriesBundleId } from "../../../src/storage/repositories/index-entries-repository";
 import { assets } from "../../../src/workspace";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
+import {
+  configNamingBundle,
+  type IsolatedAkmStorage,
+  withIsolatedAkmStorage,
+  writeSandboxConfig,
+} from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
 
@@ -118,7 +123,10 @@ function writeStash(): void {
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
   resetConfigCache();
-  fs.writeFileSync(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", semanticSearchMode: "off" }));
+  fs.writeFileSync(
+    getConfigPath(),
+    configNamingBundle(JSON.stringify({ semanticSearchMode: "off" }), storage.stashDir),
+  );
 });
 
 afterEach(() => {

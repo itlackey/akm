@@ -55,17 +55,14 @@
  *    `bun test`, but it exists so a test that DOES call
  *    `setParsedInvocation` directly can clean up after itself.
  *
- * Also folds three argv re-scanners that pre-dated this module (plan §10.7):
+ * Also folds two argv re-scanners that pre-dated this module (plan §10.7):
  *  - `parseAllFlagValues` (moved from `cli/shared.ts`) — repeated-flag
  *    collection (`--tag foo --tag bar`), re-exported from `cli/shared.ts` so
  *    every existing importer (feedback-cli, observability-cli, remember-cli,
  *    search-cli, stash-cli, cli.ts) is unaffected.
  *  - `findCittyTopLevelCommand`/`findCittyTopLevelCommandIndex` (moved from
  *    `cli/parse-args.ts`, which had zero internal imports for this cluster) —
- *    re-exported from `cli/parse-args.ts` for `tests/tasks-embedded.test.ts`.
- *  - `resolveHelpMigrateVersionArg` (moved from `cli.ts`, where it was
- *    private) — the `akm help migrate <version>` positional/flag
- *    disambiguation guard.
+ *    re-exported from `cli/parse-args.ts` for `tests/tasks-core.test.ts`.
  */
 
 // ── Repeated-flag / `--`-passthrough primitives (byte-identical to the
@@ -260,68 +257,4 @@ export function findCittyTopLevelCommand(
 ): string | undefined {
   const index = findCittyTopLevelCommandIndex(rawArgs, argsDef);
   return index >= 0 ? rawArgs[index] : undefined;
-}
-
-// ── Folded re-scanner #3: resolveHelpMigrateVersionArg (moved from cli.ts,
-// where it was a private, unexported function) ──────────────────────────────
-
-/**
- * Guard against citty consuming a global flag value as the `help migrate`
- * version positional (mirrors `resolveRememberContentArg` /
- * `wasFormatValueConsumedAsName` in the read/sources leaf modules).
- *
- * When the user runs `akm help migrate --format json` without a version
- * argument, citty may assign `"json"` to the `version` positional. This
- * detects that case and returns `undefined` so the caller surfaces the
- * "missing version" UsageError instead of treating a flag value as a version.
- */
-export function resolveHelpMigrateVersionArg(version: string | undefined): string | undefined {
-  if (version === undefined) return undefined;
-
-  const invocation = getParsedInvocation();
-
-  const parsedFormat = invocation.getFlagValue("--format");
-  if (
-    parsedFormat !== undefined &&
-    version === parsedFormat &&
-    wasHelpMigrateFlagValueConsumedAsVersion(version, parsedFormat, "--format")
-  ) {
-    return undefined;
-  }
-
-  const parsedDetail = invocation.getFlagValue("--detail");
-  if (
-    parsedDetail !== undefined &&
-    version === parsedDetail &&
-    wasHelpMigrateFlagValueConsumedAsVersion(version, parsedDetail, "--detail")
-  ) {
-    return undefined;
-  }
-
-  return version;
-}
-
-function wasHelpMigrateFlagValueConsumedAsVersion(
-  version: string,
-  flagValue: string,
-  flagName: "--format" | "--detail",
-): boolean {
-  const argv = getParsedInvocation().userArgs;
-  const helpIndex = argv.indexOf("help");
-  const tokens = helpIndex >= 0 ? argv.slice(helpIndex + 1) : argv;
-  const migrateIndex = tokens.indexOf("migrate");
-  const relevant = migrateIndex >= 0 ? tokens.slice(migrateIndex + 1) : tokens;
-
-  let flagIndex = -1;
-  for (let i = 0; i < relevant.length; i += 1) {
-    const token = relevant[i];
-    if (token === flagName || token === `${flagName}=${flagValue}`) {
-      flagIndex = i;
-      break;
-    }
-  }
-
-  if (flagIndex === -1) return false;
-  if (relevant.slice(0, flagIndex).includes(version)) return false;
-  return relevant[flagIndex] === flagName ? relevant[flagIndex + 1] === version : true;
 }

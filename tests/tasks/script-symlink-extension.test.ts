@@ -13,7 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { AkmConfig } from "../../src/core/config/config";
 import { resolveAssetPath } from "../../src/sources/resolve";
-import { prepareTaskV3Execution } from "../../src/tasks/prepare/prepare";
+import { prepareTaskExecution } from "../../src/tasks/prepare/prepare";
 import { resolveBundleAsset } from "../../src/tasks/run/load-task";
 import { parseTaskSource } from "../../src/tasks/source/parse-task-source";
 import { projectTaskSourceV4 } from "../../src/tasks/source/project-v4";
@@ -52,8 +52,8 @@ describe("a symlinked script keeps its authored interpreter", () => {
   for (const targetName of ["real-script.txt", "real-script"]) {
     test(`same bundle: scripts/deploy.sh -> ${targetName}`, async () => {
       const bundle = bundleWithLinkedScript(targetName);
-      const config = { configVersion: "0.9.0", semanticSearchMode: "off" } as AkmConfig;
-      const prepared = await prepareTaskV3Execution(task("work//scripts/deploy.sh", bundle), {
+      const config = { semanticSearchMode: "off" } as AkmConfig;
+      const prepared = await prepareTaskExecution(task("work//scripts/deploy.sh", bundle), {
         taskId: "nightly",
         taskRef: "work//tasks/nightly",
         bundleName: "work",
@@ -71,12 +71,11 @@ describe("a symlinked script keeps its authored interpreter", () => {
       const work = sandbox("akm-script-ext-work");
       const shared = bundleWithLinkedScript(targetName);
       const config = {
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         defaultBundle: "work",
         bundles: { work: { path: work }, shared: { path: shared, writable: false } },
       } as unknown as AkmConfig;
-      const prepared = await prepareTaskV3Execution(task("shared//scripts/deploy.sh", work), {
+      const prepared = await prepareTaskExecution(task("shared//scripts/deploy.sh", work), {
         taskId: "nightly",
         taskRef: "work//tasks/nightly",
         bundleName: "work",

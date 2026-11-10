@@ -4,6 +4,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { configHomeWithBundle } from "../_helpers/sandbox";
 
 const CLI = path.join(__dirname, "..", "..", "src", "cli.ts");
 const tempDirs: string[] = [];
@@ -52,9 +53,8 @@ function runCli(stashDir: string, args: string[], config?: Record<string, unknow
     timeout: 30_000,
     env: {
       ...process.env,
-      AKM_BUNDLE_DIR: stashDir,
       XDG_CACHE_HOME: xdgCache,
-      XDG_CONFIG_HOME: xdgConfig,
+      XDG_CONFIG_HOME: configHomeWithBundle(xdgConfig, stashDir),
       XDG_DATA_HOME: xdgData,
       XDG_STATE_HOME: xdgState,
     },
@@ -73,15 +73,14 @@ async function runCliAsync(stashDir: string, args: string[], config?: Record<str
   // blocked/offline fetch emits "Embedding generation failed" on stderr,
   // tripping the stderr-cleanliness check below. This test suite pins output
   // shapes, not semantic ranking.
-  writeConfig(xdgConfig, { configVersion: "0.9.0", semanticSearchMode: "off", ...(config ?? {}) });
+  writeConfig(xdgConfig, { semanticSearchMode: "off", ...(config ?? {}) });
 
   const child = spawn("bun", [CLI, ...args], {
     stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,
-      AKM_BUNDLE_DIR: stashDir,
       XDG_CACHE_HOME: xdgCache,
-      XDG_CONFIG_HOME: xdgConfig,
+      XDG_CONFIG_HOME: configHomeWithBundle(xdgConfig, stashDir),
       XDG_DATA_HOME: xdgData,
       XDG_STATE_HOME: xdgState,
     },
@@ -129,7 +128,7 @@ describe("output baseline", () => {
       path.join(stashDir, "memories", "incident.md"),
       "---\ndescription: An incident\nxrefs:\n  - knowledge/guide\n  - knowledge/missing\n---\n\nFollow guide.\n",
     );
-    const config = { configVersion: "0.9.0", semanticSearchMode: "off" };
+    const config = { semanticSearchMode: "off" };
     runCli(stashDir, ["index"], config, envDirs);
 
     const human = JSON.parse(runCli(stashDir, ["show", "memories/incident", "--format=json"], config, envDirs));
@@ -138,7 +137,7 @@ describe("output baseline", () => {
       unresolved: { xref: { total: 1, refs: ["knowledge/missing"] } },
     });
     const agent = JSON.parse(
-      runCli(stashDir, ["show", "knowledge/guide", "--format=json", "--detail=agent"], config, envDirs),
+      runCli(stashDir, ["show", "knowledge/guide", "--format=json", "--detail=normal"], config, envDirs),
     );
     expect(agent.links).toEqual({ incoming: { xref: { total: 1, refs: ["memories/incident"] } } });
 
@@ -152,18 +151,18 @@ describe("output baseline", () => {
     const stashDir = makeTempDir("akm-output-stash-");
     writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
 
-    const config = { configVersion: "0.9.0", output: { format: "text", detail: "normal" } };
+    const config = { output: { format: "text", detail: "normal" } };
     const configDriven = runCli(stashDir, ["search", "deploy"], config);
     expect(configDriven).toContain("score:");
 
     const overridden = runCli(stashDir, ["search", "deploy", "--format=json", "--detail=brief"], config);
-    const json = JSON.parse(overridden) as { hits: Array<Record<string, unknown>> };
-    // hits is always present; warnings may appear when semantic search is pending
-    expect(Object.keys(json)).toContain("hits");
-    expect(Object.keys(json.hits[0] ?? {})).not.toContain("origin");
+    const json = JSON.parse(overridden) as { results: Array<Record<string, unknown>> };
+    // results is always present; warnings may appear when semantic search is pending
+    expect(Object.keys(json)).toContain("results");
+    expect(Object.keys(json.results[0] ?? {})).not.toContain("origin");
   });
 
-  test("search shaped output includes action for local and registry hits", async () => {
+  test("search shaped output has no action for local and registry hits", async () => {
     const stashDir = makeTempDir("akm-output-stash-");
     const registryDir = makeTempDir("akm-output-registry-");
     writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
@@ -204,20 +203,20 @@ describe("output baseline", () => {
         stashDir,
         ["search", "deploy", "--format=json", "--detail=brief", "--from=all"],
         {
-          configVersion: "0.9.0",
           registries: [{ url: `http://127.0.0.1:${address.port}/index.json` }],
         },
       );
       const json = JSON.parse(output) as {
-        hits: Array<Record<string, unknown>>;
+        results: Array<Record<string, unknown>>;
         registryHits?: Array<Record<string, unknown>>;
       };
       // Brief local hits have type; registry hits are in registryHits
-      const localHit = json.hits.find((hit) => hit.type === "script");
+      const localHit = json.results.find((hit) => hit.type === "script");
       const registryHit = (json.registryHits ?? []).find((hit) => hit.name === "deploy-stash");
 
-      expect(localHit?.action).toBeTruthy();
-      // QA #28: registry brief carries the install ref instead of the action text
+      expect(localHit).toBeDefined();
+      expect(localHit).not.toHaveProperty("action");
+      // QA #28: registry brief carries the install ref
       expect(registryHit).toEqual({
         name: "deploy-stash",
         installRef: "npm:@scope/deploy-stash",

@@ -142,8 +142,6 @@ fetched, so `ahead`/`behind` are measured against the remote-tracking branch as 
   "ok": true,
   "data": {
     "defaultBundle": "stash",
-    "defaultWriteTarget": null,
-    "workingStash": null,
     "bundles": [
       {
         "name": "stash",
@@ -182,9 +180,6 @@ fetched, so `ahead`/`behind` are measured against the remote-tracking branch as 
 - `kind` is `filesystem`, `git`, `npm` or `website`. `source` describes where the bundle comes from; `path` is its local
   root (`null` if it has none).
 - The default bundle's card comes first; the rest keep their configured order.
-- `workingStash` is `{ path, git }` for the directory akm reads besides the configured bundles (`AKM_BUNDLE_DIR`, or the
-  platform stash when no `defaultBundle` is set). `git` has the same shape as a card's `git`. It is `null` when a
-  configured bundle already covers that directory or it cannot be resolved.
 - `git` is `null` unless the bundle's root is itself a git repository. `upstream`, `ahead` and `behind` are `null` without an
   upstream; `branch` is `null` on a detached HEAD; `lastCommit` is `null` for a repository with no commits. `dirtyPaths`
   counts paths with uncommitted changes.
@@ -227,7 +222,7 @@ The effective configuration, as `akm config list` shows it, with where each valu
       "harnesses": { "claude": {} },
       "defaultBundle": "stash"
     },
-    "automaticWriteTarget": { "name": "stash", "path": "/home/me/akm", "workingStash": false },
+    "automaticWriteTarget": { "name": "stash", "path": "/home/me/akm" },
     "projectWarnings": [],
     "entries": [
       { "path": "semanticSearchMode", "value": "off", "source": "file" },
@@ -235,22 +230,18 @@ The effective configuration, as `akm config list` shows it, with where each valu
     ],
     "connections": [{ "name": "default", "endpoint": "https://llm.example.test/v1?token=%5Bredacted%5D", "models": { "fast": "chat-model" } }],
     "harnesses": [{ "name": "claude" }],
-    "env": [{ "name": "AKM_BUNDLE_DIR", "value": "/home/me/akm" }]
+    "env": [{ "name": "AKM_CONFIG_FILE", "value": "/home/me/.config/akm/config.json" }]
   }
 }
 ```
 
 - `config` is the redacted effective config tree. `entries` is the same data flattened to one row per leaf (arrays are
-  leaves) with `source`: `default` (no config file sets it), `file` (this install's `config.json`),
-  `extends:<ref>` (a config it extends), or `null` when the key cannot be traced (a key containing a `.`).
-- `automaticWriteTarget` is `{ name, path, workingStash }` for where a write goes when `defaultWriteTarget` is empty:
-  `AKM_BUNDLE_DIR` when set (even with a `defaultBundle`), otherwise the default bundle. `workingStash` is `true` when
-  that directory is the one `bundles.list` reports as the working stash. It is `null` when neither exists, so writes
-  need a target.
+  leaves) with `source`: `default` (no config file sets it), `file` (this install's `config.json`), or `null` when
+  the key cannot be traced (a key containing a `.`).
+- `automaticWriteTarget` is `{ name, path }` for where a write goes: the default bundle. It is `null` when there is
+  none, so writes need a target.
 - `projectWarnings` lists, in akm's own words, what it ignores in the `projects` of this install's `config.json` (a
-  relative path, a filter of the wrong shape, a reserved name). `localProjects` names the projects that file holds;
-  any other project in `config.projects` is inherited from an `extends` base. Project values are not redacted: they
-  hold no credentials.
+  relative path, a filter of the wrong shape, a reserved name). Project values are not redacted: they hold no credentials.
 - `connections` and `harnesses` are `config.connections` and `config.harnesses` as lists, each entry with its `name`
   and the entry's own keys (a connection's `endpoint` and `models`, a harness's `platform`, ...); keys are never
   included (`apiKey` shows as `[redacted]` or its `$VAR` reference). Reachability is a health probe, not config: use
@@ -504,7 +495,7 @@ person, `null` for a decision recorded before `decidedBy` existed).
 
 ## `proposals.recentChanges`
 
-Recent commits of the write-target stash (`defaultWriteTarget`, else the default bundle), from its git log. Input:
+Recent commits of the write-target stash (the default bundle), from its git log. Input:
 `limit` (default 50).
 
 ```json
@@ -566,7 +557,7 @@ Recent commits of the write-target stash (`defaultWriteTarget`, else the default
     "schemaVersion": 1,
     "bundleDir": "/home/me/akm",
     "source": "local",
-    "hits": [
+    "results": [
       {
         "type": "knowledge",
         "name": "deploy",
@@ -577,7 +568,6 @@ Recent commits of the write-target stash (`defaultWriteTarget`, else the default
         "description": "Deploy guide",
         "tags": ["deploy"],
         "size": "small",
-        "action": "akm show knowledge/deploy -> read reference material",
         "score": 0.016393,
         "whyMatched": ["lexical rank 1"],
         "estimatedTokens": 24,
@@ -738,7 +728,7 @@ User searches that found nothing, grouped by normalised query: `query`, `count`,
 
 What first-run setup could use on this computer, read from the file system and `PATH` only: nothing is contacted and
 nothing is written. It returns `stashDir`, the library directory the config already names, else `~/akm` or another
-existing candidate, else the default (`AKM_BUNDLE_DIR`, else `~/akm`, or `Documents\akm` on Windows); `harnesses`, the agent
+existing candidate, else the default (`~/akm`, or `Documents\akm` on Windows); `harnesses`, the agent
 programs found on `PATH` that akm can run work on, each `{platform, path, modelWorkNote}` (akm's words for whether its
 model calls on that program can be limited to reading and searching); `enabled`, the platforms the config already
 enables; `modelCalls`, where akm's own model calls
@@ -769,18 +759,15 @@ retry a failed write automatically.
 
 | Operation | Input and existing behaviour |
 | --- | --- |
-| `feedback.record` | `{ref, signal: "positive"\|"negative", reason?, tags?: string[], fix?: [{replace, with}]}` → `akm feedback`. The ref is resolved as the CLI resolves it; tags follow existing `key:value` validation. Negative feedback requires a reason when `feedback.requireReason` is enabled. Submissions are recorded with source `user` unless `AKM_EVENT_SOURCE` is already set (for example under an improve or task run), which wins as it does for every akm child; they retain existing ranking/utility/event effects. Feedback does not save config, so it works under a config that still holds a literal API key. |
+| `feedback.record` | `{ref, signal: "positive"\|"negative", reason?, tags?: string[], fix?: [{replace, with}]}` → `akm feedback`. The ref is resolved as the CLI resolves it; tags follow existing `key:value` validation. Negative feedback requires a reason when `feedback.requireReason` is enabled. Submissions are recorded with source `user` unless `AKM_EVENT_SOURCE` is already set (for example under an improve or task run), which wins as it does for every akm run; they retain existing ranking/utility/event effects. Feedback does not save config, so it works under a config that still holds a literal API key. |
 | `setup.apply` | `{dir?, harness?: string[], connection?: {endpoint, model, apiKeyEnv?}, learning?: {on, harness?}}`. With `harness`: `akm setup --yes --no-probe [--dir=<dir>] --harness=<list>`, which enables the named agent programs (the first becomes the default harness) and creates the library when there is none. Without it: `akm bundle create --dir=<dir>` (`dir` defaults to the configured library, else the default location). `akm setup --yes` alone would enable every agent program it finds, which a host asks for per program. `dir` must be absolute. `connection` writes the default connection (checked as `akm setup --endpoint --api-key-env` checks it: a base URL and the NAME of a variable, never a key). `learning: {on: false}` writes `improve.enabled: false` and nothing else (no placement, no task change). `{on: true}` removes it (and an earlier Desktop's all-seven-off), sets `improve.harness` to the enabled `harness`'s entry, or else `improve.connection` to the default connection unless it already names one, and ensures the `improve` task exists and is enabled, adding it from akm's `core/improve` template when the library has none. A `learning` that cannot be honoured (a harness that is not enabled, or no connection for akm itself) is written off, with a warning. Offline: nothing is probed, downloaded or indexed. Returns `setup.detect` as it reads afterwards. Other fields are ignored with one warning. |
-| `tasks.list` | `{}` → `{tasks: [{id, schedule, enabled, description?}]}`: the default bundle's tasks that have a schedule, and whether this host has each enabled (`scheduler.enabled`). Reads only. |
-| `tasks.enable` | `{task}` → `akm task enable --bundle=<default bundle> -- <task>`: schedules the task in this host's scheduler and syncs the OS scheduler (cron, launchd or Task Scheduler). Returns `{ref, enabled, changed, sync}`. An unknown task is `not-found`. |
-| `tasks.disable` | `{task}` → `akm task disable --bundle=<default bundle> -- <task>`: the reverse. |
 | `bundles.add` | `{source, name?, writable?}` → `akm bundle add`, including source validation. Existing provider restrictions apply; no insecure-transport bypass is exposed. |
 | `bundles.update` | `{bundle}` → `akm bundle update -- <bundle>`. Fetches/reindexes only on explicit submission. A rare update requiring destructive confirmation remains refused; `--yes` is never passed silently. |
-| `bundles.rename` | `{bundle, name, dryRun?: true}` → `akm bundle rename [--dry-run] -- <bundle> <name>`. The result is the CLI's rename plan (`applied` is `false` for a dry run). |
+| `bundles.rename` | `{bundle, name, dryRun?: true}` → what `akm bundle rename [--dry-run] <bundle> <name>` does, run in process. The result is the CLI's rename plan (`applied` is `false` for a dry run). |
 | `bundles.remove` | `{bundle, confirm: true}` → `akm bundle remove --yes -- <bundle>`. Managed installs may be deleted; local filesystem source files remain on disk. |
 | `bundles.setSettings` | `{bundle?, enabled?, writable?, componentWritability?: {existingComponent: boolean}}` → existing schema-walking config setters inside `mutateConfig`. Only changed controls are submitted. Existing validation rejects disabled targets and writable npm/website sources. The default bundle and write target are edited through `config.change`. |
-| `config.change` | `{set?: {key: string}, unset?: string[]}` → `akm config set` / `unset` on each key, in one validated, atomic write. Values are strings, as on the command line, and are coerced and checked against the schema; literal API keys and `configVersion` are refused. An unset is refused with `TARGET_NOT_UPDATABLE` when the key is inherited from an `extends` base or sits inside a connection or harness entry akm ignores, and an unset with no config file writes nothing (`saved: false`), all as `akm config unset` does. |
-| `config.changeProjects` | `{set?: {name: project}, unset?: string[]}` → adds, replaces and removes `projects` entries in one validated, atomic write; a rename sets the new name and unsets the old. Each `set` value is a whole project (`paths`, `from`, `filters`, `prefer`, `write`), written exactly as sent (the reader takes a project whole by name, so an inherited project's unchanged fields are written too, and a malformed local entry is replaced), and checked by akm's config schema. `none`, `__proto__`, `constructor`, `prototype` and empty names are refused. An `unset` (so a rename) of a project `config.json` does not hold, inherited or ignored by akm, is refused with `TARGET_NOT_UPDATABLE`. A set is a no-op (`saved: false`, nothing written or backed up) only when `config.json` already holds exactly that entry; one with parts akm ignores is rewritten. Names are not dotted keys, so they may contain a dot, which `config.change` cannot address. Unrelated config and credential references are kept, as for `config.change`. |
+| `config.change` | `{set?: {key: string}, unset?: string[]}` → `akm config set` / `unset` on each key, in one validated, atomic write. Values are strings, as on the command line, and are coerced and checked against the schema; literal API keys are refused. An unset is refused with `TARGET_NOT_UPDATABLE` when the key sits inside a connection or harness entry akm ignores, and an unset with no config file writes nothing (`saved: false`), all as `akm config unset` does. |
+| `config.changeProjects` | `{set?: {name: project}, unset?: string[]}` → adds, replaces and removes `projects` entries in one validated, atomic write; a rename sets the new name and unsets the old. Each `set` value is a whole project (`paths`, `from`, `filters`, `prefer`, `write`), written exactly as sent (the reader takes a project whole by name, so a malformed local entry is replaced), and checked by akm's config schema. `none`, `__proto__`, `constructor`, `prototype` and empty names are refused. An `unset` (so a rename) of a project `config.json` does not hold, or akm ignores, is refused with `TARGET_NOT_UPDATABLE`. A set is a no-op (`saved: false`, nothing written or backed up) only when `config.json` already holds exactly that entry; one with parts akm ignores is rewritten. Names are not dotted keys, so they may contain a dot, which `config.change` cannot address. Unrelated config and credential references are kept, as for `config.change`. |
 | `documents.createKnowledge` | `{bundle, name, path?, content}` → `akm import -` with Markdown on stdin. Uses the existing writable AKM target, name/path validation, frontmatter preservation, index/Git effects, and no `--force`. Existing files are never overwritten. Fails fast with `ASSET_MUTATION_LEASE_HELD` while another writer holds the asset-mutation lease. |
 | `documents.save` | `{ref, revision, content}` → the existing shared Markdown writer with `force` and the expected raw-content hash. Only indexed writable AKM knowledge/memory documents accepted by `documents.readSource` can be edited. The writer takes the asset-mutation lease and compares the live source with `revision` inside it, immediately before writing. While another writer holds the lease the save fails fast with `ASSET_MUTATION_LEASE_HELD` instead of waiting. A stale revision raises `ASSET_CONTENT_CHANGED` without writing; a source deleted after it was loaded is refused (`ASSET_NOT_FOUND`) rather than recreated. An identical save returns `unchanged: true` without rewriting, reindexing or recording an event. Changed saves retain normal writer validation, indexing and Git effects. |
 | `documents.retire` | `{ref, revision}` → retires an indexed writable AKM asset the way `akm feedback`'s typed fix applies a change: it mints a retire proposal (source `propose`, no judged pair) and accepts it at once, so the asset follows the ordinary proposal-retire lifecycle. Skill packages, env/secret files and sessions are excluded; memory retirement carries its derived twin. The current raw SHA-256 `revision` is required, and the accept is refused if the bytes changed since. |
@@ -789,7 +776,7 @@ The `documents.retire` receipt is `{proposalId, ref, bundle, archiveDirs, warnin
 id: the archive moves back without overwriting an occupied path and its tombstone is removed. Like any accepted
 retirement, the archived bytes are purged after the grace period at the next `akm improve` (git-backed bundles only), and
 the row is listed in Review and Activity. If the accept is refused, the proposal is rejected and the operation fails.
-Task definitions do not change installed schedules until explicit `akm task sync`.
+Task definitions are read by `akm task dispatch` every minute; an edit takes effect on the next one, and retiring an enabled task leaves its ref in `scheduler.enabled` until `akm task disable`.
 
 Configuration-affecting actions do not round-trip the redacted configuration. Existing mutation helpers retain
 unknown/unrelated fields, local overrides and supported `$VAR`/`${ref}` credential references. If the existing
@@ -797,9 +784,7 @@ config sanitizer would remove unrelated legacy literal credentials, a bundle add
 would write config, is refused with `INVALID_FLAG_VALUE` and the user is asked to correct those settings through
 the CLI first. A settings request that changes nothing writes nothing and is not refused. It never writes
 `"[redacted]"` back as a credential. Bundle update writes only the lockfile, and feedback, knowledge creation and
-document editing do not save config, so none of them use that config-sanitizer check. Unsetting an inherited
-`defaultBundle` or `defaultWriteTarget` through `config.change` is refused with `TARGET_NOT_UPDATABLE`, as
-`akm config unset` refuses it.
+document editing do not save config, so none of them use that config-sanitizer check. Unsetting `defaultBundle` through `config.change` is an ordinary unset, as `akm config unset` is.
 
 The shared Markdown writer participates in the existing mutation lease, including CLI import/remember callers;
 omitting the optional expected hash retains their normal write/force behavior. This serializes cooperating AKM

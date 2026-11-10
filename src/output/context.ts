@@ -5,8 +5,7 @@
 /**
  * Process-level output mode singleton.
  *
- * Output mode (format + detail, and the agent projection `--detail agent`
- * selects) is parsed once at startup from
+ * Output mode (format + detail) is parsed once at startup from
  * `process.argv` and the persisted user config. All subsequent `output()`
  * calls read from this in-memory singleton instead of re-scanning argv and
  * re-loading config on every call.
@@ -17,20 +16,14 @@
  */
 
 import { UsageError } from "../core/errors";
+import { warnOnce } from "../core/warn";
 
 export type OutputFormat = "json" | "yaml" | "text" | "jsonl" | "md";
 /** Verbosity axis. */
 export type DetailLevel = "brief" | "normal" | "full";
-/**
- * Output projection. `human` is the default; `--detail agent` selects `agent`
- * (the token-lean action view, honoured by search/curate/show).
- */
-export type ShapeMode = "human" | "agent";
-
 export interface OutputMode {
   format: OutputFormat;
   detail: DetailLevel;
-  shape: ShapeMode;
   /**
    * Destination file for rendered output (`--output <path>`). When set,
    * `output()` writes the rendered document to this path instead of stdout.
@@ -44,9 +37,7 @@ export interface OutputDefaults {
 }
 
 const OUTPUT_FORMATS: OutputFormat[] = ["json", "yaml", "text", "jsonl", "md"];
-/** What `--detail` accepts: a verbosity level, or `agent` for the agent projection. */
-export type DetailValue = DetailLevel | "agent";
-const DETAIL_VALUES: DetailValue[] = ["brief", "normal", "full", "agent"];
+const DETAIL_VALUES: DetailLevel[] = ["brief", "normal", "full"];
 
 function parseOutputFormat(value: string | undefined): OutputFormat | undefined {
   if (!value) return undefined;
@@ -63,13 +54,15 @@ function parseOutputFormat(value: string | undefined): OutputFormat | undefined 
   );
 }
 
-export function parseDetailLevel(value: string | undefined): DetailValue | undefined {
+/** An unknown `--detail` value warns once and uses `normal`. */
+export function parseDetailLevel(value: string | undefined): DetailLevel | undefined {
   if (!value) return undefined;
-  if ((DETAIL_VALUES as string[]).includes(value)) return value as DetailValue;
-  throw new UsageError(
-    `Invalid value for --detail: ${value}. Expected one of: ${DETAIL_VALUES.join("|")}`,
-    "INVALID_DETAIL_VALUE",
+  if ((DETAIL_VALUES as string[]).includes(value)) return value as DetailLevel;
+  warnOnce(
+    `detail:${value}`,
+    `[output] Unknown --detail value "${value}": using normal. Expected one of: ${DETAIL_VALUES.join("|")}.`,
   );
+  return "normal";
 }
 
 export function parseFlagValue(argv: string[], flag: string): string | undefined {
@@ -116,21 +109,17 @@ export function getHyphenatedBoolean(args: unknown, key: string): boolean {
 
 /**
  * Resolve output mode from a synthetic argv array and config defaults.
- * Pure function — no IO. Suitable for unit tests.
+ * No IO beyond the once-only unknown `--detail` warning. Suitable for unit tests.
  */
 export function resolveOutputMode(argv: string[], defaults: OutputDefaults | undefined = {}): OutputMode {
   const format =
     parseOutputFormat(parseFlagValue(argv, "--format")) ?? (defaults?.format as OutputFormat | undefined) ?? "json";
 
-  // `--detail agent` selects the agent projection; the verbosity then stays at
-  // the configured default (the projection ignores it).
-  const parsedDetail = parseDetailLevel(parseFlagValue(argv, "--detail"));
-  const shape: ShapeMode = parsedDetail === "agent" ? "agent" : "human";
   const detail =
-    (parsedDetail === "agent" ? undefined : parsedDetail) ?? (defaults?.detail as DetailLevel | undefined) ?? "brief";
+    parseDetailLevel(parseFlagValue(argv, "--detail")) ?? (defaults?.detail as DetailLevel | undefined) ?? "brief";
   const outputPath = parseFlagValue(argv, "--output");
 
-  return { format, detail, shape, ...(outputPath ? { outputPath } : {}) };
+  return { format, detail, ...(outputPath ? { outputPath } : {}) };
 }
 
 let _mode: OutputMode | undefined;

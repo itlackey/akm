@@ -4,8 +4,7 @@
 
 /**
  * WI-C gate — the `akm` adapter's per-`type` `validate`
- * (`src/core/adapter/adapters/akm-adapter.ts` + `akm-lint.ts`), implementing
- * `docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §6 as a behavior-preserving
+ * (`src/core/adapter/adapters/akm-adapter.ts` + `akm-lint.ts`) as a behavior-preserving
  * port of `src/commands/lint/*`'s type linters.
  *
  * The FROZEN lint golden (`tests/fixtures/goldens/lint/all-types.json`,
@@ -156,7 +155,7 @@ describe("akm adapter — validate fires each type's positive finding (§6)", ()
     expect(issues(diags)).not.toContain("missing-skill-md");
   });
 
-  // P4 (docs/plans/specs/p4-deletions-closeout.md §3.2, F-A2.21) FLIPs every
+  // P4 FLIPs every
   // "v3 parsing" case below to its task source v4 equivalent, and adds one
   // new case pinning row B-14 (a genuine version: 3 document now fails the
   // SAME TASK_SCHEMA_VERSION_UNSUPPORTED way version: 2 already did, row
@@ -186,7 +185,7 @@ describe("akm adapter — validate fires each type's positive finding (§6)", ()
   // The runtime reads only task source v4 (#987): what `akm migrate apply`
   // rewrites — a retired schedule[].enabled, a v2/v3 document — is flagged
   // naming that command. The migrator reports any shape it cannot convert
-  // itself (tests/tasks/migrate-v2-to-v3.test.ts).
+  // itself.
   test("a task with source-owned schedule[].enabled is flagged naming `akm migrate apply`", async () => {
     const ctx = overlayCtx(ROOT, {});
     const diags = await akmAdapter.validate(

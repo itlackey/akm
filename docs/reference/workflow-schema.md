@@ -15,8 +15,7 @@ detail.
 
 ## Source format
 
-A workflow is a Markdown `.md` asset. Nothing else is a workflow source: the
-GitHub-shaped `.yml` workflow format was removed in 0.10, and a stray `.yml` file
+A workflow is a Markdown `.md` asset. Nothing else is a workflow source: a `.yml` file
 under `workflows/` is skipped at index time with a message saying it must use
 `.md`. The shipped `schemas/akm-workflow.json` frontmatter schema
 validates the source.
@@ -32,7 +31,7 @@ that authoring format.
 ## Child workflows
 
 > **Experimental.** Child workflows are part of the Experimental `akm workflow`
-> surface (see `STABILITY.md`) and may change or be removed before 0.11.
+> surface (see `STABILITY.md`) and may change or be removed.
 
 A step can run another workflow as a **child run**. It declares the child in
 its `unit:` bag:
@@ -91,7 +90,7 @@ run and drives it to completion, or as far as it gets, before the parent
 step is finalized. The drive happens **inline, in the parent's own
 process**: it is the same engine `akm workflow run` uses on the child's
 frozen plan, not a separately scheduled job. Consequently, whatever aborts
-the parent's own dispatch — `Ctrl-C`, a `--timeout`, or a budget ceiling —
+the parent's own dispatch — `Ctrl-C`, a `--timeout-ms`, or a budget ceiling —
 also aborts the child drive; both runs are left resumable, never partially
 torn down.
 
@@ -580,9 +579,8 @@ workflow ref, each unit's `env:` refs qualified with their bundle
 `pass_env` names as authored. It records no directory or file location. The
 bundle root, the env files, the secrets and the paths behind `${ref}` tokens are
 all looked up when the unit dispatches, through the same ref lookup `akm show`
-uses. Plans frozen by earlier releases (`irVersion` 5 and 6) also carry a frozen
-`cwdIdentity` and the env asset's owner paths; they decode, those fields are
-ignored, and such a run dispatches by ref like any other.
+uses. A plan frozen by an earlier release (`irVersion` below 8) is not run: the
+run is abandoned and `akm workflow run <ref>` starts it afresh.
 
 #### `${ref}` in argv and `cwd`
 
@@ -666,7 +664,7 @@ failure reason.
 | exit 0 | — (unit succeeds) | — |
 | non-zero exit | `non_zero_exit` | yes |
 | exceeded `timeout` | `timeout` | yes |
-| run cancelled (`Ctrl-C`, `--timeout`, budget) | `aborted` | yes |
+| run cancelled (`Ctrl-C`, `--timeout-ms`, budget) | `aborted` | yes |
 | binary missing / working directory missing | `spawn_failed` | yes |
 | **stdout** capture never completed | `exec_capture_incomplete` | **no** (the command already ran) |
 | **stderr** capture never completed | — (unit succeeds; a warning says the stderr tail may be missing) | — |
@@ -821,16 +819,16 @@ your shell would, and nothing is filtered out of it: `PATH`, `HOME`, locale and
 toolchain variables, and any credential or proxy setting of the process that ran
 `akm workflow run` reach the command. It is built in three layers, in this order:
 
-1. akm's own environment, with the directories this akm resolved set over it;
+1. akm's own environment, with the config file this akm resolved set over it;
 2. the unit's resolved **`env:` bindings**;
 3. the engine-authored **`AKM_*` context** — last, so a binding can never
    shadow it.
 
-The directories are `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR` and
-`AKM_STATE_DIR`, set to the ones the akm that started the command resolved (from
-`AKM_*_DIR`, `XDG_*_HOME` or the platform default), and `AKM_BUNDLE_DIR` when that
-akm had one. A step that runs `akm` therefore uses the same bundle, config, data,
-cache and state. Binding one of them in `env:` overrides it. When a scheduled
+The config file is `AKM_CONFIG_FILE`, set (absolute) to the one the akm that started
+the command resolved (from `--config`, `AKM_CONFIG_FILE`, `XDG_CONFIG_HOME` or the
+platform default); it names the data, state and cache in its `paths` and the working
+bundle in `defaultBundle`. A step that runs `akm` therefore uses the same bundle,
+config, data, cache and state. Binding one of them in `env:` overrides it. When a scheduled
 task runs the workflow, `AKM_EVENT_SOURCE` is set (when the environment has
 none), so a command that calls `akm` records machine traffic, not user demand; a
 direct `akm workflow run` leaves it as it found it.

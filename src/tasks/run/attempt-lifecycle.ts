@@ -19,7 +19,7 @@
  * `detail.error` code). The comment on the set says why each code is reachable.
  */
 
-import { AkmError, rethrowIfTestIsolationError } from "../../core/errors";
+import { AkmError } from "../../core/errors";
 import { withStateDb } from "../../core/state-db";
 import { reserveTaskHistoryAttempt } from "../../storage/repositories/task-history-repository";
 import { validateTaskId } from "../task-id";
@@ -49,13 +49,13 @@ export function reserveTaskAttempt(taskId: string, requestedStartedAt: Date): Re
           log_path: null,
           target_kind: null,
           target_ref: null,
-          metadata_json: JSON.stringify({ metadataVersion: 2, durationMs: 0, detail: null }),
+          // `pid` lets `akm task dispatch` tell a running attempt from one a crash or reboot left behind.
+          metadata_json: JSON.stringify({ metadataVersion: 2, durationMs: 0, detail: null, pid: process.pid }),
         });
         if (reserved) return { startedAt, historyReserved: true };
       }
     });
-  } catch (error) {
-    rethrowIfTestIsolationError(error);
+  } catch {
     // Attempt recording cannot prevent or replace task execution.
     return { startedAt: requestedStartedAt, historyReserved: false };
   }
@@ -97,7 +97,6 @@ const SAFE_TASK_ATTEMPT_ERROR_CODES = new Set([
   "STASH_DIR_UNREADABLE",
   "LLM_NOT_CONFIGURED",
   "INVALID_CONFIG_FILE",
-  "TEST_ISOLATION_MISSING",
   "INVALID_FLAG_VALUE",
   "MISSING_REQUIRED_ARGUMENT",
   "PATH_ESCAPE_VIOLATION",

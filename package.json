@@ -1,6 +1,6 @@
 {
   "name": "akm-cli",
-  "version": "0.10.261116",
+  "version": "0.11.0-beta.0",
   "type": "module",
   "description": "akm (Agent Knowledge Manager) — a portable, local-first capability library for AI agents. Discover, load, share, and improve reusable skills, scripts, workflows, and knowledge across any shell-capable coding agent, including Claude Code, OpenCode, and Cursor.",
   "keywords": [
@@ -46,15 +46,12 @@
     "SECURITY.md",
     "STABILITY.md",
     "LICENSE",
-    "docs/agents",
     "docs/architecture",
     "docs/guides",
     "docs/integration",
     "docs/maintainers",
     "docs/migration",
-    "docs/posts",
     "docs/reference",
-    "docs/product-surface.md",
     "schemas"
   ],
   "exports": {
@@ -68,24 +65,21 @@
       "bun": "./dist/api.js",
       "default": "./dist/api-node.mjs"
     },
-    "./package.json": "./package.json",
-    "./dist/*": "./dist/*"
+    "./package.json": "./package.json"
   },
   "bin": {
-    "akm": "dist/akm",
-    "akm-migrate": "dist/akm-migrate"
+    "akm": "dist/akm"
   },
   "scripts": {
     "desktop:setup": "cd desktop && bun run prepare:core",
     "build": "rm -rf dist && bun scripts/gen-config-schema.ts && bun run tsc --project ./tsconfig.build.json && bun scripts/copy-assets.ts && bun scripts/fix-esm-extensions.ts",
     "check": "bun run lint && bunx tsc --noEmit && bun run test:unit && bun run test:integration",
-    "check:fast": "bun run lint && bunx tsc --noEmit && bun run test:unit",
     "check:changed": "bun run lint && bunx tsc --noEmit && bun test tests/integration/output-baseline.test.ts tests/integration/registry/registry-search.test.ts tests/integration/show-argv-entrypoint.test.ts tests/output-shapes-unit.test.ts",
     "check:ci": "bash scripts/check-like-ci.sh",
     "sweep:tmp": "bun scripts/sweep-test-tmp.ts",
-    "test": "bash scripts/test-unit.sh",
-    "test:unit": "bash scripts/test-unit.sh",
-    "test:integration": "bash scripts/test-integration.sh",
+    "test": "bash scripts/test-shards.sh unit",
+    "test:unit": "bash scripts/test-shards.sh unit",
+    "test:integration": "bash scripts/test-shards.sh integration",
     "test:node-smoke": "bun scripts/node-smoke.ts",
     "test:node-compat": "AKM_NODE_COMPAT_TESTS=1 bun test --timeout=120000 tests/integration/node-compat.test.ts",
     "lint:doc-examples": "bun scripts/lint-doc-examples.ts",
@@ -117,8 +111,7 @@
     "typescript": "^5.9.3"
   },
   "optionalDependencies": {
-    "better-sqlite3": "13.0.3",
-    "sqlite-vec": "^0.1.9"
+    "better-sqlite3": "13.0.3"
   },
   "engines": {
     "node": ">=22"

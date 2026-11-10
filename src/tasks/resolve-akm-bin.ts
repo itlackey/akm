@@ -17,6 +17,10 @@
  * `via` names which one was used. `checkout` — a package launcher inside a
  * git work tree, or a source/build entry — runs whatever the checkout holds
  * when the scheduler fires; `task sync` says so once when it writes one.
+ * `package-local` — an entry inside another package's `node_modules` (a plugin's
+ * bundled CLI) or Electron's own binary (Desktop) — is carried by something that
+ * moves or changes when it updates, and Electron's binary opens a window unless
+ * told to run as Node; `task sync` never writes the scheduler entry from one.
  *
  * Returns the argv array the scheduler should execute (e.g.
  * `["/usr/local/bin/node", "/usr/lib/node_modules/akm-cli/dist/akm"]`). The
@@ -34,7 +38,7 @@ export interface ResolvedAkmInvocation {
   /** Argv prefix the OS scheduler should execute (one shell-safe path per element). */
   argv: string[];
   /** How the invocation was resolved, surfaced by `task doctor`. */
-  via: "npm" | "standalone" | "checkout";
+  via: "npm" | "standalone" | "checkout" | "package-local";
 }
 
 /** A source entry or local build run by a runtime: `src/cli.ts`, `dist/cli.js`, `dist/cli-node.mjs`. */
@@ -56,6 +60,8 @@ export function resolveAkmInvocation(
     mainPath?: string;
     launcherPath?: string;
     nodePath?: string;
+    /** Running inside Electron (Desktop's server); defaults to the runtime's own report. */
+    electron?: boolean;
   } = {},
 ): ResolvedAkmInvocation {
   const env = options.env ?? process.env;
@@ -78,7 +84,11 @@ export function resolveAkmInvocation(
 
   const checkoutEntry = resolveCheckoutEntry(options.cliEntryUrl ?? import.meta.url, runtime, mainPath);
   if (checkoutEntry && execPath) {
-    return { argv: [absoluteInvocationPath(execPath), absoluteInvocationPath(checkoutEntry)], via: "checkout" };
+    const electron = options.electron ?? Boolean(process.versions.electron);
+    return {
+      argv: [absoluteInvocationPath(execPath), absoluteInvocationPath(checkoutEntry)],
+      via: electron || isInsideNodeModules(checkoutEntry) ? "package-local" : "checkout",
+    };
   }
 
   throw new ConfigError(
@@ -119,6 +129,10 @@ function resolveCheckoutEntry(
   } catch {
     return runtime === "bun" ? mainPath : undefined;
   }
+}
+
+function isInsideNodeModules(file: string): boolean {
+  return path.resolve(file).split(path.sep).includes("node_modules");
 }
 
 function absoluteInvocationPath(value: string): string {

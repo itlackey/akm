@@ -5,7 +5,7 @@
 /**
  * `cli-version` advisory for `akm health` (#950). Injects `checkForUpdate` so
  * no real network call is ever made — mirrors
- * `tests/commands/health/plugin-staleness.test.ts`'s injected-seam pattern.
+ * `tests/integration/commands/health/plugin-staleness.test.ts`'s injected-seam pattern.
  */
 
 import { describe, expect, test } from "bun:test";

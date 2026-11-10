@@ -3,9 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Tests-first contract for P2a's task source v4 -> prepare-seam PROJECTION
- * (spec docs/plans/specs/p2a-task-source-v4.md §3.5, D2-N5, D2-N6). Lane A
- * TESTS — this file owns `projectTaskSourceV4()`; the grammar/router half
+ * Tests-first contract for P2a's task source v4 -> prepare-seam PROJECTION.
+ * Lane A TESTS — this file owns `projectTaskSourceV4()`; the grammar/router half
  * lives in tests/tasks/source-v4.test.ts.
  *
  * Scope clarification (read before "fixing" this file to test something
@@ -15,16 +14,16 @@
  * modified. `TaskDefinition` gains no `inputs`/`output` in P2a; P2b widens
  * it when it widens the adapter." The real P2a seam is
  * `projectTaskSourceV4(doc): PreparableTaskDocument` (§3.5), where
- * `PreparableTaskDocument` is a NAME for `TaskV3SourceDocument` (§3.1's file
- * table) — the type `prepareTaskV3Execution` already consumes, unmodified.
+ * `PreparableTaskDocument` is a NAME for `PreparableTaskDocument` (§3.1's file
+ * table) — the type `prepareTaskExecution` already consumes, unmodified.
  * This file tests exactly that seam.
  *
  * The projection is DELIBERATELY LOSSY relative to the parsed
  * `TaskSourceV4Document` — this is not a bug this file should paper over:
  *
  *   - host-local activation has no task-source projection
- *     (D2-N5) — it is carried separately to the scheduler seam, which is
- *     Lane C's `scheduler-sync.ts` edit, not this function.
+ *     (D2-N5) — it is carried separately to the scheduler seam, which
+ *     `akm task dispatch` reads from the config, not from this function.
  *   - `inputs` (the document's typed input declarations) is NOT projected
  *     anywhere — input delivery is P2b (spec §0).
  *   - `schedule[i].inputs` (per-binding literal overrides) is NOT projected
@@ -65,9 +64,9 @@
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import type { PreparableTaskDocument } from "../../src/tasks/prepare/prepared-execution";
 import * as ProjectV4Module from "../../src/tasks/source/project-v4";
 import * as TaskSourceV4Module from "../../src/tasks/source/task-source-v4";
+import type { PreparableTaskDocument } from "../../src/tasks/task-source";
 
 const { projectTaskSourceV4 } = ProjectV4Module;
 const { parseTaskSourceV4, TASK_SOURCE_V4_VERSION } = TaskSourceV4Module;
@@ -76,7 +75,7 @@ type TaskSourceV4Document = TaskSourceV4Module.TaskSourceV4Document;
 const ROOT = path.resolve(import.meta.dir, "../..");
 const FIXTURES_DIR = path.join(ROOT, "tests/fixtures/execution-contracts/tasks/v4");
 
-// ── Fixture table (mirrors tests/tasks/parse-v3-adapter.test.ts's convention: ──
+// ── Fixture table (mirrors the former parse-v3-adapter convention: ──
 // ── "maps every fixture in tests/fixtures/execution-contracts/tasks/v4/") ──
 
 interface ManifestFixture {

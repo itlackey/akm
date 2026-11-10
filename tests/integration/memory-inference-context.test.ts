@@ -14,15 +14,19 @@ import { saveConfig } from "../../src/core/config/config";
 import { akmIndex } from "../../src/indexer/indexer";
 import {
   collectPendingMemories,
-  countPendingMemoriesNeedingDecision,
-  runMemoryInferencePass,
+  runMemoryInferencePass as runMemoryInferencePassImpl,
 } from "../../src/indexer/passes/memory-inference";
 import { scopeFromFrontmatter } from "../../src/indexer/passes/metadata";
 import { _setChatCompletionForTests } from "../../src/llm/client";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { computeBodyHash, upsertLlmCacheEntry } from "../../src/storage/repositories/index-llm-cache-repository";
+import { withImproveRunner } from "../_helpers/memory-inference-runner";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 import { overrideSeam } from "../_helpers/seams";
+
+function runMemoryInferencePass(ctx: Parameters<typeof runMemoryInferencePassImpl>[0]) {
+  return runMemoryInferencePassImpl(withImproveRunner(ctx));
+}
 
 let storage: IsolatedAkmStorage;
 let requests: string[];
@@ -55,7 +59,7 @@ function config() {
     bundles: { stash: { path: storage.stashDir } },
     defaultBundle: "stash",
     connections: { memory: { endpoint: "http://127.0.0.1:1/v1/chat/completions", models: { fast: "scripted" } } },
-    index: { connection: "memory" },
+    improve: { connection: "memory" },
   };
 }
 function write(fm: Record<string, unknown>) {
@@ -192,17 +196,17 @@ for (const fm of [
     const after = parseFrontmatter(fs.readFileSync(parent, "utf8"));
     expect(after.content).toBe(before.content);
     expect(after.data).toEqual({ ...before.data, inferenceProcessed: true });
-    saveConfig({ ...config(), index: { memory: { enabled: false } } });
+    saveConfig(config());
     await akmIndex({ stashDir: storage.stashDir, full: true });
     const shown = await akmShowUnified({ ref: "memories/tunnel.derived", skipLogging: true });
     expect(JSON.stringify(shown)).toContain("restart requested");
     for (const [key, value] of Object.entries(scopeFromFrontmatter(fm))) {
       const matching = await akmSearch({ query: "tunnel", filters: { [key]: value }, skipLogging: true });
       // The child and its parent are one result; the parent points at the child only when the child passes the filter too.
-      const family = matching.hits.find((h) => "ref" in h && h.ref === "memories/tunnel");
+      const family = matching.results.find((h) => "ref" in h && h.ref === "memories/tunnel");
       expect(family && "expandTo" in family ? family.expandTo : undefined).toBe("memories/tunnel.derived");
       const other = await akmSearch({ query: "tunnel", filters: { [key]: "someone-else" }, skipLogging: true });
-      expect(other.hits).toHaveLength(0);
+      expect(other.results).toHaveLength(0);
     }
     expect((await run()).considered).toBe(0);
   });
@@ -220,7 +224,6 @@ test("no-change cache follows supplied context edits, while equivalent formattin
   try {
     await run(db);
     expect(requests).toHaveLength(1);
-    expect(countPendingMemoriesNeedingDecision(storage.stashDir, db)).toBe(0);
     write({
       unrelated: "ignored",
       provenance: { sources: [{ resource: "claude:lab", ignored: true }] },
@@ -230,7 +233,6 @@ test("no-change cache follows supplied context edits, while equivalent formattin
     });
     expect((await run(db)).cacheHits).toBe(1);
     expect(requests).toHaveLength(1);
-    expect(countPendingMemoriesNeedingDecision(storage.stashDir, db)).toBe(0);
     for (const changed of [
       { ...fm, description: "Production route" },
       { ...fm, title: "Grounded title" },
@@ -246,9 +248,7 @@ test("no-change cache follows supplied context edits, while equivalent formattin
       { ...fm, provenance: { sources: [{ resource: "claude:other" }] } },
     ]) {
       write(changed);
-      expect(countPendingMemoriesNeedingDecision(storage.stashDir, db)).toBe(1);
       expect((await run(db)).cacheHits).toBe(0);
-      expect(countPendingMemoriesNeedingDecision(storage.stashDir, db)).toBe(0);
     }
     expect(requests).toHaveLength(13);
     expect(parseFrontmatter(fs.readFileSync(file, "utf8")).data.inferenceProcessed).toBeUndefined();

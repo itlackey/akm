@@ -20,7 +20,13 @@ import { createWorkflowAsset, getWorkflowTemplate } from "../../src/workflows/au
 import { getNextWorkflowStep, listWorkflowRuns } from "../../src/workflows/runtime/runs";
 import { loadWorkflowAsset } from "../../src/workflows/runtime/workflow-asset-loader";
 import { runCliCapture } from "../_helpers/cli";
-import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
+import {
+  type IsolatedAkmStorage,
+  withBundle,
+  withEnv,
+  withIsolatedAkmStorage,
+  writeSandboxConfig,
+} from "../_helpers/sandbox";
 
 function write(root: string, rel: string, content: string): void {
   const destination = path.join(root, rel);
@@ -165,7 +171,7 @@ describe("OKF first-class conformance", () => {
     expect(shown.content).not.toContain("type: Some Vendor Thing");
 
     const search = await akmSearch({ query: "Fragment body", skipLogging: true });
-    const hit = search.hits.find(
+    const hit = search.results.find(
       (candidate) => "path" in candidate && candidate.path === path.join(okfRoot, "unknown.md"),
     );
     expect(hit && "ref" in hit ? hit.ref : undefined).toBe("adversarial//unknown");
@@ -654,7 +660,7 @@ describe("OKF first-class conformance", () => {
 
     const search = await akmSearch({ query: "identity marker", skipLogging: true });
     const refsByPath = new Map(
-      search.hits.flatMap((hit) => ("path" in hit && "ref" in hit ? [[hit.path, hit.ref] as const] : [])),
+      search.results.flatMap((hit) => ("path" in hit && "ref" in hit ? [[hit.path, hit.ref] as const] : [])),
     );
     expect(refsByPath.get(path.join(storage.stashDir, "shared.md"))).toBe("shared");
     expect(refsByPath.get(path.join(localRoot, "shared.md"))).toBe("local//shared");
@@ -678,7 +684,6 @@ describe("OKF first-class conformance", () => {
     writeSandboxConfig({
       semanticSearchMode: "off",
       defaultBundle: "native",
-      defaultWriteTarget: "native",
       connections: {
         "test-llm": {
           endpoint: "http://localhost:1/v1/chat/completions",
@@ -730,7 +735,6 @@ describe("OKF first-class conformance", () => {
     writeSandboxConfig({
       semanticSearchMode: "off",
       defaultBundle: "local",
-      defaultWriteTarget: "local",
       connections: {
         "test-llm": {
           endpoint: "http://localhost:1/v1/chat/completions",
@@ -762,7 +766,6 @@ describe("OKF first-class conformance", () => {
       writeSandboxConfig({
         semanticSearchMode: "off",
         defaultBundle: "native",
-        defaultWriteTarget: "native",
         bundles: {
           native: {
             path: workflowRoot,
@@ -845,7 +848,7 @@ describe("OKF first-class conformance", () => {
       },
     });
 
-    await withEnv({ AKM_BUNDLE_DIR: undefined }, async () => {
+    await withEnv({}, async () => {
       resetConfigCache();
       await expect(loadWorkflowAsset("workflows/same")).rejects.toThrow(
         /adapter "okf".*does not support native workflow execution/i,
@@ -898,7 +901,7 @@ describe("OKF first-class conformance", () => {
       },
     });
 
-    await withEnv({ AKM_BUNDLE_DIR: undefined }, async () => {
+    await withEnv({}, async () => {
       resetConfigCache();
       expect(() => createWorkflowAsset({ name: "blocked" })).toThrow(
         /adapter "okf".*does not support AKM asset writes/i,
@@ -916,11 +919,10 @@ describe("OKF first-class conformance", () => {
     });
   });
 
-  test("workflow authoring rejects an OKF defaultWriteTarget", () => {
+  test("workflow authoring rejects an OKF defaultBundle", () => {
     writeSandboxConfig({
       semanticSearchMode: "off",
-      defaultBundle: "local",
-      defaultWriteTarget: "adversarial",
+      defaultBundle: "adversarial",
       bundles: {
         local: {
           path: storage.stashDir,
@@ -945,7 +947,7 @@ describe("OKF first-class conformance", () => {
 
   test("an implicit OKF working stash rejects native writes", async () => {
     writeSandboxConfig({ semanticSearchMode: "off" });
-    await withEnv({ AKM_BUNDLE_DIR: okfRoot }, async () => {
+    await withBundle(okfRoot, async () => {
       resetConfigCache();
       await expect(
         writeMarkdownAsset({
@@ -967,8 +969,7 @@ describe("OKF first-class conformance", () => {
     const before = fs.readFileSync(oldPath, "utf8");
     writeSandboxConfig({
       semanticSearchMode: "off",
-      defaultBundle: "vendor",
-      defaultWriteTarget: "team",
+      defaultBundle: "team",
       bundles: {
         vendor: {
           path: okfRoot,
@@ -978,7 +979,7 @@ describe("OKF first-class conformance", () => {
       },
     });
 
-    await withEnv({ AKM_BUNDLE_DIR: okfRoot }, async () => {
+    await withBundle(okfRoot, async () => {
       resetConfigCache();
       const supersedes = resolveSupersedesForWrite(["vendor//memories/old"], "team");
       expect(supersedes[0]?.writable).toBe(false);
@@ -1011,7 +1012,7 @@ describe("OKF first-class conformance", () => {
       },
     });
 
-    await withEnv({ AKM_BUNDLE_DIR: undefined }, async () => {
+    await withEnv({}, async () => {
       resetConfigCache();
       const written = await writeMarkdownAsset({
         type: "memory",
@@ -1025,6 +1026,8 @@ describe("OKF first-class conformance", () => {
       expect(fs.existsSync(path.join(packageRoot, "memories", "nested-root.md"))).toBe(false);
       expect(resolveSourceEntries()).toEqual([
         expect.objectContaining({ path: componentRoot, registryId: "nested", adapterId: "akm" }),
+        // The sandbox's own working bundle stays configured.
+        expect.objectContaining({ path: storage.stashDir }),
       ]);
 
       await akmIndex({ stashDir: componentRoot, full: true });

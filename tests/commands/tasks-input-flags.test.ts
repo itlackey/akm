@@ -3,10 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * P2a Lane C — `akm task run`'s exact-name input flags (spec
- * docs/plans/specs/p2a-task-source-v4.md §5.1, §1.4 "Lane C — CLI + schema +
- * docs"). This lane owns ONLY this file plus the AUTHORIZED updates to
- * tests/integration/tasks-schema.test.ts (§6 F-1).
+ * P2a Lane C — `akm task run`'s exact-name input flags. This lane owns ONLY this file plus the AUTHORIZED updates to
+ * tests/tasks-schema.test.ts (§6 F-1).
  *
  * RED phase: task source v4 (`src/tasks/source/task-source-v4.ts`, Lane A),
  * the shared input contract (`src/execution/input-contract.ts`, Lane B), and
@@ -52,10 +50,10 @@
  * earlier version of this file's seam handed back only a bare
  * `TaskInputBinding[]`, which a side channel production code never reads
  * could satisfy without ever attaching `.inputs` to a real `TaskInvocation`
- * — test-review finding, tests/integration/commands/tasks-input-flags.test.ts:150.)
+ * — test-review finding, tests/commands/tasks-input-flags.test.ts:150.)
  *
  * B-27's declared-input enumeration and B-28's underlying-detail requirement
- * (test-review finding, tests/integration/commands/tasks-input-flags.test.ts:187)
+ * (test-review finding, tests/commands/tasks-input-flags.test.ts:187)
  * are pinned by checking the WHOLE serialized `{ok,error,code,hint}` envelope
  * (`JSON.stringify(envelope)`), not `.error` alone — `emitJsonError`
  * (src/cli/shared.ts:113) serializes a UsageError's `hint` into the envelope
@@ -134,7 +132,7 @@ function writeTask(id: string, yaml: string): void {
  * A task source v4 document with two OPTIONAL, defaulted inputs — no flag is
  * ever required to run it. `run:`/`shell:` (rather than `uses:
  * commands/...`) so preparation needs no engine/agent config (mirrors
- * tests/integration/tasks-runtime-v3-runner.test.ts's `run: exit 7\nshell:
+ * tests/tasks-runtime-v3-runner.test.ts's `run: exit 7\nshell:
  * sh` fixtures).
  */
 const REVIEW_TASK_YAML = [
@@ -189,7 +187,7 @@ const TAGGED_TASK_YAML = [
 
 describe("akm task run — exact-name input flags materialize literal bindings (P2a spec §5.1)", () => {
   // Test-review remediation (finding recorded against
-  // tests/integration/commands/tasks-input-flags.test.ts:150): §4.4/§5.1
+  // tests/commands/tasks-input-flags.test.ts:150): §4.4/§5.1
   // require the materialized literals to become `readonly TaskInputBinding[]`
   // on the `TaskInvocation` the run CONSTRUCTS — `TaskInvocation.inputs?` is
   // the model-type declaration §4.4 explicitly authorizes
@@ -199,7 +197,7 @@ describe("akm task run — exact-name input flags materialize literal bindings (
   // implementation (one production code never actually reads) could satisfy
   // without ever attaching `.inputs` to a real `TaskInvocation`. The seam
   // below still exists (test-only observability is otherwise impossible — the
-  // model-purity ratchet, tests/tasks/parse-v3-adapter.test.ts, keeps
+  // model-purity ratchet, tests/tasks/model-contracts.test.ts, keeps
   // `TaskInvocation` a pure, IO-free type, so nothing production reads it back
   // from in P2a either, per spec §0), but it now hands back the CONSTRUCTED
   // `TaskInvocation` itself, and the load-bearing assertion is
@@ -242,7 +240,7 @@ describe("akm task run — exact-name input flags materialize literal bindings (
   });
 
   // Test-review remediation (finding recorded against
-  // tests/integration/commands/tasks-input-flags.test.ts:187): §9 requires
+  // tests/commands/tasks-input-flags.test.ts:187): §9 requires
   // "every NEW row of §2 has at least one test asserting its code AND its
   // message text", and B-27's row requires the detail to list the declared
   // inputs — the original version of this test asserted only
@@ -389,8 +387,7 @@ describe("akm task run — B-31 array grouping and its failure modes, end to end
 });
 
 // ── B-26 / §0 — a valid input flag set is byte-identical; a manual-only v4 ──
-// ── task runs end-to-end. Test-review remediation (finding recorded against ──
-// ── docs/plans/specs/p2a-task-source-v4.md:520): §0's central observable ────
+// ── task runs end-to-end. Test-review remediation: the central observable ──
 // ── contract had no end-to-end pin at all — the one v4 run test stopped at ──
 // ── loadPreparedTask, never reaching `akm task run` itself. ─────────────────
 
@@ -415,7 +412,7 @@ describe("akm task run — end to end (B-26, §0: a valid flag set is byte-ident
     const flaggedEnvelope = JSON.parse(flagged.stdout) as { result: Record<string, unknown> };
     expect(stableResult(flaggedEnvelope.result)).toEqual(stableResult(bareEnvelope.result));
 
-    const history = await runCliCapture(["task", "history", "--id", "review", "--limit", "2"]);
+    const history = await runCliCapture(["task", "history", "review", "--limit", "2"]);
     const rows = (JSON.parse(history.stdout) as { rows: Record<string, unknown>[] }).rows;
     expect(rows).toHaveLength(2);
     expect(stableResult(rows[0] as Record<string, unknown>)).toEqual(stableResult(rows[1] as Record<string, unknown>));
@@ -433,8 +430,7 @@ describe("akm task run — end to end (B-26, §0: a valid flag set is byte-ident
 });
 
 // ── B-32 / B-33 — retired --target and akm task run's own declared flags ────
-// ── are PRESERVED, never treated as inputs. Test-review remediation (finding ──
-// ── recorded against docs/plans/specs/p2a-task-source-v4.md:526): neither ───
+// ── are PRESERVED, never treated as inputs. Test-review remediation: neither ───
 // ── B-32 nor B-33 nor F-5's isTaskRunWithId test existed anywhere. ──────────
 
 describe("akm task run <id> --target x — the retired flag is an unknown input, never a rename hint", () => {
@@ -466,7 +462,7 @@ describe("parseTaskInputFlags — akm task run's own declared flags are excluded
   });
 
   test("TASK_RUN_VALUE_FLAGS / TASK_RUN_BOOLEAN_FLAGS are exactly the closed sets spec §5.1 names", () => {
-    expect([...TASK_RUN_VALUE_FLAGS].sort()).toEqual(["bundle", "detail", "format", "output", "shape"].sort());
+    expect([...TASK_RUN_VALUE_FLAGS].sort()).toEqual(["bundle", "config", "detail", "format", "output"].sort());
     expect([...TASK_RUN_BOOLEAN_FLAGS].sort()).toEqual(
       ["help", "no-quiet", "no-verbose", "quiet", "scheduled", "verbose"].sort(),
     );

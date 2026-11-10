@@ -4,7 +4,7 @@
  * Verifies the write-destination flag added to `akm remember` per v1
  * implementation plan §6 decision 3 (renamed `--target` → `--bundle` in the
  * 0.9 CLI overhaul, S8). Resolution order is:
- *   --bundle → defaultWriteTarget → defaultBundle → ConfigError
+ *   --bundle → defaultBundle → ConfigError
  *
  * These tests exercise the explicit-target path:
  *   - resolves to a configured filesystem source by name
@@ -163,7 +163,7 @@ describe("remember --bundle", () => {
 
     const { result } = await runCli(["remember", "won't be written", "--bundle", "read-only"]);
     // VALUE-17: pin the exact classified failure (ConfigError -> exit 78,
-    // code INVALID_CONFIG_FILE — see src/core/write-source.ts's
+    // code INVALID_CONFIG_FILE — see src/sources/write-source.ts's
     // `resolveWriteTarget` non-writable-target branch and
     // src/cli/shared.ts's `classifyExitCode`), not merely "some failure".
     // `not.toBe(0)` would also pass for a crash, which defeats the point of

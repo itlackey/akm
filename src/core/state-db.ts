@@ -30,17 +30,12 @@
  * read the `schema_migrations` ledger on that connection, and run every
  * migration not yet applied inside one `BEGIN IMMEDIATE` transaction. A
  * missing, empty or table-less file is simply a fresh database and gets the
- * whole registry. A ledger carrying ids this akm does not know was written by
+ * whole registry (the baseline schema, then anything appended after it). A
+ * ledger shorter than the baseline predates akm 0.9.32 and is refused with the
+ * upgrade recipe ({@link stateDatabaseFloorBlocker}). A ledger carrying ids this akm does not know was written by
  * a newer akm: the open continues with the schema this version knows and warns
- * once ({@link warnNewerStateLedger}). Before a released migration that drops
- * schema (`018-drop-dead-lane-schema`, `028-improve-ledger`; see
- * `STATE_MIGRATION_SAFETY_BY_ID`) runs against an existing database, the
- * database is copied beside itself to `state.db.pre-<id of the first such
- * pending migration>.bak` with `VACUUM INTO` — a plain sibling copy the
- * operator can open, nothing more. A database this open created from scratch is
- * compacted once after its migrations, since the registry creates tables that
- * later migrations drop. Only a ledger that DIVERGES from this akm's registry
- * is refused (`assertMigrationLedger`).
+ * once ({@link warnNewerStateLedger}). A ledger that DIVERGES from this akm's
+ * registry is refused (`assertMigrationLedger`).
  *
  * ## Schema design: indexed columns vs. metadata_json
  *
@@ -65,14 +60,15 @@ import { type Database, openDatabase, type SqlValue } from "../storage/database"
 import { openManagedDatabase, withManagedDb } from "../storage/managed-db";
 import {
   assertMigrationLedger,
-  type Migration,
+  inspectMigrationLedger,
   type MigrationLedgerState,
   runMigrations,
 } from "../storage/sqlite-migrations";
 import { applyReadonlyPragmas } from "../storage/sqlite-pragmas";
 import { pkgVersion } from "../version";
+import { ConfigError } from "./errors";
 import { getDataDir } from "./paths";
-import { getStateMigrationSafety, STATE_MIGRATIONS } from "./state/migrations";
+import { STATE_BASELINE_IDS, STATE_MIGRATIONS } from "./state/migrations";
 import { warnOnce } from "./warn";
 
 export {
@@ -85,7 +81,7 @@ export {
 
 /**
  * Default path: `<dataDir>/state.db`.
- * Respects the same `AKM_DATA_DIR` / XDG_DATA_HOME env-isolation as `getDbPath()` so
+ * Respects the same `paths.data` / XDG_DATA_HOME resolution as `getDbPath()` so
  * cooperating processes sharing a data root automatically share the same
  * state database.
  */
@@ -111,51 +107,43 @@ function warnNewerStateLedger(ledger: MigrationLedgerState): void {
   );
 }
 
-/**
- * Copy the database beside itself before the first pending migration that
- * drops schema runs. `VACUUM INTO` writes one consistent standalone file
- * (committed WAL content included — a raw file copy would miss it) through
- * the same connection, into a temporary name that is renamed over the final
- * one only once the copy is complete, so a crash never leaves a half-written
- * `.bak` behind. Returns the copy's path, or undefined when nothing pending
- * is destructive.
- */
-function backupBeforeDestructiveMigration(
-  db: Database,
-  dbPath: string,
-  pending: readonly Migration[],
-): string | undefined {
-  const destructive = pending.find((migration) => getStateMigrationSafety(migration.id) === "historical-destructive");
-  if (!destructive) return undefined;
-  const backupPath = `${dbPath}.pre-${destructive.id}.bak`;
-  const partialPath = `${backupPath}.tmp`;
-  fs.rmSync(partialPath, { force: true });
-  db.prepare("VACUUM INTO ?").run(partialPath);
-  fs.renameSync(partialPath, backupPath);
-  return backupPath;
+/** The one instruction for a state.db that no akm from the 0.9.32 floor on has opened. */
+const STATE_DB_FLOOR_REMEDY =
+  "This state.db predates akm 0.9.32 and this akm does not upgrade it: run `npm i -g akm-cli@0.9.32 && akm migrate apply && akm task sync`, then upgrade.";
+
+function belowFloor(ledgerIds: readonly string[]): boolean {
+  return ledgerIds.length > 0 && ledgerIds.length < STATE_BASELINE_IDS.length;
 }
 
-/** What one open did to the ledger: the migrations it applied and the pre-migration copy it took. */
+/**
+ * Read-only: the refusal for a state.db whose ledger is shorter than the
+ * baseline, or undefined when it is missing, current or ahead. The migrator
+ * asks this before any step, so a database below the floor is refused whole
+ * rather than partly migrated.
+ */
+export function stateDatabaseFloorBlocker(dbPath: string = getStateDbPath()): string | undefined {
+  if (!fs.existsSync(dbPath)) return undefined;
+  const db = openDatabase(dbPath, { readonly: true, create: false });
+  try {
+    applyReadonlyPragmas(db);
+    const ledger = inspectMigrationLedger(db, STATE_MIGRATIONS);
+    return belowFloor(ledger.migrationIds) ? STATE_DB_FLOOR_REMEDY : undefined;
+  } finally {
+    db.close();
+  }
+}
+
+/** What one open did to the ledger: the migrations it applied. */
 export interface StateDatabaseMigrationReport {
   applied: string[];
-  backupPath?: string;
 }
 
-/** Read the ledger, warn on a newer one, back up before destructive DDL, then run what is pending. */
-function migrateStateDatabase(db: Database, dbPath: string): StateDatabaseMigrationReport {
+/** Read the ledger, refuse one below the floor, warn on a newer one, then run what is pending. */
+function migrateStateDatabase(db: Database): StateDatabaseMigrationReport {
   const ledger = assertMigrationLedger(db, STATE_MIGRATIONS);
+  if (belowFloor(ledger.migrationIds)) throw new ConfigError(STATE_DB_FLOOR_REMEDY, "INVALID_CONFIG_FILE");
   warnNewerStateLedger(ledger);
-  const pending = STATE_MIGRATIONS.slice(ledger.migrationIds.length);
-  if (pending.length === 0) return { applied: [] };
-  // A database with no applied migration holds nothing akm wrote: a fresh
-  // file, `:memory:`, or an empty file left by an interrupted first open.
-  const fresh = ledger.migrationIds.length === 0;
-  const backupPath = fresh ? undefined : backupBeforeDestructiveMigration(db, dbPath, pending);
-  const applied = runMigrations(db, STATE_MIGRATIONS);
-  // The registry creates tables that later migrations drop (018, 028), which
-  // leaves free pages behind; a database created by this open starts compact.
-  if (fresh && applied.length > 0) db.exec("VACUUM");
-  return backupPath ? { applied, backupPath } : { applied };
+  return { applied: runMigrations(db, STATE_MIGRATIONS) };
 }
 
 function openAndMigrate(dbPath: string): StateDatabaseMigrationReport & { db: Database } {
@@ -164,7 +152,7 @@ function openAndMigrate(dbPath: string): StateDatabaseMigrationReport & { db: Da
     path: dbPath,
     pragmas: { dataDir: path.dirname(dbPath) },
     init: (handle) => {
-      report = migrateStateDatabase(handle, dbPath);
+      report = migrateStateDatabase(handle);
     },
   });
   return { db, ...report };
@@ -211,8 +199,6 @@ export interface HistoricalStateUpgradeResult {
   upgraded: boolean;
   /** The migration IDs this call applied, in ledger order; empty when current. */
   applied: string[];
-  /** The `state.db.pre-<id>.bak` copy taken before a schema-dropping migration, when one ran. */
-  safetyCopyPath?: string;
 }
 
 /**
@@ -223,11 +209,8 @@ export interface HistoricalStateUpgradeResult {
 export function upgradeHistoricalStateDatabase(dbPath: string = getStateDbPath()): HistoricalStateUpgradeResult {
   const pending = listPendingStateMigrations(dbPath);
   if (pending.length === 0) return { upgraded: false, applied: [] };
-  const { db, backupPath } = openAndMigrate(dbPath);
-  db.close();
-  return backupPath
-    ? { upgraded: true, applied: pending, safetyCopyPath: backupPath }
-    : { upgraded: true, applied: pending };
+  openAndMigrate(dbPath).db.close();
+  return { upgraded: true, applied: pending };
 }
 
 /**

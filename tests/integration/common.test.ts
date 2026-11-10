@@ -9,14 +9,24 @@ import {
   hasErrnoCode,
   isWithin,
   jsonWithByteCap,
+  NO_DEFAULT_BUNDLE_MESSAGE,
   parseJsonc,
   ResponseTooLargeError,
   readBodyWithByteCap,
   resolveStashDir,
   toPosix,
 } from "../../src/core/common";
+import { loadConfig } from "../../src/core/config/config";
 import { writeResponseToFileCapped } from "../../src/runtime";
-import { type Cleanup, sandboxHome, sandboxXdgConfigHome, withEnvSync, withMockedFetch } from "../_helpers/sandbox";
+import { resolveWorkingStashTarget } from "../../src/sources/write-source";
+import {
+  type Cleanup,
+  sandboxHome,
+  sandboxXdgConfigHome,
+  withBundleSync,
+  withEnvSync,
+  withMockedFetch,
+} from "../_helpers/sandbox";
 
 describe("fetchWithTimeout", () => {
   test("preserves the reason from an already-aborted caller signal", async () => {
@@ -102,23 +112,23 @@ describe("resolveStashDir", () => {
   });
 
   test("throws when no stash dir is configured and default does not exist", () => {
-    // HOME is already sandboxed (no akm subdir); AKM_BUNDLE_DIR is unset for a clean slate.
-    withEnvSync({ AKM_BUNDLE_DIR: undefined }, () => {
-      expect(() => resolveStashDir()).toThrow("No bundle directory found");
+    // HOME is already sandboxed (no akm subdir); no bundle is configured.
+    withEnvSync({}, () => {
+      expect(() => resolveStashDir()).toThrow("No default bundle is configured");
     });
   });
 
-  test("throws when AKM_BUNDLE_DIR points to nonexistent path", () => {
-    withEnvSync({ AKM_BUNDLE_DIR: "/nonexistent/path/that/does/not/exist" }, () => {
+  test("throws when the default bundle path does not exist", () => {
+    withBundleSync("/nonexistent/path/that/does/not/exist", () => {
       expect(() => resolveStashDir()).toThrow("Unable to read");
     });
   });
 
-  test("throws when AKM_BUNDLE_DIR path is a file, not a directory", () => {
+  test("throws when the default bundle path is a file, not a directory", () => {
     const tmpFile = path.join(os.tmpdir(), `akm-common-test-file-${Date.now()}`);
     fs.writeFileSync(tmpFile, "not a directory");
     try {
-      withEnvSync({ AKM_BUNDLE_DIR: tmpFile }, () => {
+      withBundleSync(tmpFile, () => {
         expect(() => resolveStashDir()).toThrow("must point to a directory");
       });
     } finally {
@@ -126,10 +136,10 @@ describe("resolveStashDir", () => {
     }
   });
 
-  test("returns resolved path for valid AKM_BUNDLE_DIR", () => {
+  test("returns the resolved path of a valid default bundle", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-common-test-"));
     try {
-      withEnvSync({ AKM_BUNDLE_DIR: tmpDir }, () => {
+      withBundleSync(tmpDir, () => {
         const result = resolveStashDir();
         expect(result).toBe(path.resolve(tmpDir));
       });
@@ -147,7 +157,7 @@ describe("resolveStashDir", () => {
         path.join(configDir, "config.json"),
         JSON.stringify({ defaultBundle: "main", bundles: { main: { path: tmpDir } } }),
       );
-      withEnvSync({ AKM_BUNDLE_DIR: undefined }, () => {
+      withEnvSync({}, () => {
         const result = resolveStashDir();
         expect(result).toBe(path.resolve(tmpDir));
       });
@@ -156,32 +166,12 @@ describe("resolveStashDir", () => {
     }
   });
 
-  test("uses default stash dir when it exists", () => {
-    // HOME is already sandboxed to a fresh temp dir; create akm subdir there
-    withEnvSync({ AKM_BUNDLE_DIR: undefined }, () => {
-      const defaultStash = path.join(process.env.HOME as string, "akm");
-      fs.mkdirSync(defaultStash, { recursive: true });
-      const result = resolveStashDir();
-      expect(result).toBe(defaultStash);
+  test("an existing ~/akm is not read implicitly: reads and writes error with the same message", () => {
+    withEnvSync({}, () => {
+      fs.mkdirSync(path.join(process.env.HOME as string, "akm"), { recursive: true });
+      expect(() => resolveStashDir()).toThrow(NO_DEFAULT_BUNDLE_MESSAGE);
+      expect(() => resolveWorkingStashTarget(loadConfig())).toThrow(NO_DEFAULT_BUNDLE_MESSAGE);
     });
-  });
-
-  test("env var takes precedence over config.json stashDir", () => {
-    const envDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-common-test-env-"));
-    const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-common-test-cfg-"));
-    try {
-      withEnvSync({ AKM_BUNDLE_DIR: envDir }, () => {
-        const configRoot = path.join(testConfigHome, "akm");
-        fs.mkdirSync(configRoot, { recursive: true });
-        fs.writeFileSync(path.join(configRoot, "config.json"), JSON.stringify({ stashDir: configDir }));
-
-        const result = resolveStashDir();
-        expect(result).toBe(path.resolve(envDir));
-      });
-    } finally {
-      fs.rmSync(envDir, { recursive: true, force: true });
-      fs.rmSync(configDir, { recursive: true, force: true });
-    }
   });
 });
 

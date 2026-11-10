@@ -23,7 +23,7 @@ import type { TaskLogLineInput } from "../../core/logs-db";
 import type { WorkflowRunStatus, WorkflowRunSummary } from "../../sources/types";
 import type { runWorkflowSteps } from "../../workflows/exec/run-workflow";
 import type { ExecutionProvenanceContext } from "../model/invocation";
-import type { PreparedTaskV3Workflow } from "../prepare/prepared-execution";
+import type { PreparedTaskWorkflow } from "../prepare/prepared-execution";
 import { finishAttempt } from "./attempt-lifecycle";
 import { appendHistory } from "./task-history";
 import { persistRunLog, scrubTaskOutput } from "./task-log";
@@ -33,7 +33,7 @@ import type { TaskRunResult, TaskRunStatus } from "./task-result";
  * Whole-run timeout applied to a workflow-bound task that does not declare its
  * own `timeoutMs` — six hours.
  *
- * `akm workflow run` deliberately has NO default `--timeout`: a human is
+ * `akm workflow run` deliberately has NO default `--timeout-ms`: a human is
  * watching, and Ctrl-C aborts the very same signal the flag's timer would.
  * A scheduled task has nobody watching. Without a default, its only bound is
  * the per-unit timeout — and a frozen plan may set `timeout: null` (unbounded),
@@ -67,7 +67,7 @@ export const DEFAULT_WORKFLOW_TASK_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 export const DEFAULT_SCHEDULED_TASK_TIMEOUT_MS = DEFAULT_WORKFLOW_TASK_TIMEOUT_MS;
 
 export async function runWorkflowTask(input: {
-  task: PreparedTaskV3Workflow;
+  task: PreparedTaskWorkflow;
   logPath: string;
   startedAt: Date;
   now: () => Date;
@@ -81,7 +81,7 @@ export async function runWorkflowTask(input: {
 
   // Unset → the unattended default; `null` → the explicit no-timeout opt-out.
   const timeoutMs = task.timeoutMs === undefined ? DEFAULT_WORKFLOW_TASK_TIMEOUT_MS : task.timeoutMs;
-  // The shared deadline `akm workflow run --timeout` also arms
+  // The shared deadline `akm workflow run --timeout-ms` also arms
   // ({@link armAbortDeadline}): one AbortController for the run's lifetime,
   // aborted by a timer. The engine reads `options.signal` at every step
   // boundary and breaks GRACEFULLY — in-flight units are cancelled, the journal
@@ -240,7 +240,7 @@ function mapWorkflowStatus(status: WorkflowRunStatus | undefined): TaskRunStatus
 }
 
 function renderWorkflowLog(input: {
-  task: PreparedTaskV3Workflow;
+  task: PreparedTaskWorkflow;
   detail?: WorkflowRunSummary;
   error?: Error;
   warnings?: readonly string[];

@@ -20,7 +20,7 @@ import {
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
   sandboxXdgStateHome,
-  withEnv,
+  withBundle,
 } from "../_helpers/sandbox";
 import { withSeam } from "../_helpers/seams";
 
@@ -205,7 +205,7 @@ describe("akmClone", () => {
     expect(fs.readFileSync(destination, "utf8")).toBe("echo original\n");
   });
 
-  test("uses defaultWriteTarget when --bundle is omitted", async () => {
+  test("uses defaultBundle when --bundle is omitted", async () => {
     const targetDir = createStashDir("akm-clone-default-target-");
     writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "echo deploy\n");
     saveConfig({
@@ -214,12 +214,12 @@ describe("akmClone", () => {
         searchpath: { path: searchPathDir },
         team: { path: targetDir, writable: true },
       },
-      defaultWriteTarget: "team",
+      defaultBundle: "team",
     });
 
     const result = await akmClone({ sourceRef: "scripts/deploy.sh" });
 
-    expect(result.destination.ref).toBe("team//scripts/deploy.sh");
+    expect(result.destination.ref).toBe("scripts/deploy.sh");
     expect(fs.existsSync(path.join(targetDir, "scripts", "deploy.sh"))).toBe(true);
     expect(fs.existsSync(path.join(stashDir, "scripts", "deploy.sh"))).toBe(false);
   });
@@ -437,6 +437,7 @@ describe("akmClone", () => {
   test("throws when self-cloning a script without rename", async () => {
     writeFile(path.join(stashDir, "scripts", "deploy.sh"), "echo deploy\n");
 
+    await expect(akmClone({ sourceRef: "scripts/deploy.sh" })).rejects.toBeInstanceOf(UsageError);
     await expect(akmClone({ sourceRef: "scripts/deploy.sh" })).rejects.toThrow("same path");
     // Verify the file was not destroyed
     expect(fs.readFileSync(path.join(stashDir, "scripts", "deploy.sh"), "utf8")).toBe("echo deploy\n");
@@ -570,8 +571,8 @@ describe("akmClone --dest", () => {
 
   test("--dest does not require a working stash", async () => {
     writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "echo deploy\n");
-    // Point AKM_BUNDLE_DIR to a non-existent directory to simulate no working stash
-    await withEnv({ AKM_BUNDLE_DIR: path.join(os.tmpdir(), `nonexistent-stash-${Date.now()}`) }, async () => {
+    // Point the default bundle at a non-existent directory to simulate no working stash
+    await withBundle(path.join(os.tmpdir(), `nonexistent-stash-${Date.now()}`), async () => {
       const result = await akmClone({
         sourceRef: `${searchPathDir}//scripts/deploy.sh`,
         dest: customDest,

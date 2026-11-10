@@ -12,12 +12,6 @@ function readSchema(): Record<string, unknown> {
 }
 
 describe("config schema drift pins", () => {
-  test("requires the exact 0.9.0 configVersion const", () => {
-    const root = readSchema();
-    const properties = root.properties as Record<string, Record<string, unknown>>;
-    expect(properties.configVersion).toEqual({ type: "string", const: "0.9.0" });
-    expect(root.required).toContain("configVersion");
-  });
   test("ImproveProcessConfig schema includes the qualityGate sub-object and no longer declares contradictionDetection", () => {
     const schema = readSchema();
     const defs = schema.$defs as Record<string, unknown>;
@@ -46,7 +40,7 @@ describe("config schema drift pins", () => {
     const schema = readSchema();
     const props = schema.properties as Record<string, { properties?: Record<string, unknown> }>;
     const improve = props.improve?.properties ?? {};
-    const where = ["connection", "harness", "llm", "model", "timeoutMs"];
+    const where = ["connection", "harness", "model", "timeoutMs"];
     const processes = improve.processes as { properties?: Record<string, { properties?: Record<string, unknown> }> };
     expect(Object.keys(processes.properties ?? {}).sort()).toEqual([
       "consolidate",
@@ -67,26 +61,12 @@ describe("config schema drift pins", () => {
     for (const key of where) expect(Object.keys(defs.ImproveProcessConfig?.properties ?? {})).not.toContain(key);
   });
 
-  test("generated schema tolerates unknown LLM keys under improve.processes and accepts arbitrary extraParams", () => {
+  test("generated schema tolerates a leftover llm and other unknown keys under improve.processes", () => {
     const validate = new Ajv2020({ allErrors: true, strict: false }).compile(readSchema());
-    const withLlm = (llm: Record<string, unknown>) => ({
-      configVersion: "0.9.0",
-      improve: { processes: { triage: { llm } } },
-    });
-
     // An unknown key is never a schema error; the loader names it once at runtime.
-    for (const llm of [{ tempertaure: 0.2 }, { futureTopLevelKnob: true }]) {
-      expect(validate(withLlm(llm))).toBe(true);
+    for (const unknown of [{ llm: { temperature: 0.2 } }, { futureTopLevelKnob: true }]) {
+      expect(validate({ improve: { processes: { triage: unknown } } })).toBe(true);
     }
-
-    expect(
-      validate(
-        withLlm({
-          temperature: 0.2,
-          extraParams: { providerFeature: { nested: [1, true, "kept"] }, arbitrary_number: 7 },
-        }),
-      ),
-    ).toBe(true);
   });
 
   test("ImproveProfileConfig.processes includes distill + validation entries (0.8.0 unified feedbackDistillation into distill)", () => {
@@ -99,13 +79,11 @@ describe("config schema drift pins", () => {
     expect(Object.keys(processes)).not.toContain("feedbackDistillation");
   });
 
-  test("top-level index and search expose the new feature sections", () => {
+  test("the retired index and setup sections are gone; search and embedding expose their feature sections", () => {
     const schema = readSchema();
     const props = schema.properties as Record<string, unknown>;
-    const index = props.index as { properties?: Record<string, unknown> };
-    expect(Object.keys(index.properties ?? {})).not.toContain("metadataEnhance");
-    expect(Object.keys(index.properties ?? {})).not.toContain("stalenessDetection");
-    expect(Object.keys(index.properties ?? {})).not.toContain("indexBodyOpening");
+    expect(Object.keys(props)).not.toContain("index");
+    expect(Object.keys(props)).not.toContain("setup");
     const search = props.search as { properties?: Record<string, unknown> };
     expect(Object.keys(search.properties ?? {})).toEqual(["defaultExcludeTypes"]);
     const embedding = props.embedding as { properties?: Record<string, unknown> };

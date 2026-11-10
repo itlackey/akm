@@ -17,29 +17,25 @@
       "type": "command",
       "ref": "sample-claude//commands/deploy",
       "label": "Command",
-      "renderer": "command-md",
-      "action": "akm show sample-claude//commands/deploy -> fill placeholders and dispatch"
+      "renderer": "command-md"
     },
     "agents/reviewer.md": {
       "type": "agent",
       "ref": "sample-claude//agents/reviewer",
       "label": "Agent",
-      "renderer": "agent-md",
-      "action": "akm show sample-claude//agents/reviewer -> dispatch with full prompt"
+      "renderer": "agent-md"
     },
     "skills/pdf-processing/SKILL.md": {
       "type": "skill",
       "ref": "sample-claude//skills/pdf-processing",
       "label": "Skill",
-      "renderer": "skill-md",
-      "action": "akm show sample-claude//skills/pdf-processing -> follow the instructions"
+      "renderer": "skill-md"
     },
     "CLAUDE.md": {
       "type": "instruction",
       "ref": "sample-claude//CLAUDE",
       "label": "Instruction",
       "renderer": "knowledge-md",
-      "action": "akm show sample-claude//CLAUDE -> read the project instructions",
       "resolved": "RESOLVED (open question 1) — `instruction` is a first-class KNOWN_TYPE with its own TYPE_PRESENTATION entry: label 'Instruction', renderer 'knowledge-md' (reused — instruction files are markdown read exactly like knowledge), action mirrors knowledge's read action. NOT the generic fallback."
     }
   }

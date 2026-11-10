@@ -106,16 +106,6 @@ export function bundleSourceId(config: AkmConfig, bundleId: string): string {
   });
 }
 
-/** Identity for an environment-only filesystem bundle not persisted in config. */
-export function filesystemBundleSourceId(contentRoot: string): string {
-  return hashBundleSourceIdentity({
-    version: 1,
-    source: { kind: "filesystem", locator: bundlePhysicalContentRoot(contentRoot) },
-    registryId: null,
-    componentRoot: ".",
-  });
-}
-
 function hashBundleSourceIdentity(identity: Readonly<Record<string, unknown>>): string {
   return `sha256:${createHash("sha256")
     .update("akm.bundle-source\0v1\0")

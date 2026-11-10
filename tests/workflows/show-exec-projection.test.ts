@@ -22,14 +22,20 @@ import fs from "node:fs";
 import path from "node:path";
 import { akmShowUnified } from "../../src/commands/read/show";
 import { saveConfig } from "../../src/core/config/config";
-import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
+import {
+  type Cleanup,
+  sandboxStashDir,
+  sandboxXdgCacheHome,
+  sandboxXdgConfigHome,
+  withDefaultBundle,
+} from "../_helpers/sandbox";
 
 const WORKFLOW = [
   "---",
   "type: workflow",
   "description: Runs the test suite as a shell command",
   "defaults:",
-  "  engine: default-engine",
+  "  connection: default-engine",
   "  model: default-model",
   "steps:",
   "  - id: test",
@@ -74,7 +80,7 @@ describe("akm show --format json: exec steps", () => {
     const filePath = path.join(stashDir, "workflows", "ship.md");
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, WORKFLOW, "utf8");
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
 
     const result = await akmShowUnified({ ref: "workflows/ship", skipLogging: true });
     const steps = result.steps ?? [];

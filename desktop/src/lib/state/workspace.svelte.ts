@@ -10,7 +10,7 @@ import type { Bundle } from "../types";
 /** Workspace-wide state the shell and the sections share. Per-view state stays in the page. */
 export const workspace = $state({
   bundles: [] as Bundle[],
-  defaultWriteTarget: "",
+  defaultBundle: "",
   bundlesReady: false,
   /** Nothing is configured: no bundle and no working library, so first-run setup is what comes next. */
   unconfigured: false,
@@ -50,17 +50,15 @@ export async function refreshPending() {
 export async function refreshBundles(onlyIfChanged = false) {
   const data = await api<{
     bundles: Bundle[];
-    workingStash: unknown | null;
-    defaultWriteTarget?: string;
     defaultBundle?: string;
   }>("/bundles");
-  const target = data.defaultWriteTarget ?? data.defaultBundle ?? "";
+  const target = data.defaultBundle ?? "";
   const changed =
-    JSON.stringify(workspace.bundles) !== JSON.stringify(data.bundles) || workspace.defaultWriteTarget !== target;
+    JSON.stringify(workspace.bundles) !== JSON.stringify(data.bundles) || workspace.defaultBundle !== target;
   workspace.bundles = data.bundles;
   workspace.bundlesReady = true;
   workspace.unconfigured = isUnconfigured(data);
-  workspace.defaultWriteTarget = target;
+  workspace.defaultBundle = target;
   if (!onlyIfChanged || changed) workspace.bundleRevision++;
 }
 

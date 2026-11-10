@@ -26,7 +26,7 @@ import {
   REFLECT_CONTENT_CAP,
   REFLECT_TRUNCATION_MARKER,
   reflectResponseContract,
-} from "../src/integrations/agent/prompts";
+} from "../src/commands/prompts";
 
 const FEEDBACK_CAVEAT_SNIPPET = "It is a signal, not a fact to insert.";
 

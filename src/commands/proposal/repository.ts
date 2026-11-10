@@ -29,14 +29,21 @@ import {
 import { MEMORY_ARCHIVE_REL } from "../../core/asset/memory-archive";
 import { type AssetRef, parsePlacementRef } from "../../core/asset/resolve-ref";
 import { type AkmConfig, loadConfig } from "../../core/config/config";
-import { ConfigError, NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
+import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { type FileChange, proposalContent } from "../../core/file-change";
 import type { MemoryPruneCandidate } from "../../core/improve-types";
-import { canonicalBundleIdForTarget, resolveBundleWriteTarget } from "../../core/mutation-target";
 import { getStateDbPath, withImmediateTransaction, withStateDb } from "../../core/state-db";
 import { warn } from "../../core/warn";
 import { recordWrittenPath } from "../../core/write-provenance";
+import { withAssetMutationLease } from "../../indexer/index-writer-lock";
+import { indexWrittenAssets } from "../../indexer/index-written-assets";
+import { deriveInstallations } from "../../indexer/installations";
+import { currentConceptId, resolveWriteAddress, type WriteAddress } from "../../indexer/lookup/adapter-concept-owner";
+import { sameScope, scopeFromFrontmatter } from "../../indexer/passes/metadata";
+import { resolveSourceEntries } from "../../indexer/search/search-source";
+import { sha256Hex } from "../../runtime";
+import { canonicalBundleIdForTarget, resolveBundleWriteTarget } from "../../sources/mutation-target";
 import {
   assertAkmAssetWrite,
   assertWritePathsInsideSource,
@@ -46,14 +53,7 @@ import {
   type ResolvedWriteTarget,
   resolveWriteTarget,
   type WriteTargetSource,
-} from "../../core/write-source";
-import { withAssetMutationLease } from "../../indexer/index-writer-lock";
-import { indexWrittenAssets } from "../../indexer/index-written-assets";
-import { deriveInstallations } from "../../indexer/installations";
-import { currentConceptId, resolveWriteAddress, type WriteAddress } from "../../indexer/lookup/adapter-concept-owner";
-import { sameScope, scopeFromFrontmatter } from "../../indexer/passes/metadata";
-import { resolveSourceEntries } from "../../indexer/search/search-source";
-import { sha256Hex } from "../../runtime";
+} from "../../sources/write-source";
 import type { Database } from "../../storage/database";
 import { insertEventOnce } from "../../storage/repositories/events-repository";
 import {
@@ -342,8 +342,7 @@ function otherOwningBundle(itemRef: string, target: { source: string; root: stri
     return ownerSource !== undefined && path.resolve(ownerSource.path) !== path.resolve(target.root)
       ? owner
       : undefined;
-  } catch (err) {
-    rethrowIfTestIsolationError(err);
+  } catch {
     return undefined;
   }
 }

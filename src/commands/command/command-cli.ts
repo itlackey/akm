@@ -3,9 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { getStringArg, parsePositiveIntFlag } from "../../cli/parse-args";
-import { RETIRED_ENGINE_ARG, SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
-import { defineGroupCommand, defineJsonCommand, EXIT_CODES, output } from "../../cli/shared";
+import { SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
+import { defineJsonCommand, EXIT_CODES, output } from "../../cli/shared";
 import { loadConfig } from "../../core/config/config";
+import { UsageError } from "../../core/errors";
 import { isVerbose, setVerbose, warn, warnVerbose } from "../../core/warn";
 import type { UnresolvedExecutionDefaults } from "../../execution/source";
 import { lookupBundleRefReadonly } from "../../indexer/indexer";
@@ -15,16 +16,26 @@ import {
   prepareCommandInvocation,
 } from "./command-execution";
 
+/** `akm command run <ref>` was the 0.9 spelling; a lone `run` is still a command named `run`. */
+function rejectRetiredRunSpelling(positionals: unknown): void {
+  const tokens = Array.isArray(positionals) ? positionals.map(String) : [];
+  if (tokens[0] !== "run" || tokens.length < 2) return;
+  throw new UsageError(
+    `\`akm command run <ref>\` is now \`akm command <ref>\`: drop \`run\`, as in \`akm command ${tokens[1]}\`.`,
+    "INVALID_FLAG_VALUE",
+  );
+}
+
 function exactStringArg(args: unknown, key: string): string | undefined {
   const value = (args as Record<string, unknown>)[key];
   return typeof value === "string" ? value : undefined;
 }
 
-export const commandRunCommand = defineJsonCommand({
+export const commandCommand = defineJsonCommand({
   meta: {
-    name: "run",
+    name: "command",
     description:
-      "Resolve a stored command through its bundle adapter, apply portable arguments, and execute one fresh session",
+      "Run a stored command: resolve it through its bundle adapter, apply portable arguments, and execute one fresh session",
   },
   args: {
     ref: {
@@ -41,7 +52,6 @@ export const commandRunCommand = defineJsonCommand({
       description: "Override the command's agent selector with a portable agent ref or native harness selector",
     },
     ...SELECTION_ARGS,
-    ...RETIRED_ENGINE_ARG,
     "timeout-ms": { type: "string", description: "Override the execution timeout in milliseconds" },
     cwd: { type: "string", description: "Override the execution workspace/current working directory" },
     "dry-run": {
@@ -51,6 +61,7 @@ export const commandRunCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
+    rejectRetiredRunSpelling(args._);
     if (args.verbose === true) setVerbose(true);
     const timeoutMs = parsePositiveIntFlag(exactStringArg(args, "timeout-ms"), "--timeout-ms");
     const current: Record<string, unknown> = {};
@@ -91,12 +102,4 @@ export const commandRunCommand = defineJsonCommand({
     output("agent-result", result);
     if (!result.ok) process.exitCode = EXIT_CODES.GENERAL;
   },
-});
-
-export const commandCommand = defineGroupCommand({
-  meta: {
-    name: "command",
-    description: "Run reusable agent prompt templates through AKM's common execution resolver",
-  },
-  subCommands: { run: commandRunCommand },
 });

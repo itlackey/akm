@@ -34,11 +34,6 @@ const isolatedEnv = {
   APPDATA: undefined,
   LOCALAPPDATA: undefined,
   USERPROFILE: undefined,
-  AKM_CONFIG_DIR: undefined,
-  AKM_CACHE_DIR: undefined,
-  AKM_DATA_DIR: undefined,
-  AKM_STATE_DIR: undefined,
-  AKM_BUNDLE_DIR: undefined,
   HOME: SANDBOX_ROOT,
 } as const;
 
@@ -58,8 +53,8 @@ describe("resolveStorageLocations", () => {
     });
   });
 
-  test("honours AKM_DATA_DIR override for db paths", async () => {
-    await withEnv({ ...isolatedEnv, AKM_DATA_DIR: "/tmp/akm-storage-locations-override" }, () => {
+  test("honours an XDG_DATA_HOME override for db paths", async () => {
+    await withEnv({ ...isolatedEnv, XDG_DATA_HOME: "/tmp/akm-storage-locations-override" }, () => {
       const locations = resolveStorageLocations();
 
       expect(locations.dataDir).toBe(getDataDir());

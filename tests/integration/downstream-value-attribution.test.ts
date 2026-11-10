@@ -184,20 +184,24 @@ describe("downstream value attribution", () => {
 
   test("an asset outside memory-inference exposure records control usage metadata", async () => {
     const plain = await akmSearch({ query: "plainneedle", limit: 10 });
-    expect(plain.hits.map((hit) => ("ref" in hit ? hit.ref : undefined))).toContain("knowledge/plain-target");
+    expect(plain.results.map((hit) => ("ref" in hit ? hit.ref : undefined))).toContain("knowledge/plain-target");
     expect(metadataFor("plainneedle", "stash//knowledge/plain-target")).toEqual({
       downstreamAttribution: { version: 1, control: true },
     });
   });
 
-  test("brief search output does not attribute stripped derived surface content", async () => {
+  test("brief search output shows the derived description and attributes it", async () => {
     clearUsageRows();
     const result = await runCliCapture(["search", "surface-parent-needle", "--detail", "brief", "--format", "json"]);
     expect(result.code).toBe(0);
-    const output = JSON.parse(result.stdout) as { hits: Array<Record<string, unknown>> };
-    expect(output.hits.find((hit) => hit.name === "parent")?.description).toBeUndefined();
+    const output = JSON.parse(result.stdout) as { results: Array<Record<string, unknown>> };
+    expect(output.results.find((hit) => hit.name === "parent")?.description).toBe("direct-child-needle");
     expect(metadataFor("surface-parent-needle", "stash//memories/parent")).toEqual({
-      downstreamAttribution: { version: 1, control: true },
+      downstreamAttribution: {
+        version: 1,
+        control: false,
+        memoryInference: { exposure: "surface", childRef: "stash//memories/parent.derived" },
+      },
     });
   });
 
@@ -235,7 +239,7 @@ describe("downstream value attribution", () => {
     expect(indexedRefs).toContain("team//memories/team-only");
     expect(indexedRefs).toContain("team//memories/team-only.derived");
     const result = await akmSearch({ query: "team surface needle", source: "team", limit: 10 });
-    const teamHit = result.hits.find((hit) => hit.type !== "registry" && hit.name === "team-only" && "ref" in hit);
+    const teamHit = result.results.find((hit) => hit.type !== "registry" && hit.name === "team-only" && "ref" in hit);
     expect(teamHit && "ref" in teamHit ? teamHit.ref : undefined).toBe("team//memories/team-only");
     expect(teamHit && "expandTo" in teamHit ? teamHit.expandTo : undefined).toBe("team//memories/team-only.derived");
     expect(
@@ -258,7 +262,7 @@ describe("downstream value attribution", () => {
 
   test("duplicate-bundle expansion follows the same child that supplied the surface", async () => {
     const result = await akmSearch({ query: "team-parent-needle", source: "team", skipLogging: true });
-    const parent = result.hits.find((hit) => hit.type === "memory" && hit.name === "parent");
+    const parent = result.results.find((hit) => hit.type === "memory" && hit.name === "parent");
     expect(parent && "ref" in parent ? parent.ref : undefined).toBe("team//memories/parent");
     const expandTo = parent && "expandTo" in parent ? parent.expandTo : undefined;
     expect(expandTo).toBe("team//memories/parent.derived");
@@ -306,7 +310,7 @@ describe("downstream value attribution", () => {
 
   test("curate drops MI surface attribution when an internal path replaces the derived description", async () => {
     const searchResponse = await akmSearch({ query: "surface-parent-needle", limit: 10, skipLogging: true });
-    const parentHit = searchResponse.hits.find((hit) => hit.type === "memory" && hit.name === "parent");
+    const parentHit = searchResponse.results.find((hit) => hit.type === "memory" && hit.name === "parent");
     expect(parentHit?.description).toBe("direct-child-needle");
     if (parentHit) parentHit.description = "internal replacement";
 
@@ -321,7 +325,7 @@ describe("downstream value attribution", () => {
 
 test("real authored qualifications and tags survive search and curate without invented exposure", async () => {
   const result = await akmSearch({ query: "qualifiedneedle", skipLogging: true });
-  const hit = result.hits.find((candidate) => candidate.name === "qualified");
+  const hit = result.results.find((candidate) => candidate.name === "qualified");
   expect(hit?.description).toBe("Do not restart production; staging only, pending confirmation.");
   expect(hit && "tags" in hit ? hit.tags : undefined).toEqual(["manual", "production"]);
   expect(hit && "expandTo" in hit ? hit.expandTo : undefined).toBe("memories/qualified.derived");
@@ -345,8 +349,8 @@ test("tag-only fallback is attributed only by full search; curate never emits ta
     clearUsageRows();
     const result = await runCliCapture(["search", "tagonlyneedle", "--detail", detail, "--format", "json"]);
     expect(result.code).toBe(0);
-    const output = JSON.parse(result.stdout) as { hits: Array<Record<string, unknown>> };
-    const hit = output.hits.find((candidate) => candidate.name === "tag-only");
+    const output = JSON.parse(result.stdout) as { results: Array<Record<string, unknown>> };
+    const hit = output.results.find((candidate) => candidate.name === "tag-only");
     expect(hit?.tags).toEqual(detail === "full" ? ["derived tag"] : undefined);
     if (detail !== "brief") expect(hit?.description).toBe("tagonlyneedle Restart remains unverified; staging only.");
     expect(metadataFor("tagonlyneedle", "stash//memories/tag-only")).toEqual({
@@ -371,7 +375,7 @@ test("tag-only fallback is attributed only by full search; curate never emits ta
     "json",
   ]);
   expect(curated.code).toBe(0);
-  expect(JSON.parse(curated.stdout).items[0]?.description).toBe(
+  expect(JSON.parse(curated.stdout).results[0]?.description).toBe(
     "tagonlyneedle Restart remains unverified; staging only.",
   );
   expect(metadataFor("tagonlyneedle", "stash//memories/tag-only")).toEqual({
@@ -390,7 +394,7 @@ test("filename-generated parent description and tags fall back independently to 
   expect(indexed.description.trim()).not.toBe("");
   expect(indexed.tags).toEqual(["parent"]);
   const result = await akmSearch({ query: "surface-parent-needle", skipLogging: true });
-  const hit = result.hits.find((candidate) => candidate.name === "parent");
+  const hit = result.results.find((candidate) => candidate.name === "parent");
   expect(hit?.description).toBe("direct-child-needle");
   expect(hit && "tags" in hit ? hit.tags : undefined).toEqual(["derived insight"]);
   expect(hit && getSearchHitAttribution(hit)?.memoryInference?.surfaceFields).toEqual(["description", "tags"]);
@@ -415,7 +419,7 @@ for (const authoredTags of [undefined, ["auth"], ["manual", "auth"]]) {
     );
     await akmIndex({ stashDir: storage.stashDir, full: true });
     const result = await akmSearch({ query: "nestedtagneedle", skipLogging: true });
-    const hit = result.hits.find((candidate) => candidate.name === name);
+    const hit = result.results.find((candidate) => candidate.name === name);
     expect(hit?.description).toBe("nestedtagneedle Staging only.");
     const preservesTags = authoredTags?.includes("manual");
     expect(hit && "tags" in hit ? hit.tags : undefined).toEqual(

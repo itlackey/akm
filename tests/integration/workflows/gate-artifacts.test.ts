@@ -15,7 +15,7 @@ import { computeStepWorkList, type GateFeedback } from "../../../src/workflows/e
 import type { WorkflowPlan as WorkflowPlanGraph } from "../../../src/workflows/plan";
 import { getWorkflowStatus, resumeWorkflowRun } from "../../../src/workflows/runtime/runs";
 import type { SummaryJudge } from "../../../src/workflows/validate-summary";
-import { type Cleanup, sandboxEnvDir } from "../../_helpers/sandbox";
+import { type Cleanup, sandboxAkmDir } from "../../_helpers/sandbox";
 import { freezeWorkflow, runWorkflowSteps, storeFrozenWorkflowPlan } from "../../_helpers/workflow";
 
 /**
@@ -91,7 +91,7 @@ function useFrozenPlan(frozen: WorkflowPlanGraph): () => Promise<WorkflowPlanGra
 }
 
 beforeEach(() => {
-  const sandboxed = sandboxEnvDir("akm-gate-artifacts-", "AKM_DATA_DIR");
+  const sandboxed = sandboxAkmDir("akm-gate-artifacts-", "data");
   tmpDir = sandboxed.dir;
   cleanup = sandboxed.cleanup;
 });

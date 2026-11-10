@@ -37,7 +37,7 @@ let storage: IsolatedAkmStorage;
 let warnings: string[];
 
 beforeEach(() => {
-  storage = withIsolatedAkmStorage();
+  storage = withIsolatedAkmStorage({}, { bundle: false });
   resetConfigCache();
   warnings = [];
   _setWarnSinkForTests((level, args) => {
@@ -90,6 +90,18 @@ function endpoint(base: string, models: string[]) {
 const MODELS = ["qwen3-8b", "nomic-embed-text", "qwen3-32b"];
 const run = (raw: RawSetupFlags = {}, extra: { noProbe?: boolean } = {}) =>
   runSetupWithDefaults({ noInit: true, flags: flags(raw), ...extra });
+
+describe("akm setup --yes on an empty host", () => {
+  test("writes the choices made, not the shipped defaults, and the config reads back the same", async () => {
+    await run({}, { noProbe: true });
+
+    const saved = written();
+    expect("registries" in saved).toBe(false);
+    expect("output" in saved).toBe(false);
+    expect(loadUserConfig().registries?.length).toBeGreaterThan(0);
+    expect(loadUserConfig().output).toEqual({ format: "json", detail: "brief" });
+  });
+});
 
 describe("akm setup --endpoint --yes", () => {
   test("the standard quick start: one connection named default, one model per alias, nothing else", async () => {
@@ -557,7 +569,8 @@ describe("akm setup --from <file> --yes with answer flags", () => {
       }),
     );
 
-    expect(written().output).toEqual({ format: "text", detail: "brief" });
+    // detail is the shipped default, so the file does not carry it.
+    expect(written().output).toEqual({ format: "text" });
     expect((written().connections as Record<string, unknown>).default).toBeDefined();
     expect(summary.fields).toEqual(["output"]);
   });

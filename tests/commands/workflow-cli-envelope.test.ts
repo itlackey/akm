@@ -18,7 +18,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { runCliCapture } from "../_helpers/cli";
-import { makeSandboxDir, type SandboxedDir, withEnv, writeWorkflowTestConfig } from "../_helpers/sandbox";
+import { makeSandboxDir, type SandboxedDir, withBundle, withEnv, writeWorkflowTestConfig } from "../_helpers/sandbox";
 
 const disposers: SandboxedDir[] = [];
 
@@ -70,12 +70,11 @@ function writeWorkflowSource(): string {
 }
 
 async function runCli(args: string[], stashDir: string): Promise<{ stdout: string; stderr: string; status: number }> {
-  const { code, stdout, stderr } = await withEnv(
-    { AKM_BUNDLE_DIR: stashDir, XDG_CONFIG_HOME: path.join(stashDir, ".config") },
-    () => {
+  const { code, stdout, stderr } = await withEnv({ XDG_CONFIG_HOME: path.join(stashDir, ".config") }, () =>
+    withBundle(stashDir, () => {
       writeWorkflowTestConfig();
       return runCliCapture(args);
-    },
+    }),
   );
   return { stdout, stderr, status: code };
 }
@@ -96,8 +95,7 @@ describe("akm workflow — JSON envelope snapshot (WS6)", () => {
     expect(env.ok).toBe(true);
     expect(typeof env.path).toBe("string");
     expect(fs.existsSync(env.path as string)).toBe(true);
-    // 0.9.2 review round 2 (P4 sweep criterion-21 caveat, spec
-    // docs/plans/specs/p4-deletions-closeout.md §4.1 row B-49): the
+    // 0.9.2 review round 2 (P4 sweep criterion-21 caveat): the
     // envelope's third member is `bundleDir` — BREAKING vs 0.9.1, which
     // leaked `stashDir` here (src/workflows/authoring/authoring.ts).
     expect(env.bundleDir).toBe(stash);
@@ -186,9 +184,9 @@ describe("akm workflow — JSON envelope snapshot (WS6)", () => {
     expect(env.code).toBe("UNKNOWN_COMMAND");
   });
 
-  // P3b Lane B (spec docs/plans/specs/p3b-child-executor.md §4.6, §6 F-B2):
+  // P3b Lane B:
   // ONE additive arm, in the same additive convention P2b used for
-  // `task explain` (tests/integration/commands/tasks-explain.test.ts) —
+  // `task explain` (tests/commands/tasks-explain.test.ts) —
   // every pre-existing test above is byte-unchanged.
   test("workflow plan --format json: envelope carries ok, planHash, published:false, and a steps array", async () => {
     const stash = makeStashDir();

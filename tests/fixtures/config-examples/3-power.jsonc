@@ -51,7 +51,6 @@
     },
     "qualityGate": { "connection": "anthropic" }
   },
-  "index": { "model": "fast" },
   "embedding": { "model": "nomic-embed-text" },
 
   // Assets pick with the same words and keep their own portable settings, unchanged:

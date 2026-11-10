@@ -2,164 +2,18 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-/**
- * Config CLI commands — `akm config get/set/unset/list`.
- *
- * Thin wrappers around the schema walker in `core/config-walker.ts`. Adding a
- * new config field is one line of Zod schema in `core/config-schema.ts` and
- * zero lines here — the walker handles get/set/unset/coercion uniformly.
- *
- * `configVersion` is controlled by the config lifecycle. All execution
- * settings use their canonical connection, harness and strategy paths; retired aliases are not
- * rewritten at this boundary.
- */
-import { isDeepStrictEqual } from "node:util";
 import { defineGroupCommand, defineJsonCommand, output } from "../cli/shared";
-import { isRecord } from "../core/common";
-import {
-  type AkmConfig,
-  DEFAULT_CONFIG,
-  getConfigValueSource,
-  loadConfig,
-  mutateConfig,
-  parseAndValidateConfigText,
-  resolveConfigRefSource,
-  unusableEntryAt,
-} from "../core/config/config";
-import { configGet, configSet, configUnset, unknownKeyHint } from "../core/config/config-walker";
-import { isEnvReference } from "../core/config/schema/primitives";
-import { UsageError } from "../core/errors";
+import { getConfigValueSource, loadConfig, mutateConfig } from "../core/config/config";
 import { getConfigPath } from "../core/paths";
-import { formatRegistryUrl } from "../core/registry-url";
-
-// ── Public API ──────────────────────────────────────────────────────────────
-
-export function getConfigValue(config: AkmConfig, key: string): unknown {
-  return redactConfigValue(configGet(config as unknown as Record<string, unknown>, key), key.split("."));
-}
-
-export function setConfigValue(config: AkmConfig, key: string, rawValue: string): AkmConfig {
-  return configSet(config as unknown as Record<string, unknown>, key, rawValue) as unknown as AkmConfig;
-}
-
-export function unsetConfigValue(config: AkmConfig, key: string): AkmConfig {
-  return configUnset(config as unknown as Record<string, unknown>, key) as unknown as AkmConfig;
-}
-
-/**
- * Refuse an unset that would do nothing. A key only an `extends` base supplies has nothing local to remove:
- * `unsetConfigValue` would silently no-op and the value comes right back on the next load. An entry the reader drops
- * is not in the config `unsetConfigValue` sees, so it would no-op and say ok. Refuse before mutating rather than
- * pretend it worked.
- */
-export function assertUnsettable(key: string): void {
-  const source = getConfigValueSource(key);
-  if (source.startsWith("extends:")) {
-    throw new UsageError(
-      `Config key "${key}" is inherited from ${source} and cannot be unset here.`,
-      "TARGET_NOT_UPDATABLE",
-      `Override it locally with "akm config set ${key} <value>", or edit the base file directly.`,
-    );
-  }
-  const ignored = unusableEntryAt(key);
-  if (ignored) {
-    throw new UsageError(
-      `Config key "${key}" is inside ${ignored.kind} "${ignored.name}", which akm ignores (${ignored.why}), so \`akm config\` cannot edit it.`,
-      "TARGET_NOT_UPDATABLE",
-      ignored.inFile
-        ? `Remove or fix the ${ignored.group}.${ignored.name} entry in ${getConfigPath()} by hand.`
-        : `${getConfigPath()} is still in the retired engines form: run \`akm migrate apply\` first, then fix or remove the entry.`,
-    );
-  }
-}
-
-export function listConfig(config: AkmConfig): Record<string, unknown> {
-  // Sources live in `bundles` (spread from config); the
-  // retired top-level `sources[]` array is no longer surfaced.
-  return redactConfigValue({ ...DEFAULT_CONFIG, ...config }) as Record<string, unknown>;
-}
-
-function redactConfigValue(value: unknown, path: string[] = []): unknown {
-  if (path.at(-1) === "apiKey" && typeof value === "string" && !isEnvReference(value)) return undefined;
-  if (typeof value === "string" && isRegistryUrlPath(path)) return formatRegistryUrl(value);
-  if (Array.isArray(value)) return value.map((child, index) => redactConfigValue(child, [...path, String(index)]));
-  if (!value || typeof value !== "object") return value;
-  const result: Record<string, unknown> = {};
-  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-    if (key !== "apiKey" || (typeof child === "string" && isEnvReference(child))) {
-      result[key] = redactConfigValue(child, [...path, key]);
-    }
-  }
-  return result;
-}
-
-function isRegistryUrlPath(path: string[]): boolean {
-  return path[0] === "registries" && path.at(-1) === "url";
-}
-
-export { unknownKeyHint };
-
-// ── `akm config diff` (#945) ────────────────────────────────────────────────
-
-export interface ConfigDiffRow {
-  path: string;
-  local: unknown;
-  other: unknown;
-}
-
-/**
- * Flatten a (redacted) config object down to `{dottedPath: leafValue}`
- * entries. A plain object descends; an array or scalar is a leaf — matching
- * `deepMergeConfig`'s own "objects merge, arrays replace wholesale" rule, so
- * an array difference reports as one row rather than per-index noise.
- */
-function flattenConfigLeaves(value: unknown, prefix: string[], out: Map<string, unknown>): void {
-  if (isRecord(value) && Object.keys(value).length > 0) {
-    for (const [key, child] of Object.entries(value)) flattenConfigLeaves(child, [...prefix, key], out);
-    return;
-  }
-  out.set(prefix.join("."), value);
-}
-
-/**
- * Diff two (already redacted) effective config objects into sorted
- * `{path, local, other}` rows for every leaf that differs — including a leaf
- * present on only one side (the other's value reads `undefined`).
- */
-function diffConfigs(local: unknown, other: unknown): ConfigDiffRow[] {
-  const localLeaves = new Map<string, unknown>();
-  const otherLeaves = new Map<string, unknown>();
-  flattenConfigLeaves(local, [], localLeaves);
-  flattenConfigLeaves(other, [], otherLeaves);
-  const paths = new Set([...localLeaves.keys(), ...otherLeaves.keys()]);
-  const rows: ConfigDiffRow[] = [];
-  for (const path of paths) {
-    const localValue = localLeaves.get(path);
-    const otherValue = otherLeaves.get(path);
-    if (!isDeepStrictEqual(localValue, otherValue)) rows.push({ path, local: localValue, other: otherValue });
-  }
-  rows.sort((a, b) => a.path.localeCompare(b.path));
-  return rows;
-}
-
-/**
- * `akm config diff <path|bundle//path>`: the current effective config
- * (this instance's `extends` already applied) against another config file or
- * bundle-relative file (loaded through the same loader, its own `extends`
- * honoured), secrets redacted on both sides before comparison so a differing
- * secret never round-trips into the diff.
- */
-export function akmConfigDiff(ref: string): { rows: ConfigDiffRow[] } {
-  const current = loadConfig();
-  const { text, resolvedPath } = resolveConfigRefSource(
-    ref,
-    current as unknown as Record<string, unknown>,
-    getConfigPath(),
-  );
-  const other = parseAndValidateConfigText(text, resolvedPath);
-  const rows = diffConfigs(redactConfigValue(current), redactConfigValue(other));
-  return { rows };
-}
+import {
+  akmConfigDiff,
+  assertUnsettable,
+  getConfigValue,
+  listConfig,
+  redactSecretKeys,
+  setConfigValue,
+  unsetConfigValue,
+} from "./config";
 
 // ── `akm config` command surface ────────────────────────────────────────────
 // Extracted verbatim from src/cli.ts (WS6). The `main.subCommands.config` key
@@ -184,7 +38,7 @@ export const configCommand = defineGroupCommand({
     list: defineJsonCommand({
       meta: { name: "list", description: "List current configuration" },
       run() {
-        output("config", listConfig(loadConfig()));
+        output("config", redactSecretKeys(listConfig(loadConfig())));
       },
     }),
     get: defineJsonCommand({
@@ -193,13 +47,16 @@ export const configCommand = defineGroupCommand({
         key: { type: "positional", required: true, description: "Config key (for example: embedding, defaultBundle)" },
         "show-source": {
           type: "boolean",
-          description: "Wrap the value as { value, source } (local, extends:<ref> or default)",
+          description: "Wrap the value as { value, source } (local or default)",
           default: false,
         },
       },
       run({ args }) {
         const value = getConfigValue(loadConfig(), args.key);
-        output("config", args["show-source"] ? { value, source: getConfigValueSource(args.key) } : value);
+        output(
+          "config",
+          args["show-source"] ? { value: value ?? null, source: getConfigValueSource(args.key) } : (value ?? null),
+        );
       },
     }),
     set: defineJsonCommand({
@@ -229,7 +86,7 @@ export const configCommand = defineGroupCommand({
       run({ args }) {
         const updated = mutateConfig((current) => setConfigValue(current, args.key, args.value)).config;
         if (!args.silent) {
-          output("config", listConfig(updated));
+          output("config", redactSecretKeys(listConfig(updated)));
         }
       },
     }),
@@ -252,21 +109,20 @@ export const configCommand = defineGroupCommand({
         const result = mutateConfig((current) => unsetConfigValue(current, args.key), { absentNoop: true });
         const updated = result.config;
         if (!args.silent) {
-          output("config", listConfig(updated));
+          output("config", redactSecretKeys(listConfig(updated)));
         }
       },
     }),
     diff: defineJsonCommand({
       meta: {
         name: "diff",
-        description:
-          "Show effective-config differences against another config file or bundle-relative file, secrets redacted",
+        description: "Show effective-config differences against another config file, secrets redacted",
       },
       args: {
         ref: {
           type: "positional",
           required: true,
-          description: "Other config: a file path or bundle//path (relative to the bundle's content root)",
+          description: "Other config file path",
         },
       },
       run({ args }) {

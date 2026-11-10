@@ -154,8 +154,7 @@ function detectClaudeCode(strict = false): Detected {
   const marketplaces = runCommand("claude", ["plugin", "marketplace", "list", "--json"], READ_TIMEOUT_MS);
   if (!marketplaces.ok) {
     const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
-    const pluginsRoot =
-      process.env.AKM_CLAUDE_PLUGINS_DIR ?? process.env.CLAUDE_CODE_PLUGIN_CACHE_DIR ?? path.join(configDir, "plugins");
+    const pluginsRoot = process.env.CLAUDE_CODE_PLUGIN_CACHE_DIR ?? path.join(configDir, "plugins");
     const configured = fs.existsSync(path.join(pluginsRoot, "known_marketplaces.json"));
     return {
       entry:
@@ -190,10 +189,7 @@ function upgradeClaudeCode(dryRun: boolean, next: boolean, channel?: UpgradeChan
   if (channel && !dryRun) {
     try {
       const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
-      const pluginsRoot =
-        process.env.AKM_CLAUDE_PLUGINS_DIR ??
-        process.env.CLAUDE_CODE_PLUGIN_CACHE_DIR ??
-        path.join(configDir, "plugins");
+      const pluginsRoot = process.env.CLAUDE_CODE_PLUGIN_CACHE_DIR ?? path.join(configDir, "plugins");
       backups = writeChannelEdits(
         claudeChannelEdits(
           configDir,
@@ -713,7 +709,7 @@ export interface UpgradeRunDependencies {
   ) => Promise<UpgradeCheckResponse>;
   performUpgrade: (
     check: UpgradeCheckResponse,
-    opts: { force: boolean; skipPostUpgrade: boolean; targetVersion?: string },
+    opts: { force: boolean; skipPostUpgrade: boolean; skipChecksum?: boolean; targetVersion?: string },
   ) => Promise<UpgradeResponse>;
 }
 
@@ -886,8 +882,7 @@ function preflightMarketplaceChannels(channel: UpgradeChannel, allowDowngrade: b
     throw new UsageError(`Could not inventory Claude before switching channels: ${claude.entry.message}`);
   if (!("entry" in claude)) {
     const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
-    const pluginsRoot =
-      process.env.AKM_CLAUDE_PLUGINS_DIR ?? process.env.CLAUDE_CODE_PLUGIN_CACHE_DIR ?? path.join(configDir, "plugins");
+    const pluginsRoot = process.env.CLAUDE_CODE_PLUGIN_CACHE_DIR ?? path.join(configDir, "plugins");
     claudeChannelEdits(
       configDir,
       pluginsRoot,
@@ -921,6 +916,7 @@ export async function runUpgrade(
     check: boolean;
     force: boolean;
     skipPostUpgrade: boolean;
+    skipChecksum?: boolean;
     next?: boolean;
     channel?: string;
     allowDowngrade?: boolean;
@@ -990,6 +986,7 @@ export async function runUpgrade(
   const upgraded = await deps.performUpgrade(check, {
     force: args.force,
     skipPostUpgrade: args.skipPostUpgrade,
+    ...(args.skipChecksum ? { skipChecksum: true } : {}),
     // A package manager install must name the version, or `@latest` goes past the pin
     // (or past the prerelease that `--next` chose).
     ...(switchChannel || check.lockstep?.heldBack || (next && check.latestVersion)

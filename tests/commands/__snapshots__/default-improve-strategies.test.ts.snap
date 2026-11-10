@@ -3,7 +3,6 @@
 exports[`default improve strategies (#552) complete resolved trees are pinned for all built-ins: default 1`] = `
 {
   "config": {
-    "description": "Standard improve pass — reflect (rewrites only from negative feedback), distill, consolidation (promotion plus the reviewed pair-pass retire/supersede proposals), and validation. Memory inference is listed below but only runs when experimental.improveAutonomy is set; improve-stage extract off. Proactive maintenance plans up to 15 assets not reflected or distilled for 30 days.",
     "processes": {
       "consolidate": {
         "allowedTypes": [
@@ -67,7 +66,6 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
 exports[`default improve strategies (#552) complete resolved trees are pinned for all built-ins: consolidate 1`] = `
 {
   "config": {
-    "description": "Consolidation-only pass — merges, deduplicates, and prunes memories every 4h.",
     "processes": {
       "consolidate": {
         "allowedTypes": [

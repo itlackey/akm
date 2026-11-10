@@ -6,7 +6,7 @@
  * `akm env` command family. Extracted verbatim from src/cli.ts (WS6) so the God
  * Module shrinks; the `main.subCommands.env` key and every subcommand's
  * args/output shape are byte-identical. The ref-resolution helpers
- * (parseEnvRef / makeEnvRef / resolveEnvPath) live in src/core/env-secret-ref.ts so env + secret share one
+ * (parseEnvRef / makeEnvRef / resolveEnvPath) live in src/sources/env-secret-ref.ts so env + secret share one
  * copy.
  *
  * `akm env` manages whole `.env` files under each stash's env/ directory.
@@ -24,6 +24,9 @@ import { getParsedInvocation } from "../../cli/invocation";
 import { getStringArg } from "../../cli/parse-args";
 import { defineGroupCommand, defineJsonCommand, output } from "../../cli/shared";
 import { writeFileAtomic } from "../../core/common";
+import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
+import { warn } from "../../core/warn";
+import { readStdin } from "../../runtime";
 import {
   listEnvsRecursive,
   makeEnvRef,
@@ -31,10 +34,7 @@ import {
   resolveEnvWriteTarget,
   sensitiveMarkerPath,
   withEnvSecretWrite,
-} from "../../core/env-secret-ref";
-import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
-import { warn } from "../../core/warn";
-import { readStdin } from "../../runtime";
+} from "../../sources/env-secret-ref";
 import { buildChildEnv } from "./child-env";
 
 const envListCommand = defineJsonCommand({
@@ -70,7 +70,7 @@ const envCreateCommand = defineJsonCommand({
     },
     bundle: {
       type: "string",
-      description: "Write destination: a source name (default: defaultWriteTarget)",
+      description: "Write destination: a source name (default: defaultBundle)",
     },
   },
   async run({ args }) {
@@ -327,14 +327,6 @@ const envRunCommand = defineJsonCommand({
       type: "string",
       description: "With --clean, also inherit these parent env vars (comma-separated)",
     },
-    // Deprecated no-op, accepted through 0.10 so scripts that pass it do not
-    // fail with UNKNOWN_FLAG. Installing a bundle is the trust decision: env
-    // run no longer blocks process-hijacking keys.
-    "allow-dangerous-env-keys": {
-      type: "boolean",
-      description: "Deprecated, no effect (accepted through 0.10)",
-      default: false,
-    },
   },
   async run({ args }) {
     await runEnvInjected(args.target, {
@@ -353,7 +345,7 @@ const envRemoveCommand = defineJsonCommand({
     yes: { type: "boolean", alias: "y", description: "Skip confirmation prompt", default: false },
     bundle: {
       type: "string",
-      description: "Write destination: a source name (default: defaultWriteTarget)",
+      description: "Write destination: a source name (default: defaultBundle)",
     },
   },
   async run({ args }) {

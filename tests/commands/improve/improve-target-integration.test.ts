@@ -5,15 +5,14 @@ import { akmConsolidate } from "../../../src/commands/improve/consolidate";
 import { akmImprove } from "../../../src/commands/improve/improve";
 import type { AkmConfig, ImproveProfileConfig } from "../../../src/core/config/config";
 import { ConfigError, UsageError } from "../../../src/core/errors";
-import { resolveWriteTarget } from "../../../src/core/write-source";
 import { getCachePaths, parseGitRepoUrl } from "../../../src/sources/providers/git";
 import { getWebsiteCachePaths } from "../../../src/sources/snapshot-fetchers/website-ingest";
+import { resolveWriteTarget } from "../../../src/sources/write-source";
 import { withTestImproveLlm } from "../../_helpers/improve-config";
 import { seedLockEntries } from "../../_helpers/lockfile";
 import {
   type Cleanup,
   makeStashDir,
-  mutateScopedEnv,
   type SandboxedDir,
   sandboxXdgDataHome,
   withMockedFetch,
@@ -37,7 +36,6 @@ const noOperations = () =>
 
 function targetConfig(primary: string, team: string, readonly: string): AkmConfig {
   return withTestImproveLlm({
-    configVersion: "0.9.0",
     semanticSearchMode: "off",
     bundles: {
       primary: { path: primary, writable: true },
@@ -45,7 +43,6 @@ function targetConfig(primary: string, team: string, readonly: string): AkmConfi
       vendor: { path: readonly, writable: false },
     },
     defaultBundle: "primary",
-    defaultWriteTarget: "primary",
   } as AkmConfig);
 }
 
@@ -84,17 +81,15 @@ describe("improve named target integration", () => {
     expect(path.resolve(selectedRoot ?? "")).toBe(path.resolve(team));
   });
 
-  test("a dry run without a selector previews the working bundle the live run writes to (AKM_BUNDLE_DIR first)", async () => {
+  test("a dry run without a selector previews the working bundle the live run writes to", async () => {
     const primary = stash();
     const team = stash();
-    // No `defaultWriteTarget`, so both runs start from the working bundle, which AKM_BUNDLE_DIR overrides.
+    // No explicit target, so both runs start from the working bundle: the default one.
     const config = withTestImproveLlm({
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       bundles: { primary: { path: primary, writable: true }, team: { path: team, writable: true } },
       defaultBundle: "primary",
     } as AkmConfig);
-    mutateScopedEnv("AKM_BUNDLE_DIR", team);
     let selectedRoot: string | undefined;
 
     await akmImprove({
@@ -107,7 +102,7 @@ describe("improve named target integration", () => {
     });
 
     expect(path.resolve(selectedRoot ?? "")).toBe(path.resolve(resolveWriteTarget(config).source.path));
-    expect(path.resolve(selectedRoot ?? "")).toBe(path.resolve(team));
+    expect(path.resolve(selectedRoot ?? "")).toBe(path.resolve(primary));
   });
 
   test("a qualified scope selects its bundle and conflicts with a different --bundle", async () => {
@@ -245,14 +240,12 @@ describe("improve named target integration", () => {
         seedLockEntries([{ id: "vendor", source: "npm", ref: "npm:improve-read-only@1.0.0", localRoot: vendor }]);
       }
       const config = withTestImproveLlm({
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         bundles: {
           primary: { path: primary, writable: true },
           vendor: kind === "website" ? { website: { url: websiteUrl } } : { npm: "npm:improve-read-only@1.0.0" },
         },
         defaultBundle: "primary",
-        defaultWriteTarget: "primary",
       } as AkmConfig);
       let selectedRoot: string | undefined;
 
@@ -313,14 +306,12 @@ describe("improve named target integration", () => {
       const expectedRoot = layout === "content" ? path.join(paths.repoDir, "content") : paths.repoDir;
       fs.mkdirSync(expectedRoot, { recursive: true });
       const config = withTestImproveLlm({
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         bundles: {
           stash: { path: primary, writable: true },
           team: { git: url, writable: true },
         },
-        defaultBundle: "stash",
-        defaultWriteTarget: "team",
+        defaultBundle: "team",
       } as AkmConfig);
       let selectedRoot: string | undefined;
 

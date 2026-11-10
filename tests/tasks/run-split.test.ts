@@ -3,13 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * STRUCTURAL contract for P1b's `src/tasks/run/**` split (spec
- * docs/plans/specs/p1b-model-extraction.md §5.1, §9 "Structure"). Sibling to
+ * STRUCTURAL contract for P1b's `src/tasks/run/**` split. Sibling to
  * `tests/tasks/prepare-split.test.ts` (Lane B's caller-shape parity contract)
  * but for Lane C, and narrower in scope on purpose: Lane C's *behavior* is
- * already pinned exhaustively elsewhere — the flipped P0 characterization
- * files (tasks-provenance-characterization.test.ts,
- * tasks-legacy-vocabulary-characterization.test.ts), the two P1b files
+ * already pinned exhaustively elsewhere — tests/integration/tasks/tasks-provenance-context.test.ts,
+ * tests/integration/tasks/tasks-result-vocabulary.test.ts, the two P1b files
  * (tasks-provenance-context.test.ts, tasks-result-vocabulary.test.ts), and
  * cli-errors.test.ts. What NONE of those files pins is whether
  * `src/tasks/run/**` actually holds the real logic, independent of any other
@@ -31,8 +29,7 @@
  *   (b) `src/tasks/runner.ts` — the 1177-line-at-head module `src/tasks/run/**`
  *       was split out of, kept alive afterward only as a re-export compat
  *       shim (spec §9: "runner.ts contains no logic — only re-exports") —
- *       does not exist. P4 (docs/plans/specs/p4-deletions-closeout.md
- *       §3.2.7, row B-26, F-A2.16) deleted it once every caller was rewired
+ *       does not exist. P4 deleted it once every caller was rewired
  *       to import `src/tasks/run/**` directly; its own former "no function/
  *       class declarations of its own" AST scan and the "no file under
  *       src/tasks/run/** imports runner.ts" one-way-rule scan (spec §5.1)

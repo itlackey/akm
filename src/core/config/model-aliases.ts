@@ -20,18 +20,11 @@ export const SHIPPED_ALIAS = {
   improve: "fast",
   /** Judges: the reflect and distill quality gates, the triage judgment, a workflow gate. */
   judge: "balanced",
-  /** Agent work: `akm agent`, `command run`, `proposal new`, task dispatch, workflow agent units. */
+  /** Agent work: `akm agent`, `command`, `proposal new`, task dispatch, workflow agent units. */
   agent: "balanced",
   extract: "fast",
   enrich: "fast",
-  /** The index passes. */
-  index: "fast",
 } as const satisfies Record<string, StandardAlias>;
-
-/** One model answering to every standard alias: what a connection with a single model has. */
-export function modelForEveryAlias(model: string): Record<StandardAlias, string> {
-  return { fast: model, balanced: model, reasoning: model };
-}
 
 /** What an alias maps to: a model's name, or the name together with request fields of its own. */
 export type ModelEntry = string | { readonly model: string; readonly [field: string]: unknown };

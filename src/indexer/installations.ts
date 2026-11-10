@@ -53,7 +53,7 @@ import { detectAdapterId } from "../core/adapter/detect-adapter";
 import type { BundleInstallation } from "../core/adapter/types";
 import { conceptIdFromTypeName } from "../core/asset/resolve-ref";
 import { deriveBundleId, deriveBundleIds, slugForPath } from "../core/bundle-id";
-import { isSourceWriteActivated } from "../core/write-source";
+import { isSourceWriteActivated } from "../sources/write-source";
 import type { EntryProvenance } from "../storage/repositories/index-entry-types";
 import type { SearchSource } from "./search/search-source";
 

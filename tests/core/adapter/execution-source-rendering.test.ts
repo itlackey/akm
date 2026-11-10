@@ -222,6 +222,26 @@ describe("adapter-rendered execution sources", () => {
     }
   });
 
+  test("a retired `engine:` is refused, at the top level or under `akm`, naming the command that rewrites it", () => {
+    for (const kind of ["command", "persona"] as const) {
+      for (const metadata of ["engine: selected", "akm:\n  engine: selected"]) {
+        expect(() =>
+          renderMarkdownExecutionSource({
+            kind,
+            raw: `---\n${metadata}\n---\nDo work.\n`,
+            identity: {
+              ref: "fixture//agents/retired-engine",
+              bundle: "fixture",
+              adapter: "akm",
+              file: "agents/retired-engine.md",
+            },
+            defaults: (data) => executionDefaultsFromFrontmatter(data, { kind, allowTopLevelEngine: true }),
+          } as Parameters<typeof renderMarkdownExecutionSource>[0]),
+        ).toThrow(/key "engine" is retired.*akm migrate apply.*read-only/s);
+      }
+    }
+  });
+
   test("an alias reference still fails via toJS's own maxAliasCount bound, now as a UsageError naming the file", () => {
     expect(() =>
       parseExecutionMarkdown("---\nmodel: &chosen one\nengine: *chosen\n---\nDo work.\n", "commands/aliased.md"),
@@ -252,9 +272,6 @@ describe("adapter-rendered execution sources", () => {
     expect(renderDefaults("akm:\n  inference: {}", "persona").defaults).toEqual({ inference: {} });
     expect(() => renderDefaults("temperature: false", "persona")).toThrow(/frontmatter\.temperature|number/i);
     expect(() => renderDefaults("effort: {}", "persona")).toThrow(/frontmatter\.effort|string/i);
-    expect(() => renderDefaults("engine: selected\nakm:\n  engine: false", "persona")).toThrow(
-      /frontmatter\.akm\.engine|engine.*string/i,
-    );
     expect(() => renderDefaults("schema: {}\nakm:\n  schema: false", "persona")).toThrow(
       /frontmatter\.akm\.schema|schema.*object/i,
     );

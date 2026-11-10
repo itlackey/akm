@@ -5,19 +5,27 @@
 /** First-run setup for a host: what this computer offers, the library, and the agent programs akm may use. */
 
 import path from "node:path";
-import { defaultConnection, loadConfig, primaryBundlePath, resetConfigCache } from "../core/config/config";
+import { setConfigValue, unsetConfigValue } from "../commands/config";
+import { akmTasksAdd } from "../commands/tasks/tasks";
+import {
+  type AkmConfig,
+  defaultConnection,
+  loadConfig,
+  mutateConfig,
+  primaryBundlePath,
+  resetConfigCache,
+} from "../core/config/config";
 import { STANDARD_ALIASES } from "../core/config/model-aliases";
-import { sameEndpoint } from "../core/endpoint-url";
 import { UsageError } from "../core/errors";
 import { getDefaultStashDir } from "../core/paths";
 import { warnOnce } from "../core/warn";
 import { detectEnvironment } from "../setup/detect";
 import { learningStatus, setLearning } from "../setup/learning";
 import { parseSetupFlags } from "../setup/setup-flags";
+import { applySetupAnswers } from "../setup/setup-plan";
 import { describeRuns, runsReadOnly, unrestrictedModelWorkNote } from "../setup/summary";
 import { listEmbeddedTasks } from "../tasks/embedded";
-import { runCli } from "./cli-child";
-import { change } from "./config";
+import { type HostCli, runCli } from "./cli-child";
 import { preserveUnrelatedConfig } from "./readers";
 import * as tasks from "./tasks";
 
@@ -70,12 +78,15 @@ export async function detect() {
  * (`improve.enabled: false`) and nothing else; on removes it, runs improve on `harness` (`improve.harness`, else the
  * connection `improve.connection`) and enables the `improve` task.
  */
-export async function apply(input: {
-  dir?: string;
-  harness?: string[];
-  connection?: { endpoint: string; model: string; apiKeyEnv?: string };
-  learning?: { on: boolean; harness?: string };
-}) {
+export async function apply(
+  input: {
+    dir?: string;
+    harness?: string[];
+    connection?: { endpoint: string; model: string; apiKeyEnv?: string };
+    learning?: { on: boolean; harness?: string };
+  },
+  host?: HostCli,
+) {
   for (const key of Object.keys(input)) {
     if (!APPLY_FIELDS.includes(key)) warnOnce(`setup-apply:${key}`, `[setup] apply: ignoring unknown field "${key}".`);
   }
@@ -93,38 +104,45 @@ export async function apply(input: {
     throw new UsageError("learning must say whether it is on.");
   const config = loadConfig();
   preserveUnrelatedConfig(config);
-  await runCli(
-    harness?.length
-      ? ["setup", "--yes", "--no-probe", ...(dir ? [`--dir=${dir}`] : []), `--harness=${harness.join(",")}`]
-      : ["bundle", "create", `--dir=${dir ?? primaryBundlePath(config) ?? getDefaultStashDir()}`],
-  );
-  if (checked || learning) await writeLearning(checked, learning);
-  return detect();
+  await (harness?.length
+    ? runCli(
+        ["setup", "--yes", "--no-probe", ...(dir ? [`--dir=${dir}`] : []), `--harness=${harness.join(",")}`],
+        "setup",
+      )
+    : runCli(
+        ["bundle", "create", `--dir=${dir ?? primaryBundlePath(config) ?? getDefaultStashDir()}`],
+        "bundle-create",
+      ));
+  const warnings = checked || learning ? await writeLearning(checked, learning, host) : [];
+  return { ...(await detect()), ...(warnings.length ? { warnings } : {}) };
 }
 
 async function writeLearning(
   connection: { endpoint: string; model: string; apiKeyEnv?: string } | undefined,
   learning: { on: boolean; harness?: string } | undefined,
+  host: HostCli | undefined,
 ) {
   resetConfigCache();
   const config = loadConfig();
   const set: Record<string, string> = {};
   const unset: string[] = [];
   const connectionName = defaultConnection(config)?.name ?? (connection ? "default" : undefined);
-  if (connection && connectionName) {
-    // As `akm setup` writes a connection: a key belongs to the endpoint it was given for, so a new endpoint without
-    // its own variable drops the old reference; an alias that carries request fields keeps them (`akm models set`).
-    const base = `connections.${connectionName}`;
-    const existing = config.connections?.[connectionName];
-    set[`${base}.endpoint`] = connection.endpoint;
-    if (connection.apiKeyEnv) set[`${base}.apiKey`] = `$${connection.apiKeyEnv}`;
-    else if (existing?.apiKey !== undefined && !sameEndpoint(existing.endpoint, connection.endpoint))
-      unset.push(`${base}.apiKey`);
-    for (const alias of STANDARD_ALIASES) {
-      const held = existing?.models?.[alias];
-      set[`${base}.models.${alias}${typeof held === "object" ? ".model" : ""}`] = connection.model;
-    }
-  }
+  // As `akm setup` writes a connection: the same answer, the same rules for the key and the aliases.
+  const writesConnection = Boolean(connection && connectionName);
+  const withConnection = (current: AkmConfig): AkmConfig =>
+    connection && connectionName
+      ? {
+          ...current,
+          connections: applySetupAnswers(current, {
+            connection: {
+              name: connectionName,
+              endpoint: connection.endpoint,
+              ...(connection.apiKeyEnv ? { key: { env: connection.apiKeyEnv } } : {}),
+              picks: Object.fromEntries(STANDARD_ALIASES.map((alias) => [alias, connection.model])),
+            },
+          }).patch.connections,
+        }
+      : current;
   // Where improve runs: the named harness's entry, else the connection. Neither: learning stays off, with a warning.
   const agent = learning?.harness
     ? Object.entries(config.harnesses ?? {}).find(([name, entry]) => (entry.platform ?? name) === learning.harness)?.[0]
@@ -144,31 +162,60 @@ async function writeLearning(
     else if (config.improve?.connection === undefined) set["improve.connection"] = target;
     unset.push(agent ? "improve.connection" : "improve.harness");
   }
-  if (Object.keys(set).length || unset.length) change({ set, unset });
+  if (writesConnection || Object.keys(set).length || unset.length) {
+    mutateConfig(
+      (current) => {
+        let updated = withConnection(current);
+        for (const [key, value] of Object.entries(set)) updated = setConfigValue(updated, key, value);
+        for (const key of unset) updated = unsetConfigValue(updated, key);
+        if (updated !== current) preserveUnrelatedConfig(current);
+        return updated;
+      },
+      // With no config file there is nothing to unset; a connection or a set still has to create it.
+      { absentNoop: !writesConnection && Object.keys(set).length === 0 },
+    );
+    resetConfigCache();
+  }
   if (learning) {
     setLearning(on);
-    if (on) await enableLearningTask();
+    if (on) return enableLearningTask(host);
   }
+  return [];
 }
 
 /**
  * Learning on: the scheduled improve task exists (added from akm's template when the library has none) and is
  * enabled. Turning learning off leaves the schedule alone: the task then exits doing nothing.
  */
-async function enableLearningTask() {
+async function enableLearningTask(host: HostCli | undefined): Promise<string[]> {
   const listed = tasks.list().tasks;
   const task = listed.find((entry) => entry.id === LEARNING_TASK);
+  let result: { warnings?: string[]; sync?: { warnings?: string[] } } = {};
   if (!task) {
     const template = listEmbeddedTasks().find((entry) => entry.label === `core/${LEARNING_TASK}`);
     if (!template) throw new Error("akm ships no improve task template.");
-    await runCli([
-      "task",
-      "add",
-      LEARNING_TASK,
-      `--schedule=${template.schedule}`,
-      `--command=${template.command}`,
-      `--description=${template.description}`,
-      `--bundle=${loadConfig().defaultBundle}`,
-    ]);
-  } else if (!task.enabled) await tasks.enable({ task: LEARNING_TASK });
+    const bundle = loadConfig().defaultBundle;
+    result = await tasks.viaHost(
+      host,
+      [
+        "task",
+        "add",
+        LEARNING_TASK,
+        `--schedule=${template.schedule}`,
+        `--command=${template.command}`,
+        `--description=${template.description}`,
+        `--bundle=${bundle}`,
+      ],
+      "task-add",
+      () =>
+        akmTasksAdd({
+          id: LEARNING_TASK,
+          schedule: template.schedule,
+          command: template.command,
+          description: template.description,
+          target: bundle,
+        }),
+    );
+  } else if (!task.enabled) result = await tasks.enable({ task: LEARNING_TASK }, host);
+  return [...(result.warnings ?? []), ...(result.sync?.warnings ?? [])];
 }

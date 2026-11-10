@@ -61,8 +61,8 @@ Windows uses per-user app-data directories (`%LOCALAPPDATA%\akm\data`,
 
 ### Config directory
 
-`$XDG_CONFIG_HOME/akm` (default `~/.config/akm/`). Override with
-`AKM_CONFIG_DIR`.
+`$XDG_CONFIG_HOME/akm` (default `~/.config/akm/`). Choose another config file
+with `--config <file>` or `AKM_CONFIG_FILE`; the files below then sit beside it.
 
 | Path | Contents |
 | --- | --- |
@@ -73,19 +73,20 @@ Windows uses per-user app-data directories (`%LOCALAPPDATA%\akm\data`,
 ### Data directory
 
 `$XDG_DATA_HOME/akm` (default `~/.local/share/akm/`). Override with
-`AKM_DATA_DIR`.
+`paths.data` in the config file.
 
 | Path | Contents |
 | --- | --- |
 | `index.db` | The search index. Rebuilt by `akm index --full`. |
 | `state.db` | Durable local state: events, usage records, proposals, task history, improve runs, workflow runs. Not regenerable. |
 | `logs.db` | Log lines from scheduled task runs. Old lines are purged by `akm improve`. |
+| `metrics.db` | The long-lived history: daily rollups of events, LLM calls, usage, queries, selects and latency, and one slim row per improve run, folded in from `state.db` before it purges them. Never purged. Not regenerable: back it up with `state.db`. |
 | `akm.lock` | The lockfile: resolved version, revision and integrity of each installed bundle. `akm.lock.lck` is its write sentinel. |
 | `index.rebuild.lock`, `index.db.write.lock` | Lock files for `akm index` and asset writes. |
 | `secret-locks/` | Per-secret lock files taken while a secret is written. |
-| `state.db.pre-<migration id>.bak` | A copy of `state.db` taken before a migration that drops schema (`018`, `028`) runs. Yours to delete. |
+| `state.db.pre-<migration id>.bak` | A copy of `state.db` an earlier release took before a migration that dropped schema (`018`, `028`). akm no longer writes it. Yours to delete. |
 | `workflow-run-locks/` | One lock file per running workflow run. |
-| `backups/tasks/` | Copies of task files made by `akm migrate apply` before it rewrites them. |
+| `backups/tasks/` | Copies of task files an earlier `akm migrate apply` made before it rewrote them. akm no longer writes it. Yours to delete. |
 | `backups/asset-engine-keys/` | Copies of commands, agents, workflows and task sources made by `akm migrate apply` before it rewrites their `engine:` key. |
 | `migrate/engine-targets.json` | The connection or harness each old engine name became, kept by `akm migrate apply` until every `engine:` key is rewritten. |
 | `opencode-runtime/` | Everything akm's own agent runtime keeps: OpenCode's `config/` (with akm's plugin), `data/` (logs, repositories, shell output, and `data/opencode/opencode.db`, the runtime's sessions, which `akm proposal extract --type opencode` reads back, read-only), `cache/`, `state/` and `tmp/` (the binary's own native pieces). Recreated on next use; deleting it loses the runtime's session history. |
@@ -99,17 +100,17 @@ instead of reporting success for feedback it could not store.
 ### State directory
 
 `$XDG_STATE_HOME/akm` (default `~/.local/state/akm/`). Override with
-`AKM_STATE_DIR`.
+`paths.state` in the config file.
 
 | Path | Contents |
 | --- | --- |
-| `locks/scheduler.lock` | Serializes writes to the native scheduler (`akm task`). |
+| `scheduler/dispatch-minute` | The last minute `akm task dispatch` evaluated (an epoch minute). |
 | `locks/<bundle-key>/improve.lock` | Whole-run lock for `akm improve`, one directory per bundle. |
 
 ### Cache directory
 
 `$XDG_CACHE_HOME/akm` (default `~/.cache/akm/`). Override with
-`AKM_CACHE_DIR`. Everything here is regenerable; deleting the directory is safe.
+`paths.cache` in the config file. Everything here is regenerable; deleting the directory is safe.
 
 | Path | Contents |
 | --- | --- |
@@ -124,8 +125,8 @@ instead of reporting success for feedback it could not store.
 
 ### Bundle directory
 
-`~/akm/` by default; override with `AKM_BUNDLE_DIR`, or configure `bundles` and
-`defaultBundle` in `config.json`. This holds your asset files and is not
+`~/akm/` is where `akm bundle create` puts a new bundle; configure `bundles` and
+`defaultBundle` in `config.json` to work in another directory. This holds your asset files and is not
 regenerable. akm also writes into it:
 
 | Path | Contents |
@@ -186,8 +187,24 @@ Event types, for `akm log --type <type>`:
 
 Events and improve run rows older than 90 days are purged by `akm improve`
 (`improve.eventRetentionDays`; `0` disables). Usage records older than 90 days
-are purged on `akm index`. Read these with `akm log`, `akm metrics`,
-`akm proposal list` and `akm task history`.
+are purged on `akm index`. A purge removes whole UTC days, and only days
+already folded into `metrics.db`: before it deletes anything, each closed UTC
+day is folded there, and if `metrics.db` cannot be opened or written nothing is
+purged and akm warns once. `akm metrics` and `akm health` read the days older
+than `state.db`'s raw rows from `metrics.db`. Read these with `akm log`,
+`akm metrics`, `akm proposal list` and `akm task history`.
+
+What `metrics.db` keeps, per UTC day: event counts by type; LLM calls by stage,
+process, engine, model and outcome (calls, tokens, time, and a duration
+histogram); usage by event type, source and ref; queries with their result
+counts; feedback tag counts; selects per ref (deduped per search); search and
+index duration histograms; the `improve_skipped` tallies `akm health` counts;
+and every improve run, whole except that its list of strategy-filtered refs is
+kept as a count. What is gone once a day is folded and its raw rows pass the
+retention: individual LLM calls, individual query and ref rows and their order,
+per-call latency (the histogram stays, so a median over those days is an
+estimate), `searchId` links, `env_access` and `curate` event payloads, every
+event type except its daily count, and negative-feedback reasons.
 
 ## Inspect and clear
 
@@ -211,9 +228,7 @@ the config, data, state and cache directories.
 
 | Variable | Effect |
 | --- | --- |
-| `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR`, `AKM_CACHE_DIR` | Override the config, data, state and cache directories |
-| `AKM_BUNDLE_DIR` | Default bundle directory (`~/akm/`) |
+| `AKM_CONFIG_FILE` (or `--config <file>`) | The config file to use; its `paths` key (`data`, `state`, `cache`) says where the rest lives. `credentials.json` and the config lock sit beside it |
+| `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR`, `AKM_CACHE_DIR` | Retired. Set without `AKM_CONFIG_FILE`, akm stops with an error that names `akm migrate apply`; see [Retired location variables](configuration.md#retired-location-variables) |
 | `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME` | XDG bases; akm appends `/akm` |
-| `AKM_SQLITE_JOURNAL_MODE` | SQLite journal mode: `WAL` (default), `DELETE` or `TRUNCATE`. On a detected network filesystem the default falls back to `DELETE`. |
 | `AKM_NPM_REGISTRY` | Base URL of an npm mirror. Replaces `registry.npmjs.org` for npm bundle resolution. |
-| `AKM_REGISTRY_URL` | Comma-separated registry URLs that replace the configured `registries` in every registry search akm performs; `akm registry list`, `akm info` and the `egress-endpoints` health advisory still show the configured list. Prefix an entry with `<provider>::` (for example `skills-sh::https://skills.sh`) to choose a provider; the default is `static-index`. |

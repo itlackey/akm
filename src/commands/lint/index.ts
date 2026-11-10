@@ -28,7 +28,7 @@ import { UsageError } from "../../core/errors";
 import type { FileChange } from "../../core/file-change";
 import { warn } from "../../core/warn";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
-import { TASK_EXTENSION, TASK_NEAR_MISS_EXTENSION, taskExtensionDetail } from "../../tasks/source-v3";
+import { TASK_EXTENSION, TASK_NEAR_MISS_EXTENSION, taskExtensionDetail } from "../../tasks/task-source";
 import { resolveWorkflowSourceDomains } from "../../workflows/source-files";
 import { runBaseChecks } from "./base-linter";
 import { checkEnvForDangerousKeys } from "./env-key-rules";
@@ -433,7 +433,7 @@ function runEnvDangerousKeyPass(
  * Refuse `--fix` against a bundle the config marks `writable: false`, BEFORE
  * the sweep touches a single file (issue #761).
  *
- * Every other mutating command routes through `core/write-source.ts`'s
+ * Every other mutating command routes through `sources/write-source.ts`'s
  * `ensureWritable`/`resolveWritable` pair; `akm lint --fix` writes and deletes
  * directly and never consulted the flag, so it happily rewrote frontmatter in a
  * bundle explicitly configured read-only. `SearchSource.writable` is already the
@@ -474,7 +474,7 @@ function isFileDeletion(issue: LintIssue): boolean {
 /**
  * Reproduce `SkillLinter.lintDirectory`: a skill subdirectory with no
  * `SKILL.md` is flagged `missing-skill-md` (never auto-fixable). Exported for
- * the lint-parity golden (`tests/integration/goldens-lint-output.test.ts`).
+ * the lint-parity golden.
  */
 export function lintSkillDirectory(subdirPath: string, stashRoot: string): LintIssue[] {
   if (fs.existsSync(path.join(subdirPath, "SKILL.md"))) return [];
@@ -665,7 +665,7 @@ function lintAkmSweep(
       const fileIssues: LintIssue[] = [];
 
       if (subdir === "tasks") {
-        // Task files are pure YAML. The canonical task-v3 parser runs once in
+        // Task files are pure YAML. The canonical task source parser runs once in
         // taskDiagnostics below; base checks need no parsed frontmatter data.
         data = {};
         if (isNearMissTaskFileName(relPath)) {

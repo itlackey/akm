@@ -4,8 +4,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { runCliCapture } from "../_helpers/cli";
-import { durableItemRef } from "../_helpers/durable-ref";
-import { withEnv } from "../_helpers/sandbox";
+import { workingItemRef } from "../_helpers/durable-ref";
+import { configHomeWithBundle, withEnv } from "../_helpers/sandbox";
 
 const CLI = path.join(__dirname, "..", "..", "src", "cli.ts");
 const tempDirs: string[] = [];
@@ -31,7 +31,7 @@ interface CliRunResult {
 // assertions are byte-identical.
 async function runCli(
   args: string[],
-  options?: { stashDir?: string; env?: NodeJS.ProcessEnv },
+  options?: { stashDir?: string; env?: NodeJS.ProcessEnv; noBundle?: boolean },
 ): Promise<{ stashDir: string; result: CliRunResult }> {
   const stashDir = options?.stashDir ?? makeTempDir("akm-capture-stash-");
   const xdgCache = makeTempDir("akm-capture-cache-");
@@ -42,9 +42,8 @@ async function runCli(
   const xdgState = makeTempDir("akm-capture-state-");
   const result = await withEnv(
     {
-      AKM_BUNDLE_DIR: stashDir,
       XDG_CACHE_HOME: xdgCache,
-      XDG_CONFIG_HOME: xdgConfig,
+      XDG_CONFIG_HOME: options?.noBundle ? xdgConfig : configHomeWithBundle(xdgConfig, stashDir),
       XDG_DATA_HOME: xdgData,
       XDG_STATE_HOME: xdgState,
       ...(options?.env as Record<string, string | undefined> | undefined),
@@ -76,9 +75,8 @@ function spawnCli(
     input: options?.input,
     env: {
       ...process.env,
-      AKM_BUNDLE_DIR: stashDir,
       XDG_CACHE_HOME: xdgCache,
-      XDG_CONFIG_HOME: xdgConfig,
+      XDG_CONFIG_HOME: configHomeWithBundle(xdgConfig, stashDir),
       XDG_DATA_HOME: xdgData,
       XDG_STATE_HOME: xdgState,
       ...options?.env,
@@ -100,6 +98,7 @@ describe("capture commands", () => {
     const homeDir = makeTempDir("akm-init-home-");
     const { result } = await runCli(["bundle", "create", "--dir", customDir], {
       env: { HOME: homeDir },
+      noBundle: true,
     });
     expect(result.status).toBe(0);
 
@@ -116,8 +115,7 @@ describe("capture commands", () => {
       bundles?: Record<string, { path?: string }>;
     };
     expect(config.stashDir).toBeUndefined();
-    const primary = config.defaultBundle ? config.bundles?.[config.defaultBundle] : undefined;
-    expect(primary?.path).toBe(path.resolve(customDir));
+    expect(Object.values(config.bundles ?? {}).map((bundle) => bundle.path)).toContain(path.resolve(customDir));
   }
 
   test("bundle create honors --dir for a custom stash path", async () => {
@@ -130,7 +128,7 @@ describe("capture commands", () => {
 
     const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string };
     expect(json.ok).toBe(true);
-    expect(json.ref).toBe(durableItemRef(stashDir, "memory", "deployment-needs-vpn-access"));
+    expect(json.ref).toBe(workingItemRef(stashDir, "memory", "deployment-needs-vpn-access"));
     expect(fs.existsSync(path.join(stashDir, "memories", "deployment-needs-vpn-access.md"))).toBe(true);
 
     const show = (await runCli(["show", json.ref], { stashDir })).result;
@@ -173,7 +171,7 @@ describe("capture commands", () => {
 
     const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string };
     expect(json.ok).toBe(true);
-    expect(json.ref).toBe(durableItemRef(stashDir, "knowledge", "release-notes"));
+    expect(json.ref).toBe(workingItemRef(stashDir, "knowledge", "release-notes"));
     expect(fs.existsSync(path.join(stashDir, "knowledge", "release-notes.md"))).toBe(true);
 
     const show = (await runCli(["show", json.ref], { stashDir })).result;
@@ -190,7 +188,7 @@ describe("capture commands", () => {
     expect(result.status).toBe(0);
 
     const json = JSON.parse(result.stdout) as { ref: string };
-    expect(json.ref).toBe(durableItemRef(stashDir, "knowledge", "scratch-notes"));
+    expect(json.ref).toBe(workingItemRef(stashDir, "knowledge", "scratch-notes"));
     expect(fs.existsSync(path.join(stashDir, "knowledge", "scratch-notes.md"))).toBe(true);
   });
 

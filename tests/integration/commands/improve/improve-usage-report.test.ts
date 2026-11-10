@@ -23,7 +23,11 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { type SandboxedDir, makeStashDir as sandboxMakeStashDir } from "../../../_helpers/sandbox";
+import {
+  configHomeWithBundle,
+  type SandboxedDir,
+  makeStashDir as sandboxMakeStashDir,
+} from "../../../_helpers/sandbox";
 
 const disposers: SandboxedDir[] = [];
 const repoRoot = path.resolve(import.meta.dir, "..", "..", "..", "..");
@@ -54,7 +58,6 @@ function makeEnv(stashDir: string): TestEnv {
   fs.writeFileSync(
     path.join(configDir, "config.json"),
     JSON.stringify({
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       connections: { test: { endpoint: "https://example.test/v1/chat/completions", models: { fast: "test" } } },
     }),
@@ -63,9 +66,8 @@ function makeEnv(stashDir: string): TestEnv {
     env: {
       ...process.env,
       BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
-      AKM_BUNDLE_DIR: stashDir,
       XDG_CACHE_HOME: cache.dir,
-      XDG_CONFIG_HOME: config.dir,
+      XDG_CONFIG_HOME: configHomeWithBundle(config.dir, stashDir),
       XDG_DATA_HOME: data.dir,
       XDG_STATE_HOME: state.dir,
     },

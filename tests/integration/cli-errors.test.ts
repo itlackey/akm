@@ -9,7 +9,7 @@ import { VALID_ADAPTER_IDS } from "../../src/core/adapter/adapter-ids";
 import { ConfigError, NotFoundError, UsageError } from "../../src/core/errors";
 import { formatExemptSurfaces } from "../../src/output/format-exempt";
 import { runCliCapture } from "../_helpers/cli";
-import { makeSandboxDir, makeStashDir, type SandboxedDir, withEnv } from "../_helpers/sandbox";
+import { makeSandboxDir, makeStashDir, type SandboxedDir, withBundle, withBundleSync } from "../_helpers/sandbox";
 
 // Helpers.
 //
@@ -59,7 +59,7 @@ function spawnCli(
     encoding: "utf8",
     timeout: 10_000,
     cwd: options.cwd,
-    env: { ...process.env, AKM_BUNDLE_DIR: undefined, ...options.env },
+    env: { ...process.env, ...options.env },
   });
   return { stdout: result.stdout ?? "", stderr: result.stderr ?? "", status: result.status ?? 1 };
 }
@@ -77,7 +77,7 @@ describe("CLI error handling", () => {
     expect(status).toBe(78);
     const parsed = JSON.parse(stderr.trim());
     expect(parsed.code).toBe("STASH_DIR_NOT_FOUND");
-    expect(stderr).toContain("No bundle directory found");
+    expect(stderr).toContain("No default bundle is configured");
     expect(stderr).toContain("hint");
   });
 
@@ -102,25 +102,23 @@ describe("CLI error handling", () => {
     expect(stderr).toContain("hint");
   });
 
-  test("search --detail invalid prints hint about detail", async () => {
+  test("search --format invalid prints hint about format", async () => {
     const stash = makeStashDir();
     disposers.push(stash);
-    const { stderr, status } = await withEnv({ AKM_BUNDLE_DIR: stash.dir }, () =>
-      runCli("search", "test", "--detail", "invalid"),
-    );
-    // Usage error (INVALID_DETAIL_VALUE) -> exit 2. Ground-truthed by probing
+    const { stderr, status } = await withBundle(stash.dir, () => runCli("search", "test", "--format", "invalid"));
+    // Usage error (INVALID_FORMAT_VALUE) -> exit 2. Ground-truthed by probing
     // the actual CLI output before pinning.
     expect(status).toBe(2);
-    expect(stderr).toContain("Invalid value for --detail");
+    expect(stderr).toContain("Invalid value for --format");
     expect(stderr).toContain("hint");
   });
 
-  test("health --detail invalid value yields UsageError with exit 2", async () => {
-    const { stderr, status } = await runCli("health", "--detail", "verbose");
+  test("health --format invalid value yields UsageError with exit 2", async () => {
+    const { stderr, status } = await runCli("health", "--format", "verbose");
     expect(status).toBe(2);
     const parsed = JSON.parse(stderr.trim());
     expect(parsed.ok).toBe(false);
-    expect(parsed.code).toBe("INVALID_DETAIL_VALUE");
+    expect(parsed.code).toBe("INVALID_FORMAT_VALUE");
   });
 
   test("health --window-compare with bad duration yields UsageError exit 2", async () => {
@@ -178,12 +176,11 @@ describe("CLI error handling", () => {
     expect(parsed.ok).toBe(false);
     expect(parsed.code).toBe("STASH_DIR_NOT_FOUND");
     expect(parsed.hint).toBe(new ConfigError("x", "STASH_DIR_NOT_FOUND").hint());
-    expect(parsed.hint).toContain("akm setup");
+    expect(parsed.hint).toContain("akm bundle create");
   });
 });
 
-// P1a carried advisory, wired here per docs/plans/specs/p1b-model-extraction.md
-// §1.5 (binding choice: "the envelope tests extend
+// P1a carried advisory, wired here (binding choice: "the envelope tests extend
 // tests/integration/cli-errors.test.ts. No tasks-cli-envelope family exists
 // at head … and minting one for two cases would fragment the CLI-envelope
 // surface.") and §5.5. Both codes were declared and WIRED by P1a (D7,
@@ -195,8 +192,7 @@ describe("CLI envelope coverage for P1a's diagnostic codes (COMPOSITION_INVALID,
     const stash = makeStashDir();
     disposers.push(stash);
     fs.mkdirSync(path.join(stash.dir, "tasks"), { recursive: true });
-    // P4 (docs/plans/specs/p4-deletions-closeout.md §3.2.2, row B-18/B-19,
-    // F-A2.35) retired the R-06 shape this fixture used to pin — task source
+    // P4 retired the R-06 shape this fixture used to pin — task source
     // v4 makes scheduling OPTIONAL, so "neither akm.schedule nor on:
     // declared" is no longer an error at all (D2-N6). `run:` and `uses:`
     // both present is task source v4's own "exactly one executable selector"
@@ -207,7 +203,7 @@ describe("CLI envelope coverage for P1a's diagnostic codes (COMPOSITION_INVALID,
       "utf8",
     );
 
-    const { stderr, status } = await withEnv({ AKM_BUNDLE_DIR: stash.dir }, () => runCli("task", "run", "bad-source"));
+    const { stderr, status } = await withBundle(stash.dir, () => runCli("task", "run", "bad-source"));
 
     expect(status).toBe(2);
     const parsed = JSON.parse(stderr.trim());
@@ -218,8 +214,7 @@ describe("CLI envelope coverage for P1a's diagnostic codes (COMPOSITION_INVALID,
   });
 
   // The runtime reads only task source v4 (#987): v3 AND v2 fail with the
-  // SAME TASK_SCHEMA_VERSION_UNSUPPORTED code, naming `akm migrate apply`
-  // (the migrator runs both generations in sequence).
+  // SAME TASK_SCHEMA_VERSION_UNSUPPORTED code, naming the 0.9.32 recipe.
   test.each([
     ["v3", "version: 3\nrun: echo hi\nschedule: '@daily'\n"],
     ["v2", "version: 2\nschedule: '@daily'\ncommand: echo hi\n"],
@@ -229,17 +224,15 @@ describe("CLI envelope coverage for P1a's diagnostic codes (COMPOSITION_INVALID,
     fs.mkdirSync(path.join(stash.dir, "tasks"), { recursive: true });
     fs.writeFileSync(path.join(stash.dir, "tasks", "legacy-source.yml"), yaml, "utf8");
 
-    const { stderr, status } = await withEnv({ AKM_BUNDLE_DIR: stash.dir }, () =>
-      runCli("task", "run", "legacy-source"),
-    );
+    const { stderr, status } = await withBundle(stash.dir, () => runCli("task", "run", "legacy-source"));
 
     expect(status).toBe(2);
     const parsed = JSON.parse(stderr.trim());
     expect(parsed.ok).toBe(false);
     expect(parsed.code).toBe("TASK_SCHEMA_VERSION_UNSUPPORTED");
     expect(typeof parsed.error).toBe("string");
-    expect(parsed.error).toContain("akm migrate apply");
-    expect(parsed.hint).toContain("akm migrate apply --dry-run");
+    expect(parsed.error).toContain("akm-cli@0.9.32");
+    expect(parsed.hint).toContain("akm-cli@0.9.32");
   });
 
   test("akm workflow run of a workflow that composes itself emits {ok:false,code:COMPOSITION_INVALID} on stderr, exit 2", async () => {
@@ -263,10 +256,8 @@ describe("CLI envelope coverage for P1a's diagnostic codes (COMPOSITION_INVALID,
       ].join("\n"),
     );
 
-    await withEnv({ AKM_BUNDLE_DIR: stash.dir }, () => runCli("index", "--full"));
-    const { stderr, status } = await withEnv({ AKM_BUNDLE_DIR: stash.dir }, () =>
-      runCli("workflow", "run", "workflows/loop"),
-    );
+    await withBundle(stash.dir, () => runCli("index", "--full"));
+    const { stderr, status } = await withBundle(stash.dir, () => runCli("workflow", "run", "workflows/loop"));
 
     expect(status).toBe(2);
     const parsed = JSON.parse(stderr.trim());
@@ -277,8 +268,7 @@ describe("CLI envelope coverage for P1a's diagnostic codes (COMPOSITION_INVALID,
   });
 });
 
-// P4 (docs/plans/specs/p4-deletions-closeout.md §5.2, carried advisory R-R7):
-// investigated adding CLI-envelope + exit-2 coverage for TARGET_REF_INVALID
+// P4 investigated adding CLI-envelope + exit-2 coverage for TARGET_REF_INVALID
 // and TASK_TARGET_UNSUPPORTED — the two D7 codes with no test at this level
 // before P4's INVALID_FLAG_VALUE re-coding sweep — and found BOTH
 // unreachable through any real `akm` invocation, so no test is added for
@@ -310,13 +300,13 @@ describe("CLI envelope coverage for P1a's diagnostic codes (COMPOSITION_INVALID,
 //
 // WORKFLOW_SOURCE_INVALID, TASK_SOURCE_INVALID, COMPOSITION_INVALID, and
 // INPUT_BINDING_INVALID all already have CLI-level coverage: the describe
-// block above; tests/integration/commands/tasks-input-flags.test.ts;
+// block above; tests/commands/tasks-input-flags.test.ts;
 // tests/integration/workflows/workflow-source-collision.test.ts;
-// tests/integration/commands/workflow-cli-contract.test.ts.
+// tests/commands/workflow-cli-contract.test.ts.
 
 describe("error class hints", () => {
   test("ConfigError derives hint from code by default", () => {
-    expect(new ConfigError("missing stash", "STASH_DIR_NOT_FOUND").hint()).toContain("akm setup");
+    expect(new ConfigError("missing stash", "STASH_DIR_NOT_FOUND").hint()).toContain("akm bundle create");
     expect(new ConfigError("not a dir", "STASH_DIR_NOT_A_DIRECTORY").hint()).toContain("directory");
     expect(new ConfigError("unreadable", "STASH_DIR_UNREADABLE").hint()).toContain("permission");
     expect(new ConfigError("no llm", "LLM_NOT_CONFIGURED").hint()).toContain("add a connection");
@@ -333,9 +323,6 @@ describe("error class hints", () => {
     );
     expect(new UsageError("bad format", "INVALID_FORMAT_VALUE").hint()).toBe(
       "Pick one of: json, jsonl, yaml, text, md.",
-    );
-    expect(new UsageError("bad detail", "INVALID_DETAIL_VALUE").hint()).toBe(
-      "Pick one of: brief, normal, full, agent.",
     );
     expect(new UsageError("bad json", "INVALID_JSON_CONFIG_VALUE").hint()).toContain("JSON array like");
     expect(new UsageError("bad target", "MISSING_OR_AMBIGUOUS_TARGET").hint()).toContain("akm bundle update --all");
@@ -413,7 +400,6 @@ describe("registry remove", () => {
       userConfigPath,
       `${JSON.stringify(
         {
-          configVersion: "0.9.0",
           registries: [{ url: "https://user.example/index.json", name: "user" }],
         },
         null,
@@ -426,7 +412,6 @@ describe("registry remove", () => {
       projectConfigPath,
       `${JSON.stringify(
         {
-          configVersion: "0.9.0",
           registries: [{ url: "https://project.example/index.json", name: "project" }],
         },
         null,
@@ -510,7 +495,7 @@ describe("output shape registry — every CLI verb returns a registered shape", 
 // tests/_helpers/cli.ts) drives citty's `runCommand` directly and never runs
 // `src/cli.ts`'s `import.meta.main`-gated startup block where the fix lives
 // (see that harness's own module docstring, and
-// tests/integration/commands/distill/distill-cli-flag.test.ts's comment on
+// tests/commands/distill/distill-cli-flag.test.ts's comment on
 // the same split).
 describe("R-032: citty CLIError family exits 2, not 1", () => {
   test("akm totally-bogus (unknown top-level command) exits 2", () => {
@@ -564,11 +549,11 @@ describe("R-032: citty CLIError family exits 2, not 1", () => {
   // 0.9.0 CLI overhaul (S3): `log` and `lessons` dropped out of this list —
   // `log` is now a terminal leaf command (bare `akm log` is a valid
   // invocation, not a bare-group usage error; see
-  // tests/commands/observability-cli-envelope.test.ts) and `lessons` was
+  // tests/commands/cli-envelopes.test.ts) and `lessons` was
   // removed entirely.
   // Groups with a read-only `list` (config, bundle, env, secret, proposal, registry,
   // workflow) run it instead; see the bare-listing test below.
-  for (const group of ["migrate", "task", "command"]) {
+  for (const group of ["migrate", "task"]) {
     test(`bare akm ${group} emits the canonical usage envelope and exits 2`, () => {
       const { status, stderr } = spawnCli([group], { cwd: repoRoot });
       expect(status).toBe(2);
@@ -579,11 +564,19 @@ describe("R-032: citty CLIError family exits 2, not 1", () => {
     });
   }
 
+  test("bare akm command is a leaf: it asks for the ref and exits 2", () => {
+    const { status, stderr } = spawnCli(["command"], { cwd: repoRoot });
+    expect(status).toBe(2);
+    const parsed = JSON.parse(stderr.trim());
+    expect(parsed.code).toBe("MISSING_REQUIRED_ARGUMENT");
+    expect(parsed.error).toContain("REF");
+  });
+
   for (const group of ["config", "bundle", "env", "secret", "proposal", "registry", "workflow"]) {
     test(`bare akm ${group} runs its list and exits 0`, () => {
       const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bare-list-"));
       try {
-        const { status, stderr } = spawnCli([group], { cwd: repoRoot, env: { AKM_BUNDLE_DIR: bundleDir } });
+        const { status, stderr } = withBundleSync(bundleDir, () => spawnCli([group], { cwd: repoRoot }));
         expect(status).toBe(0);
         expect(stderr).not.toContain("requires a subcommand");
       } finally {
@@ -596,9 +589,9 @@ describe("R-032: citty CLIError family exits 2, not 1", () => {
     const { status, stdout } = spawnCli(["--help"], { cwd: repoRoot });
     expect(status).toBe(0);
     expect(stdout).toContain("USAGE");
-    expect(stdout).toContain("4   health warn");
-    expect(stdout).toContain("70  internal / unclassified error");
-    expect(stdout).toContain("1   not found / command-reported failure");
+    expect(stdout).toContain("4 health warn");
+    expect(stdout).toContain("70 internal / unclassified error");
+    expect(stdout).toContain("1 not found / command-reported failure");
   });
 
   // S11 item 3: citty's CLIError is now routed through the SAME
@@ -720,7 +713,7 @@ describe("S11: sectioned root help", () => {
         const commands = stdout
           .slice(start + heading.length + 1, end)
           .split("\n")
-          .flatMap((line) => line.match(/^ {2}(\S+)\s{2,}/)?.[1] ?? []);
+          .flatMap((line) => line.match(/^ {2}(\S+)\s/)?.[1] ?? []);
         return [heading, commands];
       }),
     );
@@ -811,9 +804,7 @@ describe("S11: sectioned root help", () => {
     expect(stderr).toBe("");
     expect(stdout).toContain("--skip-if-locked");
     expect(stdout).toContain("schedule this command");
-    // #1096: --yes stays accepted (no UNKNOWN_FLAG for existing scripts) but does nothing.
-    expect(stdout).toContain("--yes");
-    expect(stdout).toContain("Deprecated, no effect");
+    expect(stdout).not.toContain("--yes");
   });
 
   test("akm task run --help includes the akm prefix on nested USAGE lines", () => {

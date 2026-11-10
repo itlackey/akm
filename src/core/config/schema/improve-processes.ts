@@ -32,7 +32,7 @@ import { nonEmptyString, positiveInt } from "./primitives";
 // process's narrow output is assignable to), and (b) two existing tests that
 // parse fields from multiple processes against it directly with no process
 // context (tests/integration/extract-command.test.ts,
-// tests/config-triage-process.test.ts). Real per-config validation for
+// tests/triage-judgment-config.test.ts). Real per-config validation for
 // `processes.<name>` uses the NARROW per-process schemas via
 // {@link ImproveProfileProcessesSchema} below — setting a field on the wrong
 // process there is now rejected (the intended §4.2 improvement).
@@ -74,8 +74,6 @@ const qualityGateField = z
 const clsField = z
   .object({
     enabled: z.boolean().optional(),
-    // Number of adjacent lessons/knowledge to include in prompts (default 3).
-    adjacentCount: z.number().int().min(1).optional(),
   })
   .passthrough()
   .optional();
@@ -150,27 +148,13 @@ const CONSOLIDATE_PROCESS_FIELDS = {
   maxChunkSize: z.number().int().min(1).max(50).optional(),
 };
 
-const MEMORY_INFERENCE_PROCESS_FIELDS = {
-  // Minimum pending memory count to run the pass.
-  minPendingCount: z.number().int().min(0).optional(),
-};
-
 const EXTRACT_PROCESS_FIELDS = {
-  defaultSince: z.string().min(1).optional(),
-  maxTotalChars: positiveInt.optional(),
-  // Minimum raw session size (pre-filter inputCount) below which the extract
-  // LLM call is skipped (#595/#596). 0 disables the gate. Absent = default 10
-  // (skip only truly empty sessions).
-  minContentChars: z.number().int().min(0).optional(),
   triage: extractTriageGateField,
   // Minimum number of new (unseen, in-window) candidate sessions below which
   // the extract pass skips entirely (emits an `improve_skipped` event with
   // `reason: "below_min_new_sessions"`). 0 disables the guard. Default 0
   // (disabled) so existing behaviour is preserved; only opted-in profiles set it.
   minNewSessions: z.number().int().min(0).optional(),
-  // Cap on NEW sessions processed (LLM-called) per run; the rest roll to the
-  // next run (still unseen). 0 disables. Absent = default 25.
-  maxSessionsPerRun: z.number().int().min(0).optional(),
   // #561 — index agent sessions as a searchable `session` asset. Absent =
   // on-when-an-LLM-is-available (fail-open when offline). COST: when on, each
   // processed session makes a SECOND LLM call (the session summary) on top of
@@ -204,7 +188,6 @@ export const ImproveProcessConfigSchema = z
     ...REFLECT_PROCESS_FIELDS,
     ...DISTILL_PROCESS_FIELDS,
     ...CONSOLIDATE_PROCESS_FIELDS,
-    ...MEMORY_INFERENCE_PROCESS_FIELDS,
     ...EXTRACT_PROCESS_FIELDS,
     ...TRIAGE_PROCESS_FIELDS,
     ...PROACTIVE_MAINTENANCE_PROCESS_FIELDS,
@@ -227,9 +210,7 @@ export const ConsolidateProcessConfigSchema = z
   .passthrough();
 
 /** `processes.memoryInference` — narrow per-process schema (WI-9.6). */
-export const MemoryInferenceProcessConfigSchema = z
-  .object({ ...IMPROVE_PROCESS_BASE_FIELDS, ...MEMORY_INFERENCE_PROCESS_FIELDS })
-  .passthrough();
+export const MemoryInferenceProcessConfigSchema = z.object({ ...IMPROVE_PROCESS_BASE_FIELDS }).passthrough();
 
 /** `processes.extract` — narrow per-process schema (WI-9.6). */
 export const ExtractProcessConfigSchema = z
@@ -295,9 +276,7 @@ const ImproveProfileProcessesSchema = z
 
 export const ImproveProfileConfigSchema = z
   .object({
-    description: z.string().min(1).optional(),
     processes: ImproveProfileProcessesSchema.optional(),
-    limit: positiveInt.optional(),
     sync: z
       .object({
         enabled: z.boolean().optional(),

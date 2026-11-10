@@ -22,8 +22,7 @@ akm workflow create my-release --from ./my-release.md
 akm lint --type workflows                # Check for structural errors before using it
 ```
 
-Markdown is the only workflow format. The GitHub-shaped `.yml` format was
-removed in 0.10: a `.yml` file under `workflows/` is skipped at index time with
+Markdown is the only workflow format: a `.yml` file under `workflows/` is skipped at index time with
 a warning that it must use `.md`.
 
 ## A minimal complete example

@@ -35,8 +35,8 @@ import {
 import { contentHash } from "../../../src/commands/improve/content-hash";
 import { createProposal, listProposals } from "../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../src/core/config/config";
-import { resolveWriteTarget } from "../../../src/core/write-source";
 import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../../../src/indexer/installations";
+import { resolveWriteTarget } from "../../../src/sources/write-source";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -328,7 +328,6 @@ describe("existing knowledge body dedup", () => {
       semanticSearchMode: "off",
       bundles: { stash: { path: stash, writable: true } },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
     } as AkmConfig;
     const promoted: string[] = [];
     const warnings: string[] = [];
@@ -390,7 +389,6 @@ describe("existing knowledge body dedup", () => {
       semanticSearchMode: "off",
       bundles: { stash: { path: stash, writable: true } },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
     } as AkmConfig;
     const promoted: string[] = [];
     const warnings: string[] = [];

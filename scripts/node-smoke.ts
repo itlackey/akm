@@ -120,7 +120,6 @@ const env: Record<string, string> = {
   XDG_CONFIG_HOME: path.join(home, ".config"),
   XDG_CACHE_HOME: path.join(home, ".cache"),
   // Keep output machine-parseable and avoid interactive/TTY branches.
-  AKM_OUTPUT: "json",
   NO_COLOR: "1",
   CI: "1",
 };
@@ -131,6 +130,8 @@ let failures = 0;
 interface StepOptions {
   /** Substring that MUST appear in stdout for the step to pass. */
   expect?: string;
+  /** Top-level fields the stdout JSON document must carry. Whitespace-independent: stdout is parsed. */
+  expectJson?: Record<string, unknown>;
   /** Data to pipe to the CLI's stdin (exercises readStdin). */
   stdin?: string;
   /** Allow a non-zero exit (e.g. search with no provider still exits 0; default requires 0). */
@@ -170,6 +171,25 @@ function step(label: string, args: string[], opts: StepOptions = {}): string {
   if (opts.expect && !out.includes(opts.expect)) {
     ok = false;
     problems.push(`stdout missing expected substring ${JSON.stringify(opts.expect)}`);
+  }
+  if (opts.expectJson) {
+    let doc: Record<string, unknown> | undefined;
+    try {
+      doc = JSON.parse(out) as Record<string, unknown>;
+    } catch {
+      ok = false;
+      problems.push("stdout is not a single JSON document");
+    }
+    if (doc) {
+      for (const [key, want] of Object.entries(opts.expectJson)) {
+        if (doc[key] !== want) {
+          ok = false;
+          problems.push(
+            `stdout field ${JSON.stringify(key)} is ${JSON.stringify(doc[key])}, expected ${JSON.stringify(want)}`,
+          );
+        }
+      }
+    }
   }
   // A native addon that aborts (SIGABRT) prints Node's own crash banner. #790:
   // a `better-sqlite3` built from source against Node 24.19+ headers died in
@@ -211,13 +231,13 @@ try {
   // getDirname / package.json resolution via the boundary + text-import hook.
   step("version", ["--version"], { expect: "." });
   // better-sqlite3 open + config write.
-  step("init", ["bundle", "create", "--dir", stash], { expect: '"created": true' });
+  step("init", ["bundle", "create", "--dir", stash], { expectJson: { created: true } });
   // SQLite write path (was broken by the better-sqlite3 `readonly:undefined` bug).
-  step("remember", ["remember", "node smoke widget memory alpha"], { expect: '"ok": true' });
+  step("remember", ["remember", "node smoke widget memory alpha"], { expectJson: { ok: true } });
   // readStdin Node branch.
-  step("remember-stdin", ["remember", "-"], { stdin: "piped stdin memory beta\n", expect: '"ok": true' });
+  step("remember-stdin", ["remember", "-"], { stdin: "piped stdin memory beta\n", expectJson: { ok: true } });
   // FTS index build over SQLite.
-  step("index", ["index"], { expect: '"shape": "index"', timeoutMs: 180_000 });
+  step("index", ["index"], { expectJson: { shape: "index" }, timeoutMs: 180_000 });
   // Search reads the index back and returns the remembered hit.
   const searchOut = step("search", ["search", "widget"], { expect: "node-smoke", allowNonZero: true });
   if (!searchOut.includes("node-smoke")) {
@@ -226,14 +246,14 @@ try {
     console.error("       note: 'widget' hit not found by ref-name match; checking it executed cleanly only.");
   }
   // Read a single asset back out of the stash.
-  step("show", ["show", "memories/node-smoke-widget-memory-alpha"], { expect: '"type": "memory"' });
+  step("show", ["show", "memories/node-smoke-widget-memory-alpha"], { expectJson: { type: "memory" } });
   // Health aggregates DB + artifacts; touches detection.
   // health exits 0 (ok) or 4 (EXIT_HEALTH_WARN) — a minimal fresh stash often
   // reports `status: "warn"` (e.g. semantic search not ready), which is a valid,
   // non-error outcome. Both prove the SQLite/runtime boundary works under Node.
-  step("health", ["health"], { expect: '"shape": "health"', allowExitCodes: [4] });
+  step("health", ["health"], { expectJson: { shape: "health" }, allowExitCodes: [4] });
   // spawnSync + writeResponseToFile (ripgrep download) + spawn agent detection.
-  step("setup", ["setup", "--yes"], { expect: '"shape": "setup"', timeoutMs: 180_000 });
+  step("setup", ["setup", "--yes"], { expectJson: { shape: "setup" }, timeoutMs: 180_000 });
 } finally {
   rmSync(root, { recursive: true, force: true });
 }

@@ -3,33 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Test-review remediation (spec docs/plans/specs/p2a-task-source-v4.md §3.6,
- * B-36, B-37) for the finding recorded against
- * docs/plans/specs/p2a-task-source-v4.md:530: only 1 of the 7 §3.6 "ROUTE"
- * call sites (`run/load-task.ts`) was exercised anywhere in the RED-phase
- * commit. `tests/integration/lint-task-yaml.test.ts` (F-2) and
- * `tests/tasks/scheduler-binding.test.ts` stay byte-unchanged, so this v4
- * coverage lands as a new file, and `scheduler-sync.ts:480` is covered
- * separately in tests/integration/tasks-scheduler-sync-v4.test.ts (B-07/B-38)
- * rather than duplicated here.
- *
- * Each call site below is now routed through `parseTaskSource`, which
- * accepts exactly one version (spec docs/plans/specs/p4-deletions-closeout.md
- * §7.2, F-A2.14: "every call site now has exactly one accepted version") —
- * every test in this file exercises that call site against a `version: 4`
- * document.
- *
- * `src/commands/tasks/tasks.ts:189` (§3.6's remaining ROUTE call site,
- * `akmTasksAdd` re-parsing the YAML `renderTaskYaml` just rendered) is not
- * duplicated here: P4 moved `akm task add` to AUTHOR task source v4 directly
- * (`--params` projects into typed `inputs:`, spec row B-20), so
- * `renderTaskYaml` now always emits `version: 4` and this call site always
- * exercises the v4 arm — the "v4 arm is unreachable in production" premise
- * that used to justify excluding it no longer holds. Real coverage already
- * exists through `akmTasksAdd`'s own round trip
- * (tests/integration/commands/tasks-write-target.test.ts and
- * tests/integration/commands/tasks-lifecycle.test.ts both call it directly,
- * un-mocked), so adding a smoke test here would only duplicate that.
+ * Each task-source call site (run/load-task, validators, ...) routes through
+ * `parseTaskSource`, which accepts exactly one version; these tests exercise
+ * each call site against a `version: 4` document.
  */
 
 import { describe, expect, test } from "bun:test";

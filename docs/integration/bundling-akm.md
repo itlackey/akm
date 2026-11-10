@@ -13,7 +13,7 @@ Three lines cover it:
    things (npm, the standalone binary, a `node_modules` dependency).
 2. **At boot, run `akm migrate apply`** (or `akm upgrade`, which runs it).
    It is offline, idempotent, needs no root, takes its own safety copies,
-   prints one JSON plan, and exits `0` unless a file is genuinely blocked.
+   prints one JSON plan, and exits `0` unless an item is genuinely blocked.
 3. **Read `akm health --format json`.** Never grep error text — akm's
    wording is not a stable interface; the JSON fields are.
 
@@ -23,51 +23,61 @@ Everything below is detail in service of those three lines.
 
 ```sh
 akm migrate status        # read-only: what would change
-akm migrate apply --dry-run
 akm migrate apply
 ```
 
-In order, every run applies (or, under `status`/`--dry-run`, plans):
+In order, every run applies (or, under `status`, plans):
 
 1. **config.json in its current shape** (`configFile`): unknown keys dropped,
-   `configVersion` set, and the `engines` / `defaults` form converted to
-   `connections` / `harnesses`. Config loading already does this in memory;
-   this persists it under a backup. The API keys a config still holds in any
+   the 0.9 `configVersion` dropped, and the `engines` / `defaults` form converted to
+   `connections` / `harnesses`. Config loading does not convert it (it warns
+   and names this command); this writes the conversion under a backup. The API keys a config still holds in any
    form akm no longer reads move to `credentials.json` (`configFile.credentials`
    lists the entry names, never a value), and a leftover `models.json` is folded
    into the `models` of the connections and harnesses it names. A config older
-   than 0.9.15 (the legacy `stashDir`/`sources[]`/`installed` layout) is not
-   converted by 0.10: it blocks with a message to run `akm migrate apply` under
-   akm 0.9.x first. What each retired key becomes is the table in
+   than 0.9.32 (the legacy `stashDir`/`sources[]`/`installed` layout) is not
+   converted by 0.10: it blocks with a message to run
+   `npm i -g akm-cli@0.9.32 && akm migrate apply && akm task sync` first. What each retired key becomes is the table in
    [Configuration](../reference/configuration.md#the-engines-form).
 2. **Pending `state.db` migrations** (`stateMigrations`). Any command that opens
-   `state.db` applies them; this step does it up front and reports what ran. A
-   migration that drops schema first copies the file to
-   `state.db.pre-<migrationId>.bak`. See
-   [One-way state.db](#one-way-note-statedb-migrations-are-one-way) below.
-3. **Task files**: every task file at version 2 or 3, and every version 4
-   file still carrying the retired `schedule[].enabled` key, rewritten as
-   task source v4 (`taskFiles`) under one backup directory per run. A file
-   the planner cannot convert unambiguously is reported `blocked` and left
-   alone; the rest still convert.
-4. **Asset `engine:` keys** (`assetEngineKeys`): the retired `engine:` key on
+   `state.db` applies them; this step does it up front and reports what ran.
+   0.10 adds none. A `state.db` from before the 0.9.32 floor (a ledger shorter
+   than the 29 ids released through 0.9.32) is refused whole: the plan is
+   `blocked` with the 0.9.32 recipe as its one blocker, and no other step runs.
+   See [One-way state.db](#one-way-note-statedb-migrations-are-one-way) below.
+3. **Asset `engine:` keys** (`assetEngineKeys`): the retired `engine:` key on
    commands, agents, workflows and task sources rewritten to `connection:` or
    `harness:` by what the name is now, under one backup directory per run. A
    bundle akm may not change is skipped.
-5. **Content refs** (`assetContentRefs`): refs in the text files akm indexes in writable
-   bundles that still use the pre-#1432 spelling (`knowledge/WORK/x`, now
+4. **Content refs** (`assetContentRefs`): refs in the text files akm indexes in writable
+   bundles that still use the old spelling (`knowledge/WORK/x`, now
    `WORK/x`), in frontmatter and body, rewritten under one backup directory per
    run. An old spelling that is now another file's ref is listed in `shadowed`
-   and left as written.
-6. **Residue sweep**: superseded pre-0.9.0 `.akm` files in the stash and the
-   transaction-journal, maintenance-barrier, lock-mutex and version-stamp
-   files older releases kept under `$DATA`/`$STATE`/`$CONFIG` (`deadResidue`).
+   and left as written. The same step re-keys the `state.db` rows (usage events,
+   proposals, events, task history, improve ledger, asset salience and outcome)
+   stored under an old spelling to the new one, `stateRows` of them; `index.db`
+   is rebuilt by the next `akm index`.
+5. **The OS scheduler** (`scheduler`): akm 0.10 keeps one scheduler entry that
+   runs `akm task dispatch`; `apply` replaces akm 0.9's per-task rows with it
+   in one write, the same as `akm task sync`. This is the only step that
+   leaves akm's own files: it runs `crontab` (Linux), `launchctl` (macOS) or
+   `schtasks` (Windows), and only when it has something to write. An install
+   that moves a location (a config file other than the default, or an XDG variable, as an image
+   does) never has its OS scheduler written: the plan says so in
+   `scheduler.warnings`, and its supervisor runs `akm task dispatch`. A machine
+   with no `crontab` binary gets a warning in `scheduler.warnings` and exit
+   `0`; a `crontab` that exists and fails blocks.
+
+A task source below version 4 that `scheduler.enabled` names blocks the plan
+(it would silently stop running): 0.10 converts none, so `blockers` names the
+file with the 0.9.32 recipe. One that is not enabled is a line in
+`legacyTaskWarnings` and does not change the status.
 
 ### The plan JSON
 
 One JSON object on stdout, always, with one field per step. A current
 install, nothing to do, as `akm migrate status` prints it (under `apply` the
-per-step objects carry results instead — `applied`, `removed` — with the
+per-step objects carry results instead — `applied` — with the
 same step names):
 
 ```json
@@ -77,51 +87,35 @@ same step names):
   "blockers": [],
   "configFile": { "keys": [], "changed": false, "applied": false },
   "stateMigrations": { "pending": [] },
-  "taskFiles": { "schemaVersion": 1, "changed": 0, "skipped": 0, "blocked": 0, "files": [] },
   "assetEngineKeys": { "schemaVersion": 1, "changed": 0, "skipped": 0, "files": [] },
   "assetContentRefs": { "schemaVersion": 1, "changed": 0, "skipped": 0, "refs": 0, "files": [], "shadowed": [] },
-  "deadResidue": { "pending": [] }
+  "scheduler": { "backend": "cron", "entry": "absent", "removedLegacy": [], "keptLegacy": [], "hasRemovals": false, "failures": [] }
 }
 ```
 
-`akm migrate status` against a tree with one blocked task file:
+`akm migrate status` against a `state.db` from before the floor:
 
 ```json
 {
   "schemaVersion": 1,
   "status": "blocked",
-  "blockers": ["tasks/nightly.yml: with-on-non-command-target"],
-  "stateMigrations": { "pending": [] },
-  "taskFiles": {
-    "schemaVersion": 1,
-    "changed": 3,
-    "skipped": 1,
-    "blocked": 1,
-    "files": [
-      {
-        "filePath": "tasks/nightly.yml",
-        "status": "blocked",
-        "reason": "with-on-non-command-target",
-        "beforeHash": "…"
-      }
-    ]
-  }
+  "blockers": ["This state.db predates akm 0.9.32 and this akm does not upgrade it: run the 0.9.32 recipe, then upgrade."]
 }
 ```
 
 `status` is one of:
 
-- **`current`** — no task-source file needs converting, and no config
-  rewrite is pending. A no-op boot.
-- **`ready`** — task sources have eligible changes and no config-lift
-  conflict; a real `apply` will clear them.
+- **`current`** — no asset needs rewriting, and no config rewrite is pending.
+  A no-op boot.
+- **`ready`** — assets or the config have eligible changes; a real `apply`
+  will clear them.
 - **`blocked`** — at least one item cannot be applied automatically (a
-  genuine authoring problem, e.g. a task file the migrator can't rewrite
-  unambiguously, or a config that fails validation). `blockers` names each one. `apply` still applies
+  `state.db` below the floor, a config that fails validation, or a step that
+  failed). `blockers` names each one. `apply` still applies
   everything it *can*, then reports `blocked` and exits non-zero.
 
 A pending `state.db` migration needs no human decision, so it is never
-`blocked`: under `akm migrate status` or `apply --dry-run` it reads as
+`blocked`: under `akm migrate status` it reads as
 `ready` (the run would change `state.db`) and is listed in
 `stateMigrations.pending`; a real `apply` always applies it.
 
@@ -129,24 +123,18 @@ Key fields:
 
 | Field | Meaning |
 | --- | --- |
-| `stateMigrations` | `{ pending: string[] }` under `status`/`--dry-run`; `{ applied: string[], safetyCopyPath?: string }` after a real `apply`. `safetyCopyPath` is present only when a historical-destructive migration ran — see below. |
-| `taskFiles` | `changed`/`skipped`/`blocked` counts and a `files[]` array with each file's `status` and `reason`. |
+| `stateMigrations` | `{ pending: string[] }` under `status`; `{ applied: string[] }` after a real `apply`. |
 | `assetEngineKeys` | `changed`/`skipped` counts and a `files[]` array with each rewritten file's `rewrites` (`at`, `from`, `to`). |
-| `assetContentRefs` | `changed`/`skipped` file counts, `refs` (old-spelling refs found), a `files[]` array with each file's `refs`, and `shadowed[]` (`bundleId`, `from`, `to`): old spellings another file holds as its ref, not rewritten. |
-| `backupPath` / `applied` | Present after a real apply that rewrote at least one task file: the run's backup directory and how many files it rewrote. |
-| `deadResidue` | `{ pending: [...] }` under a read-only run, `{ removed: [...] }` after apply. Each entry carries `relativePath` and `sizeBytes`; a removal entry adds `removed` (a boolean) and an `error` when the delete failed. A failed delete does not set `status` to `blocked`. |
+| `assetContentRefs` | `changed`/`skipped` file counts, `refs` (old-spelling refs found), a `files[]` array with each file's `refs`, and `shadowed[]` (`bundleId`, `from`, `to`): old spellings another file holds as its ref, not rewritten; `stateRows`, the `state.db` rows keyed by an old spelling that move to the new one. |
+| `scheduler` | `backend`, `entry` (`installed`, `updated`, `unchanged`, `removed`, `absent` or `unmanaged`), `removedLegacy[]` (akm 0.9 per-task rows removed), `keptLegacy[]` (rows that name another installation), `warnings[]`. |
 
 **Backups and their retention:**
 
-- Task-file backups go to `<dataDir>/backups/tasks/<timestamp>-<uuid>/`,
-  one directory per apply run that rewrote a file; nothing prunes them.
+- Asset backups go to `<dataDir>/backups/asset-engine-keys/` and
+  `<dataDir>/backups/asset-content-refs/` (`<timestamp>-<uuid>/`), one directory
+  per apply run that rewrote a file; nothing prunes them.
 - Config backups go to `<cacheDir>/config-backups/config-<ISO-ts>.json`; akm
   keeps the newest **5** and prunes older ones.
-- A `state.db` migration that drops schema writes a sibling copy next to
-  `state.db` itself: `state.db.pre-<migrationId>.bak`, where `<migrationId>` is
-  the first such pending migration. akm does not prune it. It is a rare,
-  one-time event, so clean it up yourself once you've confirmed the upgrade, if
-  disk space matters to your image.
 
 **Exit codes:**
 
@@ -159,9 +147,10 @@ Key fields:
 **Idempotency:** re-running `apply` against a `current` database/tree is a
 no-op — safe to put in every boot, every time, on every replica.
 
-**Offline, no root:** every step reads and writes files/SQLite it already
-owns under your configured `$DATA`/`$CACHE`/bundle directories. Nothing here
-touches the network or needs elevated privileges.
+**Offline, no root:** nothing here touches the network or needs elevated
+privileges. Every step but `scheduler` reads and writes only files and SQLite
+under your configured `$DATA`/`$CACHE`/bundle directories; `scheduler` runs the
+OS scheduler's own command as the current user, and only on a default install.
 
 ## `akm upgrade` in a bundled install
 
@@ -223,19 +212,17 @@ that wording is not a stable interface.
 
 The check that replaces grepping akm's refusal text is a **hard check**
 named `state-db-migrations`. Every `state.db` open applies pending migrations
-(copying the file to `state.db.pre-<id>.bak` first when one drops schema), so
-after an upgrade the check passes and names what health's own open applied:
+so after an upgrade the check passes and names what health's own open applied:
 
 ```json
 {
   "name": "state-db-migrations",
   "status": "pass",
-  "message": "Applied 11 pending state.db migration(s) on open (018-drop-dead-lane-schema … 028-improve-ledger); the pre-migration copy is /data/akm/state.db.pre-018-drop-dead-lane-schema.bak.",
+  "message": "Applied 29 pending state.db migration(s) on open (001-initial-schema … 029-improve-ledger-content-hash).",
   "evidence": {
     "path": "/data/akm/state.db",
     "pending": [],
-    "applied": ["018-drop-dead-lane-schema", "…", "028-improve-ledger"],
-    "backupPath": "/data/akm/state.db.pre-018-drop-dead-lane-schema.bak"
+    "applied": ["001-initial-schema", "…", "029-improve-ledger-content-hash"]
   }
 }
 ```
@@ -245,22 +232,10 @@ then names what is still pending. Watch this row's `status`, not error text.
 
 ## The `akm-migrate` executable
 
-`akm-migrate` is the second `bin` entry the `akm-cli` npm package installs
-(`akm` and `akm-migrate` side by side), and it is also embedded directly in
-the compiled standalone binary — a release binary re-execs itself internally
-to reach it, so it needs no separate download. Same surface either way:
-
-```sh
-akm-migrate status
-akm-migrate apply --dry-run
-akm-migrate apply
-```
-
-`akm migrate status`/`apply` (under the `akm` CLI) are a thin wrapper over
-this same executable — same plan, same exit codes. Reach for `akm-migrate`
-directly when you don't want `akm`'s `--format`/`--detail` output
-handling in the way, e.g. a shell script that just wants the raw JSON line
-on stdout and a plain exit code.
+`akm migrate status`/`apply` spawn the migrator (`scripts/akm-migrate`) in the
+`akm-cli` npm package, and a compiled standalone binary embeds it and re-execs
+itself to reach it, so it needs no separate download. It is not a separate
+`bin` entry: run it through `akm migrate`.
 
 ## Container entrypoint sketch
 
@@ -268,25 +243,26 @@ on stdout and a plain exit code.
 #!/bin/sh
 set -e
 akm --version                 # optional: confirm the pinned version actually landed
-akm migrate apply             # offline, idempotent — exits 1 only if genuinely blocked
-akm task sync --rebind        # only if you schedule akm tasks inside this image
+akm migrate apply             # offline, idempotent — exits 1 only if an item is genuinely blocked
+# to schedule akm tasks inside this image, run `akm task dispatch` every minute from its supervisor (see the scheduling guide)
 akm health --format json      # read this JSON; act on ok/status, never on message text
 ```
 
 ### Environment variables
 
-A bundler that controls the filesystem layout should set these explicitly
-rather than rely on `$HOME`-derived defaults:
+A bundler that controls the filesystem layout should set `AKM_CONFIG_FILE` (or
+pass `--config <file>`) and name the rest in that file, rather than rely on
+`$HOME`-derived defaults. The old `AKM_*_DIR` location variables are retired; see [Retired location variables](../reference/configuration.md#retired-location-variables).
 
-| Variable | What it points at |
+| Variable or key | What it points at |
 | --- | --- |
-| `AKM_BUNDLE_DIR` | The content bundle (`$STASH`) — assets akm indexes and serves. |
-| `AKM_CONFIG_DIR` | `config.json`'s directory. |
-| `AKM_DATA_DIR` | Durable, non-regenerable data: **`index.db` and `state.db` live here.** This is the directory a migration snapshot's safety copy sits beside. |
-| `AKM_CACHE_DIR` | Regenerable cache: installed git, npm and website bundles, config backups, task logs. If it is discarded, `akm bundle update --all` restores the bundles. |
-| `AKM_STATE_DIR` | **Not** where `state.db` lives, despite the name — this is the XDG "state" directory. Holds the scheduler lock and, per bundle, `akm improve`'s whole-run lock (`locks/`) — see [Storage locations](../architecture/internals/storage-locations.md). Set it too, so those locks sit on the same persistent volume as the rest of akm's state rather than under `$HOME/.local/state/akm`. |
+| `defaultBundle` and `bundles.<id>.path` | The content bundle (`$STASH`) — assets akm indexes and serves. |
+| `AKM_CONFIG_FILE` | The config file; `credentials.json` and the config lock sit beside it. |
+| `paths.data` | Durable, non-regenerable data: **`index.db` and `state.db` live here.** This is the directory a migration snapshot's safety copy sits beside. |
+| `paths.cache` | Regenerable cache: installed git, npm and website bundles, config backups, task logs. If it is discarded, `akm bundle update --all` restores the bundles. |
+| `paths.state` | **Not** where `state.db` lives, despite the name — this is the XDG "state" directory. Holds, per bundle, `akm improve`'s whole-run lock (`locks/`) — see [Storage locations](../architecture/internals/storage-locations.md). Set it too, so those locks sit on the same persistent volume as the rest of akm's state rather than under `$HOME/.local/state/akm`. |
 
-Set all five to paths that persist across container restarts (a mounted
+Set the file and its `paths` (and the bundle `path`) to paths that persist across container restarts (a mounted
 volume), or `akm migrate apply` will see an empty `state.db` on every boot
 and never actually converge.
 
@@ -308,6 +284,5 @@ Once a migration has run against `state.db`, there is no downgrade path. An
 **older** akm that later opens the same file continues with the schema it knows
 and warns once that the database is newer; upgrade akm if its output looks
 incomplete. If you need the ability to roll back a bundled akm version, take
-your own backup of the whole data directory (`$AKM_DATA_DIR`) before running
-`akm upgrade`/`akm migrate apply`. The `state.db.pre-<migrationId>.bak` copy
-described above covers the one schema-dropping step, not a general rollback.
+your own backup of the whole data directory (`paths.data`) before running
+`akm upgrade`/`akm migrate apply`.

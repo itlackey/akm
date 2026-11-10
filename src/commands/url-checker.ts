@@ -59,10 +59,7 @@ interface CheckOutcome {
 /**
  * Check every URL in `entries` and report the ones that are dead.
  *
- * No cap, no per-entry slice, no ceiling option. There used to be a
- * `MAX_URLS = 20` plus an undocumented `slice(0, 3)` per entry, so this
- * examined at most twenty links in a bundle holding thousands and reported
- * success. Both are gone. It checks what you asked it to check, at a bounded
+ * No cap, no per-entry slice, no ceiling option: it checks every URL given, at a bounded
  * concurrency (see {@link URL_CHECK_CONCURRENCY}) so a large bundle does not
  * turn into a request flood, and each request is bounded by
  * {@link DEAD_URL_TIMEOUT_MS} so one unresponsive host cannot stall the rest.

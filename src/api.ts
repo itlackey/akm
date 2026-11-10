@@ -13,7 +13,7 @@
  */
 
 import { renderOutput } from "./cli/shared";
-import { runCurate } from "./commands/read/search-cli";
+import { runCurate } from "./commands/read/curate-run";
 import { loadConfig } from "./core/config/config";
 import { UsageError } from "./core/errors";
 import { withQuiet } from "./core/warn";
@@ -44,7 +44,7 @@ function scopeFlagTokens(scope: RecallOptions["filters"]): string[] | undefined 
 
 /**
  * Returns exactly the stdout text of
- * `akm --detail agent -q curate <query> [--limit N] [--type T] --format <format>`
+ * `akm --detail normal -q curate <query> [--limit N] [--type T] --format <format>`
  * including its trailing newline. Rejects with the error the CLI
  * would fail with: its message, and its error code on the `code` property.
  */
@@ -56,7 +56,7 @@ export async function curate(query: string, options: CurateOptions = {}): Promis
   return withQuiet(async () => {
     // Same startup order as the CLI: config first (an invalid config fails
     // the call before anything runs), then the output mode from argv + config.
-    const mode = resolveOutputMode(["--detail", "agent", "--format", format], loadConfig().output ?? {});
+    const mode = resolveOutputMode(["--detail", "normal", "--format", format], loadConfig().output ?? {});
     const disposeLlmUsageSink = installLlmUsagePersistenceIfAbsent();
     try {
       const curated = await runCurate(

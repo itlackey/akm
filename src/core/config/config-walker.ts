@@ -180,8 +180,8 @@ function selectUnionObjectOption(
  */
 export function configGet(config: Record<string, unknown>, dotted: string): unknown {
   const path = parsePath(dotted);
-  const schema = resolveSchemaAt(path, config);
-  if (!schema) {
+  // A key the schema does not know but the file holds (a stored typo) is readable, so `config set`'s warning can be followed.
+  if (!resolveSchemaAt(path, config) && !hasPath(config, path)) {
     throw new UsageError(`Unknown config key: ${dotted}`, "INVALID_FLAG_VALUE", unknownKeyHint());
   }
   let cursor: unknown = config;
@@ -191,6 +191,16 @@ export function configGet(config: Record<string, unknown>, dotted: string): unkn
     cursor = (cursor as Record<string, unknown>)[segment];
   }
   return cursor ?? null;
+}
+
+/** Whether the file holds a value at `path` (own keys only). */
+function hasPath(config: Record<string, unknown>, path: Path): boolean {
+  let cursor: unknown = config;
+  for (const segment of path) {
+    if (!isRecord(cursor) || !Object.hasOwn(cursor, segment)) return false;
+    cursor = cursor[segment];
+  }
+  return true;
 }
 
 /**
@@ -204,10 +214,6 @@ export function configGet(config: Record<string, unknown>, dotted: string): unkn
  */
 export function configSet(config: Record<string, unknown>, dotted: string, raw: string): Record<string, unknown> {
   const path = parsePath(dotted);
-  if (path.length === 1 && path[0] === "configVersion") {
-    throw new UsageError("configVersion cannot be changed through config set.", "INVALID_FLAG_VALUE");
-  }
-
   // #454: a literal apiKey is not persistable. Throw at set time.
   rejectApiKeyPath(path, raw, dotted);
   rejectLiteralApiKeyInWholeObjectSet(path, raw, dotted);
@@ -263,20 +269,6 @@ export function configSet(config: Record<string, unknown>, dotted: string, raw: 
     isRecord(existing) && isRecord(parsed.data) ? deepMergeConfig(existing, parsed.data) : parsed.data,
   );
 
-  // Targeted invariant: defaultWriteTarget must point at a configured bundle
-  // (#464.a). Whole-config validation happens at save time; this check fires
-  // at set time so the user sees the typo immediately.
-  if (dotted === "defaultWriteTarget" && typeof value === "string") {
-    const bundles = next.bundles && typeof next.bundles === "object" ? next.bundles : {};
-    const knownNames = Object.keys(bundles);
-    if (!knownNames.includes(value)) {
-      throw new UsageError(
-        `Unknown bundle "${value}" for defaultWriteTarget; configured bundles: ${knownNames.map((n) => `"${n}"`).join(", ") || "none"}.`,
-        "INVALID_FLAG_VALUE",
-      );
-    }
-  }
-
   return next;
 }
 
@@ -299,13 +291,13 @@ function isTriageJudgmentPath(path: Path): boolean {
  */
 export function configUnset(config: Record<string, unknown>, dotted: string): Record<string, unknown> {
   const path = parsePath(dotted);
-  if (path.length === 1 && path[0] === "configVersion") {
-    throw new UsageError("configVersion cannot be removed through config unset.", "INVALID_FLAG_VALUE");
-  }
-  // Validate the path resolves to a real schema field (so typos don't no-op).
-  const schema = resolveSchemaAt(path, config);
-  if (!schema) {
-    throw new UsageError(`Unknown config key: ${dotted}`, "INVALID_FLAG_VALUE", unknownKeyHint());
+  // A key the schema does not know is removable when the file holds it (a stored typo); otherwise there is nothing to remove.
+  if (!resolveSchemaAt(path, config) && !hasPath(config, path)) {
+    warnOnce(
+      `config-unset:unknown-key:${dotted}`,
+      `"${dotted}" is not a known config key and is not set; nothing to unset.`,
+    );
+    return config;
   }
   return unsetPath(config, path);
 }

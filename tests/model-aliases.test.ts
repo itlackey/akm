@@ -18,7 +18,6 @@ import { resolveQualityGateJudge } from "../src/commands/improve/stage";
 import { type AkmConfig, loadConfig, resetConfigCache } from "../src/core/config/config";
 import { SHIPPED_ALIAS } from "../src/core/config/model-aliases";
 import { getConfigPath } from "../src/core/paths";
-import { resolveIndexPassExecution } from "../src/llm/index-passes";
 import { asLlmRunner } from "./_helpers/llm-runner";
 
 const EXAMPLES = path.join(import.meta.dir, "fixtures", "config-examples");
@@ -29,7 +28,7 @@ const LAB = {
 };
 
 function configOf(extra: Record<string, unknown> = {}): AkmConfig {
-  return { configVersion: "0.9.0", semanticSearchMode: "off", connections: { default: LAB }, ...extra } as AkmConfig;
+  return { semanticSearchMode: "off", connections: { default: LAB }, ...extra } as AkmConfig;
 }
 
 const REFLECT_AND_TRIAGE = {
@@ -50,14 +49,13 @@ const REFLECT_AND_TRIAGE = {
 };
 
 describe("the shipped alias per kind of call", () => {
-  test("the table is the design's: passes fast, judges balanced, agents balanced, extract, enrich and the index fast", () => {
+  test("the table is the design's: passes fast, judges balanced, agents balanced, extract and enrich fast", () => {
     expect(SHIPPED_ALIAS).toEqual({
       improve: "fast",
       judge: "balanced",
       agent: "balanced",
       extract: "fast",
       enrich: "fast",
-      index: "fast",
     });
   });
 
@@ -104,9 +102,8 @@ describe("the shipped alias per kind of call", () => {
     expect(asLlmRunner(resolveQualityGateJudge(wide, undefined, "reflect")).model).toBe("other-balanced");
   });
 
-  test("extract and the index passes ask for fast", () => {
+  test("extract asks for fast", () => {
     expect(asLlmRunner(resolveStandaloneExtractPlan(configOf(), {}).runner).model).toBe("m-fast");
-    expect(asLlmRunner(resolveIndexPassExecution("memory", configOf()).runner).model).toBe("m-fast");
   });
 
   test("standalone extract runs under the built-in strategy, and an explicit false in the config skips it", () => {

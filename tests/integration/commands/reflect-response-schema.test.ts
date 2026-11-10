@@ -20,12 +20,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { akmReflect, REFLECT_JSON_SCHEMA, runReflectIteration } from "../../../src/commands/improve/reflect";
 import { splitFrontmatter } from "../../../src/commands/improve/reflect-noise";
+import { REFLECT_TRUNCATION_MARKER } from "../../../src/commands/prompts";
 import { validateProposal } from "../../../src/commands/proposal/validators/proposals";
 import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { readEvents } from "../../../src/core/events";
 import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
-import { parseAgentProposalPayload, REFLECT_TRUNCATION_MARKER } from "../../../src/integrations/agent/prompts";
 import {
   _resetEndpointSupportTrackersForTests,
   _setChatCompletionForTests,
@@ -923,44 +923,5 @@ describe("akmReflect — content budget is context-aware on the direct-LLM path"
     expect(capturedPrompt).toContain(TRUNCATED_CONTENT_FENCE);
     // The tail sentinel must be gone — it fell past the (near-)12k cap.
     expect(capturedPrompt).not.toContain(TAIL_SENTINEL);
-  });
-});
-
-// ── 3. Parser compatibility ─────────────────────────────────────────────────
-
-describe("agent proposal parser compatibility", () => {
-  test("a minimal schema-conforming payload (ref + content) parses successfully", () => {
-    const sample = {
-      ref: "lessons/demo",
-      content: "Some markdown body.",
-    };
-    const out = parseAgentProposalPayload(JSON.stringify(sample));
-    expect(out.ref).toBe("lessons/demo");
-    expect(out.content).toBe("Some markdown body.");
-    expect(out.frontmatter).toBeUndefined();
-    expect(out.confidence).toBeUndefined();
-  });
-
-  test("a full schema-conforming payload (ref + content + frontmatter + confidence) parses successfully", () => {
-    const sample = {
-      ref: "lessons/demo",
-      content: "---\ndescription: ok\nwhen_to_use: when relevant\n---\n\nBody.\n",
-      frontmatter: { description: "ok", when_to_use: "when relevant" },
-      confidence: 0.85,
-    };
-    const out = parseAgentProposalPayload(JSON.stringify(sample));
-    expect(out.ref).toBe("lessons/demo");
-    expect(out.frontmatter?.description).toBe("ok");
-    expect(out.confidence).toBe(0.85);
-  });
-
-  test("parser rejects a legacy agent payload missing ref", () => {
-    const sample = { content: "Body without a ref." };
-    expect(() => parseAgentProposalPayload(JSON.stringify(sample))).toThrow(/ref/);
-  });
-
-  test("parser rejects a legacy agent payload missing content", () => {
-    const sample = { ref: "lessons/demo" };
-    expect(() => parseAgentProposalPayload(JSON.stringify(sample))).toThrow(/content/);
   });
 });

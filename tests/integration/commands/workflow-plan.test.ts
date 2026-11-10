@@ -6,7 +6,7 @@
  * P3b Lane B TESTS — `akm workflow plan <ref>` (spec docs/plans/specs/
  * p3b-child-executor.md §4.6, rows B-46…B-59; named in §7's new-suites table
  * as this file). Drives the REAL `akm` CLI in-process (`runCliCapture`),
- * exactly like `tests/integration/commands/tasks-explain.test.ts`'s P2b
+ * exactly like `tests/commands/tasks-explain.test.ts`'s P2b
  * precedent for a brand-new read-only verb — no not-yet-existing TypeScript
  * export is referenced directly anywhere in this file, so no
  * `@ts-expect-error` directive is needed.
@@ -418,7 +418,7 @@ describe("akm workflow plan <ref> — lowering notices from freeze surface in no
   // once silently discarded — it is exactly the freeze-time notice row B-57
   // requires `akm workflow plan` to surface, through the same
   // {code, severity, adapter, field, message} projection `akm workflow run`
-  // already renders (tests/output-workflow-lowering-notices.test.ts).
+  // already renders (tests/output-notices.test.ts).
   function writeLoweringNoticeWorkflow(): void {
     write(
       "workflows/plan-lowering-notice.md",

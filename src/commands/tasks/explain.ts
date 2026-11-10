@@ -33,10 +33,10 @@
  *     `with.content`, an inline `akm/command` prompt body, or a stored
  *     command's own rendered content is never read, let alone printed;
  *   - effective execution settings (engine/model/timeout) come from the SAME
- *     entry point `akm command run` uses (`prepareCommandInvocation`), so a
+ *     entry point `akm command` uses (`prepareCommandInvocation`), so a
  *     stored command's own frontmatter (its `harness:`, `model:`, `agent:`) and
  *     the persona it names contribute their layers and the target named is the
- *     target `command run --dry-run` names. An inline `akm/command` prompt has
+ *     target `command --dry-run` names. An inline `akm/command` prompt has
  *     no frontmatter: it goes through `resolveExecution` with a BLANK inline
  *     command. The cascade's "current" layer is built from the TASK's own
  *     `execution` overrides ONLY — connection/harness/engine/model/agent/inference/
@@ -92,11 +92,11 @@ import {
   shippedAlias,
 } from "../../integrations/agent/execution";
 import { isSchedulerRefEnabled } from "../../tasks/activation-config";
-import type { PreparableTaskDocument } from "../../tasks/prepare/prepared-execution";
 import { parseTaskSource } from "../../tasks/source/parse-task-source";
 import { projectTaskSourceV4 } from "../../tasks/source/project-v4";
 import { TASK_INPUT_DIAGNOSTICS } from "../../tasks/source/task-input-diagnostics";
 import { validateTaskConceptId, validateTaskId } from "../../tasks/task-id";
+import type { PreparableTaskDocument } from "../../tasks/task-source";
 import { detectSecretShapedParams } from "../../workflows/exec/param-secrets";
 import { prepareCommandInvocation } from "../command/command-execution";
 import { parseTaskRef, resolveTaskReadBundle, taskIdForAdapter } from "./tasks";
@@ -271,7 +271,7 @@ function currentExecutionValues(document: PreparableTaskDocument, bundleName: st
   const akm = document.akm;
   if (!akm) return {};
   const out: Record<string, unknown> = {};
-  for (const key of ["connection", "harness", "engine", "model", "inference", "outputSchema", "timeout"] as const) {
+  for (const key of ["connection", "harness", "model", "inference", "outputSchema", "timeout"] as const) {
     if (Object.hasOwn(akm, key)) out[key] = akm[key];
   }
   if (Object.hasOwn(akm, "agent")) {
@@ -298,7 +298,7 @@ function storedCommandRef(document: PreparableTaskDocument): string | undefined 
 
 /**
  * Effective execution settings + field-level provenance for a command-kind
- * target. A stored command is prepared the way `akm command run --dry-run`
+ * target. A stored command is prepared the way `akm command --dry-run`
  * prepares it; one that cannot be (a missing command or persona) falls back to
  * the cascade without it, with the reason in `problem`.
  */

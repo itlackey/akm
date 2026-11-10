@@ -144,17 +144,15 @@ concern.
 Adapters do not place new items. AKM-native writes resolve through AKM's own
 flat type→directory placement table (`src/core/asset/asset-placement.ts`'s
 `PLACEMENT_SPECS`), which is correct for akm-layout bundles — the only bundles
-the write commands touch in practice. A per-adapter `placeNew()` existed
-through 0.9 but nothing called it, and it was removed in 0.10. Supporting
-writable bundles in another layout would need it back: see
-[#1163](https://github.com/itlackey/akm/issues/1163).
+the write commands touch in practice. Supporting writable bundles in another layout would need a per-adapter
+placement hook, which does not exist.
 
 ---
 
 ## Write allowlists
 
 Which bundles AKM-native write commands may touch is decided by a small
-allowlist check, `assertAkmAssetWrite` (`src/core/write-source.ts`), run before
+allowlist check, `assertAkmAssetWrite` (`src/sources/write-source.ts`), run before
 any write command touches the filesystem. It compares the target
 bundle's detected (or configured) adapter id against an allowlist and throws
 a `UsageError` on a miss.
@@ -189,9 +187,9 @@ source parser, `parseTaskSource`, which accepts only `version: 4` (task
 source v4). A task source v4 document declares exactly one executable
 selector (`uses` or `run`), but its scheduling is optional — a document with
 no `schedule:` is valid and runnable manually. A `version: 3` or `version: 2`
-document is not read: it raises `TASK_SCHEMA_VERSION_UNSUPPORTED`, naming
-`akm migrate apply`, which converts it. The `akm-task` probe still recognizes a
-root of v2/v3 task files so the migrator can find them. Targets are
+document is not read: it raises `TASK_SCHEMA_VERSION_UNSUPPORTED`, naming the
+0.9.32 recipe (this release converts none). The `akm-task` probe still
+recognizes a root of v2/v3 task files so `akm task sync` can report them. Targets are
 `akm/command` and canonical `commands/`, `workflows/`, and `scripts/` refs;
 the github-action `uses:` variant, agent refs, and task refs are refused.
 `.yaml` is a collection hint only: recognition gates on `.yml`, so a `.yaml`

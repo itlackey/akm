@@ -5,7 +5,6 @@
 /** The improve loop (reflect + distill per ref), the post-loop checks and the maintenance passes. */
 
 import fs from "node:fs";
-import { daysToMs } from "../../core/common";
 import { type AkmConfig, type ImproveProfileConfig, loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { appendEvent, type EventsContext } from "../../core/events";
@@ -15,32 +14,26 @@ import { getDbPath, getTaskLogDir } from "../../core/paths";
 import { withStateDb } from "../../core/state-db";
 import { info } from "../../core/warn";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
-import {
-  countPendingMemoriesNeedingDecision,
-  type MemoryInferenceResult,
-  runMemoryInferencePass,
-} from "../../indexer/passes/memory-inference";
+import { foldBeforePurge } from "../../indexer/metrics/fold";
+import { type MemoryInferenceResult, runMemoryInferencePass } from "../../indexer/passes/memory-inference";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import type { Database } from "../../storage/database";
-import { purgeOldEvents } from "../../storage/repositories/events-repository";
-import { purgeOldImproveRuns } from "../../storage/repositories/improve-runs-repository";
 import { closeDatabase, openIndexDatabase } from "../../storage/repositories/index-connection";
 import {
   getLiveRefSnapshot,
   isRefLiveInSnapshot,
   type LiveRefSnapshot,
 } from "../../storage/repositories/index-entries-repository";
+import { purgeFoldedEvents, purgeFoldedImproveRuns } from "../../storage/repositories/metrics-rollup-repository";
 import {
   clearAssetOutcomeMissing,
   countAssetOutcomeMissing,
-  deleteAssetOutcomeMissingBefore,
   listAssetOutcomeMissingState,
   stampAssetOutcomeMissing,
 } from "../../storage/repositories/outcome-repository";
 import {
   clearAssetSalienceMissing,
   countAssetSalienceMissing,
-  deleteAssetSalienceMissingBefore,
   listAssetSalienceMissingState,
   stampAssetSalienceMissing,
 } from "../../storage/repositories/salience-repository";
@@ -574,19 +567,11 @@ export async function runMemoryInferenceMaintenancePass(
   action?: ImproveActionResult;
   warnings: string[];
 }> {
-  const { config, sources, primaryStashDir, resolvedPlan } = ctx;
+  const { config, sources, resolvedPlan } = ctx;
   const settings = ctx.improveProfile?.processes?.memoryInference;
   if (settings?.enabled === false) {
     info("[improve] memory inference skipped (disabled by improve profile)");
     return { durationMs: 0, warnings: [] };
-  }
-  const minPendingCount = settings?.minPendingCount;
-  if (primaryStashDir && minPendingCount !== undefined && minPendingCount > 0) {
-    const pending = countPendingMemoriesNeedingDecision(primaryStashDir, dbCell.current);
-    if (pending < minPendingCount) {
-      info(`[improve] memory inference skipped (${pending} pending < minPendingCount ${minPendingCount})`);
-      return { durationMs: 0, warnings: [] };
-    }
   }
   const hintRefs = memoryRefsForInference.size;
   info(
@@ -698,7 +683,8 @@ function runProposalHygienePass(ctx: MaintenanceCtx): {
 
 /**
  * Trim the observability data that grows append-only — state.db events and
- * improve_runs, logs.db task_logs, and the per-run task log files — to
+ * improve_runs (folded into metrics.db first, and only folded days are
+ * deleted), logs.db task_logs, and the per-run task log files — to
  * `improve.eventRetentionDays` (default 90; 0 disables), then VACUUM state.db
  * when enough pages are free. Each store fails on its own. state.db work
  * borrows the run's long-lived handle: a second writer on the same WAL file
@@ -717,8 +703,18 @@ export function runRetentionPurgePass(ctx: MaintenanceCtx): { warnings: string[]
   try {
     withStateDb(
       (stateDb) => {
-        report("events_purged", "events/_purge", purgeOldEvents(stateDb, retentionDays), "event(s)");
-        report("improve_runs_purged", "improve_runs/_purge", purgeOldImproveRuns(stateDb, retentionDays), "run(s)");
+        // Fold closed days into metrics.db first; only folded days are purged. With metrics.db
+        // unavailable nothing is purged (one warning) and the rows wait for the next run.
+        const folded = foldBeforePurge(stateDb);
+        if (folded) {
+          report("events_purged", "events/_purge", purgeFoldedEvents(stateDb, retentionDays, folded), "event(s)");
+          report(
+            "improve_runs_purged",
+            "improve_runs/_purge",
+            purgeFoldedImproveRuns(stateDb, retentionDays, folded),
+            "run(s)",
+          );
+        }
         const vacuum = vacuumIfReclaimable(
           stateDb,
           readFreelistInfo(stateDb),
@@ -772,12 +768,6 @@ export function runRetentionPurgePass(ctx: MaintenanceCtx): { warnings: string[]
 }
 
 /**
- * Grace window before an unresolved salience/outcome row may be deleted (only
- * when `improve.stateGc.collect` is true).
- */
-export const STATE_GC_GRACE_MS = daysToMs(7);
-
-/**
  * A stored state ref is live when it, or its bare conceptId, resolves in the
  * index. The bare fallback keeps a live asset whose row predates
  * bundle-qualification from being collected.
@@ -792,31 +782,26 @@ interface StateGcTable {
   rows: ReadonlyArray<{ asset_ref: string; missing_since: number | null }>;
   stamp: (refs: string[], now: number) => number;
   clear: (refs: string[]) => number;
-  deleteOlderThan: (cutoffMs: number) => number;
   countPending: () => number;
 }
 
 /**
  * Orphan-state GC (#733) over `asset_salience` and `asset_outcome`: stamp
  * `missing_since` on refs that no longer resolve in index.db, clear it on refs
- * that resolve again, and — only with `improve.stateGc.collect` — delete rows
- * stamped longer ago than {@link STATE_GC_GRACE_MS}. An unreachable source keeps
- * its last-known index rows, so it never surfaces candidates. `pending` is the
- * backlog after the sweep; the event is emitted only when there is something to
- * report.
+ * that resolve again. Rows are never deleted: they are improve history. An
+ * unreachable source keeps its last-known index rows, so it never surfaces
+ * candidates. `pending` is the backlog after the sweep; the event is emitted
+ * only when there is something to report.
  */
 export function runOrphanStateGcPass(
   ctx: MaintenanceCtx,
   dbCell: IndexDbCell,
-): { pending: number; collected: number; warnings: string[] } {
+): { pending: number; warnings: string[] } {
   const { eventsCtx } = ctx;
   const indexDb = dbCell.current;
-  if (!indexDb)
-    return { pending: 0, collected: 0, warnings: ["orphan state GC skipped: no index.db handle available"] };
-  const collect = ctx.config.improve?.stateGc?.collect === true;
+  if (!indexDb) return { pending: 0, warnings: ["orphan state GC skipped: no index.db handle available"] };
   const now = Date.now();
   let pending = 0;
-  let collected = 0;
   try {
     const liveRefs = getLiveRefSnapshot(indexDb);
     const sweep = (table: StateGcTable) => {
@@ -829,8 +814,7 @@ export function runOrphanStateGcPass(
       }
       if (toStamp.length > 0) table.stamp(toStamp, now);
       if (toClear.length > 0) table.clear(toClear);
-      const removed = collect ? table.deleteOlderThan(now - STATE_GC_GRACE_MS) : 0;
-      return { pending: table.countPending(), collected: removed };
+      return { pending: table.countPending() };
     };
     withStateDb(
       (stateDb) => {
@@ -841,27 +825,23 @@ export function runOrphanStateGcPass(
             rows: listAssetSalienceMissingState(stateDb),
             stamp: (refs, ts) => stampAssetSalienceMissing(stateDb, refs, ts),
             clear: (refs) => clearAssetSalienceMissing(stateDb, refs),
-            deleteOlderThan: (cutoff) => deleteAssetSalienceMissingBefore(stateDb, cutoff),
             countPending: () => countAssetSalienceMissing(stateDb),
           }),
           outcome: sweep({
             rows: listAssetOutcomeMissingState(stateDb),
             stamp: (refs, ts) => stampAssetOutcomeMissing(stateDb, refs, ts),
             clear: (refs) => clearAssetOutcomeMissing(stateDb, refs),
-            deleteOlderThan: (cutoff) => deleteAssetOutcomeMissingBefore(stateDb, cutoff),
             countPending: () => countAssetOutcomeMissing(stateDb),
           }),
         };
         pending = byTable.salience.pending + byTable.outcome.pending;
-        collected = byTable.salience.collected + byTable.outcome.collected;
-        if (pending > 0 || collected > 0) {
+        if (pending > 0) {
           info(
-            `[improve] orphan state GC: ${pending} pending, ${collected} collected ` +
-              `(salience ${byTable.salience.pending}/${byTable.salience.collected}, ` +
-              `outcome ${byTable.outcome.pending}/${byTable.outcome.collected})`,
+            `[improve] orphan state GC: ${pending} pending ` +
+              `(salience ${byTable.salience.pending}, outcome ${byTable.outcome.pending})`,
           );
           appendEvent(
-            { eventType: "asset_state_gc", ref: "asset_state/_gc", metadata: { pending, collected, byTable } },
+            { eventType: "asset_state_gc", ref: "asset_state/_gc", metadata: { pending, byTable } },
             eventsCtx,
           );
         }
@@ -869,7 +849,7 @@ export function runOrphanStateGcPass(
       { path: eventsCtx?.dbPath, borrowed: eventsCtx?.db },
     );
   } catch (err) {
-    return { pending, collected, warnings: [`orphan state GC failed: ${errMessage(err)}`] };
+    return { pending, warnings: [`orphan state GC failed: ${errMessage(err)}`] };
   }
-  return { pending, collected, warnings: [] };
+  return { pending, warnings: [] };
 }

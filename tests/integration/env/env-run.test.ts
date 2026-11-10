@@ -9,7 +9,7 @@
  * spawn the target command with stdio inherited to the real file
  * descriptors, so the injected-env output belongs to the CHILD process, not
  * the CLI. The in-process console-capture harness cannot observe it — only a
- * real process boundary can. Moved here from tests/env-path-run.test.ts;
+ * real process boundary can. Moved here from tests/integration/env/env-path-run.test.ts;
  * the in-process env path/export/error-path tests remain in the unit file.
  */
 
@@ -17,7 +17,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { makeStashDir, type SandboxedDir, writeSandboxConfig } from "../../_helpers/sandbox";
+import { makeStashDir, type SandboxedDir, withBundleSync, writeSandboxConfig } from "../../_helpers/sandbox";
 
 const disposers: SandboxedDir[] = [];
 
@@ -37,18 +37,19 @@ function makeStash(): string {
 
 function spawnCli(
   args: string[],
-  extraEnv: Record<string, string | undefined> = {},
+  options: { stashDir?: string; env?: Record<string, string | undefined> } = {},
 ): { stdout: string; stderr: string; status: number } {
-  const result = spawnSync("bun", [cliPath, ...args], {
-    encoding: "utf8",
-    timeout: 15_000,
-    cwd: repoRoot,
-    env: {
-      ...process.env,
-      AKM_BUNDLE_DIR: undefined,
-      ...extraEnv,
-    },
-  });
+  const result = withBundleSync(options.stashDir, () =>
+    spawnSync("bun", [cliPath, ...args], {
+      encoding: "utf8",
+      timeout: 15_000,
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        ...options.env,
+      },
+    }),
+  );
   return {
     stdout: result.stdout ?? "",
     stderr: result.stderr ?? "",
@@ -64,7 +65,7 @@ describe("env run", () => {
 
     const { stdout, stderr, status } = spawnCli(
       ["env", "run", "env/prod", "--", "bash", "-lc", 'printf \'%s %s\' "$FOO" "$BAR"'],
-      { AKM_BUNDLE_DIR: stashDir },
+      { stashDir: stashDir },
     );
 
     expect(status).toBe(0);
@@ -80,7 +81,7 @@ describe("env run", () => {
     fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "API_KEY=Bearer ${secrets/my_api_token}\n", "utf8");
 
     const { stdout, status } = spawnCli(["env", "run", "env/prod", "--", "bash", "-lc", "printf '%s' \"$API_KEY\""], {
-      AKM_BUNDLE_DIR: stashDir,
+      stashDir: stashDir,
     });
 
     expect(status).toBe(0);
@@ -97,7 +98,7 @@ describe("env run", () => {
 
     const { stdout, status } = spawnCli(
       ["env", "run", "env/prod", "--", "bash", "-lc", 'printf \'%s|%s\' "$PAIR" "$KEEP"'],
-      { AKM_BUNDLE_DIR: stashDir },
+      { stashDir: stashDir },
     );
 
     expect(status).toBe(0);
@@ -113,7 +114,7 @@ describe("env run", () => {
     fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "API_KEY=${secrets/tok}\n", "utf8");
 
     const { stdout, status } = spawnCli(["env", "run", "env/prod", "--", "bash", "-lc", "printf '[%s]' \"$API_KEY\""], {
-      AKM_BUNDLE_DIR: stashDir,
+      stashDir: stashDir,
     });
 
     expect(status).toBe(0);
@@ -137,7 +138,7 @@ describe("env run", () => {
 
     const { stdout, status } = spawnCli(
       ["env", "run", "env/prod", "--", "bash", "-lc", 'printf \'%s|%s\' "$TOKEN" "$TOOL"'],
-      { AKM_BUNDLE_DIR: primaryDir },
+      { stashDir: primaryDir },
     );
 
     expect(status).toBe(0);
@@ -159,7 +160,7 @@ describe("env run", () => {
 
     const { stdout, status } = spawnCli(
       ["env", "run", "env/prod", "--", "bash", "-lc", 'printf \'%s|%s\' "$REL" "$SH"'],
-      { AKM_BUNDLE_DIR: primaryDir },
+      { stashDir: primaryDir },
     );
 
     expect(status).toBe(0);
@@ -171,7 +172,7 @@ describe("env run", () => {
     fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "FOO=bar\n", "utf8");
 
-    const { stderr, status } = spawnCli(["env", "run", "prod", "--", "true"], { AKM_BUNDLE_DIR: stashDir });
+    const { stderr, status } = withBundleSync(stashDir, () => spawnCli(["env", "run", "prod", "--", "true"]));
 
     expect(status).toBe(2);
     expect(JSON.parse(stderr.trim()).error).toContain("env/prod");
@@ -184,7 +185,7 @@ describe("env run", () => {
 
     const { stdout, stderr, status } = spawnCli(
       ["env", "run", "env/danger", "--", "bash", "-lc", 'printf \'%s|%s\' "$FOO" "$GIT_SSH_COMMAND"'],
-      { AKM_BUNDLE_DIR: stashDir },
+      { stashDir: stashDir },
     );
 
     expect(status).toBe(0);
@@ -201,7 +202,7 @@ describe("env run", () => {
 
     const { stdout, stderr, status } = spawnCli(
       ["env", "run", "vendor//env/danger", "--", "bash", "-lc", 'printf "%s" "$GIT_SSH_COMMAND"'],
-      { AKM_BUNDLE_DIR: primaryDir },
+      { stashDir: primaryDir },
     );
 
     expect(status).toBe(0);
@@ -209,18 +210,18 @@ describe("env run", () => {
     expect(stderr).not.toContain("Refusing to inject");
   });
 
-  test("--allow-dangerous-env-keys is accepted as a deprecated no-op (#1237)", () => {
+  test("--allow-dangerous-env-keys is an unknown flag (#1237)", () => {
     const stashDir = makeStash();
     fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "env", "danger.env"), "GIT_SSH_COMMAND=/evil\n", "utf8");
 
-    const { stdout, status } = spawnCli(
+    const { stderr, status } = spawnCli(
       ["env", "run", "env/danger", "--allow-dangerous-env-keys", "--", "bash", "-lc", 'printf "%s" "$GIT_SSH_COMMAND"'],
-      { AKM_BUNDLE_DIR: stashDir },
+      { stashDir: stashDir },
     );
 
-    expect(status).toBe(0);
-    expect(stdout.trim()).toBe("/evil");
+    expect(status).not.toBe(0);
+    expect(stderr).toContain("--allow-dangerous-env-keys");
   });
 
   test("--only injects just the named keys", () => {
@@ -230,7 +231,7 @@ describe("env run", () => {
 
     const { stdout, status } = spawnCli(
       ["env", "run", "env/prod", "--only", "FOO,BAZ", "--", "bash", "-lc", 'printf \'%s|%s|%s\' "$FOO" "$BAR" "$BAZ"'],
-      { AKM_BUNDLE_DIR: stashDir },
+      { stashDir: stashDir },
     );
 
     expect(status).toBe(0);
@@ -245,7 +246,7 @@ describe("env run", () => {
 
     const { stdout, status } = spawnCli(
       ["env", "run", "env/prod", "--except", "BAR", "--", "bash", "-lc", 'printf \'%s|%s\' "$FOO" "$BAR"'],
-      { AKM_BUNDLE_DIR: stashDir },
+      { stashDir: stashDir },
     );
 
     expect(status).toBe(0);
@@ -259,7 +260,7 @@ describe("env run", () => {
 
     const { stdout, status } = spawnCli(
       ["env", "run", "env/prod", "--clean", "--", "bash", "-lc", 'printf "%s|%s" "$FOO" "${PARENT_ONLY:-}"'],
-      { AKM_BUNDLE_DIR: stashDir, PARENT_ONLY: "sentinel" },
+      { stashDir: stashDir, env: { PARENT_ONLY: "sentinel" } },
     );
 
     expect(status).toBe(0);
@@ -284,7 +285,7 @@ describe("env run", () => {
         "-lc",
         'printf "%s|%s" "$FOO" "${PARENT_ONLY:-}"',
       ],
-      { AKM_BUNDLE_DIR: stashDir, PARENT_ONLY: "sentinel" },
+      { stashDir: stashDir, env: { PARENT_ONLY: "sentinel" } },
     );
 
     expect(status).toBe(0);
@@ -303,9 +304,7 @@ describe("env run", () => {
     fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "FOO=foo\n", "utf8");
 
-    const { status } = spawnCli(["env", "run", "env/prod", "--", "/bin/sh", "-c", "exit 3"], {
-      AKM_BUNDLE_DIR: stashDir,
-    });
+    const { status } = spawnCli(["env", "run", "env/prod", "--", "/bin/sh", "-c", "exit 3"], { stashDir: stashDir });
 
     expect(status).toBe(3);
   });
@@ -329,7 +328,7 @@ describe("secret run", () => {
         "-lc",
         'printf "%s|%s" "$API_TOKEN" "${PARENT_ONLY:-}"',
       ],
-      { AKM_BUNDLE_DIR: stashDir, PARENT_ONLY: "sentinel" },
+      { stashDir: stashDir, env: { PARENT_ONLY: "sentinel" } },
     );
 
     expect(status).toBe(0);
@@ -347,7 +346,7 @@ describe("secret run", () => {
     fs.writeFileSync(path.join(stashDir, "secrets", "token"), "sekret", "utf8");
 
     const { status } = spawnCli(["secret", "run", "secrets/token", "API_TOKEN", "--", "/bin/sh", "-c", "exit 3"], {
-      AKM_BUNDLE_DIR: stashDir,
+      stashDir: stashDir,
     });
 
     expect(status).toBe(3);

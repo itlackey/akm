@@ -22,8 +22,7 @@
 
   let config = $state<{
     path: string;
-    config: { projects?: Record<string, ProjectEntry>; defaultWriteTarget?: string };
-    localProjects?: string[];
+    config: { projects?: Record<string, ProjectEntry>; defaultBundle?: string };
     projectWarnings?: string[];
     automaticWriteTarget?: { name: string } | null;
   } | null>(null);
@@ -33,10 +32,10 @@
     failure = $state(""),
     root = $state<HTMLElement>();
 
-  const rows = $derived(projectRows(config?.config.projects, config?.localProjects ?? []));
+  const rows = $derived(projectRows(config?.config.projects));
   const row = $derived<ProjectRow | undefined>(rows.find((r) => r.name === name));
   const adding = $derived(!name && query.has("add"));
-  const defaultTarget = $derived(config?.config.defaultWriteTarget || config?.automaticWriteTarget?.name || "");
+  const defaultTarget = $derived(config?.config.defaultBundle || config?.automaticWriteTarget?.name || "");
   const bundleInfo = $derived(
     workspace.bundles.map((b) => ({ name: b.name, enabled: b.enabled, writable: b.writable })),
   );
@@ -165,7 +164,6 @@
     </nav>
     <div class="head">
       <h1 tabindex="-1">Edit {row.name}</h1>
-      <span class="badge">{row.inherited ? "Inherited" : "Local"}</span>
     </div>
     {#key row.name}<ProjectForm
         original={row}
@@ -192,7 +190,7 @@
         query={new URLSearchParams()}
         {returnTo}
         bundles={workspace.bundles}
-        defaultWriteTarget={workspace.defaultWriteTarget}
+        defaultBundle={workspace.defaultBundle}
         mode="search"
         hideBack
         on:loaded={(event) => (assetTitle = documentTitle(event.detail.asset))}

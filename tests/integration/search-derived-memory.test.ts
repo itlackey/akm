@@ -38,6 +38,7 @@ import {
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
   sandboxXdgStateHome,
+  useBundleConfig,
 } from "../_helpers/sandbox";
 
 // ── Environment isolation ───────────────────────────────────────────────────
@@ -89,7 +90,7 @@ beforeEach(() => {
   process.env.XDG_CONFIG_HOME = fileConfigHome;
   process.env.XDG_DATA_HOME = fileDataHome;
   process.env.XDG_STATE_HOME = fileStateHome;
-  process.env.AKM_BUNDLE_DIR = stashDir;
+  useBundleConfig(stashDir);
   resetConfigCache();
 });
 
@@ -215,7 +216,7 @@ for (const bundleId of ["stash", "team"]) {
 describe("derived-memory search enrichment (Phase 5A / Advantage D5)", () => {
   test("parent hit preserves authored qualifications and tags while retaining expandTo", async () => {
     const result = await akmSearch({ query: "claude-prefs", source: "local", limit: 10 });
-    const parentHit = result.hits.find((h) => h.type === "memory" && h.name === "claude-prefs");
+    const parentHit = result.results.find((h) => h.type === "memory" && h.name === "claude-prefs");
     expect(parentHit).toBeDefined();
     if (!parentHit || !("ref" in parentHit)) return;
 
@@ -230,7 +231,7 @@ describe("derived-memory search enrichment (Phase 5A / Advantage D5)", () => {
 
   test("memory without a derived child is unchanged (no expandTo, no rewrite)", async () => {
     const result = await akmSearch({ query: "lonely-pref", source: "local", limit: 10 });
-    const hit = result.hits.find((h) => h.type === "memory" && h.name === "lonely-pref");
+    const hit = result.results.find((h) => h.type === "memory" && h.name === "lonely-pref");
     expect(hit).toBeDefined();
     if (!hit || !("ref" in hit)) return;
 
@@ -242,7 +243,7 @@ describe("derived-memory search enrichment (Phase 5A / Advantage D5)", () => {
   test("derived child hit is not double-enriched (no recursive expandTo)", async () => {
     // "distilled" is only in the child's body, so the child is returned alone (its parent is not a hit).
     const result = await akmSearch({ query: "distilled", source: "local", limit: 10 });
-    const derivedHit = result.hits.find((h) => h.type === "memory" && h.name === "claude-prefs.derived");
+    const derivedHit = result.results.find((h) => h.type === "memory" && h.name === "claude-prefs.derived");
     expect(derivedHit).toBeDefined();
     if (!derivedHit || !("ref" in derivedHit)) return;
     expect(derivedHit.expandTo).toBeUndefined();
@@ -250,7 +251,7 @@ describe("derived-memory search enrichment (Phase 5A / Advantage D5)", () => {
 
   test("a parent and its child that both match are one result: the parent, with expandTo", async () => {
     const result = await akmSearch({ query: "claude-prefs.derived", source: "local", limit: 10 });
-    const names = result.hits.flatMap((h) => (h.type === "memory" ? [h.name] : []));
+    const names = result.results.flatMap((h) => (h.type === "memory" ? [h.name] : []));
     expect(names).toContain("claude-prefs");
     expect(names).not.toContain("claude-prefs.derived");
   });
@@ -326,11 +327,11 @@ for (const fixture of fallbackFixtures) {
       expect(getSearchHitAttribution(curated)?.memoryInference?.surfaceFields ?? []).toEqual(
         fixture.fields.includes("description") ? ["description"] : [],
       );
-      for (const projection of ["brief", "normal", "agent", "full"] as const) {
+      for (const projection of ["ref", "brief", "normal", "full"] as const) {
         const visible =
           projection === "full"
             ? fixture.fields.length > 0
-            : projection !== "brief" && fixture.fields.includes("description");
+            : projection !== "ref" && fixture.fields.includes("description");
         expect(
           buildUsageEventAttribution(attribution, `stash//memories/${fixture.name}`, projection)?.memoryInference
             ?.exposure,

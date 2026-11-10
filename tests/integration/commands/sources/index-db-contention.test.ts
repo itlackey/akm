@@ -26,7 +26,7 @@ import { saveConfig } from "../../../../src/core/config/config";
 import { getIndexRebuildLockPath } from "../../../../src/core/paths";
 import type { Database } from "../../../../src/storage/database";
 import { openIndexDatabase } from "../../../../src/storage/repositories/index-connection";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
+import { type IsolatedAkmStorage, withDefaultBundle, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 
 const repoRoot = path.resolve(import.meta.dir, "../../../..");
 
@@ -34,7 +34,7 @@ let storage: IsolatedAkmStorage;
 
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
-  saveConfig({ semanticSearchMode: "off" });
+  saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, storage.stashDir));
 });
 
 afterEach(() => {

@@ -9,7 +9,7 @@
  * equivalence baseline and `curate()` opens the real index database.
  *
  * Pins: (1) `curate()` returns byte-for-byte the stdout of
- * `akm --detail agent -q curate … --format <fmt>` on the same sandbox stash, for
+ * `akm --detail normal -q curate … --format <fmt>` on the same sandbox stash, for
  * text and json; (2) it rejects with the CLI's message and `code`; (3) calling
  * it repeatedly in one long-lived process sees config edits on disk, leaks no
  * file descriptors, and leaves quiet/verbose/stdout/env/cwd as the host had them.
@@ -21,7 +21,17 @@ import fs from "node:fs";
 import path from "node:path";
 import { curate } from "../../../src/api";
 import { isQuiet, isVerbose, setQuiet } from "../../../src/core/warn";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
+import {
+  type IsolatedAkmStorage,
+  withDefaultBundle,
+  withIsolatedAkmStorage,
+  writeSandboxConfig,
+} from "../../_helpers/sandbox";
+
+// The CLI prints compact JSON to a pipe; the API keeps its pretty-printed string. The documents are what must match.
+function expectSameJson(actual: string, expected: string) {
+  expect(JSON.parse(actual)).toEqual(JSON.parse(expected));
+}
 
 const CLI = path.join(import.meta.dir, "..", "..", "..", "src", "cli.ts");
 
@@ -38,7 +48,7 @@ function runCli(args: string[]): { status: number | null; stdout: string; stderr
 }
 
 function cliCurate(query: string, flags: string[] = []) {
-  return runCli(["--detail", "agent", "-q", "curate", query, ...flags]);
+  return runCli(["--detail", "normal", "-q", "curate", query, ...flags]);
 }
 
 function configPath(): string {
@@ -85,21 +95,23 @@ describe("curate() equals the CLI's stdout", () => {
       const cli = cliCurate("deploy production", ["--format", format]);
       expect(cli.status).toBe(0);
       expect(cli.stdout).toContain("deploy");
-      expect(await curate("deploy production", { format })).toBe(cli.stdout);
+      const out = await curate("deploy production", { format });
+      if (format === "json") expectSameJson(out, cli.stdout);
+      else expect(out).toBe(cli.stdout);
     });
   }
 
   test("json is the default format, as in the CLI", async () => {
     const cli = cliCurate("deploy production", ["--format", "json"]);
-    expect(await curate("deploy production")).toBe(cli.stdout);
+    expectSameJson(await curate("deploy production"), cli.stdout);
   });
 
   test("--limit and --type", async () => {
     const cli = cliCurate("deploy", ["--limit", "1", "--type", "knowledge", "--format", "json"]);
     expect(cli.status).toBe(0);
     const out = await curate("deploy", { limit: 1, type: "knowledge", format: "json" });
-    expect(out).toBe(cli.stdout);
-    expect(JSON.parse(out).items).toHaveLength(1);
+    expectSameJson(out, cli.stdout);
+    expect(JSON.parse(out).results).toHaveLength(1);
   });
 
   test("a query with no match is the same empty result", async () => {
@@ -160,7 +172,7 @@ describe("repeated calls inside one long-lived process", () => {
     const verboseBefore = isVerbose();
 
     const first = await curate("deploy production", { format: "json" });
-    expect(JSON.parse(first).items.length).toBeGreaterThan(0);
+    expect(JSON.parse(first).results.length).toBeGreaterThan(0);
     // Warm the process (module graph, embed cache) before counting descriptors.
     await curate("deploy production", { format: "text" });
     const fdsBefore = await openFdCount();
@@ -173,12 +185,14 @@ describe("repeated calls inside one long-lived process", () => {
     );
     expect(broken?.code).toBe("INVALID_CONFIG_FILE");
 
-    writeSandboxConfig({ semanticSearchMode: "off", search: { defaultExcludeTypes: ["skill"] } });
+    writeSandboxConfig(
+      withDefaultBundle({ semanticSearchMode: "off", search: { defaultExcludeTypes: ["skill"] } }, storage.stashDir),
+    );
     // writeSandboxConfig merges over the broken file's fallback ({}), so this is a valid config again.
     const cli = cliCurate("deploy production", ["--format", "json"]);
     const edited = await curate("deploy production", { format: "json" });
-    expect(edited).toBe(cli.stdout);
-    expect(JSON.parse(edited).items.map((i: { type: string }) => i.type)).not.toContain("skill");
+    expectSameJson(edited, cli.stdout);
+    expect(JSON.parse(edited).results.map((i: { type: string }) => i.type)).not.toContain("skill");
 
     // Overlapping calls with different formats do not share output state.
     const [a, b] = await Promise.all([

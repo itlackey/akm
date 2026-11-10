@@ -23,9 +23,7 @@
  *
  * This file is intentionally NOT an adapter/DI/ports-and-adapters layer. It is
  * a plain module: a structural type plus a factory function. The handle it
- * returns is the real underlying driver instance (so e.g. `sqlite-vec`'s
- * `load(db)`, used to drop the retired `entries_vec` table, receives the
- * genuine driver handle and works unchanged).
+ * returns is the real underlying driver instance.
  *
  * @module storage/database
  */
@@ -106,12 +104,6 @@ export interface Database {
    * under writer contention (see `withImmediateTransaction`).
    */
   readonly inTransaction: boolean;
-  /**
-   * Load a SQLite extension. Both drivers expose this, and `sqlite-vec`'s
-   * `load(db)` calls it directly — so the Node wrapper must forward it rather
-   * than presenting a handle that silently lacks the method.
-   */
-  loadExtension(path: string, entryPoint?: string): void;
   /** Close the underlying database handle. */
   close(): void;
 }
@@ -221,7 +213,6 @@ interface BetterSqliteDatabase {
   exec(sql: string): void;
   transaction<Args extends unknown[], R>(fn: (...args: Args) => R): (...args: Args) => R;
   readonly inTransaction: boolean;
-  loadExtension(path: string, entryPoint?: string): void;
   close(): void;
 }
 
@@ -287,9 +278,6 @@ function openNodeDatabase(path: string, opts?: OpenDatabaseOptions): Database {
     // bun:sqlite also provides db.run(). Normalize the latter at the provider
     // boundary so callers and maintenance wrappers can rely on one contract.
     run: (sql, ...params) => db.prepare(sql).run(...params),
-    // sqlite-vec's load(db) calls db.loadExtension(); without forwarding it the
-    // extension could never load on Node.
-    loadExtension: db.loadExtension.bind(db),
     transaction: db.transaction.bind(db),
     get inTransaction() {
       return db.inTransaction;

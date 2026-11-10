@@ -18,13 +18,13 @@ import { akmClone, type CloneResponse } from "../commands/sources/source-clone";
 import { assertFlatAssetName } from "../core/asset/asset-create";
 import { assetPathForName, stashDirFor } from "../core/asset/asset-placement";
 import { parseBundleRef } from "../core/asset/asset-ref";
-import { resolveStashDir, toErrorMessage } from "../core/common";
+import { toErrorMessage } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
-import { resolveBundleWriteTarget } from "../core/mutation-target";
 import { warn } from "../core/warn";
-import { assertAkmAssetWrite } from "../core/write-source";
+import { resolveBundleWriteTarget } from "../sources/mutation-target";
+import { assertAkmAssetWrite } from "../sources/write-source";
 import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
 import { getEntryIdByFilePath, getItemRefById } from "../storage/repositories/index-entries-repository";
 import { interactive } from "./lease";
@@ -184,7 +184,8 @@ export async function retire(input: { ref: string; revision: string }) {
     const { canonical, target, type } = await resolveWritableIndexedAsset(ref);
     if (["skill", "env", "secret", "session"].includes(type))
       throw new UsageError("Retire supports single-file assets, not skill packages or protected files.");
-    const stashDir = resolveStashDir();
+    // The write target the asset resolved to owns the proposal queue.
+    const stashDir = target.source.path;
     const minted = createRetireProposal(stashDir, {
       ref: canonical,
       source: "propose",
@@ -208,7 +209,12 @@ export async function retire(input: { ref: string; revision: string }) {
       ref: canonical,
       bundle: target.source.name,
       archiveDirs: accepted.retiredArchive?.dirs ?? [],
-      warnings: type === "task" ? ["Installed schedules are not changed. Run akm task sync to reconcile them."] : [],
+      warnings:
+        type === "task"
+          ? [
+              `If ${canonical} was enabled, it is still listed in scheduler.enabled and \`akm task dispatch\` reports it as missing: run \`akm task disable ${canonical}\`.`,
+            ]
+          : [],
     };
   });
 }

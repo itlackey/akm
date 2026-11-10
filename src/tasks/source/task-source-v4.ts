@@ -41,12 +41,11 @@ import {
 } from "../../execution/input-contract";
 import type { ExecutionJsonObject, ExecutionJsonValue } from "../../execution/json";
 import { EXECUTION_MAX_TIMEOUT_MS } from "../../execution/limits";
-import { warnRetiredEngineKey } from "../../execution/source";
 import { classifyTargetRef } from "../../execution/target-ref";
 import { detectSecretShapedParams } from "../../workflows/exec/param-secrets";
 import { WORKFLOW_ENV_VAR_NAME_PATTERN, WORKFLOW_MAX_SCHEMA_BYTES } from "../../workflows/resource-limits";
-import { TASK_V3_HOST_SHELLS, TASK_V3_MAX_SCHEDULES, type TaskV3Environment, type TaskV3HostShell } from "../source-v3";
 import { TASK_RUN_RESERVED_FLAG_NAMES } from "../task-run-reserved-flags";
+import { TASK_HOST_SHELLS, type TaskEnvironment, type TaskHostShell } from "../task-source";
 import {
   asRecord,
   type BoundedDocumentContext,
@@ -60,7 +59,8 @@ import {
   readBoundedTaskSourceYaml,
   sourceError,
   stringField,
-  TASK_V3_MAX_REDACT_NAMES,
+  TASK_MAX_REDACT_NAMES,
+  TASK_MAX_SCHEDULES,
   utf8Bytes,
 } from "./bounded-document";
 
@@ -114,7 +114,7 @@ const SUBSET_KEYWORD_NAMES = JSON_SCHEMA_SUBSET_SUPPORTED_KEYWORDS.split(",")
   .filter((entry) => entry.length > 0);
 export const TASK_INPUT_DECLARATION_KEYS = Object.freeze([...SUBSET_KEYWORD_NAMES, "title", "description", "default"]);
 
-const SHELL_SET = new Set<string>(TASK_V3_HOST_SHELLS);
+const SHELL_SET = new Set<string>(TASK_HOST_SHELLS);
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -132,7 +132,7 @@ export type TaskSourceV4Target =
   | Readonly<{
       kind: "run";
       run: string;
-      shell?: TaskV3HostShell;
+      shell?: TaskHostShell;
       workingDirectory?: string;
     }>;
 
@@ -166,7 +166,7 @@ export interface TaskSourceV4Document {
   readonly inputs?: InputContract;
   readonly output?: Readonly<Record<string, unknown>>;
   readonly target: TaskSourceV4Target;
-  readonly env?: TaskV3Environment;
+  readonly env?: TaskEnvironment;
   readonly execution: TaskSourceV4Execution;
   readonly schedule: readonly TaskSourceV4ScheduleBinding[];
   readonly manualOnly: boolean;
@@ -236,13 +236,8 @@ function looksLikeGithubActionLocator(value: string): boolean {
 const TASK_SOURCE_V4_USES_REMEDY = "Use a canonical commands/, scripts/, or workflows/ ref, or akm/command, instead.";
 
 export function classifyTaskSourceV4Uses(value: string): TaskSourceV4UsesTarget {
-  // Diagnostic-codes ratchet remedy (tests/architecture/diagnostic-codes.test.ts,
-  // established pattern at src/tasks/model/definition.ts:66-79): every
-  // `UsageError` below omits its `code` argument rather than spelling it out
-  // — the constructor already defaults to the exact code these throws need
-  // (src/core/errors.ts), so the thrown type, `.code`, and `.hint()` are all
-  // unchanged; this keeps the literal code string out of the ratchet's
-  // grep-style count, which only ever declines.
+  // Each `UsageError` below omits its `code`: the constructor defaults to the
+  // code these throws need (src/core/errors.ts).
   if (
     typeof value !== "string" ||
     value.length === 0 ||
@@ -349,13 +344,13 @@ function parseTarget(input: ExecutionJsonObject, ctx: BoundedDocumentContext): T
   if (own(input, "with"))
     sourceError(ctx, ["with"], "is legal only with uses: akm/command; declare typed inputs: instead.");
   const run = stringField(input.run, ctx, ["run"], { nonempty: true }) as string;
-  let shell: TaskV3HostShell | undefined;
+  let shell: TaskHostShell | undefined;
   if (own(input, "shell")) {
     const rawShell = stringField(input.shell, ctx, ["shell"], { nonempty: true }) as string;
     if (!SHELL_SET.has(rawShell)) {
-      sourceError(ctx, ["shell"], `must be one of the closed host-shell table: ${TASK_V3_HOST_SHELLS.join(", ")}.`);
+      sourceError(ctx, ["shell"], `must be one of the closed host-shell table: ${TASK_HOST_SHELLS.join(", ")}.`);
     }
-    shell = rawShell as TaskV3HostShell;
+    shell = rawShell as TaskHostShell;
   }
   let workingDirectory: string | undefined;
   if (own(input, "working-directory")) {
@@ -375,7 +370,6 @@ function parseExecutionControls(input: ExecutionJsonObject, ctx: BoundedDocument
   const out: Record<string, unknown> = {};
   for (const key of ["agent", "connection", "harness", "engine", "model"] as const) {
     if (own(input, key)) out[key] = nullableSelectorTopLevel(input[key], ctx, key);
-    if (key === "engine" && own(input, key)) warnRetiredEngineKey();
   }
   if (own(input, "inference")) {
     const inference = presentJsonValue(input.inference, ctx, ["inference"]);
@@ -388,7 +382,7 @@ function parseExecutionControls(input: ExecutionJsonObject, ctx: BoundedDocument
   if (own(input, "timeout")) out.timeout = parseTimeoutTopLevel(input.timeout, ctx);
   if (own(input, "redact")) {
     const names = parseStringArray(input.redact, ctx, ["redact"], {
-      max: TASK_V3_MAX_REDACT_NAMES,
+      max: TASK_MAX_REDACT_NAMES,
       pattern: WORKFLOW_ENV_VAR_NAME_PATTERN,
     });
     if (new Set(names).size !== names.length) sourceError(ctx, ["redact"], "must not contain duplicate names.");
@@ -525,7 +519,7 @@ function parseOutputSchema(value: ExecutionJsonValue, ctx: BoundedDocumentContex
 /**
  * True for the target kinds whose runtime actually consumes `output:` —
  * command invocations (`uses: commands/<ref>` and `uses: akm/command`), where
- * `prepareTaskV3Execution` forwards it as the invocation's outputSchema
+ * `prepareTaskExecution` forwards it as the invocation's outputSchema
  * (../prepare/prepare.ts, via prepare-support.ts's currentExecutionValues).
  * `run:`, `uses: scripts/`, and `uses: workflows/` executions carry no
  * output schema anywhere (run-native-task.ts decides status from the exit
@@ -543,8 +537,8 @@ function targetConsumesOutputSchema(target: TaskSourceV4Target): boolean {
 /**
  * Every schedule binding must be independently runnable.
  *
- * A scheduled firing supplies NO input flags — `compileTaskSchedulerBindings`
- * (../scheduler-binding.ts) appends only the entry's own
+ * A scheduled firing supplies NO input flags — `akm task dispatch`
+ * (../dispatch.ts) appends only the entry's own
  * `schedule[i].inputs` to the `["task","run",id,"--bundle",b,"--scheduled"]`
  * tail — so that literal PLUS the declared defaults is the complete value set
  * `akm task run --scheduled` will see, and it is checked there by the very
@@ -555,12 +549,10 @@ function targetConsumesOutputSchema(target: TaskSourceV4Target): boolean {
  *
  * The source document alone knows both halves of that contradiction, so it is
  * a grammar error: TASK_SOURCE_INVALID at the entry's own field path, naming
- * the unsatisfied input(s). `akm task sync`'s projectability proof
- * (../scheduler-sync.ts) keeps its own independent copy of this check over
- * the DEFAULTED view — that gate is what makes such a schedule unreachable
- * rather than merely ill-advised, and it still guards a task source reaching
- * sync through any other path — but an author should not have to run `akm
- * task sync` to learn that a document contradicts itself, so it is rejected at
+ * the unsatisfied input(s). `akm lint --type tasks`
+ * (../schedule-gates.ts) keeps its own independent copy of this check over
+ * the DEFAULTED view, but an author should not have to run it
+ * to learn that a document contradicts itself, so it is rejected at
  * parse time. Manual `akm task
  * run` is deliberately unaffected: a manual run takes the value from the
  * input's own `--<name>` flag, so a required, default-less input plus NO
@@ -656,8 +648,8 @@ function parseSchedule(
   if (!Array.isArray(raw) || raw.length === 0) {
     sourceError(ctx, ["schedule"], "must be a non-empty string or a non-empty list of {cron, inputs?} records.");
   }
-  if (raw.length > TASK_V3_MAX_SCHEDULES) {
-    sourceError(ctx, ["schedule"], `accepts at most ${TASK_V3_MAX_SCHEDULES} entries.`);
+  if (raw.length > TASK_MAX_SCHEDULES) {
+    sourceError(ctx, ["schedule"], `accepts at most ${TASK_MAX_SCHEDULES} entries.`);
   }
   const bindings = raw.map((entryRaw, index) => parseScheduleEntry(entryRaw, index, contract, ctx));
   return Object.freeze(bindings);

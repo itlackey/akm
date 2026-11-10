@@ -2,17 +2,18 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import { afterEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { usableRetrievalQueries } from "../../../src/commands/improve/retrieval-queries";
+import { isInRetrievalScope, type RetrievalScope } from "../../../src/commands/improve/retrieval-scope";
+
 /**
  * #986 — the predicate that scopes improve's fallback lanes and consolidation:
  * an asset retrieval returned inside the window, or newly captured material
  * (written inside the window) that no improve stage has processed.
  */
-
-import { afterEach, describe, expect, test } from "bun:test";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { isInRetrievalScope, type RetrievalScope } from "../../../src/commands/improve/retrieval-scope";
 
 const DAY_MS = 86_400_000;
 const NOW = Date.now();
@@ -65,5 +66,35 @@ describe("isInRetrievalScope", () => {
 
   test("without a scope (usage history unreadable) every asset stays eligible", () => {
     expect(isInRetrievalScope(undefined, "knowledge/old", assetFile(400))).toBe(true);
+  });
+});
+
+describe("usableRetrievalQueries", () => {
+  test("drops exact conversational phrases but retains task text and unlisted questions", () => {
+    expect(
+      usableRetrievalQueries([
+        "LGTM!",
+        "ok do it",
+        "thanks so much",
+        "continue please",
+        "thanks, now fix the lint errors",
+        "why?",
+      ]),
+    ).toEqual(["thanks, now fix the lint errors", "why?"]);
+  });
+  test("drops harness envelopes, the stash README line and pastes, keeps five distinct queries", () => {
+    const queries = usableRetrievalQueries([
+      "  rotate   the vpn key ",
+      "rotate the vpn key",
+      "<task-notification>done</task-notification>",
+      "This is an **AKM stash** — a structured knowledge repository that stores reusable",
+      "x".repeat(2001),
+      "q1",
+      "q2",
+      "q3",
+      "q4",
+      "q5",
+    ]);
+    expect(queries).toEqual(["rotate the vpn key", "q1", "q2", "q3", "q4"]);
   });
 });

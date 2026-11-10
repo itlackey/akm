@@ -58,7 +58,6 @@ beforeEach(() => {
   // internally). FTS-only keeps indexing fast + deterministic (no embedder).
   resetConfigCache();
   saveConfig({
-    configVersion: "0.9.0",
     semanticSearchMode: "off",
     bundles: { stash: { path: stashDir } },
     defaultBundle: "stash",
@@ -89,13 +88,11 @@ const SUMMARY_TEXT =
 
 function configFor(stash: string, indexSessions?: boolean, extractEnabled = true): AkmConfig {
   return {
-    configVersion: "0.9.0",
     // FTS-only keeps the round-trip fast + deterministic (no embedding model
     // download); the summary body is fully searchable via FTS.
     semanticSearchMode: "off",
     bundles: { stash: { path: stash, writable: true } },
     defaultBundle: "stash",
-    defaultWriteTarget: "stash",
     connections: {
       default: {
         endpoint: "http://localhost:11434/v1/chat/completions",
@@ -216,7 +213,7 @@ describe("#561 session indexing — round-trip", () => {
       source: "local",
       limit: 10,
     });
-    const hit = search.hits.find((h) => h.type === "session");
+    const hit = search.results.find((h) => h.type === "session");
     expect(hit).toBeDefined();
     // Canonical name is path-derived: sessions/<harness>/<id>.md → claude/<id>.
     expect(hit?.name).toBe(`claude/${SESSION_ID}`);

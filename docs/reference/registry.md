@@ -61,7 +61,6 @@ Registries are stored in the `registries` array of `config.json`:
 | `name` | string | none | Label |
 | `enabled` | boolean | `true` | Set `false` to keep the entry but skip it when searching |
 | `provider` | string | `static-index` | `static-index` or `skills-sh` |
-| `options` | object | none | Provider-specific options |
 
 A registry URL with a username or password is dropped with a warning, and the
 built-in providers send no credentials; host the index at a credential-free
@@ -90,18 +89,17 @@ akm search "deploy" --from registry     # registries only
 akm search "deploy" --from all          # local bundles and registries
 ```
 
-Registry hits come back in `registryHits`, separate from local `hits`. Fields
+Registry hits come back in `registryHits`, separate from the local `results`. Fields
 by `--detail` level:
 
 | Level | Fields |
 | --- | --- |
 | `brief` | `name`, `installRef`, `score` |
-| `normal` | `name`, `description`, `action`, `installRef`, `score`, and `warnings` when present |
-| `full` | the whole hit: `type`, `name`, `id`, `description`, `action`, `installRef`, `score`, `registryName`, and `warnings` when present |
+| `normal` | `name`, `description`, `installRef`, `score`, and `warnings` when present |
+| `full` | the whole hit: `type`, `name`, `id`, `description`, `installRef`, `score`, `registryName`, and `warnings` when present |
 
 `installRef` is the ref to pass to `akm bundle add`, for example
-`github:itlackey/akm-stash`. `action` holds the whole install command, for
-example `akm bundle add github:itlackey/akm-stash -> then search again`.
+`github:itlackey/akm-stash`.
 Registry scores are normalized to 0 to 1 within each registry's results;
 compare them only within one registry, never with local scores. Search returns
 bundle-level hits only; it does not list the individual assets inside a
@@ -136,7 +134,7 @@ What `bundle add` does:
    `akm lint` reports env keys that can hijack a process (`dangerous-env-key`)
    for authors who want to review their own bundle.
 3. Finds the bundle root: the package root when it looks like a bundle in any
-   layout akm recognizes (see [Bundle types](bundle-types.md)), otherwise the
+   layout akm recognizes (see [Supported formats](supported-formats.md)), otherwise the
    shallowest nested directory that does. If the package's `package.json` has
    an `akm.include` array, only those paths are copied.
 4. Saves the source to `bundles` in `config.json`, records the resolved version
@@ -194,8 +192,8 @@ The index is cached for 1 hour.
 
 Searches skills.sh through its server-side API
 (`GET {url}/api/search?q={query}&limit={limit}`). Hit ids carry a `skills-sh:`
-prefix (not installable; use the `akm bundle add` command in the hit's
-`action`, which names the skill's GitHub repo). Scores are install counts
+prefix (not installable; pass the hit's `installRef`, which names the skill's
+GitHub repo, to `akm bundle add`). Scores are install counts
 normalized to 0 to 1. Responses are cached per query for 15 minutes.
 
 ## Hosting your own registry

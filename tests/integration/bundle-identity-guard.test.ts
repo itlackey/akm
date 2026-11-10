@@ -65,12 +65,11 @@ function seedIndexBundles(bundleIds: string[]): void {
 function bundlesConfig(...ids: string[]): AkmConfig {
   const bundles: Record<string, { path: string }> = {};
   for (const id of ids) bundles[id] = { path: `/s/${id}` };
-  return { configVersion: "0.9.0", semanticSearchMode: "auto", bundles } as unknown as AkmConfig;
+  return { semanticSearchMode: "auto", bundles } as unknown as AkmConfig;
 }
 
 function bundleConfigAt(id: string, bundlePath: string): AkmConfig {
   return {
-    configVersion: "0.9.0",
     semanticSearchMode: "auto",
     bundles: { [id]: { path: bundlePath } },
   } as unknown as AkmConfig;
@@ -111,7 +110,7 @@ describe("§11.5 bundle-rename startup guard", () => {
 
   test("no-op for an old-shape config (no bundles) and for an absent index", () => {
     seedIndexBundles(["oldname"]);
-    warnOnBundleRenameDrift({ configVersion: "0.9.0", semanticSearchMode: "auto" } as AkmConfig);
+    warnOnBundleRenameDrift({ semanticSearchMode: "auto" } as AkmConfig);
     expect(warnCalls).toHaveLength(0);
 
     resetBundleIdentityGuardForTests();

@@ -9,8 +9,7 @@
  * "Core" is the subset the owner's scheduled workflows actually use (the #1091
  * audit): `params`, ordered `steps`, step `inputs:`, `output` / `unit.output`,
  * `defaults.connection`, and `### gate` rubrics judged on the default connection.
- * Nothing else is exercised here on purpose; the unused features are tracked in
- * docs/plans/0.10-workflows.md.
+ * Nothing else is exercised here on purpose.
  *
  * Why this file exists: a daily task silently broke when the old
  * `workflow next/complete` verbs were removed, because every existing test

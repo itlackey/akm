@@ -99,7 +99,7 @@ function closeScope(scope: StateDbScope): void {
  * The ambient scoped handle for `dbPath` (default: the canonical state.db), or
  * `undefined` when there is no live scope for that exact path.
  *
- * The path comparison matters: the test harness repoints `AKM_DATA_DIR` between
+ * The path comparison matters: the test harness repoints the data directory between
  * tests, and a scope entered against one data dir must never lend its handle to
  * a caller resolving a different one.
  */

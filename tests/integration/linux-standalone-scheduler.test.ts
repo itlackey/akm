@@ -17,7 +17,7 @@ import { STANDALONE_FROZEN_SCRIPT_ARG } from "../../src/tasks/standalone-script-
 import { startFakeModel } from "../_helpers/fake-model-server";
 import { expectConnectionConfig, expectHarnessOnlyConfig, type SmokeRun } from "../_helpers/model-surface-smoke";
 import { fetchSharedOpencode, linkSharedOpencode } from "../_helpers/opencode-binary";
-import { makeSandboxDir } from "../_helpers/sandbox";
+import { configHomeWithBundle, makeSandboxDir } from "../_helpers/sandbox";
 
 const REQUESTED = process.env.AKM_STANDALONE_SCHEDULER_TESTS === "1";
 const ENABLED = REQUESTED && process.platform === "linux";
@@ -29,6 +29,11 @@ if (OPENCODE_UNAVAILABLE)
 if (REQUESTED && !ENABLED) {
   throw new Error("AKM_STANDALONE_SCHEDULER_TESTS=1 requires a Linux runner");
 }
+
+/** `/usr/bin:/bin` behind the harness's crontab stub, so a shell or child that names akm cannot reach the real scheduler binary. */
+const SCHEDULER_PATH = [(process.env.PATH ?? "").split(path.delimiter)[0] ?? "", "/usr/bin", "/bin"].join(
+  path.delimiter,
+);
 
 interface RunResult {
   status: number;
@@ -54,18 +59,18 @@ function expectSuccess(result: RunResult, label: string): void {
   expect(result.status, `${label}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`).toBe(0);
 }
 
-function generatedCronCommand(crontab: string, id: string): string {
+/** The command of the one dispatch entry's cron line, as cron hands it to `sh -c`. */
+function generatedCronCommand(crontab: string): string {
   const lines = crontab.split(/\r?\n/);
-  const begin = lines.indexOf(`# akm:task ${id} BEGIN`);
-  const body = lines[begin + 1] ?? "";
-  const match = body.match(/^\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+(.+)$/);
-  if (!match) throw new Error(`Could not extract generated cron command for ${id}: ${body}`);
-  return match[1]!;
+  const begin = lines.indexOf("# akm:dispatch BEGIN");
+  const body = lines.slice(begin + 1).find((line) => line.startsWith("* * * * * ")) ?? "";
+  if (begin === -1 || !body) throw new Error(`Could not extract the generated dispatch command:\n${crontab}`);
+  return body.slice("* * * * * ".length);
 }
 
 test.skipIf(!ENABLED)(
-  "a standalone binary outside PATH installs and executes its generated cron command",
-  () => {
+  "a standalone binary outside PATH installs the dispatch entry and executes its generated cron command",
+  async () => {
     const candidateBinary = path.resolve(process.env.AKM_STANDALONE_TEST_BIN ?? "");
     const candidateArch = process.env.AKM_CANDIDATE_ARCH;
     const candidateVersion = process.env.AKM_CANDIDATE_VERSION;
@@ -79,26 +84,13 @@ test.skipIf(!ENABLED)(
     const id = `akm-ci-linux-${process.pid}-${Date.now()}-${randomUUID().slice(0, 8)}`;
     const fakeBin = path.join(sandbox.dir, "fake-bin");
     const fakeCrontab = path.join(sandbox.dir, "crontab");
+    // The default installation: HOME alone decides every location, so `task sync` owns the (fake) crontab.
     const home = path.join(sandbox.dir, "home");
-    const configHome = path.join(sandbox.dir, "config");
-    const dataHome = path.join(sandbox.dir, "data");
-    const cacheHome = path.join(sandbox.dir, "cache");
-    const stateHome = path.join(sandbox.dir, "state");
-    const stashDir = path.join(sandbox.dir, "stash");
+    const stashDir = path.join(home, "akm");
     const standaloneDir = path.join(sandbox.dir, "standalone");
     const binary = path.join(standaloneDir, "akm");
-    let taskAdded = false;
 
-    for (const dir of [
-      fakeBin,
-      home,
-      path.join(configHome, "akm"),
-      dataHome,
-      cacheHome,
-      stateHome,
-      stashDir,
-      standaloneDir,
-    ]) {
+    for (const dir of [fakeBin, path.join(home, ".config", "akm"), stashDir, standaloneDir]) {
       fs.mkdirSync(dir, { recursive: true });
     }
     fs.copyFileSync(candidateBinary, binary);
@@ -119,25 +111,14 @@ test.skipIf(!ENABLED)(
       { mode: 0o755 },
     );
     fs.writeFileSync(
-      path.join(configHome, "akm", "config.json"),
-      `${JSON.stringify({ configVersion: "0.9.0", bundles: { stash: { path: stashDir } }, defaultBundle: "stash", semanticSearchMode: "off" })}\n`,
+      path.join(home, ".config", "akm", "config.json"),
+      `${JSON.stringify({ bundles: { stash: { path: stashDir } }, defaultBundle: "stash", semanticSearchMode: "off" })}\n`,
       { mode: 0o600 },
     );
 
     const restrictedPath = [fakeBin, "/usr/bin", "/bin"].join(path.delimiter);
     expect(restrictedPath.split(path.delimiter)).not.toContain(path.dirname(binary));
-    const env = {
-      HOME: home,
-      XDG_CONFIG_HOME: configHome,
-      XDG_DATA_HOME: dataHome,
-      XDG_CACHE_HOME: cacheHome,
-      XDG_STATE_HOME: stateHome,
-      AKM_BUNDLE_DIR: stashDir,
-      FAKE_CRONTAB: fakeCrontab,
-      PATH: restrictedPath,
-      NO_COLOR: "1",
-      CI: "1",
-    };
+    const env = { HOME: home, FAKE_CRONTAB: fakeCrontab, PATH: restrictedPath, NO_COLOR: "1", CI: "1" };
 
     try {
       const version = run([binary, "--version"], env);
@@ -148,12 +129,18 @@ test.skipIf(!ENABLED)(
       expectSuccess(doctor, "standalone tasks doctor");
       expect(JSON.parse(doctor.stdout)).toMatchObject({ akm: { argv: [binary], via: "standalone" } });
 
+      // `add` writes the task, enables it, and syncs the OS scheduler: the one dispatch entry is installed by it.
       const add = run(
-        [binary, "task", "add", id, "--schedule", "@daily", "--command", "/bin/echo standalone-cron"],
+        [binary, "task", "add", id, "--schedule", "* * * * *", "--command", "/bin/echo standalone-cron"],
         env,
       );
       expectSuccess(add, "standalone tasks add");
-      taskAdded = true;
+      expect(JSON.parse(add.stdout)).toMatchObject({ sync: { entry: "installed" } });
+      expect(fs.existsSync(fakeCrontab)).toBe(true);
+      expect((fs.readFileSync(fakeCrontab, "utf8").match(/# akm:dispatch BEGIN/g) ?? []).length).toBe(1);
+      const sync = run([binary, "task", "sync"], env);
+      expectSuccess(sync, "standalone tasks sync");
+      expect(JSON.parse(sync.stdout)).toMatchObject({ entry: "unchanged" });
 
       const taskPath = path.join(stashDir, "tasks", `${id}.yml`);
       const originalTask = fs.readFileSync(taskPath);
@@ -161,21 +148,27 @@ test.skipIf(!ENABLED)(
       expect(crontab).toContain(binary);
       expect(crontab).not.toContain("/$bunfs/");
       expect(crontab).not.toContain("src/cli.ts");
-      // The row carries its own context: no descriptor argument, no descriptor file.
-      expect(crontab).not.toContain("--scheduler-context");
-      expect(fs.existsSync(path.join(dataHome, "akm", "tasks", "context"))).toBe(false);
+      // One entry, and nothing of the task in it: no bundle, no task id, no environment.
+      expect((crontab.match(/# akm:dispatch BEGIN/g) ?? []).length).toBe(1);
+      expect(crontab).not.toContain(id);
+      expect(crontab).not.toContain("AKM_");
 
-      const scheduledCommand = generatedCronCommand(crontab, id);
-      const scheduled = run(["/bin/sh", "-c", scheduledCommand], { ...env, PATH: "/usr/bin:/bin" });
+      const scheduledCommand = generatedCronCommand(crontab);
+      const scheduled = run(["/bin/sh", "-c", scheduledCommand], { ...env, PATH: SCHEDULER_PATH });
       expectSuccess(scheduled, "generated standalone cron command");
 
-      const history = run([binary, "task", "history", "--id", id, "--limit", "1"], env);
-      expectSuccess(history, "standalone tasks history");
-      const row = (
-        JSON.parse(history.stdout) as {
-          rows: Array<{ status: string; log: string; detail?: { exitCode?: number } }>;
-        }
-      ).rows[0];
+      // The task was started detached; wait for the run it started to complete.
+      const deadline = Date.now() + 60_000;
+      let row: { status: string; log: string; detail?: { exitCode?: number } } | undefined;
+      while (Date.now() < deadline) {
+        const history = run([binary, "task", "history", id, "--limit", "1"], env);
+        expectSuccess(history, "standalone tasks history");
+        row = (
+          JSON.parse(history.stdout) as { rows: Array<{ status: string; log: string; detail?: { exitCode?: number } }> }
+        ).rows[0];
+        if (row && row.status !== "active") break;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
       expect(row).toMatchObject({ status: "completed", detail: { exitCode: 0 } });
       expect(fs.readFileSync(row!.log, "utf8")).toContain("standalone-cron");
       expect(fs.readFileSync(taskPath)).toEqual(originalTask);
@@ -213,7 +206,6 @@ test.skipIf(!ENABLED)(
         expect(fs.existsSync(path.dirname(scriptResult.target.cmd.at(-1) as string))).toBe(false);
       }
     } finally {
-      if (taskAdded) run([binary, "task", "remove", id], env);
       sandbox.cleanup();
     }
   },
@@ -245,7 +237,7 @@ test.skipIf(!ENABLED)("the compiled binary runs its embedded migrator exactly on
   }
   fs.writeFileSync(
     path.join(configHome, "akm", "config.json"),
-    `${JSON.stringify({ configVersion: "0.9.0", bundles: { stash: { path: stashDir } }, defaultBundle: "stash", semanticSearchMode: "off" })}\n`,
+    `${JSON.stringify({ bundles: { stash: { path: stashDir } }, defaultBundle: "stash", semanticSearchMode: "off" })}\n`,
     { mode: 0o600 },
   );
   fs.writeFileSync(
@@ -313,13 +305,12 @@ function binarySandbox(binary: string): { env: NodeJS.ProcessEnv; run: SmokeRun;
   const dirs = { home: "home", config: "config", data: "data", cache: "cache", state: "state", stash: "stash" };
   for (const dir of Object.values(dirs)) fs.mkdirSync(path.join(sandbox.dir, dir), { recursive: true });
   const env: NodeJS.ProcessEnv = {
-    PATH: "/usr/bin:/bin",
+    PATH: SCHEDULER_PATH,
     HOME: path.join(sandbox.dir, dirs.home),
-    XDG_CONFIG_HOME: path.join(sandbox.dir, dirs.config),
+    XDG_CONFIG_HOME: configHomeWithBundle(path.join(sandbox.dir, dirs.config), path.join(sandbox.dir, dirs.stash)),
     XDG_DATA_HOME: path.join(sandbox.dir, dirs.data),
     XDG_CACHE_HOME: path.join(sandbox.dir, dirs.cache),
     XDG_STATE_HOME: path.join(sandbox.dir, dirs.state),
-    AKM_BUNDLE_DIR: path.join(sandbox.dir, dirs.stash),
     NO_COLOR: "1",
     CI: "1",
   };

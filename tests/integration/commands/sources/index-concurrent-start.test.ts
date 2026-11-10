@@ -28,7 +28,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { saveConfig } from "../../../../src/core/config/config";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
+import { type IsolatedAkmStorage, withDefaultBundle, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 
 const repoRoot = path.resolve(import.meta.dir, "../../../..");
 
@@ -36,7 +36,7 @@ let storage: IsolatedAkmStorage;
 
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
-  saveConfig({ semanticSearchMode: "off" });
+  saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, storage.stashDir));
 });
 
 afterEach(() => {

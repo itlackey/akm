@@ -33,8 +33,11 @@ import type { WorkflowAsset } from "../runtime/workflow-asset-loader";
 /** One authored step as freeze sees it: its spec plus its id. */
 export type FreezeStep = WorkflowStepSpec & { readonly id: string };
 
-/** The authored unit settings a target resolves from, plus the step's source span and argv. */
-export type BaseUnit = WorkflowUnitSettings & { source: SourceRef; exec?: WorkflowExec };
+/**
+ * The authored unit settings a target resolves from, plus the step's source span and argv. A frozen command unit
+ * also records the name of the connection or harness it resolved to as `engine`: a record, never read back as a selector.
+ */
+export type BaseUnit = WorkflowUnitSettings & { source: SourceRef; exec?: WorkflowExec; engine?: string };
 
 /**
  * Freeze a child workflow. Injected by `freeze.ts` as a plain value so
@@ -105,7 +108,6 @@ export function executionUnitValues(
   return Object.freeze({
     ...(unit && Object.hasOwn(unit, "connection") ? { connection: unit.connection } : {}),
     ...(unit && Object.hasOwn(unit, "harness") ? { harness: unit.harness } : {}),
-    ...(unit && Object.hasOwn(unit, "engine") ? { engine: unit.engine } : {}),
     ...(unit && Object.hasOwn(unit, "model") ? { model: unit.model } : {}),
     ...(unit && Object.hasOwn(unit, "llm") ? { inference: unit.llm } : {}),
     ...(unit && Object.hasOwn(unit, "timeoutMs") ? { timeout: unit.timeoutMs } : {}),

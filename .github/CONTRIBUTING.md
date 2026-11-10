@@ -65,8 +65,7 @@ Use an explicit invocation for the behavior you intend to test:
 
 Running `akm` by hand, outside `bun test`, uses the real `HOME` and your
 bundles. To try something against scratch data instead, point `HOME`, `XDG_*`,
-`AKM_CONFIG_DIR`, `AKM_DATA_DIR` and `AKM_BUNDLE_DIR` at a scratch directory
-first.
+and `AKM_CONFIG_FILE` (a config file whose `defaultBundle` is a scratch bundle) at a scratch directory first.
 
 The global checkout install deliberately replaces the globally resolved `akm`;
 do not use it for routine inner-loop testing.
@@ -151,27 +150,8 @@ Docker and native-scheduler gates run on the commit that ships: on the release
 pull request for a stable release, and as the Release workflow's own jobs for a
 prerelease.
 
-`akm help migrate <version>` prints a per-release migration note to the
-terminal. Each note lives as its own markdown file under
-[`docs/migration/release-notes/<version>.md`](../docs/migration/release-notes/)
-and is bundled with the published npm package via `package.json` `files[]`.
-
-When you tag a new release:
-
-1. Create `docs/migration/release-notes/<version>.md`. Lead with
-   `Migration notes for akm v<version>` so the text matches the pattern the
-   tests enforce.
-2. Keep the note self-contained — automatic migrations, manual actions,
-   publisher changes, breaking CLI/flag moves. Link to the longform guide
-   (e.g. `docs/migration/v0.8-to-v0.9.md`) in the last paragraph if one
-   exists.
-3. Extend the `for ... of` list in `tests/migration-help.test.ts`
-   (`"every bundled release-notes file is surfaced by the loader"`) so the
-   new version is explicitly exercised.
-4. Smoke-test end-to-end: `bun src/cli.ts help migrate <version>`.
-
-No code change is required in `src/commands/sources/migration-help.ts` — the loader discovers
-files at runtime from the release-notes directory.
+Release notes live in `CHANGELOG.md`. When a release needs a manual upgrade
+step, add it to the current migration guide under `docs/migration/`.
 
 ## Submitting Changes
 

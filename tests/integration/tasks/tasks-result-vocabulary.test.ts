@@ -6,10 +6,7 @@
  * P1b Lane C — F-2 result-vocabulary re-code (D8) + F-4 attempt-error
  * allowlist widening, new coverage.
  *
- * docs/plans/specs/p1b-model-extraction.md §5.3 (result vocabulary), §5.5 +
- * §5.6 (F-4 + the C-7 exit-78 rewire), §6 (the F-2 AUTHORIZED-FLIPS table).
- *
- * `tests/integration/tasks-legacy-vocabulary-characterization.test.ts` (the
+ * The former legacy-vocabulary characterization test (the
  * flipped P0 file) pins the per-arm stored `target_kind` STRING and the
  * `readTaskHistory()` round-trip SHAPE, including legacy (unmarked) rows.
  * This file is genuinely new coverage that file does not carry:
@@ -81,7 +78,7 @@ function closedStream(): ReadableStream<Uint8Array> {
   });
 }
 
-/** Crib of tests/integration/tasks-runtime-v3-runner.test.ts's `completedSpawn`. */
+/** Crib of tests/tasks-runtime-v3-runner.test.ts's `completedSpawn`. */
 function completedSpawn(exitCode: number): ReturnType<SpawnFn> {
   return {
     exitCode,
@@ -134,7 +131,7 @@ describe("F-2 (D8) — every NEW history row stores the result vocabulary and no
   test('a prepared command (agent/LLM) run stores target_kind "command", and engine in metadata', async () => {
     writeTask(
       "vocab-command",
-      ["version: 4", "uses: akm/command", "with:", "  content: say hi", "engine: opencode", ""].join("\n"),
+      ["version: 4", "uses: akm/command", "with:", "  content: say hi", "harness: opencode", ""].join("\n"),
     );
 
     const result = await runTask("vocab-command", {
@@ -182,7 +179,7 @@ describe("F-2 (D8) — every NEW history row stores the result vocabulary and no
 describe("§5.6 C-7 — the exit-78 rewire survives the vocabulary re-code", () => {
   // NEW test required by spec §5.6: "a shell task whose command exits 78 ->
   // CLI exit 78" — pinned as a code path, not merely as prose (the existing
-  // documented-behavior prose pin is tests/cli/exit-code-hints.test.ts).
+  // documented-behavior prose pin is tests/cli/exit-code-classification.test.ts).
   //
   // At head, src/commands/tasks/tasks.ts's exit-78 passthrough branch reads
   // `result.target.kind === "command"`, which today (pre-F-2) IS the native

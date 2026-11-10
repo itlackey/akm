@@ -42,7 +42,7 @@ import { formatExtraParamsIssue, validateExtraParams } from "../core/extra-param
 import { checkJsonSchemaDefinition, JSON_SCHEMA_SUBSET_SUPPORTED_KEYWORDS } from "../core/json-schema";
 import { warnOnce } from "../core/warn";
 import { INPUT_NAME_PATTERN } from "../execution/input-contract";
-import { warnRetiredEngineKey } from "../execution/source";
+import { RETIRED_ENGINE_KEY_MESSAGE } from "../execution/source";
 import { classifyTargetRef } from "../execution/target-ref";
 import {
   type SourceRef,
@@ -153,7 +153,7 @@ const ENVELOPE_KEYS = [
 ];
 const WORKFLOW_KEYS = ["params", "defaults", "budget", "steps"];
 const TOP_LEVEL_KEYS = [...ENVELOPE_KEYS, ...WORKFLOW_KEYS];
-const DEFAULTS_KEYS = ["connection", "harness", "engine", "model", "timeout", "on_error", "llm"];
+const DEFAULTS_KEYS = ["connection", "harness", "model", "timeout", "on_error", "llm"];
 const BUDGET_KEYS = ["max_tokens", "max_units"];
 const STEP_KEYS = ["id", "unit", "map", "inputs", "output", "gate"];
 const UNIT_KEYS = [
@@ -162,7 +162,6 @@ const UNIT_KEYS = [
   "with",
   "connection",
   "harness",
-  "engine",
   "model",
   "llm",
   "timeout",
@@ -172,8 +171,8 @@ const UNIT_KEYS = [
   "env",
 ];
 const EXEC_KEYS = ["command", "cwd", "pass_env"];
-/** Unit keys that name a model or agent dispatch and therefore cannot appear beside `exec:`. `engine` is the retired spelling of `connection` / `harness`. */
-const UNIT_ENGINE_KEYS = ["connection", "harness", "engine", "model", "llm"] as const;
+/** Unit keys that name a model or agent dispatch and therefore cannot appear beside `exec:`. */
+const UNIT_ENGINE_KEYS = ["connection", "harness", "model", "llm"] as const;
 const MAP_KEYS = ["over", "concurrency", "reducer", "unit"];
 const RETRY_KEYS = ["max", "on"];
 const GATE_KEYS = ["max_loops"];
@@ -669,11 +668,10 @@ function parseDefaults(ctx: Ctx, raw: unknown): ProgramDefaults | undefined {
   }
   checkUnknownKeys(ctx, raw, path, DEFAULTS_KEYS, `"defaults"`);
   const defaults: ProgramDefaults = {};
-  for (const key of ["connection", "harness", "engine"] as const) {
+  for (const key of ["connection", "harness"] as const) {
     if (raw[key] === undefined) continue;
     const name = parseEngineName(ctx, raw[key], [...path, key], `"defaults.${key}"`);
     if (name !== undefined) defaults[key] = name;
-    if (key === "engine") warnRetiredEngineKey();
   }
   if (raw.model !== undefined) {
     if (typeof raw.model === "string" && raw.model.trim() !== "") defaults.model = raw.model.trim();
@@ -864,11 +862,10 @@ function parseUnit(
     }
   }
 
-  for (const key of ["connection", "harness", "engine"] as const) {
+  for (const key of ["connection", "harness"] as const) {
     if (raw[key] === undefined) continue;
     const name = parseEngineName(ctx, raw[key], [...path, key], `${stepLabel} "${key}"`);
     if (name !== undefined) unit[key] = name;
-    if (key === "engine") warnRetiredEngineKey();
   }
   if (raw.model !== undefined) {
     if (typeof raw.model === "string" && raw.model.trim() !== "") unit.model = raw.model.trim();
@@ -1348,7 +1345,9 @@ function checkUnknownKeys(
   hint: (key: string) => string = () => "",
 ): void {
   for (const key of Object.keys(obj)) {
-    if (!allowed.includes(key)) {
+    if (key === "engine") {
+      ctx.err([...path, key], `${label} key "engine" ${RETIRED_ENGINE_KEY_MESSAGE}`);
+    } else if (!allowed.includes(key)) {
       ctx.err([...path, key], `Unknown ${label} key "${key}"${hint(key)}. Allowed keys: ${allowed.join(", ")}.`);
     }
   }

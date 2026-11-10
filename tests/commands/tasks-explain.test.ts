@@ -3,8 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * P2b Lane B — `akm task explain <ref> [input flags]` (spec
- * docs/plans/specs/p2b-input-bindings.md §4.5, §1.7 B-N4, rows B-52..B-59).
+ * P2b Lane B — `akm task explain <ref> [input flags]`.
  *
  * A NEW, read-only verb: it never prepares an execution that spawns
  * anything, never writes history, never touches the scheduler. It prints
@@ -36,7 +35,7 @@
  * Because the exact rendering layout is Implement's call (the spec pins the
  * CONTENT contract, not a literal template), this file's assertions are
  * deliberately CONTENT-presence checks — the same style
- * tests/integration/commands/tasks-input-flags.test.ts already uses for an
+ * tests/commands/tasks-input-flags.test.ts already uses for an
  * under-specified message shape ("check the whole serialized envelope, not
  * one specific field") — rather than a pin on exact text layout.
  */
@@ -205,7 +204,7 @@ describe("akm task explain <ref> — text output (B-52)", () => {
     // owning-bundle name this exact sandbox resolves to whether Implement
     // reuses akm task run's own DEFAULT_BUNDLE_NAME fallback
     // (src/tasks/run/load-task.ts) or the working-stash write-target path
-    // (src/core/write-source.ts's deriveBundleId, which slugifies stashDir's
+    // (src/sources/write-source.ts's deriveBundleId, which slugifies stashDir's
     // OWN basename — withIsolatedAkmStorage's stash dir is literally named
     // "stash") — the two independent resolution paths agree here.
     expect(text).toContain(path.join(tasksDir, "explain-demo.yml"));
@@ -405,7 +404,7 @@ describe("akm task explain <ref> — where a task runs", () => {
   });
 });
 
-describe("akm task explain <ref> — the stored command is read the way `command run --dry-run` reads it", () => {
+describe("akm task explain <ref> — the stored command is read the way `command --dry-run` reads it", () => {
   const explain = async (id: string) => {
     const result = await runCliCapture(["task", "explain", id, "--format", "json"]);
     expect(result.code).toBe(0);
@@ -423,13 +422,13 @@ describe("akm task explain <ref> — the stored command is read the way `command
     resetConfigCache();
   });
 
-  test("a command whose frontmatter names a harness runs on it, as `command run --dry-run` says", async () => {
+  test("a command whose frontmatter names a harness runs on it, as `command --dry-run` says", async () => {
     write("commands/on-reviewer.md", "---\nname: on-reviewer\ntype: command\nharness: reviewer\n---\nReview.\n");
     await akmIndex({ stashDir: storage.stashDir, full: true });
     useCommand("explain-on-reviewer", "commands/on-reviewer");
 
     const { execution } = await explain("explain-on-reviewer");
-    const dryRun = await runCliCapture(["command", "run", "commands/on-reviewer", "--dry-run", "--format=json"]);
+    const dryRun = await runCliCapture(["command", "commands/on-reviewer", "--dry-run", "--format=json"]);
 
     expect(execution.engine).toMatchObject({ name: "reviewer", kind: "harness" });
     expect(execution.problem).toBeUndefined();
@@ -880,7 +879,7 @@ describe("akm task explain <ref> — secret-shaped VALUE redaction (Finding 1: e
   });
 });
 
-// P4 (docs/plans/specs/p4-deletions-closeout.md §3.2, row B-57) DELETES this
+// P4 DELETES this
 // describe block, not flips it: task source v3 acceptance is retired from
 // `src` entirely, so "akm task explain resolves a genuine legacy-schema
 // (version:3) task" is no longer a claim any fixture can demonstrate — there

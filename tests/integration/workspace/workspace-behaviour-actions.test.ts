@@ -90,8 +90,8 @@ describe("reads that follow a document", () => {
     const current = await out(assets.search({ q: "gateway", type: "memory", scope }));
     const historical = await out(assets.search({ q: "gateway", type: "memory", belief: "historical", scope }));
     const all = await out(assets.search({ q: "gateway", type: "memory", belief: "all", scope }));
-    expect(current.hits.map((h: Json) => h.name)).toEqual(["current"]);
-    expect(historical.hits.map((h: Json) => h.name)).toEqual(["old"]);
+    expect(current.results.map((h: Json) => h.name)).toEqual(["current"]);
+    expect(historical.results.map((h: Json) => h.name)).toEqual(["old"]);
     const direct = await akmSearch({
       query: "gateway",
       type: "memory",
@@ -100,7 +100,7 @@ describe("reads that follow a document", () => {
       filters: { user: "alice" },
       readOnly: true,
     });
-    expect(all.hits.map((h: Json) => h.ref)).toEqual(direct.hits.flatMap((h) => ("ref" in h ? [h.ref] : [])));
+    expect(all.results.map((h: Json) => h.ref)).toEqual(direct.results.flatMap((h) => ("ref" in h ? [h.ref] : [])));
     await expectUsage(() => assets.search({ q: "", belief: "invalid" }));
   });
 
@@ -157,7 +157,7 @@ describe("feedback", () => {
     );
     // A reload observes the stored event; there is no in-memory vote store.
     expect((await out(assets.show({ ref: "knowledge/guide" }))).feedback.counts.positive).toBe(2);
-    // An ambient event source (an improve or task run driving the host) wins over the default, as for every akm child.
+    // An ambient event source (an improve or task run driving the host) wins over the default, as for every akm run.
     await withEnv({ AKM_EVENT_SOURCE: "improve" }, () =>
       feedback.record({ ref: "stash//knowledge/guide", signal: "positive", reason: "Ambient run" }),
     );
@@ -210,7 +210,6 @@ describe("bundle settings and config", () => {
       ...current,
       // A disabled bundle cannot be a default, and settings no longer edit the defaults.
       defaultBundle: undefined,
-      defaultWriteTarget: undefined,
       bundles: {
         ...current.bundles,
         stash: {
@@ -244,8 +243,7 @@ describe("bundle settings and config", () => {
     await expectUsage(() => bundles.setSettings({ bundle: "constructor", enabled: true }));
     await expectUsage(() => bundles.setSettings({ bundle: "stash", componentWritability: { constructor: true } }));
     // The defaults are edited through config only; settings ignore them.
-    expect(bundles.setSettings({ defaultWriteTarget: "stash" } as never)).toEqual({ saved: false });
-    expect(loadConfig().defaultWriteTarget).toBeUndefined();
+    expect(bundles.setSettings({ defaultBundle: "stash" } as never)).toEqual({ saved: false });
   });
 
   test("config change validates like the CLI, keeps secrets and unrelated keys, and unsets", async () => {
@@ -264,10 +262,9 @@ describe("bundle settings and config", () => {
     expect(saved.connections.default.apiKey).toBe("$AKM_UI_TEST_KEY");
     expect(saved.someToken).toBe(PLANTED_CONFIG_TOKEN);
     expect(saved.unrelated).toEqual({ keep: [1, "two"] });
-    // Schema errors, literal API keys and configVersion are refused, and nothing is written.
+    // Schema errors and literal API keys are refused, and nothing is written.
     await expectUsage(() => config.change({ set: { "output.detail": "loud" } }));
     await expectUsage(() => config.change({ set: { "connections.default.apiKey": "sk-literal" } }));
-    await expectUsage(() => config.change({ set: { configVersion: "1" } }));
     await expectUsage(() => config.change({ set: { semanticSearchMode: 1 } } as never));
     expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).output.detail).toBe("full");
     expect(config.change({ unset: ["output.detail"] })).toEqual({ saved: true });
@@ -326,31 +323,18 @@ describe("bundle settings and config", () => {
     await writableConfig();
     const configPath = getConfigPath();
     const saved = () => JSON.parse(fs.readFileSync(configPath, "utf8"));
-    const base = path.join(ctx.storage.root, "base-config.json");
-    fs.writeFileSync(
-      base,
-      JSON.stringify({
-        configVersion: "0.9.0",
-        projects: { base: { paths: ["/srv/base"], from: "team" }, "acme.corp": { paths: ["/srv/dot"] } },
-      }),
-    );
     writeSandboxConfig({
       ...loadConfig(),
-      extends: base,
-      projects: { acme: { paths: ["/srv/acme"] }, hand: { paths: ["relative", "/srv/hand"], from: 3 } },
+      projects: {
+        acme: { paths: ["/srv/acme"] },
+        hand: { paths: ["relative", "/srv/hand"], from: 3 },
+        "acme.corp": "not a project",
+      },
     });
-    const get = () =>
-      config.get() as unknown as { config: { projects: Record<string, unknown> }; localProjects: string[] };
+    const get = () => config.get() as unknown as { config: { projects: Record<string, unknown> } };
 
-    // Inherited projects are reported as such, dotted names included; a local `acme` does not make `acme.corp` local.
-    expect(get().localProjects.sort()).toEqual(["acme", "hand"]);
-    expect(Object.keys(get().config.projects).sort()).toEqual(["acme", "acme.corp", "base", "hand"]);
-
-    // Editing an inherited project writes it whole: the unchanged fields stay, and the reload equals what was sent.
-    const sent = { paths: ["/srv/base"], from: ["team", "personal"] };
-    expect(config.changeProjects({ set: { base: sent } })).toEqual({ saved: true });
-    expect(saved().projects.base).toEqual(sent);
-    expect(get().config.projects.base).toEqual(sent);
+    // A project akm ignores is not read, dotted names included.
+    expect(Object.keys(get().config.projects).sort()).toEqual(["acme", "hand"]);
 
     // Editing a malformed local entry clears what akm ignored.
     expect(config.changeProjects({ set: { hand: { paths: ["/srv/hand2"] } } })).toEqual({ saved: true });
@@ -395,10 +379,7 @@ describe("bundle settings and config", () => {
   test("config unset refuses an entry akm ignores, and does nothing without a config file", async () => {
     await seed();
     const configPath = getConfigPath();
-    fs.writeFileSync(
-      configPath,
-      JSON.stringify({ configVersion: "0.9.0", connections: { draft: { models: { fast: "m" } } } }),
-    );
+    fs.writeFileSync(configPath, JSON.stringify({ connections: { draft: { models: { fast: "m" } } } }));
     resetConfigCache();
     const before = fs.readFileSync(configPath, "utf8");
     await expectUsage(
@@ -446,24 +427,6 @@ describe("bundle settings and config", () => {
     await bundles.update({ bundle: "stash" });
     expect(fs.readFileSync(configPath, "utf8")).toBe(before);
   });
-
-  test("local settings preserve inherited configuration and do not flatten the effective config", async () => {
-    await writableConfig();
-    const configPath = getConfigPath();
-    const basePath = path.join(path.dirname(configPath), "shared.json");
-    fs.writeFileSync(
-      basePath,
-      JSON.stringify({ configVersion: "0.9.0", inheritedExtra: { keep: true }, archiveRetentionDays: 17 }),
-    );
-    writeSandboxConfig({ extends: "./shared.json" });
-    await bundles.setSettings({ bundle: "stash", writable: false });
-    const saved = JSON.parse(fs.readFileSync(configPath, "utf8"));
-    expect(saved.extends).toBe("./shared.json");
-    expect(saved.inheritedExtra).toBeUndefined();
-    expect(saved.archiveRetentionDays).toBeUndefined();
-    expect(loadConfig().archiveRetentionDays).toBe(17);
-    expect(JSON.parse(fs.readFileSync(basePath, "utf8")).inheritedExtra).toEqual({ keep: true });
-  });
 });
 
 describe("bundle lifecycle", () => {
@@ -476,7 +439,7 @@ describe("bundle lifecycle", () => {
     expect((await out(bundles.list())).bundles.map((b: Json) => b.name)).toContain("extra");
     // The asset view reads a local-dir bundle live from disk, so the update is observed through the index.
     const indexed = async () =>
-      (await out(assets.search({ q: "zephyrrevision", bundle: "extra" }))).hits.map((h: Json) => h.ref);
+      (await out(assets.search({ q: "zephyrrevision", bundle: "extra" }))).results.map((h: Json) => h.ref);
     fs.writeFileSync(path.join(source, "knowledge", "extra.md"), "# Extra\nUpdated zephyrrevision.\n");
     expect(await indexed()).toEqual([]);
     await bundles.update({ bundle: "extra" });
@@ -633,7 +596,7 @@ describe("documents", () => {
     expect(saved).toContain("# Keep comment\ntitle: 'Live title'\ncustom: [keep, me]");
     expect(saved).toContain("quasarprocedure verified");
     expect(fs.readFileSync(knowledge("guide.md"), "utf8")).toBe(GUIDE);
-    expect((await out(assets.search({ q: "quasarprocedure" }))).hits.map((h: Json) => h.ref)).toContain(
+    expect((await out(assets.search({ q: "quasarprocedure" }))).results.map((h: Json) => h.ref)).toContain(
       "knowledge/review/guide",
     );
     const indexBefore = dbSnapshot(getDbPath());

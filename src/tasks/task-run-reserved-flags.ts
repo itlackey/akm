@@ -8,7 +8,7 @@
  * declared `inputs:` name that collides with one, without creating an import
  * cycle back through the CLI layer.
  *
- * `schedulerInputFlagTail` (`../tasks/scheduler-binding.ts`) and
+ * `inputFlagTail` (`./dispatch.ts`) and
  * `akm task run <id> --<name> <value>` both let an authored/declared input
  * NAME collide with a flag `akm task run` already binds to itself
  * (`--bundle`, `--scheduled`, …). `parseTaskInputFlags`
@@ -34,7 +34,7 @@
  */
 
 /** Every VALUE-taking flag `akm task run` declares (GLOBAL_OUTPUT_ARGS' value flags plus `--bundle`). */
-export const TASK_RUN_VALUE_FLAGS: readonly string[] = ["bundle", "format", "detail", "shape", "output"];
+export const TASK_RUN_VALUE_FLAGS: readonly string[] = ["bundle", "config", "format", "detail", "output"];
 
 /** Every BOOLEAN flag `akm task run` declares, including citty's `--no-` negations of the boolean pair above. */
 export const TASK_RUN_BOOLEAN_FLAGS: readonly string[] = [

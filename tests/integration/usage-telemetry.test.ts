@@ -3,8 +3,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { openStateDatabase } from "../../src/core/state-db";
-import { insertUsageEvent, purgeOldUsageEvents, type UsageEventRow } from "../../src/indexer/usage/usage-events";
+import { foldBeforePurge } from "../../src/indexer/metrics/fold";
+import { insertUsageEvent, type UsageEventRow } from "../../src/indexer/usage/usage-events";
 import type { Database } from "../../src/storage/database";
+import { purgeFoldedUsageEvents } from "../../src/storage/repositories/metrics-rollup-repository";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
 /** Read back inserted rows directly — `getUsageEvents` was dropped as dead code (no production reader). */
@@ -230,24 +232,29 @@ describe("Usage Telemetry", () => {
     }
   });
 
-  // ── purgeOldUsageEvents boundary ──────────────────────────────────────────
+  // ── purgeFoldedUsageEvents boundary ───────────────────────────────────────
 
-  test("purgeOldUsageEvents keeps a row 1h newer than the cutoff on the same date", () => {
+  test("purgeFoldedUsageEvents deletes whole folded days before the cutoff date and keeps the cutoff date", () => {
     const dbPath = tmpDbPath();
     const db = openStateDatabase(dbPath);
     try {
-      // Cutoff = 2026-09-08T12:00:00Z. `created_at` is `YYYY-MM-DD HH:MM:SS`, so a
-      // raw string compare against the ISO cutoff (`T` sorts after a space) would
-      // wrongly delete every row on the cutoff's date.
-      spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-08T12:00:00.000Z"));
+      // Cutoff day = 2026-09-08. `created_at` is `YYYY-MM-DD HH:MM:SS`, so a raw string compare
+      // against an ISO cutoff (`T` sorts after a space) would wrongly delete every row on the cutoff's date.
+      const now = Date.parse("2026-10-08T12:00:00.000Z");
       const insert = db.prepare("INSERT INTO usage_events (event_type, entry_ref, created_at) VALUES ('show', ?, ?)");
+      insert.run("stash//skills/gone", "2026-09-07 23:00:00");
       insert.run("stash//skills/older", "2026-09-08 11:00:00");
       insert.run("stash//skills/newer", "2026-09-08 13:00:00");
 
-      purgeOldUsageEvents(db, 30);
+      purgeFoldedUsageEvents(
+        db,
+        30,
+        foldBeforePurge(db, { nowMs: now, metricsDbPath: path.join(path.dirname(dbPath), "metrics.db") }) ?? new Map(),
+        now,
+      );
 
       const refs = readEvents(db).map((e) => e.entry_ref);
-      expect(refs).toEqual(["stash//skills/newer"]);
+      expect(refs).toEqual(["stash//skills/older", "stash//skills/newer"]);
     } finally {
       db.close();
     }

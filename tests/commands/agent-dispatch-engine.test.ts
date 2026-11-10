@@ -27,7 +27,6 @@ describe("akmAgentDispatch engine capability", () => {
     await executeInteractiveAgentInvocation(
       {
         config: {
-          configVersion: "0.9.0",
           semanticSearchMode: "off",
           harnesses: { native: { platform: "claude", bin: "/bin/true" } },
         },
@@ -63,7 +62,6 @@ describe("akmAgentDispatch engine capability", () => {
   test("a connection has nothing to start interactively: it says so, and runs nothing", async () => {
     let dispatches = 0;
     const config: AkmConfig = {
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       connections: { lab: { endpoint: "https://example.invalid/v1", models: { fast: "fixture" } } },
     };
@@ -84,7 +82,6 @@ describe("akmAgentDispatch engine capability", () => {
     try {
       const bin = writeFakeHarness(bins.dir, "claude-fake", [""], { readStdin: false });
       const config: AkmConfig = {
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         harnesses: { native: { platform: "claude", bin, models: { fast: "claude-fast" } } },
       };
@@ -109,7 +106,7 @@ describe("akmAgentDispatch engine capability", () => {
     let dispatches = 0;
     await expect(
       executeInteractiveAgentInvocation(
-        { config: { configVersion: "0.9.0", semanticSearchMode: "off" } },
+        { config: { semanticSearchMode: "off" } },
         {
           runAgent: async () => {
             dispatches += 1;
@@ -123,7 +120,6 @@ describe("akmAgentDispatch engine capability", () => {
 
   test("delegates prompt-free native launch through the shared interactive execution boundary", async () => {
     const config: AkmConfig = {
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       harnesses: {
         native: { platform: "claude", bin: "/bin/true" },
@@ -167,7 +163,7 @@ describe("akmAgentDispatch engine capability", () => {
           inference: { effort: "high", temperature: 0 },
           outputSchema: { type: "object" },
         },
-        agentConfig: { configVersion: "0.9.0", semanticSearchMode: "off" },
+        agentConfig: { semanticSearchMode: "off" },
       },
       {
         executeCommand: async (input) => {
@@ -193,7 +189,7 @@ describe("akmAgentDispatch engine capability", () => {
         action: { content: "Review exactly this." },
         // A prompt is free text: sent verbatim, never parsed as a template.
         inlineContentMode: "literal",
-        config: { configVersion: "0.9.0", semanticSearchMode: "off" },
+        config: { semanticSearchMode: "off" },
         current: {
           agent: "fixture//agents/reviewer",
           harness: "reviewer",
@@ -207,37 +203,6 @@ describe("akmAgentDispatch engine capability", () => {
     ]);
   });
 
-  test("the retired engine selection reaches the invocation layer as `engine`, for a prompt and for an interactive launch", async () => {
-    const commandCalls: unknown[] = [];
-    const interactiveCalls: unknown[] = [];
-    const seams = {
-      executeCommand: async (input: unknown) => {
-        commandCalls.push(input);
-        return {
-          schemaVersion: 2,
-          ok: true,
-          shape: "agent-result",
-          engine: "x",
-          exitCode: 0,
-          stdout: "",
-          stderr: "",
-          durationMs: 1,
-        } as const;
-      },
-      executeInteractive: async (input: unknown) => {
-        interactiveCalls.push(input);
-        return { engine: "x", result: { ok: true, exitCode: 0, stdout: "", stderr: "", durationMs: 1 } };
-      },
-    };
-    const agentConfig = { configVersion: "0.9.0", semanticSearchMode: "off" } as AkmConfig;
-
-    await akmAgentDispatch({ prompt: "hi", agentConfig, selection: { engine: "old-name" } }, seams);
-    await akmAgentDispatch({ agentConfig, selection: { engine: "old-name" } }, seams);
-
-    expect(commandCalls).toMatchObject([{ current: { engine: "old-name" } }]);
-    expect(interactiveCalls).toMatchObject([{ engine: "old-name" }]);
-  });
-
   test("a persona or inference setting without a task is refused instead of fabricating an empty command", async () => {
     let calls = 0;
     const executeCommand = async () => {
@@ -248,7 +213,7 @@ describe("akmAgentDispatch engine capability", () => {
       calls += 1;
       throw new Error("must not start the harness");
     };
-    const agentConfig = { configVersion: "0.9.0", semanticSearchMode: "off" } as const;
+    const agentConfig = { semanticSearchMode: "off" } as const;
 
     await expect(
       akmAgentDispatch({ agentRef: "fixture//agents/reviewer", agentConfig }, { executeCommand, executeInteractive }),
@@ -264,7 +229,7 @@ describe("akmAgentDispatch engine capability", () => {
 
   test("a model alone does not need a task: it rides along to the interactive launch", async () => {
     const calls: unknown[] = [];
-    const agentConfig = { configVersion: "0.9.0", semanticSearchMode: "off" } as const;
+    const agentConfig = { semanticSearchMode: "off" } as const;
     await akmAgentDispatch(
       { selection: { model: "balanced" }, agentConfig },
       {
@@ -284,7 +249,7 @@ describe("akmAgentDispatch engine capability", () => {
         {
           agentRef: "knowledge/guide",
           prompt: "Review exactly this.",
-          agentConfig: { configVersion: "0.9.0", semanticSearchMode: "off" },
+          agentConfig: { semanticSearchMode: "off" },
         },
         {
           executeCommand: async () => {
@@ -302,7 +267,6 @@ describe("akmAgentDispatch engine capability", () => {
       selection: { harness: "test-agent" },
       prompt: "hello",
       agentConfig: {
-        configVersion: "0.9.0",
         semanticSearchMode: "auto",
         harnesses: {
           "test-agent": { platform: "aider", bin: "/bin/true" },
@@ -324,7 +288,6 @@ describe("akmAgentDispatch engine capability", () => {
   test("delegates a connection's prompt work instead of applying a harness-only capability gate", async () => {
     const calls: unknown[] = [];
     const config: AkmConfig = {
-      configVersion: "0.9.0",
       semanticSearchMode: "auto" as const,
       connections: {
         fast: {
@@ -362,7 +325,6 @@ describe("akmAgentDispatch engine capability", () => {
       selection: { harness: "test-agent" },
       prompt: "hello",
       agentConfig: {
-        configVersion: "0.9.0",
         semanticSearchMode: "auto",
         harnesses: {
           "test-agent": { platform: "aider", bin: "/bin/false" },
@@ -378,7 +340,6 @@ describe("akmAgentDispatch engine capability", () => {
 
 describe("akm agent --prompt is free text, not a template", () => {
   const agentConfig = {
-    configVersion: "0.9.0",
     semanticSearchMode: "off",
     harnesses: { native: { platform: "claude", bin: "/bin/true" } },
   } as unknown as AkmConfig;

@@ -67,7 +67,6 @@ export interface SourceSearchHit {
   description?: string;
   tags?: string[];
   size?: SearchHitSize;
-  action?: string;
   score?: number;
   whyMatched?: string[];
   run?: string;
@@ -120,7 +119,6 @@ export interface RegistrySearchResultHit {
   id: string;
   description?: string;
   tags?: string[];
-  action?: string;
   /** Ref to pass to `akm bundle add` to install this hit. */
   installRef?: string;
   score?: number;
@@ -143,7 +141,7 @@ export interface SearchResponse {
   source: SearchSource;
   /** The bundles a repeated `--from` searched; absent for a single `--from`. */
   bundles?: string[];
-  hits: SearchHit[];
+  results: SearchHit[];
   registryHits?: RegistrySearchResultHit[];
   tip?: string;
   warnings?: string[];
@@ -668,9 +666,12 @@ export interface InfoResponse {
    * APPDATA/LOCALAPPDATA on Windows (see `src/core/paths.ts`) — so a script
    * can read akm's paths with `akm info --format json | jq -r .dataDir`
    * instead of hardcoding `~/.local/share/akm` vs. a container's
-   * `/opt/akm/data` and drifting.
+   * `/opt/akm/data` and drifting. `configFile` is the config file in use
+   * (`--config`, `AKM_CONFIG_FILE`, or the default); `dataDir`, `stateDir` and
+   * `cacheDir` follow its `paths` key when it has one.
    */
   dataDir: string;
+  configFile: string;
   configDir: string;
   cacheDir: string;
   stateDir: string;
@@ -694,6 +695,13 @@ export interface InfoResponse {
    * runs on (`null`: a connection, or nowhere); `scheduled` whether the `improve` task is enabled.
    */
   learning: { on: boolean; harness: string | null; scheduled: boolean };
+  /**
+   * The autonomy gate's effect on the default improve strategy: which lanes it is suppressing and the config key that
+   * lifts it. Absent when the strategy cannot be resolved.
+   */
+  improveAutonomy?: { enabled: boolean; configKey: string; gatedLanes: Array<{ lane: string; reason: string }> };
+  /** Effective proposal-queue triage settings for the default improve strategy; absent when it has no `triage` block. */
+  improveTriage?: { defaultStrategy: string; enabled: boolean; applyMode: string };
   sourceProviders: Array<{ type: string; name?: string; path?: string; url?: string; enabled?: boolean }>;
   indexStats: {
     entryCount: number;

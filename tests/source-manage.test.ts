@@ -2,6 +2,8 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { buildWebsiteOptions } from "../src/commands/sources/add-cli";
+import { shouldAddAsWebsiteUrl } from "../src/commands/sources/source-add";
 import { addStash, removeStash } from "../src/commands/sources/source-manage";
 import { getSources, loadConfig, resetConfigCache, saveConfig } from "../src/core/config/config";
 import { getConfigPath } from "../src/core/paths";
@@ -117,13 +119,13 @@ describe("addStash", () => {
   });
 
   test("bundle add persists only authored settings instead of schema defaults (#972)", () => {
-    fs.writeFileSync(getConfigPath(), `${JSON.stringify({ configVersion: "0.9.0" }, null, 2)}\n`, "utf8");
+    fs.writeFileSync(getConfigPath(), `${JSON.stringify({}, null, 2)}\n`, "utf8");
     resetConfigCache();
 
     addStash({ target: "lodash", providerType: "npm", name: "lodash" });
 
     const raw = JSON.parse(fs.readFileSync(getConfigPath(), "utf8")) as Record<string, unknown>;
-    expect(Object.keys(raw).sort()).toEqual(["bundles", "configVersion"]);
+    expect(Object.keys(raw).sort()).toEqual(["bundles"]);
     expect(raw.bundles).toEqual({ lodash: { npm: "lodash" } });
   });
 
@@ -562,5 +564,27 @@ describe("round-trip integration", () => {
     sources = getSources(loadConfig());
     expect(sources).toHaveLength(2);
     expect(sources.map((s) => s.name)).toEqual(["fs2", "v2"]);
+  });
+});
+
+describe("buildWebsiteOptions", () => {
+  test("parses website crawl limits as numbers", () => {
+    expect(buildWebsiteOptions({ "max-pages": "12", "max-depth": "4" })).toEqual({ maxPages: 12, maxDepth: 4 });
+  });
+
+  test("rejects non-positive website crawl limits", () => {
+    expect(() => buildWebsiteOptions({ "max-pages": "0" })).toThrow("Invalid --max-pages value");
+    expect(() => buildWebsiteOptions({ "max-depth": "-1" })).toThrow("Invalid --max-depth value");
+  });
+});
+
+describe("shouldAddAsWebsiteUrl", () => {
+  test("treats docs-style URLs as website sources", () => {
+    expect(shouldAddAsWebsiteUrl("https://docs.example.com/guide")).toBe(true);
+  });
+
+  test("keeps known git hosts on the registry install path", () => {
+    expect(shouldAddAsWebsiteUrl("https://gitlab.com/acme/project")).toBe(false);
+    expect(shouldAddAsWebsiteUrl("https://example.com/acme/project.git")).toBe(false);
   });
 });

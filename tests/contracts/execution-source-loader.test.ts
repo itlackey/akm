@@ -16,7 +16,6 @@ import type { AkmConfig } from "../../src/core/config/config-types";
 import { _setWarnSinkForTests } from "../../src/core/warn";
 import { createAdapterRenderedExecutionSource } from "../../src/execution/source";
 import type { IndexEntry } from "../../src/indexer/indexer";
-import { withEnv } from "../_helpers/sandbox";
 
 const FIXTURES = path.resolve("tests/fixtures/execution-contracts/native");
 const roots: string[] = [];
@@ -40,7 +39,6 @@ function installFixture(adapter: "akm" | "claude" | "opencode", kind: "command" 
 
 function fixtureConfig(root: string, adapter: string): AkmConfig {
   return {
-    configVersion: "0.9.0",
     semanticSearchMode: "off",
     defaultBundle: "fixture",
     bundles: {
@@ -125,7 +123,7 @@ describe("adapter-owned execution source loading", () => {
     expect(loaded.content).toStartWith("# Contract review");
   });
 
-  test("loads an indexed persona from the canonical implicit AKM_BUNDLE_DIR source", async () => {
+  test("loads an indexed persona from the configured default bundle", async () => {
     const fixture = installFixture("akm", "persona");
     const bundleId = slugForPath(fixture.root);
     const entry = {
@@ -134,12 +132,14 @@ describe("adapter-owned execution source loading", () => {
       bundleId,
     };
 
-    const loaded = await withEnv({ AKM_BUNDLE_DIR: fixture.root }, () =>
-      loadAdapterExecutionSource(`${bundleId}//${fixture.conceptId}`, "persona", {
-        config: { configVersion: "0.9.0", semanticSearchMode: "off" },
-        lookup: lookupFor(entry),
-      }),
-    );
+    const loaded = await loadAdapterExecutionSource(`${bundleId}//${fixture.conceptId}`, "persona", {
+      config: {
+        semanticSearchMode: "off",
+        bundles: { [bundleId]: { path: fixture.root, writable: true } },
+        defaultBundle: bundleId,
+      },
+      lookup: lookupFor(entry),
+    });
 
     expect(loaded.content).toStartWith("# Contract reviewer");
     expect(loaded.identity).toMatchObject({
@@ -282,7 +282,6 @@ describe("adapter-owned execution source loading", () => {
     await expect(
       loadAdapterExecutionSource("fixture//commands/escaped", "command", {
         config: {
-          configVersion: "0.9.0",
           semanticSearchMode: "off",
           defaultBundle: "fixture",
           bundles: {
@@ -301,7 +300,6 @@ describe("adapter-owned execution source loading", () => {
     await expect(
       loadAdapterExecutionSource("fixture//commands/escaped", "command", {
         config: {
-          configVersion: "0.9.0",
           semanticSearchMode: "off",
           defaultBundle: "fixture",
           bundles: {

@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { writeFileAtomic } from "../core/common";
-import { ConfigError, rethrowIfTestIsolationError, TransientError } from "../core/errors";
+import { ConfigError, TransientError } from "../core/errors";
 import { createLockPayload, probeLock, reclaimStaleLock, releaseLock, tryAcquireLockSync } from "../core/file-lock";
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
 import { getDataDir, getLockfileLockPath, getLockfilePath } from "../core/paths";
@@ -106,11 +106,10 @@ export function readLockfile(): LockfileEntry[] {
     const raw = JSON.parse(fs.readFileSync(lockfilePath, "utf8"));
     if (!Array.isArray(raw)) return [];
     return raw.filter(isValidLockfileEntry);
-  } catch (err) {
+  } catch {
     // Defense-in-depth: getLockfilePath() is outside this try block, but a
     // future refactor that pushes a getDataDir() call inside must not mask
     // the bun-test isolation guard as "empty lockfile".
-    rethrowIfTestIsolationError(err);
     return [];
   }
 }
@@ -136,7 +135,7 @@ function assertLockfilePathReadable(target: string): void {
   throw new ConfigError(
     `Refusing to modify the lockfile: ${describeInaccessiblePath(target, code)}. akm cannot read the existing lock ` +
       "records, and writing over them would destroy every bundle they track. Fix the ownership or mode of that " +
-      "path (or point AKM_DATA_DIR / XDG_DATA_HOME somewhere this user owns) and retry.",
+      "path (or point XDG_DATA_HOME, or `paths.data` in the config file, somewhere this user owns) and retry.",
     "DATA_DIR_UNREADABLE",
   );
 }
@@ -160,7 +159,6 @@ function readLockfileOrThrow(): LockfileEntry[] {
   try {
     raw = fs.readFileSync(lockfilePath, "utf8");
   } catch (err) {
-    rethrowIfTestIsolationError(err);
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
     // An UNREADABLE lockfile has everything to preserve and we cannot see it.
     // Classify AFTER the failed read so the happy path costs no extra syscall.
@@ -205,7 +203,7 @@ function readLockfileOrThrow(): LockfileEntry[] {
  *
  * This is the SINGLE lock-first resolution point shared by the indexer READ
  * path (`resolveEntryContentDir` in indexer/search) and the command-layer WRITE
- * path (`adaptConfiguredSource` in core/write-source): consulting it first makes
+ * path (`adaptConfiguredSource` in sources/write-source): consulting it first makes
  * a write land in exactly the directory a read walks. Returns `undefined` for a
  * bundle with no lock `localRoot` or a non-managed type, so both callers fall
  * back to the identical provider-path derivation.

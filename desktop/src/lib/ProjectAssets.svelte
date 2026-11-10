@@ -62,8 +62,8 @@
       if (mine !== generation) return;
       result = next;
       const first = previousShown;
-      previousShown = next.hits.length;
-      if (first > 0 && next.hits.length > first) {
+      previousShown = next.results.length;
+      if (first > 0 && next.results.length > first) {
         await tick();
         root?.parentElement?.querySelectorAll<HTMLElement>(".asset-row a")[first]?.focus();
       }
@@ -103,7 +103,7 @@
       : `project = ${name}`,
   );
   const n = (v: number) => v.toLocaleString("en-US");
-  const hits = $derived(result?.hits ?? []);
+  const hits = $derived(result?.results ?? []);
   const searching = $derived(!!q || !!type);
 </script>
 

@@ -16,15 +16,13 @@
       "type": "script",
       "ref": "sample-generic//build.sh",
       "label": "Script",
-      "renderer": "script-source",
-      "action": "akm show sample-generic//build.sh -> execute the run command"
+      "renderer": "script-source"
     },
     "notes.md": {
       "type": "document",
       "ref": "sample-generic//notes",
       "label": "Asset",
       "renderer": null,
-      "action": "akm show sample-generic//notes",
       "flag": "GENERIC FALLBACK — `document` has no TYPE_PRESENTATION entry."
     },
     "data.csv": {
@@ -32,7 +30,6 @@
       "ref": "sample-generic//data.csv",
       "label": "Asset",
       "renderer": null,
-      "action": "akm show sample-generic//data.csv",
       "flag": "GENERIC FALLBACK — `file` has no TYPE_PRESENTATION entry."
     }
   }

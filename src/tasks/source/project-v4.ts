@@ -5,16 +5,11 @@
 /**
  * `projectTaskSourceV4()` — the task source v4 -> prepare-seam projection.
  *
- * `prepareTaskV3Execution` (`src/tasks/prepare/prepare.ts`) has never needed
+ * `prepareTaskExecution` (`src/tasks/prepare/prepare.ts`) has never needed
  * to change. This is a pure, typed transform from an already-parsed
- * `TaskSourceV4Document` into a `PreparableTaskDocument` (a name for
- * `TaskV3SourceDocument` that is not version-bound,
- * `src/tasks/prepare/prepared-execution.ts`) — no YAML string is fabricated
- * and nothing is re-parsed (no file under `src/` may spell out a fabricated task-v3 header
- * line immediately followed by a synthetic executable-selector line — see
- * `tests/workflows/direct-script-typed.test.ts`'s source-text scan, which
- * this file's own prose is careful not to trip by literally reproducing
- * that two-line needle).
+ * `TaskSourceV4Document` into a `PreparableTaskDocument`
+ * (`src/tasks/task-source.ts`) — no YAML string is fabricated
+ * and nothing is re-parsed.
  *
  * The projection is DELIBERATELY LOSSY relative to the parsed document:
  *
@@ -34,8 +29,7 @@
  *     the literal stays; see its own inline comment below.
  */
 
-import type { PreparableTaskDocument } from "../prepare/prepared-execution";
-import type { TaskV3AkmOptions } from "../source-v3";
+import type { PreparableTaskDocument, TaskAkmOptions } from "../task-source";
 import type { TaskSourceV4Document } from "./task-source-v4";
 
 /**
@@ -45,9 +39,9 @@ import type { TaskSourceV4Document } from "./task-source-v4";
  * never leak in by accident). Returns `undefined` when
  * nothing maps, matching v3's own
  * convention of omitting the `akm` key entirely rather than emitting an
- * always-present empty object (`source-v3.ts:789`).
+ * always-present empty object (`task-source.ts:789`).
  */
-function projectAkm(document: TaskSourceV4Document): Readonly<TaskV3AkmOptions> | undefined {
+function projectAkm(document: TaskSourceV4Document): Readonly<TaskAkmOptions> | undefined {
   const out: Record<string, unknown> = {};
   if (document.description !== undefined) out.description = document.description;
   if (document.when_to_use !== undefined) out.when_to_use = document.when_to_use;
@@ -57,7 +51,6 @@ function projectAkm(document: TaskSourceV4Document): Readonly<TaskV3AkmOptions> 
   if (execution.agent !== undefined) out.agent = execution.agent;
   if (execution.connection !== undefined) out.connection = execution.connection;
   if (execution.harness !== undefined) out.harness = execution.harness;
-  if (execution.engine !== undefined) out.engine = execution.engine;
   if (execution.model !== undefined) out.model = execution.model;
   if (execution.inference !== undefined) out.inference = execution.inference;
   if (execution.timeout !== undefined) out.timeout = execution.timeout;
@@ -67,7 +60,7 @@ function projectAkm(document: TaskSourceV4Document): Readonly<TaskV3AkmOptions> 
 
   if (document.output !== undefined) out.outputSchema = document.output;
 
-  return Object.keys(out).length > 0 ? (Object.freeze(out) as Readonly<TaskV3AkmOptions>) : undefined;
+  return Object.keys(out).length > 0 ? (Object.freeze(out) as Readonly<TaskAkmOptions>) : undefined;
 }
 
 /** Project one parsed task source v4 document into the prepare seam's existing input shape. */
@@ -78,7 +71,7 @@ export function projectTaskSourceV4(document: TaskSourceV4Document): PreparableT
   );
   return Object.freeze({
     // The literal `3` is the prepare seam's own discriminant
-    // (PreparableTaskDocument = TaskV3SourceDocument), not an assertion that
+    // (PreparableTaskDocument's `version`), not an assertion that
     // the source this was projected from was task v3 — `TASK_V3_SCHEMA_VERSION`
     // is gone (P4 deleted task v3 acceptance from src), and this projection
     // only ever runs on a task source v4 document (P2a §3.5's recorded wart).

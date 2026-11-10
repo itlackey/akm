@@ -74,14 +74,16 @@ const DEFAULT_LIMIT = { context: 200_000, output: 32_000 };
 
 /**
  * The inline OpenCode config of a run. `keyFile` is where the connection's key is written for the run, when it has
- * one. `ambient` is the environment the process is started over: the plugin gives the commands the agent runs these
- * values back for the variables the run sets, and removes them where there is none.
+ * one. `ambient` is the environment the process is started over: the plugin gives the commands the agent runs, and
+ * its own runs of akm, these values back for the variables the run sets, and removes them where there is none. `akm` is
+ * the argv that runs this akm, which the plugin's tools call with their arguments appended.
  */
 export function runtimeConfig(
   connection: ChatCompletionConfig,
   pluginDirectory: string,
   keyFile: string,
   ambient: Readonly<Record<string, string>> = {},
+  akm: readonly string[] = [],
 ): Record<string, unknown> {
   const requestFields = effectiveRequestFields(connection.request, connection.inference);
   const context = positiveInteger(connection.contextLength);
@@ -95,6 +97,7 @@ export function runtimeConfig(
       {
         package: pluginDirectory,
         options: {
+          akm,
           requestFields,
           shellEnv: Object.fromEntries(RUNTIME_VARIABLES.map((name) => [name, ambient[name] ?? null])),
         },
@@ -122,8 +125,7 @@ export function runtimeConfig(
 /**
  * The variables {@link runtimeEnv} sets that the commands the agent runs must not see as set: the runtime's roots (a
  * command would read and write akm's directories instead of the user's) and akm's OpenCode settings (an `opencode` a
- * command runs would load akm's provider and its key file). `AKM_OPENCODE_CLI`, between akm and its plugin, is
- * harmless to a command and is left.
+ * command runs would load akm's provider and its key file).
  */
 const RUNTIME_VARIABLES = [
   "XDG_CONFIG_HOME",
@@ -152,7 +154,6 @@ export function runtimeEnv(config: Record<string, unknown>, where: RuntimeLocati
     OPENCODE_DISABLE_PROJECT_CONFIG: "1",
     OPENCODE_DISABLE_CLAUDE_CODE: "1",
     OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
-    AKM_OPENCODE_CLI: JSON.stringify(where.akm),
   };
 }
 

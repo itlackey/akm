@@ -70,7 +70,7 @@ async function indexRepo(root: string): Promise<void> {
 
 async function refs(query: string): Promise<string[]> {
   const result = await akmSearch({ query, source: "proj", skipLogging: true });
-  return result.hits.filter((hit): hit is SourceSearchHit => "path" in hit).map((hit) => hit.ref);
+  return result.results.filter((hit): hit is SourceSearchHit => "path" in hit).map((hit) => hit.ref);
 }
 
 beforeEach(() => {

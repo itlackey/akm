@@ -3,9 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * P3a round 1, finding 1 (docs/plans/specs/p3a-plan-v5-child-freeze.md
- * Review log R8) — AUTHORIZED FLIP, P3b spec §6 F-A1 / §1.6 B-N11
- * (docs/plans/specs/p3b-child-executor.md).
+ * P3a round 1, finding 1 — AUTHORIZED FLIP, P3b spec §6 F-A1 / §1.6 B-N11
  *
  * P3a's freeze side (`src/workflows/freeze/targets/child-workflow.ts`)
  * legitimately produces a `kind: "child-workflow"` frozen target for a step
@@ -53,7 +51,7 @@
  * synchronous check on `request.frozenTarget.kind` at the very top of
  * `dispatchWorkflowExecution`, before anything touches
  * `buildExecutionFromWire` / `runExecution`
- * — mirrors `tests/workflows/unit-dispatch-event-source.test.ts`'s existing
+ * — mirrors `tests/workflows/unit-dispatch.test.ts`'s existing
  * "no injectable runAgent/runSdk/chat seam, so pin the fix at the
  * exact point the decision is made" approach for this same module.
  */

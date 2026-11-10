@@ -127,18 +127,6 @@ export type SourceConfigEntry = z.infer<typeof import("./config-schema").SourceC
 /** Output defaults for CLI rendering (`output`). */
 export type OutputConfig = z.infer<typeof import("./config-schema").OutputConfigSchema>;
 
-/**
- * Per-pass index configuration. Each named pass can select a connection and apply
- * bounded invocation overrides; `enabled: false` opts a pass out.
- */
-export type IndexPassConfig = z.infer<typeof import("./config-schema").IndexPassConfigSchema>;
-
-/**
- * Index-time configuration. Combines the index-wide model-work settings with
- * per-pass overrides keyed by pass name.
- */
-export type IndexConfig = z.infer<typeof import("./config-schema").IndexConfigSchema>;
-
 /** `akm improve` pipeline tuning (`improve`). See config-schema.ts for docs. */
 export type ImproveConfig = z.infer<typeof import("./config-schema").ImproveConfigSchema>;
 

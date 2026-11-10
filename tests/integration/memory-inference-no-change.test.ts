@@ -21,8 +21,7 @@ import type { AkmConfig } from "../../src/core/config/config";
 import { _setWarnSinkForTests } from "../../src/core/warn";
 import {
   collectPendingMemories,
-  countPendingMemoriesNeedingDecision,
-  runMemoryInferencePass,
+  runMemoryInferencePass as runMemoryInferencePassImpl,
 } from "../../src/indexer/passes/memory-inference";
 import type { SearchSource } from "../../src/indexer/search/search-source";
 import { _setChatCompletionForTests, LlmCallError } from "../../src/llm/client";
@@ -32,8 +31,13 @@ import {
   getLlmCacheEntry,
   upsertLlmCacheEntry,
 } from "../../src/storage/repositories/index-llm-cache-repository";
+import { withImproveRunner } from "../_helpers/memory-inference-runner";
 import { withEnv } from "../_helpers/sandbox";
 import { overrideSeam } from "../_helpers/seams";
+
+function runMemoryInferencePass(ctx: Parameters<typeof runMemoryInferencePassImpl>[0]) {
+  return runMemoryInferencePassImpl(withImproveRunner(ctx));
+}
 
 const NO_CHANGE_REPLY = JSON.stringify({
   noChange: true,
@@ -99,7 +103,7 @@ function config(): AkmConfig {
   return {
     semanticSearchMode: "off",
     connections: { index: { endpoint: "http://127.0.0.1:1/v1/chat/completions", models: { fast: "scripted" } } },
-    index: { connection: "index" },
+    improve: { connection: "index" },
   };
 }
 
@@ -175,7 +179,7 @@ describe("a successful no-change decision", () => {
           apiKey: "$AKM_NOCHANGE_REQUIRED_KEY",
         },
       },
-      index: { connection: "index" },
+      improve: { connection: "index" },
     };
     await withDb(async (db) => {
       // First run has the credential and records the decision.
@@ -370,60 +374,6 @@ describe("old cache data", () => {
   });
 });
 
-describe("the minPendingCount gate count (#1219)", () => {
-  const inputFor = (file: string) => {
-    const record = collectPendingMemories(tmpStash).find((record) => record.filePath === file);
-    if (!record) throw new Error("Missing pending fixture");
-    return record.effectiveInput;
-  };
-  const decide = (db: Parameters<typeof upsertLlmCacheEntry>[0], file: string) =>
-    upsertLlmCacheEntry(
-      db,
-      file,
-      computeBodyHash(inputFor(file)),
-      JSON.stringify({ noChange: true }),
-      "memory-inference-v5",
-    );
-
-  test("excludes a parent whose current body has a cached no-change decision", async () => {
-    const decided = writeMemory("decided", TOOL_COUNT_NOTE);
-    writeMemory("fresh", CHECKPOINT_NOTE);
-    await withDb(async (db) => {
-      decide(db, decided);
-      expect(countPendingMemoriesNeedingDecision(tmpStash, db)).toBe(1);
-      // Without a database every pending parent counts.
-      expect(countPendingMemoriesNeedingDecision(tmpStash)).toBe(2);
-    });
-  });
-
-  test("counts a parent again once its body is edited", async () => {
-    const parent = writeMemory("note", TOOL_COUNT_NOTE);
-    await withDb(async (db) => {
-      decide(db, parent);
-      expect(countPendingMemoriesNeedingDecision(tmpStash, db)).toBe(0);
-      writeMemory("note", SUBSTANTIVE_NOTE);
-      expect(countPendingMemoriesNeedingDecision(tmpStash, db)).toBe(1);
-    });
-  });
-
-  test("counts a parent that has no cache row, a stale namespace, or a cached child draft", async () => {
-    const stale = writeMemory("stale", TOOL_COUNT_NOTE);
-    const drafted = writeMemory("drafted", ADEQUATE_NOTE);
-    writeMemory("none", CHECKPOINT_NOTE);
-    await withDb(async (db) => {
-      upsertLlmCacheEntry(
-        db,
-        stale,
-        computeBodyHash(inputFor(stale)),
-        JSON.stringify({ noChange: true }),
-        "memory-inference-v3",
-      );
-      upsertLlmCacheEntry(db, drafted, computeBodyHash(inputFor(drafted)), CHILD_REPLY, "memory-inference-v5");
-      expect(countPendingMemoriesNeedingDecision(tmpStash, db)).toBe(3);
-    });
-  });
-});
-
 describe("the prompt", () => {
   test("offers the no-change decision and still asks for a child otherwise", async () => {
     writeMemory("note", CHECKPOINT_NOTE);
@@ -432,5 +382,16 @@ describe("the prompt", () => {
     expect(prompt).toContain("noChange");
     expect(prompt).toContain("derived memory");
     expect(prompt.slice(prompt.indexOf("\n\nBody:\n") + "\n\nBody:\n".length)).toBe(CHECKPOINT_NOTE);
+  });
+});
+
+describe("a pass handed no runner", () => {
+  test("makes no model call: it does not read the config to find where to run", async () => {
+    writeMemory("note", TOOL_COUNT_NOTE);
+    await withDb(async (db) => {
+      // No `llmRunner` key at all, on a config that has a connection the pass could once have resolved itself.
+      await runMemoryInferencePassImpl({ config: config(), sources: sources(), db });
+    });
+    expect(chatCalls).toHaveLength(0);
   });
 });

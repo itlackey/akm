@@ -8,14 +8,14 @@ The design and rationale are in [Improvement Loop](../improvement.md). This page
 
 | Option | Purpose |
 |---|---|
-| `[scope]` (positional) | A single ref (`[bundle//]conceptId`), an asset type, or omitted for all assets. `akm improve report` and `akm improve judge` are subcommands, not scopes. |
+| `[scope]` (positional) | A single ref (`[bundle//]conceptId`), an asset type, or omitted for all assets. `akm improve report` is a subcommand, not a scope. |
 | `--strategy <name>` | A named strategy from `improve.strategies` or a built-in: `default` or `consolidate`. It chooses which processes run, never where. |
 | `--connection <name>` / `--harness <name>` | Run every call of this run, judges included, on this connection or harness instead of the default. They are mutually exclusive. |
 | `--model <alias\|name>` | The model for every call of this run: an alias (`fast`, `balanced`, `reasoning`) or an exact name. |
 | `--task` | Extra guidance for this pass, passed to the reflect prompt. |
 | `--dry-run` | Compute the plan and analyze memory cleanup. Takes no lock, emits no events, calls no model, writes nothing. |
 | `--show-prompt` | Print the composed reflect prompt for one fully-qualified ref and exit. No lock, index write, or model call. |
-| `--bundle` | The bundle the run improves and writes to, overriding `defaultWriteTarget` and the working bundle. Only its assets are planned. |
+| `--bundle` | The bundle the run improves and writes to, overriding the working bundle. Only its assets are planned. |
 | `--limit` | Cap the number of assets processed, highest salience first. |
 | `--timeout-ms` | Wall-clock budget for the whole run. Default 7 200 000 ms (2 hours). |
 | `--skip-if-locked` | If another improve run holds the lock, return an exit-0 no-op. Without it, contention is `IMPROVE_LOCK_HELD`, exit 75. |
@@ -24,7 +24,7 @@ The design and rationale are in [Improvement Loop](../improvement.md). This page
 | `--json-to-stdout` | Also print the full persisted run result as JSON. |
 | `--run`, `--since` | Only for `akm improve report`. |
 
-`--require-engines` is retired: it is parsed, warned about once, and ignored. A run already stops at planning (exit 78) when no model-calling process has a connection or harness to run on.
+`--require-engines` is removed (an unknown flag). A run already stops at planning (exit 78) when no model-calling process has a connection or harness to run on.
 
 ## Run order
 
@@ -43,7 +43,7 @@ A live run:
    4. validation: a ref whose file is missing, or a lesson without a `description`, is excluded; schema repair tries to fix those when `validation` is enabled;
    5. selection: the signal-delta filter, the proactive-maintenance lane, salience ranking, a disk check, and `--limit`.
 7. The per-asset loop (`runImproveLoopStage`, `loop-stages.ts`): for each selected ref, reflect, then distill for a distillable memory. The wall-clock budget is checked before each ref.
-8. Post-loop maintenance (`runImprovePostLoopStage`), skipped when the budget is spent: memory inference (reindex if it wrote anything), proposal hygiene (orphan purge and expiry), orphaned-state GC, the retention purges (events, `improve_runs`, `logs.db`, task log files, and the per-run improve and index log files under `$CACHE/logs/`; `improve.eventRetentionDays`, default 90), and, for a whole-bundle scope, a dead-link check on URLs in knowledge bodies.
+8. Post-loop maintenance (`runImprovePostLoopStage`), skipped when the budget is spent: memory inference (reindex if it wrote anything), proposal hygiene (orphan purge and expiry), orphaned-state marking (stamps `missing_since` and counts; never deletes a row), the retention purges (events and `improve_runs`, each closed UTC day folded into `metrics.db` first and only folded days deleted; `logs.db`; task log files; and the per-run improve and index log files under `$CACHE/logs/`; `improve.eventRetentionDays`, default 90), and, for a whole-bundle scope, a dead-link check on URLs in knowledge bodies.
 9. Assemble the result, emit `improve_completed`, run the end-of-run sync, release the lock.
 
 A dry run skips steps 2 to 4. It collects refs (step 5), evaluates the preparation gates read-only (`planOnly`), and reports the plan; nothing is dispatched or persisted.
@@ -138,7 +138,7 @@ Accepting a consolidate promotion archives the source memory (and its `.derived`
 
 ## Scope
 
-`akm improve` reads and writes one bundle, its write target: `--bundle`, else `defaultWriteTarget`, else the working bundle. Only that bundle's assets are planned, because every proposal is filed in the write target. To improve another writable bundle, pass `--bundle <name>` or a bundle-qualified scope such as `team//skills/code-review`; a scheduled run covers only its own write target, so each other bundle needs its own scheduled `akm improve --bundle <name>`. A dry run resolves the bundle the same way a live run does.
+`akm improve` reads and writes one bundle, its write target: `--bundle`, else the working bundle. Only that bundle's assets are planned, because every proposal is filed in the write target. To improve another writable bundle, pass `--bundle <name>` or a bundle-qualified scope such as `team//skills/code-review`; a scheduled run covers only its own write target, so each other bundle needs its own scheduled `akm improve --bundle <name>`. A dry run resolves the bundle the same way a live run does.
 
 ## Ledger pre-filter (signal delta)
 
@@ -167,20 +167,20 @@ An explicit ref scope bypasses every gate. Consolidation, extract, and schema re
 
 ## Strategy processes
 
-A strategy is `improve.strategies.<name>` (config) or a built-in under `src/assets/improve-strategies/*.json` (`default` and `consolidate`). Its `processes` block configures eight processes (`IMPROVE_PROCESS_NAMES`, `src/core/config/engine-semantics.ts`; schemas in `src/core/config/schema/improve-processes.ts`). Every process takes `enabled`; the table lists the fields that are particular to each. A strategy says which processes run and how each is tuned, never where: where each model-calling process runs is `improve.processes.<name>` (`connection` or `harness`, `model`, `llm`, `timeoutMs`), over `improve.connection` / `improve.harness` and the defaults ([Where each process runs](../../reference/configuration.md#where-each-process-runs)).
+A strategy is `improve.strategies.<name>` (config) or a built-in under `src/assets/improve-strategies/*.json` (`default` and `consolidate`). Its `processes` block configures eight processes (`IMPROVE_PROCESS_NAMES`, `src/core/config/engine-semantics.ts`; schemas in `src/core/config/schema/improve-processes.ts`). Every process takes `enabled`; the table lists the fields that are particular to each. A strategy says which processes run and how each is tuned, never where: where each model-calling process runs is `improve.processes.<name>` (`connection` or `harness`, `model`, `timeoutMs`), over `improve.connection` / `improve.harness` and the defaults ([Where each process runs](../../reference/configuration.md#where-each-process-runs)).
 
 | Process | Does | Particular fields |
 |---|---|---|
 | `reflect` | Revises an asset's `description`, `when_to_use`, and title from negative feedback | `allowedTypes`, `limit`, `qualityGate`, `defectFilter` |
 | `distill` | Turns a memory and its feedback into a lesson or knowledge proposal | `allowedTypes`, `qualityGate`, `requirePlannedRefs`, `cls` |
 | `consolidate` | Promote pass and pair pass over memories | `allowedTypes`, `limit`, `maxChunkSize` |
-| `memoryInference` | Writes derived memories and marks parents (`inferenceProcessed`); gated by `experimental.improveAutonomy` | `minPendingCount` |
-| `extract` | Queues proposals from coding-agent session transcripts (the same pass as `akm proposal extract`) | `defaultSince`, `maxTotalChars`, `minContentChars`, `triage` (`enabled`, `minScore`), `minNewSessions`, `maxSessionsPerRun`, `indexSessions`, `minSessionDuration` |
+| `memoryInference` | Writes derived memories and marks parents (`inferenceProcessed`); gated by `experimental.improveAutonomy` | none beyond `enabled` |
+| `extract` | Queues proposals from coding-agent session transcripts (the same pass as `akm proposal extract`) | `triage` (`enabled`, `minScore`), `minNewSessions`, `indexSessions`, `minSessionDuration` |
 | `validation` | Checks that planned refs exist and lessons have a `description`; where it can run a model, attempts schema repair (proposals with `source: "schema-repair"`) | none beyond `enabled` |
 | `triage` | Drains the pending-proposal backlog before the loop | `applyMode` (`queue` or `promote`), `maxAcceptsPerRun`, `judgment` (boolean or `{ enabled }`; the judgment runs where `improve.processes.triage` says) |
 | `proactiveMaintenance` | Picks assets due for review that have no fresh feedback and plans them with the feedback-bearing refs; makes no model call | `dueDays`, `maxPerRun` |
 
-Each strategy also has a `sync` block (`enabled`, `push`, `message`) and a profile-level `limit`. `default` enables reflect, distill, consolidate, memoryInference (which runs only with `experimental.improveAutonomy`), validation, proactive maintenance, and a triage drain in `promote` mode with judgment off and `maxAcceptsPerRun` 200; improve-stage extract is off. `consolidate` is a patch merged onto `default` that turns every process off but consolidate. Any other name is a user-defined strategy that inherits `default`.
+Each strategy also has a `sync` block (`enabled`, `push`, `message`). `default` enables reflect, distill, consolidate, memoryInference (which runs only with `experimental.improveAutonomy`), validation, proactive maintenance, and a triage drain in `promote` mode with judgment off and `maxAcceptsPerRun` 200; improve-stage extract is off. `consolidate` is a patch merged onto `default` that turns every process off but consolidate. Any other name is a user-defined strategy that inherits `default`.
 
 Process selection is resolved once by `resolveImprovePlan`. The plan holds every process's enablement, config, and resolved runner. A process runs on a connection, or on a harness: one whose tools cannot be restricted runs unrestricted in a scratch directory, with a notice ([How akm runs a harness](../../reference/configuration.md#how-akm-runs-a-harness)). A process with no connection or harness is skipped and reported in `skippedProcesses`; a run in which no model-calling process can run stops at planning (exit 78).
 

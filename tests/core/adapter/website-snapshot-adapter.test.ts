@@ -17,7 +17,7 @@
  * predates open-question-3 and carries the full-path form. This suite asserts
  * the STRIPPED ref against recognition, and asserts the renderer presentation
  * (generic fallback → `akm show <ref>`) against the renderer golden's OWN
- * self-consistent ref+action.
+ * self-consistent ref.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -107,10 +107,6 @@ describe("website-snapshot adapter — renderer golden (generic fallback, `websi
       const p = presentationFor(expected.type as string);
       expect(p.label).toBe(expected.label as string);
       expect(p.renderer ?? null).toBe((expected.renderer as string | null) ?? null);
-      expect(p.action).toBeUndefined(); // generic fallback has no action builder
-      // The golden's ref+action are self-consistent (generic action = `akm show <ref>`).
-      const action = p.action ? p.action(expected.ref as string) : `akm show ${expected.ref}`;
-      expect(action).toBe(expected.action as string);
     });
   }
 });

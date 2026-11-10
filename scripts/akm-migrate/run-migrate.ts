@@ -4,43 +4,34 @@
 
 /**
  * The whole migration, in order, as one plan: config.json in its current
- * shape, pending state.db migrations, task files to task source v4, assets'
- * retired `engine:` keys, refs in content that use the pre-#1432 spelling, then the residue sweep. `akm-migrate status` / `apply [--dry-run]` print exactly
+ * shape, pending state.db migrations, assets' retired `engine:` keys, refs
+ * in content that use the pre-#1432 spelling, then the OS scheduler entry. A state.db below the 0.9.32
+ * floor stops the run before any step. `akm-migrate status` / `apply` print exactly
  * this; `akm migrate` and `akm upgrade` spawn that executable and re-emit
- * it. Every historical shape lives here or under `./migrate/`, so the CLI
- * proper only ever reads current schemas.
+ * it. Config, `engine:` keys and content refs are converted here, so the CLI
+ * reads only the current config and asset shapes. What the runtime still reads of
+ * older data is listed in docs/architecture/persisted-data-compat.md.
  */
 
-import { resolveStashDir } from "../../src/core/common";
-import {
-  bundleKeyForContentRoot,
-  type ConfigFileNormalization,
-  isBundleEnabled,
-  loadConfig,
-  normalizeConfigFile,
-  resetConfigCache,
-} from "../../src/core/config/config";
+import { akmTasksSync, akmTasksSyncPlan, type TasksSyncResult } from "../../src/commands/tasks/tasks";
+import { resetConfigCache } from "../../src/core/config/config";
 import { ConfigError } from "../../src/core/errors";
 import { getConfigPath } from "../../src/core/paths";
-import { listPendingStateMigrations, upgradeHistoricalStateDatabase } from "../../src/core/state-db";
+import { listPendingStateMigrations, stateDatabaseFloorBlocker, upgradeHistoricalStateDatabase } from "../../src/core/state-db";
 import { resolveSecretFromStore } from "../../src/sources/snapshot-fetchers/secret-seam";
-import {
-  type DeadResidueEntry,
-  type DeadResidueRemoval,
-  findDeadResidueEntries,
-  removeDeadResidue,
-} from "./migrate/dead-residue";
+import { type ConfigFileNormalization, normalizeConfigFile } from "./config/normalize";
+import { type RetiredEnvironment, retiredEnvironment } from "./retired-locations";
 import {
   applyEngineKeysMigration,
   type EngineKeysMigrationStatus,
   inspectEngineKeysMigration,
 } from "./engine-key-migrate";
+import { legacyTasks as findLegacyTasks } from "./legacy-task-check";
 import {
   applyContentRefsMigration,
   type ContentRefsMigrationStatus,
   inspectContentRefsMigration,
 } from "./content-ref-migrate";
-import { applyTaskFilesMigration, inspectTaskFilesMigration, type TaskFilesMigrationStatus } from "./task-migrate";
 
 export type MigrationStatus = "current" | "ready" | "blocked";
 
@@ -69,18 +60,46 @@ export interface CombinedMigrationPlan {
    * from this plan rather than fabricated.
    */
   failedSteps?: readonly FailedMigrationStep[];
+  /**
+   * Present when the host located its installation with a retired variable (`AKM_CONFIG_DIR`, `AKM_DATA_DIR`,
+   * `AKM_STATE_DIR`, `AKM_CACHE_DIR`, `AKM_BUNDLE_DIR`): akm refuses to start with one set, so these are the changes to make where the
+   * host sets them (an image, a compose file, a supervisor, a shell profile) once `apply` has run.
+   */
+  environment?: RetiredEnvironment;
   /** Absent only when the step itself failed (`failedSteps` names it) — see {@link FailedMigrationStep}. */
   configFile?: ConfigFileNormalization;
   stateMigrations?: { pending: string[] } | { applied: string[]; safetyCopyPath?: string };
-  taskFiles?: TaskFilesMigrationStatus["taskFiles"];
   /** Assets whose retired `engine:` key becomes `connection:` or `harness:`. */
   assetEngineKeys?: EngineKeysMigrationStatus["assetEngineKeys"];
   /** Refs in writable bundles' files that still use the pre-#1432 spelling (`knowledge/WORK/x`, now `WORK/x`). */
   assetContentRefs?: ContentRefsMigrationStatus["assetContentRefs"];
-  /** Present after a real apply that rewrote at least one task file: the run's backup directory. */
-  backupPath?: string;
-  applied?: number;
-  deadResidue?: { pending: DeadResidueEntry[] } | { removed: DeadResidueRemoval[] };
+  /**
+   * The OS scheduler: akm 0.10 keeps one entry that runs `akm task dispatch`, and `apply` replaces akm 0.9's per-task
+   * rows with it in one write (what `akm task sync` does).
+   */
+  scheduler?: TasksSyncResult;
+  /** Task sources below version 4 that no `scheduler.enabled` entry names: nothing runs from them, so no blocker. */
+  legacyTaskWarnings?: string[];
+}
+
+/**
+ * `akmTasksSync`, except that a machine with no scheduler binary (an image with no `crontab`) gets a warning instead of
+ * a failure: there is nothing to replace, and `akm task sync` writes the entry where the binary exists.
+ */
+async function syncScheduler(): Promise<TasksSyncResult> {
+  try {
+    return await akmTasksSync();
+  } catch (cause) {
+    if (!(cause instanceof ConfigError) || !/binary was not found on PATH/.test(cause.message)) throw cause;
+    const plan = await akmTasksSyncPlan();
+    return {
+      ...plan,
+      warnings: [
+        ...(plan.warnings ?? []),
+        `The scheduler entry was not written: ${cause.message} Run \`akm task sync\` where it is installed.`,
+      ],
+    };
+  }
 }
 
 function worstStatus(left: MigrationStatus, right: MigrationStatus): MigrationStatus {
@@ -107,7 +126,7 @@ function statusWithFailedSteps(status: MigrationStatus, failedSteps: readonly Fa
  * Run one migration step under its own catch: a step's own throw is
  * recorded in `failedSteps` instead of ending `runMigration` for every
  * OTHER step too. `apply` mode's mutation falling back to `probe` (the same
- * read-only inspector `status`/`--dry-run` already uses for this step) means
+ * read-only inspector `status` already uses for this step) means
  * a step that fails to WRITE can usually still report what it would have
  * done; if even that throws, the section is simply absent and `failedSteps`
  * is the only record of it. A later step that genuinely needs an earlier
@@ -141,29 +160,16 @@ export async function migrationStep<T>(
 }
 
 /**
- * The stash the residue sweep runs under. No configured bundle is an empty domain, not an error: migrate works
- * before `akm bundle create`. A stash a disabled bundle owns is left as written, as the task and asset steps leave it.
- */
-function stashDirIfConfigured(): string | undefined {
-  try {
-    const stashDir = resolveStashDir();
-    const config = loadConfig();
-    const owner = bundleKeyForContentRoot(config, stashDir);
-    return owner !== undefined && !isBundleEnabled(config, owner) ? undefined : stashDir;
-  } catch (error) {
-    if (error instanceof ConfigError && error.code === "STASH_DIR_NOT_FOUND") return undefined;
-    throw error;
-  }
-}
-
-/**
  * Run every migration step and return the combined plan. `apply: false` is
- * read-only (`status`, `apply --dry-run`); `apply: true` mutates, each step
+ * read-only (`status`); `apply: true` mutates, each step
  * under its own lock and backup.
  */
 export async function runMigration(options: { apply: boolean }): Promise<CombinedMigrationPlan> {
   const { apply } = options;
   const configPath = getConfigPath();
+  // A state.db below the floor is refused before any step runs, so nothing is half-migrated.
+  const floorBlocker = stateDatabaseFloorBlocker();
+  if (floorBlocker) return { schemaVersion: 1, status: "blocked", blockers: [floorBlocker] };
   const failedSteps: FailedMigrationStep[] = [];
 
   // config.json: read through the same pipeline every load runs, written
@@ -183,14 +189,7 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
     () => (apply ? applyStateMigrations() : { pending: listPendingStateMigrations() }),
     apply ? () => ({ pending: listPendingStateMigrations() }) : undefined,
   );
-  const taskFiles = await migrationStep(
-    failedSteps,
-    "taskFiles",
-    () => (apply ? applyTaskFilesMigration() : inspectTaskFilesMigration()),
-    apply ? () => inspectTaskFilesMigration() : undefined,
-  );
-  // After the task files (a v2/v3 task file may still carry `engine:` until it is rewritten) and the
-  // config (the names an engine had before its conversion come from that step's result).
+  // After the config (the names an engine had before its conversion come from that step's result).
   // A config the step could not read or write leaves the names unsettled, so the assets wait for a run that can.
   const configFailed = failedSteps.some((failure) => failure.step.startsWith("configFile"));
   const engineTargets = configFile?.engineTargets;
@@ -209,46 +208,67 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
     () => (apply ? applyContentRefsMigration() : inspectContentRefsMigration()),
     apply ? () => inspectContentRefsMigration() : undefined,
   );
-  // Resolving the stash dir runs as its own step: a config that fails to
-  // load here is this step's own failure, not an uncaught throw out of
-  // `runMigration`.
-  const stashDir = await migrationStep(failedSteps, "stashDir", () => stashDirIfConfigured());
-  const deadResidue = await migrationStep(
-    failedSteps,
-    "deadResidue",
-    () => (apply ? { removed: removeDeadResidue(stashDir) } : { pending: findDeadResidueEntries(stashDir) }),
-    apply ? () => ({ pending: findDeadResidueEntries(stashDir) }) : undefined,
-  );
-
-  // A pending state migration reads as "ready" under status/--dry-run, so the
+  // Last: it reads the config the steps above settled. Needs `crontab`/`launchctl`/`schtasks` only when it has
+  // something to write; an installation that moves its locations leaves the OS scheduler alone.
+  // A file that could not take `paths` or the working bundle leaves the host's locations out of it: an entry written now would run
+  // `akm task dispatch` against the default locations, so none is written until the file names them.
+  const hostLocations = configFile && { ...(configFile.paths ? { paths: configFile.paths } : {}), ...configFile.bundle };
+  const pathsUnwritten = apply && hostLocations !== undefined && Object.keys(hostLocations).length > 0 && !configFile?.applied;
+  const scheduler = pathsUnwritten
+    ? undefined
+    : await migrationStep(
+        failedSteps,
+        "scheduler",
+        () => (apply ? syncScheduler() : akmTasksSyncPlan()),
+        apply ? () => akmTasksSyncPlan() : undefined,
+      );
+  const legacyTasks = await migrationStep(failedSteps, "legacyTasks", findLegacyTasks);
+  // A pending state migration reads as "ready" under status, so the
   // preview says what apply will do; after a real apply it has been applied.
   const stateStatus: MigrationStatus =
     stateMigrations && "pending" in stateMigrations && stateMigrations.pending.length > 0 ? "ready" : "current";
   const configFileStatus: MigrationStatus = configFile?.changed && !configFile.applied ? "ready" : "current";
   const engineKeysStatus: MigrationStatus = assetEngineKeys?.status ?? "current";
   const contentRefsStatus: MigrationStatus = assetContentRefs?.status ?? "current";
+  const legacyTasksStatus: MigrationStatus = legacyTasks && legacyTasks.blockers.length > 0 ? "blocked" : "current";
+  const schedulerStatus: MigrationStatus =
+    !apply && scheduler && (scheduler.removedLegacy.length > 0 || scheduler.entry === "installed" || scheduler.entry === "removed")
+      ? "ready"
+      : "current";
   return {
     schemaVersion: 1,
     status: statusWithFailedSteps(
-      [stateStatus, configFileStatus, engineKeysStatus, contentRefsStatus].reduce(worstStatus, taskFiles?.status ?? "blocked"),
+      ([
+        stateStatus,
+        configFileStatus,
+        engineKeysStatus,
+        contentRefsStatus,
+        schedulerStatus,
+        legacyTasksStatus,
+        pathsUnwritten ? "blocked" : "current",
+      ] satisfies MigrationStatus[]).reduce(worstStatus, "current"),
       failedSteps,
     ),
-    blockers: [...(taskFiles?.blockers ?? []), ...failedStepBlockers(failedSteps)],
+    blockers: [
+      ...(legacyTasks?.blockers ?? []),
+      ...failedStepBlockers(failedSteps),
+      ...(pathsUnwritten
+        ? [
+            `${configPath} cannot be written, so the locations and bundle this host names with environment variables could not be added, and the scheduler entry was not written. Add ${JSON.stringify(hostLocations)} where the file is made, then run again.`,
+          ]
+        : []),
+    ],
+    ...(legacyTasks && legacyTasks.warnings.length > 0 ? { legacyTaskWarnings: legacyTasks.warnings } : {}),
     ...(failedSteps.length > 0 ? { failedSteps } : {}),
+    ...(retiredEnvironment() !== undefined ? { environment: retiredEnvironment() } : {}),
     ...(configFile !== undefined ? { configFile } : {}),
     ...(stateMigrations !== undefined ? { stateMigrations } : {}),
-    ...(taskFiles !== undefined ? { taskFiles: taskFiles.taskFiles } : {}),
-    ...(taskFiles?.backupPath !== undefined ? { backupPath: taskFiles.backupPath } : {}),
-    ...(taskFiles?.applied !== undefined ? { applied: taskFiles.applied } : {}),
     ...(assetEngineKeys !== undefined ? { assetEngineKeys: assetEngineKeys.assetEngineKeys } : {}),
     ...(assetContentRefs !== undefined ? { assetContentRefs: assetContentRefs.assetContentRefs } : {}),
-    ...(deadResidue !== undefined ? { deadResidue } : {}),
+    ...(scheduler !== undefined ? { scheduler } : {}),
   };
 }
 
-function applyStateMigrations(): { applied: string[]; safetyCopyPath?: string } {
-  const result = upgradeHistoricalStateDatabase();
-  return result.safetyCopyPath
-    ? { applied: result.applied, safetyCopyPath: result.safetyCopyPath }
-    : { applied: result.applied };
+function applyStateMigrations(): { applied: string[] } {
+  return { applied: upgradeHistoricalStateDatabase().applied };
 }

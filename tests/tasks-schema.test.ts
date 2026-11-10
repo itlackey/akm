@@ -5,10 +5,10 @@
 /**
  * Schema-drift gate for `schemas/akm-task.json`.
  *
- * P2a (spec docs/plans/specs/p2a-task-source-v4.md §5.3, §6 F-1) turned the
+ * P2a turned the
  * published schema into a two-arm `oneOf` at the document root: "arm 1:
  * the v3 object"; "arm 2: the v4 object". P4
- * (docs/plans/specs/p4-deletions-closeout.md §3.2) retires task source v3
+ * retires task source v3
  * acceptance from `src` entirely, and the published schema's v3 arm goes
  * with it (per the commit-2 F-A1.12 flip's own forward note: "the v3 arm
  * itself is removed from the published schema in commit 3") — the schema
@@ -32,9 +32,9 @@
  * Every v4 assertion is derived from task source v4's exported constants
  * (`TASK_SOURCE_V4_VERSION`, `TASK_SOURCE_V4_TOP_LEVEL_KEYS`,
  * `TASK_SOURCE_V4_SCHEDULE_KEYS`, `TASK_INPUT_DECLARATION_KEYS`) or from
- * existing shared bounds (`TASK_V3_MAX_SCHEDULES`) —
+ * existing shared bounds (`TASK_MAX_SCHEDULES`) —
  * never restated as literals — per the task brief's binding instruction. The
- * `TASK_V3_MAX_*` bound constants keep that name (they are shared,
+ * `TASK_MAX_*` bound constants keep that name (they are shared,
  * version-agnostic bounded-document primitives task source v4 itself still
  * imports, spec §3.2.3) even though the schema they bound no longer has a
  * v3 arm.
@@ -46,10 +46,10 @@ import path from "node:path";
 import Ajv from "ajv";
 import { EXECUTION_MAX_TIMEOUT_MS } from "../src/execution/limits";
 import {
-  TASK_V3_MAX_COLLECTION_ITEMS,
-  TASK_V3_MAX_REDACT_NAMES,
-  TASK_V3_MAX_SCHEDULES,
-  TASK_V3_MAX_STRING_BYTES,
+  TASK_MAX_COLLECTION_ITEMS,
+  TASK_MAX_REDACT_NAMES,
+  TASK_MAX_SCHEDULES,
+  TASK_MAX_STRING_BYTES,
 } from "../src/tasks/source/bounded-document";
 import {
   classifyTaskSourceV4Uses,
@@ -124,7 +124,7 @@ test("every published pattern is valid ECMAScript and the executable-ref pattern
     expect(executableRef.test(candidate), candidate).toBe(false);
     expect(() => classifyTaskSourceV4Uses(candidate), candidate).toThrow();
   }
-  // P4 (docs/plans/specs/p4-deletions-closeout.md §3.1.2, F-A1.11): the
+  // P4: the
   // githubActionRef definition and its probes are deleted along with the
   // locator grammar itself — every github-locator-shaped value is exactly as
   // rejected by the production classifier as any other unrecognized shape.
@@ -149,7 +149,7 @@ test("published schema declares the authoritative runtime-only resource constrai
   // today.
   expect(constraints.authoritativeParser).toBe("src/tasks/source/task-source-v4.ts");
   expect(constraints.maxSourceUtf8Bytes).toBe(1_048_576);
-  expect(constraints.maxStringUtf8Bytes).toBe(TASK_V3_MAX_STRING_BYTES);
+  expect(constraints.maxStringUtf8Bytes).toBe(TASK_MAX_STRING_BYTES);
   expect(constraints.maxJsonDepth).toBe(64);
   expect(constraints.maxJsonNodes).toBe(10_000);
   expect(constraints.canonicalRefsRequireNfc).toBe(true);
@@ -203,7 +203,7 @@ test("published task schema's root oneOf rejects an akm: or on: key — retired 
   );
 });
 
-// P4 (docs/plans/specs/p4-deletions-closeout.md §3.1.2/§3.2, F-A1.12): the
+// P4: the
 // githubActionRef definition and both $refs to it were deleted from the
 // published schema in commit 2; the v3 arm's own rejection half this test
 // used to pin here is gone in commit 3 along with the arm itself.
@@ -221,16 +221,16 @@ test("published task schema rejects a github-action uses: shape (B-13)", () => {
   ).toBe(true);
 });
 
-test("published task schema's schedule: bounds at TASK_V3_MAX_SCHEDULES and closes each entry to TASK_SOURCE_V4_SCHEDULE_KEYS (D2-N5)", () => {
+test("published task schema's schedule: bounds at TASK_MAX_SCHEDULES and closes each entry to TASK_SOURCE_V4_SCHEDULE_KEYS (D2-N5)", () => {
   const schema = readTaskSchema();
   const validate = new Ajv({ allErrors: true, strict: false }).compile(schema);
   const base = { version: TASK_SOURCE_V4_VERSION, run: "echo hi" };
   const entry = (i: number) => ({ cron: `${i % 60} * * * *` });
 
-  const atBound = Array.from({ length: TASK_V3_MAX_SCHEDULES }, (_, i) => entry(i));
-  const overBound = [...atBound, entry(TASK_V3_MAX_SCHEDULES)];
-  expect(validate({ ...base, schedule: atBound }), `schedule: at exactly ${TASK_V3_MAX_SCHEDULES} entries`).toBe(true);
-  expect(validate({ ...base, schedule: overBound }), `schedule: one entry over ${TASK_V3_MAX_SCHEDULES}`).toBe(false);
+  const atBound = Array.from({ length: TASK_MAX_SCHEDULES }, (_, i) => entry(i));
+  const overBound = [...atBound, entry(TASK_MAX_SCHEDULES)];
+  expect(validate({ ...base, schedule: atBound }), `schedule: at exactly ${TASK_MAX_SCHEDULES} entries`).toBe(true);
+  expect(validate({ ...base, schedule: overBound }), `schedule: one entry over ${TASK_MAX_SCHEDULES}`).toBe(false);
 
   // String shorthand (D2): one enabled binding, no inputs.
   expect(validate({ ...base, schedule: "0 8 * * 1" })).toBe(true);
@@ -429,16 +429,16 @@ test("published task schema's schedule[].inputs is closed to the input name patt
 
 test("published task schema's definitions.jsonArray/jsonValue stay bounded at the shared collection/string limits", () => {
   const schema = readTaskSchema();
-  expect(schema.definitions.jsonArray?.maxItems).toBe(TASK_V3_MAX_COLLECTION_ITEMS);
+  expect(schema.definitions.jsonArray?.maxItems).toBe(TASK_MAX_COLLECTION_ITEMS);
   expect(schema.definitions.jsonValue?.oneOf).toContainEqual({
     type: "string",
-    maxLength: TASK_V3_MAX_STRING_BYTES,
+    maxLength: TASK_MAX_STRING_BYTES,
   });
 });
 
 test("published task schema's akm: options bag equivalents (timeout/redact) stay bounded at their parser limits", () => {
   const schema = readTaskSchema();
-  expect(schema.properties.redact?.maxItems).toBe(TASK_V3_MAX_REDACT_NAMES);
+  expect(schema.properties.redact?.maxItems).toBe(TASK_MAX_REDACT_NAMES);
   expect((schema.properties.timeout?.oneOf as JsonSchema[])[0]?.maximum).toBe(EXECUTION_MAX_TIMEOUT_MS);
 });
 

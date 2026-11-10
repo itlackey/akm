@@ -22,7 +22,17 @@ export function buildImproveRunId(now: Date = new Date()): string {
   return `${iso}-${rand}`;
 }
 
-/** Record a finished run (the full result, redacted; dry runs stay filterable). */
+/**
+ * The result as stored: without `strategyFilteredRefs`, a list of refs (about 365 KB a run) rather than a
+ * metric, kept as its count `strategyFilteredCount`. The caller's envelope is unchanged.
+ */
+function slimForPersistence(result: AkmImproveResult): AkmImproveResult {
+  if (result.strategyFilteredRefs === undefined) return result;
+  const { strategyFilteredRefs, ...rest } = result;
+  return { ...rest, strategyFilteredCount: strategyFilteredRefs.length };
+}
+
+/** Record a finished run (the result without its filtered-ref list, redacted; dry runs stay filterable). */
 export function recordImproveRunResult(
   stashDir: string,
   runId: string,
@@ -31,7 +41,7 @@ export function recordImproveRunResult(
   sensitiveValues: readonly string[] = [],
 ): void {
   const decoded = decodeImproveResult(result);
-  const persistedResult = redactSensitiveValue(result, sensitiveValues);
+  const persistedResult = redactSensitiveValue(slimForPersistence(result), sensitiveValues);
   withStateDb((db) => {
     const completedAt = new Date().toISOString();
     // Without a launch timestamp, the one embedded in the run id.

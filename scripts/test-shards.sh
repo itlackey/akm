@@ -1,0 +1,180 @@
+#!/usr/bin/env bash
+#
+# Test runner: shards the unit suite (tests/ minus tests/integration) or the
+# integration suite (tests/integration) across separate OS processes for speed
+# (min(nproc, 8) concurrent `bun test` processes).
+#
+# Sharding is done by EXPLICIT round-robin file lists, NOT bun's `--shard`:
+# that flag's behavior varies silently across bun 1.3.x point releases (on
+# 1.3.11 it slices tests from the `./tests` root; on 1.3.14 in CI it ran a
+# quarter of the suite in shard 1 and ZERO tests in shards 2-4, all exit 0 —
+# a silent 75% coverage hole the aggregate "pass" line masked). Explicit file
+# lists are deterministic on every bun, and the files-ran cross-check below
+# turns any future silent under-run into a hard failure.
+#
+# Neither `--isolate` nor `--parallel` is passed (isolate removed 2026-07-02
+# on the di-seams branch):
+#   - `--parallel` (any N, including 1) implies `--isolate` and spawns worker
+#     processes over IPC — the Bun 1.3.x path with the intermittent
+#     `EEXIST epoll_ctl` race (#664). Never re-add it.
+#   - `--isolate` was only needed while test files leaked `mock.module()`
+#     state into siblings in the same process. After the DI-seams refactor,
+#     `mock.module` is at ZERO across the tree (the last three @clack/prompts
+#     suites now go through the src/cli/clack seam) — enforced by grep and
+#     required, because a two-file probe proved `mock.restore()` does NOT
+#     clear module mocks (they leak across files without --isolate).
+#     Verified by repeated green full-suite runs without `--isolate`.
+#     Dropping it removes the racy isolate machinery entirely and saves the
+#     per-file fresh-global overhead.
+#
+# Usage:  scripts/test-shards.sh <unit|integration>   # auto shards (min(nproc, 8))
+#         TEST_SHARDS=4 scripts/test-shards.sh unit
+set -uo pipefail
+
+suite="${1:-}"
+case "$suite" in
+  unit) find_args=(tests -name '*.test.ts' -not -path 'tests/integration/*') ;;
+  integration) find_args=(tests/integration -name '*.test.ts') ;;
+  *) echo "usage: $0 <unit|integration>" >&2; exit 2 ;;
+esac
+
+cores="$(nproc 2>/dev/null || echo 4)"
+N="${TEST_SHARDS:-$cores}"
+[ "$N" -gt 8 ] && N=8
+[ "$N" -lt 1 ] && N=1
+
+bun run sweep:tmp >/dev/null 2>&1 || true
+
+# Deterministic file list; sort so every machine shards identically.
+mapfile -t files < <(find "${find_args[@]}" | sort)
+total="${#files[@]}"
+
+if [ "$total" -eq 0 ]; then
+  echo "── ${suite}: no test files found" >&2
+  exit 1
+fi
+[ "$N" -gt "$total" ] && N="$total"
+
+# Shard logs live in an announced directory (not anonymous mktemp files) so a
+# hung or long run can be watched live: `tail -f <dir>/shard-*.log`. Honors
+# $TMPDIR; kept on failure for diagnosis, removed on success.
+logdir="$(mktemp -d "${TMPDIR:-/tmp}/akm-${suite}-shards.XXXXXX")"
+echo "── ${suite}: ${N} shards over ${total} files; live logs: ${logdir}/shard-N.log"
+
+# A shard's own --timeout=120000 catches a slow TEST, not a stuck PROCESS —
+# e.g. a child process a test spawned that never exits. That is exactly how
+# the alpha.9 release was lost: one shard hung with no ceiling on `wait`
+# below, was killed at the 20-minute CI job timeout, and GitHub kept no
+# logs. 600s is well above the observed norm — a full `bun run check`
+# (lint, tsc, and BOTH shard runs together) takes ~2m15s locally — and
+# leaves ample margin under the job timeout for this script to notice,
+# kill, and report before GitHub does.
+shard_timeout_secs=600
+
+# `setsid` (util-linux) isn't on macOS by default. When it's present, a
+# shard runs in its own process group and a hang is killed by group (below).
+# Otherwise, fall back to killing the shard's own pid plus its direct
+# children (`pkill -P`) — the 600s deadline and log-tail message are the
+# same either way.
+has_setsid=false
+command -v setsid >/dev/null 2>&1 && has_setsid=true
+
+declare -a pids tmps
+for k in $(seq 0 $((N - 1))); do
+  slice=()
+  for i in "${!files[@]}"; do
+    [ $((i % N)) -eq "$k" ] && slice+=("${files[$i]}")
+  done
+  t="${logdir}/shard-$((k + 1)).log"
+  tmps+=("$t")
+  runtime_home="${logdir}/runtime-home-$((k + 1))"
+  mkdir -p "$runtime_home"
+  # 120s per-test: under N-way process
+  # contention the heaviest property/goldens suites legitimately run 3-4x
+  # their solo duration; the timeout exists to catch HANGS.
+  if $has_setsid; then
+    # `exec setsid` gives this shard its own process group (pgid == its pid,
+    # distinct from every sibling shard's), so the timeout below can kill it
+    # — and anything it spawned — without touching the others.
+    ( exec setsid env HOME="$runtime_home" bun test --timeout=120000 "${slice[@]}" >"$t" 2>&1 ) &
+  else
+    ( HOME="$runtime_home" bun test --timeout=120000 "${slice[@]}" >"$t" 2>&1 ) &
+  fi
+  pids+=($!)
+done
+
+# A shard still alive at the deadline is a hang: kill its whole process
+# group (TERM, then KILL after a short grace period) and print its log tail
+# — the last test file header shows where it hung — before falling through
+# to the ordinary wait loop below, which then reaps it immediately.
+deadline=$(( $(date +%s) + shard_timeout_secs ))
+alive=("${pids[@]}")
+while [ "${#alive[@]}" -gt 0 ] && [ "$(date +%s)" -lt "$deadline" ]; do
+  next=()
+  for p in "${alive[@]}"; do
+    kill -0 "$p" 2>/dev/null && next+=("$p")
+  done
+  alive=("${next[@]}")
+  [ "${#alive[@]}" -gt 0 ] && sleep 1
+done
+for idx in "${!pids[@]}"; do
+  p="${pids[$idx]}"
+  kill -0 "$p" 2>/dev/null || continue
+  t="${tmps[$idx]}"
+  echo "── ${suite}: shard $((idx + 1)) (pid ${p}) exceeded ${shard_timeout_secs}s — killing its process group (HANG)" >&2
+  if $has_setsid; then
+    kill -TERM -"$p" 2>/dev/null || true
+    sleep 2
+    kill -KILL -"$p" 2>/dev/null || true
+  else
+    pkill -TERM -P "$p" 2>/dev/null || true
+    kill -TERM "$p" 2>/dev/null || true
+    sleep 2
+    pkill -KILL -P "$p" 2>/dev/null || true
+    kill -KILL "$p" 2>/dev/null || true
+  fi
+  echo "── shard $((idx + 1)) log tail (last 80 lines, TIMED OUT): ${t} ──"
+  tail -80 "$t"
+done
+
+# Wait for every shard; a non-zero shard exit fails the run.
+rc=0
+for p in "${pids[@]}"; do
+  wait "$p" || rc=1
+done
+
+# Aggregate and surface results.
+pass=0 fail=0 skip=0 filecount=0
+for t in "${tmps[@]}"; do
+  p="$(grep -oE '[0-9]+ pass' "$t" | tail -1 | grep -oE '[0-9]+' || true)"
+  f="$(grep -oE '[0-9]+ fail' "$t" | tail -1 | grep -oE '[0-9]+' || true)"
+  s="$(grep -oE '[0-9]+ skip' "$t" | tail -1 | grep -oE '[0-9]+' || true)"
+  c="$(grep -oE 'across [0-9]+ files?' "$t" | tail -1 | grep -oE '[0-9]+' || true)"
+  pass=$((pass + ${p:-0}))
+  fail=$((fail + ${f:-0}))
+  skip=$((skip + ${s:-0}))
+  filecount=$((filecount + ${c:-0}))
+  # Surface any real failures from this shard — summary lines first, then the
+  # full tail so assertion diffs survive aggregation (a flake with no diff is
+  # undiagnosable).
+  if [ "${f:-0}" != "0" ] || ! grep -qE '[0-9]+ pass' "$t"; then
+    grep -E "\(fail\)|^error:|panic" "$t" | head -10 || true
+    # Every failure's output, wherever it sits in the log: bun prints it just
+    # before the `(fail)` line, which the tail alone misses in a long shard (a
+    # CI failure whose diff was not in the log cost a whole reproduce-locally
+    # round trip). A thrown named error prints as `UsageError: ...`, not
+    # `error:`, so the context is taken from the `(fail)` line.
+    echo "── failure details: ${t} ──"
+    grep -n -B60 -E "^\(fail\)|panic" "$t" | head -400 || true
+    echo "── shard log tail (last 80 lines): ${t} ──"
+    tail -80 "$t"
+  fi
+done
+
+echo "── ${suite}: ${pass} pass / ${skip} skip / ${fail} fail across ${N} process-shards (${filecount}/${total} files)"
+if [ "$rc" -ne 0 ] || [ "$fail" -ne 0 ] || [ "$filecount" -ne "$total" ]; then
+  echo "── ${suite}: shard logs kept for diagnosis: ${logdir}"
+  exit 1
+fi
+rm -rf "$logdir"
+exit 0

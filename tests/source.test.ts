@@ -11,7 +11,7 @@ import { getConfigPath } from "../src/core/paths";
 import { akmIndex } from "../src/indexer/indexer";
 import type { SearchHit, SourceSearchHit } from "../src/sources/types";
 import { seedLockEntries } from "./_helpers/lockfile";
-import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage } from "./_helpers/sandbox";
+import { type IsolatedAkmStorage, withBundle, withEnv, withIsolatedAkmStorage } from "./_helpers/sandbox";
 
 const createdTmpDirs: string[] = [];
 
@@ -58,9 +58,9 @@ describe("source commands and resolution", () => {
     writeFile(path.join(stashDir, "scripts", "script.ts"), "console.log('x')\n");
     writeFile(path.join(stashDir, "scripts", "README.md"), "ignore\n");
 
-    await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+    await withBundle(stashDir, async () => {
       const result = await akmSearch({ query: "", type: "script" });
-      const localHits = result.hits.filter(isLocalHit);
+      const localHits = result.results.filter(isLocalHit);
 
       expect(localHits.length).toBe(2);
       expect(localHits.every((hit) => hit.type === "script")).toBe(true);
@@ -76,11 +76,11 @@ describe("source commands and resolution", () => {
     writeFile(path.join(stashDir, "scripts", "group", "package.json"), '{"name":"group"}');
     writeFile(path.join(stashDir, "scripts", "package.json"), '{"name":"root"}');
 
-    await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+    await withBundle(stashDir, async () => {
       const result = await akmSearch({ query: "job", type: "script" });
-      const hit = result.hits.filter(isLocalHit)[0];
+      const hit = result.results.filter(isLocalHit)[0];
 
-      expect(result.hits.length).toBe(1);
+      expect(result.results.length).toBe(1);
       expect(hit!.run).toContain("bun");
       expect(hit!.run).toContain("job.js");
     });
@@ -92,10 +92,10 @@ describe("source commands and resolution", () => {
     writeFile(nestedScript, "console.log('job')\n");
     writeFile(path.join(stashDir, "scripts", "group", "nested", "package.json"), '{"name":"group"}');
 
-    await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+    await withBundle(stashDir, async () => {
       const result = await akmSearch({ query: "job", type: "script" });
-      const hit = result.hits.filter(isLocalHit)[0];
-      expect(result.hits.length).toBe(1);
+      const hit = result.results.filter(isLocalHit)[0];
+      expect(result.results.length).toBe(1);
       // Search hits only expose run, not setup/cwd
       expect(hit!.run).toContain("bun");
       expect(hit!.run).toContain("job.js");
@@ -112,11 +112,11 @@ describe("source commands and resolution", () => {
 
     saveConfig({ semanticSearchMode: "off", bundles: { extra: { path: searchPathDir } } });
 
-    await withEnv({ AKM_BUNDLE_DIR: primaryStashDir }, async () => {
+    await withBundle(primaryStashDir, async () => {
       await akmIndex({ stashDir: primaryStashDir, full: true });
 
       const result = await akmSearch({ query: "job", type: "script" });
-      const searchPathHit = result.hits.filter(isLocalHit).find((hit) => hit.path.includes(searchPathDir));
+      const searchPathHit = result.results.filter(isLocalHit).find((hit) => hit.path.includes(searchPathDir));
 
       expect(searchPathHit).toBeDefined();
       expect(searchPathHit?.run ?? "").toContain("bun");
@@ -132,30 +132,32 @@ describe("source commands and resolution", () => {
 
     // The deterministic embedder keeps the vector list offline and always present: the default local
     // model would be downloaded from Hugging Face into the test's empty cache on every run.
-    await withEnv({ AKM_BUNDLE_DIR: stashDir, AKM_EMBED_DETERMINISTIC: "1" }, async () => {
-      await akmIndex({ stashDir, full: true });
-      const result = await akmSearch({ query: "summarize diff", type: "script" });
+    await withEnv({ AKM_EMBED_DETERMINISTIC: "1" }, () =>
+      withBundle(stashDir, async () => {
+        await akmIndex({ stashDir, full: true });
+        const result = await akmSearch({ query: "summarize diff", type: "script" });
 
-      // The hit's rank in each candidate list that returned it.
-      expect(result.hits.length).toBe(1);
-      expect(result.hits[0]!.whyMatched).toEqual(["lexical rank 1", "vector rank 1"]);
-    });
+        // The hit's rank in each candidate list that returned it.
+        expect(result.results.length).toBe(1);
+        expect(result.results[0]!.whyMatched).toEqual(["lexical rank 1", "vector rank 1"]);
+      }),
+    );
   });
 
-  test("akmSearch includes ref, action, and size for local hits", async () => {
+  test("akmSearch includes ref and size for local hits", async () => {
     const stashDir = createTmpDir("akm-stash-");
     const scriptPath = path.join(stashDir, "scripts", "deploy.sh");
     writeFile(scriptPath, "#!/usr/bin/env bash\necho deploy\n");
 
     saveConfig({ semanticSearchMode: "off" });
 
-    await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+    await withBundle(stashDir, async () => {
       await akmIndex({ stashDir, full: true });
       const result = await akmSearch({ query: "deploy", type: "script" });
-      const hit = result.hits.filter(isLocalHit)[0];
+      const hit = result.results.filter(isLocalHit)[0];
 
       expect(hit!.ref).toContain("scripts/deploy.sh");
-      expect(hit!.action).toContain("akm show");
+      expect(hit).not.toHaveProperty("action");
       expect(hit!.size).toBe("small");
     });
   });
@@ -172,12 +174,12 @@ describe("source commands and resolution", () => {
     });
     seedLockEntries([{ id: "deploy-stash", source: "npm", ref: "@scope/deploy-stash", localRoot: installedStash }]);
 
-    await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+    await withBundle(stashDir, async () => {
       await akmIndex({ stashDir, full: true });
       const result = await akmSearch({ query: "deploy", type: "script" });
 
       // The hit's origin is the bundle id (the slug-legal bundle key).
-      expect(result.hits.filter(isLocalHit).some((hit) => hit.origin === "deploy-stash")).toBe(true);
+      expect(result.results.filter(isLocalHit).some((hit) => hit.origin === "deploy-stash")).toBe(true);
     });
   });
 
@@ -190,7 +192,7 @@ describe("source commands and resolution", () => {
       '---\ndescription: "Coach"\nmodel: "gpt-5"\n---\nGuide users\n',
     );
 
-    await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+    await withBundle(stashDir, async () => {
       const skill = await akmShow({ ref: "skills/ops" });
       const command = await akmShow({ ref: "commands/release.md" });
       const agent = await akmShow({ ref: "agents/coach.md" });
@@ -212,7 +214,7 @@ describe("source commands and resolution", () => {
   test("akmShow returns clear error when stash type root is missing", async () => {
     const stashDir = createTmpDir("akm-stash-");
     try {
-      await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+      await withBundle(stashDir, async () => {
         // QA #27: error should not leak "Stash type root" wording; be user-facing.
         // 0.9.0 (Q-02): the retired `type:name` colon grammar is gone — the
         // message now emits the slash conceptId (`agents/missing.md`).
@@ -227,14 +229,14 @@ describe("source commands and resolution", () => {
 
   test("akmShow accepts a foreign conceptId shape and reports a normal index miss", async () => {
     const stashDir = createTmpDir("akm-stash-");
-    await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+    await withBundle(stashDir, async () => {
       await expect(akmShow({ ref: "widget/foo" })).rejects.toThrow(/asset not found/i);
     });
   });
 
   test("akmShow does not reserve adapter-owned tool/vault concept paths", async () => {
     const stashDir = createTmpDir("akm-stash-");
-    await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+    await withBundle(stashDir, async () => {
       await expect(akmShow({ ref: "tool/deploy.sh" })).rejects.toThrow(/asset not found/i);
       await expect(akmShow({ ref: "vault/prod" })).rejects.toThrow(/asset not found/i);
     });
@@ -242,7 +244,7 @@ describe("source commands and resolution", () => {
 
   test("akmShow rejects traversal and absolute path refs", async () => {
     const stashDir = createTmpDir("akm-stash-");
-    await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+    await withBundle(stashDir, async () => {
       // The new-grammar conceptId validator (`validateName`) is the path-safety
       // guard: a `../`-leading conceptId trips traversal, an absolute path trips
       // the absolute-path guard — both at the input-parse boundary.
@@ -266,7 +268,7 @@ describe("source commands and resolution", () => {
       return;
     }
 
-    await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+    await withBundle(stashDir, async () => {
       // Installing a bundle is the trust decision: the symlinked script is indexed and shown.
       const shown = await akmShow({ ref: "scripts/link.sh" });
       expect(shown).toMatchObject({ type: "script", ref: "scripts/link.sh", path: symlinkFile, run: "bash link.sh" });
@@ -302,12 +304,12 @@ Creates a user.
     const stashDir = createTmpDir("akm-stash-");
     writeFile(path.join(stashDir, "knowledge", "api-guide.md"), KNOWLEDGE_DOC);
 
-    await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+    await withBundle(stashDir, async () => {
       const result = await akmSearch({ query: "", type: "knowledge" });
 
-      expect(result.hits.length).toBe(1);
-      expect(result.hits[0]!.type).toBe("knowledge");
-      expect(result.hits[0]!.name).toBe("api-guide");
+      expect(result.results.length).toBe(1);
+      expect(result.results[0]!.type).toBe("knowledge");
+      expect(result.results[0]!.name).toBe("api-guide");
     });
   });
 
@@ -315,7 +317,7 @@ Creates a user.
     const stashDir = createTmpDir("akm-stash-");
     writeFile(path.join(stashDir, "knowledge", "api-guide.md"), KNOWLEDGE_DOC);
 
-    await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+    await withBundle(stashDir, async () => {
       const result = await akmShow({ ref: "knowledge/api-guide.md" });
 
       expect(result.type).toBe("knowledge");
@@ -328,7 +330,7 @@ Creates a user.
     const stashDir = createTmpDir("akm-stash-");
     writeFile(path.join(stashDir, "knowledge", "api-guide.md"), KNOWLEDGE_DOC);
 
-    await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+    await withBundle(stashDir, async () => {
       const result = await akmShow({ ref: "knowledge/api-guide.md#authentication" });
 
       expect(result.type).toBe("knowledge");
@@ -344,9 +346,9 @@ Creates a user.
       path.join(stashDir, "knowledge", "fragment-roundtrip.md"),
       `---\ndescription: fragment fixture\n---\n\n${body}\n\nNeedleFragmentCase: Proof Appears Here!`,
     );
-    await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+    await withBundle(stashDir, async () => {
       const searched = await akmSearch({ query: "NeedleFragmentCase", type: "knowledge" });
-      const hit = searched.hits[0];
+      const hit = searched.results[0];
       if (!hit || !isLocalHit(hit)) throw new Error("expected a local hit");
       expect(hit.ref).toBe("knowledge/fragment-roundtrip");
       const shown = await akmShow({ ref: hit.ref });
@@ -359,7 +361,7 @@ Creates a user.
     });
   });
 
-  test("workflow fragment evidence keeps the executable parent ref and action", async () => {
+  test("workflow fragment evidence keeps the executable parent ref", async () => {
     const stashDir = createTmpDir("akm-stash-");
     const body = Array.from({ length: 500 }, () => "workflow background material").join(" ");
     writeFile(
@@ -381,12 +383,10 @@ Creates a user.
         "workflowfragmentneedle proves the release path.",
       ].join("\n"),
     );
-    await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
-      const hit = (await akmSearch({ query: "workflowfragmentneedle", type: "workflow" })).hits.find(isLocalHit);
+    await withBundle(stashDir, async () => {
+      const hit = (await akmSearch({ query: "workflowfragmentneedle", type: "workflow" })).results.find(isLocalHit);
       if (!hit) throw new Error("expected a local workflow hit");
       expect(hit.ref).toBe("workflows/release");
-      expect(hit.action).toContain("akm workflow run 'workflows/release'");
-      expect(hit.action).not.toContain("#akm-fragment-");
     });
   });
 
@@ -408,7 +408,7 @@ Creates a user.
       path.join(stashDir, "knowledge", "oversized-section.md"),
       `# Oversized\n\n${Array.from({ length: 900 }, () => "section background").join(" ")}\n\noversizedsectiontoken evidence`,
     );
-    await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+    await withBundle(stashDir, async () => {
       const cases: Array<[string, string]> = [
         ["preambleuniquetoken", "preambleuniquetoken"],
         ["duplicateuniquetoken", "duplicateuniquetoken"],
@@ -416,7 +416,7 @@ Creates a user.
         ["oversizedsectiontoken", "oversizedsectiontoken"],
       ];
       for (const [query, expected] of cases) {
-        const hit = (await akmSearch({ query, type: "knowledge" })).hits[0];
+        const hit = (await akmSearch({ query, type: "knowledge" })).results[0];
         if (!hit || !isLocalHit(hit)) throw new Error("expected a local hit");
         expect(hit.ref).not.toContain("#");
         expect((await akmShow({ ref: hit.ref })).content).toContain(expected);
@@ -428,7 +428,7 @@ Creates a user.
     const stashDir = createTmpDir("akm-stash-");
     writeFile(path.join(stashDir, "knowledge", "api-guide.md"), KNOWLEDGE_DOC);
 
-    await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+    await withBundle(stashDir, async () => {
       await expect(akmShow({ ref: "knowledge/api-guide.md#nonexistent" })).rejects.toThrow(
         /Available fragments: #overview, #authentication, #endpoints/,
       );
@@ -439,7 +439,7 @@ Creates a user.
     const stashDir = createTmpDir("akm-stash-");
     writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
 
-    await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+    await withBundle(stashDir, async () => {
       const result = await akmShow({ ref: "scripts/deploy.sh" });
 
       expect(result.type).toBe("script");
@@ -456,7 +456,7 @@ Creates a user.
     fs.mkdirSync(stashPath, { recursive: true });
 
     try {
-      await withEnv({ HOME: tmpHome, AKM_BUNDLE_DIR: undefined }, async () => {
+      await withEnv({ HOME: tmpHome }, async () => {
         const result = await akmInit();
         expect(result.created).toBe(false);
         expect(result.bundleDir).toBe(stashPath);
@@ -471,7 +471,7 @@ Creates a user.
     writeFile(path.join(stashDir, "scripts", "readme.txt"), "not a script\n");
 
     try {
-      await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+      await withBundle(stashDir, async () => {
         const result = await akmShow({ ref: "scripts/readme.txt" });
         expect(result.type).toBe("script");
         expect(result.content).toContain("not a script");
@@ -485,7 +485,7 @@ Creates a user.
     const tmpHome = createTmpDir("akm-home-");
 
     try {
-      await withEnv({ HOME: tmpHome, AKM_BUNDLE_DIR: undefined }, async () => {
+      await withEnv({ HOME: tmpHome }, async () => {
         const result = await akmInit();
         expect(fs.existsSync(path.join(result.bundleDir, "knowledge"))).toBe(true);
       });
@@ -503,12 +503,12 @@ Creates a user.
     writeFile(path.join(stashDir, "scripts", "README.md"), "ignore\n");
 
     try {
-      await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+      await withBundle(stashDir, async () => {
         const result = await akmSearch({ query: "", type: "script" });
 
-        expect(result.hits.length).toBe(2);
-        expect(result.hits.every((hit: SearchHit) => hit.type === "script")).toBe(true);
-        expect(result.hits.some((hit: SearchHit) => hit.name === "README.md")).toBe(false);
+        expect(result.results.length).toBe(2);
+        expect(result.results.every((hit: SearchHit) => hit.type === "script")).toBe(true);
+        expect(result.results.some((hit: SearchHit) => hit.name === "README.md")).toBe(false);
       });
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true });
@@ -520,11 +520,11 @@ Creates a user.
     writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
 
     try {
-      await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+      await withBundle(stashDir, async () => {
         const result = await akmSearch({ query: "", type: "script" });
-        const hit = result.hits.filter(isLocalHit)[0];
+        const hit = result.results.filter(isLocalHit)[0];
 
-        expect(result.hits.length).toBe(1);
+        expect(result.results.length).toBe(1);
         expect(hit!.run).toBeTruthy();
         expect(hit!.run).toContain("bash");
       });
@@ -538,7 +538,7 @@ Creates a user.
     writeFile(path.join(stashDir, "scripts", "process.py"), "# A python script\nprint('hello')\n");
 
     try {
-      await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+      await withBundle(stashDir, async () => {
         const result = await akmShow({ ref: "scripts/process.py" });
 
         expect(result.type).toBe("script");
@@ -554,7 +554,7 @@ Creates a user.
     const stashDir = createTmpDir("akm-stash-");
     writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
 
-    await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+    await withBundle(stashDir, async () => {
       const result = await akmShow({ ref: "scripts/deploy.sh" });
 
       expect(result.type).toBe("script");
@@ -567,7 +567,7 @@ Creates a user.
     const tmpHome = createTmpDir("akm-home-");
 
     try {
-      await withEnv({ HOME: tmpHome, AKM_BUNDLE_DIR: undefined }, async () => {
+      await withEnv({ HOME: tmpHome }, async () => {
         const result = await akmInit();
         expect(result.configPath).toBe(getConfigPath());
         expect(result.configPath.startsWith(result.bundleDir)).toBe(false);

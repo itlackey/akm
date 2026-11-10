@@ -49,14 +49,6 @@ const ctx: ValidateContext = {
 };
 
 describe("akm-task adapter — metadata", () => {
-  test("id / version / extensions", () => {
-    expect(akmTaskAdapter.id).toBe("akm-task");
-    expect(akmTaskAdapter.version).toBe("0.9.2");
-    // `.yaml` is a COLLECTION hint only (issue #760) so `akm lint` routes the
-    // near-miss spelling into `validate` instead of walking past it.
-    expect(akmTaskAdapter.extensions).toEqual([".yml", ".yaml"]);
-  });
-
   test("a README markdown abstains (tasks are YAML)", () => {
     expect(recognizeRel("README.md")).toBeNull();
   });
@@ -99,8 +91,6 @@ describe("akm-task adapter — renderer golden", () => {
       const p = presentationFor(doc?.type ?? "");
       expect(p.label).toBe(expected.label as string);
       expect(p.renderer ?? null).toBe((expected.renderer as string | null) ?? null);
-      const action = p.action ? p.action(doc?.ref ?? "") : `akm show ${doc?.ref}`;
-      expect(action).toBe(expected.action as string);
     });
   }
 });

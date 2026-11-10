@@ -33,11 +33,9 @@ const evidence = 'The operator said: "connect VPN first".\nThe next deploy succe
 function setup(indexSessions = true) {
   const stash = storage.stashDir;
   const config = {
-    configVersion: "0.9.0",
     semanticSearchMode: "off",
     bundles: { stash: { path: stash, writable: true } },
     defaultBundle: "stash",
-    defaultWriteTarget: "stash",
     connections: {
       test: {
         endpoint: "http://localhost:11434/v1/chat/completions",
@@ -162,12 +160,11 @@ for (const type of ["memory", "lesson", "knowledge"] as const) {
     const shown = await akmShowUnified({ ref: accepted.ref });
     expect(shown.evidence).toBe(evidence);
     expect(shown.evidenceSources).toEqual([source]);
-    expect(shapeShowOutput({ ...shown }, "full", "agent").evidence).toBe(evidence);
     expect(shapeShowOutput({ ...shown }, "full").evidence).toBe(evidence);
     expect((await akmShowUnified({ ref: source })).ref).toBe(source);
     expect((await akmShowUnified({ ref: accepted.ref, detail: "brief" })).evidence).toBeUndefined();
     const found = await akmSearch({ query: "VPN deployment", limit: 5 });
-    expect(found.hits.some((hit) => "ref" in hit && hit.ref === accepted.ref.replace("stash//", ""))).toBe(true);
+    expect(found.results.some((hit) => "ref" in hit && hit.ref === accepted.ref.replace("stash//", ""))).toBe(true);
     const recalled = await akmCurate({ query: "VPN deployment", limit: 5 });
     expect(
       recalled.items.some((item) => item.source === "local" && item.ref === accepted.ref.replace("stash//", "")),

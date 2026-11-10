@@ -2,29 +2,20 @@
 
 AKM reads one user configuration file: `$XDG_CONFIG_HOME/akm/config.json`
 (normally `~/.config/akm/config.json` on Linux and macOS, or
-`%APPDATA%\akm\config.json` on Windows). Set `AKM_CONFIG_DIR` to override the
-directory. Project `.akm/config.json` files are not merged. A config file may
-optionally extend one other config via `extends` (see "Sharing configuration
-across installs" below) — this is a single, explicit, user-opted-in key, not
-automatic project-config discovery.
+`%APPDATA%\akm\config.json` on Windows). `--config <file>` or `AKM_CONFIG_FILE`
+chooses another file (see [Choosing the config file](#choosing-the-config-file)).
+Project `.akm/config.json` files are not merged. There is no config
+inheritance: `extends` is retired (see "Config inheritance (`extends`)" below).
 
-## Version 0.9
+## Shape
 
-`configVersion` is `"0.9.0"`, the only value akm has ever shipped. It is
-read, never gated on: a file without the field loads silently, and a file
-declaring any other value is named once on stderr (`config.json declares
-configVersion "X"; this release reads it as 0.9.0.`) and read as the
-current shape anyway — nothing is rewritten on disk. The next config write
-(`akm config set`, etc.) and `akm migrate apply`'s config step both persist
-`"0.9.0"`, which silences the note. When a newer akm wrote the shared
-config, `akm health`'s `binary-config-skew` advisory is what says so. Pre-0.9
-config and database layouts are not runtime inputs. Historical task sources
-are handled by the standalone `akm-migrate` executable, also invoked by `akm
-migrate` / `akm upgrade`; ordinary runtime code reads only the current shape.
+There is no config version field. A `configVersion` already in the file is ignored.
+akm reads only the current shape; `akm migrate apply` (which `akm upgrade` also
+runs) converts retired forms. Config, task and database layouts older than 0.9.32
+are not read at all: see the [0.10 to 0.11 migration guide](../migration/v0.10-to-v0.11.md).
 
 ```jsonc
 {
-  "configVersion": "0.9.0",
   "connections": {
     "default": {
       "endpoint": "http://localhost:11434/v1",
@@ -37,7 +28,7 @@ migrate` / `akm upgrade`; ordinary runtime code reads only the current shape.
   "improve": {
     "strategy": "nightly",
     "processes": {
-      "memoryInference": { "model": "qwen3-8b", "llm": { "temperature": 0.1 } }
+      "memoryInference": { "model": "qwen3-8b" }
     },
     "strategies": {
       "nightly": {
@@ -59,19 +50,16 @@ each process runs](#where-each-process-runs) say how models are added.
 listed is disabled, and removing a bundle drops its refs. The older
 `{kind, ref, sourceId}` entries are read as their `ref` and written back
 plain.
-A config without the list (written before 0.9.17) means "keep what is
-installed": the first `akm task sync`, `akm setup`, `akm task enable`, `akm task
-disable` or `akm task add` fills it from the akm-written native scheduler rows.
-There are no grants, source identities or fire-time checks. Authored
+A config without the list has never chosen and schedules nothing (akm 0.10 does not read the OS scheduler to
+seed it; upgrade a config older than 0.9.32 with akm 0.9.32 first). `akm task dispatch`, which the one OS scheduler
+entry runs every minute, reads this list. There are no grants, source identities or fire-time checks. Authored
 task/workflow files may describe schedules but cannot put themselves on the
 list.
 
-This key is deliberately local: if a config uses `extends`, any `scheduler`
-section in the base is ignored with a warning. Only the top-level local config
-can activate schedules. Prefer `akm task enable <ref>` and `akm task disable
-<ref>` over editing the JSON by hand; both update the allow-list and sync the
-affected bundle. An unscoped `akm task sync` reconciles enabled refs across all
-enabled configured bundles.
+This key is deliberately local: only the config file itself can activate
+schedules. Prefer `akm task enable <ref>` and `akm task disable
+<ref>` over editing the JSON by hand; both update the allow-list, which dispatch reads on
+the next minute. `akm task sync` installs the one OS entry while the list is non-empty and removes it when it is empty.
 
 ## Connections
 
@@ -103,7 +91,6 @@ akm reads these keys of a connection:
 | --- | --- |
 | `endpoint` | Required. The OpenAI-compatible base URL (`http://localhost:11434/v1`) or the chat-completions URL itself, starting with `http://` or `https://`. Requests go to `<base>/chat/completions` and the model list is read from `<base>/models`; a query string on the URL (a gateway's `api-version`, say) stays after the path on every request, and a `#fragment` is dropped. A username or password in the URL is warned about; put the key in `apiKey` or `credentials.json`. |
 | `apiKey` | A `$VAR` or `${VAR}` reference to an environment variable. Absent, the key is the one stored in `credentials.json` for the connection and its endpoint. See [Credentials](#credentials). |
-| `apiKeyFile` | Retired. `akm migrate apply` leaves an engine's key file here, as written, when it cannot read the file yet; akm ignores it (never reads it or sends it) and a later `akm migrate apply` moves the key it names into `credentials.json`. |
 | `models` | Alias to model. See [Aliases](#aliases). |
 | `contextLength` | The model's context window in tokens. `akm improve` sizes its prompts from it (consolidate's chunks, reflect's asset content); unset, it assumes 4096. |
 | `timeoutMs` | How long one call may take, in milliseconds; `null` runs unbounded. Unset, a model call stops after 600 000 (ten minutes) and agent work runs until it finishes; akm's own runtime also tells a model that keeps repeating one tool call and result, and ends the run if it goes on, but does not stop one that keeps making different calls ([Without a harness](#without-a-harness)). The ceiling is 2 147 483 647. |
@@ -140,7 +127,7 @@ connection's own:
 They are written `akm.inference` (and top-level `temperature` and `effort`) in
 an asset's frontmatter, `llm:` on a workflow step (`max_tokens`,
 `enable_thinking`, `reasoning_effort`), `inference` in a task, and `llm` on an
-improve process, the quality gate or an index pass. Nearest wins: the asset,
+improve process or the quality gate. Nearest wins: the asset,
 then the process, then the model entry, then the connection. A connection and
 akm's own runtime take all of them. A harness takes none: set them in the
 program's own configuration, and akm reports each as an `untranslated-field`
@@ -167,8 +154,8 @@ warning.
 
 Improve's `consolidate` and `reflect` always ask for thinking off, for a
 machine-readable payload, and the quality-gate and triage judges do too unless
-the judge's connection turns thinking on (`enable_thinking: true` as a request
-field, or `llm.enableThinking: true`).
+the judge's connection or model alias turns thinking on (`enable_thinking: true`, or
+`chat_template_kwargs.enable_thinking: true`, as a request field).
 
 When a call asks for JSON that matches a schema, a connection receives the
 schema as `response_format` (`json_schema`, strict). If the endpoint rejects it
@@ -225,7 +212,7 @@ bindings.
 
 What asks for a harness decides how akm runs it.
 
-**Agent work** (`akm agent`, `akm command run`, `akm proposal new`, agent tasks and workflow agent steps) runs your program the way you would run it yourself. It gets your environment as it is, with nothing filtered out, and your configuration, plugins, settings and logins as they are. akm sets only its own variables for the run: the directories this akm resolved (`AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR`, `AKM_STATE_DIR`, and `AKM_BUNDLE_DIR` when you set one), so a program that runs `akm` uses the same installation, and, when a task runs it, `AKM_EVENT_SOURCE` (unless already set), so the akm commands the program runs count as machine use, not yours. A workflow unit's or task's own `env:` bindings are set over them. A run given a directory (`--cwd`, a harness's `workspace`) starts there, and `PWD` names it too, as your shell sets it when you `cd` there; OpenCode takes its directory from `PWD`. On the command line, after your `args` as you wrote them, akm adds the model or agent the asset or flag names, the agent asset's persona where the program takes one there, and what the program needs to run without a person at the terminal: its print or exec mode and its approve-all switch where it asks before acting. Codex runs with the sandbox your Codex configuration sets, or the one your `args` name; model work runs it with `--sandbox read-only` (below). The prompt goes on standard input where the program reads it there and on the command line where it does not; standard output is the reply. `akm agent` with no `--prompt` starts the program interactively instead. What akm scrubs from the output it captures is in [Architecture: Connections and Harnesses](../architecture/architecture.md#connections-and-harnesses) and, for a workflow, [Workflow Schema](workflow-schema.md#the-childs-environment).
+**Agent work** (`akm agent`, `akm command`, `akm proposal new`, agent tasks and workflow agent steps) runs your program the way you would run it yourself. It gets your environment as it is, with nothing filtered out, and your configuration, plugins, settings and logins as they are. akm sets only its own variables for the run: the config file this akm resolved (`AKM_CONFIG_FILE`, which names the other locations and the default bundle), so a program that runs `akm` uses the same installation, and, when a task runs it, `AKM_EVENT_SOURCE` (unless already set), so the akm commands the program runs count as machine use, not yours. A workflow unit's or task's own `env:` bindings are set over them. A run given a directory (`--cwd`, a harness's `workspace`) starts there, and `PWD` names it too, as your shell sets it when you `cd` there; OpenCode takes its directory from `PWD`. On the command line, after your `args` as you wrote them, akm adds the model or agent the asset or flag names, the agent asset's persona where the program takes one there, and what the program needs to run without a person at the terminal: its print or exec mode and its approve-all switch where it asks before acting. Codex runs with the sandbox your Codex configuration sets, or the one your `args` name; model work runs it with `--sandbox read-only` (below). The prompt goes on standard input where the program reads it there and on the command line where it does not; standard output is the reply. `akm agent` with no `--prompt` starts the program interactively instead. What akm scrubs from the output it captures is in [Architecture: Connections and Harnesses](../architecture/architecture.md#connections-and-harnesses) and, for a workflow, [Workflow Schema](workflow-schema.md#the-childs-environment).
 
 **Model work** (see [Where each process runs](#where-each-process-runs)) is akm's own process, so akm sets the call up as it needs it. The program has the same environment. akm runs it in a scratch directory that it creates for the call and removes after it, stamps the akm commands it runs `improve`, and runs no native agent of yours. Where the program can be restricted, akm also limits its tools. The "Restricted model work" column of the table says on which platforms:
 
@@ -332,7 +319,7 @@ default connection. The npm package and the standalone binary do the same.
   own runtime does this; a harness is your program, with whatever limits it has.
 - A run that keeps making different calls is not stopped by that. Its timeout
   bounds it: the connection's `timeoutMs`, one the run is given (`akm agent
-  --timeout-ms`, `akm workflow run --timeout`, a workflow unit's `timeout`) or,
+  --timeout-ms`, `akm workflow run --timeout-ms`, a workflow unit's `timeout`) or,
   in a scheduled task, the task's `timeout:` (six hours when unset). With none,
   as for `akm agent` and `akm workflow run` by default, it runs until it
   finishes.
@@ -360,10 +347,7 @@ akm reads an API key from one of two places, and nowhere else:
   endpoint). A connection's name and the `embedding` service are
   different namespaces, so a connection called `embedding` and the embedding
   service hold different keys. An `embedding` that runs on the default connection
-  uses that connection's entry. A connection that only an `extends` base defines
-  gets its endpoint from that base, so it never uses a stored key: stored keys
-  are for the connections your own `config.json` names (name it there, even with
-  only its `models`, and a key stored for the endpoint it ends up with is used).
+  uses that connection's entry.
   A key in the older flat `{ "<name>": "<key>" }` form names no endpoint and is
   not used; `akm migrate apply` files it under the endpoint your own config gives
   that block, after copying `credentials.json` to `<cache dir>/config-backups/`.
@@ -424,7 +408,7 @@ name:
   that its other fields are ignored.
 
 A kind of work that names no model asks for a default alias: improve's
-processes, the index passes, extraction and `akm remember --enrich` ask for
+processes, extraction and `akm remember --enrich` ask for
 `fast`; the quality and triage judges and a workflow gate ask for `balanced`;
 agent work asks for `balanced`.
 
@@ -439,12 +423,12 @@ akm's work is of two kinds, and each has a default place to run.
 - **Model work** asks a model for an answer with nobody watching: the improve
   processes (reflect, distill, consolidate, memory inference, extract, and
   validation's repair), the quality and triage judges, the judge of a workflow
-  `### gate`, the index passes, and `akm remember --enrich`. It runs on the
+  `### gate`, and `akm remember --enrich`. It runs on the
   default connection, as a direct request to the endpoint. With no connection it
   runs on the default harness, unless that harness has `modelWork: false`. On a
   harness it is akm's own process, not your use of the program ([How akm runs a
   harness](#how-akm-runs-a-harness)).
-- **Agent work** runs an agent: `akm agent`, `akm command run`, `akm proposal
+- **Agent work** runs an agent: `akm agent`, `akm command`, `akm proposal
   new`, agent tasks and workflow agent steps. It runs on the default harness.
   With no harness it runs on akm's own runtime, over the default connection.
 
@@ -456,8 +440,7 @@ Anywhere a connection or harness can be named (config, a flag, an asset's
 `connection:` or `harness:`) and none is, the default is used. A name that is
 not configured is an error (exit 78), never a reason to use the default: the
 message names the selector, says it is not configured, lists the configured
-connections (or harnesses) and the nearest name when one is close, and the same
-holds for the retired `engine:` and `--engine`. Defaults apply only when nothing
+connections (or harnesses) and the nearest name when one is close. Defaults apply only when nothing
 was named, so a call for a private connection is never sent to a remote service,
 nor a call that must not touch files to a harness that can, by a typo, a removed
 entry, or an entry akm ignored when it loaded the config (`akm health` lists
@@ -475,16 +458,19 @@ These settings, all optional, choose another place for one piece of work:
 | Key | Chooses where |
 | --- | --- |
 | `improve.enabled` | `false`: background learning is off on this host, and `akm improve` and `akm proposal extract` do nothing. Written by `akm setup --learning off`; absent means on |
-| `improve.connection`, `improve.harness` | All of `akm improve`'s model work |
+| `improve.connection`, `improve.harness`, `improve.model`, `improve.timeoutMs` | The base for improve's processes, the quality-gate and triage judges, `akm remember --enrich`, extraction and the proposal drain. A workflow gate's judge does not read it: it runs on the default connection, else the default harness |
 | `improve.processes.<process>` | One improve process: `reflect`, `distill`, `consolidate`, `memoryInference`, `extract`, `validation`, or `triage` (its judgment) |
 | `improve.qualityGate` | The judge of the reflect and distill quality gates |
-| `index.connection`, `index.<pass>` | The index passes (`index.memory`) |
 
-Each takes `connection` or `harness`, `model` (an alias or a name), `llm` (the
-[settings a call asks for](#settings-a-call-asks-for)) and `timeoutMs`. A pass
-under `index` takes `connection`, not `harness` (one that names nothing runs
-where model work does: the default connection, else the default harness), and
-`enabled: false` turns it off:
+Each takes `connection` or `harness`, `model` (an alias or a name) and `timeoutMs`. Settings a call asks for
+(temperature, thinking) go on the model alias, not here ([settings a call asks for](#settings-a-call-asks-for)).
+`improve.*` is the base for improve's processes, the quality-gate and triage
+judges, `akm remember --enrich`, extraction and the proposal drain, whichever
+command makes the call; the entries below it are nearer. A workflow gate's judge
+reads none of it: it runs on the default connection, else the default harness. An `engine` in one of these blocks is
+the retired spelling of `connection` or `harness`: it still selects where the work
+runs, a warning says so, and `akm migrate apply` drops it, so name a
+`connection` or `harness` instead.
 
 ```jsonc
 {
@@ -492,22 +478,20 @@ where model work does: the default connection, else the default harness), and
     "connection": "default",
     "processes": {
       "reflect": { "connection": "cloud", "model": "reasoning" },
-      "memoryInference": { "model": "qwen3-8b", "llm": { "temperature": 0.1 } }
+      "memoryInference": { "model": "qwen3-8b" }
     },
-    "qualityGate": { "connection": "judge", "llm": { "enableThinking": true } }
-  },
-  "index": { "connection": "default", "memory": { "enabled": false } }
+    "qualityGate": { "connection": "judge", "model": "thinking" }
+  }
 }
 ```
 
 The nearest setting wins, farthest to nearest: the shipped alias of the kind of
-work, `improve.connection` and `improve.harness`, the process's entry in
+work, `improve.*` (`connection`, `harness`, `model`, `timeoutMs`), the process's entry in
 `improve.processes`, and `--connection`, `--harness` and `--model` on the run,
-which reach every call in it, the judges included. The quality-gate judge is the
+which reach every call in it, the quality-gate and triage judges included. The quality-gate judge is the
 exception: a process's own entry is the writer's, so `improve.qualityGate`
 replaces it, and a `reasoning` model chosen for reflect is not the one that
-judges it. An index pass reads `index.*`, then `index.<pass>`. A strategy adds no
-layer: it says which processes run, never where.
+judges it. A strategy adds no layer: it says which processes run, never where.
 
 `akm health` and `akm info` print this as a table, resolved by the same code the
 calls use: for each kind of work, the connection or harness and the model.
@@ -573,19 +557,18 @@ drain, set `processes.triage` (`enabled`, `applyMode: "promote"`,
 `processes.triage.judgment` controls the optional judgment tier: `true` enables
 it, `false` disables it, and an object holds `enabled` (default `true`). The
 judgment is a model call; it runs where `improve.processes.triage` says
-(`connection` or `harness`, `model`, `llm`, `timeoutMs`), over `improve.connection`
+(`connection` or `harness`, `model`, `timeoutMs`), over `improve.connection`
 and `improve.harness`, and over the defaults. Enabling it with no connection or
 harness configured fails before the run starts, naming `akm setup`.
 
 The `default` strategy runs triage in `promote` mode with judgment off and
-`maxAcceptsPerRun: 200` (#1143), so the proposal backlog drains through the
+`maxAcceptsPerRun: 200`, so the proposal backlog drains through the
 deterministic gates without `experimental.improveAutonomy`. Turning judgment on
 in a promote strategy is what that opt-in gates.
 
 Judgment is off in every built-in strategy, and the judgment tier may accept
 only a consolidate promotion. Retirements and reflect revisions it
-would accept are left for a person. This is measured, not cautious by habit
-(#1132, #1094): with `experimental.improveAutonomy` and judgment over every
+would accept are left for a person. This is measured, not cautious by habit: with `experimental.improveAutonomy` and judgment over every
 proposal kind, the nightly eval solved 0.49 (gpt-5.6-terra) and 0.53
 (qwen3.8-27b) of its items while harming 14 and 11, and changed 18 and 21 notes
 outside the planted set; the judge accepted unsafe retirements and applied exact
@@ -613,7 +596,7 @@ judge passes is staged for the triage drain to accept; a distill lesson it
 passes is deferred for a person (reason `distill-review`), which the drain and
 its judgment tier leave alone. With the distill gate off nothing is judged, and
 the drain decides. The judge is a model call that
-runs where `improve.qualityGate` says (`connection` or `harness`, `model`, `llm`,
+runs where `improve.qualityGate` says (`connection` or `harness`, `model`,
 `timeoutMs`), for both gates, over `improve.connection` and `improve.harness`
 and the defaults: with no `qualityGate`, the default connection answers with its
 `balanced` model. The process's own entry in `improve.processes` is the writer's
@@ -631,11 +614,14 @@ judge's connection at the server directly.
   "connections": {
     "judge": {
       "endpoint": "http://127.0.0.1:8080/v1",
-      "models": { "balanced": "qwen3-27b" }
+      "models": {
+        "balanced": "qwen3-27b",
+        "thinking": { "model": "qwen3-27b", "chat_template_kwargs": { "enable_thinking": true } }
+      }
     }
   },
   "improve": {
-    "qualityGate": { "connection": "judge", "llm": { "enableThinking": true } }
+    "qualityGate": { "connection": "judge", "model": "thinking" }
   }
 }
 ```
@@ -689,7 +675,7 @@ other shipped strategy. It plans stable assets that have had no feedback: at mos
 inherits the `default` value; set `processes.proactiveMaintenance.enabled: false` in the
 selected strategy to turn the lane off. A proposal from this lane is never
 accepted by `proposal drain`: it waits for a person (reason
-`proactive-needs-review`, #1147). User strategy overrides
+`proactive-needs-review`). User strategy overrides
 are applied last, so an explicit `enabled: true` still opts the selected
 strategy in.
 
@@ -755,7 +741,7 @@ semantic search on anyway gets it reported unavailable for the platform by the
 index and a warning from `akm health`.
 
 **Without network access**, fill akm's cache directory (`akm info` prints
-`cacheDir`; `AKM_CACHE_DIR` moves it) before the first `akm index`:
+`cacheDir`; `paths.cache` or `XDG_CACHE_HOME` moves it) before the first `akm index`:
 
 - `onnxruntime/<version>-<platform>-<arch>/` (for example
   `onnxruntime/1.24.3-linux-x64/`) holding `onnxruntime_binding.node` and the
@@ -770,8 +756,7 @@ index and a warning from `akm health`.
   to a directory that holds them and `HF_HUB_OFFLINE=1`.
 - `opencode/2.2.0/opencode` (`opencode.exe` on Windows) for akm's own agent
   runtime.
-The default is `"off"` so a bare or headless install (`akm bundle create`, `--yes`,
-`--config`) never silently downloads the local embedding model on first
+The default is `"off"` so a bare or headless install (`akm bundle create`, `--yes`) never silently downloads the local embedding model on first
 index. A config that has an `embedding` block and sets no `semanticSearchMode`
 reads as `"auto"`: writing the block says semantic search is wanted.
 The interactive `akm setup` wizard pre-selects semantic search **on**
@@ -788,8 +773,7 @@ embedding model: `provider`, `endpoint`, `model`, `apiKey` (a `$VAR` reference,
 or the `embedding` service's entry in `credentials.json`; see
 [Credentials](#credentials)), `dimension`, `localModel`,
 `maxInputTokens`, `maxTokens`, `batchSize`, `contextLength`, `timeoutMs`,
-`queryTimeoutMs`, `queryTemplate`, `documentTemplate`, `concurrency`, and
-`ollamaOptions.num_ctx`. An `embedding` with a `model` and no `endpoint` names a
+`queryTimeoutMs`, `queryTemplate`, `documentTemplate`, `concurrency`. An `embedding` with a `model` and no `endpoint` names a
 model the default connection serves, at its endpoint and with its key; with no
 default connection there is nothing to serve it, and the built-in local embedder
 runs, with a warning.
@@ -900,8 +884,24 @@ and `defaultBundle` are the 0.9 source configuration shape — see
 full bundle model (`path`, `git`, `website`, `npm`, `writable`, `registryId`,
 `components`). `defaultBundle` must name a key in `bundles` when set. A
 bundle's `components.<id>.adapter` key pins it to a specific format adapter
-instead of relying on auto-detection — see [Bundle Types](bundle-types.md)
+instead of relying on auto-detection — see [Supported Formats](supported-formats.md)
 for the full adapter list and what each one reads/writes.
+
+A bundle's `path` is read like a project's `paths`: `~` expands to your home
+folder, and a relative path means the folder of the config file that holds it,
+never the folder you ran akm from. `~user/...`, or a relative path with no
+config file to resolve against, warns once and that bundle is ignored.
+
+**Which bundle is the working bundle** (the one short refs and bare commands
+use): the path of `defaultBundle`; else
+`akm` stops with a `ConfigError` ("No default bundle is configured"), for reads
+and writes alike. There is no implicit `~/akm`: `akm bundle create` registers
+one (and `akm migrate apply` registers an existing `~/akm` on a host that relied
+on 0.9's fallback). Search and show still read every configured bundle when
+there is no default. A `defaultBundle` that names no configured bundle warns
+once and loads as unset; a write then fails until you set one. A matching project's `write.bundle` and a
+command's `--bundle` choose a write destination on top of this (the write-target
+order is `--bundle`, then the working bundle).
 
 Each physical content root has one bundle id. Duplicate paths and symbolic-link
 aliases are rejected because source ownership, scheduler authority, and default
@@ -909,16 +909,13 @@ selection must not depend on which spelling a caller used. If an older config
 contains aliases, choose the id whose durable refs should survive and remove
 the other entry before running ordinary commands.
 
-### defaultWriteTarget
+### Improve housekeeping
 
-`defaultWriteTarget` names the bundle that write commands (`akm remember`,
-`akm import`, `akm env create`, `akm secret set`, `akm improve`, etc.) fall
-back to when no explicit destination flag is given and the command isn't
-already scoped to a specific source. It must name a configured bundle; setting it with no
-`bundles` configured, or naming an unconfigured bundle, is rejected at
-`config set` (or config load) time. The full write-target resolution order
-is the command's destination flag (`--bundle`) -> `defaultWriteTarget` ->
-working bundle (`defaultBundle`) -> `ConfigError`.
+One `improve` key trims akm's own stores; it does not choose where model work runs. Salience and outcome rows are improve history and are never deleted: a row whose asset has left the index is marked `missing_since` and counted in the `asset_state_gc` event, and stays.
+
+| Key | Effect |
+| --- | --- |
+| `improve.eventRetentionDays` | `akm improve` purges events, improve run rows, task logs and per-run task log files older than this many days (default `90`; `0` disables the purge) |
 
 ### Memory scope
 
@@ -967,7 +964,7 @@ what akm reads and writes there:
   `--from`, `--filter` and `--prefer` (a value or a list; an empty string matches assets
   without the key).
 - `write`: `bundle` (a default for `remember` and `proposal new`, between `--bundle` and
-  `defaultWriteTarget`; an explicit `--bundle` or a `--supersedes` ref decides first), `user`,
+  the working bundle; an explicit `--bundle` or a `--supersedes` ref decides first), `user`,
   `agent`, `channel` (each fills a flag you left out) and `metadata` (frontmatter keys a write
   lacks; the body's own keys win, and akm's own keys win over both; keys akm sets itself, such
   as `description` or `tags`, are ignored with a warning). `proposal extract` uses `user`,
@@ -976,8 +973,7 @@ what akm reads and writes there:
   writes carry `project: <name>`.
 - A malformed project or key warns once and is ignored, as is a path that is `~user/...` or
   relative. When two projects list the same path, the first in the file is used, with a warning.
-  `extends` layers combine projects by name: a project in the local file replaces the inherited
-  one of that name whole, never field by field. Improve's session extract names a memory folder and a session asset's
+  Improve's session extract names a memory folder and a session asset's
   `project:` after the project containing the session's working directory, when there is one.
 
 See [Projects in the CLI reference](cli.md#projects) for how a call chooses one.
@@ -986,15 +982,15 @@ See [Projects in the CLI reference](cli.md#projects) for how a call chooses one.
 
 `registries` (top-level array, distinct from `bundles`) lists remote package
 registries `akm registry`/`akm bundle add` can search and install from.
-Each entry is `{ url, name?, enabled?, provider?, options? }`; `provider`
+Each entry is `{ url, name?, enabled?, provider? }`; `provider`
 defaults to `"static-index"`. With no `registries` key, the defaults are the
 official registry and a skills.sh entry that ships with `enabled: false`. See
 [Registries](registry.md) for the field reference, the provider list and how to
 enable skills.sh.
 
 Registry `url` values cannot carry a username or password: such an entry is
-dropped with a warning. The built-in providers send no credentials and
-`options` does not add any; use a credential-free HTTPS endpoint.
+dropped with a warning. The built-in providers send no credentials; use a
+credential-free HTTPS endpoint.
 
 ## Output defaults
 
@@ -1003,13 +999,6 @@ default `json`) and `output.detail` (`brief`\|`normal`\|`full`, default
 `brief`) set the CLI's default `--format`/`--detail` when the flags are
 omitted. Per-command flags always override these. A config that still says `output.format: html` (retired with
 akm's HTML output) loads: one warning names it and the default format applies.
-
-## Setup-derived recommendations
-
-`setup` is reserved for configuration derived by `akm setup`. It currently
-holds no keys — the `setup.taskSchedules` sub-key was removed in 0.9.0 after
-nothing in the setup flow or the tasks subsystem was found to read or write
-it. Scheduling lives in the tasks subsystem (`akm task`).
 
 ## Experimental opt-ins
 
@@ -1039,6 +1028,40 @@ section, an absent key, and an explicit `false` all read identically as off.
   the commits `akm proposal accept` makes, and the end-of-run `sync.push`
   (which has its own `--no-push` and `sync.push` controls).
 
+## Plugins
+
+`plugins` holds the settings of the akm plugins for Claude Code, Codex and
+OpenCode. The plugins read this file themselves, find it the way akm does
+(`AKM_CONFIG_FILE`, else `XDG_CONFIG_HOME/akm/config.json`, else `~/.config/akm/config.json`) and own the
+keys and their validation: akm keeps the section, never reads it, and never warns
+about what is inside it. A wrong plugin value is ignored by the plugin, with a
+warning in its own log. Every key is optional.
+
+```jsonc
+{
+  "plugins": {
+    "autoFeedback": true,
+    "indexOnSessionEnd": true,
+    "curateLimit": 5,
+    "curateTimeoutSeconds": 8,
+    "pendingProposalTimeoutSeconds": 2,
+    "redact": { "pii": false, "highEntropy": false }
+  }
+}
+```
+
+- `autoFeedback` (default `true`): record `akm feedback` from a session's signals. Never on under Codex.
+- `indexOnSessionEnd` (default `true`): run `akm index` when a session ends.
+- `curateLimit` (integer 1 to 25, default 5): results injected per prompt.
+- `curateTimeoutSeconds` (default 8) and `pendingProposalTimeoutSeconds` (default 2): how long the plugin waits for those calls.
+- `redact.pii` and `redact.highEntropy` (default `false`): redact phone, SSN and card numbers, or long high-entropy tokens, from what the plugin writes to its logs and memory events. Set `true` on any host that handles personal data.
+
+Whether a plugin learns from sessions is not a plugin key: it is `improve.enabled`
+(`akm setup --learning on|off`).
+
+`akm config set plugins.curateLimit 8` writes a key. A nested key such as
+`plugins.redact.pii` is stored too, with a one-line note that akm does not define it.
+
 ## Managing Config
 
 ```sh
@@ -1053,132 +1076,127 @@ Object values passed to `config set` deep-merge with their current value.
 Arrays replace, `null` is only valid for nullable fields, and `config unset` is
 the only deletion operation. It removes the named key and nothing else: a
 parent object left empty stays, because `harnesses.opencode: {}` is how a
-harness is enabled. `configVersion` cannot be set or unset with the generic
-walker.
+harness is enabled.
 
 `config get <key> --show-source` wraps the (redacted) value as
 `{ value, source }`, where `source` is `"local"` when the local file's own
-JSON sets the key, `"extends:<ref>"` for the nearest `extends` chain member
-that sets it, or `"default"` when neither does. It is opt-in — plain
+JSON sets the key, or `"default"` when it does not. It is opt-in — plain
 `config get` keeps its Stable, script-safe bare-value shape.
 
-### Sharing configuration across installs
+### Config inheritance (`extends`)
 
-Five hosts running the same fleet often carry an identical `connections` map and
-`improve.strategies` block, differing only in credential delivery, bundle paths,
-and cron offsets. Hand-syncing that block across hosts drifts silently. `extends` fixes this: put the shared block in
-one file, and have each host's local config extend it.
+`extends`, which merged a base config file under the local one (0.9.15 to
+0.10.261019), is removed. A config file that still sets it is refused with an
+error naming `akm migrate apply`: ignoring the key would silently drop every
+setting the base supplied. `akm migrate apply` merges the base (a file path, or a
+`bundle//<path>` file under a filesystem bundle, and any chain of them) into your
+`config.json` once, with the local file winning, and drops the key. What the
+runtime never took from a base stays out of the merge, and each such part is
+noted: `bundles`, `defaultBundle`, `embedding`, `experimental`, `registries` and
+`scheduler`, a connection's `apiKey`, a harness's `bin`, `args` and `workspace`,
+and an improve strategy's `sync`. To share a block between hosts, copy it.
 
-```jsonc
-// bundles/fleet/config/shared.json — versioned with the bundle, shared by every host
-{
-  "configVersion": "0.9.0",
-  "connections": {
-    "fast": { "endpoint": "https://api.example.test/v1", "models": { "fast": "qwen3", "balanced": "qwen3" } }
-  },
-  "improve": { "connection": "fast", "strategies": { "nightly": { "processes": { "reflect": { "limit": 10 } } } } }
-}
-```
-
-```jsonc
-// ~/.config/akm/config.json — this host's local file, under 20 lines
-{
-  "configVersion": "0.9.0",
-  "extends": "fleet//config/shared.json",
-  "bundles": {
-    "fleet": { "git": "https://github.com/example/fleet-bundle.git" },
-    "stash": { "path": "~/akm-stash", "writable": true }
-  },
-  "defaultBundle": "stash",
-  "connections": { "fast": { "apiKey": "$FAST_API_KEY" } }
-}
-```
-
-`extends` accepts either form:
-
-- A filesystem path — relative paths resolve against the directory of the
-  config file that declares them; a leading `~` expands.
-- A `bundle//<path>` ref — a plain file path *relative to that bundle's
-  content root* (e.g. `config/shared.json`), resolved through the bundle's
-  configured `path`, not the search index — so it never needs `akm index` to
-  have run. This is not an asset ref: the path after `//` needs no asset type
-  (`scripts/`, `knowledge/`, …) and the shared file is never indexed; it can
-  live anywhere under the bundle. An empty, absolute, or content-root-escaping
-  path is rejected. Only a filesystem bundle (`bundles.<id>.path`) can host an
-  `extends` source; sync a `git`/`website` bundle with `akm bundle
-  add`/`akm sync` first so the file is materialized locally, then point
-  `extends` at it.
-
-Shared layers carry portable policy, not host authority. `bundles`, source and
-write defaults, registries, embedding connections, scheduler activation,
-`experimental`, and setup state are ignored when inherited.
-Connection and harness definitions may be shared, but credentials and
-executable authority (`apiKey`, `bin`, `args`, and `workspace`) are ignored
-when inherited and must be supplied by the local file; a key in the host's
-`credentials.json` needs no entry at all. Improve publication (`strategies.*.sync`) is local as well. Bundle-relative chains stay physically inside
-the bundle root for every hop; lexical `..` paths and symlink escapes are both
-rejected before a referenced file is read.
-
-There is no `extends: <url>` form: config load is synchronous and runs on
-every invocation, and akm deliberately does not fetch network resources at
-load time (the same reason `registries` is never fetched until a
-registry-touching command runs). A URL-backed shared config should be synced
-as a `git`/`website` bundle and referenced as `extends: bundle//<path>`
-once materialized, reusing the sync machinery akm already has instead of a
-second one inside config load.
-
-The base config runs through the exact same load pipeline as the local
-file — its own version shim, its own legacy-shape shim — so it can carry an
-older `configVersion` independently, and it may itself set `extends`
-(chained). Cycle detection (`ConfigError`, "extends cycle detected") stops A
-extends B extends A instead of recursing forever. Merge order is
-`DEFAULT_CONFIG` (outermost) → the resolved `extends` chain → the local
-file's own keys (local always wins) — the same `deepMergeConfig` "override
-wins" semantics `config set` already uses. A referenced file/bundle that does
-not already exist locally is a load-time `ConfigError` naming the ref — akm
-never fetches or syncs one on your behalf.
-
-`akm config diff <path|bundle//path>` compares this host's EFFECTIVE
-config (its own `extends` already applied) against another config file or
-bundle-relative file (loaded through the same loader, so ITS `extends` is
-honoured too), printing sorted `{ path, local, other }` rows for every leaf
-that differs. Both sides are redacted the same way `config get`/`list` are
-before comparison, so a differing secret never round-trips into the diff
-output. Cross-host comparison (`ssh host2 akm config diff ...` in a loop) is
-left to the operator; akm has no concept of a networked fleet to compare
-against directly.
+`akm config diff <path>` compares this host's effective config against another
+config file (a relative path is read from the working directory; `~` expands),
+printing sorted `{ path, local, other }` rows for every leaf that differs. Both
+sides are redacted the same way `config get`/`list` are before comparison, so a
+differing secret never round-trips into the diff output.
 
 ```sh
 akm config diff ~/other-host/config.json
-akm config diff fleet//config/shared.json
 ```
+
+## Choosing the config file
+
+`--config <file>` (on any command) or `AKM_CONFIG_FILE` names the config file
+this run uses; the flag wins over the variable, and either wins over the
+default location. A relative path is taken from the working directory. A file
+that does not exist reads as the default file's absence does: the defaults, and
+`akm config set` creates it. `credentials.json` and the config lock live beside
+the chosen file. akm hands `AKM_CONFIG_FILE` (absolute) to every process it starts
+that runs `akm` (agents, task and workflow scripts, scheduled tasks), so they use
+the same installation.
+
+A chosen file other than the default is a separate installation: akm does not
+write the OS scheduler entry for it, and its supervisor runs `akm task dispatch`
+itself (see [`akm task`](cli.md#task)).
+
+### `paths`
+
+```jsonc
+{ "paths": { "data": "/var/lib/akm", "state": "state", "cache": "~/.cache/akm-work" } }
+```
+
+`paths.data`, `paths.state` and `paths.cache` say where this installation keeps
+its databases and `akm.lock` (data), its locks and per-run state (state), and its
+regenerable caches, config backups and task logs (cache). Each is absolute,
+`~`-relative, or relative to the config file. A key left out is the platform
+default (`XDG_DATA_HOME` and the others, else under the home folder). akm reads
+`paths` before anything else, so a value it cannot place (not a string, `~user/...`)
+is a fatal config error rather than a warning: it would move writes. `paths` is how
+an installation places its data, state and cache: `AKM_DATA_DIR`, `AKM_STATE_DIR`
+and `AKM_CACHE_DIR` are retired (see [Retired location variables](#retired-location-variables)),
+and `akm migrate apply` writes what they named into the file (absolute, and only the
+ones the file does not name). A file that cannot be written (an image-baked config)
+gets the entries listed in the plan to add to the image's template. `akm info`
+reports the resolved `configFile`, `dataDir`, `stateDir` and `cacheDir`.
+
+### Retired location variables
+
+`AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR`, `AKM_CACHE_DIR` and
+`AKM_BUNDLE_DIR` are no longer read. With one of the first four set and `AKM_CONFIG_FILE` unset, akm stops with an error
+that names the variable, `akm migrate apply` and `AKM_CONFIG_FILE` (exit 78,
+`RETIRED_LOCATION_VARIABLE`); ignoring one would open empty databases at the default
+locations. `akm migrate`, `akm upgrade`, `akm info`, `--version` and `--help` still
+run, and so does a library caller up to the first call that needs a location. To
+move a host over: run `akm migrate apply` with the old variables still set (it finds
+the config through `AKM_CONFIG_DIR`, and writes the data, state and cache it was
+given into `paths`), then unset all four where the host sets them (shell profile,
+image, compose file, supervisor), and, if `AKM_CONFIG_DIR` located the file, set
+`AKM_CONFIG_FILE=<that directory>/config.json` there instead. The plan's
+`environment` section lists exactly those names. A host that keeps the variables for
+an older akm may set `AKM_CONFIG_FILE` as well: akm then ignores them. A scheduler
+row an older akm wrote that sets one of them fails when it fires; `akm migrate`
+and `akm task sync` list such rows with what to do instead.
+
+`AKM_BUNDLE_DIR` named the working bundle; now only `defaultBundle` and
+`bundles.<id>.path` (or `--bundle`) do. Every scheduler row akm 0.9.32 and 0.10 wrote
+sets it to the working bundle, and many hosts set it equal to `defaultBundle`, so a
+value that names the bundle akm resolves without it (the same directory by resolved
+path, or that bundle's component root) is ignored, with no error and no warning, as is
+any value while `AKM_CONFIG_FILE` is set. Any other directory is the same fatal
+`RETIRED_LOCATION_VARIABLE` error (exit 78): ignoring it would work in a different
+bundle than the host meant. `akm migrate apply` registers that directory as
+`defaultBundle` (a bundle already configured there is reused; a different default
+stays configured as a bundle; a file that cannot be written gets the entries to add
+to its template), and lists `AKM_BUNDLE_DIR` among the variables to unset. A scheduler
+row that names another bundle's directory is left in place and reported by
+`akm migrate` and `akm task sync`: it fails when it fires. To work in a bundle for
+one run, pass `--bundle <name>`; to isolate a run, use `--config <file>`.
 
 ## Environment
 
 | Variable | Purpose |
 | --- | --- |
-| `AKM_CONFIG_DIR` | Override the user config directory (or set `XDG_CONFIG_HOME`) |
-| `AKM_BUNDLE_DIR` | Override the bundle directory |
-| `AKM_DATA_DIR` | Override the data directory — `index.db`, durable `state.db`, and `akm.lock` (or set `XDG_DATA_HOME`) |
-| `AKM_CACHE_DIR` | Override the cache directory — regenerable caches (or set `XDG_CACHE_HOME`) |
-| `AKM_STATE_DIR` | Override the state directory — the scheduler lock and, per bundle, `akm improve`'s whole-run lock (or set `XDG_STATE_HOME`) |
-| `AKM_SQLITE_JOURNAL_MODE` | SQLite journal mode: `WAL` (default), `DELETE`, or `TRUNCATE` |
+| `AKM_CONFIG_FILE` | The config file to use (same as `--config <file>`, which wins); see [Choosing the config file](#choosing-the-config-file) |
 | `AKM_NPM_REGISTRY` | Base URL of an npm mirror; replaces `registry.npmjs.org` for npm bundle resolution |
-| `AKM_REGISTRY_URL` | Comma-separated registry URLs that replace the configured `registries` in every registry search akm performs; `akm registry list`, `akm info` and the `egress-endpoints` health advisory still show the configured list (prefix an entry with `<provider>::` to choose a provider) |
-| `AKM_VERBOSE` | Truthy value enables the same diagnostics as `--verbose` |
-| `AKM_DEBUG` | `1` prints a stack trace on unexpected internal errors |
 
-Use `AKM_SQLITE_JOURNAL_MODE=DELETE` or `TRUNCATE` when WAL is unavailable,
-such as on some NFS/SMB mounts. With the default `WAL` setting, AKM detects a
-network filesystem for the data directory and falls back to `DELETE`.
+The config file's `paths` (and, below it, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME`, `XDG_CONFIG_HOME`) place the rest. `akm setup --dir <a directory under /tmp, /var/tmp or the macOS temp folders>` keeps its config and cache under `<dir>/.akm` for that run (`AKM_CONFIG_FILE` points there), unless you chose a config file or `XDG_CONFIG_HOME` yourself, so a sandbox never touches your real config.
+
+`AKM_EMBED_DETERMINISTIC` is an Internal seam that akm-eval and the tests use (a hash embedder instead of a model). It is not for product use and carries no compatibility guarantee ([STABILITY](../../STABILITY.md)).
+
+SQLite uses WAL; when the data directory is on a detected network filesystem
+(NFS, SMB, some FUSE mounts), akm falls back to the `DELETE` journal mode and says so.
 
 ## Retired Configuration
 
 A key akm no longer reads is named once, ignored, and dropped by `akm migrate
 apply`. That covers `profiles`, `llm`, `agent`, `features`, `stashes`,
-`defaults.llm`, `defaults.agent`, `defaults.improve`, the settings that sat
-under `index.<pass>` (`endpoint`, `provider`, `apiKey`, `baseUrl`,
-`temperature`, `maxTokens`, `capabilities`), `index.graph.*`, every strategy's
+`defaults.llm`, `defaults.agent`, `defaults.improve`, the whole `index` section
+(its `connection`, `model`, `timeoutMs`, `llm` and per-pass entries never took
+effect: improve resolves where memory inference runs), `setup`,
+`improve.salience`, `bundles.<name>.website.refresh`, a registry's `options`, a
+strategy's `description` and `limit` (set `processes.reflect.limit`), every strategy's
 `processes.graphExtraction.*`, a strategy's `processes.feedbackDistillation`
 (use `processes.distill.enabled`), `processes.consolidate.incrementalSince`
 and `neighborsPerChanged`, and `embedding.chunkSize`. The strategy name
@@ -1187,11 +1205,13 @@ holds an override; `akm migrate apply` drops the override.
 
 ### The `engines` form
 
-A config that holds `engines` or `defaults` loads: akm reads it in memory as
-`connections` and `harnesses`, with one warning that names `akm migrate apply`.
-`akm migrate apply` makes the same conversion permanent, under a backup, and
-prints a note for everything it cannot carry. Credentials, `models.json` and
-asset keys move as the table says.
+akm reads only the current shape. A config that holds `engines` or `defaults`
+loads with no connections or harnesses from them, so model work has nowhere to
+run, and one warning says so and names `akm migrate apply`. `akm migrate apply`
+(which `akm upgrade` runs) converts the file, under a backup, and prints a note
+for everything it cannot carry. Credentials, `models.json` and asset keys move
+as the table says. The conversion covers a config written by 0.9.32 through
+0.10.261013-beta; one written before 0.9.32 steps through 0.9.32 first.
 
 | In the file | What `akm migrate apply` does |
 | --- | --- |
@@ -1200,34 +1220,32 @@ asset keys move as the table says.
 | `engines.<name>` with `kind: "agent"` and `platform: "opencode-sdk"`, with an `llmEngine` | Removed: OpenCode ran over that connection, which is what akm's own runtime is, so it has no entry. When `defaults.llmEngine` or `defaults.engine` names the engine, and `defaults.llmEngine` names no connection, the `llmEngine` connection becomes `default`. The engine's `model`, `timeoutMs`, `workspace`, `bin` and `agent` are dropped, with a note naming those it set. |
 | `engines.<name>` with `kind: "agent"`, any other platform | `harnesses.<name>`, keeping `platform`, `bin`, `args`, `workspace`, `agent` and `timeoutMs`. `model` becomes `models`, naming it for all three aliases. |
 | `defaults.llmEngine`, else `defaults.engine` when it names an LLM engine | That connection is renamed `default`, and every reference to the old name follows. An entry already called `default` moves aside to `legacy-default`, or the first `legacy-default-<n>` nothing else has: the renaming is one name to one name, so no two entries share a name and none is lost. A `defaults.llmEngine` that named an agent engine ran akm's model work there; model work runs on the default connection, else the default harness, so a note says when that is another place and names `improve.harness`. With no `defaults.llmEngine` and no connection, 0.9 ran no model work unless a setting named an engine and the default harness takes it now; a note says so and how to turn it off (`modelWork: false`). |
-| `defaults.engine` naming an agent engine, when there are several | That harness is renamed `default`. With no `defaults.engine`, an engine called `opencode-sdk` is the default agent engine, as the 0.9 fallback made it. |
+| `defaults.engine` naming an agent engine, when there are several | That harness is renamed `default`. With no `defaults.engine`, an engine called `opencode-sdk` is the default agent engine, as the 0.9 fallback made it. With no `defaults.engine` and no such engine, none is `default`, and agent work errors until you name one `default` or pass `--harness`. |
 | No `defaults.engine` | 0.9 ran agent work on your own OpenCode, when it was installed. A note says where agent work runs now: on the harness if one is configured, else on akm's own runtime, and then how to enable the harness (`akm setup --harness opencode`). |
 | `defaults.improveStrategy` | `improve.strategy`. |
 | `models.json` | Folded into the `models` of the connections and harnesses it names; what it cannot place is listed in the notes. The `opencode-sdk` column names the harnesses that were `opencode-sdk` engines, and the `opencode` column those that were `platform: "opencode"`. A harness whose engine had a `model` of its own keeps it for every alias, over any column: it is what ran when a request named none. The file moves to `config-backups/` in the cache directory. |
-| `apiKeyFile`, a literal `apiKey`, a `${secrets/...}` `apiKey` | The key moves to `credentials.json` for the connection and its endpoint; a note names where it was, never its value. A key that cannot be read stays on the connection as it was (`apiKey`, or `apiKeyFile` for a key file), with a note that it is still to do; a later run moves it once it can be read. |
+| `apiKeyFile`, a literal `apiKey`, a `${secrets/...}` `apiKey` | The key moves to `credentials.json` for the connection and its endpoint; a note names where it was, never its value. A key that cannot be read stays on the connection as `apiKey`, with a note that it is still to do; a later run moves it once it can be read. A key file that cannot be read is dropped, with a note naming its path: akm does not read a key file. |
 | `AKM_ENGINE_<NAME>_API_KEY` or `AKM_LLM_API_KEY` set in the environment | `apiKey: "$AKM_ENGINE_<NAME>_API_KEY"` (or `$AKM_LLM_API_KEY`) on that connection. Set in no variable, an engine that names no key gets none, and a note names the variables 0.9 read. |
 | `improve.strategies.<name>.engine`, `model`, `llm`, `timeoutMs` | Dropped, with a note: a strategy says which processes run, not where. |
-| `engine`, `model`, `llm`, `timeoutMs` on a strategy's process, its `qualityGate` or its `triage.judgment` | Moved to `improve.processes.<process>` or `improve.qualityGate`, with `engine` becoming `connection` or `harness` by what it named. When that place already says, the first one is kept, with a note. |
-| `index.defaults.*`, `index.<pass>.engine` | `index.*`, and `connection`. An index pass cannot name a harness, so an engine that named one is dropped, with a note; a pass that names nothing runs where model work does: on the default connection, else the default harness. |
+| `engine`, `model`, `timeoutMs` on a strategy's process, its `qualityGate` or its `triage.judgment` | Moved to `improve.processes.<process>` or `improve.qualityGate`, with `engine` becoming `connection` or `harness` by what it named. When that place already says, the first one is kept, with a note. |
+| `llm` on a strategy's process, its `qualityGate` or its `triage.judgment` | Dropped, with a note: improve reads no inference settings there. Set them on a model alias of the connection and name it with `model` ([Settings a call asks for](#settings-a-call-asks-for)). |
+| `index.defaults.*`, `index.<pass>.engine` | Dropped with the rest of the `index` section: it is retired and no longer read, so it is named once as an unknown key until then. Where memory inference runs is `improve.processes.memoryInference` over `improve.*`. |
 | `workflow.judgeEngine` | Dropped, with a note: a gate's judge runs on the default connection, else the default harness. The note says whether the engine it named is that default, or the judge has moved. With none set, 0.9 ran the judge on `defaults.engine`; a note says when that is not where it runs now. |
 | `engine:` in an asset's frontmatter, a workflow step or a task source | `connection:` or `harness:`, by what the configured target is; a name it cannot place becomes `harness:`, with a note. A bundle akm may not change, and an asset that is a symbolic link, are skipped. |
 
-An `engine:` key on an asset that has not been migrated is read the same way,
-with a one-time notice, and so is `--engine NAME` (hidden from `--help`): both
-name a connection by that name, else a harness. While the config file is still
-in the `engines` form they name the connection or harness that engine became, so
-`engine: lab` still means the engine called `lab` after the conversion has
-renamed it `default`. Once `akm migrate apply` has rewritten the file, the names
-the engines had are kept in akm's data directory
-(`migrate/engine-targets.json`), and the key and the flag go on meaning the same
-engine until the migrator has rewritten every `engine:` key it can reach; an
-asset in a read-only bundle, or a block it could not splice, is rewritten under
-the same names by a later run, and an asset that is a symbolic link is read but
-never rewritten, so it is listed as skipped and keeps the names until you change
-the file it leads to. Then the names are forgotten, an old name that is
-neither a connection nor a harness fails like any unconfigured name (exit 78),
-and the run that forgets them prints one note listing each renamed engine and
-the flag that replaces it. A script or scheduled command that passes `--engine`
-is not one the migrator can reach: change it to `--connection` or `--harness`. A
-remembered name whose connection is no longer configured fails like any
-selection of an unconfigured name.
+akm does not read `engine:` or `--engine NAME`. A workflow, task source, command
+or agent that still says `engine:` is refused when it is rendered for a run,
+naming `akm migrate apply` (index, show, search and lint still read it); a
+bundle that command cannot rewrite is edited by hand, or the asset is copied to
+a writable bundle. `--engine` and `--require-engines` are unknown
+flags (exit 2). The conversion renames the engine `defaults` named to `default`
+and moves an old `default` aside, so the migrator keeps the old names in akm's
+data directory (`migrate/engine-targets.json`) until it has rewritten every
+`engine:` key it can reach; an asset in a read-only bundle, or a block it could
+not splice, is rewritten under the same names by a later run, and an asset that
+is a symbolic link is read but never rewritten, so it is listed as skipped and
+keeps the names until you change the file it leads to. Then the names are
+forgotten, and the run that forgets them prints one note listing each renamed
+engine and the flag that replaces it. A script or scheduled command that passes
+`--engine` is not one the migrator can reach: change it to `--connection` or
+`--harness`.

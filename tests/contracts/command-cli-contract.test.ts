@@ -16,19 +16,19 @@ type DynamicCommand = {
 };
 
 describe("canonical command CLI surface", () => {
-  test("registers command run <ref> with one exact argument string", () => {
+  test("registers command <ref> as one leaf with one exact argument string", () => {
     const top = main.subCommands as unknown as Record<string, DynamicCommand>;
     expect(top.command).toBe(commandCommand as unknown as DynamicCommand);
 
-    const run = (commandCommand as unknown as DynamicCommand).subCommands?.run;
+    const run = commandCommand as unknown as DynamicCommand;
+    expect(run.subCommands).toBeUndefined();
     expect(run?.args?.ref).toMatchObject({ type: "positional", required: true });
     expect(run?.args?.arguments).toMatchObject({ type: "string" });
     expect(run?.args?.["dry-run"]).toMatchObject({ type: "boolean", default: false });
   });
 });
 
-// P2b Lane B (spec docs/plans/specs/p2b-input-bindings.md §1.2 binding, §7
-// F-B3): the contract must be extended in the SAME commit that registers a
+// P2b Lane B: the contract must be extended in the SAME commit that registers a
 // new verb. `akm task explain` (B-N4) is read-only introspection — a `ref`
 // positional plus the global `format` flag (GLOBAL_OUTPUT_ARGS,
 // src/cli/shared.ts), like every defineJsonCommand leaf.
@@ -70,8 +70,7 @@ describe("canonical task CLI surface", () => {
   });
 });
 
-// P3b Lane B (spec docs/plans/specs/p3b-child-executor.md §1.2 binding, §6
-// F-B4): extended in the SAME commit that registers the verb, mirroring this
+// P3b Lane B: extended in the SAME commit that registers the verb, mirroring this
 // file's own "canonical task CLI surface" describe above. `akm workflow plan
 // <ref>` is read-only compile+freeze introspection (§4.6) — a `ref`
 // positional plus the global `format` flag (GLOBAL_OUTPUT_ARGS,
@@ -100,21 +99,11 @@ describe("canonical workflow CLI surface", () => {
     expect(run?.args?.["skip-if-locked"]).toMatchObject({ type: "boolean", default: false });
   });
 
-  // #1239: `--all-scopes` and `--new` stay registered as deprecated no-ops
-  // through 0.10 so existing scripts do not fail with UNKNOWN_FLAG.
-  test("registers workflow list/status --all-scopes and run --new as boolean flags defaulting to false", () => {
-    const top = main.subCommands as unknown as Record<string, DynamicCommand>;
-    expect(top.workflow).toBe(workflowCommand as unknown as DynamicCommand);
-
-    const list = (workflowCommand as unknown as DynamicCommand).subCommands?.list;
-    expect(list?.args?.["all-scopes"]).toMatchObject({ type: "boolean", default: false });
-
-    const status = (workflowCommand as unknown as DynamicCommand).subCommands?.status;
-    expect(status?.args?.target).toMatchObject({ type: "positional", required: true });
-    expect(status?.args?.["all-scopes"]).toMatchObject({ type: "boolean", default: false });
-
-    const run = (workflowCommand as unknown as DynamicCommand).subCommands?.run;
-    expect(run?.args?.new).toMatchObject({ type: "boolean", default: false });
+  test("workflow list/status/run no longer register --all-scopes or --new", () => {
+    const sub = (workflowCommand as unknown as DynamicCommand).subCommands;
+    expect(sub?.list?.args?.["all-scopes"]).toBeUndefined();
+    expect(sub?.status?.args?.["all-scopes"]).toBeUndefined();
+    expect(sub?.run?.args?.new).toBeUndefined();
   });
 });
 

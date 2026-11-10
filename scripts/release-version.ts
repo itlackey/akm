@@ -3,108 +3,72 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Release version rules (#1089), used by .github/workflows/release.yml.
+ * Release versions, used by .github/workflows/release.yml and scripts/release.sh.
  *
- * From 0.10 the patch number is a monthly release number: `0.<minor>.YYMMNN`,
- * with `YY` the UTC year, `MM` the month (`01` to `12`) and `NN` the release
- * within that month (`01` to `99`), all two digits. A release takes its number
- * when its branch (`release/<version>`) is cut, one above the highest `NN`
- * published that month at any stage. Its prereleases are that number with the
- * stage and a counter appended (`0.10.261001-beta.1`, then `-beta.2`, then
- * `-rc.1`; the counter is one above the highest on npm for that release and
- * stage); the stable release is the bare number. Prereleases published before
- * this rule carry a bare stage (`0.10.261115-beta`) and still validate.
- * The 0.9 line and older keep plain `X.Y.Z[-prerelease]`.
+ * Plain semver from 0.11: prereleases are `0.11.0-alpha.N`, `-beta.N` and `-rc.N`, the stable release is `0.11.0`,
+ * then patches `0.11.1`, `0.11.2`; the next minor starts at `0.12.0`. The counter N is one above the highest published
+ * for that version and stage. package.json holds the release's version (a stage with counter 0, `0.11.0-beta.0`, while
+ * the release is in progress; the bare version once it ships).
  *
- *   bun scripts/release-version.ts validate <version>
  *   bun scripts/release-version.ts next [0.<minor>]
  *   VERSION_INPUT=... STAGE_INPUT=... bun scripts/release-version.ts resolve
  *
- * `next` prints the next release number of a line (package.json's unless one is given, as when a new line starts)
- * for the UTC month, numbered from the versions already on npm (any stage counts, legacy 8-digit daily builds do
- * not): the name of the next release branch. `resolve` is what the Release workflow runs on a release's version and
- * stage.
+ * `next` prints the version of the next release of a line (package.json's unless one is given): the next patch of
+ * the line's latest stable on npm, or `0.<minor>.0` when the line has none. `resolve` is what the Release workflow
+ * runs on package.json's version and the dispatched stage.
  */
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import semver from "semver";
 
 export const STAGES = ["alpha", "beta", "rc"] as const;
 
-const MONTHLY = /^0\.(\d+)\.(\d{2})(\d{2})(\d{2})(?:-(alpha|beta|rc)(?:\.([1-9]\d*))?)?$/;
-const LEGACY = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?$/;
+const RELEASE = /^0\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:alpha|beta|rc)\.[1-9]\d*)?$/;
 
-/** The first minor that uses monthly release numbers. */
-const FIRST_MONTHLY_MINOR = 10;
-
-function usesMonthlyNumbers(version: string): boolean {
-  const m = /^0\.(\d+)\./.exec(version);
-  return m !== null && Number(m[1]) >= FIRST_MONTHLY_MINOR;
-}
-
-/** An error message when `version` is not a valid release version, else undefined. */
+/** An error message when `version` is not `0.x.y` or `0.x.y-(alpha|beta|rc).N`, else undefined. */
 export function validateVersion(version: string): string | undefined {
-  if (!usesMonthlyNumbers(version)) {
-    return LEGACY.test(version) ? undefined : `"${version}" is not a valid version (X.Y.Z or X.Y.Z-prerelease)`;
-  }
-  const m = MONTHLY.exec(version);
-  if (!m) {
-    const legacy = /^0\.\d+\.\d{8}(?:-|$)/.test(version) ? " (the 8-digit daily YYMMDDNN form is retired)" : "";
-    return `"${version}" is not 0.<minor>.YYMMNN with an optional -alpha.N, -beta.N or -rc.N (two digits each for YY, MM, NN)${legacy}`;
-  }
-  const [, , , mm, nn] = m;
-  if (Number(mm) < 1 || Number(mm) > 12) return `"${version}": the month MM is 01 to 12, not ${mm}`;
-  if (Number(nn) < 1) return `"${version}": the release number NN is 01 to 99`;
-  return undefined;
-}
-
-function pad2(n: number): string {
-  return String(n).padStart(2, "0");
+  return RELEASE.test(version) ? undefined : `"${version}" is not 0.x.y or 0.x.y-(alpha|beta|rc).N`;
 }
 
 /**
- * The next release number of `line` (for example `0.10`) in the UTC month of `now`: one above the highest NN already
- * published that month at any stage, so a number is never reused and a gap left by an unpublished version stays a
- * gap. Legacy 8-digit daily builds do not match and are ignored.
+ * The next release of `line` (for example `0.11`): one patch above its highest stable version in `published`, or
+ * `<line>.0` when it has none. Prereleases do not count.
  */
-export function deriveVersion(line: string, now: Date, published: readonly string[]): string {
-  const month = `${pad2(now.getUTCFullYear() % 100)}${pad2(now.getUTCMonth() + 1)}`;
-  let highest = 0;
+export function nextVersion(line: string, published: readonly string[]): string {
+  let patch = -1;
   for (const v of published) {
-    const m = MONTHLY.exec(v);
-    if (m && `0.${m[1]}` === line && `${m[2]}${m[3]}` === month) highest = Math.max(highest, Number(m[4]));
+    const p = semver.parse(v);
+    if (p && p.prerelease.length === 0 && `${p.major}.${p.minor}` === line) patch = Math.max(patch, p.patch);
   }
-  if (highest >= 99)
-    throw new Error(`${line}.${month}99 is already published: no release numbers are left for this UTC month`);
-  return `${line}.${month}${pad2(highest + 1)}`;
+  return `${line}.${patch + 1}`;
 }
 
 /**
- * The version to publish: the release's number (the release branch's name for a prerelease, package.json for a
- * stable release), with `stage` and a counter appended for a prerelease (`stage` empty for a stable release). The
- * counter is one above the highest already in `published` for that release and stage; a published bare stage
- * counts as 1. Throws an Error naming what is wrong.
+ * The version to publish: `versionInput` as it is for a stable release (`stageInput` empty; it must have no
+ * prerelease part), or its base with `stage` and the next counter for a prerelease. Throws an Error naming what is
+ * wrong.
  */
 export function resolveVersion(versionInput: string, stageInput: string, published: readonly string[] = []): string {
   const given = versionInput.trim();
   const stage = stageInput.trim();
-  if (stage !== "" && !(STAGES as readonly string[]).includes(stage)) {
-    throw new Error(`stage "${stage}" is not one of ${STAGES.join(", ")}`);
-  }
   let candidate = given;
   if (stage !== "") {
-    if (!usesMonthlyNumbers(given))
-      throw new Error(`stage applies to monthly release numbers (0.${FIRST_MONTHLY_MINOR}+) only, not "${given}"`);
-    if (given.includes("-"))
-      throw new Error(
-        `"${given}" already has a stage; give the release number (0.<minor>.YYMMNN) and the stage separately`,
-      );
+    if (!(STAGES as readonly string[]).includes(stage)) {
+      throw new Error(`stage "${stage}" is not one of ${STAGES.join(", ")}`);
+    }
+    const base = given.replace(/-.*/, "");
+    if (published.includes(base)) throw new Error(`${base} is already published; package.json must name a new version`);
     let highest = 0;
     for (const v of published) {
-      const m = MONTHLY.exec(v);
-      if (m && v.split("-")[0] === given && m[5] === stage) highest = Math.max(highest, m[6] ? Number(m[6]) : 1);
+      const p = semver.parse(v);
+      if (p && `${p.major}.${p.minor}.${p.patch}` === base && p.prerelease[0] === stage) {
+        highest = Math.max(highest, Number(p.prerelease[1]) || 0);
+      }
     }
-    candidate = `${given}-${stage}.${highest + 1}`;
+    candidate = `${base}-${stage}.${highest + 1}`;
+  } else if (given.includes("-")) {
+    throw new Error(`"${given}" is a prerelease; dispatch the Release workflow with a stage, or ship the bare version`);
   }
   const problem = validateVersion(candidate);
   if (problem) throw new Error(problem);
@@ -134,11 +98,6 @@ function npmVersions(name: string): string[] {
 function main(argv: string[]): number {
   const [command, arg] = argv;
   try {
-    if (command === "validate" && arg) {
-      const problem = validateVersion(arg);
-      if (problem) throw new Error(problem);
-      return 0;
-    }
     if (command === "resolve") {
       const stage = (process.env.STAGE_INPUT ?? "").trim();
       const published = stage === "" ? [] : npmVersions(packageJson().name);
@@ -147,20 +106,17 @@ function main(argv: string[]): number {
     }
     if (command === "next") {
       const pkg = packageJson();
-      const line = /^0\.(\d+)(?:\.|$)/.exec(arg ?? pkg.version);
-      if (!line || Number(line[1]) < FIRST_MONTHLY_MINOR) {
-        throw new Error(
-          `${arg ?? `package.json ${pkg.version}`} is not a monthly-number line (0.${FIRST_MONTHLY_MINOR}+)`,
-        );
-      }
-      console.log(deriveVersion(`0.${line[1]}`, new Date(), npmVersions(pkg.name)));
+      const line = /^0\.\d+(?=\.|$)/.exec(arg ?? pkg.version);
+      if (!line) throw new Error(`${arg ?? `package.json ${pkg.version}`} is not a 0.<minor> line`);
+      // package.json is what the line last shipped: npm may not have it yet right after its merge.
+      console.log(nextVersion(line[0], [...npmVersions(pkg.name), pkg.version]));
       return 0;
     }
   } catch (err) {
     console.error((err as Error).message);
     return 1;
   }
-  console.error("usage: release-version.ts validate <version> | resolve | next [0.<minor>]");
+  console.error("usage: release-version.ts resolve | next [0.<minor>]");
   return 2;
 }
 

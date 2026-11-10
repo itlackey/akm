@@ -31,7 +31,7 @@ function curate(
 ```
 
 - **Result.** Exactly the stdout of
-  `akm --detail agent -q curate <query> [--limit N] [--type T] --format <format>`,
+  `akm --detail normal -q curate <query> [--limit N] [--type T] --format <format>`,
   including the trailing newline, computed in-process. `format` defaults to
   `"json"`, as the CLI does. It runs the same code as the command (argument
   validation, search, ranking, shaping and rendering are shared, not copied), so
@@ -71,8 +71,7 @@ function curate(
   event in `state.db`.
 - **Repeated calls.** Config is re-validated against `config.json` on every
   call (its path, size and modification time), so an edit to that file is seen by
-  the next call exactly as a separate CLI run would see it. A change only in a file
-  its `extends` names is not noticed until the config file itself changes. Database handles are
+  the next call exactly as a separate CLI run would see it. Database handles are
   opened and closed within each call. The local embedding model and the embedding
   cache are kept for the life of the process, which is what makes a warm call
   cheaper than a CLI run. Overlapping calls are safe. Under Bun the SQLite file
@@ -84,10 +83,8 @@ function curate(
 `package.json` `exports` maps `akm-cli/api` to `dist/api.js` under Bun and to
 `dist/api-node.mjs` under Node (which registers the loader hook for the
 package's embedded `.md`/`.xml` assets before loading `dist/api.js`), with
-`dist/api.d.ts` for types. `akm-cli/package.json` and `akm-cli/dist/*` are also
-exported, so a plugin can locate the `akm` bin with
-`require.resolve("akm-cli/package.json")` and published plugin versions that
-deep-import `akm-cli/dist/commands/read/*.js` keep working.
+`dist/api.d.ts` for types. `akm-cli/package.json` is also exported, so a plugin
+can locate the `akm` bin with `require.resolve("akm-cli/package.json")`.
 
 ## Stability
 

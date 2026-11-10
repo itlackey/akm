@@ -61,7 +61,6 @@ function fakeHarness(count: number): SessionLogHarness {
 /** Config enabling extract with a specific minNewSessions threshold. */
 function configWithMinNewSessions(minNewSessions: number | undefined): AkmConfig {
   return withTestImproveLlm({
-    configVersion: "0.9.0",
     semanticSearchMode: "off",
     improve: {
       strategies: {
@@ -105,7 +104,7 @@ beforeEach(() => {
   const storage = withIsolatedAkmStorage();
   stashDir = storage.stashDir;
   cleanup = storage.cleanup;
-  saveConfig(withTestImproveLlm({ configVersion: "0.9.0", semanticSearchMode: "off" }));
+  saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
 });
 
 afterEach(() => {
@@ -172,7 +171,6 @@ describe("#554 extract minNewSessions gate", () => {
       // ACTIVE profile ("racy") sets it; default does not. 1 new session < 3 must
       // still skip — proving the gate reads the resolved active profile.
       const config = withTestImproveLlm({
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         improve: {
           strategies: {

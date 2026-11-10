@@ -18,14 +18,11 @@ const PACKAGE_NAME = "akm-cli";
 /**
  * Every upgrade origin the rehearsal gate drives against the candidate.
  * `"previous"` resolves dynamically (the highest stable release below the
- * candidate). `"0.9.32"` preserves the full 0.9 engines-to-connections migration
- * when `previous` advances into 0.10. `"0.9.15"` is fixed: the last release before source-bound
- * scheduler grants (0.9.16) — a 0.9.15-built home has crontab rows
- * installed by `task add`'s own direct activation, with no host-local
- * `scheduler.enabled` grant recorded at all, the exact 2026-09-24 scenario
- * the scheduler-grant carry-forward exists to rescue.
+ * candidate). `"0.9.32"` is the upgrade floor: it preserves the full 0.9
+ * engines-to-connections migration when `previous` advances into 0.10. Nothing
+ * older is rehearsed: a home below the floor is refused with the 0.9.32 recipe.
  */
-export const KNOWN_UPGRADE_ORIGINS = ["previous", "0.9.32", "0.9.15"] as const;
+export const KNOWN_UPGRADE_ORIGINS = ["previous", "0.9.32"] as const;
 export type UpgradeOrigin = (typeof KNOWN_UPGRADE_ORIGINS)[number];
 
 /** `AKM_UPGRADE_FROM` still overrides ONLY the `"previous"` origin — the numbered origins are fixed. */

@@ -5,7 +5,7 @@
 /**
  * P1b Lane C — ExecutionProvenanceContext (D5, spec §1.2 / §5.2 / §1.6 D5-N1).
  *
- * `tests/integration/tasks-provenance-characterization.test.ts` (the flipped
+ * The former provenance characterization test (the flipped
  * P0 file) proves the DEFAULT provenance context reproduces today's observable
  * behavior for each dispatch arm (P-06 unchanged; P-05 reclassified; R-07
  * fixed). This file is genuinely new coverage: it exercises the
@@ -192,7 +192,7 @@ describe("workflow arm threads an explicit provenance.eventSource to the eventSo
 describe("command/prompt arm threads an explicit provenance.eventSource end to end", () => {
   function writeStoredCommandTask(id: string): void {
     fs.writeFileSync(path.join(storage.stashDir, "commands", `${id}.md`), "Notify the team.\n", "utf8");
-    writeTask(id, ["version: 4", `uses: commands/${id}`, "engine: opencode", ""].join("\n"));
+    writeTask(id, ["version: 4", `uses: commands/${id}`, "harness: opencode", ""].join("\n"));
   }
 
   test('an explicit provenance.eventSource=user overrides the "task" default in the dispatched engine env and the recorded usage-event row', async () => {
@@ -289,9 +289,8 @@ describe('CLI boundary (D5 "Construction", spec §5.2): `akm task run` builds { 
   ])('akm task run %s stamps a stored command dispatch\'s usage as "task"', async (...extraArgs) => {
     const id = `cli-prompt-${extraArgs.length > 0 ? "scheduled" : "unscheduled"}`;
     fs.writeFileSync(path.join(storage.stashDir, "commands", `${id}.md`), "Notify the team.\n", "utf8");
-    writeTask(id, ["version: 4", `uses: commands/${id}`, "engine: cli-audit", ""].join("\n"));
+    writeTask(id, ["version: 4", `uses: commands/${id}`, "harness: cli-audit", ""].join("\n"));
     const base = {
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       bundles: { fixture: { path: storage.stashDir, writable: true } },
       defaultBundle: "fixture",
@@ -300,7 +299,7 @@ describe('CLI boundary (D5 "Construction", spec §5.2): `akm task run` builds { 
       ...base,
       harnesses: { "cli-audit": { platform: "aider", bin: "/bin/true" } },
       scheduler: {
-        enabled: [{ kind: "task", ref: `fixture//tasks/${id}`, sourceId: bundleSourceId(base, "fixture") }],
+        enabled: [`fixture//tasks/${id}`],
       },
     });
     const indexed = await runCliCapture(["index", "--full"]);
@@ -319,10 +318,10 @@ describe('CLI boundary (D5 "Construction", spec §5.2): `akm task run` builds { 
 
 describe("F-3 (type-level only) — RunTaskOptions.bundleDir replaces stashDir", () => {
   // Scope note: the MECHANICAL rename across every OTHER existing
-  // `RunTaskOptions` call site (tests/integration/tasks-runtime-v3-runner.test.ts
+  // `RunTaskOptions` call site (tests/tasks-runtime-v3-runner.test.ts
   // — the canary G-1 requires stay unchanged except for this exact
-  // substitution — tests/integration/tasks-run-attempt-observability.test.ts,
-  // tests/integration/tasks-runner.test.ts) belongs to the same commit as the
+  // substitution — tests/integration/tasks/tasks-run-attempt-observability.test.ts,
+  // tests/integration/tasks/tasks-runner.test.ts) belongs to the same commit as the
   // `src/tasks/run/**` rename itself, not to this lane's two new files or its
   // authorized flips. This test only pins the TYPE-LEVEL shape: a bare
   // `bundleDir` (no `stashDir` anywhere) is a complete, valid RunTaskOptions.

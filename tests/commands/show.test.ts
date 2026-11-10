@@ -3,12 +3,19 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { akmShowUnified as akmShow, showByRef, showLocal } from "../../src/commands/read/show";
+import { slugForPath } from "../../src/core/bundle-id";
 import { saveConfig } from "../../src/core/config/config";
 import { NotFoundError } from "../../src/core/errors";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 
 import { seedLockEntries } from "../_helpers/lockfile";
-import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
+import {
+  type Cleanup,
+  sandboxStashDir,
+  sandboxXdgCacheHome,
+  sandboxXdgConfigHome,
+  withDefaultBundle,
+} from "../_helpers/sandbox";
 
 const createdTmpDirs: string[] = [];
 const testSymlink = process.platform === "win32" ? test.skip : test;
@@ -51,7 +58,7 @@ afterEach(() => {
 
 describe("akmShow stash .meta convention", () => {
   test("direct-reads .meta/index.md from the working stash for `meta`", async () => {
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
     writeFile(path.join(stashDir, ".meta", "index.md"), "# Stash orientation\nStart at skills/foo.");
 
     const result = await akmShow({ ref: "meta" });
@@ -62,7 +69,7 @@ describe("akmShow stash .meta convention", () => {
   });
 
   test("resolves a named meta doc via `meta:<name>`", async () => {
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
     writeFile(path.join(stashDir, ".meta", "about.md"), "# About\nThe stash.");
 
     const result = await akmShow({ ref: "meta:about" });
@@ -77,20 +84,20 @@ describe("akmShow stash .meta convention", () => {
     writeFile(outsidePath, "OUTSIDE_META_SECRET");
     fs.mkdirSync(path.join(stashDir, ".meta"), { recursive: true });
     fs.symlinkSync(outsidePath, path.join(stashDir, ".meta", "about.md"));
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
 
     await expect(akmShow({ ref: "meta:about" })).rejects.toThrow(/symlink|outside|escape/i);
   });
 
   test("throws a maintainer-actionable error when the doc is absent", async () => {
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
     await expect(akmShow({ ref: "meta:missing" })).rejects.toThrow(/\.meta\/missing/);
   });
 });
 
 describe("akmShow legacy colon refs", () => {
   test("a colon ref is an ordinary not-found, with no migration tip", async () => {
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
     await expect(akmShow({ ref: "knowledge:print/some-doc" })).rejects.toThrow(NotFoundError);
     await expect(akmShow({ ref: "knowledge:print/some-doc" })).rejects.not.toThrow(/slash form/);
   });
@@ -105,10 +112,15 @@ describe("akmShow installed ref", () => {
     // create the actual asset file.
     fs.mkdirSync(path.join(installedStashRoot, "scripts"), { recursive: true });
 
-    saveConfig({
-      semanticSearchMode: "off",
-      bundles: { "test-pkg": { npm: "test-pkg" } },
-    });
+    saveConfig(
+      withDefaultBundle(
+        {
+          semanticSearchMode: "off",
+          bundles: { "test-pkg": { npm: "test-pkg" } },
+        },
+        stashDir,
+      ),
+    );
     seedLockEntries([
       {
         id: "test-pkg",
@@ -131,10 +143,15 @@ describe("akmShow installed ref", () => {
       ["---", "name: svelte-file-editor", "description: Svelte editor", "---", "Use Svelte tools."].join("\n"),
     );
 
-    saveConfig({
-      semanticSearchMode: "off",
-      bundles: { "ai-tools": { git: "github:sveltejs/ai-tools", registryId: "github:sveltejs/ai-tools" } },
-    });
+    saveConfig(
+      withDefaultBundle(
+        {
+          semanticSearchMode: "off",
+          bundles: { "ai-tools": { git: "github:sveltejs/ai-tools", registryId: "github:sveltejs/ai-tools" } },
+        },
+        stashDir,
+      ),
+    );
     seedLockEntries([
       {
         id: "ai-tools",
@@ -160,10 +177,15 @@ describe("akmShow installed ref", () => {
       ["---", "name: svelte-code-writer", "description: Svelte writer", "---", "# Svelte writer"].join("\n"),
     );
 
-    saveConfig({
-      semanticSearchMode: "off",
-      bundles: { "ai-tools": { git: "github:sveltejs/ai-tools", registryId: "github:sveltejs/ai-tools" } },
-    });
+    saveConfig(
+      withDefaultBundle(
+        {
+          semanticSearchMode: "off",
+          bundles: { "ai-tools": { git: "github:sveltejs/ai-tools", registryId: "github:sveltejs/ai-tools" } },
+        },
+        stashDir,
+      ),
+    );
     seedLockEntries([
       {
         id: "ai-tools",
@@ -185,7 +207,7 @@ describe("akmShow installed ref", () => {
 
 describe("akmShow sensitive fragments", () => {
   test("ignores a secret fragment with a warning; the render path itself never reads the secret body", async () => {
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
     const secretPath = path.join(stashDir, "secrets", "leak");
     const secretBody = "# token\nDO_NOT_PRINT\n";
     writeFile(secretPath, secretBody);
@@ -224,7 +246,7 @@ describe("akmShow sensitive fragments", () => {
   });
 
   test("ignores an env fragment with a warning, reading only key names, never values", async () => {
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
     const envPath = path.join(stashDir, "env", "prod.env");
     writeFile(envPath, "# token\nAPI_KEY=DO_NOT_PRINT\n");
 
@@ -261,17 +283,22 @@ describe("akmShow agents across bundles", () => {
     writeFile(path.join(stashDir, "agents", "helper.md"), AGENT_MD);
     const result = await akmShow({ ref: "agents/helper" });
     expect(result.type).toBe("agent");
-    // Own stash → no registry origin.
-    expect(result.origin ?? null).toBeNull();
+    // Own stash → the default bundle, not a registry origin.
+    expect(result.origin).toBe(slugForPath(stashDir));
   });
 
   test("registry-installed bundle agent resolves with its origin", async () => {
     const installedStashRoot = createTmpDir("akm-show-tp-agent-");
     writeFile(path.join(installedStashRoot, "tools", "agents", "helper.md"), AGENT_MD);
-    saveConfig({
-      semanticSearchMode: "off",
-      bundles: { pack: { git: "github:evil/pack", registryId: "github:evil/pack" } },
-    });
+    saveConfig(
+      withDefaultBundle(
+        {
+          semanticSearchMode: "off",
+          bundles: { pack: { git: "github:evil/pack", registryId: "github:evil/pack" } },
+        },
+        stashDir,
+      ),
+    );
     seedLockEntries([
       {
         id: "pack",
@@ -289,10 +316,15 @@ describe("akmShow agents across bundles", () => {
   test("a --writable installed pack resolves its agent", async () => {
     const installedStashRoot = createTmpDir("akm-show-writable-pack-");
     writeFile(path.join(installedStashRoot, "tools", "agents", "helper.md"), AGENT_MD);
-    saveConfig({
-      semanticSearchMode: "off",
-      bundles: { pack: { git: "git:contrib/pack", writable: true, registryId: "git:contrib/pack" } },
-    });
+    saveConfig(
+      withDefaultBundle(
+        {
+          semanticSearchMode: "off",
+          bundles: { pack: { git: "git:contrib/pack", writable: true, registryId: "git:contrib/pack" } },
+        },
+        stashDir,
+      ),
+    );
     seedLockEntries([
       {
         id: "pack",
@@ -320,10 +352,15 @@ describe("akmShow agents across bundles", () => {
     try {
       // A resolvable asset in the PRIMARY stash proves "everything else resolves".
       writeFile(path.join(stashDir, "agents", "local.md"), AGENT_MD);
-      saveConfig({
-        semanticSearchMode: "off",
-        bundles: { remote: { git: "git:contrib/pack" } },
-      });
+      saveConfig(
+        withDefaultBundle(
+          {
+            semanticSearchMode: "off",
+            bundles: { remote: { git: "git:contrib/pack" } },
+          },
+          stashDir,
+        ),
+      );
       // Deliberately NO lock entry for "remote" — the cache is cold.
 
       const result = await akmShow({ ref: "agents/local" });
@@ -341,7 +378,9 @@ describe("akmShow agents across bundles", () => {
     const thirdPartyDir = createTmpDir("akm-show-secondary-src-");
     writeFile(path.join(thirdPartyDir, "agents", "helper.md"), AGENT_MD);
     // No `name` — the setup-wizard "add a source and leave the name blank" shape.
-    saveConfig({ semanticSearchMode: "off", bundles: { "third-party": { path: thirdPartyDir } } });
+    saveConfig(
+      withDefaultBundle({ semanticSearchMode: "off", bundles: { "third-party": { path: thirdPartyDir } } }, stashDir),
+    );
 
     const result = await akmShow({ ref: "agents/helper" });
     expect(result.type).toBe("agent");
@@ -351,7 +390,7 @@ describe("akmShow agents across bundles", () => {
   test("a source NESTED inside the primary stash resolves its agent", async () => {
     const nestedDir = path.join(stashDir, "vendor");
     writeFile(path.join(nestedDir, "agents", "helper.md"), AGENT_MD);
-    saveConfig({ semanticSearchMode: "off", bundles: { vendor: { path: nestedDir } } });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off", bundles: { vendor: { path: nestedDir } } }, stashDir));
 
     const result = await akmShow({ ref: "agents/vendor/agents/helper" });
     expect(result.type).toBe("agent");
@@ -365,7 +404,9 @@ describe("akmShow search path", () => {
     const searchPathDir = createTmpDir("akm-show-searchpath-");
     writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
 
-    saveConfig({ semanticSearchMode: "off", bundles: { searchpath: { path: searchPathDir } } });
+    saveConfig(
+      withDefaultBundle({ semanticSearchMode: "off", bundles: { searchpath: { path: searchPathDir } } }, stashDir),
+    );
 
     const result = await akmShow({ ref: "scripts/deploy.sh" });
 
@@ -379,7 +420,7 @@ describe("akmShow stale indexed paths", () => {
   test("converts only indexed-path disappearance into actionable not-found errors", async () => {
     const file = path.join(stashDir, "knowledge", "gone.md");
     writeFile(file, "# Gone\n");
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
     await akmShow({ ref: "knowledge/gone", skipLogging: true });
     fs.rmSync(file);
 
@@ -401,12 +442,12 @@ describe("akmShow editability", () => {
   test("working stash asset has editable true", async () => {
     writeFile(path.join(stashDir, "scripts", "local.sh"), "#!/usr/bin/env bash\necho local\n");
 
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
 
     const result = await akmShow({ ref: "scripts/local.sh" });
 
     expect(result.type).toBe("script");
-    expect(result.origin).toBeNull();
+    expect(result.origin).toBe(slugForPath(stashDir));
     expect(result.action).toContain("Execute the run command");
     expect(result.editable).toBe(true);
     expect(result.editHint).toBeUndefined();
@@ -416,7 +457,9 @@ describe("akmShow editability", () => {
     const searchPathDir = createTmpDir("akm-show-searchpath-editable-");
     writeFile(path.join(searchPathDir, "scripts", "remote.sh"), "#!/usr/bin/env bash\necho remote\n");
 
-    saveConfig({ semanticSearchMode: "off", bundles: { searchpath: { path: searchPathDir } } });
+    saveConfig(
+      withDefaultBundle({ semanticSearchMode: "off", bundles: { searchpath: { path: searchPathDir } } }, stashDir),
+    );
 
     const result = await akmShow({ ref: "scripts/remote.sh" });
 
@@ -433,10 +476,15 @@ describe("akmShow editability", () => {
     const installedStashRoot = createTmpDir("akm-show-installed-resolve-");
     writeFile(path.join(installedStashRoot, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
 
-    saveConfig({
-      semanticSearchMode: "off",
-      bundles: { "installed-pkg": { npm: "installed-pkg" } },
-    });
+    saveConfig(
+      withDefaultBundle(
+        {
+          semanticSearchMode: "off",
+          bundles: { "installed-pkg": { npm: "installed-pkg" } },
+        },
+        stashDir,
+      ),
+    );
     seedLockEntries([
       {
         id: "installed-pkg",
@@ -469,7 +517,7 @@ describe("akmShow content-based classification", () => {
       ["---", "model: gpt-4", "description: Deploy command", "---", "Deploy $ARGUMENTS."].join("\n"),
     );
 
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
 
     const result = await akmShow({ ref: "commands/deploy.md" });
 
@@ -492,7 +540,7 @@ describe("akmShow content-based classification", () => {
       ].join("\n"),
     );
 
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
 
     const result = await akmShow({ ref: "commands/deploy.md" });
 
@@ -510,7 +558,7 @@ describe("akmShow content-based classification", () => {
       ["---", "description: Positional args", "---", "Run release $1 with notes from $2 and flag $9."].join("\n"),
     );
 
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
 
     const result = await akmShow({ ref: "commands/positional.md" });
 
@@ -524,7 +572,7 @@ describe("akmShow content-based classification", () => {
       ["---", "description: Named args", "---", "Deploy {{env}} with {{version}} using {{env}} again."].join("\n"),
     );
 
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
 
     const result = await akmShow({ ref: "commands/named.md" });
 
@@ -535,7 +583,7 @@ describe("akmShow content-based classification", () => {
   test("script in scripts/ directory uses new renderer pipeline", async () => {
     writeFile(path.join(stashDir, "scripts", "build.sh"), "#!/usr/bin/env bash\necho build\n");
 
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
 
     const result = await akmShow({ ref: "scripts/build.sh" });
 
@@ -550,7 +598,7 @@ describe("akmShow content-based classification", () => {
       ["---", "description: Deploy helper", "---", "Deploy $ARGUMENTS to staging."].join("\n"),
     );
 
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
 
     const result = await akmShow({ ref: "commands/loose/deploy-cmd" });
 
@@ -565,7 +613,7 @@ describe("akmShow content-based classification", () => {
   ] as const) {
     test(`$ARGUMENTS documentation under ${dir}/ keeps its ref and presentation`, async () => {
       writeFile(path.join(stashDir, dir, "placeholder-guide.md"), "This guide explains `$ARGUMENTS`.\n");
-      saveConfig({ semanticSearchMode: "off" });
+      saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
 
       const result = await akmShow({ ref: `${dir}/placeholder-guide` });
 
@@ -584,7 +632,7 @@ describe("akmShow content-based classification", () => {
       ["---", "agent: build", "description: Build dispatch", "---", "Build the project."].join("\n"),
     );
 
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
 
     const result = await akmShow({ ref: "commands/agents/build-cmd" });
 
@@ -601,7 +649,7 @@ describe("akmShow markdown fragments", () => {
 
   beforeEach(() => {
     writeFile(path.join(stashDir, "knowledge", "guide.md"), GUIDE);
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
   });
 
   test("no fragment returns the whole item", async () => {
@@ -664,7 +712,7 @@ describe("akmShow markdown toc", () => {
 
   beforeEach(() => {
     writeFile(path.join(stashDir, "knowledge", "notes.md"), DOC);
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
   });
 
   test("a whole document lists its headings with the slug that selects each, duplicates suffixed", async () => {
@@ -747,7 +795,7 @@ describe("akmShow memory with a .derived.md child", () => {
     const child = path.join(stashDir, "memories", "ops", "gate.derived.md");
     writeFile(parent, "---\ndescription: Parent\n---\n# Gate\n\n## Checks\nParent body.\n");
     writeFile(child, "---\ninferred: true\nsource: memories/ops/gate\n---\nDerived body.\n");
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
 
     const shown = await akmShow({ ref: "memories/ops/gate", skipLogging: true });
     expect(shown.path).toBe(parent);
@@ -765,14 +813,14 @@ describe("akmShow memory with a .derived.md child", () => {
 // F6/R-021: direct unit coverage for `input.detail === "brief"` /
 // `buildBriefResponse` on `akmShowUnified` itself — previously ZERO test in
 // the suite exercised this path (the CLI-layer resolution that feeds it is
-// covered separately in tests/integration/commands/show-argv.test.ts).
+// covered separately in tests/commands/show-argv.test.ts).
 describe("akmShow detail levels", () => {
   test("detail: 'brief' strips content/template/prompt but keeps identity + edit fields", async () => {
     writeFile(
       path.join(stashDir, "commands", "release.md"),
       "---\ndescription: Release\n---\nRun release {{version}}\n",
     );
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
 
     const full = await akmShow({ ref: "commands/release.md" });
     expect(full.template).toBe("Run release {{version}}\n");

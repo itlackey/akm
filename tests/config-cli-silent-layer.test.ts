@@ -38,7 +38,6 @@ afterAll(() => {
 /** A fresh XDG/HOME env override so writes from one test don't bleed into another. */
 function freshEnv(): Record<string, string | undefined> {
   return {
-    AKM_BUNDLE_DIR: undefined,
     HOME: makeTempDir(),
     XDG_CONFIG_HOME: makeTempDir(),
     XDG_CACHE_HOME: makeTempDir(),
@@ -105,10 +104,7 @@ describe("akm config unset on the last key of a harness", () => {
     const config = await withEnv(freshEnv(), async () => {
       const file = path.join(process.env.XDG_CONFIG_HOME ?? "", "akm", "config.json");
       fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(
-        file,
-        JSON.stringify({ configVersion: "0.9.0", harnesses: { opencode: { timeoutMs: 120000 } } }),
-      );
+      fs.writeFileSync(file, JSON.stringify({ harnesses: { opencode: { timeoutMs: 120000 } } }));
       const result = await runCliCapture(["config", "unset", "harnesses.opencode.timeoutMs"]);
       expect(result.code).toBe(0);
       return JSON.parse(fs.readFileSync(file, "utf8")) as { harnesses?: unknown };
@@ -123,7 +119,7 @@ describe("akm config unset on an entry the reader drops", () => {
     const { key, entry, after, before } = await withEnv(freshEnv(), async () => {
       const file = path.join(process.env.XDG_CONFIG_HOME ?? "", "akm", "config.json");
       fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, JSON.stringify({ configVersion: "0.9.0", connections: { draft } }));
+      fs.writeFileSync(file, JSON.stringify({ connections: { draft } }));
       const before = fs.readFileSync(file, "utf8");
       const whole = await runCliCapture(["config", "unset", "connections.draft"]);
       const nested = await runCliCapture(["config", "unset", "connections.draft.models.fast"]);
@@ -138,59 +134,12 @@ describe("akm config unset on an entry the reader drops", () => {
     expect(after).toBe(before);
   });
 
-  test("on a file still in the engines form the hint says to run akm migrate apply first", async () => {
-    const result = await withEnv(freshEnv(), async () => {
-      const file = path.join(process.env.XDG_CONFIG_HOME ?? "", "akm", "config.json");
-      fs.mkdirSync(path.dirname(file), { recursive: true });
-      // A 0.9 LLM engine with no endpoint: the reader reads it as a connection it then drops.
-      fs.writeFileSync(
-        file,
-        JSON.stringify({
-          configVersion: "0.9.0",
-          engines: { draft: { kind: "llm", model: "m" } },
-          defaults: { llmEngine: "draft" },
-        }),
-      );
-      return runCliCapture(["config", "unset", "connections.default.models"]);
-    });
-    expect(result.code).toBe(2);
-    const envelope = JSON.parse(result.stderr.slice(result.stderr.indexOf("{"))) as { hint?: string };
-    expect(envelope.hint).toContain("akm migrate apply");
-    expect(envelope.hint).not.toContain("by hand");
-  });
-
-  test("an entry an extends base completes is in use: a key inside it is unset as ever", async () => {
-    const { result, local } = await withEnv(freshEnv(), async () => {
-      const dir = path.join(process.env.XDG_CONFIG_HOME ?? "", "akm");
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(
-        path.join(dir, "base.json"),
-        JSON.stringify({ configVersion: "0.9.0", connections: { lab: { endpoint: "http://lab:1/v1" } } }),
-      );
-      fs.writeFileSync(
-        path.join(dir, "config.json"),
-        JSON.stringify({
-          configVersion: "0.9.0",
-          extends: "base.json",
-          connections: { lab: { models: { fast: "m", balanced: "b" } } },
-        }),
-      );
-      const result = await runCliCapture(["config", "unset", "connections.lab.models.balanced"]);
-      const local = JSON.parse(fs.readFileSync(path.join(dir, "config.json"), "utf8")) as {
-        connections: { lab: { models: Record<string, string> } };
-      };
-      return { result, local };
-    });
-    expect(result.code).toBe(0);
-    expect(local.connections.lab.models).toEqual({ fast: "m" });
-  });
-
   test("an entry the reader uses is unset as ever", async () => {
     const lab = { endpoint: "http://lab:1/v1", models: { fast: "m" } };
     const { result, config } = await withEnv(freshEnv(), async () => {
       const file = path.join(process.env.XDG_CONFIG_HOME ?? "", "akm", "config.json");
       fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, JSON.stringify({ configVersion: "0.9.0", connections: { lab, other: lab } }));
+      fs.writeFileSync(file, JSON.stringify({ connections: { lab, other: lab } }));
       const result = await runCliCapture(["config", "unset", "connections.other"]);
       return { result, config: JSON.parse(fs.readFileSync(file, "utf8")) as { connections: Record<string, unknown> } };
     });

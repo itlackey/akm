@@ -212,6 +212,7 @@ describe("assembleInfo", () => {
   });
 
   test("defaultBundle is null when no bundle is configured", () => {
+    saveConfig({ semanticSearchMode: "off" });
     const info = assembleInfo();
     expect(info.defaultBundle).toBeNull();
     expect(typeof info.bundleDir).toBe("string");
@@ -291,13 +292,14 @@ describe("assembleInfo", () => {
     expect(Array.isArray(info.sourceProviders)).toBe(true);
   });
 
-  // Precondition for consolidate-wave2-e.test.ts's D5 deletion (Phase 2
+  // Precondition for tests/commands/consolidate/consolidate-coverage.test.ts's D5 deletion (Phase 2
   // triage): that file's "assembleInfo — sourceProviders populated" test only
   // asserted `typeof assembleInfo === "function"`. This strengthens the real
   // coverage: sourceProviders is empty with no configured bundle, and once a
   // bundle IS configured it projects the bundle → source shape assembleInfo
   // actually emits (src/commands/sources/info.ts:47-56).
   test("sourceProviders is empty with no configured bundle, and reflects a configured bundle", () => {
+    saveConfig({ semanticSearchMode: "off" });
     expect(assembleInfo().sourceProviders).toEqual([]);
 
     const stashDir = makeStashDir();
@@ -502,20 +504,11 @@ describe("assembleInfo — config degrade (a10-info)", () => {
     saveConfig(config);
     resetConfigCache();
 
-    // The outer beforeEach's sandboxed AKM_BUNDLE_DIR would otherwise win
-    // resolveStashDir()'s step 1 and mask the configured-path failure this
-    // test targets (step 2).
-    const previousBundleDir = process.env.AKM_BUNDLE_DIR;
-    delete process.env.AKM_BUNDLE_DIR;
-    try {
-      const info = assembleInfo();
-      expect(info.bundleDirError).toBeDefined();
-      expect(info.bundleDirError).toContain("/nonexistent/definitely-not-here");
-      expect(info.defaultBundle).toBe("main");
-      expect(info.bundleDir).not.toBe("/nonexistent/definitely-not-here");
-    } finally {
-      if (previousBundleDir !== undefined) process.env.AKM_BUNDLE_DIR = previousBundleDir;
-    }
+    const info = assembleInfo();
+    expect(info.bundleDirError).toBeDefined();
+    expect(info.bundleDirError).toContain("/nonexistent/definitely-not-here");
+    expect(info.defaultBundle).toBe("main");
+    expect(info.bundleDir).not.toBe("/nonexistent/definitely-not-here");
   });
 });
 

@@ -22,12 +22,12 @@ covers the automated test workflow and test-authoring guidance.
 
 `bun run check` runs lint and the typecheck, then both targets in sequence.
 
-- `bun run test:unit` (`scripts/test-unit.sh`) runs every `*.test.ts` under
+- `bun run test:unit` (`scripts/test-shards.sh unit`) runs every `*.test.ts` under
   `tests/` except `tests/integration/`. That includes the top-level
   `tests/commands/` and `tests/workflows/` directories; do not confuse them with
   the separate `tests/integration/commands/` and `tests/integration/workflows/`
   directories.
-- `bun run test:integration` (`scripts/test-integration.sh`) runs
+- `bun run test:integration` (`scripts/test-shards.sh integration`) runs
   `tests/integration/**` only.
 
 **Where a test goes.** A file belongs under `tests/integration/` if it opens a
@@ -76,29 +76,32 @@ Relevant coverage:
 
 ### Writing deterministic, isolated tests
 
-Both `scripts/test-unit.sh` (`bun run test:unit`) and `scripts/test-integration.sh`
-(`bun run test:integration`) shard their target across up to `min(nproc, 8)`
+`scripts/test-shards.sh` (`bun run test:unit` and `bun run test:integration`) shards its target across up to `min(nproc, 8)`
 concurrent `bun test` processes, splitting the file list round-robin — neither
-runner is a single shared process. Within one shard, every file assigned to that
+suite runs in a single shared process. Within one shard, every file assigned to that
 process still runs in **one shared process**: one `process.env`, one
 module-singleton namespace, and (under fake timers) one global clock for every
 file in that shard. A test that mutates shared state without restoring it, or
 that asserts on a wall-clock measurement, can pass on one scheduling and fail on
 another.
 
-Rules (conventions, not statically enforced; `src/core/paths.ts` throws
-`TEST_ISOLATION_MISSING` at runtime when isolation is missing, and the preload
-tripwire catches leaks):
+Rules (conventions, not statically enforced; production code does not know it is
+under a test: the preload sandbox and tripwire, `tests/_preload.ts` and
+`tests/_helpers/isolation-guard.ts`, fail a test that resolves a directory outside
+the temp root or starts akm, `crontab` or `launchctl` against the real ones):
 
 1. **Do not mutate `AKM_*` / `XDG_*` / `HOME` on `process.env` directly.** Use the
    helpers in `tests/_helpers/sandbox.ts`:
-   - `sandboxStashDir`, `sandboxXdgConfigHome`, `sandboxXdgDataHome`,
-     `sandboxXdgCacheHome`, `sandboxXdgStateHome`, `sandboxHome` — set the env var
-     to an isolated temp dir and return a `cleanup` that restores the prior value.
-     Chain them and call `cleanup()` in `afterEach`.
-   - `withEnv({ AKM_BUNDLE_DIR }, async () => …)` — scoped override that always
+   - `sandboxXdgConfigHome`, `sandboxXdgDataHome`, `sandboxXdgCacheHome`,
+     `sandboxXdgStateHome`, `sandboxHome` — set the env var to an isolated temp dir
+     and return a `cleanup` that restores the prior value. `sandboxStashDir` makes a
+     temp stash and names it as `defaultBundle` in the config file akm resolves (akm
+     reads no environment variable for the working bundle). Chain them and call
+     `cleanup()` in `afterEach`.
+   - `withEnv({ XDG_… }, async () => …)` — scoped override that always
      restores in a `finally`, even on throw. Use this for per-call overrides
-     around an in-process CLI invocation.
+     around an in-process CLI invocation. `withBundle(dir, fn)` is the same for the
+     working bundle: it names `dir` as `defaultBundle` for the call.
    - `makeStashDir` / `makeSandboxDir` — temp dirs that are not wired into env
      (pass them to `withEnv` or a subprocess env object yourself).
    - `writeSandboxConfig(partial)` — merges `partial` into the sandboxed
@@ -140,8 +143,8 @@ tripwire catches leaks):
 owns the process state that crosses test boundaries:
 
 - At preload time `HOME` and all four `XDG_*_HOME` variables point at a
-  per-process sandbox directory, the `AKM_*_DIR` overrides are cleared, and so
-  are `AKM_VERBOSE`, `AKM_LLM_API_KEY` and `AKM_EMBED_API_KEY`. A test file never
+  per-process sandbox directory, the retired `AKM_BUNDLE_DIR` and `AKM_*_DIR` variables are cleared, and so
+  are `AKM_CONFIG_FILE`, `AKM_LLM_API_KEY` and `AKM_EMBED_API_KEY`. A test file never
   reads the developer's real `~/.config/akm/` or `~/.cache/akm/`.
 - Bun's `os.homedir()` ignores a runtime `HOME` change, so the preload cannot
   redirect a default built from it. Both runner scripts start every shard with its
@@ -153,9 +156,10 @@ owns the process state that crosses test boundaries:
   `OPENCODE_TEST_HOME` for OpenCode.
 - Before each test it snapshots the harnessed environment (`HARNESSED` in the
   preload: `HOME`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `OPENCODE_TEST_HOME`, the
-  four `XDG_*_HOME` variables, `AKM_BUNDLE_DIR`, `AKM_CONFIG_DIR`,
-  `AKM_CACHE_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR`, `AKM_VERBOSE`,
-  `AKM_LLM_API_KEY`, `AKM_EMBED_API_KEY`, `AKM_REGISTRY_URL`,
+  four `XDG_*_HOME` variables, `AKM_CONFIG_FILE`, the retired `AKM_BUNDLE_DIR` and
+  the four retired `AKM_*_DIR` variables (akm refuses to start with one set, so the preload removes a
+  developer's exported ones),
+  `AKM_LLM_API_KEY`, `AKM_EMBED_API_KEY`,
   `AKM_NPM_REGISTRY`), `process.cwd()` and `globalThis.fetch`, and restores them
   afterwards.
 - It resets the module-level singletons of production code between tests:
@@ -356,7 +360,7 @@ The suites that run akm's own runtime on the real binary
 (`opencode-runtime-sessions`, `opencode-runtime-signal-teardown`,
 `opencode-session-store` and `standalone-first-run`, all under
 `tests/integration/`) need no gate: they fetch the pinned OpenCode once, through
-akm's own fetch path, into a cache every run shares (`$AKM_TEST_OPENCODE_CACHE`,
+akm's own fetch path, into a cache every run shares (an `XDG_CACHE_HOME` in `$AKM_TEST_OPENCODE_CACHE`,
 else `node_modules/.cache/akm-test-opencode`), and link it into each test's
 sandboxed akm cache (`tests/_helpers/opencode-binary.ts`). When the registry
 cannot be reached they skip, with a message that says why. Run them against a new
@@ -373,7 +377,7 @@ For curate/search ranking quality, run the retrieval eval of
 **[itlackey/akm-eval](https://github.com/itlackey/akm-eval)**
 (`evals/retrieval/run --corpus public`, with `AKM_BIN` naming the build under
 test). It scores `akm search` and `akm curate` against graded judgments and
-calls no model service. See `docs/maintainers/eval.md`.
+calls no model service.
 
 ## Recommended Workflow
 
@@ -439,32 +443,33 @@ orchestration, checksum, and failure paths.
 
 `tests/integration/upgrade-rehearsal/` runs once per origin in
 `KNOWN_UPGRADE_ORIGINS` (`previous-release.ts`): `previous`, the highest stable
-release below the candidate's `package.json` version; `0.9.32`, which keeps the
-full engines migration covered after `previous` advances to 0.10; and `0.9.15`,
-which covers scheduler rows installed before host-local activation was recorded.
+release below the candidate's `package.json` version, and `0.9.32`, the upgrade
+floor, which keeps the full engines migration covered after `previous` advances
+to 0.10. Nothing older is rehearsed: a home below the floor is refused with the
+0.9.32 recipe.
 Each origin installs that release as a real global npm
 package (a real `npm pack` / `npm install --global` into a throwaway prefix, see
-`scripts/package-install.ts`). The `previous` and `0.9.32` origins build a full
+`scripts/package-install.ts`). Both origins build a full
 home — filesystem,
 git (with an in-bundle symlink at its root), website, and npm bundles, scheduled
 tasks, a synced native (fake) crontab, and model configuration the release
 itself writes: native connections/harnesses on 0.10+, or the full 0.9 `engines`
 form (an llm engine with an `apiKeyFile`, agent engines, a `models.json`, and a
-command and task that name an engine). The `0.9.15` origin uses a smaller home
-with one directly installed scheduled task. Each then installs
+command and task that name an engine). Each then installs
 the CANDIDATE build OVER it in the SAME prefix: an in-place swap, the same thing
 a real `npm i -g akm-cli@…` or `bun add -g` upgrade does. It then runs the
 candidate against that home (`migrate status` / `apply`, which converts the
 `engines` form, files its key and rewrites the `engine:` keys, or preserves
 native connections/harnesses, `bundle list`,
-`search` / `show`, `task sync` dry-run and real — plain, no `--rebind`, as an
-upgrading user runs it — executing the generated cron command and confirming it
-ran the candidate, `task run`, `health`, `improve --dry-run`), and finally runs a
+`search` / `show`, the previous release's cron row run as cron runs it (`--scheduled`),
+`migrate apply` replacing every row with the one dispatch entry in a single
+crontab write, `task sync` finding nothing left to do, the entry's command run as
+cron runs it and starting a due task detached, `task run`, `health`,
+`improve --dry-run`), and finally runs a
 separate untouched copy of the origin release back against the candidate-written
-home to check that read-back still works. Plain `task sync` is clean because the
-candidate lands inside the same prefix the previous release's scheduler rows
-already point at; a side-by-side install (a separate prefix) would need
-`--rebind`. `tests/integration/previous-release-corpus.test.ts` covers
+home to check that read-back still works. The home uses the default layout
+(HOME alone decides every location), because the candidate writes the OS
+scheduler for the default installation only. `tests/integration/previous-release-corpus.test.ts` covers
 persisted-data shapes read in isolation; this gate covers the whole CLI surface
 across two real installed releases.
 
@@ -503,7 +508,7 @@ extending it:
 
 - `tests/integration/db/`, `tests/integration/fts/`, `tests/integration/indexer/`,
   `tests/integration/storage/` — database, full-text search, and index behavior
-- `tests/search-rrf.test.ts`, `tests/integration/search-fusion.test.ts` — search ranking
+- `tests/integration/search-fusion.test.ts` — search ranking
 - `tests/integration/registry/` — registry install, search, and update flows
 - `tests/integration/workflows/`, `tests/integration/tasks/` — workflow and task behavior
 - `tests/integration/vector-search.test.ts`, `tests/integration/semantic-search-e2e.test.ts` — vectors and embeddings

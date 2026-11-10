@@ -5,9 +5,8 @@
 /**
  * Pure planner for the `assetEngineKeys` step: an asset that still says
  * `engine: <name>` is rewritten to `connection: <name>` or `harness: <name>`,
- * whichever the name now is. The runtime reads `engine:` as a connection by that
- * name, else a harness, with a one-time notice (`warnRetiredEngineKey`); this
- * makes the choice durable.
+ * whichever the name now is. The runtime does not read `engine:` (it refuses or names it, and says to run
+ * `akm migrate apply`); this is the only place the choice is made.
  *
  * Only the key (and the name, when the conversion renamed its engine) is
  * touched: the rewrite is a splice into the source text at the key's own

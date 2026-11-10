@@ -104,7 +104,6 @@ assert_json_field() {
 STASH_DIR="$(mktemp -d)/akm-smoke"
 CONFIG_DIR="$(mktemp -d)/akm-config"
 CACHE_DIR="$(mktemp -d)/akm-cache"
-export AKM_BUNDLE_DIR="$STASH_DIR"
 export XDG_CONFIG_HOME="$CONFIG_DIR"
 export XDG_CACHE_HOME="$CACHE_DIR"
 
@@ -124,7 +123,7 @@ assert_output_contains "akm --help shows usage" "usage\|Usage\|akm" akm --help
 # ── 2. Init ──────────────────────────────────────────────────────────────────
 
 echo "--- Init ---"
-assert_exit_zero "akm bundle create creates stash" akm bundle create
+assert_exit_zero "akm bundle create creates stash" akm bundle create --dir "$STASH_DIR" --set-default
 
 # Verify stash directory structure was created
 for subdir in scripts skills commands agents knowledge; do
@@ -222,7 +221,7 @@ assert_exit_zero "akm search 'deploy' exits 0" akm search deploy
 assert_output_contains "search 'deploy' finds deploy script" "deploy" akm search deploy
 
 # Search with JSON output
-assert_json_field "search JSON has hits" "hits" akm search deploy --format json
+assert_json_field "search JSON has results" "results" akm search deploy --format json
 
 # Search with type filter
 assert_output_contains "search type:skill finds code-review" "code-review\|review" akm search review --type skill
@@ -237,10 +236,10 @@ RESULT_STATUS=$?
 set -e
 if [ "$RESULT_STATUS" -ne 0 ]; then
 	fail "search with --limit 1 failed — command exited $RESULT_STATUS: ${RESULT:0:200}"
-elif echo "$RESULT" | grep -q "hits"; then
-	pass "search with --limit 1 returns JSON with hits"
+elif echo "$RESULT" | grep -q "results"; then
+	pass "search with --limit 1 returns JSON with results"
 else
-	fail "search with --limit 1 failed — no 'hits' field in output"
+	fail "search with --limit 1 failed — no 'results' field in output"
 fi
 
 # ── 6. Show ──────────────────────────────────────────────────────────────────
@@ -270,18 +269,18 @@ assert_output_contains "models set changes an alias" "smoke-model" \
 	env XDG_CONFIG_HOME="$CONNECTION_CONFIG" akm models set fast smoke-model --no-probe
 assert_output_contains "models shows the alias on the connection" "smoke-model" \
 	env XDG_CONFIG_HOME="$CONNECTION_CONFIG" akm models --no-probe
-assert_status_output_contains "health --no-probe reports the connection" "0 4" '"type": "connection"' \
+assert_status_output_contains "health --no-probe reports the connection" "0 4" '"type": *"connection", *"name": *"default"' \
 	env XDG_CONFIG_HOME="$CONNECTION_CONFIG" akm health --no-probe
-assert_output_contains "info reports the connection" '"type": "connection"' \
+assert_output_contains "info reports the connection" '"type": *"connection", *"name": *"default"' \
 	env XDG_CONFIG_HOME="$CONNECTION_CONFIG" akm info
 
 assert_exit_zero "config set enables a harness with no connection" \
 	env XDG_CONFIG_HOME="$HARNESS_CONFIG" akm config set harnesses.claude '{}' --silent
 assert_status_output_contains "models with no connection points at setup" "78" "akm setup" \
 	env XDG_CONFIG_HOME="$HARNESS_CONFIG" akm models --no-probe
-assert_status_output_contains "health --no-probe reports the harness" "0 4" '"type": "harness"' \
+assert_status_output_contains "health --no-probe reports the harness" "0 4" '"type": *"harness", *"name": *"claude"' \
 	env XDG_CONFIG_HOME="$HARNESS_CONFIG" akm health --no-probe
-assert_output_contains "info reports the harness" '"type": "harness"' \
+assert_output_contains "info reports the harness" '"type": *"harness", *"name": *"claude"' \
 	env XDG_CONFIG_HOME="$HARNESS_CONFIG" akm info
 
 # ── 9. List ──────────────────────────────────────────────────────────────────

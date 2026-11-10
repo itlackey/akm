@@ -21,12 +21,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { parsePlacementRef } from "../../../src/core/asset/resolve-ref";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
+import { saveGitStash } from "../../../src/sources/providers/git";
 import {
   commitWriteTargetBoundary,
   prepareWriteTargetForMutation,
   writeAssetToSource,
-} from "../../../src/core/write-source";
-import { saveGitStash } from "../../../src/sources/providers/git";
+} from "../../../src/sources/write-source";
 import { seedLockEntries } from "../../_helpers/lockfile";
 import {
   type Cleanup,
@@ -88,6 +88,7 @@ function captureWarnings(): string[] {
   return warnings;
 }
 
+let currentStashDir = "";
 let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
@@ -96,6 +97,7 @@ beforeEach(() => {
   const cfgResult = sandboxXdgConfigHome(dataResult.cleanup);
   const stashResult = sandboxStashDir(cfgResult.cleanup);
   envCleanup = stashResult.cleanup;
+  currentStashDir = stashResult.dir;
 });
 
 afterEach(() => {
@@ -106,7 +108,7 @@ afterEach(() => {
 
 describe("commitWriteTargetBoundary — exact operation paths", () => {
   test("named sync commits the lock-backed managed checkout instead of a URL-derived mirror", () => {
-    const repoDir = process.env.AKM_BUNDLE_DIR as string;
+    const repoDir = currentStashDir;
     const contentDir = path.join(repoDir, "content");
     initRepo(repoDir);
     writeFile(path.join(contentDir, "memories", "seed.md"), "seed\n");
@@ -139,7 +141,7 @@ describe("commitWriteTargetBoundary — exact operation paths", () => {
   });
 
   test("content-layout boundary commits only content and leaves repository-root WIP dirty", () => {
-    const repoDir = process.env.AKM_BUNDLE_DIR as string;
+    const repoDir = currentStashDir;
     const contentDir = path.join(repoDir, "content");
     initRepo(repoDir);
     writeFile(path.join(contentDir, "memories", "asset.md"), "asset\n");
@@ -159,7 +161,7 @@ describe("commitWriteTargetBoundary — exact operation paths", () => {
   });
 
   test("content-layout boundary does not commit unrelated pre-staged WIP", () => {
-    const repoDir = process.env.AKM_BUNDLE_DIR as string;
+    const repoDir = currentStashDir;
     const contentDir = path.join(repoDir, "content");
     initRepo(repoDir);
     writeFile(path.join(repoDir, "src", "staged-wip.ts"), "pre-staged WIP\n");
@@ -181,7 +183,7 @@ describe("commitWriteTargetBoundary — exact operation paths", () => {
   });
 
   test("write boundary excludes pre-staged WIP inside the same content asset directory", async () => {
-    const repoDir = process.env.AKM_BUNDLE_DIR as string;
+    const repoDir = currentStashDir;
     const contentDir = path.join(repoDir, "content");
     initRepo(repoDir);
     writeFile(path.join(contentDir, "memories", "staged-wip.md"), "pre-staged content WIP\n");
@@ -206,7 +208,7 @@ describe("commitWriteTargetBoundary — exact operation paths", () => {
   });
 
   test("an ignored destination is written locally and left out of the boundary commit, with a warning", async () => {
-    const repoDir = process.env.AKM_BUNDLE_DIR as string;
+    const repoDir = currentStashDir;
     const contentDir = path.join(repoDir, "content");
     initRepo(repoDir);
     writeFile(path.join(repoDir, ".gitignore"), "content/memories/ignored.md\n");
@@ -238,7 +240,7 @@ describe("commitWriteTargetBoundary — exact operation paths", () => {
   });
 
   test("a push the remote rejects leaves the commit local and names it", async () => {
-    const repoDir = process.env.AKM_BUNDLE_DIR as string;
+    const repoDir = currentStashDir;
     const cacheHome = process.env.XDG_CACHE_HOME as string;
     const remoteDir = path.join(cacheHome, "lease-remote.git");
     const otherClone = path.join(cacheHome, "lease-other");
@@ -278,7 +280,7 @@ describe("commitWriteTargetBoundary — exact operation paths", () => {
   });
 
   test("mutation preparation rejects a detached local target before writing", () => {
-    const repoDir = process.env.AKM_BUNDLE_DIR as string;
+    const repoDir = currentStashDir;
     const contentDir = path.join(repoDir, "content");
     initRepo(repoDir);
     writeFile(path.join(repoDir, "README.md"), "seed\n");
@@ -298,7 +300,7 @@ describe("commitWriteTargetBoundary — exact operation paths", () => {
 
 describe("saveGitStash — scoped staging (exact paths, bundle-wide default)", () => {
   test("an ignored path aborts a mixed exact-path commit without staging its siblings", () => {
-    const repoDir = process.env.AKM_BUNDLE_DIR as string;
+    const repoDir = currentStashDir;
     initRepo(repoDir);
     writeFile(path.join(repoDir, ".gitignore"), "memories/ignored.md\n");
     git(repoDir, ["add", ".gitignore"]);
@@ -318,7 +320,7 @@ describe("saveGitStash — scoped staging (exact paths, bundle-wide default)", (
   });
 
   test("commits every unignored change in the bundle, files outside asset directories included (#1502)", () => {
-    const stashDir = process.env.AKM_BUNDLE_DIR as string;
+    const stashDir = currentStashDir;
     initRepo(stashDir);
     writeFile(path.join(stashDir, ".gitignore"), "tasks.bak-*/\n");
 
@@ -344,7 +346,7 @@ describe("saveGitStash — scoped staging (exact paths, bundle-wide default)", (
   });
 
   test("does NOT throw the old 'refusing to push' error when non-akm files are present", () => {
-    const stashDir = process.env.AKM_BUNDLE_DIR as string;
+    const stashDir = currentStashDir;
     initRepo(stashDir);
     writeFile(path.join(stashDir, "facts", "a.md"), "fact a\n");
     writeFile(path.join(stashDir, "scratch.tmp"), "stray\n");
@@ -359,7 +361,7 @@ describe("saveGitStash — scoped staging (exact paths, bundle-wide default)", (
   });
 
   test("explicit options.paths stages only the listed subset", () => {
-    const stashDir = process.env.AKM_BUNDLE_DIR as string;
+    const stashDir = currentStashDir;
     initRepo(stashDir);
     writeFile(path.join(stashDir, "memories", "keep.md"), "keep\n");
     writeFile(path.join(stashDir, "memories", "skip.md"), "skip\n");
@@ -378,7 +380,7 @@ describe("saveGitStash — scoped staging (exact paths, bundle-wide default)", (
   });
 
   test("commit-tree bypasses user commit hooks", () => {
-    const stashDir = process.env.AKM_BUNDLE_DIR as string;
+    const stashDir = currentStashDir;
     initRepo(stashDir);
     writeFile(path.join(stashDir, "knowledge", "seed.md"), "seed\n");
     git(stashDir, ["add", "."]);
@@ -398,7 +400,7 @@ describe("saveGitStash — scoped staging (exact paths, bundle-wide default)", (
   });
 
   test("a change outside the asset directories is committed, not reported as nothing to commit (#1502)", () => {
-    const stashDir = process.env.AKM_BUNDLE_DIR as string;
+    const stashDir = currentStashDir;
     initRepo(stashDir);
     writeFile(path.join(stashDir, "knowledge", "seed.md"), "seed\n");
     writeFile(path.join(stashDir, "README.md"), "v1\n");
@@ -413,7 +415,7 @@ describe("saveGitStash — scoped staging (exact paths, bundle-wide default)", (
   });
 
   test("clean tree → nothing to commit, working tree clean", () => {
-    const stashDir = process.env.AKM_BUNDLE_DIR as string;
+    const stashDir = currentStashDir;
     initRepo(stashDir);
     writeFile(path.join(stashDir, "facts", "seed.md"), "seed\n");
     saveGitStash(undefined, "seed");
@@ -424,7 +426,7 @@ describe("saveGitStash — scoped staging (exact paths, bundle-wide default)", (
   });
 
   test("committed change pushes when a remote is configured and stash is writable", () => {
-    const stashDir = process.env.AKM_BUNDLE_DIR as string;
+    const stashDir = currentStashDir;
     // Bare remote to push into.
     const remoteDir = `${stashDir}-remote.git`;
     spawnSync("git", ["init", "--bare", "--initial-branch=main", remoteDir], { encoding: "utf8" });
@@ -458,7 +460,7 @@ describe("saveGitStash — scoped staging (exact paths, bundle-wide default)", (
   });
 
   test("pushes the exact AKM commit when a pre-push hook creates a local descendant", () => {
-    const stashDir = process.env.AKM_BUNDLE_DIR as string;
+    const stashDir = currentStashDir;
     const remoteDir = path.join(process.env.XDG_CACHE_HOME as string, "exact-push-remote.git");
     fs.mkdirSync(remoteDir, { recursive: true });
     git(remoteDir, ["init", "--bare"]);

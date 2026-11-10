@@ -275,7 +275,7 @@ describe("remember --xref", () => {
     // xrefs into the FTS hints — the conventions' provenance channel.
     const search = await runCliCapture(["search", "oauth-refresh-dance", "--type", "memory"]);
     expect(search.code).toBe(0);
-    const hits = (JSON.parse(search.stdout).hits ?? []) as Array<{ ref: string }>;
+    const hits = (JSON.parse(search.stdout).results ?? []) as Array<{ ref: string }>;
     expect(hits.map((h) => conceptId(h.ref))).toContain(conceptId(written.ref));
   });
 });
@@ -283,7 +283,7 @@ describe("remember --xref", () => {
 // ── root set + resolver parity with lint (findings #6/#7) ───────────────────
 
 describe("--xref root set and resolver parity", () => {
-  test("resolves working-stash refs when defaultWriteTarget routes the write to a named source", async () => {
+  test("resolves working-stash refs when --bundle routes the write to a named source", async () => {
     // The primary working stash (AKM_BUNDLE_DIR) is NOT in config.sources here,
     // and the write goes to the named "team" source — the root set must still
     // include the working stash (--supersedes already did; --xref did not).
@@ -292,13 +292,14 @@ describe("--xref root set and resolver parity", () => {
     const localNoteRef = stashRef("memory", "local-note");
     writeSandboxConfig({
       semanticSearchMode: "off",
-      defaultWriteTarget: "team",
       bundles: { team: { path: teamDir, writable: true } },
     });
 
     const { code, stdout } = await runCliCapture([
       "remember",
       "Note derived from the working-stash one",
+      "--bundle",
+      "team",
       "--xref",
       localNoteRef,
     ]);

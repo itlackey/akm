@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildProposePrompt, buildReflectPrompt } from "../../src/integrations/agent/prompts";
+import { buildProposePrompt, buildReflectPrompt } from "../../src/commands/prompts";
 
 describe("explicit confidence elicitation", () => {
   test("buildReflectPrompt asks for a self-rated confidence score in [0, 1]", () => {

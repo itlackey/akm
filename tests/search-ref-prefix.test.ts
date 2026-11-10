@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * D4 (docs/architecture/specs/0.9.0-decisions.md) — conceptId-prefix browse.
+ * D4 — conceptId-prefix browse.
  *
  * Subtree enumeration is spelled in the grammar refs are actually emitted in:
  * `akm search "memories/projecta/"`, not the retired `"memory:projecta/"`.
@@ -44,6 +44,7 @@ import {
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
+  withDefaultBundle,
 } from "./_helpers/sandbox";
 
 let stashDir = "";
@@ -66,7 +67,7 @@ async function search(input: Parameters<typeof akmSearch>[0]): Promise<SourceSea
     skipLogging: true,
     ...input,
   });
-  return result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+  return result.results.filter((h): h is SourceSearchHit => h.type !== "registry");
 }
 
 const PROJECTA_MEMORIES = ["projecta/auth-tip", "projecta/deploy-note", "projecta/nested/db-tip"] as const;
@@ -146,7 +147,7 @@ beforeEach(async () => {
     "Transcript summary body.",
   );
 
-  saveConfig({ semanticSearchMode: "off" });
+  saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
   await reindex();
 });
 
@@ -261,10 +262,15 @@ describe("akm search conceptId-prefix enumeration (D4)", () => {
         { description: "Companion observation from the extra stash" },
         "Extra stash body.",
       );
-      saveConfig({
-        semanticSearchMode: "off",
-        bundles: { extra: { path: extra.dir } },
-      });
+      saveConfig(
+        withDefaultBundle(
+          {
+            semanticSearchMode: "off",
+            bundles: { extra: { path: extra.dir } },
+          },
+          stashDir,
+        ),
+      );
       await reindex();
 
       // Fixture sanity (existing behavior): the extra source is indexed and
@@ -357,9 +363,9 @@ describe("akm search conceptId-prefix enumeration (D4)", () => {
       source: "local",
       skipLogging: true,
     });
-    const hits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+    const hits = result.results.filter((h): h is SourceSearchHit => h.type !== "registry");
     expect(hits).toHaveLength(0);
-    expect(result.tip ?? "").toContain("No matching stash assets");
+    expect(result.tip ?? "").toContain("No matching assets");
   });
 
   // The defect D4 exists to fix: the retired grammar matched `namePrefix`
@@ -393,7 +399,7 @@ describe("akm search conceptId-prefix enumeration (D4)", () => {
       source: "local",
       skipLogging: true,
     });
-    const hits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+    const hits = result.results.filter((h): h is SourceSearchHit => h.type !== "registry");
 
     // No fixture carries a "memor…" token in an indexed field, so the retired
     // spelling can only come back empty.

@@ -39,7 +39,6 @@ async function runCli(
 ): Promise<{ stdout: string; stderr: string; status: number }> {
   const result = await withEnv(
     {
-      AKM_BUNDLE_DIR: undefined,
       HOME: makeTempDir("akm-distill-cli-home-"),
       XDG_CACHE_HOME: makeTempDir("akm-distill-cli-cache-"),
       XDG_CONFIG_HOME: makeTempDir("akm-distill-cli-config-"),
@@ -78,7 +77,7 @@ describe("akm distill CLI removal (0.8.0 hard break)", () => {
 // ── #284 GAP-CRIT 3: distill happy-path via injected chat seam ─────────────
 //
 // Spawning the real CLI cannot exercise the LLM happy path without a real
-// endpoint, so we drive `akmDistill` with the same seams as `tests/distill.test.ts`
+// endpoint, so we drive `akmDistill` with the same seams as `tests/integration/distill.test.ts`
 // to lock the success contract: outcome=queued, exit=0 (when wrapped via
 // runWithJsonErrors in the CLI), proposal materialised in the queue.
 
@@ -124,10 +123,8 @@ describeHappy("akm distill happy-path (#284 CRIT 3)", () => {
   testHappy("LLM stub returns valid lesson → outcome=queued, proposal in queue", async () => {
     const stash = happyStash(happyStorage);
     const config: AkmConfig = {
-      configVersion: "0.9.0",
       bundles: { stash: { path: stash, writable: true } },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
       connections: {
         default: {
           endpoint: "http://localhost:11434/v1/chat/completions",
@@ -155,10 +152,8 @@ describeHappy("akm distill happy-path (#284 CRIT 3)", () => {
   testHappy("--source-run sourceRun param threads onto the queued proposal", async () => {
     const stash = happyStash(happyStorage);
     const config: AkmConfig = {
-      configVersion: "0.9.0",
       bundles: { stash: { path: stash, writable: true } },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
       connections: {
         default: {
           endpoint: "http://localhost:11434/v1/chat/completions",

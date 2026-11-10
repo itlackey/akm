@@ -23,6 +23,7 @@ import {
   runRetentionPurgePass,
 } from "../../../../src/commands/improve/loop-stages";
 import type { AkmConfig } from "../../../../src/core/config/config";
+import { getMetricsDbPath, openMetricsDatabase } from "../../../../src/core/metrics-db";
 import { getStateDbPath, openStateDatabase } from "../../../../src/core/state-db";
 import { collectPendingMemories, type MemoryInferenceResult } from "../../../../src/indexer/passes/memory-inference";
 import type { Database } from "../../../../src/storage/database";
@@ -77,50 +78,6 @@ describe("runMemoryInferenceMaintenancePass", () => {
     expect(out.action).toBeUndefined();
     expect(out.durationMs).toBe(0);
     expect(out.warnings).toEqual([]);
-  });
-
-  test("minPendingCount gate skips when the stash has fewer pending parents", async () => {
-    const stash = freshStash();
-    const ctx = makeCtx(stash, {
-      improveProfile: { processes: { memoryInference: { minPendingCount: 5 } } } as MaintenanceCtx["improveProfile"],
-    });
-
-    const out = await runMemoryInferenceMaintenancePass(ctx, { current: fakeDb }, new Set());
-
-    expect(out.memoryInference).toBeUndefined();
-    expect(out.warnings).toEqual([]);
-  });
-
-  test("minPendingCount gate does not count a parent with a cached no-change decision (#1219)", async () => {
-    const stash = freshStash();
-    const file = path.join(stash, "memories", "note.md");
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, "---\ndescription: note\n---\n\nTool calls this session: Read 12.\n", "utf8");
-    const db = openIndexDatabase(path.join(stash, "index.db"));
-    try {
-      upsertLlmCacheEntry(
-        db,
-        file,
-        computeBodyHash(collectPendingMemories(stash)[0]!.effectiveInput),
-        JSON.stringify({ noChange: true }),
-        "memory-inference-v5",
-      );
-      const ctx = makeCtx(stash, {
-        improveProfile: { processes: { memoryInference: { minPendingCount: 1 } } } as MaintenanceCtx["improveProfile"],
-      });
-
-      // Only a cached decision is pending: below the gate, so the seam is not reached.
-      const out = await runMemoryInferenceMaintenancePass(ctx, { current: db }, new Set());
-      expect(out.memoryInference).toBeUndefined();
-      expect(out.warnings).toEqual([]);
-
-      // Editing the body makes the parent count again, so the gate admits the pass.
-      fs.writeFileSync(file, "---\ndescription: note\n---\n\nThe retry cap is 30s via http.retryCap.\n", "utf8");
-      const admitted = await runMemoryInferenceMaintenancePass(ctx, { current: db }, new Set());
-      expect(admitted.warnings).toEqual(["memory inference failed: memoryInferenceFn not expected in this scenario"]);
-    } finally {
-      closeDatabase(db);
-    }
   });
 
   test("success returns the result, the memories/_inference action, and the pass duration", async () => {
@@ -178,6 +135,59 @@ describe("runRetentionPurgePass", () => {
 
     // Empty sandboxed DBs: all purges succeed with zero rows removed.
     expect(out.warnings).toEqual([]);
+  });
+
+  test("folds old events into metrics.db before deleting them from state.db", () => {
+    const stash = freshStash();
+    const seedDb = openStateDatabase();
+    try {
+      const oldTs = new Date(Date.now() - 200 * 86_400_000).toISOString();
+      insertEventStrict(seedDb, { eventType: "reflect_invoked", ts: oldTs, ref: "lessons/a" });
+      insertEventStrict(seedDb, { eventType: "reflect_invoked", ts: oldTs, ref: "lessons/b" });
+    } finally {
+      seedDb.close();
+    }
+
+    const out = runRetentionPurgePass(makeCtx(stash));
+
+    expect(out.warnings).toEqual([]);
+    const checkDb = openStateDatabase();
+    const metricsDb = openMetricsDatabase();
+    try {
+      expect(checkDb.prepare("SELECT COUNT(*) AS n FROM events WHERE event_type = 'reflect_invoked'").get()).toEqual({
+        n: 0,
+      });
+      expect(metricsDb.prepare("SELECT n FROM event_daily WHERE event_type = 'reflect_invoked'").all()).toEqual([
+        { n: 2 },
+      ]);
+    } finally {
+      checkDb.close();
+      metricsDb.close();
+    }
+  });
+
+  test("keeps every old row when metrics.db cannot be opened", () => {
+    const stash = freshStash();
+    const seedDb = openStateDatabase();
+    try {
+      const oldTs = new Date(Date.now() - 200 * 86_400_000).toISOString();
+      insertEventStrict(seedDb, { eventType: "reflect_invoked", ts: oldTs, ref: "lessons/a" });
+    } finally {
+      seedDb.close();
+    }
+    fs.mkdirSync(getMetricsDbPath(), { recursive: true }); // a directory where the database file belongs
+
+    const out = runRetentionPurgePass(makeCtx(stash));
+
+    expect(out.warnings).toEqual([]);
+    const checkDb = openStateDatabase();
+    try {
+      expect(checkDb.prepare("SELECT COUNT(*) AS n FROM events WHERE event_type = 'reflect_invoked'").get()).toEqual({
+        n: 1,
+      });
+    } finally {
+      checkDb.close();
+    }
   });
 
   // #951: per-run flat log files under getTaskLogDir() are a separate purge

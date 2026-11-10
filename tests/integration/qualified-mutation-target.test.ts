@@ -23,15 +23,14 @@ function sandbox(prefix: string): string {
   return dir.dir;
 }
 
-function configure(team: string, defaultWriteTarget?: string): void {
+function configure(team: string, defaultBundle = "stash"): void {
   writeSandboxConfig({
     semanticSearchMode: "off",
     bundles: {
       stash: { path: storage.stashDir, writable: true },
       team: { path: team, writable: true },
     },
-    defaultBundle: "stash",
-    ...(defaultWriteTarget ? { defaultWriteTarget } : {}),
+    defaultBundle,
   });
 }
 
@@ -98,7 +97,7 @@ describe("qualified mutation targets", () => {
     expect(fs.existsSync(path.join(storage.stashDir, "env", "conflict.env"))).toBe(false);
   });
 
-  test("a short ref retains defaultWriteTarget fallback and returns a qualified ref", async () => {
+  test("a short ref falls back to defaultBundle and returns its short ref", async () => {
     const team = sandbox("akm-qualified-fallback");
     configure(team, "team");
     const value = seed(storage.root, "value.txt", "secret-value");
@@ -106,16 +105,16 @@ describe("qualified mutation targets", () => {
     const result = await runCliCapture(["env", "create", "env/prod", "--from-file", value]);
 
     expect(result.code).toBe(0);
-    expect(JSON.parse(result.stdout).ref).toBe("team//env/prod");
+    expect(JSON.parse(result.stdout).ref).toBe("env/prod");
     expect(fs.existsSync(path.join(team, "env", "prod.env"))).toBe(true);
   });
 
-  test("a derived implicit qualifier bypasses a different defaultWriteTarget", async () => {
+  test("a derived implicit qualifier bypasses a different defaultBundle", async () => {
     const team = sandbox("akm-qualified-implicit-default");
     writeSandboxConfig({
       semanticSearchMode: "off",
       bundles: { team: { path: team, writable: true } },
-      defaultWriteTarget: "team",
+      defaultBundle: "team",
     });
     const value = seed(storage.root, "implicit-value.txt", "secret-value");
 

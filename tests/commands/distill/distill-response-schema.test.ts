@@ -40,11 +40,9 @@ function makeStashDir(): string {
 
 function configEnabled(stashDir: string): AkmConfig {
   return {
-    configVersion: "0.9.0",
     semanticSearchMode: "auto",
     bundles: { stash: { path: stashDir, writable: true } },
     defaultBundle: "stash",
-    defaultWriteTarget: "stash",
     connections: {
       default: {
         endpoint: "http://localhost:11434/v1/chat/completions",

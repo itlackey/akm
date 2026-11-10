@@ -37,8 +37,7 @@ function makeStashDir(): string {
 }
 
 function writeLocallyDisabledCommandTask(stashDir: string): void {
-  // P4 (docs/plans/specs/p4-deletions-closeout.md §3.2.7, row B-22, F-A2.18)
-  // DELETED run-task.ts's shouldSkipUnactivatedTask entirely — task source v4
+  // P4 DELETED run-task.ts's shouldSkipUnactivatedTask entirely — task source v4
   // has no document-level enabled/disabled concept. Scheduling activation is
   // host-local config, and its absence must not prevent manual dispatch.
   fs.writeFileSync(
@@ -113,7 +112,6 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
     disposers.push(bundle);
     try {
       saveConfig({
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         defaultBundle: "stash",
         bundles: {
@@ -148,7 +146,6 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
         ["version: 4", 'run: "exit 0"', 'schedule: "@daily"', ""].join("\n"),
       );
       saveConfig({
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         defaultBundle: "stash",
         bundles: {
@@ -191,7 +188,6 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
         ["version: 4", 'run: "exit 0"', 'schedule: "@daily"', ""].join("\n"),
       );
       saveConfig({
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         defaultBundle: "stash",
         bundles: {
@@ -208,19 +204,18 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
       expect(run.code, run.stderr).toBe(0);
       expect(JSON.parse(run.stdout).result).toMatchObject({ id: taskId, status: "completed" });
 
-      const history = await runCliCapture(["task", "history", "--id", `scheduled//${taskId}`]);
+      const history = await runCliCapture(["task", "history", `scheduled//${taskId}`]);
       expect(history.code, history.stderr).toBe(0);
       expect(JSON.parse(history.stdout).rows[0]).toMatchObject({ id: taskId, status: "completed" });
 
-      // #911: a positional id means the same as --id instead of being
-      // silently discarded (which answered with every task's newest rows).
+      // #911: the positional id filters (it was once silently discarded); `--id` no longer exists.
       const positional = await runCliCapture(["task", "history", `scheduled//${taskId}`, "--limit", "1"]);
       expect(positional.code, positional.stderr).toBe(0);
       expect(JSON.parse(positional.stdout).rows).toEqual(JSON.parse(history.stdout).rows.slice(0, 1));
 
-      const conflict = await runCliCapture(["task", "history", "other-task", "--id", `scheduled//${taskId}`]);
-      expect(conflict.code).toBe(2);
-      expect(`${conflict.stdout}${conflict.stderr}`).toContain("two task ids");
+      const removed = await runCliCapture(["task", "history", "--id", `scheduled//${taskId}`]);
+      expect(removed.code).toBe(2);
+      expect(`${removed.stdout}${removed.stderr}`).toContain("--id");
     } finally {
       storage.cleanup();
     }
@@ -238,7 +233,6 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
         ["version: 4", 'run: "exit 0"', 'schedule: "@daily"', ""].join("\n"),
       );
       saveConfig({
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         defaultBundle: "stash",
         bundles: {
@@ -255,7 +249,7 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
       expect(run.code, run.stderr).toBe(0);
       expect(JSON.parse(run.stdout).result).toMatchObject({ id: taskId, status: "completed" });
 
-      const history = await runCliCapture(["task", "history", "--id", `scheduled//${taskId}`]);
+      const history = await runCliCapture(["task", "history", `scheduled//${taskId}`]);
       expect(history.code, history.stderr).toBe(0);
       expect(JSON.parse(history.stdout).rows[0]).toMatchObject({ id: taskId, status: "completed" });
     } finally {
@@ -279,7 +273,6 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
         ["version: 4", 'run: "exit 0"', 'schedule: "@daily"', ""].join("\n"),
       );
       saveConfig({
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         defaultBundle: "stash",
         bundles: {
@@ -296,7 +289,7 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
       expect(run.code, run.stderr).toBe(0);
       expect(JSON.parse(run.stdout).result).toMatchObject({ id: taskId, status: "completed" });
 
-      const history = await runCliCapture(["task", "history", "--id", `scheduled//${taskId}`]);
+      const history = await runCliCapture(["task", "history", `scheduled//${taskId}`]);
       expect(history.code, history.stderr).toBe(0);
       expect(JSON.parse(history.stdout).rows[0]).toMatchObject({ id: taskId, status: "completed" });
     } finally {
@@ -310,7 +303,7 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
       cwd: repoRoot,
       encoding: "utf8",
       timeout: 10_000,
-      env: { ...process.env, AKM_BUNDLE_DIR: undefined },
+      env: { ...process.env },
     });
     const help = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
     expect(result.status).toBe(0);

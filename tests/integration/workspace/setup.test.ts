@@ -11,9 +11,10 @@ import { akmExtract, resolveStandaloneExtractPlan } from "../../../src/commands/
 import { loadConfig } from "../../../src/core/config/config";
 import { getConfigPath } from "../../../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../../src/core/warn";
-import { setup, tasks } from "../../../src/workspace";
+import { setup } from "../../../src/workspace";
 import { change } from "../../../src/workspace/config";
-import { ctx, expectUsage, fakeCrontab, useSandbox } from "./workspace-behaviour-helpers";
+import * as tasks from "../../../src/workspace/tasks";
+import { ctx, expectUsage, fakeCrontab, stubHostCli, useSandbox } from "./workspace-behaviour-helpers";
 
 useSandbox();
 // Detection reads the home directory, which is the machine's own unless a test gives it another.
@@ -114,7 +115,8 @@ describe("setup.apply", () => {
       expect(config.improve.harness).toBeUndefined();
       expect(config.improve.enabled).toBeUndefined();
       expect(config.scheduler.enabled).toEqual([expect.stringMatching(/\/\/tasks\/improve$/)]);
-      expect(fs.readFileSync(cron.file, "utf8")).toContain("improve");
+      // The sandbox is not the default installation, so the sync that follows the add leaves the OS scheduler alone.
+      expect(fs.existsSync(cron.file)).toBe(false);
       expect(after.learning).toEqual({ on: true, harness: null, scheduled: true });
       expect(after.connection).toBe("default");
       expect(after.modelCalls.description).toContain('connection "default"');
@@ -172,7 +174,7 @@ describe("setup.apply", () => {
       expect(tasks.list().tasks).toEqual([]);
       await setup.apply({ dir: library(), learning: { on: true } });
       expect(tasks.list().tasks).toEqual([expect.objectContaining({ id: "improve", enabled: true })]);
-      expect(fs.readFileSync(cron.file, "utf8")).toContain("improve");
+      expect(fs.existsSync(cron.file)).toBe(false);
       expect(savedConfig().improve.connection).toBe("other");
       // A save with it already enabled changes nothing.
       const before = fs.readFileSync(getConfigPath(), "utf8");
@@ -190,10 +192,10 @@ describe("setup.apply", () => {
       await setup.apply({ dir });
       change({ set: { "connections.default.endpoint": "http://old:1/v1" }, unset: [] });
       await setup.apply({ dir, learning: { on: true } });
-      const scheduled = fs.readFileSync(cron.file, "utf8");
+      const scheduled = savedConfig().scheduler.enabled;
       await setup.apply({ dir, learning: { on: false } });
       expect(tasks.list().tasks).toEqual([expect.objectContaining({ id: "improve", enabled: true })]);
-      expect(fs.readFileSync(cron.file, "utf8")).toBe(scheduled);
+      expect(savedConfig().scheduler.enabled).toEqual(scheduled);
     } finally {
       cron.restore();
     }
@@ -335,6 +337,30 @@ describe("setup.detect", () => {
     } finally {
       fetched.mockRestore();
       restore();
+    }
+  });
+
+  test("learning on with a host CLI adds the improve task through it; without one the unmanaged warning comes back", async () => {
+    const cron = fakeCrontab();
+    try {
+      await setup.apply({ dir: library(), learning: { on: false } });
+      const connection = { endpoint: "http://localhost:1234", model: "qwen" };
+      const host = stubHostCli("task-add", { id: "improve", sync: { entry: "installed" } });
+      const withHost = (await setup.apply({ dir: library(), connection, learning: { on: true } }, host.cli)) as {
+        warnings?: string[];
+      };
+      expect(host.calls()).toEqual([
+        { marker: "host-env", args: expect.arrayContaining(["task", "add", "improve", "--format=json"]) },
+      ]);
+      expect(withHost.warnings).toBeUndefined();
+      // The stand-in did the add, so this process wrote no task.
+      expect(tasks.list().tasks).toEqual([]);
+
+      const without = (await setup.apply({ dir: library(), learning: { on: true } })) as { warnings?: string[] };
+      expect(tasks.list().tasks).toEqual([expect.objectContaining({ id: "improve", enabled: true })]);
+      expect(without.warnings?.join(" ")).toContain("akm task dispatch");
+    } finally {
+      cron.restore();
     }
   });
 });

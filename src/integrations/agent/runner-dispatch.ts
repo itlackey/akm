@@ -63,14 +63,7 @@ export function collectDispatchSensitiveValues(
   const inherited = collectInferredSecretValues(envSource);
   if (runner.kind !== "connection") return collectSensitiveValues(inherited);
   return collectSensitiveValues([
-    resolveApiKey(
-      runner.apiKey,
-      { connection: runner.name },
-      runner.endpoint,
-      envSource,
-      true,
-      runner.storedKey !== false,
-    ),
+    resolveApiKey(runner.apiKey, { connection: runner.name }, runner.endpoint, envSource, true),
     ...inherited,
   ]);
 }
@@ -151,14 +144,7 @@ export function materializeConnection(
   inference?: LlmInference | null,
   envSource: NodeJS.ProcessEnv = process.env,
 ): ChatCompletionConfig {
-  const apiKey = resolveApiKey(
-    runner.apiKey,
-    { connection: runner.name },
-    runner.endpoint,
-    envSource,
-    false,
-    runner.storedKey !== false,
-  );
+  const apiKey = resolveApiKey(runner.apiKey, { connection: runner.name }, runner.endpoint, envSource);
   const settings = mergeLayerInference([
     { inference: runner.inference as ExecutionJsonObject | undefined },
     { inference: inference as ExecutionJsonObject | null | undefined },
@@ -306,8 +292,6 @@ export interface InteractiveAgentInvocationOptions {
   /** What to launch, by name; omitted means the default harness. */
   readonly connection?: string;
   readonly harness?: string;
-  /** The retired spelling of the two: a connection by that name, else a harness. */
-  readonly engine?: string;
   /** The model it starts with, as an alias or an exact name. */
   readonly model?: string;
   readonly timeoutMs?: number;
@@ -334,7 +318,6 @@ export async function executeInteractiveAgentInvocation(
     layers: [
       ...(input.connection === undefined ? [] : [{ connection: input.connection }]),
       ...(input.harness === undefined ? [] : [{ harness: input.harness }]),
-      ...(input.engine === undefined ? [] : [{ engine: input.engine }]),
       ...(input.model === undefined ? [] : [{ model: input.model }]),
     ],
   });

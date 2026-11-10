@@ -5,7 +5,7 @@
 /**
  * A wall-clock deadline that aborts a caller's {@link AbortController}.
  *
- * Both surfaces that bound a whole workflow run — `akm workflow run --timeout`
+ * Both surfaces that bound a whole workflow run — `akm workflow run --timeout-ms`
  * (`commands/workflow-cli.ts`) and a scheduled workflow task (`tasks/runner.ts`)
  * — need the same four things: a timer, an abort carrying a reason, a flag
  * saying the deadline is why the run stopped, and an `unref` so a pending timer

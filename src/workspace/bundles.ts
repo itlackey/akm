@@ -4,7 +4,8 @@
 
 /** The configured bundles and their settings, and the actions that add, remove, update, rename or configure one. */
 
-import { setConfigValue } from "../commands/config-cli";
+import { setConfigValue } from "../commands/config";
+import { akmBundleRename } from "../commands/sources/bundle-rename";
 import { assembleInfo } from "../commands/sources/info";
 import { akmListSources } from "../commands/sources/installed-stashes";
 import { loadConfig, mutateConfig } from "../core/config/config";
@@ -14,7 +15,8 @@ import { closeDatabase, openReadonlyExistingDatabase } from "../storage/reposito
 import { getEmbeddingCount } from "../storage/repositories/index-vec-repository";
 import { runCli } from "./cli-child";
 import { readBundleGitStatus } from "./git-read";
-import { configSource, preserveUnrelatedConfig, tryStashDir, workingStashDir } from "./readers";
+import { configSource, preserveUnrelatedConfig, tryStashDir } from "./readers";
+import { redactForUi } from "./redact";
 
 export async function list() {
   const config = loadConfig();
@@ -42,10 +44,7 @@ export async function list() {
     })),
   );
 
-  const stashDir = workingStashDir(config);
-  const workingStash = stashDir ? { path: stashDir, git: await readBundleGitStatus(stashDir) } : null;
-
-  // The default bundle is the working stash when one is configured: list it first.
+  // The default bundle is the working bundle: list it first.
   cards.sort((a, b) => Number(b.default) - Number(a.default));
 
   const info = assembleInfo();
@@ -65,9 +64,7 @@ export async function list() {
   const entryCount = info.indexStats.entryCount;
   return {
     defaultBundle: config.defaultBundle ?? null,
-    defaultWriteTarget: config.defaultWriteTarget ?? null,
     bundles: cards,
-    workingStash,
     index: {
       entryCount,
       byType: info.indexStats.byType,
@@ -108,31 +105,27 @@ export async function add(input: { source: string; name?: string; writable?: boo
   const args = ["bundle", "add", positional(input.source, "source")];
   if (typeof input.name === "string" && input.name.trim()) args.push(`--name=${input.name.trim()}`);
   if (input.writable === true) args.push("--writable");
-  return runCli(args);
+  return runCli(args, "add");
 }
 
 export async function remove(input: { bundle: string; confirm: boolean }) {
   preserveUnrelatedConfig();
   if (input.confirm !== true) throw new UsageError("Confirm removal of this configured bundle first.");
-  return runCli(["bundle", "remove", "--yes", "--", configured(name(input.bundle, "bundle"))]);
+  return runCli(["bundle", "remove", "--yes", "--", configured(name(input.bundle, "bundle"))], "remove");
 }
 
 /** Writes only the lockfile, so it never passes config through the sanitizer. */
 export async function update(input: { bundle: string }) {
-  return runCli(["bundle", "update", "--", configured(name(input.bundle, "bundle"))]);
+  return runCli(["bundle", "update", "--", configured(name(input.bundle, "bundle"))], "update");
 }
 
 /** A dry run returns the plan and writes nothing. */
 export async function rename(input: { bundle: string; name: string; dryRun?: boolean }) {
   if (input.dryRun !== true) preserveUnrelatedConfig();
-  return runCli([
-    "bundle",
-    "rename",
-    ...(input.dryRun === true ? ["--dry-run"] : []),
-    "--",
-    name(input.bundle, "bundle"),
-    name(input.name, "name"),
-  ]);
+  const result = await akmBundleRename(name(input.bundle, "bundle"), name(input.name, "name"), {
+    dryRun: input.dryRun === true,
+  });
+  return redactForUi(result) as Record<string, unknown>;
 }
 
 export function setSettings(input: {

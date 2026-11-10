@@ -19,10 +19,10 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { REFLECT_TRUNCATION_MARKER } from "../../../src/commands/prompts";
 import type { Proposal, ProposalValidationContext } from "../../../src/commands/proposal/proposal-types";
 import { defaultProposalQualityValidators } from "../../../src/commands/proposal/validators/proposal-quality-validators";
 import { runProposalValidators } from "../../../src/commands/proposal/validators/proposal-validators";
-import { REFLECT_TRUNCATION_MARKER } from "../../../src/integrations/agent/prompts";
 import { makeProposal, payloadChanges } from "../../_helpers/factories";
 
 const ctx: ProposalValidationContext = {};

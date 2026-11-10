@@ -3,12 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Contract for `src/tasks/model/invocation.ts` (spec
- * docs/plans/specs/p1b-model-extraction.md §1.1 D4 module map, §3.1) — the
+ * Contract for `src/tasks/model/invocation.ts` — the
  * one surviving module of P1b's original three-file `src/tasks/model/**`
  * package.
  *
- * P4 (docs/plans/specs/p4-deletions-closeout.md §3.2.7, F-A2.4) deleted
+ * P4 deleted
  * `src/tasks/model/definition.ts` and `src/tasks/model/schedule.ts` along
  * with `src/tasks/source/parse-v3-adapter.ts`, the v3-to-model transition
  * adapter that was their only importer (D11's "transition period" ends with
@@ -18,7 +17,7 @@
  * stay pinned below — `model/invocation.ts` has six live importers untouched
  * by the deletion (spec §3.2.7's disposition table) — and the purity ratchet
  * that used to cover all four now-deleted-or-surviving files from
- * `tests/tasks/parse-v3-adapter.test.ts` moves here, scoped to this one
+ * the removed parse-v3-adapter test moves here, scoped to this one
  * surviving file, so `model/invocation.ts`'s "no fs/db/subprocess/network
  * import, no dynamic import or require" invariant (spec §3.2) keeps real
  * coverage.
@@ -75,9 +74,9 @@ describe("model/invocation.ts — pure type exports (P1b spec §1.1, design deci
 });
 
 // ── Purity ratchet (spec §3.2), scoped to the one surviving file — moved ───
-// ── here from tests/tasks/parse-v3-adapter.test.ts (deleted, P4 §3.2.7, ────
+// ── here from the removed parse-v3-adapter test (P4 §3.2.7, ────
 // ── F-A2.3) when parse-v3-adapter.ts and its two sibling model files were ──
-// ── deleted alongside it. Mirrors tests/architecture/diagnostic-codes.test.ts. ──
+// ── deleted alongside it. ──
 
 // Spec §3.2's forbidden list. node:path and node:crypto are explicitly
 // PERMITTED ("pure string/hash helpers") and deliberately absent here.

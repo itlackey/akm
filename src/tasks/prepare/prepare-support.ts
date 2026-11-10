@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Helpers prepareTaskV3Execution depends on. Only the subset prepare.ts's
+ * Helpers prepareTaskExecution depends on. Only the subset prepare.ts's
  * function body calls is exported here.
  */
 
@@ -18,15 +18,14 @@ import { resolveAssetPath } from "../../sources/resolve";
 import { checkWorkflowPlan, compileWorkflowSource } from "../../workflows/compile";
 import { detectSecretShapedParams } from "../../workflows/exec/param-secrets";
 import { isInferredSecretName } from "../log-redaction";
-import { SCHEDULED_TASK_CONTEXT_KEYS } from "../scheduler-invocation";
-import type { TaskV3Environment, TaskV3HostShell, TaskV3SourceDocument } from "../source-v3";
-import type { PrepareTaskV3ExecutionContext, TaskV3PreparedBase } from "./prepared-execution";
+import type { PreparableTaskDocument, TaskEnvironment, TaskHostShell } from "../task-source";
+import type { PreparedTaskBase, PrepareTaskExecutionContext } from "./prepared-execution";
 
 function own(value: object | undefined, key: PropertyKey): boolean {
   return value !== undefined && Object.hasOwn(value, key);
 }
 
-export function environmentSnapshot(environment: TaskV3Environment | undefined): Readonly<Record<string, string>> {
+export function environmentSnapshot(environment: TaskEnvironment | undefined): Readonly<Record<string, string>> {
   const out = Object.create(null) as Record<string, string>;
   for (const key of Object.keys(environment ?? {}).sort()) {
     const raw = environment?.[key];
@@ -42,23 +41,6 @@ export function environmentSnapshot(environment: TaskV3Environment | undefined):
   return Object.freeze(out);
 }
 
-/** Merge source env with the authoritative, closed scheduler directory context. */
-export function commandEnvironmentSnapshot(
-  environment: Readonly<Record<string, string>>,
-  schedulerContext: PrepareTaskV3ExecutionContext["schedulerContext"],
-): Readonly<Record<string, string>> {
-  const out = Object.create(null) as Record<string, string>;
-  for (const key of Object.keys(environment)) {
-    Object.defineProperty(out, key, { value: environment[key], enumerable: true, configurable: true, writable: true });
-  }
-  for (const key of SCHEDULED_TASK_CONTEXT_KEYS) {
-    const value = schedulerContext?.[key];
-    if (!value) continue;
-    Object.defineProperty(out, key, { value, enumerable: true, configurable: true, writable: true });
-  }
-  return Object.freeze(out);
-}
-
 function normalizeTimeout(value: string | number | null | undefined): number | null | undefined {
   if (value === undefined || value === null || typeof value === "number") return value;
   const parsed = parseDuration(value, DURATION_UNITS);
@@ -68,7 +50,7 @@ function normalizeTimeout(value: string | number | null | undefined): number | n
 
 export function qualifyOwnedRef(
   ref: string,
-  context: PrepareTaskV3ExecutionContext,
+  context: PrepareTaskExecutionContext,
 ): { parsed: BundleRef; qualified: string } {
   const parsed = parseBundleRef(ref);
   const bundle = parsed.bundle ?? context.bundleName;
@@ -76,8 +58,8 @@ export function qualifyOwnedRef(
 }
 
 export function currentExecutionValues(
-  document: TaskV3SourceDocument,
-  context: PrepareTaskV3ExecutionContext,
+  document: PreparableTaskDocument,
+  context: PrepareTaskExecutionContext,
   environment: Readonly<Record<string, string>>,
 ): UnresolvedExecutionDefaults {
   const akm = document.akm;
@@ -93,7 +75,6 @@ export function currentExecutionValues(
       : {}),
     ...(own(akm, "connection") ? { connection: akm?.connection } : {}),
     ...(own(akm, "harness") ? { harness: akm?.harness } : {}),
-    ...(own(akm, "engine") ? { engine: akm?.engine } : {}),
     ...(own(akm, "model") ? { model: akm?.model } : {}),
     ...(own(akm, "inference") ? { inference: akm?.inference } : {}),
     ...(own(akm, "outputSchema") ? { outputSchema: akm?.outputSchema } : {}),
@@ -104,10 +85,10 @@ export function currentExecutionValues(
 }
 
 export function base(
-  document: TaskV3SourceDocument,
-  context: PrepareTaskV3ExecutionContext,
+  document: PreparableTaskDocument,
+  context: PrepareTaskExecutionContext,
   environment: Readonly<Record<string, string>>,
-): TaskV3PreparedBase {
+): PreparedTaskBase {
   const timeoutMs = normalizeTimeout(document.akm?.timeout);
   return Object.freeze({
     taskId: context.taskId,
@@ -121,7 +102,7 @@ export function base(
 export async function resolvedOwnedAsset(
   qualified: string,
   type: "workflow" | "script",
-  context: PrepareTaskV3ExecutionContext,
+  context: PrepareTaskExecutionContext,
 ): Promise<Readonly<{ file: string; bundleRoot: string }>> {
   const parsed = parseBundleRef(qualified);
   const prefix = `${type}s/`;
@@ -144,13 +125,13 @@ export async function resolvedOwnedAsset(
   });
 }
 
-export function defaultTaskShell(platform: NodeJS.Platform): TaskV3HostShell {
+export function defaultTaskShell(platform: NodeJS.Platform): TaskHostShell {
   return platform === "win32" ? "powershell" : "sh";
 }
 
 export function validatePreparedCommand(
   invocation: PreparedCommandInvocation,
-  context: PrepareTaskV3ExecutionContext,
+  context: PrepareTaskExecutionContext,
 ): PreparedCommandInvocation {
   const { request } = invocation;
   if (!request.target.name) {

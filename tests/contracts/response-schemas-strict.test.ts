@@ -37,7 +37,7 @@ import { EXTRACT_JSON_SCHEMA } from "../../src/commands/improve/extract-prompt";
 import { REFLECT_JSON_SCHEMA, REFLECT_UNSCOPED_JSON_SCHEMA } from "../../src/commands/improve/reflect";
 import { SESSION_SUMMARY_JSON_SCHEMA } from "../../src/commands/improve/session-asset";
 import { judgeResponseSchema } from "../../src/commands/improve/stage";
-import { PROPOSAL_JSON_SCHEMA } from "../../src/integrations/agent/prompts";
+import { PROPOSAL_JSON_SCHEMA } from "../../src/commands/prompts";
 import { DERIVED_MEMORY_JSON_SCHEMA } from "../../src/llm/memory-infer";
 
 /** Every schema akm sends, by the name its call site uses. */

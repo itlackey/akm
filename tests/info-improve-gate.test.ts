@@ -1,0 +1,138 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+/**
+ * D8: `akm info` reports the autonomy gate (it moved here from `akm task doctor`).
+ *
+ * `info` is where an operator checks what a scheduled `akm improve` will actually do. It must list the lanes the gate
+ * is suppressing, and `improveTriage.applyMode` must report the EFFECTIVE mode, not the strategy's raw value: a
+ * `promote` strategy under a review-first config would otherwise say "promote" while the run used "queue".
+ */
+
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { assembleInfo } from "../src/commands/sources/info";
+import { resetConfigCache, saveConfig } from "../src/core/config/config";
+import { IMPROVE_AUTONOMY_CONFIG_KEY } from "../src/core/config/experimental";
+import {
+  type Cleanup,
+  sandboxStashDir,
+  sandboxXdgCacheHome,
+  sandboxXdgConfigHome,
+  sandboxXdgDataHome,
+} from "./_helpers/sandbox";
+
+let cleanup: Cleanup = () => {};
+
+beforeEach(() => {
+  const dataResult = sandboxXdgDataHome();
+  const cacheResult = sandboxXdgCacheHome(dataResult.cleanup);
+  const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
+  const stashResult = sandboxStashDir(cfgResult.cleanup);
+  cleanup = stashResult.cleanup;
+});
+
+afterEach(() => {
+  cleanup();
+  cleanup = () => {};
+  resetConfigCache();
+});
+
+const PROMOTING = {
+  strategies: {
+    promoting: { processes: { triage: { enabled: true, applyMode: "promote" as const, judgment: { enabled: true } } } },
+  },
+};
+
+describe("info reports the improve autonomy gate", () => {
+  test("reports autonomy off and names the gated lanes and the config key", () => {
+    saveConfig({ semanticSearchMode: "off", improve: { strategy: "consolidate" } });
+    resetConfigCache();
+
+    const result = assembleInfo();
+
+    expect(result.improveAutonomy?.enabled).toBe(false);
+    expect(result.improveAutonomy?.configKey).toBe(IMPROVE_AUTONOMY_CONFIG_KEY);
+    expect(result.improveAutonomy?.gatedLanes.map((lane) => lane.lane)).toEqual(["memoryCleanup"]);
+    expect(result.improveAutonomy?.gatedLanes.every((lane) => lane.reason.length > 0)).toBe(true);
+  });
+
+  test("does not report advisory consolidation operations as gated writers", () => {
+    saveConfig({
+      semanticSearchMode: "off",
+      improve: {
+        strategy: "contradiction-report",
+        strategies: {
+          "contradiction-report": {
+            processes: {
+              reflect: { enabled: false },
+              distill: { enabled: false },
+              consolidate: { enabled: true, contradictionDetection: { enabled: true } },
+              memoryInference: { enabled: false },
+              extract: { enabled: false },
+              validation: { enabled: false },
+              triage: { enabled: false },
+              proactiveMaintenance: { enabled: false },
+            },
+          },
+        },
+      },
+    });
+    resetConfigCache();
+
+    const result = assembleInfo();
+
+    expect(result.improveAutonomy?.gatedLanes.map((lane) => lane.lane)).toEqual(["memoryCleanup"]);
+  });
+
+  test("reports autonomy on with no gated lanes", () => {
+    saveConfig({
+      semanticSearchMode: "off",
+      improve: { strategy: "consolidate" },
+      experimental: { improveAutonomy: true },
+    });
+    resetConfigCache();
+
+    const result = assembleInfo();
+
+    expect(result.improveAutonomy?.enabled).toBe(true);
+    expect(result.improveAutonomy?.gatedLanes).toEqual([]);
+  });
+
+  test("improveTriage.applyMode reports the effective mode, not the strategy's raw value", () => {
+    // A strategy that enables triage in promote mode WITH judgment. With autonomy
+    // off the run uses queue, so info must say queue.
+    saveConfig({ semanticSearchMode: "off", improve: { ...PROMOTING, strategy: "promoting" } });
+    resetConfigCache();
+
+    const result = assembleInfo();
+
+    expect(result.improveTriage?.applyMode).toBe("queue");
+    expect(result.improveAutonomy?.gatedLanes.map((lane) => lane.lane)).toContain("triagePromote");
+  });
+
+  test("the default strategy reports deterministic promote with no triagePromote gate (#1143)", () => {
+    saveConfig({ semanticSearchMode: "off" });
+    resetConfigCache();
+
+    const result = assembleInfo();
+
+    expect(result.improveTriage?.enabled).toBe(true);
+    expect(result.improveTriage?.applyMode).toBe("promote");
+    expect(result.improveAutonomy?.gatedLanes.map((lane) => lane.lane)).not.toContain("triagePromote");
+    expect(result.improveAutonomy?.gatedLanes.map((lane) => lane.lane)).toContain("memoryInference");
+  });
+
+  test("improveTriage.applyMode reports promote once autonomy is opted into", () => {
+    saveConfig({
+      semanticSearchMode: "off",
+      improve: { ...PROMOTING, strategy: "promoting" },
+      experimental: { improveAutonomy: true },
+    });
+    resetConfigCache();
+
+    const result = assembleInfo();
+
+    expect(result.improveTriage?.applyMode).toBe("promote");
+  });
+});

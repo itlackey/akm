@@ -26,7 +26,7 @@ function searchResponse(overrides: Partial<SearchResponse> = {}): SearchResponse
     schemaVersion: 1,
     bundleDir: "/tmp/stash",
     source: "local",
-    hits: [],
+    results: [],
     ...overrides,
   };
 }
@@ -36,7 +36,7 @@ describe("curateSearchResults", () => {
     const result = await curateSearchResults(
       "release review",
       searchResponse({
-        hits: [
+        results: [
           stashHit({ type: "knowledge", name: "release-guide", ref: "knowledge/release-guide", path: "/tmp/2" }),
           stashHit({ type: "skill", name: "release-playbook", ref: "skills/release-playbook", path: "/tmp/1" }),
           stashHit({ type: "agent", name: "release-reviewer", ref: "agents/release-reviewer", path: "/tmp/4" }),
@@ -57,7 +57,7 @@ describe("curateSearchResults", () => {
     const result = await curateSearchResults(
       `release ${"very long prompt text ".repeat(40)}`,
       searchResponse({
-        hits: [stashHit({ type: "knowledge", name: "g", ref: "knowledge/g", path: "/tmp/g" })],
+        results: [stashHit({ type: "knowledge", name: "g", ref: "knowledge/g", path: "/tmp/g" })],
         registryHits: [registryHit({ name: "r", id: "npm:r" })],
       }),
       3,
@@ -72,7 +72,7 @@ describe("curateSearchResults", () => {
     const result = await curateSearchResults(
       "release",
       searchResponse({
-        hits: [
+        results: [
           stashHit({ type: "skill", name: "release-review", ref: "skills/release-review", path: "/tmp/1" }),
           stashHit({ type: "command", name: "release-notes", ref: "commands/release-notes", path: "/tmp/2" }),
           stashHit({ type: "command", name: "release-manager", ref: "commands/release-manager", path: "/tmp/3" }),
@@ -99,7 +99,7 @@ describe("curateSearchResults", () => {
     const result = await curateSearchResults(
       "deploy",
       searchResponse({
-        hits: [
+        results: [
           stashHit({ type: "script", name: "deploy-check", ref: "scripts/deploy-check", path: "/tmp/1", score: 0.8 }),
         ],
         registryHits: [
@@ -129,7 +129,7 @@ describe("akmCurate", () => {
     const result = await akmCurate({
       query: "deploy",
       searchResponse: searchResponse({
-        hits: [
+        results: [
           stashHit({ type: "script", name: "deploy-check", ref: "scripts/deploy-check", path: "/tmp/1", score: 0.9 }),
           stashHit({
             type: "command",
@@ -164,7 +164,7 @@ describe("akmCurate", () => {
 
 describe("akmCurate abstains on input that is not a task", () => {
   const matching = searchResponse({
-    hits: [stashHit({ type: "knowledge", name: "deploy-guide", ref: "knowledge/deploy-guide", path: "/tmp/1" })],
+    results: [stashHit({ type: "knowledge", name: "deploy-guide", ref: "knowledge/deploy-guide", path: "/tmp/1" })],
   });
 
   test.each([

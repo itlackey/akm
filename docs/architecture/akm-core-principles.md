@@ -49,8 +49,8 @@ more often than they protected anyone.
 
 Worked examples, which are the precedent:
 
-- **#857** — single-ref lookup walked the entire bundle tree, capped at 16,384 files, and aborted when tripped. Zero useful firings in months of local event history; its only production behavior was making the CLI unusable on a large bundle. Walk and cap deleted, replaced with closed-form candidate enumeration. Net −13 lines of source, every collision guarantee intact.
-- **`extra-params` (#815/#816)** — hard-rejected legacy keys. Degraded to warn-and-auto-lift; only genuinely conflicting keys still reject. This is the template for a guard that had to stay but had the wrong failure mode.
+- **Single-ref lookup** — single-ref lookup walked the entire bundle tree, capped at 16,384 files, and aborted when tripped. Zero useful firings in months of local event history; its only production behavior was making the CLI unusable on a large bundle. Walk and cap deleted, replaced with closed-form candidate enumeration. Net −13 lines of source, every collision guarantee intact.
+- **`extra-params`** — hard-rejected legacy keys. Degraded to warn-and-auto-lift; only genuinely conflicting keys still reject. This is the template for a guard that had to stay but had the wrong failure mode.
 - **`guarded-source` 1MiB cap** — kept once on the argument that the bytes are hashed, so a truncated read would be silently wrong. That argument rejects *truncation*; it never justified a *cap*. Correct answer was no truncation and no cap.
 - **Migrator TOCTOU fencing** — inode/device/ctime identity checks defending a window inside a human-typed `akm migrate apply` that already holds a cross-process lock and writes backups. A multi-tenant-daemon threat model applied to a single-user CLI.
 
@@ -59,7 +59,7 @@ Enforced by: review.
 ### 2. One place per policy
 
 A rule lives in exactly one module and everything else calls it. Write
-destinations branch on source kind only in `src/core/write-source.ts`.
+destinations branch on source kind only in `src/sources/write-source.ts`.
 Fan-out widths are decided once in `src/workflows/concurrency-policy.ts`.
 A call's timeout is resolved once in `src/integrations/agent/resolution.ts`,
 and no other layer adds one.
@@ -92,10 +92,10 @@ shapes. A reader uses the converter and keeps no tolerance of its own. A user's
 file (`config.json`, a task source, bundle content) is rewritten only by
 `akm migrate apply`, with a backup, running that same converter; akm's own
 stores (`state.db`, `index.db`) migrate forward when opened, with a backup
-before any destructive step. Reads reach back to the 0.9.15 floor: above it a
-reader converts in memory, warns once and names `akm migrate apply`; below it,
-and for an older task source (the one named exception), the command stops and
-names the migrator. What happens to data from a newer release differs by
+before any destructive step. A reader reads only the current shape: a retired
+form is named once, with `akm migrate apply` (which `akm upgrade` runs), and is
+not converted; a task source or config older than the 0.9.32 floor stops the
+command and names the recipe. What happens to data from a newer release differs by
 format (a newer index layout or frozen plan is refused with "upgrade akm";
 `state.db` and `config.json` warn and continue, and `akm health` reports the
 config skew), so [Persisted-Data Compatibility](persisted-data-compat.md)
@@ -164,8 +164,9 @@ that reads a developer's real config passes on one machine and fails on
 the next.
 
 Enforced by: `tests/_preload.ts` (the sandbox and the tripwire),
-`scripts/test-unit.sh` and `scripts/test-integration.sh` (the split and the
-per-shard `HOME`), `TEST_ISOLATION_MISSING` in `src/core/paths.ts`. Reads
+`scripts/test-shards.sh` (the unit/integration split and the
+per-shard `HOME`), `tests/_helpers/isolation-guard.ts` (the directory and child-process
+checks the preload installs). Reads
 through `os.homedir()` outside the runner scripts are held by review.
 
 ### 7. Prose lives in files; comments say why
@@ -220,7 +221,7 @@ functions rather than duplicating policy and export no primitive (writers, lease
 index readers); the host owns transport authentication. It is the
 seam for local hosts: its operations own all akm policy and a host owns only its
 transport and its own features. The
-`exports` map lists `./api`, `./workspace`, `./package.json` and `./dist/*`. Bun is the
+`exports` map lists `./api`, `./workspace`, and `./package.json`. Bun is the
 preferred runtime and the toolchain. Node 22 is the floor (`engines.node`):
 the npm package bootstraps through Node, and its launcher falls back to Node
 when no usable Bun is on `PATH`. Anything that would become another API for

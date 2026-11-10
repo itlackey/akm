@@ -39,14 +39,15 @@ import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { isHttpUrl, resolveStashDir } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { appendEvent } from "../../core/events";
-import { resolveBundleWriteTarget } from "../../core/mutation-target";
 import { getRunLogDir } from "../../core/paths";
 import { clearLogFile, info, isVerbose, setLogFile, warn } from "../../core/warn";
-import { resolveWriteTarget } from "../../core/write-source";
 import { exportVectors } from "../../indexer/export-vectors";
 import { releaseIndexRebuildLock, tryAcquireIndexRebuildLock } from "../../indexer/index-rebuild-lock";
 import { akmIndex } from "../../indexer/indexer";
+import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { getOutputMode } from "../../output/context";
+import { resolveBundleWriteTarget } from "../../sources/mutation-target";
+import { resolveWriteTarget } from "../../sources/write-source";
 import { pkgVersion } from "../../version";
 import {
   inferAssetName,
@@ -154,7 +155,11 @@ export const indexCommand = defineCommand({
       // Resolve the stash dir once at the `akm index` command boundary and
       // thread it into the indexer (WI-9.10 CLI-wide sweep) — the indexer leaf
       // no longer reads the ambient `resolveStashDir()`.
-      const stashDir = resolveStashDir();
+      // With configured bundles and no default, the first source stands in; with none, `resolveSourceEntries` throws
+      // the one "No default bundle" error, as search does.
+      const indexConfig = loadConfig();
+      const firstSource = resolveSourceEntries(undefined, indexConfig)[0]?.path;
+      const stashDir = indexConfig.defaultBundle ? resolveStashDir() : (firstSource ?? resolveStashDir());
       try {
         const result = await akmIndex({
           stashDir,
@@ -255,7 +260,7 @@ export const importKnowledgeCommand = defineJsonCommand({
     },
     bundle: {
       type: "string",
-      description: "Write destination: a source name (default: defaultWriteTarget)",
+      description: "Write destination: a source name (default: defaultBundle)",
     },
     xref: {
       type: "string",

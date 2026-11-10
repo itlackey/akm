@@ -1,0 +1,127 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+/**
+ * Where the engines of improve strategies and workflow gates went: the
+ * `connection` / `harness` they name now, or the process they moved to. See `convert-engines.ts`.
+ */
+
+import { isDeepStrictEqual } from "node:util";
+import { isRecord } from "../../../src/core/common";
+import { type Conversion, type Dict, type EngineTarget, objectAt, str } from "./convert-engines-shared";
+
+/** What a strategy's process, quality gate or judgment once said about where it runs and how. */
+const EXECUTION_KEYS = ["connection", "harness", "model", "timeoutMs"] as const;
+
+export type Retarget = (holder: unknown, where: string) => void;
+
+/** Rewrite the `engine` of `holder` as the `connection` or `harness` it names now, unless the holder already says. */
+export function retargeter(conversion: Conversion, target: (engine: string) => EngineTarget | undefined): Retarget {
+  return (holder, where) => {
+    if (!isRecord(holder) || !("engine" in holder)) return;
+    conversion.changed = true;
+    const engine = str(holder.engine);
+    delete holder.engine;
+    const found = engine === undefined ? undefined : target(engine);
+    if (found === undefined) conversion.notes.push(`${where}: engine ${JSON.stringify(engine)} is not carried over.`);
+    else for (const [key, value] of Object.entries(found)) holder[key] ??= value;
+  };
+}
+
+/**
+ * A strategy's `engine`, `model`, `llm` and `timeoutMs` are dropped (it says which processes run, not where), and
+ * where its processes, quality gates and triage judgment said a process runs moves to `improve.processes.<name>` /
+ * `improve.qualityGate`; the first strategy to say it wins. Their `llm` is dropped with a note: a model alias on the
+ * connection carries inference settings now.
+ */
+export function moveStrategyExecution(improve: Dict, conversion: Conversion, retarget: Retarget): void {
+  if (!isRecord(improve.strategies)) return;
+  const hoist = (holder: unknown, from: string, place: string, destination: () => Dict): void => {
+    if (!isRecord(holder)) return;
+    retarget(holder, `${from}.engine`);
+    if ("llm" in holder) {
+      delete holder.llm;
+      conversion.changed = true;
+      conversion.notes.push(
+        `${from}.llm: improve no longer reads inference settings here; set them on a model alias of the connection (\`connections.<name>.models.<alias>\`) and name it with \`model\`. It is dropped.`,
+      );
+    }
+    const found = EXECUTION_KEYS.filter((key) => key in holder);
+    if (found.length === 0) return;
+    conversion.changed = true;
+    const into = destination();
+    for (const key of found) {
+      const value = holder[key];
+      delete holder[key];
+      const names = key === "connection" || key === "harness";
+      const taken = names ? "connection" in into || "harness" in into : key in into;
+      if (!taken) into[key] = value;
+      else if (!isDeepStrictEqual(into[key], value))
+        conversion.notes.push(`${from}.${key}: ${place} already says where this runs; the first choice is kept.`);
+    }
+  };
+  const processEntry = (name: string) => () => objectAt(objectAt(improve, "processes"), name);
+  for (const [strategyName, strategy] of Object.entries(improve.strategies)) {
+    if (!isRecord(strategy)) continue;
+    for (const key of ["engine", "model", "llm", "timeoutMs"]) {
+      if (key in strategy) {
+        delete strategy[key];
+        conversion.changed = true;
+        conversion.notes.push(
+          `improve.strategies.${strategyName}.${key}: a strategy says which processes run, not where; it is dropped.`,
+        );
+      }
+    }
+    for (const [processName, process] of Object.entries(isRecord(strategy.processes) ? strategy.processes : {})) {
+      const where = `improve.strategies.${strategyName}.processes.${processName}`;
+      if (!isRecord(process)) continue;
+      // Triage's judgment is the model call; in 0.9 its setting was the nearer one, so it is hoisted first and wins.
+      hoist(process.judgment, `${where}.judgment`, "improve.processes.triage", processEntry("triage"));
+      hoist(process, where, `improve.processes.${processName}`, processEntry(processName));
+      hoist(process.qualityGate, `${where}.qualityGate`, "improve.qualityGate", () => objectAt(improve, "qualityGate"));
+    }
+  }
+}
+
+/** `defaults.improveStrategy`: `improve.strategy`. */
+export function improveStrategyDefault(out: Dict, defaults: Dict, improve: unknown): void {
+  if (defaults.improveStrategy === undefined) return;
+  out.improve = { ...(isRecord(improve) ? improve : {}) };
+  (out.improve as Dict).strategy ??= defaults.improveStrategy;
+}
+
+/**
+ * `workflow.judgeEngine`, else `defaults.engine`, is where 0.9 ran a gate's judge. It is model work now and runs where
+ * model work does, `judge`: the default connection, else the default harness. `workflow.judgeEngine` is dropped, and
+ * a note says whether the judge moves.
+ */
+export function dropJudgeEngine(
+  out: Dict,
+  conversion: Conversion,
+  target: (engine: string) => EngineTarget | undefined,
+  defaultEngine: string | undefined,
+  judge: EngineTarget | undefined,
+): void {
+  const workflow = out.workflow;
+  const named = isRecord(workflow) && "judgeEngine" in workflow;
+  const engine = named ? str(workflow.judgeEngine) : defaultEngine;
+  if (named) {
+    delete workflow.judgeEngine;
+    conversion.changed = true;
+  }
+  const became = engine === undefined ? undefined : target(engine);
+  const stays = became !== undefined && judge !== undefined && isDeepStrictEqual(became, judge);
+  const kind = judge === undefined ? undefined : "connection" in judge ? "connection" : "harness";
+  if (named) {
+    conversion.notes.push(
+      stays
+        ? `workflow.judgeEngine: "${engine}" is the default ${kind}, where a gate's judge runs now; the setting is dropped.`
+        : `workflow.judgeEngine${engine === undefined ? "" : ` "${engine}"`}: dropped. A gate's judge runs on the default connection, else the default harness, so a judge that ran on another engine has moved; to keep it, make that engine the default.`,
+    );
+  } else if (became !== undefined && judge !== undefined && !stays) {
+    conversion.notes.push(
+      `workflow: with no workflow.judgeEngine, a gate's judge ran on the default engine "${engine}"; it is model work now and runs on the default ${kind}, "${"connection" in judge ? judge.connection : judge.harness}".`,
+    );
+  }
+}

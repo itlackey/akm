@@ -27,7 +27,6 @@
 import fs from "node:fs";
 import { type Database, openDatabase } from "../storage/database";
 import { insertEvent, readStateEvents } from "../storage/repositories/events-repository";
-import { rethrowIfTestIsolationError } from "./errors";
 import type { EventEnvelope } from "./events-types";
 import { getStateDbPath, openStateDatabase, withStateDb } from "./state-db";
 import { borrowScopedStateDb } from "./state-db-scope";
@@ -99,7 +98,7 @@ export type EventType =
   | "improve_completed"
   /** Emitted by `runImproveMaintenancePasses` after rejecting proposals whose target assets no longer exist on disk. */
   | "proposal_orphan_purge"
-  /** Emitted by `runImproveMaintenancePasses` after running `purgeOldEvents()` on state.db. Metadata: `{purgedCount, retentionDays}`. */
+  /** Emitted by `runImproveMaintenancePasses` after running `purgeFoldedEvents()` on state.db. Metadata: `{purgedCount, retentionDays}`. */
   | "events_purged"
   /** Emitted by `createProposal()` when input validation fails before write — metadata carries `reason` and `source`. */
   | "proposal_creation_rejected"
@@ -144,10 +143,9 @@ export type EventType =
    * #733 — emitted by `runOrphanStateGcPass` (the orphan-state GC maintenance
    * pass) when a run has something to report: any `asset_salience` /
    * `asset_outcome` row currently pending (unresolved against
-   * `entries.item_ref`) or collected (deleted, only when
-   * `improve.stateGc.collect` is true) this run. A quiet run with nothing
-   * pending and nothing collected emits no event. Metadata carries
-   * `{pending, collected, byTable}`, where `byTable` breaks both counts down
+   * `entries.item_ref`). Rows are never deleted. A quiet run with nothing
+   * pending emits no event. Metadata carries
+   * `{pending, byTable}`, where `byTable` breaks the count down
    * per table (`asset_salience` / `asset_outcome`). Sentinel ref:
    * `asset_state/_gc` (same convention as `proposals/_orphan-purge`).
    */
@@ -257,7 +255,6 @@ export function appendEvent(input: AppendEventInput, ctx?: EventsContext): void 
     withStateDb((db) => insertEvent(db, row), { path: dbPath });
   } catch (err) {
     // Never mask the bun-test isolation guard as a silent "events failed".
-    rethrowIfTestIsolationError(err);
     // Read-only sandboxes can serve an existing index but cannot create the
     // maintenance lock or state DB used by best-effort usage tracking. That is
     // expected for a read verb; unrelated storage failures remain visible.
@@ -337,9 +334,8 @@ export function readEvents(options: ReadEventsOptions = {}, ctx?: EventsContext)
       db = openStateDatabase(dbPath);
       ownsDb = true;
     }
-  } catch (err) {
+  } catch {
     // Never mask the bun-test isolation guard as "no events".
-    rethrowIfTestIsolationError(err);
     // DB does not exist yet or cannot be opened — return empty result.
     return { events: [], nextOffset: 0 };
   }

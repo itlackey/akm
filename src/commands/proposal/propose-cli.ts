@@ -20,11 +20,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { defineCommand } from "citty";
 import { getStringArg, PROJECT_ARG, parsePositiveIntFlag, SCOPE_ARGS, scopeFromArgs } from "../../cli/parse-args";
-import { RETIRED_ENGINE_ARG, SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
+import { SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
 import { EXIT_CODES, GLOBAL_OUTPUT_ARGS, output, runWithJsonErrors } from "../../cli/shared";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../../core/asset/asset-create";
 import { loadConfig } from "../../core/config/config";
-import { UsageError } from "../../core/errors";
+import { NotFoundError, UsageError } from "../../core/errors";
 import { resolveProject } from "../../core/projects";
 import { akmPropose } from "./propose";
 
@@ -60,7 +60,6 @@ export const proposeCommand = defineCommand({
     },
     ...PROJECT_ARG,
     ...SELECTION_ARGS,
-    ...RETIRED_ENGINE_ARG,
     ...SCOPE_ARGS,
     "timeout-ms": { type: "string", description: "Override the engine timeout in milliseconds" },
   },
@@ -84,7 +83,11 @@ export const proposeCommand = defineCommand({
       // `name` is flat; subdirectory placement is `--path`'s job.
       assertFlatAssetName(String(args.name));
       const proposedName = combineCreatePath(normalizeCreateSubPath(getStringArg(args, "path")), String(args.name));
-      const taskText = fileFromFlag ? fs.readFileSync(path.resolve(fileFromFlag), "utf8") : (taskFromFlag ?? "");
+      const taskFile = fileFromFlag ? path.resolve(fileFromFlag) : undefined;
+      if (taskFile && !fs.existsSync(taskFile)) {
+        throw new NotFoundError(`--file ${fileFromFlag} does not exist.`, "FILE_NOT_FOUND");
+      }
+      const taskText = taskFile ? fs.readFileSync(taskFile, "utf8") : (taskFromFlag ?? "");
       const timeoutMs = parsePositiveIntFlag(args["timeout-ms"], "--timeout-ms");
       const project = resolveProject(loadConfig(), { project: getStringArg(args, "project") });
       const result = await akmPropose({

@@ -2,13 +2,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { warnOnce } from "../core/warn";
 import { cloneExecutionJsonObject, type ExecutionJsonObject } from "./json";
 
 export const EXECUTION_SOURCE_SCHEMA_VERSION = 1 as const;
 
-/** Current internal adapter identifiers are lowercase kebab-case registry keys. */
-export const EXECUTION_ADAPTER_ID_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
+/** What a workflow or task source that still says `engine:` is told: ignoring the key would move the work to another model. */
+export const RETIRED_ENGINE_KEY_MESSAGE =
+  "is retired and no longer read. Run `akm migrate apply` to rewrite it as `connection:` or `harness:`.";
 
 /** Exact identity of the authoritative native file from which content was rendered. */
 export interface ExecutionSourceIdentity {
@@ -22,18 +22,11 @@ export interface ExecutionSourceIdentity {
   readonly hash: string;
 }
 
-/** What an asset that still says `engine:` is told, once. */
-export function warnRetiredEngineKey(): void {
-  warnOnce("asset-engine-key-retired", "`engine` is retired; use `connection:` or `harness:`.");
-}
-
 /** Ordinary defaults contributed by one command or persona source layer. */
 export interface UnresolvedExecutionDefaults {
   readonly agent?: string | null;
   readonly connection?: string | null;
   readonly harness?: string | null;
-  /** The retired spelling of `connection` / `harness`: a connection by this name, else a harness. */
-  readonly engine?: string | null;
   readonly model?: string | null;
   readonly inference?: ExecutionJsonObject | null;
   readonly outputSchema?: ExecutionJsonObject | null;
@@ -43,13 +36,11 @@ export interface UnresolvedExecutionDefaults {
   readonly environment?: Readonly<Record<string, string>> | null;
 }
 
-/** What a config block (`improve.processes.<name>`, `index.<pass>`) or a flag says about where a call runs and how. */
+/** What a config block (`improve.processes.<name>`) or a flag says about where a call runs and how. */
 export interface ConfiguredExecutionSettings {
   readonly connection?: string;
   readonly harness?: string;
-  readonly engine?: string;
   readonly model?: string;
-  readonly llm?: object;
   /** `null` runs unbounded. */
   readonly timeoutMs?: number | null;
 }
@@ -60,9 +51,7 @@ export function executionDefaultsOf(settings: ConfiguredExecutionSettings | unde
   return {
     ...(settings.connection !== undefined ? { connection: settings.connection } : {}),
     ...(settings.harness !== undefined ? { harness: settings.harness } : {}),
-    ...(settings.engine !== undefined ? { engine: settings.engine } : {}),
     ...(settings.model !== undefined ? { model: settings.model } : {}),
-    ...(settings.llm !== undefined ? { inference: cloneExecutionJsonObject(settings.llm, "inference") } : {}),
     ...(settings.timeoutMs !== undefined ? { timeout: settings.timeoutMs } : {}),
   };
 }
@@ -91,20 +80,8 @@ function requireRecord(value: unknown, path: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-/** A selector or layer identifier that may cross the durable execution boundary. */
-export function requireStableExecutionSelector(value: unknown, path: string): string {
-  if (typeof value !== "string" || value.length === 0 || value.trim() !== value) {
-    throw new TypeError(`${path} must be a non-empty stable identifier`);
-  }
-  return value;
-}
-
 export function isPortableExecutionAgentSelector(value: string): boolean {
   return /^(?:[^/]+\/\/)?agents\/[^/]/.test(value);
-}
-
-export function executionPersonaMatchesSelector(selector: string, personaRef: string): boolean {
-  return selector.includes("//") ? selector === personaRef : personaRef.endsWith(`//${selector}`);
 }
 
 const IDENTITY_KEYS = ["ref", "bundle", "adapter", "file", "hash"] as const;
@@ -142,7 +119,7 @@ export function cloneUnresolvedExecutionDefaults(
   const record = requireRecord(input, path);
   const present = (key: string): boolean => Object.hasOwn(record, key) && record[key] !== undefined;
   const out: Record<string, unknown> = {};
-  for (const key of ["agent", "connection", "harness", "engine", "model", "workspace"] as const) {
+  for (const key of ["agent", "connection", "harness", "model", "workspace"] as const) {
     if (!present(key)) continue;
     const value = record[key];
     if (value !== null && typeof value !== "string") throw new TypeError(`${path}.${key} must be a string or null`);

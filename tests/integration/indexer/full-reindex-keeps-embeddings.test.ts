@@ -26,7 +26,7 @@ import { closeDatabase, openExistingDatabase } from "../../../src/storage/reposi
 import { getEmbeddingCount } from "../../../src/storage/repositories/index-vec-repository";
 import {
   type Cleanup,
-  sandboxEnvDir,
+  sandboxAkmDir,
   sandboxStashDir,
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
@@ -69,8 +69,8 @@ describe("akm index --full keeps the vectors of unchanged entries", () => {
     stashDir = stash.dir;
     let chain = sandboxXdgConfigHome(stash.cleanup).cleanup;
     chain = sandboxXdgCacheHome(chain).cleanup;
-    chain = sandboxEnvDir("akm-full-reindex-data", "AKM_DATA_DIR", chain).cleanup;
-    chain = sandboxEnvDir("akm-full-reindex-state", "AKM_STATE_DIR", chain).cleanup;
+    chain = sandboxAkmDir("akm-full-reindex-data", "data", chain).cleanup;
+    chain = sandboxAkmDir("akm-full-reindex-state", "state", chain).cleanup;
     cleanup = chain;
     writeSandboxConfig({ semanticSearchMode: "auto" });
     providerCalls = 0;

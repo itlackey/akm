@@ -47,14 +47,6 @@ function docSources(doc: IndexDocument): string[] {
 
 // ── metadata ─────────────────────────────────────────────────────────────────
 
-describe("llm-wiki adapter — metadata", () => {
-  test("id / version / extensions", () => {
-    expect(llmWikiAdapter.id).toBe("llm-wiki");
-    expect(llmWikiAdapter.version).toBe("0.9.0");
-    expect(llmWikiAdapter.extensions).toEqual([".md"]);
-  });
-});
-
 // ── recognition golden ─────────────────────────────────────────────────────────
 
 describe("llm-wiki adapter — recognition golden", () => {
@@ -114,8 +106,6 @@ describe("llm-wiki adapter — renderer golden (generic fallback, reading A)", (
       // The wiki page kinds + wiki-source are NOT in KNOWN_TYPES → generic.
       expect(presentation.label).toBe(expected.label as string);
       expect(presentation.renderer ?? null).toBe((expected.renderer as string | null) ?? null);
-      const action = presentation.action ? presentation.action(doc.ref ?? "") : `akm show ${doc.ref}`;
-      expect(action).toBe(expected.action as string);
     });
   }
 });

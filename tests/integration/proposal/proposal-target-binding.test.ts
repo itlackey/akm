@@ -36,7 +36,6 @@ function config(primary: string, team: string, other?: string): AkmConfig {
       ...(other ? { other: { path: other, writable: true } } : {}),
     } as AkmConfig["bundles"],
     defaultBundle: "primary",
-    defaultWriteTarget: "primary",
   } as AkmConfig;
 }
 
@@ -159,9 +158,10 @@ describe("proposal queue target binding", () => {
     const team = stash("akm-proposal-implicit-default-team-");
     const cfg = {
       bundles: { team: { path: team, writable: true } } as AkmConfig["bundles"],
-      defaultWriteTarget: "team",
+      defaultBundle: "team",
     } as AkmConfig;
-    writeSandboxConfig(cfg);
+    // The file names only `team`: the sandbox's own stash is not a configured bundle here.
+    fs.writeFileSync(path.join(storage.configDir, "akm", "config.json"), JSON.stringify(cfg), "utf8");
 
     expect(() =>
       createProposal(storage.stashDir, {
@@ -309,7 +309,6 @@ describe("proposal queue target binding", () => {
         collision: { path: collisionTarget, writable: true },
       } as AkmConfig["bundles"],
       defaultBundle: "primary",
-      defaultWriteTarget: "primary",
     } as AkmConfig;
     writeSandboxConfig(cfg);
     resetConfigCache();

@@ -8,7 +8,7 @@ import { parseTaskSourceV4 } from "../../src/tasks/source/task-source-v4";
 // so they need no stash and carry no subprocess cost.
 //
 // The `improve --dry-run` happy path lives in
-// tests/integration/improve-cli-flags.test.ts — it executes improve for real
+// tests/integration/commands/improve/improve-cli-flags.test.ts — it executes improve for real
 // and needs a fresh subprocess to avoid state.db lock contention with the
 // in-process suite (see the header comment there).
 import { runCliCapture } from "../_helpers/cli";

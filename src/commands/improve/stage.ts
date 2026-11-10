@@ -20,13 +20,13 @@ import type { Parsed } from "../../core/structured";
 import { warn } from "../../core/warn";
 import type { NoticeSink } from "../../execution/notices";
 import type { ConfiguredExecutionSettings, UnresolvedExecutionDefaults } from "../../execution/source";
-import type { RejectedProposalContext } from "../../integrations/agent/prompts";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import type { Judge, JudgeCall, JudgeOutcome } from "../../judges/registry";
 import type { ChatCompletionConfig, ChatCompletionOptions, ChatMessage } from "../../llm/client";
 import { isRefused, type StructuredLoopOptions, type StructuredLoopResult, structuredLoop } from "../../llm/structured";
 import { type CallStructuredRequest, callStructured, type StructuredOutcome } from "../../llm/structured-call";
 import { currentLlmStage, withLlmStage } from "../../llm/usage-telemetry";
+import type { RejectedProposalContext } from "../prompts";
 import { isProceduralRejection } from "../proposal/proposal-types";
 import {
   type CreateProposalInput,

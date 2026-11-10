@@ -32,7 +32,7 @@ import { displayRef, displayRefForConceptId } from "../../core/asset/resolve-ref
 import { META_DIR, type MetaRef, parseMetaRef, readMetaFile } from "../../core/asset/stash-meta";
 import { asNonEmptyString, isContainedResolvedPath } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
-import { NotFoundError, rethrowIfDataDirUnreadable, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
+import { NotFoundError, rethrowIfDataDirUnreadable, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { SCRIPT_EXTENSIONS } from "../../core/recognition-util";
 import { presentationFor } from "../../core/type-presentation";
@@ -470,7 +470,6 @@ function showLinks(itemRef: string, defaultBundle: string | undefined, readOnly 
   try {
     rows = withIndexDb((db) => readEntryLinks(db, itemRef), { readOnly });
   } catch (err) {
-    rethrowIfTestIsolationError(err);
     rethrowIfDataDirUnreadable(err);
     return {};
   }

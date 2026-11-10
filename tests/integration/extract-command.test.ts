@@ -16,14 +16,13 @@ import {
   resolveStandaloneExtractPlan,
 } from "../../src/commands/improve/extract";
 import { EXTRACT_JSON_SCHEMA } from "../../src/commands/improve/extract-prompt";
-import { akmMetrics } from "../../src/commands/metrics/metrics-cli";
+import { akmMetrics } from "../../src/commands/metrics/metrics";
 import { akmProposalAccept } from "../../src/commands/proposal/proposal";
 import * as proposalRepository from "../../src/commands/proposal/repository";
 import { listProposals } from "../../src/commands/proposal/repository";
 import { isValidDescription } from "../../src/commands/proposal/validators/proposal-quality-validators";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import type { AkmConfig } from "../../src/core/config/config";
-import { ImproveProcessConfigSchema, ImproveProfileConfigSchema } from "../../src/core/config/config-schema";
 import { TransientError, UsageError } from "../../src/core/errors";
 import { appendEvent, readEvents } from "../../src/core/events";
 import { createLockPayload } from "../../src/core/file-lock";
@@ -74,7 +73,7 @@ function makeStashDir(): string {
   return stash;
 }
 beforeEach(() => {
-  storage = withIsolatedAkmStorage();
+  storage = withIsolatedAkmStorage({}, { bundle: false });
 });
 afterEach(() => {
   storage.cleanup();
@@ -85,11 +84,9 @@ afterEach(() => {
 
 function configEnabled(stashDir: string): AkmConfig {
   return {
-    configVersion: "0.9.0",
     semanticSearchMode: "auto",
     bundles: { stash: { path: stashDir, writable: true } },
     defaultBundle: "stash",
-    defaultWriteTarget: "stash",
     connections: {
       default: {
         endpoint: "http://localhost:11434/v1/chat/completions",
@@ -102,7 +99,7 @@ function configEnabled(stashDir: string): AkmConfig {
         // #561 — these tests assert the distillation chat-call count / schema.
         // Session indexing (default-on) would add a second chat call per session,
         // so disable it here; the session-indexing behaviour has dedicated
-        // coverage in tests/session-indexing.test.ts.
+        // coverage in tests/integration/session-indexing.test.ts.
         extract: {
           processes: { extract: { enabled: true, indexSessions: false, triage: { enabled: false } } },
         },
@@ -112,11 +109,9 @@ function configEnabled(stashDir: string): AkmConfig {
 }
 function configDisabled(stashDir: string): AkmConfig {
   return {
-    configVersion: "0.9.0",
     semanticSearchMode: "auto",
     bundles: { stash: { path: stashDir, writable: true } },
     defaultBundle: "stash",
-    defaultWriteTarget: "stash",
     connections: {
       default: { endpoint: "http://localhost:11434/v1/chat/completions", models: { fast: "test-model" } },
     },
@@ -304,14 +299,13 @@ describe("akmExtract — discovery mode", () => {
     expect(result.sessions[0]?.sessionId).toBe("recent");
   });
 
-  test("maxSessionsPerRun caps LLM-processed sessions; overflow stays unseen for the next run", async () => {
+  test("the per-run cap (25) limits LLM-processed sessions; overflow stays unseen for the next run", async () => {
     const stash = makeStashDir();
     const now = Date.now();
-    const sessions = Array.from({ length: 5 }, (_, i) => fakeSession(`s${i}`, now - (i + 1) * 60_000));
+    const sessions = Array.from({ length: 27 }, (_, i) => fakeSession(`s${i}`, now - (i + 1) * 60_000));
     const cfg = configEnabled(stash) as AkmConfig & {
       improve: { strategies: { extract: { processes: { extract: Record<string, unknown> } } } };
     };
-    cfg.improve.strategies.extract.processes.extract.maxSessionsPerRun = 3;
 
     let chatCalls = 0;
     const result = await akmExtract({
@@ -325,19 +319,18 @@ describe("akmExtract — discovery mode", () => {
       },
     });
     expect(result.ok).toBe(true);
-    expect(chatCalls).toBe(3); // capped at 3, not all 5
-    expect(result.sessionsProcessed).toBe(3);
-    expect(result.warnings.join(" ")).toMatch(/maxSessionsPerRun=3.*deferred/);
+    expect(chatCalls).toBe(25); // capped at 25, not all 27
+    expect(result.sessionsProcessed).toBe(25);
+    expect(result.warnings.join(" ")).toMatch(/per-run limit of 25.*deferred/);
   });
 
-  test("an explicit --since bypasses maxSessionsPerRun", async () => {
+  test("an explicit --since bypasses the per-run cap", async () => {
     const stash = makeStashDir();
     const now = Date.now();
-    const sessions = Array.from({ length: 5 }, (_, i) => fakeSession(`s${i}`, now - (i + 1) * 60_000));
+    const sessions = Array.from({ length: 27 }, (_, i) => fakeSession(`s${i}`, now - (i + 1) * 60_000));
     const cfg = configEnabled(stash) as AkmConfig & {
       improve: { strategies: { extract: { processes: { extract: Record<string, unknown> } } } };
     };
-    cfg.improve.strategies.extract.processes.extract.maxSessionsPerRun = 3;
 
     let chatCalls = 0;
     const result = await akmExtract({
@@ -352,9 +345,9 @@ describe("akmExtract — discovery mode", () => {
       },
     });
     expect(result.ok).toBe(true);
-    expect(chatCalls).toBe(5); // cap bypassed — all 5 processed
-    expect(result.sessionsProcessed).toBe(5);
-    expect(result.warnings.join(" ")).not.toMatch(/maxSessionsPerRun/);
+    expect(chatCalls).toBe(27); // cap bypassed — all 27 processed
+    expect(result.sessionsProcessed).toBe(27);
+    expect(result.warnings.join(" ")).not.toMatch(/per-run limit/);
   });
 });
 
@@ -414,19 +407,16 @@ describe("akmExtract — skip aggregation + resolved engine (#912, #913)", () =>
   test("a mix of llm_unavailable and too_short only warns for the infrastructure reason; skipReasons counts both", async () => {
     const stash = makeStashDir();
     const now = Date.now();
-    // Below the 50-char minContentChars floor set below → skipped too_short,
+    // Below the 10-char minContentChars floor → skipped too_short,
     // never reaching the (throwing) LLM call.
     const short = fakeSessionWithText("short", now - 60_000, "hi");
     // Above the floor → reaches the LLM call, which always throws → llm_unavailable.
     const long = fakeSessionWithText(
       "long",
       now - 120_000,
-      "a session transcript long enough to clear the minContentChars floor for this test",
+      "a session transcript long enough to clear the minimum content floor for this test",
     );
-    const cfg = configEnabled(stash) as AkmConfig & {
-      improve: { strategies: { extract: { processes: { extract: Record<string, unknown> } } } };
-    };
-    cfg.improve.strategies.extract.processes.extract.minContentChars = 50;
+    const cfg = configEnabled(stash);
 
     const result = await akmExtract({
       type: "claude",
@@ -502,7 +492,7 @@ describe("akmExtract — single-session mode", () => {
 
 describe("akmExtract — subagent transcripts are never extracted as their own session (#839)", () => {
   // Real ClaudeCodeProvider (not the fake harness) driven against
-  // `withIsolatedAkmStorage()`'s isolated `AKM_CLAUDE_PROJECTS_DIR`, so
+  // `withIsolatedAkmStorage()`'s isolated `CLAUDE_CONFIG_DIR`, so
   // `listSessions()`'s subagents-exclusion (#830) and the folding in
   // `readSession()` both run for real. `chat` is still injected so no LLM
   // call happens.
@@ -1610,24 +1600,6 @@ describe("akmExtract — LLM call wiring", () => {
   });
 });
 
-// ── minContentChars config schema (#595) ────────────────────────────────────
-
-describe("minContentChars improve-process config schema", () => {
-  test("accepts 0 (disabled) and positive integers; rejects negatives and floats", () => {
-    expect(ImproveProcessConfigSchema.safeParse({ minContentChars: 0 }).success).toBe(true);
-    expect(ImproveProcessConfigSchema.safeParse({ minContentChars: 500 }).success).toBe(true);
-    expect(ImproveProcessConfigSchema.safeParse({ minContentChars: -1 }).success).toBe(false);
-    expect(ImproveProcessConfigSchema.safeParse({ minContentChars: 1.5 }).success).toBe(false);
-  });
-
-  test("parses inside a profile's extract process block", () => {
-    const result = ImproveProfileConfigSchema.safeParse({
-      processes: { extract: { enabled: true, minContentChars: 10 } },
-    });
-    expect(result.success).toBe(true);
-  });
-});
-
 // ── per-process connection/harness + strategy config support ────────────────────────────
 
 describe("akmExtract — connection, harness + strategy config resolution", () => {
@@ -1679,13 +1651,11 @@ describe("akmExtract — connection, harness + strategy config resolution", () =
     expect(fs.existsSync(stateDbPath)).toBe(false);
   });
 
-  test("a newly locked first candidate frees its maxSessionsPerRun slot for the next candidate", async () => {
+  test("a newly locked first candidate frees its per-run slot for the next candidate", async () => {
     const stash = storage.stashDir;
     const first = fakeSession("lock-cap-first", Date.now());
     const second = fakeSession("lock-cap-second", Date.now() - 1);
     const config = configEnabled(stash);
-    const process = config.improve?.strategies?.extract?.processes?.extract;
-    if (process) process.maxSessionsPerRun = 1;
     const stateDbPath = getStateDbPath();
     const firstLockPath = path.join(
       path.dirname(stateDbPath),
@@ -1741,8 +1711,6 @@ describe("akmExtract — connection, harness + strategy config resolution", () =
     const second = fakeSession("post-probe-lock-second", Date.now() - 1);
     const third = fakeSession("post-probe-lock-third", Date.now() - 2);
     const config = configEnabled(stash);
-    const process = config.improve?.strategies?.extract?.processes?.extract;
-    if (process) process.maxSessionsPerRun = 2;
     const stateDbPath = getStateDbPath();
     const secondLockPath = path.join(
       path.dirname(stateDbPath),
@@ -1827,11 +1795,6 @@ describe("akmExtract — connection, harness + strategy config resolution", () =
     if (!firstEvent) throw new Error("test fixture requires a session event");
     shortened.events = [{ ...firstEvent, text: "tiny" }];
     const config = configEnabled(stash);
-    const process = config.improve?.strategies?.extract?.processes?.extract;
-    if (process) {
-      process.maxSessionsPerRun = 1;
-      process.minContentChars = 100;
-    }
     const baseHarness = makeFakeHarness([first, second]);
     let firstReads = 0;
     let chatCalls = 0;
@@ -1907,11 +1870,11 @@ describe("akmExtract — connection, harness + strategy config resolution", () =
     {
       reason: "too_short" as const,
       key: "AKM_EXTRACT_TOO_SHORT_REQUIRED_KEY",
-      configure: (config: AkmConfig) => {
-        const process = config.improve?.strategies?.extract?.processes?.extract;
-        if (process) process.minContentChars = 100_000;
-      },
-      harness: (session: SessionData) => makeFakeHarness([session]),
+      configure: (_config: AkmConfig) => {},
+      harness: (session: SessionData) =>
+        makeFakeHarness([
+          { ...session, events: session.events.slice(0, 1).map((event) => ({ ...event, text: "hi" })) },
+        ]),
     },
     {
       reason: "triaged_out" as const,
@@ -2069,11 +2032,9 @@ describe("akmExtract — connection, harness + strategy config resolution", () =
     const placed = Object.fromEntries(Object.entries(processOverride).filter(([key]) => where.includes(key)));
     const strategyProcess = Object.fromEntries(Object.entries(processOverride).filter(([key]) => !where.includes(key)));
     return {
-      configVersion: "0.9.0",
       semanticSearchMode: "auto",
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
       connections: {
         default: {
           endpoint: "http://localhost:11434/v1/chat/completions",
@@ -2105,25 +2066,25 @@ describe("akmExtract — connection, harness + strategy config resolution", () =
 
   test("a connection and a strategy are chosen apart: the strategy never says where the model runs", () => {
     const stash = makeStashDir();
-    const config = configWithStrategy(stash, { maxTotalChars: 4321 });
+    const config = configWithStrategy(stash, { minNewSessions: 4321 });
     const plan = resolveStandaloneExtractPlan(config, { connection: "extract-special", strategy: "extract" });
     expect(plan).toMatchObject({ strategy: "extract", engine: "extract-special" });
-    expect(plan.process.maxTotalChars).toBe(4321);
+    expect(plan.process.minNewSessions).toBe(4321);
   });
 
   test("an explicitly selected strategy supplies settings, and its own enabled: false in the config stops standalone extract", () => {
     const stash = makeStashDir();
-    const on = resolveStandaloneExtractPlan(configWithStrategy(stash, { maxTotalChars: 4321 }), {
+    const on = resolveStandaloneExtractPlan(configWithStrategy(stash, { minNewSessions: 4321 }), {
       strategy: "extract",
     });
     expect(on).toMatchObject({ strategy: "extract", enabled: true });
     expect(on.runner?.timeoutMs).toBe(600_000);
-    expect(on.process.maxTotalChars).toBe(4321);
-    const off = resolveStandaloneExtractPlan(configWithStrategy(stash, { enabled: false, maxTotalChars: 4321 }), {
+    expect(on.process.minNewSessions).toBe(4321);
+    const off = resolveStandaloneExtractPlan(configWithStrategy(stash, { enabled: false, minNewSessions: 4321 }), {
       strategy: "extract",
     });
     expect(off).toMatchObject({ strategy: "extract", enabled: false, runner: null });
-    expect(off.process.maxTotalChars).toBe(4321);
+    expect(off.process.minNewSessions).toBe(4321);
   });
 
   test("standalone planning preserves an explicit unbounded timeout", () => {
@@ -2176,8 +2137,7 @@ describe("akmExtract — connection, harness + strategy config resolution", () =
       connection: "default",
       model: "process-model",
       timeoutMs: 55_000,
-      llm: { temperature: 0.2, maxTokens: 321 },
-      maxTotalChars: 1234,
+      minNewSessions: 1234,
       // minScore 2 (the default). This freeze test only needs the session to
       // clear triage so the frozen `process-model` is exercised on the LLM call;
       // it does not assert the threshold value. The shared `fakeSession` scores
@@ -2198,9 +2158,8 @@ describe("akmExtract — connection, harness + strategy config resolution", () =
       endpoint: "http://192.168.0.205:1234/v1/chat/completions",
       model: "process-model",
       request: {},
-      inference: { temperature: 0.2, maxTokens: 321 },
     });
-    expect(plan.process.maxTotalChars).toBe(1234);
+    expect(plan.process.minNewSessions).toBe(1234);
 
     const timeoutOverridePlan = resolveStandaloneExtractPlan(config, {
       connection: "extract-special",
@@ -2213,7 +2172,7 @@ describe("akmExtract — connection, harness + strategy config resolution", () =
     if (live) live.models = { fast: "changed-after-watch-start" };
     const process = config.improve?.strategies?.extract?.processes?.extract;
     if (process) {
-      process.maxTotalChars = 9999;
+      process.minNewSessions = 9999;
       if (process.triage) process.triage.enabled = false;
     }
 
@@ -2355,28 +2314,7 @@ describe("akmExtract — connection, harness + strategy config resolution", () =
     expect(receivedTimeout).toBe(30_000);
   });
 
-  test("honors defaultSince when --since is not passed", async () => {
-    const stash = makeStashDir();
-    const now = Date.now();
-    // session is 5 days old — would be excluded by the default 24h window
-    // but defaultSince: 7d should keep it.
-    const old = fakeSession("ses_5d", now - 5 * 86_400_000);
-    let chatCalls = 0;
-    const result = await akmExtract({
-      type: "claude",
-      stashDir: stash,
-      config: configWithStrategy(stash, { defaultSince: "7d" }),
-      harnesses: [makeFakeHarness([old])],
-      chat: async () => {
-        chatCalls += 1;
-        return JSON.stringify({ candidates: [] });
-      },
-    });
-    expect(chatCalls).toBe(1);
-    expect(result.sessions).toHaveLength(1);
-  });
-
-  // ── #595/#596 — minContentChars pre-LLM gate ──────────────────────────────
+  // ── #595/#596 — the pre-LLM content-size gate (constant floor of 10 chars) ──────────────────────────────
 
   /** Session whose raw content is exactly the given texts (one user event each). */
   function sessionWithTexts(id: string, texts: string[]): SessionData {
@@ -2421,9 +2359,9 @@ describe("akmExtract — connection, harness + strategy config resolution", () =
     return { result, chatCalls };
   }
 
-  test("minContentChars skips sub-threshold sessions before the LLM call (skipReason too_short)", async () => {
-    const tiny = sessionWithTexts("ses_tiny", ["short note"]); // 10 raw chars < 500
-    const { result, chatCalls } = await runExtract(tiny, { minContentChars: 500 });
+  test("sub-threshold sessions skip before the LLM call (skipReason too_short)", async () => {
+    const tiny = sessionWithTexts("ses_tiny", ["short"]); // 5 raw chars < 10
+    const { result, chatCalls } = await runExtract(tiny, {});
     expect(chatCalls).toBe(0);
     expect(result.sessionsProcessed).toBe(0);
     expect(result.sessionsSkipped).toBe(1);
@@ -2431,9 +2369,9 @@ describe("akmExtract — connection, harness + strategy config resolution", () =
     expect(result.sessions[0]?.skipReason).toBe("too_short");
   });
 
-  test("minContentChars processes sessions at/above the threshold", async () => {
-    const exact = sessionWithTexts("ses_exact", ["x".repeat(500)]); // 500 raw chars
-    const { result, chatCalls } = await runExtract(exact, { minContentChars: 500 });
+  test("sessions at/above the threshold are processed", async () => {
+    const exact = sessionWithTexts("ses_exact", ["x".repeat(10)]); // 10 raw chars
+    const { result, chatCalls } = await runExtract(exact, {});
     expect(chatCalls).toBe(1);
     expect(result.sessionsProcessed).toBe(1);
     expect(result.sessionsSkipped).toBe(0);
@@ -2447,14 +2385,13 @@ describe("akmExtract — connection, harness + strategy config resolution", () =
       "ses_noisy",
       Array.from({ length: 5 }, () => `<system-reminder>${"n".repeat(200)}</system-reminder>`),
     );
-    const { result, chatCalls } = await runExtract(noisy, { minContentChars: 500 });
+    const { result, chatCalls } = await runExtract(noisy, {});
     expect(chatCalls).toBe(1);
     expect(result.sessions[0]?.preFilter.outputCount).toBe(0); // proves the pre-filter stripped everything
     expect(result.sessions[0]?.skipReason).toBeUndefined();
   });
 
   test("default threshold is 10: empty sessions skip, tiny real sessions process", async () => {
-    // No minContentChars in config → in-code default 10.
     const empty = sessionWithTexts("ses_empty_raw", []);
     const emptyRun = await runExtract(empty, {});
     expect(emptyRun.chatCalls).toBe(0);
@@ -2465,68 +2402,5 @@ describe("akmExtract — connection, harness + strategy config resolution", () =
     const tinyRun = await runExtract(tinyReal, {});
     expect(tinyRun.chatCalls).toBe(1);
     expect(tinyRun.result.sessionsProcessed).toBe(1);
-  });
-
-  test("minContentChars: 0 disables the gate entirely", async () => {
-    const empty = sessionWithTexts("ses_empty_gate_off", []);
-    const { result, chatCalls } = await runExtract(empty, { minContentChars: 0 });
-    expect(chatCalls).toBe(1);
-    expect(result.sessionsProcessed).toBe(1);
-  });
-
-  test("honors maxTotalChars override for the pre-filter budget", async () => {
-    const stash = makeStashDir();
-    // Build a session with many fat events. Run extract twice — once with a
-    // tight budget, once with a generous one — and assert the tight-budget
-    // prompt is meaningfully smaller. This verifies the wiring without baking
-    // a brittle absolute size assertion against the prompt template.
-    const fatSession: SessionData = {
-      ref: {
-        harness: "claude",
-        sessionId: "ses_budget",
-        filePath: "/tmp/fake/ses_budget.jsonl",
-        startedAt: Date.now() - 3600_000,
-        endedAt: Date.now(),
-      },
-      events: Array.from({ length: 20 }, (_, i) => ({
-        harness: "claude",
-        text: `event ${i} `.padEnd(800, "x"),
-        ts: Date.now() - 60_000 * (20 - i),
-        sessionId: "ses_budget",
-        role: "user" as const,
-        filePath: "/tmp/fake/ses_budget.jsonl",
-      })),
-      inlineRefs: [],
-    };
-
-    let tightPromptLen = 0;
-    let generousPromptLen = 0;
-    await akmExtract({
-      type: "claude",
-      sessionId: "ses_budget",
-      force: true, // re-extract the same session twice to compare prompt budgets
-      stashDir: stash,
-      config: configWithStrategy(stash, { maxTotalChars: 1500 }),
-      harnesses: [makeFakeHarness([fatSession])],
-      chat: async (_cfg, msgs) => {
-        tightPromptLen = msgs[0]?.content.length ?? 0;
-        return JSON.stringify({ candidates: [] });
-      },
-    });
-    await akmExtract({
-      type: "claude",
-      sessionId: "ses_budget",
-      force: true, // --force overrides the content-hash skip on the second run
-      stashDir: stash,
-      config: configWithStrategy(stash, { maxTotalChars: 100_000 }),
-      harnesses: [makeFakeHarness([fatSession])],
-      chat: async (_cfg, msgs) => {
-        generousPromptLen = msgs[0]?.content.length ?? 0;
-        return JSON.stringify({ candidates: [] });
-      },
-    });
-    // Tight budget should drop ~15-18 of the 20 events; generous keeps all.
-    expect(tightPromptLen).toBeLessThan(generousPromptLen);
-    expect(generousPromptLen - tightPromptLen).toBeGreaterThan(8000);
   });
 });

@@ -46,5 +46,3 @@ On failure stderr carries `{"ok": false, "error": "...", "code": "...", "hint": 
 | 70 | Internal / unclassified error |
 | 75 | Transient: retry shortly |
 | 78 | Configuration error |
-
-`akm hints --detail full` prints the complete guide.

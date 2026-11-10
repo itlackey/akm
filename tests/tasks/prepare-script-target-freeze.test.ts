@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Ported from the deleted `tests/tasks-runtime-v3.test.ts` (removed by this
+ * Ported from the removed v3 task-runtime test (removed by this
  * stabilization PR; see `origin/release/0.9.2:tests/tasks-runtime-v3.test.ts`
  * ~line 142 and ~line 225). That file held the ONLY coverage for two
  * invariants of a task's frozen script/run-target snapshot:
@@ -18,12 +18,12 @@
  *
  * The first invariant still holds at HEAD — the logic moved body-intact into
  * `src/tasks/prepare/script-capture.ts` (`captureScriptTarget`) behind
- * `src/tasks/prepare/prepare.ts`'s `prepareTaskV3Execution` entry point. This
+ * `src/tasks/prepare/prepare.ts`'s `prepareTaskExecution` entry point. This
  * file ports the invariants only — never the retired v3 document grammar
  * the original suite spoke — expressed against task source v4 (`version: 4`),
  * exercised through the CURRENT `prepare/prepare.ts` entry point:
  * `tests/tasks/prepare-split.test.ts` drives that same entry for its own
- * caller-shape-parity concern but explicitly defers `prepareTaskV3Execution`'s
+ * caller-shape-parity concern but explicitly defers `prepareTaskExecution`'s
  * PER-KIND behavior — this file, and specifically these invariants — to
  * "elsewhere" (that file's own header comment).
  */
@@ -34,14 +34,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { makeBundleRef } from "../../src/core/asset/asset-ref";
 import type { AkmConfig } from "../../src/core/config/config-types";
-import { prepareTaskV3Execution } from "../../src/tasks/prepare/prepare";
-import type { PrepareTaskV3ExecutionContext } from "../../src/tasks/prepare/prepared-execution";
+import { prepareTaskExecution } from "../../src/tasks/prepare/prepare";
+import type { PrepareTaskExecutionContext } from "../../src/tasks/prepare/prepared-execution";
 import { parseTaskSource } from "../../src/tasks/source/parse-task-source";
 import { projectTaskSourceV4 } from "../../src/tasks/source/project-v4";
 import { makeSandboxDir, type SandboxedDir } from "../_helpers/sandbox";
 
 /** No `config.engines`/`defaults` needed — neither the script nor the shell arm reads them. */
-const config: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "off" };
+const config: AkmConfig = { semanticSearchMode: "off" };
 
 const sandboxes: SandboxedDir[] = [];
 afterEach(() => {
@@ -55,7 +55,7 @@ function sandboxRoot(): string {
   return made.dir;
 }
 
-function contextFor(root: string): PrepareTaskV3ExecutionContext {
+function contextFor(root: string): PrepareTaskExecutionContext {
   const bundleName = "bundle";
   return {
     taskId: "nightly",
@@ -66,7 +66,7 @@ function contextFor(root: string): PrepareTaskV3ExecutionContext {
   };
 }
 
-describe("prepareTaskV3Execution's frozen script/run-target snapshot (ported from the deleted tests/tasks-runtime-v3.test.ts)", () => {
+describe("prepareTaskExecution's frozen script/run-target snapshot (ported from the removed v3 task-runtime test)", () => {
   test("a uses: scripts/<file> target freezes byte-exact sha256/bytesBase64 and carries no live resumable file path", async () => {
     const root = sandboxRoot();
     fs.mkdirSync(path.join(root, "scripts"), { recursive: true });
@@ -80,7 +80,7 @@ describe("prepareTaskV3Execution's frozen script/run-target snapshot (ported fro
     });
     const document = projectTaskSourceV4(parsed.v4);
 
-    const prepared = await prepareTaskV3Execution(document, contextFor(root));
+    const prepared = await prepareTaskExecution(document, contextFor(root));
 
     expect(prepared.kind).toBe("script");
     if (prepared.kind !== "script") return;
@@ -107,7 +107,7 @@ describe("prepareTaskV3Execution's frozen script/run-target snapshot (ported fro
         yaml: "version: 4\nuses: scripts/nightly.sh\nschedule: '@daily'\n",
         filePath: path.join(root, "tasks", "nightly.yml"),
       });
-      const prepared = await prepareTaskV3Execution(projectTaskSourceV4(parsed.v4), contextFor(root));
+      const prepared = await prepareTaskExecution(projectTaskSourceV4(parsed.v4), contextFor(root));
 
       expect(prepared.kind).toBe("script");
       if (prepared.kind !== "script") return;
@@ -124,7 +124,7 @@ describe("prepareTaskV3Execution's frozen script/run-target snapshot (ported fro
       yaml: "version: 4\nrun: printf ok\nworking-directory: work\nschedule: '@daily'\n",
       filePath: path.join(root, "tasks", "nightly.yml"),
     });
-    const prepared = await prepareTaskV3Execution(projectTaskSourceV4(parsed.v4), contextFor(root));
+    const prepared = await prepareTaskExecution(projectTaskSourceV4(parsed.v4), contextFor(root));
 
     expect(prepared.kind).toBe("shell");
     if (prepared.kind !== "shell") return;
@@ -140,7 +140,7 @@ describe("prepareTaskV3Execution's frozen script/run-target snapshot (ported fro
       yaml: `version: 4\nrun: printf ok\nworking-directory: ${JSON.stringify(elsewhere)}\nschedule: '@daily'\n`,
       filePath: path.join(root, "tasks", "nightly.yml"),
     });
-    const prepared = await prepareTaskV3Execution(projectTaskSourceV4(parsed.v4), contextFor(root));
+    const prepared = await prepareTaskExecution(projectTaskSourceV4(parsed.v4), contextFor(root));
 
     expect(prepared.kind).toBe("shell");
     if (prepared.kind !== "shell") return;
@@ -158,7 +158,7 @@ describe("prepareTaskV3Execution's frozen script/run-target snapshot (ported fro
         yaml: "version: 4\nrun: printf ok\nworking-directory: link\nschedule: '@daily'\n",
         filePath: path.join(root, "tasks", "nightly.yml"),
       });
-      const prepared = await prepareTaskV3Execution(projectTaskSourceV4(parsed.v4), contextFor(root));
+      const prepared = await prepareTaskExecution(projectTaskSourceV4(parsed.v4), contextFor(root));
 
       expect(prepared.kind).toBe("shell");
       if (prepared.kind !== "shell") return;

@@ -3,8 +3,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { readPromptStdin } from "../src/commands/agent/contribute-cli";
+import { _resetWarnOnceForTests } from "../src/core/warn";
 import { runCliCapture } from "./_helpers/cli";
-import { withEnv } from "./_helpers/sandbox";
+import { withBundle, withEnv } from "./_helpers/sandbox";
 
 const tempDirs: string[] = [];
 
@@ -57,19 +58,19 @@ async function runCli(
   if (config) writeConfig(runtime.xdgConfig, config);
   return withEnv(
     {
-      AKM_BUNDLE_DIR: stashDir,
       XDG_CACHE_HOME: runtime.xdgCache,
       XDG_CONFIG_HOME: runtime.xdgConfig,
       XDG_DATA_HOME: runtime.xdgData,
       XDG_STATE_HOME: runtime.xdgState,
     },
-    async () => {
-      const { code, stdout, stderr } = await runCliCapture(args);
-      if (code !== 0) {
-        throw new Error(`CLI exited ${code}:\n${stderr}`);
-      }
-      return stdout.trim();
-    },
+    () =>
+      withBundle(stashDir, async () => {
+        const { code, stdout, stderr } = await runCliCapture(args);
+        if (code !== 0) {
+          throw new Error(`CLI exited ${code}:\n${stderr}`);
+        }
+        return stdout.trim();
+      }),
   );
 }
 
@@ -79,7 +80,7 @@ afterEach(() => {
   }
 });
 
-describe("--detail agent field projection", () => {
+describe("search, show and curate output", () => {
   function makeStash(): string {
     const stashDir = makeTempDir("akm-agent-stash-");
     writeFile(
@@ -94,112 +95,39 @@ describe("--detail agent field projection", () => {
     return stashDir;
   }
 
-  test("--detail agent search output includes canonical location and edit authorization", async () => {
+  test("--detail agent warns once and gives the normal output", async () => {
+    _resetWarnOnceForTests(); // an earlier file in the same process may already have warned
     const stashDir = makeStash();
-    const output = await runCli(stashDir, ["search", "architect", "--format=json", "--detail=agent"]);
-    const json = JSON.parse(output) as { hits: Array<Record<string, unknown>> };
-
-    expect(json.hits.length).toBeGreaterThan(0);
-    const hit = json.hits[0];
-    if (!hit) throw new Error("expected a matching search hit");
-    const keys = Object.keys(hit);
-
-    // Must have these agent-essential fields (when present)
-    expect(keys).toContain("name");
-    expect(keys).toContain("type");
-    expect(keys).toContain("action");
-    expect(hit).toHaveProperty("ref");
-    expect(hit).toHaveProperty("path");
-    expect(path.isAbsolute(String(hit?.path))).toBe(true);
-    expect(hit).toHaveProperty("editable", true);
-    expect(hit).not.toHaveProperty("editHint");
-
-    // Only allowed keys (estimatedTokens is optional — present when fileSize is known)
-    const allowedKeys = new Set([
-      "name",
-      "ref",
-      "type",
-      "path",
-      "editable",
-      "editHint",
-      "description",
-      "action",
-      "score",
-      "estimatedTokens",
-    ]);
-    for (const key of keys) {
-      expect(allowedKeys.has(key)).toBe(true);
-    }
-  });
-
-  test("--detail agent search output omits envelope and ranking internals", async () => {
-    const stashDir = makeStash();
-    const output = await runCli(stashDir, ["search", "architect", "--format=json", "--detail=agent"]);
-    const json = JSON.parse(output) as Record<string, unknown>;
-
-    // Top-level envelope must not have these
-    expect(json).not.toHaveProperty("schemaVersion");
-    expect(json).not.toHaveProperty("stashDir");
-    expect(json).not.toHaveProperty("timing");
-
-    // Hits must not have these
-    const hits = json.hits as Array<Record<string, unknown>>;
-    for (const hit of hits) {
-      expect(hit).not.toHaveProperty("whyMatched");
-      expect(hit).not.toHaveProperty("origin");
-      expect(hit).not.toHaveProperty("tags");
-      expect(hit).not.toHaveProperty("size");
-    }
-  });
-
-  test("--detail agent show output strips non-essential fields", async () => {
-    const stashDir = makeStash();
-    const output = await runCli(stashDir, ["show", "commands/release.md", "--format=json", "--detail=agent"]);
-    const json = JSON.parse(output) as Record<string, unknown>;
-
-    // Must have essential fields
-    expect(json).toHaveProperty("name");
-    expect(json).toHaveProperty("type");
-
-    // Must expose exact local access information but omit unrelated metadata.
-    expect(json).not.toHaveProperty("schemaVersion");
-    expect(json).toHaveProperty("ref");
-    expect(json).toHaveProperty("path");
-    expect(path.isAbsolute(String(json.path))).toBe(true);
-    expect(json).toHaveProperty("editable", true);
-    expect(json).not.toHaveProperty("editHint");
-    expect(json).not.toHaveProperty("origin");
-  });
-
-  test("--detail agent show output keeps content/run/action", async () => {
-    const stashDir = makeStash();
-
-    // Command has template content
-    const cmdOutput = await runCli(stashDir, ["show", "commands/release.md", "--format=json", "--detail=agent"]);
-    const cmdJson = JSON.parse(cmdOutput) as Record<string, unknown>;
-    expect(cmdJson).toHaveProperty("template");
-    expect(cmdJson).toHaveProperty("action");
-
-    // Script has run field
-    const scriptOutput = await runCli(stashDir, ["show", "scripts/deploy.sh", "--format=json", "--detail=agent"]);
-    const scriptJson = JSON.parse(scriptOutput) as Record<string, unknown>;
-    expect(scriptJson).toHaveProperty("run");
-    expect(scriptJson).toHaveProperty("action");
+    const normal = await runCli(stashDir, ["search", "architect", "--format=json", "--detail=normal"]);
+    const runtime = makeCliRuntime();
+    const { code, stdout, stderr } = await withEnv(
+      {
+        XDG_CACHE_HOME: runtime.xdgCache,
+        XDG_CONFIG_HOME: runtime.xdgConfig,
+        XDG_DATA_HOME: runtime.xdgData,
+        XDG_STATE_HOME: runtime.xdgState,
+      },
+      () => withBundle(stashDir, () => runCliCapture(["search", "architect", "--format=json", "--detail=agent"])),
+    );
+    expect(code).toBe(0);
+    expect(stderr.match(/Unknown --detail value "agent"/g)).toHaveLength(1);
+    expect(stdout.trim()).toBe(normal);
   }, 30_000);
 
-  test("standard output (without --detail agent) is unchanged", async () => {
+  test("default search output is brief and carries `results`", async () => {
     const stashDir = makeStash();
 
     // Default brief search still has same shape
     const searchOutput = await runCli(stashDir, ["search", "architect", "--format=json"]);
-    const searchJson = JSON.parse(searchOutput) as { hits: Array<Record<string, unknown>> };
-    // hits is always present; warnings may appear when semantic search is pending
-    expect(Object.keys(searchJson)).toContain("hits");
-    // Standard brief output includes at least name, type, action (may also include estimatedTokens etc.)
-    const hit = searchJson.hits[0] ?? {};
+    const searchJson = JSON.parse(searchOutput) as { results: Array<Record<string, unknown>> };
+    // results is always present; warnings may appear when semantic search is pending
+    expect(Object.keys(searchJson)).toContain("results");
+    expect(Object.keys(searchJson)).not.toContain("hits");
+    // Standard brief output includes at least name, type (may also include description, estimatedTokens etc.)
+    const hit = searchJson.results[0] ?? {};
     expect(hit).toHaveProperty("name");
     expect(hit).toHaveProperty("type");
-    expect(hit).toHaveProperty("action");
+    expect(hit).not.toHaveProperty("action");
 
     // Default show still has origin
     const showOutput = await runCli(stashDir, ["show", "commands/release.md", "--format=json"]);
@@ -207,53 +135,39 @@ describe("--detail agent field projection", () => {
     expect(showJson).toHaveProperty("origin");
   });
 
-  test("read-only local assets expose secondary edit hints without replacing use actions", async () => {
+  test("read-only local assets expose secondary edit hints", async () => {
     const stashDir = makeStash();
     const teamDir = makeTempDir("akm-agent-readonly-");
     const assetPath = path.join(teamDir, "knowledge", "readonly-guide.md");
     writeFile(assetPath, "# Read-only guide\n\nUse this reference.\n");
     const config = {
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       bundles: { team: { path: teamDir, writable: false } },
     };
 
     const search = JSON.parse(
-      await runCli(stashDir, ["search", "readonly guide", "--format=json", "--detail=agent"], config),
-    ) as { hits: Array<Record<string, unknown>> };
-    const searchHit = search.hits.find((hit) => hit.ref === "team//knowledge/readonly-guide");
-    expect(searchHit).toMatchObject({
-      ref: "team//knowledge/readonly-guide",
-      path: assetPath,
-      editable: false,
-    });
-    expect(searchHit?.editHint).toContain("akm clone team//knowledge/readonly-guide");
-    expect(searchHit?.action).toContain("akm show team//knowledge/readonly-guide");
-    expect(searchHit?.action).not.toContain("clone");
+      await runCli(stashDir, ["search", "readonly guide", "--format=json", "--detail=normal"], config),
+    ) as { results: Array<Record<string, unknown>> };
+    const searchHit = search.results.find((hit) => hit.ref === "team//knowledge/readonly-guide");
+    expect(searchHit).toBeDefined();
+    expect(searchHit).not.toHaveProperty("action");
 
     const show = JSON.parse(
-      await runCli(stashDir, ["show", "team//knowledge/readonly-guide", "--format=json", "--detail=agent"], config),
+      await runCli(stashDir, ["show", "team//knowledge/readonly-guide", "--format=json", "--detail=full"], config),
     ) as Record<string, unknown>;
     expect(show).toMatchObject({ ref: "team//knowledge/readonly-guide", path: assetPath, editable: false });
     expect(show.editHint).toContain("akm clone team//knowledge/readonly-guide");
     expect(show.action).not.toContain("clone");
 
     const curate = JSON.parse(
-      await runCli(stashDir, ["curate", "readonly guide", "--format=json", "--detail=agent"], config),
-    ) as { items: Array<Record<string, unknown>> };
-    const curated = curate.items.find((item) => item.ref === "team//knowledge/readonly-guide");
+      await runCli(stashDir, ["curate", "readonly guide", "--format=json", "--detail=normal"], config),
+    ) as { results: Array<Record<string, unknown>> };
+    const curated = curate.results.find((item) => item.ref === "team//knowledge/readonly-guide");
     expect(curated).toMatchObject({ ref: "team//knowledge/readonly-guide", path: assetPath, editable: false });
     expect(curated?.editHint).toContain("akm clone team//knowledge/readonly-guide");
-    expect(curated?.followUp).toBe("akm show team//knowledge/readonly-guide");
+    expect(curated).not.toHaveProperty("followUp");
   }, 30_000);
 });
-
-// WS2 ("--detail agent is the canonical spelling") removed (D1): it was a
-// strict subset of the "--detail agent field projection" describe block above
-// (:78-113 covers the same allowedKeys set plus essential-field checks;
-// :135-152 and :154-168 cover show fields + `template`). Its private
-// makeStash helper was local to the deleted describe block and needed no
-// separate removal.
 
 describe("--format jsonl", () => {
   function makeStash(): string {
@@ -297,34 +211,6 @@ describe("--format jsonl", () => {
     }
   });
 
-  test("JSONL combined with --detail agent uses agent shaping", async () => {
-    const stashDir = makeStash();
-    const output = await runCli(stashDir, ["search", "deploy", "--format=jsonl", "--detail=agent"]);
-    const lines = output.split("\n").filter((line) => line.trim().length > 0);
-
-    for (const line of lines) {
-      const parsed = JSON.parse(line) as Record<string, unknown>;
-      const allowedKeys = new Set([
-        "name",
-        "ref",
-        "type",
-        "path",
-        "editable",
-        "editHint",
-        "description",
-        "action",
-        "score",
-        "estimatedTokens",
-      ]);
-      for (const key of Object.keys(parsed)) {
-        expect(allowedKeys.has(key)).toBe(true);
-      }
-      // Must not have stripped fields
-      expect(parsed).not.toHaveProperty("origin");
-      expect(parsed).not.toHaveProperty("whyMatched");
-    }
-  });
-
   test("agent dispatch uses the rendered agent prompt and keeps one JSON result envelope", async () => {
     const stashDir = makeTempDir("akm-agent-dispatch-stash-");
     writeFile(
@@ -336,7 +222,6 @@ describe("--format jsonl", () => {
     writeFile(bin, '#!/bin/sh\necho "$@"\ncat\n');
     fs.chmodSync(bin, 0o755);
     const config = {
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       harnesses: { test: { platform: "claude", bin } },
     };
@@ -366,7 +251,6 @@ describe("--format jsonl", () => {
     );
 
     const config = {
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       defaultBundle: "fixture",
       bundles: {

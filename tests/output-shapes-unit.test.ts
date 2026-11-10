@@ -3,6 +3,7 @@ import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
 import { resolveOutputMode } from "../src/output/context";
 import { shapeForCommand } from "../src/output/shapes";
 import {
+  BRIEF_DESCRIPTION_LIMIT,
   capDescription,
   pickFields,
   shapeProposalAcceptOutput,
@@ -12,7 +13,6 @@ import {
   shapeProposalRejectOutput,
   shapeProposalShowOutput,
   shapeSearchHit,
-  shapeSearchHitForAgent,
   shapeSearchOutput,
   shapeShowOutput,
   truncateDescription,
@@ -109,7 +109,6 @@ describe("shapeSearchHit — local stash hits", () => {
     description: "Deploy the app",
     ref: "skills/deploy",
     itemRef: "team//skills/deploy",
-    action: "akm show skills/deploy",
     score: 0.42,
     estimatedTokens: 120,
     origin: "local:.",
@@ -117,15 +116,20 @@ describe("shapeSearchHit — local stash hits", () => {
     whyMatched: "name match",
   };
 
-  test("brief keeps only type/name/ref/action/estimatedTokens", () => {
+  test("brief keeps only type/name/ref/description/estimatedTokens", () => {
     // ref is included at brief so agents can run `akm show <ref>`
     expect(shapeSearchHit(fullHit, "brief")).toEqual({
       type: "skill",
       name: "deploy",
       ref: "skills/deploy",
-      action: "akm show skills/deploy",
+      description: "Deploy the app",
       estimatedTokens: 120,
     });
+  });
+
+  test("brief caps the description", () => {
+    const out = shapeSearchHit({ ...fullHit, description: "x ".repeat(100) }, "brief");
+    expect(String(out.description).length).toBeLessThanOrEqual(BRIEF_DESCRIPTION_LIMIT + 3);
   });
 
   test("normal adds ref, description and score (and caps description)", () => {
@@ -134,7 +138,6 @@ describe("shapeSearchHit — local stash hits", () => {
       type: "skill",
       name: "deploy",
       description: "Deploy the app",
-      action: "akm show skills/deploy",
       score: 0.42,
       estimatedTokens: 120,
       ref: "skills/deploy",
@@ -157,7 +160,6 @@ describe("shapeSearchHit — registry hits", () => {
     type: "registry",
     name: "azure-ops",
     description: "Azure ops kit",
-    action: "akm bundle add npm:azure-ops",
     installRef: "npm:azure-ops",
     warnings: ["registry rate limit hit, results may be stale"],
     id: "npm:azure-ops",
@@ -168,7 +170,6 @@ describe("shapeSearchHit — registry hits", () => {
     // Brief carries the install ref so callers can act without --detail full.
     const result = shapeSearchHit(registryHit, "brief");
     expect(result).toEqual({ name: "azure-ops", installRef: "npm:azure-ops", score: 0.7 });
-    // action is not in brief output — use installRef to act
     expect(result).not.toHaveProperty("curated");
     // brief intentionally omits warnings to keep payloads small
     expect(result).not.toHaveProperty("warnings");
@@ -179,7 +180,6 @@ describe("shapeSearchHit — registry hits", () => {
     expect(out).toMatchObject({
       name: "azure-ops",
       description: "Azure ops kit",
-      action: "akm bundle add npm:azure-ops",
       installRef: "npm:azure-ops",
       warnings: ["registry rate limit hit, results may be stale"],
     });
@@ -198,53 +198,6 @@ describe("shapeSearchHit — registry hits", () => {
   });
 });
 
-describe("shapeSearchHitForAgent", () => {
-  test("includes ref + caps description", () => {
-    const hit = {
-      type: "skill",
-      name: "deploy",
-      ref: "skills/deploy",
-      description: "long ".repeat(100),
-      action: "akm show skills/deploy",
-      score: 0.5,
-      estimatedTokens: 100,
-      tags: ["ops"],
-      origin: "local:.",
-    };
-    const out = shapeSearchHitForAgent(hit);
-    expect(out).toMatchObject({
-      name: "deploy",
-      ref: "skills/deploy",
-      type: "skill",
-      action: "akm show skills/deploy",
-      score: 0.5,
-      estimatedTokens: 100,
-    });
-    expect(out).not.toHaveProperty("tags");
-    expect(out).not.toHaveProperty("origin");
-    expect(typeof out.description).toBe("string");
-  });
-
-  test("omits editHint unless the local asset is read-only", () => {
-    const editable = shapeSearchHitForAgent({
-      type: "skill",
-      name: "deploy",
-      ref: "skills/deploy",
-      path: "/tmp/skills/deploy/SKILL.md",
-      editable: true,
-      editHint: "stale hint",
-    });
-    expect(editable).not.toHaveProperty("editHint");
-
-    const readOnly = shapeSearchHitForAgent({
-      ...editable,
-      editable: false,
-      editHint: "akm clone team//skills/deploy",
-    });
-    expect(readOnly.editHint).toBe("akm clone team//skills/deploy");
-  });
-});
-
 describe("shapeShowOutput", () => {
   const fullShow = {
     type: "skill",
@@ -258,26 +211,11 @@ describe("shapeShowOutput", () => {
     content: "long body...",
     template: "tpl",
     cwd: "/tmp",
-    extra: "should-not-appear-in-agent-mode",
+    extra: "should-not-appear",
   };
 
-  test("shape=agent picks the agent-action field set", () => {
-    const out = shapeShowOutput(fullShow, "full", "agent");
-    expect(out).toMatchObject({
-      type: "skill",
-      name: "deploy",
-      ref: "team//skills/deploy",
-      path: "/tmp/team/skills/deploy/SKILL.md",
-      editable: false,
-      editHint: "Inspect with akm show team//skills/deploy",
-      description: "Deploy",
-      content: "long body...",
-    });
-    expect(out).not.toHaveProperty("extra");
-  });
-
-  test("shape=human at full picks the show field set + adds schemaVersion", () => {
-    const out = shapeShowOutput(fullShow, "full", "human");
+  test("show at full picks the show field set + adds schemaVersion", () => {
+    const out = shapeShowOutput(fullShow, "full");
     expect(out.schemaVersion).toBe(1);
     expect(out).toMatchObject({
       type: "skill",
@@ -291,22 +229,18 @@ describe("shapeShowOutput", () => {
     expect(out).not.toHaveProperty("extra");
   });
 
-  test("shape=human at brief omits schemaVersion (only added at full)", () => {
-    const out = shapeShowOutput(fullShow, "brief", "human");
+  test("show at brief omits schemaVersion (only added at full)", () => {
+    const out = shapeShowOutput(fullShow, "brief");
     expect(out).not.toHaveProperty("schemaVersion");
     expect(out.name).toBe("deploy");
   });
 
   // `ref` is the canonical identity of the shown asset and must be present in
-  // EVERY show shape (human default, summary, and agent).
-  test("ref is present in shape=human at every detail level", () => {
-    expect(shapeShowOutput(fullShow, "brief", "human").ref).toBe("team//skills/deploy");
-    expect(shapeShowOutput(fullShow, "normal", "human").ref).toBe("team//skills/deploy");
-    expect(shapeShowOutput(fullShow, "full", "human").ref).toBe("team//skills/deploy");
-  });
-
-  test("ref is present in shape=agent", () => {
-    expect(shapeShowOutput(fullShow, "normal", "agent").ref).toBe("team//skills/deploy");
+  // EVERY show detail level.
+  test("ref is present in show at every detail level", () => {
+    expect(shapeShowOutput(fullShow, "brief").ref).toBe("team//skills/deploy");
+    expect(shapeShowOutput(fullShow, "normal").ref).toBe("team//skills/deploy");
+    expect(shapeShowOutput(fullShow, "full").ref).toBe("team//skills/deploy");
   });
 
   test("fragment provenance and context status survive every show shape", () => {
@@ -327,31 +261,27 @@ describe("shapeShowOutput", () => {
       contextTruncated: true,
     };
 
-    for (const shape of ["human", "agent"] as const) {
-      expect(shapeShowOutput(fragmentShow, "normal", shape)).toMatchObject({
-        selectedRef: fragmentShow.selectedRef,
-        parentRef: fragmentShow.parentRef,
-        fragmentOrdinal: 2,
-        contextMode: "lead",
-        contextMaxChars: 800,
-        contextTruncated: true,
-      });
-    }
+    expect(shapeShowOutput(fragmentShow, "normal")).toMatchObject({
+      selectedRef: fragmentShow.selectedRef,
+      parentRef: fragmentShow.parentRef,
+      fragmentOrdinal: 2,
+      contextMode: "lead",
+      contextMaxChars: 800,
+      contextTruncated: true,
+    });
   });
 
   test("toc survives every show shape and detail level", () => {
     const toc = [{ level: 2, text: "Install", slug: "install", startLine: 3 }];
-    for (const shape of ["human", "agent"] as const) {
-      for (const detail of ["brief", "normal", "full"] as const) {
-        expect(shapeShowOutput({ ...fullShow, toc }, detail, shape).toc).toEqual(toc);
-      }
+    for (const detail of ["brief", "normal", "full"] as const) {
+      expect(shapeShowOutput({ ...fullShow, toc }, detail).toc).toEqual(toc);
     }
   });
 
   // `path` and `editable` are projected at every --detail level, not
   // gated behind --detail full — only `schemaVersion`/`editHint` are full-only.
-  test("path and editable are present in shape=human at --detail brief (not full-gated)", () => {
-    const out = shapeShowOutput(fullShow, "brief", "human");
+  test("path and editable are present in show at --detail brief (not full-gated)", () => {
+    const out = shapeShowOutput(fullShow, "brief");
     expect(out.path).toBe("/tmp/team/skills/deploy/SKILL.md");
     expect(out.editable).toBe(false);
     expect(out).not.toHaveProperty("schemaVersion");
@@ -362,25 +292,22 @@ describe("shapeForCommand", () => {
   test("routes search results through shapeSearchOutput", () => {
     const out = shapeForCommand(
       "search",
-      { hits: [{ type: "skill", name: "x", action: "a", estimatedTokens: 1 }], registryHits: [] },
+      { results: [{ type: "skill", name: "x", estimatedTokens: 1 }], registryHits: [] },
       "brief",
-      "human",
     ) as Record<string, unknown>;
-    expect(Array.isArray(out.hits)).toBe(true);
-    expect((out.hits as unknown[])[0]).toEqual({
+    expect(Array.isArray(out.results)).toBe(true);
+    expect((out.results as unknown[])[0]).toEqual({
       type: "skill",
       name: "x",
-      action: "a",
       estimatedTokens: 1,
     });
   });
 
-  test("routes show results through shapeShowOutput at full + shape=agent", () => {
+  test("routes show results through shapeShowOutput at full", () => {
     const out = shapeForCommand(
       "show",
       { type: "skill", name: "deploy", action: "a", extra: "drop me" },
       "full",
-      "agent",
     ) as Record<string, unknown>;
     expect(out).not.toHaveProperty("extra");
   });
@@ -393,78 +320,85 @@ describe("shapeForCommand", () => {
     // behavior is asserted by the two tests above), so the original fields
     // besides the stamp survive untouched.
     const result = { something: "untouched" };
-    expect(shapeForCommand("info", result, "full", "human")).toMatchObject(result);
-    expect(shapeForCommand("health", result, "full", "human")).toMatchObject(result);
+    expect(shapeForCommand("info", result, "full")).toMatchObject(result);
+    expect(shapeForCommand("health", result, "full")).toMatchObject(result);
   });
 });
 
 describe("shapeSearchOutput", () => {
   test("respects detail level for hits", () => {
     const result = {
-      hits: [{ type: "skill", name: "x", action: "a", estimatedTokens: 1, description: "desc" }],
+      results: [{ type: "skill", name: "x", estimatedTokens: 1, description: "desc" }],
       registryHits: [],
     };
-    const brief = shapeSearchOutput(result, "brief", "human") as { hits: Record<string, unknown>[] };
-    const normal = shapeSearchOutput(result, "normal", "human") as { hits: Record<string, unknown>[] };
-    expect((brief.hits[0] as Record<string, unknown>).description).toBeUndefined();
-    expect((normal.hits[0] as Record<string, unknown>).description).toBe("desc");
-  });
-
-  test("shape=agent overrides detail and uses the agent shape", () => {
-    const result = {
-      hits: [
-        {
-          type: "skill",
-          name: "x",
-          action: "a",
-          ref: "skills/x",
-          path: "/tmp/skills/x/SKILL.md",
-          editable: true,
-          description: "d",
-          score: 0.1,
-          estimatedTokens: 1,
-        },
-      ],
-      registryHits: [],
-    };
-    const out = shapeSearchOutput(result, "brief", "agent") as { hits: Record<string, unknown>[] };
-    expect(out.hits[0]).toMatchObject({
-      ref: "skills/x",
-      path: "/tmp/skills/x/SKILL.md",
-      editable: true,
-    });
-  });
-
-  test("shape=agent preserves machine-visible semantic fallback disclosure", () => {
-    const out = shapeSearchOutput(
-      {
-        hits: [],
-        registryHits: [],
-        searchMode: "fts-fallback",
-        warnings: ["Vector search unavailable — falling back to keyword search."],
-      },
-      "brief",
-      "agent",
-    );
-
-    expect(out).toMatchObject({
-      searchMode: "fts-fallback",
-      warnings: ["Vector search unavailable — falling back to keyword search."],
-    });
-  });
-
-  test("agent registry hits never acquire a local path", () => {
-    const out = shapeSearchOutput(
-      { hits: [], registryHits: [{ type: "registry", name: "kit", id: "kit", action: "akm bundle add kit" }] },
-      "normal",
-      "agent",
-    ) as { registryHits: Record<string, unknown>[] };
-    expect(out.registryHits[0]).not.toHaveProperty("path");
-    expect(out.registryHits[0]).not.toHaveProperty("editable");
+    const brief = shapeSearchOutput(result, "brief") as { results: Record<string, unknown>[] };
+    const normal = shapeSearchOutput(result, "normal") as { results: Record<string, unknown>[] };
+    expect((brief.results[0] as Record<string, unknown>).description).toBe("desc");
+    expect((normal.results[0] as Record<string, unknown>).description).toBe("desc");
   });
 });
 
-describe("curate agent access projection", () => {
+describe("curate field sets", () => {
+  const item = {
+    source: "stash",
+    type: "knowledge",
+    name: "guide",
+    ref: "team//knowledge/guide",
+    path: "/tmp/team/knowledge/guide.md",
+    editable: true,
+    editHint: "stale",
+    id: "guide",
+    description: "Guide",
+    preview: "body",
+    keys: ["K"],
+    parameters: [{ name: "p" }],
+    run: "bash x",
+    supportRefs: [],
+    beliefState: "active",
+    reason: "r",
+    score: 0.5,
+  };
+  const curate = (detail: "brief" | "normal" | "full") =>
+    (shapeForCommand("curate", { query: "q", summary: "s", items: [item] }, detail) as { results: object[] })
+      .results[0] as Record<string, unknown>;
+
+  test("normal is the field set `--detail agent` used to return", () => {
+    expect(Object.keys(curate("normal")).sort()).toEqual(
+      [
+        "source",
+        "type",
+        "name",
+        "ref",
+        "path",
+        "editable",
+        "id",
+        "description",
+        "supportRefs",
+        "beliefState",
+        "reason",
+        "score",
+      ].sort(),
+    );
+  });
+
+  test("brief keeps the refs and a capped description; full keeps everything", () => {
+    expect(Object.keys(curate("brief")).sort()).toEqual(
+      ["source", "type", "name", "ref", "id", "description", "supportRefs", "beliefState", "reason"].sort(),
+    );
+    expect(curate("full")).toEqual(item);
+  });
+
+  test("the list key is `results`, never `items`", () => {
+    const out = shapeForCommand("curate", { query: "q", summary: "s", items: [item] }, "normal") as Record<
+      string,
+      unknown
+    >;
+    expect(out).toHaveProperty("results");
+    expect(out).not.toHaveProperty("items");
+  });
+});
+
+describe("curate normal access projection", () => {
   test("local items include access fields while registry-only items have no path", () => {
     const out = shapeForCommand(
       "curate",
@@ -480,7 +414,6 @@ describe("curate agent access projection", () => {
             path: "/tmp/team/knowledge/guide.md",
             editable: false,
             editHint: "Inspect with akm show team//knowledge/guide",
-            followUp: "akm show team//knowledge/guide",
             reason: "Useful guide",
           },
           {
@@ -488,26 +421,24 @@ describe("curate agent access projection", () => {
             type: "registry",
             name: "deploy-kit",
             id: "deploy-kit",
-            followUp: "akm bundle add deploy-kit",
             reason: "External kit",
           },
         ],
       },
       "normal",
-      "agent",
-    ) as { items: Record<string, unknown>[] };
+    ) as { results: Record<string, unknown>[] };
 
-    expect(out.items[0]).toMatchObject({
+    expect(out.results[0]).toMatchObject({
       ref: "team//knowledge/guide",
       path: "/tmp/team/knowledge/guide.md",
       editable: false,
       editHint: "Inspect with akm show team//knowledge/guide",
     });
-    expect(out.items[1]).not.toHaveProperty("path");
-    expect(out.items[1]).not.toHaveProperty("editable");
+    expect(out.results[1]).not.toHaveProperty("path");
+    expect(out.results[1]).not.toHaveProperty("editable");
   });
 
-  test("agent projection preserves merged semantic fallback mode and warning", () => {
+  test("brief preserves merged semantic fallback mode and warning", () => {
     const out = shapeForCommand(
       "curate",
       {
@@ -518,7 +449,6 @@ describe("curate agent access projection", () => {
         warnings: ["Vector search unavailable — falling back to keyword search."],
       },
       "brief",
-      "agent",
     );
 
     expect(out).toMatchObject({
@@ -541,13 +471,13 @@ describe("shapeForCommand: unknown command", () => {
   });
 });
 
-// ── #1476: list-returning commands carry no `results` alias ──
+// ── #1476: list-returning commands carry no duplicated `results` alias ──
 
 describe("shapeForCommand — no `results` collection alias (#1476)", () => {
   // command -> [collection key, minimal valid raw result]
   const LIST_COMMANDS: Array<[string, string, Record<string, unknown>]> = [
-    ["search", "hits", { hits: [{ type: "skill", name: "x", action: "a" }], registryHits: [] }],
-    ["curate", "items", { items: [{ type: "skill", name: "x" }], query: "q", summary: "s" }],
+    ["search", "results", { hits: [{ type: "skill", name: "x" }], registryHits: [] }],
+    ["curate", "results", { items: [{ type: "skill", name: "x" }], query: "q", summary: "s" }],
     ["proposal-list", "proposals", { totalCount: 1, proposals: [{ id: "p1", ref: "lessons/x", status: "pending" }] }],
     ["list", "sources", { sources: [{ name: "b1" }] }],
     ["env-list", "envs", { envs: [{ name: "e1" }] }],
@@ -560,13 +490,16 @@ describe("shapeForCommand — no `results` collection alias (#1476)", () => {
   ];
 
   for (const [command, key, raw] of LIST_COMMANDS) {
-    for (const shapeMode of ["human", "agent"] as const) {
-      test(`akm ${command} ${shapeMode} has \`${key}\` and no \`results\``, () => {
-        const out = shapeForCommand(command, raw, "normal", shapeMode) as Record<string, unknown>;
-        expect(Array.isArray(out[key])).toBe(true);
+    test(`akm ${command} has \`${key}\`${key === "results" ? " and no `hits` or `items`" : " and no `results`"}`, () => {
+      const out = shapeForCommand(command, raw, "normal") as Record<string, unknown>;
+      expect(Array.isArray(out[key])).toBe(true);
+      if (key === "results") {
+        expect(out).not.toHaveProperty("hits");
+        expect(out).not.toHaveProperty("items");
+      } else {
         expect(out).not.toHaveProperty("results");
-      });
-    }
+      }
+    });
   }
 });
 
@@ -869,16 +802,27 @@ describe("shapeProposal* — proposal commands", () => {
   });
 });
 
-describe("--detail agent", () => {
-  test("selects the agent projection and leaves verbosity at the configured default", () => {
-    expect(resolveOutputMode(["--detail", "agent"], { detail: "normal" })).toMatchObject({
-      shape: "agent",
-      detail: "normal",
-    });
-    expect(resolveOutputMode(["--detail=full"])).toMatchObject({ shape: "human", detail: "full" });
+describe("--detail", () => {
+  test("an unknown value (including the retired `agent`) warns once and uses normal", () => {
+    const lines: string[] = [];
+    _resetWarnOnceForTests();
+    _setWarnSinkForTests((_level, args) => lines.push(args.join(" ")));
+    try {
+      expect(resolveOutputMode(["--detail", "agent"], { detail: "full" })).toEqual({
+        format: "json",
+        detail: "normal",
+      });
+      expect(resolveOutputMode(["--detail=agent"])).toMatchObject({ detail: "normal" });
+      expect(resolveOutputMode(["--detail", "huge"])).toMatchObject({ detail: "normal" });
+    } finally {
+      _setWarnSinkForTests();
+    }
+    expect(lines.filter((line) => line.includes('"agent"'))).toHaveLength(1);
+    expect(lines.filter((line) => line.includes('"huge"'))).toHaveLength(1);
   });
 
-  test("an unknown --detail value is still a usage error", () => {
-    expect(() => resolveOutputMode(["--detail", "huge"])).toThrow(/brief\|normal\|full\|agent/);
+  test("brief, normal and full are accepted and the config default applies without a flag", () => {
+    expect(resolveOutputMode(["--detail=full"])).toMatchObject({ detail: "full" });
+    expect(resolveOutputMode([], { detail: "normal" })).toMatchObject({ detail: "normal" });
   });
 });

@@ -11,7 +11,7 @@ import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 import * as p from "../../cli/clack";
 import { akmTasksSync } from "../../commands/tasks/tasks";
 import { makeBundleRef } from "../../core/asset/asset-ref";
-import { loadConfig, mutateConfig, resetConfigCache } from "../../core/config/config";
+import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import {
   commitWriteTargetBoundary,
@@ -19,12 +19,10 @@ import {
   prepareWriteTargetForMutation,
   resolveWriteTarget,
   writeAssetToSource,
-} from "../../core/write-source";
-import { enabledRefsFromInstalled, isSchedulerBundleActive, schedulerEnabledRefs } from "../../tasks/activation-config";
-import { backendNameForPlatform, selectBackend } from "../../tasks/backends";
+} from "../../sources/write-source";
+import { schedulerEnabledRefs, setSchedulerRefs } from "../../tasks/activation-config";
 import { type EmbeddedTask, listEmbeddedTasks } from "../../tasks/embedded";
 import { parseSchedule } from "../../tasks/schedule";
-import type { InstalledSchedulerBinding } from "../../tasks/scheduler-binding";
 import { parseTaskSource } from "../../tasks/source/parse-task-source";
 import { prompt } from "../prompt";
 
@@ -112,8 +110,6 @@ export interface ScheduledTasksDeps {
   list: () => SetupTaskDefinition[] | Promise<SetupTaskDefinition[]>;
   prepare: (tasks: PreparedSetupTask[]) => Promise<number>;
   sync: typeof akmTasksSync;
-  /** Read-only native scheduler inventory, used to pre-check the review truthfully. */
-  inspectInstalled: () => Promise<{ installed: readonly InstalledSchedulerBinding[] }>;
 }
 
 export function listSetupTaskDefinitions(): SetupTaskDefinition[] {
@@ -188,7 +184,7 @@ export async function prepareSetupTaskDefinitions(
 
     const parsed = parseTaskSource({ yaml, filePath });
     for (const schedule of parsed.v4.schedule) {
-      parseSchedule(schedule.cron, backendNameForPlatform());
+      parseSchedule(schedule.cron);
     }
     return { filePath, original, yaml, ref: { type: "task" as const, name: plan.task.id } };
   });
@@ -232,18 +228,7 @@ export async function prepareSetupTaskDefinitions(
     tasks.filter((plan) => plan.enabled).map((plan) => makeBundleRef(target.source.name, `tasks/${plan.task.id}`)),
   );
   const managed = new Set(tasks.map((plan) => makeBundleRef(target.source.name, `tasks/${plan.task.id}`)));
-  mutateConfig((current) => {
-    const existing = schedulerEnabledRefs(current) ?? [];
-    const next = existing.filter((ref) => !managed.has(ref));
-    if (selected.size > 0 && !isSchedulerBundleActive(current, target.source.name)) {
-      throw new UsageError(`Cannot activate setup tasks from disabled bundle ${JSON.stringify(target.source.name)}.`);
-    }
-    next.push(...selected);
-    next.sort((left, right) => left.localeCompare(right));
-    if (current.scheduler?.enabled !== undefined && JSON.stringify([...existing]) === JSON.stringify(next))
-      return current;
-    return { ...current, scheduler: { ...current.scheduler, enabled: next } };
-  });
+  setSchedulerRefs([...managed], [...selected]);
 
   return changed.length;
 }
@@ -252,7 +237,6 @@ const DEFAULT_SCHEDULED_TASKS_DEPS: ScheduledTasksDeps = {
   list: listSetupTaskDefinitions,
   prepare: prepareSetupTaskDefinitions,
   sync: akmTasksSync,
-  inspectInstalled: async () => ({ installed: await selectBackend().list() }),
 };
 
 export async function stepScheduledTasks(
@@ -273,20 +257,6 @@ export async function stepScheduledTasks(
   // unpreparable.
   const embedded = listEmbeddedTasks();
   if (embedded.length === 0) return;
-
-  // A config that predates `scheduler.enabled` means "keep what is installed":
-  // make that explicit before the review below reads and edits the list.
-  if (schedulerEnabledRefs(loadConfig()) === undefined) {
-    try {
-      const inspection = await deps.inspectInstalled();
-      const refs = enabledRefsFromInstalled(inspection.installed, loadConfig());
-      mutateConfig((current) => ({ ...current, scheduler: { ...current.scheduler, enabled: [...refs] } }));
-      resetConfigCache();
-    } catch (cause) {
-      const message = cause instanceof Error ? cause.message : String(cause);
-      p.log.warn(`Native scheduler bindings could not be inspected: ${message}`);
-    }
-  }
 
   const installed = await deps.list();
   const byId = new Map<string, SetupTaskDefinition>();
@@ -334,7 +304,7 @@ export async function stepScheduledTasks(
         validate(value) {
           const candidate = (value ?? "").trim() || task.schedule;
           try {
-            parseSchedule(candidate, backendNameForPlatform());
+            parseSchedule(candidate);
           } catch (error) {
             return error instanceof Error ? error.message : "Invalid schedule.";
           }
@@ -372,7 +342,8 @@ export async function stepScheduledTasks(
 
   const activate = await prompt(() =>
     p.confirm({
-      message: `Activate these schedules now? This will update task files and sync them to the ${backendNameForPlatform()} scheduler.`,
+      message:
+        "Activate these schedules now? This will update task files and make sure the OS scheduler runs `akm task dispatch`.",
       initialValue: false,
     }),
   );
@@ -384,18 +355,8 @@ export async function stepScheduledTasks(
   const changed = await deps.prepare(plans);
   if (changed > 0) p.log.success(`Prepared ${changed} task definition${changed === 1 ? "" : "s"}.`);
   const syncResult = await deps.sync();
-  if (syncResult.skipped.length > 0) {
-    for (const skipped of syncResult.skipped) {
-      p.log.warn(`Task "${skipped.id}" was not activated: ${skipped.reason}`);
-    }
-    const activeCount = syncResult.installed.length + syncResult.updated.length + syncResult.unchanged.length;
-    p.log.warn(
-      `${activeCount === 0 ? "No task schedules were activated." : "Task schedule activation was incomplete."} ` +
-        "If you are running AKM from source, run the installed `akm setup`. " +
-        "To migrate or repair existing scheduler bindings explicitly, run `akm task sync --rebind`.",
-    );
-    return;
-  }
+  for (const warning of syncResult.warnings ?? []) p.log.warn(warning);
+  if (syncResult.entry === "unmanaged") return;
   p.log.success("Task schedules activated. Verify them with `akm task doctor`.");
 }
 

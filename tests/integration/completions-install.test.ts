@@ -42,7 +42,6 @@ describe("completions --install", () => {
       cwd: path.resolve(import.meta.dir, "..", ".."),
       env: {
         ...process.env,
-        AKM_BUNDLE_DIR: undefined,
         HOME: makeTempDir(),
         XDG_CACHE_HOME: makeTempDir(),
         XDG_CONFIG_HOME: makeTempDir(),

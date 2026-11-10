@@ -112,8 +112,8 @@ with the bundle that owns the env file, and warns once naming the env ref. The
 env file is bundle content and is not rewritten; write the full ref.
 
 `secret://name` was the config spelling of the same thing. It is retired:
-config still reads it as `${secrets/name}` and names the key once, and `akm
-migrate apply` rewrites the file.
+config no longer reads it as a reference, and names the key once; `akm
+migrate apply` rewrites it as `${secrets/name}`.
 
 ## Running commands
 
@@ -172,7 +172,7 @@ need the index.
 
 Env and secret mutations (`env create`, `env remove`, `secret set`, `secret remove`) choose their
 destination like every other write command: an explicit `--bundle <source>`,
-else `defaultWriteTarget`, else the working bundle. The chosen source must be
+else the working bundle. The chosen source must be
 writable, or the command fails with a `ConfigError` before anything is written;
 a git-backed writable target commits the mutation at a single operation
 boundary. Reads (`list`, `show`, `path`, `run`, `export`) span all configured

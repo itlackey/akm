@@ -262,13 +262,11 @@ Carrying learned state (utility, salience, usage history) across a rename is
 opt-in and out-of-band: run `bun scripts/rekey-asset-ref.ts <old-ref> <new-ref>`
 from a source checkout **before** `akm index`, and it re-keys the `entries` row
 plus `asset_salience`/`asset_outcome`/`usage_events` in place rather than letting
-`akm index` mint a fresh row. See
-[`v0.9.0-troubleshooting.md`](../../migration/v0.9.0-troubleshooting.md) for the
-walkthrough.
+`akm index` mint a fresh row.
 
 Renaming a *bundle* is separate: `akm bundle rename <old> <new>` is the one
 command that changes a bundle id. It rewrites the config `bundles` key,
-`defaultBundle` and `defaultWriteTarget`, `scheduler.enabled` refs, the lockfile
+`defaultBundle`, `scheduler.enabled` refs, the lockfile
 entry, and the stored `bundle//` refs in index entries, proposals, task history,
 workflow runs, recorded feedback and usage, and the improve ledger, salience, and
 outcome rows, so search and improve keep counting the bundle's feedback. Refs

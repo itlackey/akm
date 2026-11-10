@@ -10,7 +10,11 @@ import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { type SandboxedDir, makeStashDir as sandboxMakeStashDir } from "../../../_helpers/sandbox";
+import {
+  configHomeWithBundle,
+  type SandboxedDir,
+  makeStashDir as sandboxMakeStashDir,
+} from "../../../_helpers/sandbox";
 
 const disposers: Array<{ cleanup: () => void }> = [];
 
@@ -35,7 +39,6 @@ function writeTestConfig(root: string): void {
   fs.writeFileSync(
     path.join(configDir, "config.json"),
     JSON.stringify({
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       connections: { test: { endpoint: "https://example.test/v1/chat/completions", models: { fast: "test" } } },
     }),
@@ -63,6 +66,7 @@ function runCli(args: string[], stashDir: string): CliRun {
   const state = sandboxMakeStashDir();
   disposers.push(data, cache, config, state);
   writeTestConfig(config.dir);
+  configHomeWithBundle(config.dir, stashDir);
   const roots = [cache.dir, config.dir, data.dir, state.dir, stashDir];
   const artifactBefore = snapshotRoots(roots);
   const result = spawnSync("bun", [cliPath, ...args], {
@@ -71,7 +75,6 @@ function runCli(args: string[], stashDir: string): CliRun {
     env: {
       ...process.env,
       BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
-      AKM_BUNDLE_DIR: stashDir,
       XDG_CACHE_HOME: cache.dir,
       XDG_CONFIG_HOME: config.dir,
       XDG_DATA_HOME: data.dir,
@@ -284,6 +287,7 @@ describe("akm improve CLI result storage", () => {
       const snapshotTemp = sandboxMakeStashDir();
       disposers.push(data, cache, config, state, snapshotTemp);
       writeTestConfig(config.dir);
+      configHomeWithBundle(config.dir, stashDir);
       const snapshotSourcePath = path.join(snapshotTemp.dir, "source.db");
       const snapshotSource = new Database(snapshotSourcePath);
       snapshotSource.exec("CREATE TABLE held(value TEXT); INSERT INTO held VALUES ('preserve')");
@@ -329,7 +333,6 @@ describe("akm improve CLI result storage", () => {
         env: {
           ...process.env,
           BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
-          AKM_BUNDLE_DIR: stashDir,
           XDG_CACHE_HOME: cache.dir,
           XDG_CONFIG_HOME: config.dir,
           XDG_DATA_HOME: data.dir,

@@ -17,7 +17,6 @@ import type { AkmConfig } from "../../../src/core/config/config";
 
 const config = (improve: Record<string, unknown> = {}): AkmConfig =>
   ({
-    configVersion: "0.9.0",
     connections: {
       default: { endpoint: "http://lab:1/v1", models: { fast: "default-model" } },
       wide: { endpoint: "http://lab:2/v1", models: { fast: "wide-model" } },
@@ -78,17 +77,6 @@ describe("resolveImproveExecution — the nearest layer that names a target wins
       kind: "connection",
       name: "default",
       model: "default-model",
-    });
-  });
-
-  test("the retired `engine` key (a connection by that name, else a harness) replaces a process's choice of the other kind", () => {
-    expect(resolve(reflect({ connection: "near" }), { current: { engine: "claude" } })).toMatchObject({
-      kind: "harness",
-      name: "claude",
-    });
-    expect(resolve(reflect({ harness: "claude" }), { current: { engine: "near" } })).toMatchObject({
-      kind: "connection",
-      name: "near",
     });
   });
 });

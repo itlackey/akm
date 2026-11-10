@@ -7,11 +7,11 @@
  * `exitCodeForStatus` (the OS-scheduler exit-code mapping).
  * `RunTaskOptions` — the public options bag `runTask()`, `load-task.ts`, and
  * every dispatch arm read from — lives here too, alongside the other
- * public-surface types the compat shim (src/tasks/runner.ts) re-exports.
+ * public-surface types.
  *
  * The result vocabulary's write side lives in each dispatch arm's own result
  * construction (run-native-task.ts, run-command-task.ts, run-workflow-task.ts);
- * task-history.ts carries the read-side legacy mapping.
+ * task-history.ts carries the read side.
  *
  * Import direction: this module is a DAG leaf with respect to the rest of
  * src/tasks/run/** — it imports nothing from ./task-history (appendHistory)
@@ -29,7 +29,7 @@ import type { LoweringNotice } from "../../execution/resolved-request";
 import type { RunExecutionOptions } from "../../integrations/agent/runner-dispatch";
 import type { runWorkflowSteps } from "../../workflows/exec/run-workflow";
 import type { ExecutionProvenanceContext, TaskInvocation } from "../model/invocation";
-import type { PreparedTaskV3Script, PreparedTaskV3Shell } from "../prepare/prepared-execution";
+import type { PreparedTaskScript, PreparedTaskShell } from "../prepare/prepared-execution";
 
 export type TaskRunStatus = "completed" | "blocked" | "failed" | "active";
 
@@ -102,7 +102,7 @@ export interface RunTaskOptions {
    */
   provenance?: ExecutionProvenanceContext;
   /** Runs after immutable preparation/history reservation and before native dispatch (tests). */
-  beforeNativeDispatch?: (task: PreparedTaskV3Shell | PreparedTaskV3Script) => void;
+  beforeNativeDispatch?: (task: PreparedTaskShell | PreparedTaskScript) => void;
   /**
    * Raw, exact-name `akm task run` input flags captured by `tasks-cli.ts`'s Stage
    * 1 (`parseTaskInputFlags`). `load-task.ts`'s Stage 2 materializes these
@@ -117,10 +117,9 @@ export interface RunTaskOptions {
    * TEST-ONLY. Runs once, with the `TaskInvocation` Stage 2 constructs,
    * before dispatch — never read by production code. `TaskInvocation`
    * (`src/tasks/model/invocation.ts`) is otherwise unobservable from outside
-   * `load-task.ts` in P2a (the model-purity ratchet,
-   * tests/tasks/parse-v3-adapter.test.ts, keeps it a pure, IO-free type that
+   * `load-task.ts` in P2a (a pure, IO-free type that
    * nothing production reads back either), so this is the seam
-   * tests/integration/commands/tasks-input-flags.test.ts uses to assert
+   * tests/commands/tasks-input-flags.test.ts uses to assert
    * against the real constructed value rather than a bespoke side channel.
    */
   captureTaskInvocation?: (invocation: TaskInvocation) => void;

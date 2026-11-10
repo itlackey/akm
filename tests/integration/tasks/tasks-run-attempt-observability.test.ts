@@ -47,11 +47,7 @@ function writeRawConfig(contents: string): void {
 
 function capturedSchedulerContext(): Record<string, string> {
   return {
-    AKM_BUNDLE_DIR: storage.stashDir,
-    AKM_CONFIG_DIR: path.join(storage.configDir, "akm"),
-    AKM_DATA_DIR: path.join(storage.dataDir, "akm"),
-    AKM_CACHE_DIR: path.join(storage.cacheDir, "akm"),
-    AKM_STATE_DIR: path.join(storage.stateDir, "akm"),
+    AKM_CONFIG_FILE: path.join(storage.configDir, "akm", "config.json"),
   };
 }
 
@@ -132,8 +128,8 @@ describe("tasks run attempt observability", () => {
   });
 
   for (const [label, config, code] of [
-    ["malformed", '{"configVersion":', "INVALID_CONFIG_FILE"],
-    ["schema-invalid", '{"configVersion":"0.9.0","bundles":{"primary":{"path":42}}}', "INVALID_CONFIG_FILE"],
+    ["malformed", '{"bundles":', "INVALID_CONFIG_FILE"],
+    ["schema-invalid", '{"bundles":{"primary":{"path":42}}}', "INVALID_CONFIG_FILE"],
   ] as const) {
     test(`${label} config fails before task-history or log mutation`, async () => {
       writeRawConfig(config);
@@ -293,11 +289,10 @@ describe("tasks run attempt observability", () => {
     const errorSecret = "DISPATCH-ERROR-SECRET-SENTINEL";
     writeTask(
       "dispatch-throws",
-      ["version: 4", "uses: akm/command", "with:", `  content: ${promptSecret}`, "engine: opencode"].join("\n"),
+      ["version: 4", "uses: akm/command", "with:", `  content: ${promptSecret}`, "harness: opencode"].join("\n"),
     );
     writeRawConfig(
       JSON.stringify({
-        configVersion: "0.9.0",
         harnesses: { opencode: { platform: "opencode" } },
       }),
     );
@@ -335,7 +330,7 @@ describe("tasks run attempt observability", () => {
   test("JSON CLI preflight errors stay intact when durable paths are unavailable", async () => {
     const blockedDataDir = path.join(storage.root, "blocked-data-dir");
     fs.writeFileSync(blockedDataDir, "not a directory");
-    const result = await withEnv({ AKM_DATA_DIR: blockedDataDir }, () =>
+    const result = await withEnv({ XDG_DATA_HOME: blockedDataDir }, () =>
       runCliCapture(["task", "run", "missing-json-error"]),
     );
 

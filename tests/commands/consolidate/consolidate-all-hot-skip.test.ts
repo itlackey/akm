@@ -14,7 +14,6 @@ import path from "node:path";
 import { akmConsolidate } from "../../../src/commands/improve/consolidate";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { getStateDbPath } from "../../../src/core/state-db";
-import type { LoweringNotice } from "../../../src/execution/resolved-request";
 import {
   type Cleanup,
   mutateScopedEnv,
@@ -57,11 +56,9 @@ describe("akmConsolidate — all-hot chunk", () => {
   test("nothing configured does not eagerly create consolidation state", async () => {
     writeMemory("cold-a", { hot: false });
     const config = {
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
       improve: { strategy: "default", strategies: { default: { processes: { consolidate: { enabled: true } } } } },
     } as AkmConfig;
     const stateDbPath = getStateDbPath();
@@ -79,11 +76,9 @@ describe("akmConsolidate — all-hot chunk", () => {
     writeMemory("cold-a", { hot: false });
     writeMemory("cold-b", { hot: false });
     const config = {
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
       connections: {
         planner: {
           endpoint: "https://consolidate.example.test/v1/chat/completions",
@@ -134,11 +129,9 @@ describe("akmConsolidate — all-hot chunk", () => {
     writeMemory("hot-a", { hot: true });
     writeMemory("hot-b", { hot: true });
     const config = {
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
       connections: {
         planner: { endpoint: "https://consolidate.example.test/v1/chat/completions", models: { fast: "planner" } },
       },
@@ -193,40 +186,5 @@ describe("akmConsolidate — all-hot chunk", () => {
     expect(result.processed).toBe(3);
     expect(result.judgedNoAction).toBe(0);
     expect(result.failedChunkMemories).toBe(3);
-  });
-
-  test("standalone selection is frozen once and reports its lowering notice once", async () => {
-    writeMemory("hot-a", { hot: true });
-    const config = {
-      configVersion: "0.9.0",
-      semanticSearchMode: "off",
-      improve: {
-        strategy: "freeze-once",
-        processes: { consolidate: { llm: { unsupportedPlannerField: true } } },
-        strategies: { "freeze-once": { processes: { consolidate: { enabled: true } } } },
-      },
-      connections: {
-        planner: {
-          endpoint: "https://example.test/v1/chat/completions",
-          models: { fast: "planner-model" },
-        },
-      },
-    } as unknown as AkmConfig;
-    const reported: Readonly<LoweringNotice>[] = [];
-
-    const result = await akmConsolidate({
-      stashDir,
-      config,
-      onNotices: (notices) => reported.push(...notices),
-    });
-
-    expect(reported).toEqual([
-      expect.objectContaining({
-        code: "untranslated-field",
-        adapter: "connection",
-        field: "inference.unsupportedPlannerField",
-      }),
-    ]);
-    expect(result.notices).toEqual(reported);
   });
 });

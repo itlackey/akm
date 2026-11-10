@@ -37,11 +37,9 @@ function makeStash(): string {
 
 function config(stash: string, endpoint = "http://localhost:11434/v1/chat/completions"): AkmConfig {
   return {
-    configVersion: "0.9.0",
     semanticSearchMode: "off",
     bundles: { stash: { path: stash, writable: true } },
     defaultBundle: "stash",
-    defaultWriteTarget: "stash",
     connections: { default: { endpoint, models: { fast: "test-model" } } },
     improve: {
       strategy: "extract",

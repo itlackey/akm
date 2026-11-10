@@ -163,7 +163,7 @@ describe("show unsupported scripts and first-owner arbitration", () => {
   test("a valid earlier physical owner wins before a later AKM unsupported-path diagnostic", async () => {
     resetConfigCache();
     storage.cleanup();
-    storage = withIsolatedAkmStorage({ AKM_BUNDLE_DIR: undefined });
+    storage = withIsolatedAkmStorage({}, { bundle: false });
     const early = path.join(storage.root, "early");
     const later = path.join(storage.root, "later");
     const earlyPath = write(early, "scripts/readme.txt.md", "# EARLY_OKF_OWNER\n");

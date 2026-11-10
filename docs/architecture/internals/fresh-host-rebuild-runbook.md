@@ -12,7 +12,7 @@ restore it from.
 2. **Confirm the binary resolves:** `akm --version`.
 3. **Restore `config.json`.** akm reads one user config at
    `~/.config/akm/config.json` (`%APPDATA%\akm\config.json` on Windows; set
-   `AKM_CONFIG_DIR` to move it). It holds your `connections`, `harnesses`, and
+   `AKM_CONFIG_FILE` to move it). It holds your `connections`, `harnesses`, and
    your improve strategies.
 4. **Provide secrets.** `config.json` refers to API keys as `$VAR` or
    `${VAR}`. Export those environment variables, or restore `credentials.json`

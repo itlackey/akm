@@ -3,33 +3,18 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * End-to-end coverage for bundle-targeted tasks (issue #711): scheduling tasks
- * from a non-default bundle via `--bundle`, threaded through the command layer
- * into the real cron backend (an in-memory crontab). Proves:
- *   1. enable / disable / run a task living in a NON-default bundle works
- *      end-to-end (file resolved from that bundle; cron line carries `--bundle`).
- *   2. `--bundle` on a NON-writable bundle fails with a writable-enforcement error.
- *   3. an id colliding with one already scheduled from another bundle → hard error.
- *   4. a plain (primary) sync never removes a `--bundle <other>` entry; a scoped
- *      `sync --bundle X` reconciles only X's entries.
- *   5. the default bundle (or no `--bundle`) produces a byte-identical cron line.
+ * Coverage for bundle-targeted tasks (issue #711): enabling, disabling, adding and
+ * running tasks that live in a bundle other than the default one, selected with
+ * `--bundle` or a task ref. Enabling only edits `scheduler.enabled`; `akm task
+ * dispatch` finds the task by its ref on the next minute (tests/tasks-dispatch.test.ts).
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import {
-  akmTasksAdd,
-  akmTasksDisable,
-  akmTasksEnable,
-  akmTasksRun,
-  akmTasksSync,
-  resolveTaskReadBundle,
-} from "../../src/commands/tasks/tasks";
+import { akmTasksAdd, akmTasksDisable, akmTasksEnable, resolveTaskReadBundle } from "../../src/commands/tasks/tasks";
 import { loadConfig, resetConfigCache, saveConfig } from "../../src/core/config/config";
 import { schedulerEnabledRefs, setSchedulerRefEnabled } from "../../src/tasks/activation-config";
-import { buildCronLine, CRON_BACKEND, type CronExec, type CronExecResult } from "../../src/tasks/backends/cron";
-import type { SchedulerBinding } from "../../src/tasks/scheduler-binding";
 import {
   type IsolatedAkmStorage,
   makeSandboxDir,
@@ -37,35 +22,9 @@ import {
   withIsolatedAkmStorage,
 } from "../_helpers/sandbox";
 
-function memoryExec(initial = ""): CronExec & { current: () => string } {
-  let store = initial;
-  return {
-    read(): CronExecResult {
-      return { status: 0, stdout: store, stderr: "" };
-    },
-    write(content: string): CronExecResult {
-      store = content;
-      return { status: 0, stdout: "", stderr: "" };
-    },
-    current: () => store,
-  };
-}
-
 let iso: IsolatedAkmStorage;
 let work: SandboxedDir;
 let readonlyDir: SandboxedDir;
-let exec: ReturnType<typeof memoryExec>;
-
-function cron() {
-  return CRON_BACKEND({
-    exec,
-    fs: { ensureDir() {} },
-    logDir: "/var/log/akm",
-    akmArgv: ["/usr/local/bin/akm"],
-    envPath: false,
-  });
-}
-
 function writeTaskFile(dir: string, id: string, yaml: string): void {
   fs.mkdirSync(path.join(dir, "tasks"), { recursive: true });
   fs.writeFileSync(path.join(dir, "tasks", `${id}.yml`), yaml, "utf8");
@@ -77,21 +36,11 @@ function taskYaml(): string {
   return ["version: 4", 'run: "true"', "schedule:", '  - cron: "@daily"', ""].join("\n");
 }
 
-/** Extract the crontab body line (between BEGIN/END markers) for a task id. */
-function cronBody(crontab: string, id: string): string | undefined {
-  const lines = crontab.split(/\r?\n/);
-  const begin = lines.indexOf(`# akm:task ${id} BEGIN`);
-  if (begin === -1) return undefined;
-  return lines[begin + 1];
-}
-
 beforeEach(() => {
   iso = withIsolatedAkmStorage();
   work = makeSandboxDir("akm-bundle-work");
   readonlyDir = makeSandboxDir("akm-bundle-ro");
-  exec = memoryExec();
   saveConfig({
-    configVersion: "0.9.0",
     semanticSearchMode: "off",
     defaultBundle: "stash",
     bundles: {
@@ -110,39 +59,18 @@ afterEach(() => {
 });
 
 describe("bundle-targeted tasks via --bundle", () => {
-  test("sync of a task in a NON-default bundle carries --bundle through cron, and local disable removes it", async () => {
-    writeTaskFile(work.dir, "foo", taskYaml());
-
-    // sync --bundle work → installs, cron line embeds `--bundle work`.
-    const synced = await akmTasksSync({ backend: cron() }, "work");
-    expect(synced.installed).toEqual(["foo"]);
-
-    const body = cronBody(exec.current(), "foo");
-    expect(body).toBeDefined();
-    expect(body).toContain("task run foo --bundle work --scheduled");
-    // The file must NOT have been written to the primary stash.
-    expect(fs.existsSync(path.join(iso.stashDir, "tasks", "foo.yml"))).toBe(false);
-
-    setSchedulerRefEnabled("work//tasks/foo", false);
-    const resynced = await akmTasksSync({ backend: cron() }, "work");
-    expect(resynced.removed).toEqual(["foo"]);
-    expect(cronBody(exec.current(), "foo")).toBeUndefined();
-  });
-
   test("enable and disable mutate only host-local config for a task in any configured bundle", async () => {
     const source = taskYaml();
     writeTaskFile(work.dir, "foo", source);
     setSchedulerRefEnabled("work//tasks/foo", false);
 
-    const enabled = await akmTasksEnable("work//tasks/foo", {}, { backend: cron() });
+    const enabled = await akmTasksEnable("work//tasks/foo");
     expect(enabled).toMatchObject({ ref: "work//tasks/foo", enabled: true, changed: true });
-    expect(cronBody(exec.current(), "foo")).toContain("--bundle work");
     expect(fs.readFileSync(path.join(work.dir, "tasks", "foo.yml"), "utf8")).toBe(source);
     expect(schedulerEnabledRefs(loadConfig())).toContain("work//tasks/foo");
 
-    const disabled = await akmTasksDisable("work//tasks/foo", {}, { backend: cron() });
+    const disabled = await akmTasksDisable("work//tasks/foo");
     expect(disabled).toMatchObject({ ref: "work//tasks/foo", enabled: false, changed: true });
-    expect(cronBody(exec.current(), "foo")).toBeUndefined();
     expect(fs.readFileSync(path.join(work.dir, "tasks", "foo.yml"), "utf8")).toBe(source);
     expect(schedulerEnabledRefs(loadConfig())).not.toContain("work//tasks/foo");
   });
@@ -152,188 +80,31 @@ describe("bundle-targeted tasks via --bundle", () => {
     writeTaskFile(readonlyDir.dir, "vendor-job", source);
     setSchedulerRefEnabled("readonly//tasks/vendor-job", false);
 
-    const result = await akmTasksEnable("readonly//tasks/vendor-job", {}, { backend: cron() });
+    const result = await akmTasksEnable("readonly//tasks/vendor-job");
 
     expect(result).toMatchObject({ ref: "readonly//tasks/vendor-job", enabled: true, changed: true });
-    expect(cronBody(exec.current(), "vendor-job")).toContain("--bundle readonly");
     expect(fs.readFileSync(path.join(readonlyDir.dir, "tasks", "vendor-job.yml"), "utf8")).toBe(source);
-  });
-
-  test("plain sync reconciles enabled tasks from every configured bundle", async () => {
-    writeTaskFile(iso.stashDir, "primary", taskYaml());
-    writeTaskFile(work.dir, "secondary", taskYaml());
-
-    const result = await akmTasksSync({ backend: cron() });
-
-    expect(result.installed).toEqual(["primary", "secondary"]);
-    expect(cronBody(exec.current(), "primary")).toContain("--bundle stash");
-    expect(cronBody(exec.current(), "secondary")).toContain("--bundle work");
-  });
-
-  test("plain sync removes installed bindings when every configured bundle is disabled", async () => {
-    writeTaskFile(work.dir, "secondary", taskYaml());
-    await akmTasksSync({ backend: cron() });
-    expect(cronBody(exec.current(), "secondary")).toContain("--bundle work");
-
-    const current = loadConfig();
-    saveConfig({
-      ...current,
-      defaultBundle: undefined,
-      defaultWriteTarget: undefined,
-      bundles: Object.fromEntries(
-        Object.entries(current.bundles ?? {}).map(([id, bundle]) => [id, { ...bundle, enabled: false }]),
-      ),
-    });
-
-    const result = await akmTasksSync({ backend: cron() });
-
-    expect(result.removed).toEqual(["secondary"]);
-    expect(cronBody(exec.current(), "secondary")).toBeUndefined();
-  });
-
-  test("plain sync removes a disabled bundle while reconciling bundles that remain active", async () => {
-    writeTaskFile(iso.stashDir, "primary", taskYaml());
-    writeTaskFile(work.dir, "secondary", taskYaml());
-    await akmTasksSync({ backend: cron() });
-
-    const current = loadConfig();
-    saveConfig({
-      ...current,
-      bundles: {
-        ...current.bundles,
-        work: { ...current.bundles?.work, path: work.dir, enabled: false },
-      },
-    });
-
-    const result = await akmTasksSync({ backend: cron() });
-
-    expect(result.removed).toEqual(["secondary"]);
-    expect(result.unchanged).toEqual(["primary"]);
-    expect(cronBody(exec.current(), "primary")).toBeDefined();
-    expect(cronBody(exec.current(), "secondary")).toBeUndefined();
-  });
-
-  test("scoped sync uses the active set while AKM_BUNDLE_DIR names a disabled bundle", async () => {
-    writeTaskFile(work.dir, "foo", taskYaml());
-    const current = loadConfig();
-    saveConfig({
-      ...current,
-      defaultBundle: "work",
-      bundles: { ...current.bundles, stash: { ...current.bundles?.stash, path: iso.stashDir, enabled: false } },
-    });
-
-    const synced = await akmTasksSync({ backend: cron() }, "work");
-    expect(synced.installed).toEqual(["foo"]);
-    expect(cronBody(exec.current(), "foo")).toContain("--bundle work");
-
-    await expect(akmTasksSync({ backend: cron() }, "stash")).rejects.toThrow('Bundle "stash" is disabled.');
-  });
-
-  test("plain sync reports two bundles claiming one native id and installs neither", async () => {
-    writeTaskFile(iso.stashDir, "same", taskYaml());
-    writeTaskFile(work.dir, "same", taskYaml());
-    writeTaskFile(work.dir, "other", taskYaml());
-
-    const result = await akmTasksSync({ backend: cron() });
-
-    expect(result.installed).toEqual(["other"]);
-    expect(result.failures.map((failure) => failure.ref).sort()).toEqual(["stash//tasks/same", "work//tasks/same"]);
-    expect(result.failures[0]?.reason).toMatch(/is claimed by .*Rename one task/);
-    expect(cronBody(exec.current(), "same")).toBeUndefined();
   });
 
   test("add --bundle on a NON-writable bundle fails with a writable-enforcement error", async () => {
     // add --bundle readonly is refused before writing anything.
-    await expect(
-      akmTasksAdd({ id: "bar", schedule: "@daily", command: "true", target: "readonly" }, { backend: cron() }),
-    ).rejects.toThrow(/not writable/i);
-  });
-
-  test("an id already scheduled from another bundle is a hard collision error", async () => {
-    writeTaskFile(work.dir, "foo", taskYaml());
-    await akmTasksSync({ backend: cron() }, "work");
-
-    // Adding the same id to the primary bundle collides with work's entry.
-    await expect(akmTasksAdd({ id: "foo", schedule: "@daily", command: "true" }, { backend: cron() })).rejects.toThrow(
-      /already scheduled from bundle "work"/,
+    await expect(akmTasksAdd({ id: "bar", schedule: "@daily", command: "true", target: "readonly" })).rejects.toThrow(
+      /not writable/i,
     );
-    // The primary add must not have written a file or clobbered the cron entry.
-    expect(fs.existsSync(path.join(iso.stashDir, "tasks", "foo.yml"))).toBe(false);
-    expect(cronBody(exec.current(), "foo")).toContain("--bundle work");
   });
 
-  test("plain sync reconciles all bundles; sync --bundle limits reconciliation to that bundle", async () => {
-    // A primary task and a work-bundle task, both scheduled.
-    await akmTasksAdd({ id: "bar", schedule: "@daily", command: "true" }, { backend: cron() });
-    writeTaskFile(work.dir, "foo", taskYaml());
-    await akmTasksSync({ backend: cron() }, "work");
-
-    // Plain sync reconciles both configured bundles and leaves both current entries unchanged.
-    const primarySync = await akmTasksSync({ backend: cron() });
-    expect(primarySync.removed).toEqual([]);
-    expect(cronBody(exec.current(), "foo")).toContain("--bundle work");
-    expect(cronBody(exec.current(), "bar")).toBeDefined();
-
-    // Deleting the work file then syncing --bundle work removes only foo.
-    fs.rmSync(path.join(work.dir, "tasks", "foo.yml"));
-    const workSync = await akmTasksSync({ backend: cron() }, "work");
-    expect(workSync.removed).toEqual(["foo"]);
-    expect(cronBody(exec.current(), "foo")).toBeUndefined();
-    // The primary task survives the scoped sync.
-    expect(cronBody(exec.current(), "bar")).toBeDefined();
-  });
-
-  test("default bundle always carries its canonical owner in the public cron invocation", async () => {
-    const result = await akmTasksAdd({ id: "baz", schedule: "@daily", command: "true" }, { backend: cron() });
+  test("add writes into the default bundle and enables its ref there", async () => {
+    const result = await akmTasksAdd({ id: "baz", schedule: "@daily", command: "true" });
     expect(result.bundleDir).toBe(iso.stashDir);
+    expect(schedulerEnabledRefs(loadConfig())).toContain("stash//tasks/baz");
 
-    const body = cronBody(exec.current(), "baz");
-    expect(body).toBeDefined();
-    expect(body).toContain("task run baz --bundle stash --scheduled");
-
-    // New artifacts always persist the resolved primary owner explicitly.
-    const task: SchedulerBinding = {
-      id: "baz",
-      logicalSource: { kind: "task", ref: "stash//tasks/baz" },
-      cron: "@daily",
-      source: "akm.schedule",
-      ordinal: 0,
-      enabled: true,
-      invocation: ["task", "run", "baz", "--bundle", "stash", "--scheduled"],
-    };
-    // Every row carries the working stash it was synced from, as the old descriptor did.
-    const expectedLine = buildCronLine(task, ["/usr/local/bin/akm"], "/var/log/akm", {
-      AKM_BUNDLE_DIR: path.resolve(iso.stashDir),
-    });
-    expect(body).toBe(expectedLine);
-
-    // Adding with --bundle stash (the DEFAULT bundle by name) is byte-identical.
+    // --bundle stash (the DEFAULT bundle by name) is the same bundle.
     fs.rmSync(path.join(iso.stashDir, "tasks", "baz.yml"));
-    exec = memoryExec();
-    await akmTasksAdd({ id: "baz", schedule: "@daily", command: "true", target: "stash" }, { backend: cron() });
-    expect(cronBody(exec.current(), "baz")).toBe(expectedLine);
+    const again = await akmTasksAdd({ id: "baz", schedule: "@daily", command: "true", target: "stash" });
+    expect(again.bundleDir).toBe(iso.stashDir);
   });
 
-  test("a scheduled canonical owner resolves an environment-only working stash", async () => {
-    fs.rmSync(path.join(iso.configDir, "akm", "config.json"));
-    resetConfigCache();
-
-    await akmTasksAdd({ id: "implicit-owner", schedule: "@daily", command: "true" }, { backend: cron() });
-    // No config names this stash: the row's AKM_BUNDLE_DIR is how `--bundle stash` finds it.
-    expect(cronBody(exec.current(), "implicit-owner")).toContain(
-      `AKM_BUNDLE_DIR=${path.resolve(iso.stashDir)} /usr/local/bin/akm task run implicit-owner --bundle stash --scheduled`,
-    );
-
-    const result = await akmTasksRun("implicit-owner", { target: "stash", scheduled: true });
-    expect(result.exitCode).toBe(0);
-    expect(result.result.status).toBe("completed");
-
-    await expect(akmTasksRun("implicit-owner", { target: "other" })).rejects.toMatchObject({
-      code: "INVALID_FLAG_VALUE",
-    });
-  });
-
-  test("a read selector resolves the working stash, another bundle and an environment-only stash through the active set", () => {
+  test("a read selector resolves the working stash and another bundle through the active set", () => {
     expect(resolveTaskReadBundle("stash", undefined).source).toMatchObject({ name: "stash", path: iso.stashDir });
     expect(resolveTaskReadBundle(undefined, "work").source).toMatchObject({ name: "work", path: work.dir });
     expect(resolveTaskReadBundle("readonly", "readonly").source).toMatchObject({
@@ -341,18 +112,11 @@ describe("bundle-targeted tasks via --bundle", () => {
       path: readonlyDir.dir,
     });
 
-    fs.rmSync(path.join(iso.configDir, "akm", "config.json"));
-    resetConfigCache();
-    expect(resolveTaskReadBundle(undefined, "stash").source).toMatchObject({
-      name: "stash",
-      path: path.resolve(iso.stashDir),
-    });
     expect(() => resolveTaskReadBundle(undefined, "other")).toThrow(/No source named "other"/);
   });
 
   test("a disabled bundle selector is reported as disabled, not as unconfigured", () => {
     saveConfig({
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       defaultBundle: "stash",
       bundles: {

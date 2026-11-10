@@ -61,7 +61,6 @@ async function buildIndex(): Promise<void> {
     semanticSearchMode: "off",
     bundles: { stash: { path: stashDir, writable: true } },
     defaultBundle: "stash",
-    defaultWriteTarget: "stash",
   });
   await akmIndex({ stashDir, full: true });
 }
@@ -219,7 +218,6 @@ describe("akm feedback", () => {
         team: { path: teamDir, writable: true },
       },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
     });
     await akmIndex({ stashDir, full: true });
 
@@ -327,7 +325,6 @@ describe("akm feedback", () => {
         team: { path: teamDir, writable: true },
       },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
     });
     expect(resolveSourceEntries(undefined, loadConfig()).map((source) => source.path)).toContain(teamDir);
     await akmIndex({ stashDir, full: true });

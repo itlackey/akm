@@ -21,9 +21,6 @@ z.config({
     issue.code === "invalid_key" ? issue.issues.map((inner) => inner.message).join("; ") : undefined,
 });
 
-/** Persisted config schema version. Package prerelease/patch versions do not change this value. */
-export const CURRENT_CONFIG_VERSION = "0.9.0" as const;
-
 // ── Reusable atomic schemas ─────────────────────────────────────────────────
 
 /** Positive integer (used for tokens, timeouts, batch sizes). */
@@ -97,8 +94,7 @@ export const envReferenceApiKey = z.string().transform((value) => {
 });
 
 /**
- * The retired `apiKeyFile` of an engine that `akm migrate apply` could not read yet: kept as written so a
- * later run can move the key it names, never read, sent or printed by akm.
+ * An `apiKeyFile` that `akm migrate apply` has not moved yet: named once, and never read, sent or printed by akm.
  */
 export const retiredApiKeyFile = z.string().transform((value) => {
   warnOnce(

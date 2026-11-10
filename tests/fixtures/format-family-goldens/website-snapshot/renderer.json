@@ -17,7 +17,6 @@
       "ref": "sample-website//stash/knowledge/example-com/index",
       "label": "Asset",
       "renderer": null,
-      "action": "akm show sample-website//stash/knowledge/example-com/index",
       "flag": "GENERIC FALLBACK — `website` has no TYPE_PRESENTATION entry."
     },
     "stash/knowledge/example-com/about.md": {
@@ -25,7 +24,6 @@
       "ref": "sample-website//stash/knowledge/example-com/about",
       "label": "Asset",
       "renderer": null,
-      "action": "akm show sample-website//stash/knowledge/example-com/about",
       "flag": "GENERIC FALLBACK — `website` has no TYPE_PRESENTATION entry."
     }
   }

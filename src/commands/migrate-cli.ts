@@ -9,8 +9,7 @@ export type RunMigrationTool = typeof runMigrationTool;
 
 /**
  * `akm migrate` is a thin wrapper over the standalone `akm-migrate`
- * executable, which owns every migration step and every historical shape
- * (`scripts/akm-migrate/`). This module only spawns it, re-emits its one JSON
+ * executable, which owns every migration step (`scripts/akm-migrate/`). This module only spawns it, re-emits its one JSON
  * plan through the normal output pipeline so `--format` applies, and mirrors
  * its exit code. `akm upgrade` calls the same executable after an install.
  * Passed the runner as a parameter so a test can hand it a stand-in.
@@ -40,7 +39,8 @@ export async function runMigrateSubcommand(
 export const migrateCommand = defineGroupCommand({
   meta: {
     name: "migrate",
-    description: "Inspect or apply pending migrations: legacy config, state.db, and task-v2/v3 sources to v4",
+    description:
+      "Inspect or apply pending migrations: config.json, state.db, asset keys and refs, and the OS scheduler entry",
   },
   subCommands: {
     status: defineJsonCommand({
@@ -54,15 +54,8 @@ export const migrateCommand = defineGroupCommand({
         name: "apply",
         description: "Back up and apply every pending migration (`akm upgrade` runs this after an install)",
       },
-      args: {
-        "dry-run": {
-          type: "boolean",
-          default: false,
-          description: "Run the same eligibility checks without mutation.",
-        },
-      },
-      run({ args }) {
-        return runMigrateSubcommand("migrate-apply", args.dryRun ? ["apply", "--dry-run"] : ["apply"]);
+      run() {
+        return runMigrateSubcommand("migrate-apply", ["apply"]);
       },
     }),
   },

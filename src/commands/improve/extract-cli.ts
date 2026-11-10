@@ -19,8 +19,8 @@
  * `--auto` runs multiple harnesses).
  */
 
-import { getStringArg, PROJECT_ARG, SCOPE_ARGS, scopeFromArgs } from "../../cli/parse-args";
-import { RETIRED_ENGINE_ARG, SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
+import { getStringArg, PROJECT_ARG, parsePositiveIntFlag, SCOPE_ARGS, scopeFromArgs } from "../../cli/parse-args";
+import { SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
 import { defineJsonCommand, EXIT_CODES, output } from "../../cli/shared";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
@@ -71,7 +71,6 @@ export const extractCommand = defineJsonCommand({
       description: "Per-session LLM timeout in ms. Default: the engine's own timeout.",
     },
     ...SELECTION_ARGS,
-    ...RETIRED_ENGINE_ARG,
     ...SCOPE_ARGS,
     ...PROJECT_ARG,
     strategy: {
@@ -88,16 +87,7 @@ export const extractCommand = defineJsonCommand({
     const dryRun = args["dry-run"] === true;
     const force = args.force === true;
     const strategy = getStringArg(args, "strategy");
-    const timeoutMs =
-      typeof args["timeout-ms"] === "string" && args["timeout-ms"] !== ""
-        ? Number.parseInt(args["timeout-ms"], 10)
-        : undefined;
-    if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0)) {
-      throw new UsageError(
-        `--timeout-ms must be a positive integer (got "${args["timeout-ms"]}").`,
-        "INVALID_FLAG_VALUE",
-      );
-    }
+    const timeoutMs = parsePositiveIntFlag(args["timeout-ms"] as string | undefined, "--timeout-ms");
     if (auto && type) {
       throw new UsageError("--auto and --type are mutually exclusive. Pick one.", "INVALID_FLAG_VALUE");
     }

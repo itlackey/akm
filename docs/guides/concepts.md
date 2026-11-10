@@ -30,7 +30,7 @@ indexer walks.
 Your **working bundle** (`~/akm` by default, created by `akm setup`) is where
 writes go unless you say otherwise. The destination for `akm remember`,
 `akm import`, `akm clone` and other writes is, in order: the destination flag
-on the command, then `defaultWriteTarget` in config, then the working bundle.
+on the command, then the working bundle.
 
 Each bundle is read through one **adapter**, which decides what its files are
 (a skill, a task, a wiki page) and how they are validated and written. akm
@@ -50,7 +50,7 @@ Every connected bundle is folded into one local FTS5 index; there is no
 per-bundle fan-out at query time. Two verbs work that index:
 
 ```text
-search decides   -- a lean menu: type, name, ref, action, estimatedTokens (and keys for env assets)
+search decides   -- a lean menu: type, name, ref, description, estimatedTokens (and keys for env assets)
 show delivers    -- the full dispatch envelope: run command, prompt, content
 ```
 
@@ -63,7 +63,7 @@ semantic search is on) adjusted by the feedback recorded for each asset, and has
 no preference for any bundle. A short ref given to `akm show` resolves against
 the default bundle first, then the remaining bundles in installation order.
 `akm clone` copies an asset into the write target (`--bundle`, else
-`defaultWriteTarget`, else your working bundle). The copy is a separate asset with its own ref; when it lands in
+your working bundle). The copy is a separate asset with its own ref; when it lands in
 your default bundle under the same name, the short ref resolves to it.
 
 ## 4. A ref names one asset

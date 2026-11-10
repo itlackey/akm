@@ -29,22 +29,22 @@ import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import { warn } from "../../core/warn";
-import { resolveWriteTarget } from "../../core/write-source";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { deriveEntryProvenance } from "../../indexer/installations";
 import { fillMetadata, sameScope, scopeFromFrontmatter, stampScope } from "../../indexer/passes/metadata";
 import type { AgentFailureReason, AgentRunResult } from "../../integrations/agent";
 import { buildExecution, currentLayer, resolveExecution, shippedAlias } from "../../integrations/agent/execution";
+import { runExecution } from "../../integrations/agent/runner-dispatch";
+import { isRefused, jsonParser, type StructuredLoopResult, structuredLoop } from "../../llm/structured";
+import { outcomeOf } from "../../llm/structured-call";
+import { resolveWriteTarget } from "../../sources/write-source";
+import { baseFailureFields, enoentHintMessage, isEnoentFailure } from "../agent/agent-support";
 import {
   type AgentProposalPayload,
   buildProposePrompt,
   PROPOSAL_JSON_SCHEMA,
   validateProposalPayload,
-} from "../../integrations/agent/prompts";
-import { runExecution } from "../../integrations/agent/runner-dispatch";
-import { isRefused, jsonParser, type StructuredLoopResult, structuredLoop } from "../../llm/structured";
-import { outcomeOf } from "../../llm/structured-call";
-import { baseFailureFields, enoentHintMessage, isEnoentFailure } from "../agent/agent-support";
+} from "../prompts";
 import {
   type CreateProposalInput,
   createProposal,
@@ -206,7 +206,7 @@ function proposeItemRef(bundleId: string, type: string, name: string): string {
  * (`proposeItemRef`), so the entry event and the stored proposal agree.
  */
 function emitProposeInvoked(bundleId: string, options: AkmProposeOptions): void {
-  const named = options.selection?.connection ?? options.selection?.harness ?? options.selection?.engine;
+  const named = options.selection?.connection ?? options.selection?.harness;
   appendEvent({
     eventType: "propose_invoked",
     ref: proposeItemRef(bundleId, options.type, options.name),

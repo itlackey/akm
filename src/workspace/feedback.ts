@@ -4,8 +4,9 @@
 
 /** Record feedback on an asset, with an optional typed fix, exactly as `akm feedback` does. */
 
+import { akmFeedback } from "../commands/feedback";
 import { UsageError } from "../core/errors";
-import { runCli } from "./cli-child";
+import { redactForUi } from "./redact";
 
 const MAX_FIX_PAIRS = 10;
 
@@ -29,14 +30,9 @@ export async function record(input: FeedbackInput) {
     );
   if (input.signal !== "positive" && input.signal !== "negative")
     throw new UsageError("signal must be positive or negative.");
-  const args = ["feedback", ref, `--${input.signal}`];
-  if (typeof input.reason === "string" && input.reason.trim()) args.push(`--reason=${input.reason.trim()}`);
-  if (input.tags !== undefined) {
-    if (!Array.isArray(input.tags) || input.tags.some((tag) => typeof tag !== "string"))
-      throw new UsageError("tags must be strings.");
-    for (const tag of input.tags) args.push(`--tag=${tag}`);
-  }
-  // Passed as `--replace=` / `--with=` so a value that starts with a dash is not read as a flag.
+  const reason = typeof input.reason === "string" && input.reason.trim() ? input.reason.trim() : undefined;
+  if (input.tags !== undefined && (!Array.isArray(input.tags) || input.tags.some((tag) => typeof tag !== "string")))
+    throw new UsageError("tags must be strings.");
   if (input.fix !== undefined) {
     if (!Array.isArray(input.fix) || input.fix.length === 0)
       throw new UsageError("fix must be a list of replace/with pairs.");
@@ -45,9 +41,18 @@ export async function record(input: FeedbackInput) {
     for (const pair of input.fix) {
       if (typeof pair?.replace !== "string" || typeof pair?.with !== "string")
         throw new UsageError("Every fix needs a replace and a with string.");
-      args.push(`--replace=${pair.replace}`, `--with=${pair.with}`);
     }
-    if (typeof input.source === "string" && input.source.trim()) args.push(`--source=${input.source.trim()}`);
   }
-  return runCli(args, undefined, true);
+  const source = typeof input.source === "string" && input.source.trim() ? input.source.trim() : undefined;
+  return redactForUi(
+    await akmFeedback({
+      ref,
+      signal: input.signal,
+      reason,
+      tags: input.tags,
+      fix: input.fix,
+      // Only recorded with a fix.
+      source: input.fix !== undefined ? source : undefined,
+    }),
+  ) as Record<string, unknown>;
 }

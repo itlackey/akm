@@ -1,20 +1,18 @@
 # Documentation
 
 AKM is a portable capability library for AI agents: one library for every
-agent. This hub is organized by what you're trying to do. Each subdirectory
-also has its own README indexing everything inside it: [Guides](guides/README.md),
-[Reference](reference/README.md), [Agents](agents/README.md),
-[Architecture](architecture/README.md), [Maintainers](maintainers/README.md),
-[Migration](migration/README.md), [Posts](posts/README.md).
+agent. This hub is organized by what you're trying to do. The
+[architecture index](architecture/README.md), [maintainer docs](maintainers/README.md)
+and [migration guides](migration/README.md) have their own indexes.
 
 ## Start
 
-- [Product Surface](product-surface.md) -- Every feature and its status
 - [Getting Started](guides/getting-started.md) -- Install akm, connect a source, and pull a curated shortlist
 - [Concepts](guides/concepts.md) -- Capabilities, bundles, adapters, and refs: the mental model in one page
-- [Agent Install Guide](agents/agent-install.md) -- Automated, non-interactive install for agents
-- [Upgrade from 0.9 to 0.10](migration/v0.9-to-v0.10.md) -- The current upgrade path: the order to follow, every removed CLI spelling, config key and workflow feature with its replacement, and what a scheduled `akm improve` now does
-- `akm hints` -- The CLI guide agents load (short by default; `akm hints --detail full` for the complete one)
+- [Headless Install](guides/recipes/headless-install.md) -- The no-prompts install sequence for agents and automation
+- [Upgrade from 0.10 to 0.11](migration/v0.10-to-v0.11.md) -- The current upgrade path: the order to follow, the retired location variables and the working bundle, every removed flag and command, the output and scheduler changes, and the new error codes
+- [Upgrade from 0.9 to 0.10](migration/v0.9-to-v0.10.md) -- The 0.10 changes: every removed CLI spelling, config key and workflow feature with its replacement, and what a scheduled `akm improve` now does
+- `akm hints` -- The CLI guide agents load (the short guide; `akm help <command>` for one command)
 
 ## Use
 
@@ -41,6 +39,8 @@ also has its own README indexing everything inside it: [Guides](guides/README.md
 - [CLI](reference/cli.md) -- All `akm` commands and flags
 - [Configuration](reference/configuration.md) -- Connections, harnesses, strategies, bundles, and settings
 - [Supported Formats](reference/supported-formats.md) -- Every bundle format akm recognizes, its detection marker, and current read/write support
+- [Programmatic API](reference/api.md) -- `akm-cli/api`: in-process `curate()` for the akm plugins
+- [Workspace](reference/workspace.md) -- The operations of `akm-cli/workspace` and the JSON they return
 - [Asset Types](reference/asset-types.md) -- The capability taxonomy, directory conventions, and per-type examples
 - [Refs](reference/refs.md) -- The ref grammar `akm search` emits and `akm show` consumes
 - [Memory](reference/memory.md) -- The `memory` asset type: capture, belief states, and derived memories
@@ -53,7 +53,7 @@ also has its own README indexing everything inside it: [Guides](guides/README.md
 
 ## Migration
 
-- [Migration](migration/README.md) -- The current 0.9 to 0.10 upgrade guide, then the historical guides and per-release notes of earlier releases
+- [Migration](migration/README.md) -- The 0.10 to 0.11 and 0.9 to 0.10 upgrade guides
 
 ## Official Ecosystem Repositories
 

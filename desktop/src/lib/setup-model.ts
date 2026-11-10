@@ -20,6 +20,8 @@ export interface Detected {
   connection: string | null;
   /** Background learning: the host-wide switch, the platform improve runs on (null: a connection, or nowhere) and whether its task is scheduled. */
   learning: { on: boolean; harness: string | null; scheduled: boolean };
+  /** Only from `setup.apply`: what the OS scheduler did not get (no host akm to write its entry). */
+  warnings?: string[];
 }
 
 /** Background learning is switched on and has somewhere to run. `learning.on` alone is only the switch. */
@@ -67,9 +69,8 @@ export function pluginMatches(engine: string | undefined, plugin: string | undef
 /** The name akm's own `harnesses` setting uses for a harness Desktop installs a plugin into. */
 export const akmPlatform = (id: string) => (id === "opencode2" ? "opencode" : id);
 
-/** Nothing is configured: no bundle and no working library. Home shows setup instead of health failures then. */
-export const isUnconfigured = (listing: { bundles: unknown[]; workingStash: unknown | null }) =>
-  listing.bundles.length === 0 && !listing.workingStash;
+/** Nothing is configured: no bundle. Home shows setup instead of health failures then. */
+export const isUnconfigured = (listing: { bundles: unknown[] }) => listing.bundles.length === 0;
 
 export const hasStarter = (bundles: Bundle[]) =>
   bundles.some((bundle) => /akm-stash/.test(`${bundle.name} ${bundle.source?.locator ?? ""}`));

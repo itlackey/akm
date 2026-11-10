@@ -24,8 +24,7 @@ export interface RegistrySearchOptions {
   limit?: number;
   /**
    * Registries to search instead of the defaults (`akm search` passes the
-   * config's). Accepts an array of RegistryConfigEntry objects. A set
-   * `AKM_REGISTRY_URL` still takes precedence over this list.
+   * config's). Accepts an array of RegistryConfigEntry objects.
    */
   registries?: RegistryConfigEntry[];
 }
@@ -39,11 +38,8 @@ export async function searchRegistry(query: string, options?: RegistrySearchOpti
   }
 
   const limit = clampLimit(options?.limit);
-  // AKM_REGISTRY_URL outranks the caller's list: `akm search` passes
-  // `config.registries`, which would otherwise shadow the override.
-  const envOverride = process.env.AKM_REGISTRY_URL?.trim() ? resolveRegistries() : undefined;
   // resolveRegistries() already filters by enabled; explicit registries are filtered here
-  const raw = envOverride ?? options?.registries ?? resolveRegistries();
+  const raw = options?.registries ?? resolveRegistries();
   const warnings: string[] = [];
   const entries = (options?.registries ? raw.filter((r) => r.enabled !== false) : raw).filter((entry) => {
     if (!hasRegistryUrlCredentials(entry.url)) return true;
@@ -108,56 +104,10 @@ export async function searchRegistry(query: string, options?: RegistrySearchOpti
 // ── Registry resolution ─────────────────────────────────────────────────────
 
 /**
- * Resolve the list of enabled registries.
- *
- * Priority:
- * 1. AKM_REGISTRY_URL env var (CI override, comma-separated)
- * 2. config.registries (filtered by enabled !== false)
- * 3. Default registries from DEFAULT_CONFIG
- *
- * AKM_REGISTRY_URL syntax (comma-separated):
- *   - Bare URL: `https://example.com/index.json`  → defaults to provider "static-index"
- *   - Typed URL: `skills-sh::https://skills.sh/api`  → explicit provider type
- *     Format: `<provider-type>::<url>`
+ * Resolve the list of enabled registries: `config.registries` (filtered by
+ * `enabled !== false`), else the defaults from DEFAULT_CONFIG.
  */
 export function resolveRegistries(configRegistries?: RegistryConfigEntry[]): RegistryConfigEntry[] {
-  // Allow env var override (comma-separated URLs) — CI escape hatch
-  const envUrls = process.env.AKM_REGISTRY_URL?.trim();
-  if (envUrls) {
-    const entries: RegistryConfigEntry[] = [];
-    for (const raw of envUrls.split(",")) {
-      const trimmed = raw.trim();
-      if (!trimmed) continue;
-
-      // Parse optional `<provider-type>::<url>` prefix
-      let provider: string | undefined;
-      let url: string;
-      const colonColonIdx = trimmed.indexOf("::");
-      if (colonColonIdx !== -1 && !trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
-        // Only treat as `provider::url` if the prefix doesn't look like a URL scheme itself
-        provider = trimmed.slice(0, colonColonIdx).trim();
-        url = trimmed.slice(colonColonIdx + 2).trim();
-        if (!provider) {
-          warn('[akm] Ignoring AKM_REGISTRY_URL entry: empty provider type before "::".');
-          continue;
-        }
-      } else {
-        url = trimmed;
-      }
-
-      if (!url.startsWith("http://") && !url.startsWith("https://")) {
-        warn("[akm] Ignoring AKM_REGISTRY_URL entry: URL must start with http:// or https://.");
-        continue;
-      }
-      if (hasRegistryUrlCredentials(url)) {
-        warn(`[akm] ${formatRegistryCredentialWarning({ url })}`);
-        continue;
-      }
-      entries.push(provider ? { url, provider } : { url });
-    }
-    return entries;
-  }
-
   const registries = configRegistries ?? DEFAULT_CONFIG.registries ?? [];
   return registries.filter((entry) => {
     if (entry.enabled === false) return false;

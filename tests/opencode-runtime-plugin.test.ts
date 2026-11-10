@@ -4,7 +4,7 @@
 
 /**
  * The plugin akm's own runtime gives OpenCode (`src/assets/opencode/akm-plugin.js`):
- * akm's three read tools, which run the argv `AKM_OPENCODE_CLI` holds (the akm that started OpenCode), and
+ * akm's three read tools, which run the argv the plugin's `akm` option holds (the akm that started OpenCode), and
  * the connection's request fields laid over each model request. The plugin is loaded
  * here from its shipped text, as akm writes it for OpenCode, against a stand-in for
  * OpenCode's plugin context; OpenCode itself loads it in
@@ -69,12 +69,12 @@ const REPORT_ARGS =
 
 /**
  * A stand-in for a compiled akm: one executable that prints the arguments it was called with, or fails. The value of
- * `AKM_OPENCODE_CLI` that runs it is the executable alone.
+ * `akm` option that runs it is the executable alone.
  */
-function installAkm(body = REPORT_ARGS): string {
+function installAkm(body = REPORT_ARGS): string[] {
   const file = path.join(scratch.dir, "akm");
   fs.writeFileSync(file, `#!${process.execPath}\n${body}\n`, { mode: 0o755 });
-  return JSON.stringify([file]);
+  return [file];
 }
 
 describe("the plugin's identity", () => {
@@ -103,34 +103,32 @@ describe.skipIf(process.platform === "win32")("akm's read tools", () => {
     [
       "akm_search",
       { query: "backup", type: "skill", limit: 3 },
-      ["search", "backup", "--type", "skill", "--limit", "3"],
+      ["search", "backup", "--type", "skill", "--limit", "3", "--project", "none"],
     ],
-    ["akm_curate", { query: "deploy a service" }, ["curate", "deploy a service"]],
+    ["akm_curate", { query: "deploy a service" }, ["curate", "deploy a service", "--project", "none"]],
     ["akm_show", { ref: "knowledge/deploy#Rollback", type: "ignored" }, ["show", "knowledge/deploy#Rollback"]],
-  ])("%s calls akm with the agent detail and JSON, and returns what it printed", async (name, input, args) => {
-    const { tools } = await load();
+  ])("%s calls akm with the normal detail and JSON, and returns what it printed", async (name, input, args) => {
     const akm = installAkm();
+    const { tools } = await load({ akm });
 
-    const result = await withEnv({ AKM_OPENCODE_CLI: akm, AKM_EVENT_SOURCE: "improve" }, () =>
-      tools.get(name)?.execute(input),
-    );
+    const result = await withEnv({ AKM_EVENT_SOURCE: "improve" }, () => tools.get(name)?.execute(input));
 
     expect(JSON.parse(result?.content as string)).toEqual({
-      argv: [...args, "--detail", "agent", "--format", "json"],
+      argv: [...args, "--detail", "normal", "--format", "json"],
       // The run's environment is the call's: its provenance reaches akm.
       source: "improve",
     });
   });
 
   test('akm_show with detail "brief" asks akm for the outline, and tells the agent to read it first', async () => {
-    const { tools } = await load();
     const akm = installAkm();
+    const { tools } = await load({ akm });
     const show = tools.get("akm_show");
 
     expect(show?.input.properties.detail).toMatchObject({ enum: ["brief"] });
     expect(show?.description).toContain('detail "brief"');
     expect(show?.description).toContain("ref#<slug>");
-    const result = await withEnv({ AKM_OPENCODE_CLI: akm, AKM_EVENT_SOURCE: undefined }, () =>
+    const result = await withEnv({ AKM_EVENT_SOURCE: undefined }, () =>
       show?.execute({ ref: "knowledge/deploy", detail: "brief" }),
     );
 
@@ -141,41 +139,36 @@ describe.skipIf(process.platform === "win32")("akm's read tools", () => {
   });
 
   test("akm run as a script is the runtime and the script, which needs neither a shebang nor the executable bit", async () => {
-    const { tools } = await load();
     const script = path.join(scratch.dir, "akm.js");
     fs.writeFileSync(script, REPORT_ARGS, { mode: 0o644 });
+    const { tools } = await load({ akm: [process.execPath, script] });
 
-    const result = await withEnv(
-      { AKM_OPENCODE_CLI: JSON.stringify([process.execPath, script]), AKM_EVENT_SOURCE: undefined },
-      () => tools.get("akm_show")?.execute({ ref: "knowledge/deploy" }),
+    const result = await withEnv({ AKM_EVENT_SOURCE: undefined }, () =>
+      tools.get("akm_show")?.execute({ ref: "knowledge/deploy" }),
     );
 
     expect(JSON.parse(result?.content as string)).toEqual({
-      argv: ["show", "knowledge/deploy", "--detail", "agent", "--format", "json"],
+      argv: ["show", "knowledge/deploy", "--detail", "normal", "--format", "json"],
       source: null,
     });
   });
 
   test("a call without its required argument fails in words, and starts nothing", async () => {
-    const { tools } = await load();
     const akm = installAkm('require("node:fs").writeFileSync(process.env.MARKER, "ran");');
+    const { tools } = await load({ akm });
     const marker = path.join(scratch.dir, "marker");
 
-    const result = await withEnv({ AKM_OPENCODE_CLI: akm, MARKER: marker }, () =>
-      tools.get("akm_search")?.execute({ query: " " }),
-    );
+    const result = await withEnv({ MARKER: marker }, () => tools.get("akm_search")?.execute({ query: " " }));
 
     expect(result?.content).toBe('akm_search failed: "query" is required');
     expect(fs.existsSync(marker)).toBe(false);
   });
 
   test("akm failing is reported with its own message", async () => {
-    const { tools } = await load();
     const akm = installAkm('console.error("No such asset"); process.exit(4);');
+    const { tools } = await load({ akm });
 
-    const result = await withEnv({ AKM_OPENCODE_CLI: akm }, () =>
-      tools.get("akm_show")?.execute({ ref: "knowledge/none" }),
-    );
+    const result = await tools.get("akm_show")?.execute({ ref: "knowledge/none" });
 
     expect(result?.content).toContain("akm_show failed:");
     expect(result?.content).toContain("No such asset");
@@ -184,21 +177,116 @@ describe.skipIf(process.platform === "win32")("akm's read tools", () => {
   test("without the akm executable named, the tool says so", async () => {
     const { tools } = await load();
 
-    const result = await withEnv({ AKM_OPENCODE_CLI: undefined }, () =>
-      tools.get("akm_search")?.execute({ query: "x" }),
-    );
+    const result = await tools.get("akm_search")?.execute({ query: "x" });
 
-    expect(result?.content).toBe("akm_search failed: AKM_OPENCODE_CLI is not set");
+    expect(result?.content).toBe(
+      "akm_search failed: the plugin's akm option is not an argv (an array of strings with at least the executable)",
+    );
   });
 
-  test("an AKM_OPENCODE_CLI that is not an argv is refused in words", async () => {
-    const { tools } = await load();
+  test("an akm option that is not an argv is refused in words", async () => {
+    const { tools } = await load({ akm: "/usr/bin/akm" });
 
-    const result = await withEnv({ AKM_OPENCODE_CLI: '"/usr/bin/akm"' }, () =>
+    const result = await tools.get("akm_search")?.execute({ query: "x" });
+
+    expect(result?.content).toContain("akm_search failed: the plugin's akm option is not an argv");
+  });
+
+  // Risk 2 of the config-file design: the runtime remaps OpenCode's XDG roots in the process the plugin runs in, so
+  // the plugin's own runs of akm must be given the user's values back, or akm resolves the runtime's locations.
+  test("a run of akm sees the user's locations, not the runtime's remapped XDG roots", async () => {
+    const akm = installAkm(
+      "console.log(JSON.stringify({ data: process.env.XDG_DATA_HOME ?? null, cache: process.env.XDG_CACHE_HOME ?? null, tmp: process.env.TMPDIR ?? null, file: process.env.AKM_CONFIG_FILE ?? null }));",
+    );
+    const { tools } = await load({
+      akm,
+      shellEnv: {
+        XDG_DATA_HOME: path.join(scratch.dir, "me", "share"),
+        XDG_CACHE_HOME: null,
+        TMPDIR: path.join(scratch.dir, "tmp"),
+      },
+    });
+
+    const result = await withEnv(
+      {
+        XDG_DATA_HOME: path.join(scratch.dir, "rt", "data"),
+        XDG_CACHE_HOME: path.join(scratch.dir, "rt", "cache"),
+        TMPDIR: path.join(scratch.dir, "rt", "tmp"),
+        AKM_CONFIG_FILE: path.join(scratch.dir, "etc", "config.json"),
+      },
+      () => tools.get("akm_search")?.execute({ query: "x" }),
+    );
+
+    expect(JSON.parse(result?.content as string)).toEqual({
+      data: path.join(scratch.dir, "me", "share"),
+      cache: null,
+      tmp: path.join(scratch.dir, "tmp"),
+      file: path.join(scratch.dir, "etc", "config.json"),
+    });
+  });
+});
+
+// The same, through the code akm resolves its locations with: the runtime remaps XDG_*_HOME for OpenCode, the plugin's
+// own run of akm is given the user's values back, and the config, data, state and cache akm then resolves are the
+// user's, not the runtime's. With only AKM_CONFIG_FILE handed over (the file names no `paths`), nothing else holds
+// the user's data, state or cache locations but the user's XDG variables.
+describe.skipIf(process.platform === "win32")("a run of akm under the runtime's remapped XDG roots", () => {
+  const PATHS_MODULE = path.join(import.meta.dir, "..", "src", "core", "paths.ts");
+  const REPORT_LOCATIONS = `
+import { getCacheDir, getConfigPath, getDataDir, getStateDir } from ${JSON.stringify(PATHS_MODULE)};
+console.log(JSON.stringify({ config: getConfigPath(), data: getDataDir(), state: getStateDir(), cache: getCacheDir() }));
+`;
+
+  test("resolves the user's locations, because the plugin gives the user's XDG back", async () => {
+    const script = path.join(scratch.dir, "locations.ts");
+    fs.writeFileSync(script, REPORT_LOCATIONS);
+    const user = {
+      XDG_CONFIG_HOME: path.join(scratch.dir, "user", "config"),
+      XDG_DATA_HOME: path.join(scratch.dir, "user", "data"),
+      XDG_STATE_HOME: path.join(scratch.dir, "user", "state"),
+      XDG_CACHE_HOME: path.join(scratch.dir, "user", "cache"),
+    };
+    const runtime = path.join(scratch.dir, "akm", "opencode-runtime");
+    const configFile = path.join(user.XDG_CONFIG_HOME, "akm", "config.json");
+    const { tools } = await load({
+      akm: [process.execPath, script],
+      // What `runtimeConfig` builds from the environment akm was started in.
+      shellEnv: { ...user, TMPDIR: null },
+    });
+
+    const result = await withEnv(
+      {
+        // OpenCode's process, as `runtimeEnv` starts it.
+        XDG_CONFIG_HOME: path.join(runtime, "config"),
+        XDG_DATA_HOME: path.join(runtime, "data"),
+        XDG_STATE_HOME: path.join(runtime, "state"),
+        XDG_CACHE_HOME: path.join(runtime, "cache"),
+        TMPDIR: path.join(runtime, "tmp"),
+        // What akm hands any child: the file, and nothing the user's XDG could not give.
+        AKM_CONFIG_FILE: configFile,
+      },
+      () => tools.get("akm_search")?.execute({ query: "x" }),
+    );
+
+    expect(JSON.parse(result?.content as string)).toEqual({
+      config: configFile,
+      data: path.join(user.XDG_DATA_HOME, "akm"),
+      state: path.join(user.XDG_STATE_HOME, "akm"),
+      cache: path.join(user.XDG_CACHE_HOME, "akm"),
+    });
+  });
+
+  test("without the plugin giving them back, the same run resolves the runtime's (what the fix prevents)", async () => {
+    const script = path.join(scratch.dir, "locations.ts");
+    fs.writeFileSync(script, REPORT_LOCATIONS);
+    const runtime = path.join(scratch.dir, "akm", "opencode-runtime");
+    const { tools } = await load({ akm: [process.execPath, script] });
+
+    const result = await withEnv({ XDG_DATA_HOME: path.join(runtime, "data") }, () =>
       tools.get("akm_search")?.execute({ query: "x" }),
     );
 
-    expect(result?.content).toBe("akm_search failed: AKM_OPENCODE_CLI is not a JSON array of strings");
+    expect(JSON.parse(result?.content as string).data).toBe(path.join(runtime, "data", "akm"));
   });
 });
 

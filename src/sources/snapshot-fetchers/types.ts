@@ -42,7 +42,7 @@ export interface FetcherContext {
    * Resolve a secret by ref (e.g. `secrets/x-bearer-token`) from akm's secret
    * store, or null when absent.
    *
-   * Injected rather than imported: `core/env-secret-ref` transitively imports
+   * Injected rather than imported: `sources/env-secret-ref` transitively imports
    * the source providers, which import the fetcher registry, so a fetcher
    * reading the store directly would form an import cycle. Callers that can
    * already import it populate this; fetchers stay leaves in the import graph.

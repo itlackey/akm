@@ -18,7 +18,7 @@ import { parseTimeout, resolveTarget } from "../src/integrations/agent/resolutio
 import type { ConnectionRunner, HarnessRunner } from "../src/integrations/agent/runner";
 import { overrideSeam } from "./_helpers/seams";
 
-const configOf = (parts: Record<string, unknown>): AkmConfig => ({ configVersion: "0.9.0", ...parts }) as AkmConfig;
+const configOf = (parts: Record<string, unknown>): AkmConfig => ({ ...parts }) as AkmConfig;
 
 const lab = {
   endpoint: "http://lab:8080/v1",
@@ -133,6 +133,31 @@ describe("the default is chosen by name", () => {
   });
 });
 
+describe("several harnesses and no default", () => {
+  const several = { work: { platform: "claude" }, home: { platform: "codex" } };
+
+  test("agent work does not fall through to the connection: it errors naming the harnesses and the fix", () => {
+    const config = configOf({ connections: { default: lab }, harnesses: several });
+    const error = failureOf(() => resolveTarget({ config, layers: [] }));
+    expect(error.code).toBe("AGENT_NOT_CONFIGURED");
+    expect(error.message).toContain("work, home");
+    expect(error.message).toContain('none is named "default"');
+    expect(error.message).toContain("--harness");
+  });
+
+  test("a harness named default, or one named by the call, runs", () => {
+    const withDefault = configOf({ connections: { default: lab }, harnesses: { ...several, default: {} } });
+    expect(resolveTarget({ config: withDefault, layers: [] }).kind).toBe("harness");
+    const config = configOf({ connections: { default: lab }, harnesses: several });
+    expect(harnessFor(config, [{ harness: "home" }]).name).toBe("home");
+  });
+
+  test("model work with the same config still runs on the connection", () => {
+    const config = configOf({ connections: { default: lab }, harnesses: several });
+    expect(resolveTarget({ config, layers: [], modelWork: true }).kind).toBe("connection");
+  });
+});
+
 describe("the nearest layer that names a target decides", () => {
   const config = configOf({
     connections: { default: lab, cloud },
@@ -148,11 +173,6 @@ describe("the nearest layer that names a target decides", () => {
     const layers = [{ connection: "cloud" }, { model: "fast" }, { connection: "default" }, {}];
     expect(connectionFor(config, layers).name).toBe("default");
     expect(connectionFor(config, [{ connection: "cloud" }, { model: "fast" }]).name).toBe("cloud");
-  });
-
-  test("the retired engine key is a connection by that name, else a harness", () => {
-    expect(connectionFor(config, [{ engine: "cloud" }]).name).toBe("cloud");
-    expect(harnessFor(config, [{ engine: "claude" }]).name).toBe("claude");
   });
 
   describe("a name that is not configured", () => {
@@ -176,8 +196,7 @@ describe("the nearest layer that names a target decides", () => {
       expect(failure([{ connection: "gone" }]).message).not.toContain("Did you mean");
     });
 
-    test("is an error for the retired engine spelling too, and for the nearest layer that names anything", () => {
-      expect(failure([{ engine: "gone" }]).message).toContain('"gone" is not configured');
+    test("is an error for the nearest layer that names anything", () => {
       // A nearer layer that is configured does not rescue a farther one; the nearest layer that names a target decides.
       expect(connectionFor(config, [{ connection: "gone" }, { connection: "cloud" }]).name).toBe("cloud");
       expect(failure([{ connection: "cloud" }, { connection: "gone" }]).message).toContain('"gone"');
@@ -348,14 +367,11 @@ describe("the request", () => {
           timeoutMs: 1000,
           concurrency: 2,
           temperature: 0.1,
-          // A key file an earlier migration could not read yet: kept as written, never sent.
-          apiKeyFile: "/run/secrets/key",
         },
       },
     });
     const runner = connectionFor(config);
     expect(runner.request).toEqual({ temperature: 0.1 });
-    expect(JSON.stringify(runner)).not.toContain("/run/secrets/key");
     expect(runner).toMatchObject({
       apiKey: "$CLOUD_KEY",
       contextLength: 8192,

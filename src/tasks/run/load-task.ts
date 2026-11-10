@@ -6,7 +6,7 @@
  * Load and project one task asset into immutable executable work: id
  * validation, adapter detection, owner resolution, source read, strict task
  * source parsing, config selection, bundle-name resolution, and the
- * `prepareTaskV3Execution` call. Everything here is non-mutating — run-task.ts
+ * `prepareTaskExecution` call. Everything here is non-mutating — run-task.ts
  * reserves a durable attempt only after this resolves.
  */
 
@@ -19,7 +19,6 @@ import { loadConfig } from "../../core/config/config";
 import { bundleKeyForContentRoot } from "../../core/config/config-sources";
 import type { AkmConfig } from "../../core/config/config-types";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
-import { assertBundleNotDisabled } from "../../core/write-source";
 import {
   applyInputDefaults,
   type InputContract,
@@ -32,10 +31,10 @@ import { resolveAdapterConceptOwner, resolveConceptOwner } from "../../indexer/l
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { resolveAssetPath } from "../../sources/resolve";
+import { assertBundleNotDisabled } from "../../sources/write-source";
 import type { TaskInvocation } from "../model/invocation";
-import { prepareTaskV3Execution } from "../prepare/prepare";
-import type { PreparedTaskV3Execution } from "../prepare/prepared-execution";
-import { scheduledTaskContextEnv } from "../scheduler-invocation";
+import { prepareTaskExecution } from "../prepare/prepare";
+import type { PreparedTaskExecution } from "../prepare/prepared-execution";
 import { parseTaskSource } from "../source/parse-task-source";
 import { projectTaskSourceV4 } from "../source/project-v4";
 import { TASK_INPUT_DIAGNOSTICS } from "../source/task-input-diagnostics";
@@ -49,7 +48,6 @@ import type { RunTaskOptions } from "./task-result";
 export const DEFAULT_BUNDLE_NAME = "stash";
 
 const CONFIG_FREE_TASK_RUNTIME: AkmConfig = Object.freeze({
-  configVersion: "0.9.0",
   semanticSearchMode: "off",
 });
 
@@ -94,8 +92,8 @@ export function resolveBundleAsset(
   throw new NotFoundError(`Task asset ${makeBundleRef(bundle, conceptId)} was not found.`, "ASSET_NOT_FOUND");
 }
 
-/** Resolve, parse, and project one task-v3 asset into a frozen, executable projection. */
-export async function loadPreparedTask(id: string, options: RunTaskOptions): Promise<PreparedTaskV3Execution> {
+/** Resolve, parse, and project one task asset into a frozen, executable projection. */
+export async function loadPreparedTask(id: string, options: RunTaskOptions): Promise<PreparedTaskExecution> {
   const bundleDir = options.bundleDir;
   const adapterId = options.adapterId ?? detectAdapterId(bundleDir);
   if (adapterId === "akm-task") validateTaskConceptId(id);
@@ -155,14 +153,12 @@ export async function loadPreparedTask(id: string, options: RunTaskOptions): Pro
     source.target.kind === "uses" && source.target.uses.kind === "workflow"
       ? { ...source, target: { ...source.target, with: defaultedInputs as ExecutionJsonObject } }
       : source;
-  return prepareTaskV3Execution(deliverySource, {
+  return prepareTaskExecution(deliverySource, {
     taskId: id,
     taskRef: makeBundleRef(bundleName, taskConceptId),
     bundleName,
     bundleRoot: bundleDir,
     config,
-    // Freeze the AKM directory context the scheduled row set before command preparation.
-    ...(options.scheduled ? { schedulerContext: scheduledTaskContextEnv() } : {}),
     resolveAsset: async ({ bundle, type, name }) => {
       if (bundle === bundleName) {
         return { file: await resolveAssetPath(bundleDir, type, name), bundleRoot: bundleDir };

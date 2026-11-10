@@ -13,7 +13,7 @@
  * indistinguishable. akm used `existsSync` as its "is there an index?" gate on
  * the read path, so an index the caller could not read was reported as an index
  * that did not exist — `akm search` and `akm curate` returned
- * `hits: []` with the tip *"No search index available. Run 'akm index' to build
+ * `results: []` with the tip *"No search index available. Run 'akm index' to build
  * one."* at exit 0, for a populated index sitting right there on disk.
  *
  * That is the worst possible shape for a failure. A non-zero exit is a problem

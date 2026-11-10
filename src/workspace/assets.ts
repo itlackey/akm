@@ -12,7 +12,6 @@ import { parseBundleRef } from "../core/asset/asset-ref";
 import { parseMarkdownToc, uniqueHeadingSlugs } from "../core/asset/markdown";
 import { markdownLinkTargets } from "../core/asset/markdown-link-targets";
 import { loadConfig } from "../core/config/config";
-import { resolveRefOwner } from "../core/env-secret-ref";
 import { UsageError } from "../core/errors";
 import { getDbPath } from "../core/paths";
 import { projectView, resolveProject } from "../core/projects";
@@ -20,6 +19,7 @@ import type { ScopeFilters } from "../indexer/passes/metadata";
 import { resolveReadSources } from "../indexer/read-preflight";
 import { countBrowseEntries } from "../indexer/search/db-search";
 import { findSourceForPath, resolveSourceEntries } from "../indexer/search/search-source";
+import { resolveRefOwner } from "../sources/env-secret-ref";
 import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
 import { getEntryIdByFilePath, getItemRefById } from "../storage/repositories/index-entries-repository";
 import { countFeedbackBySignal, listFeedbackEventRows } from "../storage/repositories/metrics-repository";
@@ -105,7 +105,7 @@ export function projectOverview(input: { project: string }) {
       closeDatabase(db);
     }
   }
-  const writeName = project.write.bundle ?? config.defaultWriteTarget ?? automaticWriteTarget(config)?.name ?? null;
+  const writeName = project.write.bundle ?? automaticWriteTarget(config)?.name ?? null;
   const writeSource = writeName === null ? undefined : local.find((source) => source.registryId === writeName);
   return {
     project: { ...projectView(project), write: project.write },

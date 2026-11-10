@@ -22,7 +22,7 @@ import { closeDatabase, openExistingDatabase } from "../../../src/storage/reposi
 import { getMeta } from "../../../src/storage/repositories/index-meta-repository";
 import {
   type Cleanup,
-  sandboxEnvDir,
+  sandboxAkmDir,
   sandboxStashDir,
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
@@ -105,8 +105,8 @@ beforeEach(async () => {
   stashDir = stash.dir;
   let chain = sandboxXdgConfigHome(stash.cleanup).cleanup;
   chain = sandboxXdgCacheHome(chain).cleanup;
-  chain = sandboxEnvDir("akm-written-data", "AKM_DATA_DIR", chain).cleanup;
-  chain = sandboxEnvDir("akm-written-state", "AKM_STATE_DIR", chain).cleanup;
+  chain = sandboxAkmDir("akm-written-data", "data", chain).cleanup;
+  chain = sandboxAkmDir("akm-written-state", "state", chain).cleanup;
   cleanup = chain;
   writeSandboxConfig({ semanticSearchMode: "off" });
   writeMemory("seed-memory", "Seed body.");
@@ -190,7 +190,7 @@ describe("indexWrittenAssets", () => {
     }
     const search = await akmSearch({ query: "gasoline", skipLogging: true });
     expect(search.searchMode).toBe("semantic");
-    expect(search.hits.flatMap((hit) => ("ref" in hit ? [hit.ref] : []))).toContain("memories/fuel-delivery-note");
+    expect(search.results.flatMap((hit) => ("ref" in hit ? [hit.ref] : []))).toContain("memories/fuel-delivery-note");
   });
 
   test("embedding failure preserves the authored file and FTS row and reports the failure live", async () => {
@@ -226,7 +226,9 @@ describe("indexWrittenAssets", () => {
     // circuits it) and hits the same broken embedder live, falling back to
     // FTS and disclosing it in this response.
     const search = await akmSearch({ query: "offline-provider-note", skipLogging: true });
-    expect(search.hits.flatMap((hit) => ("ref" in hit ? [hit.ref] : []))).toContain("memories/offline-provider-note");
+    expect(search.results.flatMap((hit) => ("ref" in hit ? [hit.ref] : []))).toContain(
+      "memories/offline-provider-note",
+    );
     expect(search.warnings?.join("\n")).toContain("Vector search unavailable");
     expect(search.searchMode).toBe("fts-fallback");
   });
@@ -387,12 +389,12 @@ describe("indexWrittenAssets on an indexed empty stash", () => {
   test("a memory written after a search on the empty stash is found by the next search", async () => {
     fs.rmSync(path.join(stashDir, "memories"), { recursive: true, force: true });
     await akmIndex({ stashDir, full: true });
-    expect((await akmSearch({ query: "zebra" })).hits).toHaveLength(0);
+    expect((await akmSearch({ query: "zebra" })).results).toHaveLength(0);
 
     const file = writeMemory("zebra-crossing", "zebra crossing procedure");
     expect(await indexWrittenAssets(stashDir, [file])).toBe(true);
 
-    const hits = (await akmSearch({ query: "zebra" })).hits;
+    const hits = (await akmSearch({ query: "zebra" })).results;
     expect(hits.length).toBeGreaterThan(0);
   });
 });

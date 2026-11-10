@@ -170,7 +170,7 @@ const BUILTIN_PLACEMENT_SPECS = {
   // `sessions/<harness>/<session-id>.md`.
   session: { stashDir: "sessions", ...markdownSpec },
   // Durable stash-level semantic knowledge — facts about the user, team, or
-  // project. A plain markdown spec; see docs/architecture/specs/fact-asset-type.md.
+  // project. A plain markdown spec.
   fact: { stashDir: "facts", ...markdownSpec },
   // Short agent rules for a project (`rules/<project>/<name>.md`); see docs/guides/author-bundles.md.
   rule: { stashDir: "rules", ...markdownSpec },
@@ -200,11 +200,6 @@ const PLACEMENT_SPECS: Record<string, AssetSpec> = { ...BUILTIN_PLACEMENT_SPECS 
 /** Live placement spec for a type, or `undefined` for an unknown type. */
 export function placementSpecFor(type: string): AssetSpec | undefined {
   return PLACEMENT_SPECS[type];
-}
-
-/** Every registered placement spec (for whole-registry sweeps). */
-export function placementSpecList(): readonly AssetSpec[] {
-  return Object.values(PLACEMENT_SPECS);
 }
 
 /** Every registered placement type key (the set of types that have a stash subdir). */

@@ -1,5 +1,4 @@
 {
-  "configVersion": "0.9.0",
   "semanticSearchMode": "auto",
   "engines": {
     "lab": {

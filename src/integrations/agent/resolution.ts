@@ -29,8 +29,6 @@ import {
   ambiguousDefaultAdvice,
   defaultConnection,
   defaultHarness,
-  inheritedConnectionsOf,
-  retiredEngineTargets,
   unusableEntryAt,
 } from "../../core/config/config";
 import type { ConnectionConfig, HarnessConfig } from "../../core/config/config-types";
@@ -137,25 +135,8 @@ type Target =
   | { readonly kind: "connection"; readonly name: string; readonly connection: ConnectionConfig }
   | { readonly kind: "harness"; readonly name: string; readonly harness: HarnessConfig };
 
-/**
- * What the retired `engine` spelling names. While the config file is still in the `engines` form, the connection
- * or harness that engine became (it may have been renamed); otherwise a connection by that name, else a harness.
- */
-export function retiredEngineSelection(
-  config: AkmConfig,
-  name: string,
-): { kind: "connection" | "harness"; name: string } {
-  const became = retiredEngineTargets()[name];
-  if (became)
-    return "harness" in became
-      ? { kind: "harness", name: became.harness }
-      : { kind: "connection", name: became.connection };
-  return { kind: config.harnesses?.[name] && !config.connections?.[name] ? "harness" : "connection", name };
-}
-
 /** The name the nearest layer that names anything gives, and the kind it gave it as. */
 function namedByLayers(
-  config: AkmConfig,
   layers: readonly UnresolvedExecutionDefaults[],
   modelWork: boolean,
 ): { kind: "connection" | "harness"; name: string } | undefined {
@@ -167,8 +148,6 @@ function namedByLayers(
       const name = layer[kind];
       if (typeof name === "string" && name) return { kind, name };
     }
-    const engine = layer.engine;
-    if (typeof engine === "string" && engine) return retiredEngineSelection(config, engine);
   }
   return undefined;
 }
@@ -238,7 +217,7 @@ export function selectionNotConfigured(config: AkmConfig, kind: "connection" | "
 
 function selectTarget(input: ResolveTargetInput): Target {
   const modelWork = input.modelWork === true;
-  const named = namedByLayers(input.config, input.layers, modelWork);
+  const named = namedByLayers(input.layers, modelWork);
   if (named) {
     const connection = named.kind === "connection" ? input.config.connections?.[named.name] : undefined;
     const harness = named.kind === "harness" ? harnessNamed(input.config, named.name) : undefined;
@@ -248,6 +227,10 @@ function selectTarget(input: ResolveTargetInput): Target {
     // service, or a call that must not touch files to an agent that can. Defaults apply only when nothing was named.
     throw selectionNotConfigured(input.config, named.kind, named.name);
   }
+  // Agent work with several harnesses and no `default` does not fall through to a connection: that is a different
+  // runtime (it cannot edit files). Model work prefers the connection by design, so it is unaffected.
+  const ambiguousHarnesses = modelWork ? undefined : ambiguousDefaultAdvice(input.config, "harness");
+  if (ambiguousHarnesses) throw new ConfigError(`${ambiguousHarnesses}.`, "AGENT_NOT_CONFIGURED");
   const target = defaultTarget(input.config, modelWork);
   if (target) return target;
   const ambiguous = ambiguousDefaultAdvice(input.config);
@@ -314,7 +297,6 @@ function connectionRunner(
   aliases: ReadonlySet<string>,
   layers: readonly UnresolvedExecutionDefaults[],
   modelWork: boolean,
-  inherited: boolean,
 ): ConnectionRunner {
   const entry = modelEntry(connection.models ?? {}, requested, aliases);
   if (entry === undefined) {
@@ -336,7 +318,6 @@ function connectionRunner(
     request: mergeRequestFields(connectionFields, entryFields),
     ...(inference && Object.keys(inference).length > 0 ? { inference } : {}),
     ...(apiKeyReference(connection.apiKey) !== undefined ? { apiKey: connection.apiKey } : {}),
-    ...(inherited ? { storedKey: false } : {}),
     ...(connection.contextLength !== undefined ? { contextLength: connection.contextLength } : {}),
     ...(connection.concurrency !== undefined ? { concurrency: connection.concurrency } : {}),
     timeoutMs: firstTimeout(layerTimeout(layers), connection.timeoutMs, defaultTimeout(modelWork)),
@@ -423,15 +404,7 @@ export function resolveTarget(input: ResolveTargetInput): RunnerSpec {
   const aliases = knownAliases(input.config);
   const modelWork = input.modelWork === true;
   return target.kind === "connection"
-    ? connectionRunner(
-        target.name,
-        target.connection,
-        requested,
-        aliases,
-        input.layers,
-        modelWork,
-        inheritedConnectionsOf(input.config).has(target.name),
-      )
+    ? connectionRunner(target.name, target.connection, requested, aliases, input.layers, modelWork)
     : harnessRunner(
         target.name,
         target.harness,

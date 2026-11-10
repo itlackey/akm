@@ -62,7 +62,7 @@ export function placeBundle(
  * `defaultBundle` at it. Reuses the current default key when it already names a
  * filesystem bundle (so re-pointing the primary keeps a stable id). Otherwise,
  * reuses whichever configured bundle ALREADY resolves to `stashDir`'s content
- * root (issue #870 — `AKM_BUNDLE_DIR`/`--dir` pointed at a directory already
+ * root (issue #870 — `--dir` pointed at a directory already
  * configured under a different id must not mint a second bundle for it); only
  * when no bundle owns that root yet is a fresh slug-legal key derived.
  */

@@ -51,14 +51,6 @@ const ctx: ValidateContext = {
   resolveRef: async () => ({ exists: false }),
 };
 
-describe("claude adapter — metadata", () => {
-  test("id / version / extensions", () => {
-    expect(claudeAdapter.id).toBe("claude");
-    expect(claudeAdapter.version).toBe("0.9.0");
-    expect(claudeAdapter.extensions).toEqual([".md"]);
-  });
-});
-
 describe("claude adapter — recognition golden", () => {
   const byRelPath = loadGolden("recognition").byRelPath as Record<string, Record<string, unknown>>;
 
@@ -96,8 +88,6 @@ describe("claude adapter — renderer golden (presentation keyed on the open typ
       const p = presentationFor(doc.type);
       expect(p.label).toBe(expected.label as string);
       expect(p.renderer ?? null).toBe((expected.renderer as string | null) ?? null);
-      const action = p.action ? p.action(doc.ref ?? "") : `akm show ${doc.ref}`;
-      expect(action).toBe(expected.action as string);
     });
   }
 });

@@ -14,7 +14,8 @@ import {
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
-  withEnv,
+  withBundle,
+  withDefaultBundle,
 } from "./_helpers/sandbox";
 
 // ── Temp directory management ───────────────────────────────────────────────
@@ -54,8 +55,8 @@ function tmpStash(): string {
  * inside `run` so it reads back the stash that was just indexed.
  */
 async function withTestIndex<T>(stashDir: string, run: () => Promise<T> | T): Promise<T> {
-  return withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
-    saveConfig({ semanticSearchMode: "off" });
+  return withBundle(stashDir, async () => {
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
     await akmIndex({ stashDir, full: true });
     return run();
   });
@@ -123,8 +124,8 @@ describe("Parallel search: result parity", () => {
       // the second call's ranking scores.
       const result1 = await akmSearch({ query: "deploy", source: "local", skipLogging: true });
       const result2 = await akmSearch({ query: "deploy", source: "local", skipLogging: true });
-      const localHits1 = result1.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
-      const localHits2 = result2.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+      const localHits1 = result1.results.filter((h): h is SourceSearchHit => h.type !== "registry");
+      const localHits2 = result2.results.filter((h): h is SourceSearchHit => h.type !== "registry");
 
       expect(localHits1.length).toBeGreaterThan(0);
       expect(localHits1.length).toBe(localHits2.length);
@@ -177,7 +178,7 @@ describe("Parallel search: vector unavailable", () => {
 
     await withTestIndex(stashDir, async () => {
       const result = await akmSearch({ query: "lint", source: "local" });
-      const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+      const localHits = result.results.filter((h): h is SourceSearchHit => h.type !== "registry");
 
       expect(localHits.length).toBeGreaterThanOrEqual(1);
       const lintHit = localHits.find((h) => h.name === "lint");
@@ -213,7 +214,7 @@ describe("Parallel search: FTS empty", () => {
     await withTestIndex(stashDir, async () => {
       // Query for something that won't match any FTS tokens
       const result = await akmSearch({ query: "zzzznonexistent", source: "local" });
-      const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+      const localHits = result.results.filter((h): h is SourceSearchHit => h.type !== "registry");
 
       // Should return 0 results without crashing
       expect(localHits.length).toBe(0);
@@ -227,7 +228,7 @@ describe("Parallel search: FTS result ordering", () => {
   test("FTS search returns results sorted by score descending (semanticSearchMode off)", async () => {
     // NOTE: Despite the original "hybrid" naming, this test runs with
     // semanticSearchMode: "off", so only FTS scoring is exercised. True hybrid
-    // (FTS + vector) coverage lives in tests/vector-search.test.ts.
+    // (FTS + vector) coverage lives in tests/integration/vector-search.test.ts.
     const stashDir = tmpStash();
 
     // #39: sidecars retired — seed via knowledge/*.md frontmatter (this test pins
@@ -244,7 +245,7 @@ describe("Parallel search: FTS result ordering", () => {
 
     await withTestIndex(stashDir, async () => {
       const result = await akmSearch({ query: "build compile", source: "local" });
-      const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+      const localHits = result.results.filter((h): h is SourceSearchHit => h.type !== "registry");
 
       // Both entries should be found
       expect(localHits.length).toBeGreaterThanOrEqual(1);

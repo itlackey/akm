@@ -70,12 +70,10 @@ import { describeRuns, type SetupRuns } from "./summary";
  * path — `akm setup --dir $(mktemp -d)` resolves under this family on every
  * macOS machine (`/var/folders/...`), and used to be refused outright with
  * no discoverable remedy. The OS may reap the directory at any time, so the
- * operator is told up front; `applyStashIsolationToEnv` below still pre-sets
- * `AKM_BUNDLE_DIR` so the `getConfigDir` / `getCacheDir` isolation rules
- * (`core/paths.ts`) route config + cache writes into `$stashDir/.akm/`
- * instead of the user's host `~/.config/akm`, which is what actually
- * protects the host config (the 2026-05-23 setup-clobbers-user-config
- * incident this guard traces to).
+ * operator is told up front; `isolateTransientSetup` below keeps the config
+ * and cache writes under `$stashDir/.akm/` instead of the user's host
+ * `~/.config/akm`, which is what actually protects the host config (the
+ * 2026-05-23 setup-clobbers-user-config incident this guard traces to).
  */
 export function assertSetupSandbox(stashDir: string, dirExplicitlyProvided: boolean): void {
   if (!dirExplicitlyProvided) return;
@@ -89,22 +87,26 @@ export function assertSetupSandbox(stashDir: string, dirExplicitlyProvided: bool
 }
 
 /**
- * Propagate the explicit `--dir <stashDir>` choice to the env so that the
- * `getConfigDir` / `getCacheDir` isolation rules in `src/core/paths.ts`
- * actually fire for the duration of this setup run. Without this, a CLI
- * caller who passes `--dir /tmp/X` but doesn't pre-export `AKM_BUNDLE_DIR`
- * would still write config to the host `~/.config/akm/config.json`. We
- * only set the env var when:
- *   - `--dir` was explicitly provided (we have an operator-stated stash), AND
- *   - `AKM_BUNDLE_DIR` is not already set (caller's explicit env wins).
- * The set is process-wide; for the CLI that's the right scope (the process
- * is about to do all its work against this stash). For tests, each test
- * already isolates env via beforeEach/afterEach so there is no leak.
+ * `akm setup --dir <transient path>` writes its config under that directory
+ * (`<dir>/.akm/config.json`, with `paths.cache` beside it) and points
+ * `AKM_CONFIG_FILE` at it for the run, so the host config and cache are not
+ * touched: the 2026-05-23 clobber guard. A config file the caller chose
+ * (`--config` / `AKM_CONFIG_FILE`) or an XDG/APPDATA config location the caller
+ * pre-arranged is honoured as set. The assignment is process-wide: the
+ * process is about to do all its work against this directory, and children
+ * inherit it.
  */
-function applyStashIsolationToEnv(stashDir: string, dirExplicitlyProvided: boolean): void {
-  if (!dirExplicitlyProvided) return;
-  if (process.env.AKM_BUNDLE_DIR?.trim()) return;
-  process.env.AKM_BUNDLE_DIR = stashDir;
+function isolateTransientSetup(stashDir: string, dirExplicitlyProvided: boolean): void {
+  if (!dirExplicitlyProvided || !isTransientStashPath(stashDir)) return;
+  const chosen = process.env.AKM_CONFIG_FILE?.trim();
+  const placed = (process.platform === "win32" ? process.env.APPDATA : process.env.XDG_CONFIG_HOME)?.trim();
+  if (chosen || placed) return;
+  const file = path.join(stashDir, ".akm", "config.json");
+  if (!fs.existsSync(file)) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `${JSON.stringify({ paths: { cache: "cache" } }, null, 2)}\n`);
+  }
+  process.env.AKM_CONFIG_FILE = file;
 }
 
 // ── Interfaces ──────────────────────────────────────────────────────────────
@@ -581,7 +583,7 @@ function storeCredentials(credentials: readonly PendingCredential[]): void {
  * Resolve the stash directory, apply stash isolation, and THEN read the config.
  *
  * Order is the whole point. The pre-isolation read exists only to discover
- * where the stash is; `applyStashIsolationToEnv` can repoint AKM_CONFIG_DIR,
+ * where the stash is; `isolateTransientSetup` can repoint AKM_CONFIG_FILE,
  * after which both the config contents and `getConfigPath()` differ. Reading
  * the merge base before isolation meant an isolated run merged the wizard's
  * answers onto the HOST config and reported the host path as the save target
@@ -602,7 +604,7 @@ function resolveIsolatedSetupConfig(opts?: { dir?: string }): {
   // Refuse explicit --dir /tmp/... before doing any work — protects the host
   // config from being clobbered with a stashDir that the OS may reap.
   assertSetupSandbox(resolvedStashDir, opts?.dir != null);
-  applyStashIsolationToEnv(resolvedStashDir, opts?.dir != null);
+  isolateTransientSetup(resolvedStashDir, opts?.dir != null);
 
   return { current: loadUserConfig(), configPath: getConfigPath(), resolvedStashDir };
 }
@@ -781,10 +783,9 @@ export async function runSetupWithDefaults(opts: {
   flags?: SetupFlags;
   noProbe?: boolean;
 }): Promise<SetupSummary> {
-  assertSetupConfigPreflight();
   const explicitStashDir = opts.dir != null ? path.resolve(opts.dir) : undefined;
   // R-066 #4: a second `assertSetupSandbox(stashDir, explicitStashDir != null)`
-  // + `applyStashIsolationToEnv(stashDir, explicitStashDir != null)` pair used
+  // + `isolateTransientSetup(stashDir, explicitStashDir != null)` pair used
   // to follow `stashDir`'s resolution below. It was strictly redundant: unlike
   // `runSetupFromConfig` (which can also derive an explicit stash dir from an
   // incoming config file's bundle path, a case the early block below can't
@@ -794,8 +795,10 @@ export async function runSetupWithDefaults(opts: {
   // no-op in both helpers) whenever it didn't. Removed rather than duplicated.
   if (explicitStashDir) {
     assertSetupSandbox(explicitStashDir, true);
-    applyStashIsolationToEnv(explicitStashDir, true);
+    isolateTransientSetup(explicitStashDir, true);
   }
+  // After the isolation: a transient `--dir` reads (and refuses) its own config, not the host's.
+  assertSetupConfigPreflight();
   const current = loadUserConfig();
   const stashDir = explicitStashDir ?? primaryBundlePath(current) ?? getDefaultStashDir();
 
@@ -803,11 +806,16 @@ export async function runSetupWithDefaults(opts: {
 
   const finalConfig = finalizeSetupDraft(config);
   validateCompleteConfig(finalConfig);
-  const { config: savedConfig, precommit: initResult } = await saveSetupConfig(current, finalConfig, async () => {
-    storeCredentials(credentials);
-    if (opts.noInit) return undefined;
-    return akmInit({ dir: stashDir, setDefault: true, persistConfig: false });
-  });
+  const { config: savedConfig, precommit: initResult } = await saveSetupConfig(
+    current,
+    finalConfig,
+    async () => {
+      storeCredentials(credentials);
+      if (opts.noInit) return undefined;
+      return akmInit({ dir: stashDir, setDefault: true, persistConfig: false });
+    },
+    { persistTopLevelKeys: ["semanticSearchMode"] },
+  );
   const semanticAssets = await prepareLocalEmbeddings(savedConfig, opts.noProbe);
 
   return {
@@ -885,7 +893,7 @@ export async function runSetupFromConfig(opts: {
   //
   // R-066 #4 (verified, NOT reduced — unlike the `runSetupWithDefaults` pair
   // above, this one is NOT strictly redundant): the `assertSetupSandbox` +
-  // `applyStashIsolationToEnv` pair below looks like a duplicate of the pair
+  // `isolateTransientSetup` pair below looks like a duplicate of the pair
   // here, but each guards a case the other cannot:
   //   - THIS early pair must run before `loadUserConfig()` so an explicit
   //     `--dir` pointed at a force-escaped transient sandbox isolates the
@@ -904,7 +912,7 @@ export async function runSetupFromConfig(opts: {
   const explicitStashDir = opts.dir != null ? path.resolve(opts.dir) : undefined;
   if (explicitStashDir) {
     assertSetupSandbox(explicitStashDir, true);
-    applyStashIsolationToEnv(explicitStashDir, true);
+    isolateTransientSetup(explicitStashDir, true);
   }
   const current = loadUserConfig();
   let merged = deepMergeConfig(
@@ -917,7 +925,7 @@ export async function runSetupFromConfig(opts: {
 
   const stashDirExplicit = explicitStashDir != null || incomingPrimaryPath !== undefined;
   assertSetupSandbox(stashDir, stashDirExplicit);
-  applyStashIsolationToEnv(stashDir, stashDirExplicit);
+  isolateTransientSetup(stashDir, stashDirExplicit);
 
   if (explicitStashDir !== undefined || configuredPrimaryPath === undefined) {
     merged = deepMergeConfig(merged, { primaryPath: stashDir }) as SetupDraftConfig;
@@ -942,11 +950,16 @@ export async function runSetupFromConfig(opts: {
 
   // Reject an invalid merged config before touching the stash.
   validateCompleteConfig(finalizedMerged);
-  const { config: savedConfig, precommit: initResult } = await saveSetupConfig(current, finalizedMerged, async () => {
-    storeCredentials(credentials);
-    if (opts.noInit) return undefined;
-    return akmInit({ dir: stashDir, setDefault: true, persistConfig: false });
-  });
+  const { config: savedConfig, precommit: initResult } = await saveSetupConfig(
+    current,
+    finalizedMerged,
+    async () => {
+      storeCredentials(credentials);
+      if (opts.noInit) return undefined;
+      return akmInit({ dir: stashDir, setDefault: true, persistConfig: false });
+    },
+    { persistTopLevelKeys: ["semanticSearchMode"] },
+  );
   const semanticAssets = await prepareLocalEmbeddings(savedConfig, opts.noProbe);
 
   return {

@@ -16,7 +16,7 @@ import { listProposals } from "../../src/commands/proposal/repository";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import type { AkmConfig } from "../../src/core/config/config";
 import type { readEvents } from "../../src/core/events";
-import { resolveWriteTarget } from "../../src/core/write-source";
+import { resolveWriteTarget } from "../../src/sources/write-source";
 import { writeFakeHarness } from "../_helpers/engine-stubs";
 import { quietQualityGateConfig, reflectReply } from "../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
@@ -41,7 +41,6 @@ async function acceptedContent(stash: string): Promise<string> {
     semanticSearchMode: "off",
     bundles: { stash: { path: stash, writable: true } },
     defaultBundle: "stash",
-    defaultWriteTarget: "stash",
   } as AkmConfig;
   const { assetPath } = await akmProposalAccept({ stashDir: stash, config, id: listProposals(stash)[0]!.id });
   return fs.readFileSync(assetPath, "utf8");
@@ -49,11 +48,9 @@ async function acceptedContent(stash: string): Promise<string> {
 
 function distillConfig(stash: string, qualityGate: boolean): AkmConfig {
   return {
-    configVersion: "0.9.0",
     semanticSearchMode: "auto",
     bundles: { stash: { path: stash, writable: true } },
     defaultBundle: "stash",
-    defaultWriteTarget: "stash",
     connections: {
       default: { endpoint: "http://localhost:11434/v1/chat/completions", models: { fast: "test-model" } },
     },
@@ -109,7 +106,6 @@ describe("improve keeps the frontmatter it does not own (#1454)", () => {
       semanticSearchMode: "off",
       bundles: { stash: { path: stash, writable: true } },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
     } as AkmConfig;
     await emitPromotionProposal(
       { op: "promote", ref: "memories/source", knowledgeRef: "knowledge/new-slug", reason: "r", description: "d" },

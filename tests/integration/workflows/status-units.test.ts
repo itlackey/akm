@@ -11,7 +11,7 @@ import {
   withWorkflowRunsRepo,
 } from "../../../src/storage/repositories/workflow-runs-repository";
 import { getWorkflowStatus } from "../../../src/workflows/runtime/runs";
-import { type Cleanup, sandboxEnvDir } from "../../_helpers/sandbox";
+import { type Cleanup, sandboxAkmDir } from "../../_helpers/sandbox";
 
 /**
  * `akm workflow status --units` (#22): the honest per-unit diagnostic surface.
@@ -42,7 +42,7 @@ function seedRun(dbPath: string): void {
 }
 
 beforeEach(() => {
-  const sandboxed = sandboxEnvDir("akm-status-units-", "AKM_DATA_DIR");
+  const sandboxed = sandboxAkmDir("akm-status-units-", "data");
   tmpDir = sandboxed.dir;
   cleanup = sandboxed.cleanup;
   seedRun(path.join(tmpDir, "state.db"));

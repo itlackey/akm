@@ -22,7 +22,7 @@ import { withImproveAutonomy, withTestImproveLlm } from "../../_helpers/improve-
 import {
   type IsolatedAkmStorage,
   makeSandboxDir,
-  mutateScopedEnv,
+  useBundleConfig,
   withIsolatedAkmStorage,
 } from "../../_helpers/sandbox";
 
@@ -33,7 +33,7 @@ beforeEach(() => {
   const data = makeSandboxDir("akm-reflect-transient-data-");
   const state = makeSandboxDir("akm-reflect-transient-state-");
   dirCleanups.push(data.cleanup, state.cleanup);
-  storage = withIsolatedAkmStorage({ AKM_DATA_DIR: data.dir, AKM_STATE_DIR: state.dir });
+  storage = withIsolatedAkmStorage({ XDG_DATA_HOME: data.dir, XDG_STATE_HOME: state.dir });
 });
 
 afterEach(() => {
@@ -50,14 +50,13 @@ async function runWithReflectFailure(reason: string): Promise<{ stash: string; m
     "---\ndescription: Deploy guide\nwhen_to_use: When deploying\n---\n\nDeploy carefully.\n",
     "utf8",
   );
-  mutateScopedEnv("AKM_BUNDLE_DIR", stash);
+  useBundleConfig(stash);
   saveConfig(
     withImproveAutonomy(
       withTestImproveLlm({
         semanticSearchMode: "off",
         bundles: { stash: { path: stash, writable: true } },
         defaultBundle: "stash",
-        defaultWriteTarget: "stash",
         index: { enrichment: { enabled: false } },
       }),
     ),

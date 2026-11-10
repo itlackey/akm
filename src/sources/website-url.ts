@@ -31,10 +31,6 @@ export interface WebsiteCachePaths {
   manifestPath: string;
 }
 
-export function shouldAllowPrivateWebsiteHostsForTests(): boolean {
-  return process.env.BUN_TEST === "1" || process.env.NODE_ENV === "test";
-}
-
 export function shouldAllowPrivateWebsiteUrlForTests(rawUrl: string): boolean {
   let hostname: string;
   try {
@@ -43,13 +39,11 @@ export function shouldAllowPrivateWebsiteUrlForTests(rawUrl: string): boolean {
     return false;
   }
   if (classifyNetworkHostname(hostname) === "public") return false;
-  if (!shouldAllowPrivateWebsiteHostsForTests()) {
-    warnOnce(
-      `website-private-host:${hostname}`,
-      `[akm] "${hostname}" is not a publicly routable host, but you added it as a source directly — proceeding. ` +
-        "Links discovered elsewhere are still checked.",
-    );
-  }
+  warnOnce(
+    `website-private-host:${hostname}`,
+    `[akm] "${hostname}" is not a publicly routable host, but you added it as a source directly — proceeding. ` +
+      "Links discovered elsewhere are still checked.",
+  );
   return true;
 }
 

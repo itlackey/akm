@@ -74,6 +74,14 @@ export function formatInfoPlain(r: Record<string, unknown>): string {
       `learning: ${learning.on ? "on" : "off"}${typeof learning.harness === "string" ? ` (harness: ${learning.harness})` : ""}, improve task ${learning.scheduled ? "scheduled" : "not scheduled"}`,
     );
   }
+  const autonomy = r.improveAutonomy as { enabled?: boolean; configKey?: string; gatedLanes?: unknown[] } | undefined;
+  if (autonomy) {
+    lines.push(
+      `improveAutonomy: ${autonomy.enabled ? "on" : `off (${autonomy.gatedLanes?.length ?? 0} gated lanes; set ${String(autonomy.configKey)})`}`,
+    );
+  }
+  const triage = r.improveTriage as { enabled?: boolean; applyMode?: string } | undefined;
+  if (triage) lines.push(`improveTriage: ${triage.enabled ? "on" : "off"}, applyMode ${String(triage.applyMode)}`);
   const indexStats = r.indexStats as Record<string, unknown> | undefined;
   if (indexStats) {
     lines.push("indexStats:");
@@ -246,7 +254,7 @@ export function formatEventLine(event: Record<string, unknown>): string {
 }
 
 export function formatSearchPlain(r: Record<string, unknown>, detail: DetailLevel): string {
-  const hits = (r.hits as Record<string, unknown>[]) ?? [];
+  const hits = (r.results as Record<string, unknown>[]) ?? [];
   const registryHits = (r.registryHits as Record<string, unknown>[]) ?? [];
   const allHits = [...hits, ...registryHits];
 
@@ -278,7 +286,6 @@ export function formatSearchPlain(r: Record<string, unknown>, detail: DetailLeve
     if (hit.origin !== undefined) lines.push(`  origin: ${String(hit.origin)}`);
     if (Array.isArray(hit.keys) && hit.keys.length > 0) lines.push(`  keys: ${hit.keys.join(", ")}`);
     if (hit.size) lines.push(`  size: ${String(hit.size)}`);
-    if (hit.action) lines.push(`  action: ${String(hit.action)}`);
     if (hit.installRef) lines.push(`  installRef: ${String(hit.installRef)}`);
     if (hit.run) lines.push(`  run: ${String(hit.run)}`);
     if (Array.isArray(hit.tags) && hit.tags.length > 0) lines.push(`  tags: ${hit.tags.join(", ")}`);
@@ -329,7 +336,7 @@ export function formatSearchPlain(r: Record<string, unknown>, detail: DetailLeve
 export function formatCuratePlain(r: Record<string, unknown>, detail: DetailLevel): string {
   const query = typeof r.query === "string" ? r.query : "";
   const summary = typeof r.summary === "string" ? r.summary : "";
-  const items = Array.isArray(r.items) ? (r.items as Record<string, unknown>[]) : [];
+  const items = Array.isArray(r.results) ? (r.results as Record<string, unknown>[]) : [];
 
   const lines: string[] = [`Curated results for "${query}"`];
   if (summary) lines.push(summary);
@@ -354,7 +361,6 @@ export function formatCuratePlain(r: Record<string, unknown>, detail: DetailLeve
       lines.push(`  parameters: ${item.parameters.join(", ")}`);
     }
     if (item.run) lines.push(`  run: ${String(item.run)}`);
-    if (item.followUp) lines.push(`  show: ${String(item.followUp)}`);
     if (Array.isArray(item.supportRefs) && item.supportRefs.length > 0) {
       for (const support of item.supportRefs as Array<Record<string, unknown>>) {
         if (!support.ref) continue;

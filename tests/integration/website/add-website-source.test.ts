@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { configNamingBundle } from "../../_helpers/sandbox";
 
 const CLI = path.join(__dirname, "..", "..", "..", "src", "cli.ts");
 const tempDirs: string[] = [];
@@ -76,7 +77,6 @@ describe("akm bundle add website", () => {
       const websiteUrl = serveWebsite();
       const env = {
         ...process.env,
-        AKM_BUNDLE_DIR: stashDir,
         XDG_CACHE_HOME: xdgCache,
         XDG_CONFIG_HOME: xdgConfig,
         XDG_DATA_HOME: xdgData,
@@ -86,7 +86,7 @@ describe("akm bundle add website", () => {
       fs.mkdirSync(configDir, { recursive: true });
       fs.writeFileSync(
         path.join(configDir, "config.json"),
-        `${JSON.stringify({ configVersion: "0.9.0", semanticSearchMode: "off" }, null, 2)}\n`,
+        configNamingBundle(JSON.stringify({ semanticSearchMode: "off" }), stashDir),
       );
 
       const child = spawn(
@@ -135,7 +135,10 @@ describe("akm bundle add website", () => {
       });
 
       expect(exitCode).toBe(0);
-      expect(stderr.trim()).toBe("");
+      // A loopback source added directly is allowed, and says so once (NODE_ENV=test does not hush it).
+      expect(stderr.trim()).toBe(
+        '[akm] "127.0.0.1" is not a publicly routable host, but you added it as a source directly — proceeding. Links discovered elsewhere are still checked.',
+      );
       const parsed = JSON.parse(stdout.trim()) as {
         sourceAdded?: { type?: string; url?: string; name?: string; stashRoot?: string };
         index?: { totalEntries?: number };

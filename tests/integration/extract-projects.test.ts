@@ -22,11 +22,9 @@ async function run(sessions: Array<{ id: string; cwd?: string }>, project?: stri
   const other = makeSandboxDir("extract-projects-other");
   const acme = fs.realpathSync(makeSandboxDir("extract-projects-acme").dir);
   const config = {
-    configVersion: "0.9.0",
     semanticSearchMode: "off",
     bundles: { stash: { path: stash, writable: true }, other: { path: other.dir, writable: true } },
     defaultBundle: "stash",
-    defaultWriteTarget: "stash",
     connections: { test: { endpoint: "http://localhost:11434/v1/chat/completions", models: { fast: "test" } } },
     improve: {
       strategy: "extract-only",

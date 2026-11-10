@@ -32,11 +32,10 @@ export const HOME_DEVIATIONS: readonly string[] = [
     "every 0.9.17 candidate), ignore `--name` on a registry add (npm, `github:`, git) and key the bundle " +
     "`extracted`, a slug of its extracted cache directory's basename. For those origins the key is read back " +
     "from `bundle list`: an upgraded home really carries it, and the candidate keeps an installed bundle's key.",
-  "Steps 5 and 6 expect the candidate to rewrite the previous release's scheduler rows only when the origin " +
-    "predates 0.9.17-alpha.7: until then a row named a `--scheduler-context` descriptor, so the first " +
-    "`task sync` shows each row as an update. From 0.9.17-alpha.7 on (0.9.17 is the `previous` origin of every " +
-    "0.9.18 candidate) the origin already writes the inline `AKM_BUNDLE_DIR=… task run …` row the candidate " +
-    "writes, so a dry run lists each row as unchanged and a plain sync updates nothing.",
+  "The previous release's scheduler rows are replaced by the candidate's one dispatch entry by `migrate apply` " +
+    "(step 3), whichever shape the origin wrote: a `--scheduler-context` descriptor row before 0.9.17-alpha.7, an " +
+    "inline `AKM_BUNDLE_DIR=… task run …` row since. The home uses the default layout (HOME alone decides every " +
+    "location) because the candidate writes the OS scheduler for the default installation only.",
 ];
 
 /**
@@ -48,9 +47,6 @@ export const HOME_DEVIATIONS: readonly string[] = [
  * `git:…`) is never a legal bundle slug.
  */
 const REGISTRY_ADD_HONORS_NAME_SINCE = "0.9.17-alpha.4";
-
-/** The first release whose scheduler rows set their environment inline (#987); 0.9.0 – 0.9.17-alpha.6 name a `--scheduler-context` file. */
-export const INLINE_SCHEDULER_ROWS_SINCE = "0.9.17-alpha.7";
 
 export interface UpgradeHomeTaskIds {
   readonly a: string;
@@ -94,16 +90,6 @@ export interface UpgradeHomeEngines {
   readonly key: string;
   /** The user's `models.json`, which `akm models copy-defaults` wrote. */
   readonly modelsFile: string;
-}
-
-/** A single installed scheduled task, with no full-suite bundle/index/search fixture around it. */
-export interface LegacyGrantHome {
-  readonly root: string;
-  readonly env: NodeJS.ProcessEnv;
-  readonly stashDir: string;
-  readonly fakeCrontab: string;
-  readonly configPath: string;
-  readonly taskId: string;
 }
 
 function git(args: readonly string[], cwd: string): void {
@@ -156,10 +142,12 @@ export async function buildHome(oldLauncher: string, oldVersion: string, root: s
   const fakeBin = path.join(root, "fake-bin");
   const fakeCrontab = path.join(root, "crontab");
   const home = path.join(root, "home");
-  const configHome = path.join(root, "config");
-  const dataHome = path.join(root, "data");
-  const cacheHome = path.join(root, "cache");
-  const stateHome = path.join(root, "state");
+  // The default installation: every location is where HOME alone puts it, so the candidate's `task sync` owns the
+  // (fake) crontab, as it does on a real host. The variables name those same default locations.
+  const configHome = path.join(home, ".config");
+  const dataHome = path.join(home, ".local", "share");
+  const cacheHome = path.join(home, ".cache");
+  const stateHome = path.join(home, ".local", "state");
   const stashDir = path.join(root, "stash");
   const configPath = path.join(configHome, "akm", "config.json");
 
@@ -185,7 +173,6 @@ export async function buildHome(oldLauncher: string, oldVersion: string, root: s
     configPath,
     `${JSON.stringify(
       {
-        configVersion: "0.9.0",
         bundles: { stash: { path: stashDir } },
         defaultBundle: "stash",
         semanticSearchMode: "off",
@@ -203,7 +190,6 @@ export async function buildHome(oldLauncher: string, oldVersion: string, root: s
     XDG_DATA_HOME: dataHome,
     XDG_CACHE_HOME: cacheHome,
     XDG_STATE_HOME: stateHome,
-    AKM_BUNDLE_DIR: stashDir,
     FAKE_CRONTAB: fakeCrontab,
     PATH: [fakeBin, process.env.PATH ?? ""].join(path.delimiter),
     NO_COLOR: "1",
@@ -479,77 +465,4 @@ export async function buildHome(oldLauncher: string, oldVersion: string, root: s
     },
     deviations: HOME_DEVIATIONS,
   };
-}
-
-/**
- * Builds the minimal home the `"0.9.15"` upgrade origin needs: a single
- * scheduled task, installed by the 0.9.15 launcher's OWN direct activation
- * (`akm task add --schedule ... --command ...`, no `--disabled`) — 0.9.15
- * predates `task enable`/`task disable` and source-bound scheduler grants
- * (0.9.16) entirely, so this installs a real crontab row with NO
- * `scheduler.enabled` config grant at all, the exact 2026-09-24 scenario
- * the scheduler-grant carry-forward exists to rescue. Deliberately reduced from
- * {@link buildHome}'s full five-bundle-kind fixture (brief's own allowance:
- * "adapt the home builder per origin ... report any gap as a deviation") --
- * every other bundle kind, index/search/remember, and the retired
- * `experimental.workflowEngine` config-shape fixture are already covered
- * by the `"previous"` origin; this origin exists ONLY to prove the
- * ungranted-row carry-forward against a home the current grant model never
- * touched.
- */
-export async function buildLegacyGrantHome(oldLauncher: string, root: string): Promise<LegacyGrantHome> {
-  const fakeBin = path.join(root, "fake-bin");
-  const fakeCrontab = path.join(root, "crontab");
-  const home = path.join(root, "home");
-  const configHome = path.join(root, "config");
-  const dataHome = path.join(root, "data");
-  const cacheHome = path.join(root, "cache");
-  const stateHome = path.join(root, "state");
-  const stashDir = path.join(root, "stash");
-  const configPath = path.join(configHome, "akm", "config.json");
-
-  for (const dir of [fakeBin, home, path.join(configHome, "akm"), dataHome, cacheHome, stateHome, stashDir]) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-
-  fs.writeFileSync(path.join(fakeBin, "crontab"), fakeCrontabScript(), { mode: 0o755 });
-
-  fs.writeFileSync(
-    configPath,
-    `${JSON.stringify(
-      {
-        configVersion: "0.9.0",
-        bundles: { stash: { path: stashDir } },
-        defaultBundle: "stash",
-        semanticSearchMode: "off",
-      },
-      null,
-      2,
-    )}\n`,
-    { mode: 0o600 },
-  );
-
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    HOME: home,
-    XDG_CONFIG_HOME: configHome,
-    XDG_DATA_HOME: dataHome,
-    XDG_CACHE_HOME: cacheHome,
-    XDG_STATE_HOME: stateHome,
-    AKM_BUNDLE_DIR: stashDir,
-    FAKE_CRONTAB: fakeCrontab,
-    PATH: [fakeBin, process.env.PATH ?? ""].join(path.delimiter),
-    NO_COLOR: "1",
-    CI: "1",
-  };
-
-  const taskId = "legacy-scheduled";
-  await runStep(
-    "task add (0.9.15 direct activation, no host-local grant)",
-    oldLauncher,
-    ["task", "add", taskId, "--schedule", "0 4 * * *", "--command", `echo ${taskId}`],
-    env,
-  );
-
-  return { root, env, stashDir, fakeCrontab, configPath, taskId };
 }

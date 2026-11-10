@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmImprove } from "../../../src/commands/improve/improve";
@@ -7,7 +7,6 @@ import { saveConfig } from "../../../src/core/config/config";
 import { appendEvent, readEvents } from "../../../src/core/events";
 import type { AkmDistillResult, AkmReflectResult } from "../../../src/core/improve-types";
 import { getDbPath } from "../../../src/core/paths";
-import { setQuiet } from "../../../src/core/warn";
 import { akmIndex } from "../../../src/indexer/indexer";
 import type { MemoryInferenceResult } from "../../../src/indexer/passes/memory-inference";
 import { getWebsiteCachePaths } from "../../../src/sources/snapshot-fetchers/website-ingest";
@@ -19,7 +18,7 @@ import { withImproveAutonomy, withTestImproveLlm } from "../../_helpers/improve-
 import {
   type IsolatedAkmStorage,
   makeSandboxDir,
-  mutateScopedEnv,
+  useBundleConfig,
   withIsolatedAkmStorage,
 } from "../../_helpers/sandbox";
 
@@ -32,14 +31,13 @@ function makeTempDir(prefix: string): string {
 }
 
 async function buildIndex(stashDir: string): Promise<void> {
-  mutateScopedEnv("AKM_BUNDLE_DIR", stashDir);
+  useBundleConfig(stashDir);
   saveConfig(
     withImproveAutonomy(
       withTestImproveLlm({
         semanticSearchMode: "off",
         bundles: { stash: { path: stashDir, writable: true } },
         defaultBundle: "stash",
-        defaultWriteTarget: "stash",
         improve: { strategies: { default: { processes: { extract: { enabled: false } } } } },
       }),
     ),
@@ -59,7 +57,7 @@ beforeEach(() => {
   const akmDataDir = makeSandboxDir("akm-improve-memory-data-");
   const akmStateDir = makeSandboxDir("akm-improve-memory-state-");
   dirCleanups.push(akmDataDir.cleanup, akmStateDir.cleanup);
-  storage = withIsolatedAkmStorage({ AKM_DATA_DIR: akmDataDir.dir, AKM_STATE_DIR: akmStateDir.dir });
+  storage = withIsolatedAkmStorage({ XDG_DATA_HOME: akmDataDir.dir, XDG_STATE_HOME: akmStateDir.dir });
 });
 
 afterEach(() => {
@@ -365,7 +363,6 @@ describe("akm improve memory cleanup", () => {
           semanticSearchMode: "off",
           bundles: { stash: { path: stashDir, writable: true } },
           defaultBundle: "stash",
-          defaultWriteTarget: "stash",
           improve: { strategies: { default: { processes: { extract: { enabled: false } } } } },
         }),
       ),
@@ -450,10 +447,10 @@ describe("akm improve memory cleanup", () => {
       type: "memory",
       belief: "historical",
     });
-    expect(contradictedResult.hits.some((hit) => hit.type !== "registry" && hit.name === "deploy-legacy.derived")).toBe(
-      true,
-    );
-    const contradictedHit = contradictedResult.hits.find(
+    expect(
+      contradictedResult.results.some((hit) => hit.type !== "registry" && hit.name === "deploy-legacy.derived"),
+    ).toBe(true);
+    const contradictedHit = contradictedResult.results.find(
       (hit) => hit.type !== "registry" && hit.name === "deploy-legacy.derived",
     );
     expect(contradictedHit && "beliefState" in contradictedHit ? contradictedHit.beliefState : undefined).toBe(
@@ -469,7 +466,7 @@ describe("akm improve memory cleanup", () => {
       type: "memory",
       belief: "all",
     });
-    const survivorHits = survivorResult.hits.filter((hit) => hit.type !== "registry");
+    const survivorHits = survivorResult.results.filter((hit) => hit.type !== "registry");
     expect(survivorHits[0]?.name).toBe("deploy.derived");
     expect(survivorHits[1]?.name).toBe("deploy-legacy.derived");
   });
@@ -808,7 +805,7 @@ describe("akm improve memory cleanup", () => {
     expect(distilledRefs).toEqual([]);
   });
 
-  // ── Merged from improve-memory-cleanup2.test.ts (same describe title) ────────
+  // ── Cleanup planning ────────
 
   test("requireFeedbackSignal restricts planning to refs with recent feedback", async () => {
     const stashDir = makeTempDir("akm-improve-memory-signal-filter-");
@@ -1143,7 +1140,6 @@ describe("akm improve memory cleanup", () => {
           semanticSearchMode: "off",
           bundles: { stash: { path: stashDir, writable: true } },
           defaultBundle: "stash",
-          defaultWriteTarget: "stash",
           improve: {
             strategies: { default: { processes: { extract: { enabled: false }, consolidate: { enabled: false } } } },
           },

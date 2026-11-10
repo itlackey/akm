@@ -27,6 +27,7 @@
 /** Stable, machine-readable codes for ConfigError. */
 export type ConfigErrorCode =
   | "CONFIG_DIR_UNRESOLVABLE"
+  | "RETIRED_LOCATION_VARIABLE"
   | "STASH_DIR_NOT_FOUND"
   | "STASH_DIR_NOT_A_DIRECTORY"
   | "STASH_DIR_UNREADABLE"
@@ -45,17 +46,15 @@ export type ConfigErrorCode =
   // A connection or harness was named (a flag, an asset, a config key) that is not configured: never replaced by a default.
   | "SELECTION_NOT_CONFIGURED"
   | "INVALID_CONFIG_FILE"
+  // The OS scheduler (crontab, launchctl, schtasks) is missing, refused a read or write, or exited non-zero. A host
+  // problem, not a bad akm config file; same exit class as every ConfigError.
+  | "SCHEDULER_UNAVAILABLE"
   | "UNKNOWN_IMPROVE_STRATEGY"
   // Refused stashDir that would clobber a sensitive system path or the user's
   // home directory (#473). Triggered by `akm bundle create`/`akm setup` when the
   // explicit `--dir` argument resolves to e.g. `/`, `$HOME`, `~/.config`,
   // `/etc`, etc.
   | "UNSAFE_STASH_DIR"
-  // Defense-in-depth sentinel raised under `bun test` / NODE_ENV=test
-  // when a test sets AKM_BUNDLE_DIR but forgets to also point
-  // XDG_DATA_HOME / AKM_DATA_DIR (and XDG_STATE_HOME / AKM_STATE_DIR)
-  // at temp directories. See src/core/paths.ts.
-  | "TEST_ISOLATION_MISSING"
   // The host platform/architecture has no supported build for a requested
   // binary operation (e.g. `akm upgrade` on an unreleased platform target).
   | "UNSUPPORTED_PLATFORM"
@@ -76,7 +75,6 @@ export type UsageErrorCode =
   | "INVALID_FLAG_VALUE"
   | "INVALID_SOURCE_VALUE"
   | "INVALID_FORMAT_VALUE"
-  | "INVALID_DETAIL_VALUE"
   | "INVALID_JSON_CONFIG_VALUE"
   | "INVALID_JSON_ARGUMENT"
   | "MISSING_REQUIRED_ARGUMENT"
@@ -109,7 +107,7 @@ export type UsageErrorCode =
   // src/workflows/freeze/targets/task.ts's
   // taskDispatch and src/workflows/freeze/freeze.ts's resolveStep.
   | "COMPOSITION_INVALID"
-  // P1a: the sourceError funnel in src/tasks/source-v3.ts, re-coded from
+  // P1a: the sourceError funnel in src/tasks/source/bounded-document.ts, re-coded from
   // INVALID_FLAG_VALUE. Message text, field-path rendering (`$` for the
   // empty path), and the file:line location string are unchanged.
   | "TASK_SOURCE_INVALID"
@@ -179,10 +177,6 @@ export type TransientErrorCode =
   // by a live process for the whole wait window. Previously a bare Error
   // (exit 70) for the same ordinary contention.
   | "ASSET_MUTATION_LEASE_HELD"
-  // The one lock around native scheduler writes (`src/tasks/scheduler-lock.ts`)
-  // is held by another live akm process running `task sync|add|enable|
-  // disable|prune`. Ordinary contention: retry once it finishes.
-  | "SCHEDULER_LOCK_HELD"
   // A registry request failed for a reason a retry can fix: the connection,
   // DNS lookup or TLS handshake failed, the request timed out, or the server
   // answered 429/5xx after the boundary's own retries (`src/registry/network.ts`).
@@ -210,14 +204,14 @@ export type NotFoundErrorCode =
  * imperative. Returning undefined means "no canned hint".
  */
 const CONFIG_HINTS: Partial<Record<ConfigErrorCode, string>> = {
-  STASH_DIR_NOT_FOUND: "Run `akm setup` to create and configure your bundle, or configure a defaultBundle path.",
+  STASH_DIR_NOT_FOUND: "Run `akm bundle create` to create your bundle, or configure a defaultBundle path.",
   STASH_DIR_NOT_A_DIRECTORY:
     "The configured default bundle path exists but isn't a directory. Update it to point at a folder.",
   STASH_DIR_UNREADABLE: "Check the path exists and your user has read permission, or update the default bundle path.",
   DATA_DIR_UNREADABLE:
-    "The data directory is not readable by the user running akm. Check its owner and mode, or point AKM_DATA_DIR / XDG_DATA_HOME somewhere this user owns.",
+    "The data directory is not readable by the user running akm. Check its owner and mode, or point XDG_DATA_HOME (or `paths.data` in the config file) somewhere this user owns.",
   DATA_DIR_NOT_WRITABLE:
-    "Nothing was recorded. Make the akm data directory writable for this process (for an agent sandbox, add it to the writable paths), or point AKM_DATA_DIR / XDG_DATA_HOME somewhere this user can write, then retry.",
+    "Nothing was recorded. Make the akm data directory writable for this process (for an agent sandbox, add it to the writable paths), or point XDG_DATA_HOME (or `paths.data` in the config file) somewhere this user can write, then retry.",
   INDEX_SCHEMA_INCOMPATIBLE:
     "Run `akm index --full` to rebuild the derived index from the currently materialized sources.",
   LLM_NOT_CONFIGURED:
@@ -225,8 +219,6 @@ const CONFIG_HINTS: Partial<Record<ConfigErrorCode, string>> = {
   AGENT_NOT_CONFIGURED: "Run `akm setup` to enable a harness or add a connection; agent work needs one.",
   SELECTION_NOT_CONFIGURED:
     "Name one that is configured (`akm health` lists them), correct the name, or add it with `akm setup --name <name> --endpoint <url>` (a connection) or `akm setup --harness <name>`.",
-  TEST_ISOLATION_MISSING:
-    "Under bun test, when AKM_BUNDLE_DIR is set you MUST also set XDG_DATA_HOME (or AKM_DATA_DIR) and XDG_STATE_HOME (or AKM_STATE_DIR) to temp directories so the test does not touch the developer's real ~/.local/share/akm or ~/.local/state/akm.",
   UNSAFE_STASH_DIR:
     "Choose a path inside your home directory (e.g. ~/akm) or another empty workspace. The bundle directory cannot be the filesystem root, your home directory itself, or a sensitive system path like /etc, /var, ~/.config, or ~/.ssh.",
   UNKNOWN_IMPROVE_STRATEGY:
@@ -234,7 +226,7 @@ const CONFIG_HINTS: Partial<Record<ConfigErrorCode, string>> = {
   SECRET_REFERENCE_UNRESOLVED:
     "Check the secret exists (`akm secret list`) and the ref inside `${…}` matches it, or run `akm secret set secrets/<name>` to store it.",
   REGISTRY_URL_INVALID:
-    "Registry URLs must be credential-free http(s) URLs. Fix the entry with `akm registry list` / `akm registry add`, or the AKM_REGISTRY_URL / AKM_NPM_REGISTRY variable that supplied it.",
+    "Registry URLs must be credential-free http(s) URLs. Fix the entry with `akm registry list` / `akm registry add`, or the AKM_NPM_REGISTRY variable that supplied it.",
 };
 
 // COMPOSITION_INVALID covers several unrelated causes
@@ -258,7 +250,6 @@ const USAGE_HINTS: Partial<Record<UsageErrorCode, string>> = {
   INVALID_FLAG_VALUE: "Run `akm <command> --help` to see accepted values.",
   INVALID_SOURCE_VALUE: "Pick one of: local, registry, all, or a configured source name.",
   INVALID_FORMAT_VALUE: "Pick one of: json, jsonl, yaml, text, md.",
-  INVALID_DETAIL_VALUE: "Pick one of: brief, normal, full, agent.",
   INVALID_JSON_CONFIG_VALUE:
     'Array and object values take JSON, quoted for the shell: a JSON array like `akm config set projects.x.filters.project \'["x"]\'` or a JSON object like `akm config set connections.fast \'{"endpoint":"http://localhost:11434/v1"}\'`. `akm config unset <key>` removes a key.',
   MISSING_OR_AMBIGUOUS_TARGET:
@@ -305,8 +296,6 @@ const TRANSIENT_HINTS: Partial<Record<TransientErrorCode, string>> = {
   LOCKFILE_CONTENDED: "Another akm process is updating its bundle lockfile right now. Wait a few seconds and retry.",
   ASSET_MUTATION_LEASE_HELD:
     "Another akm process is writing bundle content right now. Wait for it to finish and retry.",
-  SCHEDULER_LOCK_HELD:
-    "Another `akm task sync`, `add`, `enable`, `disable` or `prune` is writing the scheduler right now. Wait for it to finish and retry.",
   REGISTRY_UNREACHABLE:
     "The registry did not answer in time. Check the network and the registry URL (`akm registry list`), then retry.",
 };
@@ -441,42 +430,7 @@ export class NotFoundError extends AkmError {
 }
 
 /**
- * Test-isolation guard helper.
- *
- * `src/core/paths.ts` throws `ConfigError("TEST_ISOLATION_MISSING")` under
- * `bun test` when `AKM_BUNDLE_DIR` is set without a paired data-dir or
- * state-dir override. That throw must never be swallowed by best-effort
- * catches around DB/data-dir operations — otherwise the guard's loud failure
- * silently degrades into a "no result" outcome (cold cache, missing snapshot,
- * etc.) and the underlying test leak goes undetected.
- *
- * Call `rethrowIfTestIsolationError(err)` from any catch block that returns
- * a fallback value (null, [], empty result) after touching DB or data-dir
- * paths. It re-throws when the caught error is the guard violation, otherwise
- * does nothing so the existing benign-fallback path can proceed unchanged.
- *
- * Usage:
- *   try {
- *     const db = openDatabase();
- *     // ...
- *   } catch (err) {
- *     rethrowIfTestIsolationError(err);
- *     // existing benign-fallback handling
- *   }
- */
-export function isTestIsolationError(err: unknown): boolean {
-  return err instanceof ConfigError && err.code === "TEST_ISOLATION_MISSING";
-}
-
-export function rethrowIfTestIsolationError(err: unknown): void {
-  if (isTestIsolationError(err)) {
-    throw err;
-  }
-}
-
-/**
- * Unreadable-data-dir guard helper — the #791 sibling of the test-isolation
- * pair above, and it exists for the same reason.
+ * Unreadable-data-dir guard helper (#791).
  *
  * `DATA_DIR_UNREADABLE` says "this path is there and I am not allowed to read
  * it". It is raised by `assertIndexPathReadable` and friends precisely so a

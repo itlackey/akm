@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { setConfigValue } from "../../../src/commands/config-cli";
+import { setConfigValue } from "../../../src/commands/config";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { ConfigError, NotFoundError, UsageError } from "../../../src/core/errors";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../../src/core/warn";
@@ -44,7 +44,7 @@ describe("error hint rendering (#8)", () => {
   test("ConfigError with hint: true returns hint", () => {
     const err = new ConfigError("bad", "STASH_DIR_NOT_FOUND");
     expect(err.hint()).toBeDefined();
-    expect(err.hint()).toMatch(/akm setup/);
+    expect(err.hint()).toMatch(/akm bundle create/);
   });
 
   test("ConfigError with explicit hint returns it", () => {
@@ -78,7 +78,7 @@ describe("error hint rendering (#8)", () => {
 // backing `akm config set`.
 
 describe("config-cli setConfigValue sources error message (#16)", () => {
-  const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+  const base: AkmConfig = { semanticSearchMode: "auto" };
 
   test("unrecognized 'sources' warns naming 'sources', not 'stashes'", () => {
     let result!: ReturnType<typeof setConfigValue>;

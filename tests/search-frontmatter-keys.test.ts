@@ -19,7 +19,7 @@ import {
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
-  withEnv,
+  withBundle,
 } from "./_helpers/sandbox";
 
 const tempDirs: string[] = [];
@@ -52,7 +52,7 @@ async function indexStash(): Promise<string> {
   metas.forEach((meta, i) => {
     writeMemory(stash, `m${i + 1}`, meta, `${"gateway ".repeat(5 - i)}${"filler ".repeat(i * 4)}`);
   });
-  await withEnv({ AKM_BUNDLE_DIR: stash }, async () => {
+  await withBundle(stash, async () => {
     resetConfigCache();
     saveConfig({ semanticSearchMode: "off" });
     await akmIndex({ stashDir: stash, full: true });
@@ -61,10 +61,10 @@ async function indexStash(): Promise<string> {
 }
 
 async function names(stash: string, input: Partial<Parameters<typeof akmSearch>[0]>, query = "gateway") {
-  return withEnv({ AKM_BUNDLE_DIR: stash }, async () => {
+  return withBundle(stash, async () => {
     resetConfigCache();
     const result = await akmSearch({ query, ...input });
-    return result.hits.map((hit) => ("name" in hit ? String(hit.name) : ""));
+    return result.results.map((hit) => ("name" in hit ? String(hit.name) : ""));
   });
 }
 

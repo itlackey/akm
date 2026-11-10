@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { getConfigValue, listConfig } from "../src/commands/config-cli";
+import { getConfigValue, listConfig } from "../src/commands/config";
 import { collectEgressAdvisory } from "../src/commands/health/egress";
 import { resolveRegistries, searchRegistry } from "../src/commands/read/registry-search";
 import { DEFAULT_CONFIG, loadConfig, resetConfigCache, saveConfig } from "../src/core/config/config";
@@ -440,7 +440,7 @@ function expectConfiguredProjectionsSafe(url: string): void {
 let storage: IsolatedAkmStorage;
 
 beforeEach(() => {
-  storage = withIsolatedAkmStorage({ AKM_REGISTRY_URL: undefined });
+  storage = withIsolatedAkmStorage();
 });
 
 afterEach(() => {
@@ -704,24 +704,6 @@ describe("registry provider, search, warning, and log boundaries", () => {
         expect(result.warnings ?? []).toEqual([]);
       }
     }
-  });
-
-  test("AKM_REGISTRY_URL ignores userinfo without returning or warning with secrets", () => {
-    const warnings: unknown[][] = [];
-    const originalWarn = console.warn;
-    console.warn = (...args: unknown[]) => warnings.push(args);
-    try {
-      const resolved = withEnvSync(
-        {
-          AKM_REGISTRY_URL: `${CREDENTIAL_URL},::${CREDENTIAL_URL},static-index::ftp://${USERNAME}:${PASSWORD}@registry.example.test`,
-        },
-        () => resolveRegistries(),
-      );
-      expect(resolved).toEqual([]);
-    } finally {
-      console.warn = originalWarn;
-    }
-    expectCredentialsAbsent(warnings);
   });
 
   test("fetch error objects sanitize nested, control, and punctuation userinfo before response and log sinks", async () => {

@@ -16,7 +16,7 @@ narrows to a ref, and loads that ref's content:
 ```sh
 akm curate "deploy the app to staging"
 # → shortlist; top item: {"type":"script","name":"deploy.sh","ref":"scripts/deploy.sh",
-#                          "followUp":"akm show scripts/deploy.sh"}
+#                          "description":"Deploy the app to staging"}
 
 akm show scripts/deploy.sh
 # → {"run": "...", "setup": "...", ...} — ready to execute
@@ -42,12 +42,12 @@ what you're trying to do.
 
 ```sh
 akm search "deploy" --type script
-# → {"hits":[{"type":"script","name":"deploy.sh","ref":"scripts/deploy.sh",
-#             "action":"akm show scripts/deploy.sh -> ...","estimatedTokens":240}]}
+# → {"results":[{"type":"script","name":"deploy.sh","ref":"scripts/deploy.sh",
+#             "description":"Deploy the app to staging","estimatedTokens":240}]}
 ```
 
 `akm curate` goes further: it takes the top search hits in order, adds related
-support refs, and includes a direct `akm show <ref>` follow-up on every result.
+support refs, and gives every result a `ref` to pass to `akm show`.
 `--detail normal` also attaches a preview and run details to each item:
 
 ```sh
@@ -56,7 +56,7 @@ akm curate "review an architecture proposal" --type skill
 ```
 
 At the default `--detail brief` both commands return a `ref` for every hit, which
-is all an agent needs to call `akm show`. `--detail agent` adds each hit's `path`
+is all an agent needs to call `akm show`. `akm curate --detail normal` adds each result's `path`
 and `editable` flag, for agents that read or edit the file directly. To list a
 subtree instead of keyword-matching, end the query with a slash:
 `akm search "knowledge/"` or `akm search "team//skills/"`. See

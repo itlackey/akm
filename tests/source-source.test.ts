@@ -6,7 +6,6 @@ import type { AkmConfig, BundleConfigEntry } from "../src/core/config/config";
 import { saveConfig } from "../src/core/config/config";
 import { getUnresolvedSourcesDir } from "../src/core/paths";
 import { _setWarnSinkForTests } from "../src/core/warn";
-import { resolveWritable } from "../src/core/write-source";
 import { buildDbHit } from "../src/indexer/search/db-search";
 import {
   ensureSourceCaches,
@@ -15,8 +14,9 @@ import {
   resolveSourceEntries,
 } from "../src/indexer/search/search-source";
 import type { InstallKind } from "../src/registry/types";
+import { resolveWritable } from "../src/sources/write-source";
 import { seedLockEntries } from "./_helpers/lockfile";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
+import { type IsolatedAkmStorage, withDefaultBundle, withIsolatedAkmStorage } from "./_helpers/sandbox";
 import { withSeam } from "./_helpers/seams";
 
 /**
@@ -28,7 +28,7 @@ function seedManagedBundle(
   descriptor: BundleConfigEntry,
   lock: { source: InstallKind; ref: string; localRoot: string },
 ): void {
-  saveConfig({ semanticSearchMode: "off", bundles: { [key]: descriptor } });
+  saveConfig(withDefaultBundle({ semanticSearchMode: "off", bundles: { [key]: descriptor } }, stashDir));
   seedLockEntries([{ id: key, source: lock.source, ref: lock.ref, localRoot: lock.localRoot }]);
 }
 
@@ -54,18 +54,18 @@ afterEach(() => {
 
 describe("resolveSourceEntries", () => {
   test("returns primary stash as first source", () => {
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
     const sources = resolveSourceEntries();
     expect(sources.length).toBeGreaterThanOrEqual(1);
     expect(sources[0]!.path).toBe(stashDir);
-    expect(sources[0]!.registryId).toBeUndefined();
+    expect(sources[0]!.registryId).toBe("stash");
     expect(sources[0]?.writable).toBe(true);
   });
 
   test("includes valid stash paths", () => {
     const extraDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-extra-"));
     try {
-      saveConfig({ semanticSearchMode: "off", bundles: { extra: { path: extraDir } } });
+      saveConfig(withDefaultBundle({ semanticSearchMode: "off", bundles: { extra: { path: extraDir } } }, stashDir));
       const sources = resolveSourceEntries();
       expect(sources.length).toBe(2);
       expect(sources[1]!.path).toBe(extraDir);
@@ -123,10 +123,15 @@ describe("resolveSourceEntries", () => {
   });
 
   test("keeps non-existent configured paths so indexing can preserve their last-known-good rows", () => {
-    saveConfig({
-      semanticSearchMode: "off",
-      bundles: { missing: { path: "/nonexistent/path/should/not/exist" } },
-    });
+    saveConfig(
+      withDefaultBundle(
+        {
+          semanticSearchMode: "off",
+          bundles: { missing: { path: "/nonexistent/path/should/not/exist" } },
+        },
+        stashDir,
+      ),
+    );
     const sources = resolveSourceEntries();
     expect(sources).toHaveLength(2);
     expect(sources[1]).toMatchObject({
@@ -163,17 +168,22 @@ describe("resolveSourceEntries", () => {
     const extraDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-extra-"));
     const installedDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-installed-"));
     try {
-      saveConfig({
-        semanticSearchMode: "off",
-        bundles: {
-          extra: { path: extraDir },
-          "test-pkg": { npm: "npm:test-pkg@1.0.0", registryId: "npm:test-pkg" },
-        },
-      });
+      saveConfig(
+        withDefaultBundle(
+          {
+            semanticSearchMode: "off",
+            bundles: {
+              extra: { path: extraDir },
+              "test-pkg": { npm: "npm:test-pkg@1.0.0", registryId: "npm:test-pkg" },
+            },
+          },
+          stashDir,
+        ),
+      );
       seedLockEntries([{ id: "test-pkg", source: "npm", ref: "npm:test-pkg@1.0.0", localRoot: installedDir }]);
       const sources = resolveSourceEntries();
       expect(sources[0]!.path).toBe(stashDir);
-      expect(sources[0]!.registryId).toBeUndefined();
+      expect(sources[0]!.registryId).toBe("stash");
       expect(sources[1]!.path).toBe(extraDir);
       expect(sources[1]!.registryId).toBe("extra");
       expect(sources[2]!.path).toBe(installedDir);
@@ -187,7 +197,7 @@ describe("resolveSourceEntries", () => {
   test("accepts overrideStashDir parameter", () => {
     const overrideDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-override-"));
     try {
-      saveConfig({ semanticSearchMode: "off" });
+      saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
       const sources = resolveSourceEntries(overrideDir);
       expect(sources[0]!.path).toBe(overrideDir);
     } finally {
@@ -195,39 +205,7 @@ describe("resolveSourceEntries", () => {
     }
   });
 
-  test("keeps AKM_BUNDLE_DIR ahead of a configured default bundle", () => {
-    const configuredDefault = fs.mkdtempSync(path.join(os.tmpdir(), "akm-configured-default-"));
-    try {
-      saveConfig({
-        semanticSearchMode: "off",
-        defaultBundle: "configured",
-        bundles: { configured: { path: configuredDefault } },
-      });
-
-      const sources = resolveSourceEntries();
-      expect(sources.map((source) => source.path)).toEqual([stashDir, configuredDefault]);
-      expect(sources[0]?.registryId).toBeUndefined();
-      expect(sources[1]?.registryId).toBe("configured");
-    } finally {
-      fs.rmSync(configuredDefault, { recursive: true, force: true });
-    }
-  });
-
-  test("a symlink spelling cannot index a disabled configured bundle", () => {
-    const alias = `${stashDir}-disabled-alias`;
-    try {
-      fs.symlinkSync(stashDir, alias, "dir");
-      saveConfig({
-        semanticSearchMode: "off",
-        bundles: { dormant: { path: alias, enabled: false } },
-      });
-      expect(() => resolveSourceEntries()).toThrow(/disabled.*dormant/i);
-    } finally {
-      fs.rmSync(alias, { force: true });
-    }
-  });
-
-  test("keeps an explicit stash override ahead of env and default bundle", () => {
+  test("keeps an explicit stash override ahead of the default bundle", () => {
     const configuredDefault = fs.mkdtempSync(path.join(os.tmpdir(), "akm-configured-default-"));
     const overrideDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-explicit-override-"));
     try {
@@ -258,7 +236,6 @@ describe("resolveSourceEntries", () => {
 
       const sources = resolveSourceEntries();
       const unresolved = sources.find((source) => source.registryId === "escaping");
-      expect(sources[0]?.path).toBe(stashDir);
       expect(unresolved).toMatchObject({ unresolved: true, registryId: "escaping" });
       // itlackey/akm#890: the placeholder lives under $CACHE, keyed by the
       // bundle root, never under the bundle root (or the escaped root) itself.
@@ -286,16 +263,21 @@ describe("resolveSourceEntries", () => {
     const websitePaths = websiteIngest.getWebsiteCachePaths(websiteUrl);
     fs.mkdirSync(websitePaths.stashDir, { recursive: true });
     try {
-      saveConfig({
-        semanticSearchMode: "off",
-        bundles: {
-          filesystem: { path: filesystemDir },
-          "git-default": { git: "https://example.test/default.git" },
-          "git-writable": { git: "https://example.test/writable.git", writable: true },
-          website: { website: { url: websiteUrl } },
-          npm: { npm: "npm:policy-package@1.0.0" },
-        },
-      });
+      saveConfig(
+        withDefaultBundle(
+          {
+            semanticSearchMode: "off",
+            bundles: {
+              filesystem: { path: filesystemDir },
+              "git-default": { git: "https://example.test/default.git" },
+              "git-writable": { git: "https://example.test/writable.git", writable: true },
+              website: { website: { url: websiteUrl } },
+              npm: { npm: "npm:policy-package@1.0.0" },
+            },
+          },
+          stashDir,
+        ),
+      );
       seedLockEntries([
         {
           id: "git-default",
@@ -357,7 +339,7 @@ describe("findSourceForPath", () => {
 
 describe("isEditable", () => {
   test("files in primary stash are editable", () => {
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
     const filePath = path.join(stashDir, "scripts", "deploy.sh");
     expect(isEditable(filePath)).toBe(true);
   });
@@ -365,7 +347,7 @@ describe("isEditable", () => {
   test("files in stash paths are editable", () => {
     const extraDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-extra-"));
     try {
-      saveConfig({ semanticSearchMode: "off", bundles: { extra: { path: extraDir } } });
+      saveConfig(withDefaultBundle({ semanticSearchMode: "off", bundles: { extra: { path: extraDir } } }, stashDir));
       const filePath = path.join(extraDir, "scripts", "deploy.sh");
       expect(isEditable(filePath)).toBe(true);
     } finally {
@@ -402,7 +384,12 @@ describe("isEditable", () => {
   test("explicit read-only filesystem bundles are not editable", () => {
     const extraDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-extra-readonly-"));
     try {
-      saveConfig({ semanticSearchMode: "off", bundles: { extra: { path: extraDir, writable: false } } });
+      saveConfig(
+        withDefaultBundle(
+          { semanticSearchMode: "off", bundles: { extra: { path: extraDir, writable: false } } },
+          stashDir,
+        ),
+      );
       expect(isEditable(path.join(extraDir, "scripts", "deploy.sh"))).toBe(false);
     } finally {
       fs.rmSync(extraDir, { recursive: true, force: true });
@@ -464,11 +451,11 @@ describe("isEditable", () => {
   }
 
   test("files outside every configured source fail closed", () => {
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
     expect(isEditable("/some/random/path/file.sh")).toBe(false);
   });
 
-  test("read-only hits keep a use-oriented action and receive a secondary edit hint", async () => {
+  test("read-only hits receive an edit hint", async () => {
     const sourceDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-readonly-hit-"));
     try {
       const filePath = path.join(sourceDir, "knowledge", "guide.md");
@@ -490,8 +477,6 @@ describe("isEditable", () => {
       expect(hit.ref).toBe("team//knowledge/guide");
       expect(hit.editable).toBe(false);
       expect(hit.editHint).toContain("akm clone team//knowledge/guide");
-      expect(hit.action).toContain("akm show team//knowledge/guide");
-      expect(hit.action).not.toContain("clone");
     } finally {
       fs.rmSync(sourceDir, { recursive: true, force: true });
     }

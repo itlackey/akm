@@ -15,10 +15,7 @@
  * `AssetOutcomeRow` lives here (not in outcome-loop.ts) so this file imports
  * NOTHING from commands/improve/outcome-loop.ts: outcome-loop.ts re-exports
  * this module's functions (a mandatory edge in that direction), so an import
- * back from here would form a 2-node cycle —
- * `tests/architecture/import-cycle-ratchet.test.ts` enforces a zero-tolerance,
- * shrink-only baseline (currently empty) over the whole `src/` import graph,
- * counting type-only imports as graph edges same as value imports.
+ * back from here would form a 2-node cycle (type-only imports count as graph edges, same as value imports).
  * outcome-loop.ts imports `AssetOutcomeRow` back from here (one direction
  * only) and re-exports it, so external importers are unaffected.
  *
@@ -191,17 +188,6 @@ export function clearAssetOutcomeMissing(db: Database, refs: readonly string[]):
   let changed = 0;
   for (const ref of refs) changed += Number(stmt.run(ref).changes);
   return changed;
-}
-
-/**
- * Delete `asset_outcome` rows whose `missing_since` is older than
- * `cutoffMs`. A single DELETE — SQLite runs it as one implicit transaction.
- * Returns the number of rows deleted.
- */
-export function deleteAssetOutcomeMissingBefore(db: Database, cutoffMs: number): number {
-  return Number(
-    db.prepare(`DELETE FROM asset_outcome WHERE missing_since IS NOT NULL AND missing_since < ?`).run(cutoffMs).changes,
-  );
 }
 
 /** Count `asset_outcome` rows currently marked missing (the live backlog size). */

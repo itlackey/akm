@@ -247,6 +247,12 @@ export class HostTools {
   async environment() {
     return hostEnvironment(this.sourceEnv, this.home, this.platform);
   }
+  /** The host `akm` that is installed and answers `--version`, with the environment to run it in; none otherwise. */
+  async cli() {
+    const env = await this.environment();
+    const found = await this.detect("akm", env);
+    return found.runnable && found.path ? { path: found.path, env } : undefined;
+  }
   async invoke(file: string, args: string[], env: Env, timeout?: number) {
     return this.run(file, args, { env, home: this.home, timeout });
   }

@@ -8,7 +8,7 @@
  * No registry imports — no circular dependencies.
  */
 
-import type { DetailLevel, ShapeMode } from "../context";
+import type { DetailLevel } from "../context";
 
 export const NORMAL_DESCRIPTION_LIMIT = 250;
 
@@ -250,36 +250,15 @@ export function shapeEventEntry(entry: Record<string, unknown>, detail: DetailLe
   return pickFields(entry, ["id", "schemaVersion", "eventType", "ref", "ts", "metadata"]);
 }
 
-export function shapeSearchOutput(
-  result: Record<string, unknown>,
-  detail: DetailLevel,
-  shape: ShapeMode = "human",
-): Record<string, unknown> {
-  const forAgent = shape === "agent";
-  const hits = Array.isArray(result.hits) ? (result.hits as Record<string, unknown>[]) : [];
+export function shapeSearchOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
+  const results = Array.isArray(result.results) ? (result.results as Record<string, unknown>[]) : [];
   const registryHits = Array.isArray(result.registryHits) ? (result.registryHits as Record<string, unknown>[]) : [];
-  const shapedHits = forAgent
-    ? hits.map((hit) => shapeSearchHitForAgent(hit))
-    : hits.map((hit) => shapeSearchHit(hit, detail));
-  const shapedRegistryHits = forAgent
-    ? registryHits.map((hit) => shapeSearchHitForAgent(hit))
-    : registryHits.map((hit) => shapeSearchHit(hit, detail));
+  const shapedHits = results.map((hit) => shapeSearchHit(hit, detail));
+  const shapedRegistryHits = registryHits.map((hit) => shapeSearchHit(hit, detail));
   const searchMode = typeof result.searchMode === "string" ? result.searchMode : undefined;
   const bundles = Array.isArray(result.bundles) ? result.bundles : undefined;
   const warnings = Array.isArray(result.warnings) && result.warnings.length > 0 ? result.warnings : undefined;
   const project = result.project;
-
-  if (forAgent) {
-    return {
-      hits: shapedHits,
-      ...(project ? { project } : {}),
-      ...(shapedRegistryHits.length > 0 ? { registryHits: shapedRegistryHits } : {}),
-      ...(searchMode ? { searchMode } : {}),
-      ...(bundles ? { bundles } : {}),
-      ...(warnings ? { warnings } : {}),
-      ...(result.tip ? { tip: result.tip } : {}),
-    };
-  }
 
   if (detail === "full") {
     return {
@@ -287,7 +266,7 @@ export function shapeSearchOutput(
       bundleDir: result.bundleDir,
       source: result.source,
       ...(project ? { project } : {}),
-      hits: shapedHits,
+      results: shapedHits,
       ...(shapedRegistryHits.length > 0 ? { registryHits: shapedRegistryHits } : {}),
       ...(result.tip ? { tip: result.tip } : {}),
       ...(searchMode ? { searchMode } : {}),
@@ -298,7 +277,7 @@ export function shapeSearchOutput(
   }
 
   return {
-    hits: shapedHits,
+    results: shapedHits,
     ...(project ? { project } : {}),
     ...(shapedRegistryHits.length > 0 ? { registryHits: shapedRegistryHits } : {}),
     ...(searchMode ? { searchMode } : {}),
@@ -319,7 +298,7 @@ export function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel
       // Renderers project optional hit-level `warnings` so providers can
       // surface non-fatal issues.
       return capDescription(
-        pickFields(hit, ["name", "description", "action", "installRef", "score", "warnings"]),
+        pickFields(hit, ["name", "description", "installRef", "score", "warnings"]),
         NORMAL_DESCRIPTION_LIMIT,
       );
     }
@@ -328,9 +307,12 @@ export function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel
 
   // Stash hit (local or remote)
   // `ref` is included at `brief` so agents can run `akm show <ref>` without
-  // needing --detail full or --detail agent.
+  // needing --detail full.
   if (detail === "brief") {
-    return pickFields(hit, ["type", "name", "ref", "action", "estimatedTokens", "keys"]);
+    return capDescription(
+      pickFields(hit, ["type", "name", "ref", "description", "estimatedTokens", "keys"]),
+      BRIEF_DESCRIPTION_LIMIT,
+    );
   }
   if (detail === "normal") {
     // `warnings` is projected at `normal` so non-fatal hit-level issues are
@@ -343,7 +325,6 @@ export function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel
         "name",
         "ref",
         "description",
-        "action",
         "score",
         "estimatedTokens",
         "warnings",
@@ -359,26 +340,8 @@ export function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel
   return hit;
 }
 
-/** Agent-optimized search hit: only fields an LLM agent needs to decide and act */
-export function shapeSearchHitForAgent(hit: Record<string, unknown>): Record<string, unknown> {
-  const picked = pickFields(hit, [
-    "name",
-    "ref",
-    "type",
-    "path",
-    "editable",
-    "editHint",
-    "description",
-    "action",
-    "score",
-    "estimatedTokens",
-    "keys",
-    "observed",
-    "updated",
-  ]);
-  if (picked.editable !== false) delete picked.editHint;
-  return capDescription(picked, NORMAL_DESCRIPTION_LIMIT);
-}
+// Brief carries a short description in place of the removed `action` hint.
+export const BRIEF_DESCRIPTION_LIMIT = 35;
 
 export function capDescription(hit: Record<string, unknown>, limit: number): Record<string, unknown> {
   if (typeof hit.description !== "string") return hit;
@@ -395,45 +358,7 @@ export function truncateDescription(description: string, limit: number): string 
   return `${safe.trimEnd()}...`;
 }
 
-export function shapeShowOutput(
-  result: Record<string, unknown>,
-  detail: DetailLevel,
-  shape: ShapeMode = "human",
-): Record<string, unknown> {
-  if (shape === "agent") {
-    const shaped = pickFields(result, [
-      "type",
-      "name",
-      "ref",
-      "path",
-      "editable",
-      "editHint",
-      "description",
-      "action",
-      "toc",
-      "content",
-      "template",
-      "prompt",
-      "run",
-      "setup",
-      "cwd",
-      "modelHint",
-      "agent",
-      "parameters",
-      "workflowTitle",
-      "workflowParameters",
-      "steps",
-      "keys",
-      "links",
-      "evidence",
-      "evidenceSources",
-      "provenance",
-      ...FRAGMENT_PROVENANCE_FIELDS,
-      ...FRAGMENT_CONTEXT_FIELDS,
-    ]);
-    if (shaped.editable !== false) delete shaped.editHint;
-    return shaped;
-  }
+export function shapeShowOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
   const base = pickFields(result, [
     "type",
     "name",

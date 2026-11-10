@@ -2,8 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { resolveSecretPath } from "../../core/env-secret-ref";
 import { readValue } from "../../core/secret-value";
+import { resolveSecretPath } from "../env-secret-ref";
 import type { SecretResolver } from "../provider";
 
 /**
@@ -11,7 +11,7 @@ import type { SecretResolver } from "../provider";
  * seam (see `FetcherContext.resolveSecret`).
  *
  * This module — NOT the fetchers themselves — is what imports
- * `core/env-secret-ref`. That module transitively imports the source
+ * `sources/env-secret-ref`. That module transitively imports the source
  * providers, which import the fetcher registry, so a fetcher importing it
  * directly would close an import cycle. Keeping the dependency here lets the
  * fetchers stay leaves while still reaching the store.
@@ -33,7 +33,7 @@ export function resolveSecretFromStore(ref: string): string | null {
 /**
  * The single store-backed {@link SecretResolver}, constructed here because this
  * is the only module in the sources tree sanctioned to import
- * `core/env-secret-ref`. Composition roots above the import cycle
+ * `sources/env-secret-ref`. Composition roots above the import cycle
  * (`indexer/indexer.ts` for the `sync()`/bundle-update path, and the
  * `akm import` / `akm bundle add` command handlers) inject this so in-cycle
  * consumers depend only on the `SecretResolver` interface, never on the reader.

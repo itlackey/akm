@@ -14,7 +14,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { isRelevantAssetFile } from "../../core/asset/asset-placement";
 import { isScratchPath } from "../../core/asset/scratch";
-import { WORKFLOW_EXTENSIONS } from "../../core/recognition-util";
 import { spawnSync } from "../../runtime";
 import { buildFileContext, type FileContext } from "./file-context";
 

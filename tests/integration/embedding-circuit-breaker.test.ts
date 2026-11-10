@@ -20,8 +20,7 @@
  * A real Bun.serve server whose fetch handler never resolves removes any
  * timing race between the client's timeout and a server that merely
  * responds late — the client's own `embedding.timeoutMs` is the only way the
- * request ever settles (see tests/integration/reflect-propose-http-timeout.test.ts
- * for the same pattern). This opens a real index.db via `akmIndex`, so it is
+ * request ever settles . This opens a real index.db via `akmIndex`, so it is
  * an integration test per the ORG-03..06 classification rule.
  */
 

@@ -14,8 +14,8 @@
  * This module is intentionally tiny and stateless so tests can stub it via
  * `mock.module("../src/llm/memory-infer", ...)` without hitting a network.
  *
- * The symbolic LLM runner comes from the current index-pass execution
- * resolution and is passed straight through.
+ * The symbolic LLM runner is the one improve resolves for `memoryInference`
+ * and is passed straight through.
  */
 
 import memoryInferSystemPrompt from "../assets/prompts/memory-infer-system.md" with { type: "text" };

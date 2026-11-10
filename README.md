@@ -93,8 +93,9 @@ See [Supported Formats](https://akm.fwdslsh.dev/docs/reference/supported-formats
 - Connect local dirs, git repos, npm packages, and websites — [Bundles](https://akm.fwdslsh.dev/docs/guides/bundles/)
 - Capture memories, import docs, and manage wikis — [Capture Knowledge](https://akm.fwdslsh.dev/docs/guides/capture-knowledge/)
 - Turn feedback and usage into reviewable proposals — [Improve the Library](https://akm.fwdslsh.dev/docs/guides/improve-the-library/)
-- Run resumable, multi-step procedures — [Workflows](https://akm.fwdslsh.dev/docs/reference/workflows/)
+- Run resumable, multi-step procedures — [Workflows](https://akm.fwdslsh.dev/docs/guides/run-workflows/)
 - Author strict scheduled automation — [Tasks](https://akm.fwdslsh.dev/docs/reference/tasks/)
+- Upgrading from 0.10 — [0.10 to 0.11 migration guide](https://akm.fwdslsh.dev/docs/migration/v0.10-to-v0.11/)
 - Upgrading from 0.9 — [0.9 to 0.10 migration guide](https://akm.fwdslsh.dev/docs/migration/v0.9-to-v0.10/)
 - Wire akm into Claude Code, OpenCode, Cursor, and other assistants — [Use AKM With Any Agent](https://akm.fwdslsh.dev/docs/guides/use-with-any-agent/)
 
@@ -111,7 +112,6 @@ The full documentation is published at **[akm.fwdslsh.dev](https://akm.fwdslsh.d
 | Doc | Description |
 | --- | --- |
 | [Documentation index](https://akm.fwdslsh.dev/docs/README/) | Full guide and reference index |
-| [Product surface](https://akm.fwdslsh.dev/docs/product-surface/) | Every feature and its status |
 | [Stability policy](STABILITY.md) | Which CLI surfaces are stable, evolving, or experimental |
 | [Security policy](SECURITY.md) | Supported versions and how to report a vulnerability |
 | [Changelog](CHANGELOG.md) | Per-release behavior changes |

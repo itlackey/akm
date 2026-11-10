@@ -27,7 +27,7 @@
 import { defineCommand } from "citty";
 import { getParsedInvocation } from "../../cli/invocation";
 import { parsePositiveIntFlag } from "../../cli/parse-args";
-import { RETIRED_ENGINE_ARG, SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
+import { SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
 import {
   defineGroupCommand,
   defineJsonCommand,
@@ -39,6 +39,7 @@ import {
 } from "../../cli/shared";
 import { UsageError } from "../../core/errors";
 import type { InputFlag } from "../../execution/input-contract";
+import { dispatchDueTasks } from "../../tasks/dispatch";
 import { TASK_RUN_BOOLEAN_FLAGS, TASK_RUN_VALUE_FLAGS } from "../../tasks/task-run-reserved-flags";
 import { akmTaskExplain } from "./explain";
 import {
@@ -47,10 +48,8 @@ import {
   akmTasksDoctor,
   akmTasksEnable,
   akmTasksHistory,
-  akmTasksPrune,
   akmTasksRun,
   akmTasksSync,
-  akmTasksSyncPlan,
 } from "./tasks";
 
 /** Shared `--bundle <bundle>` arg wired onto every task subcommand. */
@@ -191,7 +190,7 @@ export function parseTaskInputFlags(rawArgs: readonly string[], id: string): Inp
 }
 
 const tasksAddCommand = defineJsonCommand({
-  meta: { name: "add", description: "Register a new scheduled task and install it in the OS scheduler" },
+  meta: { name: "add", description: "Register a new scheduled task (`akm task dispatch` runs it on its schedule)" },
   args: {
     id: { type: "positional", description: "Task id (used as filename and scheduler entry)", required: true },
     schedule: { type: "string", description: 'Cron-style schedule, e.g. "0 9 * * *" or "@daily"', required: true },
@@ -207,20 +206,14 @@ const tasksAddCommand = defineJsonCommand({
         'Exact shell string to run on the schedule (no AI agent), e.g. "akm improve --strategy consolidate".',
     },
     ...SELECTION_ARGS,
-    ...RETIRED_ENGINE_ARG,
     "timeout-ms": { type: "string", description: "Positive timeout in milliseconds for prompt or command targets" },
     params: { type: "string", description: "Workflow params as a JSON object" },
     name: { type: "string", description: "Human-readable name for the task" },
     "when-to-use": { type: "string", description: "Guidance on when this task runs or should be used" },
     description: { type: "string", description: "Human-readable description" },
     tags: { type: "string", description: "Comma-separated tags" },
-    disabled: { type: "boolean", description: "Register but leave disabled in the OS scheduler", default: false },
+    disabled: { type: "boolean", description: "Register but leave disabled: dispatch will not run it", default: false },
     force: { type: "boolean", description: "Overwrite an existing task with the same id", default: false },
-    rebind: {
-      type: "boolean",
-      description: "Also point the bundle's installed scheduler rows at this akm invocation (as `task sync --rebind`)",
-      default: false,
-    },
   },
   async run({ args }) {
     const result = await akmTasksAdd({
@@ -244,7 +237,6 @@ const tasksAddCommand = defineJsonCommand({
         : undefined,
       disabled: args.disabled === true,
       force: args.force === true,
-      rebind: args.rebind === true,
     });
     output("task-add", result);
   },
@@ -253,7 +245,7 @@ const tasksAddCommand = defineJsonCommand({
 const tasksRunCommand = defineCommand({
   meta: {
     name: "run",
-    description: "Execute a task now (this is what cron / launchd / schtasks invoke at the scheduled time)",
+    description: "Execute a task now (`akm task dispatch` starts a due task this way)",
   },
   // Raw defineCommand (it forwards the task's exit code), so the global output
   // flags are declared here or `--format md nightly` loses the task id.
@@ -261,7 +253,14 @@ const tasksRunCommand = defineCommand({
     ...GLOBAL_OUTPUT_ARGS,
     id: { type: "positional", description: "Task id", required: true },
     ...bundleArg,
-    scheduled: { type: "boolean", description: "Internal marker for scheduler-generated runs", default: false },
+    // Hidden for good: `task dispatch` passes it, and so do the per-task rows of akm 0.9 until `task sync` replaces
+    // them. It selects the unattended default timeout.
+    scheduled: {
+      type: "boolean",
+      description: "Internal marker for scheduler-generated runs",
+      default: false,
+      hidden: true,
+    },
   },
   async run({ args, rawArgs }) {
     await runWithJsonErrors(async () => {
@@ -283,7 +282,11 @@ const tasksRunCommand = defineCommand({
 });
 
 const tasksEnableCommand = defineJsonCommand({
-  meta: { name: "enable", description: "Enable a task in this host's scheduler configuration and sync it" },
+  meta: {
+    name: "enable",
+    description:
+      "Enable a task: add it to this host's `scheduler.enabled` list and install the scheduler entry if needed",
+  },
   args: {
     ref: { type: "positional", description: "Task ref or id", required: true },
     ...bundleArg,
@@ -294,7 +297,11 @@ const tasksEnableCommand = defineJsonCommand({
 });
 
 const tasksDisableCommand = defineJsonCommand({
-  meta: { name: "disable", description: "Disable a task in this host's scheduler configuration and sync it" },
+  meta: {
+    name: "disable",
+    description:
+      "Disable a task: remove it from this host's `scheduler.enabled` list; the entry goes with the last one",
+  },
   args: {
     ref: { type: "positional", description: "Task ref or id", required: true },
     ...bundleArg,
@@ -304,87 +311,54 @@ const tasksDisableCommand = defineJsonCommand({
   },
 });
 
-/**
- * #911: `task run <id>` and `task explain <ref>` take the id positionally, so
- * `task history <id>` is the natural thing to write — and it used to be
- * accepted and silently discarded, answering with every task's newest rows.
- * A positional id now means the same as `--id`; giving both with different
- * values is a usage error rather than a silent pick.
- */
-export function resolveTaskHistoryId(positional: string | undefined, flag: string | undefined): string | undefined {
-  if (positional !== undefined && flag !== undefined && positional !== flag) {
-    throw new UsageError(
-      `\`akm task history\` was given two task ids: "${positional}" and --id "${flag}". Pass one.`,
-      "INVALID_FLAG_VALUE",
-    );
-  }
-  return flag ?? positional;
-}
-
 const tasksHistoryCommand = defineJsonCommand({
   meta: { name: "history", description: "Show recent task run history" },
   args: {
-    task: { type: "positional", description: "Task id to filter to (same as --id)", required: false },
-    id: { type: "string", description: "Filter to one task id" },
+    task: { type: "positional", description: "Task id to filter to", required: false },
     limit: { type: "string", description: "Maximum rows to return (default 50)" },
     ...bundleArg,
   },
   async run({ args }) {
     const limit = parsePositiveIntFlag(args.limit ?? undefined);
-    const id = resolveTaskHistoryId(args.task, args.id);
-    const result = await akmTasksHistory({ id, limit, target: args.bundle });
+    const result = await akmTasksHistory({ id: args.task, limit, target: args.bundle });
     output("task-history", result);
   },
 });
 
-/**
- * #849: `task sync --dry-run`'s exit-code contract, "non-zero when the plan
- * contains removals" — factored out as a pure function (rather than left
- * inline in the command's `run()`) so it's directly unit-testable without
- * driving the whole CLI through a real scheduler backend. #867: also
- * non-zero when any source failed to parse/prepare — sync degrades (still
- * reconciles the tasks/workflows that DID parse) rather than rejecting the
- * whole set, but a dropped source must still surface as a failing exit.
- */
-export function taskSyncDryRunExitCode(preview: {
-  hasRemovals: boolean;
-  failures?: readonly unknown[];
-}): number | undefined {
-  return preview.hasRemovals || (preview.failures?.length ?? 0) > 0 ? EXIT_CODES.GENERAL : undefined;
-}
-
 const tasksSyncCommand = defineJsonCommand({
   meta: {
     name: "sync",
-    description: "Reconcile enabled task/workflow schedules with the OS scheduler, one row at a time",
+    description:
+      "Install, update or remove the one OS scheduler entry that runs `akm task dispatch` every minute, " +
+      "and remove akm 0.9's per-task scheduler rows",
   },
   args: {
-    ...bundleArg,
     rebind: {
       type: "boolean",
-      description: "Point installed rows at this akm invocation instead of keeping their launcher",
-      default: false,
-    },
-    "dry-run": {
-      type: "boolean",
-      description: "Print the reconcile plan without touching the OS scheduler; exits non-zero if it has removals",
+      description: "Point the installed entry at this akm invocation and PATH instead of keeping them",
       default: false,
     },
   },
   async run({ args }) {
-    const rebind = args.rebind === true;
-    if (args["dry-run"] === true) {
-      const preview = await akmTasksSyncPlan({}, args.bundle, { rebind });
-      outputWithExitCode("task-sync-dry-run", preview, taskSyncDryRunExitCode(preview));
-      return;
-    }
-    const result = await akmTasksSync({}, args.bundle, { rebind });
-    // #867: sync degrades — sources that failed to parse/prepare are
-    // excluded from reconciliation and reported in `result.failures` rather
-    // than poisoning the whole sync, but their presence must still fail
-    // the command's exit code so the breakage stays visible. (#906: this key
-    // matches the `--dry-run` preview's `failures` field — no separate name.)
-    outputWithExitCode("task-sync", result, result.failures.length > 0 ? EXIT_CODES.GENERAL : undefined);
+    output("task-sync", await akmTasksSync({}, { rebind: args.rebind === true }));
+  },
+});
+
+/**
+ * `akm task dispatch`: the one command the OS scheduler runs, once a minute.
+ * Starts every enabled task that is due, detached, and exits.
+ */
+const tasksDispatchCommand = defineJsonCommand({
+  meta: {
+    name: "dispatch",
+    description:
+      "Start the enabled tasks that are due this minute, each detached, and exit. " +
+      "The OS scheduler entry (`akm task sync`) or your own supervisor runs this every minute",
+  },
+  args: {},
+  async run() {
+    const result = await dispatchDueTasks();
+    outputWithExitCode("task-dispatch", result, result.failures.length > 0 ? EXIT_CODES.GENERAL : undefined);
   },
 });
 
@@ -423,7 +397,7 @@ const tasksExplainCommand = defineJsonCommand({
 const tasksDoctorCommand = defineJsonCommand({
   meta: {
     name: "doctor",
-    description: "Report the active scheduler backend, akm bin path, log dir, and supported schedule subset",
+    description: "Report the scheduler backend and its entry, akm bin path, log dir, and schedule grammar",
   },
   args: {},
   async run() {
@@ -432,64 +406,24 @@ const tasksDoctorCommand = defineJsonCommand({
   },
 });
 
-/**
- * #851: `akm task prune`'s exit-code contract mirrors `task sync --dry-run`'s
- * (`taskSyncDryRunExitCode` above) — non-zero whenever the preview lists
- * removals the invocation didn't (or couldn't, without `--yes`) execute, so
- * `akm task prune` is usable as a CI/health check the same way `sync
- * --dry-run` is.
- */
-export function taskPruneExitCode(result: { dryRun: boolean; preview: { hasRemovals: boolean } }): number | undefined {
-  return result.dryRun && result.preview.hasRemovals ? EXIT_CODES.GENERAL : undefined;
-}
-
-const tasksPruneCommand = defineJsonCommand({
-  meta: {
-    name: "prune",
-    description:
-      "Remove installed scheduler entries `sync` can never reclaim because they no longer resolve to a live " +
-      "bundle (the bundle directory a row names is gone, or an older row's --scheduler-context descriptor " +
-      "cannot be read). Defaults to a dry-run preview — zero scheduler writes. Requires --yes to remove anything; " +
-      "--id narrows removal to specific binding ids (comma-separated).",
-  },
-  args: {
-    yes: {
-      type: "boolean",
-      description: "Execute removal of every currently-computed orphan (the plan is still printed first)",
-      default: false,
-    },
-    id: {
-      type: "string",
-      description: "Comma-separated scheduler binding id(s) to limit pruning to (must already be orphan candidates)",
-    },
-  },
-  async run({ args }) {
-    const id = args.id
-      ? args.id
-          .split(",")
-          .map((value) => value.trim())
-          .filter(Boolean)
-      : undefined;
-    const result = await akmTasksPrune({}, { yes: args.yes === true, id });
-    outputWithExitCode("task-prune", result, taskPruneExitCode(result));
-  },
-});
-
 export const taskCommand = defineGroupCommand({
   meta: {
     name: "task",
     description:
-      "Schedule recurring commands, prompts, and workflows through the OS scheduler (cron / launchd / schtasks)",
+      "Schedule recurring commands, prompts, and workflows: one OS scheduler entry (cron / launchd / schtasks) runs `akm task dispatch` every minute\n" +
+      "Definitions are assets: `akm search --type task`, then `akm show <ref>`. " +
+      "`task doctor` reports the scheduler entry; `task explain` the resolved inputs and target; " +
+      "`task history` the executions.",
   },
   subCommands: {
     add: tasksAddCommand,
     enable: tasksEnableCommand,
     disable: tasksDisableCommand,
+    dispatch: tasksDispatchCommand,
     run: tasksRunCommand,
     explain: tasksExplainCommand,
     history: tasksHistoryCommand,
     sync: tasksSyncCommand,
-    prune: tasksPruneCommand,
     doctor: tasksDoctorCommand,
   },
   // Bare `akm task` reports scheduler diagnostics. Deeper inspection of

@@ -17,8 +17,8 @@ import {
   type AdapterRenderedPersonaSource,
   createAdapterRenderedExecutionSource,
   type ExecutionSourceIdentity,
+  RETIRED_ENGINE_KEY_MESSAGE,
   type UnresolvedExecutionDefaults,
-  warnRetiredEngineKey,
 } from "../../execution/source";
 import { UsageError } from "../errors";
 import { warnOnce } from "../warn";
@@ -200,14 +200,20 @@ export function executionDefaultsFromFrontmatter(
   if (kind === "command" && own(frontmatter, "agent")) {
     out.agent = nullableString(frontmatter.agent, "frontmatter.agent");
   }
-  // `engine` is the retired spelling of `connection` / `harness`; the resolver reads it as whichever it names.
-  for (const key of ["connection", "harness", "engine"] as const) {
+  for (const key of ["connection", "harness"] as const) {
     const topLevel =
       allowTopLevelEngine && own(frontmatter, key) ? nullableString(frontmatter[key], `frontmatter.${key}`) : undefined;
     const namespaced = own(namespace, key) ? nullableString(namespace[key], `frontmatter.akm.${key}`) : undefined;
     if (topLevel !== undefined) out[key] = topLevel;
     else if (namespaced !== undefined) out[key] = namespaced;
-    if (key === "engine" && out.engine !== undefined) warnRetiredEngineKey();
+  }
+  // `engine` is the retired spelling of `connection` / `harness`. Ignoring it would run the work on the default
+  // connection or harness, so it is refused, as it is in a workflow or a task. This is the render path of a run: index,
+  // show, search and lint never reach it. A read-only bundle migrate cannot rewrite is edited by hand.
+  if ((allowTopLevelEngine && own(frontmatter, "engine")) || own(namespace, "engine")) {
+    throw new TypeError(
+      `${kind === "persona" ? "agent" : kind} key "engine" ${RETIRED_ENGINE_KEY_MESSAGE} If the bundle is read-only, ask its owner to make that change, or copy the asset to a writable bundle first.`,
+    );
   }
   if (own(frontmatter, "model")) {
     out.model = nullableString(frontmatter.model, "frontmatter.model");

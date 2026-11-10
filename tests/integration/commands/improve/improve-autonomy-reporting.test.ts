@@ -12,7 +12,6 @@ import { type Cleanup, type IsolatedAkmStorage, withIsolatedAkmStorage } from ".
 import { overrideSeam } from "../../../_helpers/seams";
 
 const config = {
-  configVersion: "0.9.0",
   semanticSearchMode: "off",
   improve: {
     strategy: "contradiction-report",

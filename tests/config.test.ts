@@ -2,8 +2,11 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { setConfigValue } from "../src/commands/config-cli";
+import { setConfigValue } from "../src/commands/config";
 import { resolveImproveExecution } from "../src/commands/improve/execution";
+import { resolveImprovePlan } from "../src/commands/improve/improve-strategies";
+import { resolveQualityGateJudge } from "../src/commands/improve/stage";
+import { stripJsonComments } from "../src/core/common";
 import {
   DEFAULT_CONFIG,
   defaultConnection,
@@ -14,21 +17,30 @@ import {
   loadConfig,
   loadUserConfig,
   mutateConfig,
+  parseAndValidateConfigText,
   primaryBundlePath,
   resetConfigCache,
   saveConfig,
+  unknownConfigKeyPaths,
   updateConfig,
 } from "../src/core/config/config";
 import { backupExistingConfig, copyToConfigBackups } from "../src/core/config/config-io";
-import { EmbeddingConnectionConfigSchema } from "../src/core/config/config-schema";
+import {
+  AkmConfigSchema,
+  EmbeddingConnectionConfigSchema,
+  ImproveProcessConfigSchema,
+  ImproveProfileConfigSchema,
+  validateConfigShape,
+} from "../src/core/config/config-schema";
+import { isImproveAutonomyEnabled } from "../src/core/config/experimental";
 import { ConfigError } from "../src/core/errors";
+import { formatExtraParamsIssue, validateExtraParams } from "../src/core/extra-params";
 import { getCacheDir, getConfigDir, getConfigPath } from "../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
-import { resolveIndexPassExecution } from "../src/llm/index-passes";
+import { resolveTarget } from "../src/integrations/agent/resolution";
 import { schedulerEnabledRefs } from "../src/tasks/activation-config";
 import {
   type Cleanup,
-  mockHomedir,
   sandboxHome,
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
@@ -50,7 +62,7 @@ function writeRawConfig(configPath: string, content: string): void {
 }
 
 function writeCurrentConfig(value: Record<string, unknown>): void {
-  writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", ...value }));
+  writeRawConfig(getConfigPath(), JSON.stringify({ ...value }));
 }
 
 function captureWarnings(fn: () => void): string[] {
@@ -100,12 +112,6 @@ describe("getConfigPath", () => {
 
   test("defaults to ~/.config/akm when XDG_CONFIG_HOME is unset", () => {
     delete process.env.XDG_CONFIG_HOME;
-    // Defense against CI environments where AKM_BUNDLE_DIR is inherited
-    // from outer test isolation: if it points at a transient path,
-    // getConfigDir's isolation rule fires and overrides the HOME-based
-    // fallback this test is verifying (the 2026-05-23
-    // setup-clobbers-user-config incident).
-    delete process.env.AKM_BUNDLE_DIR;
     const home = sandboxHome();
 
     expect(getConfigPath()).toBe(path.join(home.dir, ".config", "akm", "config.json"));
@@ -171,8 +177,7 @@ describe("loadConfig", () => {
     expect(loadConfig().semanticSearchMode).toBe("off");
   });
 
-  test("loads config without requiring AKM_BUNDLE_DIR", () => {
-    delete process.env.AKM_BUNDLE_DIR;
+  test("loads config without a working bundle", () => {
     writeCurrentConfig({ semanticSearchMode: "off" });
 
     const config = loadConfig();
@@ -220,6 +225,28 @@ describe("loadConfig", () => {
     writeCurrentConfig({ execution: { allowedTools: ["Read"] } });
     const warnings = captureWarnings(() => loadConfig());
     expect(warnings.join("\n")).toMatch(/unknown config key.*execution/i);
+  });
+
+  test("a plugins section (the akm plugins' settings) loads with no warning, whatever its inner values", () => {
+    writeCurrentConfig({ plugins: { curateLimit: 8, redact: { pii: true }, autoFeedback: "bad", extra: [1] } });
+    let loaded: ReturnType<typeof loadConfig> | undefined;
+    const warnings = captureWarnings(() => {
+      loaded = loadConfig();
+    });
+    expect(warnings.filter((w) => /plugins/i.test(w))).toEqual([]);
+    expect((loaded as unknown as { plugins?: Record<string, unknown> }).plugins).toEqual({
+      curateLimit: 8,
+      redact: { pii: true },
+      autoFeedback: "bad",
+      extra: [1],
+    });
+  });
+
+  test("akm config set writes a plugins key and keeps the rest of the section", () => {
+    const base = { plugins: { autoFeedback: false } } as never;
+    const next = setConfigValue(base, "plugins.curateLimit", "8") as unknown as { plugins: Record<string, unknown> };
+    expect(next.plugins.autoFeedback).toBe(false);
+    expect(next.plugins.curateLimit).toBeDefined();
   });
 
   test("ignores stash-root config.json files", () => {
@@ -271,17 +298,17 @@ describe("loadConfig", () => {
     expect(warnings.some((w) => w.includes("stashes") && w.includes("retired"))).toBe(true);
   });
 
-  // Older than the 0.9.15 floor: 0.10 does not convert these, it refuses them
-  // with one message naming `akm migrate apply` under akm 0.9.x (#1091).
+  // Older than the 0.9.32 floor: 0.10 does not convert these, it refuses them
+  // with one message naming the 0.9.32 recipe (#1091).
   test.each([
     ["sources", [{ type: "filesystem", path: "/keep", name: "keep" }]],
     ["installed", [{ id: "npm:left-pad", source: "npm", ref: "npm:left-pad" }]],
     ["stashDir", "/legacy-stash"],
   ])("refuses the pre-0.9 `%s` key, naming akm migrate apply under akm 0.9.x", (key, value) => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", [key]: value }));
+    writeRawConfig(getConfigPath(), JSON.stringify({ [key]: value }));
 
     expect(() => loadConfig()).toThrow(
-      new RegExp(`${key}: .*predates akm 0\\.9\\.15.*akm migrate apply.* with akm 0\\.9\\.x`),
+      new RegExp(`${key}: .*predates akm 0\\.9\\.32.*akm-cli@0\\.9\\.32 && akm migrate apply`),
     );
   });
 });
@@ -291,7 +318,6 @@ describe("loadConfig", () => {
 describe("saveConfig", () => {
   test("writes formatted JSON to config.json", () => {
     const config = {
-      configVersion: "0.9.0" as const,
       semanticSearchMode: "off" as const,
       bundles: { extra: { path: "/extra" } },
     };
@@ -333,7 +359,6 @@ describe("saveConfig", () => {
 
     expect(fs.existsSync(latestPath)).toBe(true);
     expect(JSON.parse(fs.readFileSync(latestPath, "utf8"))).toEqual({
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
     });
 
@@ -844,13 +869,12 @@ describe("primary stash config", () => {
     expect(primaryBundlePath(loadConfig())).toBe("/custom/stash");
   });
 
-  test("rejects disabled read and write defaults", () => {
+  test("rejects a disabled default bundle", () => {
     writeCurrentConfig({
       bundles: { off: { path: "/custom/stash", enabled: false } },
       defaultBundle: "off",
-      defaultWriteTarget: "off",
     });
-    expect(() => loadConfig()).toThrow(/defaultBundle.*disabled|defaultWriteTarget.*disabled/i);
+    expect(() => loadConfig()).toThrow(/defaultBundle.*disabled/i);
   });
 
   test("rejects two bundle ids that alias one physical directory through a symlink", () => {
@@ -917,12 +941,6 @@ describe("embedding profile config", () => {
 });
 
 describe("0.9 config shape parsing", () => {
-  test("parses configVersion", () => {
-    writeCurrentConfig({});
-    const loaded = loadConfig();
-    expect(loaded.configVersion).toBe("0.9.0");
-  });
-
   test("parses harnesses by platform name, with platform for a second install", () => {
     writeCurrentConfig({
       harnesses: {
@@ -1027,8 +1045,6 @@ describe("0.9 config shape parsing", () => {
       "improve",
     ],
     ["improve.qualityGate.connection", { improve: { qualityGate: { connection: "Anthropic" } } }, "gate"],
-    ["index.connection", { index: { connection: "Anthropic" } }, "index"],
-    ["index.<pass>.connection", { index: { graph: { connection: "Anthropic" } } }, "index"],
   ])("a miscased name at %s loads, and is an error at resolution naming it", (_where, pointer, resolves) => {
     writeCurrentConfig({
       connections: { default: { endpoint: "http://lab:1/v1", models: { fast: "m" } } },
@@ -1044,8 +1060,7 @@ describe("0.9 config shape parsing", () => {
           alias: "fast",
           ...(loaded.improve?.qualityGate ? { current: loaded.improve.qualityGate } : {}),
         }),
-      index: () => resolveIndexPassExecution("graph", loaded),
-    }[resolves as "improve" | "gate" | "index"];
+    }[resolves as "improve" | "gate"];
     expect(resolution).toThrow(/"Anthropic" is not configured/);
   });
 
@@ -1111,293 +1126,33 @@ describe("0.9 config shape parsing", () => {
   });
 });
 
-// ── `extends` inheritance (#945) ────────────────────────────────────────────
+// ── `extends` is retired ─────────────────────────────────────────────────────
 
-describe("extends inheritance (#945)", () => {
-  test("merges a base config from a relative path, local wins", () => {
+describe("a config that still sets extends", () => {
+  test("is refused, naming `akm migrate apply`", () => {
     const dir = path.dirname(getConfigPath());
-    fs.mkdirSync(path.join(dir, "shared"), { recursive: true });
-    writeRawConfig(
-      path.join(dir, "shared", "shared.json"),
-      JSON.stringify({
-        configVersion: "0.9.0",
-        connections: {
-          fast: { endpoint: "https://api.example.test/v1", models: { fast: "base-model" } },
-        },
-        output: { format: "text", detail: "full" },
-      }),
-    );
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        configVersion: "0.9.0",
-        extends: "./shared/shared.json",
-        output: { detail: "brief" },
-      }),
-    );
+    writeRawConfig(path.join(dir, "base.json"), JSON.stringify({ archiveRetentionDays: 7 }));
+    writeRawConfig(getConfigPath(), JSON.stringify({ extends: "./base.json" }));
 
-    const config = loadConfig();
-    expect(config.connections?.fast?.models).toEqual({ fast: "base-model" });
-    // Local wins: output.detail overridden, output.format inherited.
-    expect(config.output).toEqual({ format: "text", detail: "brief" });
+    expect(() => loadConfig()).toThrow(/"extends" is no longer supported.*akm migrate apply/s);
   });
 
-  test("expands ~ in a filesystem extends path", () => {
-    const home = mockHomedir();
-    try {
-      fs.mkdirSync(path.join(home.dir, "fleet"), { recursive: true });
-      fs.writeFileSync(
-        path.join(home.dir, "fleet", "shared.json"),
-        JSON.stringify({ configVersion: "0.9.0", semanticSearchMode: "auto" }),
-      );
-      writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "~/fleet/shared.json" }));
+  test("is refused even when the base does not exist", () => {
+    writeRawConfig(getConfigPath(), JSON.stringify({ extends: "./does-not-exist.json" }));
 
-      expect(loadConfig().semanticSearchMode).toBe("auto");
-    } finally {
-      home.cleanup();
-    }
+    expect(() => loadConfig()).toThrow(/akm migrate apply/);
   });
 
-  test("supports a chain (A extends B extends C)", () => {
-    const dir = path.dirname(getConfigPath());
-    writeRawConfig(path.join(dir, "c.json"), JSON.stringify({ configVersion: "0.9.0", archiveRetentionDays: 30 }));
-    writeRawConfig(
-      path.join(dir, "b.json"),
-      JSON.stringify({ configVersion: "0.9.0", extends: "./c.json", semanticSearchMode: "auto" }),
-    );
-    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "./b.json" }));
+  test("is refused by a write too, and the file is not changed", () => {
+    writeRawConfig(getConfigPath(), JSON.stringify({ extends: "./base.json" }));
+    const before = fs.readFileSync(getConfigPath(), "utf8");
 
-    const config = loadConfig();
-    expect(config.archiveRetentionDays).toBe(30);
-    expect(config.semanticSearchMode).toBe("auto");
+    expect(() => updateConfig({ output: { detail: "full" } })).toThrow(/akm migrate apply/);
+    expect(fs.readFileSync(getConfigPath(), "utf8")).toBe(before);
   });
+});
 
-  test("throws ConfigError on a two-hop cycle", () => {
-    const dir = path.dirname(getConfigPath());
-    writeRawConfig(path.join(dir, "b.json"), JSON.stringify({ configVersion: "0.9.0", extends: getConfigPath() }));
-    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: path.join(dir, "b.json") }));
-
-    expect(() => loadConfig()).toThrow(ConfigError);
-    expect(() => loadConfig()).toThrow(/cycle/i);
-  });
-
-  test("throws ConfigError when extends resolves to a self-loop", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: getConfigPath() }));
-    expect(() => loadConfig()).toThrow(ConfigError);
-    expect(() => loadConfig()).toThrow(/cycle/i);
-  });
-
-  test("throws ConfigError on a missing extends file, naming the ref", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "./does-not-exist.json" }));
-    expect(() => loadConfig()).toThrow(ConfigError);
-    expect(() => loadConfig()).toThrow(/does-not-exist\.json/);
-  });
-
-  test("throws ConfigError when extends is not a non-empty string", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "" }));
-    expect(() => loadConfig()).toThrow(ConfigError);
-  });
-
-  test("a base config declaring a foreign configVersion is still merged underneath", () => {
-    // The base gets the same per-file pipeline as the local file: its
-    // `configVersion` is read as current rather than gating the merge, and the retired
-    // engines/defaults form it is written in is read as connections.
-    const dir = path.dirname(getConfigPath());
-    writeRawConfig(
-      path.join(dir, "old-base.json"),
-      JSON.stringify({
-        configVersion: "0.8.0",
-        defaults: { llmEngine: "legacy" },
-        engines: { legacy: { kind: "llm", endpoint: "https://api.example.test/v1/chat/completions", model: "m" } },
-      }),
-    );
-    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "./old-base.json" }));
-
-    const config = loadConfig();
-    expect(config.configVersion).toBe("0.9.0");
-    expect(config.connections?.default).toMatchObject({ endpoint: "https://api.example.test/v1/chat/completions" });
-  });
-
-  test("extends by a filesystem bundle asset ref (bundle//<path>), no index involved", () => {
-    const fleetDir = makeTmpDir();
-    try {
-      fs.mkdirSync(path.join(fleetDir, "config"), { recursive: true });
-      fs.writeFileSync(
-        path.join(fleetDir, "config", "shared.json"),
-        JSON.stringify({ configVersion: "0.9.0", archiveRetentionDays: 14 }),
-      );
-      writeRawConfig(
-        getConfigPath(),
-        JSON.stringify({
-          configVersion: "0.9.0",
-          bundles: { fleet: { path: fleetDir } },
-          extends: "fleet//config/shared.json",
-        }),
-      );
-
-      const config = loadConfig();
-      expect(config.archiveRetentionDays).toBe(14);
-    } finally {
-      cleanup(fleetDir);
-    }
-  });
-
-  test("extends bundle ref against a non-filesystem bundle is a ConfigError naming the bundle", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        configVersion: "0.9.0",
-        bundles: { fleet: { git: "https://example.test/fleet.git" } },
-        extends: "fleet//config/shared.json",
-      }),
-    );
-    expect(() => loadConfig()).toThrow(ConfigError);
-    expect(() => loadConfig()).toThrow(/fleet/);
-  });
-
-  test("rejects an absolute path after bundle//", () => {
-    const fleetDir = makeTmpDir();
-    try {
-      writeRawConfig(
-        getConfigPath(),
-        JSON.stringify({
-          configVersion: "0.9.0",
-          bundles: { fleet: { path: fleetDir } },
-          extends: "fleet///etc/passwd",
-        }),
-      );
-      expect(() => loadConfig()).toThrow(ConfigError);
-      expect(() => loadConfig()).toThrow(/absolute/);
-    } finally {
-      cleanup(fleetDir);
-    }
-  });
-
-  test("rejects a bundle//<path> that escapes the bundle's content root", () => {
-    const fleetDir = makeTmpDir();
-    try {
-      writeRawConfig(
-        getConfigPath(),
-        JSON.stringify({
-          configVersion: "0.9.0",
-          bundles: { fleet: { path: path.join(fleetDir, "content") } },
-          extends: "fleet//../outside.json",
-        }),
-      );
-      expect(() => loadConfig()).toThrow(ConfigError);
-      expect(() => loadConfig()).toThrow(/escapes/);
-    } finally {
-      cleanup(fleetDir);
-    }
-  });
-
-  test("rejects a bundle config symlink that physically escapes its content root", () => {
-    const fleetDir = makeTmpDir();
-    const outsideDir = makeTmpDir();
-    try {
-      fs.mkdirSync(path.join(fleetDir, "config"), { recursive: true });
-      fs.writeFileSync(
-        path.join(outsideDir, "shared.json"),
-        JSON.stringify({ configVersion: "0.9.0", archiveRetentionDays: 99 }),
-      );
-      fs.symlinkSync(path.join(outsideDir, "shared.json"), path.join(fleetDir, "config", "shared.json"));
-      writeRawConfig(
-        getConfigPath(),
-        JSON.stringify({
-          configVersion: "0.9.0",
-          bundles: { fleet: { path: fleetDir } },
-          extends: "fleet//config/shared.json",
-        }),
-      );
-      expect(() => loadConfig()).toThrow(/symbolic link outside/i);
-    } finally {
-      cleanup(fleetDir);
-      cleanup(outsideDir);
-    }
-  });
-
-  test("strips inherited host authority while retaining portable connection and harness settings", () => {
-    const dir = path.dirname(getConfigPath());
-    writeRawConfig(
-      path.join(dir, "base.json"),
-      JSON.stringify({
-        configVersion: "0.9.0",
-        connections: {
-          cloud: {
-            endpoint: "https://api.example.test/v1",
-            apiKey: "$INHERITED_KEY",
-            models: { fast: "portable-model" },
-          },
-        },
-        harnesses: {
-          inherited: {
-            platform: "claude",
-            models: { fast: "portable-model" },
-            bin: "/untrusted/bin",
-            args: ["--dangerous"],
-            workspace: "/untrusted/workspace",
-          },
-        },
-        experimental: { improveAutonomy: true },
-      }),
-    );
-    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "./base.json" }));
-
-    const config = loadConfig();
-    expect(config.harnesses?.inherited).toMatchObject({ platform: "claude", models: { fast: "portable-model" } });
-    expect(config.harnesses?.inherited).not.toHaveProperty("bin");
-    expect(config.harnesses?.inherited).not.toHaveProperty("args");
-    expect(config.harnesses?.inherited).not.toHaveProperty("workspace");
-    expect(config.connections?.cloud).toMatchObject({ endpoint: "https://api.example.test/v1" });
-    expect(config.connections?.cloud).not.toHaveProperty("apiKey");
-    expect(config.experimental).toBeUndefined();
-    expect(getConfigValueSource("harnesses.inherited.models")).toBe("extends:./base.json");
-    expect(getConfigValueSource("harnesses.inherited.bin")).toBe("default");
-  });
-
-  test("config get extends returns the locally configured ref (not silently dropped)", () => {
-    // Deliberate deviation from a literal "strip extends before validation"
-    // reading: `mutateConfig` (config set/unset) reads the EFFECTIVE config as
-    // `current` and writes a mutated copy of the SAME object back to the local
-    // file (pre-existing behavior — see DEFAULT_CONFIG baking into config.json
-    // on any write). Stripping `extends` from the effective object would mean
-    // any `config set` after adopting `extends` silently deletes the
-    // directive from disk. Keeping it lets it round-trip.
-    const dir = path.dirname(getConfigPath());
-    writeRawConfig(path.join(dir, "base.json"), JSON.stringify({ configVersion: "0.9.0", archiveRetentionDays: 7 }));
-    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "./base.json" }));
-
-    const config = loadConfig();
-    expect(config.archiveRetentionDays).toBe(7);
-    expect((config as unknown as Record<string, unknown>).extends).toBe("./base.json");
-  });
-
-  test("scheduler activation is host-local and never inherited through extends", () => {
-    const dir = path.dirname(getConfigPath());
-    writeRawConfig(
-      path.join(dir, "base.json"),
-      JSON.stringify({
-        configVersion: "0.9.0",
-        scheduler: { enabled: [{ kind: "task", ref: "fleet//tasks/untrusted" }] },
-      }),
-    );
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        configVersion: "0.9.0",
-        extends: "./base.json",
-        scheduler: {
-          enabled: [{ kind: "task", ref: "local//tasks/nightly", sourceId: `sha256:${"a".repeat(64)}` }],
-        },
-      }),
-    );
-
-    const warnings = captureWarnings(() => {
-      expect(loadConfig().scheduler?.enabled).toEqual(["local//tasks/nightly"]);
-    });
-    expect(warnings.join("\n")).toMatch(/ignoring inherited config key "scheduler"/i);
-  });
-
+describe("scheduler.enabled", () => {
   test("scheduler.enabled tolerates non-canonical and duplicate entries, including 0.9.17-alpha grant objects", () => {
     writeCurrentConfig({
       scheduler: {
@@ -1414,48 +1169,9 @@ describe("extends inheritance (#945)", () => {
     });
     expect(warnings.join("\n")).toMatch(/Ignoring scheduler\.enabled entry "tasks\/nightly"/);
   });
-
-  test("config set on an unrelated key after adopting extends does not duplicate the base's fields into the local file", () => {
-    // Round-1 review finding: mutateConfig used to write the entire
-    // extends-merged EFFECTIVE config back to the local file on any
-    // `config set`/`unset`, baking every inherited field (connections,
-    // improve.strategies, ...) into the local file on the very next
-    // ordinary write — defeating the whole point of `extends`.
-    const dir = path.dirname(getConfigPath());
-    writeRawConfig(
-      path.join(dir, "base.json"),
-      JSON.stringify({
-        configVersion: "0.9.0",
-        connections: {
-          fast: { endpoint: "https://api.example.test/v1", models: { fast: "base-model" } },
-        },
-        improve: { connection: "fast" },
-        archiveRetentionDays: 30,
-      }),
-    );
-    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "./base.json" }));
-
-    // `akm config set output.detail full` — an unrelated key. `updateConfig`
-    // goes through `mutateConfig` the same way `config set`'s CLI handler does.
-    updateConfig({ output: { detail: "full" } });
-
-    const raw = JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
-    expect(raw.extends).toBe("./base.json");
-    expect(raw.output).toEqual({ detail: "full" });
-    // The base's fields must NOT have been duplicated into the local file.
-    expect(raw.connections).toBeUndefined();
-    expect(raw.improve).toBeUndefined();
-    expect(raw.archiveRetentionDays).toBeUndefined();
-
-    // The effective (loaded) config is unaffected: still inherited.
-    const config = loadConfig();
-    expect(config.connections?.fast?.models).toEqual({ fast: "base-model" });
-    expect(config.archiveRetentionDays).toBe(30);
-    expect(config.output).toEqual({ format: "json", detail: "full" });
-  });
 });
 
-describe("getConfigValueSource (#945)", () => {
+describe("getConfigValueSource", () => {
   test("reports 'default' when no config.json exists", () => {
     expect(getConfigValueSource("semanticSearchMode")).toBe("default");
   });
@@ -1465,27 +1181,339 @@ describe("getConfigValueSource (#945)", () => {
     expect(getConfigValueSource("semanticSearchMode")).toBe("local");
   });
 
-  test("reports 'extends:<ref>' for a key that only the base sets", () => {
-    const dir = path.dirname(getConfigPath());
-    writeRawConfig(path.join(dir, "base.json"), JSON.stringify({ configVersion: "0.9.0", archiveRetentionDays: 30 }));
-    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "./base.json" }));
-
-    expect(getConfigValueSource("archiveRetentionDays")).toBe("extends:./base.json");
-  });
-
-  test("reports 'default' for a key neither the local file nor any base sets", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0" }));
+  test("reports 'default' for a key the local file does not set", () => {
+    writeRawConfig(getConfigPath(), JSON.stringify({}));
     expect(getConfigValueSource("archiveRetentionDays")).toBe("default");
   });
+});
 
-  test("prefers 'local' over an inherited value for the same key", () => {
-    const dir = path.dirname(getConfigPath());
-    writeRawConfig(path.join(dir, "base.json"), JSON.stringify({ configVersion: "0.9.0", archiveRetentionDays: 30 }));
-    writeRawConfig(
+// #852: an asset's `extraParams` (a workflow unit's `extra_params:`) may not
+// shadow a setting akm manages, and the issue names the portable setting to use
+// instead. A connection no longer has `extraParams` at all: its request fields
+// are written directly and sent as written.
+
+function firstIssue(extraParams: Record<string, unknown>): string {
+  const issue = validateExtraParams(extraParams)[0];
+  if (!issue) throw new Error("expected extraParams to be refused");
+  return formatExtraParamsIssue("extraParams", issue);
+}
+
+describe("an extraParams key that shadows a portable setting is refused, naming the setting", () => {
+  test.each([
+    ["reasoning_effort", "none", "reasoningEffort"],
+    ["temperature", 0.2, "temperature"],
+    ["maxtokens", 512, "maxTokens"],
+    ["enable_thinking", true, "enableThinking"],
+  ])("extraParams.%s names %s", (key, value, field) => {
+    const message = firstIssue({ [key]: value });
+    expect(message).toContain("is protected by AKM");
+    expect(message).toContain(`set ${field} instead`);
+  });
+
+  test("a protected key with no portable equivalent is refused, and the error names the remedy", () => {
+    const message = firstIssue({ stream: true });
+    expect(message).toContain("stream is protected by AKM");
+    expect(message).toContain("AKM controls streaming internally");
+  });
+
+  test("credential-shaped keys are refused at any depth, inside arrays too", () => {
+    expect(validateExtraParams({ nested: { "API-Key": "leak" } })).toHaveLength(1);
+    expect(validateExtraParams({ provider: [{ auth: [{ API_KEY: "leak" }] }] })).toHaveLength(1);
+  });
+
+  test("chat_template_kwargs is the enableThinking setting's to send", () => {
+    expect(firstIssue({ chat_template_kwargs: { enable_thinking: true } })).toContain("set enableThinking instead");
+  });
+});
+
+/**
+ * D8 — the `experimental.improveAutonomy` opt-in key.
+ *
+ * Before D8 this key was documented but did not exist: it was absent from the
+ * schema, read nowhere in the runtime, and `akm config set
+ * experimental.improveAutonomy true` failed with `Unknown config key`. The
+ * documentation therefore inverted the safety posture — an operator could read
+ * that autonomy required an opt-in, never set the key, and conclude they were
+ * review-first while consolidate was deleting files.
+ *
+ * These pin the key's existence and its default. The gating behaviour itself is
+ * pinned by `tests/improve-autonomy-gate.test.ts`, which asserts on
+ * the filesystem rather than on this flag.
+ */
+
+const BASE = {};
+
+describe("experimental.improveAutonomy schema", () => {
+  test("accepts the key and round-trips true", () => {
+    const parsed = AkmConfigSchema.parse({ ...BASE, experimental: { improveAutonomy: true } });
+    expect(parsed.experimental?.improveAutonomy).toBe(true);
+  });
+
+  test("accepts the key set to false", () => {
+    const parsed = AkmConfigSchema.parse({ ...BASE, experimental: { improveAutonomy: false } });
+    expect(parsed.experimental?.improveAutonomy).toBe(false);
+  });
+
+  test("rejects a non-boolean value rather than coercing it", () => {
+    expect(() => AkmConfigSchema.parse({ ...BASE, experimental: { improveAutonomy: "yes" } })).toThrow();
+  });
+
+  test("the whole section is optional", () => {
+    expect(() => AkmConfigSchema.parse(BASE)).not.toThrow();
+  });
+});
+
+describe("isImproveAutonomyEnabled", () => {
+  test("is OFF when the section is absent — autonomy is opt-in, never inferred", () => {
+    expect(isImproveAutonomyEnabled({})).toBe(false);
+  });
+
+  test("is OFF when the section exists but the key does not", () => {
+    expect(isImproveAutonomyEnabled({ experimental: {} })).toBe(false);
+  });
+
+  test("is OFF when explicitly false", () => {
+    expect(isImproveAutonomyEnabled({ experimental: { improveAutonomy: false } })).toBe(false);
+  });
+
+  test("is ON only when explicitly true", () => {
+    expect(isImproveAutonomyEnabled({ experimental: { improveAutonomy: true } })).toBe(true);
+  });
+});
+
+/** The three example configs the rework is specified by: each is the current form, loads unchanged and validates. */
+
+type Dict = Record<string, unknown>;
+
+describe("the example configs load unchanged and validate", () => {
+  const examples = path.join(import.meta.dir, "fixtures", "config-examples");
+
+  test.each(["1-basic", "2-harness", "3-power"])("%s.jsonc", (name) => {
+    const raw = JSON.parse(stripJsonComments(fs.readFileSync(path.join(examples, `${name}.jsonc`), "utf8"))) as Dict;
+    expect(AkmConfigSchema.safeParse({ semanticSearchMode: "off", ...raw }).success).toBe(true);
+    // Every key is one akm reads or a request field.
+    expect(unknownConfigKeyPaths({ ...raw })).toEqual([]);
+  });
+
+  test.each([
+    ["1-basic", "off"],
+    ["2-harness", "auto"],
+    ["3-power", "auto"],
+  ] as const)("%s.jsonc, loaded as written, reads semantic search as %s", (name, mode) => {
+    // The examples carry no semanticSearchMode: an `embedding` block alone says semantic search is wanted.
+    fs.mkdirSync(path.dirname(getConfigPath()), { recursive: true });
+    fs.copyFileSync(path.join(examples, `${name}.jsonc`), getConfigPath());
+    resetConfigCache();
+    expect(loadConfig().semanticSearchMode).toBe(mode);
+    resetConfigCache();
+  });
+
+  test("3-power.jsonc, loaded from a file: triage judges on the anthropic connection's reasoning model, the quality gate on anthropic's balanced one", () => {
+    const raw = JSON.parse(stripJsonComments(fs.readFileSync(path.join(examples, "3-power.jsonc"), "utf8"))) as Dict;
+    const improve = raw.improve as Dict;
+    fs.mkdirSync(path.dirname(getConfigPath()), { recursive: true });
+    fs.writeFileSync(
       getConfigPath(),
-      JSON.stringify({ configVersion: "0.9.0", extends: "./base.json", archiveRetentionDays: 5 }),
+      JSON.stringify({
+        ...raw,
+        improve: {
+          ...improve,
+          strategy: "nightly",
+          strategies: {
+            nightly: { processes: { triage: { enabled: true, judgment: true }, distill: { enabled: true } } },
+          },
+        },
+      }),
     );
+    resetConfigCache();
+    const config = loadConfig();
+    const plan = resolveImprovePlan("nightly", config);
+    expect(plan.triageJudgment).toMatchObject({ kind: "connection", name: "anthropic", model: "claude-opus-4-7" });
+    expect(plan.processes.distill.runner).toMatchObject({ kind: "connection", name: "default", model: "qwen3-32b" });
+    // Nothing names a model for the gate's judge, so it asks for the shipped judge alias: `balanced`.
+    expect(resolveQualityGateJudge(config, undefined, "reflect")).toMatchObject({
+      kind: "connection",
+      name: "anthropic",
+      model: "claude-sonnet-4-5",
+    });
+    resetConfigCache();
+  });
+});
 
-    expect(getConfigValueSource("archiveRetentionDays")).toBe("local");
+{
+  /**
+   * A harness takes no connection or inference of its own: inference for opencode
+   * belongs in opencode's own config, and a connection's model alias carries it into
+   * model work. A key a harness does not read is warned about once and
+   * ignored; it never fails the load.
+   */
+
+  function captureWarnings(run: () => void): string[] {
+    const warnings: string[] = [];
+    _resetWarnOnceForTests();
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+    try {
+      run();
+    } finally {
+      _setWarnSinkForTests(undefined);
+    }
+    return warnings;
+  }
+
+  test.each([
+    "endpoint",
+    "apiKey",
+    "temperature",
+    "maxTokens",
+    "contextLength",
+    "reasoning_effort",
+  ])("%s is not read by a harness: the load warns once and ignores it", (key) => {
+    const text = JSON.stringify({ harnesses: { opencode: { [key]: "x" } } });
+    const warnings = captureWarnings(() => {
+      expect(() => parseAndValidateConfigText(text)).not.toThrow();
+    });
+    expect(warnings.filter((w) => w.includes(`harnesses.opencode.${key}`) && w.includes("ignored"))).toHaveLength(1);
+  });
+
+  // `agent` names the harness's default native agent, so it needs a platform that can run one.
+  describe("a harness's default agent", () => {
+    const configWith = (platform: string, agent: string) => ({
+      semanticSearchMode: "off" as const,
+      harnesses: { h: { platform: platform as "claude", agent } },
+    });
+
+    test.each(["opencode", "claude"])("is used on %s", (platform) => {
+      const runner = resolveTarget({ config: configWith(platform, "akm-workflow"), layers: [] });
+      expect(runner).toMatchObject({ kind: "harness", agent: "akm-workflow" });
+    });
+
+    test("is rejected by the schema when empty", () => {
+      expect(validateConfigShape(configWith("opencode", "")).ok).toBe(false);
+    });
+
+    test("is warned about once and ignored on a harness with no native agent selector", () => {
+      const warnings = captureWarnings(() => {
+        const runner = resolveTarget({ config: configWith("codex", "x"), layers: [] });
+        expect(runner).not.toHaveProperty("agent");
+      });
+      expect(warnings.some((w) => w.includes('Harness "h"') && w.includes("no native agents"))).toBe(true);
+    });
+  });
+
+  describe("a harness's models", () => {
+    const configWith = (models: unknown) => ({
+      semanticSearchMode: "off" as const,
+      harnesses: { claude: { models } },
+    });
+
+    test("map an alias to a model name", () => {
+      expect(validateConfigShape(configWith({ fast: "claude-haiku-4-5" })).ok).toBe(true);
+    });
+
+    test("take the model name only: an entry written as a connection's object is read for its model, and needs one", () => {
+      expect(validateConfigShape(configWith({ fast: { model: "claude-haiku-4-5", temperature: 0.2 } })).ok).toBe(true);
+      expect(validateConfigShape(configWith({ fast: { temperature: 0.2 } })).ok).toBe(false);
+    });
+  });
+}
+
+// Phase 2: triage is a first-class improve process. These guard that a triage
+// block under `processes` parses and is accepted, that the triage-specific
+// fields validate, and that enabled unknown process keys are rejected by the
+// `ImproveProfileProcessesSchema` superRefine.
+
+describe("triage improve-process config schema", () => {
+  test("a triage block under processes parses and is accepted", () => {
+    const result = ImproveProfileConfigSchema.safeParse({
+      processes: {
+        reflect: { enabled: true },
+        triage: {
+          enabled: true,
+          applyMode: "queue",
+          maxAcceptsPerRun: 25,
+          judgment: { connection: "fast", timeoutMs: 600000 },
+        },
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  test("triage-specific fields validate on ImproveProcessConfigSchema", () => {
+    expect(
+      ImproveProcessConfigSchema.safeParse({
+        enabled: false,
+        applyMode: "promote",
+        maxAcceptsPerRun: 10,
+        judgment: { harness: "agent" },
+      }).success,
+    ).toBe(true);
+
+    // applyMode is constrained to queue|promote
+    expect(ImproveProcessConfigSchema.safeParse({ applyMode: "delete" }).success).toBe(false);
+    // maxAcceptsPerRun must be a positive integer
+    expect(ImproveProcessConfigSchema.safeParse({ maxAcceptsPerRun: 0 }).success).toBe(false);
+    // The retired drain-policy keys are tolerated like any unknown key, never fatal.
+    expect(
+      ImproveProcessConfigSchema.safeParse({ policy: "personal-stash", maxDiffLines: -1, rejectEmpty: true }).success,
+    ).toBe(true);
+    // An unknown judgment key is not fatal: the loader warns about it and it changes nothing.
+    const withUnknown = ImproveProcessConfigSchema.safeParse({ judgment: { connection: "fast", bogus: 1 } });
+    expect(withUnknown.success).toBe(true);
+    // judgment.mode is retired in favor of a named connection or harness; like any unknown key it is tolerated, not fatal.
+    expect(ImproveProcessConfigSchema.safeParse({ judgment: { mode: "llm" } }).success).toBe(true);
+    // judgment.timeoutMs accepts null
+    expect(ImproveProcessConfigSchema.safeParse({ judgment: { timeoutMs: null } }).success).toBe(true);
+  });
+
+  test("an enabled unknown process is rejected instead of disappearing from the execution plan", () => {
+    const enabled = ImproveProfileConfigSchema.safeParse({
+      processes: {
+        triage: { enabled: true },
+        reflecct: { enabled: true, connection: "missing" },
+      },
+    });
+    expect(enabled.success).toBe(false);
+    if (enabled.success) throw new Error("fixture must fail validation");
+    expect(enabled.error.issues[0]?.path).toEqual(["processes", "reflecct"]);
+    expect(enabled.error.issues[0]?.message).toContain("Unknown enabled improve process");
+
+    expect(ImproveProfileConfigSchema.safeParse({ processes: { futureProcess: { enabled: false } } }).success).toBe(
+      true,
+    );
+  });
+
+  // 0.9.17-alpha.9: graphExtraction is a genuinely retired process name (the
+  // LLM entity-graph extraction it ran is gone), not a typo — unlike an
+  // unrecognized name, it must not fail config loading even when enabled.
+  test("an enabled processes.graphExtraction is tolerated, not rejected like an unknown process", () => {
+    const result = ImproveProfileConfigSchema.safeParse({
+      processes: {
+        reflect: { enabled: true },
+        graphExtraction: { enabled: true, fullScan: true },
+      },
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    // Kept in memory as an ordinary unknown key — nothing reads it any more.
+    expect((result.data.processes as Record<string, unknown> | undefined)?.graphExtraction).toEqual({
+      enabled: true,
+      fullScan: true,
+    });
+  });
+
+  test("triage may select any connection or harness by name; whether it is configured is resolved when it is used", () => {
+    const base = {
+      harnesses: { reviewer: { platform: "claude" } },
+    } as const;
+    for (const selection of [{ harness: "reviewer" }, { connection: "missing" }, { harness: "missing" }]) {
+      expect(
+        validateConfigShape({
+          ...base,
+          improve: { strategies: { custom: { processes: { triage: { enabled: true, ...selection, judgment: {} } } } } },
+        }).ok,
+      ).toBe(true);
+    }
   });
 });

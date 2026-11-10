@@ -5,7 +5,7 @@
   "adapterStatus": "IMPLEMENTED — validation delegates to the canonical strict task-v3 parser.",
   "specSource": "docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md §6 (task validation column: 'invalid-task-yaml: schedule+enabled+one target'), §2/§5.1 (Diagnostic {file, issue, detail, fixed}).",
   "realWorldSource": [
-    "AKM-native strict task-v3 source contract — src/tasks/source-v3.ts and schemas/akm-task.json."
+    "AKM-native strict task-v3 source contract — src/tasks/task-source.ts and schemas/akm-task.json."
   ],
   "notes": [
     "The invalid-task-yaml rule requires exactly one executable selector (uses XOR run) and exactly one scheduling source. two-targets.yml declares both selectors.",

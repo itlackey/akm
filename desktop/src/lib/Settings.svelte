@@ -88,11 +88,6 @@
     bundles: Bundle[],
   ): SettingsGroup[] {
     const names = listing?.bundles.map((bundle) => bundle.name) ?? bundles.map((bundle) => bundle.name);
-    const options: Array<[string, string]> = [
-      ["", "Automatic"],
-      ...names.map((name) => [name, name] as [string, string]),
-    ];
-    const target = config?.automaticWriteTarget;
     const unavailableWrites = (listing?.bundles ?? bundles)
       .filter(
         (bundle) =>
@@ -129,24 +124,16 @@
         title: "Library defaults",
         description: "Where AKM reads by default and writes new knowledge, memories and accepted proposals.",
         fields: [
-          { key: "defaultBundle", label: "Default bundle", kind: "select", options },
           {
-            key: "defaultWriteTarget",
-            label: "Default write target",
+            key: "defaultBundle",
+            label: "Default bundle",
             kind: "select",
             disabledOptions: unavailableWrites,
-            hint: unavailableWrites.includes(String(config?.config.defaultWriteTarget ?? ""))
-              ? "The configured target cannot accept writes. Choose an enabled writable bundle."
+            hint: unavailableWrites.includes(String(config?.config.defaultBundle ?? ""))
+              ? "The default bundle cannot accept writes. Choose an enabled writable bundle."
               : "New content needs an enabled, writable AKM bundle.",
             options: [
-              [
-                "",
-                target
-                  ? target.workingStash
-                    ? "Automatic (working stash)"
-                    : `Automatic (${target.name})`
-                  : "None (create a library first)",
-              ],
+              ["", "Automatic"],
               ...names.map(
                 (name) =>
                   [name, unavailableWrites.includes(name) ? `${name} (unavailable for writes)` : name] as [
@@ -156,12 +143,12 @@
               ),
             ],
           },
-          { key: "archiveRetentionDays", label: "Keep archived assets for (days)", kind: "number" },
+          { key: "archiveRetentionDays", label: "Expire pending proposals after (days)", kind: "number" },
           {
             key: "feedback.requireReason",
-            label: "Require a reason with positive feedback too",
+            label: "Require a reason with negative feedback",
             kind: "boolean",
-            hint: "Negative feedback always requires a reason.",
+            hint: "When off, negative feedback without a reason only warns.",
           },
         ],
       },
@@ -335,8 +322,7 @@
     </div>{/if}
   {#if loading && !config}<p role="status">Loading settings…</p>{:else if route !== "config"}
     <p class="muted" hidden={!!manageName}>
-      Default bundle: <strong>{listing?.defaultBundle ?? "none yet"}</strong>. New content goes to:
-      <strong>{listing?.defaultWriteTarget ?? "a bundle chosen automatically"}</strong>.
+      Default bundle: <strong>{listing?.defaultBundle ?? "none yet"}</strong>.
       <a href="/settings/config">Change library defaults</a> · <a href="/setup">Run setup again</a>
     </p>
     {#if manageName}<a class="bundle-back" href="/settings/bundles"
@@ -352,15 +338,7 @@
         <p>Sources, indexed contents and Git status.</p>
       </div>
       <div class="bundle-panels" class:managing={!!manageName}>
-        {#if listing?.workingStash}<article class="card" hidden={!!manageName}>
-            <h3>Working stash</h3>
-            <p class="mono wrap">{listing.workingStash.path}</p>
-            <p>
-              {listing.workingStash.git
-                ? `Branch ${listing.workingStash.git.branch ?? "detached HEAD"} · ${listing.workingStash.git.dirtyPaths} uncommitted paths`
-                : "Not a Git repository."}
-            </p>
-          </article>{/if}{#each listing?.bundles ?? [] as bundle (bundle.name)}<SettingsBundleCard
+        {#each listing?.bundles ?? [] as bundle (bundle.name)}<SettingsBundleCard
             {bundle}
             {action}
             busy={busy || loading}
@@ -528,8 +506,7 @@
             <div class="settings-intro">
               <h2 id="advanced-settings">Advanced configuration</h2>
               <p>
-                Set or unset a supported key. Objects and lists take JSON. Clearing a value removes its local override;
-                inherited values can still apply.
+                Set or unset a supported key. Objects and lists take JSON. Clearing a value removes it from config.json.
               </p>
             </div>
             <form

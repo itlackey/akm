@@ -7,7 +7,7 @@
  *
  *   1. Environment variables in {@link HARNESSED}. The preload-time
  *      bottom layer (`installSuiteWideSandbox`) repoints `HOME`, all four
- *      `XDG_*`, and the `AKM_*_DIR` overrides to a per-process sandbox
+ *      `XDG_*`, and the location overrides to a per-process sandbox
  *      directory under `os.tmpdir()`. Test files that set their own values
  *      via `beforeAll` / `beforeEach` still take precedence — but if a
  *      test forgets, the process-wide defaults keep production code's
@@ -53,6 +53,12 @@ import { _setAssetMutationLeaseSyncTimingForTests } from "../src/indexer/index-w
 import { agentRuntime } from "../src/integrations/agent/runtime";
 import { _setOpencodeVersionProbeForTests } from "../src/integrations/harnesses/opencode/version";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
+import {
+  installChildProcessGuard,
+  schedulerStubDir,
+  takeViolations,
+  unsandboxedDirs,
+} from "./_helpers/isolation-guard";
 import { resetAllSeams } from "./_helpers/seams";
 
 /**
@@ -64,11 +70,14 @@ import { resetAllSeams } from "./_helpers/seams";
  */
 const HARNESSED: readonly string[] = [
   // Storage layout overrides.
-  "AKM_BUNDLE_DIR",
+  "AKM_CONFIG_FILE",
+  // Retired: akm refuses to start with one set (src/core/paths.ts). Listed so a test of that refusal, or a
+  // developer's exported one, is restored or removed like any other and never reaches the leak tripwire.
   "AKM_CONFIG_DIR",
   "AKM_CACHE_DIR",
   "AKM_DATA_DIR",
   "AKM_STATE_DIR",
+  "AKM_BUNDLE_DIR",
   // XDG base directories.
   "XDG_CONFIG_HOME",
   "XDG_CACHE_HOME",
@@ -76,16 +85,16 @@ const HARNESSED: readonly string[] = [
   "XDG_STATE_HOME",
   // Home directory itself.
   "HOME",
+  // Windows ignores HOME and the XDG variables: its locations come from these (set below, on win32 only).
+  ...(process.platform === "win32" ? ["USERPROFILE", "APPDATA", "LOCALAPPDATA"] : []),
   // Codex and Claude Code session-log roots (pointed into the sandbox at preload).
   "CODEX_HOME",
   "CLAUDE_CONFIG_DIR",
   "OPENCODE_TEST_HOME",
-  // Diagnostic / secret env vars production code reads.
-  "AKM_VERBOSE",
+  // Secret env vars production code reads.
   "AKM_LLM_API_KEY",
   "AKM_EMBED_API_KEY",
-  // Registry overrides used by registry-providers tests.
-  "AKM_REGISTRY_URL",
+  // Registry install override used by registry-providers tests.
   "AKM_NPM_REGISTRY",
 ];
 
@@ -108,6 +117,16 @@ function removeSuiteRoot(): void {
   }
 }
 
+/** The Windows profile folders, under the suite sandbox: what akm reads there instead of HOME and XDG_*. */
+function windowsProfileEnv(root: string): Record<string, string> {
+  const home = path.join(root, "home");
+  return {
+    USERPROFILE: home,
+    APPDATA: path.join(home, "AppData", "Roaming"),
+    LOCALAPPDATA: path.join(home, "AppData", "Local"),
+  };
+}
+
 function installSuiteWideSandbox(): void {
   suiteSandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-test-suite-"));
   registerTestRoot(suiteSandboxRoot);
@@ -123,18 +142,24 @@ function installSuiteWideSandbox(): void {
   process.env.XDG_CACHE_HOME = path.join(suiteSandboxRoot, "xdg-cache");
   process.env.XDG_DATA_HOME = path.join(suiteSandboxRoot, "xdg-data");
   process.env.XDG_STATE_HOME = path.join(suiteSandboxRoot, "xdg-state");
-  // The AKM_*_DIR overrides take precedence over XDG in src/core/paths.ts.
-  // If a developer's shell exports any of them, they would defeat the XDG
-  // sandbox above and leak production paths into the suite. Delete them at
-  // startup so the XDG sandbox always wins; tests that need a specific
-  // AKM_*_DIR set it explicitly (and the afterEach tripwire restores it).
+  // On Windows akm resolves config, data, cache, state and the default bundle from the profile folders, not from
+  // HOME or XDG_*: without these the sandbox would not hold, and the afterEach tripwire would see the runner's own.
+  if (process.platform === "win32") {
+    for (const [name, value] of Object.entries(windowsProfileEnv(suiteSandboxRoot))) process.env[name] = value;
+  }
+  // AKM_CONFIG_FILE takes precedence over XDG in src/core/paths.ts, and the retired AKM_*_DIR variables (and an
+  // AKM_BUNDLE_DIR naming a bundle the config does not) make akm
+  // refuse to start. If a developer's shell exports any of them, they would defeat the XDG sandbox above or fail
+  // every test. Delete them at startup so the XDG sandbox always wins; tests that need one set it explicitly (and
+  // the afterEach tripwire restores it).
+  delete process.env.AKM_CONFIG_FILE;
   delete process.env.AKM_CONFIG_DIR;
   delete process.env.AKM_DATA_DIR;
   delete process.env.AKM_CACHE_DIR;
   delete process.env.AKM_STATE_DIR;
-  // Diagnostic / secret env vars must start unset so production code paths
+  delete process.env.AKM_BUNDLE_DIR;
+  // Secret env vars must start unset so production code paths
   // see a clean default. Tests that need them set should do so explicitly.
-  delete process.env.AKM_VERBOSE;
   delete process.env.AKM_LLM_API_KEY;
   delete process.env.AKM_EMBED_API_KEY;
   // The Codex session reader's default root is `os.homedir()/.codex`, and bun's
@@ -167,6 +192,32 @@ function installSuiteWideSandbox(): void {
 }
 
 installSuiteWideSandbox();
+
+/**
+ * Production akm does not know it is under a test, so what used to stop a test reaching the developer's real
+ * directories and scheduler (the `NODE_ENV=test` / `BUN_TEST` branches in `src/`) is this file's job, with
+ * `tests/_helpers/isolation-guard.ts`:
+ *   - HOME, every XDG_*_HOME and the AKM_*_DIR overrides point into the suite sandbox (above), healed before each
+ *     test.
+ *   - `afterEach` fails a test that leaves any of akm's directories (config, data, cache, state, default stash)
+ *     resolving outside the temp root. This is detection after the fact, not prevention: a write that lands in a
+ *     real directory while the test runs is not stopped, and a test that points HOME outside the temp root and
+ *     restores it before it ends is not caught. `bun test` run from a directory whose bunfig.toml does not load
+ *     this file has none of these protections.
+ *   - `crontab` and `launchctl` on PATH are stubs, and a child given no `env` is given this process's, so a child
+ *     that takes this process's environment (a node `spawnSync`, `execSync`, the scheduler backend's `crontab`)
+ *     finds the stubs first, never the developer's.
+ *   - A child akm started with an environment of its own is refused when that environment would reach a real
+ *     directory or scheduler binary, however it is launched (directly, behind `env`, or by a shell command line).
+ * The native scheduler gate (`AKM_NATIVE_TEST_BIN`) runs a compiled akm against the real per-user scheduler on
+ * purpose, in directories of its own: it is the one run these protections do not apply to.
+ */
+if (!process.env.AKM_NATIVE_TEST_BIN) {
+  if (process.platform !== "win32") {
+    process.env.PATH = [schedulerStubDir(suiteSandboxRoot ?? os.tmpdir()), process.env.PATH ?? ""].join(path.delimiter);
+  }
+  installChildProcessGuard();
+}
 
 /**
  * akm's own runtime with no fake would fetch a 114 MB OpenCode binary and run it
@@ -206,7 +257,7 @@ const baselineEnvKeys: Set<string> = new Set(Object.keys(process.env));
 // down the *directory* but leaks the *env var* or leaves *config-file* content
 // in the shared sandbox; the next file inherits it):
 //
-//   1. Env leak  — e.g. AKM_BUNDLE_DIR left pointing at a now-deleted /tmp dir.
+//   1. Env leak  — e.g. XDG_DATA_HOME left pointing at a now-deleted /tmp dir.
 //   2. FS leak   — e.g. a config.json with a stale stashDir written into the
 //                  shared suite-sandbox XDG_CONFIG_HOME.
 //
@@ -230,15 +281,8 @@ const SANDBOX_ENV: Record<string, string> = {
   XDG_CACHE_HOME: path.join(suiteSandboxRoot ?? "", "xdg-cache"),
   XDG_DATA_HOME: path.join(suiteSandboxRoot ?? "", "xdg-data"),
   XDG_STATE_HOME: path.join(suiteSandboxRoot ?? "", "xdg-state"),
+  ...(process.platform === "win32" ? windowsProfileEnv(suiteSandboxRoot ?? "") : {}),
 };
-
-const AKM_DIR_OVERRIDES: readonly string[] = [
-  "AKM_BUNDLE_DIR",
-  "AKM_CONFIG_DIR",
-  "AKM_CACHE_DIR",
-  "AKM_DATA_DIR",
-  "AKM_STATE_DIR",
-];
 
 /** True iff `dir` is the temp root or strictly within it. */
 function isUnderTmp(dir: string): boolean {
@@ -311,17 +355,7 @@ function healSandboxEnv(): void {
     }
   }
 
-  // Repair 2: AKM_*_DIR overrides have NO sandbox baseline (unset at preload).
-  // Drop any that leaked to a missing or out-of-tmp dir; production then falls
-  // back to the sandbox HOME/XDG. Valid live /tmp overrides are preserved.
-  for (const key of AKM_DIR_OVERRIDES) {
-    const current = process.env[key];
-    if (current !== undefined && !isLiveTmpDir(current)) {
-      delete process.env[key];
-    }
-  }
-
-  // Repair 3: when using the shared sandbox config (test didn't override
+  // Repair 2: when using the shared sandbox config (test didn't override
   // XDG_CONFIG_HOME), drop a leftover config.json so a prior file's config
   // can't bleed in. (Verified: no test persists shared-sandbox config across
   // tests.) Guarded by safeRm/safeMkdir → can only touch the /tmp sandbox.
@@ -414,6 +448,14 @@ afterEach(() => {
   if (snapshot && globalThis.fetch !== snapshot.fetch) {
     leakReasons.push("globalThis.fetch left replaced");
     globalThis.fetch = snapshot.fetch;
+  }
+
+  // Tripwire 4: a directory akm resolves outside the temp root, or a child process the guard refused (a test that
+  // catches the refusal still fails here).
+  if (!process.env.AKM_NATIVE_TEST_BIN) {
+    const outside = unsandboxedDirs(process.env);
+    if (outside.length > 0) leakReasons.push(`akm resolves ${outside.join(", ")} outside the temp root`);
+    leakReasons.push(...takeViolations());
   }
 
   // Restore the harnessed env vars from the snapshot.

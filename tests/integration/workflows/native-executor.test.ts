@@ -17,7 +17,7 @@ import {
 import { computePlanHash } from "../../../src/workflows/ir/plan-hash";
 import type { WorkflowPlan, WorkflowPlanStep } from "../../../src/workflows/plan";
 import { completeWorkflowStep, getWorkflowStatus } from "../../../src/workflows/runtime/runs";
-import { type Cleanup, sandboxEnvDir } from "../../_helpers/sandbox";
+import { type Cleanup, sandboxAkmDir } from "../../_helpers/sandbox";
 import { withSeam } from "../../_helpers/seams";
 import {
   executeStepPlan as executeFrozenStepPlan,
@@ -101,7 +101,7 @@ function useFrozenPlan(frozen: WorkflowPlan): () => Promise<WorkflowPlan> {
 }
 
 beforeEach(() => {
-  const sandboxed = sandboxEnvDir("akm-native-exec-", "AKM_DATA_DIR");
+  const sandboxed = sandboxAkmDir("akm-native-exec-", "data");
   tmpDir = sandboxed.dir;
   cleanup = sandboxed.cleanup;
 });
@@ -209,7 +209,7 @@ Do the work.
 
     // No bundle is configured here, so the cause is reported as itself.
     expect(result.ok).toBe(false);
-    expect(result.summary).toContain('Step "work" cannot run: No bundle directory found');
+    expect(result.summary).toContain('Step "work" cannot run: No default bundle is configured');
     expect(result.summary).not.toContain("..");
     expect(dispatched).toBe(0);
   });
@@ -755,7 +755,7 @@ describe("executeStepPlan — empty free-text output is 'no output' (PR #714 com
     // is empty), not a per-unit one. Reading `computeStepWorkList`'s
     // unit-construction loop confirms there is no remaining code path that
     // produces a per-unit `resolved: { ok: false }` — reported to the
-    // orchestrating agent (see the identical note in `step-work.test.ts`).
+    // orchestrating agent.
     // The still-true parts of the original narrative — deterministic failure,
     // "resolved to null" in the message, zero dispatch — are preserved below.
     seedRun({
@@ -1053,7 +1053,7 @@ Summarize the reviews (declared inputs above carry the full array and its first 
 `;
 
   test("the documented addressing works end-to-end: solo result feeds map.over, collect array feeds a later unit", async () => {
-    // The flagship docs example shape (docs/reference/workflows.md): a solo
+    // The flagship docs example shape (docs/guides/author-workflows.md): a solo
     // unit's structured result is the step output — NOT the internal
     // evidence envelope {units, itemCount} — and a collect fan-out's output
     // is the array of per-item results in item order. `summarize` addresses

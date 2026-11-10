@@ -98,7 +98,7 @@ export interface ResolvedExecution {
   readonly request: ResolvedExecutionRequestV1;
   /** Where the request runs. Credentials are still symbolic. */
   readonly runner: RunnerSpec;
-  /** The layer behind each request field, for `akm task explain` and `command run --dry-run`. */
+  /** The layer behind each request field, for `akm task explain` and `command --dry-run`. */
   readonly provenance: Readonly<Record<string, ExecutionFieldProvenance>>;
 }
 
@@ -195,7 +195,7 @@ export function resolveExecution(input: ResolveExecutionInput): ResolvedExecutio
   const provenance: Record<string, ExecutionFieldProvenance> = {};
   const targetLayer = [...layers]
     .reverse()
-    .find((layer) => has(layer.values, "connection") || has(layer.values, "harness") || has(layer.values, "engine"));
+    .find((layer) => has(layer.values, "connection") || has(layer.values, "harness"));
   provenance.target = targetLayer
     ? explicit(targetLayer)
     : { layer: "installation-defaults", kind: "installation", via: "explicit" };

@@ -3,17 +3,16 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * An improve process's `llm` overlay (`improve.strategies.<s>.processes.<p>.llm`)
- * reaches a connection's model work. Model work resolves its runner once,
- * freezes it in the improve plan, and every stage call resolves from that
- * runner again, so the overlay must survive that round trip. With no overlay,
- * akm sends nothing of its own and the connection's own request fields apply.
+ * A connection's model alias carries request fields (`models.<alias>: { model, ...fields }`), and they reach a
+ * connection's improve model work. Model work resolves its runner once, freezes it in the improve plan, and every
+ * stage call resolves from that runner again, so the fields must survive that round trip. With none, akm sends
+ * nothing of its own and the connection's own request fields apply.
  */
 
 import { describe, expect, test } from "bun:test";
 import { resolveImproveExecution } from "../../../src/commands/improve/execution";
 import type { AkmConfig } from "../../../src/core/config/config";
-import { effectiveRequestFields } from "../../../src/core/llm-inference";
+import { effectiveRequestFields, thinkingSetting } from "../../../src/core/llm-inference";
 import { buildExecution, resolveExecution } from "../../../src/integrations/agent/execution";
 import { runExecution } from "../../../src/integrations/agent/runner-dispatch";
 import type { ChatCompletionConfig } from "../../../src/llm/client";
@@ -23,13 +22,11 @@ const CONNECTION = {
   models: { fast: "krang/chat/qwen3.8-27b" },
 };
 
-function configFor(connection: Record<string, unknown>, llm?: Record<string, unknown>): AkmConfig {
+function configFor(connection: Record<string, unknown>): AkmConfig {
   return {
-    configVersion: "0.9.0",
     connections: { x: connection },
     improve: {
       strategies: { s: { processes: { reflect: { enabled: true } } } },
-      ...(llm ? { processes: { reflect: { llm } } } : {}),
     },
   } as unknown as AkmConfig;
 }
@@ -55,19 +52,24 @@ async function dispatchedAgain(runner: ReturnType<typeof resolveReflect>["runner
 }
 
 describe("improve model work on a connection", () => {
-  test("the process overlay survives the frozen runner and reaches the chat call", async () => {
-    const config = configFor(CONNECTION, { reasoningEffort: "low", temperature: 0.2 });
-    const resolved = resolveReflect(config);
-
-    expect(resolved.notices.filter((notice) => (notice.field ?? "").startsWith("inference."))).toEqual([]);
-    const { connection } = await dispatchedAgain(resolved.runner);
-    expect(connection).toMatchObject({ model: "krang/chat/qwen3.8-27b" });
-    // The runner the plan froze holds the connection's fields and the process's settings apart.
-    expect(resolved.runner).toMatchObject({ request: {}, inference: { temperature: 0.2, reasoningEffort: "low" } });
-    expect(effectiveRequestFields(connection.request, connection.inference)).toEqual({
-      temperature: 0.2,
-      reasoning_effort: "low",
+  test("an alias's request fields survive the frozen runner and reach the chat call", async () => {
+    const config = configFor({
+      endpoint: CONNECTION.endpoint,
+      models: {
+        fast: {
+          model: "krang/chat/qwen3.8-27b",
+          temperature: 0.2,
+          chat_template_kwargs: { enable_thinking: false },
+        },
+      },
     });
+    const { runner } = resolveReflect(config);
+    const { connection } = await dispatchedAgain(runner);
+
+    expect(connection).toMatchObject({ model: "krang/chat/qwen3.8-27b" });
+    const fields = effectiveRequestFields(connection.request, connection.inference);
+    expect(fields).toMatchObject({ temperature: 0.2, chat_template_kwargs: { enable_thinking: false } });
+    expect(thinkingSetting(fields)).toBe(false);
   });
 
   test("with no setting anywhere, akm sends nothing of its own", async () => {
@@ -79,11 +81,18 @@ describe("improve model work on a connection", () => {
     expect(effectiveRequestFields(connection.request, connection.inference)).toEqual({});
   });
 
-  test("the connection's own request fields stay under the overlay", async () => {
-    const config = configFor({ ...CONNECTION, top_p: 0.9, temperature: 0.7 }, { temperature: 0.2 });
+  test("the connection's own request fields apply under the alias's", async () => {
+    const config = configFor({
+      ...CONNECTION,
+      top_p: 0.9,
+      temperature: 0.7,
+      models: { fast: { model: "krang/chat/qwen3.8-27b", temperature: 0.2 } },
+    });
     const { connection } = await dispatchedAgain(resolveReflect(config).runner);
 
-    expect(connection.request).toEqual({ top_p: 0.9, temperature: 0.7 });
-    expect(effectiveRequestFields(connection.request, connection.inference)).toEqual({ top_p: 0.9, temperature: 0.2 });
+    expect(effectiveRequestFields(connection.request, connection.inference)).toMatchObject({
+      top_p: 0.9,
+      temperature: 0.2,
+    });
   });
 });

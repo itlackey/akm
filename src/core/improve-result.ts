@@ -14,76 +14,8 @@ export interface DecodedImproveResult {
   strategy: string;
 }
 
-const COMMON_FIELDS = [
-  "schemaVersion",
-  "ok",
-  "scope",
-  "dryRun",
-  "notices",
-  "skipped",
-  "guidance",
-  "memorySummary",
-  "memoryCleanup",
-  "cyclesRun",
-  "plannedRefs",
-  "plan",
-  "actions",
-  "skippedProcesses",
-  // No longer written (the retired `--require-engines` probe wrote it); kept readable for envelopes a prior release wrote.
-  "engineProbe",
-  "distillSkipped",
-  "validationFailures",
-  "schemaRepairs",
-  "consolidation",
-  "extract",
-  "lintSummary",
-  "memoryIndexHealth",
-  "coverageGaps",
-  // R10: no longer written (the write-only eval-cases path was removed),
-  // but kept in the allow-list so `decodeImproveResult` still reads
-  // improve-result envelopes a prior release wrote with this field.
-  "evalCasesWritten",
-  "deadUrls",
-  "deadUrlCoverage",
-  "reflectsWithErrorContext",
-  "memoryInference",
-  // 0.9.17-alpha.9: no longer written (the LLM entity-graph extraction that
-  // wrote these was retired), kept readable for the same reason as
-  // `evalCasesWritten` above.
-  "graphExtraction",
-  "memoryInferenceDurationMs",
-  "graphExtractionDurationMs",
-  "ensureIndexDurationMs",
-  "orphansPurged",
-  "proposalsExpired",
-  "reflectCooldownActions",
-  "reflectSkippedActions",
-  "reflectGuardRejectedActions",
-  // No longer written (nothing has set it since the confidence gate was
-  // deleted), but kept in the allow-list so `decodeImproveResult` still reads
-  // the improve_runs rows an older release wrote with it, its value ignored.
-  "gateAutoAcceptedCount",
-  "gateAutoAcceptFailedCount",
-  "triage",
-  "proactiveMaintenance",
-  "cycleMetrics",
-  "runId",
-  "sync",
-  "preRunSync",
-  "writtenPaths",
-  "terminated",
-  "usageReport",
-] as const;
-
-const V2_FIELDS = new Set<string>([...COMMON_FIELDS, "strategy", "strategyFilteredRefs"]);
-
 function fail(message: string): never {
   throw new Error(`invalid improve-result envelope: ${message}`);
-}
-
-function requireExactFields(value: Record<string, unknown>, allowed: Set<string>): void {
-  const unknown = Object.keys(value).filter((key) => !allowed.has(key));
-  if (unknown.length > 0) fail(`unknown field${unknown.length === 1 ? "" : "s"}: ${unknown.sort().join(", ")}`);
 }
 
 function requireNumber(value: Record<string, unknown>, field: string, path: string): void {
@@ -102,7 +34,6 @@ function validateLoweringNotices(value: unknown): void {
   for (let index = 0; index < value.length; index += 1) {
     const notice = value[index];
     if (!isRecord(notice)) fail(`notices[${index}] must be an object`);
-    requireExactFields(notice, new Set(["code", "severity", "adapter", "field", "message", "details"]));
     for (const field of ["code", "adapter", "message"] as const) {
       if (typeof notice[field] !== "string") fail(`notices[${index}].${field} must be a string`);
     }
@@ -124,23 +55,9 @@ function validateLoweringNotices(value: unknown): void {
 
 function validateConsolidationPlan(value: unknown): void {
   if (!isRecord(value)) fail("plan.consolidation must be an object");
-  requireExactFields(
-    value,
-    new Set([
-      "configured",
-      "effective",
-      "poolSize",
-      "candidatePoolSize",
-      "gates",
-      "wouldRun",
-      "reason",
-      "estimatedChunks",
-    ]),
-  );
   if (!isRecord(value.configured)) fail("plan.consolidation.configured must be an object");
   // `minPoolSize` is no longer written (the minimum-pool guard was removed in 0.10, #1131); runs an
   // older release persisted still carry it, ignored.
-  requireExactFields(value.configured, new Set(["enabled", "minPoolSize", "limit", "maxChunkSize"]));
   if (value.configured.enabled !== undefined && typeof value.configured.enabled !== "boolean") {
     fail("plan.consolidation.configured.enabled must be a boolean");
   }
@@ -150,7 +67,6 @@ function validateConsolidationPlan(value: unknown): void {
     }
   }
   if (!isRecord(value.effective)) fail("plan.consolidation.effective must be an object");
-  requireExactFields(value.effective, new Set(["enabled", "minPoolSize", "limit", "chunkSize"]));
   if (typeof value.effective.enabled !== "boolean") fail("plan.consolidation.effective.enabled must be a boolean");
   if (value.effective.minPoolSize !== undefined)
     requireCount(value.effective, "minPoolSize", "plan.consolidation.effective");
@@ -164,13 +80,11 @@ function validateConsolidationPlan(value: unknown): void {
   if (typeof value.wouldRun !== "boolean") fail("plan.consolidation.wouldRun must be a boolean");
   if (typeof value.reason !== "string") fail("plan.consolidation.reason must be a string");
   if (!isRecord(value.gates)) fail("plan.consolidation.gates must be an object");
-  requireExactFields(value.gates, new Set(["profile", "minimumPool", "delta"]));
   for (const gateName of ["profile", "minimumPool", "delta"] as const) {
     const gate = value.gates[gateName];
     // `minimumPool` is no longer written; only an older release's persisted plan has it.
     if (gate === undefined && gateName === "minimumPool") continue;
     if (!isRecord(gate)) fail(`plan.consolidation.gates.${gateName} must be an object`);
-    requireExactFields(gate, new Set(["passed", "reason"]));
     if (typeof gate.passed !== "boolean" || typeof gate.reason !== "string") {
       fail(`plan.consolidation.gates.${gateName} must contain boolean passed and string reason`);
     }
@@ -179,21 +93,15 @@ function validateConsolidationPlan(value: unknown): void {
 
 function validateProactivePlan(value: unknown): void {
   if (!isRecord(value)) fail("plan.proactive must be an object");
-  requireExactFields(
-    value,
-    new Set(["configured", "effective", "candidatePool", "dueTotal", "neverReflected", "selected", "selectedRefs"]),
-  );
   if (!isRecord(value.configured)) fail("plan.proactive.configured must be an object");
   // `limit` is no longer written (the `proactiveMaintenance.limit` alias of `maxPerRun` was removed in 0.10, #1091);
   // runs an older release stored may carry it.
-  requireExactFields(value.configured, new Set(["dueDays", "maxPerRun", "limit"]));
   for (const field of ["dueDays", "maxPerRun", "limit"] as const) {
     if (value.configured[field] !== undefined && typeof value.configured[field] !== "number") {
       fail(`plan.proactive.configured.${field} must be a number`);
     }
   }
   if (!isRecord(value.effective)) fail("plan.proactive.effective must be an object");
-  requireExactFields(value.effective, new Set(["dueDays", "maxPerRun"]));
   requireNumber(value.effective, "dueDays", "plan.proactive.effective");
   requireNumber(value.effective, "maxPerRun", "plan.proactive.effective");
   for (const field of ["candidatePool", "dueTotal", "neverReflected", "selected"] as const) {
@@ -214,10 +122,6 @@ function validateProcessRoutingRows(value: unknown): void {
   const seen = new Set<string>();
   for (const row of value) {
     if (!isRecord(row)) fail("plan.processes entries must be objects");
-    requireExactFields(
-      row,
-      new Set(["process", "enabled", "engine", "model", "engineKind", "notices", "unavailable", "eligibleRefs"]),
-    );
     if (
       typeof row.process !== "string" ||
       !(
@@ -226,9 +130,8 @@ function validateProcessRoutingRows(value: unknown): void {
         // 0.9.17-alpha.9: "graphExtraction" is no longer a process a fresh
         // plan can route (the LLM entity-graph extraction it named was
         // retired), but every pre-alpha.9 run recorded one here — kept
-        // readable, same as `stageNames`' "graph-extraction" above and
-        // `graphExtraction` in COMMON_FIELDS, so a historical run still
-        // decodes for `akm health` instead of failing this row outright.
+        // readable, same as `stageNames`' "graph-extraction" above, so a
+        // historical run still decodes for `akm health`.
         row.process === "graphExtraction"
       )
     ) {
@@ -246,7 +149,6 @@ function validateProcessRoutingRows(value: unknown): void {
     validateLoweringNotices(row.notices);
     if (row.unavailable !== undefined) {
       if (!isRecord(row.unavailable)) fail("plan.processes.unavailable must be an object");
-      requireExactFields(row.unavailable, new Set(["configKey", "reason"]));
       if (typeof row.unavailable.configKey !== "string" || typeof row.unavailable.reason !== "string") {
         fail("plan.processes.unavailable must contain string configKey and reason");
       }
@@ -260,23 +162,6 @@ function validateProcessRoutingRows(value: unknown): void {
 
 function validateImprovePlan(value: unknown, dryRun: boolean, plannedRefNames: readonly string[]): void {
   if (!isRecord(value)) fail("plan must be an object");
-  requireExactFields(
-    value,
-    new Set([
-      "mode",
-      "dispatch",
-      "snapshot",
-      "candidates",
-      "limits",
-      "gates",
-      "effectiveRefs",
-      "processes",
-      "proactive",
-      "consolidation",
-      "stages",
-      "triage",
-    ]),
-  );
   if (value.mode !== "estimate" && value.mode !== "execution") fail('plan.mode must be "estimate" or "execution"');
   if (typeof value.dispatch !== "boolean") fail("plan.dispatch must be a boolean");
   if ((value.mode === "estimate" && value.dispatch) || (value.mode === "execution" && !value.dispatch)) {
@@ -289,7 +174,6 @@ function validateImprovePlan(value: unknown, dryRun: boolean, plannedRefNames: r
     fail("dryRun=false requires execution mode with dispatch=true");
   }
   if (!isRecord(value.snapshot)) fail("plan.snapshot must be an object");
-  requireExactFields(value.snapshot, new Set(["status", "reason"]));
   if (
     typeof value.snapshot.status !== "string" ||
     !new Set(["ready", "missing", "incompatible", "unknown"]).has(value.snapshot.status)
@@ -298,7 +182,6 @@ function validateImprovePlan(value: unknown, dryRun: boolean, plannedRefNames: r
   }
   if (typeof value.snapshot.reason !== "string") fail("plan.snapshot.reason must be a string");
   if (!isRecord(value.candidates)) fail("plan.candidates must be an object");
-  requireExactFields(value.candidates, new Set(["rawInScope", "selected", "effective"]));
   for (const field of ["rawInScope", "selected", "effective"] as const) {
     requireCount(value.candidates, field, "plan.candidates");
   }
@@ -309,9 +192,7 @@ function validateImprovePlan(value: unknown, dryRun: boolean, plannedRefNames: r
     fail("plan.candidates.selected cannot be less than plan.candidates.effective");
   }
   if (!isRecord(value.limits)) fail("plan.limits must be an object");
-  requireExactFields(value.limits, new Set(["configured", "effective", "additiveReplayAllowance", "totalCeiling"]));
   if (!isRecord(value.limits.configured)) fail("plan.limits.configured must be an object");
-  requireExactFields(value.limits.configured, new Set(["cli", "profile", "reflect"]));
   for (const field of ["cli", "profile", "reflect"] as const) {
     if (value.limits.configured[field] !== undefined)
       requireCount(value.limits.configured, field, "plan.limits.configured");
@@ -336,7 +217,6 @@ function validateImprovePlan(value: unknown, dryRun: boolean, plannedRefNames: r
   const gateRemovedByName = new Map<string, number>();
   for (const gate of value.gates) {
     if (!isRecord(gate)) fail("plan.gates entries must be objects");
-    requireExactFields(gate, new Set(["name", "removed", "reason"]));
     if (typeof gate.name !== "string" || !(gateNames.has(gate.name) || optionalGateNames.has(gate.name))) {
       fail("plan.gates.name is invalid");
     }
@@ -375,7 +255,6 @@ function validateImprovePlan(value: unknown, dryRun: boolean, plannedRefNames: r
   if (!Array.isArray(value.effectiveRefs)) fail("plan.effectiveRefs must be an array");
   for (const entry of value.effectiveRefs) {
     if (!isRecord(entry)) fail("plan.effectiveRefs entries must be objects");
-    requireExactFields(entry, new Set(["ref", "lane", "reason"]));
     if (typeof entry.ref !== "string") fail("plan.effectiveRefs.ref must be a string");
     if (typeof entry.lane !== "string" || !lanes.has(entry.lane)) fail("plan.effectiveRefs.lane is invalid");
     if (typeof entry.reason !== "string" || !reasons.has(entry.reason)) fail("plan.effectiveRefs.reason is invalid");
@@ -421,7 +300,6 @@ function validateImprovePlan(value: unknown, dryRun: boolean, plannedRefNames: r
   if (!Array.isArray(value.stages)) fail("plan.stages must be an array");
   for (const stage of value.stages) {
     if (!isRecord(stage)) fail("plan.stages entries must be objects");
-    requireExactFields(stage, new Set(["name", "wouldRun", "reason"]));
     if (typeof stage.name !== "string" || !stageNames.has(stage.name)) fail("plan.stages.name is invalid");
     if (typeof stage.wouldRun !== "boolean" || typeof stage.reason !== "string") {
       fail("plan.stages entries must contain boolean wouldRun and string reason");
@@ -430,7 +308,6 @@ function validateImprovePlan(value: unknown, dryRun: boolean, plannedRefNames: r
   if (!isRecord(value.triage)) fail("plan.triage must be an object");
   // `maxDiffLines` is no longer written (the triage config key was dropped before 0.10, #1091); runs an older
   // release stored may carry it.
-  requireExactFields(value.triage, new Set(["enabled", "configuredMode", "mode", "maxAcceptsPerRun", "maxDiffLines"]));
   if (typeof value.triage.enabled !== "boolean") fail("plan.triage.enabled must be a boolean");
   for (const field of ["configuredMode", "mode"] as const) {
     if (value.triage[field] !== "queue" && value.triage[field] !== "promote") {
@@ -454,7 +331,6 @@ function validateCommon(value: Record<string, unknown>): void {
   });
   if (value.plan !== undefined) validateImprovePlan(value.plan, value.dryRun, plannedRefNames);
   if (!isRecord(value.scope)) fail("scope must be an object");
-  requireExactFields(value.scope, new Set(["mode", "value"]));
   if (value.scope.mode !== "all" && value.scope.mode !== "type" && value.scope.mode !== "ref") {
     fail('scope.mode must be "all", "type", or "ref"');
   }
@@ -462,7 +338,6 @@ function validateCommon(value: Record<string, unknown>): void {
     fail("scope.value must be a string when present");
   }
   if (!isRecord(value.memorySummary)) fail("memorySummary must be an object");
-  requireExactFields(value.memorySummary, new Set(["eligible", "derived"]));
   if (typeof value.memorySummary.eligible !== "number" || typeof value.memorySummary.derived !== "number") {
     fail("memorySummary.eligible and memorySummary.derived must be numbers");
   }
@@ -485,7 +360,7 @@ function validateCommon(value: Record<string, unknown>): void {
   }
   for (const field of [
     "cyclesRun",
-    // R10: retired write, kept readable — see the COMMON_FIELDS comment above.
+    // R10: retired write, kept readable for envelopes a prior release wrote.
     "evalCasesWritten",
     "reflectsWithErrorContext",
     "memoryInferenceDurationMs",
@@ -525,7 +400,6 @@ function validateCommon(value: Record<string, unknown>): void {
     if (value[field] !== undefined && !isRecord(value[field])) fail(`${field} must be an object`);
   }
   if (isRecord(value.terminated)) {
-    requireExactFields(value.terminated, new Set(["reason", "at", "errorMessage"]));
     if (typeof value.terminated.reason !== "string" || typeof value.terminated.at !== "string") {
       fail("terminated.reason and terminated.at must be strings");
     }
@@ -534,7 +408,6 @@ function validateCommon(value: Record<string, unknown>): void {
     }
   }
   if (isRecord(value.deadUrlCoverage)) {
-    requireExactFields(value.deadUrlCoverage, new Set(["checked", "total", "skipped"]));
     for (const field of ["checked", "total", "skipped"] as const) {
       requireCount(value.deadUrlCoverage, field, "deadUrlCoverage");
     }
@@ -559,7 +432,6 @@ function validateCommon(value: Record<string, unknown>): void {
  */
 const SCHEMA_DECODERS: Record<number, (parsed: Record<string, unknown>) => DecodedImproveResult> = {
   2: (parsed) => {
-    requireExactFields(parsed, V2_FIELDS);
     validateCommon(parsed);
     if (typeof parsed.strategy !== "string" || parsed.strategy.length === 0) {
       fail("strategy must be a non-empty string");

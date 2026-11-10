@@ -3,11 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * MULTI-PROCESS crash-window resume for a CHILD-composing parent (spec
- * docs/plans/specs/p3b-child-executor.md §5.2-§5.3, rows C-01…C-04). A real
+ * MULTI-PROCESS crash-window resume for a CHILD-composing parent. A real
  * `bun` driver is SIGKILLed at a precise durable window around child
  * publication/execution, and a fresh process converges the run exactly once —
- * the CHILD-level analogue of tests/integration/workflow-crash-windows.test.ts,
+ * the CHILD-level analogue of tests/integration/workflows/workflow-crash-windows.test.ts,
  * using its exact SIGKILL technique and the SAME
  * tests/integration/_helpers/workflow-crossproc.ts helper, UNCHANGED (spec
  * §5.2: the CHILD's own units dispatch through the identical fake-dispatcher
@@ -15,20 +14,6 @@
  * SAME injected `dispatcher` down into its own `runWorkflowSteps` call — spec
  * row A-33 — so `dispatchCount(markerDir, <childUnitId>)` already counts them
  * with no helper change).
- *
- * RED phase: the child executor (`src/workflows/exec/child-workflow.ts`,
- * reached from the ONE dispatch seam in `native-executor.ts`) is not wired
- * yet, so a composing step's unit currently fails closed
- * (`WORKFLOW_CHILD_EXECUTION_UNSUPPORTED`) rather than driving a child run —
- * every scenario below fails today for that reason. This file references only
- * already-existing, already-typed APIs (repository accessors P3a shipped:
- * `childRunsOf`, `publishChildWorkflowRun`, `getRunById`, `getUnit`; the
- * existing `runWorkflowSteps`/`startWorkflowRun`/`resumeWorkflowRun` engine
- * entry points; `computeChildInvocationKey`, `computeStepWorkList`,
- * `frozenStepRows`, `canonicalPlanJson`/`computePlanHash`), so no
- * `@ts-expect-error` directive is needed anywhere in it — Implement makes
- * these assertions true by wiring the seam, not by changing any type this
- * file touches.
  *
  * Windows (mirroring workflow-crash-windows.test.ts's Window A/B naming,
  * shifted one level down to the CHILD):
@@ -143,13 +128,8 @@ async function firstChildOf(parentRunId: string): Promise<string | undefined> {
 
 /**
  * Wait for the parent's child row to appear, or for the crasher process to
- * exit first — whichever happens sooner. RED phase: today the composing
- * unit is handed to the plain injected fake dispatcher exactly like any
- * other unit (nothing at the dispatch seam yet routes a `child-workflow`
- * target away from it — spec §3.2), so the run completes trivially and the
- * process exits long before any child row is ever published. This fails
- * fast with a clear message instead of waiting out `pollUntil`'s own
- * timeout for a row that will never appear via today's path.
+ * exit first — whichever happens sooner, so a missing child fails fast with a
+ * clear message instead of waiting out `pollUntil`'s own timeout.
  */
 async function waitForChildOrExit(parentRunId: string, crasher: RunnerChild, label: string): Promise<void> {
   const published = pollUntil(async () => (await firstChildOf(parentRunId)) !== undefined, { label });

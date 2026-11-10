@@ -28,13 +28,13 @@ import {
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
-  withEnv,
+  withBundle,
 } from "../_helpers/sandbox";
 
 const disposers: SandboxedDir[] = [];
 
 async function runCli(args: string[], stashDir: string): Promise<{ stdout: string; stderr: string; status: number }> {
-  return withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+  return withBundle(stashDir, async () => {
     resetConfigCache();
     const res = await runCliCapture(args);
     return { stdout: res.stdout, stderr: res.stderr, status: res.code };
@@ -65,7 +65,7 @@ async function makeIndexedStash(): Promise<string> {
     path.join(stash, "skills", "deploy-widgets", "SKILL.md"),
     "---\ndescription: deploy widgets uniformly\ntags:\n  - deploy\nquality: curated\n---\n# Deploy widgets\n",
   );
-  await withEnv({ AKM_BUNDLE_DIR: stash }, async () => {
+  await withBundle(stash, async () => {
     resetConfigCache();
     saveConfig({ semanticSearchMode: "off" });
     await akmIndex({ stashDir: stash, full: true });
@@ -74,16 +74,16 @@ async function makeIndexedStash(): Promise<string> {
 }
 
 describe("akm search/curate/show — JSON envelope snapshot (WS6)", () => {
-  test("search: indexed stash → success envelope with hits array", async () => {
+  test("search: indexed stash → success envelope with results array", async () => {
     const stash = await makeIndexedStash();
     const { stdout, status } = await runCli(["search", "deploy"], stash);
     expect(status).toBe(0);
     const env = JSON.parse(stdout);
-    expect(Array.isArray(env.hits)).toBe(true);
-    expect((env.hits as Array<{ name: string }>).map((h) => h.name)).toContain("deploy-widgets");
+    expect(Array.isArray(env.results)).toBe(true);
+    expect((env.results as Array<{ name: string }>).map((h) => h.name)).toContain("deploy-widgets");
   });
 
-  test("search: missing query → JSON envelope with hits array (F5/R-009: bare query browses, per --help's own contract)", async () => {
+  test("search: missing query → JSON envelope with results array (F5/R-009: bare query browses, per --help's own contract)", async () => {
     const stash = await makeIndexedStash();
     // R-009 orchestrator ruling: `search --help` documents "QUERY  Search
     // query (omit to list all assets)" — a bare `akm search` must honor that
@@ -93,8 +93,8 @@ describe("akm search/curate/show — JSON envelope snapshot (WS6)", () => {
     const { stdout, status } = await runCli(["search"], stash);
     expect(status).toBe(0);
     const env = JSON.parse(stdout);
-    expect(Array.isArray(env.hits)).toBe(true);
-    expect((env.hits as Array<{ name: string }>).map((h) => h.name)).toContain("deploy-widgets");
+    expect(Array.isArray(env.results)).toBe(true);
+    expect((env.results as Array<{ name: string }>).map((h) => h.name)).toContain("deploy-widgets");
   });
 
   test("curate: indexed stash → success envelope with shape 'curate'", async () => {

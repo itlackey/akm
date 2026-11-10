@@ -147,6 +147,38 @@ export function reserveTaskHistoryAttempt(db: Database, row: TaskHistoryRow): bo
   return Number(result.changes) === 1;
 }
 
+/** An unfinished attempt: its task, when it started, and the process that reserved it when that was recorded. */
+export interface ActiveTaskRun {
+  task_id: string;
+  started_at: string;
+  pid?: number;
+}
+
+/** The unfinished attempts of the given task ids (`akm task dispatch` skips a task that has one running). */
+export function listActiveTaskRuns(db: Database, taskIds: readonly string[]): ActiveTaskRun[] {
+  if (taskIds.length === 0) return [];
+  const placeholders = taskIds.map(() => "?").join(", ");
+  const rows = db
+    .prepare(
+      `SELECT task_id, started_at, metadata_json FROM task_history
+       WHERE status = 'active' AND completed_at IS NULL AND task_id IN (${placeholders})`,
+    )
+    .all(...taskIds) as Array<{ task_id: string; started_at: string; metadata_json: string }>;
+  return rows.map((row) => {
+    let pid: unknown;
+    try {
+      pid = (JSON.parse(row.metadata_json) as { pid?: unknown }).pid;
+    } catch {
+      pid = undefined;
+    }
+    return {
+      task_id: row.task_id,
+      started_at: row.started_at,
+      ...(typeof pid === "number" && Number.isInteger(pid) && pid > 0 ? { pid } : {}),
+    };
+  });
+}
+
 /** Finalize a row previously created by {@link reserveTaskHistoryAttempt}. */
 export function finalizeTaskHistoryAttempt(db: Database, row: TaskHistoryRow): boolean {
   const result = db
@@ -275,36 +307,6 @@ export function queryTaskHistory(
        FROM task_history ${where} ORDER BY started_at DESC, id DESC ${limit}`,
     )
     .all(...(params as SqlValue[])) as TaskHistoryRow[];
-}
-
-/**
- * Slim projection of a `task_history` row used by health interval analysis.
- */
-export interface TaskIntervalRow {
-  started_at: string;
-  completed_at: string;
-}
-
-/**
- * Read COMPLETED `akm-improve` task_history runs whose `started_at` falls in
- * `[since, until)` (or `started_at >= since` when `until` is omitted), ordered
- * oldest-first by `started_at`. Only rows with a non-null `completed_at` are
- * returned (in-flight runs are excluded). The `task_id = 'akm-improve'`
- * predicate is fixed because the only caller (commands/health.ts
- * `loadTaskIntervals`) builds wall-time intervals for the improve cron task.
- *
- * Owns the SQL formerly inlined in commands/health.ts. Note the bound is
- * EXCLUSIVE on the upper end (`started_at < ?`) — callers pass an already
- * widened window; this helper does not widen.
- *
- * Connection-lifetime rule (WS5): `.all()` materializes a plain array before
- * returning.
- */
-export function queryCompletedTaskIntervals(db: Database, since: string, until?: string): TaskIntervalRow[] {
-  const sql = until
-    ? "SELECT started_at, completed_at FROM task_history WHERE task_id = 'akm-improve' AND started_at >= ? AND started_at < ? AND completed_at IS NOT NULL ORDER BY started_at"
-    : "SELECT started_at, completed_at FROM task_history WHERE task_id = 'akm-improve' AND started_at >= ? AND completed_at IS NOT NULL ORDER BY started_at";
-  return (until ? db.prepare(sql).all(since, until) : db.prepare(sql).all(since)) as TaskIntervalRow[];
 }
 
 /**

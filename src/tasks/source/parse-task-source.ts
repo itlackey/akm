@@ -12,15 +12,15 @@
  *   | root `version`        | outcome                                                        |
  *   |------------------------|-----------------------------------------------------------------|
  *   | `4`                    | `parseTaskSourceV4Document` — the current grammar               |
- *   | `4`, some `schedule[]` entry carries `enabled` (0.9.15's grammar) | `TASK_SOURCE_INVALID` naming `akm migrate apply`, which removes the key |
- *   | `2` or `3`             | `TASK_SCHEMA_VERSION_UNSUPPORTED` naming `akm migrate apply`, which converts the file |
+ *   | `4`, some `schedule[]` entry carries `enabled` (0.9.15's grammar) | `TASK_SOURCE_INVALID` naming the 0.9.32 recipe |
+ *   | `4`, a top-level `engine` key | `TASK_SOURCE_INVALID` naming `akm migrate apply`, which rewrites it as `connection` or `harness` |
+ *   | `2` or `3`             | `TASK_SCHEMA_VERSION_UNSUPPORTED` naming the 0.9.32 recipe       |
  *   | any other number       | `TASK_SCHEMA_VERSION_UNSUPPORTED`, naming the migrator          |
  *   | absent / not a number  | `parseTaskSourceV4Document` — its own `TASK_SOURCE_INVALID` "version is required and must be 4" / "must be exactly 4" wording |
  *
- * `akm migrate apply` (`scripts/akm-migrate/`) is the one place a v2/v3
- * document, or a v4 document carrying the retired `schedule[].enabled`, is
- * converted: it rewrites the file once, under a backup. Nothing here converts
- * in memory. Every caller reports the refusal for that one file — `akm task
+ * Nothing converts a v2/v3 document, or a v4 document carrying the retired
+ * `schedule[].enabled`: akm 0.9.32's `akm migrate apply` did, and 0.10 does not
+ * (the floor). Every caller reports the refusal for that one file — `akm task
  * sync` keeps reconciling every other task (#867).
  *
  * A missing or non-numeric `version:` is a MALFORMED v4 document, not a
@@ -30,7 +30,9 @@
  * render with the label `task source`.
  */
 
+import { isRecord } from "../../core/common";
 import { UsageError } from "../../core/errors";
+import { RETIRED_ENGINE_KEY_MESSAGE } from "../../execution/source";
 import { readBoundedTaskSourceYaml } from "./bounded-document";
 import { parseTaskSourceV4Document, TASK_SOURCE_V4_VERSION, type TaskSourceV4Document } from "./task-source-v4";
 
@@ -48,15 +50,17 @@ export function peekTaskSourceVersion(root: unknown): number | undefined {
   return typeof value === "number" ? value : undefined;
 }
 
-const TASK_MIGRATE_HINT =
-  "Run `akm migrate apply --dry-run` to preview the task-v3 to task-source-v4 conversion, then run `akm migrate apply`.";
+const TASK_MIGRATE_HINT = "Run `akm migrate status` to preview the rewrite, then run `akm migrate apply`.";
 
-/** A v2/v3 document: `akm migrate apply` converts it; this release reads only v4. */
+/** The one instruction for a task file written before the 0.9.32 floor. */
+const PRE_FLOOR_TASK_REMEDY = "run `npm i -g akm-cli@0.9.32 && akm migrate apply && akm task sync`, then upgrade";
+
+/** A v2/v3 document: only akm 0.9.32 converts it; this release reads only v4. */
 function legacyVersionError(filePath: string, version: number): UsageError {
   return new UsageError(
-    `TASK_SCHEMA_VERSION_UNSUPPORTED: Task at ${filePath} uses task schema version ${version}; this release reads only version 4. Run \`akm migrate apply\` to convert it.`,
+    `TASK_SCHEMA_VERSION_UNSUPPORTED: Task at ${filePath} uses task schema version ${version}; this release reads only version 4 and does not convert older files: ${PRE_FLOOR_TASK_REMEDY}.`,
     "TASK_SCHEMA_VERSION_UNSUPPORTED",
-    TASK_MIGRATE_HINT,
+    `Older than akm 0.9.32: ${PRE_FLOOR_TASK_REMEDY}.`,
   );
 }
 
@@ -73,7 +77,7 @@ function unsupportedVersionError(filePath: string, version: number): UsageError 
  * entry that carries an `enabled` key, regardless of that key's value or
  * type — the shape 0.9.15's v4 grammar accepted and this release's does
  * not (`schedule[].enabled`). Activation is host-local `scheduler.enabled`,
- * so the value is never read; `akm migrate apply` removes the key.
+ * so the value is never read; only akm 0.9.32's `akm migrate apply` removes the key.
  */
 export function v4ScheduleHasRetiredEnabledKey(root: unknown): boolean {
   if (root === null || typeof root !== "object" || Array.isArray(root)) return false;
@@ -94,7 +98,16 @@ export function parseTaskSource(input: ParseTaskSourceInput): ParsedTaskSource {
   }
   if (version === TASK_SOURCE_V4_VERSION && v4ScheduleHasRetiredEnabledKey(root)) {
     throw new UsageError(
-      `Invalid task source v4 at ${input.filePath}: schedule[].enabled was removed (scheduler activation is host-local config). Run \`akm migrate apply\` to rewrite it.`,
+      `Invalid task source v4 at ${input.filePath}: schedule[].enabled was removed (scheduler activation is host-local config); ${PRE_FLOOR_TASK_REMEDY}.`,
+      "TASK_SOURCE_INVALID",
+      `Older than akm 0.9.32: ${PRE_FLOOR_TASK_REMEDY}.`,
+    );
+  }
+  // The document grammar still accepts `engine` so the migrator can read a file before it rewrites the key; a run
+  // would ignore it and move the task to another model, so the runtime refuses it here.
+  if (version === TASK_SOURCE_V4_VERSION && isRecord(root) && Object.hasOwn(root, "engine")) {
+    throw new UsageError(
+      `Invalid task source v4 at ${input.filePath}: engine ${RETIRED_ENGINE_KEY_MESSAGE}`,
       "TASK_SOURCE_INVALID",
       TASK_MIGRATE_HINT,
     );

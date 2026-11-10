@@ -39,7 +39,6 @@ function makeStashDir(): string {
   writeSandboxConfig({
     bundles: { [bundleId]: { path: stash, writable: true } },
     defaultBundle: bundleId,
-    defaultWriteTarget: bundleId,
   });
   return stash;
 }
@@ -52,10 +51,7 @@ async function runCli(
   args: string[],
   options: { stashDir: string; env?: Record<string, string | undefined> } = { stashDir: "" },
 ): Promise<{ stdout: string; stderr: string; status: number }> {
-  const { code, stdout, stderr } = await withEnv(
-    { AKM_BUNDLE_DIR: options.stashDir || undefined, ...options.env },
-    () => runCliCapture(args),
-  );
+  const { code, stdout, stderr } = await withEnv({ ...options.env }, () => runCliCapture(args));
   return { stdout, stderr, status: code };
 }
 
@@ -79,10 +75,8 @@ describe("akm proposal drain strategy selector", () => {
   test("uses defaults.improveStrategy and reports the effective strategy/output buckets", async () => {
     const stashDir = makeStashDir();
     writeSandboxConfig({
-      configVersion: "0.9.0",
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
       improve: {
         strategy: "queue-only",
         strategies: {
@@ -114,10 +108,8 @@ describe("akm proposal drain strategy selector", () => {
   test("an explicitly selected strategy enables its judgment tier, while the implicit default does not", async () => {
     const stashDir = makeStashDir();
     writeSandboxConfig({
-      configVersion: "0.9.0",
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
       harnesses: { reviewer: { platform: "claude" } },
       improve: {
         strategy: "enabled-judgment",
@@ -146,10 +138,8 @@ describe("akm proposal drain strategy selector", () => {
   test("--judgment overrides a disabled selected strategy", async () => {
     const stashDir = makeStashDir();
     writeSandboxConfig({
-      configVersion: "0.9.0",
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
       harnesses: { reviewer: { platform: "claude" } },
       improve: {
         strategies: {
@@ -219,10 +209,8 @@ describe("akm proposal drain strategy selector", () => {
     const stashDir = makeStashDir();
     const bundleId = slugForPath(stashDir);
     writeSandboxConfig({
-      configVersion: "0.9.0",
       bundles: { [bundleId]: { path: stashDir, writable: true } },
       defaultBundle: bundleId,
-      defaultWriteTarget: bundleId,
       improve: {
         strategies: {
           "queue-mode": { processes: { triage: { enabled: true, applyMode: "queue" } } },
@@ -913,13 +901,11 @@ describe("akm proposal noun group (canonical)", () => {
 describe("akm proposal multi-bundle queues", () => {
   function multiBundleConfig(primary: string, secondary: string): AkmConfig {
     return {
-      configVersion: "0.9.0",
       bundles: {
         primary: { path: primary, writable: true },
         secondary: { path: secondary, writable: true },
       },
       defaultBundle: "primary",
-      defaultWriteTarget: "primary",
       semanticSearchMode: "off",
     };
   }

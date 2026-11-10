@@ -64,11 +64,9 @@ function durableRef(stashDir: string, type: string, name: string): string {
 
 function distillConfig(stashDir: string, distill: Record<string, unknown>): AkmConfig {
   return {
-    configVersion: "0.9.0",
     semanticSearchMode: "auto",
     bundles: { stash: { path: stashDir, writable: true } },
     defaultBundle: "stash",
-    defaultWriteTarget: "stash",
     connections: {
       default: {
         endpoint: "http://localhost:11434/v1/chat/completions",
@@ -160,7 +158,7 @@ function eventsFor(ref: string, signals: Array<"positive" | "negative">) {
 }
 
 beforeEach(() => {
-  storage = withIsolatedAkmStorage();
+  storage = withIsolatedAkmStorage({}, { bundle: false });
 });
 
 afterEach(() => {
@@ -590,7 +588,6 @@ describe("akmDistill — LLM error paths", () => {
     const config = {
       bundles: { stash: { path: stash, writable: true } },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
       // 0.8.0: the distill gate defaults to true; with no llm profile wired,
       // the inner call throws ConfigError(LLM_NOT_CONFIGURED) which folds into llm_failed.
     } as unknown as AkmConfig;
@@ -1485,7 +1482,6 @@ describe("akmDistill — feature ON + llm.client missing (#284 HIGH 7)", () => {
       semanticSearchMode: "auto",
       bundles: { stash: { path: stash, writable: true } },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
       improve: { strategies: { default: { processes: { distill: { enabled: true } } } } },
     };
     const result = await akmDistill({

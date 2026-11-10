@@ -17,8 +17,14 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { createWorkflowAsset } from "../src/workflows/authoring/authoring";
-import { durableItemRef } from "./_helpers/durable-ref";
-import { type IsolatedAkmStorage, makeSandboxDir, withEnvSync, withIsolatedAkmStorage } from "./_helpers/sandbox";
+import { workingItemRef } from "./_helpers/durable-ref";
+import {
+  type IsolatedAkmStorage,
+  makeSandboxDir,
+  withBundleSync,
+  withEnvSync,
+  withIsolatedAkmStorage,
+} from "./_helpers/sandbox";
 
 const dirCleanups: (() => void)[] = [];
 
@@ -51,11 +57,11 @@ describe("createWorkflowAsset — clean stash (issue #157)", () => {
     const xdgCache = makeTempDir("akm-issue157-cache-");
     const xdgConfig = makeTempDir("akm-issue157-config-");
 
-    const result = withEnvSync({ AKM_BUNDLE_DIR: stashDir, XDG_CACHE_HOME: xdgCache, XDG_CONFIG_HOME: xdgConfig }, () =>
-      createWorkflowAsset({ name: "agentic-test-workflow" }),
+    const result = withEnvSync({ XDG_CACHE_HOME: xdgCache, XDG_CONFIG_HOME: xdgConfig }, () =>
+      withBundleSync(stashDir, () => createWorkflowAsset({ name: "agentic-test-workflow" })),
     );
 
-    expect(result.ref).toBe(durableItemRef(stashDir, "workflow", "agentic-test-workflow"));
+    expect(result.ref).toBe(workingItemRef(stashDir, "workflow", "agentic-test-workflow"));
     expect(fs.existsSync(result.path)).toBe(true);
     expect(result.path).toBe(path.join(stashDir, "workflows", "agentic-test-workflow.md"));
   });
@@ -63,20 +69,18 @@ describe("createWorkflowAsset — clean stash (issue #157)", () => {
   test("bare name with hyphens resolves correctly", () => {
     const stashDir = makeTempDir("akm-issue157-stash-");
 
-    const result = withEnvSync({ AKM_BUNDLE_DIR: stashDir }, () =>
-      createWorkflowAsset({ name: "my-multi-step-workflow" }),
-    );
+    const result = withBundleSync(stashDir, () => createWorkflowAsset({ name: "my-multi-step-workflow" }));
 
-    expect(result.ref).toBe(durableItemRef(stashDir, "workflow", "my-multi-step-workflow"));
+    expect(result.ref).toBe(workingItemRef(stashDir, "workflow", "my-multi-step-workflow"));
     expect(fs.existsSync(result.path)).toBe(true);
   });
 
   test("nested name (subdirectory) resolves correctly", () => {
     const stashDir = makeTempDir("akm-issue157-stash-");
 
-    const result = withEnvSync({ AKM_BUNDLE_DIR: stashDir }, () => createWorkflowAsset({ name: "team/release-flow" }));
+    const result = withBundleSync(stashDir, () => createWorkflowAsset({ name: "team/release-flow" }));
 
-    expect(result.ref).toBe(durableItemRef(stashDir, "workflow", "team/release-flow"));
+    expect(result.ref).toBe(workingItemRef(stashDir, "workflow", "team/release-flow"));
     expect(fs.existsSync(result.path)).toBe(true);
     expect(result.path).toContain(path.join("workflows", "team", "release-flow.md"));
   });
@@ -94,11 +98,9 @@ describe("createWorkflowAsset — clean stash (issue #157)", () => {
     fs.symlinkSync(realDir, symlinkDir);
 
     // Must not throw "Resolved workflow path escapes the stash"
-    const result = withEnvSync({ AKM_BUNDLE_DIR: symlinkDir }, () =>
-      createWorkflowAsset({ name: "agentic-test-workflow" }),
-    );
+    const result = withBundleSync(symlinkDir, () => createWorkflowAsset({ name: "agentic-test-workflow" }));
 
-    expect(result.ref).toBe(durableItemRef(symlinkDir, "workflow", "agentic-test-workflow"));
+    expect(result.ref).toBe(workingItemRef(symlinkDir, "workflow", "agentic-test-workflow"));
     expect(fs.existsSync(result.path)).toBe(true);
   });
 
@@ -129,11 +131,9 @@ Check all inputs.
 `;
     fs.writeFileSync(srcPath, content, "utf8");
 
-    const result = withEnvSync({ AKM_BUNDLE_DIR: stashDir }, () =>
-      createWorkflowAsset({ name: "release", from: srcPath }),
-    );
+    const result = withBundleSync(stashDir, () => createWorkflowAsset({ name: "release", from: srcPath }));
 
-    expect(result.ref).toBe(durableItemRef(stashDir, "workflow", "release"));
+    expect(result.ref).toBe(workingItemRef(stashDir, "workflow", "release"));
     expect(fs.existsSync(result.path)).toBe(true);
     expect(fs.readFileSync(result.path, "utf8")).toContain("# Release");
   });
@@ -145,7 +145,7 @@ describe("createWorkflowAsset — path escape rejection", () => {
   test("../traversal is rejected", () => {
     const stashDir = makeTempDir("akm-issue157-stash-");
 
-    withEnvSync({ AKM_BUNDLE_DIR: stashDir }, () => {
+    withBundleSync(stashDir, () => {
       expect(() => createWorkflowAsset({ name: "../outside" })).toThrow("must be a relative path without");
     });
   });
@@ -153,7 +153,7 @@ describe("createWorkflowAsset — path escape rejection", () => {
   test("deep traversal is rejected", () => {
     const stashDir = makeTempDir("akm-issue157-stash-");
 
-    withEnvSync({ AKM_BUNDLE_DIR: stashDir }, () => {
+    withBundleSync(stashDir, () => {
       expect(() => createWorkflowAsset({ name: "a/../../outside" })).toThrow("must be a relative path without");
     });
   });
@@ -165,9 +165,9 @@ describe("createWorkflowAsset — path escape rejection", () => {
     // into a relative name rather than treating it as a filesystem path.
     const stashDir = makeTempDir("akm-issue157-stash-");
 
-    const result = withEnvSync({ AKM_BUNDLE_DIR: stashDir }, () => createWorkflowAsset({ name: "/etc/passwd" }));
+    const result = withBundleSync(stashDir, () => createWorkflowAsset({ name: "/etc/passwd" }));
     // Leading slash is stripped → name becomes "etc/passwd"
-    expect(result.ref).toBe(durableItemRef(stashDir, "workflow", "etc/passwd"));
+    expect(result.ref).toBe(workingItemRef(stashDir, "workflow", "etc/passwd"));
     // The resulting file is inside the stash workflows dir, not at /etc/passwd
     expect(result.path.startsWith(stashDir)).toBe(true);
     expect(result.path).toContain(path.join("workflows", "etc", "passwd.md"));

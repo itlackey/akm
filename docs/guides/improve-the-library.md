@@ -99,7 +99,7 @@ akm improve --limit 10                # Cap the refs the run processes
 ```
 
 A run improves one bundle, the one it writes to (`--bundle`, else
-`defaultWriteTarget`, else your working bundle), and leaves assets in your other
+your working bundle), and leaves assets in your other
 bundles alone even when they are writable. Run `akm improve --bundle team` to
 improve another one. A scheduled run covers the same single bundle, so schedule
 one `akm improve --bundle <name>` run per other bundle you want improved.
@@ -157,7 +157,7 @@ akm config set experimental.improveAutonomy true
 
 With the key off (the default), memory inference is skipped, memory cleanup is
 analyzed but not applied, and a judged promote is downgraded to `queue`; each downgrade is reported on
-stderr and by `akm task doctor`. `akm proposal drain --promote` is a
+stderr and by `akm info` (`improveAutonomy`). `akm proposal drain --promote` is a
 separate, explicit way to accept judged proposals and does not need the key.
 
 Some writes happen either way: session summaries under `sessions/**`, the purge
@@ -174,14 +174,12 @@ follow it or sit beside it.
 
 | Layer | Switch | Model calls |
 | --- | --- | --- |
-| Recall | `AKM_AUTO_CURATE` (plugin) | None |
-| Prompt-time proposal capture | Follows core learning (the plugins read `learning.on` from `akm info`) | Yes, agent work |
-| Session extraction | Follows core learning (the plugins read `learning.on`; `akm proposal extract` itself is a no-op while it is off) | Yes |
+| Recall | None: the plugin always recalls (`plugins.curateLimit` in `config.json` sets how many) | None |
+| Prompt-time proposal capture | Follows core learning (the plugins read `improve.enabled` from `config.json`) | Yes, agent work |
+| Session extraction | Follows core learning (the plugins read `improve.enabled`; `akm proposal extract` itself is a no-op while it is off) | Yes |
 | Scheduled improve | Core learning plus the `improve` task; the run exits doing nothing while learning is off | Yes |
 
-With Claude's `auto_learning` option off, the plugin turns learning off again at each session start, so
-`akm setup --learning on` by hand reverts until the option is on. A person or agent can always author a proposal with
-`akm proposal new` without the flag, whatever the switch says.
+A person or agent can always author a proposal with `akm proposal new` without the flag, whatever the switch says.
 
 ## akm proposal (list, show, diff, accept, reject, reopen, revert)
 

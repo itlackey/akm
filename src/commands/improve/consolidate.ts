@@ -37,7 +37,6 @@ import type { ConsolidateOpKind, ConsolidateResult } from "../../core/improve-ty
 import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { openStateDatabase } from "../../core/state-db";
 import { warn, warnVerbose } from "../../core/warn";
-import { type ResolvedWriteTarget, resolveWriteTarget } from "../../core/write-source";
 import { type NoticeSink, noticeSet } from "../../execution/notices";
 import { deriveInstallations } from "../../indexer/installations";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
@@ -45,6 +44,7 @@ import { USAGE_EVENT_RETENTION_DAYS } from "../../indexer/usage/usage-events";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import { cosineSimilarity, embedBatch, resolveEmbeddingModelId } from "../../llm/embedder";
 import { effectiveEmbedding } from "../../llm/embedders/connection";
+import { type ResolvedWriteTarget, resolveWriteTarget } from "../../sources/write-source";
 import type { Database } from "../../storage/database";
 import { getBodyEmbeddings, upsertBodyEmbeddings } from "../../storage/repositories/embeddings-repository";
 import {

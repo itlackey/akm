@@ -11,6 +11,12 @@ import { UsageError } from "../../core/errors";
 import { readEvents } from "../../core/events";
 import { DURATION_UNITS, parseDuration } from "../../core/time";
 import type { Database } from "../../storage/database";
+import {
+  readEventDailyCount,
+  readSkipDaily,
+  rollupDayRange,
+  withMetricsHistory,
+} from "../../storage/repositories/metrics-rollup-repository";
 import { queryTaskHistory, type TaskHistoryRow } from "../../storage/repositories/task-history-repository";
 import {
   buildImproveSkipSummary,
@@ -22,7 +28,7 @@ import {
   summarizeImproveRuns,
   taskFailureDetail,
 } from "./improve-metrics";
-import { readLlmUsageAggregate } from "./llm-usage";
+import { oldestTs, readLlmUsageAggregate } from "./llm-usage";
 import { buildPerRunSummaries } from "./task-runs";
 import {
   ACTIVE_RUN_WARN_MS,
@@ -213,9 +219,24 @@ export function buildImproveWindowSummary(
       (event) => new Date(event.ts ?? since).getTime() < untilMs,
     );
   const { metrics: improve, runCount } = summarizeImproveRuns(db, since, until);
-  improve.invoked = eventsBeforeUntil("improve_invoked").length;
-  improve.completed = eventsBeforeUntil(IMPROVE_COMPLETED_EVENT).length;
-  const skipSummary = buildImproveSkipSummary(eventsBeforeUntil("improve_skipped"));
+  const invoked = eventsBeforeUntil("improve_invoked");
+  const completed = eventsBeforeUntil(IMPROVE_COMPLETED_EVENT);
+  const skipped = eventsBeforeUntil("improve_skipped");
+  // Days before a kind's oldest raw event were purged from state.db: metrics.db holds their counts.
+  const invokedDays = rollupDayRange(since, until, oldestTs(invoked));
+  const completedDays = rollupDayRange(since, until, oldestTs(completed));
+  const skippedDays = rollupDayRange(since, until, oldestTs(skipped));
+  const history =
+    invokedDays || completedDays || skippedDays
+      ? withMetricsHistory(db, stateDbPath, (metrics) => ({
+          invoked: invokedDays ? readEventDailyCount(metrics, invokedDays, "improve_invoked") : 0,
+          completed: completedDays ? readEventDailyCount(metrics, completedDays, IMPROVE_COMPLETED_EVENT) : 0,
+          skipped: skippedDays ? readSkipDaily(metrics, skippedDays) : undefined,
+        }))
+      : undefined;
+  improve.invoked = invoked.length + (history?.invoked ?? 0);
+  improve.completed = completed.length + (history?.completed ?? 0);
+  const skipSummary = buildImproveSkipSummary(skipped, history?.skipped);
   improve.skipped = skipSummary.skipped;
   improve.skipReasons = skipSummary.skipReasons;
   // Wall times come from the same improve-runs window as the per-run

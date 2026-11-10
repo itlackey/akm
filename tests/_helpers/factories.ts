@@ -30,7 +30,6 @@ import type { AgentProfile } from "../../src/integrations/agent/profiles";
  */
 export function quietQualityGateConfig(bin = "fake-agent"): AkmConfig {
   return {
-    configVersion: "0.9.0",
     semanticSearchMode: "auto",
     harnesses: {
       "fake-agent": { platform: "gemini", bin },
@@ -106,7 +105,7 @@ export function makeProfile(overrides: Partial<AgentProfile> = {}): AgentProfile
 /**
  * A minimal single-bundle config pointing at `stashDir` (#37: the old
  * `stashDir`/`sources`/`installed` trio is hard-rejected by the 0.9.0 schema;
- * the primary bundle keeps the historical "stash" key so `defaultWriteTarget`
+ * the primary bundle keeps the historical "stash" key so `defaultBundle`
  * and `--from stash` (named-source) pins keep resolving).
  */
 export function makeConfig(stashDir: string): AkmConfig {
@@ -114,6 +113,5 @@ export function makeConfig(stashDir: string): AkmConfig {
   return {
     bundles,
     defaultBundle: "stash",
-    defaultWriteTarget: "stash",
   } as AkmConfig;
 }

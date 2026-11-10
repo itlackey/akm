@@ -15,5 +15,5 @@
     "memories/plain-memory.md carries no quality/beliefState/scope frontmatter at all -- the neutral baseline present in every gridlock-query filter combination's result set.",
     "knowledge/contradicted-knowledge.md (beliefState: contradicted, type knowledge, scope_user: bob) proves matchBeliefFilter applies beyond the memory type (03's belief-filter widening) and that inheritDerivedTwinBeliefStates only ever touches type==='memory' entries (this one is never eligible for inheritance)."
   ],
-  "consumers": ["tests/integration/goldens-search-filter-behavior.test.ts"]
+  "consumers": ["tests/fixture-stash-loader.test.ts"]
 }

@@ -16,7 +16,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { getCacheDir, getDataDir } from "../../src/core/paths";
+import { getCacheDir, getConfigPath, getDataDir } from "../../src/core/paths";
 import { runtimeProfile } from "../../src/integrations/agent/profiles";
 import type { ConnectionRunner } from "../../src/integrations/agent/runner";
 import type { RunAgentOptions } from "../../src/integrations/agent/spawn";
@@ -103,12 +103,12 @@ describe.skipIf(unavailable !== undefined)("akm's runtime on the real OpenCode b
     expect(result.ok, `${result.stdout}\n${result.stderr}`).toBe(true);
     expect(result.exitCode).toBe(0);
     // The call went to akm's CLI (the plugin shells out to it) and its JSON came back through the tool.
-    expect(result.stdout).toMatch(/^AKM:\{[\s\S]*"hits"/);
+    expect(result.stdout).toMatch(/^AKM:\{[\s\S]*"results"/);
     const [first, second] = model.requests;
     expect(first?.tools).toEqual(
       expect.arrayContaining(["akm_search", "akm_show", "akm_curate", "shell", "write", "edit"]),
     );
-    expect(second?.toolResult).toContain('"hits"');
+    expect(second?.toolResult).toContain('"results"');
     // The connection is the provider: its key, and its request fields over the request; OpenCode's own output cap is gone.
     expect(first?.authorization).toBe("Bearer sk-runtime-test");
     expect(first?.params).toMatchObject({ model: "fake-model", reasoning_effort: "high", top_p: 0.9 });
@@ -133,7 +133,7 @@ describe.skipIf(unavailable !== undefined)("akm's runtime on the real OpenCode b
     expect(result.ok, `${result.stdout}\n${result.stderr}`).toBe(true);
     // What the shell tool printed: the runtime's own settings are not there, akm's environment and the run's variables are.
     expect(result.stdout).toContain(
-      `CONFIG=unset DATA=${ambient.XDG_DATA_HOME} CACHE=${ambient.XDG_CACHE_HOME} TMP=${ambient.TMPDIR} FREE=unset SOURCE=task DIR=${getDataDir()}`,
+      `CONFIG=unset DATA=${ambient.XDG_DATA_HOME} CACHE=${ambient.XDG_CACHE_HOME} TMP=${ambient.TMPDIR} FREE=unset SOURCE=task FILE=${getConfigPath()}`,
     );
     expect(result.stdout).not.toContain("sk-never-in-a-command");
   });
@@ -201,7 +201,7 @@ describe.skipIf(unavailable !== undefined)("akm's runtime on the real OpenCode b
     const texts = data.events.map((event) => [event.role, event.text]);
     expect(texts[0]).toEqual(["user", "MODE:akm please"]);
     expect(texts.some(([role, text]) => role === "assistant" && text?.startsWith("[tool:akm_search]"))).toBe(true);
-    expect(texts.some(([role, text]) => role === "tool" && text?.includes("hits"))).toBe(true);
+    expect(texts.some(([role, text]) => role === "tool" && text?.includes("results"))).toBe(true);
   });
 
   test("nothing is written outside akm's directories: not in the home directory, not in the temp directory", async () => {

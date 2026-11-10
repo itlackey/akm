@@ -16,6 +16,7 @@ import { getDbPath } from "../core/paths";
 import { SCRIPT_EXTENSIONS } from "../core/recognition-util";
 import { withStateDb } from "../core/state-db";
 import { isVerbose, warn, warnOnce, warnVerbose } from "../core/warn";
+import { foldBeforePurge } from "../indexer/metrics/fold";
 import { localEmbeddingRuntime } from "../llm/embedder";
 import { effectiveEmbedding } from "../llm/embedders/connection";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
@@ -67,20 +68,18 @@ import { rebuildFtsIfTotalsStale } from "../storage/repositories/index-fts-repos
 import { clearStaleCacheEntries } from "../storage/repositories/index-llm-cache-repository";
 import {
   deleteIndexDirState,
-  deleteMeta,
   getIndexDirState,
   getMeta,
   setMeta,
   upsertIndexDirState,
 } from "../storage/repositories/index-meta-repository";
-import { VACUUM_PENDING_META } from "../storage/repositories/index-schema";
 import { upsertUtilityScore } from "../storage/repositories/index-utility-repository";
 import { getEmbeddingCount } from "../storage/repositories/index-vec-repository";
+import { purgeFoldedUsageEvents } from "../storage/repositories/metrics-rollup-repository";
 import { INDEX_DB_VACUUMED_EVENT, readFreelistInfo, vacuumIfReclaimable } from "../storage/state-db-integrity";
 import { assertIndexedWorkflowSourceIdentity, WorkflowSourceIdentityError } from "../workflows/source-files";
 import { reclassifyIndexDbContention } from "./index-db-contention";
 import { deriveEntryProvenance, deriveInstallations } from "./installations";
-import { type LegacyRefMove, legacyRefMove, rekeyLegacyEntry, rewriteLegacyStateRefs } from "./legacy-refs";
 import { type AdapterConceptOwner, indexedPathMatchesOwner, resolveConceptOwner } from "./lookup/adapter-concept-owner";
 import { type EmbeddingGenerationResult, embeddingInputCap, generateEmbeddingsForDb } from "./materialize-embeddings";
 import {
@@ -101,7 +100,7 @@ import {
 } from "./passes/metadata";
 import { drainDirDocuments } from "./scan/drain-dir";
 import type { SearchSource } from "./search/search-source";
-import { purgeOldUsageEvents, USAGE_EVENT_RETENTION_DAYS } from "./usage/usage-events";
+import { USAGE_EVENT_RETENTION_DAYS } from "./usage/usage-events";
 import type { FileContext } from "./walk/file-context";
 import {
   type IndexVerification,
@@ -414,19 +413,13 @@ function finalizeIndex(args: {
 }
 
 /**
- * Compact index.db once a layout migration has left tables and columns'
- * pages free, or whenever more than half its pages are free (the same
+ * Compact index.db whenever more than half its pages are free (the same
  * threshold improve applies to state.db). Nothing else ever VACUUMs this
  * file, and a delete-heavy history leaves it mostly free pages.
  */
 function vacuumIndexDb(db: Database, onProgress: (event: IndexProgressEvent) => void): void {
-  const migrated = getMeta(db, VACUUM_PENDING_META) === "1";
-  const outcome = vacuumIfReclaimable(db, readFreelistInfo(db), {
-    eventType: INDEX_DB_VACUUMED_EVENT,
-    force: migrated,
-  });
+  const outcome = vacuumIfReclaimable(db, readFreelistInfo(db), { eventType: INDEX_DB_VACUUMED_EVENT });
   if (!outcome.ran) return;
-  if (migrated) deleteMeta(db, VACUUM_PENDING_META);
   onProgress({
     phase: "finalize",
     message: `Compacted index.db with VACUUM: ${outcome.pagesBefore} → ${outcome.pagesAfter} pages.`,
@@ -752,8 +745,7 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
       if (skippedWorkflowCount > 0) {
         const noun = skippedWorkflowCount === 1 ? "workflow spec" : "workflow specs";
         warn(
-          `${skippedWorkflowCount} ${noun} skipped due to validation errors; ` +
-            "rerun with --verbose (or AKM_VERBOSE=1) to see details.",
+          `${skippedWorkflowCount} ${noun} skipped due to validation errors; ` + "rerun with --verbose to see details.",
         );
       }
     }
@@ -1368,7 +1360,6 @@ function persistDirRecords(
   maxInputTokens: number,
 ): void {
   const deletedEntries = new Map<number, DeletedEntry>();
-  const legacyMoves: LegacyRefMove[] = [];
   const findPersisted = db.prepare("SELECT id, content_hash, file_path, adapter_id FROM entries WHERE item_ref = ?");
 
   const insertTransaction = db.transaction(() => {
@@ -1492,11 +1483,6 @@ function persistDirRecords(
             continue;
           }
 
-          const legacy = legacyRefMove(bundle.bundleId, entry.type, provenance.conceptId);
-          if (legacy) {
-            rekeyLegacyEntry(db, legacy, provenance.conceptId, entryPath);
-            legacyMoves.push(legacy);
-          }
           upsertEntry(db, entryPath, withFileSize(entry, entryPath), provenance, contentHash, maxInputTokens);
         }
       }
@@ -1557,11 +1543,6 @@ function persistDirRecords(
   deleteUsageEventsForEntries(
     [...deletedEntries.values()].filter((entry) => refStillIndexed.get(entry.itemRef) == null),
   );
-  try {
-    rewriteLegacyStateRefs(legacyMoves);
-  } catch (error) {
-    warn(`[index] could not carry over the history of ${legacyMoves.length} re-keyed asset(s): ${String(error)}`);
-  }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -1852,6 +1833,20 @@ function readLookupEntry(db: Database, id: number, fallbackConceptId: string, so
 // ── Utility score recomputation ──────────────────────────────────────────────
 
 /**
+ * Fold closed days into metrics.db, then purge the usage rows past retention whose day is folded. When
+ * metrics.db is unavailable nothing is purged (one warning); a state.db without the table has nothing to purge.
+ */
+function purgeFoldedUsageHistory(stateDb: Database): void {
+  const folded = foldBeforePurge(stateDb);
+  if (!folded) return;
+  try {
+    purgeFoldedUsageEvents(stateDb, USAGE_EVENT_RETENTION_DAYS, folded);
+  } catch {
+    /* Table may not exist yet */
+  }
+}
+
+/**
  * Recompute utility scores based on usage_events data: every entry by default,
  * or just `onlyEntryId` (what `akm feedback` passes so the value it stores is
  * the one `akm index` would compute, not a second formula). A one-entry call
@@ -1876,7 +1871,7 @@ export function recomputeUtilityScores(db: Database, stateDb: Database, onlyEntr
 
   // Purge stale usage events (90-day retention). usage_events lives in state.db
   // (Chunk-8 WI-8.3); its table is created by state migration 020.
-  if (!scoped) purgeOldUsageEvents(stateDb, USAGE_EVENT_RETENTION_DAYS);
+  if (!scoped) purgeFoldedUsageHistory(stateDb);
 
   // Decay is raised to the days since the last run, floored at one day. Every
   // run therefore applies at least one full round of EMA decay (so runs less

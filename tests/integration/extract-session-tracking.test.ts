@@ -70,11 +70,9 @@ afterEach(() => {
 
 function configEnabled(stashDir: string): AkmConfig {
   return {
-    configVersion: "0.9.0",
     semanticSearchMode: "auto",
     bundles: { stash: { path: stashDir, writable: true } },
     defaultBundle: "stash",
-    defaultWriteTarget: "stash",
     connections: {
       default: {
         endpoint: "http://localhost:11434/v1/chat/completions",
@@ -217,7 +215,7 @@ describe("hashSessionContent", () => {
     expect(hashSessionContent(a)).not.toBe(hashSessionContent(b));
   });
 
-  test("hashes the RAW event stream (config maxTotalChars / truncation must not change it)", () => {
+  test("hashes the RAW event stream (truncation must not change it)", () => {
     // Two identical sessions; the hash must be stable irrespective of any
     // downstream pre-filter/truncation config (hash is computed on data.events).
     const a = fakeSession("ses_raw", 1_000_000, { text: "x".repeat(100_000) });
@@ -241,7 +239,7 @@ describe("hashSessionContent", () => {
 
 // ── #840 harvest-without-prompting hybrid — prompt-composition invariants ───
 //
-// docs/plans/subagent-extraction-design.md §6: the LLM prompt is built from
+// The LLM prompt is built from
 // parent-origin events only (`data.events.filter(e => e.filePath ===
 // data.ref.filePath)` inside `runPreLlmSessionGates`), while
 // `hashSessionContent` and `data.inlineRefs` keep seeing the FULL folded
@@ -1173,7 +1171,6 @@ describe("akmExtract — R4 transient outcomes stay retryable (null content_hash
     // outcome does not depend on a fragile low-signal fixture.
     const config = configEnabled(stash);
     const extractProcess = config.improve?.strategies?.tracking?.processes?.extract as Record<string, unknown>;
-    extractProcess.minContentChars = 1;
     extractProcess.triage = { enabled: true, minScore: 999_999 };
 
     let chatCalls = 0;

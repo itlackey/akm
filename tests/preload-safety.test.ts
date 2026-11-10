@@ -39,23 +39,9 @@ describe("preload safety invariants", () => {
     expect(process.env.XDG_CONFIG_HOME).not.toBe(path.dirname(processStartConfig));
   });
 
-  test("both broad shard runners seed a unique HOME before Bun starts", () => {
-    for (const runner of ["scripts/test-unit.sh", "scripts/test-integration.sh"]) {
-      const source = fs.readFileSync(path.join(repoRoot, runner), "utf8");
-      expect(source).toMatch(/runtime_home="\$\{logdir\}\/runtime-home-\$\(\(k \+ 1\)\)"/);
-      expect(source).toContain('HOME="$runtime_home" bun test');
-    }
-  });
-
-  test("AKM_*_DIR overrides, if set, are always live dirs under the temp root (heal drops leaked ones)", () => {
-    // The cross-file leak signature is an AKM_*_DIR pointing at a now-deleted
-    // /tmp dir. The beforeEach self-heal drops any such dangling pointer before
-    // the test runs, so by the time any test body executes, an override that is
-    // still set must resolve to a live dir under the temp root — never a
-    // dangling pointer that would surface as STASH_DIR_UNREADABLE.
-    for (const k of ["AKM_BUNDLE_DIR", "AKM_CONFIG_DIR", "AKM_CACHE_DIR", "AKM_DATA_DIR", "AKM_STATE_DIR"]) {
-      const v = process.env[k];
-      if (v !== undefined) expect(underTmp(v)).toBe(true);
-    }
+  test("the shard runner seeds a unique HOME before Bun starts", () => {
+    const source = fs.readFileSync(path.join(repoRoot, "scripts/test-shards.sh"), "utf8");
+    expect(source).toMatch(/runtime_home="\$\{logdir\}\/runtime-home-\$\(\(k \+ 1\)\)"/);
+    expect(source).toContain('HOME="$runtime_home" bun test');
   });
 });

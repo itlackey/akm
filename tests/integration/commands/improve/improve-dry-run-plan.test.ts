@@ -23,7 +23,14 @@ import { saveConfig } from "../../../../src/core/config/config";
 import { appendEvent, readEvents } from "../../../../src/core/events";
 import { decodeImproveResult } from "../../../../src/core/improve-result";
 import type { AkmDistillResult, AkmReflectResult } from "../../../../src/core/improve-types";
-import { getDbPath, getStashLocksDir } from "../../../../src/core/paths";
+import {
+  getCacheDir,
+  getConfigDir,
+  getDataDir,
+  getDbPath,
+  getStashLocksDir,
+  getStateDir,
+} from "../../../../src/core/paths";
 import { getStateDbPath, openStateDatabase } from "../../../../src/core/state-db";
 import { _setWarnSinkForTests } from "../../../../src/core/warn";
 import { akmIndex } from "../../../../src/indexer/indexer";
@@ -769,7 +776,7 @@ describe("#800 effective dry-run planner", () => {
         throw new Error("dry-run dispatched extraction");
       },
     };
-    const dataRoot = process.env.AKM_DATA_DIR ?? path.join(stashDir, ".missing-data");
+    const dataRoot = getDataDir();
     const beforeData = snapshotTree(dataRoot);
 
     const result = await akmImprove({
@@ -791,7 +798,7 @@ describe("#800 effective dry-run planner", () => {
 
   test("real OpenCode held-WAL discovery leaves its live main, WAL, and SHM byte-identical", async () => {
     const storage = isolatedStorage();
-    const config = plannerConfig({ extract: { enabled: true, minNewSessions: 1, defaultSince: "7d" } });
+    const config = plannerConfig({ extract: { enabled: true, minNewSessions: 1 } });
     await indexSkills(storage.stashDir, 1, config);
 
     const opencodeDir = path.join(storage.root, "opencode");
@@ -863,10 +870,10 @@ describe("#800 effective dry-run planner", () => {
 
     const roots = {
       stash: stashDir,
-      config: path.dirname(process.env.AKM_CONFIG_DIR ?? path.join(stashDir, ".missing-config")),
-      data: process.env.AKM_DATA_DIR ?? path.join(stashDir, ".missing-data"),
-      state: process.env.AKM_STATE_DIR ?? path.join(stashDir, ".missing-state"),
-      cache: process.env.AKM_CACHE_DIR ?? path.join(stashDir, ".missing-cache"),
+      config: getConfigDir(),
+      data: getDataDir(),
+      state: getStateDir(),
+      cache: getCacheDir(),
     };
     const before = Object.fromEntries(Object.entries(roots).map(([name, root]) => [name, snapshotTree(root)]));
     const reflectFn = mock(async () => {

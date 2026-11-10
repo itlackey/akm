@@ -6,11 +6,9 @@
  * `src/tasks/source/bounded-document.ts` — the version-agnostic bounded YAML
  * front end shared by task source v4's own parser and (frozen, vendored)
  * task v3's — renders every source label its callers supply through the
- * SAME shared funnel (D2-N4, spec docs/plans/specs/p2a-task-source-v4.md
- * §3.1).
+ * SAME shared funnel (D2-N4).
  *
- * P4 (docs/plans/specs/p4-deletions-closeout.md §3.2.2/§3.2.3, row B-17,
- * F-A2.11) retires task source v3 acceptance from `src/tasks/source-v3.ts`
+ * P4 retires task source v3 acceptance from `src/tasks/task-source.ts`
  * entirely — the "task v3 source" label this file used to pin died with it.
  * Two DISTINCT labels remain in real production use today, and this file
  * pins both:
@@ -33,9 +31,9 @@
  * input through the identical assertion with only the label swapped.
  *
  * The former THIRD describe block here — an AST scan proving
- * `src/tasks/source-v3.ts` imported the D2-N4 helper set from
+ * `src/tasks/task-source.ts` imported the D2-N4 helper set from
  * `./source/bounded-document` rather than keeping a local copy — is DELETED,
- * not flipped: `source-v3.ts`'s shrink (P4 §3.2.3) removed the field-parsing
+ * not flipped: `task-source.ts`'s shrink (P4 §3.2.3) removed the field-parsing
  * logic that check was guarding entirely; the module's surviving purpose is
  * the prepare seam's document vocabulary (types only), which imports no
  * D2-N4 helper at all. `task-source-v4.ts` is the extraction's real home
@@ -51,12 +49,12 @@ import { UsageError } from "../../src/core/errors";
 import {
   assertBoundedTaskYamlDocument,
   sourceError,
-  TASK_V3_MAX_STRING_BYTES,
+  TASK_MAX_STRING_BYTES,
 } from "../../src/tasks/source/bounded-document";
 import { parseTaskSource } from "../../src/tasks/source/parse-task-source";
 import { parseTaskSourceV4, parseTaskSourceV4Document } from "../../src/tasks/source/task-source-v4";
 
-/** Reused verbatim from the deleted tests/tasks/source-v3.test.ts's hostile-YAML `test.each` list (an aliased mapping) — converted to task source v4. */
+/** Reused verbatim from the former v3 task-source hostile-YAML `test.each` list (an aliased mapping) — converted to task source v4. */
 const ALIASED_YAML = "version: 4\nuses: commands/a\ninputs: &a {}\ncopy: *a\n";
 const FILE_PATH = "/bundle/tasks/hostile.yml";
 
@@ -157,11 +155,10 @@ describe("sourceError — the per-field funnel renders both source labels via it
 });
 
 /**
- * Ported from the deleted tests/tasks/source-v3.test.ts's
+ * Ported from the former v3 task-source test's
  * "task v3 hostile input and resource bounds" describe block (commit
  * 09691628 deleted the v3 parser it directly exercised — parseTaskV3Document
- * / parseTaskV3Yaml). Review finding
- * (docs/plans/specs/p4-deletions-closeout.md review, on this file): that
+ * / parseTaskV3Yaml). Review finding: that
  * describe block's real subject was never the v3 grammar — it was this
  * file's own bounded-document front end (assertBoundedTaskYamlDocument,
  * cloneBoundedJson, readBoundedTaskSourceYaml), which P4 did NOT delete and
@@ -296,7 +293,7 @@ describe("task source v4 hostile input and resource bounds", () => {
   });
 
   test("bounds mapping-key strings before object publication and YAML expansion", () => {
-    const oversizedKey = "k".repeat(TASK_V3_MAX_STRING_BYTES + 1);
+    const oversizedKey = "k".repeat(TASK_MAX_STRING_BYTES + 1);
     expect(() =>
       parseTaskSourceV4Document(
         { version: 4, uses: "commands/a", with: { [oversizedKey]: true } },

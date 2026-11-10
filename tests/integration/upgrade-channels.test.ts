@@ -99,7 +99,7 @@ beforeEach(() => {
     PATH: file("bin"),
     AKM_CHANNEL_FIXTURE: root,
     CLAUDE_CONFIG_DIR: file("claude"),
-    AKM_CLAUDE_PLUGINS_DIR: file("claude/plugins"),
+    CLAUDE_CODE_PLUGIN_CACHE_DIR: file("claude/plugins"),
     CODEX_HOME: file("codex"),
     XDG_CONFIG_HOME: file("config"),
     XDG_CACHE_HOME: file("cache"),
@@ -139,6 +139,15 @@ afterEach(() => cleanup());
     for (const plugin of run.result.plugins)
       for (const backup of plugin.backups ?? []) expect(fs.existsSync(backup)).toBe(true);
     expect(read("calls.jsonl")).not.toContain('"remove"');
+  });
+
+  test("--skip-checksum reaches the CLI step as skipChecksum, and is absent otherwise", async () => {
+    const skipped = deps();
+    await withEnv(env, () => runUpgrade({ ...opts, skipChecksum: true }, "0.10.1", skipped));
+    expect(skipped.calls).toMatchObject([{ force: false, skipPostUpgrade: true, skipChecksum: true }]);
+    const plain = deps();
+    await withEnv(env, () => runUpgrade({ ...opts }, "0.10.1", plain));
+    expect(plain.calls[0]).not.toHaveProperty("skipChecksum");
   });
 
   test("--check shows mismatches and a planned switch without native writes or installs", async () => {

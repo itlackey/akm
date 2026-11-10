@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { parseGitRepoUrl } from "../../src/sources/providers/git";
 import { type CliResult, runCliCapture } from "../_helpers/cli";
-import { withEnv } from "../_helpers/sandbox";
+import { withBundle, withEnv } from "../_helpers/sandbox";
 
 // INTEGRATION TEST — real git subprocesses against temp repos and a local bare
 // remote (#1500 file mode, #1501 sync credential, #1502 sync scope).
@@ -84,7 +84,6 @@ async function runSync(
   fs.writeFileSync(
     path.join(config, "akm", "config.json"),
     JSON.stringify({
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       bundles: opts.bundles ?? {},
       ...(opts.defaultBundle ? { defaultBundle: opts.defaultBundle } : {}),
@@ -92,7 +91,6 @@ async function runSync(
   );
   return withEnv(
     {
-      AKM_BUNDLE_DIR: opts.bundleDir,
       XDG_CONFIG_HOME: config,
       XDG_CACHE_HOME: opts.cacheHome ?? tmp("akm-sync-cache-"),
       XDG_DATA_HOME: tmp("akm-sync-data-"),
@@ -101,7 +99,7 @@ async function runSync(
       GIT_CONFIG_GLOBAL: "/dev/null",
       ...opts.env,
     },
-    () => runCliCapture(args),
+    () => withBundle(opts.bundleDir, () => runCliCapture(args)),
   );
 }
 
@@ -461,7 +459,6 @@ exec "${real}" "$@"
     fs.writeFileSync(
       path.join(config, "akm", "config.json"),
       JSON.stringify({
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         bundles: { ...extraBundles, priv: { git: URL, writable: true, credential } },
       }),

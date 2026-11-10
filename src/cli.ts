@@ -44,13 +44,13 @@ process.on("unhandledRejection", (reason) => {
         ok: false,
         error: `Unhandled rejection: ${err.message}`,
         code: "UNHANDLED_REJECTION",
-        hint: "Re-run with AKM_DEBUG=1 for a stack trace, or report at https://github.com/itlackey/akm/issues with the failing command.",
+        hint: "Re-run with --verbose for a stack trace, or report at https://github.com/itlackey/akm/issues with the failing command.",
       },
       null,
       2,
     ),
   );
-  if (process.env.AKM_DEBUG === "1" && err.stack) console.error(err.stack);
+  if (isVerbose() && err.stack) console.error(err.stack);
   process.exit(EXIT_CODES.INTERNAL);
 });
 process.on("uncaughtException", (err) => {
@@ -60,24 +60,25 @@ process.on("uncaughtException", (err) => {
         ok: false,
         error: `Uncaught exception: ${err.message}`,
         code: "UNCAUGHT_EXCEPTION",
-        hint: "Re-run with AKM_DEBUG=1 for a stack trace, or report at https://github.com/itlackey/akm/issues with the failing command.",
+        hint: "Re-run with --verbose for a stack trace, or report at https://github.com/itlackey/akm/issues with the failing command.",
       },
       null,
       2,
     ),
   );
-  if (process.env.AKM_DEBUG === "1" && err.stack) console.error(err.stack);
+  if (isVerbose() && err.stack) console.error(err.stack);
   process.exit(EXIT_CODES.INTERNAL);
 });
 
 import fs from "node:fs";
-import { type ArgsDef, type CommandDef, defineCommand, parseArgs, renderUsage, runCommand, showUsage } from "citty";
+import path from "node:path";
+import { type ArgsDef, type CommandDef, defineCommand, parseArgs, renderUsage, runCommand } from "citty";
+import { formatHelp } from "./cli/help-format";
 import {
   type CittyArgsDefinitionForScan,
   findCittyTopLevelCommandIndex,
   getParsedInvocation,
   parseAllFlagValues,
-  resolveHelpMigrateVersionArg,
   setParsedInvocation,
 } from "./cli/invocation";
 import {
@@ -114,7 +115,6 @@ import { rememberCommand } from "./commands/read/remember-cli";
 import { curateCommand, searchCommand, showCommand } from "./commands/read/search-cli";
 import { registryCommand } from "./commands/registry-cli";
 import { bundleCommand } from "./commands/sources/bundle-cli";
-import { renderMigrationHelp } from "./commands/sources/migration-help";
 import { cloneCommand, syncCommand, upgradeCommand } from "./commands/sources/sources-cli";
 import { importKnowledgeCommand, indexCommand, infoCommand } from "./commands/sources/stash-cli";
 import { taskCommand } from "./commands/tasks/tasks-cli";
@@ -126,15 +126,42 @@ import { startParentDeathWatchdog } from "./core/parent-watchdog";
 import { getConfigPath } from "./core/paths";
 import { DURATION_UNITS, parseDuration } from "./core/time";
 import { plainize } from "./core/tty";
-import { info, isQuiet, setQuiet, setVerbose, warn, warnOnce } from "./core/warn";
+import { info, isQuiet, isVerbose, setQuiet, setVerbose, warn, warnOnce } from "./core/warn";
 import { installLlmUsagePersistenceIfAbsent } from "./llm/usage-persist";
-import { EMBEDDED_HINTS, EMBEDDED_HINTS_FULL } from "./output/cli-hints";
-import { getOutputMode, initOutputMode, parseDetailLevel } from "./output/context";
+import { EMBEDDED_HINTS } from "./output/cli-hints";
+import { getOutputMode, initOutputMode } from "./output/context";
 import { isFormatExemptCommand } from "./output/format-exempt";
-import { consumeSchedulerContextArg } from "./tasks/scheduler-invocation";
 import { pkgVersion } from "./version";
 
-function applyEarlyStderrFlags(argv: string[]): void {
+/**
+ * `--config <file>` (or `--config=<file>`): the installation's config file, chosen before anything is read. Resolved
+ * against the cwd and assigned to `AKM_CONFIG_FILE`, which is what every later read of a location, and every child
+ * akm starts, goes by. Beats an `AKM_CONFIG_FILE` already in the environment; the last flag wins; scanning stops
+ * at `--`. A file that does not exist is not an error here: it reads as the default file's absence does.
+ */
+export function applyEarlyConfigFlag(argv: string[]): void {
+  const separator = argv.indexOf("--");
+  const ownArgv = separator === -1 ? argv : argv.slice(0, separator);
+  let chosen: string | undefined;
+  for (let i = 2; i < ownArgv.length; i++) {
+    const token = ownArgv[i] as string;
+    if (token === "--config") {
+      const value = ownArgv[i + 1];
+      if (value === undefined || value.trim() === "" || value.startsWith("--")) {
+        throw new UsageError("--config needs the path of a config file.", "MISSING_REQUIRED_ARGUMENT");
+      }
+      chosen = value;
+      i++;
+    } else if (token.startsWith("--config=")) {
+      chosen = token.slice("--config=".length);
+      if (chosen.trim() === "")
+        throw new UsageError("--config needs the path of a config file.", "MISSING_REQUIRED_ARGUMENT");
+    }
+  }
+  if (chosen !== undefined) process.env.AKM_CONFIG_FILE = path.resolve(chosen);
+}
+
+export function applyEarlyStderrFlags(argv: string[]): void {
   const separator = argv.indexOf("--");
   const ownArgv = separator === -1 ? argv : argv.slice(0, separator);
   if (ownArgv.includes("--quiet") || ownArgv.includes("-q")) {
@@ -477,21 +504,11 @@ const healthCommand = defineCommand({
 const hintsCommand = defineCommand({
   meta: {
     name: "hints",
-    description:
-      "Print agent instructions on how to use akm — the short guide by default; pass --detail full for the complete one",
+    description: "Print agent instructions on how to use akm",
   },
-  args: {
-    detail: {
-      type: "string",
-      description:
-        "Hints detail level (brief|normal|full). `brief` (default) prints the short guide; `normal`/`full` print the complete guide.",
-      default: "brief",
-    },
-  },
-  run({ args }) {
+  run() {
     return runWithJsonErrors(() => {
-      const detail = parseDetailLevel(args.detail as string | undefined) ?? "brief";
-      process.stdout.write(detail === "brief" ? EMBEDDED_HINTS : EMBEDDED_HINTS_FULL);
+      process.stdout.write(EMBEDDED_HINTS);
     });
   },
 });
@@ -519,7 +536,7 @@ const completionsCommand = defineCommand({
     // handling as a raw stack trace (`completions` is format-exempt, so it
     // stays a raw `defineCommand` rather than `defineJsonCommand`, but still
     // needs the same error-classification wrapper other bare `defineCommand`s
-    // in this file use, e.g. `help migrate` below).
+    // in this file use).
     return runWithJsonErrors(() => {
       if (args.shell !== "bash") {
         throw new UsageError(`Unsupported shell: ${args.shell}. Only bash is supported.`);
@@ -573,8 +590,13 @@ const commands = {
 
 /** Leaf `--help`: usage without the hidden args and the shared global flags, then one pointer line. */
 async function showCommandUsage(command: AnyCittyCommand, path: readonly string[]): Promise<void> {
-  await showUsage(withoutHelpHiddenArgs(command) as CommandDef, buildUsageParentForPath(path) as CommandDef);
-  console.log("Global flags: --format, --detail, --output, -q/--quiet, --verbose (see `akm --help`)");
+  const usage = await renderUsage(
+    withoutHelpHiddenArgs(command) as CommandDef,
+    buildUsageParentForPath(path) as CommandDef,
+  );
+  console.log(
+    formatHelp(`${usage}\nGlobal flags: --format, --detail, --output, -q/--quiet, --verbose (see \`akm --help\`)`),
+  );
 }
 
 function commandHelpTopic(name: string, command: AnyCittyCommand): AnyCittyCommand {
@@ -586,56 +608,20 @@ function commandHelpTopic(name: string, command: AnyCittyCommand): AnyCittyComma
   });
 }
 
-// `migrate` is excluded here even though it's a normal, now-visible SYSTEM
-// command (see HELP_SECTIONS below): `help`'s own `migrate` subcommand
-// (registered below) intentionally shadows this generic command-usage
-// renderer with release-notes lookup instead — `akm help migrate 0.9.0`
-// prints migration guidance, not `migrate`'s own `--help` usage block. That
-// usage block is still reachable directly via `akm migrate --help`.
 const commandHelpTopics = Object.fromEntries(
-  Object.entries(commands)
-    .filter(([name]) => name !== "migrate")
-    .map(([name, command]) => [name, commandHelpTopic(name, command)]),
+  Object.entries(commands).map(([name, command]) => [name, commandHelpTopic(name, command)]),
 );
 
 const helpCommand = defineGroupCommand({
   meta: {
     name: "help",
-    description:
-      "Print the command overview, detailed help for a command, agent instructions, or a release's migration guidance",
+    description: "Print the command overview or detailed help for a command",
   },
   subCommands: {
     ...commandHelpTopics,
-    migrate: defineCommand({
-      meta: {
-        name: "migrate",
-        description:
-          "Print release notes and migration guidance for a version. Bundled notes live in docs/migration/release-notes/<version>.md; an unknown version lists what's available.",
-      },
-      args: {
-        version: {
-          type: "positional",
-          description: "Version to review (for example 0.6.0, v0.6.0, 0.6.0-rc1, or latest)",
-          required: false,
-        },
-      },
-      run({ args }) {
-        return runWithJsonErrors(() => {
-          const version = resolveHelpMigrateVersionArg(typeof args.version === "string" ? args.version : undefined);
-          if (!version?.trim()) {
-            throw new UsageError(
-              "Usage: akm help migrate <version>.",
-              "MISSING_REQUIRED_ARGUMENT",
-              "Pass a version like `0.6.0`, `v0.6.0`, `0.6.0-rc1`, or `latest`.",
-            );
-          }
-          process.stdout.write(renderMigrationHelp(version));
-        });
-      },
-    }),
   },
   async defaultRun() {
-    process.stdout.write(`${await renderSectionedRootHelp()}\n`);
+    process.stdout.write(`${formatHelp(await renderSectionedRootHelp())}\n`);
   },
 });
 
@@ -720,13 +706,9 @@ export function shouldBypassConfigStartup(argv: readonly string[]): boolean {
   const commandIndex = findCittyTopLevelCommandIndex(args, MAIN_TOP_LEVEL_ARGS);
   const command = commandIndex >= 0 ? args[commandIndex] : undefined;
   if (command === "setup" || command === "migrate") return true;
-  // `help` and `hints` are pure-text surfaces (bundled release notes, static
-  // agent-guide text, command usage rendered from `meta` alone) — none of
-  // their run bodies read config. The documented recovery path
-  // (`akm help migrate 0.9.0`) is only ever run against a config that
-  // startup's own load would reject, so both must bypass it the same way
-  // `setup`/`migrate` do, or the recovery instructions are themselves
-  // unreachable.
+  // `help` and `hints` are pure-text surfaces (static agent-guide text,
+  // command usage rendered from `meta` alone) — none of their run bodies
+  // read config.
   if (command === "help" || command === "hints") return true;
   if (isTaskRunWithId(argv)) return true;
   if (command !== "config") return false;
@@ -736,22 +718,26 @@ export function shouldBypassConfigStartup(argv: readonly string[]): boolean {
 }
 
 /**
- * Whether `argv` resolves to the top-level `info` command — used by
- * `runCli` (and mirrored in `tests/_helpers/cli.ts`) to scope the startup
- * config read's best-effort fallback to `info` alone. `info` is NOT on
- * {@link shouldBypassConfigStartup}'s allowlist: unlike a bare bypass, it
- * still reads a valid config's `output.format`/`output.detail` like any
- * other command, it just must not be aborted by one it cannot read (see
- * `assembleInfo`'s doc comment, src/commands/sources/info.ts, for why).
- * Every other command reads config exactly as before — a broken config
- * throws here and the command never runs.
+ * Whether `argv` resolves to a top-level command whose startup config read is
+ * best-effort: `info` and `upgrade`. Used by `runCli` (and mirrored in
+ * `tests/_helpers/cli.ts`) to scope the best-effort fallback to these two
+ * alone. They are NOT on {@link shouldBypassConfigStartup}'s allowlist:
+ * unlike a bare bypass, they still read a valid config's
+ * `output.format`/`output.detail` like any other command, they just must not be
+ * aborted by a config or location they cannot read. `info` is the diagnostic
+ * (see `assembleInfo`'s doc comment, src/commands/sources/info.ts, for why);
+ * `upgrade` ends by running `akm-migrate apply`, the repair for exactly such a
+ * config or a retired location variable (see `src/core/paths.ts`), so it must
+ * reach it. Every other command reads config exactly as before — a broken
+ * config throws here and the command never runs.
  */
-export function isInfoCommand(argv: readonly string[]): boolean {
+export function readsConfigBestEffort(argv: readonly string[]): boolean {
   const userArgs = argv.slice(2);
   const separator = userArgs.indexOf("--");
   const args = separator === -1 ? userArgs : userArgs.slice(0, separator);
   const commandIndex = findCittyTopLevelCommandIndex(args, MAIN_TOP_LEVEL_ARGS);
-  return (commandIndex >= 0 ? args[commandIndex] : undefined) === "info";
+  const command = commandIndex >= 0 ? args[commandIndex] : undefined;
+  return command === "info" || command === "upgrade";
 }
 
 // ── Exit codes ──────────────────────────────────────────────────────────────
@@ -978,7 +964,7 @@ async function renderSectionedRootHelp(): Promise<string> {
       "`akm search` output rather than synthesizing them.",
     "",
     "Run `akm help <command>` or `akm <command> --help` for details on any command.",
-    "Agents: run `akm hints` for the short guide, or `akm hints --detail full` for the complete one.",
+    "Agents: run `akm hints` for the short guide.",
   ].join("\n");
   return [head, "", renderCommandSections(), "", epilogue].join("\n");
 }
@@ -1042,6 +1028,12 @@ function cittyCliErrorUsageCode(error: Error & { code?: string }): UsageErrorCod
   }
 }
 
+/** Recovery hints for the mistakes agents actually make, keyed by the command path as typed. */
+const RECOVERY_HINTS: Readonly<Record<string, string>> = {
+  "task list": "Task definitions are assets: `akm search --type task`. What is installed: `akm task doctor`.",
+  "config get": "Pass a key, for example `akm config get defaultBundle`; `akm config list` shows them all.",
+};
+
 /**
  * Route a citty `CLIError` through the standard JSON envelope instead of
  * citty's own usage-banner + raw `console.error(message)`: the
@@ -1054,7 +1046,9 @@ function toUsageErrorFromCliError(error: Error, rawArgs: readonly string[]): Usa
   const code = cittyCliErrorUsageCode(error as Error & { code?: string });
   const attempt = code === "UNKNOWN_COMMAND" ? findUnknownCommandAttempt(rawArgs) : undefined;
   const suggestion = attempt ? closestCommandMatch(attempt.attempted, attempt.candidates) : undefined;
-  const helpPointer = `Run \`${["akm", ...resolveCittyCommandPath(main, rawArgs), "--help"].join(" ")}\` for usage.`;
+  const typed = [...resolveCittyCommandPath(main, rawArgs), ...(attempt ? [attempt.attempted] : [])].join(" ");
+  const recovery = RECOVERY_HINTS[typed];
+  const helpPointer = `${recovery ? `${recovery} ` : ""}Run \`${["akm", ...resolveCittyCommandPath(main, rawArgs), "--help"].join(" ")}\` for usage.`;
   const hint = suggestion ? `Did you mean \`${suggestion}\`? ${helpPointer}` : helpPointer;
   // citty colorizes error.message with ANSI escapes even when stdout/stderr
   // is not a TTY. Strip them so the JSON envelope's `error` field is plain
@@ -1097,12 +1091,6 @@ export function insertBareListSubcommand(argv: string[]): string[] {
  * stop the rest of startup from running after a fatal early error.
  */
 export async function runCli(): Promise<void> {
-  try {
-    process.argv = consumeSchedulerContextArg(process.argv);
-  } catch (error: unknown) {
-    emitJsonError(error);
-    return;
-  }
   process.argv = insertBareListSubcommand(process.argv);
   // Mint the ParsedInvocation singleton from the (normalized) argv — the ONE
   // place argv is parsed for the whole process.
@@ -1115,16 +1103,16 @@ export async function runCli(): Promise<void> {
   // invalid; surface it through the same JSON-error path the rest of the CLI uses
   // rather than letting the raw exception escape with a stack trace.
   try {
+    applyEarlyConfigFlag(process.argv);
     applyEarlyStderrFlags(process.argv);
     const bypassConfig = shouldBypassConfigStartup(process.argv);
     // Off the bypass allowlist, every command reads config here exactly as
     // it always has: an invalid config.json throws, `emitJsonError` reports
     // it, and the command never runs — no side effect of its own body ever
     // happens (a lock taken, a network call made, a database opened
-    // read-write). `akm info` is the ONE exception (see `assembleInfo`'s
-    // doc comment, src/commands/sources/info.ts): only ITS read is
-    // best-effort, falling back to `DEFAULT_CONFIG.output` instead of
-    // throwing. Scoped narrowly on purpose — an earlier version of this fix
+    // read-write). `akm info` and `akm upgrade` are the exceptions (see
+    // `readsConfigBestEffort`): only THEIR read is best-effort, falling back
+    // to `DEFAULT_CONFIG.output` instead of throwing. Scoped narrowly on purpose — an earlier version of this fix
     // made the read best-effort for every command, which silently changed
     // outcomes across the CLI (some commands that should refuse at exit 78
     // ran anyway; `health`/`index`/`config set`/`feedback` still failed,
@@ -1132,7 +1120,7 @@ export async function runCli(): Promise<void> {
     // or making a network call).
     let outputDefaults = DEFAULT_CONFIG.output ?? {};
     if (!bypassConfig) {
-      if (isInfoCommand(process.argv)) {
+      if (readsConfigBestEffort(process.argv)) {
         try {
           outputDefaults = loadConfig().output ?? {};
         } catch {
@@ -1195,7 +1183,7 @@ export async function runCli(): Promise<void> {
   const disposeLlmUsageSink = installLlmUsagePersistenceIfAbsent();
   try {
     if (rawArgs.length === 0) {
-      process.stdout.write(`${await renderSectionedRootHelp()}\n`);
+      process.stdout.write(`${formatHelp(await renderSectionedRootHelp())}\n`);
       return;
     }
     // Mirrors citty's own builtin-flag short-circuit in `runMain` (main's own
@@ -1213,7 +1201,7 @@ export async function runCli(): Promise<void> {
       if (resolved === (main as AnyCittyCommand)) {
         // Root `--help`: the sectioned overview, not citty's
         // flat COMMANDS dump.
-        process.stdout.write(`${await renderSectionedRootHelp()}\n`);
+        process.stdout.write(`${formatHelp(await renderSectionedRootHelp())}\n`);
       } else {
         const path = resolveCittyCommandPath(main, rawArgs);
         await showCommandUsage(resolved, path);

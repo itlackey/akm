@@ -12,10 +12,10 @@
 
 import { refForFile } from "../core/asset/asset-placement";
 import { displayRef } from "../core/asset/resolve-ref";
-import { isInstalledBundle, resolveRefOwner } from "../core/env-secret-ref";
 import { UsageError } from "../core/errors";
 import { substituteRefTokens } from "../core/ref-token";
 import type { AssetRenderer, RenderContext } from "../indexer/walk/file-context";
+import { isInstalledBundle, resolveRefOwner } from "../sources/env-secret-ref";
 import type {
   ShowResponse,
   WorkflowParameter,
@@ -98,8 +98,7 @@ export function summarizeStepOrchestration(
   const exec = spec ? spec.exec : frozen?.exec;
   const env = unit?.env ?? frozen?.env;
   const workflow = spec ? spec.workflow : frozen?.workflow;
-  const named = (settings: typeof unit | undefined): string | undefined =>
-    settings?.connection ?? settings?.harness ?? settings?.engine;
+  const named = (settings: typeof unit | undefined): string | undefined => settings?.connection ?? settings?.harness;
   const engine = exec ? undefined : (named(unit) ?? named(defaults));
   const model = exec ? undefined : (unit?.model ?? defaults?.model);
   const timeoutMs = unit?.timeoutMs !== undefined ? unit.timeoutMs : defaults?.timeoutMs;

@@ -13,7 +13,7 @@ written are in [Core Principles](akm-core-principles.md).
 - **Files are the truth.** Capabilities are files in bundles. `index.db` is
   a derived view that `akm index` rebuilds; `state.db` holds akm's
   bookkeeping (events, proposals, runs, salience), never capability
-  content; `logs.db` holds purgeable log lines. Every change akm makes to a
+  content; `logs.db` holds purgeable log lines; `metrics.db` holds the daily rollups folded from `state.db` before its history is purged, and is never purged. Every change akm makes to a
   capability lands as a file: an accepted proposal becomes the asset, memory
   inference writes derived children, retirement leaves an archive and a
   tombstone, extraction writes session assets. Pinned by
@@ -21,7 +21,7 @@ written are in [Core Principles](akm-core-principles.md).
 - **One local retrieval layer.** Every source materializes to disk and is
   indexed the same way; `show` resolves through the index and reads from
   disk. Registry results are opt-in and arrive in `registryHits`, never
-  merged into `hits`. A source provider fetches and refreshes and implements
+  merged into `results`. A source provider fetches and refreshes and implements
   no search or show, so source resolution, registry install and provider
   plumbing stay behind indexing and the path from `search` or `curate` to
   `show` is a lookup in the local index. Pinned by the `SourceProvider`
@@ -29,12 +29,13 @@ written are in [Core Principles](akm-core-principles.md).
   `tests/integration/output-baseline.test.ts`.
 - **Discovery chooses, show delivers.** `search` and `curate` return enough
   to pick an asset and its `ref` at every detail level (a registry hit
-  carries `installRef` instead); `show` returns the payload; `--detail agent`
-  results also carry `path` and `editable`. Pinned by
+  carries `installRef` instead); `show` returns the payload; both commands list
+  their matches under `results`, and `curate` at `normal` also carries `path`
+  and `editable`. Pinned by
   `tests/output-shapes-unit.test.ts` and `tests/output-baseline.test.ts`.
 - **Every token earns its place.** Default output is lean: `--detail brief`
-  lists only what is needed to choose the next asset, and `normal`, `full`
-  and `agent` widen or reshape it. `show` returns what a consumer needs to
+  lists only what is needed to choose the next asset, and `normal` and `full`
+  widen it. `show` returns what a consumer needs to
   act on the asset (a script's run hints, a skill's instructions, a
   command's template, an agent's prompt, knowledge content, a workflow's
   steps and parameters, env key names, secret metadata) and never an env or
@@ -48,7 +49,7 @@ written are in [Core Principles](akm-core-principles.md).
   `tests/contracts/ref-resolver-contract.test.ts`.
 - **Execution happens only through named surfaces.** Workflow runs, tasks,
   agent and command dispatch, `env run` and `secret run`, the improve and
-  proposal processes, index passes, and fetcher modules in the working
+  proposal processes, and fetcher modules in the working
   bundle's `scripts/wiki-fetchers/` directory during website sync. `search`
   and `show` execute nothing; a script runs only as a task or workflow
   target. Held by review.
@@ -62,10 +63,9 @@ written are in [Core Principles](akm-core-principles.md).
   session extraction writes session assets, and `improve` purges graced
   archives, commits accepted proposals and auto-syncs a git-backed bundle.
   Pinned by
-  `tests/improve-plan-autonomy-wiring.test.ts` and
-  `tests/config-experimental-improve-autonomy.test.ts`.
+  `tests/improve-autonomy-gate.test.ts`.
 - **Writes resolve one way.** An explicit `--bundle`, then
-  `defaultWriteTarget`, then the working bundle, then an error. A
+  the working bundle, then an error. A
   destination that is not writable is an error, never a fallback. Env and
   secret values are never printed. Pinned by
   `tests/integration/write/write-source.test.ts`,
@@ -81,20 +81,16 @@ written are in [Core Principles](akm-core-principles.md).
   config, so editing config changes the next run and not the one in flight.
   The journaled runner is symbolic (a `$VAR` reference, or a connection's name
   for its stored key), so a credential is not frozen: dispatch materializes the
-  current key, for the frozen endpoint only, and only if the runner was frozen
-  eligible for one (`storedKey: false` marks a connection an `extends` base
-  alone defines). Pinned by `tests/workflows/child-plan-immutability.test.ts`
+  current key, for the frozen endpoint only. Pinned by `tests/workflows/child-plan-immutability.test.ts`
   and `tests/workflows/immutable-execution-v4-red.test.ts`.
-- **Host authority is local and never inferred.** Inherited config shares
-  portable policy only. A disabled bundle (`enabled: false`) is inert across
+- **Host authority is local and never inferred.** A disabled bundle (`enabled: false`) is inert across
   content reads, writes, indexing and execution; an explicit bundle lifecycle
   command may still update a named disabled bundle without activating it. The
   default bundle is carried as explicit identity and default status, never
-  taken from array position. Runtime code never invents authority: the one
-  host-local choice it fills in by itself is `scheduler.enabled`, and only from
-  evidence the operator already created on this host (a config without the list
-  takes the akm-written rows already in the native scheduler as the choice;
-  see [Configuration](../reference/configuration.md#scheduler-activation)).
+  taken from array position. Runtime code never invents authority: it
+  fills in no host-local choice by itself: `scheduler.enabled` is the operator's list, and a config
+  without it schedules nothing
+  (see [Configuration](../reference/configuration.md#scheduler-activation)).
   Anything else that would need a new trust decision is reported, never
   invented. Pinned by `tests/config.test.ts` and
   `tests/source-source.test.ts`.
@@ -112,13 +108,13 @@ The `akm` adapter's fourteen built-in asset types (`skill`, `command`,
 `lesson`, `fact`, `env`, `secret`, `task`, `session`) each map to a
 canonical source directory through `src/core/asset/asset-placement.ts`'s
 `PLACEMENT_SPECS` map. See
-[Bundle Types](../reference/bundle-types.md) for the full table.
+[Asset Types](../reference/asset-types.md#directory-layout) for the full table.
 
 `env` holds whole `.env` files and `secret` holds single-value secret files.
 `wiki` is not an item type: multi-page wikis are a bundle *format* owned by the
 `llm-wiki` adapter, not a per-file type stamped by the classifier (see
 [Classification](internals/classification.md) and
-[Bundle Types](../reference/bundle-types.md) for the ten other formats akm
+[Supported Formats](../reference/supported-formats.md) for the ten other formats akm
 recognizes besides its own native one).
 
 ---
@@ -271,7 +267,7 @@ Notes:
 - `content` is bounded body text plus TOC headings and parameter metadata; `env`
   and `secret` entries index key names and file names only, and session bodies
   are not indexed
-- registry results live in `registryHits`, never in `hits`
+- registry results live in `registryHits`, never in `results`
 - `--from all` keeps registry results in `registryHits` — they are not
   rank-merged with source hits
 - curate carries search's normalized scope/source/type/belief controls through
@@ -283,7 +279,7 @@ Notes:
 - local search and curate expose the actual execution in `searchMode`:
   `semantic`, intentional/unavailable `keyword`, or `fts-fallback` when a
   ready semantic runtime failed during the query; that degradation also
-  surfaces as one `warnings[]` entry, including in agent shape
+  surfaces as one `warnings[]` entry, including at `normal`
 - usage-event writes are best-effort; a read-only filesystem drops them
   silently and does not change `searchMode`
 
@@ -325,7 +321,7 @@ read only after an indexed row resolves it.
 Agent-shaped search, show, and curate results for materialized local assets
 include the index-backed `ref`, absolute `path`, and `editable`. `editHint` is
 included only when `editable` is `false`; it is secondary guidance and does not
-replace the normal show, run, or use action (or curate follow-up). Registry-only
+replace the normal show, run, or use path. Registry-only
 results have no local path or editability fields.
 
 `editable` means the asset's file belongs to a configured source whose
@@ -337,7 +333,7 @@ from the current resolved source roots, is not stored in the index, and is
 
 ## Writing to Sources
 
-Writes go through one helper: `src/core/write-source.ts`. It is the only
+Writes go through one helper: `src/sources/write-source.ts`. It is the only
 place that should branch on `source.kind`; command layers do not hold provider
 knowledge. That is a convention that code review holds (core principle 2), not
 a lint rule. Where a step is meaningful only for a publication-backed target,
@@ -378,7 +374,7 @@ not `false`. `options.pushOnCommit` is not supported: config load reports it
 refresh.
 
 Write-target resolution (`resolveWriteTarget`) follows: an explicit
-destination flag (`--bundle`) -> `config.defaultWriteTarget` -> working
+destination flag (`--bundle`) -> working
 bundle (`defaultBundle`) -> `ConfigError`. There is no fallback to the first
 writable source. The resolved target keeps the optional configured selector
 separate from the stable `source.name`: APIs that must re-resolve a destination
@@ -516,11 +512,11 @@ names a connection or a harness, never a profile, and
 
 What runs where follows from the kind of work:
 
-- **Model work** (the improve processes, judges, index passes, extraction,
+- **Model work** (the improve processes, judges, extraction,
   `remember --enrich`) runs on the default connection as a direct request to its
   endpoint; with no connection, on the default harness, with its tools restricted
   where the harness can be.
-- **Agent work** (`akm agent`, `command run`, `proposal new`, agent tasks,
+- **Agent work** (`akm agent`, `command`, `proposal new`, agent tasks,
   workflow agent steps) runs on the default harness; with no harness, on **akm's
   own runtime** over the default connection. The runtime is a pinned OpenCode 2
   binary that akm runs as a process, has no name in config, and is not a harness.
@@ -528,8 +524,8 @@ What runs where follows from the kind of work:
   command that needs one says so and points at `akm setup`. There is no fallback
   and nothing hidden.
 
-Every execution — direct commands, tasks, workflows, improve, proposals, and
-index passes — takes the same steps
+Every execution — direct commands, tasks, workflows, improve, and proposals —
+takes the same steps
 (`src/integrations/agent/resolution.ts`, `execution.ts`, `runner-dispatch.ts`):
 
 ```text
@@ -554,7 +550,7 @@ and the model entry's are sent as written, under the portable settings
 in `src/core/llm-inference.ts` writes in the endpoint's own spelling. Omitted,
 explicit `null`, zero, and empty values stay distinct. The result's
 `provenance` names the layer behind each field (`akm task explain`,
-`command run --dry-run`).
+`command --dry-run`).
 
 An agent asset is a persona (a system prompt), not executable work. An
 `agents/<name>` selector (optionally `bundle//`-qualified) is resolved by akm
@@ -591,8 +587,8 @@ harness directly and starts it with the terminal inherited; a connection has
 nothing to start.
 
 A config in the older `engines` form is converted to `connections` and
-`harnesses` by one pure function (`src/core/config/convert-engines.ts`), in
-memory on every load and permanently by `akm migrate apply`.
+`harnesses` by one pure function (`scripts/akm-migrate/config/convert-engines.ts`),
+run only by `akm migrate apply`; a load reads the current shape and names the retired form.
 
 Task source v4 execution and durable workflow dispatch use this runtime
 boundary. Markdown workflows compile through source IR v1; new starts freeze
@@ -615,8 +611,8 @@ Every helper under `src/llm/` is a **bounded, single-shot, stateless** call.
 Concretely:
 
 - Each public export is either a stateless function (`chatCompletion` performs
-  one HTTP request and keeps nothing between calls; `resolveIndexPassExecution`,
-  `parseJsonResponse` in `src/core/parse.ts`, …) or a factory that returns a
+  one HTTP request and keeps nothing between calls; `parseJsonResponse` in
+  `src/core/parse.ts`, …) or a factory that returns a
   one-shot client tied to the symbolic runner/config the caller passes in.
 - No module under `src/llm/` keeps session, conversation, or response state at
   module scope. The module-level state is the local embedder pipeline and the
@@ -627,10 +623,9 @@ Concretely:
   structured-LLM seam: it adapts an already-resolved symbolic runner into an
   inline resolved request, lowers it, and dispatches it through `runExecution`,
   which materializes the connection's key at dispatch like every other dispatch
-  and re-runs no alias resolution. Index callers use
-  `resolveIndexPassExecution()` (`src/llm/index-passes.ts`) to freeze the typed
-  `{ runner, notices }` selection once per invocation; there is no separate
-  readiness projection. Which improve processes run is chosen by
+  and re-runs no alias resolution. Improve resolves the typed `{ runner, notices }`
+  selection once per call (`resolveImproveExecution()`, `src/commands/improve/execution.ts`)
+  and passes the runner in; there is no separate readiness projection. Which improve processes run is chosen by
   `improve.strategies`, and where each runs by `improve.processes`; see
   `docs/reference/configuration.md` for canonical config paths.
 
@@ -690,9 +685,10 @@ Agent programs are reachable by two execution paths, both behind
   akm process or another, wait for it.
 - The process loads akm's plugin (`src/assets/opencode/akm-plugin.js`, written
   to the runtime's config directory): `akm_search`, `akm_show` and `akm_curate`
-  run the akm that started the run, by the argv it runs as (`AKM_OPENCODE_CLI`,
-  a JSON array: the executable alone when compiled, the runtime and the script
-  otherwise), the
+  run the akm that started the run, by the argv it runs as (the plugin's `akm`
+  option, an array: the executable alone when compiled, the runtime and the script
+  otherwise), with the same put-back environment as the agent's commands so they
+  resolve the user's installation, not the runtime's remapped roots, the
   connection's request fields are laid over each model request, with OpenCode's
   own output cap taken off, the variables akm set for the process (its
   directories and its OpenCode settings) are put back to akm's own, or removed,
@@ -725,7 +721,7 @@ Agent programs are reachable by two execution paths, both behind
 
 Long-lived mutable operations each take their own lock file, one `O_EXCL`
 create (`src/core/file-lock.ts`, `src/core/run-lock.ts`): index writers, improve
-and extract process locks, lockfile writers, the scheduler lock, and each
+and extract process locks, lockfile writers, and each
 workflow run's lock. A lock whose holder process is gone is reclaimed; nothing
 expires by age. There is no shared barrier or activity registry around them;
 `state.db` writers serialize on SQLite's own `BEGIN IMMEDIATE`.
@@ -743,11 +739,11 @@ expires by age. There is no shared barrier or activity registry around them;
 | `src/core/adapter/` | the `BundleAdapter` contract and the built-in adapters (see [Adapters](adapters.md)) |
 | `src/core/config/config.ts` | config loading, validation, env resolution; the default connection and harness |
 | `src/core/config/credentials.ts` | `credentials.json` and the dispatch-time resolution of a connection's key (`$VAR`, else the stored entry) |
-| `src/core/config/convert-engines.ts` | the one conversion of the older `engines` / `defaults` form to `connections` / `harnesses`, called by the loader and by `akm migrate apply` |
+| `scripts/akm-migrate/config/convert-engines.ts` | the one conversion of the older `engines` / `defaults` form to `connections` / `harnesses`, run only by `akm migrate apply` |
 | `src/core/errors.ts` | error classes with stable codes and hints |
 | `src/core/parse.ts` | shared JSON parsing: think/fence stripping, balanced-brace extraction |
 | `src/core/concurrent.ts` | bounded concurrency pool (`concurrentMap`, default 1 worker) and keyed serialization |
-| `src/core/write-source.ts` | the single write helper (branches on `source.kind`) |
+| `src/sources/write-source.ts` | the single write helper (branches on `source.kind`) |
 | `src/execution/resolved-request.ts` | the versioned resolved execution request and its canonical wire form (tolerant decode) |
 | `src/integrations/agent/resolution.ts` | `resolveTarget`: the connection or harness a call runs on, and its model, timeout and request fields |
 | `src/integrations/agent/execution.ts` | `resolveExecution` (target, layers, model alias, persona) and `buildExecution` / `buildExecutionFromWire` |
@@ -758,7 +754,7 @@ expires by age. There is no shared barrier or activity registry around them;
 | `src/sources/provider.ts` | minimal `SourceProvider` interface |
 | `src/sources/providers/` | filesystem / git / website / npm implementations |
 | `src/sources/resolve.ts` | filesystem path resolution for refs |
-| `src/storage/repositories/` | SQL for `index.db`, `state.db`, and `logs.db` (entries, FTS, proposals, task history, workflow runs, …) |
+| `src/storage/repositories/` | SQL for `index.db`, `state.db`, `logs.db`, and `metrics.db` (entries, FTS, proposals, task history, workflow runs, …) |
 | `src/indexer/indexer.ts` | walking, metadata generation, index rebuilds, embeddings, utility recompute |
 | `src/indexer/walk/` | walker, matchers, path/file/index context — the walk phase |
 | `src/indexer/db/` | `llm-cache` — the persistence phase (entries/embeddings persistence lives in `src/storage/repositories/`) |
@@ -779,8 +775,7 @@ expires by age. There is no shared barrier or activity registry around them;
 | `src/workflows/runtime/runs.ts` | workflow run persistence (raw SQL lives in `src/storage/repositories/workflow-runs-repository.ts`) |
 | `src/workflows/runtime/` | run lifecycle: runs, run-plan decoding, run outputs, agent-identity |
 | `src/llm/client.ts` | OpenAI-compatible chat completions client (stateless, single request/response) |
-| `src/llm/index-passes.ts` | per-pass connection or harness resolution for `akm index` (`index.*`) |
-| `src/llm/memory-infer.ts` | atomic-fact split helper (runs where `improve.processes.memoryInference` or `index.memory` says) |
+| `src/llm/memory-infer.ts` | atomic-fact split helper (runs where `improve.processes.memoryInference` says) |
 | `src/llm/embedder.ts` | local + remote embedder facade with cached pipeline |
 | `src/integrations/agent/spawn.ts` | agent CLI shell-out entry point (`runAgent`) |
 | `src/integrations/harnesses/opencode/runtime/` | akm's own runtime: the pinned OpenCode binary, fetched and run as a process |

@@ -8,7 +8,7 @@ import path from "node:path";
 import githubFetcher, { extractGithubRepository } from "../src/sources/snapshot-fetchers/github";
 import type { FetcherContext } from "../src/sources/snapshot-fetchers/types";
 import { ensureWebsiteMirror, fetchWebsiteMarkdownSnapshot } from "../src/sources/snapshot-fetchers/website-ingest";
-import { makeStashDir, withEnv, withMockedFetch } from "./_helpers/sandbox";
+import { makeStashDir, withBundle, withEnv, withMockedFetch } from "./_helpers/sandbox";
 
 const CTX: FetcherContext = { stashDir: "", timeoutMs: 5_000, allowPrivateHosts: true };
 const README_HTML = `<div id="readme" class="md" data-path="README.md">
@@ -357,7 +357,7 @@ describe("GitHub repository fetcher", () => {
     const stash = customFetcherStash();
     try {
       let fetched = false;
-      const paths = await withEnv({ AKM_BUNDLE_DIR: stash.dir }, () =>
+      const paths = await withBundle(stash.dir, () =>
         withMockedFetch(
           () =>
             ensureWebsiteMirror(

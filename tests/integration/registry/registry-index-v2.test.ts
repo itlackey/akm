@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { searchRegistry } from "../../../src/commands/read/registry-search";
 import type { RegistryIndex } from "../../../src/registry/providers/static-index";
-import { type Cleanup, sandboxEnvDir, sandboxXdgCacheHome } from "../../_helpers/sandbox";
+import { type Cleanup, sandboxAkmDir, sandboxXdgCacheHome } from "../../_helpers/sandbox";
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -94,17 +94,8 @@ beforeEach(() => {
   // servers get OS-assigned ports, and a recycled port would resurrect a
   // previous test's cached index (observed: a v2 query returning a stale v1
   // index — duplicate hits). A per-test AKM_DATA_DIR keeps the cache empty.
-  const dataResult = sandboxEnvDir("akm-registry-v2-data", "AKM_DATA_DIR", cacheResult.cleanup);
-  const originalRegistryUrl = process.env.AKM_REGISTRY_URL;
-  delete process.env.AKM_REGISTRY_URL;
-  envCleanup = () => {
-    dataResult.cleanup();
-    if (originalRegistryUrl === undefined) {
-      delete process.env.AKM_REGISTRY_URL;
-    } else {
-      process.env.AKM_REGISTRY_URL = originalRegistryUrl;
-    }
-  };
+  const dataResult = sandboxAkmDir("akm-registry-v2-data", "data", cacheResult.cleanup);
+  envCleanup = dataResult.cleanup;
 });
 
 afterEach(() => {

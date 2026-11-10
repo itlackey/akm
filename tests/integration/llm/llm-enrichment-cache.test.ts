@@ -18,13 +18,14 @@ import path from "node:path";
 import type { AkmConfig } from "../../../src/core/config/config";
 import type { SearchSource } from "../../../src/indexer/search/search-source";
 import type { Database } from "../../../src/storage/database";
+import { withImproveRunner } from "../../_helpers/memory-inference-runner";
 import { type Cleanup, makeSandboxDir, sandboxXdgDataHome, sandboxXdgStateHome } from "../../_helpers/sandbox";
 
 // ── Local LLM server (stub endpoint) ──────────────────────────────────────────
 // A real HTTP server on a random port stands in for the LLM endpoint so
 // `configWithLlm()` can point a real connection at it. This avoids
 // mock.module("../src/llm/client") which leaks into other test files (e.g.
-// tests/llm.test.ts) when Bun shares workers across files. The memory-inference
+// other llm tests) when Bun shares workers across files. The memory-inference
 // tests below never actually reach it — they inject `compressMemoryToDerivedMemory`
 // directly (see `memoryInferenceOptions()`) — so this stub only needs to answer
 // with well-formed JSON, never anything content-specific.
@@ -79,7 +80,10 @@ function memoryInferenceOptions() {
 
 function runMemoryInferencePass(...args: Parameters<typeof runMemoryInferencePassImpl>) {
   const [ctx] = args;
-  return runMemoryInferencePassImpl({ ...ctx, options: { ...ctx.options, ...memoryInferenceOptions() } });
+  return runMemoryInferencePassImpl({
+    ...withImproveRunner(ctx),
+    options: { ...ctx.options, ...memoryInferenceOptions() },
+  });
 }
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -96,7 +100,6 @@ let envCleanup: Cleanup = () => {};
 
 function configWithLlm(overrides?: Partial<AkmConfig>): AkmConfig {
   const base: AkmConfig = {
-    configVersion: "0.9.0",
     semanticSearchMode: "auto",
     connections: {
       test: {
@@ -104,13 +107,11 @@ function configWithLlm(overrides?: Partial<AkmConfig>): AkmConfig {
         models: { fast: "test-model" },
       },
     },
-    index: { connection: "test" },
   };
   return {
     ...base,
     ...overrides,
     connections: { ...base.connections, ...overrides?.connections },
-    index: { ...base.index, ...overrides?.index },
   };
 }
 
@@ -237,24 +238,6 @@ describe("getLlmCacheEntry / upsertLlmCacheEntry", () => {
     const entry = getLlmCacheEntry(db, "my-ref", "hash2", "v1");
     expect(entry).toBeDefined();
     expect(JSON.parse(entry?.resultJson ?? "null")).toEqual({ v: 2 });
-  });
-});
-
-// ── ensureSchema — retired metadata-enhance cache rows ────────────────────────
-
-describe("ensureSchema — retired metadata-enhance cache rows", () => {
-  test("drops the default cache_variant on the next writable open but keeps named variants", () => {
-    // Metadata-enhance (retired 0.9.17-alpha.9) was the only writer that left
-    // cache_variant at its default empty string; graph and memory inference
-    // always pass a named variant.
-    upsertLlmCacheEntry(db, "some-bundle//knowledge/thing", "h1", "{}", "");
-    upsertLlmCacheEntry(db, "/stash/memories/parent.md", "h2", "{}", "memory-inference-v3");
-    closeDatabase(db);
-
-    db = openIndexDatabase(tmpDbPath);
-
-    const rows = db.prepare("SELECT asset_ref, cache_variant FROM llm_enrichment_cache").all();
-    expect(rows).toEqual([{ asset_ref: "/stash/memories/parent.md", cache_variant: "memory-inference-v3" }]);
   });
 });
 

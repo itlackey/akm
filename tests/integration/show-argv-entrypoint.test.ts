@@ -5,7 +5,7 @@
 /**
  * Real-subprocess entrypoint test for the removed global `--shape` flag.
  *
- * `--shape` (0.10 folded `agent` into `--detail agent`) is an ordinary unknown
+ * `--shape` (0.10 folded `agent` into `--detail`) is an ordinary unknown
  * flag now. It must fail before any command runs, so a write command like
  * `remember` leaves nothing behind; that only holds for the real subprocess
  * entry point, so it lives in tests/integration/ on spawnSync.

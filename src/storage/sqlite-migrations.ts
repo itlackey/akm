@@ -26,6 +26,7 @@ import { withImmediateTransaction } from "./sqlite-transaction";
 /** A single, append-only schema migration. */
 export interface Migration {
   id: string;
+  /** The SQL to run; empty when the id only completes the ledger (its schema is in an earlier entry). */
   up: string;
 }
 
@@ -175,7 +176,7 @@ export function runMigrations(db: Database, migrations: readonly Migration[]): s
     ensureMigrationsTable(db);
     const applied: string[] = [];
     for (const migration of pendingMigrations(db, migrations)) {
-      db.exec(migration.up);
+      if (migration.up !== "") db.exec(migration.up);
       db.prepare("INSERT INTO schema_migrations (id) VALUES (?)").run(migration.id);
       applied.push(migration.id);
     }

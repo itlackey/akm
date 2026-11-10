@@ -9,6 +9,7 @@ import path from "node:path";
 import type { AkmConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
 import { getLogsDbPath } from "../core/logs-db";
+import { getMetricsDbPath } from "../core/metrics-db";
 import { getDbPath, getStateDbPathInDataDir } from "../core/paths";
 import { warn } from "../core/warn";
 import { effectiveEmbedding } from "../llm/embedders/connection";
@@ -31,10 +32,10 @@ function realLocation(file: string): string {
   }
 }
 
-/** Refuse to write over akm's own databases (index.db, state.db, logs.db and their sidecars). */
+/** Refuse to write over akm's own databases (index.db, state.db, logs.db, metrics.db and their sidecars). */
 function assertNotAkmDatabase(file: string): void {
   const target = realLocation(file);
-  const protectedPaths = [getDbPath(), getStateDbPathInDataDir(), getLogsDbPath()].flatMap((p) => [
+  const protectedPaths = [getDbPath(), getStateDbPathInDataDir(), getLogsDbPath(), getMetricsDbPath()].flatMap((p) => [
     p,
     `${p}-wal`,
     `${p}-shm`,

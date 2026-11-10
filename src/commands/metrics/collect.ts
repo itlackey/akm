@@ -6,18 +6,24 @@
  * Pure aggregation behind `akm metrics`: rows read from the stores in, the
  * {@link AkmMetricsResult} envelope out. Nothing here touches a database, the
  * clock or the config, so every section is unit-testable from plain rows.
- * `metrics-cli.ts` reads the rows and calls {@link buildMetricsResult}.
+ * `metrics.ts` reads the rows and calls {@link buildMetricsResult}.
  */
 
-import type { EventEnvelope } from "../../core/events-types";
+import {
+  addToHistogram,
+  emptyHistogram,
+  histogramCount,
+  histogramMedian,
+  mergeHistogram,
+} from "../../core/metrics-histogram";
+import { aggregateUsage, dedupeSelects, toUsageRow } from "../../indexer/metrics/rows";
 import type { UsageEventRow } from "../../indexer/usage/usage-events";
-import { decodeLlmUsageRecord } from "../../llm/usage-telemetry";
 import type { UtilityWithRef } from "../../storage/repositories/index-utility-repository";
 import type { SelectEventRow } from "../../storage/repositories/metrics-repository";
+import type { QueryDailyRow, TagDailyRow, UsageDailyRow } from "../../storage/repositories/metrics-rollup-repository";
 import type { AssetOutcomeRow } from "../../storage/repositories/outcome-repository";
 import { decodeTaskHistoryMetadata, type TaskHistoryRow } from "../../storage/repositories/task-history-repository";
 import { computeWallTimeStats } from "../health/improve-metrics";
-import { hasTokenUsage } from "../health/llm-usage";
 import type { LlmUsageAggregate } from "../health/types-metrics";
 import { computeValenceScore } from "../improve/feedback-valence";
 import type {
@@ -38,21 +44,6 @@ import type {
 const DAY_MS = 86_400_000;
 /** Utility is a score in [0, 1], reported in ten equal buckets. */
 const UTILITY_BUCKETS = 10;
-/**
- * Keep the first select per (searchId, ref): a result shown twice after one
- * search is one select. Rows from before selects carried a `searchId` have no
- * key to dedupe on and are all kept.
- */
-function dedupeSelects(selects: SelectEventRow[]): SelectEventRow[] {
-  const seen = new Set<string>();
-  return selects.filter((select) => {
-    if (select.searchId === undefined) return true;
-    const key = `${select.searchId}\u0000${select.ref}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
 
 /** The coverage note naming where dedupe starts, or nothing when no select carries a `searchId`. */
 function selectDedupeNotes(selects: SelectEventRow[]): string[] {
@@ -67,6 +58,25 @@ function selectDedupeNotes(selects: SelectEventRow[]): string[] {
 const MEAN_SCALE = 100;
 /** `improve.eventRetentionDays` default (`runRetentionPurgePass`); 0 disables the purge. */
 export const DEFAULT_EVENT_RETENTION_DAYS = 90;
+
+/**
+ * Days of the window that only metrics.db still holds (see `storage/repositories/metrics-rollup-repository.ts`),
+ * folded into the sections built from raw rows. Each part covers its own days: usage and queries the days
+ * before the oldest raw usage row, selects, LLM calls and index runs the days before the oldest raw event.
+ */
+export interface MetricsRollup {
+  /** `usage_daily` rows of the report's source. */
+  usage: UsageDailyRow[];
+  queries: QueryDailyRow[];
+  tags: TagDailyRow[];
+  /** Selects per ref, the ref already resolved to the durable form. */
+  selects: Array<{ ref: string; n: number; lastAt: string }>;
+  /** Search `totalMs` histogram over the rollup days (empty when there are none). */
+  searchHist: number[];
+  llm: MetricsLlmRow[];
+  indexRuns: number;
+  indexHist: number[];
+}
 
 /** Everything {@link buildMetricsResult} needs, already read and window-filtered by the caller. */
 export interface MetricsInput {
@@ -91,6 +101,8 @@ export interface MetricsInput {
   workflows: AkmMetricsResult["workflows"];
   /** Notes the caller already gathered (missing stores, retention). */
   notes: string[];
+  /** The window's days that only metrics.db holds, when it reaches back past state.db's raw rows. */
+  rollup?: MetricsRollup;
 }
 
 // ── Filters ─────────────────────────────────────────────────────────────────
@@ -125,122 +137,14 @@ export function retentionNotes(args: {
   return notes;
 }
 
-// ── Row mapping ─────────────────────────────────────────────────────────────
-
-/** `usage_events.created_at` (`YYYY-MM-DD HH:MM:SS`, UTC) as an ISO-8601 string. */
-export function usageCreatedAtToIso(createdAt: string): string {
-  const text = createdAt.includes("T") ? createdAt : `${createdAt.replace(" ", "T")}Z`;
-  const ms = Date.parse(text);
-  return Number.isNaN(ms) ? createdAt : new Date(ms).toISOString();
-}
-
-function parseMetadata(text: string | null): Record<string, unknown> {
-  if (!text) return {};
-  try {
-    const parsed: unknown = JSON.parse(text);
-    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : {};
-  } catch {
-    return {};
-  }
-}
-
-function finiteNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-/** Map one `usage_events` row to the shape reported (and carried to the HTML dashboard). */
-export function toUsageRow(row: UsageEventRow): MetricsUsageRow {
-  const metadata = parseMetadata(row.metadata);
-  const resultCount = finiteNumber(metadata.resultCount);
-  const totalMs = finiteNumber(metadata.totalMs);
-  const reason = typeof metadata.reason === "string" && metadata.reason.trim() ? metadata.reason : undefined;
-  const tags = Array.isArray(metadata.tags)
-    ? metadata.tags.filter((tag): tag is string => typeof tag === "string")
-    : undefined;
-  return {
-    id: row.id,
-    at: usageCreatedAtToIso(row.created_at),
-    eventType: row.event_type,
-    ...(row.entry_ref ? { ref: row.entry_ref } : {}),
-    ...(row.query ? { query: row.query } : {}),
-    ...(row.signal === "positive" || row.signal === "negative" ? { signal: row.signal } : {}),
-    source: row.source,
-    ...(resultCount !== undefined ? { resultCount } : {}),
-    ...(totalMs !== undefined ? { totalMs } : {}),
-    ...(reason !== undefined ? { reason } : {}),
-    ...(tags && tags.length > 0 ? { tags } : {}),
-  };
-}
-
-/**
- * `llm_usage` events summed per UTC day x stage x process x engine x model x
- * outcome: the rows the dashboard re-aggregates. One row per call would be the
- * largest thing in the page, and the page only ever filters them by date.
- * Events that do not decode are skipped; rows come out in first-seen order.
- */
-export function llmRowsFromEvents(events: EventEnvelope[]): MetricsLlmRow[] {
-  const rows = new Map<string, MetricsLlmRow>();
-  for (const event of events) {
-    const record = decodeLlmUsageRecord(event.metadata);
-    if (!record) continue;
-    const day = event.ts.slice(0, 10);
-    const key = JSON.stringify([day, record.stage, record.process, record.engine, record.model, record.outcome]);
-    let row = rows.get(key);
-    if (!row) {
-      row = {
-        day,
-        ...(record.stage !== undefined ? { stage: record.stage } : {}),
-        ...(record.process !== undefined ? { process: record.process } : {}),
-        ...(record.engine !== undefined ? { engine: record.engine } : {}),
-        ...(record.model !== undefined ? { model: record.model } : {}),
-        outcome: record.outcome,
-        calls: 0,
-        durationMs: 0,
-        promptTokens: 0,
-        completionTokens: 0,
-        totalTokens: 0,
-        reasoningTokens: 0,
-        usageCalls: 0,
-        reasoningCalls: 0,
-      };
-      rows.set(key, row);
-    }
-    row.calls += 1;
-    row.durationMs += record.durationMs;
-    row.promptTokens += record.promptTokens ?? 0;
-    row.completionTokens += record.completionTokens ?? 0;
-    // A call without a total counts as prompt + completion, as the dashboard did per call.
-    row.totalTokens += record.totalTokens ?? (record.promptTokens ?? 0) + (record.completionTokens ?? 0);
-    row.reasoningTokens += record.reasoningTokens ?? 0;
-    if (hasTokenUsage(record)) row.usageCalls += 1;
-    if (record.reasoningTokens !== undefined) row.reasoningCalls += 1;
-  }
-  return [...rows.values()];
-}
-
-/** `index_completed` events as index runs; rows without a numeric `totalMs` are skipped. */
-export function indexRunsFromEvents(events: Array<{ ts: string; metadata_json: string }>): MetricsIndexRun[] {
-  const runs: MetricsIndexRun[] = [];
-  for (const event of events) {
-    const metadata = parseMetadata(event.metadata_json);
-    const totalMs = finiteNumber(metadata.totalMs);
-    if (totalMs === undefined) continue;
-    runs.push({ at: event.ts, mode: metadata.mode === "full" ? "full" : "incremental", totalMs });
-  }
-  return runs;
-}
-
 // ── Small helpers ───────────────────────────────────────────────────────────
 
 function median(values: number[]): number | null {
   return values.length === 0 ? null : computeWallTimeStats(values).medianMs;
 }
 
-function mean(values: number[]): number | null {
-  if (values.length === 0) return null;
-  return Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * MEAN_SCALE) / MEAN_SCALE;
+function meanOf(sum: number, count: number): number | null {
+  return count === 0 ? null : Math.round((sum / count) * MEAN_SCALE) / MEAN_SCALE;
 }
 
 function byCountThenKey<T extends { count: number }>(key: (item: T) => string): (a: T, b: T) => number {
@@ -250,15 +154,18 @@ function byCountThenKey<T extends { count: number }>(key: (item: T) => string): 
 // ── Sections ────────────────────────────────────────────────────────────────
 
 function buildUsage(input: MetricsInput, rows: MetricsUsageRow[]): AkmMetricsResult["usage"] {
-  // A search or curate writes one summary row (no ref) plus one row per hit;
-  // the summary row is the unit counted.
-  const isUnit = (row: MetricsUsageRow) => row.ref === undefined;
+  // Raw rows and metrics.db rollup rows are counted by one loop: the raw rows are first folded into the
+  // rollup shape (`aggregateUsage`, the rules the fold uses), so a day read either way counts the same.
+  const raw = aggregateUsage(rows);
+  const rollup = input.rollup;
+  const usageRows = [...raw.usage, ...(rollup?.usage ?? []).map((r) => ({ ...r, source: input.source }))];
+  const queryRows = [...raw.queries, ...(rollup?.queries ?? [])];
+  const selectRows = [...input.selects.map((s) => ({ ref: s.ref, n: 1, lastAt: s.ts })), ...(rollup?.selects ?? [])];
 
   const days = new Map<string, MetricsDailyUsage>();
-  const bump = (at: string, field: keyof Omit<MetricsDailyUsage, "day">) => {
-    const day = at.slice(0, 10);
+  const bumpDay = (day: string, field: keyof Omit<MetricsDailyUsage, "day">, n: number) => {
     const entry = days.get(day) ?? { day, search: 0, show: 0, curate: 0, feedback: 0 };
-    entry[field] += 1;
+    entry[field] += n;
     days.set(day, entry);
   };
 
@@ -275,82 +182,97 @@ function buildUsage(input: MetricsInput, rows: MetricsUsageRow[]): AkmMetricsRes
     if (entry.lastUsedAt === undefined || at > entry.lastUsedAt) entry.lastUsedAt = at;
   };
 
-  const queries = new Map<string, { count: number; results: number[]; lastAt: string }>();
+  const queries = new Map<string, { count: number; resultsSum: number; resultsN: number; lastAt: string }>();
   const zeroQueries = new Map<string, { count: number; lastAt: string }>();
   const bySource: Record<string, number> = {};
-  const searchMs: number[] = [];
   let searches = 0;
   let searchesWithHits = 0;
   let zeroResultSearches = 0;
   let shows = 0;
   let curates = 0;
 
-  for (const row of rows) {
-    bySource[row.source] = (bySource[row.source] ?? 0) + 1;
-    if (row.eventType === "search") {
-      if (row.ref !== undefined) {
-        const entry = asset(row.ref);
-        entry.searchHits += 1;
-        touch(entry, row.at);
+  for (const r of usageRows) {
+    bySource[r.source] = (bySource[r.source] ?? 0) + r.n;
+    const isSummary = r.ref === "";
+    if (r.event_type === "search") {
+      if (!isSummary) {
+        const entry = asset(r.ref);
+        entry.searchHits += r.n;
+        touch(entry, r.last_at);
+      } else {
+        searches += r.n;
+        bumpDay(r.day, "search", r.n);
+        searchesWithHits += r.hits;
+        zeroResultSearches += r.zero;
       }
-      if (!isUnit(row)) continue;
-      searches += 1;
-      bump(row.at, "search");
-      if ((row.resultCount ?? 0) > 0) searchesWithHits += 1;
-      if (row.resultCount === 0) zeroResultSearches += 1;
-      if (row.totalMs !== undefined && row.totalMs >= 0) searchMs.push(row.totalMs);
-      const query = row.query?.trim();
-      if (query) {
-        const entry = queries.get(query) ?? { count: 0, results: [], lastAt: row.at };
-        entry.count += 1;
-        if (row.resultCount !== undefined) entry.results.push(row.resultCount);
-        if (row.at > entry.lastAt) entry.lastAt = row.at;
-        queries.set(query, entry);
-        if (row.resultCount === 0) {
-          const zero = zeroQueries.get(query) ?? { count: 0, lastAt: row.at };
-          zero.count += 1;
-          if (row.at > zero.lastAt) zero.lastAt = row.at;
-          zeroQueries.set(query, zero);
-        }
+    } else if (r.event_type === "curate") {
+      if (isSummary) {
+        curates += r.n;
+        bumpDay(r.day, "curate", r.n);
       }
-    } else if (row.eventType === "curate") {
-      if (isUnit(row)) {
-        curates += 1;
-        bump(row.at, "curate");
+    } else if (r.event_type === "show") {
+      shows += r.n;
+      bumpDay(r.day, "show", r.n);
+      if (!isSummary) {
+        const entry = asset(r.ref);
+        entry.shows += r.n;
+        touch(entry, r.last_at);
       }
-    } else if (row.eventType === "show") {
-      shows += 1;
-      bump(row.at, "show");
-      if (row.ref !== undefined) {
-        const entry = asset(row.ref);
-        entry.shows += 1;
-        touch(entry, row.at);
-      }
-    } else if (row.eventType === "feedback") {
+    } else if (r.event_type === "feedback") {
       // Signed rows only, so the daily series and the totals count the same rows.
-      if (row.signal === undefined) continue;
-      bump(row.at, "feedback");
-      if (row.ref !== undefined) {
-        const entry = asset(row.ref);
-        entry[row.signal] += 1;
-        touch(entry, row.at);
+      const signed = r.positive + r.negative;
+      if (signed === 0) continue;
+      bumpDay(r.day, "feedback", signed);
+      if (!isSummary) {
+        const entry = asset(r.ref);
+        entry.positive += r.positive;
+        entry.negative += r.negative;
+        touch(entry, r.last_at);
       }
     }
   }
 
-  for (const select of input.selects) {
+  for (const q of queryRows) {
+    const entry = queries.get(q.query) ?? { count: 0, resultsSum: 0, resultsN: 0, lastAt: q.last_at };
+    entry.count += q.n;
+    entry.resultsSum += q.results_sum;
+    entry.resultsN += q.results_n;
+    if (q.last_at > entry.lastAt) entry.lastAt = q.last_at;
+    queries.set(q.query, entry);
+    if (q.zero_n > 0) {
+      const zero = zeroQueries.get(q.query) ?? { count: 0, lastAt: q.last_at };
+      zero.count += q.zero_n;
+      if (q.last_at > zero.lastAt) zero.lastAt = q.last_at;
+      zeroQueries.set(q.query, zero);
+    }
+  }
+
+  let selectCount = 0;
+  for (const select of selectRows) {
+    selectCount += select.n;
     const entry = asset(select.ref);
-    entry.selects += 1;
-    touch(entry, select.ts);
+    entry.selects += select.n;
+    touch(entry, select.lastAt);
+  }
+
+  // Latency: exact over raw rows; over rollup days an estimate from the duration histograms.
+  const searchMs = rows
+    .filter((row) => row.eventType === "search" && row.ref === undefined)
+    .flatMap((row) => (row.totalMs !== undefined && row.totalMs >= 0 ? [row.totalMs] : []));
+  const searchHist = emptyHistogram();
+  const rollupLatency = !!rollup && histogramCount(rollup.searchHist) > 0;
+  if (rollup && rollupLatency) {
+    for (const ms of searchMs) addToHistogram(searchHist, ms);
+    mergeHistogram(searchHist, rollup.searchHist);
   }
 
   const toQueryCount = (
     query: string,
-    entry: { count: number; results: number[]; lastAt: string },
+    entry: { count: number; resultsSum: number; resultsN: number; lastAt: string },
   ): MetricsQueryCount => ({
     query,
     count: entry.count,
-    avgResults: mean(entry.results),
+    avgResults: meanOf(entry.resultsSum, entry.resultsN),
     lastAt: entry.lastAt,
   });
 
@@ -359,14 +281,15 @@ function buildUsage(input: MetricsInput, rows: MetricsUsageRow[]): AkmMetricsRes
       searches,
       shows,
       curates,
-      selects: input.selects.length,
+      selects: selectCount,
       zeroResultSearches,
       searchesWithHits,
       distinctAssets: assets.size,
       distinctQueries: queries.size,
     },
-    selectsPerSearch: searchesWithHits > 0 ? input.selects.length / searchesWithHits : null,
-    searchMedianMs: median(searchMs),
+    selectsPerSearch: searchesWithHits > 0 ? selectCount / searchesWithHits : null,
+    // Exact over raw rows; over rollup days an estimate from the duration histograms.
+    searchMedianMs: rollupLatency ? histogramMedian(searchHist) : median(searchMs),
     daily: [...days.values()].sort((a, b) => a.day.localeCompare(b.day)),
     topAssets: [...assets.values()]
       .sort(
@@ -386,7 +309,11 @@ function buildUsage(input: MetricsInput, rows: MetricsUsageRow[]): AkmMetricsRes
   };
 }
 
-function buildFeedback(top: number, rows: MetricsUsageRow[]): AkmMetricsResult["feedback"] {
+function buildFeedback(
+  top: number,
+  rows: MetricsUsageRow[],
+  rollup?: Pick<MetricsRollup, "usage" | "tags">,
+): AkmMetricsResult["feedback"] {
   const totals = { positive: 0, negative: 0 };
   const byAsset = new Map<string, { positive: number; negative: number; lastAt: string }>();
   const byTag: Record<string, { positive: number; negative: number }> = {};
@@ -414,6 +341,23 @@ function buildFeedback(top: number, rows: MetricsUsageRow[]): AkmMetricsResult["
         ...(row.tags ? { tags: row.tags } : {}),
       });
     }
+  }
+
+  for (const r of rollup?.usage ?? []) {
+    if (r.event_type !== "feedback" || r.positive + r.negative === 0) continue;
+    totals.positive += r.positive;
+    totals.negative += r.negative;
+    if (r.ref === "") continue;
+    const entry = byAsset.get(r.ref) ?? { positive: 0, negative: 0, lastAt: r.last_at };
+    entry.positive += r.positive;
+    entry.negative += r.negative;
+    if (r.last_at > entry.lastAt) entry.lastAt = r.last_at;
+    byAsset.set(r.ref, entry);
+  }
+  for (const t of rollup?.tags ?? []) {
+    byTag[t.tag] ??= { positive: 0, negative: 0 };
+    byTag[t.tag]!.positive += t.positive;
+    byTag[t.tag]!.negative += t.negative;
   }
 
   const assetRows: MetricsFeedbackAsset[] = [...byAsset.entries()].map(([ref, entry]) => ({
@@ -506,10 +450,20 @@ export function buildTasks(top: number, rows: TaskHistoryRow[]): AkmMetricsResul
   };
 }
 
-function buildIndex(top: number, runs: MetricsIndexRun[]): AkmMetricsResult["index"] {
+function buildIndex(
+  top: number,
+  runs: MetricsIndexRun[],
+  rollup?: Pick<MetricsRollup, "indexRuns" | "indexHist">,
+): AkmMetricsResult["index"] {
+  const hist = emptyHistogram();
+  if (rollup && rollup.indexRuns > 0) {
+    for (const run of runs) addToHistogram(hist, run.totalMs);
+    mergeHistogram(hist, rollup.indexHist);
+  }
   return {
-    runs: runs.length,
-    medianMs: median(runs.map((run) => run.totalMs)),
+    runs: runs.length + (rollup?.indexRuns ?? 0),
+    // Exact over raw runs; with rollup days an estimate from the duration histograms.
+    medianMs: rollup && rollup.indexRuns > 0 ? histogramMedian(hist) : median(runs.map((run) => run.totalMs)),
     // Input is oldest first; reversing before the stable sort puts later rows first within one timestamp.
     recent: [...runs]
       .reverse()
@@ -536,15 +490,15 @@ export function buildMetricsResult(input: MetricsInput): AkmMetricsResult {
     window: input.window,
     filters: { source: input.source },
     usage: buildUsage({ ...input, selects }, rows),
-    feedback: buildFeedback(input.top, rows),
+    feedback: buildFeedback(input.top, rows, input.rollup),
     utility: buildUtility(input),
     outcomes: { lowestOutcome: outcomes },
     llm: input.llm,
-    index: buildIndex(input.top, input.indexRuns),
+    index: buildIndex(input.top, input.indexRuns, input.rollup),
     tasks: buildTasks(input.top, input.tasks),
     proposals: input.proposals,
     workflows: input.workflows,
-    ...(input.includeRows ? { rows: { usage: rows, llm: input.llmRows } } : {}),
+    ...(input.includeRows ? { rows: { usage: rows, llm: [...(input.rollup?.llm ?? []), ...input.llmRows] } } : {}),
     notes: [...input.notes, ...selectDedupeNotes(selects)],
   };
 }

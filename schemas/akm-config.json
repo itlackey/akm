@@ -5,14 +5,6 @@
   "description": "Configuration file for the akm CLI (Agent Knowledge Manager). Stored at ~/.config/akm/config.json (Linux/macOS) or %APPDATA%\\akm\\config.json (Windows). Supports JSONC (JavaScript-style comments). Auto-generated from src/core/config/config-schema.ts by scripts/gen-config-schema.ts — do NOT edit by hand.",
   "type": "object",
   "properties": {
-    "configVersion": {
-      "type": "string",
-      "const": "0.9.0"
-    },
-    "extends": {
-      "type": "string",
-      "minLength": 1
-    },
     "connections": {
       "type": "object",
       "propertyNames": {
@@ -186,6 +178,24 @@
         "auto"
       ]
     },
+    "paths": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "type": "string",
+          "minLength": 1
+        },
+        "state": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cache": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": {}
+    },
     "embedding": {
       "type": "object",
       "properties": {
@@ -230,17 +240,6 @@
           "exclusiveMinimum": 0,
           "maximum": 9007199254740991
         },
-        "ollamaOptions": {
-          "type": "object",
-          "properties": {
-            "num_ctx": {
-              "type": "integer",
-              "exclusiveMinimum": 0,
-              "maximum": 9007199254740991
-            }
-          },
-          "additionalProperties": {}
-        },
         "timeoutMs": {
           "type": "integer",
           "exclusiveMinimum": 0,
@@ -265,116 +264,6 @@
       },
       "additionalProperties": {}
     },
-    "index": {
-      "type": "object",
-      "properties": {
-        "connection": {
-          "type": "string",
-          "minLength": 1
-        },
-        "model": {
-          "type": "string",
-          "minLength": 1
-        },
-        "timeoutMs": {
-          "anyOf": [
-            {
-              "type": "integer",
-              "exclusiveMinimum": 0,
-              "maximum": 9007199254740991
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "llm": {
-          "type": "object",
-          "properties": {
-            "temperature": {
-              "type": "number"
-            },
-            "maxTokens": {
-              "type": "integer",
-              "exclusiveMinimum": 0,
-              "maximum": 9007199254740991
-            },
-            "extraParams": {
-              "type": "object",
-              "propertyNames": {
-                "type": "string"
-              },
-              "additionalProperties": {}
-            },
-            "enableThinking": {
-              "type": "boolean"
-            },
-            "reasoningEffort": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "additionalProperties": {}
-        }
-      },
-      "additionalProperties": {
-        "type": "object",
-        "properties": {
-          "connection": {
-            "type": "string",
-            "minLength": 1
-          },
-          "model": {
-            "type": "string",
-            "minLength": 1
-          },
-          "timeoutMs": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "enabled": {
-            "type": "boolean"
-          },
-          "llm": {
-            "type": "object",
-            "properties": {
-              "temperature": {
-                "type": "number"
-              },
-              "maxTokens": {
-                "type": "integer",
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991
-              },
-              "extraParams": {
-                "type": "object",
-                "propertyNames": {
-                  "type": "string"
-                },
-                "additionalProperties": {}
-              },
-              "enableThinking": {
-                "type": "boolean"
-              },
-              "reasoningEffort": {
-                "type": "string",
-                "minLength": 1
-              }
-            },
-            "additionalProperties": {}
-          }
-        },
-        "additionalProperties": {}
-      }
-    },
     "registries": {
       "type": "array",
       "items": {
@@ -393,13 +282,6 @@
           "provider": {
             "type": "string",
             "minLength": 1
-          },
-          "options": {
-            "type": "object",
-            "propertyNames": {
-              "type": "string"
-            },
-            "additionalProperties": {}
           }
         },
         "required": [
@@ -430,10 +312,6 @@
             "properties": {
               "url": {
                 "type": "string"
-              },
-              "refresh": {
-                "type": "string",
-                "minLength": 1
               },
               "maxPages": {
                 "type": "integer",
@@ -532,10 +410,6 @@
         }
       },
       "additionalProperties": {}
-    },
-    "defaultWriteTarget": {
-      "type": "string",
-      "minLength": 1
     },
     "projects": {
       "type": "object",
@@ -651,6 +525,13 @@
         "additionalProperties": {}
       }
     },
+    "plugins": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {}
+    },
     "search": {
       "type": "object",
       "properties": {
@@ -696,6 +577,22 @@
           "type": "string",
           "minLength": 1
         },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timeoutMs": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 2147483647
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "processes": {
           "type": "object",
           "properties": {
@@ -713,34 +610,6 @@
                 "model": {
                   "type": "string",
                   "minLength": 1
-                },
-                "llm": {
-                  "type": "object",
-                  "properties": {
-                    "temperature": {
-                      "type": "number"
-                    },
-                    "maxTokens": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0,
-                      "maximum": 9007199254740991
-                    },
-                    "extraParams": {
-                      "type": "object",
-                      "propertyNames": {
-                        "type": "string"
-                      },
-                      "additionalProperties": {}
-                    },
-                    "enableThinking": {
-                      "type": "boolean"
-                    },
-                    "reasoningEffort": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "additionalProperties": {}
                 },
                 "timeoutMs": {
                   "anyOf": [
@@ -772,34 +641,6 @@
                   "type": "string",
                   "minLength": 1
                 },
-                "llm": {
-                  "type": "object",
-                  "properties": {
-                    "temperature": {
-                      "type": "number"
-                    },
-                    "maxTokens": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0,
-                      "maximum": 9007199254740991
-                    },
-                    "extraParams": {
-                      "type": "object",
-                      "propertyNames": {
-                        "type": "string"
-                      },
-                      "additionalProperties": {}
-                    },
-                    "enableThinking": {
-                      "type": "boolean"
-                    },
-                    "reasoningEffort": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "additionalProperties": {}
-                },
                 "timeoutMs": {
                   "anyOf": [
                     {
@@ -829,34 +670,6 @@
                 "model": {
                   "type": "string",
                   "minLength": 1
-                },
-                "llm": {
-                  "type": "object",
-                  "properties": {
-                    "temperature": {
-                      "type": "number"
-                    },
-                    "maxTokens": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0,
-                      "maximum": 9007199254740991
-                    },
-                    "extraParams": {
-                      "type": "object",
-                      "propertyNames": {
-                        "type": "string"
-                      },
-                      "additionalProperties": {}
-                    },
-                    "enableThinking": {
-                      "type": "boolean"
-                    },
-                    "reasoningEffort": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "additionalProperties": {}
                 },
                 "timeoutMs": {
                   "anyOf": [
@@ -888,34 +701,6 @@
                   "type": "string",
                   "minLength": 1
                 },
-                "llm": {
-                  "type": "object",
-                  "properties": {
-                    "temperature": {
-                      "type": "number"
-                    },
-                    "maxTokens": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0,
-                      "maximum": 9007199254740991
-                    },
-                    "extraParams": {
-                      "type": "object",
-                      "propertyNames": {
-                        "type": "string"
-                      },
-                      "additionalProperties": {}
-                    },
-                    "enableThinking": {
-                      "type": "boolean"
-                    },
-                    "reasoningEffort": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "additionalProperties": {}
-                },
                 "timeoutMs": {
                   "anyOf": [
                     {
@@ -945,34 +730,6 @@
                 "model": {
                   "type": "string",
                   "minLength": 1
-                },
-                "llm": {
-                  "type": "object",
-                  "properties": {
-                    "temperature": {
-                      "type": "number"
-                    },
-                    "maxTokens": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0,
-                      "maximum": 9007199254740991
-                    },
-                    "extraParams": {
-                      "type": "object",
-                      "propertyNames": {
-                        "type": "string"
-                      },
-                      "additionalProperties": {}
-                    },
-                    "enableThinking": {
-                      "type": "boolean"
-                    },
-                    "reasoningEffort": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "additionalProperties": {}
                 },
                 "timeoutMs": {
                   "anyOf": [
@@ -1004,34 +761,6 @@
                   "type": "string",
                   "minLength": 1
                 },
-                "llm": {
-                  "type": "object",
-                  "properties": {
-                    "temperature": {
-                      "type": "number"
-                    },
-                    "maxTokens": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0,
-                      "maximum": 9007199254740991
-                    },
-                    "extraParams": {
-                      "type": "object",
-                      "propertyNames": {
-                        "type": "string"
-                      },
-                      "additionalProperties": {}
-                    },
-                    "enableThinking": {
-                      "type": "boolean"
-                    },
-                    "reasoningEffort": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "additionalProperties": {}
-                },
                 "timeoutMs": {
                   "anyOf": [
                     {
@@ -1061,34 +790,6 @@
                 "model": {
                   "type": "string",
                   "minLength": 1
-                },
-                "llm": {
-                  "type": "object",
-                  "properties": {
-                    "temperature": {
-                      "type": "number"
-                    },
-                    "maxTokens": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0,
-                      "maximum": 9007199254740991
-                    },
-                    "extraParams": {
-                      "type": "object",
-                      "propertyNames": {
-                        "type": "string"
-                      },
-                      "additionalProperties": {}
-                    },
-                    "enableThinking": {
-                      "type": "boolean"
-                    },
-                    "reasoningEffort": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "additionalProperties": {}
                 },
                 "timeoutMs": {
                   "anyOf": [
@@ -1123,34 +824,6 @@
               "type": "string",
               "minLength": 1
             },
-            "llm": {
-              "type": "object",
-              "properties": {
-                "temperature": {
-                  "type": "number"
-                },
-                "maxTokens": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0,
-                  "maximum": 9007199254740991
-                },
-                "extraParams": {
-                  "type": "object",
-                  "propertyNames": {
-                    "type": "string"
-                  },
-                  "additionalProperties": {}
-                },
-                "enableThinking": {
-                  "type": "boolean"
-                },
-                "reasoningEffort": {
-                  "type": "string",
-                  "minLength": 1
-                }
-              },
-              "additionalProperties": {}
-            },
             "timeoutMs": {
               "anyOf": [
                 {
@@ -1176,10 +849,6 @@
           "additionalProperties": {
             "type": "object",
             "properties": {
-              "description": {
-                "type": "string",
-                "minLength": 1
-              },
               "processes": {
                 "type": "object",
                 "properties": {
@@ -1270,11 +939,6 @@
                         "properties": {
                           "enabled": {
                             "type": "boolean"
-                          },
-                          "adjacentCount": {
-                            "type": "integer",
-                            "minimum": 1,
-                            "maximum": 9007199254740991
                           }
                         },
                         "additionalProperties": {}
@@ -1313,11 +977,6 @@
                     "properties": {
                       "enabled": {
                         "type": "boolean"
-                      },
-                      "minPendingCount": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 9007199254740991
                       }
                     },
                     "additionalProperties": {}
@@ -1327,20 +986,6 @@
                     "properties": {
                       "enabled": {
                         "type": "boolean"
-                      },
-                      "defaultSince": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "maxTotalChars": {
-                        "type": "integer",
-                        "exclusiveMinimum": 0,
-                        "maximum": 9007199254740991
-                      },
-                      "minContentChars": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 9007199254740991
                       },
                       "triage": {
                         "type": "object",
@@ -1356,11 +1001,6 @@
                         "additionalProperties": {}
                       },
                       "minNewSessions": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 9007199254740991
-                      },
-                      "maxSessionsPerRun": {
                         "type": "integer",
                         "minimum": 0,
                         "maximum": 9007199254740991
@@ -1443,11 +1083,6 @@
                 },
                 "additionalProperties": {}
               },
-              "limit": {
-                "type": "integer",
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991
-              },
               "sync": {
                 "type": "object",
                 "properties": {
@@ -1471,20 +1106,6 @@
         "eventRetentionDays": {
           "type": "number",
           "minimum": 0
-        },
-        "salience": {
-          "type": "object",
-          "properties": {},
-          "additionalProperties": {}
-        },
-        "stateGc": {
-          "type": "object",
-          "properties": {
-            "collect": {
-              "type": "boolean"
-            }
-          },
-          "additionalProperties": {}
         }
       },
       "additionalProperties": {}
@@ -1535,11 +1156,6 @@
       },
       "additionalProperties": {}
     },
-    "setup": {
-      "type": "object",
-      "properties": {},
-      "additionalProperties": {}
-    },
     "experimental": {
       "type": "object",
       "properties": {
@@ -1550,22 +1166,11 @@
       "additionalProperties": {}
     }
   },
-  "required": [
-    "configVersion"
-  ],
   "additionalProperties": {},
   "$defs": {
     "AkmConfig": {
       "type": "object",
       "properties": {
-        "configVersion": {
-          "type": "string",
-          "const": "0.9.0"
-        },
-        "extends": {
-          "type": "string",
-          "minLength": 1
-        },
         "connections": {
           "type": "object",
           "propertyNames": {
@@ -1739,6 +1344,24 @@
             "auto"
           ]
         },
+        "paths": {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "string",
+              "minLength": 1
+            },
+            "state": {
+              "type": "string",
+              "minLength": 1
+            },
+            "cache": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": {}
+        },
         "embedding": {
           "type": "object",
           "properties": {
@@ -1783,17 +1406,6 @@
               "exclusiveMinimum": 0,
               "maximum": 9007199254740991
             },
-            "ollamaOptions": {
-              "type": "object",
-              "properties": {
-                "num_ctx": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0,
-                  "maximum": 9007199254740991
-                }
-              },
-              "additionalProperties": {}
-            },
             "timeoutMs": {
               "type": "integer",
               "exclusiveMinimum": 0,
@@ -1818,116 +1430,6 @@
           },
           "additionalProperties": {}
         },
-        "index": {
-          "type": "object",
-          "properties": {
-            "connection": {
-              "type": "string",
-              "minLength": 1
-            },
-            "model": {
-              "type": "string",
-              "minLength": 1
-            },
-            "timeoutMs": {
-              "anyOf": [
-                {
-                  "type": "integer",
-                  "exclusiveMinimum": 0,
-                  "maximum": 9007199254740991
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "llm": {
-              "type": "object",
-              "properties": {
-                "temperature": {
-                  "type": "number"
-                },
-                "maxTokens": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0,
-                  "maximum": 9007199254740991
-                },
-                "extraParams": {
-                  "type": "object",
-                  "propertyNames": {
-                    "type": "string"
-                  },
-                  "additionalProperties": {}
-                },
-                "enableThinking": {
-                  "type": "boolean"
-                },
-                "reasoningEffort": {
-                  "type": "string",
-                  "minLength": 1
-                }
-              },
-              "additionalProperties": {}
-            }
-          },
-          "additionalProperties": {
-            "type": "object",
-            "properties": {
-              "connection": {
-                "type": "string",
-                "minLength": 1
-              },
-              "model": {
-                "type": "string",
-                "minLength": 1
-              },
-              "timeoutMs": {
-                "anyOf": [
-                  {
-                    "type": "integer",
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "enabled": {
-                "type": "boolean"
-              },
-              "llm": {
-                "type": "object",
-                "properties": {
-                  "temperature": {
-                    "type": "number"
-                  },
-                  "maxTokens": {
-                    "type": "integer",
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "extraParams": {
-                    "type": "object",
-                    "propertyNames": {
-                      "type": "string"
-                    },
-                    "additionalProperties": {}
-                  },
-                  "enableThinking": {
-                    "type": "boolean"
-                  },
-                  "reasoningEffort": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                },
-                "additionalProperties": {}
-              }
-            },
-            "additionalProperties": {}
-          }
-        },
         "registries": {
           "type": "array",
           "items": {
@@ -1946,13 +1448,6 @@
               "provider": {
                 "type": "string",
                 "minLength": 1
-              },
-              "options": {
-                "type": "object",
-                "propertyNames": {
-                  "type": "string"
-                },
-                "additionalProperties": {}
               }
             },
             "required": [
@@ -1983,10 +1478,6 @@
                 "properties": {
                   "url": {
                     "type": "string"
-                  },
-                  "refresh": {
-                    "type": "string",
-                    "minLength": 1
                   },
                   "maxPages": {
                     "type": "integer",
@@ -2085,10 +1576,6 @@
             }
           },
           "additionalProperties": {}
-        },
-        "defaultWriteTarget": {
-          "type": "string",
-          "minLength": 1
         },
         "projects": {
           "type": "object",
@@ -2204,6 +1691,13 @@
             "additionalProperties": {}
           }
         },
+        "plugins": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        },
         "search": {
           "type": "object",
           "properties": {
@@ -2249,6 +1743,22 @@
               "type": "string",
               "minLength": 1
             },
+            "model": {
+              "type": "string",
+              "minLength": 1
+            },
+            "timeoutMs": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 2147483647
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "processes": {
               "type": "object",
               "properties": {
@@ -2266,34 +1776,6 @@
                     "model": {
                       "type": "string",
                       "minLength": 1
-                    },
-                    "llm": {
-                      "type": "object",
-                      "properties": {
-                        "temperature": {
-                          "type": "number"
-                        },
-                        "maxTokens": {
-                          "type": "integer",
-                          "exclusiveMinimum": 0,
-                          "maximum": 9007199254740991
-                        },
-                        "extraParams": {
-                          "type": "object",
-                          "propertyNames": {
-                            "type": "string"
-                          },
-                          "additionalProperties": {}
-                        },
-                        "enableThinking": {
-                          "type": "boolean"
-                        },
-                        "reasoningEffort": {
-                          "type": "string",
-                          "minLength": 1
-                        }
-                      },
-                      "additionalProperties": {}
                     },
                     "timeoutMs": {
                       "anyOf": [
@@ -2325,34 +1807,6 @@
                       "type": "string",
                       "minLength": 1
                     },
-                    "llm": {
-                      "type": "object",
-                      "properties": {
-                        "temperature": {
-                          "type": "number"
-                        },
-                        "maxTokens": {
-                          "type": "integer",
-                          "exclusiveMinimum": 0,
-                          "maximum": 9007199254740991
-                        },
-                        "extraParams": {
-                          "type": "object",
-                          "propertyNames": {
-                            "type": "string"
-                          },
-                          "additionalProperties": {}
-                        },
-                        "enableThinking": {
-                          "type": "boolean"
-                        },
-                        "reasoningEffort": {
-                          "type": "string",
-                          "minLength": 1
-                        }
-                      },
-                      "additionalProperties": {}
-                    },
                     "timeoutMs": {
                       "anyOf": [
                         {
@@ -2382,34 +1836,6 @@
                     "model": {
                       "type": "string",
                       "minLength": 1
-                    },
-                    "llm": {
-                      "type": "object",
-                      "properties": {
-                        "temperature": {
-                          "type": "number"
-                        },
-                        "maxTokens": {
-                          "type": "integer",
-                          "exclusiveMinimum": 0,
-                          "maximum": 9007199254740991
-                        },
-                        "extraParams": {
-                          "type": "object",
-                          "propertyNames": {
-                            "type": "string"
-                          },
-                          "additionalProperties": {}
-                        },
-                        "enableThinking": {
-                          "type": "boolean"
-                        },
-                        "reasoningEffort": {
-                          "type": "string",
-                          "minLength": 1
-                        }
-                      },
-                      "additionalProperties": {}
                     },
                     "timeoutMs": {
                       "anyOf": [
@@ -2441,34 +1867,6 @@
                       "type": "string",
                       "minLength": 1
                     },
-                    "llm": {
-                      "type": "object",
-                      "properties": {
-                        "temperature": {
-                          "type": "number"
-                        },
-                        "maxTokens": {
-                          "type": "integer",
-                          "exclusiveMinimum": 0,
-                          "maximum": 9007199254740991
-                        },
-                        "extraParams": {
-                          "type": "object",
-                          "propertyNames": {
-                            "type": "string"
-                          },
-                          "additionalProperties": {}
-                        },
-                        "enableThinking": {
-                          "type": "boolean"
-                        },
-                        "reasoningEffort": {
-                          "type": "string",
-                          "minLength": 1
-                        }
-                      },
-                      "additionalProperties": {}
-                    },
                     "timeoutMs": {
                       "anyOf": [
                         {
@@ -2498,34 +1896,6 @@
                     "model": {
                       "type": "string",
                       "minLength": 1
-                    },
-                    "llm": {
-                      "type": "object",
-                      "properties": {
-                        "temperature": {
-                          "type": "number"
-                        },
-                        "maxTokens": {
-                          "type": "integer",
-                          "exclusiveMinimum": 0,
-                          "maximum": 9007199254740991
-                        },
-                        "extraParams": {
-                          "type": "object",
-                          "propertyNames": {
-                            "type": "string"
-                          },
-                          "additionalProperties": {}
-                        },
-                        "enableThinking": {
-                          "type": "boolean"
-                        },
-                        "reasoningEffort": {
-                          "type": "string",
-                          "minLength": 1
-                        }
-                      },
-                      "additionalProperties": {}
                     },
                     "timeoutMs": {
                       "anyOf": [
@@ -2557,34 +1927,6 @@
                       "type": "string",
                       "minLength": 1
                     },
-                    "llm": {
-                      "type": "object",
-                      "properties": {
-                        "temperature": {
-                          "type": "number"
-                        },
-                        "maxTokens": {
-                          "type": "integer",
-                          "exclusiveMinimum": 0,
-                          "maximum": 9007199254740991
-                        },
-                        "extraParams": {
-                          "type": "object",
-                          "propertyNames": {
-                            "type": "string"
-                          },
-                          "additionalProperties": {}
-                        },
-                        "enableThinking": {
-                          "type": "boolean"
-                        },
-                        "reasoningEffort": {
-                          "type": "string",
-                          "minLength": 1
-                        }
-                      },
-                      "additionalProperties": {}
-                    },
                     "timeoutMs": {
                       "anyOf": [
                         {
@@ -2614,34 +1956,6 @@
                     "model": {
                       "type": "string",
                       "minLength": 1
-                    },
-                    "llm": {
-                      "type": "object",
-                      "properties": {
-                        "temperature": {
-                          "type": "number"
-                        },
-                        "maxTokens": {
-                          "type": "integer",
-                          "exclusiveMinimum": 0,
-                          "maximum": 9007199254740991
-                        },
-                        "extraParams": {
-                          "type": "object",
-                          "propertyNames": {
-                            "type": "string"
-                          },
-                          "additionalProperties": {}
-                        },
-                        "enableThinking": {
-                          "type": "boolean"
-                        },
-                        "reasoningEffort": {
-                          "type": "string",
-                          "minLength": 1
-                        }
-                      },
-                      "additionalProperties": {}
                     },
                     "timeoutMs": {
                       "anyOf": [
@@ -2676,34 +1990,6 @@
                   "type": "string",
                   "minLength": 1
                 },
-                "llm": {
-                  "type": "object",
-                  "properties": {
-                    "temperature": {
-                      "type": "number"
-                    },
-                    "maxTokens": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0,
-                      "maximum": 9007199254740991
-                    },
-                    "extraParams": {
-                      "type": "object",
-                      "propertyNames": {
-                        "type": "string"
-                      },
-                      "additionalProperties": {}
-                    },
-                    "enableThinking": {
-                      "type": "boolean"
-                    },
-                    "reasoningEffort": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "additionalProperties": {}
-                },
                 "timeoutMs": {
                   "anyOf": [
                     {
@@ -2729,10 +2015,6 @@
               "additionalProperties": {
                 "type": "object",
                 "properties": {
-                  "description": {
-                    "type": "string",
-                    "minLength": 1
-                  },
                   "processes": {
                     "type": "object",
                     "properties": {
@@ -2823,11 +2105,6 @@
                             "properties": {
                               "enabled": {
                                 "type": "boolean"
-                              },
-                              "adjacentCount": {
-                                "type": "integer",
-                                "minimum": 1,
-                                "maximum": 9007199254740991
                               }
                             },
                             "additionalProperties": {}
@@ -2866,11 +2143,6 @@
                         "properties": {
                           "enabled": {
                             "type": "boolean"
-                          },
-                          "minPendingCount": {
-                            "type": "integer",
-                            "minimum": 0,
-                            "maximum": 9007199254740991
                           }
                         },
                         "additionalProperties": {}
@@ -2880,20 +2152,6 @@
                         "properties": {
                           "enabled": {
                             "type": "boolean"
-                          },
-                          "defaultSince": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "maxTotalChars": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0,
-                            "maximum": 9007199254740991
-                          },
-                          "minContentChars": {
-                            "type": "integer",
-                            "minimum": 0,
-                            "maximum": 9007199254740991
                           },
                           "triage": {
                             "type": "object",
@@ -2909,11 +2167,6 @@
                             "additionalProperties": {}
                           },
                           "minNewSessions": {
-                            "type": "integer",
-                            "minimum": 0,
-                            "maximum": 9007199254740991
-                          },
-                          "maxSessionsPerRun": {
                             "type": "integer",
                             "minimum": 0,
                             "maximum": 9007199254740991
@@ -2996,11 +2249,6 @@
                     },
                     "additionalProperties": {}
                   },
-                  "limit": {
-                    "type": "integer",
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991
-                  },
                   "sync": {
                     "type": "object",
                     "properties": {
@@ -3024,20 +2272,6 @@
             "eventRetentionDays": {
               "type": "number",
               "minimum": 0
-            },
-            "salience": {
-              "type": "object",
-              "properties": {},
-              "additionalProperties": {}
-            },
-            "stateGc": {
-              "type": "object",
-              "properties": {
-                "collect": {
-                  "type": "boolean"
-                }
-              },
-              "additionalProperties": {}
             }
           },
           "additionalProperties": {}
@@ -3088,11 +2322,6 @@
           },
           "additionalProperties": {}
         },
-        "setup": {
-          "type": "object",
-          "properties": {},
-          "additionalProperties": {}
-        },
         "experimental": {
           "type": "object",
           "properties": {
@@ -3103,9 +2332,6 @@
           "additionalProperties": {}
         }
       },
-      "required": [
-        "configVersion"
-      ],
       "additionalProperties": {}
     },
     "ConnectionConfig": {
@@ -3220,17 +2446,6 @@
           "exclusiveMinimum": 0,
           "maximum": 9007199254740991
         },
-        "ollamaOptions": {
-          "type": "object",
-          "properties": {
-            "num_ctx": {
-              "type": "integer",
-              "exclusiveMinimum": 0,
-              "maximum": 9007199254740991
-            }
-          },
-          "additionalProperties": {}
-        },
         "timeoutMs": {
           "type": "integer",
           "exclusiveMinimum": 0,
@@ -3317,11 +2532,6 @@
           "properties": {
             "enabled": {
               "type": "boolean"
-            },
-            "adjacentCount": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 9007199254740991
             }
           },
           "additionalProperties": {}
@@ -3330,25 +2540,6 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 50
-        },
-        "minPendingCount": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
-        },
-        "defaultSince": {
-          "type": "string",
-          "minLength": 1
-        },
-        "maxTotalChars": {
-          "type": "integer",
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991
-        },
-        "minContentChars": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
         },
         "triage": {
           "type": "object",
@@ -3364,11 +2555,6 @@
           "additionalProperties": {}
         },
         "minNewSessions": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
-        },
-        "maxSessionsPerRun": {
           "type": "integer",
           "minimum": 0,
           "maximum": 9007199254740991
@@ -3424,10 +2610,6 @@
     "ImproveProfileConfig": {
       "type": "object",
       "properties": {
-        "description": {
-          "type": "string",
-          "minLength": 1
-        },
         "processes": {
           "type": "object",
           "properties": {
@@ -3518,11 +2700,6 @@
                   "properties": {
                     "enabled": {
                       "type": "boolean"
-                    },
-                    "adjacentCount": {
-                      "type": "integer",
-                      "minimum": 1,
-                      "maximum": 9007199254740991
                     }
                   },
                   "additionalProperties": {}
@@ -3561,11 +2738,6 @@
               "properties": {
                 "enabled": {
                   "type": "boolean"
-                },
-                "minPendingCount": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 9007199254740991
                 }
               },
               "additionalProperties": {}
@@ -3575,20 +2747,6 @@
               "properties": {
                 "enabled": {
                   "type": "boolean"
-                },
-                "defaultSince": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "maxTotalChars": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0,
-                  "maximum": 9007199254740991
-                },
-                "minContentChars": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 9007199254740991
                 },
                 "triage": {
                   "type": "object",
@@ -3604,11 +2762,6 @@
                   "additionalProperties": {}
                 },
                 "minNewSessions": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 9007199254740991
-                },
-                "maxSessionsPerRun": {
                   "type": "integer",
                   "minimum": 0,
                   "maximum": 9007199254740991
@@ -3691,11 +2844,6 @@
           },
           "additionalProperties": {}
         },
-        "limit": {
-          "type": "integer",
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991
-        },
         "sync": {
           "type": "object",
           "properties": {
@@ -3731,13 +2879,6 @@
         "provider": {
           "type": "string",
           "minLength": 1
-        },
-        "options": {
-          "type": "object",
-          "propertyNames": {
-            "type": "string"
-          },
-          "additionalProperties": {}
         }
       },
       "required": [

@@ -26,7 +26,7 @@ import {
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
-  withEnv,
+  withBundle,
 } from "./_helpers/sandbox";
 
 const tempDirs: string[] = [];
@@ -49,7 +49,7 @@ async function indexStash(setup: (stash: string) => void): Promise<string> {
   const stash = fs.mkdtempSync(path.join(os.tmpdir(), "akm-search-dates-"));
   tempDirs.push(stash);
   setup(stash);
-  await withEnv({ AKM_BUNDLE_DIR: stash }, async () => {
+  await withBundle(stash, async () => {
     resetConfigCache();
     saveConfig({ semanticSearchMode: "off" });
     await akmIndex({ stashDir: stash, full: true });
@@ -58,14 +58,14 @@ async function indexStash(setup: (stash: string) => void): Promise<string> {
 }
 
 async function search(stash: string, input: Parameters<typeof akmSearch>[0]) {
-  return withEnv({ AKM_BUNDLE_DIR: stash }, async () => {
+  return withBundle(stash, async () => {
     resetConfigCache();
     return akmSearch(input);
   });
 }
 
 function hitNames(result: Awaited<ReturnType<typeof akmSearch>>): string[] {
-  return result.hits.map((hit) => ("name" in hit ? String(hit.name) : ""));
+  return result.results.map((hit) => ("name" in hit ? String(hit.name) : ""));
 }
 
 /** Memories that all match "gateway", dated differently. */
@@ -86,7 +86,7 @@ function writeDatedStash(stash: string): void {
 describe("date fields on search hits", () => {
   test("observed, created, updated and expires are returned as written", async () => {
     const stash = await indexStash(writeDatedStash);
-    const { hits } = await search(stash, { query: "gateway", limit: 20 });
+    const { results: hits } = await search(stash, { query: "gateway", limit: 20 });
     const byName = new Map(hits.map((hit) => [hit.name, hit as unknown as Record<string, unknown>]));
     const early = byName.get("observed-early");
     expect(early?.observed).toBe("2026-01-10");
@@ -97,13 +97,13 @@ describe("date fields on search hits", () => {
 
   test("the legacy observed_at spelling fills `observed`", async () => {
     const stash = await indexStash(writeDatedStash);
-    const { hits } = await search(stash, { query: "gateway", limit: 20 });
+    const { results: hits } = await search(stash, { query: "gateway", limit: 20 });
     expect((hits.find((hit) => hit.name === "legacy-observed") as { observed?: string }).observed).toBe("2026-03-03");
   });
 
   test("a hit omits the dates it does not have, and a value that is not a date is not indexed", async () => {
     const stash = await indexStash(writeDatedStash);
-    const { hits } = await search(stash, { query: "gateway", limit: 20 });
+    const { results: hits } = await search(stash, { query: "gateway", limit: 20 });
     for (const name of ["undated", "bad-date"]) {
       const hit = hits.find((candidate) => candidate.name === name) as unknown as Record<string, unknown>;
       expect(hit).toBeDefined();
@@ -118,7 +118,7 @@ describe("date fields on search hits", () => {
     const stash = await indexStash((dir) =>
       writeMemory(dir, "stamped", { observed: "'2026-04-01T09:30:00Z'" }, "gateway stamped"),
     );
-    const { hits } = await search(stash, { query: "gateway" });
+    const { results: hits } = await search(stash, { query: "gateway" });
     expect((hits[0] as { observed?: string }).observed).toBe("2026-04-01T09:30:00Z");
   });
 });
@@ -174,13 +174,15 @@ describe("--since and --until", () => {
   test("the CLI takes the flags and rejects a value that is not a day", async () => {
     const stash = await indexStash(writeDatedStash);
     const run = (args: string[]) =>
-      withEnv({ AKM_BUNDLE_DIR: stash }, async () => {
+      withBundle(stash, async () => {
         resetConfigCache();
         return runCliCapture(args);
       });
     const ok = await run(["search", "gateway", "--since", "2026-09-01", "--format=json"]);
     expect(ok.code).toBe(0);
-    expect((JSON.parse(ok.stdout).hits as Array<{ name: string }>).map((hit) => hit.name)).toEqual(["observed-late"]);
+    expect((JSON.parse(ok.stdout).results as Array<{ name: string }>).map((hit) => hit.name)).toEqual([
+      "observed-late",
+    ]);
 
     for (const bad of ["yesterday", "2026-02-30", "2026-9-1"]) {
       const result = await run(["search", "gateway", "--until", bad, "--format=json"]);

@@ -6,9 +6,7 @@
  * `akm improve` with nothing to run its model-calling processes on stops at
  * planning (exit 78), before it takes a lock, writes the index or opens a log,
  * and says what to do. No flag asks for that: a scheduled run that would index
- * and then skip everything fails loudly by itself. `--require-engines`, the 0.9
- * spelling of the flag that used to force it, is accepted and does nothing, so a
- * task installed for 0.9 keeps running. Drives the real `improveCommand`
+ * and then skip everything fails loudly by itself. Drives the real `improveCommand`
  * in-process through `runCliCapture`; no database is opened, no process spawned.
  */
 
@@ -18,7 +16,14 @@ import type { akmImprove } from "../../../src/commands/improve/improve";
 import { _setAkmImproveForTests } from "../../../src/commands/improve/improve-cli";
 import { _resetWarnOnceForTests } from "../../../src/core/warn";
 import { runCliCapture } from "../../_helpers/cli";
-import { makeSandboxDir, makeStashDir, type SandboxedDir, withEnv, writeSandboxConfig } from "../../_helpers/sandbox";
+import {
+  configHomeWithBundle,
+  makeSandboxDir,
+  makeStashDir,
+  type SandboxedDir,
+  withEnv,
+  writeSandboxConfig,
+} from "../../_helpers/sandbox";
 import { snapshotTree } from "../../_helpers/snapshot-tree";
 
 const disposers: SandboxedDir[] = [];
@@ -35,9 +40,8 @@ function freshEnv(stashDir: string): { env: Record<string, string>; roots: strin
   ];
   return {
     env: {
-      AKM_BUNDLE_DIR: stashDir,
       HOME: home.dir,
-      XDG_CONFIG_HOME: cfg.dir,
+      XDG_CONFIG_HOME: configHomeWithBundle(cfg.dir, stashDir),
       XDG_CACHE_HOME: cache.dir,
       XDG_DATA_HOME: data.dir,
       XDG_STATE_HOME: state.dir,
@@ -47,7 +51,7 @@ function freshEnv(stashDir: string): { env: Record<string, string>; roots: strin
   };
 }
 
-const NOTHING = { configVersion: "0.9.0", semanticSearchMode: "off" } as const;
+const NOTHING = { semanticSearchMode: "off" } as const;
 const ONE_CONNECTION = {
   ...NOTHING,
   connections: { default: { endpoint: "http://127.0.0.1:1/v1", models: { fast: "m", balanced: "m", reasoning: "m" } } },
@@ -88,28 +92,6 @@ describe("akm improve with nothing configured", () => {
     });
   }
 
-  test("the retired --require-engines changes nothing: the same stop, and one warning that it does nothing", async () => {
-    const stash = makeStashDir();
-    disposers.push(stash);
-    _resetWarnOnceForTests();
-    _setAkmImproveForTests((async () => {
-      throw new Error("akmImprove must not run when planning stops first");
-    }) as unknown as typeof akmImprove);
-    const { env } = freshEnv(stash.dir);
-    const run = () =>
-      withEnv(env, async () => {
-        writeSandboxConfig(NOTHING);
-        return runCliCapture(["improve", "--require-engines"]);
-      });
-
-    const first = await run();
-    const second = await run();
-
-    for (const result of [first, second]) expect(result.code).toBe(78);
-    expect(first.stderr).toContain("--require-engines is retired and has no effect");
-    expect(second.stderr).not.toContain("--require-engines is retired");
-  });
-
   test("--require-targets and --preflight are not flags", async () => {
     const stash = makeStashDir();
     disposers.push(stash);
@@ -125,22 +107,7 @@ describe("akm improve with nothing configured", () => {
 });
 
 describe("akm improve with something to run on", () => {
-  test("a run with the retired --require-engines proceeds, and only warns", async () => {
-    const stash = makeStashDir();
-    disposers.push(stash);
-    _resetWarnOnceForTests();
-    const { env } = freshEnv(stash.dir);
-
-    const result = await withEnv(env, async () => {
-      writeSandboxConfig(ONE_CONNECTION);
-      return runCliCapture(["improve", "--dry-run", "--require-engines"]);
-    });
-
-    expect(result.code).toBe(0);
-    expect(result.stderr).toContain("--require-engines is retired and has no effect");
-  });
-
-  test("--require-engines no longer asks that every process have somewhere to run: the runnable one runs and the other is reported", async () => {
+  test("a run does not ask that every process have somewhere to run: the runnable one runs and the other is reported", async () => {
     const stash = makeStashDir();
     disposers.push(stash);
     _resetWarnOnceForTests();
@@ -158,11 +125,10 @@ describe("akm improve with something to run on", () => {
 
     const result = await withEnv(env, async () => {
       writeSandboxConfig(config);
-      return runCliCapture(["improve", "--dry-run", "--require-engines"]);
+      return runCliCapture(["improve", "--dry-run"]);
     });
 
     expect(result.code).toBe(0);
-    expect(result.stderr).toContain("--require-engines is retired and has no effect");
     const run = JSON.parse(result.stdout) as {
       skippedProcesses?: Array<{ process: string; configKey: string; reason: string }>;
       plan: { processes: Array<{ process: string; enabled: boolean; engine?: string; unavailable?: unknown }> };
@@ -175,7 +141,7 @@ describe("akm improve with something to run on", () => {
     expect(run.skippedProcesses?.[0]?.reason).toContain("not configured");
   });
 
-  test("--require-engines no longer checks that a harness program is installed: the run plans it, and `akm health` is what names it", async () => {
+  test("a run does not check that a harness program is installed: it plans it, and `akm health` is what names it", async () => {
     const stash = makeStashDir();
     disposers.push(stash);
     const { env } = freshEnv(stash.dir);
@@ -187,7 +153,7 @@ describe("akm improve with something to run on", () => {
 
     const result = await withEnv(env, async () => {
       writeSandboxConfig(config);
-      return runCliCapture(["improve", "--dry-run", "--require-engines"]);
+      return runCliCapture(["improve", "--dry-run"]);
     });
     const health = await withEnv(env, async () => {
       writeSandboxConfig(config);

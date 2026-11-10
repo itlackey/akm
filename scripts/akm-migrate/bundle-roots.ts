@@ -20,7 +20,7 @@ import {
   bundlesToSourceEntries,
 } from "../../src/core/config/config-sources";
 import { ConfigError } from "../../src/core/errors";
-import { resolveWritable } from "../../src/core/write-source";
+import { resolveWritable } from "../../src/sources/write-source";
 import { implicitStashDir } from "../../src/indexer/search/search-source";
 import { lockContentRootFor } from "../../src/integrations/lockfile";
 
@@ -51,7 +51,7 @@ function existingDirectory(target: string): boolean {
 
 /**
  * Reconcile two bundle roots that resolve to the same directory on disk
- * (issue #870 — e.g. `AKM_BUNDLE_DIR` pointed at a directory already
+ * (issue #870 — e.g. `--dir` pointed at a directory already
  * configured under a different bundle id). When the two roots agree on
  * everything that matters for migration (writability, adapter) the
  * duplicate is silently dropped so each file is enumerated once,
@@ -68,16 +68,6 @@ function reconcileDuplicateRoot(existing: BundleRoot, candidate: BundleRoot, sha
       "directory must have matching settings, or one of them removed — run `akm bundle list` to see both.",
     "INVALID_CONFIG_FILE",
   );
-}
-
-/** The runtime's working stash, or none when there is no such directory yet. */
-function workingStash(config: AkmConfig): string | undefined {
-  try {
-    return implicitStashDir(config);
-  } catch (cause) {
-    if (cause instanceof ConfigError) return undefined;
-    throw cause;
-  }
 }
 
 export function bundleRoots(config: AkmConfig): BundleRoot[] {
@@ -120,20 +110,5 @@ export function bundleRoots(config: AkmConfig): BundleRoot[] {
     rootsByPath.set(componentRoot, candidate);
   }
 
-  // The working stash the runtime reads besides the bundles (`AKM_BUNDLE_DIR`, else the default stash): its files
-  // must convert here too. A configured bundle at that directory, under any spelling, owns it as it does for the
-  // runtime: the loop above took it with that bundle's policy, or left it as disabled.
-  const stashRoot = workingStash(config);
-  if (stashRoot && !rootsByPath.has(stashRoot) && bundleKeyForContentRoot(config, stashRoot) === undefined) {
-    const bundleId = deriveBundleId(undefined, stashRoot, new Set(Object.keys(config.bundles ?? {})));
-    // The runtime reads this stash with the adapter it detects, or `akm`.
-    rootsByPath.set(stashRoot, {
-      bundleId,
-      bundleRoot: stashRoot,
-      root: stashRoot,
-      adapter: detectAdapterId(stashRoot),
-      writable: true,
-    });
-  }
   return [...rootsByPath.values()];
 }

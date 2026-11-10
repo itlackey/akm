@@ -12,11 +12,11 @@
  * script work contains frozen bytes and their digest, never a path that can
  * be reread when a delayed or resumed dispatch begins.
  *
- * `prepareTaskV3Execution`'s three production callers are
- * `src/tasks/run/load-task.ts`, `src/tasks/scheduler-sync.ts`, and
+ * `prepareTaskExecution`'s three production callers are
+ * `src/tasks/run/load-task.ts`, `src/commands/tasks/tasks.ts` (`task add`), and
  * `src/workflows/freeze/targets/task.ts`'s `taskDispatch`. The name and the
- * `TaskV3*` type family it takes stay; only task source v4 ever reaches this
- * function now, always via `src/tasks/source/project-v4.ts`'s
+ * `PreparableTaskDocument` it takes is the only input shape; only task source v4
+ * ever reaches this function, always via `src/tasks/source/project-v4.ts`'s
  * `projectTaskSourceV4()`.
  */
 
@@ -25,10 +25,9 @@ import path from "node:path";
 import { prepareCommandInvocation } from "../../commands/command/command-execution";
 import { UsageError } from "../../core/errors";
 import { warn } from "../../core/warn";
-import type { TaskV3SourceDocument } from "../source-v3";
+import type { PreparableTaskDocument } from "../task-source";
 import {
   base,
-  commandEnvironmentSnapshot,
   currentExecutionValues,
   defaultTaskShell,
   environmentSnapshot,
@@ -37,16 +36,15 @@ import {
   validatePreparedCommand,
   validateWorkflowRuntimeSource,
 } from "./prepare-support";
-import type { PreparedTaskV3Execution, PrepareTaskV3ExecutionContext } from "./prepared-execution";
+import type { PreparedTaskExecution, PrepareTaskExecutionContext } from "./prepared-execution";
 import { captureScriptTarget } from "./script-capture";
 
-/** Project one canonical task-v3 source into immutable executable work. */
-export async function prepareTaskV3Execution(
-  document: TaskV3SourceDocument,
-  context: PrepareTaskV3ExecutionContext,
-): Promise<PreparedTaskV3Execution> {
+/** Project one canonical task source into immutable executable work. */
+export async function prepareTaskExecution(
+  document: PreparableTaskDocument,
+  context: PrepareTaskExecutionContext,
+): Promise<PreparedTaskExecution> {
   const environment = environmentSnapshot(document.env);
-  const commandEnvironment = commandEnvironmentSnapshot(environment, context.schedulerContext);
   const common = base(document, context, environment);
   if (document.target.kind === "run") {
     return Object.freeze({
@@ -73,7 +71,7 @@ export async function prepareTaskV3Execution(
       await (context.prepareCommand ?? prepareCommandInvocation)({
         action,
         config: context.config,
-        current: currentExecutionValues(document, context, commandEnvironment),
+        current: currentExecutionValues(document, context, environment),
         ...(context.commandSourceLoader ? { sourceLoader: context.commandSourceLoader } : {}),
       }),
       context,
@@ -96,7 +94,7 @@ export async function prepareTaskV3Execution(
       await (context.prepareCommand ?? prepareCommandInvocation)({
         action: { ref: qualified },
         config: context.config,
-        current: currentExecutionValues(document, context, commandEnvironment),
+        current: currentExecutionValues(document, context, environment),
         ...(context.commandSourceLoader ? { sourceLoader: context.commandSourceLoader } : {}),
       }),
       context,
@@ -133,8 +131,6 @@ export async function prepareTaskV3Execution(
     throw new UsageError("Script refs do not accept with.", "COMPOSITION_INVALID");
   }
   const resolved = await resolvedOwnedAsset(qualified, "script", context);
-  // Shared with prepare-script-target.ts's prepareScriptTarget():
-  // one implementation of the byte/interpreter capture, not two.
   const captured = captureScriptTarget(
     qualified,
     resolved.file,

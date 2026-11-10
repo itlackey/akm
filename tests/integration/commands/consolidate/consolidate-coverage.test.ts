@@ -2,17 +2,16 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-/**
- * #998 — the promote pass's coverage gate against a real index.db: crafted
- * unit-vector embeddings (so neighbours are exact and deterministic, as in
- * consolidate-pair-pass.test.ts), real knowledge files on disk, and the real
- * mint path. Opens a real index.db, so it lives under integration (ORG-03).
- */
-
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { akmConsolidate, emitPromotionProposal } from "../../../../src/commands/improve/consolidate";
+import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "../../../../src/commands/config";
+import {
+  akmConsolidate,
+  type ConsolidatePromoteOp,
+  emitPromotionProposal,
+  type PromoteContext,
+} from "../../../../src/commands/improve/consolidate";
 import {
   findCoveringKnowledge,
   nearestKnowledgeNotes,
@@ -21,12 +20,19 @@ import {
 import { PAIR_NEIGHBOR_FETCH_K } from "../../../../src/commands/improve/consolidate/pair-pass";
 import { contentHash } from "../../../../src/commands/improve/content-hash";
 import { drainProposals } from "../../../../src/commands/proposal/drain";
-import { createProposal, listProposals } from "../../../../src/commands/proposal/repository";
+import { akmProposalAccept } from "../../../../src/commands/proposal/proposal";
+import {
+  createProposal,
+  getProposal,
+  listProposals,
+  proposalContent,
+} from "../../../../src/commands/proposal/repository";
+import { parseFrontmatter } from "../../../../src/core/asset/frontmatter";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { getDbPath } from "../../../../src/core/paths";
 import { openStateDatabase } from "../../../../src/core/state-db";
-import { resolveWriteTarget } from "../../../../src/core/write-source";
 import type { IndexDocument } from "../../../../src/indexer/passes/metadata";
+import { resolveWriteTarget } from "../../../../src/sources/write-source";
 import { getImproveLedgerRow } from "../../../../src/storage/repositories/improve-ledger-repository";
 import { closeDatabase, openIndexDatabase } from "../../../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../../../src/storage/repositories/index-entries-repository";
@@ -34,6 +40,13 @@ import { upsertEmbedding } from "../../../../src/storage/repositories/index-vec-
 import { makeConfig } from "../../../_helpers/factories";
 import { testLlmRunner } from "../../../_helpers/llm-runner";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, withMockedFetch } from "../../../_helpers/sandbox";
+
+/**
+ * #998 — the promote pass's coverage gate against a real index.db: crafted
+ * unit-vector embeddings (so neighbours are exact and deterministic, as in
+ * consolidate-pair-pass.test.ts), real knowledge files on disk, and the real
+ * mint path. Opens a real index.db, so it lives under integration (ORG-03).
+ */
 
 let storage: IsolatedAkmStorage;
 let stash: string;
@@ -337,11 +350,9 @@ describe("akmConsolidate — a covered memory is not promoted, an uncovered one 
       indexAsset(db, "knowledge", "handbook", guideFile, 3);
     });
     const config = {
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       bundles: { stash: { path: stash, writable: true } },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
       connections: {
         planner: { endpoint: "https://consolidate.example.test/v1/chat/completions", models: { fast: "planner" } },
       },
@@ -516,5 +527,403 @@ describe("the drain's judge sees the knowledge a promotion may duplicate", () =>
     const prompts = await judgedPrompts();
     expect(prompts.filter((p) => p.includes("knowledge/not-a-promotion"))).toHaveLength(1);
     expect(prompts.some((p) => p.includes("Existing knowledge notes"))).toBe(false);
+  });
+});
+
+describe("consolidate-empty-as-none", () => {
+  /**
+   * A strict structured-output provider needs every property of the plan's
+   * promote op in `required`, so the model says "none" in the value: an empty
+   * `description` keeps the memory's own, a null `confidence` is no confidence.
+   * `emitPromotionProposal` must read both as absent, not carry "" into the
+   * proposal's frontmatter or reject a null where it expects a number.
+   *
+   * Integration (ORG-03): `emitPromotionProposal` mints into a real state.db.
+   */
+
+  const BODY =
+    "Always run the release check on a clean checkout before tagging, because a dirty tree hides files the build needs. " +
+    "The second sentence keeps this fixture above the promotion size gate.";
+
+  let storage: IsolatedAkmStorage;
+  let stash: string;
+  let config: AkmConfig;
+
+  beforeEach(() => {
+    storage = withIsolatedAkmStorage();
+    stash = storage.stashDir;
+    config = { ...makeConfig(stash), semanticSearchMode: "off" } as AkmConfig;
+    fs.mkdirSync(path.join(stash, "memories"), { recursive: true });
+    fs.mkdirSync(path.join(stash, "knowledge"), { recursive: true });
+    fs.writeFileSync(
+      path.join(stash, "memories", "release-check.md"),
+      `---\ndescription: Run the release check on a clean checkout.\n---\n\n${BODY}\n`,
+      "utf8",
+    );
+  });
+
+  afterEach(() => storage.cleanup());
+
+  /** Mint the promotion of `memories/release-check` for `reply` and return the one pending proposal. */
+  async function promote(reply: Pick<ConsolidatePromoteOp, "description" | "confidence">) {
+    const op: ConsolidatePromoteOp = {
+      op: "promote",
+      ref: "memories/release-check",
+      knowledgeRef: "knowledge/release-check",
+      reason: "Stable, reusable guidance.",
+      ...reply,
+    };
+    const skips: string[] = [];
+    await emitPromotionProposal(op, {
+      config,
+      stashDir: stash,
+      sourceRun: "consolidate-test",
+      target: resolveWriteTarget(config),
+      memoryByRef: new Map([
+        [
+          op.ref,
+          {
+            name: "release-check",
+            ref: "memories/release-check",
+            filePath: path.join(stash, "memories", "release-check.md"),
+            description: "Run the release check on a clean checkout.",
+            tags: [],
+            stashDir: stash,
+          },
+        ],
+      ]),
+      promoted: [],
+      promotedSourceRefs: new Set(),
+      existingKnowledgeBodyHashes: new Set(),
+      promotionFailures: { count: 0 },
+      warnings: [],
+      pushSkipReason: (_op, _ref, reason) => skips.push(reason),
+    });
+    expect(skips).toEqual([]);
+    const pending = listProposals(stash, { status: "pending" });
+    expect(pending).toHaveLength(1);
+    return pending[0]!;
+  }
+
+  describe("a promote op as a strict provider must write it", () => {
+    test("an empty description keeps the memory's own and a null confidence records none", async () => {
+      const proposal = await promote({ description: "", confidence: null });
+      expect(proposal.payload.frontmatter?.description).toBe("Run the release check on a clean checkout.");
+      expect(proposal.payload.content).toContain("description: Run the release check on a clean checkout.");
+      expect(proposal).not.toHaveProperty("confidence");
+    });
+
+    test("a description and a confidence the model gave are used", async () => {
+      const proposal = await promote({ description: "Run the release check before tagging.", confidence: 0.9 });
+      expect(proposal.payload.frontmatter?.description).toBe("Run the release check before tagging.");
+      expect(proposal.confidence).toBe(0.9);
+    });
+  });
+});
+
+describe("consolidate-scopes", () => {
+  // Integration: exercises the real proposal/state database and publication/archive paths.
+
+  let storage: IsolatedAkmStorage;
+  beforeEach(() => {
+    storage = withIsolatedAkmStorage();
+  });
+  afterEach(() => {
+    storage.cleanup();
+  });
+
+  const keys = ["user", "agent", "run", "channel"] as const;
+  const scope = Object.fromEntries(keys.map((key) => [`scope_${key}`, `original-${key}`]));
+  const fm = keys.map((key) => `scope_${key}: original-${key}`).join("\n");
+  const body =
+    "The Larch recovery service requires the offline vault key from the custodian. Run the recovery check before restoring the backup, and retain the recovery log for seven days.\n";
+
+  function setup() {
+    const config = makeConfig(storage.stashDir);
+    const file = path.join(storage.stashDir, "memories/source.md");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `---\ndescription: Larch recovery\n${fm}\nxrefs: [knowledge/recovery-guide]\n---\n${body}`);
+    const ctx: PromoteContext = {
+      config,
+      stashDir: storage.stashDir,
+      sourceRun: "scope-test",
+      target: resolveWriteTarget(config),
+      memoryByRef: new Map([
+        [
+          "memories/source",
+          {
+            name: "source",
+            ref: "memories/source",
+            filePath: file,
+            description: "Larch recovery",
+            tags: [],
+            stashDir: storage.stashDir,
+          },
+        ],
+      ]),
+      promoted: [],
+      promotedSourceRefs: new Set(),
+      existingKnowledgeBodyHashes: new Set(),
+      promotionFailures: { count: 0 },
+      warnings: [],
+      pushSkipReason: () => {},
+    };
+    return { config, file, ctx };
+  }
+  async function promote(ctx: PromoteContext) {
+    await emitPromotionProposal(
+      {
+        op: "promote",
+        ref: "memories/source",
+        knowledgeRef: "knowledge/recovery",
+        reason: "durable recovery",
+        description: "Larch recovery",
+      },
+      ctx,
+    );
+    expect(ctx.promoted).toHaveLength(1);
+    return getProposal(storage.stashDir, ctx.promoted[0]!);
+  }
+
+  describe("promotion scope preservation (#1197)", () => {
+    test("real writer and accepted output retain all scopes, body and source evidence", async () => {
+      const { config, file, ctx } = setup();
+      const proposal = await promote(ctx);
+      expect(parseFrontmatter(proposalContent(proposal)).data).toMatchObject(scope);
+      const result = await akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config });
+      const output = parseFrontmatter(fs.readFileSync(result.assetPath, "utf8"));
+      expect(output.data).toMatchObject(scope);
+      expect(output.content.trim()).toBe(body.trim());
+      expect(output.data.xrefs).toContain("memories/source");
+      expect(output.data.xrefs).toContain("knowledge/recovery-guide");
+      expect(fs.existsSync(file)).toBe(false);
+    });
+
+    for (const key of keys)
+      test(`scope-only source ${key} edit refuses publication and archival`, async () => {
+        const { config, file, ctx } = setup();
+        const proposal = await promote(ctx);
+        fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace(`original-${key}`, `changed-${key}`));
+        await expect(akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config })).rejects.toThrow(
+          /scope/i,
+        );
+        expect(fs.existsSync(file)).toBe(true);
+        expect(fs.existsSync(path.join(storage.stashDir, "knowledge/recovery.md"))).toBe(false);
+        expect(getProposal(storage.stashDir, proposal.id).status).toBe("pending");
+      });
+
+    test("an older promotion with scope erased cannot publish or retire a scoped source", async () => {
+      const { config, file } = setup();
+      const proposal = createProposal(storage.stashDir, {
+        source: "consolidate",
+        ref: "knowledge/recovery",
+        payload: {
+          content: `---\ndescription: Larch recovery\n---\n${body}`,
+          frontmatter: { description: "Larch recovery" },
+        },
+        promotionSource: "memories/source",
+        promotionSourceHash: contentHash(fs.readFileSync(file, "utf8"), "body"),
+      });
+      await expect(akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config })).rejects.toThrow(
+        /scope/i,
+      );
+      expect(fs.existsSync(file)).toBe(true);
+    });
+
+    test("a differently scoped derived twin survives promotion archive", async () => {
+      const { config, file, ctx } = setup();
+      const twin = file.replace(/\.md$/, ".derived.md");
+      const original = fs.readFileSync(file, "utf8").replace("original-user", "other-user");
+      fs.writeFileSync(twin, original);
+      const proposal = await promote(ctx);
+      await akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config });
+      expect(fs.readFileSync(twin, "utf8")).toBe(original);
+    });
+  });
+});
+
+/**
+ * Wave-2 QA fixes tests — Cluster B (#21, #36) and Cluster C (#6, #14, #24).
+ *
+ * Cluster B: llm/embedding subkey support in config-cli.
+ * Cluster C: empty-query guards.
+ */
+
+// ── Cluster B: connection/embedding subkey support ────────────────────────────────
+
+describe("config-cli: connections.* and embedding.* subkeys (#36)", () => {
+  const base: AkmConfig = { semanticSearchMode: "auto" };
+
+  // ── setConfigValue ────────────────────────────────────────────────────────
+  // R-063 #5: previously exercised via `parseConfigValue`, a compatibility
+  // shim removed as dead code (zero production callers) — see the note in
+  // tests/config-cli.test.ts. `setConfigValue` is the live implementation.
+
+  test("setConfigValue handles connections.local.endpoint", () => {
+    const result = setConfigValue(base, "connections.local.endpoint", "http://localhost:11434/v1/chat/completions");
+    expect(result.connections?.local?.endpoint).toBe("http://localhost:11434/v1/chat/completions");
+  });
+
+  test("setConfigValue handles connections.local.models.fast", () => {
+    const result = setConfigValue(base, "connections.local.models.fast", "llama3.2");
+    expect(result.connections?.local?.models).toEqual({ fast: "llama3.2" });
+  });
+
+  test("setConfigValue handles embedding.endpoint", () => {
+    const result = setConfigValue(base, "embedding.endpoint", "http://localhost:11434/v1/embeddings");
+    expect(result.embedding?.endpoint).toBe("http://localhost:11434/v1/embeddings");
+  });
+
+  test("setConfigValue handles embedding.model", () => {
+    const result = setConfigValue(base, "embedding.model", "nomic-embed-text");
+    expect(result.embedding?.model).toBe("nomic-embed-text");
+  });
+
+  test("setConfigValue accepts symbolic embedding credentials and rejects literals", () => {
+    expect(setConfigValue(base, "embedding.apiKey", "$AKM_EMBED_API_KEY").embedding?.apiKey).toBe("$AKM_EMBED_API_KEY");
+    expect(() => setConfigValue(base, "embedding.apiKey", "sk-embed")).toThrow(
+      /apiKey cannot be a literal in config; use a \$VAR reference/,
+    );
+  });
+
+  test("setConfigValue rejects an empty connection endpoint", () => {
+    expect(() => setConfigValue(base, "connections.local.endpoint", "")).toThrow(/endpoint must be a complete URL/);
+  });
+
+  // ── getConfigValue ────────────────────────────────────────────────────────
+
+  test("getConfigValue: connections.local.endpoint returns null when the connection is not set", () => {
+    expect(getConfigValue(base, "connections.local.endpoint")).toBeNull();
+  });
+
+  test("getConfigValue: connection fields return values when set", () => {
+    const config: AkmConfig = {
+      ...base,
+      connections: { local: { endpoint: "http://localhost/v1/chat/completions", models: { fast: "llama3.2" } } },
+    };
+    expect(getConfigValue(config, "connections.local.endpoint")).toBe("http://localhost/v1/chat/completions");
+    expect(getConfigValue(config, "connections.local.models.fast")).toBe("llama3.2");
+    expect(getConfigValue(config, "connections.local.apiKey")).toBeNull();
+  });
+
+  test("getConfigValue: embedding subkeys work", () => {
+    const config: AkmConfig = {
+      ...base,
+      embedding: { endpoint: "http://localhost/emb", model: "bge-small" },
+    };
+    expect(getConfigValue(config, "embedding.endpoint")).toBe("http://localhost/emb");
+    expect(getConfigValue(config, "embedding.model")).toBe("bge-small");
+    expect(
+      getConfigValue({ ...config, embedding: { ...config.embedding, apiKey: "$EMBED_KEY" } }, "embedding.apiKey"),
+    ).toBe("$EMBED_KEY");
+  });
+
+  // ── setConfigValue with deep merge ────────────────────────────────────────
+
+  test("setConfigValue: connection endpoint preserves sibling models", () => {
+    const config: AkmConfig = {
+      ...base,
+      connections: { local: { endpoint: "http://old/chat/completions", models: { fast: "old-model" } } },
+    };
+    const result = setConfigValue(config, "connections.local.endpoint", "http://new/chat/completions");
+    expect(result.connections?.local?.endpoint).toBe("http://new/chat/completions");
+    expect(result.connections?.local?.models).toEqual({ fast: "old-model" });
+  });
+
+  test("setConfigValue: a connection's model alias preserves its endpoint", () => {
+    const config: AkmConfig = {
+      ...base,
+      connections: { local: { endpoint: "http://localhost/v1/chat/completions", models: { fast: "old-model" } } },
+    };
+    const result = setConfigValue(config, "connections.local.models.fast", "gpt-4o");
+    expect(result.connections?.local?.models).toEqual({ fast: "gpt-4o" });
+    expect(result.connections?.local?.endpoint).toBe("http://localhost/v1/chat/completions");
+  });
+
+  test("setConfigValue: a literal connection apiKey is rejected with a $VAR hint (#454)", () => {
+    const config: AkmConfig = { ...base };
+    expect(() => setConfigValue(config, "connections.local.apiKey", "sk-secret")).toThrow(
+      /apiKey cannot be a literal in config; use a \$VAR reference/,
+    );
+    expect(setConfigValue(config, "connections.local.apiKey", "$LOCAL_API_KEY").connections?.local?.apiKey).toBe(
+      "$LOCAL_API_KEY",
+    );
+  });
+
+  test("setConfigValue: embedding.endpoint works when embedding was undefined", () => {
+    const result = setConfigValue(base, "embedding.endpoint", "http://localhost/emb");
+    expect(result.embedding?.endpoint).toBe("http://localhost/emb");
+    // Post-rewrite: subkey-set no longer scaffolds an empty `model`. The
+    // user runs `embedding.model <name>` as a follow-up.
+    expect(result.embedding?.model).toBeUndefined();
+  });
+
+  // ── unsetConfigValue ──────────────────────────────────────────────────────
+
+  test("unsetConfigValue: connection endpoint removes the key", () => {
+    const config: AkmConfig = {
+      ...base,
+      connections: { local: { endpoint: "http://localhost/v1/chat/completions", models: { fast: "llama3.2" } } },
+    };
+    const result = unsetConfigValue(config, "connections.local.endpoint");
+    expect(result.connections?.local?.endpoint).toBeUndefined();
+    expect(result.connections?.local?.models).toEqual({ fast: "llama3.2" });
+  });
+
+  test("unsetConfigValue: connection apiKey removes the key", () => {
+    const config: AkmConfig = {
+      ...base,
+      connections: {
+        local: {
+          endpoint: "http://localhost/v1/chat/completions",
+          models: { fast: "llama3.2" },
+          apiKey: "$LOCAL_API_KEY",
+        },
+      },
+    };
+    const result = unsetConfigValue(config, "connections.local.apiKey");
+    expect(result.connections?.local?.apiKey).toBeUndefined();
+    expect(result.connections?.local?.endpoint).toBe("http://localhost/v1/chat/completions");
+  });
+
+  test("unsetConfigValue: embedding.apiKey removes the key", () => {
+    const config: AkmConfig = {
+      ...base,
+      embedding: { endpoint: "http://localhost/emb", model: "bge-small", apiKey: "sk-embed" },
+    };
+    const result = unsetConfigValue(config, "embedding.apiKey");
+    expect(result.embedding?.apiKey).toBeUndefined();
+    expect(result.embedding?.endpoint).toBe("http://localhost/emb");
+  });
+});
+
+// ── Cluster C: #14 empty query guard ────────────────────────────────────────
+
+describe("search empty-query guard (#14, #24)", () => {
+  // Note: The empty-query guard for `akmSearch` lives in the CLI layer (src/cli.ts),
+  // not in `akmSearch` itself (which accepts empty queries for programmatic list-all).
+  // The guard for `akmCurate` IS in the function itself since curation always
+  // requires a meaningful query.
+
+  test("akmCurate throws UsageError for empty string query", async () => {
+    const { akmCurate } = await import("../../../../src/commands/read/curate");
+    await expect(akmCurate({ query: "" })).rejects.toThrow(/query is required/i);
+  });
+
+  test("akmCurate throws UsageError for whitespace-only query", async () => {
+    const { akmCurate } = await import("../../../../src/commands/read/curate");
+    await expect(akmCurate({ query: "   " })).rejects.toThrow(/query is required/i);
+  });
+
+  test("akmCurate UsageError has MISSING_REQUIRED_ARGUMENT code", async () => {
+    const { akmCurate } = await import("../../../../src/commands/read/curate");
+    const { UsageError } = await import("../../../../src/core/errors");
+    try {
+      await akmCurate({ query: "" });
+      throw new Error("should have thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(UsageError);
+      expect((err as import("../../../../src/core/errors").UsageError).code).toBe("MISSING_REQUIRED_ARGUMENT");
+    }
   });
 });

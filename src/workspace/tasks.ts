@@ -4,10 +4,12 @@
 
 /** The default bundle's scheduled tasks, and the actions that enable or disable one on this host. */
 
+import { akmTasksDisable, akmTasksEnable } from "../commands/tasks/tasks";
 import { loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
 import { listSetupTaskDefinitions } from "../setup/steps/tasks";
-import { runCli } from "./cli-child";
+import { type HostCli, runCli } from "./cli-child";
+import { redactForUi } from "./redact";
 
 /** The tasks the default bundle holds that have a schedule, and whether this host has enabled each. Nothing is written. */
 export function list() {
@@ -15,20 +17,50 @@ export function list() {
   return { tasks: listSetupTaskDefinitions() };
 }
 
-/** The arguments that name a task in the default bundle, the one `list` reads. */
+/** The default bundle's name and the task the input names. */
 function target(input: { task: string }) {
   if (typeof input?.task !== "string" || !input.task.trim()) throw new UsageError("task must name a task.");
   const bundle = loadConfig().defaultBundle;
   if (!bundle) throw new UsageError("There is no default bundle yet.");
-  return [`--bundle=${bundle}`, "--", input.task.trim()];
+  return { ref: input.task.trim(), options: { target: bundle } };
 }
 
-/** `akm task enable`: schedule it in this host's scheduler and sync that. */
-export async function enable(input: { task: string }) {
-  return runCli(["task", "enable", ...target(input)]);
+/**
+ * Run a task action on the host's `akm` when Desktop has one, so the OS entry it writes names that install; the bundled
+ * engine writes none. Without one, or when it fails or answers in another shape (an older akm), the action runs here:
+ * the change is saved and the result says what the scheduler did not get.
+ */
+export async function viaHost(
+  host: HostCli | undefined,
+  args: string[],
+  shape: string,
+  here: () => Promise<object>,
+): Promise<Record<string, unknown>> {
+  if (host) {
+    try {
+      return await runCli(args, shape, host);
+    } catch (error) {
+      const result = redactForUi(await here()) as Record<string, unknown>;
+      const reason = (error as Error).message.replace(/\.$/, "");
+      const note = `The akm at ${host.path} could not run this (${reason}), so the OS scheduler was not updated. Run \`akm task sync\` there.`;
+      return { ...result, warnings: [...((result.warnings as string[] | undefined) ?? []), note] };
+    }
+  }
+  return redactForUi(await here()) as Record<string, unknown>;
 }
 
-/** `akm task disable`: take it out of this host's scheduler and sync that. */
-export async function disable(input: { task: string }) {
-  return runCli(["task", "disable", ...target(input)]);
+/** `akm task enable`: the task joins this host's `scheduler.enabled`, and the OS entry that runs it is installed if needed. */
+export async function enable(input: { task: string }, host?: HostCli) {
+  const { ref, options } = target(input);
+  return viaHost(host, ["task", "enable", `--bundle=${options.target}`, "--", ref], "task-enable", () =>
+    akmTasksEnable(ref, options),
+  );
+}
+
+/** `akm task disable`: the entry goes when no task is left enabled. */
+export async function disable(input: { task: string }, host?: HostCli) {
+  const { ref, options } = target(input);
+  return viaHost(host, ["task", "disable", `--bundle=${options.target}`, "--", ref], "task-disable", () =>
+    akmTasksDisable(ref, options),
+  );
 }

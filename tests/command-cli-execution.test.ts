@@ -80,7 +80,16 @@ async function installHostileInferenceKey(): Promise<void> {
 }
 
 describe("command CLI execution convergence", () => {
-  test("command run --dry-run authorizes and lowers without dispatch, credentials, usage, or persistent writes", async () => {
+  test("`command run <ref>` is a usage error naming `akm command <ref>`, with no bundle configured", async () => {
+    // A bundle-less sandbox: the check runs before any config or bundle lookup.
+    fs.rmSync(storage.stashDir, { recursive: true, force: true });
+    const result = await runCliCapture(["command", "run", "commands/review", "--dry-run", "--format=json"]);
+    expect(result.code).toBe(2);
+    const error = JSON.parse(result.stderr.trim()) as { error?: string };
+    expect(error.error).toContain("akm command commands/review");
+  });
+
+  test("command --dry-run authorizes and lowers without dispatch, credentials, usage, or persistent writes", async () => {
     writeSandboxConfig({
       harnesses: undefined, // only the connection: agent work would prefer a harness
       connections: {
@@ -96,7 +105,6 @@ describe("command CLI execution convergence", () => {
 
     const result = await runCliCapture([
       "command",
-      "run",
       "commands/review",
       "--dry-run",
       "--cwd",
@@ -122,12 +130,12 @@ describe("command CLI execution convergence", () => {
     expect(snapshotTree(storage.root)).toEqual(before);
   });
 
-  test("command run --dry-run runs where --connection or --harness says, and refuses both together", async () => {
+  test("command --dry-run runs where --connection or --harness says, and refuses both together", async () => {
     writeSandboxConfig({
       connections: { lab: { endpoint: "https://lab.invalid/v1/chat/completions", models: { fast: "lab-model" } } },
     });
     const dryRun = (...flags: string[]) =>
-      runCliCapture(["command", "run", "commands/review", "--dry-run", "--format=json", ...flags]);
+      runCliCapture(["command", "commands/review", "--dry-run", "--format=json", ...flags]);
 
     const harness = await dryRun("--harness", "reviewer");
     expect(harness.code).toBe(0);
@@ -162,7 +170,7 @@ describe("command CLI execution convergence", () => {
         ].join("\n"),
       );
       await akmIndex({ stashDir: storage.stashDir, full: true });
-      return runCliCapture(["command", "run", "commands/review", "--dry-run", "--format=json"]);
+      return runCliCapture(["command", "commands/review", "--dry-run", "--format=json"]);
     };
 
     test("the only claude harness, which setup named default, runs an asset that says claude", async () => {
@@ -199,7 +207,6 @@ describe("command CLI execution convergence", () => {
 
       const result = await runCliCapture([
         "command",
-        "run",
         "commands/review",
         "--dry-run",
         "--format=json",
@@ -212,29 +219,9 @@ describe("command CLI execution convergence", () => {
     });
   });
 
-  test("the retired --engine still names a connection by that name, else a harness, with one warning", async () => {
-    writeSandboxConfig({
-      connections: { lab: { endpoint: "https://lab.invalid/v1/chat/completions", models: { fast: "lab-model" } } },
-    });
-    _resetWarnOnceForTests();
-    const dryRun = (engine: string) =>
-      runCliCapture(["command", "run", "commands/review", "--dry-run", "--format=json", "--engine", engine]);
-
-    const harness = await dryRun("reviewer");
-    expect(harness.code).toBe(0);
-    expect(JSON.parse(harness.stdout)).toMatchObject({ engine: "reviewer" });
-    expect(harness.stderr).toContain("--engine is retired: use --connection or --harness");
-
-    const connection = await dryRun("lab");
-    expect(connection.code).toBe(0);
-    expect(JSON.parse(connection.stdout)).toMatchObject({ engine: "lab" });
-    expect(connection.stderr).not.toContain("--engine is retired");
-  });
-
   test("live --verbose reports only safe dry-run diagnostics before preserving the dispatch envelope", async () => {
     const ordinary = await runCliCapture([
       "command",
-      "run",
       "commands/review",
       "--arguments",
       "private argument",
@@ -242,7 +229,6 @@ describe("command CLI execution convergence", () => {
     ]);
     const verbose = await runCliCapture([
       "command",
-      "run",
       "commands/review",
       "--arguments",
       "private argument",
@@ -262,10 +248,10 @@ describe("command CLI execution convergence", () => {
     expect(verbose.stderr).not.toContain(storage.stashDir);
   });
 
-  test("command run --dry-run canonicalizes user-authored inference keys in provenance and notices", async () => {
+  test("command --dry-run canonicalizes user-authored inference keys in provenance and notices", async () => {
     await installHostileInferenceKey();
 
-    const result = await runCliCapture(["command", "run", "commands/review", "--dry-run", "--format=json"]);
+    const result = await runCliCapture(["command", "commands/review", "--dry-run", "--format=json"]);
 
     expect(result.code).toBe(0);
     expect(result.stderr).toBe("");
@@ -279,10 +265,10 @@ describe("command CLI execution convergence", () => {
     expect(JSON.stringify(envelope.notices)).not.toContain("DO-NOT-LEAK-secret-key");
   });
 
-  test("command run --verbose canonicalizes user-authored inference keys in stderr diagnostics", async () => {
+  test("command --verbose canonicalizes user-authored inference keys in stderr diagnostics", async () => {
     await installHostileInferenceKey();
 
-    const result = await runCliCapture(["command", "run", "commands/review", "--verbose", "--format=json"]);
+    const result = await runCliCapture(["command", "commands/review", "--verbose", "--format=json"]);
 
     expect(result.code).toBe(0);
     expect(result.stderr).toContain('"field":"/inference/*"');
@@ -295,7 +281,7 @@ describe("command CLI execution convergence", () => {
     fs.writeFileSync(commandFile, "---\nname: review\ntype: command\nupdated: 2026-08-19\n---\nBudget is $1 per run\n");
     await akmIndex({ stashDir: storage.stashDir, full: true });
 
-    const result = await runCliCapture(["command", "run", "commands/review", "--dry-run", "--format=json", "-q"]);
+    const result = await runCliCapture(["command", "commands/review", "--dry-run", "--format=json", "-q"]);
     expect(result.code).toBe(0);
     expect(result.stderr).toBe("");
     const envelope = JSON.parse(result.stdout) as Record<string, unknown>;

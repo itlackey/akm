@@ -10,8 +10,7 @@
  * (`indexWrittenAssets`) plus full runs (improve cron / explicit `akm index`).
  * They rebuild inline only when the index cannot serve at all (missing DB, no
  * `builtAt`, different stash). An indexed empty stash is built, not unusable. This replaced the stale-triggered background
- * reindex that made every read on an actively-written stash spawn a writer
- * (docs/design/read-path-reindex-contention-findings.md §7).
+ * reindex that made every read on an actively-written stash spawn a writer.
  *
  * Blocking mode (improve) runs an incremental index and lets its per-file
  * fingerprints decide, in every bundle.
@@ -29,7 +28,7 @@ import { closeDatabase, openExistingDatabase } from "../../../src/storage/reposi
 import { getIndexedFilePaths } from "../../../src/storage/repositories/index-entries-repository";
 import {
   type Cleanup,
-  sandboxEnvDir,
+  sandboxAkmDir,
   sandboxStashDir,
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
@@ -118,8 +117,8 @@ beforeEach(async () => {
   stashDir = stash.dir;
   let chain = sandboxXdgConfigHome(stash.cleanup).cleanup;
   chain = sandboxXdgCacheHome(chain).cleanup;
-  chain = sandboxEnvDir("akm-ensure-serve-data", "AKM_DATA_DIR", chain).cleanup;
-  chain = sandboxEnvDir("akm-ensure-serve-state", "AKM_STATE_DIR", chain).cleanup;
+  chain = sandboxAkmDir("akm-ensure-serve-data", "data", chain).cleanup;
+  chain = sandboxAkmDir("akm-ensure-serve-state", "state", chain).cleanup;
   cleanup = chain;
   writeMemory("first");
   await indexerModule.akmIndex({ stashDir });

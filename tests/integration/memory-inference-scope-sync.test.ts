@@ -12,12 +12,17 @@ import { assembleAsset } from "../../src/core/asset/asset-serialize";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import { saveConfig } from "../../src/core/config/config";
 import { akmIndex } from "../../src/indexer/indexer";
-import { runMemoryInferencePass } from "../../src/indexer/passes/memory-inference";
+import { runMemoryInferencePass as runMemoryInferencePassImpl } from "../../src/indexer/passes/memory-inference";
 import { scopeFromFrontmatter } from "../../src/indexer/passes/metadata";
 import type { SearchSource } from "../../src/indexer/search/search-source";
 import { _setChatCompletionForTests } from "../../src/llm/client";
+import { withImproveRunner } from "../_helpers/memory-inference-runner";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 import { overrideSeam } from "../_helpers/seams";
+
+function runMemoryInferencePass(ctx: Parameters<typeof runMemoryInferencePassImpl>[0]) {
+  return runMemoryInferencePassImpl(withImproveRunner(ctx));
+}
 
 let storage: IsolatedAkmStorage;
 let requests: number;
@@ -39,7 +44,7 @@ function config() {
     bundles: { stash: { path: storage.stashDir } },
     defaultBundle: "stash",
     connections: { memory: { endpoint: "http://127.0.0.1:1/v1/chat/completions", models: { fast: "scripted" } } },
-    index: { connection: "memory" },
+    improve: { connection: "memory" },
   };
 }
 function run(sources: SearchSource[] = [{ path: storage.stashDir, isDefault: true, writable: true }]) {
@@ -86,12 +91,12 @@ function pinMtime(file: string): number {
   return fs.statSync(file).mtimeMs;
 }
 async function searchUser(user: string) {
-  return (await akmSearch({ query: "tunnel", filters: { user }, skipLogging: true })).hits.filter(
+  return (await akmSearch({ query: "tunnel", filters: { user }, skipLogging: true })).results.filter(
     (hit): hit is typeof hit & { ref: string; expandTo?: string } => "ref" in hit,
   );
 }
 async function reindex() {
-  saveConfig({ ...config(), index: { memory: { enabled: false } } });
+  saveConfig(config());
   await akmIndex({ stashDir: storage.stashDir, full: true });
 }
 

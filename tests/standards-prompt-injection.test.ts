@@ -5,8 +5,7 @@
 /**
  * Unit tests for standards PROMPT INJECTION.
  *
- * The resolvers/dispatch are tested in standards-resolvers.test.ts and
- * standards-dispatch.test.ts. THIS file proves that every LLM prompt that
+ * This file proves that every LLM prompt that
  * authors or edits a stash asset actually renders the resolved
  * `standardsContext` into its output — and omits the section when there are no
  * standards (so a stash without convention/meta facts pays zero prompt cost).
@@ -34,9 +33,9 @@ import os from "node:os";
 import path from "node:path";
 import { buildDistillPrompt } from "../src/commands/improve/distill";
 import { buildExtractPrompt } from "../src/commands/improve/extract-prompt";
+import { buildProposePrompt, buildReflectPrompt } from "../src/commands/prompts";
 import { resolveStandardsContext } from "../src/core/standards/resolve-standards-context";
 import { resolveStashStandards } from "../src/core/standards/resolve-stash-standards";
-import { buildProposePrompt, buildReflectPrompt } from "../src/integrations/agent/prompts";
 
 /** The lead-in line shared by every authoring prompt's standards section. */
 const LEAD_IN = "Standards to follow (the rulebook for this target)";

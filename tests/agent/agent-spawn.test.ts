@@ -11,7 +11,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { ConfigError } from "../../src/core/errors";
-import { getCacheDir, getConfigDir, getDataDir, getStateDir } from "../../src/core/paths";
+import { getConfigPath } from "../../src/core/paths";
 import type { AgentProfile } from "../../src/integrations/agent/profiles";
 import { runAgent } from "../../src/integrations/agent/spawn";
 import { makeSandboxDir, type SandboxedDir, withEnv } from "../_helpers/sandbox";
@@ -187,8 +187,8 @@ describe("runAgent — the command", () => {
 });
 
 describe("runAgent — the child's environment", () => {
-  test("is akm's own, the directories akm resolved, and the call's env", async () => {
-    const env = await withEnv({ FOO: "bar", AKM_BUNDLE_DIR: "/sandbox/bundle" }, async () => {
+  test("is akm's own, the config file akm resolved, and the call's env", async () => {
+    const env = await withEnv({ FOO: "bar" }, async () => {
       const result = await runAgent(profileFor("probe"), {
         dispatch: { prompt: "go" },
         env: { CALL_VAR: "2" },
@@ -197,25 +197,19 @@ describe("runAgent — the child's environment", () => {
     });
     expect(env.FOO).toBe("bar");
     expect(env.CALL_VAR).toBe("2");
-    expect(env).toMatchObject({
-      AKM_CONFIG_DIR: getConfigDir(),
-      AKM_DATA_DIR: getDataDir(),
-      AKM_CACHE_DIR: getCacheDir(),
-      AKM_STATE_DIR: getStateDir(),
-      AKM_BUNDLE_DIR: "/sandbox/bundle",
-    });
+    expect(env).toMatchObject({ AKM_CONFIG_FILE: getConfigPath() });
   });
 
-  test("the call's env wins over the ambient environment and over the resolved directories", async () => {
+  test("the call's env wins over the ambient environment and over the resolved config file", async () => {
     const env = await withEnv({ FOO: "ambient" }, async () => {
       const result = await runAgent(profileFor("probe"), {
         dispatch: { prompt: "go" },
-        env: { FOO: "call", AKM_CONFIG_DIR: "/call/config" },
+        env: { FOO: "call", AKM_CONFIG_FILE: "/call/config.json" },
       });
       return probed(result.stdout).env;
     });
     expect(env.FOO).toBe("call");
-    expect(env.AKM_CONFIG_DIR).toBe("/call/config");
+    expect(env.AKM_CONFIG_FILE).toBe("/call/config.json");
   });
 
   // Usage-event provenance (AKM_EVENT_SOURCE) must survive the agent boundary: a nested agent

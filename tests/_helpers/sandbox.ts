@@ -11,7 +11,7 @@
  *
  *   let cleanup: () => void;
  *   beforeEach(() => {
- *     cleanup = sandboxStashDir();           // sets process.env.AKM_BUNDLE_DIR
+ *     cleanup = sandboxStashDir();           // a stash, named as `defaultBundle` in the config file
  *     sandboxXdgConfigHome(cleanup);         // sets process.env.XDG_CONFIG_HOME
  *   });
  *   afterEach(() => cleanup());
@@ -27,6 +27,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { registerTestRoot } from "../../scripts/sweep-test-tmp";
+import { deriveBundleId } from "../../src/core/bundle-id";
+import { resetConfigCache } from "../../src/core/config/config";
+import { stripJsonComments } from "../../src/core/jsonc";
+import { getConfigPath } from "../../src/core/paths";
 
 export type Cleanup = () => void;
 
@@ -70,7 +74,7 @@ let sandboxCounter = 0;
  * Lives here (in the allowlisted sandbox helper) rather than inline in test
  * files so the test-isolation lint stays satisfied: tests mutate env only
  * through this restoring wrapper. Used by the in-process CLI harness call sites
- * that need a per-call env override (e.g. a populated `AKM_BUNDLE_DIR`).
+ * that need a per-call env override.
  *
  * `timeoutMs` is an optional safety net for callers whose `fn()` can hang —
  * e.g. it shells out to a subprocess or makes a network call with no bound
@@ -177,8 +181,8 @@ export function withEnvSync<T>(overrides: Record<string, string | undefined>, fn
 /**
  * Create an isolated, asset-typed stash directory (with the standard subdirs an
  * initialized stash has) and return its path plus a disposer. The directory is
- * NOT wired into `process.env` — callers pass it to `withEnv({ AKM_BUNDLE_DIR })`
- * or to a subprocess env. Registering cleanup here keeps `fs.mkdtempSync` out of
+ * NOT wired into the config — callers pass it to `withBundle` or `useBundleConfig`.
+ * Registering cleanup here keeps `fs.mkdtempSync` out of
  * test files (which the isolation lint flags).
  */
 /**
@@ -216,6 +220,120 @@ export async function withProcessArch<T>(arch: string, fn: () => T | Promise<T>)
     return await fn();
   } finally {
     Object.defineProperty(process, "arch", original);
+  }
+}
+
+// ── The working bundle, through config ───────────────────────────────────────
+
+/** Stashes `sandboxStashDir` made that are still live: a later `sandboxXdgConfigHome` names the latest in its new file. */
+const liveSandboxStashes: string[] = [];
+
+/** Config text naming `dir` as the default bundle, keeping everything else in `text` (a config file's content, or none). */
+export function configNamingBundle(text: string | undefined, dir: string): string {
+  let config: Record<string, unknown> = {};
+  if (text !== undefined) {
+    try {
+      config = JSON.parse(stripJsonComments(text)) as Record<string, unknown>;
+    } catch {
+      // start fresh if corrupt
+    }
+  }
+  const bundles: Record<string, Record<string, unknown>> = {
+    ...((config.bundles as Record<string, Record<string, unknown>> | undefined) ?? {}),
+  };
+  const resolved = path.resolve(dir);
+  let id = Object.keys(bundles).find(
+    (key) => typeof bundles[key]?.path === "string" && path.resolve(bundles[key].path as string) === resolved,
+  );
+  if (id === undefined) {
+    id = deriveBundleId(undefined, resolved, new Set(Object.keys(bundles)));
+    bundles[id] = {
+      path: resolved,
+      writable: true,
+      components: { main: { root: ".", adapter: "akm", writable: true } },
+    };
+  }
+  return `${JSON.stringify({ ...config, bundles, defaultBundle: id }, null, 2)}\n`;
+}
+
+/** Name `dir` as the default bundle in the config file `file`, keeping everything else in it. */
+export function writeBundleConfig(file: string, dir: string): void {
+  const previous = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : undefined;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, configNamingBundle(previous, dir), "utf8");
+}
+
+/**
+ * An `XDG_CONFIG_HOME` value whose `akm/config.json` names `dir` as the default bundle: for a test that builds the
+ * environment of a child (or an in-process run) and wants `dir` to be its working bundle. Returns `configHome`.
+ */
+export function configHomeWithBundle(configHome: string, dir: string): string {
+  writeBundleConfig(path.join(configHome, "akm", "config.json"), dir);
+  return configHome;
+}
+
+/**
+ * Name `dir` as the working bundle (`defaultBundle` + `bundles.<id>.path`) in the config file akm resolves now,
+ * keeping everything else in it. Returns a callback that puts the file back as it was (unless something changed it since). This is the one way a test
+ * gives akm a working bundle: akm reads no environment variable for it.
+ */
+export function useBundleConfig(dir: string): Cleanup {
+  const file = getConfigPath();
+  const previous = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : undefined;
+  writeBundleConfig(file, dir);
+  const written = fs.readFileSync(file, "utf8");
+  resetConfigCache();
+  return () => {
+    // A command that ran meanwhile and changed the file (`bundle create`, `config set`) keeps its change.
+    if (!fs.existsSync(file) || fs.readFileSync(file, "utf8") !== written) return;
+    if (previous === undefined) fs.rmSync(file, { force: true });
+    else fs.writeFileSync(file, previous, "utf8");
+    resetConfigCache();
+  };
+}
+
+/**
+ * `config` with `dir` as its default bundle (listed first), unless it names a default bundle itself: for a test that
+ * saves a whole config, which replaces the file {@link useBundleConfig} wrote, and works in `dir`.
+ */
+export function withDefaultBundle<const T extends Record<string, unknown>>(
+  config: T,
+  dir: string,
+): T & { bundles: Record<string, { path: string; writable?: boolean }>; defaultBundle: string } {
+  const named = config as { bundles?: Record<string, { path: string; writable?: boolean }>; defaultBundle?: string };
+  if (named.defaultBundle !== undefined) return config as never;
+  const resolved = path.resolve(dir);
+  const owner = Object.entries(named.bundles ?? {}).find(
+    ([, bundle]) => bundle.path && path.resolve(bundle.path) === resolved,
+  );
+  if (owner) return { ...config, bundles: named.bundles ?? {}, defaultBundle: owner[0] };
+  const id = deriveBundleId(undefined, resolved, new Set(Object.keys(named.bundles ?? {})));
+  return {
+    ...config,
+    bundles: { [id]: { path: path.resolve(dir), writable: true }, ...named.bundles },
+    defaultBundle: id,
+  };
+}
+
+/** Run `fn` with `dir` as the working bundle (the config as it is when `dir` is undefined), then restore the config file. */
+export async function withBundle<T>(dir: string | undefined, fn: () => Promise<T> | T): Promise<T> {
+  if (dir === undefined) return await fn();
+  const restore = useBundleConfig(dir);
+  try {
+    return await fn();
+  } finally {
+    restore();
+  }
+}
+
+/** Synchronous counterpart of {@link withBundle}. */
+export function withBundleSync<T>(dir: string | undefined, fn: () => T): T {
+  if (dir === undefined) return fn();
+  const restore = useBundleConfig(dir);
+  try {
+    return fn();
+  } finally {
+    restore();
   }
 }
 
@@ -275,19 +393,52 @@ export function sandboxEnvDir(prefix: string, envVar: string, chain?: Cleanup): 
   return { dir, cleanup };
 }
 
+/**
+ * Sandbox the akm data, state or cache directory itself: a fresh temp root becomes the matching `XDG_*_HOME`, and the
+ * returned `dir` is the `akm` folder akm keeps its files in under it (created), so a test can name
+ * `path.join(dir, "state.db")` as akm does. Replaces pointing the retired `AKM_DATA_DIR`, `AKM_STATE_DIR` and
+ * `AKM_CACHE_DIR` at a directory.
+ */
+export function sandboxAkmDir(
+  prefix: string,
+  kind: "data" | "state" | "cache",
+  chain?: Cleanup,
+): { dir: string; cleanup: Cleanup } {
+  const variable = { data: "XDG_DATA_HOME", state: "XDG_STATE_HOME", cache: "XDG_CACHE_HOME" }[kind];
+  const root = sandboxEnvDir(prefix, variable, chain);
+  const dir = path.join(root.dir, "akm");
+  fs.mkdirSync(dir, { recursive: true });
+  return { dir, cleanup: root.cleanup };
+}
+
 // ── Named helpers ────────────────────────────────────────────────────────────
 
 /**
- * Sandbox `AKM_BUNDLE_DIR`.  Returns `{ dir, cleanup }` where `dir` is the new
- * stash root.  The standard stash subdirs (skills, commands, agents, knowledge,
- * scripts, memories, lessons) are created automatically.
+ * Sandbox the working bundle.  Returns `{ dir, cleanup }` where `dir` is the new
+ * stash root, named as `defaultBundle` in the config file akm resolves (a later
+ * {@link sandboxXdgConfigHome} names it in its own file too).  The standard stash
+ * subdirs (skills, commands, agents, knowledge, scripts, memories, lessons) are
+ * created automatically.
  */
 export function sandboxStashDir(chain?: Cleanup): { dir: string; cleanup: Cleanup } {
-  const result = sandboxEnvDir("akm-sb-stash-", "AKM_BUNDLE_DIR", chain);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-sb-stash-"));
+  registerTestRoot(dir);
   for (const sub of STASH_SKELETON_SUBDIRS) {
-    fs.mkdirSync(path.join(result.dir, sub), { recursive: true });
+    fs.mkdirSync(path.join(dir, sub), { recursive: true });
   }
-  return result;
+  const restore = useBundleConfig(dir);
+  liveSandboxStashes.push(dir);
+  const cleanup: Cleanup = () => {
+    liveSandboxStashes.splice(liveSandboxStashes.indexOf(dir), 1);
+    restore();
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+    if (chain) chain();
+  };
+  return { dir, cleanup };
 }
 
 /**
@@ -336,6 +487,8 @@ export function mockHomedir(): { dir: string; cleanup: Cleanup } {
 export function sandboxXdgConfigHome(chain?: Cleanup): { dir: string; cleanup: Cleanup } {
   const result = sandboxEnvDir("akm-sb-cfg-", "XDG_CONFIG_HOME", chain);
   fs.mkdirSync(path.join(result.dir, "akm"), { recursive: true });
+  const stash = liveSandboxStashes.at(-1);
+  if (stash !== undefined) useBundleConfig(stash);
   return result;
 }
 
@@ -368,7 +521,7 @@ export function sandboxXdgStateHome(chain?: Cleanup): { dir: string; cleanup: Cl
  * already exists on disk under a single per-call temp root.
  */
 export interface IsolatedAkmStorage {
-  /** Isolated stash root (`AKM_BUNDLE_DIR`), scaffolded with the standard subdirs. */
+  /** Isolated stash root, named as `defaultBundle` in the config file unless `bundle: false`; scaffolded with the standard subdirs. */
   readonly stashDir: string;
   /** Isolated data dir (`XDG_DATA_HOME`). */
   readonly dataDir: string;
@@ -378,11 +531,11 @@ export interface IsolatedAkmStorage {
   readonly configDir: string;
   /** Isolated state dir (`XDG_STATE_HOME`). */
   readonly stateDir: string;
-  /** Isolated Claude session-log root (`AKM_CLAUDE_PROJECTS_DIR`), empty by default. */
+  /** Isolated Claude session-log root (`<CLAUDE_CONFIG_DIR>/projects`), empty by default. */
   readonly sessionLogsDir: string;
-  /** Isolated Claude plugins root (`AKM_CLAUDE_PLUGINS_DIR`), empty by default. */
+  /** Isolated Claude plugins root (`CLAUDE_CODE_PLUGIN_CACHE_DIR`), empty by default. */
   readonly claudePluginsDir: string;
-  /** Isolated OpenCode cache root (`AKM_OPENCODE_CACHE_DIR`), empty by default. */
+  /** Isolated OpenCode cache root (`<XDG_CACHE_HOME>/opencode`), empty by default. */
   readonly opencodeCacheDir: string;
   /** Isolated Codex home (`CODEX_HOME`), empty by default; its `sessions/` is the rollout root. */
   readonly codexHomeDir: string;
@@ -401,8 +554,9 @@ export interface IsolatedAkmStorage {
  *   - creates `stash/`, `data/`, `cache/`, `config/`, `state/` subdirs under it
  *     (the stash scaffolded with {@link STASH_SKELETON_SUBDIRS}, the config with
  *     an `akm/` subdir),
- *   - points `AKM_BUNDLE_DIR`, `XDG_DATA_HOME`, `XDG_CACHE_HOME`,
- *     `XDG_CONFIG_HOME`, `XDG_STATE_HOME` at them, snapshotting each prior value,
+ *   - points `XDG_DATA_HOME`, `XDG_CACHE_HOME`, `XDG_CONFIG_HOME`, `XDG_STATE_HOME`
+ *     at them, snapshotting each prior value, and names the stash as `defaultBundle`
+ *     in the config file under `config/akm/` (not with `bundle: false`),
  *   - returns the resolved {@link IsolatedAkmStorage} context plus a single
  *     `cleanup()` that restores every env var and removes the temp root.
  *
@@ -414,14 +568,22 @@ export interface IsolatedAkmStorage {
  *
  * `overrides` lets a test pin a specific env var to a literal value (or delete
  * it with `undefined`); those keys are still restored by `cleanup()`. Any
- * override of one of the four managed XDG/stash vars wins over the temp dir.
+ * override of one of the four managed XDG vars wins over the temp dir.
  *
  * The single `cleanup` restores env in the reverse order it was applied and is
  * safe to call more than once. The existing `tests/_preload.ts` afterEach
  * tripwire (which throws on any leaked `AKM_*`/`XDG_*`/`HOME` env var) is the
  * regression net that proves this helper restores everything it touched.
  */
-export function withIsolatedAkmStorage(overrides?: Record<string, string | undefined>): IsolatedAkmStorage {
+export function withIsolatedAkmStorage(
+  overrides?: Record<string, string | undefined>,
+  options: { bundle?: boolean } = {},
+): IsolatedAkmStorage {
+  if (overrides && Object.hasOwn(overrides, "AKM_BUNDLE_DIR")) {
+    throw new Error(
+      "withIsolatedAkmStorage: akm reads no AKM_BUNDLE_DIR; name the bundle in config, or pass { bundle: false }",
+    );
+  }
   const root = fs.mkdtempSync(path.join(os.tmpdir(), `akm-iso-${sandboxCounter++}-`));
   registerTestRoot(root);
 
@@ -439,36 +601,33 @@ export function withIsolatedAkmStorage(overrides?: Record<string, string | undef
   fs.mkdirSync(path.join(configDir, "akm"), { recursive: true });
   fs.mkdirSync(stateDir, { recursive: true });
 
-  const sessionLogsDir = path.join(root, "claude-projects");
+  // `CLAUDE_CONFIG_DIR` is the root below, so the session logs are read from `<root>/projects`.
+  const sessionLogsDir = path.join(root, "projects");
   fs.mkdirSync(sessionLogsDir, { recursive: true });
 
   const claudePluginsDir = path.join(root, "claude-plugins");
   fs.mkdirSync(claudePluginsDir, { recursive: true });
 
-  const opencodeCacheDir = path.join(root, "opencode-cache");
+  // OpenCode's package cache is `$XDG_CACHE_HOME/opencode`.
+  const opencodeCacheDir = path.join(cacheDir, "opencode");
   fs.mkdirSync(opencodeCacheDir, { recursive: true });
 
   const codexHomeDir = path.join(root, "codex-home");
   fs.mkdirSync(codexHomeDir, { recursive: true });
 
   const env: Record<string, string> = {
-    AKM_BUNDLE_DIR: stashDir,
     XDG_DATA_HOME: dataDir,
     XDG_CACHE_HOME: cacheDir,
     XDG_CONFIG_HOME: configDir,
     XDG_STATE_HOME: stateDir,
-    // Redirect the Claude session-log scan at an empty fixture dir so the
-    // synchronous `akm health` session-log scan stays hermetic and fast
-    // instead of walking the host's real (and potentially huge) history.
-    AKM_CLAUDE_PROJECTS_DIR: sessionLogsDir,
     // Same reasoning for the `plugin-version` advisory (itlackey/akm#832): an
     // empty fixture dir means "no plugin installed" instead of scanning the
     // host's real `~/.claude/plugins` cache.
-    AKM_CLAUDE_PLUGINS_DIR: claudePluginsDir,
-    // Same reasoning for the `opencode-plugin-version` advisory: an empty
-    // fixture dir means "no OpenCode plugin installed" instead of reading
-    // the host's real `~/.cache/opencode` package cache.
-    AKM_OPENCODE_CACHE_DIR: opencodeCacheDir,
+    CLAUDE_CODE_PLUGIN_CACHE_DIR: claudePluginsDir,
+    // The Claude session-log scan reads `<CLAUDE_CONFIG_DIR>/projects`: the empty
+    // fixture dir keeps the synchronous `akm health` scan hermetic and fast
+    // instead of walking the host's real (and potentially huge) history.
+    CLAUDE_CONFIG_DIR: root,
     // Same reasoning for the Codex session-log scan: `CODEX_HOME` is Codex's own
     // override of `~/.codex`, so a developer who exports it would otherwise have
     // `extract --auto` and `improve` read their real rollouts.
@@ -484,6 +643,9 @@ export function withIsolatedAkmStorage(overrides?: Record<string, string | undef
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
   }
+
+  // The config file is under `configDir` now (or wherever an override of AKM_CONFIG_FILE / XDG_CONFIG_HOME put it).
+  if (options.bundle !== false) useBundleConfig(stashDir);
 
   let cleaned = false;
   const cleanup: Cleanup = () => {
@@ -519,7 +681,7 @@ export function withIsolatedAkmStorage(overrides?: Record<string, string | undef
 
 /**
  * Write a (partial) AKM config JSON into the current `XDG_CONFIG_HOME/akm/`
- * directory.  Merges `partial` over any existing config on disk.
+ * directory.  Merges `partial` over any existing config on disk (its `bundles` wholesale, keeping the working bundle).
  *
  * Must be called after `sandboxXdgConfigHome()` has been invoked so that
  * `XDG_CONFIG_HOME` is set to an isolated temp dir.
@@ -541,9 +703,29 @@ export function writeSandboxConfig(partial: Record<string, unknown>): void {
     }
   }
 
+  // `bundles` replaces the file's, but the working bundle a sandbox helper named (the file's default) stays configured
+  // unless the test names that directory itself, under its own id. With no `defaultBundle` of its own the test keeps
+  // that working bundle as the default (or its own entry for the same directory).
+  const bundles =
+    typeof partial.bundles === "object" && partial.bundles !== null
+      ? { ...(partial.bundles as Record<string, unknown>) }
+      : undefined;
+  let defaultBundle: string | undefined;
+  const existingBundles = (existing.bundles ?? {}) as Record<string, unknown>;
+  const working = typeof existing.defaultBundle === "string" ? existing.defaultBundle : undefined;
+  const workingEntry = working ? existingBundles[working] : undefined;
+  if (bundles && working && workingEntry) {
+    const pathOf = (bundle: unknown): string | undefined => {
+      const configured = (bundle as { path?: unknown } | null)?.path;
+      return typeof configured === "string" ? path.resolve(configured) : undefined;
+    };
+    const owner = Object.entries(bundles).find(([, bundle]) => pathOf(bundle) === pathOf(workingEntry));
+    if (!owner && !(working in bundles)) bundles[working] = workingEntry;
+    if (partial.defaultBundle === undefined) defaultBundle = owner ? owner[0] : working;
+  }
   fs.writeFileSync(
     configPath,
-    `${JSON.stringify({ configVersion: "0.9.0", ...existing, ...partial }, null, 2)}\n`,
+    `${JSON.stringify({ ...existing, ...(defaultBundle ? { defaultBundle } : {}), ...partial, ...(bundles ? { bundles } : {}) }, null, 2)}\n`,
     "utf8",
   );
 }

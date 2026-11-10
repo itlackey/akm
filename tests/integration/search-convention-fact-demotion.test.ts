@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * SPEC-6 (docs/architecture/specs/stash-conventions-code-spec.md) — deterministic
+ * SPEC-6 — deterministic
  * MEASUREMENT + regression test for convention-fact crowding of domain-term
  * queries, plus the index-capture (document_json) round-trip for the fact
  * `category:` frontmatter key.
@@ -48,7 +48,7 @@ import {
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
   sandboxXdgStateHome,
-  withEnv,
+  withBundle,
 } from "../_helpers/sandbox";
 
 /** The shipped skeleton convention facts — the exact files `akm init` installs. */
@@ -134,7 +134,7 @@ async function buildFixture(): Promise<void> {
 }
 
 async function runCli(args: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
-  return withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+  return withBundle(stashDir, async () => {
     resetConfigCache();
     return runCliCapture(args);
   });
@@ -143,7 +143,7 @@ async function runCli(args: string[]): Promise<{ stdout: string; stderr: string;
 async function searchHits(args: string[]): Promise<Hit[]> {
   const res = await runCli(args);
   expect(res.code).toBe(0);
-  return (JSON.parse(res.stdout).hits as Hit[]) ?? [];
+  return (JSON.parse(res.stdout).results as Hit[]) ?? [];
 }
 
 beforeEach(() => {

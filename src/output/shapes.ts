@@ -4,56 +4,72 @@
 
 /**
  * Pure shaping functions that select and trim fields from command result
- * objects according to the active detail level / agent mode.
+ * objects according to the active detail level.
  *
  * Every function in this module is side-effect free and operates on plain
  * `Record<string, unknown>` shapes, which makes them trivial to unit test.
  *
- * Output shapes are assembled EXPLICITLY here: each per-command module under
- * `src/output/shapes/` EXPORTS a pure `OutputShapeEntry[]` (no top-level
- * side effect), and this barrel imports those exports and registers them in a
- * single deterministic, order-independent pass (`BUILT_IN_OUTPUT_SHAPES`).
- * Dropping a module from the assembly array is a COMPILE error, not a silent
- * runtime gap. The central `shapeForCommand` dispatcher looks up the registry
- * and throws for unknown commands (exhaustive registry, no silent
- * fallback).
+ * Built-in shapes are registered once, in one explicit pass
+ * (`BUILT_IN_OUTPUT_SHAPES`). `shapeForCommand` looks up the registry and
+ * throws for unknown commands (exhaustive registry, no silent fallback).
  */
 
-import type { DetailLevel, ShapeMode } from "./context";
+import type { DetailLevel } from "./context";
 import { curateShapes } from "./shapes/curate";
 import { envListShapes } from "./shapes/env-list";
 import { eventsShapes } from "./shapes/events";
+import {
+  shapeProposalAcceptOutput,
+  shapeProposalDiffOutput,
+  shapeProposalListOutput,
+  shapeProposalRejectOutput,
+  shapeProposalShowOutput,
+  shapeSearchOutput,
+  shapeShowOutput,
+} from "./shapes/helpers";
 import { migrateShapes } from "./shapes/migrate";
 import { passthroughShapes } from "./shapes/passthrough";
-import { proposalAcceptShapes } from "./shapes/proposal/accept";
-import { proposalDiffShapes } from "./shapes/proposal/diff";
-import { proposalListShapes } from "./shapes/proposal/list";
 import { proposalProducerShapes } from "./shapes/proposal/producer";
-import { proposalRejectShapes } from "./shapes/proposal/reject";
-import { proposalReopenShapes } from "./shapes/proposal/reopen";
-import { proposalShowShapes } from "./shapes/proposal/show";
 import { getOutputShapeHandler, type OutputShapeEntry, registerOutputShapes } from "./shapes/registry";
-import { searchShapes } from "./shapes/search";
 import { secretListShapes } from "./shapes/secret-list";
-import { showShapes } from "./shapes/show";
 
-// ── Explicit built-in shape assembly ──────────────────────────────────────────
-// Each entry below is a pure exported `OutputShapeEntry[]` from a per-command
-// module. The set is registered ONCE, deterministically, with no reliance on
-// import order. Removing a module from this list removes its registration —
-// and because each name is referenced statically, a deleted export fails to
-// compile instead of silently disappearing at runtime.
 const BUILT_IN_OUTPUT_SHAPES: OutputShapeEntry[] = [
-  ...searchShapes,
+  {
+    command: "search",
+    handler: (result, detail) => shapeSearchOutput(result as Record<string, unknown>, detail),
+  },
   ...curateShapes,
-  ...showShapes,
+  {
+    command: "show",
+    handler: (result, detail) => shapeShowOutput(result as Record<string, unknown>, detail),
+  },
   ...eventsShapes,
-  ...proposalListShapes,
-  ...proposalShowShapes,
-  ...proposalAcceptShapes,
-  ...proposalRejectShapes,
-  ...proposalReopenShapes,
-  ...proposalDiffShapes,
+  {
+    command: "proposal-list",
+    handler: (result, detail) => shapeProposalListOutput(result as Record<string, unknown>, detail),
+  },
+  {
+    command: "proposal-show",
+    handler: (result, detail) => shapeProposalShowOutput(result as Record<string, unknown>, detail),
+  },
+  {
+    command: "proposal-accept",
+    handler: (result, detail) => shapeProposalAcceptOutput(result as Record<string, unknown>, detail),
+  },
+  {
+    command: "proposal-reject",
+    handler: (result, detail) => shapeProposalRejectOutput(result as Record<string, unknown>, detail),
+  },
+  // One reopened proposal is the same envelope `reject` returns, so it shares that shaper; several are the
+  // passthrough `proposal-reopen-batch`.
+  {
+    command: "proposal-reopen",
+    handler: (result, detail) => shapeProposalRejectOutput(result as Record<string, unknown>, detail),
+  },
+  {
+    command: "proposal-diff",
+    handler: (result, detail) => shapeProposalDiffOutput(result as Record<string, unknown>, detail),
+  },
   ...proposalProducerShapes,
   ...envListShapes,
   ...secretListShapes,
@@ -83,15 +99,10 @@ registerOutputShapes(BUILT_IN_OUTPUT_SHAPES);
  */
 export type OutputCommandName = string;
 
-export function shapeForCommand(
-  command: OutputCommandName,
-  result: unknown,
-  detail: DetailLevel,
-  shape: ShapeMode = "human",
-): unknown {
+export function shapeForCommand(command: OutputCommandName, result: unknown, detail: DetailLevel): unknown {
   const handler = getOutputShapeHandler(command);
   if (handler) {
-    return handler(result, detail, shape);
+    return handler(result, detail);
   }
   // Output-shape registry is exhaustive: no silent JSON.stringify
   // fallback. A missing case here is a registration bug — fail loudly so

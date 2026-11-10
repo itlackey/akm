@@ -23,7 +23,7 @@ import { akmIndex } from "../../src/indexer/indexer";
 import { searchLocal } from "../../src/indexer/search/db-search";
 import {
   type Cleanup,
-  sandboxEnvDir,
+  sandboxAkmDir,
   sandboxStashDir,
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
@@ -48,8 +48,8 @@ beforeEach(async () => {
   stashDir = stash.dir;
   let chain = sandboxXdgConfigHome(stash.cleanup).cleanup;
   chain = sandboxXdgCacheHome(chain).cleanup;
-  chain = sandboxEnvDir("akm-search-mode-data", "AKM_DATA_DIR", chain).cleanup;
-  chain = sandboxEnvDir("akm-search-mode-state", "AKM_STATE_DIR", chain).cleanup;
+  chain = sandboxAkmDir("akm-search-mode-data", "data", chain).cleanup;
+  chain = sandboxAkmDir("akm-search-mode-state", "state", chain).cleanup;
   cleanup = chain;
   const knowledgeDir = path.join(stashDir, "knowledge");
   fs.mkdirSync(knowledgeDir, { recursive: true });
@@ -73,7 +73,7 @@ describe("search-mode telemetry", () => {
   test("keyword-only search (semanticSearchMode off) reports mode 'keyword'", async () => {
     const result = await runSearch({ semanticSearchMode: "off" });
     // FTS matched the query, so this did real work — but no vector search ran.
-    expect(result.hits.length).toBeGreaterThan(0);
+    expect(result.results.length).toBeGreaterThan(0);
     expect(result.mode).toBe("keyword");
   });
 
@@ -83,7 +83,7 @@ describe("search-mode telemetry", () => {
     // mode must be keyword, not inferred from how long the concurrent FTS work
     // took.
     const result = await runSearch({ semanticSearchMode: "auto" });
-    expect(result.hits.length).toBeGreaterThan(0);
+    expect(result.results.length).toBeGreaterThan(0);
     expect(result.mode).toBe("keyword");
   });
 

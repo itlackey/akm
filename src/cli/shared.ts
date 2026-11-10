@@ -173,9 +173,15 @@ export const GLOBAL_OUTPUT_ARGS = {
   format: { type: "string", description: "Output format: json|jsonl|yaml|text|md" },
   detail: {
     type: "string",
-    description: "Detail level: brief|normal|full, or agent (trims search, curate and show to essential fields)",
+    description: "Detail level: brief|normal|full",
   },
   output: { type: "string", description: "Write output to a file instead of stdout (not jsonl)" },
+  // Parsed from raw argv by `applyEarlyConfigFlag` in src/cli.ts before anything reads a location; declared
+  // here so every command accepts it and `assertKnownFlags` knows it.
+  config: {
+    type: "string",
+    description: "Use this config file instead of the default; credentials.json sits beside it (also AKM_CONFIG_FILE)",
+  },
   // S11: declared at every leaf so a command's flags parse wherever they sit;
   // leaf `--help` prints them once as a pointer (see `withoutGlobalArgs`), root
   // `--help` lists them in full. They are parsed from raw argv by
@@ -190,7 +196,7 @@ export const GLOBAL_OUTPUT_ARGS = {
   },
   verbose: {
     type: "boolean",
-    description: "Print diagnostics to stderr (also AKM_VERBOSE)",
+    description: "Print diagnostics to stderr",
     default: false,
   },
 } as const satisfies ArgsDef;
@@ -319,14 +325,20 @@ export function output(command: string, result: unknown): void {
   const mode: OutputMode = getOutputMode();
   const { format } = mode;
   if (format === "jsonl") {
-    outputJsonl(command, shapeForCommand(command, result, mode.detail, mode.shape));
+    outputJsonl(command, shapeForCommand(command, result, mode.detail));
     return;
   }
-  deliverRendered(renderOutput(command, result, { ...mode, format }), mode.outputPath);
+  // Compact JSON when stdout is piped (agents, scripts); `--output <path>` files and a TTY stay pretty.
+  const compact = !process.stdout.isTTY && mode.outputPath === undefined;
+  deliverRendered(renderOutput(command, result, { ...mode, format, compact }), mode.outputPath);
 }
 
 /** An output mode with a single-document format (everything but `jsonl`, a line-streaming protocol). */
-type DocumentOutputMode = Pick<OutputMode, "detail" | "shape"> & { format: Exclude<OutputFormat, "jsonl"> };
+type DocumentOutputMode = Pick<OutputMode, "detail"> & {
+  format: Exclude<OutputFormat, "jsonl">;
+  /** Print `json` on one line. Default: the 2-space form. */
+  compact?: boolean;
+};
 
 /**
  * Shape and render a command result into the document `output()` delivers.
@@ -335,10 +347,10 @@ type DocumentOutputMode = Pick<OutputMode, "detail" | "shape"> & { format: Exclu
  * explicit `mode`.
  */
 export function renderOutput(command: string, result: unknown, mode: DocumentOutputMode): string {
-  const shaped = shapeForCommand(command, result, mode.detail, mode.shape);
+  const shaped = shapeForCommand(command, result, mode.detail);
   switch (mode.format) {
     case "json":
-      return JSON.stringify(shaped, null, 2);
+      return mode.compact ? JSON.stringify(shaped) : JSON.stringify(shaped, null, 2);
     case "yaml":
       return yamlStringify(shaped);
     case "text":

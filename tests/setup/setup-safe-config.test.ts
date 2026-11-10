@@ -32,6 +32,7 @@ import {
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
   sandboxXdgStateHome,
+  withBundle,
   withEnv,
   withMockedFetch,
   writeSandboxConfig,
@@ -220,7 +221,7 @@ describe("runSetupFromConfig — top-level key allowlist (R-017)", () => {
     // exited 0.
     await runSetupFromConfig({
       configJson: JSON.stringify({
-        index: { memory: { enabled: false } },
+        improve: { enabled: false },
         search: { defaultExcludeTypes: ["session"] },
         feedback: { requireReason: true },
         archiveRetentionDays: 30,
@@ -231,7 +232,7 @@ describe("runSetupFromConfig — top-level key allowlist (R-017)", () => {
     });
 
     const written = readWrittenConfig();
-    expect(written.index).toEqual({ memory: { enabled: false } });
+    expect(written.improve).toEqual({ enabled: false });
     expect(written.search).toEqual({ defaultExcludeTypes: ["session"] });
     expect(written.feedback).toEqual({ requireReason: true });
     expect(written.archiveRetentionDays).toBe(30);
@@ -389,11 +390,8 @@ describe("runSetupWithDefaults — idempotency", () => {
   test("fails a config-lock conflict before initializing the stash", async () => {
     const stashDir = path.join(process.env.HOME as string, "setup-lock-boundary");
     fs.rmSync(stashDir, { recursive: true, force: true });
-    await withEnv(
-      {
-        AKM_BUNDLE_DIR: stashDir,
-      },
-      async () => {
+    await withEnv({}, () =>
+      withBundle(stashDir, async () => {
         fs.mkdirSync(path.dirname(getConfigLockPath()), { recursive: true });
         fs.writeFileSync(getConfigLockPath(), String(process.pid));
         try {
@@ -408,7 +406,7 @@ describe("runSetupWithDefaults — idempotency", () => {
         } finally {
           fs.rmSync(getConfigLockPath(), { force: true });
         }
-      },
+      }),
     );
   });
 });

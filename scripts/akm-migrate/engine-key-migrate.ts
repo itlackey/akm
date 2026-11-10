@@ -7,7 +7,7 @@
  * workflow files and task sources becomes `connection:` or `harness:`, by the
  * kind of thing the name is now. The names an engine had before the `engines`
  * form was converted come from that step's result (`engineTargets`: `lab` may now
- * be `default`), and are kept in the data directory (`src/core/config/retired-engines.ts`)
+ * be `default`), and are kept in the data directory (`config/retired-engines.ts`)
  * until a re-read of the files finds no `engine:` key that still names an old engine
  * (a skipped file, or a block of a rewritten file that is spelled in a style the
  * splice does not write), so a read-only bundle's asset that becomes writable, or a
@@ -19,9 +19,10 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { detectAdapterId } from "../../src/core/adapter/detect-adapter";
-import { type AkmConfig, loadConfig, resetConfigCache, retiredEngineTargets } from "../../src/core/config/config";
+import { type AkmConfig, loadConfig, resetConfigCache } from "../../src/core/config/config";
 import { withConfigLock } from "../../src/core/config/config-io";
-import { type EngineTargets, forgetEngineTargets } from "../../src/core/config/retired-engines";
+import { retiredEngineTargets } from "./config/normalize";
+import { type EngineTargets, forgetEngineTargets } from "./config/retired-engines";
 import { getDataDir } from "../../src/core/paths";
 import { bundleRoots } from "./bundle-roots";
 import {
@@ -125,9 +126,8 @@ function plan(targets?: EngineTargets) {
 }
 
 /**
- * Forget the old engine names, which nothing reads once no `engine:` key names one. From then on `--engine <old name>`
- * reaches only a connection or harness of that name, so a script that passes a renamed engine must change: one note
- * says which flag now reaches each.
+ * Forget the old engine names, which nothing reads once no `engine:` key names one. The CLI has no `--engine` any
+ * more, so a script or scheduled command that passes one must change: one note says which flag reaches each.
  */
 function forgetOldNames(known: EngineTargets): readonly string[] {
   forgetEngineTargets();
@@ -139,7 +139,7 @@ function forgetOldNames(known: EngineTargets): readonly string[] {
   return renamed.length === 0
     ? []
     : [
-        `--engine no longer reaches an engine by its old name, only a connection or harness of that name. A script or scheduled command that passes one of these must change: ${renamed.join("; ")}.`,
+        `--engine is removed. A script or scheduled command that passes one of these must change: ${renamed.join("; ")}.`,
       ];
 }
 

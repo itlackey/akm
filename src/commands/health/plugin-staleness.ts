@@ -27,29 +27,15 @@ import type { HealthCheckResult } from "./types";
 
 /**
  * Root directory holding Claude Code's plugin cache + marketplace clones.
- * Resolved per call (not memoized) so `AKM_CLAUDE_PLUGINS_DIR` can be set
- * after import — the override exists so tests point this at an empty
- * fixture directory instead of the real `~/.claude/plugins`, matching
- * `AKM_CLAUDE_PROJECTS_DIR` in `../../integrations/harnesses/claude/session-log.ts`.
+ * Resolved per call (not memoized) so Claude's own `CLAUDE_CODE_PLUGIN_CACHE_DIR`
+ * can be set after import; tests point it at an empty fixture directory instead
+ * of the real `~/.claude/plugins`.
  */
 function claudePluginsDir(): string {
   return (
-    process.env.AKM_CLAUDE_PLUGINS_DIR ??
     process.env.CLAUDE_CODE_PLUGIN_CACHE_DIR ??
     path.join(process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude"), "plugins")
   );
-}
-
-/**
- * Root of OpenCode's package cache, same override pattern as
- * {@link claudePluginsDir} (`AKM_OPENCODE_CACHE_DIR` for tests).
- * The OpenCode plugins (`akm-opencode`, and `akm-opencode-v2` for OpenCode 2) bundle their own `akm-cli`
- * (layout: `integrations/harnesses/opencode/plugin-layout.ts`) and run it in-process,
- * sharing the host's databases with every other akm install — its version
- * lag matters the same way a stale Claude plugin's does.
- */
-function defaultOpencodeCacheRoot(): string {
-  return process.env.AKM_OPENCODE_CACHE_DIR ?? opencodeCacheDir();
 }
 
 /** One cached copy of an OpenCode plugin's bundled `akm-cli`. */
@@ -188,9 +174,6 @@ function detectInstalledPlugins(pluginsRoot: string): DetectedPlugin[] | undefin
       timeout: 30_000,
       env: {
         ...process.env,
-        ...(process.env.AKM_CLAUDE_PLUGINS_DIR
-          ? { CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR ?? path.dirname(pluginsRoot) }
-          : {}),
         CLAUDE_CODE_PLUGIN_CACHE_DIR: pluginsRoot,
       },
     });
@@ -351,7 +334,7 @@ export interface PluginStalenessOptions {
   probe?: boolean;
   /** Injectable remote-tag lister; defaults to the real `git ls-remote`. */
   listRemoteTags?: ListRemoteTagsFn;
-  /** Root of OpenCode's package cache. Defaults to `defaultOpencodeCacheRoot()`. */
+  /** Root of OpenCode's package cache. Defaults to `opencodeCacheDir()` (`$XDG_CACHE_HOME/opencode`). */
   opencodeCacheRoot?: string;
 }
 
@@ -386,7 +369,7 @@ export function collectPluginStalenessAdvisories(options: PluginStalenessOptions
     });
   }
 
-  const opencodeCacheRoot = options.opencodeCacheRoot ?? defaultOpencodeCacheRoot();
+  const opencodeCacheRoot = options.opencodeCacheRoot ?? opencodeCacheDir();
   for (const plugin of OPENCODE_PLUGIN_LOCATIONS) {
     for (const bundled of findBundledAkm(plugin, opencodeCacheRoot)) {
       results.push(buildOpencodeBundledAdvisory(plugin, bundled, options.cliVersion));

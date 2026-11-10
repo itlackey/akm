@@ -16,7 +16,7 @@ import type { ResolvedProject } from "../core/projects";
 // findCittyTopLevelCommand(Index) + CittyArg(s)DefinitionForScan moved to
 // ./invocation (chunk-9 WI-9.9 argv-normalization fold — that cluster had no
 // internal imports, so it relocated cleanly); re-exported here so existing
-// importers (tests/tasks-embedded.test.ts, commands/read/show.ts) are unaffected.
+// importers (tests/tasks-core.test.ts, commands/read/show.ts) are unaffected.
 export {
   type CittyArgDefinitionForScan,
   type CittyArgsDefinitionForScan,
@@ -67,6 +67,26 @@ export function parsePositiveIntFlag(raw: string | undefined, flagName = "--limi
     throw new UsageError(`Invalid ${flagName} value: "${raw}". Must be a positive integer.`, "INVALID_FLAG_VALUE");
   }
   return parsed;
+}
+
+/**
+ * Parse an integer flag value: digits only (so `3x`, `3.5` and `-1` are
+ * rejected, not truncated), within `minimum` and the optional `maximum`.
+ * Returns `undefined` when the flag was not supplied.
+ */
+export function parseIntegerFlag(
+  raw: string | undefined,
+  name: string,
+  minimum: number,
+  maximum?: number,
+): number | undefined {
+  if (raw === undefined) return undefined;
+  const value = Number.parseInt(raw, 10);
+  if (!/^\d+$/.test(raw) || value < minimum || (maximum !== undefined && value > maximum)) {
+    const range = maximum === undefined ? `at least ${minimum}` : `from ${minimum} through ${maximum}`;
+    throw new UsageError(`${name} must be an integer ${range}, got "${raw}".`, "INVALID_FLAG_VALUE");
+  }
+  return value;
 }
 
 // ── String flag parsing ──────────────────────────────────────────────────────

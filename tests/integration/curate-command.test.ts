@@ -3,14 +3,15 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { resetConfigCache } from "../../src/core/config/config";
+import { BRIEF_DESCRIPTION_LIMIT } from "../../src/output/shapes/helpers";
 import { runCliCapture } from "../_helpers/cli";
 import {
   type Cleanup,
   sandboxStashDir,
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
+  withBundle,
   withEnv,
-  writeSandboxConfig,
 } from "../_helpers/sandbox";
 
 // Migrated from per-test spawnSync("bun", [CLI, ...]) to the in-process harness
@@ -43,17 +44,11 @@ async function runCliWithDataDir(stashDir: string, args: string[]): Promise<{ st
   const xdgCache = makeTempDir("akm-curate-cache-");
   const xdgConfig = makeTempDir("akm-curate-config-");
   const xdgData = makeTempDir("akm-curate-data-");
-  const res = await withEnv(
-    {
-      AKM_BUNDLE_DIR: stashDir,
-      XDG_CACHE_HOME: xdgCache,
-      XDG_CONFIG_HOME: xdgConfig,
-      XDG_DATA_HOME: xdgData,
-    },
-    async () => {
+  const res = await withEnv({ XDG_CACHE_HOME: xdgCache, XDG_CONFIG_HOME: xdgConfig, XDG_DATA_HOME: xdgData }, () =>
+    withBundle(stashDir, async () => {
       resetConfigCache();
       return runCliCapture(args);
-    },
+    }),
   );
   expect(res.code).toBe(0);
   return { stdout: res.stdout.trim(), dataDir: xdgData };
@@ -108,20 +103,20 @@ describe("curate command", () => {
     return stashDir;
   }
 
-  test("returns curated JSON with follow-up commands and previews", async () => {
+  test("returns curated JSON with refs", async () => {
     const stashDir = makeStash();
     const output = await runCli(stashDir, ["curate", "release deploy", "--format=json"]);
-    const json = JSON.parse(output) as { query: string; items: Array<Record<string, unknown>>; summary: string };
+    const json = JSON.parse(output) as { query: string; results: Array<Record<string, unknown>>; summary: string };
 
     expect(json.query).toBe("release deploy");
     expect(json.summary).toContain("Selected");
-    expect(json.items.length).toBeGreaterThanOrEqual(2);
-    expect(new Set(json.items.map((item) => item.type)).size).toBeGreaterThanOrEqual(2);
+    expect(json.results.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(json.results.map((item) => item.type)).size).toBeGreaterThanOrEqual(2);
 
-    for (const item of json.items) {
+    for (const item of json.results) {
       if (item.source === "local") {
         expect(typeof item.ref).toBe("string");
-        expect(String(item.followUp)).toContain("akm show");
+        expect(item).not.toHaveProperty("followUp");
         expect(item.reason).toBeUndefined(); // only historical items carry a reason (#1482)
       }
     }
@@ -135,30 +130,30 @@ describe("curate command", () => {
     );
 
     const output = await runCli(stashDir, ["curate", "release", "--type", "command", "--format=json"]);
-    const json = JSON.parse(output) as { items: Array<Record<string, unknown>> };
+    const json = JSON.parse(output) as { results: Array<Record<string, unknown>> };
 
-    expect(json.items.map((item) => String(item.ref).split("//").at(-1)).sort()).toEqual([
+    expect(json.results.map((item) => String(item.ref).split("//").at(-1)).sort()).toEqual([
       "commands/release",
       "commands/release-notes",
     ]);
   });
 
-  test("text output includes direct refs and follow-up commands", async () => {
+  test("text output includes direct refs", async () => {
     const stashDir = makeStash();
     const output = await runCli(stashDir, ["curate", "release deploy", "--format=text"]);
 
     expect(output).toContain('Curated results for "release deploy"');
     expect(output).toContain("[command]");
     expect(output).toContain("commands/release");
-    expect(output).toContain("show: akm show commands/release");
+    expect(output).not.toContain("show: akm show");
   });
 
   test("returns a tip when no curated results are found", async () => {
     const stashDir = makeTempDir("akm-curate-empty-stash-");
     const output = await runCli(stashDir, ["curate", "totally unmatched request", "--format=json"]);
-    const json = JSON.parse(output) as { items: Array<Record<string, unknown>>; tip?: string; summary: string };
+    const json = JSON.parse(output) as { results: Array<Record<string, unknown>>; tip?: string; summary: string };
 
-    expect(json.items).toEqual([]);
+    expect(json.results).toEqual([]);
     // Auto-index runs but finds nothing in the empty stash
     expect(json.tip).toContain("Index is empty");
   });
@@ -189,53 +184,53 @@ describe("curate command", () => {
   });
 
   // ── WS2: --detail / --shape are now effective on curate ─────────────────────
-  test("--detail full projects description on stash items; brief omits it", async () => {
+  test("--detail full projects description on stash items; brief caps it", async () => {
     const stashDir = makeStash();
     const brief = JSON.parse(await runCli(stashDir, ["curate", "release", "--format=json"])) as {
-      items: Array<Record<string, unknown>>;
+      results: Array<Record<string, unknown>>;
     };
     const full = JSON.parse(await runCli(stashDir, ["curate", "release", "--format=json", "--detail=full"])) as {
-      items: Array<Record<string, unknown>>;
+      results: Array<Record<string, unknown>>;
     };
-    const briefStash = brief.items.find((i) => i.source === "local");
-    const fullStash = full.items.find((i) => i.source === "local");
+    const briefStash = brief.results.find((i) => i.source === "local");
+    const fullStash = full.results.find((i) => i.source === "local");
     expect(briefStash).toBeDefined();
     expect(fullStash).toBeDefined();
-    // brief omits description; full carries it (when the item has one).
-    expect(briefStash).not.toHaveProperty("description");
+    // brief carries a short capped description; full carries the whole thing.
+    expect(String(briefStash?.description).length).toBeLessThanOrEqual(BRIEF_DESCRIPTION_LIMIT);
+    expect(briefStash).not.toHaveProperty("followUp");
   });
 
-  test("--detail agent trims items to the agent field set", async () => {
+  test("--detail normal trims results to the field set an agent needs", async () => {
     const stashDir = makeStash();
-    const output = await runCli(stashDir, ["curate", "release", "--format=json", "--detail=agent"]);
-    const json = JSON.parse(output) as { items: Array<Record<string, unknown>> };
-    const stashItem = json.items.find((i) => i.source === "local");
+    const output = await runCli(stashDir, ["curate", "release", "--format=json", "--detail=normal"]);
+    const json = JSON.parse(output) as { results: Array<Record<string, unknown>> };
+    const stashItem = json.results.find((i) => i.source === "local");
     expect(stashItem).toBeDefined();
-    // agent shape never carries the heavyweight `preview` field.
+    // normal never carries the heavyweight `preview` field.
     expect(stashItem).not.toHaveProperty("preview");
     expect(stashItem).toHaveProperty("ref");
     expect(path.isAbsolute(String(stashItem?.path))).toBe(true);
     expect(stashItem).toHaveProperty("editable", true);
     expect(stashItem).not.toHaveProperty("editHint");
-    // but keeps the actionable followUp.
-    expect(String(stashItem?.followUp)).toContain("akm show");
+    expect(stashItem).not.toHaveProperty("followUp");
   });
 
   test("a stopword-padded prompt still finds docker results", async () => {
     const stashDir = makeRankingBaselineStash();
     const output = await runCli(stashDir, ["curate", "the docker", "--format=json", "--detail=full"]);
-    const json = JSON.parse(output) as { items: Array<Record<string, unknown>> };
+    const json = JSON.parse(output) as { results: Array<Record<string, unknown>> };
 
-    expect(json.items.length).toBeGreaterThan(0);
-    expect(json.items.every((item) => String(item.ref).includes("docker"))).toBe(true);
+    expect(json.results.length).toBeGreaterThan(0);
+    expect(json.results.every((item) => String(item.ref).includes("docker"))).toBe(true);
   });
 
   test("docker deploy no longer surfaces release-manager filler", async () => {
     const stashDir = makeRankingBaselineStash();
     const output = await runCli(stashDir, ["curate", "docker deploy", "--format=json", "--detail=full"]);
-    const json = JSON.parse(output) as { items: Array<Record<string, unknown>> };
+    const json = JSON.parse(output) as { results: Array<Record<string, unknown>> };
 
-    expect(json.items.some((item) => String(item.ref).endsWith("//commands/release-manager"))).toBe(false);
+    expect(json.results.some((item) => String(item.ref).endsWith("//commands/release-manager"))).toBe(false);
   });
 
   describe("--pack", () => {

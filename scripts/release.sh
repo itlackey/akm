@@ -2,7 +2,7 @@
 #
 # The release steps of docs/maintainers/release-checklist.md, one subcommand each:
 #
-#   start [0.<minor>]       cut release/<version> from main with the next free number of the line
+#   start [0.<minor>]       cut release/<version> from main: the next patch of the line, or 0.<minor>.0 for a new minor
 #   prerelease [stage]      dispatch the Release workflow on the current release branch (alpha, beta or rc; beta)
 #   stable                  set the version, cut the changelog, commit `release: <version>`, push, open the PR into main
 #
@@ -12,7 +12,8 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-# The current branch is release/<version> and matches origin. Sets $branch and $version.
+# The current branch is release/<version> and matches origin. Sets $branch and $version, package.json's version
+# without its prerelease part.
 on_release_branch() {
   branch="$(git branch --show-current)"
   case "$branch" in
@@ -22,7 +23,7 @@ on_release_branch() {
       exit 1
       ;;
   esac
-  version="${branch#release/}"
+  version="$(node -p "require('./package.json').version.replace(/-.*/, '')")"
   git fetch origin "$branch"
   if [ "$(git rev-parse HEAD)" != "$(git rev-parse "origin/$branch")" ]; then
     echo "$branch differs from origin/$branch; push or pull first." >&2
@@ -36,6 +37,9 @@ start() {
   version="$(bun scripts/release-version.ts next ${1:+"$1"})"
   branch="release/$version"
   git switch -c "$branch"
+  # package.json names the release in progress as a prerelease; the stable step sets the bare version.
+  npm pkg set version="$version-beta.0"
+  git commit -qam "release: start $version"
   git push -u origin "$branch"
   echo "Cut $branch from main. Pull requests for it use --base $branch."
 }

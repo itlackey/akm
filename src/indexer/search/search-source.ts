@@ -17,10 +17,10 @@ import {
 import { ConfigError } from "../../core/errors";
 import { getUnresolvedSourcesDir } from "../../core/paths";
 import { warn } from "../../core/warn";
-import { resolveGitContentRoot, resolveWritable } from "../../core/write-source";
 import { lockContentRootFor } from "../../integrations/lockfile";
 import { resolveSourceProviderFactory } from "../../sources/provider-factory";
 import { ensureWebsiteMirror } from "../../sources/snapshot-fetchers/website-ingest";
+import { resolveGitContentRoot, resolveWritable } from "../../sources/write-source";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -43,23 +43,21 @@ export interface SearchSource {
 // ── Resolution ──────────────────────────────────────────────────────────────
 
 /**
- * The working stash read besides the configured bundles: an explicit argument,
- * else `AKM_BUNDLE_DIR`, else the platform default stash when no `defaultBundle`
- * is configured. With a `defaultBundle` and no override there is none, because
- * the configured bundle is the working stash. Throws as `resolveStashDir` does
- * when the directory is missing.
+ * The working stash read besides the configured bundles: an explicit argument.
+ * With no override there is none: the configured bundles (the `defaultBundle`
+ * first) are the sources. With no override and no bundles at all, throws as
+ * `resolveStashDir` does, naming the missing default bundle.
  */
 export function implicitStashDir(config: AkmConfig, overrideStashDir?: string): string | undefined {
   if (overrideStashDir !== undefined) return path.resolve(overrideStashDir);
-  if (process.env.AKM_BUNDLE_DIR?.trim()) return resolveStashDir();
-  return config.defaultBundle ? undefined : resolveStashDir();
+  return config.defaultBundle || Object.keys(config.bundles ?? {}).length > 0 ? undefined : resolveStashDir();
 }
 
 /**
  * Build the ordered list of stash sources, walking every configured stash
  * once. Iteration order:
  *
- *   1. An explicit argument or `AKM_BUNDLE_DIR`, when present.
+ *   1. An explicit argument, when present.
  *   2. The configured `defaultBundle`, after component-root validation.
  *   3. Remaining configured bundles in installation-priority order.
  *
@@ -81,7 +79,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
     );
   }
 
-  // Explicit and environment overrides stay first. Without either override,
+  // An explicit override stays first. Without one,
   // the configured default enters through the validated loop below.
   const sources: SearchSource[] = implicitStash
     ? [{ path: implicitStash, writable: true, isDefault: true, type: "filesystem" }]

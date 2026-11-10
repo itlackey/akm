@@ -5,8 +5,8 @@
  * injected through the pass's `options` parameter to return deterministic
  * derived-memory drafts (no `mock.module`). These tests cover:
  *   - pending detection (parent vs already-inferred vs already-processed)
- *   - the disabled-by-default path (no index connection configured)
- *   - the `index.memory.enabled = false` opt-out
+ *   - the disabled-by-default path (no connection or harness resolves for improve)
+ *   - the opt-out (a null runner: improve resolved none)
  *   - derived memories written with `inferred: true` + `source:` backref
  *   - re-running the pass is idempotent (no duplicate children, parent stays
  *     processed, inferred children are not deleted when toggled off)
@@ -24,6 +24,7 @@ import type { SearchSource } from "../../src/indexer/search/search-source";
 import { compressMemoryToDerivedMemory } from "../../src/llm/memory-infer";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { computeBodyHash, upsertLlmCacheEntry } from "../../src/storage/repositories/index-llm-cache-repository";
+import { withImproveRunner } from "../_helpers/memory-inference-runner";
 import { mutateScopedEnv, withEnv, withMockedFetch } from "../_helpers/sandbox";
 
 type Draft = {
@@ -50,7 +51,10 @@ function memoryInferenceOptions() {
 
 function runMemoryInferencePass(...args: Parameters<typeof runMemoryInferencePassImpl>) {
   const [ctx] = args;
-  return runMemoryInferencePassImpl({ ...ctx, options: { ...ctx.options, ...memoryInferenceOptions() } });
+  return runMemoryInferencePassImpl({
+    ...withImproveRunner(ctx),
+    options: { ...ctx.options, ...memoryInferenceOptions() },
+  });
 }
 
 // ── Test fixtures ───────────────────────────────────────────────────────────
@@ -92,15 +96,7 @@ function configWithLlm(): AkmConfig {
   return {
     semanticSearchMode: "auto",
     connections: { index: { ...SAMPLE_LLM } },
-    index: { connection: "index" },
-  };
-}
-
-function configOptedOut(): AkmConfig {
-  return {
-    semanticSearchMode: "auto",
-    connections: { index: { ...SAMPLE_LLM } },
-    index: { connection: "index", memory: { enabled: false } },
+    improve: { connection: "index" },
   };
 }
 
@@ -205,10 +201,10 @@ describe("runMemoryInferencePass — disabled by default", () => {
     });
   });
 
-  test("returns no-op when index.memory.enabled = false", async () => {
+  test("returns no-op when improve resolved no runner (null)", async () => {
     const filePath = writeMemory("plain", {}, "Plain body, needs splitting.");
     compressor = () => sampleDraft();
-    const result = await runMemoryInferencePass({ config: configOptedOut(), sources: sources() });
+    const result = await runMemoryInferencePass({ config: configWithLlm(), llmRunner: null, sources: sources() });
     expect(result.writtenFacts).toBe(0);
     // Existing inferred children are NOT deleted — but here we just confirm
     // the parent file is unchanged, since the toggle should not mutate state.
@@ -229,28 +225,28 @@ describe("runMemoryInferencePass — disabled by default", () => {
     compressor = () => {
       throw new Error("must not be called when disabled");
     };
-    await runMemoryInferencePass({ config: configOptedOut(), sources: sources() });
+    await runMemoryInferencePass({ config: configWithLlm(), llmRunner: null, sources: sources() });
     expect(fs.existsSync(derivedPath)).toBe(true);
   });
 });
 
 // ── runMemoryInferencePass — orthogonal gating (§14 + #208) ─────────────────
 
-describe("runMemoryInferencePass — index pass gate and engine selection", () => {
-  test("runs when the pass is enabled and its index engine resolves", async () => {
+describe("runMemoryInferencePass — runner gate and engine selection", () => {
+  test("runs when improve's connection resolves for memory inference", async () => {
     writeMemory("parent", {}, "Body.");
     compressor = () => sampleDraft();
     const cfg: AkmConfig = {
       semanticSearchMode: "auto",
       connections: { index: { ...SAMPLE_LLM } },
-      index: { connection: "index", memory: { enabled: true } },
+      improve: { connection: "index" },
     };
     const result = await runMemoryInferencePass({ config: cfg, sources: sources() });
     expect(result.writtenFacts).toBe(1);
     expect(result.splitParents).toBe(1);
   });
 
-  test("skipped when index.memory.enabled is false", async () => {
+  test("skipped when improve resolves no runner for memory inference", async () => {
     const filePath = writeMemory("parent", {}, "Body.");
     let invocations = 0;
     compressor = () => {
@@ -260,9 +256,9 @@ describe("runMemoryInferencePass — index pass gate and engine selection", () =
     const cfg: AkmConfig = {
       semanticSearchMode: "auto",
       connections: { index: { ...SAMPLE_LLM } },
-      index: { connection: "index", memory: { enabled: false } },
+      improve: { connection: "index" },
     };
-    const result = await runMemoryInferencePass({ config: cfg, sources: sources() });
+    const result = await runMemoryInferencePass({ config: cfg, llmRunner: null, sources: sources() });
     expect(result).toEqual({
       considered: 0,
       cacheHits: 0,
@@ -293,7 +289,6 @@ describe("runMemoryInferencePass — index pass gate and engine selection", () =
     };
     const cfg: AkmConfig = {
       semanticSearchMode: "auto",
-      index: { memory: { enabled: true } },
     };
     const result = await runMemoryInferencePass({ config: cfg, sources: sources() });
     expect(result.writtenFacts).toBe(0);
@@ -344,7 +339,7 @@ describe("runMemoryInferencePass — enabled", () => {
           apiKey: "$AKM_MEMORY_VANISHING_CHILD_REQUIRED_KEY",
         },
       },
-      index: { connection: "memory", memory: { enabled: true } },
+      improve: { connection: "memory" },
     };
     let calls = 0;
     let removed = false;
@@ -414,7 +409,7 @@ describe("runMemoryInferencePass — enabled", () => {
           apiKey: "$AKM_MEMORY_EXISTING_REQUIRED_KEY",
         },
       },
-      index: { connection: "memory", memory: { enabled: true } },
+      improve: { connection: "memory" },
     };
     let calls = 0;
     compressor = () => {
@@ -447,7 +442,7 @@ describe("runMemoryInferencePass — enabled", () => {
           apiKey: "$AKM_MEMORY_ABORTED_REQUIRED_KEY",
         },
       },
-      index: { connection: "memory", memory: { enabled: true } },
+      improve: { connection: "memory" },
     };
 
     const result = await withEnv({ AKM_MEMORY_ABORTED_REQUIRED_KEY: undefined }, () =>
@@ -473,7 +468,7 @@ describe("runMemoryInferencePass — enabled", () => {
           apiKey: "$AKM_MEMORY_CACHE_REQUIRED_KEY",
         },
       },
-      index: { connection: "memory", memory: { enabled: true } },
+      improve: { connection: "memory" },
     };
     upsertLlmCacheEntry(
       db,
@@ -516,7 +511,7 @@ describe("runMemoryInferencePass — enabled", () => {
           apiKey: "$AKM_MEMORY_ROTATING_KEY",
         },
       },
-      index: { connection: "memory", memory: { enabled: true } },
+      improve: { connection: "memory" },
     };
     const authorization: Array<string | null> = [];
 
@@ -524,8 +519,7 @@ describe("runMemoryInferencePass — enabled", () => {
       withMockedFetch(
         () =>
           runMemoryInferencePassImpl({
-            config,
-            sources: sources(),
+            ...withImproveRunner({ config, sources: sources() }),
             options: { compressMemoryToDerivedMemory },
           }),
         (_url, init) => {
@@ -556,7 +550,7 @@ describe("runMemoryInferencePass — enabled", () => {
     }
   });
 
-  test("merges standalone selection and per-call lowering notices in stable deduped order", async () => {
+  test("dedupes per-call lowering notices, in order", async () => {
     writeMemory("parent", {}, "Body.");
     const perCallNotice: LoweringNotice = {
       code: "untranslated-field",
@@ -567,10 +561,10 @@ describe("runMemoryInferencePass — enabled", () => {
     };
     const cfg: AkmConfig = {
       ...configWithLlm(),
-      index: { connection: "index", memory: { enabled: true, llm: { topP: 0.9 } } },
     };
 
     const result = await runMemoryInferencePassImpl({
+      ...withImproveRunner({ config: cfg, sources: sources() }),
       config: cfg,
       sources: sources(),
       options: {
@@ -581,14 +575,7 @@ describe("runMemoryInferencePass — enabled", () => {
       },
     });
 
-    expect(result.notices).toEqual([
-      expect.objectContaining({
-        code: "untranslated-field",
-        adapter: "connection",
-        field: "inference.topP",
-      }),
-      perCallNotice,
-    ]);
+    expect(result.notices).toEqual([perCallNotice]);
     expect(Object.isFrozen(result.notices)).toBe(true);
   });
 

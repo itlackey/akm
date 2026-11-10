@@ -39,7 +39,7 @@ import { akmProposalAccept, akmProposalReject, akmProposalReopen } from "../../.
 import { getProposal, listProposals, recordGateDecision } from "../../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { openStateDatabase } from "../../../../src/core/state-db";
-import { resolveWriteTarget } from "../../../../src/core/write-source";
+import { resolveWriteTarget } from "../../../../src/sources/write-source";
 import {
   getImproveLedgerRow,
   isContentDrivenRow,
@@ -62,11 +62,9 @@ beforeEach(() => {
   storage = withIsolatedAkmStorage();
   stash = storage.stashDir;
   config = {
-    configVersion: "0.9.0",
     semanticSearchMode: "off",
     bundles: { stash: { path: stash, writable: true } },
     defaultBundle: "stash",
-    defaultWriteTarget: "stash",
     connections: {
       planner: { endpoint: "https://consolidate.example.test/v1/chat/completions", models: { fast: "planner" } },
     },

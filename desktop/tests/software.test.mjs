@@ -23,7 +23,7 @@ test("host environment finds conventional user tools without running profiles or
       AKM_LAUNCHER_NODE: "/bundled/electron",
       ELECTRON_RUN_AS_NODE: "1",
       AKM_DESKTOP_SESSION_TOKEN: "secret",
-      AKM_CONFIG_DIR: "/test-config",
+      AKM_CONFIG_FILE: "/test-config/config.json",
     },
     home,
   );
@@ -31,7 +31,7 @@ test("host environment finds conventional user tools without running profiles or
   assert.equal(env.AKM_LAUNCHER_NODE, undefined);
   assert.equal(env.ELECTRON_RUN_AS_NODE, undefined);
   assert.equal(env.AKM_DESKTOP_SESSION_TOKEN, undefined);
-  assert.equal(env.AKM_CONFIG_DIR, "/test-config");
+  assert.equal(env.AKM_CONFIG_FILE, "/test-config/config.json");
   assert.ok(env.PATH.includes(path.join(home, ".local/bin")));
   assert.ok(env.PATH.includes(path.join(home, ".nvm/versions/node/v24.18.0/bin")));
   assert.ok(!env.PATH.split(":").includes("."));
@@ -293,4 +293,12 @@ test("a failed native command is not reported as success; its cause is bounded d
   assert.ok(snapshot.errorDetail.length <= 1000, "detail is bounded");
   assert.throws(() => f.manager.start("shell", "rm"), /Invalid/);
   assert.throws(() => f.manager.start("install-plugin", "other"), /Invalid/);
+});
+
+test("the host CLI for scheduled tasks is the one Software detects, and none when it is absent", async () => {
+  const present = await hostFixture();
+  const cli = await present.manager.cli();
+  assert.equal(cli.path, "/fixture/bin/akm");
+  assert.equal(cli.env.AKM_LAUNCHER_NODE, undefined);
+  assert.equal(await (await hostFixture({ absent: true })).manager.cli(), undefined);
 });

@@ -16,7 +16,7 @@ import { parseBundleRef } from "../../core/asset/asset-ref";
 import { type AssetRef, parsePlacementRef } from "../../core/asset/resolve-ref";
 import { type AkmConfig, bundlesToSourceEntries, loadConfig } from "../../core/config/config";
 import { collectCredentialValues } from "../../core/config/credentials";
-import { ConfigError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
+import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent, type EventsContext } from "../../core/events";
 import type { LockOwnership } from "../../core/file-lock";
 import type {
@@ -28,21 +28,19 @@ import type {
   ImproveMemoryCleanupResult,
 } from "../../core/improve-types";
 import { classifyImproveAction, foldDistillSkipped } from "../../core/improve-types";
-import { resolveMutationTarget } from "../../core/mutation-target";
 import { getDbPath, getStashLocksDir, getStateDbPathInDataDir } from "../../core/paths";
 import { redactSensitiveText } from "../../core/redaction";
 import { openStateDatabase } from "../../core/state-db";
 import { info, warn, warnVerbose } from "../../core/warn";
 import { beginWriteProvenance, relativeWrittenPath, type WriteProvenanceJournal } from "../../core/write-provenance";
-import { resolveWorkingStashTarget, resolveWritable, resolveWriteTarget } from "../../core/write-source";
 import { type Notice, noticeSet } from "../../execution/notices";
 import { ensureIndex } from "../../indexer/ensure-index";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { akmIndex } from "../../indexer/indexer";
-import { countPendingMemoriesNeedingDecision } from "../../indexer/passes/memory-inference";
 import { resolveEntryContentDir, resolveSourceEntries } from "../../indexer/search/search-source";
 import { installLlmUsagePersistence } from "../../llm/usage-persist";
 import { type LlmUsageRecord, withLlmStage } from "../../llm/usage-telemetry";
+import { resolveMutationTarget } from "../../sources/mutation-target";
 import {
   GitStashPushError,
   isGitBackedStash,
@@ -51,9 +49,9 @@ import {
   resolveWritableOverride,
   saveGitStash,
 } from "../../sources/providers/git";
+import { resolveWritable, resolveWriteTarget } from "../../sources/write-source";
 import type { Database } from "../../storage/database";
 import { closeDatabase, openExistingDatabase } from "../../storage/repositories/index-connection";
-import { withIndexDb } from "../../storage/repositories/index-db";
 import { getEntryCount } from "../../storage/repositories/index-entries-repository";
 import { openSqliteReadSnapshot, SqliteReadSnapshotUnavailableError } from "../../storage/sqlite-read-snapshot";
 import { summarizeLlmUsageRecordsCrossTab } from "../health/llm-usage";
@@ -343,9 +341,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     try {
       eventsDb = openStateDatabase(resolvedStateDbPath);
       eventsCtx = { db: eventsDb };
-    } catch (err) {
-      rethrowIfTestIsolationError(err);
-    }
+    } catch {}
     if (!firstEngineResponseSeen) {
       const firstResponseTimer = setTimeout(() => {
         warn("[improve] Still waiting for the first model response...");
@@ -426,13 +422,8 @@ export function resolveImproveReadSource(
       `Drop ${IMPROVE_TARGET_FLAG} or use ${IMPROVE_TARGET_FLAG} ${scopedRef.origin}.`,
     );
   }
-  const selector = scopedRef?.origin ?? explicitTarget ?? config.defaultWriteTarget;
+  const selector = scopedRef?.origin ?? explicitTarget;
   if (!selector && fallbackStashDir) return { source: { name: "stash", path: fallbackStashDir } };
-  if (!selector && process.env.AKM_BUNDLE_DIR?.trim()) {
-    // A live run's working bundle starts from AKM_BUNDLE_DIR (`resolveWorkingStashTarget`), so its preview does too.
-    const { source } = resolveWorkingStashTarget(config, { requireWritable: false });
-    return { source: { name: source.name, path: source.path } };
-  }
   const configuredSelector = selector ?? config.defaultBundle;
   if (configuredSelector) {
     const entry = bundlesToSourceEntries(config)?.find((source) => source.name === configuredSelector);
@@ -480,13 +471,12 @@ function resolveImproveRunSetup(options: AkmImproveOptions) {
   const improveProfile = selectedStrategy.config;
   const configuredLimits = {
     ...(options.limit !== undefined ? { cli: options.limit } : {}),
-    ...(configuredImproveProfile.limit !== undefined ? { profile: configuredImproveProfile.limit } : {}),
     ...(configuredImproveProfile.processes?.reflect?.limit !== undefined
       ? { reflect: configuredImproveProfile.processes.reflect.limit }
       : {}),
   };
-  // --limit, then the reflect process limit, then the profile limit.
-  const effectiveLimit = options.limit ?? improveProfile?.processes?.reflect?.limit ?? improveProfile.limit;
+  // --limit, then the reflect process limit.
+  const effectiveLimit = options.limit ?? improveProfile?.processes?.reflect?.limit;
   // Only a bundle-qualified scope picks the bundle; parse it then (a bare bundle-root ref has no placement).
   const scopedRef =
     scope.mode === "ref" && scope.value && parseBundleRef(scope.value).bundle !== undefined
@@ -504,7 +494,7 @@ function resolveImproveRunSetup(options: AkmImproveOptions) {
           flag: IMPROVE_TARGET_FLAG,
         }).target
       : (options.writeTarget ??
-        (options.target || config.defaultWriteTarget || !options.stashDir
+        (options.target || !options.stashDir
           ? resolveWriteTarget(config, options.target, { flag: IMPROVE_TARGET_FLAG })
           : {
               source: { kind: "filesystem" as const, name: "stash", path: options.stashDir },
@@ -580,19 +570,6 @@ function recordImproveFailure(err: unknown, run: ImproveRunSetup, eventsCtx: Eve
   );
 }
 
-/**
- * The `minPendingCount` gate's count. Reads index.db read-only for cached no-change
- * decisions; with no usable index it counts every pending parent.
- */
-function countUndecidedPendingMemories(stashDir: string): number {
-  try {
-    return withIndexDb((db) => countPendingMemoriesNeedingDecision(stashDir, db), { readOnly: true });
-  } catch (err) {
-    rethrowIfTestIsolationError(err);
-    return countPendingMemoriesNeedingDecision(stashDir);
-  }
-}
-
 function probeEntryCount(): number | undefined {
   try {
     if (!fs.existsSync(getDbPath())) return undefined;
@@ -602,8 +579,7 @@ function probeEntryCount(): number | undefined {
     } finally {
       closeDatabase(db);
     }
-  } catch (err) {
-    rethrowIfTestIsolationError(err);
+  } catch {
     return undefined;
   }
 }
@@ -798,14 +774,6 @@ function buildResultExecutionPlan(
   const { improveProfile, configuredImproveProfile, resolvedPlan, scope } = run;
   const { strategyFilteredRefs } = collected;
   const configuredTriage = configuredImproveProfile.processes?.triage;
-  const inferenceMinPending = improveProfile.processes?.memoryInference?.minPendingCount;
-  const pendingMemories =
-    run.primaryStashDir && inferenceMinPending !== undefined && inferenceMinPending > 0
-      ? countUndecidedPendingMemories(run.primaryStashDir)
-      : undefined;
-  const belowMinPending =
-    pendingMemories !== undefined && inferenceMinPending !== undefined && pendingMemories < inferenceMinPending;
-  const memoryInferenceEnabled = resolvedPlan.processes.memoryInference.enabled && !belowMinPending;
   // Per-process routing, plus how many effective refs each ref-scoped process would act on (#947).
   const processes = projectResolvedProcessRouting(resolvedPlan).map((row) => {
     const eligibleRefs = eligibleRefCount(preparation.loopRefs, row.process, resolvedPlan.strategy.config);
@@ -850,12 +818,10 @@ function buildResultExecutionPlan(
     stageConfig: {
       extract: { enabled: preparation.planning.extract.wouldRun, reason: preparation.planning.extract.reason },
       memoryInference: {
-        enabled: memoryInferenceEnabled,
-        reason: !resolvedPlan.processes.memoryInference.enabled
-          ? "disabled"
-          : !memoryInferenceEnabled
-            ? `${pendingMemories ?? 0} pending memories is below minPendingCount ${inferenceMinPending}`
-            : "enabled; the pass discovers pending memories independently of selected refs",
+        enabled: resolvedPlan.processes.memoryInference.enabled,
+        reason: resolvedPlan.processes.memoryInference.enabled
+          ? "enabled; the pass discovers pending memories independently of selected refs"
+          : "disabled",
       },
     },
     triage: {

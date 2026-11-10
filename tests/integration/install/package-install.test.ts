@@ -43,8 +43,8 @@ function writeFixturePackage(root: string, name = "akm-package-install-fixture",
         name,
         version,
         type: "module",
-        files: ["cli.js", "migrate.js"],
-        bin: { akm: "cli.js", "akm-migrate": "migrate.js" },
+        files: ["cli.js"],
+        bin: { akm: "cli.js" },
       },
       null,
       4,
@@ -63,9 +63,6 @@ function writeFixturePackage(root: string, name = "akm-package-install-fixture",
     ].join("\n"),
   );
   fs.chmodSync(launcher, 0o755);
-  const migrateLauncher = path.join(sourceDir, "migrate.js");
-  fs.writeFileSync(migrateLauncher, '#!/usr/bin/env node\nthrow new Error("migrate launcher must not execute");\n');
-  fs.chmodSync(migrateLauncher, 0o755);
   return sourceDir;
 }
 
@@ -101,9 +98,8 @@ describe("package install orchestration (real npm)", () => {
       expect(fs.lstatSync(verified.packageDir).isSymbolicLink()).toBe(false);
       expect(verified.version).toBe(version);
       expect(verified.launcher.startsWith(prefix)).toBe(true);
-      expect(Object.keys(verified.launchers).sort()).toEqual(["akm", "akm-migrate"]);
+      expect(Object.keys(verified.launchers).sort()).toEqual(["akm"]);
       expect(fs.existsSync(verified.launchers.akm)).toBe(true);
-      expect(fs.existsSync(verified.launchers["akm-migrate"])).toBe(true);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

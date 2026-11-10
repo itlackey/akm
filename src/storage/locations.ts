@@ -32,7 +32,7 @@ export interface StorageLocations {
   readonly lockfile: string;
   /** The lockfile write-sentinel (`<dataDir>/akm.lock.lck`). */
   readonly lockfileSentinel: string;
-  /** The data directory root (`AKM_DATA_DIR` / `XDG_DATA_HOME` aware). */
+  /** The data directory root (the config file's `paths.data`, then `XDG_DATA_HOME`). */
   readonly dataDir: string;
   /** The cache directory root. */
   readonly cacheDir: string;
@@ -45,7 +45,7 @@ export interface StorageLocations {
 /**
  * Resolve the current {@link StorageLocations} by delegating to the existing
  * path getters. Resolution honours the same environment overrides
- * (`AKM_DATA_DIR`, XDG variables, transient-stash isolation) as the underlying
+ * (`paths` in the config file, XDG variables) as the underlying
  * getters, so this is safe to call at boot or per-operation — it carries no
  * cached state of its own.
  */

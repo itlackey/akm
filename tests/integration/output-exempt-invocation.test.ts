@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { configHomeWithBundle, withBundleSync } from "../_helpers/sandbox";
 
 const dirs: string[] = [];
 const cliPath = path.join(import.meta.dir, "..", "..", "src", "cli.ts");
@@ -51,9 +52,9 @@ console.log(JSON.stringify({ before: before ?? null, after: process.exitCode }))
     fs.mkdirSync(path.join(stash, "env"), { recursive: true });
     fs.writeFileSync(path.join(stash, "env", "prod.env"), "FOO=bar\n");
 
-    const result = spawnCli(["--format", "text", "env", "run", "env/prod", "--", "/bin/true"], {
-      AKM_BUNDLE_DIR: stash,
-    });
+    const result = withBundleSync(stash, () =>
+      spawnCli(["--format", "text", "env", "run", "env/prod", "--", "/bin/true"], {}),
+    );
 
     expect(result.status).toBe(0);
     expect(result.stderr).toContain("'--format' has no effect on 'akm env run'");
@@ -73,9 +74,9 @@ console.log(JSON.stringify({ before: before ?? null, after: process.exitCode }))
     fs.mkdirSync(path.join(stash, "env"), { recursive: true });
     fs.writeFileSync(path.join(stash, "env", "prod.env"), "FOO=bar\n");
 
-    const result = spawnCli(["env", "run", "env/prod", "--format", "text", "--", "/bin/true"], {
-      AKM_BUNDLE_DIR: stash,
-    });
+    const result = withBundleSync(stash, () =>
+      spawnCli(["env", "run", "env/prod", "--format", "text", "--", "/bin/true"], {}),
+    );
 
     expect(result.status).toBe(0);
     expect(result.stderr).toContain("'--format' has no effect on 'akm env run'");
@@ -86,9 +87,9 @@ console.log(JSON.stringify({ before: before ?? null, after: process.exitCode }))
     fs.mkdirSync(path.join(stash, "env"), { recursive: true });
     fs.writeFileSync(path.join(stash, "env", "prod.env"), "FOO=bar\n");
 
-    const result = spawnCli(["env", "run", "env/prod", "--", "/bin/true", "--format", "text"], {
-      AKM_BUNDLE_DIR: stash,
-    });
+    const result = withBundleSync(stash, () =>
+      spawnCli(["env", "run", "env/prod", "--", "/bin/true", "--format", "text"], {}),
+    );
 
     expect(result.status).toBe(0);
     expect(result.stderr).not.toContain("'--format' has no effect");
@@ -99,33 +100,18 @@ console.log(JSON.stringify({ before: before ?? null, after: process.exitCode }))
     fs.mkdirSync(path.join(stash, "env"), { recursive: true });
     fs.writeFileSync(path.join(stash, "env", "prod.env"), "FOO=bar\n");
 
-    const result = spawnCli(["--format", "text", "env", "run", "env/prod", "--", "/bin/true", "--quiet"], {
-      AKM_BUNDLE_DIR: stash,
-    });
-
-    expect(result.status).toBe(0);
-    expect(result.stderr).toContain("'--format' has no effect on 'akm env run'");
-  });
-
-  test("scheduler-context discovery ignores a child argument after `--`", () => {
-    const stash = tempDir("akm-scheduler-child-arg-");
-    fs.mkdirSync(path.join(stash, "env"), { recursive: true });
-    fs.writeFileSync(path.join(stash, "env", "prod.env"), "FOO=bar\n");
-
-    const result = spawnCli(
-      ["env", "run", "env/prod", "--", "/bin/true", "--scheduler-context", "/does/not/exist.json"],
-      { AKM_BUNDLE_DIR: stash },
+    const result = withBundleSync(stash, () =>
+      spawnCli(["--format", "text", "env", "run", "env/prod", "--", "/bin/true", "--quiet"], {}),
     );
 
     expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
+    expect(result.stderr).toContain("'--format' has no effect on 'akm env run'");
   });
 
   test("scripted setup formats its result instead of warning as exempt", () => {
     const stash = tempDir("akm-setup-format-");
     const result = spawnCli(["--format", "text", "setup", "--yes", "--no-init", "--dir", stash], {
       AKM_FORCE_SETUP_TMP_STASH: "1",
-      AKM_BUNDLE_DIR: stash,
     });
 
     expect(result.status).toBe(0);
@@ -145,15 +131,13 @@ console.log(JSON.stringify({ before: before ?? null, after: process.exitCode }))
     fs.writeFileSync(
       path.join(configHome, "akm", "config.json"),
       JSON.stringify({
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         harnesses: { test: { platform: "aider", bin } },
       }),
     );
 
     const result = spawnCli(["--format", "text", "agent", "--harness", "test"], {
-      AKM_BUNDLE_DIR: stash,
-      XDG_CONFIG_HOME: configHome,
+      XDG_CONFIG_HOME: configHomeWithBundle(configHome, stash),
     });
 
     expect(result.status).toBe(0);

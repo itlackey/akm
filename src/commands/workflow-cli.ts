@@ -10,7 +10,7 @@
  * with `akm lint --type workflows`.
  */
 
-import { getStringArg } from "../cli/parse-args";
+import { getStringArg, parseIntegerFlag, parsePositiveIntFlag } from "../cli/parse-args";
 import { defineGroupCommand, defineJsonCommand, EXIT_CODES, output, outputWithExitCode } from "../cli/shared";
 import { armAbortDeadline } from "../core/abort-deadline";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../core/asset/asset-create";
@@ -38,13 +38,6 @@ const workflowStatusCommand = defineJsonCommand({
     units: {
       type: "boolean",
       description: "Also list per-unit rows from the run journal",
-      default: false,
-    },
-    // Deprecated no-op, accepted through 0.10 so scripts that pass it do not
-    // fail with UNKNOWN_FLAG. Runs are no longer scoped to a directory.
-    "all-scopes": {
-      type: "boolean",
-      description: "Deprecated, no effect (accepted through 0.10)",
       default: false,
     },
   },
@@ -86,13 +79,6 @@ const workflowListCommand = defineJsonCommand({
     children: {
       type: "boolean",
       description: "Also include child workflow runs (hidden by default, P3b)",
-      default: false,
-    },
-    // Deprecated no-op, accepted through 0.10 so scripts that pass it do not
-    // fail with UNKNOWN_FLAG. Runs are no longer scoped to a directory.
-    "all-scopes": {
-      type: "boolean",
-      description: "Deprecated, no effect (accepted through 0.10)",
       default: false,
     },
   },
@@ -192,14 +178,7 @@ const workflowRunCommand = defineJsonCommand({
     },
     "max-steps": { type: "string", description: "Stop after executing this many steps" },
     "max-retries": { type: "string", description: "Retry a failed workflow step this many additional times" },
-    timeout: { type: "string", description: "Whole-run timeout: N, Nms, Ns, or Nm (bare N is milliseconds)" },
-    // Deprecated no-op, accepted through 0.10 so scripts that pass it do not
-    // fail with UNKNOWN_FLAG. A workflow ref always starts a new run now.
-    new: {
-      type: "boolean",
-      description: "Deprecated, no effect (accepted through 0.10)",
-      default: false,
-    },
+    "timeout-ms": { type: "string", description: "Whole-run timeout in milliseconds" },
     "skip-if-locked": {
       type: "boolean",
       description: "Skip (exit 0, not 75) if another akm process holds this run or state.db is busy",
@@ -211,7 +190,7 @@ const workflowRunCommand = defineJsonCommand({
     const parameterFlags = parseWorkflowParameterFlags(rawArgs, args.target);
     const maxSteps = parseIntegerFlag(getStringArg(args, "max-steps"), "--max-steps", 1);
     const maxRetries = parseIntegerFlag(getStringArg(args, "max-retries"), "--max-retries", 0);
-    const timeoutMs = parseWorkflowTimeout(getStringArg(args, "timeout"));
+    const timeoutMs = parseWorkflowTimeout(getStringArg(args, "timeout-ms"));
     const skipIfLocked = args["skip-if-locked"];
     const controller = new AbortController();
     let signalExitCode: number | undefined;
@@ -293,11 +272,12 @@ const WORKFLOW_RUN_VALUE_FLAGS = new Set([
   "maxSteps",
   "max-retries",
   "maxRetries",
-  "timeout",
+  "timeout-ms",
+  "timeoutMs",
   "format",
   "detail",
-  "shape",
   "output",
+  "config",
 ]);
 const WORKFLOW_RUN_BOOLEAN_FLAGS = new Set([
   "quiet",
@@ -305,8 +285,6 @@ const WORKFLOW_RUN_BOOLEAN_FLAGS = new Set([
   "help",
   "no-quiet",
   "no-verbose",
-  "new",
-  "no-new",
   "skip-if-locked",
   "no-skip-if-locked",
 ]);
@@ -371,33 +349,11 @@ export function parseWorkflowParameterFlags(rawArgs: readonly string[], target: 
   return flags;
 }
 
-function parseIntegerFlag(
-  raw: string | undefined,
-  name: string,
-  minimum: number,
-  maximum?: number,
-): number | undefined {
-  if (raw === undefined) return undefined;
-  const value = Number.parseInt(raw, 10);
-  if (!/^\d+$/.test(raw) || value < minimum || (maximum !== undefined && value > maximum)) {
-    const range = maximum === undefined ? `at least ${minimum}` : `from ${minimum} through ${maximum}`;
-    throw new UsageError(`${name} must be an integer ${range}, got "${raw}".`, "INVALID_FLAG_VALUE");
-  }
-  return value;
-}
-
 function parseWorkflowTimeout(raw: string | undefined): number | undefined {
-  if (raw === undefined) return undefined;
-  const match = /^(\d+)(ms|s|m)?$/.exec(raw);
-  if (!match) {
-    throw new UsageError(`--timeout must be N, Nms, Ns, or Nm, got "${raw}".`, "INVALID_FLAG_VALUE");
-  }
-  const amount = Number(match[1]);
-  const multiplier = match[2] === "m" ? 60_000 : match[2] === "s" ? 1_000 : 1;
-  const timeoutMs = amount * multiplier;
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > WORKFLOW_MAX_TIMEOUT_MS) {
+  const timeoutMs = parsePositiveIntFlag(raw, "--timeout-ms");
+  if (timeoutMs !== undefined && timeoutMs > WORKFLOW_MAX_TIMEOUT_MS) {
     throw new UsageError(
-      `--timeout must resolve to 1 through ${WORKFLOW_MAX_TIMEOUT_MS} milliseconds, got "${raw}".`,
+      `--timeout-ms must be 1 through ${WORKFLOW_MAX_TIMEOUT_MS} milliseconds, got "${raw}".`,
       "INVALID_FLAG_VALUE",
     );
   }
@@ -465,7 +421,12 @@ const workflowResumeCommand = defineJsonCommand({
 export const workflowCommand = defineGroupCommand({
   meta: {
     name: "workflow",
-    description: "Experimental: author, inspect, and execute step-by-step workflow assets",
+    description:
+      "Experimental: author, inspect, and execute step-by-step workflow assets\n" +
+      "Order: write the definition (`workflow create`), `workflow plan <ref>` (compiles it, executes nothing), " +
+      "`workflow run <ref>` (starts a run and prints its run id), `workflow status <run-id>`, then " +
+      "`workflow resume <run-id>` or `workflow abandon <run-id>` for a blocked or failed run. " +
+      "A ref names the definition (workflows/<name>); a run id names one execution of it.",
   },
   subCommands: {
     status: workflowStatusCommand,

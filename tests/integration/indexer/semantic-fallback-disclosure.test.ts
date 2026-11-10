@@ -24,7 +24,7 @@ import { upsertEntry } from "../../../src/storage/repositories/index-entries-rep
 import { rebuildFts } from "../../../src/storage/repositories/index-fts-repository";
 import { setMeta } from "../../../src/storage/repositories/index-meta-repository";
 import { upsertEmbedding } from "../../../src/storage/repositories/index-vec-repository";
-import { withIsolatedAkmStorage } from "../../_helpers/sandbox";
+import { withDefaultBundle, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 import { overrideSeam } from "../../_helpers/seams";
 
 test("query-embedding failure preserves FTS results and returns one sanitized fts-fallback disclosure", async () => {
@@ -81,7 +81,7 @@ test("query-embedding failure preserves FTS results and returns one sanitized ft
       config,
     });
 
-    expect(result.hits.map((hit) => hit.ref)).toContain("knowledge/deploy-guide");
+    expect(result.results.map((hit) => hit.ref)).toContain("knowledge/deploy-guide");
     expect(result.mode).toBe("fts-fallback");
     expect(result.warnings).toEqual([
       "Vector search unavailable: cannot reach embedding endpoint http://127.0.0.1:1234/v1/embeddings (connection failed) — falling back to keyword search.",
@@ -94,7 +94,7 @@ test("query-embedding failure preserves FTS results and returns one sanitized ft
     expect(serialized).not.toContain("sk-runtime-secret");
     expect(serialized).not.toContain("typo in the url or port");
 
-    saveConfig(config);
+    saveConfig(withDefaultBundle(config, storage.stashDir));
     const publicSearch = await akmSearch({ query: "deploy", skipLogging: true });
     expect(publicSearch.searchMode).toBe("fts-fallback");
     expect(publicSearch.warnings).toEqual(result.warnings);

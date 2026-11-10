@@ -45,7 +45,6 @@ import { DEFAULT_EXEC_TIMEOUT_MS } from "../../src/workflows/resource-limits";
 import { decodeWorkflowPlan, frozenStepRows } from "../../src/workflows/runtime/run-plan";
 
 export const WORKFLOW_TEST_CONFIG = {
-  configVersion: "0.9.0",
   semanticSearchMode: "off",
   connections: {
     "test-llm": {
@@ -125,14 +124,13 @@ export function freezeWorkflow(
 }
 
 type ExecutionUnitLike = Partial<
-  Pick<WorkflowUnitSettings, "connection" | "harness" | "engine" | "model" | "llm" | "timeoutMs" | "output">
+  Pick<WorkflowUnitSettings, "connection" | "harness" | "model" | "llm" | "timeoutMs" | "output">
 >;
 
 function executionValues(unit: ExecutionUnitLike | undefined): UnresolvedExecutionDefaults {
   return {
     ...(unit && Object.hasOwn(unit, "connection") ? { connection: unit.connection } : {}),
     ...(unit && Object.hasOwn(unit, "harness") ? { harness: unit.harness } : {}),
-    ...(unit && Object.hasOwn(unit, "engine") ? { engine: unit.engine } : {}),
     ...(unit && Object.hasOwn(unit, "model") ? { model: unit.model } : {}),
     ...(unit && Object.hasOwn(unit, "llm") ? { inference: unit.llm as ExecutionJsonObject } : {}),
     ...(unit && Object.hasOwn(unit, "timeoutMs") ? { timeout: unit.timeoutMs } : {}),

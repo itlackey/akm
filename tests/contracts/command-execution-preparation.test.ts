@@ -26,7 +26,6 @@ import type { ChatCompletionConfig } from "../../src/llm/client";
 import { withEnv } from "../_helpers/sandbox";
 
 const config: AkmConfig = {
-  configVersion: "0.9.0",
   semanticSearchMode: "off",
   harnesses: {
     reviewer: {
@@ -48,7 +47,6 @@ const valueStateConfig: AkmConfig = {
 
 /** A connection only: agent work on it runs on akm's own runtime. */
 const connectionConfig: AkmConfig = {
-  configVersion: "0.9.0",
   semanticSearchMode: "off",
   connections: {
     direct: {
@@ -365,7 +363,6 @@ describe("common command invocation preparation", () => {
 
   test("explicit null clears a harness's first configured model and its workspace", async () => {
     const configured: AkmConfig = {
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       harnesses: {
         reviewer: {
@@ -427,7 +424,6 @@ describe("common command invocation preparation", () => {
   test("redacts a credential echoed by a connection's provider failure", async () => {
     const secret = "provider-command-secret-987654";
     const configured: AkmConfig = {
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       connections: {
         direct: {
@@ -457,7 +453,6 @@ describe("common command invocation preparation", () => {
 
   test("a config edit after preparation does not change the prepared transport", async () => {
     const llmConfig: AkmConfig = {
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       connections: {
         direct: {
@@ -484,7 +479,6 @@ describe("common command invocation preparation", () => {
     });
 
     const agentConfig: AkmConfig = {
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       harnesses: {
         reviewer: { platform: "claude", bin: "/safe/claude", args: ["--safe"] },
@@ -511,7 +505,6 @@ describe("common command invocation preparation", () => {
 
     const runFor = async (platform: "aider" | "claude") => {
       const configured: AkmConfig = {
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         harnesses: { reviewer: { platform, bin: "/bin/true" } },
       };

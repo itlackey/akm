@@ -43,7 +43,7 @@ const DEFAULT_REGISTRY_URLS = [
 // misaligned queue fails with the full transcript instead of dying silently.
 //
 // To re-capture the wizard's real prompt sequence after a flow change, run:
-//   SETUP_RUN_CAPTURE=1 bun test tests/integration/setup-run.test.ts
+//   SETUP_RUN_CAPTURE=1 bun test tests/setup-run.test.ts
 // Capture mode answers drained queues with safe defaults and prints the full
 // trace instead of throwing, so one run reveals the whole sequence.
 const CAPTURE = process.env.SETUP_RUN_CAPTURE === "1";
@@ -264,8 +264,9 @@ beforeEach(() => {
     throw new Error(`process.exit(${code}) during setup wizard test — prompt queue misaligned`);
   }) as typeof process.exit;
   resetPromptState();
-  storage = withIsolatedAkmStorage();
-  DEFAULT_STASH_DIR = storage.stashDir;
+  storage = withIsolatedAkmStorage({}, { bundle: false });
+  // No `AKM_BUNDLE_DIR`: the wizard's default stash is `~/akm`, under the sandbox's HOME.
+  DEFAULT_STASH_DIR = path.join(process.env.HOME as string, "akm");
   DEFAULT_CONFIG_PATH = path.join(storage.configDir, "akm", "config.json");
   resetSetupState();
 });
@@ -472,7 +473,7 @@ describe("runSetupWizard", () => {
     };
     fs.writeFileSync(
       DEFAULT_CONFIG_PATH,
-      `${JSON.stringify({ configVersion: "0.9.0", semanticSearchMode: "off", connections: { default: connection } })}\n`,
+      `${JSON.stringify({ semanticSearchMode: "off", connections: { default: connection } })}\n`,
     );
 
     promptState.selects.push("default", "small", "mid", "big", "off", "done", "json", "brief");
@@ -534,7 +535,6 @@ describe("runSetupWizard", () => {
     fs.writeFileSync(
       DEFAULT_CONFIG_PATH,
       `${JSON.stringify({
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         harnesses: { claude: { args: ["--keep"] }, codex: { bin: "/opt/codex" } },
         connections: { default: { endpoint: "https://api.example.test/v1", models: { fast: "m" } } },
@@ -587,7 +587,6 @@ describe("runSetupWizard", () => {
     fs.writeFileSync(
       DEFAULT_CONFIG_PATH,
       `${JSON.stringify({
-        configVersion: "0.9.0",
         semanticSearchMode: "auto",
         bundles: {
           stash: { path: DEFAULT_STASH_DIR, writable: true },
@@ -634,7 +633,6 @@ describe("runSetupWizard", () => {
     fs.writeFileSync(
       DEFAULT_CONFIG_PATH,
       `${JSON.stringify({
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         bundles: {
           stash: { path: DEFAULT_STASH_DIR, writable: true },

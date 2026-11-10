@@ -58,7 +58,7 @@ export type { Database };
 /**
  * Default path: `<dataDir>/logs.db` — alongside state.db so cooperating
  * processes sharing a data root automatically share the same logs database
- * (same `AKM_DATA_DIR` / XDG env-isolation as {@link getStateDbPath}).
+ * (same `paths.data` / XDG resolution as {@link getStateDbPath}).
  */
 export function getLogsDbPath(): string {
   return path.join(getDataDir(), "logs.db");
@@ -303,7 +303,7 @@ export function getLoggedRunIds(db: Database, runIds: readonly string[]): Set<st
 
 /**
  * Delete task_logs rows older than `retentionDays` (default: 90). Mirrors
- * `purgeOldEvents` / `purgeOldImproveRuns` in state-db.ts — same default, same
+ * `purgeFoldedEvents` / `purgeFoldedImproveRuns` (storage/repositories/metrics-rollup-repository.ts) — same default, same
  * return shape (rows deleted), same disabled-when-non-positive semantics.
  * Wired into the improve maintenance pass alongside the state.db purges.
  */

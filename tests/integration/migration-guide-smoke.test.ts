@@ -7,7 +7,7 @@
 // The 0.9 -> 0.10 guide tells a reader to run a sequence of commands on a 0.9
 // install and what to see afterwards. The docs lint proves those commands
 // exist; this proves they do what the guide says on a config as 0.9 wrote it:
-// the dry run changes nothing, the apply moves the engines and the stored key,
+// the status check changes nothing, the apply moves the engines and the stored key,
 // and the verification commands that need no network run.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -36,7 +36,6 @@ beforeEach(() => {
   fs.writeFileSync(
     path.join(configDir, "config.json"),
     JSON.stringify({
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       defaultBundle: "stash",
       bundles: { stash: { path: storage.stashDir, writable: true } },
@@ -63,9 +62,9 @@ async function guideStep(line: string) {
 }
 
 describe("the commands the 0.9 -> 0.10 guide tells a reader to run, on a config as 0.9 wrote it", () => {
-  test("the dry run changes nothing, the apply moves engines and the key, and the status then reads current", async () => {
+  test("the status check changes nothing, the apply moves engines and the key, and the status then reads current", async () => {
     const before = snapshotTree(getConfigDir());
-    const dry = await guideStep("akm migrate apply --dry-run");
+    const dry = await guideStep("akm migrate status");
     expect(dry.code).toBe(0);
     expect(snapshotTree(getConfigDir())).toEqual(before);
 

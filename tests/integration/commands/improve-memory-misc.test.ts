@@ -13,7 +13,13 @@ import { writeMemory } from "../../_helpers/assets";
 import { makeProposal } from "../../_helpers/factories";
 import { withTestImproveLlm } from "../../_helpers/improve-config";
 import { testLlmRunner } from "../../_helpers/llm-runner";
-import { type IsolatedAkmStorage, mutateScopedEnv, withEnv, withIsolatedAkmStorage } from "../../_helpers/sandbox";
+import {
+  type IsolatedAkmStorage,
+  mutateScopedEnv,
+  useBundleConfig,
+  withEnv,
+  withIsolatedAkmStorage,
+} from "../../_helpers/sandbox";
 
 const tempDirs: string[] = [];
 
@@ -29,13 +35,12 @@ function configureStash(stashDir: string): void {
       semanticSearchMode: "off",
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
     }),
   );
 }
 
 async function buildIndex(stashDir: string): Promise<void> {
-  mutateScopedEnv("AKM_BUNDLE_DIR", stashDir);
+  useBundleConfig(stashDir);
   configureStash(stashDir);
   await akmIndex({ stashDir, full: true });
 }
@@ -489,11 +494,9 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
     fs.writeFileSync(lessonFile, "---\nwhen_to_use: trigger\n---\n\nBody text.\n", "utf8");
     await buildIndex(stashDir);
     saveConfig({
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
       connections: { default: { endpoint: "http://127.0.0.1:1/v1/chat/completions", models: { fast: "test" } } },
     });
 

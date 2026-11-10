@@ -15,7 +15,12 @@ import { ConfigError, UsageError } from "../../src/core/errors";
 import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
 import type { SessionData, SessionLogHarness } from "../../src/integrations/session-logs/types";
 import { upsertExtractedSession } from "../../src/storage/repositories/extract-sessions-repository";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
+import {
+  type IsolatedAkmStorage,
+  useBundleConfig,
+  withIsolatedAkmStorage,
+  writeSandboxConfig,
+} from "../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
 const tempDirs: string[] = [];
@@ -50,7 +55,6 @@ function extractStrategy(enabled: boolean) {
 /** A config that registers `bundles` and turns extraction on or off. */
 function configWith(bundles: Record<string, { path: string; writable: boolean }> | undefined, enabled = true) {
   return {
-    configVersion: "0.9.0",
     semanticSearchMode: "auto",
     ...(bundles ? { bundles, defaultBundle: Object.keys(bundles)[0] } : {}),
     connections: CONNECTION,
@@ -152,15 +156,6 @@ describe("extract checks its proposal destination before any model call (#1289)"
     expect(pending(primary)).toHaveLength(1);
   });
 
-  test("an implicit primary with no bundle config persists as before", async () => {
-    const primary = makeDir("akm-primary-");
-    const { run, calls } = await extract(primary, configWith(undefined));
-    const result = await run();
-    expect(result.ok).toBe(true);
-    expect(calls.count).toBe(1);
-    expect(pending(primary)).toHaveLength(1);
-  });
-
   test("a non-writing preview does not need a writable owner", async () => {
     const primary = makeDir("akm-primary-");
     const { run, calls } = await extract(primary, configWith({ stash: { path: primary, writable: false } }), {
@@ -196,23 +191,10 @@ describe("health reports the same proposal destination finding for enabled learn
   const targetCheck = async () =>
     (await akmHealth({ since: "7d" })).advisories.find((c) => c.name === "proposal-queue");
 
-  test("warns, naming the owner problem, when extraction is on and nothing owns the queue", async () => {
-    const primary = makeDir("akm-primary-");
-    const external = makeDir("akm-external-");
-    writeSandboxConfig(
-      configWith({ external: { path: external, writable: false } }) as unknown as Record<string, unknown>,
-    );
-    process.env.AKM_BUNDLE_DIR = primary;
-    const check = await targetCheck();
-    expect(check?.status).toBe("warn");
-    expect(check?.message).toContain(primary);
-    expect(check?.message).toMatch(/No configured bundle owns/);
-  });
-
   test("warns for an explicitly read-only primary", async () => {
     const primary = makeDir("akm-primary-");
     writeSandboxConfig(configWith({ stash: { path: primary, writable: false } }) as unknown as Record<string, unknown>);
-    process.env.AKM_BUNDLE_DIR = primary;
+    useBundleConfig(primary);
     const check = await targetCheck();
     expect(check?.status).toBe("warn");
     expect(check?.message).toMatch(/not writable/);
@@ -221,14 +203,14 @@ describe("health reports the same proposal destination finding for enabled learn
   test("passes for a writable primary", async () => {
     const primary = makeDir("akm-primary-");
     writeSandboxConfig(configWith({ stash: { path: primary, writable: true } }) as unknown as Record<string, unknown>);
-    process.env.AKM_BUNDLE_DIR = primary;
+    useBundleConfig(primary);
     expect((await targetCheck())?.status).toBe("pass");
   });
 
   test("passes for an implicit primary", async () => {
     const primary = makeDir("akm-primary-");
     writeSandboxConfig(configWith(undefined) as unknown as Record<string, unknown>);
-    process.env.AKM_BUNDLE_DIR = primary;
+    useBundleConfig(primary);
     expect((await targetCheck())?.status).toBe("pass");
   });
 
@@ -237,7 +219,7 @@ describe("health reports the same proposal destination finding for enabled learn
     writeSandboxConfig(
       configWith({ stash: { path: primary, writable: false } }, false) as unknown as Record<string, unknown>,
     );
-    process.env.AKM_BUNDLE_DIR = primary;
+    useBundleConfig(primary);
     expect((await targetCheck())?.status).toBe("unknown");
   });
 
@@ -246,7 +228,7 @@ describe("health reports the same proposal destination finding for enabled learn
     writeSandboxConfig(
       configWith({ stash: { path: primary, writable: false } }, false) as unknown as Record<string, unknown>,
     );
-    process.env.AKM_BUNDLE_DIR = primary;
+    useBundleConfig(primary);
     const db = openStateDatabase();
     try {
       upsertExtractedSession(db, {

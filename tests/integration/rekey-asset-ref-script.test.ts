@@ -10,7 +10,7 @@
  * Exercises the script's EXPORTED function against a real index.db + state.db
  * (built by a real `akmIndex` run, then seeded with the salience / outcome /
  * usage rows a lived-in stash accumulates), mirroring how
- * `tests/integration/registry-build-index.test.ts` tests its own script.
+ * `tests/integration/registry/registry-build-index.test.ts` tests its own script.
  */
 
 import { afterEach, beforeEach, expect, test } from "bun:test";
@@ -40,7 +40,6 @@ beforeEach(() => {
   stashDir = storage.stashDir;
   writeSandboxConfig({
     semanticSearchMode: "off",
-    defaultWriteTarget: "stash",
     bundles: { stash: { path: stashDir, writable: true } },
     defaultBundle: "stash",
   });

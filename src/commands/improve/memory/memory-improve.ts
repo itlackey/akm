@@ -738,7 +738,7 @@ const EMPTY_ARCHIVE_PURGE_RESULT: ArchivePurgeResult = { purgedDirs: 0, purgedFi
  * removal, the same way it commits the archive move itself (#652).
  *
  * `.git` presence is necessary but NOT sufficient: `proposal accept` only
- * commits for a `kind: "git"` write target (`core/write-source.ts`
+ * commits for a `kind: "git"` write target (`sources/write-source.ts`
  * `commitWriteTargetBoundary`), and improve's own auto-sync stages only the
  * paths its own run wrote. A filesystem-kind bundle that merely happens to
  * have a `.git` directory (e.g. the owner committing by hand, or an old

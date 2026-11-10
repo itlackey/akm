@@ -13,6 +13,7 @@ import {
 } from "../../storage/state-db-integrity";
 import { resolveImproveStrategy, resolveProcessEnabled } from "../improve/improve-strategies";
 import { resolveProposalQueueTarget } from "../proposal/repository";
+import { type MetricsDbState, metricsDbCheck } from "./metrics-db-check";
 import { type SemanticSearchState, semanticSearchCheck } from "./semantic-search-check";
 import { ACTIVE_RUN_WARN_MS, type HealthCheckResult, type ImproveHealthMetrics, TASK_FAIL_RATE_WARN } from "./types";
 
@@ -39,6 +40,8 @@ export interface HealthCheckContext {
   stateDbFreelist: StateDbFreelistInfo;
   /** What this run's own state.db open applied (every open applies pending migrations). */
   stateDbMigrations: StateDatabaseMigrationReport;
+  /** metrics.db's size, fold range and the fold's lag behind state.db, read once (`metrics-db-check.ts`). */
+  metricsDb: MetricsDbState;
   /** Total task_history rows read in the window. */
   taskRowCount: number;
   /** Fraction of task_history rows in the window whose status is `failed` (0..1, raw). */
@@ -90,6 +93,8 @@ export interface HealthCheckContext {
    * other check.
    */
   schedulerBinaryDrift: HealthCheckResult;
+  /** The `unrunnable-tasks` advisory: enabled tasks dispatch cannot read or schedule. */
+  unrunnableTasks: HealthCheckResult;
 }
 
 /** Who owns the primary stash's proposal queue, and whether the active strategy extracts. */
@@ -176,7 +181,7 @@ export function runPendingStateMigrationsCheck(
 
 /**
  * Hard check: state.db's ledger is current. Every open applies the pending
- * migrations (copying the file aside first when one drops schema), so after
+ * migrations, so after
  * health's own open nothing is pending; this names what that open applied, so
  * an upgrade that migrated state.db is visible in the report.
  */
@@ -184,7 +189,7 @@ export function appliedStateMigrationsCheck(
   stateDbPath: string,
   report: StateDatabaseMigrationReport,
 ): HealthCheckResult {
-  const { applied, backupPath } = report;
+  const { applied } = report;
   const range = applied.length > 1 ? `${applied[0]} … ${applied[applied.length - 1]}` : applied[0];
   return {
     name: "state-db-migrations",
@@ -194,9 +199,8 @@ export function appliedStateMigrationsCheck(
     message:
       applied.length === 0
         ? "state.db has no pending migrations."
-        : `Applied ${applied.length} pending state.db migration(s) on open (${range})` +
-          (backupPath ? `; the pre-migration copy is ${backupPath}.` : "."),
-    evidence: { path: stateDbPath, pending: [], applied, ...(backupPath ? { backupPath } : {}) },
+        : `Applied ${applied.length} pending state.db migration(s) on open (${range}).`,
+    evidence: { path: stateDbPath, pending: [], applied },
   };
 }
 
@@ -321,6 +325,11 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
     run: (ctx) => appliedStateMigrationsCheck(ctx.stateDbPath, ctx.stateDbMigrations),
   },
   {
+    name: "metrics-db",
+    channel: "hard",
+    run: (ctx) => metricsDbCheck(ctx.metricsDb),
+  },
+  {
     name: "task-history-read",
     channel: "hard",
     run: (ctx) => ({
@@ -363,6 +372,11 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
     name: "semantic-search",
     channel: "hard",
     run: (ctx) => semanticSearchCheck(ctx.semanticSearch),
+  },
+  {
+    name: "unrunnable-tasks",
+    channel: "advisory",
+    run: (ctx) => ctx.unrunnableTasks,
   },
   {
     // C2 (13-bus-factor): the cron task-failure rate was computed but never

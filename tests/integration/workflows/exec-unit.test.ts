@@ -12,13 +12,13 @@
  * dependency on any external tool beyond `git` for the worktree case.
  *
  * The authoring surface (parser / freeze / decoder / hashing) is covered purely
- * in `tests/workflows/exec-unit-authoring.test.ts`.
+ * in tests/workflows/.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { getCacheDir, getConfigDir, getDataDir, getStateDir } from "../../../src/core/paths";
+import { getConfigPath } from "../../../src/core/paths";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { readStream } from "../../../src/core/subprocess";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
@@ -386,30 +386,27 @@ describe("exec unit — the child environment is akm's own", () => {
     expect(env.AKM_PARAMS).toBe("{}");
   });
 
-  test("the child sees the parent's EFFECTIVE akm directories, including ones that come from XDG_*_HOME", async () => {
-    // The sandbox sets XDG_*_HOME and no AKM_{CONFIG,DATA,CACHE,STATE}_DIR, as an operator using XDG does.
-    expect(process.env.AKM_CONFIG_DIR).toBeUndefined();
+  test("the child sees the config file the parent resolved, including one that comes from XDG_CONFIG_HOME, and no other location", async () => {
+    // The sandbox sets XDG_*_HOME and no AKM_CONFIG_FILE, as an operator using XDG does.
+    expect(process.env.AKM_CONFIG_FILE).toBeUndefined();
     expect(process.env.XDG_CONFIG_HOME).toBeTruthy();
-    expect(process.env.AKM_BUNDLE_DIR).toBeTruthy();
     expect(
-      await reportEnv(["AKM_BUNDLE_DIR", "AKM_CONFIG_DIR", "AKM_DATA_DIR", "AKM_CACHE_DIR", "AKM_STATE_DIR"]),
+      await reportEnv([
+        "AKM_BUNDLE_DIR",
+        "AKM_CONFIG_FILE",
+        "AKM_CONFIG_DIR",
+        "AKM_DATA_DIR",
+        "AKM_CACHE_DIR",
+        "AKM_STATE_DIR",
+      ]),
     ).toEqual({
-      AKM_BUNDLE_DIR: process.env.AKM_BUNDLE_DIR as string,
-      AKM_CONFIG_DIR: getConfigDir(),
-      AKM_DATA_DIR: getDataDir(),
-      AKM_CACHE_DIR: getCacheDir(),
-      AKM_STATE_DIR: getStateDir(),
+      AKM_BUNDLE_DIR: null,
+      AKM_CONFIG_FILE: getConfigPath(),
+      AKM_CONFIG_DIR: null,
+      AKM_DATA_DIR: null,
+      AKM_CACHE_DIR: null,
+      AKM_STATE_DIR: null,
     });
-  });
-
-  test("a bundle dir the parent never set is not invented for the child", async () => {
-    const prior = process.env.AKM_BUNDLE_DIR;
-    delete process.env.AKM_BUNDLE_DIR;
-    try {
-      expect((await reportEnv(["AKM_BUNDLE_DIR"])).AKM_BUNDLE_DIR).toBeNull();
-    } finally {
-      if (prior !== undefined) process.env.AKM_BUNDLE_DIR = prior;
-    }
   });
 });
 

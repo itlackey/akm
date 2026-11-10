@@ -7,7 +7,7 @@ import { loadConfig, resetConfigCache, saveConfig } from "../../../src/core/conf
 import { getConfigPath } from "../../../src/core/paths";
 import type { RegistryIndex } from "../../../src/registry/providers/static-index";
 import { runCliCapture } from "../../_helpers/cli";
-import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage } from "../../_helpers/sandbox";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -40,9 +40,8 @@ beforeEach(() => {
   // the bun-test isolation guard in src/core/paths.ts (tightened in 35ec047)
   // does not fire when searchRegistry's static-index provider tries to open
   // the DB cache. Without these the guard throws TEST_ISOLATION_MISSING,
-  // which surfaces as a warning + zero hits — see
-  // tests/test-isolation-no-swallow.test.ts.
-  storage = withIsolatedAkmStorage({ AKM_REGISTRY_URL: undefined });
+  // which surfaces as a warning + zero hits.
+  storage = withIsolatedAkmStorage();
 });
 
 afterEach(() => {
@@ -203,14 +202,6 @@ describe("resolveRegistries", () => {
     expect(resolved.map((r) => r.name)).toEqual(["a", "c"]);
   });
 
-  test("AKM_REGISTRY_URL env var overrides config", () => {
-    return withEnv({ AKM_REGISTRY_URL: "https://override.com/index.json" }, () => {
-      const resolved = resolveRegistries([{ url: "https://config.com/index.json" }]);
-      expect(resolved.length).toBe(1);
-      expect(resolved[0]!.url).toBe("https://override.com/index.json");
-    });
-  });
-
   test("returns empty array when passed empty array", () => {
     const resolved = resolveRegistries([]);
     // Empty array passed explicitly — returns empty, no fallback
@@ -331,7 +322,7 @@ describe("config roundtrip", () => {
       { url: "https://a.com/index.json", name: "alpha" },
       { url: "https://b.com/index.json", name: "beta", enabled: false },
     ];
-    saveConfig({ configVersion: "0.9.0", semanticSearchMode: "auto", registries });
+    saveConfig({ semanticSearchMode: "auto", registries });
 
     const loaded = loadConfig();
     expect(loaded.registries?.length).toBe(2);
@@ -342,7 +333,6 @@ describe("config roundtrip", () => {
   test("invalid registry entries reject at load time (no silent filtering)", () => {
     const configPath = getConfigPath();
     writeConfig(configPath, {
-      configVersion: "0.9.0",
       semanticSearchMode: "auto",
       registries: [
         { url: "https://valid.com/index.json", name: "valid" },

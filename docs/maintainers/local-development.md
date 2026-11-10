@@ -62,12 +62,12 @@ akm --version
 
 This replaces the globally resolved package and can affect agents, shells, and
 scheduled tasks that invoke `akm`. Re-run `akm task sync --rebind` only when you
-intend existing scheduler entries to capture the new installed runtime, then
+intend the scheduler entry to capture the new installed runtime, then
 verify with `akm task doctor`.
 
 ## Inspecting a Live Database
 
-`state.db`, `logs.db`, and `index.db` are WAL-mode SQLite databases that akm
+`state.db`, `logs.db`, `metrics.db`, and `index.db` are WAL-mode SQLite databases that akm
 (or a scheduled task) may be writing at any moment. Open a live one only with
 `sqlite3 -readonly`:
 

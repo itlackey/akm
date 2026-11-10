@@ -13,17 +13,23 @@ import os from "node:os";
 import path from "node:path";
 import { akmSearch } from "../../src/commands/read/search";
 import { saveConfig } from "../../src/core/config/config";
+import { getMetricsDbPath, openMetricsDatabase } from "../../src/core/metrics-db";
 import { getDbPath } from "../../src/core/paths";
 import { openStateDatabase } from "../../src/core/state-db";
 import { akmIndex, recomputeUtilityScores } from "../../src/indexer/indexer";
 import { deriveEntryProvenance } from "../../src/indexer/installations";
-import { ensureUsageEventsSchema } from "../../src/indexer/usage/usage-events";
 import type { SourceSearchHit } from "../../src/sources/types";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { getItemRefById, upsertEntry } from "../../src/storage/repositories/index-entries-repository";
 import { getUtilityScore, upsertUtilityScore } from "../../src/storage/repositories/index-utility-repository";
-import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
-import { recordUsageEvent } from "../_helpers/usage-events";
+import {
+  type Cleanup,
+  sandboxStashDir,
+  sandboxXdgCacheHome,
+  sandboxXdgConfigHome,
+  withDefaultBundle,
+} from "../_helpers/sandbox";
+import { ensureUsageEventsSchema, recordUsageEvent } from "../_helpers/usage-events";
 
 // ── Temp directory tracking ─────────────────────────────────────────────────
 
@@ -61,7 +67,7 @@ async function buildTestIndex(stashDir: string, files: Record<string, string> = 
     fs.mkdirSync(path.dirname(fullPath), { recursive: true });
     fs.writeFileSync(fullPath, content);
   }
-  saveConfig({ semanticSearchMode: "off" });
+  saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
   await akmIndex({ stashDir, full: true });
 }
 
@@ -223,7 +229,7 @@ describe("Utility scores and search ranking", () => {
 
     await buildTestIndex(stashDir, {});
     const search = async () =>
-      (await akmSearch({ query: "deployment automation", source: "local", skipLogging: true })).hits
+      (await akmSearch({ query: "deployment automation", source: "local", skipLogging: true })).results
         .filter((h): h is SourceSearchHit => h.type !== "registry")
         .map((h) => [h.name, h.score]);
     const before = await search();
@@ -250,6 +256,42 @@ describe("Utility scores and search ranking", () => {
 // ── Test 4: recomputeUtilityScores ──────────────────────────────────────────
 
 describe("recomputeUtilityScores", () => {
+  test("an index run folds old usage into metrics.db before purging it; a one-entry recompute writes nothing", () => {
+    const dbPath = path.join(createTmpDir("akm-util-db-"), "test.db");
+    const db = openIndexDatabase(dbPath);
+    const stateDb = new Database(":memory:") as unknown as typeof db;
+    try {
+      const entryId = seedIndexEntry(db, "fold-test", "/tmp/fold.sh");
+      const entryRef = getItemRefById(db, entryId) as string;
+      const oldDay = new Date(Date.now() - 200 * 86_400_000).toISOString();
+      recordUsageEvent(stateDb, {
+        eventType: "show",
+        entryId,
+        entryRef,
+        timestamp: oldDay.slice(0, 19).replace("T", " "),
+      });
+
+      fs.rmSync(getMetricsDbPath(), { force: true }); // earlier tests in this file may have folded
+      recomputeUtilityScores(db, stateDb, entryId);
+      expect(fs.existsSync(getMetricsDbPath())).toBe(false);
+      expect((stateDb.prepare("SELECT COUNT(*) AS n FROM usage_events").get() as { n: number }).n).toBe(1);
+
+      recomputeUtilityScores(db, stateDb);
+      expect((stateDb.prepare("SELECT COUNT(*) AS n FROM usage_events").get() as { n: number }).n).toBe(0);
+      const metricsDb = openMetricsDatabase();
+      try {
+        expect(
+          metricsDb.prepare("SELECT n FROM usage_daily WHERE day = ? AND event_type = 'show'").get(oldDay.slice(0, 10)),
+        ).toEqual({ n: 1 });
+      } finally {
+        metricsDb.close();
+      }
+    } finally {
+      closeDatabase(db);
+      stateDb.close();
+    }
+  });
+
   test("aggregates search and show events from usage_events", () => {
     const dbPath = path.join(createTmpDir("akm-util-db-"), "test.db");
     const db = openIndexDatabase(dbPath);
@@ -362,7 +404,7 @@ describe("Production path end-to-end", () => {
 
     // Search to trigger usage event logging
     const result = await akmSearch({ query: "end-to-end test", source: "local" });
-    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+    const localHits = result.results.filter((h): h is SourceSearchHit => h.type !== "registry");
     expect(localHits.length).toBeGreaterThan(0);
 
     // Verify usage_events have entry_ref (usage_events lives in state.db, WI-8.3)

@@ -11,7 +11,7 @@
 // `<type>:<slug>` -> on-disk-asset question and MUST agree on the set of
 // reachable refs for any given stash layout.
 //
-// The lock is enforced by `tests/integration/contracts/ref-resolver-contract.test.ts`,
+// The lock is enforced by `tests/contracts/ref-resolver-contract.test.ts`,
 // which drives this implementation through a canonical fixture set. The
 // akm-plugins repo ships an equivalent test that drives its copy through the
 // SAME inputs and asserts identical outcomes. Any change to the resolver
@@ -776,7 +776,7 @@ export function runBaseChecks(ctx: LintContext): LintIssue[] {
     for (const candidate of [...staleInBody, ...staleInFrontmatter]) {
       // M4: Suggest portable replacement when path is under stashRoot.
       const portableHint = candidate.startsWith(ctx.stashRoot)
-        ? ` (portable form: $AKM_BUNDLE_DIR${candidate.slice(ctx.stashRoot.length)})`
+        ? ` (portable form: relative to the bundle root, ${candidate.slice(ctx.stashRoot.length).replace(/^[\\/]/, "")})`
         : "";
       issues.push({
         file: ctx.relPath,

@@ -3,8 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * P3a Lane A TESTS — `computeChildInvocationKey` (spec
- * docs/plans/specs/p3a-plan-v5-child-freeze.md §3.4, rows A-17…A-19). Named
+ * P3a Lane A TESTS — `computeChildInvocationKey`. Named
  * in §7's "new suites this phase adds" table as its own file.
  *
  * TEST-REVIEW FOLLOW-UP (round 3, finding 2): these tests originally lived

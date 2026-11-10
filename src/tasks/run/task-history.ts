@@ -24,7 +24,6 @@
  * imports appendHistory or readTaskHistory from here.
  */
 
-import { rethrowIfTestIsolationError } from "../../core/errors";
 import { withStateDb } from "../../core/state-db";
 import { warn } from "../../core/warn";
 import {
@@ -62,7 +61,6 @@ export function appendHistory(result: TaskRunResult, historyReserved = false): v
       upsertTaskHistory(db, row);
     });
   } catch (error) {
-    rethrowIfTestIsolationError(error);
     // History recording must not alter the task's own result/exit status —
     // the task already ran and its outcome is independent of whether we can
     // persist a history row. But silence would make a failed write
@@ -88,7 +86,7 @@ export function readTaskHistory(options: ReadHistoryOptions = {}): TaskRunResult
     if (options.limit === 0) return [];
     if (options.id) {
       // An id-scoped query used the single-row helper, so `--limit` was silently
-      // discarded and `akm task history --id X --limit 20` always returned one
+      // discarded and `akm task history X --limit 20` always returned one
       // run. The CLI documents --limit as "Maximum rows to return"; honour it.
       if (options.limit !== undefined && options.limit > 0) {
         return decodeTaskHistoryRows(getTaskHistoryRuns(db, options.id, options.limit));

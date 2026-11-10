@@ -94,7 +94,7 @@ test("writes reach their operations and unknown fields are ignored", async (t) =
     overview.bundles.map((bundle) => [bundle.name, bundle.total.count > 0, bundle.eligible.count]),
     [["personal", true, 0]],
   );
-  assert.deepEqual(ok(await app.call("/api/search?q=restore&project=browse&surprise=1")).hits, []);
+  assert.deepEqual(ok(await app.call("/api/search?q=restore&project=browse&surprise=1")).results, []);
   assert.equal((await app.call("/api/projects/overview?project=missing")).status, 400);
   ok(await app.call("/api/config/projects", { unset: ["browse", "my.project"] }));
   ok(
@@ -127,7 +127,6 @@ test("writes reach their operations and unknown fields are ignored", async (t) =
     references: [],
     wasDefault: true,
     defaultConnection: null,
-    stillInherited: false,
   });
   assert.equal((await app.call("/api/config/connections/remove", { name: "lab" })).status, 400);
   ok(await app.call("/api/bundles/settings", { bundle: "vendor", enabled: true }));
@@ -183,7 +182,7 @@ test("an index written by a newer akm tells the user to update Desktop, not to u
   const app = await launchFixture({
     configureFixture: (fixture) => {
       // What a newer host CLI leaves behind: an index layout this engine does not understand.
-      const db = new DatabaseSync(path.join(fixture.env.AKM_DATA_DIR, "index.db"));
+      const db = new DatabaseSync(path.join(fixture.root, "data", "index.db"));
       try {
         db.prepare("UPDATE index_meta SET value = '999' WHERE key = 'version'").run();
       } finally {

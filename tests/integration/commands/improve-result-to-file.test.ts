@@ -31,7 +31,7 @@ import { type SandboxedDir, makeStashDir as sandboxMakeStashDir, sandboxXdgDataH
 // improve` CLI tests that used to live here run `improve` for real (which
 // opens and WRITES the state.db improve_runs table, hitting genuine
 // cross-process SQLite contention in-process) and were moved to
-// tests/integration/improve-cli-result-storage.test.ts.
+// tests/integration/commands/improve/improve-cli-result-storage.test.ts.
 
 const disposers: Array<{ cleanup: () => void }> = [];
 
@@ -144,6 +144,26 @@ describe("recordImproveRunResult", () => {
       // No legacy on-disk file under .akm/runs/ — the storage swap is complete.
       const runsDir = path.join(stash, ".akm", "runs");
       expect(fs.existsSync(runsDir)).toBe(false);
+    } finally {
+      dataSb.cleanup();
+    }
+  });
+
+  test("persists the count of strategy-filtered refs, not the list, and leaves the caller's result alone", () => {
+    const stash = makeStashDir();
+    const dataSb = sandboxXdgDataHome();
+    try {
+      const refs = [
+        { ref: "scripts/a.sh", reason: "strategy_filtered_all_passes" },
+        { ref: "scripts/b.sh", reason: "strategy_filtered_all_passes" },
+      ] as unknown as AkmImproveResult["strategyFilteredRefs"];
+      const result: AkmImproveResult = { ...baseResult, strategyFilteredRefs: refs };
+      recordImproveRunResult(stash, "test-run-filtered", result);
+
+      const persisted = readImproveRuns(dataSb.dir)[0]!.result;
+      expect(persisted.strategyFilteredRefs).toBeUndefined();
+      expect(persisted.strategyFilteredCount).toBe(2);
+      expect(result.strategyFilteredRefs).toBe(refs);
     } finally {
       dataSb.cleanup();
     }

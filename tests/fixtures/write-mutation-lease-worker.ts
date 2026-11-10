@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { writeFileAtomic } from "../../src/core/common";
-import { type ResolvedWriteTarget, withWriteTargetMutation } from "../../src/core/write-source";
 import { sleepSync } from "../../src/runtime";
+import { type ResolvedWriteTarget, withWriteTargetMutation } from "../../src/sources/write-source";
 import { createWorkflowAsset } from "../../src/workflows/authoring/authoring";
 
 const [mode, root, content, enteredPath, releasePath, readyPath] = process.argv.slice(2);

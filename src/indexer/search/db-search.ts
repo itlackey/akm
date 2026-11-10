@@ -14,14 +14,15 @@
 
 import path from "node:path";
 import { displayRef } from "../../core/asset/resolve-ref";
+import { closestMatch } from "../../core/closest-match";
 import { compareCodePoints } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { classifyPathAccess } from "../../core/path-access";
 import { getDbPath } from "../../core/paths";
+import { KNOWN_TYPES } from "../../core/recognition-util";
 import { withStateDbTelemetry } from "../../core/state-db";
 import { systemErrorCode } from "../../core/system-error";
 import { isoDay } from "../../core/time";
-import { presentationFor } from "../../core/type-presentation";
 import { embed } from "../../llm/embedder";
 import { effectiveEmbedding } from "../../llm/embedders/connection";
 import { applyEmbeddingTemplate, resolveEmbeddingProfile } from "../../llm/embedders/profile";
@@ -111,10 +112,6 @@ function buildStaleIndexHint(db: Database): string | undefined {
   }
 }
 
-export function buildLocalAction(type: string, ref: string): string {
-  return presentationFor(type).action?.(ref) ?? `akm show ${ref}`;
-}
-
 function resolveSearchHitRef(provenance: IndexedProvenance, defaultBundleId?: string): string {
   return displayRef({ conceptId: provenance.conceptId, bundleId: provenance.bundleId }, defaultBundleId);
 }
@@ -198,7 +195,7 @@ export interface SearchLocalInput {
 }
 
 export async function searchLocal(input: SearchLocalInput): Promise<{
-  hits: SourceSearchHit[];
+  results: SourceSearchHit[];
   tip?: string;
   warnings?: string[];
   embedMs?: number;
@@ -232,7 +229,7 @@ export async function searchLocal(input: SearchLocalInput): Promise<{
   assertIndexPathReadable(dbPath);
   if (classifyPathAccess(dbPath).access === "absent") {
     return {
-      hits: [],
+      results: [],
       tip: "No search index available. Run 'akm index' to build one.",
       warnings: warnings.length > 0 ? warnings : undefined,
       mode: "keyword",
@@ -247,7 +244,7 @@ export async function searchLocal(input: SearchLocalInput): Promise<{
     const entryCount = getEntryCount(db);
     if (entryCount === 0) {
       return {
-        hits: [],
+        results: [],
         tip: "Index is empty. Run 'akm index' to populate it.",
         warnings: warnings.length > 0 ? warnings : undefined,
         mode: "keyword",
@@ -257,12 +254,12 @@ export async function searchLocal(input: SearchLocalInput): Promise<{
     const staleHint = buildStaleIndexHint(db);
     if (staleHint) warnings.push(staleHint);
 
-    const { hits, embedMs, rankMs, mode, semanticWarning, feedbackWarning } = await searchDatabase(db, input);
+    const { results, embedMs, rankMs, mode, semanticWarning, feedbackWarning } = await searchDatabase(db, input);
     if (semanticWarning) warnings.push(semanticWarning);
     if (feedbackWarning) warnings.push(feedbackWarning);
     return {
-      hits,
-      tip: hits.length === 0 ? EMPTY_RESULT_TIP : undefined,
+      results,
+      tip: results.length === 0 ? emptyResultTip(db, input.searchType) : undefined,
       warnings: warnings.length > 0 ? warnings : undefined,
       embedMs,
       rankMs,
@@ -281,7 +278,7 @@ async function searchDatabase(
   db: Database,
   input: SearchLocalInput,
 ): Promise<{
-  hits: SourceSearchHit[];
+  results: SourceSearchHit[];
   embedMs?: number;
   rankMs?: number;
   mode: SearchExecutionMode;
@@ -318,7 +315,7 @@ async function searchDatabase(
   const refPrefix = searchType === "any" ? parseRefPrefixQuery(query) : null;
   if (refPrefix) {
     return {
-      hits: await enumerateEntries({
+      results: await enumerateEntries({
         ...filterOptions,
         limit,
         prefer,
@@ -336,7 +333,7 @@ async function searchDatabase(
   // enumerate matching entries instead of returning nothing.
   if (ftsQueryTokens(query).length === 0) {
     return {
-      hits: await enumerateEntries({
+      results: await enumerateEntries({
         ...filterOptions,
         limit,
         prefer,
@@ -377,7 +374,7 @@ async function searchDatabase(
   const selected = selectFusedEntries(db, fused, limit, filterOptions);
   const rankMs = Date.now() - tRank0;
 
-  const hits = await Promise.all(
+  const results = await Promise.all(
     selected.map(({ candidate, row }) =>
       buildDbHit({
         entry: row.entry,
@@ -397,7 +394,7 @@ async function searchDatabase(
   );
 
   const mode: SearchExecutionMode = vector.warning ? "fts-fallback" : vector.neighbors ? "semantic" : "keyword";
-  return { embedMs, rankMs, hits, mode, semanticWarning: vector.warning, feedbackWarning: feedback.warning };
+  return { embedMs, rankMs, results, mode, semanticWarning: vector.warning, feedbackWarning: feedback.warning };
 }
 
 /**
@@ -550,7 +547,19 @@ function describeRanks(candidate: FusedCandidate): string[] {
   ];
 }
 
-const EMPTY_RESULT_TIP = "No matching stash assets were found. Try a different query or run 'akm index' to rebuild.";
+const EMPTY_RESULT_TIP = "No matching assets were found. Try a different query or run 'akm index' to rebuild.";
+
+/** The empty-result tip; for a `--type` that is not an indexed type but is close to one, names the nearest. */
+function emptyResultTip(db: Database, searchType: AkmSearchType): string {
+  // A known type costs nothing; only a type akm does not know reads the index.
+  if (searchType === "any" || (KNOWN_TYPES as readonly string[]).includes(searchType)) return EMPTY_RESULT_TIP;
+  const types = [...new Set([...KNOWN_TYPES, ...getAllEntries(db).map((e) => e.entry.type)])];
+  if (types.includes(searchType)) return EMPTY_RESULT_TIP;
+  const near = closestMatch(searchType, types, Math.max(1, Math.floor(searchType.length / 3)));
+  return near
+    ? `No assets of type "${searchType}". Did you mean --type ${near}? ${EMPTY_RESULT_TIP}`
+    : EMPTY_RESULT_TIP;
+}
 
 // ── Enumeration (browse) path ────────────────────────────────────────────────
 
@@ -937,7 +946,6 @@ export async function buildDbHit(input: {
     description: input.entry.description,
     tags: input.entry.tags,
     size: deriveSize(input.entry.fileSize),
-    action: buildLocalAction(input.entry.type, ref),
     score: input.score,
     ...(input.whyMatched ? { whyMatched: input.whyMatched } : {}),
     ...(estimatedTokens !== undefined ? { estimatedTokens } : {}),

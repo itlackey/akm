@@ -5,10 +5,7 @@
 /**
  * P3a Lane C TESTS — `publishChildWorkflowRun` and its accessors.
  *
- * Spec: docs/plans/specs/p3a-plan-v5-child-freeze.md §5.2-§5.5 (binding
- * design), §1.4(2-4) (Lane C design), §1.8 A-N12 (spawnedByUnitId naming).
- * Behavior-table rows covered: C-07…C-15 (§2.9). This lane owns ONLY this
- * file and tests/integration/state-migration-023.test.ts.
+ * Behavior-table rows covered: C-07…C-15 (§2.9).
  *
  * RED phase: `WorkflowRunsRepository.publishChildWorkflowRun`, `childRunsOf`,
  * and `getRunByInvocationKey` do not exist yet. This file references them
@@ -16,9 +13,9 @@
  * (`ChildWorkflowRunsRepositoryV4`) intersected onto the real repository
  * instance, exactly the convention already established for this same
  * "repository gains a new method" situation by
- * tests/integration/workflows/v4-atomic-publication-red.test.ts
+ * tests/integration/workflows/v4-atomic-publication.test.ts
  * (`RepositoryWithV4Publisher`, `publishV4`) and
- * tests/integration/workflows/durable-attempt-journal-v4-red.test.ts
+ * tests/integration/workflows/durable-attempt-journal-v4.test.ts
  * (`DurableAttemptRepositoryV4`, `durableAttempts`). `WorkflowRunsRepository &
  * Partial<ChildWorkflowRunsRepositoryV4>` is valid whether or not the class
  * already declares those members, so this produces no compile error to
@@ -36,7 +33,7 @@
  * The C-09 concurrency test spawns a real `node:worker_threads` Worker with
  * its OWN `bun:sqlite` connection against the SAME state.db file — the same
  * "genuinely separate connection/thread, real file, real locking" technique
- * tests/storage/state-db-migrations.test.ts already uses for its
+ * tests/integration/storage/state-db-migrations.test.ts already uses for its
  * writer-exclusion-window tests — so the partial unique index and SQLite's
  * own IMMEDIATE-transaction serialization are exercised for real, never a
  * mocked repository (§5.4).
@@ -58,7 +55,7 @@
  * own `BEGIN IMMEDIATE` (inside its publishChildWorkflowRun call) is
  * guaranteed to block against a real reserved lock; main then holds it for a
  * short, deterministic pause (the same 150 ms margin
- * tests/storage/state-db-migrations.test.ts's own writer-exclusion-window
+ * tests/integration/storage/state-db-migrations.test.ts's own writer-exclusion-window
  * tests use for the identical purpose) before releasing it and immediately
  * racing its OWN publishChildWorkflowRun call — issued on the very next
  * line, no I/O in between — against the worker's already-blocked,
@@ -495,7 +492,7 @@ describe("publishChildWorkflowRun — two concurrent publishers (C-09)", () => {
       // Deterministic pause: give the worker's blocked BEGIN IMMEDIATE time
       // to actually register against the held lock before releasing it —
       // same technique and margin as
-      // tests/storage/state-db-migrations.test.ts's own
+      // tests/integration/storage/state-db-migrations.test.ts's own
       // writer-exclusion-window tests.
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150);
 

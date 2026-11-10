@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "../src/commands/config-cli";
+import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "../src/commands/config";
 import type { AkmConfig } from "../src/core/config/config";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
 import { resolveTarget } from "../src/integrations/agent/resolution";
@@ -20,7 +20,7 @@ function captureWarnings(fn: () => void): string[] {
 
 describe("config CLI helpers", () => {
   test("listConfig omits unconfigured embedding, connections and harnesses", () => {
-    const config = listConfig({ configVersion: "0.9.0", semanticSearchMode: "auto" });
+    const config = listConfig({ semanticSearchMode: "auto" });
     expect(config.embedding).toBeUndefined();
     expect(config.connections).toBeUndefined();
     expect(config.harnesses).toBeUndefined();
@@ -35,13 +35,13 @@ describe("config CLI helpers", () => {
   // touched sub-path — same coverage of the config-walker validation rules,
   // no shim in between.
   test("setConfigValue supports output config keys", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const base: AkmConfig = { semanticSearchMode: "auto" };
     expect(setConfigValue(base, "output.format", "yaml").output).toEqual({ format: "yaml" });
     expect(setConfigValue(base, "output.detail", "full").output).toEqual({ detail: "full" });
   });
 
   test("setConfigValue supports embedding JSON with dimensions", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const base: AkmConfig = { semanticSearchMode: "auto" };
     expect(
       setConfigValue(
         base,
@@ -56,7 +56,7 @@ describe("config CLI helpers", () => {
   });
 
   test("setConfigValue supports a connection JSON with request fields and per-model settings", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const base: AkmConfig = { semanticSearchMode: "auto" };
     const connection = {
       endpoint: "https://api.openai.com/v1",
       models: { fast: "gpt-4o-mini", reasoning: { model: "gpt-5", reasoning_effort: "high" } },
@@ -69,12 +69,12 @@ describe("config CLI helpers", () => {
   });
 
   test("setConfigValue rejects a connection JSON with no endpoint", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const base: AkmConfig = { semanticSearchMode: "auto" };
     expect(() => setConfigValue(base, "connections.fast", '{"models":{"fast":"m"}}')).toThrow(/endpoint/);
   });
 
   test("setConfigValue takes a model alias as a name or as a JSON entry", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const base: AkmConfig = { semanticSearchMode: "auto" };
     const named = setConfigValue(base, "connections.lab.models.fast", "qwen3-8b");
     expect(named.connections?.lab?.models).toEqual({ fast: "qwen3-8b" });
     const entry = setConfigValue(base, "connections.lab.models.reasoning", '{"model":"glm-5","top_p":0.9}');
@@ -82,13 +82,13 @@ describe("config CLI helpers", () => {
   });
 
   test("setConfigValue stores a request field on a connection as written", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const base: AkmConfig = { semanticSearchMode: "auto" };
     const updated = setConfigValue(base, "connections.lab.chat_template_kwargs", '{"enable_thinking":false}');
     expect(updated.connections?.lab?.chat_template_kwargs).toEqual({ enable_thinking: false });
   });
 
   test("setConfigValue warns and stores an unrecognized retired key like sources instead of rejecting it (#37)", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const base: AkmConfig = { semanticSearchMode: "auto" };
     let result!: ReturnType<typeof setConfigValue>;
     const warnings = captureWarnings(() => {
       result = setConfigValue(base, "sources", '[{"type":"website","url":"https://example.com","writable":true}]');
@@ -100,14 +100,14 @@ describe("config CLI helpers", () => {
   });
 
   test("setConfigValue rejects writable non-filesystem bundles through config CLI", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const base: AkmConfig = { semanticSearchMode: "auto" };
     expect(() =>
       setConfigValue(base, "bundles", '{"w":{"website":{"url":"https://example.com"},"writable":true}}'),
     ).toThrow("writable: true is only supported on path and git bundle sources");
   });
 
   test("setConfigValue rejects empty and multi-entry component maps", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const base: AkmConfig = { semanticSearchMode: "auto" };
     expect(() => setConfigValue(base, "bundles", '{"empty":{"path":"/tmp/empty","components":{}}}')).toThrow(
       "a bundle components map must contain exactly one component",
     );
@@ -121,7 +121,7 @@ describe("config CLI helpers", () => {
   });
 
   test("setConfigValue rejects component-level writable website and npm bundles", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const base: AkmConfig = { semanticSearchMode: "auto" };
     expect(() =>
       setConfigValue(
         base,
@@ -135,7 +135,7 @@ describe("config CLI helpers", () => {
   });
 
   test("setConfigValue sets embedding via JSON", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const base: AkmConfig = { semanticSearchMode: "auto" };
     const updated = setConfigValue(
       base,
       "embedding",
@@ -148,13 +148,13 @@ describe("config CLI helpers", () => {
   });
 
   test("setConfigValue sets a harness via JSON", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const base: AkmConfig = { semanticSearchMode: "auto" };
     const updated = setConfigValue(base, "harnesses.claude-work", '{"platform":"claude","bin":"/opt/claude"}');
     expect(updated.harnesses?.["claude-work"]).toEqual({ platform: "claude", bin: "/opt/claude" });
   });
 
   test("getConfigValue returns null for unconfigured embedding/connection", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const base: AkmConfig = { semanticSearchMode: "auto" };
     expect(getConfigValue(base, "embedding")).toBeNull();
     expect(getConfigValue(base, "connections.default")).toBeNull();
   });
@@ -166,7 +166,6 @@ describe("config CLI helpers", () => {
       temperature: 0.3,
     };
     const base: AkmConfig = {
-      configVersion: "0.9.0",
       semanticSearchMode: "auto",
       embedding: {
         endpoint: "https://api.openai.com/v1/embeddings",
@@ -180,7 +179,6 @@ describe("config CLI helpers", () => {
 
   test("unsetConfigValue clears embedding and a connection", () => {
     const base: AkmConfig = {
-      configVersion: "0.9.0",
       semanticSearchMode: "auto",
       embedding: {
         endpoint: "https://api.openai.com/v1/embeddings",
@@ -197,7 +195,6 @@ describe("config CLI helpers", () => {
 
   test("unsetConfigValue leaves a parent object in place when its last key goes: {} is how a harness is enabled", () => {
     const base: AkmConfig = {
-      configVersion: "0.9.0",
       semanticSearchMode: "auto",
       harnesses: { opencode: { modelWork: false } },
     };
@@ -209,7 +206,7 @@ describe("config CLI helpers", () => {
   });
 
   test("setConfigValue merges output format and detail", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const base: AkmConfig = { semanticSearchMode: "auto" };
     const withFormat = setConfigValue(base, "output.format", "text");
     const withDetail = setConfigValue(withFormat, "output.detail", "full");
 
@@ -218,7 +215,6 @@ describe("config CLI helpers", () => {
 
   test("getConfigValue reads output keys", () => {
     const base: AkmConfig = {
-      configVersion: "0.9.0",
       semanticSearchMode: "auto",
       output: { format: "yaml", detail: "normal" },
     };
@@ -228,7 +224,6 @@ describe("config CLI helpers", () => {
 
   test("unsetConfigValue clears individual output keys", () => {
     const base: AkmConfig = {
-      configVersion: "0.9.0",
       semanticSearchMode: "auto",
       output: { format: "yaml", detail: "normal" },
     };
@@ -237,7 +232,7 @@ describe("config CLI helpers", () => {
   });
 
   test("setConfigValue accepts previously hand-listed sub-keys now that the schema is the source of truth (#455)", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const base: AkmConfig = { semanticSearchMode: "auto" };
     const withProvider = setConfigValue(base, "embedding.provider", "ollama");
     expect(withProvider.embedding?.provider).toBe("ollama");
     const withTimeout = setConfigValue(base, "connections.local.timeoutMs", "5000");
@@ -245,7 +240,7 @@ describe("config CLI helpers", () => {
   });
 
   test("setConfigValue warns and stores a key not in the schema instead of rejecting it (#16)", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const base: AkmConfig = { semanticSearchMode: "auto" };
     let result!: ReturnType<typeof setConfigValue>;
     const warnings = captureWarnings(() => {
       result = setConfigValue(base, "totally.unknown.path", "x");
@@ -254,8 +249,27 @@ describe("config CLI helpers", () => {
     expect(warnings.some((w) => w.includes("totally.unknown.path"))).toBe(true);
   });
 
+  test("a stored unknown key can be read and removed; an absent one warns on unset and errors on get", () => {
+    const base: AkmConfig = { semanticSearchMode: "auto" };
+    let stored!: AkmConfig;
+    captureWarnings(() => {
+      stored = setConfigValue(base, "typo.key", "x");
+    });
+    expect(getConfigValue(stored, "typo.key")).toBe("x");
+    const cleared = unsetConfigValue(stored, "typo.key");
+    expect((cleared as unknown as { typo?: { key?: string } }).typo?.key).toBeUndefined();
+    expect(() => getConfigValue(cleared, "typo.key")).toThrow(/Unknown config key/);
+
+    let unchanged!: AkmConfig;
+    const warnings = captureWarnings(() => {
+      unchanged = unsetConfigValue(base, "nope.absent");
+    });
+    expect(unchanged).toEqual(base);
+    expect(warnings.some((w) => w.includes("nope.absent"))).toBe(true);
+  });
+
   test("setConfigValue rejects non-integer embedding dimension in JSON", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const base: AkmConfig = { semanticSearchMode: "auto" };
     expect(() =>
       setConfigValue(
         base,
@@ -266,7 +280,7 @@ describe("config CLI helpers", () => {
   });
 
   test("setConfigValue accepts an embedding dimension above 4096 (the vec-table cap is gone)", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const base: AkmConfig = { semanticSearchMode: "auto" };
     const updated = setConfigValue(
       base,
       "embedding",
@@ -276,35 +290,35 @@ describe("config CLI helpers", () => {
   });
 
   test("setConfigValue rejects invalid output values", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const base: AkmConfig = { semanticSearchMode: "auto" };
     expect(() => setConfigValue(base, "output.format", "xml")).toThrow(/expected one of "json"\|"yaml"\|"text"/);
     expect(() => setConfigValue(base, "output.detail", "max")).toThrow(/expected one of "brief"\|"normal"\|"full"/);
   });
 
   test("setConfigValue rejects retired boolean semanticSearchMode value 'true'", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const base: AkmConfig = { semanticSearchMode: "auto" };
     expect(() => setConfigValue(base, "semanticSearchMode", "true")).toThrow(/Invalid value for semanticSearchMode/);
   });
 
   test("setConfigValue rejects retired boolean semanticSearchMode value 'false'", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const base: AkmConfig = { semanticSearchMode: "auto" };
     expect(() => setConfigValue(base, "semanticSearchMode", "false")).toThrow(/Invalid value for semanticSearchMode/);
   });
 
   test("setConfigValue accepts 'auto' for semanticSearchMode", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const base: AkmConfig = { semanticSearchMode: "auto" };
     const result = setConfigValue(base, "semanticSearchMode", "auto");
     expect(result.semanticSearchMode).toBe("auto");
   });
 
   test("setConfigValue accepts 'off' for semanticSearchMode", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const base: AkmConfig = { semanticSearchMode: "auto" };
     const result = setConfigValue(base, "semanticSearchMode", "off");
     expect(result.semanticSearchMode).toBe("off");
   });
 
   test("setConfigValue rejects invalid semanticSearchMode", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const base: AkmConfig = { semanticSearchMode: "auto" };
     expect(() => setConfigValue(base, "semanticSearchMode", "yes")).toThrow("Invalid value for semanticSearchMode");
   });
 });
@@ -312,7 +326,7 @@ describe("config CLI helpers", () => {
 // ── #454: apiKey rejection at set time ──────────────────────────────────────
 
 describe("apiKey rejection (#454)", () => {
-  const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+  const base: AkmConfig = { semanticSearchMode: "auto" };
 
   test("a literal apiKey is refused on every block that has one, pointing at $VAR and credentials.json", () => {
     for (const key of ["connections.fast.apiKey", "embedding.apiKey"]) {
@@ -352,14 +366,14 @@ describe("apiKey rejection (#454)", () => {
 
 describe("nested schema keys are all settable via zod walker (#455)", () => {
   test("improve's strategy, connection and harness are settable", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const base: AkmConfig = { semanticSearchMode: "auto" };
     expect(setConfigValue(base, "improve.strategy", "fast").improve?.strategy).toBe("fast");
     expect(setConfigValue(base, "improve.connection", "lab").improve?.connection).toBe("lab");
     expect(setConfigValue(base, "improve.harness", "claude").improve?.harness).toBe("claude");
   });
 
   test("feedback.requireReason / archiveRetentionDays / improve.eventRetentionDays settable", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const base: AkmConfig = { semanticSearchMode: "auto" };
     const a = setConfigValue(base, "feedback.requireReason", "false");
     expect(a.feedback?.requireReason).toBe(false);
     const b = setConfigValue(base, "archiveRetentionDays", "90");
@@ -369,7 +383,7 @@ describe("nested schema keys are all settable via zod walker (#455)", () => {
   });
 
   test("a request field and the owned timeout are settable on a connection", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const base: AkmConfig = { semanticSearchMode: "auto" };
     const c1 = setConfigValue(base, "connections.local.temperature", "0.7");
     expect(c1.connections?.local?.temperature).toBe(0.7);
     const c2 = setConfigValue(base, "connections.local.timeoutMs", "30000");
@@ -381,7 +395,7 @@ describe("nested schema keys are all settable via zod walker (#455)", () => {
 
 describe("unknown-key hint stays in sync with schema (#460)", () => {
   test("unknown top-level key error lists schema-derived keys and does not mention retired profiles", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const base: AkmConfig = { semanticSearchMode: "auto" };
     try {
       getConfigValue(base, "totally.unknown.path");
       throw new Error("should have thrown");
@@ -405,7 +419,7 @@ describe("unknown-key hint stays in sync with schema (#460)", () => {
 // preserved rather than rejected. Known fields are still type-validated.
 describe("registries/sources tolerate unknown fields at set time (lenient policy)", () => {
   test("set sources warns and stores instead of rejecting — the key retired with the 0.9.0 bundles cutover (#37/#16)", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const base: AkmConfig = { semanticSearchMode: "auto" };
     let result!: ReturnType<typeof setConfigValue>;
     const warnings = captureWarnings(() => {
       result = setConfigValue(base, "sources", '[{"type":"git","name":"x","url":"https://example.com/r.git"}]');
@@ -417,7 +431,7 @@ describe("registries/sources tolerate unknown fields at set time (lenient policy
   });
 
   test("set registries tolerates and preserves an unknown field on a registry entry", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    const base: AkmConfig = { semanticSearchMode: "auto" };
     const updated = setConfigValue(
       base,
       "registries",
@@ -433,7 +447,7 @@ describe("registries/sources tolerate unknown fields at set time (lenient policy
 
 describe("semanticSearchMode is unsettable (#464.b)", () => {
   test("unsetConfigValue removes semanticSearchMode entirely (falls back to DEFAULT_CONFIG at load)", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "off" };
+    const base: AkmConfig = { semanticSearchMode: "off" };
     const cleared = unsetConfigValue(base, "semanticSearchMode");
     expect(cleared.semanticSearchMode).toBeUndefined();
   });

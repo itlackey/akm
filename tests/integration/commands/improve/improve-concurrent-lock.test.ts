@@ -26,7 +26,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { makeSandboxDir, makeStashDir, type SandboxedDir } from "../../../_helpers/sandbox";
+import { configHomeWithBundle, makeSandboxDir, makeStashDir, type SandboxedDir } from "../../../_helpers/sandbox";
 
 const repoRoot = path.resolve(import.meta.dir, "../../../..");
 const cliPath = path.join(repoRoot, "src", "cli.ts");
@@ -43,7 +43,6 @@ function writeQuietConfig(configDir: string): void {
   fs.writeFileSync(
     configPath,
     JSON.stringify({
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       improve: {
         strategy: "quiet-test",
@@ -98,8 +97,7 @@ async function spawnImproveChild(): Promise<ChildResult> {
       cwd: repoRoot,
       env: {
         ...process.env,
-        AKM_BUNDLE_DIR: stash.dir,
-        XDG_CONFIG_HOME: config.dir,
+        XDG_CONFIG_HOME: configHomeWithBundle(config.dir, stash.dir),
         XDG_DATA_HOME: data.dir,
       },
       stdout: "pipe",

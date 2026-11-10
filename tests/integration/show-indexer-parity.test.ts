@@ -34,6 +34,7 @@ import {
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
+  withDefaultBundle,
 } from "../_helpers/sandbox";
 
 const createdTmpDirs: string[] = [];
@@ -94,7 +95,7 @@ async function onlyHit(bundleId: string, query: string): Promise<SourceSearchHit
     source: bundleId,
     skipLogging: true,
   });
-  const hits = result.hits.filter((hit): hit is SourceSearchHit => "path" in hit);
+  const hits = result.results.filter((hit): hit is SourceSearchHit => "path" in hit);
   expect(hits).toHaveLength(1);
   const hit = hits[0];
   if (!hit) throw new Error(`expected one search hit for ${bundleId}:${query}`);
@@ -128,7 +129,7 @@ beforeEach(() => {
   stashDir = stashResult.dir;
   envCleanup = stashResult.cleanup;
   resetConfigCache();
-  saveConfig({ semanticSearchMode: "off" });
+  saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
   resetConfigCache();
 });
 
@@ -219,15 +220,20 @@ describe("Phase 4 parity: indexer.lookupBundleRef ↔ akmShowUnified", () => {
     const body = ["---", "name: embed-skill", "description: Test", "---", "# embed"].join("\n");
     writeFile(path.join(stashDir, "skills", "embed-skill", "SKILL.md"), body);
 
-    saveConfig({
-      semanticSearchMode: "auto",
-      embedding: {
-        provider: "openai-compatible",
-        endpoint: url,
-        model: "test-embed",
-        dimension: 4,
-      },
-    });
+    saveConfig(
+      withDefaultBundle(
+        {
+          semanticSearchMode: "auto",
+          embedding: {
+            provider: "openai-compatible",
+            endpoint: url,
+            model: "test-embed",
+            dimension: 4,
+          },
+        },
+        stashDir,
+      ),
+    );
     resetConfigCache();
 
     try {
@@ -484,7 +490,7 @@ Run the tests.
 
     // Search ranks whole documents, so the hit is the parent ref; the
     // fragment selector comes from the same safe projection the index stores.
-    const hit = (await akmSearch({ query: "latefragmentneedle", type: "knowledge", skipLogging: true })).hits.find(
+    const hit = (await akmSearch({ query: "latefragmentneedle", type: "knowledge", skipLogging: true })).results.find(
       (candidate): candidate is SourceSearchHit => "path" in candidate,
     );
     expect(hit?.ref).toBe("knowledge/memory");

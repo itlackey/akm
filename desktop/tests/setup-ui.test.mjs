@@ -50,8 +50,7 @@ const crontab = (root) => `#!/bin/sh
 case "$1" in -l) [ -f "${path.join(root, "crontab.txt")}" ] && /bin/cat "${path.join(root, "crontab.txt")}" || exit 1;; -) /bin/cat > "${path.join(root, "crontab.txt")}";; esac
 `;
 const table = async (server) => readFile(path.join(server.root, "crontab.txt"), "utf8").catch(() => "");
-const savedConfig = async (server) =>
-  JSON.parse(await readFile(path.join(server.env.AKM_CONFIG_DIR, "config.json"), "utf8"));
+const savedConfig = async (server) => JSON.parse(await readFile(server.env.AKM_CONFIG_FILE, "utf8"));
 
 const commands = async (server) =>
   (await readFile(path.join(server.root, "commands.jsonl"), "utf8").catch(() => ""))
@@ -185,7 +184,9 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
   assert.equal(onItself.connections.default.apiKey, "$LAB_KEY");
   assert.equal(onItself.improve.enabled, undefined);
   assert.match(onItself.scheduler.enabled[0], /tasks\/improve$/);
-  assert.match(await table(server), /improve/);
+  // The fixture moves akm's directories (AKM_*_DIR), so it is not the default installation: the sync that follows
+  // enabling the task reports that and leaves the OS scheduler (the fixture's crontab) alone.
+  assert.equal(await table(server), "");
 
   // Choose the agent instead: improve runs on it, and akm's own words say what it can do there.
   await page.getByRole("radio", { name: "Claude Code" }).check();
@@ -196,7 +197,9 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
   await expect(page.getByText("Restart Claude Code")).toBeVisible();
   await shot("setup-05-learning-agent");
   const run = await commands(server);
-  assert.ok(run.some((item) => item.args.join(" ") === "plugin marketplace add itlackey/akm-plugins"));
+  // A stage engine (0.11.0-beta.0) installs the plugins from the marketplace's next channel.
+  const marketplace = `itlackey/akm-plugins${/^\d+\.\d+\.\d+-/.test(ENGINE) ? "@next" : ""}`;
+  assert.ok(run.some((item) => item.args.join(" ") === `plugin marketplace add ${marketplace}`));
   assert.ok(run.some((item) => item.args.join(" ") === "plugin install akm@akm-plugins --scope user"));
   assert.ok(!run.some((item) => item.name === "bun"), "Bun's installer is never run");
   const onAgent = await savedConfig(server);
@@ -211,7 +214,7 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
   const off = await savedConfig(server);
   assert.equal(off.improve.enabled, false);
   assert.match(off.scheduler.enabled[0], /tasks\/improve$/);
-  assert.match(await table(server), /improve/);
+  assert.equal(await table(server), "");
   assert.equal(off.connections.default.apiKey, "$LAB_KEY");
   // And on again removes the switch: nothing is left behind.
   await learning.check();
@@ -346,7 +349,7 @@ test("errors that say the library is missing lead to setup", { timeout: 120000 }
   await mkdir(screenshots, { recursive: true });
   await page.goto(server.url);
   await page.getByRole("link", { name: "Library", exact: true }).click();
-  const alert = page.getByRole("alert").filter({ hasText: "No bundle directory found" });
+  const alert = page.getByRole("alert").filter({ hasText: "No default bundle is configured" });
   await expect(alert).toBeVisible();
   await page.screenshot({ path: path.join(screenshots, "library-search-no-library.png"), fullPage: true });
   await alert.getByRole("link", { name: "Set up akm" }).click();

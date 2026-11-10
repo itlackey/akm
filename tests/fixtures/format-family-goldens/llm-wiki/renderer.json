@@ -18,7 +18,6 @@
       "ref": "sample-wiki//pages/http-caching",
       "label": "Asset",
       "renderer": null,
-      "action": "akm show sample-wiki//pages/http-caching",
       "note": "RESOLVED (reading A): concept ∉ KNOWN_TYPES → generic render (renderer=null, label 'Asset')."
     },
     "pages/entities/varnish.md": {
@@ -26,7 +25,6 @@
       "ref": "sample-wiki//pages/entities/varnish",
       "label": "Asset",
       "renderer": null,
-      "action": "akm show sample-wiki//pages/entities/varnish",
       "note": "RESOLVED (reading A): entity ∉ KNOWN_TYPES → generic render."
     },
     "pages/orphan.md": {
@@ -34,7 +32,6 @@
       "ref": "sample-wiki//pages/orphan",
       "label": "Asset",
       "renderer": null,
-      "action": "akm show sample-wiki//pages/orphan",
       "note": "RESOLVED (reading A): note ∉ KNOWN_TYPES → generic render."
     },
     "raw/2026-07-http-rfc.md": {
@@ -42,7 +39,6 @@
       "ref": "sample-wiki//raw/2026-07-http-rfc",
       "label": "Asset",
       "renderer": null,
-      "action": "akm show sample-wiki//raw/2026-07-http-rfc",
       "note": "RESOLVED (reading A): wiki-source ∉ KNOWN_TYPES → generic render. Raw sources are source material; a generic reader is the finalized behavior."
     }
   }

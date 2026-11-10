@@ -99,8 +99,8 @@ akm registry add https://registry.internal.company.com --name team
 # Search — registries you've added are searched automatically
 akm search "deploy" --from registry
 
-# Install a specific skill from the registry (each hit's `action` field
-# prints the exact `akm add <installRef>` to run)
+# Install a specific skill from the registry (each hit's `installRef`
+# is what to pass to the install command)
 akm add https://registry.internal.company.com/skills/deploy-to-k8s  # doclint:ignore (historical — pre-0.9.0 command spelling)
 ```
 

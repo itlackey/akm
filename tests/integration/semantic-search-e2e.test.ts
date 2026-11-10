@@ -30,6 +30,7 @@ import {
   sandboxStashDir,
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
+  useBundleConfig,
 } from "../_helpers/sandbox";
 
 // ── Gate ───────────────────────────────────────────────────────────────────
@@ -336,7 +337,7 @@ describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)",
   beforeEach(() => {
     mutateScopedEnv("XDG_CACHE_HOME", savedCacheDir);
     mutateScopedEnv("XDG_CONFIG_HOME", savedConfigDir);
-    mutateScopedEnv("AKM_BUNDLE_DIR", stashDir);
+    useBundleConfig(stashDir);
     resetConfigCache();
   });
 
@@ -411,15 +412,15 @@ describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)",
       config,
     });
 
-    expect(result.hits.length).toBeGreaterThan(0);
+    expect(result.results.length).toBeGreaterThan(0);
 
     // The deploy script should be the top result (or at least top 2)
-    const topHits = result.hits.slice(0, 2);
+    const topHits = result.results.slice(0, 2);
     const deployHit = topHits.find((h) => h.name === "deploy" || h.name.includes("deploy"));
     expect(deployHit).toBeDefined();
 
     // Verify we got hybrid ranking (FTS + semantic combined)
-    const deployResult = result.hits.find((h) => h.name === "deploy" || h.name.includes("deploy"));
+    const deployResult = result.results.find((h) => h.name === "deploy" || h.name.includes("deploy"));
     expect(deployResult).toBeDefined();
     expect(deployResult?.score).toBeGreaterThan(0);
   });
@@ -436,10 +437,10 @@ describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)",
       config,
     });
 
-    expect(result.hits.length).toBeGreaterThan(0);
+    expect(result.results.length).toBeGreaterThan(0);
 
     // The docker guide should rank high for container queries
-    const topHits = result.hits.slice(0, 3);
+    const topHits = result.results.slice(0, 3);
     const dockerHit = topHits.find((h) => h.name === "docker-guide" || h.name.includes("docker"));
     expect(dockerHit).toBeDefined();
   });
@@ -456,10 +457,10 @@ describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)",
       config,
     });
 
-    expect(result.hits.length).toBeGreaterThan(0);
+    expect(result.results.length).toBeGreaterThan(0);
 
     // The testing patterns doc should rank high
-    const topHits = result.hits.slice(0, 3);
+    const topHits = result.results.slice(0, 3);
     const testingHit = topHits.find((h) => h.name === "testing-patterns" || h.name.includes("testing"));
     expect(testingHit).toBeDefined();
   });
@@ -478,9 +479,9 @@ describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)",
       config,
     });
 
-    const deployScore = deployResult.hits.find((h) => h.name === "deploy" || h.name.includes("deploy"))?.score ?? 0;
+    const deployScore = deployResult.results.find((h) => h.name === "deploy" || h.name.includes("deploy"))?.score ?? 0;
     const testingScoreInDeployQuery =
-      deployResult.hits.find((h) => h.name === "testing-patterns" || h.name.includes("testing"))?.score ?? 0;
+      deployResult.results.find((h) => h.name === "testing-patterns" || h.name.includes("testing"))?.score ?? 0;
 
     // Deploy should score higher than testing when searching for deployment
     expect(deployScore).toBeGreaterThan(testingScoreInDeployQuery);
@@ -495,8 +496,10 @@ describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)",
       config,
     });
 
-    const testingIndex = testResult.hits.findIndex((h) => h.name === "testing-patterns" || h.name.includes("testing"));
-    const deployIndex = testResult.hits.findIndex((h) => h.name === "deploy" || h.name.includes("deploy"));
+    const testingIndex = testResult.results.findIndex(
+      (h) => h.name === "testing-patterns" || h.name.includes("testing"),
+    );
+    const deployIndex = testResult.results.findIndex((h) => h.name === "deploy" || h.name.includes("deploy"));
 
     // A relaxed body-only query deliberately gives both hits the same displayed
     // score ceiling. Its quality contract is the retained pre-ceiling ordering:
@@ -523,10 +526,10 @@ describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)",
     });
 
     // We should still get results (semantic search should find relevant items)
-    expect(result.hits.length).toBeGreaterThan(0);
+    expect(result.results.length).toBeGreaterThan(0);
 
     // The deploy script should appear somewhere in results via semantic similarity
-    const deployHit = result.hits.find((h) => h.name === "deploy" || h.name.includes("deploy"));
+    const deployHit = result.results.find((h) => h.name === "deploy" || h.name.includes("deploy"));
     // It may or may not be top-1 since FTS won't match, but it should appear
     // in the results via vector search
     if (deployHit) {
@@ -546,14 +549,14 @@ describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)",
       config,
     });
 
-    expect(result.hits.length).toBeGreaterThan(0);
+    expect(result.results.length).toBeGreaterThan(0);
 
     // embedMs should be set when vector search ran
     expect(result.embedMs).toBeDefined();
     expect(result.embedMs).toBeGreaterThanOrEqual(0);
 
     // All hits should have positive scores
-    for (const hit of result.hits) {
+    for (const hit of result.results) {
       expect(hit.score).toBeGreaterThan(0);
     }
   });
@@ -591,7 +594,7 @@ describe("Semantic search graceful degradation", () => {
   beforeEach(() => {
     mutateScopedEnv("XDG_CACHE_HOME", degradationCacheDir);
     mutateScopedEnv("XDG_CONFIG_HOME", degradationConfigDir);
-    mutateScopedEnv("AKM_BUNDLE_DIR", stashDir);
+    useBundleConfig(stashDir);
     resetConfigCache();
   });
 
@@ -647,8 +650,8 @@ describe("Semantic search graceful degradation", () => {
     });
 
     // Should still return results via FTS
-    expect(result.hits.length).toBeGreaterThan(0);
-    const helloHit = result.hits.find((h) => h.name === "hello");
+    expect(result.results.length).toBeGreaterThan(0);
+    const helloHit = result.results.find((h) => h.name === "hello");
     expect(helloHit).toBeDefined();
     expect(helloHit?.score).toBeGreaterThan(0);
   });

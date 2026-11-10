@@ -2,8 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { slugForPath } from "../src/core/bundle-id";
 import { runCliCapture } from "./_helpers/cli";
-import { withEnv } from "./_helpers/sandbox";
+import { withBundle, withEnv } from "./_helpers/sandbox";
 
 const tempDirs: string[] = [];
 
@@ -49,18 +50,13 @@ async function runCli(
   const xdgState = envDirs?.xdgState ?? makeTempDir("akm-output-state-");
   if (config) writeConfig(xdgConfig, config);
   return withEnv(
-    {
-      AKM_BUNDLE_DIR: stashDir,
-      XDG_CACHE_HOME: xdgCache,
-      XDG_CONFIG_HOME: xdgConfig,
-      XDG_DATA_HOME: xdgData,
-      XDG_STATE_HOME: xdgState,
-    },
-    async () => {
-      const { code, stdout } = await runCliCapture(args);
-      expect(code).toBe(0);
-      return stdout.trim();
-    },
+    { XDG_CACHE_HOME: xdgCache, XDG_CONFIG_HOME: xdgConfig, XDG_DATA_HOME: xdgData, XDG_STATE_HOME: xdgState },
+    () =>
+      withBundle(stashDir, async () => {
+        const { code, stdout } = await runCliCapture(args);
+        expect(code).toBe(0);
+        return stdout.trim();
+      }),
   );
 }
 
@@ -79,12 +75,18 @@ describe("output baseline", () => {
     );
 
     const output = await runCli(stashDir, ["search", "architect", "--format=json"]);
-    const json = JSON.parse(output) as { hits: Array<Record<string, unknown>> };
+    const json = JSON.parse(output) as { results: Array<Record<string, unknown>> };
 
-    // hits is always present; warnings may appear when semantic search is pending
-    expect(Object.keys(json)).toContain("hits");
+    // results is always present; warnings may appear when semantic search is pending
+    expect(Object.keys(json)).toContain("results");
     // REC-03: ref is now included at brief detail so agents can run `akm show <ref>`
-    expect(Object.keys(json.hits[0] ?? {}).sort()).toEqual(["action", "estimatedTokens", "name", "ref", "type"]);
+    expect(Object.keys(json.results[0] ?? {}).sort()).toEqual([
+      "description",
+      "estimatedTokens",
+      "name",
+      "ref",
+      "type",
+    ]);
   });
 
   test("search normal detail includes description capped at 250 characters", async () => {
@@ -97,12 +99,12 @@ describe("output baseline", () => {
     );
 
     const output = await runCli(stashDir, ["search", "architect", "--format=json", "--detail=normal"]);
-    const json = JSON.parse(output) as { hits: Array<Record<string, unknown>> };
+    const json = JSON.parse(output) as { results: Array<Record<string, unknown>> };
 
-    expect(json.hits[0]?.score).toBeDefined();
-    expect(typeof json.hits[0]?.description).toBe("string");
-    expect(String(json.hits[0]?.description).length).toBeLessThanOrEqual(253); // 250 + "..."
-    expect(typeof json.hits[0]?.ref).toBe("string");
+    expect(json.results[0]?.score).toBeDefined();
+    expect(typeof json.results[0]?.description).toBe("string");
+    expect(String(json.results[0]?.description).length).toBeLessThanOrEqual(253); // 250 + "..."
+    expect(typeof json.results[0]?.ref).toBe("string");
   });
 
   test("search text output includes score for local hits at normal detail", async () => {
@@ -112,7 +114,7 @@ describe("output baseline", () => {
     const output = await runCli(stashDir, ["search", "deploy", "--format=text", "--detail=normal"]);
 
     expect(output).toContain("score:");
-    expect(output).toContain("action: akm show");
+    expect(output).not.toContain("action:");
   });
 
   test("show default JSON shape stays stable", async () => {
@@ -126,8 +128,7 @@ describe("output baseline", () => {
     const json = JSON.parse(output) as Record<string, unknown>;
 
     // QA #7: path and editable are now always projected in JSON shape.
-    // R-020: canonical `ref` is now always projected too, not just under
-    // `--detail agent` — every show shape (human/summary/agent) carries it.
+    // R-020: canonical `ref` is now always projected too, at every detail level.
     expect(Object.keys(json).sort()).toEqual([
       "action",
       "description",
@@ -140,16 +141,16 @@ describe("output baseline", () => {
       "template",
       "type",
     ]);
-    expect(json.origin).toBeNull();
+    expect(json.origin).toBe(slugForPath(stashDir));
   });
 
-  test("show text output includes null origin for local assets", async () => {
+  test("show text output names the default bundle as the origin of local assets", async () => {
     const stashDir = makeTempDir("akm-output-stash-");
     writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
 
     const output = await runCli(stashDir, ["show", "scripts/deploy.sh", "--format=text"]);
 
-    expect(output).toContain("# origin: null");
+    expect(output).toContain(`# origin: ${slugForPath(stashDir)}`);
     expect(output).toContain("run:");
   });
 
@@ -182,7 +183,7 @@ describe("output baseline", () => {
     for (const ref of refs) {
       const output = await runCli(stashDir, ["show", ref, "--format=json"], undefined, envDirs);
       const json = JSON.parse(output) as Record<string, unknown>;
-      expect(json.origin).toBeNull();
+      expect(json.origin).toBe(slugForPath(stashDir));
       expect(typeof json.action).toBe("string");
       expect(String(json.action).length).toBeGreaterThan(0);
     }

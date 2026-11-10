@@ -11,7 +11,7 @@ import { parse as parseSemver } from "semver";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
 const PACKAGE_NAME = "akm-cli";
-const PUBLISHED_BINS = ["akm", "akm-migrate"] as const;
+const PUBLISHED_BINS = ["akm"] as const;
 
 export interface CommandResult {
   stdout: string;
@@ -446,7 +446,6 @@ export async function verifyGlobalInstall(
     launchers[binName] = launcher;
   }
 
-  // The migration launcher has no inert --help path; invoking it can inspect live migration state.
   const launcher = launchers.akm;
   const execution = await runner(launcherExecutionCommand(launcher, ["--version"]), { cwd: prefix });
   if (execution.stdout.trim() !== expected.version) {
@@ -587,8 +586,8 @@ async function testPackageAcceptance(skipBuild = false): Promise<void> {
     );
     const probeEnv = {
       ...process.env,
-      AKM_CONFIG_DIR: configDir,
-      AKM_CACHE_DIR: path.join(workDir, "probe-cache"),
+      AKM_CONFIG_FILE: path.join(configDir, "config.json"),
+      XDG_CACHE_HOME: path.join(workDir, "probe-cache"),
     };
     await runCommand(["node", probe], { cwd: verified.packageDir, env: probeEnv });
     await runCommand(["bun", probe], { cwd: verified.packageDir, env: probeEnv });

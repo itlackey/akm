@@ -6,7 +6,7 @@
  * MULTI-PROCESS crash-window resume — a real `bun` driver is SIGKILLed at a
  * precise durable window, and a fresh process converges the run exactly once.
  * The single-process, deterministic-state versions live in
- * tests/workflows/chaos.test.ts; these prove the SAME contracts survive a real
+ * tests/integration/workflows/chaos.test.ts; these prove the SAME contracts survive a real
  * OS kill (no `finally`, a lock file left behind by a dead pid, half-written
  * journal) against shared storage.
  *
@@ -50,7 +50,6 @@ let markerDir: string;
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
   writeSandboxConfig({
-    configVersion: "0.9.0",
     connections: {
       "test-llm": { endpoint: "http://127.0.0.1:1/v1/chat/completions", models: { fast: "test-model" } },
     },

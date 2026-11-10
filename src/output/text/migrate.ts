@@ -4,8 +4,7 @@
 
 /**
  * Plain-text rendering of the combined migration plan: the config file's moved
- * keys and notes, the task-file section and the
- * assets' `engine:` keys and old-spelling refs in content.
+ * keys and notes, and the assets' `engine:` keys and old-spelling refs in content.
  */
 
 import type { TextFormatterEntry } from "./registry";
@@ -14,16 +13,14 @@ interface MigrationPlanResult {
   status: string;
   blockers?: string[];
   configFile?: { credentials?: string[]; notes?: string[] };
-  taskFiles?: { changed: number; skipped: number; blocked: number };
   assetEngineKeys?: { changed: number; skipped: number; notes?: string[] };
   assetContentRefs?: {
     changed: number;
     skipped: number;
     refs: number;
+    stateRows?: number;
     shadowed?: { bundleId: string; from: string; to: string }[];
   };
-  backupPath?: string;
-  applied?: number;
 }
 
 function planGlyph(status: string): string {
@@ -48,10 +45,6 @@ export function formatMigratePlain(result: unknown): string | null {
       `    credentials.json: ${plan.configFile.credentials.length} key(s) (${plan.configFile.credentials.join(", ")})`,
     );
   }
-  if (plan.taskFiles) {
-    const tasks = plan.taskFiles;
-    lines.push(`    task files: ${tasks.changed} change, ${tasks.skipped} current, ${tasks.blocked} blocked`);
-  }
   if (plan.assetEngineKeys) {
     lines.push(
       `    asset engine keys: ${plan.assetEngineKeys.changed} change, ${plan.assetEngineKeys.skipped} skipped`,
@@ -60,7 +53,7 @@ export function formatMigratePlain(result: unknown): string | null {
   if (plan.assetContentRefs) {
     const refs = plan.assetContentRefs;
     lines.push(
-      `    asset content refs: ${refs.refs} in ${refs.changed} file(s) change, ${refs.skipped} skipped, ${refs.shadowed?.length ?? 0} shadowed`,
+      `    asset content refs: ${refs.refs} in ${refs.changed} file(s) change, ${refs.skipped} skipped, ${refs.shadowed?.length ?? 0} shadowed, ${refs.stateRows ?? 0} history row(s) re-keyed`,
     );
   }
 
@@ -82,11 +75,6 @@ export function formatMigratePlain(result: unknown): string | null {
       ...plan.assetContentRefs.shadowed.map((ref) => `  - ${ref.bundleId}: ${ref.from} (now ${ref.to})`),
     );
   }
-
-  if (plan.backupPath) {
-    lines.push("", `backup: ${plan.backupPath}`);
-  }
-  if (plan.applied !== undefined) lines.push(`applied: ${plan.applied}`);
 
   return lines.join("\n");
 }

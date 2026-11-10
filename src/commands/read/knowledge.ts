@@ -24,9 +24,18 @@ import { type AssetRef, conceptIdFromTypeName, parsePlacementRef } from "../../c
 import { isHttpUrl, isWithin, resolveStashDir, tryReadStdinText } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
-import { resolveBundleWriteTarget, resolveMutationTarget } from "../../core/mutation-target";
 import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
 import { warn } from "../../core/warn";
+import { withAssetMutationLease } from "../../indexer/index-writer-lock";
+import { indexWrittenAssets } from "../../indexer/index-written-assets";
+import { deriveInstallations, slugForPath } from "../../indexer/installations";
+import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
+import { resolveBundleWriteTarget, resolveMutationTarget } from "../../sources/mutation-target";
+import { storeSecretResolver } from "../../sources/snapshot-fetchers/secret-seam";
+import {
+  fetchWebsiteMarkdownSnapshot,
+  shouldAllowPrivateWebsiteUrlForTests,
+} from "../../sources/snapshot-fetchers/website-ingest";
 import {
   commitWriteTargetBoundary,
   formatRefForMessage,
@@ -34,16 +43,7 @@ import {
   recordWriteTargetPath,
   resolveWriteTarget,
   writeAssetToSource,
-} from "../../core/write-source";
-import { withAssetMutationLease } from "../../indexer/index-writer-lock";
-import { indexWrittenAssets } from "../../indexer/index-written-assets";
-import { deriveInstallations, slugForPath } from "../../indexer/installations";
-import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
-import { storeSecretResolver } from "../../sources/snapshot-fetchers/secret-seam";
-import {
-  fetchWebsiteMarkdownSnapshot,
-  shouldAllowPrivateWebsiteUrlForTests,
-} from "../../sources/snapshot-fetchers/website-ingest";
+} from "../../sources/write-source";
 import { writeSupersededEdge } from "../improve/memory/memory-belief";
 import { refToRelPath, resolveRefPathInStash } from "../lint/base-linter";
 
@@ -222,7 +222,7 @@ function parseWriteRefs(rawRefs: string[], flag: "--xref" | "--supersedes"): Par
  *
  *   1. the resolved write target (mutable),
  *   2. the primary working stash when it is a different directory (mutable) —
- *      a `--bundle`/`defaultWriteTarget` write must still see working-stash
+ *      a `--bundle` write must still see working-stash
  *      assets, which `resolveSourceEntries(writeTarget)` alone omits,
  *   3. every other configured source (read-only for demotion purposes).
  *
@@ -645,7 +645,7 @@ export function resolveSupersedesForWrite(rawRefs: string[], target?: string, ta
  * Write a markdown asset (knowledge or memory) to the resolved write target.
  *
  * Resolves the write target via the v1 precedence chain (`--bundle` →
- * `defaultWriteTarget` → working stash), validates the path is within the
+ * working stash), validates the path is within the
  * type root, enforces `--force` semantics, and delegates the actual write
  * to `writeAssetToSource`.
  */

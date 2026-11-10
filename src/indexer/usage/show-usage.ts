@@ -3,7 +3,6 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
-import { rethrowIfTestIsolationError } from "../../core/errors";
 import { appendEvent, readEvents } from "../../core/events";
 import { withStateDbTelemetry } from "../../core/state-db";
 import { TELEMETRY_BUSY_TIMEOUT_MS, withIndexDb } from "../../storage/repositories/index-db";
@@ -118,9 +117,7 @@ export function recordShowUsage(
       },
       { busyTimeoutMs: TELEMETRY_BUSY_TIMEOUT_MS },
     );
-  } catch (error) {
-    rethrowIfTestIsolationError(error);
-  }
+  } catch {}
 }
 
 /**
@@ -137,7 +134,5 @@ export function recordIndexedShowUsage(
   appendShowTrace(ref, type, name);
   try {
     insertShowUsage(undefined, ref, undefined, eventSource);
-  } catch (error) {
-    rethrowIfTestIsolationError(error);
-  }
+  } catch {}
 }

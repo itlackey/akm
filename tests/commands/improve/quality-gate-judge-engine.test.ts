@@ -16,6 +16,7 @@ import {
 import type { AkmConfig, ImproveProfileConfig } from "../../../src/core/config/config";
 import { validateConfigShape } from "../../../src/core/config/config-schema";
 import { ConfigError } from "../../../src/core/errors";
+import { effectiveRequestFields, thinkingSetting } from "../../../src/core/llm-inference";
 import { compressMemoryToDerivedMemory } from "../../../src/llm/memory-infer";
 import {
   clearLlmUsageSink,
@@ -33,7 +34,7 @@ function config(extra: Record<string, unknown> = {}, connections: Record<string,
     semanticSearchMode: "auto",
     stashDir: "/tmp/does-not-matter",
     sources: [],
-    defaultWriteTarget: "stash",
+    defaultBundle: "stash",
     connections: {
       default: { endpoint: "http://localhost:11434/v1/chat/completions", models: { fast: "gen-model" } },
       judge: {
@@ -83,20 +84,44 @@ describe("resolveQualityGateJudge (#1011)", () => {
     expect(asLlmRunner(runner).model).toBe("judge-model");
   });
 
-  test("improve.qualityGate.llm alone keeps the improve-wide connection; the process's own connection and settings are the writer's", () => {
+  test("improve.qualityGate alone keeps the improve-wide connection; the process's own connection and model are the writer's", () => {
     const cfg = config(
       {
         improve: {
           connection: "judge",
-          qualityGate: { llm: { temperature: 0.5 } },
-          processes: { distill: { connection: "other", llm: { temperature: 0.3 } } },
+          qualityGate: { timeoutMs: 5_000 },
+          processes: { distill: { connection: "other", timeoutMs: 9_000 } },
         },
       },
       { other: { endpoint: "http://localhost:11436/v1/chat/completions", models: { fast: "other-model" } } },
     );
     const runner = resolveQualityGateJudge(cfg, undefined, "distill");
     expect(runner?.name).toBe("judge");
-    expect(asLlmRunner(runner).inference?.temperature).toBe(0.5);
+    expect(runner?.timeoutMs).toBe(5_000);
+  });
+
+  test("a model alias with request fields turns the judge's thinking on, through improve.qualityGate.model", () => {
+    const runner = asLlmRunner(
+      resolveQualityGateJudge(
+        gated(
+          { connection: "tuned", model: "thinking" },
+          undefined,
+          {},
+          {
+            tuned: {
+              endpoint: "http://localhost:11437/v1/chat/completions",
+              models: {
+                thinking: { model: "tuned-model", chat_template_kwargs: { enable_thinking: true } },
+              },
+            },
+          },
+        ),
+        undefined,
+        "reflect",
+      ),
+    );
+    expect(runner.model).toBe("tuned-model");
+    expect(thinkingSetting(effectiveRequestFields(runner.request, runner.inference))).toBe(true);
   });
 
   test("what the run selected is nearer than the gate's own judge, for reflect's and distill's alike", () => {
@@ -161,7 +186,6 @@ describe("a quality gate's judge is checked when it resolves, not when the confi
 
   function gateErrors(gate: Record<string, unknown>): string[] {
     const result = validateConfigShape({
-      configVersion: "0.9.0",
       connections: reviewers,
       harnesses: { reviewer: { platform: "pi" }, confined: { platform: "claude" } },
       improve: { qualityGate: gate },
@@ -299,7 +323,7 @@ describe("memory inference uses the configured temperature", () => {
     globalThis.fetch = originalFetch;
   });
 
-  async function temperatureSent(connectionTemperature?: number, processTemperature?: number): Promise<unknown> {
+  async function temperatureSent(connectionTemperature?: number): Promise<unknown> {
     const cfg = {
       ...config(
         {},
@@ -315,9 +339,6 @@ describe("memory inference uses the configured temperature", () => {
       experimental: { improveAutonomy: true },
       improve: {
         strategies: { default: { processes: { memoryInference: { enabled: true } } } },
-        ...(processTemperature === undefined
-          ? {}
-          : { processes: { memoryInference: { llm: { temperature: processTemperature } } } }),
       },
     } as AkmConfig;
     // The runner improve hands memory inference.
@@ -342,9 +363,5 @@ describe("memory inference uses the configured temperature", () => {
 
   test("the connection's temperature when it sets one", async () => {
     expect(await temperatureSent(0.4)).toBe(0.4);
-  });
-
-  test("the process's llm.temperature over the connection's", async () => {
-    expect(await temperatureSent(0.4, 0.6)).toBe(0.6);
   });
 });

@@ -73,7 +73,7 @@ describe("akmSearch: vector-only match path (VALUE-02)", () => {
         registries: [],
       });
       const ftsOnly = await akmSearch({ query: QUERY, skipLogging: true });
-      expect(ftsOnly.hits.some((hit) => "path" in hit && hit.path === knowledgeFile)).toBe(false);
+      expect(ftsOnly.results.some((hit) => "path" in hit && hit.path === knowledgeFile)).toBe(false);
 
       // With semantic search back on, the vector path must surface the entry
       // purely as a nearest neighbour — a genuine vector-only hit.
@@ -84,7 +84,7 @@ describe("akmSearch: vector-only match path (VALUE-02)", () => {
         registries: [],
       });
       const hybrid = await akmSearch({ query: QUERY, skipLogging: true });
-      const hit = hybrid.hits.find((h) => "path" in h && h.path === knowledgeFile);
+      const hit = hybrid.results.find((h) => "path" in h && h.path === knowledgeFile);
       expect(hit).toBeDefined();
       // Only the vector channel returned it: no lexical rank.
       expect(hit?.whyMatched).toEqual(["vector rank 1"]);

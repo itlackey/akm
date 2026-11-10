@@ -1,5 +1,5 @@
 /**
- * Tests for src/core/write-source.ts — the single dispatch point for writes.
+ * Tests for src/sources/write-source.ts — the single dispatch point for writes.
  *
  * Covers the locked v1 contract from spec §2.6 / §2.7 / §5.4 / §10 step 5:
  *
@@ -10,7 +10,7 @@
  *     complete commit + clean tree, pushes per the writable+remote+push gate,
  *     and is a no-op for filesystem targets
  *   - rejection of unsupported `kind` reaching the helper
- *   - resolveWriteTarget precedence (explicit → defaultWriteTarget → defaultBundle)
+ *   - resolveWriteTarget precedence (explicit → defaultBundle)
  *   - commit-message sanitization (issue #270) via the boundary commit
  */
 
@@ -24,6 +24,9 @@ import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
 import type { SourceConfigEntry } from "../../../src/core/config/config";
 import { ConfigError, UsageError } from "../../../src/core/errors";
 import { sanitizeCommitMessage } from "../../../src/core/git-message";
+import { resolveSourceEntries } from "../../../src/indexer/search/search-source";
+import { writeLockfile } from "../../../src/integrations/lockfile";
+import { getCachePaths, parseGitRepoUrl } from "../../../src/sources/providers/git";
 import {
   commitWriteTargetBoundary,
   deleteAssetFromSource,
@@ -33,10 +36,7 @@ import {
   resolveWriteTarget,
   type WriteTargetSource,
   writeAssetToSource,
-} from "../../../src/core/write-source";
-import { resolveSourceEntries } from "../../../src/indexer/search/search-source";
-import { writeLockfile } from "../../../src/integrations/lockfile";
-import { getCachePaths, parseGitRepoUrl } from "../../../src/sources/providers/git";
+} from "../../../src/sources/write-source";
 import { type IsolatedAkmStorage, withEnvSync, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
@@ -478,23 +478,12 @@ describe("resolveWriteTarget", () => {
     expect(teamSource?.path).toBe(path.resolve(localRoot));
   });
 
-  test("falls back to defaultWriteTarget", () => {
-    const dir = makeTempDir("akm-target-default-");
-    const result = resolveWriteTarget({
-      semanticSearchMode: "off",
-      bundles: { "default-one": { path: dir, writable: true } },
-      defaultWriteTarget: "default-one",
-    });
-    expect(result.selector).toBe("default-one");
-    expect(result.source.name).toBe("default-one");
-  });
-
-  test("requires a default bundle when no explicit target or defaultWriteTarget exists", () => {
+  test("requires a default bundle when no explicit target exists", () => {
     // resolveWriteTarget falls back to process.env.AKM_BUNDLE_DIR (named
     // "stash") when nothing else is configured — unset it so this asserts
     // the true "nothing configured" path, not the isolated stash sandboxed
     // by withIsolatedAkmStorage above.
-    withEnvSync({ AKM_BUNDLE_DIR: undefined }, () => {
+    withEnvSync({}, () => {
       expect(() => resolveWriteTarget({ semanticSearchMode: "off" })).toThrow(ConfigError);
     });
   });
@@ -512,14 +501,16 @@ describe("resolveWriteTarget", () => {
     expect(result.source.path).toBe(stashDir);
   });
 
-  test("throws ConfigError when defaultWriteTarget points at a missing source", () => {
-    expect(() =>
-      resolveWriteTarget({
-        semanticSearchMode: "off",
-        bundles: { exists: { path: "/tmp/akm-missing", writable: true } },
-        defaultWriteTarget: "ghost",
-      }),
-    ).toThrow(ConfigError);
+  test("throws ConfigError when defaultBundle points at a missing source", () => {
+    withEnvSync({}, () => {
+      expect(() =>
+        resolveWriteTarget({
+          semanticSearchMode: "off",
+          bundles: { exists: { path: "/tmp/akm-missing", writable: true } },
+          defaultBundle: "ghost",
+        }),
+      ).toThrow(ConfigError);
+    });
   });
 
   test("throws UsageError when --target names a missing source", () => {

@@ -4,8 +4,7 @@
 
 /**
  * WI-B gate — the AKM workspace's own `akm` adapter
- * (`src/core/adapter/adapters/akm-adapter.ts`), implementing
- * `docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §5.1 (BINDING) / §6 / §7.
+ * (`src/core/adapter/adapters/akm-adapter.ts`).
  *
  * §5.1 is a behavior-preserving port: the `akm` adapter reproduces TODAY'S
  * `runMatchers` classification and `resolveAssetPathFromName` placement VERBATIM

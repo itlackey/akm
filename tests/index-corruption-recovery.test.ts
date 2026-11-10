@@ -66,7 +66,7 @@ test("real SQLITE_CORRUPT on index.db is detected and the index rebuilds", async
   // Sanity: the healthy index actually finds the entry before we break it.
   const before = await runCliCapture(["search", "deployment", "--format=json"]);
   expect(before.code).toBe(0);
-  expect(JSON.parse(before.stdout).hits.length).toBeGreaterThan(0);
+  expect(JSON.parse(before.stdout).results.length).toBeGreaterThan(0);
 
   // `akm index` leaves data in the WAL file, not `index.db` itself — garbling
   // only the main file would corrupt bytes SQLite never actually reads.
@@ -89,7 +89,7 @@ test("real SQLITE_CORRUPT on index.db is detected and the index rebuilds", async
   // is indistinguishable from a genuine empty result. Detecting SQLITE_CORRUPT
   // must rebuild and answer correctly again, not quietly go blank.
   expect(after.code).toBe(0);
-  const hits = JSON.parse(after.stdout).hits;
+  const hits = JSON.parse(after.stdout).results;
   expect(hits.length).toBeGreaterThan(0);
   expect(hits.some((hit: { ref?: string }) => hit.ref?.includes("deploy"))).toBe(true);
 });

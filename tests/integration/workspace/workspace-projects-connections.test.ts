@@ -10,6 +10,12 @@
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import {
+  type ConnectionRow,
+  connectionDraft,
+  connectionEntry,
+  entryOf,
+} from "../../../desktop/src/lib/connections-model";
 import { akmSearch } from "../../../src/commands/read/search";
 import { loadConfig, resetConfigCache } from "../../../src/core/config/config";
 import { getConfigPath } from "../../../src/core/paths";
@@ -26,7 +32,7 @@ const write = (root: string, rel: string, content: string) => {
   fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
   fs.writeFileSync(path.join(root, rel), content);
 };
-const refs = (result: Json) => result.hits.map((hit: { ref: string }) => hit.ref).sort();
+const refs = (result: Json) => result.results.map((hit: { ref: string }) => hit.ref).sort();
 
 async function seedProjects() {
   const stash = ctx.storage.stashDir;
@@ -45,7 +51,6 @@ async function seedProjects() {
       off: { path: path.join(ctx.storage.root, "off"), enabled: false },
     },
     defaultBundle: "stash",
-    defaultWriteTarget: "stash",
     semanticSearchMode: "off",
     projects: {
       alpha: { from: ["stash", "team"], filters: { project: "alpha" }, prefer: { project: "alpha" } },
@@ -76,7 +81,7 @@ describe("assets.search with a project", () => {
       prefer: { project: "alpha" },
       readOnly: true,
     });
-    expect(refs(alpha)).toEqual(direct.hits.map((hit) => (hit as { ref: string }).ref).sort());
+    expect(refs(alpha)).toEqual(direct.results.map((hit) => (hit as { ref: string }).ref).sort());
 
     // A filter value of "" admits the assets that lack the key.
     expect(refs(await out(assets.search({ q: "", project: "beta", limit: 50 })))).toEqual([
@@ -121,7 +126,9 @@ describe("assets.projectOverview", () => {
       { name: "team", total: { count: 3 }, eligible: { count: 2, byType: { knowledge: 1, memory: 1 } } },
     ]);
     const found = await out(assets.search({ q: "", project: "alpha", limit: 200 }));
-    expect(alpha.bundles.reduce((sum: number, bundle: Json) => sum + bundle.eligible.count, 0)).toBe(found.hits.length);
+    expect(alpha.bundles.reduce((sum: number, bundle: Json) => sum + bundle.eligible.count, 0)).toBe(
+      found.results.length,
+    );
   });
 
   test("a project without from reads every local bundle; a missing or disabled bundle is reported, not counted", async () => {
@@ -149,7 +156,7 @@ describe("assets.projectOverview", () => {
 
 describe("config.removeConnection", () => {
   const saved = () => JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
-  function seedConnections(extra: Record<string, unknown> = {}) {
+  function seedConnections() {
     writeSandboxConfig({
       bundles: { stash: { path: ctx.storage.stashDir, writable: true } },
       defaultBundle: "stash",
@@ -163,7 +170,6 @@ describe("config.removeConnection", () => {
       },
       improve: { connection: "lab", processes: { reflect: { connection: "lab" }, distill: { connection: "default" } } },
       unrelated: { keep: [1] },
-      ...extra,
     });
     resetConfigCache();
   }
@@ -172,9 +178,9 @@ describe("config.removeConnection", () => {
     seedConnections();
     const before = config.get();
     expect(before.defaultConnection).toBe("default");
-    expect(before.connections.map((connection: Json) => [connection.name, connection.inherited])).toEqual([
-      ["default", false],
-      ["lab", false],
+    expect(before.connections.map((connection: Json) => [connection.name, connection.source])).toEqual([
+      ["default", "file"],
+      ["lab", "file"],
     ]);
     expect(before.connections.find((connection: Json) => connection.name === "lab")?.usedBy).toEqual([
       "improve.connection",
@@ -187,7 +193,6 @@ describe("config.removeConnection", () => {
       references: ["improve.connection", "improve.processes.reflect.connection"],
       wasDefault: false,
       defaultConnection: "default",
-      stillInherited: false,
     });
     expect(saved().connections).toEqual({
       default: { endpoint: "http://127.0.0.1:1/v1", apiKey: "$SYNTH_KEY", models: { fast: "small" } },
@@ -218,6 +223,49 @@ describe("config.removeConnection", () => {
     expect(Object.keys(saved().connections)).toEqual(["default", "lab", "extra"]);
   });
 
+  test("a save through the real path (get, draft, change the endpoint, save) never writes a mask over a stored value", () => {
+    writeSandboxConfig({
+      bundles: { stash: { path: ctx.storage.stashDir, writable: true } },
+      defaultBundle: "stash",
+      connections: {
+        lab: {
+          endpoint: "http://127.0.0.1:2/v1",
+          headers: { Authorization: "Bearer abc-secret", "X-Team": "blue" },
+          tokenizer: "tiktoken",
+          maxTokens: 64,
+          prompt_cache_key: "cache-1",
+          models: { fast: "small", "token-small": "tiny" },
+        },
+      },
+    });
+    resetConfigCache();
+    const row = config.get().connections.find((connection: Json) => connection.name === "lab") as ConnectionRow;
+    // The view hides the credential and nothing else.
+    expect((row.headers as Record<string, string>).Authorization).toBe("[redacted]");
+    expect(row.tokenizer).toBe("tiktoken");
+    expect(row.prompt_cache_key).toBe("cache-1");
+    expect(row.models?.["token-small"]).toBe("tiny");
+    const original = entryOf(row);
+    const draft = { ...connectionDraft("lab", original), endpoint: "http://127.0.0.1:9/v1" };
+    expect(config.saveConnection({ name: "lab", entry: connectionEntry(draft, original) })).toEqual({ saved: true });
+    expect(saved().connections.lab).toEqual({
+      endpoint: "http://127.0.0.1:9/v1",
+      headers: { Authorization: "Bearer abc-secret", "X-Team": "blue" },
+      tokenizer: "tiktoken",
+      maxTokens: 64,
+      prompt_cache_key: "cache-1",
+      models: { fast: "small", "token-small": "tiny" },
+    });
+    // A mask with no stored value behind it is refused, never written.
+    expect(() =>
+      config.saveConnection({
+        name: "lab",
+        entry: { endpoint: "http://127.0.0.1:9/v1", headers: { Cookie: "[redacted]" } },
+      }),
+    ).toThrow();
+    expect(saved().connections.lab.headers).toEqual({ Authorization: "Bearer abc-secret", "X-Team": "blue" });
+  });
+
   test("removing the default hands the default to the sole remaining connection, then to none", async () => {
     seedConnections();
     expect(config.removeConnection({ name: "default" })).toMatchObject({
@@ -229,16 +277,10 @@ describe("config.removeConnection", () => {
     expect(saved().connections ?? {}).toEqual({});
   });
 
-  test("refuses an unknown or blank name, and a connection only an extends base defines", async () => {
-    const base = path.join(ctx.storage.root, "base.json");
-    fs.writeFileSync(base, JSON.stringify({ connections: { shared: { endpoint: "http://127.0.0.1:3/v1" } } }));
-    seedConnections({ extends: base });
-    const shared = config.get().connections.find((connection: Json) => connection.name === "shared");
-    expect([shared?.inherited, shared?.source]).toEqual([true, `extends:${base}`]);
-    expect(config.get().connections.find((connection: Json) => connection.name === "lab")?.source).toBe("file");
+  test("refuses an unknown or blank name", async () => {
+    seedConnections();
     await expectUsage(() => config.removeConnection({ name: "nope" }));
     await expectUsage(() => config.removeConnection({ name: " " }));
-    await expectUsage(() => config.removeConnection({ name: "shared" }), "TARGET_NOT_UPDATABLE");
     expect(Object.keys(saved().connections)).toEqual(["default", "lab"]);
   });
 });

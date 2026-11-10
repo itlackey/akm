@@ -12,4 +12,4 @@ whether changes actually improve it.
   cut, release and install akm and its plugins.
 - [akm-eval](https://github.com/itlackey/akm-eval) — the evals and benchmarks
   that measure whether `akm improve` and retrieval changes are actually
-  working. The old in-repo toolkit is retired: see [eval.md](eval.md).
+  working.

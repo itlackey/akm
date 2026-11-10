@@ -94,7 +94,7 @@ export type { AkmExtractResult, ExtractedSessionResult } from "../../core/improv
 const DEFAULT_MIN_SESSION_DURATION_MINUTES = 5;
 /** Raw session size (chars) below which the LLM call is skipped; only truly empty sessions are safe to skip. */
 const DEFAULT_MIN_CONTENT_CHARS = 10;
-/** New sessions LLM-processed per run (`processes.extract.maxSessionsPerRun`, 0 disables); the rest wait for later runs. */
+/** New sessions LLM-processed per run; the rest wait for later runs. A run with `--since` is uncapped. */
 const DEFAULT_MAX_SESSIONS_PER_RUN = 25;
 /**
  * Without an explicit window, discovery looks back to the last extract run for
@@ -245,7 +245,6 @@ export function resolveStandaloneExtractPlan(
     current: {
       ...(selection.connection ? { connection: selection.connection } : {}),
       ...(selection.harness ? { harness: selection.harness } : {}),
-      ...(selection.engine ? { engine: selection.engine } : {}),
       ...(selection.model ? { model: selection.model } : {}),
       ...(Object.hasOwn(selection, "timeoutMs") ? { timeoutMs: selection.timeoutMs ?? null } : {}),
     },
@@ -319,22 +318,19 @@ function emptyExtractResult(args: {
 }
 
 /**
- * A since-string as an epoch-ms cutoff: an ISO timestamp or `<n>m|h|d`
- * (case-insensitive here — `5M` is five minutes). Default 24h; anything else
- * is a usage error.
+ * A since-string as an epoch-ms cutoff: an ISO timestamp or a duration in the
+ * CLI-wide grammar (`m` minutes, `h` hours, `d` days, `M` months; case matters,
+ * see core/time.ts). Default 24h; anything else is a usage error.
  */
 export function parseSinceArg(value: string | undefined, now: number = Date.now()): number {
   if (!value || value.trim() === "") return now - 24 * 60 * 60 * 1000;
   const trimmed = value.trim();
-  const relMatch = trimmed.match(/^(\d+)\s*([mhd])$/i);
-  if (relMatch) {
-    const ms = parseDuration(`${relMatch[1] ?? "0"}${(relMatch[2] ?? "h").toLowerCase()}`, DURATION_UNITS);
-    if (ms !== null) return now - ms;
-  }
+  const ms = parseDuration(trimmed, DURATION_UNITS);
+  if (ms !== null) return now - ms;
   const iso = Date.parse(trimmed);
   if (!Number.isNaN(iso)) return iso;
   throw new UsageError(
-    `--since value "${value}" could not be parsed (expected ISO timestamp or duration like 24h / 7d / 30m)`,
+    `--since value "${value}" could not be parsed (expected ISO timestamp or duration like 24h / 7d / 30m / 3M)`,
     "INVALID_FLAG_VALUE",
   );
 }
@@ -458,8 +454,6 @@ type Triage = { enabled: boolean; minScore: number };
 // ── Planning ─────────────────────────────────────────────────────────────────
 
 interface SessionGateOptions {
-  maxTotalChars: number | undefined;
-  minContentChars: number;
   triage: Triage;
 }
 
@@ -504,14 +498,11 @@ async function runPreLlmSessionGates(
   }
   // The prompt sees only parent-origin events; subagent work still reaches
   // the hash above and the inline-ref harvest.
-  const filtered = preFilterSession(
-    { ...data, events: data.events.filter((e) => e.filePath === data.ref.filePath) },
-    typeof gates.maxTotalChars === "number" ? { maxTotalChars: gates.maxTotalChars } : {},
-  );
+  const filtered = preFilterSession({ ...data, events: data.events.filter((e) => e.filePath === data.ref.filePath) });
   // Measured on the full raw stream: pre-filtered size says little about value.
   const rawChars = data.events.reduce((sum, event) => sum + event.text.length, 0);
   const skipReason =
-    gates.minContentChars > 0 && rawChars < gates.minContentChars
+    rawChars < DEFAULT_MIN_CONTENT_CHARS
       ? "too_short"
       : gates.triage.enabled && !sessionTriagePasses(data, gates.triage.minScore)
         ? "triaged_out"
@@ -1119,20 +1110,13 @@ function resolveExtractRun(
     llmRunner: runner,
     notices,
     gates: {
-      maxTotalChars: typeof process?.maxTotalChars === "number" ? process.maxTotalChars : undefined,
-      minContentChars:
-        typeof process?.minContentChars === "number" ? process.minContentChars : DEFAULT_MIN_CONTENT_CHARS,
       triage: {
         enabled: triage?.enabled === true,
         minScore: typeof triage?.minScore === "number" ? triage.minScore : DEFAULT_TRIAGE_MIN_SCORE,
       },
     },
-    maxSessionsPerRun: options.since
-      ? 0
-      : typeof process?.maxSessionsPerRun === "number"
-        ? process.maxSessionsPerRun
-        : DEFAULT_MAX_SESSIONS_PER_RUN,
-    effectiveSince: options.since ?? process?.defaultSince,
+    maxSessionsPerRun: options.since ? 0 : DEFAULT_MAX_SESSIONS_PER_RUN,
+    effectiveSince: options.since,
     sessionIndexing: {
       enabled: process?.indexSessions ?? true,
       minDurationMinutes:
@@ -1316,7 +1300,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
   }
   if (tally.deferred > 0) {
     topLevelWarnings.push(
-      `Reached maxSessionsPerRun=${resolved.maxSessionsPerRun}; ${tally.deferred} session(s) deferred to a later run.`,
+      `Reached the per-run limit of ${resolved.maxSessionsPerRun} sessions; ${tally.deferred} session(s) deferred to a later run.`,
     );
   }
   // Every skip reason is counted; infrastructure failures also get a warning line.
@@ -1410,8 +1394,7 @@ export async function countNewExtractCandidates(
   _config: AkmConfig,
   options: CountNewExtractCandidatesOptions = {},
 ): Promise<number> {
-  const effectiveSince = options.since ?? getImproveProcessConfig("extract", options.improveProfile)?.defaultSince;
-  const explicitSinceMs = effectiveSince ? parseSinceArg(effectiveSince) : undefined;
+  const explicitSinceMs = options.since ? parseSinceArg(options.since) : undefined;
   const harnesses = (options.harnesses ?? getAvailableHarnesses()).filter((h) => h.isAvailable());
   let stateDb: Database | undefined = options.stateDb;
   let openedStateDb = false;

@@ -13,7 +13,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { getConfigValue, listConfig, setConfigValue } from "../../src/commands/config-cli";
+import { getConfigValue, listConfig, setConfigValue } from "../../src/commands/config";
 import { loadUserConfig, mutateConfig, resetConfigCache } from "../../src/core/config/config";
 import { collectCredentialValues, writeCredential } from "../../src/core/config/credentials";
 import { getConfigPath } from "../../src/core/paths";
@@ -34,7 +34,6 @@ function writeConfig(value: unknown): void {
 }
 
 const withLiteral = {
-  configVersion: "0.9.0",
   semanticSearchMode: "off",
   connections: { lab: { endpoint: "http://lab:1/v1", models: { fast: "m" }, apiKey: LITERAL } },
   embedding: { model: "embed-model", apiKey: LITERAL },

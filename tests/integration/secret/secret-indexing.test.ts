@@ -7,7 +7,6 @@
  *
  * A secret is discoverable by NAME, but the file's bytes (the value) must never
  * reach the FTS index, the embedding input, document_json, or `akm show` output.
- * Mirrors tests/vault.test.ts "vault indexer safety".
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -26,7 +25,7 @@ import {
   sandboxStashDir,
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
-  withEnv,
+  withBundle,
   writeSandboxConfig,
 } from "../../_helpers/sandbox";
 
@@ -135,7 +134,7 @@ describe("secret indexer safety", () => {
     const stashDir = currentStashDir;
     setSecret(path.join(stashDir, "secrets", "demo"), Buffer.from(SECRET_VALUE));
 
-    const { stdout, code } = await withEnv({ AKM_BUNDLE_DIR: stashDir }, () =>
+    const { stdout, code } = await withBundle(stashDir, () =>
       runCliCapture(["show", "secrets/demo", "--format", "json"]),
     );
     expect(code).toBe(0);

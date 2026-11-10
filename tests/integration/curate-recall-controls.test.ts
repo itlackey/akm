@@ -11,6 +11,10 @@ import { saveConfig } from "../../src/core/config/config";
 import { akmIndex } from "../../src/indexer/indexer";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, withMockedFetch } from "../_helpers/sandbox";
 
+// The CLI prints compact JSON to a pipe; the API keeps its pretty-printed string. The documents are what must match.
+function expectSameJson(actual: string, expected: string) {
+  expect(JSON.parse(actual)).toEqual(JSON.parse(expected));
+}
 let storage: IsolatedAkmStorage;
 const CLI = path.resolve(import.meta.dir, "../../src/cli.ts");
 function put(ref: string, fields: Record<string, unknown> = {}, body = "quartz deployment procedure", root?: string) {
@@ -25,7 +29,7 @@ function put(ref: string, fields: Record<string, unknown> = {}, body = "quartz d
   return file;
 }
 function cli(flags: string[] = [], query = "quartz deployment") {
-  return spawnSync("bun", [CLI, "-q", "--detail", "agent", "curate", query, ...flags], {
+  return spawnSync("bun", [CLI, "-q", "--detail", "normal", "curate", query, ...flags], {
     encoding: "utf8",
     env: { ...process.env },
   });
@@ -66,7 +70,7 @@ for (const belief of [undefined, "current", "all", "historical"] as const) {
     const flags = ["--limit", "20", ...(belief ? ["--belief", belief] : [])];
     const out = cli(flags);
     expect(out.status).toBe(0);
-    expect(await curate("quartz deployment", options)).toBe(out.stdout);
+    expectSameJson(await curate("quartz deployment", options), out.stdout);
     const packed = await packCuratedHits(result, 4000);
     expect(packed.items.map((x) => x.ref).sort()).toEqual(expected.sort());
     for (const item of packed.items.filter((x) => historical.includes(x.beliefState as (typeof historical)[number]))) {
@@ -97,7 +101,8 @@ for (const key of ["user", "agent", "run", "channel"] as const) {
       result.items[0] && "supportRefs" in result.items[0] ? result.items[0].supportRefs?.map((x) => x.ref) : [],
     ).toEqual(["knowledge/support"]);
     expect((await packCuratedHits(result, 4000)).items.map((x) => x.ref)).toEqual(["knowledge/match"]);
-    expect(await curate("quartz deployment", { filters: { [key]: "alice" } })).toBe(
+    expectSameJson(
+      await curate("quartz deployment", { filters: { [key]: "alice" } }),
       cli(["--filter", `${key}=alice`]).stdout,
     );
     expect(refs(await akmCurate({ query: "quartz deployment", filters: { [key]: "nobody" } }))).toEqual([]);
@@ -110,7 +115,8 @@ test("a repeated scope key matches any value, with CLI/API parity", async () => 
   await akmIndex({ stashDir: storage.stashDir, full: true });
   const filters = { user: ["alice", "bob"], channel: undefined };
   expect(refs(await akmCurate({ query: "quartz deployment", filters })).sort()).toEqual(["knowledge/a", "knowledge/b"]);
-  expect(await curate("quartz deployment", { filters })).toBe(
+  expectSameJson(
+    await curate("quartz deployment", { filters }),
     cli(["--filter", "user=alice", "--filter", "user=bob"]).stdout,
   );
 });
@@ -155,7 +161,7 @@ test("compound scope, source/type combinations and duplicate source identities",
       ...Object.entries(scope).flatMap(([k, v]) => ["--filter", `${k}=${v}`]),
     ]);
     expect(out.status).toBe(0);
-    expect(await curate("quartz deployment", opts)).toBe(out.stdout);
+    expectSameJson(await curate("quartz deployment", opts), out.stdout);
   }
 });
 test("stale outgoing/incoming links are filtered in current; all labels historical context", async () => {
@@ -282,7 +288,7 @@ test("an empty filter value selects assets without the key, with CLI/API parity"
   await akmIndex({ stashDir: storage.stashDir, full: true });
   const out = cli(["--filter", "user="]);
   expect(out.status).toBe(0);
-  expect(await curate("quartz deployment", { filters: { user: "" } })).toBe(out.stdout);
+  expectSameJson(await curate("quartz deployment", { filters: { user: "" } }), out.stdout);
   expect(refs(await akmCurate({ query: "quartz deployment", filters: { user: "" } }))).toEqual(["knowledge/open"]);
 });
 
@@ -302,7 +308,7 @@ test("repeated --from searches several bundles, in either spelling, and curate r
     registries: [],
   });
   await akmIndex({ stashDir: storage.stashDir, full: true });
-  for (const detail of ["agent", "full"]) {
+  for (const detail of ["normal", "full"]) {
     const out = spawnSync(
       "bun",
       [CLI, "-q", "--detail", detail, "curate", "quartz deployment", "--from", "one", "--from=two", "--limit", "10"],
@@ -311,7 +317,7 @@ test("repeated --from searches several bundles, in either spelling, and curate r
     expect(out.status).toBe(0);
     const json = JSON.parse(out.stdout);
     expect(json.bundles).toEqual(["one", "two"]);
-    expect(json.items).toHaveLength(2);
+    expect(json.results).toHaveLength(2);
   }
   const result = await akmCurate({ query: "quartz deployment", source: ["one", "two"], limit: 10 });
   expect(refs(result)).toEqual(["one//knowledge/a", "two//knowledge/b"]);
@@ -334,17 +340,19 @@ test("search default current, explicit all/historical, browse and prefix share t
   for (const query of ["quartz deployment", "", "memories/"]) {
     const defaultResult = await akmSearch({ query, limit: 20 });
     const current = await akmSearch({ query, limit: 20, belief: "current" });
-    expect(defaultResult.hits.map((x) => ("ref" in x ? x.ref : x.id))).toEqual(
-      current.hits.map((x) => ("ref" in x ? x.ref : x.id)),
+    expect(defaultResult.results.map((x) => ("ref" in x ? x.ref : x.id))).toEqual(
+      current.results.map((x) => ("ref" in x ? x.ref : x.id)),
     );
     expect(
-      defaultResult.hits.some(
+      defaultResult.results.some(
         (x) => "beliefState" in x && historical.includes(x.beliefState as (typeof historical)[number]),
       ),
     ).toBe(false);
-    expect((await akmSearch({ query, limit: 20, belief: "all" })).hits.length).toBeGreaterThan(current.hits.length);
+    expect((await akmSearch({ query, limit: 20, belief: "all" })).results.length).toBeGreaterThan(
+      current.results.length,
+    );
     expect(
-      (await akmSearch({ query, limit: 20, belief: "historical" })).hits.every(
+      (await akmSearch({ query, limit: 20, belief: "historical" })).results.every(
         (x) => "beliefState" in x && historical.includes(x.beliefState as (typeof historical)[number]),
       ),
     ).toBe(true);
@@ -359,8 +367,8 @@ test("registry/all source and free-form type controls keep CLI/API parity withou
       const options = { source, type, filters: { user: "alice" } };
       const out = cli(["--from", source, "--type", type, "--filter", "user=alice"]);
       expect(out.status).toBe(0);
-      expect(await curate("quartz deployment", options)).toBe(out.stdout);
-      const items = JSON.parse(out.stdout).items;
+      expectSameJson(await curate("quartz deployment", options), out.stdout);
+      const items = JSON.parse(out.stdout).results;
       expect(items.length).toBe(source === "all" && type === "knowledge" ? 1 : 0);
     }
   }

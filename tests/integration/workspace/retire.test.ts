@@ -13,11 +13,10 @@ import {
 } from "../../../src/commands/proposal/repository";
 import { akmSearch } from "../../../src/commands/read/search";
 import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
-import { renameBundle } from "../../../src/core/bundle-rename";
 import { saveConfig } from "../../../src/core/config/config";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { writeLockfile } from "../../../src/integrations/lockfile";
-import type { SchedulerBackend } from "../../../src/tasks/backends/types";
+import { renameBundle } from "../../../src/sources/bundle-rename";
 import { assets, documents } from "../../../src/workspace";
 import { git, makeGitRepo } from "../../_helpers/git";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
@@ -33,7 +32,6 @@ beforeEach(async () => {
     semanticSearchMode: "off",
     bundles: { stash: { path: storage.stashDir, writable: true } },
     defaultBundle: "stash",
-    defaultWriteTarget: "stash",
     registries: [],
   });
   fs.writeFileSync(file(), body, { mode: 0o640 });
@@ -67,7 +65,7 @@ test("retire is an accepted retire proposal; revert restores bytes, mode and bel
   const data = tombstone(dir!);
   expect(data).toMatchObject({ reason: "manual", previousBeliefState: "deprecated", proposalId: receipt.proposalId });
   expect(typeof data.retiredAt).toBe("string");
-  expect((await akmSearch({ query: "quartz", skipLogging: true })).hits).toHaveLength(0);
+  expect((await akmSearch({ query: "quartz", skipLogging: true })).results).toHaveLength(0);
 
   expect((await revert(receipt)).proposal.status).toBe("reverted");
   expect(fs.readFileSync(file(), "utf8")).toBe(body);
@@ -83,7 +81,7 @@ test("memory retirement and revert carry its derived twin", async () => {
   const receipt = await retireAsset(ref, hash());
   expect(receipt.archiveDirs).toHaveLength(2);
   expect(fs.existsSync(twin)).toBe(false);
-  expect((await akmSearch({ query: "quartz", skipLogging: true })).hits).toHaveLength(0);
+  expect((await akmSearch({ query: "quartz", skipLogging: true })).results).toHaveLength(0);
   await revert(receipt);
   expect(fs.existsSync(twin)).toBe(true);
   expect(fs.readFileSync(file(), "utf8")).toBe(body);
@@ -112,21 +110,7 @@ test("revert refuses to overwrite newer work at the original path", async () => 
   expect(fs.existsSync(dir!)).toBe(true);
 });
 
-const noTasks: SchedulerBackend = {
-  name: "cron",
-  list: () => [],
-  install: () => {
-    throw new Error("No task installation expected");
-  },
-  uninstall: () => {
-    throw new Error("No task removal expected");
-  },
-  setEnabled: () => {
-    throw new Error("No task toggle expected");
-  },
-};
-const rename = () =>
-  renameBundle("stash", "renamed", {}, { backend: noTasks, syncTasks: async () => ({ ok: true }) as never });
+const rename = () => renameBundle("stash", "renamed", {}, { syncTasks: async () => ({ ok: true }) as never });
 
 test("revert still works after the bundle is renamed, for a manual retirement and for an ordinary proposal", async () => {
   const receipt = await retireAsset(ref, hash());

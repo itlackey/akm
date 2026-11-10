@@ -14,9 +14,9 @@ const LegacySchedulerActivationSchema = z
 export const SchedulerConfigSchema = z
   .object({
     /**
-     * Fully-qualified refs (`bundle//tasks/x`, `bundle//workflows/y`) this host
-     * schedules. Absent when the host has never chosen: `akm task sync` then
-     * takes the akm-written rows already installed as the choice and writes it.
+     * Fully-qualified refs (`bundle//tasks/x`) this host runs on schedule:
+     * `akm task dispatch` runs the ones whose `schedule:` is due. Absent when
+     * the host has never chosen, which schedules nothing.
      */
     enabled: z.array(z.union([nonEmptyString, LegacySchedulerActivationSchema])).optional(),
   })

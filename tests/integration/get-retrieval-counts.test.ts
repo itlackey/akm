@@ -7,11 +7,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { getLastUseMsByRef } from "../../src/commands/improve/salience";
 import { recomputeUtilityScores } from "../../src/indexer/indexer";
 import { deriveEntryProvenance } from "../../src/indexer/installations";
-import { ensureUsageEventsSchema } from "../../src/indexer/usage/usage-events";
 import type { Database as AkmDatabase } from "../../src/storage/database";
 import { openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { getItemRefById, upsertEntry } from "../../src/storage/repositories/index-entries-repository";
 import { getRetrievalCounts, upsertUtilityScore } from "../../src/storage/repositories/index-utility-repository";
+import { ensureUsageEventsSchema } from "../_helpers/usage-events";
 
 /**
  * Unit coverage for getRetrievalCounts (db.ts).

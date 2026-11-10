@@ -12,13 +12,13 @@ const catalog = path.join(root, "catalog");
 fs.mkdirSync(path.join(stash, "knowledge"), { recursive: true });
 fs.mkdirSync(path.join(catalog, "knowledge"), { recursive: true });
 fs.writeFileSync(path.join(catalog, "knowledge", "reference.md"), "# Reference\nSynthetic catalog content.\n");
-fs.mkdirSync(process.env.AKM_CONFIG_DIR, { recursive: true });
+const configDir = path.join(process.env.XDG_CONFIG_HOME, "akm");
+fs.mkdirSync(configDir, { recursive: true });
 fs.writeFileSync(
-  path.join(process.env.AKM_CONFIG_DIR, "config.json"),
+  path.join(configDir, "config.json"),
   JSON.stringify({
     bundles: { stash: { path: stash, writable: true }, catalog: { path: catalog, writable: false } },
     defaultBundle: "stash",
-    defaultWriteTarget: "stash",
     semanticSearchMode: "off",
   }),
 );
@@ -50,7 +50,6 @@ for (const name of [
   "proposals",
   "sensitive",
   "setup",
-  "tasks",
 ])
   assert.equal(typeof workspace[name], "object", name);
 for (const name of [
@@ -80,7 +79,7 @@ assert.equal(created.shape, undefined);
 assert.ok(
   fs.readFileSync(path.join(stash, "knowledge", "desktop-note.md"), "utf8").includes("Synthetic workspace evidence"),
 );
-assert.ok((await assets.search({ q: "Synthetic", bundle: "stash" })).hits.length > 0);
+assert.ok((await assets.search({ q: "Synthetic", bundle: "stash" })).results.length > 0);
 const source = await documents.readSource({ ref: "stash//knowledge/desktop-note" });
 assert.equal(source.type, "knowledge");
 assert.equal(source.revision.length, 64);

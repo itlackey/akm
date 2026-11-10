@@ -99,17 +99,17 @@ verify_model_surface() {
 	local root="$CANDIDATE_DIR/model-surface"
 	local out status
 
-	# The AKM_*_DIR overrides beat HOME and XDG_* (src/core/paths.ts), so a
-	# caller's are dropped, as the test preload does: otherwise these commands
-	# read and write that config.
+	# A caller's AKM_CONFIG_FILE beats HOME and XDG_*, and the retired location
+	# variables stop akm (src/core/paths.ts), so they are dropped, as the test
+	# preload does.
 	akm_in() {
 		local scenario="$1"
 		shift
-		env -u AKM_CONFIG_DIR -u AKM_DATA_DIR -u AKM_STATE_DIR -u AKM_CACHE_DIR \
+		env -u AKM_CONFIG_FILE -u AKM_BUNDLE_DIR \
+			-u AKM_CONFIG_DIR -u AKM_DATA_DIR -u AKM_STATE_DIR -u AKM_CACHE_DIR \
 			HOME="$root/$scenario/home" \
 			XDG_CONFIG_HOME="$root/$scenario/config" XDG_DATA_HOME="$root/$scenario/data" \
 			XDG_CACHE_HOME="$root/$scenario/cache" XDG_STATE_HOME="$root/$scenario/state" \
-			AKM_BUNDLE_DIR="$root/$scenario/bundle" \
 			"$PROJECT_ROOT/dist/akm" "$@"
 	}
 
@@ -132,17 +132,17 @@ verify_model_surface() {
 	}
 
 	mkdir -p "$root/connection" "$root/harness"
-	expect "0" '"shape": "setup"' "setup --endpoint" \
+	expect "0" '"shape":"setup"' "setup --endpoint" \
 		connection setup --yes --no-init --no-probe --endpoint http://127.0.0.1:9/v1
-	expect "0" '"model": "smoke-model"' "models set" connection models set fast smoke-model --no-probe
-	expect "0" '"fast": "smoke-model"' "models" connection models --no-probe
-	expect "0 4" '"type": "connection"' "health --no-probe on a connection" connection health --no-probe
-	expect "0" '"type": "connection"' "info on a connection" connection info
+	expect "0" '"model":"smoke-model"' "models set" connection models set fast smoke-model --no-probe
+	expect "0" '"fast":"smoke-model"' "models" connection models --no-probe
+	expect "0 4" '"type":"connection"' "health --no-probe on a connection" connection health --no-probe
+	expect "0" '"type":"connection"' "info on a connection" connection info
 
 	expect "0" "" "config set harnesses.claude" harness config set harnesses.claude '{}' --silent
 	expect "78" 'akm setup' "models with no connection" harness models --no-probe
-	expect "0 4" '"type": "harness"' "health --no-probe on a harness" harness health --no-probe
-	expect "0" '"type": "harness"' "info on a harness" harness info
+	expect "0 4" '"type":"harness"' "health --no-probe on a harness" harness health --no-probe
+	expect "0" '"type":"harness"' "info on a harness" harness info
 }
 
 # Release acceptance for the packaged artifact. Lint, typecheck, the unit and
@@ -154,16 +154,10 @@ run_step "Workflow Syntax" validate_workflow_syntax
 run_step "Build Package" bun run build
 run_step \
 	"Verify npm bin target" \
-	node -e 'const fs = require("node:fs"); const pkg = require("./package.json"); const bins = [["akm", "dist/akm", "cli.js", "cli-node.mjs"], ["akm-migrate", "dist/akm-migrate", "scripts/akm-migrate.js"]]; for (const [name, expected, bunEntry, nodeEntry] of bins) { const actual = pkg.bin?.[name]; if (actual !== expected) { console.error(`npm bin ${name} must point at ${expected}, got ${actual ?? "<undefined>"}`); process.exit(1); } if (!fs.existsSync(actual)) { console.error(`Missing npm bin target: ${actual}`); process.exit(1); } if (!fs.existsSync(`dist/${bunEntry}`)) { console.error(`Missing bundled entry: dist/${bunEntry}`); process.exit(1); } const entry = fs.readFileSync(actual, "utf8"); if (!entry.startsWith("#!/usr/bin/env node")) { console.error(`npm bin ${name} must expose Node to npm platform shims`); process.exit(1); } if (!entry.includes(`new URL("./${bunEntry}", import.meta.url)`)) { console.error(`npm bin ${name} must select its Bun entry`); process.exit(1); } if (nodeEntry && !entry.includes(`await import("./${nodeEntry}")`)) { console.error(`npm bin ${name} must retain its Node fallback`); process.exit(1); } if (!nodeEntry && entry.includes("migrate-storage-node.mjs")) { console.error(`npm bin ${name} must not retain the removed Node fallback`); process.exit(1); } } if (!fs.existsSync("dist/cli-node.mjs")) { console.error("Missing Node wrapper: dist/cli-node.mjs"); process.exit(1); } if (pkg.bin?.["akm-migrate-storage"] !== undefined) { console.error("Removed akm-migrate-storage bin is still declared"); process.exit(1); } for (const removed of ["dist/akm-migrate-storage", "dist/migrate-storage-node.mjs", "dist/scripts/migrate-storage.js"]) { if (fs.existsSync(removed)) { console.error(`Removed migration artifact still exists: ${removed}`); process.exit(1); } } if (pkg.engines?.node !== ">=22") { console.error(`package engines.node must be >=22, got ${pkg.engines?.node ?? "<undefined>"}`); process.exit(1); } if (fs.existsSync("dist/tests")) { console.error("Publish build should not emit dist/tests"); process.exit(1); }'
-	run_step \
-		"Verify task migration bundle" \
-		node -e 'const { spawnSync } = require("node:child_process"); const result = spawnSync("./dist/akm-migrate", ["--help"], { encoding: "utf8" }); if (result.error || result.status !== 0) { console.error(result.error?.message ?? result.stderr); process.exit(1); } if (!result.stdout.includes("Usage: akm-migrate <command>") || !result.stdout.includes("state.db")) { console.error("Packaged migrator does not expose the combined status/apply surface"); process.exit(1); }'
+	node -e 'const fs = require("node:fs"); const pkg = require("./package.json"); const bins = [["akm", "dist/akm", "cli.js", "cli-node.mjs"]]; for (const [name, expected, bunEntry, nodeEntry] of bins) { const actual = pkg.bin?.[name]; if (actual !== expected) { console.error(`npm bin ${name} must point at ${expected}, got ${actual ?? "<undefined>"}`); process.exit(1); } if (!fs.existsSync(actual)) { console.error(`Missing npm bin target: ${actual}`); process.exit(1); } if (!fs.existsSync(`dist/${bunEntry}`)) { console.error(`Missing bundled entry: dist/${bunEntry}`); process.exit(1); } const entry = fs.readFileSync(actual, "utf8"); if (!entry.startsWith("#!/usr/bin/env node")) { console.error(`npm bin ${name} must expose Node to npm platform shims`); process.exit(1); } if (!entry.includes(`new URL("./${bunEntry}", import.meta.url)`)) { console.error(`npm bin ${name} must select its Bun entry`); process.exit(1); } if (nodeEntry && !entry.includes(`await import("./${nodeEntry}")`)) { console.error(`npm bin ${name} must retain its Node fallback`); process.exit(1); } if (!nodeEntry && entry.includes("migrate-storage-node.mjs")) { console.error(`npm bin ${name} must not retain the removed Node fallback`); process.exit(1); } } if (!fs.existsSync("dist/cli-node.mjs")) { console.error("Missing Node wrapper: dist/cli-node.mjs"); process.exit(1); } if (pkg.bin?.["akm-migrate-storage"] !== undefined) { console.error("Removed akm-migrate-storage bin is still declared"); process.exit(1); } for (const removed of ["dist/akm-migrate-storage", "dist/migrate-storage-node.mjs", "dist/scripts/migrate-storage.js"]) { if (fs.existsSync(removed)) { console.error(`Removed migration artifact still exists: ${removed}`); process.exit(1); } } if (pkg.engines?.node !== ">=22") { console.error(`package engines.node must be >=22, got ${pkg.engines?.node ?? "<undefined>"}`); process.exit(1); } if (fs.existsSync("dist/tests")) { console.error("Publish build should not emit dist/tests"); process.exit(1); }'
 run_step \
-	"Verify migration runtime entries" \
-	node -e 'const fs = require("node:fs"); const launcher = fs.readFileSync("dist/akm-migrate", "utf8"); for (const entry of ["scripts/akm-migrate.js", "scripts/akm-migrate-node.js"]) { if (!fs.existsSync(`dist/${entry}`)) { console.error(`Missing migration runtime entry: dist/${entry}`); process.exit(1); } if (!launcher.includes(`new URL("./${entry}", import.meta.url)`)) { console.error(`Migration launcher does not select ${entry}`); process.exit(1); } }'
-	run_step \
-		"Verify Node task migration bundle" \
-		node -e 'const { spawnSync } = require("node:child_process"); const result = spawnSync(process.execPath, ["./dist/scripts/akm-migrate-node.js", "--help"], { encoding: "utf8" }); if (result.error || result.status !== 0) { console.error(result.error?.message ?? result.stderr); process.exit(1); } if (!result.stdout.includes("Usage: akm-migrate <command>") || !result.stdout.includes("state.db")) { console.error("Packaged Node migrator does not expose the combined status/apply surface"); process.exit(1); }'
+	"Verify Node task migration bundle" \
+	node -e 'const { spawnSync } = require("node:child_process"); const result = spawnSync(process.execPath, ["./dist/scripts/akm-migrate-node.js", "--help"], { encoding: "utf8" }); if (result.error || result.status !== 0) { console.error(result.error?.message ?? result.stderr); process.exit(1); } if (!result.stdout.includes("Usage: akm-migrate <command>") || !result.stdout.includes("state.db")) { console.error("Packaged Node migrator does not expose the combined status/apply surface"); process.exit(1); }'
 run_step "Verify model surface" verify_model_surface
 # The compiled standalone binary's first run of akm's own runtime, with the OpenCode binary it runs fetched once into a cache the test shares (the registry is the one step that needs the network) and nothing downloaded for the provider.
 run_step \
@@ -176,8 +170,6 @@ run_step \
 	tar -tzf "$PACKAGE_CANDIDATE" \
 	package/schemas/akm-task.json \
 	package/docs/reference/tasks.md \
-	package/docs/migration/v0.9.1-to-v0.9.2.md \
-	package/docs/migration/release-notes/0.9.2.md \
 	package/docs/reference/workflow-schema.md
 if [ "$SKIP_DOCKER" = false ]; then
 	run_step "Docker Install Matrix" "$SCRIPT_DIR/docker/run-docker-tests.sh"

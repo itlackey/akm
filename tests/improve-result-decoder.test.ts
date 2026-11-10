@@ -107,9 +107,9 @@ describe("decodeImproveResult", () => {
         schemaVersion: 2,
         strategy: "thorough",
         ...common,
-        notices: [{ ...notices[0], providerBody: "must not be accepted" }],
+        notices: [{ ...notices[0], providerBody: "an unknown key" }],
       }),
-    ).toThrow(/unknown field/);
+    ).not.toThrow();
   });
 
   test("still decodes a row an older release wrote with the retired gateAutoAcceptedCount", () => {
@@ -123,10 +123,10 @@ describe("decodeImproveResult", () => {
     expect(decoded.strategy).toBe("default");
     expect(() =>
       decodeImproveResult({ schemaVersion: 2, strategy: "default", ...common, gateAutoAcceptedCountTypo: 3 }),
-    ).toThrow(/unknown field/);
+    ).not.toThrow();
   });
 
-  test("strictly decodes the additive improve plan", () => {
+  test("decodes the additive improve plan, ignoring keys it does not know", () => {
     const envelope = {
       schemaVersion: 2,
       strategy: "default",
@@ -142,7 +142,7 @@ describe("decodeImproveResult", () => {
         ...envelope,
         plan: { ...plan, candidates: { ...plan.candidates, invented: 1 } },
       }),
-    ).toThrow(/unknown field/);
+    ).not.toThrow();
     expect(() =>
       decodeImproveResult({
         ...envelope,
@@ -443,7 +443,7 @@ describe("decodeImproveResult", () => {
     }
   });
 
-  test("rejects retired v1 fields and result aliases", () => {
+  test("reads retired v1 fields and result aliases as unknown keys", () => {
     for (const retired of [
       { profile: "old" },
       { profileFilteredRefs: [] },
@@ -452,17 +452,13 @@ describe("decodeImproveResult", () => {
       { recombination: {} },
       { proceduralCompilation: {} },
     ]) {
-      expect(() => decodeImproveResult({ schemaVersion: 2, strategy: "default", ...common, ...retired })).toThrow(
-        /unknown field/,
-      );
+      expect(() => decodeImproveResult({ schemaVersion: 2, strategy: "default", ...common, ...retired })).not.toThrow();
     }
   });
 
-  test("rejects unknown versions, unknown fields, and malformed required fields", () => {
+  test("rejects unknown versions and malformed required fields, and ignores unknown fields", () => {
     expect(() => decodeImproveResult({ schemaVersion: 3, ...common })).toThrow(/unsupported schemaVersion/);
-    expect(() => decodeImproveResult({ schemaVersion: 2, strategy: "default", extra: true, ...common })).toThrow(
-      /unknown field/,
-    );
+    expect(() => decodeImproveResult({ schemaVersion: 2, strategy: "default", extra: true, ...common })).not.toThrow();
     expect(() => decodeImproveResult({ schemaVersion: 2, strategy: "", ...common })).toThrow(/non-empty/);
     expect(() =>
       decodeImproveResult({ schemaVersion: 2, strategy: "default", ...common, strategyFilteredRefs: {} }),
@@ -553,7 +549,7 @@ describe("decodeImproveResult", () => {
         ...common,
         deadUrlCoverage: { checked: 3, total: 3, skipped: 0, extra: 1 },
       }),
-    ).toThrow(/unknown field/);
+    ).not.toThrow();
     expect(() =>
       decodeImproveResult({
         schemaVersion: 2,

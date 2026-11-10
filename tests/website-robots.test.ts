@@ -5,13 +5,13 @@
 /**
  * P1 — robots.txt compliance: pure-function and policy-layer unit tests.
  *
- * Authoritative spec: docs/plans/specs/p1-robots.md. Row IDs in test names
+ * Row IDs in test names
  * (P-xx, D-xx, M-xx, L-xx, F-xx, G-xx) refer to that spec's behavior tables
  * (§4.1–§4.7) so failures can be traced back to the exact requirement.
  *
  * No real network: `loadRobotsTxt` tests go through `withMockedFetch`, and
  * every non-IP-literal hostname passes an injected `resolveHostname` stub so
- * no real DNS lookup ever runs (mirrors tests/integration/website-ssrf.test.ts).
+ * no real DNS lookup ever runs (mirrors tests/website-fetch-safety.test.ts).
  */
 import { beforeEach, describe, expect, test } from "bun:test";
 import { ConfigError, UsageError } from "../src/core/errors";
@@ -545,7 +545,7 @@ describe("createAllowAllRobotsPolicy", () => {
 // ── §4.5 loadRobotsTxt (F-01…F-12) ──────────────────────────────────────────
 
 const ROBOTS_URL = "https://example.test/robots.txt";
-// No real DNS: a fixed public-looking answer, matching website-ssrf.test.ts's
+// No real DNS: a fixed public-looking answer, matching website-fetch-safety.test.ts's
 // resolverReturning() pattern.
 const resolveHostname = async () => ["93.184.216.34"];
 

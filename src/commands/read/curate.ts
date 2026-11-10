@@ -20,7 +20,7 @@
 import fs from "node:fs";
 import { parseBundleRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
-import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
+import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { nonTaskInput } from "../../core/non-task-input";
 import type { ProjectView } from "../../core/projects";
@@ -84,7 +84,6 @@ export type CuratedStashItem = {
   parameters?: string[];
   run?: string;
   supportRefs?: CurateSupportRef[];
-  followUp: string;
   reason?: string;
   score?: number;
   beliefState?: string;
@@ -96,7 +95,6 @@ export type CuratedRegistryItem = {
   name: string;
   id: string;
   description?: string;
-  followUp: string;
   reason?: string;
   score?: number;
 };
@@ -204,9 +202,7 @@ function logCurateEvent(
         });
       }
     }, TELEMETRY_BUSY_TIMEOUT_MS);
-  } catch (err) {
-    rethrowIfTestIsolationError(err);
-  }
+  } catch {}
 }
 
 export async function akmCurate(options: CurateOptions): Promise<CurateResponse> {
@@ -321,7 +317,7 @@ export async function curateSearchResults(
   eventSource?: UsageEventSource,
   policy?: EvidencePolicy,
 ): Promise<CurateResponse> {
-  const allStashHits = result.hits.filter((hit): hit is SourceSearchHit => hit.type !== "registry");
+  const allStashHits = result.results.filter((hit): hit is SourceSearchHit => hit.type !== "registry");
   const registryHits = result.registryHits ?? [];
 
   // F3/R-018: `--type` NARROWS the candidate pool. The caller's search
@@ -469,7 +465,6 @@ async function enrichCuratedStashHit(
     ...(shown?.parameters?.length ? { parameters: shown.parameters } : {}),
     ...(shown?.run ? { run: shown.run } : {}),
     ...(supportRefs.length > 0 ? { supportRefs } : {}),
-    followUp: `akm show ${ref}`,
     ...(beliefState ? { beliefState } : {}),
     ...(matchBeliefFilter(beliefState, "historical")
       ? { reason: "Historical context; not current supporting authority." }
@@ -489,7 +484,6 @@ function buildCuratedRegistryItem(hit: RegistrySearchResultHit): CuratedRegistry
     name: hit.name,
     id: hit.id,
     ...(hit.description ? { description: hit.description } : {}),
-    followUp: hit.action ?? `akm bundle add ${hit.id}`,
     ...(hit.score !== undefined ? { score: hit.score } : {}),
   };
 }
