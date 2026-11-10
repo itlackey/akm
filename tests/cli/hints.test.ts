@@ -2,6 +2,44 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import { describe, expect, test } from "bun:test";
+import { feedbackCommand } from "../../src/commands/feedback-cli";
+import { showCommand } from "../../src/commands/read/search-cli";
+import { EMBEDDED_HINTS } from "../../src/output/cli-hints";
+
+/**
+ * #1259: agents used to discover a document's sections by showing a fragment
+ * that does not exist. What agents read now teaches the outline first:
+ * `akm show <ref> --detail brief` for the `toc`, then `akm show <ref>#<slug>`.
+ *
+ * Pure string assertions on the embedded hints, the workflow unit preamble and
+ * the `show` help; nothing is spawned or opened, so this belongs with the unit
+ * tests.
+ */
+
+import unitPreamble from "../../src/assets/prompts/workflow-unit-preamble.md" with { type: "text" };
+
+const fold = (text: string) => text.replace(/\s+/g, " ");
+
+describe("agent guidance on reading a large document (#1259)", () => {
+  for (const [name, text] of [
+    ["brief hints", EMBEDDED_HINTS],
+    ["workflow unit preamble", unitPreamble],
+  ] as const) {
+    test(`${name} send agents to the outline, then one section`, () => {
+      const prose = fold(text);
+      expect(prose).toContain("akm show <ref> --detail brief` returns its outline (`toc`, no body)");
+      expect(prose).toContain("akm show <ref>#<slug>");
+    });
+  }
+
+  test("`akm show` help names the outline", () => {
+    const args = showCommand.args as Record<string, { description?: string }>;
+    expect(args.ref?.description).toContain("`--detail brief` returns the outline (`toc`, each heading's slug)");
+    expect(args.ref?.description).not.toContain("unmatched");
+  });
+});
+
 /**
  * #999: the shipped agent hints told agents to record `--negative` "when it
  * fails", and agents read that as recording a failed `akm show`. The failure
@@ -12,10 +50,6 @@
  * Pure string assertions on the embedded hints and the flag help; nothing is
  * spawned or opened, so this belongs with the unit tests.
  */
-
-import { describe, expect, test } from "bun:test";
-import { feedbackCommand } from "../../src/commands/feedback-cli";
-import { EMBEDDED_HINTS } from "../../src/output/cli-hints";
 
 describe("shipped hints on recording feedback (#999)", () => {
   for (const [name, hints] of [["brief", EMBEDDED_HINTS]] as const) {
