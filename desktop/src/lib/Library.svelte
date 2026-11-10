@@ -416,20 +416,20 @@
       if (!signal.aborted) compareBusy = false;
     }
   }
-  function receiveAsset(event: CustomEvent<AssetRead>) {
-    loadedAsset = event.detail;
+  function receiveAsset(read: AssetRead) {
+    loadedAsset = read;
     locatedRef = ref;
   }
-  function beginCompare(event: CustomEvent<string>) {
-    selected = [event.detail];
+  function beginCompare(chosen: string) {
+    selected = [chosen];
     comparisonMode = true;
     // Continue in the user's current discovery view, rather than changing
     // Search readers into file-management sessions just to find a second page.
     if (inFiles && folderHref) void navigate(withReview(folderHref));
     else void navigate(searchHref(searchParams));
   }
-  function comparePair(event: CustomEvent<string[]>) {
-    selected = event.detail;
+  function comparePair(refs: string[]) {
+    selected = refs;
     comparisonMode = false;
     void navigate(compareHref());
   }
@@ -671,10 +671,10 @@
               filesHref={folderHref}
               {editHref}
               {readingHref}
-              on:loaded={receiveAsset}
-              on:compare={beginCompare}
-              on:comparePair={comparePair}
-              on:changed={() => {
+              onLoaded={receiveAsset}
+              onCompare={beginCompare}
+              onComparePair={comparePair}
+              onChanged={() => {
                 mutationRevision++;
                 if (!inFiles) void search();
               }}
@@ -731,10 +731,10 @@
       mode="search"
       filesHref={folderHref}
       {editHref}
-      on:loaded={receiveAsset}
-      on:compare={beginCompare}
-      on:comparePair={comparePair}
-      on:changed={() => {
+      onLoaded={receiveAsset}
+      onCompare={beginCompare}
+      onComparePair={comparePair}
+      onChanged={() => {
         mutationRevision++;
         if (!inFiles) void search();
       }}
