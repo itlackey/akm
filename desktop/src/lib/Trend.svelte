@@ -6,14 +6,21 @@
 
 <script lang="ts">
   import { countAxis } from "./client";
-  export let heading: string;
-  export let description: string;
-  export let labels: string[] = [];
-  export let series: Array<{ name: string; values: number[]; color: string }> = [];
-  $: axis = countAxis(Math.max(1, ...series.flatMap((s) => s.values)));
-  $: maximum = axis.maximum;
-  $: hasData = series.some((s) => s.values.some((value) => value > 0));
-  $: step = 640 / Math.max(1, labels.length);
+  let {
+    heading,
+    description,
+    labels = [],
+    series = [],
+  }: {
+    heading: string;
+    description: string;
+    labels?: string[];
+    series?: Array<{ name: string; values: number[]; color: string }>;
+  } = $props();
+  const axis = $derived(countAxis(Math.max(1, ...series.flatMap((s) => s.values))));
+  const maximum = $derived(axis.maximum);
+  const hasData = $derived(series.some((s) => s.values.some((value) => value > 0)));
+  const step = $derived(640 / Math.max(1, labels.length));
 </script>
 
 <section class="trend-section">
