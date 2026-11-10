@@ -399,12 +399,7 @@
             <div class="folder-tools">
               <button class="quiet" onclick={() => onSearch?.(bundleName)}
                 ><Icon name="search" size={16} />Search this bundle</button
-              ><input
-                type="search"
-                bind:value={filter}
-                aria-label="Filter this folder"
-                placeholder="Filter this folder"
-              />
+              ><label class="folder-filter">Filter this folder<input type="search" bind:value={filter} /></label>
             </div>
           </div>
           {#if listing && !listing.indexAvailable}<p class="notice">
@@ -614,6 +609,15 @@
     align-items: center;
     gap: 12px;
   }
+  /* The filter's name is shown: before the field, and above it where the tools stack on a phone. */
+  .folder-filter {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+    font-size: 13px;
+    white-space: nowrap;
+  }
   .folder-heading input {
     flex: none;
     max-width: 200px;
@@ -751,6 +755,10 @@
     .folder-tools .quiet {
       align-self: start;
       padding-inline: 0;
+    }
+    .folder-filter {
+      display: grid;
+      gap: 4px;
     }
     .folder-heading input {
       max-width: none;

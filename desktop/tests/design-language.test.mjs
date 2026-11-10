@@ -370,6 +370,18 @@ test("keyboard order, focus hand-back and names at the shortest windows", { time
     );
     assert.equal(headings.length, 1, `${state}: one h1 on the page, found ${JSON.stringify(headings)}`);
   }
+  // In Files: the folder filter has a label that is shown, and the icon-only button says what it is on hover too.
+  await open(`${files}knowledge`, ".folder-table");
+  const filterLabelled = await page
+    .locator('.folder-tools input[type="search"]')
+    .evaluate((input) => [...input.labels].some((label) => label.getClientRects().length && label.textContent.trim()));
+  assert.ok(filterLabelled, "Filter this folder has a visible label");
+  await expect(page.getByRole("searchbox", { name: "Filter this folder", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Other file types", exact: true })).toHaveAttribute(
+    "title",
+    "Other file types",
+  );
+
   await open("/settings/bundles", "#configured-bundles");
   const card = await tabStops(page, "form.settings-card");
   assert.ok(card.length >= 4, `the add-bundle form has its controls in the tab order (${card.length})`);
