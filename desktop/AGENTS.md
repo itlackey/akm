@@ -27,7 +27,7 @@ Desktop replaces `akm ui` and akm's HTML output, which are removed; the CLI keep
 
 ## Dependencies
 
-`electron-updater` is imported only by `electron/main.mjs`, and the web process (`server/`, `src/`) never needs it.
+`electron-updater` is imported only by `electron/main.mjs` and `electron/release-feed.mjs`, and the web process (`server/`, `src/`) never needs it.
 It stays in `dependencies` anyway: the packager stages a production-only install, so a devDependency would be missing
 from the packaged app. `akm-web` (`scripts/package-web.mjs`) is that web-process-only distribution and leaves it out of its manifest.
 

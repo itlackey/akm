@@ -15,13 +15,15 @@
  * }} UpdateStatus
  */
 
+import { HighestReleaseProvider, releases } from "./release-feed.mjs";
+
 const SIX_HOURS = 6 * 60 * 60 * 1000;
 
 /**
- * Updates come from this repository's GitHub releases (electron-updater's `github` provider; the repository is
- * written into the app by package.mjs). The release line followed is the person's saved choice, else the stage of the
- * embedded akm version: a stable build follows stable releases only, a build of a stage release (alpha, beta, rc)
- * follows prereleases and stable releases.
+ * Updates come from this repository's GitHub releases (`HighestReleaseProvider`, electron-updater's GitHub provider
+ * with the release line's highest version). The release line followed is the person's saved choice, else the stage
+ * of the embedded akm version: a stable build follows stable releases only, a build of a stage release (alpha, beta,
+ * rc) follows prereleases and stable releases.
  *
  * macOS cannot apply an unsigned update, and akm does not sign its macOS packages, so there the app only reports that
  * one exists.
@@ -42,18 +44,13 @@ export function createUpdater({ autoUpdater, version, platform, unsupportedReaso
   /** @type {UpdateChannel} */
   let channel = embeddedPrerelease ? "prerelease" : "stable";
   const configure = () => {
-    const prerelease = channel === "prerelease";
-    autoUpdater.allowPrerelease = prerelease;
-    // akm's stages are one line of releases, each with its own number. electron-updater's GitHub provider follows a
-    // stage by name: beta skips alpha, and rc follows only rc, so an rc build never reaches the next stable release.
-    // As "alpha" it takes the newest alpha, beta or stable release; rc releases are not offered. "latest" is the
-    // default channel file (latest*.yml), so the same setter puts a build back on stable releases only. Setting a
-    // channel also allows downgrades, which this must not: a prerelease build that chooses stable stays until the next
-    // stable release.
-    autoUpdater.channel = prerelease ? "alpha" : "latest";
+    // Stable releases are GitHub's latest release; stable and prerelease releases are the highest version in the
+    // release feed. Never a downgrade: a prerelease build that chooses stable stays until the next stable release.
+    autoUpdater.allowPrerelease = channel === "prerelease";
     autoUpdater.allowDowngrade = false;
   };
   configure();
+  if (supported) autoUpdater.setFeedURL({ provider: "custom", updateProvider: HighestReleaseProvider, ...releases });
   autoUpdater.autoDownload = canInstall;
   autoUpdater.autoInstallOnAppQuit = canInstall;
   autoUpdater.on("update-available", (info) => {
