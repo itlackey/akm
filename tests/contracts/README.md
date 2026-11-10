@@ -21,9 +21,7 @@ section names are intentionally absent from this active suite.
 | --- | --- |
 | `quality-rules.test.ts` | Runtime quality normalization and proposed filtering |
 | `configuration.test.ts` | Connection, harness and strategy schema, source write constraints, and the retired-selector scan over the active docs |
-| `runtime-boundaries.test.ts` | Current search/show/write/storage architecture |
 | `module-boundaries.test.ts` | core/ and storage/ do not import upward beyond a shrink-only allowlist |
-| `extension-points.test.ts` | Supported source and registry provider boundaries |
 | `improve-cli-surface.test.ts` | Current improvement CLI surface |
 | `response-schemas-strict.test.ts` | Every response schema akm sends is valid for a strict structured-output provider |
 | `runtime-port-boundary.test.ts` | Only `integrations/agent/runtime.ts` names the agent runtime's implementation, and the implementation reads no config |

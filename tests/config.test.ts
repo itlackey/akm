@@ -4,6 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import { setConfigValue } from "../src/commands/config";
 import { resolveImproveExecution } from "../src/commands/improve/execution";
+import { resolveImprovePlan } from "../src/commands/improve/improve-strategies";
+import { resolveQualityGateJudge } from "../src/commands/improve/stage";
+import { stripJsonComments } from "../src/core/common";
 import {
   DEFAULT_CONFIG,
   defaultConnection,
@@ -14,16 +17,27 @@ import {
   loadConfig,
   loadUserConfig,
   mutateConfig,
+  parseAndValidateConfigText,
   primaryBundlePath,
   resetConfigCache,
   saveConfig,
+  unknownConfigKeyPaths,
   updateConfig,
 } from "../src/core/config/config";
 import { backupExistingConfig, copyToConfigBackups } from "../src/core/config/config-io";
-import { EmbeddingConnectionConfigSchema } from "../src/core/config/config-schema";
+import {
+  AkmConfigSchema,
+  EmbeddingConnectionConfigSchema,
+  ImproveProcessConfigSchema,
+  ImproveProfileConfigSchema,
+  validateConfigShape,
+} from "../src/core/config/config-schema";
+import { isImproveAutonomyEnabled } from "../src/core/config/experimental";
 import { ConfigError } from "../src/core/errors";
+import { formatExtraParamsIssue, validateExtraParams } from "../src/core/extra-params";
 import { getCacheDir, getConfigDir, getConfigPath } from "../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
+import { resolveTarget } from "../src/integrations/agent/resolution";
 import { schedulerEnabledRefs } from "../src/tasks/activation-config";
 import {
   type Cleanup,
@@ -1170,5 +1184,336 @@ describe("getConfigValueSource", () => {
   test("reports 'default' for a key the local file does not set", () => {
     writeRawConfig(getConfigPath(), JSON.stringify({}));
     expect(getConfigValueSource("archiveRetentionDays")).toBe("default");
+  });
+});
+
+// #852: an asset's `extraParams` (a workflow unit's `extra_params:`) may not
+// shadow a setting akm manages, and the issue names the portable setting to use
+// instead. A connection no longer has `extraParams` at all: its request fields
+// are written directly and sent as written.
+
+function firstIssue(extraParams: Record<string, unknown>): string {
+  const issue = validateExtraParams(extraParams)[0];
+  if (!issue) throw new Error("expected extraParams to be refused");
+  return formatExtraParamsIssue("extraParams", issue);
+}
+
+describe("an extraParams key that shadows a portable setting is refused, naming the setting", () => {
+  test.each([
+    ["reasoning_effort", "none", "reasoningEffort"],
+    ["temperature", 0.2, "temperature"],
+    ["maxtokens", 512, "maxTokens"],
+    ["enable_thinking", true, "enableThinking"],
+  ])("extraParams.%s names %s", (key, value, field) => {
+    const message = firstIssue({ [key]: value });
+    expect(message).toContain("is protected by AKM");
+    expect(message).toContain(`set ${field} instead`);
+  });
+
+  test("a protected key with no portable equivalent is refused, and the error names the remedy", () => {
+    const message = firstIssue({ stream: true });
+    expect(message).toContain("stream is protected by AKM");
+    expect(message).toContain("AKM controls streaming internally");
+  });
+
+  test("credential-shaped keys are refused at any depth, inside arrays too", () => {
+    expect(validateExtraParams({ nested: { "API-Key": "leak" } })).toHaveLength(1);
+    expect(validateExtraParams({ provider: [{ auth: [{ API_KEY: "leak" }] }] })).toHaveLength(1);
+  });
+
+  test("chat_template_kwargs is the enableThinking setting's to send", () => {
+    expect(firstIssue({ chat_template_kwargs: { enable_thinking: true } })).toContain("set enableThinking instead");
+  });
+});
+
+/**
+ * D8 — the `experimental.improveAutonomy` opt-in key.
+ *
+ * Before D8 this key was documented but did not exist: it was absent from the
+ * schema, read nowhere in the runtime, and `akm config set
+ * experimental.improveAutonomy true` failed with `Unknown config key`. The
+ * documentation therefore inverted the safety posture — an operator could read
+ * that autonomy required an opt-in, never set the key, and conclude they were
+ * review-first while consolidate was deleting files.
+ *
+ * These pin the key's existence and its default. The gating behaviour itself is
+ * pinned by `tests/integration/improve-autonomy-gate.test.ts`, which asserts on
+ * the filesystem rather than on this flag.
+ */
+
+const BASE = {};
+
+describe("experimental.improveAutonomy schema", () => {
+  test("accepts the key and round-trips true", () => {
+    const parsed = AkmConfigSchema.parse({ ...BASE, experimental: { improveAutonomy: true } });
+    expect(parsed.experimental?.improveAutonomy).toBe(true);
+  });
+
+  test("accepts the key set to false", () => {
+    const parsed = AkmConfigSchema.parse({ ...BASE, experimental: { improveAutonomy: false } });
+    expect(parsed.experimental?.improveAutonomy).toBe(false);
+  });
+
+  test("rejects a non-boolean value rather than coercing it", () => {
+    expect(() => AkmConfigSchema.parse({ ...BASE, experimental: { improveAutonomy: "yes" } })).toThrow();
+  });
+
+  test("the whole section is optional", () => {
+    expect(() => AkmConfigSchema.parse(BASE)).not.toThrow();
+  });
+});
+
+describe("isImproveAutonomyEnabled", () => {
+  test("is OFF when the section is absent — autonomy is opt-in, never inferred", () => {
+    expect(isImproveAutonomyEnabled({})).toBe(false);
+  });
+
+  test("is OFF when the section exists but the key does not", () => {
+    expect(isImproveAutonomyEnabled({ experimental: {} })).toBe(false);
+  });
+
+  test("is OFF when explicitly false", () => {
+    expect(isImproveAutonomyEnabled({ experimental: { improveAutonomy: false } })).toBe(false);
+  });
+
+  test("is ON only when explicitly true", () => {
+    expect(isImproveAutonomyEnabled({ experimental: { improveAutonomy: true } })).toBe(true);
+  });
+});
+
+/** The three example configs the rework is specified by: each is the current form, loads unchanged and validates. */
+
+type Dict = Record<string, unknown>;
+
+describe("the example configs load unchanged and validate", () => {
+  const examples = path.join(import.meta.dir, "fixtures", "config-examples");
+
+  test.each(["1-basic", "2-harness", "3-power"])("%s.jsonc", (name) => {
+    const raw = JSON.parse(stripJsonComments(fs.readFileSync(path.join(examples, `${name}.jsonc`), "utf8"))) as Dict;
+    expect(AkmConfigSchema.safeParse({ semanticSearchMode: "off", ...raw }).success).toBe(true);
+    // Every key is one akm reads or a request field.
+    expect(unknownConfigKeyPaths({ ...raw })).toEqual([]);
+  });
+
+  test.each([
+    ["1-basic", "off"],
+    ["2-harness", "auto"],
+    ["3-power", "auto"],
+  ] as const)("%s.jsonc, loaded as written, reads semantic search as %s", (name, mode) => {
+    // The examples carry no semanticSearchMode: an `embedding` block alone says semantic search is wanted.
+    fs.mkdirSync(path.dirname(getConfigPath()), { recursive: true });
+    fs.copyFileSync(path.join(examples, `${name}.jsonc`), getConfigPath());
+    resetConfigCache();
+    expect(loadConfig().semanticSearchMode).toBe(mode);
+    resetConfigCache();
+  });
+
+  test("3-power.jsonc, loaded from a file: triage judges on the anthropic connection's reasoning model, the quality gate on anthropic's balanced one", () => {
+    const raw = JSON.parse(stripJsonComments(fs.readFileSync(path.join(examples, "3-power.jsonc"), "utf8"))) as Dict;
+    const improve = raw.improve as Dict;
+    fs.mkdirSync(path.dirname(getConfigPath()), { recursive: true });
+    fs.writeFileSync(
+      getConfigPath(),
+      JSON.stringify({
+        ...raw,
+        improve: {
+          ...improve,
+          strategy: "nightly",
+          strategies: {
+            nightly: { processes: { triage: { enabled: true, judgment: true }, distill: { enabled: true } } },
+          },
+        },
+      }),
+    );
+    resetConfigCache();
+    const config = loadConfig();
+    const plan = resolveImprovePlan("nightly", config);
+    expect(plan.triageJudgment).toMatchObject({ kind: "connection", name: "anthropic", model: "claude-opus-4-7" });
+    expect(plan.processes.distill.runner).toMatchObject({ kind: "connection", name: "default", model: "qwen3-32b" });
+    // Nothing names a model for the gate's judge, so it asks for the shipped judge alias: `balanced`.
+    expect(resolveQualityGateJudge(config, undefined, "reflect")).toMatchObject({
+      kind: "connection",
+      name: "anthropic",
+      model: "claude-sonnet-4-5",
+    });
+    resetConfigCache();
+  });
+});
+
+{
+  /**
+   * A harness takes no connection or inference of its own: inference for opencode
+   * belongs in opencode's own config, and a connection's model alias carries it into
+   * model work. A key a harness does not read is warned about once and
+   * ignored; it never fails the load.
+   */
+
+  function captureWarnings(run: () => void): string[] {
+    const warnings: string[] = [];
+    _resetWarnOnceForTests();
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+    try {
+      run();
+    } finally {
+      _setWarnSinkForTests(undefined);
+    }
+    return warnings;
+  }
+
+  test.each([
+    "endpoint",
+    "apiKey",
+    "temperature",
+    "maxTokens",
+    "contextLength",
+    "reasoning_effort",
+  ])("%s is not read by a harness: the load warns once and ignores it", (key) => {
+    const text = JSON.stringify({ harnesses: { opencode: { [key]: "x" } } });
+    const warnings = captureWarnings(() => {
+      expect(() => parseAndValidateConfigText(text)).not.toThrow();
+    });
+    expect(warnings.filter((w) => w.includes(`harnesses.opencode.${key}`) && w.includes("ignored"))).toHaveLength(1);
+  });
+
+  // `agent` names the harness's default native agent, so it needs a platform that can run one.
+  describe("a harness's default agent", () => {
+    const configWith = (platform: string, agent: string) => ({
+      semanticSearchMode: "off" as const,
+      harnesses: { h: { platform: platform as "claude", agent } },
+    });
+
+    test.each(["opencode", "claude"])("is used on %s", (platform) => {
+      const runner = resolveTarget({ config: configWith(platform, "akm-workflow"), layers: [] });
+      expect(runner).toMatchObject({ kind: "harness", agent: "akm-workflow" });
+    });
+
+    test("is rejected by the schema when empty", () => {
+      expect(validateConfigShape(configWith("opencode", "")).ok).toBe(false);
+    });
+
+    test("is warned about once and ignored on a harness with no native agent selector", () => {
+      const warnings = captureWarnings(() => {
+        const runner = resolveTarget({ config: configWith("codex", "x"), layers: [] });
+        expect(runner).not.toHaveProperty("agent");
+      });
+      expect(warnings.some((w) => w.includes('Harness "h"') && w.includes("no native agents"))).toBe(true);
+    });
+  });
+
+  describe("a harness's models", () => {
+    const configWith = (models: unknown) => ({
+      semanticSearchMode: "off" as const,
+      harnesses: { claude: { models } },
+    });
+
+    test("map an alias to a model name", () => {
+      expect(validateConfigShape(configWith({ fast: "claude-haiku-4-5" })).ok).toBe(true);
+    });
+
+    test("take the model name only: an entry written as a connection's object is read for its model, and needs one", () => {
+      expect(validateConfigShape(configWith({ fast: { model: "claude-haiku-4-5", temperature: 0.2 } })).ok).toBe(true);
+      expect(validateConfigShape(configWith({ fast: { temperature: 0.2 } })).ok).toBe(false);
+    });
+  });
+}
+
+// Phase 2: triage is a first-class improve process. These guard that a triage
+// block under `processes` parses and is accepted, that the triage-specific
+// fields validate, and that enabled unknown process keys are rejected by the
+// `ImproveProfileProcessesSchema` superRefine.
+
+describe("triage improve-process config schema", () => {
+  test("a triage block under processes parses and is accepted", () => {
+    const result = ImproveProfileConfigSchema.safeParse({
+      processes: {
+        reflect: { enabled: true },
+        triage: {
+          enabled: true,
+          applyMode: "queue",
+          maxAcceptsPerRun: 25,
+          judgment: { connection: "fast", timeoutMs: 600000 },
+        },
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  test("triage-specific fields validate on ImproveProcessConfigSchema", () => {
+    expect(
+      ImproveProcessConfigSchema.safeParse({
+        enabled: false,
+        applyMode: "promote",
+        maxAcceptsPerRun: 10,
+        judgment: { harness: "agent" },
+      }).success,
+    ).toBe(true);
+
+    // applyMode is constrained to queue|promote
+    expect(ImproveProcessConfigSchema.safeParse({ applyMode: "delete" }).success).toBe(false);
+    // maxAcceptsPerRun must be a positive integer
+    expect(ImproveProcessConfigSchema.safeParse({ maxAcceptsPerRun: 0 }).success).toBe(false);
+    // The retired drain-policy keys are tolerated like any unknown key, never fatal.
+    expect(
+      ImproveProcessConfigSchema.safeParse({ policy: "personal-stash", maxDiffLines: -1, rejectEmpty: true }).success,
+    ).toBe(true);
+    // An unknown judgment key is not fatal: the loader warns about it and it changes nothing.
+    const withUnknown = ImproveProcessConfigSchema.safeParse({ judgment: { connection: "fast", bogus: 1 } });
+    expect(withUnknown.success).toBe(true);
+    // judgment.mode is retired in favor of a named connection or harness; like any unknown key it is tolerated, not fatal.
+    expect(ImproveProcessConfigSchema.safeParse({ judgment: { mode: "llm" } }).success).toBe(true);
+    // judgment.timeoutMs accepts null
+    expect(ImproveProcessConfigSchema.safeParse({ judgment: { timeoutMs: null } }).success).toBe(true);
+  });
+
+  test("an enabled unknown process is rejected instead of disappearing from the execution plan", () => {
+    const enabled = ImproveProfileConfigSchema.safeParse({
+      processes: {
+        triage: { enabled: true },
+        reflecct: { enabled: true, connection: "missing" },
+      },
+    });
+    expect(enabled.success).toBe(false);
+    if (enabled.success) throw new Error("fixture must fail validation");
+    expect(enabled.error.issues[0]?.path).toEqual(["processes", "reflecct"]);
+    expect(enabled.error.issues[0]?.message).toContain("Unknown enabled improve process");
+
+    expect(ImproveProfileConfigSchema.safeParse({ processes: { futureProcess: { enabled: false } } }).success).toBe(
+      true,
+    );
+  });
+
+  // 0.9.17-alpha.9: graphExtraction is a genuinely retired process name (the
+  // LLM entity-graph extraction it ran is gone), not a typo — unlike an
+  // unrecognized name, it must not fail config loading even when enabled.
+  test("an enabled processes.graphExtraction is tolerated, not rejected like an unknown process", () => {
+    const result = ImproveProfileConfigSchema.safeParse({
+      processes: {
+        reflect: { enabled: true },
+        graphExtraction: { enabled: true, fullScan: true },
+      },
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    // Kept in memory as an ordinary unknown key — nothing reads it any more.
+    expect((result.data.processes as Record<string, unknown> | undefined)?.graphExtraction).toEqual({
+      enabled: true,
+      fullScan: true,
+    });
+  });
+
+  test("triage may select any connection or harness by name; whether it is configured is resolved when it is used", () => {
+    const base = {
+      harnesses: { reviewer: { platform: "claude" } },
+    } as const;
+    for (const selection of [{ harness: "reviewer" }, { connection: "missing" }, { harness: "missing" }]) {
+      expect(
+        validateConfigShape({
+          ...base,
+          improve: { strategies: { custom: { processes: { triage: { enabled: true, ...selection, judgment: {} } } } } },
+        }).ok,
+      ).toBe(true);
+    }
   });
 });

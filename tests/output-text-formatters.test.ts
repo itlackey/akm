@@ -2,14 +2,36 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import { describe, expect, it } from "bun:test";
+import "../src/output/text";
+import { formatAddPlain, formatBundleRenamePlain, formatUpdatePlain } from "../src/output/text/command-format";
+import { getTextFormatterHandler } from "../src/output/text/registry";
+
+// Characterization test for WS7 (#490): the `akm env *` plain-text formatters
+// are registered as a side effect of importing the text-output barrel. This
+// pins the registration set so the mechanical rename of the registering module
+// (src/output/text/vault.ts -> src/output/text/env.ts) cannot silently drop a
+// formatter. Asserting the exact set guards the rename's zero-behaviour-change
+// contract.
+
+// Importing the barrel triggers every `registerTextFormatter` side effect,
+// including the env-* registrations in src/output/text/env.ts.
+
+const ENV_COMMANDS = ["env-list", "env-create", "env-export", "env-remove"] as const;
+
+describe("env text formatters (WS7 rename guard)", () => {
+  for (const command of ENV_COMMANDS) {
+    it(`registers a plain-text formatter for "${command}"`, () => {
+      expect(typeof getTextFormatterHandler(command)).toBe("function");
+    });
+  }
+});
+
 // Regression coverage for R-014 (formatAddPlain rendering "Installed
 // undefined" for a --provider add) and R-015 (formatUpdatePlain rendering
 // "nothing to update" for a successful plain-source sync, or for a --all run
 // that silently skipped configured plain sources). Both defects stem from a
 // text formatter reading a field that the actual result shape never carries.
-
-import { describe, expect, it } from "bun:test";
-import { formatAddPlain, formatUpdatePlain } from "../src/output/text/command-format";
 
 describe("formatAddPlain", () => {
   it("renders an AddResponse (eager install) shape as before", () => {
@@ -120,5 +142,90 @@ describe("formatUpdatePlain", () => {
       ],
     });
     expect(text).toBe("update: left-pad v1.0.0 → v1.1.0");
+  });
+});
+
+// formatBundleRenamePlain used to print "Native scheduler bindings
+// re-synced under the new name." whenever renameBundle's taskSync.ok was
+// true — including when the sync itself had already reported per-binding
+// failures in taskSync.result.failures, since the old code only ever set
+// ok: true on a non-throwing sync call. Now that ok reflects
+// result.failures.length === 0, the formatter must give a summary
+// (installed/updated/removed counts) on success, and list each failure
+// (never claiming "re-synced under the new name") when there are any.
+
+function baseResult(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    oldId: "old",
+    newId: "new",
+    applied: true,
+    config: { defaultBundleChanges: false, schedulerRefs: [] },
+    index: { entries: 0 },
+    state: { proposalRefs: 0, proposalTargets: 0, taskHistoryRefs: 0 },
+    contentRefs: [],
+    nativeSchedulerRows: [],
+    ...overrides,
+  };
+}
+
+describe("formatBundleRenamePlain — taskSync", () => {
+  it("prints an installed/updated/removed summary when every binding re-synced", () => {
+    const text = formatBundleRenamePlain(
+      baseResult({
+        taskSync: {
+          ok: true,
+          result: { installed: ["foo"], updated: [], removed: [], unchanged: [], skipped: [], failures: [] },
+        },
+      }),
+    );
+    expect(text).toContain("re-synced under the new name");
+    expect(text).toContain("1 installed, 0 updated, 0 removed");
+  });
+
+  it("lists each failure and points to `akm task sync`, without claiming a re-sync, when a binding failed", () => {
+    const text = formatBundleRenamePlain(
+      baseResult({
+        taskSync: {
+          ok: false,
+          result: {
+            installed: [],
+            updated: [],
+            removed: [],
+            unchanged: [],
+            skipped: [],
+            failures: [{ path: "tasks/foo.yml", ref: "new//tasks/foo", reason: "version is required and must be 4" }],
+          },
+        },
+      }),
+    );
+    expect(text).not.toContain("re-synced under the new name");
+    expect(text).toContain("new//tasks/foo: version is required and must be 4");
+    expect(text).toContain("akm task sync");
+  });
+
+  it("still reports a thrown sync error distinctly from a per-binding failure", () => {
+    const text = formatBundleRenamePlain(
+      baseResult({ taskSync: { ok: false, error: "scheduler backend unavailable" } }),
+    );
+    expect(text).toContain("Re-syncing native scheduler bindings failed: scheduler backend unavailable");
+    expect(text).toContain("akm task sync");
+    expect(text).not.toContain("re-synced under the new name");
+  });
+});
+
+describe("formatBundleRenamePlain — unfinished workflow runs (#1239)", () => {
+  it("names `run <id>` as the way to continue, and lists a blocked run with its status", () => {
+    const text = formatBundleRenamePlain(
+      baseResult({
+        activeWorkflowRuns: [
+          { id: "run-a", workflowRef: "old//workflows/foo", status: "active" },
+          { id: "run-b", workflowRef: "old//workflows/foo", status: "blocked" },
+        ],
+      }),
+    );
+    expect(text).toContain("`akm workflow run <id>`");
+    expect(text).toContain("`akm workflow resume <id>`");
+    expect(text).toContain("run-a (old//workflows/foo, active)");
+    expect(text).toContain("run-b (old//workflows/foo, blocked)");
   });
 });
