@@ -2269,7 +2269,7 @@ akm registry add https://skills.sh --name skills.sh --provider skills-sh
 | --- | --- |
 | `--name` | Human-friendly label for the registry |
 | `--provider` | Provider type (e.g. `static-index`, `skills-sh`). Default: `static-index` |
-| `--options` | Provider-specific options as JSON (e.g. `'{"apiKey":"key"}'`) |
+| `--options` | Provider-specific options as JSON (e.g. `'{"maxPages":100}'`) |
 | `--allow-insecure-transport` | Allow a plain HTTP registry URL (rejected by default) |
 
 Duplicate URLs are rejected.
@@ -3786,7 +3786,7 @@ akm proposal drain --strategy default --promote -y  # Read the triage block from
 | `--dry-run` | List what would be accepted/rejected/deferred, without writing |
 | `--max-accepts` | Hard per-run accept ceiling; accepts beyond this are reported as `skippedByCap` |
 | `--older-than` | Only consider proposals created (or last reopened) more than this many days ago |
-| `--judgment` | Explicitly enable the judgment tier for this standalone drain, including when the selected strategy says `judgment.enabled: false`; it accepts only consolidate promotions (#1132); execution overrides still come from that strategy. Without this flag, strategy judgment config does not enable standalone drain judgment. A missing runner remains a no-op with a logged `triage_deferred` summary. |
+| `--judgment` | Explicitly enable the judgment tier for this standalone drain, including when the selected strategy says `judgment.enabled: false`; it accepts only consolidate promotions; execution overrides still come from that strategy. Without this flag, strategy judgment config does not enable standalone drain judgment. A missing runner remains a no-op with a logged `triage_deferred` summary. |
 | `-y`, `--yes` | Skip the confirmation prompt (required in non-interactive mode for promotion) |
 
 ### feedback (`--reason`)
