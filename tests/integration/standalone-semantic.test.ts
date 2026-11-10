@@ -32,6 +32,7 @@ import {
   makeSandboxDir,
   type SandboxedDir,
   withIsolatedAkmStorage,
+  writeBundleConfig,
   writeSandboxConfig,
 } from "../_helpers/sandbox";
 
@@ -81,6 +82,7 @@ describe.skipIf(!SEMANTIC_TESTS)("the standalone binary's semantic search", () =
     }
     // The file `writeSandboxConfig` writes, on every platform (XDG_CONFIG_HOME does not place the config on Windows).
     const configFile = path.join(process.env.XDG_CONFIG_HOME as string, "akm", "config.json");
+    writeBundleConfig(configFile, storage.stashDir);
     const akm = (...args: string[]) =>
       spawnSync(binary, args, {
         env: { ...process.env, AKM_CONFIG_FILE: configFile, HF_HOME },
