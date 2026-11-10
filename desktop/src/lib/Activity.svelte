@@ -77,9 +77,14 @@
     loaded = key;
     untrack(() => void load());
   });
-  // An anchor in the address is opened, focused and scrolled to once its view is on screen.
+  // An anchor in the address is opened, focused and scrolled to once per arrival, when its view is on screen. A
+  // refresh reloads the same address, so it reveals nothing and leaves focus and the page where they are. Plain, not
+  // state: the address whose anchor was last revealed (each arrival hands this view a new `query`).
+  let revealed: URLSearchParams | undefined;
   $effect(() => {
-    if (!loading) void revealAnchor(query.get("anchor"));
+    if (loading || revealed === query) return;
+    revealed = query;
+    void revealAnchor(query.get("anchor"));
   });
   const filteredCommits = $derived(
     (changes?.commits ?? []).filter(
@@ -155,13 +160,6 @@
       } else {
         const next = await api<NonNullable<typeof misses>>("/search/misses", { since: window });
         if (request === generation) misses = next;
-      }
-      await tick();
-      const anchor = query.get("anchor");
-      if (request === generation && anchor) {
-        const target = document.getElementById(anchor);
-        if (target instanceof HTMLDetailsElement) target.open = true;
-        target?.scrollIntoView({ block: "start" });
       }
     } catch (cause) {
       if (request === generation) error = (cause as Error).message;

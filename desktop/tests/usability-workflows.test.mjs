@@ -203,6 +203,17 @@ test("reviewed human workflows prevent dead ends and preserve focus and source",
       await expect(page.locator("#activity-status")).toHaveText("Health refreshed.");
       await expect(health).toHaveAttribute("data-kept", "yes");
       await expect(refresh).toBeFocused();
+      // Home's link arrives with the check in the address: it is revealed and focused once, on arrival. A refresh
+      // after that reloads the same address and leaves focus on its button and the button on screen.
+      await navigate("/");
+      await page.getByRole("link", { name: "Inspect: Task failure rate, in health details", exact: true }).focus();
+      await page.keyboard.press("Enter");
+      await expect(check).toBeFocused();
+      await refresh.focus();
+      await page.keyboard.press("Enter");
+      await expect(page.locator("#activity-status")).toHaveText("Health refreshed.");
+      await expect(refresh).toBeFocused();
+      await expect(refresh).toBeInViewport();
     },
   );
   await t.test("read-only bundles are not selectable write targets", async () => {
