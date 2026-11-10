@@ -203,8 +203,8 @@ release is `0.11.0`, then patches `0.11.1`, `0.11.2`; the next minor starts at
 `0.12.0-beta.1`. `bun scripts/release-version.ts next [0.<minor>]` prints the
 next version of a line from npm (one patch above its latest stable, or
 `0.<minor>.0`), and the Release workflow appends the stage and the next counter
-at publish time; the stage counter is never committed. Versions before 0.11 (`0.10.YYMMNN`) sort below
-every 0.11 version.
+at publish time; the stage counter is never committed. Versions before 0.11
+(`0.10.YYMMNN`) sort below every 0.11 version.
 
 ## Repository settings
 

@@ -49,6 +49,7 @@ describe("CI workflow", () => {
     expect(run).toContain(`VERSION="$(node -p "require('./package.json').version")"`);
     expect(run).toContain('[[ "$VERSION" == *-* ]]');
     expect(run).toContain('npm view "akm-cli@$VERSION" version');
+    expect(run).toContain("grep -q E404");
   });
 
   test("the platform jobs and Gated CI follow the release-branch check, so they run on a release pull request only", () => {

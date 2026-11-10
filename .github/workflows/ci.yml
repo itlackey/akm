@@ -56,6 +56,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
       - env:
           HEAD: ${{ github.head_ref }}
+        shell: bash
         run: |
           case "$HEAD" in
             release/*) ;;
@@ -69,8 +70,12 @@ jobs:
             echo "package.json is $VERSION, a prerelease; a release into main carries the stable version. Run bun run release:stable first." >&2
             exit 1
           fi
-          if npm view "akm-cli@$VERSION" version >/dev/null 2>&1; then
+          if out="$(npm view "akm-cli@$VERSION" version 2>&1)"; then
             echo "akm-cli@$VERSION is already published; a release carries a new version." >&2
+            exit 1
+          elif ! grep -q E404 <<<"$out"; then
+            echo "Could not check npm for akm-cli@$VERSION (rerun the job):" >&2
+            echo "$out" >&2
             exit 1
           fi
 
