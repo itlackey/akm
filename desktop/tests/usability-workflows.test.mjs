@@ -237,5 +237,31 @@ test("reviewed human workflows prevent dead ends and preserve focus and source",
     await navigate("/activity/overview?view=retrieval");
     await expect(page.locator("#activity-retrieval-rate svg")).toBeVisible();
   });
+  await t.test("the weekly decisions chart follows the Process select, as its table does", async () => {
+    // The fixture records no decisions, so two processes with different weeks are added to the measured response.
+    await page.route("**/api/improve/impact*", async (route) => {
+      const response = await route.fetch();
+      const body = await response.json();
+      const week = (date, judge, rejected) => ({ week: date, judge, you: 1, unknown: 0, rejected, reverted: 0 });
+      (body.data ?? body).outcomes = [
+        { source: "reflect", weeks: [week("2026-10-19", 4, 1), week("2026-10-26", 2, 3)] },
+        { source: "distill", weeks: [week("2026-10-19", 0, 6), week("2026-10-26", 7, 0)] },
+      ];
+      await route.fulfill({ response, json: body });
+    });
+    await navigate("/activity/improve");
+    const drawing = page.locator("#impact-weekly-outcomes svg");
+    await expect(drawing).toBeVisible();
+    const table = page.locator("#outcomes .chart-data table").first();
+    const process = page.getByRole("combobox", { name: "Process", exact: true });
+    await expect(process).toHaveValue("reflect");
+    const before = { drawn: await drawing.innerHTML(), listed: await table.textContent() };
+    await process.selectOption("distill");
+    await expect.poll(() => table.textContent()).not.toBe(before.listed);
+    await expect
+      .poll(() => drawing.innerHTML(), "the chart is drawn again for the chosen process")
+      .not.toBe(before.drawn);
+    await page.unroute("**/api/improve/impact*");
+  });
   assert.deepEqual(errors, []);
 });

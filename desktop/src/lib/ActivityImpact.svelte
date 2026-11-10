@@ -26,6 +26,21 @@
     availableProcesses.includes(selectedProcess) ? selectedProcess : (availableProcesses[0] ?? ""),
   );
   const weeklyOutcomes = $derived(impact.outcomes.find((row) => row.source === activeProcess)?.weeks ?? []);
+  // A chart is drawn again when it is given another builder, so this one is made anew whenever its weeks change.
+  const weeklyOption = $derived.by(() => {
+    const weeks = weeklyOutcomes;
+    return () =>
+      verticalBars(
+        weeks.map((row) => row.week.slice(5)),
+        outcomeClasses.map((item, index) => ({
+          name: item.label,
+          stack: "total",
+          colorIndex: [0, 2, 4, 1, 3][index],
+          data: weeks.map((row) => row[item.key]),
+        })),
+        "Decisions",
+      );
+  });
   let drill = $state<{ source: string; week: string; kind: string } | null>(null),
     proposals = $state<Proposal[]>([]),
     drillError = $state(""),
@@ -155,17 +170,7 @@
         heading="Decisions by week"
         legend={outcomeClasses.map((item, index) => ({ name: item.label, index: [0, 2, 4, 1, 3][index] }))}
         description="Select a nonzero segment or table value to inspect its proposals. Decisions are not a quality score."
-        option={() =>
-          verticalBars(
-            weeklyOutcomes.map((row) => row.week.slice(5)),
-            outcomeClasses.map((item, index) => ({
-              name: item.label,
-              stack: "total",
-              colorIndex: [0, 2, 4, 1, 3][index],
-              data: weeklyOutcomes.map((row) => row[item.key]),
-            })),
-            "Decisions",
-          )}
+        option={weeklyOption}
         onSelect={inspectMark}
       >
         {#snippet controls()}<label class="process-control"
