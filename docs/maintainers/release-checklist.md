@@ -14,8 +14,7 @@
    merge. A branch for the next minor can be open at the same time, such as
    `release/0.12.0` beside `release/0.11.1`. The patch ships first, and the
    minor's branch merges `main` before it can ship (the ruleset requires it), so
-   the patch is in it too. (`release/0.11.261101` predates semver and keeps its
-   name; it ships `0.11.0`.)
+   the patch is in it too.
 3. All work lands on the release branch by pull request. A feature that needs
    several pull requests lands in slices that are each shippable but inert
    until the last one (internals first, the command or flag wired up last, or
