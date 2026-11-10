@@ -78,7 +78,9 @@ release/<version> -f stage=<stage>`), which, on the branch's head:
    targets and migrator, and package acceptance;
 3. builds the package and the standalone binaries as `<version>-<stage>.N`,
    `N` one above the highest already on npm for that release and stage;
-4. publishes them to npm `next` and creates a GitHub prerelease;
+4. publishes them to npm `next` (or to the line's tag, `next-0.10`, when a
+   newer line's prerelease already holds `next`) and creates a GitHub
+   prerelease;
 5. builds AKM Desktop on Linux, macOS and Windows from the tarball it just
    published and attaches the installers to the same release (Desktop shares
    the akm version, tag and changelog, and its beta channel follows GitHub
@@ -106,7 +108,10 @@ On the release branch with everything pushed:
    `## [Unreleased]` entries become `## [<version>] - <UTC date>` under a fresh
    empty Unreleased heading; `tests/workflow-release.test.ts` pins the two
    against each other), commits `release: <version>`, pushes, and opens the
-   pull request into `main` (`gh pr create --base main`).
+   pull request into `main` (`gh pr create --base main`). The pull request can
+   be opened earlier as a draft (`gh pr create --base main --draft`): CI runs
+   nothing on a draft into `main`, and `release:stable` marks it ready, which
+   runs the whole gate once on the release commit.
 
    That pull request is the whole gate: everything a pull request runs, plus
    Desktop packaged on all three platforms, the upgrade rehearsals from the
@@ -193,7 +198,10 @@ published (an abandoned branch) stays unused.
 ## Repository settings
 
 The process is enforced by the repository's settings where GitHub allows it.
-Set these once. `main` stays the default branch.
+`bun scripts/github-settings.ts` applies everything in this section through
+`gh api` (logged in with admin rights; `--dry-run` prints the requests). It
+reads the required checks from the workflow files, so run it again after a CI
+matrix change. `main` stays the default branch.
 
 **Ruleset `main`** (Settings → Rules → Rulesets; rulesets are the current form
 of branch protection and are available on a public repository under the Free

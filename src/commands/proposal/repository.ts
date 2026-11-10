@@ -67,6 +67,7 @@ import {
 } from "../../storage/repositories/improve-ledger-repository";
 import {
   getStateProposal,
+  isLegacyProposalRef,
   listStateProposalIdsByPrefix,
   listStateProposals,
   upsertProposal,
@@ -229,15 +230,10 @@ interface ProposalRefIdentity {
   bundle?: string;
 }
 
-function isRetiredProposalConceptId(conceptId: string): boolean {
-  const colon = conceptId.indexOf(":");
-  return colon > 0 && stashDirFor(conceptId.slice(0, colon)) !== undefined;
-}
-
 function proposalRefIdentity(ref: string): ProposalRefIdentity | undefined {
   try {
     const parsed = parseBundleRef(ref);
-    if (parsed.fragment !== undefined || isRetiredProposalConceptId(parsed.conceptId)) return undefined;
+    if (parsed.fragment !== undefined || isLegacyProposalRef(ref)) return undefined;
     return { conceptId: parsed.conceptId, ...(parsed.bundle !== undefined ? { bundle: parsed.bundle } : {}) };
   } catch {
     return undefined;
@@ -1218,7 +1214,13 @@ function resolveProposalWriteTarget(
   });
   if (!proposal.proposedTarget) {
     const identity = proposalRefIdentity(proposal.ref);
-    if (!identity) throw new UsageError(`Proposal ${proposal.id} has an invalid ref.`, "INVALID_PROPOSAL");
+    // Only a legacy ref reaches this without an identity: the row codec refuses every other defect (#1513).
+    if (!identity) {
+      throw new UsageError(
+        `Proposal ${proposal.id} predates concept IDs: its ref "${proposal.ref}" names no asset, so it cannot be applied; \`akm proposal show ${proposal.id}\` says what it lacks.`,
+        "INVALID_PROPOSAL",
+      );
+    }
     if (identity.bundle !== undefined) {
       const target = named(resolveBundleWriteTarget(config, identity.bundle));
       if (

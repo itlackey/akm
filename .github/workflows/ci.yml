@@ -10,6 +10,9 @@ on:
   workflow_dispatch:
   workflow_call:
   pull_request:
+    # A draft pull request into main runs nothing: it is the release pull request opened early, and every change
+    # on its branch already passed the gate on its own pull request. Marking it ready runs the whole gate once.
+    types: [opened, synchronize, reopened, ready_for_review]
 
 concurrency:
   # One run per pull request, the newest wins. A dispatch or a call from Release never cancels another run.
@@ -21,6 +24,7 @@ permissions:
 
 jobs:
   check:
+    if: ${{ !(github.event_name == 'pull_request' && github.base_ref == 'main' && github.event.pull_request.draft) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -45,7 +49,7 @@ jobs:
     # Only a release branch merges to main, and it ships the version it is named for: package.json carries it (the
     # release commit, `bun run release:stable`). The ruleset on main requires this check, and the platform jobs
     # below run after it (docs/maintainers/release-checklist.md, "Repository settings").
-    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    if: github.event_name == 'pull_request' && github.base_ref == 'main' && !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -69,6 +73,7 @@ jobs:
   desktop:
     # Desktop's type check, unit, browser, usability, server, package and Electron tests, on Linux, on every pull
     # request. `test:workspace-package` stays in node-smoke.
+    if: ${{ !(github.event_name == 'pull_request' && github.base_ref == 'main' && github.event.pull_request.draft) }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -152,6 +157,7 @@ jobs:
           overwrite: true
 
   node-smoke:
+    if: ${{ !(github.event_name == 'pull_request' && github.base_ref == 'main' && github.event.pull_request.draft) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:

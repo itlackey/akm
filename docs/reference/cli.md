@@ -3423,6 +3423,14 @@ akm proposal show <id>
 akm proposal show <id> --queue team-bundle
 ```
 
+A proposal recorded before concept IDs, whose ref is the retired `<type>:<name>`
+grammar (`lesson:<name>`) and whose metadata has no `changes` or
+`proposedTarget`, is shown as written with one `legacy-ref` finding naming what
+it lacks. It cannot be accepted: `accept` and `diff` refuse it with the same
+reason and `drain` leaves it alone; `akm proposal reject <id> --reason <why>`
+archives it with its content and ref kept. The `legacy-ref` finding is
+**Experimental** for its first release (#1513).
+
 #### proposal accept
 
 Accept a proposal and promote it into its recorded destination. Accepts a full
