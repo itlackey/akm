@@ -3,6 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { writeFile } from "node:fs/promises";
+import path from "node:path";
 import test from "node:test";
 import { chromium, expect } from "@playwright/test";
 import { launchFixture } from "./support.mjs";
@@ -77,4 +80,53 @@ test("desktop chrome and action groups share one readable control language", { t
       assert.ok(!/mono/i.test(label.font));
     }
   }
+});
+
+// A knowledge document with a long title and an unbreakable token, for the headers that must wrap it.
+const longName = "a-very-long-knowledge-file-name-that-keeps-going-for-breadcrumb-and-title-truncation-checks";
+async function longDocument(fixture) {
+  await writeFile(
+    path.join(fixture.root, `personal/knowledge/${longName}.md`),
+    `---\ntitle: Long reference with a wide table, long code and an unbreakable identifier ${"Z".repeat(40)}\ndescription: Synthetic long title\n---\n# Long reference\n\nBody.\n`,
+  );
+  execFileSync(process.execPath, [fixture.launcher, "index", "--full", "--format=json", "-q"], {
+    env: fixture.env,
+    stdio: "pipe",
+  });
+}
+
+// The native window's minimum is 900×620; its content area is 593px tall on Linux. Short laptop browsers are shorter
+// still. These are the sizes where the workspace pages, the review pane, the filter panel and the asset menu broke.
+test("workspace pages, panels and menus fit the shortest windows", { timeout: 180000 }, async (t) => {
+  const app = await launchFixture({ proposals: true, configureFixture: longDocument });
+  t.after(() => app.stop());
+  const browser = await chromium.launch();
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 900, height: 593 } });
+  await page.goto(app.url);
+  await expect(page.locator(".home-attention")).toBeVisible();
+  const open = async (route, ready) => {
+    await page.goto(`${app.origin}${route}`);
+    await expect(page.locator(ready).first()).toBeVisible();
+    await page.evaluate(() => document.fonts.ready);
+  };
+  const longRef = encodeURIComponent(`personal//knowledge/${longName}`);
+
+  // The page must not scroll while its panes do: one scroll owner at the native minimum (and below).
+  for (const [route, ready] of [
+    ["/library/files?bundle=personal&path=knowledge", ".folder-table"],
+    [`/library/edit?ref=${longRef}`, 'textarea[name="content"]'],
+    [`/review/${app.proposals.fresh}`, ".change-preview"],
+  ]) {
+    await open(route, ready);
+    const geometry = await page.evaluate(() => ({
+      pageHeight: document.documentElement.scrollHeight,
+      viewport: innerHeight,
+    }));
+    assert.ok(
+      geometry.pageHeight <= geometry.viewport + 1,
+      `${route}: the workspace shell must fit a ${geometry.viewport}px window, not scroll the page (${geometry.pageHeight}px)`,
+    );
+  }
+
 });

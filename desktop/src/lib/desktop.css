@@ -347,7 +347,6 @@
   @media (width > 850px) {
     .desktop-shell.workspace-active {
       block-size: 100dvh;
-      min-block-size: 620px;
     }
     .desktop-shell.workspace-active > main {
       display: flex;
