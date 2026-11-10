@@ -145,7 +145,8 @@ describe.skipIf(!SEMANTIC_TESTS)("the standalone binary's semantic search", () =
         );
         expect(JSON.parse(setup.stdout as string).semanticAssets).toBeUndefined();
         const config = JSON.parse(fs.readFileSync(configFile, "utf8"));
-        expect(config.semanticSearchMode).toBe("off");
+        // "off" is the default, so setup need not spell it in a file that already exists.
+        expect(config.semanticSearchMode ?? "off").toBe("off");
 
         // A config that turns semantic search on anyway, as one copied from another machine does.
         writeSandboxConfig({ semanticSearchMode: "auto" });
