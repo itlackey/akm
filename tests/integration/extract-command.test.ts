@@ -23,7 +23,6 @@ import { listProposals } from "../../src/commands/proposal/repository";
 import { isValidDescription } from "../../src/commands/proposal/validators/proposal-quality-validators";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import type { AkmConfig } from "../../src/core/config/config";
-import { ImproveProcessConfigSchema, ImproveProfileConfigSchema } from "../../src/core/config/config-schema";
 import { TransientError, UsageError } from "../../src/core/errors";
 import { appendEvent, readEvents } from "../../src/core/events";
 import { createLockPayload } from "../../src/core/file-lock";
@@ -74,7 +73,7 @@ function makeStashDir(): string {
   return stash;
 }
 beforeEach(() => {
-  storage = withIsolatedAkmStorage();
+  storage = withIsolatedAkmStorage({}, { bundle: false });
 });
 afterEach(() => {
   storage.cleanup();
@@ -493,7 +492,7 @@ describe("akmExtract — single-session mode", () => {
 
 describe("akmExtract — subagent transcripts are never extracted as their own session (#839)", () => {
   // Real ClaudeCodeProvider (not the fake harness) driven against
-  // `withIsolatedAkmStorage()`'s isolated `AKM_CLAUDE_PROJECTS_DIR`, so
+  // `withIsolatedAkmStorage()`'s isolated `CLAUDE_CONFIG_DIR`, so
   // `listSessions()`'s subagents-exclusion (#830) and the folding in
   // `readSession()` both run for real. `chat` is still injected so no LLM
   // call happens.

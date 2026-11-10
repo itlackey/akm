@@ -6,8 +6,7 @@
  * Module-level quiet/verbose flags and optional file sink for stderr output.
  *
  * `quiet` is controlled by the CLI `--quiet`/`-q` flag.
- * `verbose` is controlled by the CLI `--verbose` flag, with `AKM_VERBOSE`
- * (env var) winning regardless: env > flag > default (false).
+ * `verbose` is controlled by the CLI `--verbose` flag (default false).
  *
  * Call `setLogFile(path)` to tee all warn/error/info output to a file in
  * addition to stderr. The file sink is written even when `--quiet` suppresses
@@ -68,10 +67,7 @@ export async function withQuiet<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-/**
- * Set the verbose flag from a CLI flag. The `AKM_VERBOSE` env var, when set,
- * always wins regardless of this flag (env > flag > default).
- */
+/** Set the verbose flag from the CLI `--verbose` flag. */
 export function setVerbose(value: boolean): void {
   verbose = value;
 }
@@ -84,19 +80,8 @@ export function resetVerbose(): void {
   verbose = false;
 }
 
-/**
- * Returns true when verbose output is requested.
- *
- * Precedence: `AKM_VERBOSE` env var (when truthy) > `setVerbose(true)` > false.
- * Truthy matches `1`, `true`, `yes`, `on` (case-insensitive). The values
- * `0`, `false`, `no`, `off` hard-disable verbose even if the flag is set,
- * so operators can override per-invocation. Any other value (including
- * empty string) is treated as "not set" and falls through to the flag.
- */
+/** Returns true when `--verbose` was passed. */
 export function isVerbose(): boolean {
-  const env = process.env.AKM_VERBOSE?.trim().toLowerCase();
-  if (env === "1" || env === "true" || env === "yes" || env === "on") return true;
-  if (env === "0" || env === "false" || env === "no" || env === "off") return false;
   return verbose;
 }
 

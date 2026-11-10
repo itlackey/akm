@@ -776,7 +776,7 @@ export function runBaseChecks(ctx: LintContext): LintIssue[] {
     for (const candidate of [...staleInBody, ...staleInFrontmatter]) {
       // M4: Suggest portable replacement when path is under stashRoot.
       const portableHint = candidate.startsWith(ctx.stashRoot)
-        ? ` (portable form: $AKM_BUNDLE_DIR${candidate.slice(ctx.stashRoot.length)})`
+        ? ` (portable form: relative to the bundle root, ${candidate.slice(ctx.stashRoot.length).replace(/^[\\/]/, "")})`
         : "";
       issues.push({
         file: ctx.relPath,

@@ -37,7 +37,7 @@ import { currentLlmStage, emitLlmUsage, hasLlmUsageSink } from "../../../../src/
 import { resolveWriteTarget } from "../../../../src/sources/write-source";
 import { closeDatabase, openExistingDatabase } from "../../../../src/storage/repositories/index-connection";
 import { getIndexedFilePaths } from "../../../../src/storage/repositories/index-entries-repository";
-import { type Cleanup, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
+import { type Cleanup, withDefaultBundle, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 
 const TIMEOUT_MS = 20_000;
 
@@ -87,7 +87,7 @@ beforeEach(() => {
   const storage = withIsolatedAkmStorage();
   stashDir = storage.stashDir;
   cleanup = storage.cleanup;
-  saveConfig({ semanticSearchMode: "off" });
+  saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
 });
 
 afterEach(() => {
@@ -305,7 +305,7 @@ describe("akm improve — triage pre-pass", () => {
     async () => {
       writeMemory("alpha", "Remember alpha details.");
       await akmIndex({ stashDir, full: true });
-      const config = { ...triageEnabledConfig(true), stashDir };
+      const config = withDefaultBundle({ ...triageEnabledConfig(true), stashDir }, stashDir);
       const writeTarget = resolveWriteTarget(config);
       let captured: import("../../../../src/commands/proposal/drain").DrainOptions | undefined;
 
@@ -620,7 +620,7 @@ describe("akm improve — triage pre-pass", () => {
         const result = await akmImprove({
           scope: "memory",
           stashDir,
-          config: { ...triageEnabledConfig(true), stashDir },
+          config: withDefaultBundle({ ...triageEnabledConfig(true), stashDir }, stashDir),
           drainProposalsFn: drainAcceptingTwo() as never,
         });
 
@@ -648,7 +648,7 @@ describe("akm improve — triage pre-pass", () => {
         const result = await akmImprove({
           scope: "memory",
           stashDir,
-          config: { ...triageEnabledConfig(true), stashDir },
+          config: withDefaultBundle({ ...triageEnabledConfig(true), stashDir }, stashDir),
           sync: { enabled: false },
           drainProposalsFn: drainAcceptingTwo() as never,
         });

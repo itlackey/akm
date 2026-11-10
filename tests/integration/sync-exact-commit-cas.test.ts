@@ -61,7 +61,7 @@ function writeFile(filePath: string, content: string): void {
 
 /** Seed a repo with one commit and return its repo dir + that commit's oid. */
 function seedRepo(): { repoDir: string; seedHead: string } {
-  const repoDir = process.env.AKM_BUNDLE_DIR as string;
+  const repoDir = currentStashDir;
   initRepo(repoDir);
   writeFile(path.join(repoDir, "README.md"), "seed\n");
   git(repoDir, ["add", "."]);
@@ -83,6 +83,7 @@ function historySubjects(repoDir: string): string[] {
   return out ? out.split("\n") : [];
 }
 
+let currentStashDir = "";
 let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
@@ -91,6 +92,7 @@ beforeEach(() => {
   const cfgResult = sandboxXdgConfigHome(dataResult.cleanup);
   const stashResult = sandboxStashDir(cfgResult.cleanup);
   envCleanup = stashResult.cleanup;
+  currentStashDir = stashResult.dir;
 });
 
 afterEach(() => {

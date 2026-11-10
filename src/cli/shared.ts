@@ -176,6 +176,12 @@ export const GLOBAL_OUTPUT_ARGS = {
     description: "Detail level: brief|normal|full",
   },
   output: { type: "string", description: "Write output to a file instead of stdout (not jsonl)" },
+  // Parsed from raw argv by `applyEarlyConfigFlag` in src/cli.ts before anything reads a location; declared
+  // here so every command accepts it and `assertKnownFlags` knows it.
+  config: {
+    type: "string",
+    description: "Use this config file instead of the default; credentials.json sits beside it (also AKM_CONFIG_FILE)",
+  },
   // S11: declared at every leaf so a command's flags parse wherever they sit;
   // leaf `--help` prints them once as a pointer (see `withoutGlobalArgs`), root
   // `--help` lists them in full. They are parsed from raw argv by
@@ -190,7 +196,7 @@ export const GLOBAL_OUTPUT_ARGS = {
   },
   verbose: {
     type: "boolean",
-    description: "Print diagnostics to stderr (also AKM_VERBOSE)",
+    description: "Print diagnostics to stderr",
     default: false,
   },
 } as const satisfies ArgsDef;

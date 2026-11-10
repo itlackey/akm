@@ -24,7 +24,13 @@ import { readLockfile } from "../src/integrations/lockfile";
 import * as gitProvider from "../src/sources/providers/git";
 import * as syncFromRefModule from "../src/sources/providers/sync-from-ref";
 import { seedLockEntries } from "./_helpers/lockfile";
-import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage, withMockedFetch } from "./_helpers/sandbox";
+import {
+  type IsolatedAkmStorage,
+  withDefaultBundle,
+  withEnv,
+  withIsolatedAkmStorage,
+  withMockedFetch,
+} from "./_helpers/sandbox";
 
 const createdTmpDirs: string[] = [];
 
@@ -116,7 +122,7 @@ function mockNpmFetch(): ReturnType<typeof spyOn> {
 
 describe("issue #9: --name flag persisted for filesystem sources", () => {
   test("akmAdd persists explicit --name for a local path", async () => {
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
     const extraStash = createTmpDir("akm-qa-extra-");
     makeStashDir(extraStash);
 
@@ -134,7 +140,7 @@ describe("issue #9: --name flag persisted for filesystem sources", () => {
   });
 
   test("akm bundle remove works when source was added with --name", async () => {
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
     const extraStash = createTmpDir("akm-qa-extra-rm-");
     makeStashDir(extraStash);
 
@@ -146,7 +152,7 @@ describe("issue #9: --name flag persisted for filesystem sources", () => {
   });
 
   test("akmAdd without --name falls back to readable path", async () => {
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
     const someStash = createTmpDir("akm-qa-noname-");
     makeStashDir(someStash);
 
@@ -163,18 +169,18 @@ describe("issue #9: --name flag persisted for filesystem sources", () => {
 
 describe("manual QA add validation", () => {
   test("akmAdd rejects writable installs for npm refs before syncing", async () => {
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
     await expect(akmAdd({ ref: "npm:left-pad", writable: true })).rejects.toThrow(ConfigError);
   });
 
   test("addStash rejects openviking providers before persisting config", () => {
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
     expect(() => addStash({ target: "https://example.com", providerType: "openviking" })).toThrow(ConfigError);
     expect(loadConfig().sources).toBeUndefined();
   });
 
   test("addStash rejects writable website sources before persisting config", () => {
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
     expect(() => addStash({ target: "https://example.com", providerType: "website", writable: true })).toThrow(
       ConfigError,
     );
@@ -189,10 +195,15 @@ describe("issue #10: filesystem kind in list output", () => {
     const sourceDir = createTmpDir("akm-qa-fs-kind-");
     makeStashDir(sourceDir);
 
-    saveConfig({
-      semanticSearchMode: "off",
-      bundles: { src: { path: sourceDir } },
-    });
+    saveConfig(
+      withDefaultBundle(
+        {
+          semanticSearchMode: "off",
+          bundles: { src: { path: sourceDir } },
+        },
+        stashDir,
+      ),
+    );
 
     const result = await akmListSources({ stashDir });
 
@@ -202,10 +213,15 @@ describe("issue #10: filesystem kind in list output", () => {
   });
 
   test("git source has kind='git' in akmListSources", async () => {
-    saveConfig({
-      semanticSearchMode: "off",
-      bundles: { "my-git": { git: "https://github.com/example/repo.git" } },
-    });
+    saveConfig(
+      withDefaultBundle(
+        {
+          semanticSearchMode: "off",
+          bundles: { "my-git": { git: "https://github.com/example/repo.git" } },
+        },
+        stashDir,
+      ),
+    );
 
     const result = await akmListSources({ stashDir });
 
@@ -219,10 +235,15 @@ describe("issue #10: filesystem kind in list output", () => {
 
 describe("issue #17: website kind in list output", () => {
   test("website source has kind='website' in akmListSources", async () => {
-    saveConfig({
-      semanticSearchMode: "off",
-      bundles: { "docs-site": { website: { url: "https://example.com" } } },
-    });
+    saveConfig(
+      withDefaultBundle(
+        {
+          semanticSearchMode: "off",
+          bundles: { "docs-site": { website: { url: "https://example.com" } } },
+        },
+        stashDir,
+      ),
+    );
 
     const result = await akmListSources({ stashDir });
 
@@ -239,10 +260,15 @@ describe("issue #11: filesystem writable defaults to true in list output", () =>
     const sourceDir = createTmpDir("akm-qa-writable-");
     makeStashDir(sourceDir);
 
-    saveConfig({
-      semanticSearchMode: "off",
-      bundles: { src: { path: sourceDir } },
-    });
+    saveConfig(
+      withDefaultBundle(
+        {
+          semanticSearchMode: "off",
+          bundles: { src: { path: sourceDir } },
+        },
+        stashDir,
+      ),
+    );
 
     const result = await akmListSources({ stashDir });
 
@@ -255,10 +281,15 @@ describe("issue #11: filesystem writable defaults to true in list output", () =>
     const sourceDir = createTmpDir("akm-qa-writable-false-");
     makeStashDir(sourceDir);
 
-    saveConfig({
-      semanticSearchMode: "off",
-      bundles: { src: { path: sourceDir, writable: false } },
-    });
+    saveConfig(
+      withDefaultBundle(
+        {
+          semanticSearchMode: "off",
+          bundles: { src: { path: sourceDir, writable: false } },
+        },
+        stashDir,
+      ),
+    );
 
     const result = await akmListSources({ stashDir });
 
@@ -268,10 +299,15 @@ describe("issue #11: filesystem writable defaults to true in list output", () =>
   });
 
   test("git source without explicit writable defaults to false", async () => {
-    saveConfig({
-      semanticSearchMode: "off",
-      bundles: { "my-git": { git: "https://github.com/example/repo.git" } },
-    });
+    saveConfig(
+      withDefaultBundle(
+        {
+          semanticSearchMode: "off",
+          bundles: { "my-git": { git: "https://github.com/example/repo.git" } },
+        },
+        stashDir,
+      ),
+    );
 
     const result = await akmListSources({ stashDir });
 
@@ -281,10 +317,15 @@ describe("issue #11: filesystem writable defaults to true in list output", () =>
   });
 
   test("website source without explicit writable defaults to false", async () => {
-    saveConfig({
-      semanticSearchMode: "off",
-      bundles: { "docs-site": { website: { url: "https://example.com" } } },
-    });
+    saveConfig(
+      withDefaultBundle(
+        {
+          semanticSearchMode: "off",
+          bundles: { "docs-site": { website: { url: "https://example.com" } } },
+        },
+        stashDir,
+      ),
+    );
 
     const result = await akmListSources({ stashDir });
 
@@ -301,10 +342,15 @@ describe("issue #12: updatable field absent from SourceEntry", () => {
     const sourceDir = createTmpDir("akm-qa-no-updatable-");
     makeStashDir(sourceDir);
 
-    saveConfig({
-      semanticSearchMode: "off",
-      bundles: { src: { path: sourceDir } },
-    });
+    saveConfig(
+      withDefaultBundle(
+        {
+          semanticSearchMode: "off",
+          bundles: { src: { path: sourceDir } },
+        },
+        stashDir,
+      ),
+    );
 
     const result = await akmListSources({ stashDir });
 
@@ -317,10 +363,15 @@ describe("issue #12: updatable field absent from SourceEntry", () => {
     const stashRoot = createTmpDir("akm-qa-managed-root-");
     makeStashDir(stashRoot);
 
-    saveConfig({
-      semanticSearchMode: "off",
-      bundles: { "test-pkg": { npm: "test-pkg" } },
-    });
+    saveConfig(
+      withDefaultBundle(
+        {
+          semanticSearchMode: "off",
+          bundles: { "test-pkg": { npm: "test-pkg" } },
+        },
+        stashDir,
+      ),
+    );
     seedLockEntries([
       {
         id: "test-pkg",
@@ -344,10 +395,15 @@ describe("issue #12: updatable field absent from SourceEntry", () => {
 describe("issue #19: akm bundle update website sources", () => {
   test("website source update does not throw TARGET_NOT_UPDATABLE", async () => {
     const siteUrl = "http://127.0.0.1:45679/test-site";
-    saveConfig({
-      semanticSearchMode: "off",
-      bundles: { "test-site": { website: { url: siteUrl } } },
-    });
+    saveConfig(
+      withDefaultBundle(
+        {
+          semanticSearchMode: "off",
+          bundles: { "test-site": { website: { url: siteUrl } } },
+        },
+        stashDir,
+      ),
+    );
 
     // Should not throw TARGET_NOT_UPDATABLE
     const result = await withMockedFetch(
@@ -373,10 +429,15 @@ describe("issue #19: akm bundle update website sources", () => {
     const secret = "STORE_ONLY_X_TOKEN";
     fs.mkdirSync(path.join(stashDir, "secrets"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "secrets", "x-bearer-token"), `${secret}\n`, { mode: 0o600 });
-    saveConfig({
-      semanticSearchMode: "off",
-      bundles: { "x-site": { website: { url: "https://x.com/jack" } } },
-    });
+    saveConfig(
+      withDefaultBundle(
+        {
+          semanticSearchMode: "off",
+          bundles: { "x-site": { website: { url: "https://x.com/jack" } } },
+        },
+        stashDir,
+      ),
+    );
 
     const apiRequests: string[] = [];
     const authenticatedApiRequests: string[] = [];
@@ -423,10 +484,15 @@ describe("issue #19: akm bundle update website sources", () => {
   test("git source update refreshes configured git mirrors instead of treating them as local paths", async () => {
     const syncSpy = mockGitMirror();
 
-    saveConfig({
-      semanticSearchMode: "off",
-      bundles: { "test-git": { git: "https://github.com/example/repo" } },
-    });
+    saveConfig(
+      withDefaultBundle(
+        {
+          semanticSearchMode: "off",
+          bundles: { "test-git": { git: "https://github.com/example/repo" } },
+        },
+        stashDir,
+      ),
+    );
 
     const result = await akmUpdate({ target: "test-git", stashDir });
     expect(result.processed).toEqual([]);
@@ -469,16 +535,21 @@ describe("update preserves entry.source for writable installed entries", () => {
     const oldOrigin = git(stashRoot, ["remote", "get-url", "origin"]);
     const cacheDir = createTmpDir("akm-qa-writable-cache-");
 
-    saveConfig({
-      semanticSearchMode: "off",
-      bundles: {
-        "dimm-city-agent-stash": {
-          git: "https://github.com/dimm-city/agent-stash.git",
-          registryId: "github:dimm-city/agent-stash",
-          components: { main: { root: ".", adapter: "okf", writable: true } },
+    saveConfig(
+      withDefaultBundle(
+        {
+          semanticSearchMode: "off",
+          bundles: {
+            "dimm-city-agent-stash": {
+              git: "https://github.com/dimm-city/agent-stash.git",
+              registryId: "github:dimm-city/agent-stash",
+              components: { main: { root: ".", adapter: "okf", writable: true } },
+            },
+          },
         },
-      },
-    });
+        stashDir,
+      ),
+    );
     seedLockEntries([
       {
         id: "dimm-city-agent-stash",
@@ -568,16 +639,21 @@ describe("update preserves entry.source for writable installed entries", () => {
     const stashRoot = createTmpDir("akm-qa-readd-writable-");
     makeStashDir(stashRoot);
     const cacheDir = createTmpDir("akm-qa-readd-cache-");
-    saveConfig({
-      semanticSearchMode: "off",
-      bundles: {
-        "dimm-city-agent-stash": {
-          git: "https://github.com/dimm-city/agent-stash.git",
-          registryId: "github:dimm-city/agent-stash",
-          components: { main: { root: ".", adapter: "okf", writable: true } },
+    saveConfig(
+      withDefaultBundle(
+        {
+          semanticSearchMode: "off",
+          bundles: {
+            "dimm-city-agent-stash": {
+              git: "https://github.com/dimm-city/agent-stash.git",
+              registryId: "github:dimm-city/agent-stash",
+              components: { main: { root: ".", adapter: "okf", writable: true } },
+            },
+          },
         },
-      },
-    });
+        stashDir,
+      ),
+    );
     seedLockEntries([
       {
         id: "dimm-city-agent-stash",
@@ -709,14 +785,19 @@ describe("R-015: akm bundle update --all with mixed plain and managed sources", 
   test("filters disabled managed and plain sources from --all without changing explicit targeting", async () => {
     const disabledManagedRoot = createTmpDir("akm-disabled-managed-");
     makeStashDir(disabledManagedRoot);
-    saveConfig({
-      semanticSearchMode: "off",
-      bundles: {
-        local: { path: stashDir },
-        managed: { npm: "managed", enabled: false },
-        plain: { git: "https://github.com/example/plain.git", enabled: false },
-      },
-    });
+    saveConfig(
+      withDefaultBundle(
+        {
+          semanticSearchMode: "off",
+          bundles: {
+            local: { path: stashDir },
+            managed: { npm: "managed", enabled: false },
+            plain: { git: "https://github.com/example/plain.git", enabled: false },
+          },
+        },
+        stashDir,
+      ),
+    );
     seedLockEntries([{ id: "managed", source: "npm", ref: "npm:managed", localRoot: disabledManagedRoot }]);
     const managedSync = spyOn(syncFromRefModule, "syncFromRef").mockRejectedValue(new Error("disabled managed synced"));
     const plainSync = spyOn(gitProvider, "syncMirroredRepo").mockRejectedValue(new Error("disabled plain synced"));
@@ -735,10 +816,15 @@ describe("R-015: akm bundle update --all with mixed plain and managed sources", 
   });
 
   test("still updates a disabled source when it is explicitly targeted", async () => {
-    saveConfig({
-      semanticSearchMode: "off",
-      bundles: { plain: { git: "https://github.com/example/plain.git", enabled: false } },
-    });
+    saveConfig(
+      withDefaultBundle(
+        {
+          semanticSearchMode: "off",
+          bundles: { plain: { git: "https://github.com/example/plain.git", enabled: false } },
+        },
+        stashDir,
+      ),
+    );
     const plainSync = mockGitMirror();
 
     try {
@@ -755,15 +841,20 @@ describe("R-015: akm bundle update --all with mixed plain and managed sources", 
 
     const siteUrl = "http://127.0.0.1:45680/docs-site";
 
-    saveConfig({
-      semanticSearchMode: "off",
-      bundles: {
-        "local-fs": { path: fsDir, components: { main: { root: ".", adapter: "akm", writable: true } } },
-        "docs-site": { website: { url: siteUrl } },
-        "mirror-git": { git: "https://github.com/example/mirror-git.git" },
-        "left-pad": { npm: "left-pad" },
-      },
-    });
+    saveConfig(
+      withDefaultBundle(
+        {
+          semanticSearchMode: "off",
+          bundles: {
+            "local-fs": { path: fsDir, components: { main: { root: ".", adapter: "akm", writable: true } } },
+            "docs-site": { website: { url: siteUrl } },
+            "mirror-git": { git: "https://github.com/example/mirror-git.git" },
+            "left-pad": { npm: "left-pad" },
+          },
+        },
+        stashDir,
+      ),
+    );
 
     const gitSyncSpy = mockGitMirror();
     const npmSyncSpy = mockNpmFetch();
@@ -815,10 +906,15 @@ describe("R-015: akm bundle update --all with mixed plain and managed sources", 
     // the generic filesystem-source fallback message ("is a local directory
     // — it reflects your files in place"), which is actively wrong for an
     // unsynced npm package and gives the user no way to ever sync it.
-    saveConfig({
-      semanticSearchMode: "off",
-      bundles: { "left-pad": { npm: "left-pad" } },
-    });
+    saveConfig(
+      withDefaultBundle(
+        {
+          semanticSearchMode: "off",
+          bundles: { "left-pad": { npm: "left-pad" } },
+        },
+        stashDir,
+      ),
+    );
 
     const npmSyncSpy = mockNpmFetch();
     try {

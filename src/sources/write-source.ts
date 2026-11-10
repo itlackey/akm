@@ -33,20 +33,9 @@ import { normalizeAkmMarkdown } from "../core/asset/akm-markdown";
 import { assetPathForName, stashDirFor } from "../core/asset/asset-placement";
 import type { AssetRef } from "../core/asset/resolve-ref";
 import { conceptIdFromTypeName, displayRef } from "../core/asset/resolve-ref";
-import { deriveBundleId } from "../core/bundle-id";
-import {
-  existingFileMode,
-  isWithin,
-  NO_DEFAULT_BUNDLE_MESSAGE,
-  resolveStashDir,
-  writeFileAtomic,
-} from "../core/common";
+import { existingFileMode, isWithin, NO_DEFAULT_BUNDLE_MESSAGE, writeFileAtomic } from "../core/common";
 import type { AkmConfig, ConfiguredSource, SourceConfigEntry } from "../core/config/config";
-import {
-  bundleKeyForContentRoot,
-  resolveActiveConfiguredSources,
-  resolveConfiguredSources,
-} from "../core/config/config";
+import { resolveActiveConfiguredSources, resolveConfiguredSources } from "../core/config/config";
 import { ConfigError, UsageError } from "../core/errors";
 import { sanitizeCommitMessage } from "../core/git-message";
 import { warn, warnOnce } from "../core/warn";
@@ -169,34 +158,13 @@ export function resolveWriteTarget(
   return resolveWorkingStashTarget(akmConfig, options);
 }
 
-/** Resolve the implicit working stash: `AKM_BUNDLE_DIR`, else `defaultBundle`. */
+/** Resolve the implicit working stash: the `defaultBundle`. */
 export function resolveWorkingStashTarget(
   akmConfig: AkmConfig,
   options: { requireWritable?: boolean } = {},
 ): ResolvedWriteTarget {
-  const allConfiguredSources = resolveConfiguredSources(akmConfig);
   const configuredSources = resolveActiveConfiguredSources(akmConfig);
   const requireWritable = options.requireWritable !== false;
-  if (process.env.AKM_BUNDLE_DIR?.trim()) {
-    const stashDir = resolveStashDir();
-    const configuredBundleId = bundleKeyForContentRoot(akmConfig, stashDir);
-    const configured = configuredSources.find((source) => source.name === configuredBundleId);
-    if (configured) {
-      const target = adaptConfiguredSource(configured);
-      if (requireWritable && !resolveWritable(target.config)) {
-        throw new ConfigError(`Bundle "${configured.name}" is not writable.`, "INVALID_CONFIG_FILE");
-      }
-      return { ...target, selector: undefined };
-    }
-    if (allConfiguredSources.some((source) => source.name === configuredBundleId)) {
-      throw new ConfigError("The AKM_BUNDLE_DIR source is disabled in config.", "INVALID_CONFIG_FILE");
-    }
-    const bundleId = deriveBundleId(undefined, stashDir, new Set(Object.keys(akmConfig.bundles ?? {})));
-    return {
-      source: { kind: "filesystem", name: bundleId, path: stashDir, adapterId: detectAdapterId(stashDir) },
-      config: { type: "filesystem", name: bundleId, path: stashDir, writable: true },
-    };
-  }
   const defaultBundleSource = akmConfig.defaultBundle
     ? configuredSources.find((source) => source.name === akmConfig.defaultBundle)
     : undefined;

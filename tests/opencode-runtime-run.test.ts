@@ -14,7 +14,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import akmPlugin from "../src/assets/opencode/akm-plugin.js" with { type: "text" };
-import { getDataDir } from "../src/core/paths";
+import { getConfigPath, getDataDir } from "../src/core/paths";
 import { runtimeProfile } from "../src/integrations/agent/profiles";
 import type { ConnectionRunner } from "../src/integrations/agent/runner";
 import type { AgentRunResult, RunAgentOptions } from "../src/integrations/agent/spawn";
@@ -135,9 +135,13 @@ describe.skipIf(process.platform === "win32")("a run on akm's runtime", () => {
     // The inline config is akm's own, not the one the user's environment holds.
     expect(JSON.parse(env.OPENCODE_CONFIG_CONTENT as string)).not.toHaveProperty("model");
     expect(env.AKM_EVENT_SOURCE).toBe("task");
-    expect(env.AKM_DATA_DIR).toBe(getDataDir());
-    // The argv that runs this akm: here the runtime and the source entry.
-    expect(JSON.parse(env.AKM_OPENCODE_CLI as string)).toEqual(resolveAkmInvocation().argv);
+    expect(env.AKM_CONFIG_FILE).toBe(getConfigPath());
+    // The argv that runs this akm, for the plugin, is in the config it is given: here the runtime and the source entry.
+    const config = JSON.parse(env.OPENCODE_CONFIG_CONTENT as string) as {
+      plugins: Array<{ options: { akm: string[] } }>;
+    };
+    expect(config.plugins[0]?.options.akm).toEqual(resolveAkmInvocation().argv);
+    expect(env).not.toHaveProperty("AKM_OPENCODE_CLI");
     expect(path.basename(resolveAkmInvocation().argv.at(-1) as string)).toBe("cli.ts");
     for (const name of ["config", "data", "cache", "state", "tmp"]) {
       expect(fs.statSync(path.join(directory, name)).isDirectory()).toBe(true);

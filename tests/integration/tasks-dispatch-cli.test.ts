@@ -181,7 +181,7 @@ describe.skipIf(!LINUX)("task sync and task dispatch, as processes", () => {
   test("an installation that moves its state directory leaves the crontab alone and says to run dispatch itself", () => {
     const before = crontab();
 
-    const result = akm(["task", "sync", "--rebind"], { AKM_STATE_DIR: path.join(sandbox.dir, "other-state") });
+    const result = akm(["task", "sync", "--rebind"], { XDG_STATE_HOME: path.join(sandbox.dir, "other-state") });
 
     expect(result.status, result.stderr).toBe(0);
     const synced = JSON.parse(result.stdout) as { entry: string; warnings: string[] };

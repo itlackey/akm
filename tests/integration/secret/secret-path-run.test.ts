@@ -35,7 +35,14 @@ import path from "node:path";
 import { setSecret } from "../../../src/commands/env/secret";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../../../src/llm/embedder";
 import { runCliCapture } from "../../_helpers/cli";
-import { makeStashDir, type SandboxedDir, withEnv, writeSandboxConfig } from "../../_helpers/sandbox";
+import {
+  makeStashDir,
+  type SandboxedDir,
+  withBundle,
+  withBundleSync,
+  withEnv,
+  writeSandboxConfig,
+} from "../../_helpers/sandbox";
 
 const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
 const cliPath = path.join(repoRoot, "src", "cli.ts");
@@ -43,14 +50,16 @@ const cliPath = path.join(repoRoot, "src", "cli.ts");
 /** Real-subprocess runner — see the module docstring for why this is required. */
 function spawnCli(
   args: string[],
-  extraEnv: Record<string, string | undefined> = {},
+  options: { stashDir?: string; env?: Record<string, string | undefined> } = {},
 ): { stdout: string; stderr: string; status: number } {
-  const result = spawnSync("bun", [cliPath, ...args], {
-    encoding: "utf8",
-    timeout: 15_000,
-    cwd: repoRoot,
-    env: { ...process.env, AKM_BUNDLE_DIR: undefined, ...extraEnv },
-  });
+  const result = withBundleSync(options.stashDir, () =>
+    spawnSync("bun", [cliPath, ...args], {
+      encoding: "utf8",
+      timeout: 15_000,
+      cwd: repoRoot,
+      env: { ...process.env, ...options.env },
+    }),
+  );
   return { stdout: result.stdout ?? "", stderr: result.stderr ?? "", status: result.status ?? 1 };
 }
 
@@ -77,14 +86,16 @@ afterEach(() => {
 
 async function runCli(
   args: string[],
-  extraEnv: Record<string, string | undefined> = {},
+  options: { stashDir?: string; env?: Record<string, string | undefined> } = {},
 ): Promise<{ stdout: string; stderr: string; status: number }> {
-  return withEnv({ AKM_CONFIG_DIR: undefined, ...extraEnv }, async () => {
-    clearEmbeddingCache();
-    resetLocalEmbedder();
-    const { stdout, stderr, code } = await runCliCapture(args);
-    return { stdout, stderr, status: code };
-  });
+  return withEnv({ ...options.env }, () =>
+    withBundle(options.stashDir, async () => {
+      clearEmbeddingCache();
+      resetLocalEmbedder();
+      const { stdout, stderr, code } = await runCliCapture(args);
+      return { stdout, stderr, status: code };
+    }),
+  );
 }
 
 describe("secret path — removed in 0.9.0", () => {
@@ -93,7 +104,7 @@ describe("secret path — removed in 0.9.0", () => {
     const fp = path.join(stashDir, "secrets", "demo");
     setSecret(fp, Buffer.from("super-secret-token-value"));
 
-    const { stdout, stderr, status } = spawnCli(["secret", "path", "secrets/demo"], { AKM_BUNDLE_DIR: stashDir });
+    const { stdout, stderr, status } = withBundleSync(stashDir, () => spawnCli(["secret", "path", "secrets/demo"]));
 
     expect(status).toBe(2);
     expect(stderr).toContain("Unknown command");
@@ -124,7 +135,7 @@ describe("secret run", () => {
         "-c",
         `printf %s "$GIT_SSH_COMMAND" > ${out}`,
       ],
-      { AKM_BUNDLE_DIR: stashDir },
+      { stashDir: stashDir },
     );
     expect(status).toBe(0);
     expect(stderr).not.toContain("Injecting anyway");
@@ -149,7 +160,7 @@ describe("secret run", () => {
         "-c",
         `printf %s "$GIT_SSH_COMMAND" > ${out}`,
       ],
-      { AKM_BUNDLE_DIR: primaryStashDir },
+      { stashDir: primaryStashDir },
     );
 
     expect(status).toBe(0);
@@ -161,7 +172,7 @@ describe("secret run", () => {
     const stashDir = makeStash();
     setSecret(path.join(stashDir, "secrets", "demo"), Buffer.from("v"));
     const { status } = await runCli(["secret", "run", "secrets/demo", "not a var", "--", "true"], {
-      AKM_BUNDLE_DIR: stashDir,
+      stashDir: stashDir,
     });
     expect(status).toBe(2);
   });
@@ -169,7 +180,7 @@ describe("secret run", () => {
   test("errors when no command is supplied after --", async () => {
     const stashDir = makeStash();
     setSecret(path.join(stashDir, "secrets", "demo"), Buffer.from("v"));
-    const { status } = await runCli(["secret", "run", "secrets/demo", "TOKEN"], { AKM_BUNDLE_DIR: stashDir });
+    const { status } = await withBundle(stashDir, () => runCli(["secret", "run", "secrets/demo", "TOKEN"]));
     expect(status).toBe(2);
   });
 });

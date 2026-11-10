@@ -9,7 +9,7 @@ import { VALID_ADAPTER_IDS } from "../../src/core/adapter/adapter-ids";
 import { ConfigError, NotFoundError, UsageError } from "../../src/core/errors";
 import { formatExemptSurfaces } from "../../src/output/format-exempt";
 import { runCliCapture } from "../_helpers/cli";
-import { makeSandboxDir, makeStashDir, type SandboxedDir, withEnv } from "../_helpers/sandbox";
+import { makeSandboxDir, makeStashDir, type SandboxedDir, withBundle, withBundleSync } from "../_helpers/sandbox";
 
 // Helpers.
 //
@@ -59,7 +59,7 @@ function spawnCli(
     encoding: "utf8",
     timeout: 10_000,
     cwd: options.cwd,
-    env: { ...process.env, AKM_BUNDLE_DIR: undefined, ...options.env },
+    env: { ...process.env, ...options.env },
   });
   return { stdout: result.stdout ?? "", stderr: result.stderr ?? "", status: result.status ?? 1 };
 }
@@ -105,9 +105,7 @@ describe("CLI error handling", () => {
   test("search --format invalid prints hint about format", async () => {
     const stash = makeStashDir();
     disposers.push(stash);
-    const { stderr, status } = await withEnv({ AKM_BUNDLE_DIR: stash.dir }, () =>
-      runCli("search", "test", "--format", "invalid"),
-    );
+    const { stderr, status } = await withBundle(stash.dir, () => runCli("search", "test", "--format", "invalid"));
     // Usage error (INVALID_FORMAT_VALUE) -> exit 2. Ground-truthed by probing
     // the actual CLI output before pinning.
     expect(status).toBe(2);
@@ -207,7 +205,7 @@ describe("CLI envelope coverage for P1a's diagnostic codes (COMPOSITION_INVALID,
       "utf8",
     );
 
-    const { stderr, status } = await withEnv({ AKM_BUNDLE_DIR: stash.dir }, () => runCli("task", "run", "bad-source"));
+    const { stderr, status } = await withBundle(stash.dir, () => runCli("task", "run", "bad-source"));
 
     expect(status).toBe(2);
     const parsed = JSON.parse(stderr.trim());
@@ -228,9 +226,7 @@ describe("CLI envelope coverage for P1a's diagnostic codes (COMPOSITION_INVALID,
     fs.mkdirSync(path.join(stash.dir, "tasks"), { recursive: true });
     fs.writeFileSync(path.join(stash.dir, "tasks", "legacy-source.yml"), yaml, "utf8");
 
-    const { stderr, status } = await withEnv({ AKM_BUNDLE_DIR: stash.dir }, () =>
-      runCli("task", "run", "legacy-source"),
-    );
+    const { stderr, status } = await withBundle(stash.dir, () => runCli("task", "run", "legacy-source"));
 
     expect(status).toBe(2);
     const parsed = JSON.parse(stderr.trim());
@@ -262,10 +258,8 @@ describe("CLI envelope coverage for P1a's diagnostic codes (COMPOSITION_INVALID,
       ].join("\n"),
     );
 
-    await withEnv({ AKM_BUNDLE_DIR: stash.dir }, () => runCli("index", "--full"));
-    const { stderr, status } = await withEnv({ AKM_BUNDLE_DIR: stash.dir }, () =>
-      runCli("workflow", "run", "workflows/loop"),
-    );
+    await withBundle(stash.dir, () => runCli("index", "--full"));
+    const { stderr, status } = await withBundle(stash.dir, () => runCli("workflow", "run", "workflows/loop"));
 
     expect(status).toBe(2);
     const parsed = JSON.parse(stderr.trim());
@@ -585,7 +579,7 @@ describe("R-032: citty CLIError family exits 2, not 1", () => {
     test(`bare akm ${group} runs its list and exits 0`, () => {
       const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bare-list-"));
       try {
-        const { status, stderr } = spawnCli([group], { cwd: repoRoot, env: { AKM_BUNDLE_DIR: bundleDir } });
+        const { status, stderr } = withBundleSync(bundleDir, () => spawnCli([group], { cwd: repoRoot }));
         expect(status).toBe(0);
         expect(stderr).not.toContain("requires a subcommand");
       } finally {

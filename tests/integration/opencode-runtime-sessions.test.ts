@@ -16,7 +16,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { getCacheDir, getDataDir } from "../../src/core/paths";
+import { getCacheDir, getConfigPath, getDataDir } from "../../src/core/paths";
 import { runtimeProfile } from "../../src/integrations/agent/profiles";
 import type { ConnectionRunner } from "../../src/integrations/agent/runner";
 import type { RunAgentOptions } from "../../src/integrations/agent/spawn";
@@ -133,7 +133,7 @@ describe.skipIf(unavailable !== undefined)("akm's runtime on the real OpenCode b
     expect(result.ok, `${result.stdout}\n${result.stderr}`).toBe(true);
     // What the shell tool printed: the runtime's own settings are not there, akm's environment and the run's variables are.
     expect(result.stdout).toContain(
-      `CONFIG=unset DATA=${ambient.XDG_DATA_HOME} CACHE=${ambient.XDG_CACHE_HOME} TMP=${ambient.TMPDIR} FREE=unset SOURCE=task DIR=${getDataDir()}`,
+      `CONFIG=unset DATA=${ambient.XDG_DATA_HOME} CACHE=${ambient.XDG_CACHE_HOME} TMP=${ambient.TMPDIR} FREE=unset SOURCE=task FILE=${getConfigPath()}`,
     );
     expect(result.stdout).not.toContain("sk-never-in-a-command");
   });

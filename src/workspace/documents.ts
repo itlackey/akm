@@ -18,7 +18,7 @@ import { akmClone, type CloneResponse } from "../commands/sources/source-clone";
 import { assertFlatAssetName } from "../core/asset/asset-create";
 import { assetPathForName, stashDirFor } from "../core/asset/asset-placement";
 import { parseBundleRef } from "../core/asset/asset-ref";
-import { resolveStashDir, toErrorMessage } from "../core/common";
+import { toErrorMessage } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
@@ -184,7 +184,8 @@ export async function retire(input: { ref: string; revision: string }) {
     const { canonical, target, type } = await resolveWritableIndexedAsset(ref);
     if (["skill", "env", "secret", "session"].includes(type))
       throw new UsageError("Retire supports single-file assets, not skill packages or protected files.");
-    const stashDir = resolveStashDir();
+    // The write target the asset resolved to owns the proposal queue.
+    const stashDir = target.source.path;
     const minted = createRetireProposal(stashDir, {
       ref: canonical,
       source: "propose",

@@ -61,8 +61,8 @@ Windows uses per-user app-data directories (`%LOCALAPPDATA%\akm\data`,
 
 ### Config directory
 
-`$XDG_CONFIG_HOME/akm` (default `~/.config/akm/`). Override with
-`AKM_CONFIG_DIR`.
+`$XDG_CONFIG_HOME/akm` (default `~/.config/akm/`). Choose another config file
+with `--config <file>` or `AKM_CONFIG_FILE`; the files below then sit beside it.
 
 | Path | Contents |
 | --- | --- |
@@ -73,7 +73,7 @@ Windows uses per-user app-data directories (`%LOCALAPPDATA%\akm\data`,
 ### Data directory
 
 `$XDG_DATA_HOME/akm` (default `~/.local/share/akm/`). Override with
-`AKM_DATA_DIR`.
+`paths.data` in the config file.
 
 | Path | Contents |
 | --- | --- |
@@ -100,7 +100,7 @@ instead of reporting success for feedback it could not store.
 ### State directory
 
 `$XDG_STATE_HOME/akm` (default `~/.local/state/akm/`). Override with
-`AKM_STATE_DIR`.
+`paths.state` in the config file.
 
 | Path | Contents |
 | --- | --- |
@@ -110,7 +110,7 @@ instead of reporting success for feedback it could not store.
 ### Cache directory
 
 `$XDG_CACHE_HOME/akm` (default `~/.cache/akm/`). Override with
-`AKM_CACHE_DIR`. Everything here is regenerable; deleting the directory is safe.
+`paths.cache` in the config file. Everything here is regenerable; deleting the directory is safe.
 
 | Path | Contents |
 | --- | --- |
@@ -125,8 +125,8 @@ instead of reporting success for feedback it could not store.
 
 ### Bundle directory
 
-`~/akm/` by default; override with `AKM_BUNDLE_DIR`, or configure `bundles` and
-`defaultBundle` in `config.json`. This holds your asset files and is not
+`~/akm/` is where `akm bundle create` puts a new bundle; configure `bundles` and
+`defaultBundle` in `config.json` to work in another directory. This holds your asset files and is not
 regenerable. akm also writes into it:
 
 | Path | Contents |
@@ -228,8 +228,7 @@ the config, data, state and cache directories.
 
 | Variable | Effect |
 | --- | --- |
-| `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR`, `AKM_CACHE_DIR` | Override the config, data, state and cache directories |
-| `AKM_BUNDLE_DIR` | Default bundle directory (`~/akm/`) |
+| `AKM_CONFIG_FILE` (or `--config <file>`) | The config file to use; its `paths` key (`data`, `state`, `cache`) says where the rest lives. `credentials.json` and the config lock sit beside it |
+| `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR`, `AKM_CACHE_DIR` | Retired. Set without `AKM_CONFIG_FILE`, akm stops with an error that names `akm migrate apply`; see [Retired location variables](configuration.md#retired-location-variables) |
 | `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME` | XDG bases; akm appends `/akm` |
-| `AKM_SQLITE_JOURNAL_MODE` | SQLite journal mode: `WAL` (default), `DELETE` or `TRUNCATE`. On a detected network filesystem the default falls back to `DELETE`. |
 | `AKM_NPM_REGISTRY` | Base URL of an npm mirror. Replaces `registry.npmjs.org` for npm bundle resolution. |

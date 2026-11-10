@@ -20,7 +20,7 @@ import {
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
   sandboxXdgStateHome,
-  withEnv,
+  withBundle,
 } from "../_helpers/sandbox";
 import { withSeam } from "../_helpers/seams";
 
@@ -206,9 +206,6 @@ describe("akmClone", () => {
   });
 
   test("uses defaultBundle when --bundle is omitted", async () => {
-    // The working bundle is AKM_BUNDLE_DIR when set; this test works from the configured defaultBundle.
-
-    delete process.env.AKM_BUNDLE_DIR;
     const targetDir = createStashDir("akm-clone-default-target-");
     writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "echo deploy\n");
     saveConfig({
@@ -574,8 +571,8 @@ describe("akmClone --dest", () => {
 
   test("--dest does not require a working stash", async () => {
     writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "echo deploy\n");
-    // Point AKM_BUNDLE_DIR to a non-existent directory to simulate no working stash
-    await withEnv({ AKM_BUNDLE_DIR: path.join(os.tmpdir(), `nonexistent-stash-${Date.now()}`) }, async () => {
+    // Point the default bundle at a non-existent directory to simulate no working stash
+    await withBundle(path.join(os.tmpdir(), `nonexistent-stash-${Date.now()}`), async () => {
       const result = await akmClone({
         sourceRef: `${searchPathDir}//scripts/deploy.sh`,
         dest: customDest,

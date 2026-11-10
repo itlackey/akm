@@ -23,7 +23,7 @@ import { akmIndex } from "../../src/indexer/indexer";
 import { searchLocal } from "../../src/indexer/search/db-search";
 import {
   type Cleanup,
-  sandboxEnvDir,
+  sandboxAkmDir,
   sandboxStashDir,
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
@@ -48,8 +48,8 @@ beforeEach(async () => {
   stashDir = stash.dir;
   let chain = sandboxXdgConfigHome(stash.cleanup).cleanup;
   chain = sandboxXdgCacheHome(chain).cleanup;
-  chain = sandboxEnvDir("akm-search-mode-data", "AKM_DATA_DIR", chain).cleanup;
-  chain = sandboxEnvDir("akm-search-mode-state", "AKM_STATE_DIR", chain).cleanup;
+  chain = sandboxAkmDir("akm-search-mode-data", "data", chain).cleanup;
+  chain = sandboxAkmDir("akm-search-mode-state", "state", chain).cleanup;
   cleanup = chain;
   const knowledgeDir = path.join(stashDir, "knowledge");
   fs.mkdirSync(knowledgeDir, { recursive: true });

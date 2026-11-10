@@ -10,10 +10,11 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { slugForPath } from "../../../src/core/bundle-id";
 import { loadConfig, saveConfig } from "../../../src/core/config/config";
 import { readLockfile } from "../../../src/integrations/lockfile";
 import { runCliCapture } from "../../_helpers/cli";
-import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage } from "../../_helpers/sandbox";
+import { type IsolatedAkmStorage, withDefaultBundle, withEnv, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 const NPM_PACKAGE = "akm-bundle-name-fixture";
 const GITHUB_URL = "https://github.com/acme/name-fixture.git";
@@ -91,13 +92,14 @@ async function bundleAdd(...args: string[]): Promise<Record<string, unknown>> {
   return JSON.parse(result.stdout);
 }
 
+/** The bundles the test added: the working bundle the sandbox configured is not one of them. */
 function bundleKeys(): string[] {
-  return Object.keys(loadConfig().bundles ?? {});
+  return Object.keys(loadConfig().bundles ?? {}).filter((key) => key !== slugForPath(storage.stashDir));
 }
 
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
-  saveConfig({ semanticSearchMode: "off" });
+  saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, storage.stashDir));
   const registry = serveNpmPackage();
   stopRegistry = registry.stop;
   const remote = createGitRemote();

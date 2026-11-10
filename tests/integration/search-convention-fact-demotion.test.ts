@@ -48,7 +48,7 @@ import {
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
   sandboxXdgStateHome,
-  withEnv,
+  withBundle,
 } from "../_helpers/sandbox";
 
 /** The shipped skeleton convention facts — the exact files `akm init` installs. */
@@ -134,7 +134,7 @@ async function buildFixture(): Promise<void> {
 }
 
 async function runCli(args: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
-  return withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+  return withBundle(stashDir, async () => {
     resetConfigCache();
     return runCliCapture(args);
   });

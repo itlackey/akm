@@ -40,8 +40,6 @@ describe("workflow force publication safety", () => {
   });
 
   test("continues to support a symlinked source root", () => {
-    // The working bundle is AKM_BUNDLE_DIR when set; this test works from the configured defaultBundle.
-    delete process.env.AKM_BUNDLE_DIR;
     const real = path.join(storage.root, "real-stash");
     const linked = path.join(storage.root, "linked-stash");
     fs.mkdirSync(real, { recursive: true });

@@ -15,25 +15,23 @@
  * #786 ORG-04: relocated out of tests/integration/fixtures/stashes/ — no
  * .test.ts belongs under a fixtures/_fixtures path.
  *
- * The literal sentinel-value AKM_BUNDLE_DIR override this test needs (to
- * prove `loadFixtureStash`'s cleanup restores to whatever was set before the
- * call, not some hardcoded default) is routed through `withEnv` rather than
- * a raw `process.env.AKM_BUNDLE_DIR = …` assignment, so this file needs no
- * isolation-lint allowlist entry.
+ * The sentinel working bundle this test needs (to prove `loadFixtureStash`'s
+ * cleanup restores the config to whatever it was before the call, not some
+ * hardcoded default) is routed through `withBundle`.
  */
 
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { withEnv } from "../_helpers/sandbox";
+import { resolveStashDir } from "../../src/core/common";
+import { makeStashDir, withBundle } from "../_helpers/sandbox";
 import { loadFixtureStash } from "../fixtures/stashes/load";
 
 describe("loadFixtureStash", () => {
   test("materialises the minimal fixture, runs a real akm index, and cleanup removes it", async () => {
-    const priorAkmStashDir = process.env.AKM_BUNDLE_DIR;
-    const sentinel = "/tmp/some-prior-value";
+    const sentinel = makeStashDir();
 
-    await withEnv({ AKM_BUNDLE_DIR: sentinel }, () => {
+    await withBundle(sentinel.dir, () => {
       const { stashDir, cleanup, contentHash } = loadFixtureStash("minimal");
 
       try {
@@ -48,8 +46,8 @@ describe("loadFixtureStash", () => {
         // Content hash is non-empty hex.
         expect(contentHash).toMatch(/^[0-9a-f]{64}$/);
 
-        // The helper set AKM_BUNDLE_DIR to the materialised path.
-        expect(process.env.AKM_BUNDLE_DIR).toBe(stashDir);
+        // The helper made the materialised path the working bundle.
+        expect(resolveStashDir()).toBe(stashDir);
 
         // Default behaviour runs `akm index`, which writes the SQLite DB
         // into the helper's isolated XDG_DATA_HOME (sibling of stashDir).
@@ -60,15 +58,14 @@ describe("loadFixtureStash", () => {
         cleanup();
       }
 
-      // After loadFixtureStash's own cleanup, the tmp tree is gone and
-      // AKM_BUNDLE_DIR is restored to the sentinel withEnv set (the value
-      // that was current when loadFixtureStash was called).
+      // After loadFixtureStash's own cleanup, the tmp tree is gone and the working
+      // bundle is the sentinel again (the one current when loadFixtureStash was called).
       expect(fs.existsSync(stashDir)).toBe(false);
-      expect(process.env.AKM_BUNDLE_DIR).toBe(sentinel);
+      expect(resolveStashDir()).toBe(sentinel.dir);
     });
 
-    // withEnv's own restore (its finally) brings AKM_BUNDLE_DIR back to
-    // whatever it was before this test ran.
-    expect(process.env.AKM_BUNDLE_DIR).toBe(priorAkmStashDir);
+    // withBundle's own restore brings the config back to what it was before this test ran.
+    expect(() => resolveStashDir()).toThrow();
+    sentinel.cleanup();
   });
 });

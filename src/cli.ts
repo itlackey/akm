@@ -44,7 +44,7 @@ process.on("unhandledRejection", (reason) => {
         ok: false,
         error: `Unhandled rejection: ${err.message}`,
         code: "UNHANDLED_REJECTION",
-        hint: "Re-run with --verbose (or AKM_VERBOSE=1) for a stack trace, or report at https://github.com/itlackey/akm/issues with the failing command.",
+        hint: "Re-run with --verbose for a stack trace, or report at https://github.com/itlackey/akm/issues with the failing command.",
       },
       null,
       2,
@@ -60,7 +60,7 @@ process.on("uncaughtException", (err) => {
         ok: false,
         error: `Uncaught exception: ${err.message}`,
         code: "UNCAUGHT_EXCEPTION",
-        hint: "Re-run with --verbose (or AKM_VERBOSE=1) for a stack trace, or report at https://github.com/itlackey/akm/issues with the failing command.",
+        hint: "Re-run with --verbose for a stack trace, or report at https://github.com/itlackey/akm/issues with the failing command.",
       },
       null,
       2,
@@ -71,6 +71,7 @@ process.on("uncaughtException", (err) => {
 });
 
 import fs from "node:fs";
+import path from "node:path";
 import { type ArgsDef, type CommandDef, defineCommand, parseArgs, renderUsage, runCommand } from "citty";
 import { formatHelp } from "./cli/help-format";
 import {
@@ -132,7 +133,35 @@ import { getOutputMode, initOutputMode } from "./output/context";
 import { isFormatExemptCommand } from "./output/format-exempt";
 import { pkgVersion } from "./version";
 
-function applyEarlyStderrFlags(argv: string[]): void {
+/**
+ * `--config <file>` (or `--config=<file>`): the installation's config file, chosen before anything is read. Resolved
+ * against the cwd and assigned to `AKM_CONFIG_FILE`, which is what every later read of a location, and every child
+ * akm starts, goes by. Beats an `AKM_CONFIG_FILE` already in the environment; the last flag wins; scanning stops
+ * at `--`. A file that does not exist is not an error here: it reads as the default file's absence does.
+ */
+export function applyEarlyConfigFlag(argv: string[]): void {
+  const separator = argv.indexOf("--");
+  const ownArgv = separator === -1 ? argv : argv.slice(0, separator);
+  let chosen: string | undefined;
+  for (let i = 2; i < ownArgv.length; i++) {
+    const token = ownArgv[i] as string;
+    if (token === "--config") {
+      const value = ownArgv[i + 1];
+      if (value === undefined || value.trim() === "" || value.startsWith("--")) {
+        throw new UsageError("--config needs the path of a config file.", "MISSING_REQUIRED_ARGUMENT");
+      }
+      chosen = value;
+      i++;
+    } else if (token.startsWith("--config=")) {
+      chosen = token.slice("--config=".length);
+      if (chosen.trim() === "")
+        throw new UsageError("--config needs the path of a config file.", "MISSING_REQUIRED_ARGUMENT");
+    }
+  }
+  if (chosen !== undefined) process.env.AKM_CONFIG_FILE = path.resolve(chosen);
+}
+
+export function applyEarlyStderrFlags(argv: string[]): void {
   const separator = argv.indexOf("--");
   const ownArgv = separator === -1 ? argv : argv.slice(0, separator);
   if (ownArgv.includes("--quiet") || ownArgv.includes("-q")) {
@@ -689,22 +718,26 @@ export function shouldBypassConfigStartup(argv: readonly string[]): boolean {
 }
 
 /**
- * Whether `argv` resolves to the top-level `info` command — used by
- * `runCli` (and mirrored in `tests/_helpers/cli.ts`) to scope the startup
- * config read's best-effort fallback to `info` alone. `info` is NOT on
- * {@link shouldBypassConfigStartup}'s allowlist: unlike a bare bypass, it
- * still reads a valid config's `output.format`/`output.detail` like any
- * other command, it just must not be aborted by one it cannot read (see
- * `assembleInfo`'s doc comment, src/commands/sources/info.ts, for why).
- * Every other command reads config exactly as before — a broken config
- * throws here and the command never runs.
+ * Whether `argv` resolves to a top-level command whose startup config read is
+ * best-effort: `info` and `upgrade`. Used by `runCli` (and mirrored in
+ * `tests/_helpers/cli.ts`) to scope the best-effort fallback to these two
+ * alone. They are NOT on {@link shouldBypassConfigStartup}'s allowlist:
+ * unlike a bare bypass, they still read a valid config's
+ * `output.format`/`output.detail` like any other command, they just must not be
+ * aborted by a config or location they cannot read. `info` is the diagnostic
+ * (see `assembleInfo`'s doc comment, src/commands/sources/info.ts, for why);
+ * `upgrade` ends by running `akm-migrate apply`, the repair for exactly such a
+ * config or a retired location variable (see `src/core/paths.ts`), so it must
+ * reach it. Every other command reads config exactly as before — a broken
+ * config throws here and the command never runs.
  */
-export function isInfoCommand(argv: readonly string[]): boolean {
+export function readsConfigBestEffort(argv: readonly string[]): boolean {
   const userArgs = argv.slice(2);
   const separator = userArgs.indexOf("--");
   const args = separator === -1 ? userArgs : userArgs.slice(0, separator);
   const commandIndex = findCittyTopLevelCommandIndex(args, MAIN_TOP_LEVEL_ARGS);
-  return (commandIndex >= 0 ? args[commandIndex] : undefined) === "info";
+  const command = commandIndex >= 0 ? args[commandIndex] : undefined;
+  return command === "info" || command === "upgrade";
 }
 
 // ── Exit codes ──────────────────────────────────────────────────────────────
@@ -1070,16 +1103,16 @@ export async function runCli(): Promise<void> {
   // invalid; surface it through the same JSON-error path the rest of the CLI uses
   // rather than letting the raw exception escape with a stack trace.
   try {
+    applyEarlyConfigFlag(process.argv);
     applyEarlyStderrFlags(process.argv);
     const bypassConfig = shouldBypassConfigStartup(process.argv);
     // Off the bypass allowlist, every command reads config here exactly as
     // it always has: an invalid config.json throws, `emitJsonError` reports
     // it, and the command never runs — no side effect of its own body ever
     // happens (a lock taken, a network call made, a database opened
-    // read-write). `akm info` is the ONE exception (see `assembleInfo`'s
-    // doc comment, src/commands/sources/info.ts): only ITS read is
-    // best-effort, falling back to `DEFAULT_CONFIG.output` instead of
-    // throwing. Scoped narrowly on purpose — an earlier version of this fix
+    // read-write). `akm info` and `akm upgrade` are the exceptions (see
+    // `readsConfigBestEffort`): only THEIR read is best-effort, falling back
+    // to `DEFAULT_CONFIG.output` instead of throwing. Scoped narrowly on purpose — an earlier version of this fix
     // made the read best-effort for every command, which silently changed
     // outcomes across the CLI (some commands that should refuse at exit 78
     // ran anyway; `health`/`index`/`config set`/`feedback` still failed,
@@ -1087,7 +1120,7 @@ export async function runCli(): Promise<void> {
     // or making a network call).
     let outputDefaults = DEFAULT_CONFIG.output ?? {};
     if (!bypassConfig) {
-      if (isInfoCommand(process.argv)) {
+      if (readsConfigBestEffort(process.argv)) {
         try {
           outputDefaults = loadConfig().output ?? {};
         } catch {

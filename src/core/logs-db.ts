@@ -58,7 +58,7 @@ export type { Database };
 /**
  * Default path: `<dataDir>/logs.db` — alongside state.db so cooperating
  * processes sharing a data root automatically share the same logs database
- * (same `AKM_DATA_DIR` / XDG env-isolation as {@link getStateDbPath}).
+ * (same `paths.data` / XDG resolution as {@link getStateDbPath}).
  */
 export function getLogsDbPath(): string {
   return path.join(getDataDir(), "logs.db");

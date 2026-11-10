@@ -28,13 +28,13 @@ import {
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
-  withEnv,
+  withBundle,
 } from "../_helpers/sandbox";
 
 const disposers: SandboxedDir[] = [];
 
 async function runCli(args: string[], stashDir: string): Promise<{ stdout: string; stderr: string; status: number }> {
-  return withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+  return withBundle(stashDir, async () => {
     resetConfigCache();
     const res = await runCliCapture(args);
     return { stdout: res.stdout, stderr: res.stderr, status: res.code };
@@ -65,7 +65,7 @@ async function makeIndexedStash(): Promise<string> {
     path.join(stash, "skills", "deploy-widgets", "SKILL.md"),
     "---\ndescription: deploy widgets uniformly\ntags:\n  - deploy\nquality: curated\n---\n# Deploy widgets\n",
   );
-  await withEnv({ AKM_BUNDLE_DIR: stash }, async () => {
+  await withBundle(stash, async () => {
     resetConfigCache();
     saveConfig({ semanticSearchMode: "off" });
     await akmIndex({ stashDir: stash, full: true });

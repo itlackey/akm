@@ -165,7 +165,6 @@ const GONE_FLAGS: ReadonlyArray<{ flag: string; use: string; commands?: readonly
     use: '`akm improve && akm proposal drain --promote --yes`, or a `triage` block with `applyMode: "promote"` in your strategy',
     commands: ["improve"],
   },
-  { flag: "--config", use: "`--endpoint <url> --yes` and the other answer flags", commands: ["setup"] },
   { flag: "--probe", use: "no flag: probing is the default, and `--no-probe` runs offline", commands: ["setup"] },
 ];
 

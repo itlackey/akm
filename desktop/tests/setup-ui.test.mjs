@@ -50,8 +50,7 @@ const crontab = (root) => `#!/bin/sh
 case "$1" in -l) [ -f "${path.join(root, "crontab.txt")}" ] && /bin/cat "${path.join(root, "crontab.txt")}" || exit 1;; -) /bin/cat > "${path.join(root, "crontab.txt")}";; esac
 `;
 const table = async (server) => readFile(path.join(server.root, "crontab.txt"), "utf8").catch(() => "");
-const savedConfig = async (server) =>
-  JSON.parse(await readFile(path.join(server.env.AKM_CONFIG_DIR, "config.json"), "utf8"));
+const savedConfig = async (server) => JSON.parse(await readFile(server.env.AKM_CONFIG_FILE, "utf8"));
 
 const commands = async (server) =>
   (await readFile(path.join(server.root, "commands.jsonl"), "utf8").catch(() => ""))

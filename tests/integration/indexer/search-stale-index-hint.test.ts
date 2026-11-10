@@ -21,7 +21,7 @@ import { closeDatabase, openExistingDatabase } from "../../../src/storage/reposi
 import { setMeta } from "../../../src/storage/repositories/index-meta-repository";
 import {
   type Cleanup,
-  sandboxEnvDir,
+  sandboxAkmDir,
   sandboxStashDir,
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
@@ -56,8 +56,8 @@ beforeEach(async () => {
   stashDir = stash.dir;
   let chain = sandboxXdgConfigHome(stash.cleanup).cleanup;
   chain = sandboxXdgCacheHome(chain).cleanup;
-  chain = sandboxEnvDir("akm-stale-hint-data", "AKM_DATA_DIR", chain).cleanup;
-  chain = sandboxEnvDir("akm-stale-hint-state", "AKM_STATE_DIR", chain).cleanup;
+  chain = sandboxAkmDir("akm-stale-hint-data", "data", chain).cleanup;
+  chain = sandboxAkmDir("akm-stale-hint-state", "state", chain).cleanup;
   cleanup = chain;
   const memoryPath = path.join(stashDir, "memories", "seed.md");
   fs.writeFileSync(memoryPath, "---\ndescription: seed memory\n---\n\n# seed\n\nBody.\n", "utf8");

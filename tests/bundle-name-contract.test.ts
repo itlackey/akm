@@ -19,7 +19,12 @@ import path from "node:path";
 import { akmAdd } from "../src/commands/sources/source-add";
 import { loadConfig, saveConfig } from "../src/core/config/config";
 import { UsageError } from "../src/core/errors";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage, withMockedFetch } from "./_helpers/sandbox";
+import {
+  type IsolatedAkmStorage,
+  withDefaultBundle,
+  withIsolatedAkmStorage,
+  withMockedFetch,
+} from "./_helpers/sandbox";
 
 const createdTmpDirs: string[] = [];
 
@@ -39,7 +44,7 @@ let storage: IsolatedAkmStorage;
 
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
-  saveConfig({ semanticSearchMode: "off" });
+  saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, storage.stashDir));
 });
 
 afterEach(() => {
@@ -72,7 +77,7 @@ describe("akm bundle add <local path> --name (D6)", () => {
     await expect(akmAdd({ ref: dir, name: "my.local" })).rejects.toThrow(/not a legal bundle name/);
 
     expect(fs.readFileSync(configPath(), "utf8")).toBe(before);
-    expect(loadConfig().bundles ?? {}).toEqual({});
+    expect(Object.keys(loadConfig().bundles ?? {})).toEqual(["stash"]);
   });
 
   test("a name already used by a different bundle fails before any write", async () => {
@@ -86,7 +91,7 @@ describe("akm bundle add <local path> --name (D6)", () => {
     await expect(akmAdd({ ref: second, name: "taken" })).rejects.toThrow(/already exists/);
 
     expect(fs.readFileSync(configPath(), "utf8")).toBe(before);
-    expect(Object.keys(loadConfig().bundles ?? {})).toEqual(["taken"]);
+    expect(Object.keys(loadConfig().bundles ?? {})).toEqual(["stash", "taken"]);
   });
 
   test("re-adding the same path under a different --name fails and names rename", async () => {
@@ -98,7 +103,7 @@ describe("akm bundle add <local path> --name (D6)", () => {
     await expect(akmAdd({ ref: dir, name: "renamed" })).rejects.toThrow(/akm bundle rename original renamed/);
 
     expect(fs.readFileSync(configPath(), "utf8")).toBe(before);
-    expect(Object.keys(loadConfig().bundles ?? {})).toEqual(["original"]);
+    expect(Object.keys(loadConfig().bundles ?? {})).toEqual(["stash", "original"]);
   });
 
   test("re-adding the same path under the same --name is a no-op, not an error", async () => {
@@ -107,7 +112,7 @@ describe("akm bundle add <local path> --name (D6)", () => {
     await akmAdd({ ref: dir, name: "stable" });
 
     await expect(akmAdd({ ref: dir, name: "stable" })).resolves.toBeDefined();
-    expect(Object.keys(loadConfig().bundles ?? {})).toEqual(["stable"]);
+    expect(Object.keys(loadConfig().bundles ?? {})).toEqual(["stash", "stable"]);
   });
 
   // A legal slug that happens to shadow an inherited `Object.prototype`
@@ -125,7 +130,7 @@ describe("akm bundle add <local path> --name (D6)", () => {
     const result = await akmAdd({ ref: dir, name: "toString" });
 
     expect(result.bundleId).toBe("toString");
-    expect(Object.keys(loadConfig().bundles ?? {})).toEqual(["toString"]);
+    expect(Object.keys(loadConfig().bundles ?? {})).toEqual(["stash", "toString"]);
   });
 });
 
@@ -140,27 +145,37 @@ describe("akm bundle add <website URL> --name (D6)", () => {
     );
 
     expect(fs.readFileSync(configPath(), "utf8")).toBe(before);
-    expect(loadConfig().bundles ?? {}).toEqual({});
+    expect(Object.keys(loadConfig().bundles ?? {})).toEqual(["stash"]);
   });
 
   test("a name already used by a different bundle fails before any write", async () => {
-    saveConfig({
-      semanticSearchMode: "off",
-      bundles: { taken: { website: { url: "https://other.example.com/" } } },
-    });
+    saveConfig(
+      withDefaultBundle(
+        {
+          semanticSearchMode: "off",
+          bundles: { taken: { website: { url: "https://other.example.com/" } } },
+        },
+        storage.stashDir,
+      ),
+    );
     const before = fs.readFileSync(configPath(), "utf8");
 
     await expect(akmAdd({ ref: "https://example.com/docs", name: "taken" })).rejects.toThrow(/already exists/);
 
     expect(fs.readFileSync(configPath(), "utf8")).toBe(before);
-    expect(Object.keys(loadConfig().bundles ?? {})).toEqual(["taken"]);
+    expect(Object.keys(loadConfig().bundles ?? {})).toEqual(["stash", "taken"]);
   });
 
   test("re-adding the same URL under a different --name fails and names rename", async () => {
-    saveConfig({
-      semanticSearchMode: "off",
-      bundles: { original: { website: { url: "https://example.com/docs" } } },
-    });
+    saveConfig(
+      withDefaultBundle(
+        {
+          semanticSearchMode: "off",
+          bundles: { original: { website: { url: "https://example.com/docs" } } },
+        },
+        storage.stashDir,
+      ),
+    );
     const before = fs.readFileSync(configPath(), "utf8");
 
     await expect(akmAdd({ ref: "https://example.com/docs", name: "renamed" })).rejects.toThrow(
@@ -168,7 +183,7 @@ describe("akm bundle add <website URL> --name (D6)", () => {
     );
 
     expect(fs.readFileSync(configPath(), "utf8")).toBe(before);
-    expect(Object.keys(loadConfig().bundles ?? {})).toEqual(["original"]);
+    expect(Object.keys(loadConfig().bundles ?? {})).toEqual(["stash", "original"]);
   });
 
   test("a successful add result carries bundleId", async () => {
@@ -181,6 +196,6 @@ describe("akm bundle add <website URL> --name (D6)", () => {
     );
 
     expect(result.bundleId).toBe("my-site");
-    expect(Object.keys(loadConfig().bundles ?? {})).toEqual(["my-site"]);
+    expect(Object.keys(loadConfig().bundles ?? {})).toEqual(["stash", "my-site"]);
   });
 });

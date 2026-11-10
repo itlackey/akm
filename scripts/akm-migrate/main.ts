@@ -13,6 +13,7 @@
 import { EXIT_CODES } from "../../src/cli/shared";
 import { UsageError } from "../../src/core/errors";
 import helpText from "./help.txt" with { type: "text" };
+import { carryOverRetiredLocations } from "./retired-locations";
 import { type CombinedMigrationPlan, runMigration } from "./run-migrate";
 
 function printPlan(plan: CombinedMigrationPlan): void {
@@ -34,12 +35,14 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
       console.log(helpText.trimEnd());
       return;
     case "status": {
+      carryOverRetiredLocations();
       const unknown = rest[0];
       if (unknown !== undefined) throw new UsageError(`\`status\` does not accept ${unknown}.`, "INVALID_FLAG_VALUE");
       printPlan(await runMigration({ apply: false }));
       return;
     }
     case "apply": {
+      carryOverRetiredLocations();
       const unknown = rest[0];
       if (unknown !== undefined) throw new UsageError(`\`apply\` does not accept ${unknown}.`, "INVALID_FLAG_VALUE");
       printPlan(await runMigration({ apply: true }));

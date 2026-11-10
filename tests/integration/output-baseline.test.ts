@@ -4,6 +4,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { configHomeWithBundle } from "../_helpers/sandbox";
 
 const CLI = path.join(__dirname, "..", "..", "src", "cli.ts");
 const tempDirs: string[] = [];
@@ -52,9 +53,8 @@ function runCli(stashDir: string, args: string[], config?: Record<string, unknow
     timeout: 30_000,
     env: {
       ...process.env,
-      AKM_BUNDLE_DIR: stashDir,
       XDG_CACHE_HOME: xdgCache,
-      XDG_CONFIG_HOME: xdgConfig,
+      XDG_CONFIG_HOME: configHomeWithBundle(xdgConfig, stashDir),
       XDG_DATA_HOME: xdgData,
       XDG_STATE_HOME: xdgState,
     },
@@ -79,9 +79,8 @@ async function runCliAsync(stashDir: string, args: string[], config?: Record<str
     stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,
-      AKM_BUNDLE_DIR: stashDir,
       XDG_CACHE_HOME: xdgCache,
-      XDG_CONFIG_HOME: xdgConfig,
+      XDG_CONFIG_HOME: configHomeWithBundle(xdgConfig, stashDir),
       XDG_DATA_HOME: xdgData,
       XDG_STATE_HOME: xdgState,
     },

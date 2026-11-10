@@ -96,7 +96,8 @@ async function writeOpenCode2Store(): Promise<OpenCode2Fixture> {
   const root = makeBase();
   const work = path.join(root, "work");
   fs.mkdirSync(work, { recursive: true });
-  const cache = path.join(root, "cache");
+  const xdgCache = path.join(root, "cache");
+  const cache = path.join(xdgCache, "akm");
   linkSharedOpencode(cache);
   const profile = runtimeProfile({ name: "lab" } as ConnectionRunner);
   // A declared window lets the model's "compact" mode make OpenCode compact the conversation.
@@ -107,7 +108,7 @@ async function writeOpenCode2Store(): Promise<OpenCode2Fixture> {
     request: { max_tokens: 4_000 },
   };
   return withEnv(
-    { AKM_DATA_DIR: path.join(root, "data"), AKM_CACHE_DIR: cache, AKM_STATE_DIR: path.join(root, "state") },
+    { XDG_DATA_HOME: path.join(root, "data"), XDG_CACHE_HOME: xdgCache, XDG_STATE_HOME: path.join(root, "state") },
     async () => {
       useRealOpencodeRuntime();
       const directory = path.dirname(akmOpencodeDatabasePath());

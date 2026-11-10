@@ -17,7 +17,7 @@ import { STANDALONE_FROZEN_SCRIPT_ARG } from "../../src/tasks/standalone-script-
 import { startFakeModel } from "../_helpers/fake-model-server";
 import { expectConnectionConfig, expectHarnessOnlyConfig, type SmokeRun } from "../_helpers/model-surface-smoke";
 import { fetchSharedOpencode, linkSharedOpencode } from "../_helpers/opencode-binary";
-import { makeSandboxDir } from "../_helpers/sandbox";
+import { configHomeWithBundle, makeSandboxDir } from "../_helpers/sandbox";
 
 const REQUESTED = process.env.AKM_STANDALONE_SCHEDULER_TESTS === "1";
 const ENABLED = REQUESTED && process.platform === "linux";
@@ -307,11 +307,10 @@ function binarySandbox(binary: string): { env: NodeJS.ProcessEnv; run: SmokeRun;
   const env: NodeJS.ProcessEnv = {
     PATH: SCHEDULER_PATH,
     HOME: path.join(sandbox.dir, dirs.home),
-    XDG_CONFIG_HOME: path.join(sandbox.dir, dirs.config),
+    XDG_CONFIG_HOME: configHomeWithBundle(path.join(sandbox.dir, dirs.config), path.join(sandbox.dir, dirs.stash)),
     XDG_DATA_HOME: path.join(sandbox.dir, dirs.data),
     XDG_CACHE_HOME: path.join(sandbox.dir, dirs.cache),
     XDG_STATE_HOME: path.join(sandbox.dir, dirs.state),
-    AKM_BUNDLE_DIR: path.join(sandbox.dir, dirs.stash),
     NO_COLOR: "1",
     CI: "1",
   };

@@ -60,10 +60,12 @@
 
 import { renderUsage, runCommand } from "citty";
 import {
+  applyEarlyConfigFlag,
+  applyEarlyStderrFlags,
   insertBareListSubcommand,
-  isInfoCommand,
   main,
   normalizeCittyCliError,
+  readsConfigBestEffort,
   shouldBypassConfigStartup,
 } from "../../src/cli";
 import { _resetParsedInvocationForTests } from "../../src/cli/invocation";
@@ -75,7 +77,7 @@ import { clearLogFile, resetQuiet, resetVerbose } from "../../src/core/warn";
 import { resetLocalEmbedder } from "../../src/llm/embedder";
 import { clearEmbeddingCache } from "../../src/llm/embedders/cache";
 import { initOutputMode, resetOutputMode } from "../../src/output/context";
-import { withEnv } from "./sandbox";
+import { withBundle } from "./sandbox";
 
 /**
  * Reset every module-level process singleton the CLI caches, so an in-process
@@ -189,6 +191,8 @@ export async function runCliCapture(args: string[]): Promise<CliResult> {
   const realExit = process.exit;
   const realArgv = process.argv;
   const realExitCode = process.exitCode;
+  // `--config` assigns AKM_CONFIG_FILE for the rest of the process, as it does in a real run; a fresh run must not inherit it.
+  const realConfigFile = process.env.AKM_CONFIG_FILE;
 
   // Several commands (and helpers like `parseAllFlagValues` in
   // src/cli/shared.ts) read `process.argv` DIRECTLY rather than the citty-parsed
@@ -266,12 +270,14 @@ export async function runCliCapture(args: string[]): Promise<CliResult> {
       try {
         // Mirrors src/cli.ts's own startup resolution: off the bypass
         // allowlist, every command reads config here exactly as it always
-        // has (throws on invalid config.json) EXCEPT `info`, whose read is
+        // has (throws on invalid config.json) EXCEPT `info` and `upgrade`, whose read is
         // best-effort — see that file's matching comment for why the
         // scoping matters.
+        applyEarlyConfigFlag(argv);
+        applyEarlyStderrFlags(argv);
         let outputDefaults = DEFAULT_CONFIG.output ?? {};
         if (!shouldBypassConfigStartup(argv)) {
-          if (isInfoCommand(argv)) {
+          if (readsConfigBestEffort(argv)) {
             try {
               outputDefaults = loadConfig().output ?? {};
             } catch {
@@ -339,6 +345,8 @@ export async function runCliCapture(args: string[]): Promise<CliResult> {
     console.debug = realDebug;
     (process as unknown as { exit: typeof realExit }).exit = realExit;
     process.argv = realArgv;
+    if (realConfigFile === undefined) delete process.env.AKM_CONFIG_FILE;
+    else process.env.AKM_CONFIG_FILE = realConfigFile;
   }
 
   return { code, stdout, stderr };
@@ -364,6 +372,6 @@ export async function runCliStatusWithBundleDir(
   args: string[],
   stashDir: string,
 ): Promise<{ stdout: string; stderr: string; status: number }> {
-  const { code, stdout, stderr } = await withEnv({ AKM_BUNDLE_DIR: stashDir }, () => runCliCapture(args));
+  const { code, stdout, stderr } = await withBundle(stashDir, () => runCliCapture(args));
   return { stdout, stderr, status: code };
 }

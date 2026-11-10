@@ -48,7 +48,7 @@ version drops, `akm upgrade` handles it in place.
 akm setup
 ```
 
-This creates `~/akm` with subdirectories for each asset type: `scripts/`, `skills/`, `commands/`, `agents/`, `knowledge/`, and `memories/`. If you want to put it somewhere else, set `AKM_BUNDLE_DIR` before you run setup.
+This creates `~/akm` with subdirectories for each asset type: `scripts/`, `skills/`, `commands/`, `agents/`, `knowledge/`, and `memories/`. If you want to put it somewhere else, pass `--dir` to `akm setup`.
 
 But the real power move isn't putting everything in one folder. It's telling `akm` where your stuff already lives.
 

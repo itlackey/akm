@@ -111,7 +111,7 @@ describe("bundle add --writable on an existing read-only Git bundle (#1296)", ()
     expect(promoted.code).toBe(0);
 
     const { bundle, lock } = installed();
-    expect(Object.keys(loadConfig().bundles ?? {})).toEqual(["shared"]);
+    expect(Object.keys(loadConfig().bundles ?? {})).toEqual(["stash", "shared"]);
     expect(isWritable(bundle)).toBe(true);
     const root = lock?.localRoot as string;
     expect(git(["-C", root, "rev-parse", "--show-toplevel"]).trim()).toBeTruthy();
@@ -128,6 +128,7 @@ describe("bundle add --writable on an existing read-only Git bundle (#1296)", ()
     saveConfig({
       ...config,
       bundles: {
+        ...config.bundles,
         shared: {
           ...shared,
           credential: CREDENTIAL_REF,
@@ -146,7 +147,7 @@ describe("bundle add --writable on an existing read-only Git bundle (#1296)", ()
     }
 
     const bundles = loadConfig().bundles ?? {};
-    expect(Object.keys(bundles)).toEqual(["shared", "other"]);
+    expect(Object.keys(bundles)).toEqual(["stash", "shared", "other"]);
     expect(bundles.shared?.credential).toBe(CREDENTIAL_REF);
     expect(bundles.shared?.components).toEqual({ notes: { root: "knowledge", adapter: "akm", writable: true } });
     const root = installed().lock?.localRoot as string;

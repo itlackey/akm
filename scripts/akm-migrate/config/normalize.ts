@@ -13,7 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { withPrimaryBundle } from "../../../src/commands/sources/bundle-config-ops";
-import { getConfigPath, getDefaultStashDir } from "../../../src/core/paths";
+import { getCarriedLocations, getConfigPath, getDefaultStashDir, resolveConfiguredBundlePath, sameDirectory } from "../../../src/core/paths";
 import { isRefToken } from "../../../src/core/ref-token";
 import { isRecord } from "../../../src/core/common";
 import {
@@ -37,6 +37,7 @@ import {
 import { fileFlatCredentials, writeCredential } from "../../../src/core/config/credentials";
 import { isPlainObject } from "../../../src/core/config/deep-merge";
 import { findUnusableEntries } from "../../../src/core/config/unusable-entries";
+import { carriedBundleDir } from "../retired-locations";
 import { convertEngineConfig, type EngineTarget } from "./convert-engines";
 import { inlineExtends } from "./inline-extends";
 import { documentEndpoint, planKeyMoves } from "./migrate-keys";
@@ -178,6 +179,18 @@ function deleteConfigPath(node: Record<string, unknown>, keyPath: readonly strin
 export interface ConfigFileNormalization {
   /** Top-level keys whose stored shape differs from the current one. */
   readonly keys: readonly string[];
+  /**
+   * The `paths` entries the environment names and the file does not (`AKM_DATA_DIR`, `AKM_STATE_DIR`,
+   * `AKM_CACHE_DIR`): written by `apply`, pending under `status`, and, when the file cannot be written
+   * (an image-baked or read-only mount), the entries the image's own template must carry.
+   */
+  readonly paths?: Readonly<Record<string, string>>;
+  /**
+   * The `defaultBundle` and `bundles` entry for the directory `AKM_BUNDLE_DIR` named when the file does not name it as
+   * its default: written by `apply`, pending under `status`, and, when the file cannot be written, what the image's
+   * own template must carry.
+   */
+  readonly bundle?: Readonly<{ defaultBundle: string; bundles: Record<string, unknown> }>;
   readonly changed: boolean;
   readonly applied: boolean;
   readonly backupPath?: string;
@@ -219,15 +232,53 @@ function keepUnusableEntries(
 }
 
 /**
- * 0.9.32 read the working bundle from `~/akm` when no `defaultBundle` and no `AKM_BUNDLE_DIR` named one; this release
- * does not. A host that relied on it keeps its bundle: an existing `~/akm` directory is registered as the default,
- * exactly as `akm bundle create` registers it (same entry), but without creating or seeding anything in it.
+ * 0.9.32 read the working bundle from `AKM_BUNDLE_DIR`, else `~/akm` when no `defaultBundle` named one; this release
+ * reads neither. A host that relied on them keeps its bundle, registered as `akm bundle create` registers it (same
+ * entry), without creating or seeding anything in it:
+ *   - the directory `AKM_BUNDLE_DIR` named (carried over at start, see `retired-locations.ts`) becomes `defaultBundle`
+ *     unless that already is the default; a default that named another bundle stays configured, as a bundle;
+ *   - with no default and no variable, an existing `~/akm` directory is registered as the default.
+ * A file that cannot be written is left alone, and the entries are reported for the template that makes it.
  */
+function registerWorkingBundle(
+  body: Record<string, unknown>,
+  configPath: string,
+  notes: string[],
+): { body: Record<string, unknown>; bundle?: { defaultBundle: string; bundles: Record<string, unknown> } } {
+  const carried = carriedBundleDir();
+  if (carried === undefined) return { body: registerHomeBundle(body, notes) };
+  const current = defaultBundlePath(body, configPath);
+  if (current !== undefined && sameDirectory(current, carried)) return { body };
+  if (!fs.existsSync(carried) || !fs.statSync(carried).isDirectory()) {
+    notes.push(`defaultBundle: AKM_BUNDLE_DIR named ${carried}, which is not a directory, so no bundle was registered for it.`);
+    return { body };
+  }
+  const registered = withPrimaryBundle({ ...body, defaultBundle: undefined } as unknown as AkmConfig, carried) as unknown as Record<string, unknown>;
+  const key = registered.defaultBundle as string;
+  const entries = { defaultBundle: key, bundles: { [key]: (registered.bundles as Record<string, unknown>)[key] } };
+  if (!configWritable(configPath)) {
+    notes.push(
+      `defaultBundle: AKM_BUNDLE_DIR named ${carried}, but ${configPath} cannot be written. Add ${JSON.stringify(entries)} to the file where it is made (an image's config template).`,
+    );
+    return { body, bundle: entries };
+  }
+  notes.push(
+    `defaultBundle ${JSON.stringify(key)}: registered ${carried}, the directory AKM_BUNDLE_DIR named. akm no longer reads that variable.`,
+  );
+  return { body: registered, bundle: entries };
+}
+
+function defaultBundlePath(body: Record<string, unknown>, configPath: string): string | undefined {
+  const key = body.defaultBundle;
+  const bundles = isRecord(body.bundles) ? body.bundles : {};
+  const entry = typeof key === "string" ? bundles[key] : undefined;
+  const configured = isRecord(entry) && typeof entry.path === "string" ? entry.path.trim() : "";
+  return configured ? resolveConfiguredBundlePath(configured, configPath) : undefined;
+}
+
 function registerHomeBundle(body: Record<string, unknown>, notes: string[]): Record<string, unknown> {
   if (body.defaultBundle !== undefined) return body;
-  // 0.9.32 read `AKM_BUNDLE_DIR` first and `~/akm` only without it: a host that names its bundle by the variable keeps it.
-  if (process.env.AKM_BUNDLE_DIR?.trim()) return body;
-  const homeDir = getDefaultStashDir({ ...process.env, AKM_BUNDLE_DIR: undefined });
+  const homeDir = getDefaultStashDir();
   if (!fs.existsSync(homeDir) || !fs.statSync(homeDir).isDirectory()) return body;
   const registered = withPrimaryBundle(body as unknown as AkmConfig, homeDir) as unknown as Record<string, unknown>;
   // A bundle the user disabled at that path stays off.
@@ -239,6 +290,56 @@ function registerHomeBundle(body: Record<string, unknown>, notes: string[]): Rec
   return registered;
 }
 
+/** The locations the retired variables named (carried over at start, see `retired-locations.ts`) that the file's `paths` does not, as absolute paths. */
+function environmentPaths(body: Record<string, unknown>): Record<string, string> {
+  const named = isRecord(body.paths) ? body.paths : {};
+  const missing: Record<string, string> = {};
+  for (const [kind, value] of Object.entries(getCarriedLocations())) {
+    if (value && named[kind] === undefined) missing[kind] = value;
+  }
+  return missing;
+}
+
+/** Whether the file (or, when it does not exist yet, its folder) can be rewritten: an atomic write replaces the file in its folder. */
+function configWritable(configPath: string): boolean {
+  try {
+    if (fs.existsSync(configPath)) fs.accessSync(configPath, fs.constants.W_OK);
+    fs.accessSync(fs.existsSync(configPath) ? path.dirname(configPath) : nearestFolder(configPath), fs.constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function nearestFolder(file: string): string {
+  let folder = path.dirname(file);
+  while (!fs.existsSync(folder) && path.dirname(folder) !== folder) folder = path.dirname(folder);
+  return folder;
+}
+
+/**
+ * A host that located its data, state or cache with `AKM_DATA_DIR`, `AKM_STATE_DIR` or `AKM_CACHE_DIR` keeps
+ * those locations by the file naming them in `paths`. What the file already names stays. A file that cannot be
+ * written is left alone, and the entries are reported for the template that makes it.
+ */
+function registerEnvironmentPaths(
+  body: Record<string, unknown>,
+  configPath: string,
+  notes: string[],
+): { body: Record<string, unknown>; paths?: Record<string, string> } {
+  const missing = environmentPaths(body);
+  if (Object.keys(missing).length === 0) return { body };
+  if (!configWritable(configPath)) {
+    notes.push(
+      `paths: the environment names ${Object.keys(missing).join(", ")}, but ${configPath} cannot be written. Add ${JSON.stringify({ paths: missing })} to the file where it is made (an image's config template).`,
+    );
+    return { body, paths: missing };
+  }
+  const named = isRecord(body.paths) ? body.paths : {};
+  notes.push(`paths: wrote ${Object.keys(missing).join(", ")} from the environment, so the file names where this installation keeps them.`);
+  return { body: { ...body, paths: { ...named, ...missing } }, paths: missing };
+}
+
 /**
  * The migrator's one config step. The reader tolerates the `{kind, ref, sourceId}`
  * scheduler entries 0.9.x writes and drops unknown keys; this writes the current shape back to `config.json` so the tolerance becomes
@@ -248,19 +349,25 @@ function registerHomeBundle(body: Record<string, unknown>, notes: string[]): Rec
  * written. Reports without writing unless `apply` is set.
  */
 export function normalizeConfigFile(configPath: string, options: NormalizeConfigOptions): ConfigFileNormalization {
-  return withConfigLock(() => {
+  // The lock is a file beside the config: a folder that cannot be written cannot hold it, and nothing is written there.
+  const locked = configWritable(configPath) ? withConfigLock : <T>(action: () => T): T => action();
+  return locked(() => {
     const text = readConfigText(configPath);
     if (text === undefined) {
       // No file at all: only an existing `~/akm` gives it content.
       const homeNotes: string[] = [];
-      const registered = registerHomeBundle({}, homeNotes);
-      if (homeNotes.length === 0) return { keys: [], changed: false, applied: false };
+      const { body: withHome, bundle: homeBundle } = registerWorkingBundle({}, configPath, homeNotes);
+      const { body: registered, paths: homePaths } = registerEnvironmentPaths(withHome, configPath, homeNotes);
+      const pathsReported = { ...(homePaths ? { paths: homePaths } : {}), ...(homeBundle ? { bundle: homeBundle } : {}) };
+      if (Object.keys(registered).length === 0) {
+        return { keys: [], changed: false, applied: false, ...pathsReported, ...(homeNotes.length > 0 ? { notes: homeNotes } : {}) };
+      }
       const homeKeys = Object.keys(registered).sort();
-      if (!options.apply) return { keys: homeKeys, changed: true, applied: false, notes: homeNotes };
+      if (!options.apply) return { keys: homeKeys, changed: true, applied: false, ...pathsReported, notes: homeNotes };
       fs.mkdirSync(path.dirname(configPath), { recursive: true });
       writeConfigAtomic(configPath, registered);
       resetConfigCache();
-      return { keys: homeKeys, changed: true, applied: true, notes: homeNotes };
+      return { keys: homeKeys, changed: true, applied: true, ...pathsReported, notes: homeNotes };
     }
     const raw = parseConfigText(text, configPath);
     // A base the file `extends` is merged in first, so everything below reads one document, as the file will hold it.
@@ -308,7 +415,10 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
       );
     }
     keepUnusableEntries(body, localRaw, current, notes);
-    body = registerHomeBundle(body, notes);
+    const working = registerWorkingBundle(body, configPath, notes);
+    body = working.body;
+    const environment = registerEnvironmentPaths(body, configPath, notes);
+    body = environment.body;
     const hasModelsFile = modelsFileExists();
     if (hasModelsFile) {
       notes.push(
@@ -320,6 +430,8 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
       .sort();
     const reported = {
       keys,
+      ...(environment.paths ? { paths: environment.paths } : {}),
+      ...(working.bundle ? { bundle: working.bundle } : {}),
       ...(plan.moves.length > 0 || flat.filed.length > 0
         ? { credentials: [...plan.moves.map((move) => move.name), ...flat.filed] }
         : {}),

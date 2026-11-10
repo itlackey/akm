@@ -42,6 +42,7 @@ import os from "node:os";
 import path from "node:path";
 
 const CLI_ABS = path.join(import.meta.dir, "..", "..", "src", "cli.ts");
+const WARN_ABS = path.join(import.meta.dir, "..", "..", "src", "core", "warn.ts");
 
 let harnessDir: string | undefined;
 
@@ -60,14 +61,11 @@ afterEach(() => {
 function runHarness(triggerSource: string, opts?: { debug?: boolean; retiredDebug?: boolean }) {
   harnessDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-cli-error-handler-"));
   const harnessFile = path.join(harnessDir, "harness.ts");
-  fs.writeFileSync(harnessFile, `import ${JSON.stringify(CLI_ABS)};\n${triggerSource}\n`);
+  // `--verbose` is the only switch; the harness sets it the way `applyEarlyStderrFlags` would.
+  const verbose = opts?.debug ? `import { setVerbose } from ${JSON.stringify(WARN_ABS)};\nsetVerbose(true);\n` : "";
+  fs.writeFileSync(harnessFile, `import ${JSON.stringify(CLI_ABS)};\n${verbose}${triggerSource}\n`);
 
   const env = { ...process.env };
-  if (opts?.debug) {
-    env.AKM_VERBOSE = "1";
-  } else {
-    delete env.AKM_VERBOSE;
-  }
   if (opts?.retiredDebug) env.AKM_DEBUG = "1";
   else delete env.AKM_DEBUG;
 
@@ -97,7 +95,7 @@ describe("src/cli.ts global unhandledRejection handler", () => {
     expect(envelope.error).toBe("Unhandled rejection: plain string reason");
   });
 
-  test("AKM_VERBOSE=1 appends the real stack trace after the JSON envelope", () => {
+  test("--verbose appends the real stack trace after the JSON envelope", () => {
     const result = runHarness('Promise.reject(new Error("value-11 probe: debug stack"));', { debug: true });
 
     expect(result.status).toBe(70);
@@ -125,7 +123,7 @@ describe("src/cli.ts global uncaughtException handler", () => {
     expect(envelope.hint).toContain("--verbose");
   });
 
-  test("AKM_VERBOSE=1 appends the real stack trace after the JSON envelope", () => {
+  test("--verbose appends the real stack trace after the JSON envelope", () => {
     const result = runHarness('setTimeout(() => { throw new Error("value-11 probe: debug stack"); }, 0);', {
       debug: true,
     });

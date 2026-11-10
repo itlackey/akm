@@ -103,8 +103,6 @@ describe("env/secret write-target routing", () => {
   });
 
   test("defaultBundle is the fallback destination for a secret write without --bundle", async () => {
-    // The working bundle is AKM_BUNDLE_DIR when set; this test works from the configured defaultBundle.
-    delete process.env.AKM_BUNDLE_DIR;
     const team = bundleDir();
     writeSandboxConfig({
       bundles: { stash: { path: storage.stashDir }, team: { path: team } },
@@ -143,7 +141,10 @@ describe("env/secret write-target routing", () => {
   });
 
   test("an explicitly named working-stash target emits its qualified ref", async () => {
-    writeSandboxConfig({ bundles: { primary: { path: storage.stashDir } } });
+    writeSandboxConfig({ bundles: { primary: { path: storage.stashDir } }, defaultBundle: "other" });
+    writeSandboxConfig({
+      bundles: { other: { path: path.join(storage.root, "other") }, primary: { path: storage.stashDir } },
+    });
 
     const res = await runCliCapture([
       "env",
@@ -216,8 +217,6 @@ describe("env/secret write-target routing", () => {
   });
 
   test("a git-backed writable target lands the write through a single boundary commit", async () => {
-    // The working bundle is AKM_BUNDLE_DIR when set; this test works from the configured defaultBundle.
-    delete process.env.AKM_BUNDLE_DIR;
     const url = "https://example.com/akm/env-secret-write-target.git";
     const repo = getCachePaths(parseGitRepoUrl(url).canonicalUrl).repoDir;
     const content = path.join(repo, "content");
@@ -250,8 +249,6 @@ describe("env/secret write-target routing", () => {
   });
 
   test("ignored env and secret overlays mutate locally without creating commits", async () => {
-    // The working bundle is AKM_BUNDLE_DIR when set; this test works from the configured defaultBundle.
-    delete process.env.AKM_BUNDLE_DIR;
     const url = "https://example.com/akm/env-secret-ignored-overlay.git";
     const repo = getCachePaths(parseGitRepoUrl(url).canonicalUrl).repoDir;
     const content = path.join(repo, "content");

@@ -304,7 +304,7 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
       cwd: repoRoot,
       encoding: "utf8",
       timeout: 10_000,
-      env: { ...process.env, AKM_BUNDLE_DIR: undefined },
+      env: { ...process.env },
     });
     const help = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
     expect(result.status).toBe(0);

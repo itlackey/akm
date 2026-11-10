@@ -46,7 +46,6 @@ export interface SettingsIndex {
 export interface SettingsBundleResponse {
   defaultBundle: string | null;
   bundles: SettingsBundle[];
-  workingStash: { path: string; git: SettingsGit | null } | null;
   index: SettingsIndex;
 }
 export interface SettingsConfig {
@@ -56,7 +55,7 @@ export interface SettingsConfig {
   entries: SettingsEntry[];
   /** What akm ignores in the `projects` of config.json, in its own words. */
   projectWarnings: string[];
-  automaticWriteTarget: { name: string; path: string | null; workingStash: boolean } | null;
+  automaticWriteTarget: { name: string; path: string | null } | null;
   connections: Array<{ name: string; default?: boolean; models?: Record<string, unknown> }>;
   harnesses: Array<{ name: string; platform?: string }>;
   env: Array<{ name: string; value: string }>;

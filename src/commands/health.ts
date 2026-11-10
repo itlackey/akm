@@ -674,7 +674,7 @@ function unreadableStateDbCheck(detail: string): HealthCheckResult {
     message:
       `state.db exists but is not readable: ${detail}. Every other health check is skipped because ` +
       "none of them can read it. Check the owner and mode of the data directory, or point " +
-      "AKM_DATA_DIR / XDG_DATA_HOME at a location this user owns.",
+      "XDG_DATA_HOME (or `paths.data` in the config file) at a location this user owns.",
     evidence: { detail },
   };
 }

@@ -44,19 +44,18 @@ describe("git-ignored env/ and secrets/ are indexed", () => {
 
     await withEnv(
       {
-        AKM_BUNDLE_DIR: bundleDir,
         HOME: makeTempDir("akm-env-ignored-home-"),
         XDG_CONFIG_HOME: makeTempDir("akm-env-ignored-config-"),
         XDG_CACHE_HOME: makeTempDir("akm-env-ignored-cache-"),
         XDG_DATA_HOME: makeTempDir("akm-env-ignored-data-"),
         XDG_STATE_HOME: makeTempDir("akm-env-ignored-state-"),
       },
-      async () => {
+      () => async () => {
         clearEmbeddingCache();
         resetLocalEmbedder();
         writeSandboxConfig({ semanticSearchMode: "off" });
 
-        const created = await runCliCapture(["bundle", "create"]);
+        const created = await runCliCapture(["bundle", "create", "--dir", bundleDir]);
         expect(created.code).toBe(0);
 
         // The default scaffold ignores both directories.

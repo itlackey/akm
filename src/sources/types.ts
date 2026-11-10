@@ -666,9 +666,12 @@ export interface InfoResponse {
    * APPDATA/LOCALAPPDATA on Windows (see `src/core/paths.ts`) — so a script
    * can read akm's paths with `akm info --format json | jq -r .dataDir`
    * instead of hardcoding `~/.local/share/akm` vs. a container's
-   * `/opt/akm/data` and drifting.
+   * `/opt/akm/data` and drifting. `configFile` is the config file in use
+   * (`--config`, `AKM_CONFIG_FILE`, or the default); `dataDir`, `stateDir` and
+   * `cacheDir` follow its `paths` key when it has one.
    */
   dataDir: string;
+  configFile: string;
   configDir: string;
   cacheDir: string;
   stateDir: string;

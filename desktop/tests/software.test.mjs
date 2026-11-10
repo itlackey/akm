@@ -23,7 +23,7 @@ test("host environment finds conventional user tools without running profiles or
       AKM_LAUNCHER_NODE: "/bundled/electron",
       ELECTRON_RUN_AS_NODE: "1",
       AKM_DESKTOP_SESSION_TOKEN: "secret",
-      AKM_CONFIG_DIR: "/test-config",
+      AKM_CONFIG_FILE: "/test-config/config.json",
     },
     home,
   );
@@ -31,7 +31,7 @@ test("host environment finds conventional user tools without running profiles or
   assert.equal(env.AKM_LAUNCHER_NODE, undefined);
   assert.equal(env.ELECTRON_RUN_AS_NODE, undefined);
   assert.equal(env.AKM_DESKTOP_SESSION_TOKEN, undefined);
-  assert.equal(env.AKM_CONFIG_DIR, "/test-config");
+  assert.equal(env.AKM_CONFIG_FILE, "/test-config/config.json");
   assert.ok(env.PATH.includes(path.join(home, ".local/bin")));
   assert.ok(env.PATH.includes(path.join(home, ".nvm/versions/node/v24.18.0/bin")));
   assert.ok(!env.PATH.split(":").includes("."));

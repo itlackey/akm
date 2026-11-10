@@ -208,7 +208,7 @@ describe("GITHUB_TOKEN set but empty", () => {
 describe("readStashDirFromConfig", () => {
   let storage: IsolatedAkmStorage;
   beforeEach(() => {
-    storage = withIsolatedAkmStorage({ AKM_BUNDLE_DIR: undefined });
+    storage = withIsolatedAkmStorage({}, { bundle: false });
   });
   afterEach(() => storage.cleanup());
 
@@ -219,7 +219,7 @@ describe("readStashDirFromConfig", () => {
       path.join(storage.configDir, "akm", "config.json"),
       JSON.stringify({ defaultBundle: "a", bundles: { a: { path: "my-bundle" } } }),
     );
-    expect(resolveStashDir({})).toBe(bundleDir);
+    expect(resolveStashDir()).toBe(bundleDir);
   });
 });
 

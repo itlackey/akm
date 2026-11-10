@@ -99,9 +99,10 @@ that run.
 The OS scheduler is one namespace per user, shared by every akm installation and
 every sandbox on the machine, so akm writes it for the user's **default**
 installation only: the one whose config, data, cache and state directories are
-where `HOME` puts them. Setting any `AKM_*_DIR` or `AKM_BUNDLE_DIR`, or an
-`XDG_*_HOME` that moves one of those directories, makes an installation
-non-default. `akm task sync` then writes nothing and says so; run
+where `HOME` puts them, read from the default config file. A config file other than
+the default (`--config`, `AKM_CONFIG_FILE`), or an `XDG_*_HOME` that moves one of
+those directories, makes an installation non-default. A `paths` key in the default file does not: dispatch
+reads that file. `akm task sync` then writes nothing and says so; run
 `akm task dispatch` every minute from your own supervisor, with that
 installation's environment:
 
@@ -151,7 +152,16 @@ and so does `akm task sync`. The old rows keep working until then — they run
 `akm task run <id> --scheduled`, which still exists. A row that names another
 installation's directories (a sandbox's `AKM_BUNDLE_DIR` or `AKM_STATE_DIR`) is
 left where it is and reported; remove it from the OS scheduler by hand once its
-bundle directory is gone.
+bundle directory is gone. A row that names the working bundle in `AKM_BUNDLE_DIR`
+(every row 0.9.32 and 0.10 wrote does) keeps running and is replaced by the sync:
+akm ignores a value that names the bundle it resolves without it. A row that sets
+`AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR` or `AKM_CACHE_DIR`, or an
+`AKM_BUNDLE_DIR` naming another bundle, stops working with this release: akm no
+longer reads them and refuses to start with one set (see
+[Retired location variables](../reference/configuration.md#retired-location-variables)).
+The report says so. Run `akm migrate apply` with that installation's environment,
+then run `akm task dispatch` from its own supervisor with `AKM_CONFIG_FILE` set, and
+remove the row.
 
 ## Migrating or repairing the entry (`--rebind`)
 

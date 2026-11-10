@@ -97,7 +97,7 @@ function fail(message: string): never {
  * means the working stash, whose durable identity is its configured
  * `registryId` — falling back to `defaultBundle` and then to the
  * {@link DEFAULT_SOURCE_NAME} spelling stored rows carried before the bundle
- * map existed (an explicit `AKM_BUNDLE_DIR` override is identity-less).
+ * map existed.
  */
 function resolveBundle(origin: string | undefined): { sourceName: string; sourceRoot: string } {
   const config = loadConfig();

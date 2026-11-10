@@ -32,6 +32,7 @@ import {
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
   sandboxXdgStateHome,
+  withBundle,
   withEnv,
   withMockedFetch,
   writeSandboxConfig,
@@ -389,11 +390,8 @@ describe("runSetupWithDefaults — idempotency", () => {
   test("fails a config-lock conflict before initializing the stash", async () => {
     const stashDir = path.join(process.env.HOME as string, "setup-lock-boundary");
     fs.rmSync(stashDir, { recursive: true, force: true });
-    await withEnv(
-      {
-        AKM_BUNDLE_DIR: stashDir,
-      },
-      async () => {
+    await withEnv({}, () =>
+      withBundle(stashDir, async () => {
         fs.mkdirSync(path.dirname(getConfigLockPath()), { recursive: true });
         fs.writeFileSync(getConfigLockPath(), String(process.pid));
         try {
@@ -408,7 +406,7 @@ describe("runSetupWithDefaults — idempotency", () => {
         } finally {
           fs.rmSync(getConfigLockPath(), { force: true });
         }
-      },
+      }),
     );
   });
 });

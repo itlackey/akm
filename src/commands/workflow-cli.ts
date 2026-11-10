@@ -276,6 +276,7 @@ const WORKFLOW_RUN_VALUE_FLAGS = new Set([
   "format",
   "detail",
   "output",
+  "config",
 ]);
 const WORKFLOW_RUN_BOOLEAN_FLAGS = new Set([
   "quiet",

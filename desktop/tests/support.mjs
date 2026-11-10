@@ -72,7 +72,7 @@ function seedUsage(fixture) {
  * written into the state database the CLI made.
  */
 function seedRuns(fixture) {
-  const db = new DatabaseSync(path.join(fixture.env.AKM_DATA_DIR, "state.db"));
+  const db = new DatabaseSync(path.join(fixture.root, "data", "state.db"));
   const at = (minutesAgo) => new Date(Date.now() - minutesAgo * 60000).toISOString();
   try {
     db.prepare(
@@ -94,7 +94,7 @@ function seedRuns(fixture) {
       "synthetic-improve",
       at(30),
       at(29),
-      fixture.env.AKM_BUNDLE_DIR,
+      path.join(fixture.root, "personal"),
       JSON.stringify({
         usageReport: { byProcessEngineModel: [{ process: "reflect", calls: 3, failures: 0 }] },
         triage: { promoted: 2, rejected: 1, failed: 0 },
@@ -107,7 +107,7 @@ function seedRuns(fixture) {
 
 /** Stored embeddings for two documents, so Similar content has a match to score (no embedding model runs). */
 function seedSimilarity(fixture) {
-  const db = new DatabaseSync(path.join(fixture.env.AKM_DATA_DIR, "index.db"));
+  const db = new DatabaseSync(path.join(fixture.root, "data", "index.db"));
   try {
     db.prepare("INSERT OR REPLACE INTO index_meta (key, value) VALUES ('embeddingFingerprint', 'fixture')").run();
     for (const [ref, vector] of [

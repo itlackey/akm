@@ -664,7 +664,7 @@ describe("OpenCodeProvider.listSessions (opencode.db)", () => {
       }
     }
     // akm's own OpenCode database also makes the provider available; this test has none.
-    withEnvSync({ AKM_DATA_DIR: makeTempDir("akm-opencode-availability-data-") }, () => {
+    withEnvSync({ XDG_DATA_HOME: makeTempDir("akm-opencode-availability-data-") }, () => {
       const provider = new TempOpenCodeProvider();
 
       fs.mkdirSync(base, { recursive: true });

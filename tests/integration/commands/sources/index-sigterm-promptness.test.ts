@@ -22,7 +22,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { saveConfig } from "../../../../src/core/config/config";
 import { getIndexRebuildLockPath } from "../../../../src/core/paths";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
+import { type IsolatedAkmStorage, withDefaultBundle, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 
 const repoRoot = path.resolve(import.meta.dir, "../../../..");
 
@@ -72,10 +72,15 @@ describe("akm index — SIGTERM promptness (#956)", () => {
 
     let child: ReturnType<typeof Bun.spawn> | undefined;
     try {
-      saveConfig({
-        semanticSearchMode: "auto",
-        embedding: { endpoint: `http://localhost:${server.port}`, model: "test-model", batchSize: 1 },
-      });
+      saveConfig(
+        withDefaultBundle(
+          {
+            semanticSearchMode: "auto",
+            embedding: { endpoint: `http://localhost:${server.port}`, model: "test-model", batchSize: 1 },
+          },
+          storage.stashDir,
+        ),
+      );
 
       child = Bun.spawn(["bun", "src/cli.ts", "index", "--full", "--format=json"], {
         cwd: repoRoot,

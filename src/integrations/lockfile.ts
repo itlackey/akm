@@ -135,7 +135,7 @@ function assertLockfilePathReadable(target: string): void {
   throw new ConfigError(
     `Refusing to modify the lockfile: ${describeInaccessiblePath(target, code)}. akm cannot read the existing lock ` +
       "records, and writing over them would destroy every bundle they track. Fix the ownership or mode of that " +
-      "path (or point AKM_DATA_DIR / XDG_DATA_HOME somewhere this user owns) and retry.",
+      "path (or point XDG_DATA_HOME, or `paths.data` in the config file, somewhere this user owns) and retry.",
     "DATA_DIR_UNREADABLE",
   );
 }

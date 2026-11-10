@@ -400,8 +400,8 @@ export interface TaskSyncDeps {
  * (`# akm:task` blocks and the `# akm:env` block on cron, `com.akm.task.*`
  * plists, `\akm\<id>` tasks), except those that name another installation.
  *
- * An installation that moves any location (an `AKM_*` directory or an XDG
- * variable) never writes the OS scheduler: its supervisor runs
+ * An installation that moves any location (a config file other than the default,
+ * or an XDG variable) never writes the OS scheduler: its supervisor runs
  * `akm task dispatch` itself.
  */
 export async function akmTasksSync(
@@ -432,17 +432,25 @@ function legacyRowKeepReason(row: LegacyRow, workingStash: string | undefined): 
     named.AKM_BUNDLE_DIR !== undefined &&
     (workingStash === undefined || path.resolve(named.AKM_BUNDLE_DIR) !== workingStash)
   ) {
-    return `it names another installation's bundle directory (${named.AKM_BUNDLE_DIR})`;
+    // akm no longer reads AKM_BUNDLE_DIR: with another bundle's directory the row fails when it fires.
+    return (
+      `it names another installation's bundle directory (${named.AKM_BUNDLE_DIR}), and akm no longer reads AKM_BUNDLE_DIR: the row fails when it fires. ` +
+      "Run `akm migrate apply` with that installation's environment (it registers the bundle in config), then run `akm task dispatch` from its supervisor with AKM_CONFIG_FILE set instead"
+    );
   }
   const moved = ["AKM_CONFIG_DIR", "AKM_DATA_DIR", "AKM_CACHE_DIR", "AKM_STATE_DIR"].find(
     (name) => named[name] !== undefined,
   );
-  return moved === undefined ? undefined : `it sets ${moved}, so another installation wrote it`;
+  // akm no longer reads these: the row fails when it fires, with the retired-variable error in its log.
+  return moved === undefined
+    ? undefined
+    : `it sets ${moved}, so another installation wrote it, and akm no longer reads ${moved}: the row fails when it fires. ` +
+        "Run `akm migrate apply` with that installation's environment, then run `akm task dispatch` from its supervisor with AKM_CONFIG_FILE set instead";
 }
 
-function workingStashPath(env: NodeJS.ProcessEnv): string | undefined {
+function workingStashPath(): string | undefined {
   try {
-    return path.resolve(resolveStashDir(env));
+    return path.resolve(resolveStashDir());
   } catch {
     return undefined;
   }
@@ -473,7 +481,7 @@ async function planSync(
 
   const inspection = await sched.inspect();
   const enabled = (schedulerEnabledRefs(loadConfig()) ?? []).length > 0;
-  const workingStash = workingStashPath(env);
+  const workingStash = workingStashPath();
   const removeLegacy: string[] = [];
   const keptLegacy: TasksSyncResult["keptLegacy"] = [];
   for (const row of inspection.legacy) {

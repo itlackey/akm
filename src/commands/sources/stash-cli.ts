@@ -159,10 +159,7 @@ export const indexCommand = defineCommand({
       // the one "No default bundle" error, as search does.
       const indexConfig = loadConfig();
       const firstSource = resolveSourceEntries(undefined, indexConfig)[0]?.path;
-      const stashDir =
-        indexConfig.defaultBundle || process.env.AKM_BUNDLE_DIR?.trim()
-          ? resolveStashDir()
-          : (firstSource ?? resolveStashDir());
+      const stashDir = indexConfig.defaultBundle ? resolveStashDir() : (firstSource ?? resolveStashDir());
       try {
         const result = await akmIndex({
           stashDir,

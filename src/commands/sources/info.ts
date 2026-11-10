@@ -10,7 +10,14 @@ import { DEFAULT_CONFIG, getSources, loadConfig } from "../../core/config/config
 import { IMPROVE_AUTONOMY_CONFIG_KEY, isImproveAutonomyEnabled } from "../../core/config/experimental";
 import { ConfigError } from "../../core/errors";
 import { classifyPathAccess, describeInaccessiblePath } from "../../core/path-access";
-import { getCacheDir, getConfigDir, getDataDir, getDefaultStashDir, getStateDir } from "../../core/paths";
+import {
+  getCacheDir,
+  getConfigDir,
+  getConfigPath,
+  getDataDir,
+  getDefaultStashDir,
+  getStateDir,
+} from "../../core/paths";
 import { formatRegistryUrl } from "../../core/registry-url";
 import { error } from "../../core/warn";
 import { learningStatus } from "../../setup/learning";
@@ -155,6 +162,7 @@ export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
     ...(configError ? { configError } : {}),
     ...(bundleDirError ? { bundleDirError } : {}),
     dataDir,
+    configFile: safePath(getConfigPath),
     configDir: safePath(getConfigDir),
     cacheDir: safePath(getCacheDir),
     stateDir: safePath(getStateDir),

@@ -44,7 +44,7 @@ import { withTestImproveLlm } from "../../_helpers/improve-config";
 import {
   type IsolatedAkmStorage,
   makeSandboxDir,
-  mutateScopedEnv,
+  useBundleConfig,
   withIsolatedAkmStorage,
 } from "../../_helpers/sandbox";
 
@@ -109,7 +109,7 @@ function makeFixtureStash(): string {
 }
 
 async function indexStash(stashDir: string): Promise<void> {
-  mutateScopedEnv("AKM_BUNDLE_DIR", stashDir);
+  useBundleConfig(stashDir);
   saveConfig(
     withTestImproveLlm({
       semanticSearchMode: "off",
@@ -130,7 +130,7 @@ beforeEach(() => {
   const akmDataDir = makeSandboxDir("akm-improve-planner-skip-data-");
   const akmStateDir = makeSandboxDir("akm-improve-planner-skip-state-");
   dirCleanups.push(akmDataDir.cleanup, akmStateDir.cleanup);
-  storage = withIsolatedAkmStorage({ AKM_DATA_DIR: akmDataDir.dir, AKM_STATE_DIR: akmStateDir.dir });
+  storage = withIsolatedAkmStorage({ XDG_DATA_HOME: akmDataDir.dir, XDG_STATE_HOME: akmStateDir.dir });
 });
 
 afterEach(() => {

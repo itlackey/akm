@@ -25,7 +25,7 @@ import path from "node:path";
 import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../../../src/llm/embedder";
 import { runCliCapture } from "../../_helpers/cli";
-import { withEnv } from "../../_helpers/sandbox";
+import { withBundle, withEnv } from "../../_helpers/sandbox";
 
 const tempDirs: string[] = [];
 
@@ -54,19 +54,14 @@ async function runCli(args: string[], options: { stashDir?: string; configDir: s
   const xdgData = makeTempDir("akm-import-data-");
   const xdgState = makeTempDir("akm-import-state-");
   const result = await withEnv(
-    {
-      AKM_BUNDLE_DIR: stashDir,
-      AKM_CONFIG_DIR: path.join(options.configDir, "akm"),
-      XDG_CACHE_HOME: xdgCache,
-      XDG_DATA_HOME: xdgData,
-      XDG_STATE_HOME: xdgState,
-    },
-    async () => {
-      clearEmbeddingCache();
-      resetLocalEmbedder();
-      const { stdout, stderr, code } = await runCliCapture(args);
-      return { status: code, stdout, stderr };
-    },
+    { XDG_CONFIG_HOME: options.configDir, XDG_CACHE_HOME: xdgCache, XDG_DATA_HOME: xdgData, XDG_STATE_HOME: xdgState },
+    () =>
+      withBundle(stashDir, async () => {
+        clearEmbeddingCache();
+        resetLocalEmbedder();
+        const { stdout, stderr, code } = await runCliCapture(args);
+        return { status: code, stdout, stderr };
+      }),
   );
   return { stashDir, result };
 }

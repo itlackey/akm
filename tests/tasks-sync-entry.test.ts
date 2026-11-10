@@ -186,6 +186,12 @@ describe("task sync: akm 0.9 per-task rows", () => {
     expect(result.removedLegacy).toEqual(["mine"]);
     expect(result.keptLegacy.map((kept) => kept.id)).toEqual(["sandbox-bundle", "sandbox-state"]);
     expect(result.warnings?.join("\n")).toContain("sandbox-bundle");
+    // A row that sets a retired location variable fails when it fires; the warning says so and what to do instead.
+    expect(result.keptLegacy.find((kept) => kept.id === "sandbox-state")?.reason).toContain(
+      "akm no longer reads AKM_STATE_DIR",
+    );
+    expect(result.warnings?.join("\n")).toContain("akm migrate apply");
+    expect(result.warnings?.join("\n")).toContain("AKM_CONFIG_FILE");
     expect(state.legacy.map((row) => row.id)).toEqual(["sandbox-bundle", "sandbox-state"]);
   });
 
@@ -215,9 +221,8 @@ describe("task sync: akm 0.9 per-task rows", () => {
 
 describe("task sync: an installation that moves its locations", () => {
   test.each([
-    ["AKM_CONFIG_DIR", { AKM_CONFIG_DIR: "/srv/akm/config" }, "config"],
-    ["AKM_STATE_DIR", { AKM_STATE_DIR: "/srv/akm/state" }, "state"],
-    ["AKM_BUNDLE_DIR", { AKM_BUNDLE_DIR: "/srv/akm/stash" }, "bundle"],
+    ["AKM_CONFIG_FILE", { AKM_CONFIG_FILE: "/srv/akm/config/config.json" }, "config"],
+    ["XDG_STATE_HOME", { XDG_STATE_HOME: "/srv/akm/state" }, "state"],
     ["XDG_DATA_HOME", { XDG_DATA_HOME: "/srv/xdg/data" }, "data"],
   ])("%s: never writes the OS scheduler, and says to run `akm task dispatch` from its own supervisor", async (_name, moved, location) => {
     configure(["stash//tasks/a"]);
@@ -245,10 +250,14 @@ describe("task sync: an installation that moves its locations", () => {
     expect(state.applied).toEqual([]);
   });
 
-  test("any AKM_*_DIR variable makes the installation non-default (AKM_CACHE_DIR)", async () => {
+  test("an XDG_CACHE_HOME that moves the cache makes the installation non-default", async () => {
     configure(["stash//tasks/a"]);
     const result = await akmTasksSync(
-      { backend: fakeBackend(state), launcher: launcher("/opt/akm"), env: { ...DEFAULT_ENV, AKM_CACHE_DIR: "/srv/c" } },
+      {
+        backend: fakeBackend(state),
+        launcher: launcher("/opt/akm"),
+        env: { ...DEFAULT_ENV, XDG_CACHE_HOME: "/srv/c" },
+      },
       {},
     );
     expect(result.entry).toBe("unmanaged");
@@ -271,20 +280,6 @@ describe("task sync: the default installation, as every 0.9.32 and 0.10 row name
 
     expect(result).toMatchObject({ entry: "installed", removedLegacy: ["a"] });
     expect(state.entry).toBeDefined();
-  });
-
-  test("AKM_BUNDLE_DIR naming some other directory still does", async () => {
-    configure(["stash//tasks/a"]);
-    const result = await akmTasksSync(
-      {
-        backend: fakeBackend(state),
-        launcher: launcher("/opt/akm"),
-        env: { ...DEFAULT_ENV, AKM_BUNDLE_DIR: path.join(storage.root, "elsewhere") },
-      },
-      {},
-    );
-    expect(result.entry).toBe("unmanaged");
-    expect(result.warnings?.[0]).toContain("bundle");
   });
 });
 
@@ -386,7 +381,7 @@ describe("task doctor", () => {
       },
     };
 
-    const report = await akmTasksDoctor({ backend, env: { ...DEFAULT_ENV, AKM_STATE_DIR: "/srv/state" } });
+    const report = await akmTasksDoctor({ backend, env: { ...DEFAULT_ENV, XDG_STATE_HOME: "/srv/state" } });
 
     expect(inspected).toBe(false);
     expect(report.bindings).toEqual([]);

@@ -16,7 +16,8 @@
  * as its `ref`.
  */
 import { bundleRefToString, parseBundleRef } from "../core/asset/asset-ref";
-import { type AkmConfig, mutateConfig, schedulerSourceIdFor } from "../core/config/config";
+import { type AkmConfig, mutateConfig } from "../core/config/config";
+import { isBundleEnabled } from "../core/config/config-sources";
 import { UsageError } from "../core/errors";
 import { warnOnce } from "../core/warn";
 
@@ -65,9 +66,9 @@ export function revokeSchedulerActivationsForBundle(config: AkmConfig, bundleId:
   return { ...config, scheduler: { ...config.scheduler, enabled } };
 }
 
-/** Whether refs from this bundle may be scheduled here: configured and enabled, or the implicit `AKM_BUNDLE_DIR` stash. */
+/** Whether refs from this bundle may be scheduled here: configured and enabled. */
 export function isSchedulerBundleActive(config: AkmConfig, bundleId: string): boolean {
-  return schedulerSourceIdFor(config, bundleId) !== undefined;
+  return isBundleEnabled(config, bundleId);
 }
 
 /**

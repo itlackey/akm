@@ -62,7 +62,7 @@ In order, every run applies (or, under `status`, plans):
    in one write, the same as `akm task sync`. This is the only step that
    leaves akm's own files: it runs `crontab` (Linux), `launchctl` (macOS) or
    `schtasks` (Windows), and only when it has something to write. An install
-   that moves a location (any `AKM_*` directory or XDG variable, as an image
+   that moves a location (a config file other than the default, or an XDG variable, as an image
    does) never has its OS scheduler written: the plan says so in
    `scheduler.warnings`, and its supervisor runs `akm task dispatch`. A machine
    with no `crontab` binary gets a warning in `scheduler.warnings` and exit
@@ -250,18 +250,25 @@ akm health --format json      # read this JSON; act on ok/status, never on messa
 
 ### Environment variables
 
-A bundler that controls the filesystem layout should set these explicitly
-rather than rely on `$HOME`-derived defaults:
+A bundler that controls the filesystem layout should set `AKM_CONFIG_FILE` (or
+pass `--config <file>`) and name the rest in that file, rather than rely on
+`$HOME`-derived defaults. `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR` and
+`AKM_CACHE_DIR` are retired: with one set and `AKM_CONFIG_FILE` unset, akm exits 78 and
+names `akm migrate apply`, which writes what they named into the file's `paths`.
+`AKM_BUNDLE_DIR` is retired too: the working bundle is the config's `defaultBundle`. An
+image that still sets it to that bundle works unchanged (the value is ignored); one that
+sets it to anything else exits 78 until `akm migrate apply` has registered the directory
+as `defaultBundle` and the variable is unset.
 
-| Variable | What it points at |
+| Variable or key | What it points at |
 | --- | --- |
-| `AKM_BUNDLE_DIR` | The content bundle (`$STASH`) — assets akm indexes and serves. |
-| `AKM_CONFIG_DIR` | `config.json`'s directory. |
-| `AKM_DATA_DIR` | Durable, non-regenerable data: **`index.db` and `state.db` live here.** This is the directory a migration snapshot's safety copy sits beside. |
-| `AKM_CACHE_DIR` | Regenerable cache: installed git, npm and website bundles, config backups, task logs. If it is discarded, `akm bundle update --all` restores the bundles. |
-| `AKM_STATE_DIR` | **Not** where `state.db` lives, despite the name — this is the XDG "state" directory. Holds, per bundle, `akm improve`'s whole-run lock (`locks/`) — see [Storage locations](../architecture/internals/storage-locations.md). Set it too, so those locks sit on the same persistent volume as the rest of akm's state rather than under `$HOME/.local/state/akm`. |
+| `defaultBundle` and `bundles.<id>.path` | The content bundle (`$STASH`) — assets akm indexes and serves. |
+| `AKM_CONFIG_FILE` | The config file; `credentials.json` and the config lock sit beside it. |
+| `paths.data` | Durable, non-regenerable data: **`index.db` and `state.db` live here.** This is the directory a migration snapshot's safety copy sits beside. |
+| `paths.cache` | Regenerable cache: installed git, npm and website bundles, config backups, task logs. If it is discarded, `akm bundle update --all` restores the bundles. |
+| `paths.state` | **Not** where `state.db` lives, despite the name — this is the XDG "state" directory. Holds, per bundle, `akm improve`'s whole-run lock (`locks/`) — see [Storage locations](../architecture/internals/storage-locations.md). Set it too, so those locks sit on the same persistent volume as the rest of akm's state rather than under `$HOME/.local/state/akm`. |
 
-Set all five to paths that persist across container restarts (a mounted
+Set the file and its `paths` (and the bundle `path`) to paths that persist across container restarts (a mounted
 volume), or `akm migrate apply` will see an empty `state.db` on every boot
 and never actually converge.
 
@@ -283,5 +290,5 @@ Once a migration has run against `state.db`, there is no downgrade path. An
 **older** akm that later opens the same file continues with the schema it knows
 and warns once that the database is newer; upgrade akm if its output looks
 incomplete. If you need the ability to roll back a bundled akm version, take
-your own backup of the whole data directory (`$AKM_DATA_DIR`) before running
+your own backup of the whole data directory (`paths.data`) before running
 `akm upgrade`/`akm migrate apply`.

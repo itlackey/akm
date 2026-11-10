@@ -69,9 +69,8 @@ export function pluginMatches(engine: string | undefined, plugin: string | undef
 /** The name akm's own `harnesses` setting uses for a harness Desktop installs a plugin into. */
 export const akmPlatform = (id: string) => (id === "opencode2" ? "opencode" : id);
 
-/** Nothing is configured: no bundle and no working library. Home shows setup instead of health failures then. */
-export const isUnconfigured = (listing: { bundles: unknown[]; workingStash: unknown | null }) =>
-  listing.bundles.length === 0 && !listing.workingStash;
+/** Nothing is configured: no bundle. Home shows setup instead of health failures then. */
+export const isUnconfigured = (listing: { bundles: unknown[] }) => listing.bundles.length === 0;
 
 export const hasStarter = (bundles: Bundle[]) =>
   bundles.some((bundle) => /akm-stash/.test(`${bundle.name} ${bundle.source?.locator ?? ""}`));

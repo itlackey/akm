@@ -7,10 +7,11 @@
 // it imports no package: only Node's own child_process, to call back into akm.
 //
 //   - akm's three read tools, each a run of the akm that started OpenCode, with `--detail normal --format json`
-//     (`--detail brief` when akm_show asks for a document's outline). akm passes the argv that runs it in
-//     `AKM_OPENCODE_CLI`, a JSON array: the executable alone for a compiled akm, the runtime and the script for one
-//     run as a script (Node and `dist/akm`, say), so no shebang or shell is needed on any platform. The run's
-//     environment is the call's, so a stamped run's reads (`AKM_EVENT_SOURCE`) are recorded as that run's.
+//     (`--detail brief` when akm_show asks for a document's outline). akm passes the argv that runs it as the plugin's
+//     `akm` option, an array: the executable alone for a compiled akm, the runtime and the script for one run as a
+//     script (Node and `dist/akm`, say), so no shebang or shell is needed on any platform. The run's environment is the
+//     call's, so a stamped run's reads (`AKM_EVENT_SOURCE`) are recorded as that run's, with the `shellEnv` below laid
+//     over it: the runtime moved OpenCode's XDG roots, and akm must find the user's installation, not the runtime's.
 //   - The environment of the commands the agent runs: the variables akm set for the OpenCode process (its roots and
 //     its OpenCode settings) are put back to what akm runs in, or removed, so the agent's shell sees the environment a
 //     harness's child would.
@@ -101,23 +102,31 @@ function cliArguments(tool, input) {
   ];
 }
 
-/** The argv in `AKM_OPENCODE_CLI`; throws unless it is a JSON array of strings with at least the executable. */
-function akmArgv() {
-  const raw = process.env.AKM_OPENCODE_CLI;
-  if (!raw) throw new Error("AKM_OPENCODE_CLI is not set");
-  const argv = JSON.parse(raw);
+/** The plugin's `akm` option; throws unless it is an array of strings with at least the executable. */
+function akmArgv(argv) {
   if (!Array.isArray(argv) || argv.length === 0 || !argv.every((part) => typeof part === "string")) {
-    throw new Error("AKM_OPENCODE_CLI is not a JSON array of strings");
+    throw new Error("the plugin's akm option is not an argv (an array of strings with at least the executable)");
   }
   return argv;
 }
 
-function runAkm([executable, ...prefix], args) {
+/** The environment of a run of akm: this process's, with `shellEnv` put back (a string) or removed (anything else). */
+function akmEnvironment(shellEnv) {
+  const env = { ...process.env };
+  if (!isObject(shellEnv)) return env;
+  for (const [name, value] of Object.entries(shellEnv)) {
+    if (typeof value === "string") env[name] = value;
+    else delete env[name];
+  }
+  return env;
+}
+
+function runAkm([executable, ...prefix], args, env) {
   return new Promise((resolve, reject) => {
     execFile(
       executable,
       [...prefix, ...args],
-      { encoding: "utf8", maxBuffer: OUTPUT_LIMIT_BYTES, env: process.env },
+      { encoding: "utf8", maxBuffer: OUTPUT_LIMIT_BYTES, env },
       (error, stdout, stderr) => {
         if (error) reject(new Error((stderr || error.message).trim()));
         else resolve(stdout);
@@ -203,6 +212,7 @@ const quoted = (names) => names.map((name) => `\`${name}\``).join(", ");
 export default {
   id: "akm",
   setup: async (ctx) => {
+    const shellEnv = ctx.options?.shellEnv;
     await ctx.tool.transform((editor) => {
       for (const tool of TOOLS) {
         editor.add({
@@ -213,7 +223,7 @@ export default {
           execute: async (input) => {
             try {
               const args = cliArguments(tool, input);
-              return { content: await runAkm(akmArgv(), args) };
+              return { content: await runAkm(akmArgv(ctx.options?.akm), args, akmEnvironment(shellEnv)) };
             } catch (error) {
               return { content: `${tool.name} failed: ${error instanceof Error ? error.message : String(error)}` };
             }
@@ -222,7 +232,6 @@ export default {
       }
     });
 
-    const shellEnv = ctx.options?.shellEnv;
     if (isObject(shellEnv)) {
       await ctx.shell.hook("create.before", async (event) => {
         for (const [name, value] of Object.entries(shellEnv)) {

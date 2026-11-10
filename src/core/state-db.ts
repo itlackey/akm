@@ -81,7 +81,7 @@ export {
 
 /**
  * Default path: `<dataDir>/state.db`.
- * Respects the same `AKM_DATA_DIR` / XDG_DATA_HOME env-isolation as `getDbPath()` so
+ * Respects the same `paths.data` / XDG_DATA_HOME resolution as `getDbPath()` so
  * cooperating processes sharing a data root automatically share the same
  * state database.
  */

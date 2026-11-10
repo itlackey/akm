@@ -13,7 +13,6 @@
  * `src/output/shapes.ts` and `src/output/text.ts`.
  */
 
-import { resolveStashDir } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import { AkmError, NotFoundError } from "../../core/errors";
@@ -46,9 +45,13 @@ import { validateProposal } from "./validators/proposals";
 
 // ── Shared helpers ──────────────────────────────────────────────────────────
 
+/** The default proposal queue's root: the working bundle's directory, which a git-managed bundle has only once resolved. */
+export function defaultProposalStash(): string {
+  return resolveWriteTarget(loadConfig(), undefined, { requireWritable: false }).source.path;
+}
+
 function resolveStash(stashDir?: string): string {
-  if (stashDir) return stashDir;
-  return resolveStashDir();
+  return stashDir ?? defaultProposalStash();
 }
 
 interface ResolvedProposalQueue {

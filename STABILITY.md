@@ -64,7 +64,7 @@ feedback are attributed to it. `info.learning`, `setup --learning` and
 
 **Not frozen.** The `state.db` and `index.db` schemas, the `dist/` layout,
 `akm-cli/workspace`, harness internals and the eval seams
-(`AKM_EMBED_DETERMINISTIC`, `AKM_CLAUDE_PROJECTS_DIR`) may change in any
+(`AKM_EMBED_DETERMINISTIC`) may change in any
 release.
 
 ## Command tier index
@@ -76,7 +76,7 @@ covers beyond the table.
 
 | Command | Tier | Notes |
 | --- | --- | --- |
-| `akm setup` | Stable | The answer flags (`--endpoint`, `--api-key-env`, `--name`, `--harness`, `--embedding`, ...) are new in 0.10; `--config` and `--probe` are gone (see the [migration guide](docs/migration/v0.9-to-v0.10.md)). `--learning on|off` is Stable; the `improve.enabled` config key it writes is Experimental. |
+| `akm setup` | Stable | The answer flags (`--endpoint`, `--api-key-env`, `--name`, `--harness`, `--embedding`, ...) are new in 0.10; the old `--config <json>` (an answers file) and `--probe` are gone (see the [migration guide](docs/migration/v0.9-to-v0.10.md)); `--config <file>` is now the global config-file selector, so on `setup` it names the config file to write. `--learning on|off` is Stable; the `improve.enabled` config key it writes is Experimental. |
 | `akm index` | Stable | `--export-vectors` and `--import-vectors` are Experimental for their first release; the vector file (`model`, `text_hash`, `embedding`) is their contract, the index file format stays internal. |
 | `akm health` | Evolving | Exit codes are Evolving; report *content* and rendered `md` layout are Experimental — do not script against report layout. |
 | `akm metrics` | Experimental | New in 0.9.28. Report content and JSON shape may change. |
@@ -88,7 +88,7 @@ covers beyond the table.
 | `akm bundle rename` | Stable | |
 | `akm bundle remove` | Stable | |
 | `akm bundle update` | Stable | |
-| `akm upgrade` | Stable | Including the plugin step and `--next`. Checksum verification is not optional; the recovery hatch is the `AKM_UPGRADE_SKIP_CHECKSUM` environment variable (Internal), not a flag. |
+| `akm upgrade` | Stable | Including the plugin step and `--next`. Checksum verification is on by default; `--skip-checksum` is the recovery hatch for an unreachable `checksums.txt` (Evolving). |
 | `akm search` | Stable | |
 | `akm curate` | Stable | |
 | `akm show` | Stable | |
@@ -501,24 +501,21 @@ on them.
 
 | Variable | Purpose |
 | --- | --- |
-| `AKM_BUNDLE_DIR`, `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR`, `AKM_CACHE_DIR` | Filesystem layout overrides |
-| `AKM_VERBOSE` | Diagnostics |
+| `AKM_CONFIG_FILE` (and the global `--config <file>`) | The config file this run uses; its `paths` key (`data`, `state`, `cache`) places the rest |
+| `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR`, `AKM_CACHE_DIR` | **Retired** (0.11): replaced by `AKM_CONFIG_FILE` and `paths`. Set without `AKM_CONFIG_FILE`, akm exits 78 (`RETIRED_LOCATION_VARIABLE`) naming `akm migrate apply` and `AKM_CONFIG_FILE`; `akm migrate`, `akm upgrade`, `akm info`, `--version` and `--help` still run. |
+| `AKM_BUNDLE_DIR` | **Retired** (0.11): the working bundle is `defaultBundle` (or `--bundle`). Naming the directory of the bundle akm resolves without it, or set with `AKM_CONFIG_FILE`, it is ignored; naming any other directory, akm exits 78 (`RETIRED_LOCATION_VARIABLE`) naming `akm migrate apply` (which registers that directory as `defaultBundle`). |
 | `AKM_NPM_REGISTRY` | npm mirror base URL; replaces `registry.npmjs.org` for package lookups |
-| `AKM_SQLITE_JOURNAL_MODE` | SQLite journal mode (network filesystems) |
 | `AKM_INSTALL_DIR` | Install-script prefix (read by `install.sh` and `install.ps1`, not by akm itself) |
 
 **Internal** — no compatibility guarantee, may vanish without notice:
-`AKM_UPGRADE_SKIP_CHECKSUM` (the upgrade recovery hatch; see `akm upgrade`),
 `AKM_NODE_ENTRY`, `AKM_STANDALONE_ENTRY`, `AKM_MIGRATE_ENTRY`,
 `AKM_LAUNCHER_PID`, `AKM_LAUNCHER_NODE`, `AKM_LAUNCHER_PATH`,
-`AKM_OPENCODE_CLI`, `AKM_OPENCODE_CACHE_DIR`,
 and the eight handed to a workflow unit's script
 (`AKM_RUN_ID`, `AKM_STEP_ID`, `AKM_UNIT_ID`, `AKM_PARAMS`, `AKM_ITEM`,
 `AKM_ITEM_INDEX`, `AKM_INPUTS`, `AKM_TASK_INPUTS`).
 
-Internal seams used by akm-eval and the tests, never for product use:
-`AKM_EMBED_DETERMINISTIC` (a hash embedder instead of a model) and
-`AKM_CLAUDE_PROJECTS_DIR` (where Claude session logs are read from).
+Internal seam used by akm-eval and the tests, never for product use:
+`AKM_EMBED_DETERMINISTIC` (a hash embedder instead of a model).
 
 ## Reporting stability regressions
 

@@ -161,11 +161,10 @@ describe("akm info when environment resolution itself fails (a10-info, infoComma
     const cleanup = sandboxXdgConfigHome(home.cleanup).cleanup;
     try {
       // A JS test runner (Jest, Vitest) sets NODE_ENV=test on its own process and its children inherit it. akm does
-      // not read it: with no XDG_DATA_HOME or AKM_DATA_DIR the data directory is under HOME, and `info` is whole.
+      // not read it: with no XDG_DATA_HOME the data directory is under HOME, and `info` is whole.
       const result = await spawnAkm(["info", "--format", "json"], {
         NODE_ENV: "test",
         XDG_DATA_HOME: undefined,
-        AKM_DATA_DIR: undefined,
       });
       expect(result.code, result.stderr).toBe(0);
       expect(result.elapsedMs).toBeLessThan(MAX_MS);
@@ -180,6 +179,30 @@ describe("akm info when environment resolution itself fails (a10-info, infoComma
     }
   });
 
+  test("a retired location variable is reported in the output, not thrown: exit 0 with the fix named", async () => {
+    const result = await spawnAkm(["info", "--format", "json"], { AKM_DATA_DIR: "/somewhere/akm-data" });
+    expect(result.code, result.stderr).toBe(0);
+    expect(result.elapsedMs).toBeLessThan(MAX_MS);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.ok).toBe(true);
+    expect(parsed.configError).toContain("AKM_DATA_DIR");
+    expect(parsed.configError).toContain("akm migrate apply");
+    expect(parsed.configError).toContain("AKM_CONFIG_FILE");
+  });
+
+  test("a bad `paths` value is reported in the output, not thrown: exit 0 with the reason", async () => {
+    const config = path.join(process.env.XDG_CONFIG_HOME as string, "akm", "config.json");
+    fs.mkdirSync(path.dirname(config), { recursive: true });
+    fs.writeFileSync(config, JSON.stringify({ semanticSearchMode: "off", paths: { data: 3 } }));
+    const result = await spawnAkm(["info", "--format", "json"]);
+    expect(result.code, result.stderr).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.ok).toBe(true);
+    expect(parsed.configError).toContain("paths.data");
+    expect(parsed.dataDir).toBe("");
+    expect(parsed.indexStats.unavailable).toContain("paths.data");
+  });
+
   test("HOME entirely unset (nothing resolvable) still exits 0 with the full report, not just the minimal fallback", async () => {
     const result = await spawnAkm(["info", "--format", "json"], {
       HOME: undefined,
@@ -187,11 +210,6 @@ describe("akm info when environment resolution itself fails (a10-info, infoComma
       XDG_DATA_HOME: undefined,
       XDG_CACHE_HOME: undefined,
       XDG_STATE_HOME: undefined,
-      AKM_BUNDLE_DIR: undefined,
-      AKM_CONFIG_DIR: undefined,
-      AKM_DATA_DIR: undefined,
-      AKM_CACHE_DIR: undefined,
-      AKM_STATE_DIR: undefined,
     });
     expect(result.code, result.stderr).toBe(0);
     expect(result.elapsedMs).toBeLessThan(MAX_MS);
@@ -281,9 +299,9 @@ describe("akm info under real index.db lock contention (a10-info)", () => {
     // Build a real (empty) index, then hold it EXCLUSIVE from a second
     // connection. WAL readers never block on a writer (SQLite's whole
     // design point — a BEGIN IMMEDIATE or even BEGIN EXCLUSIVE holder under
-    // WAL does not reproduce this), so this forces the DELETE/TRUNCATE
-    // journal mode the network-filesystem fallback (and
-    // AKM_SQLITE_JOURNAL_MODE) can also select in production, where a
+    // WAL does not reproduce this), so this forces the DELETE
+    // journal mode the network-filesystem fallback
+    // selects in production, where a
     // reader genuinely does wait on a held writer lock — the real shape of
     // the bug this fix closes, confirmed empirically before this fix
     // (a ~30s wait) and after (bounded here).

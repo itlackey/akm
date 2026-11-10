@@ -27,10 +27,9 @@ test("plugins follow Desktop's release stage and match on akm's major and minor"
   assert.equal(pluginMatches("0.10.261105", undefined), null);
 });
 
-test("nothing is configured only when there is no bundle and no working library", () => {
-  assert.equal(isUnconfigured({ bundles: [], workingStash: null }), true);
-  assert.equal(isUnconfigured({ bundles: [{}], workingStash: null }), false);
-  assert.equal(isUnconfigured({ bundles: [], workingStash: { path: "/x" } }), false);
+test("nothing is configured only when there is no bundle", () => {
+  assert.equal(isUnconfigured({ bundles: [] }), true);
+  assert.equal(isUnconfigured({ bundles: [{}] }), false);
 });
 
 test("the starter bundle is recognised by its source", () => {

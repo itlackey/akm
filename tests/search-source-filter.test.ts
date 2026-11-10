@@ -33,7 +33,7 @@ import {
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
   sandboxXdgStateHome,
-  withEnv,
+  withBundle,
 } from "./_helpers/sandbox";
 
 const disposers: SandboxedDir[] = [];
@@ -74,7 +74,7 @@ afterEach(() => {
  * narrowed stash, mirroring what the spawned subprocess got via its env.
  */
 async function runCli(args: string[], stashDir: string): Promise<{ stdout: string; stderr: string; status: number }> {
-  return withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+  return withBundle(stashDir, async () => {
     resetConfigCache();
     const res = await runCliCapture(args);
     return { stdout: res.stdout, stderr: res.stderr, status: res.code };
@@ -100,7 +100,7 @@ describe("akm search --from <name> filters hits to that source", () => {
       "---\ndescription: shared-keyword in the library stash\ntags:\n  - shared-keyword\n---\n# Library\n",
     );
 
-    await withEnv({ AKM_BUNDLE_DIR: primary }, async () => {
+    await withBundle(primary, async () => {
       saveConfig({
         semanticSearchMode: "off",
         bundles: {

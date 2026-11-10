@@ -46,7 +46,7 @@ import {
 import { closeDatabase, openExistingDatabase } from "../../../../src/storage/repositories/index-connection";
 import { getAllEntries } from "../../../../src/storage/repositories/index-entries-repository";
 import { withImproveAutonomy, withTestImproveLlm } from "../../../_helpers/improve-config";
-import { type IsolatedAkmStorage, mutateScopedEnv, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
+import { type IsolatedAkmStorage, useBundleConfig, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 
 describe("resolveImproveScope syntax classification", () => {
   test("rejects colon, fragment, and malformed slash-shaped explicit refs as usage errors", () => {
@@ -96,7 +96,7 @@ function writeMemory(stashDir: string, name: string, body: string, mtime?: Date)
 }
 
 async function buildIndex(stashDir: string): Promise<void> {
-  mutateScopedEnv("AKM_BUNDLE_DIR", stashDir);
+  useBundleConfig(stashDir);
   saveConfig(
     withImproveAutonomy(
       withTestImproveLlm({
@@ -303,7 +303,7 @@ test("a read-only nested bundle is never eligible through its writable ancestor"
   const nested = path.join(stash, ".read-only-bundle");
   writeMemory(stash, "writable", "Writable memory.");
   writeMemory(nested, "readonly", "Read-only nested memory.");
-  mutateScopedEnv("AKM_BUNDLE_DIR", stash);
+  useBundleConfig(stash);
   const config = withImproveAutonomy(
     withTestImproveLlm({
       semanticSearchMode: "off",

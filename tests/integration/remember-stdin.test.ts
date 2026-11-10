@@ -22,6 +22,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
+import { configHomeWithBundle } from "../_helpers/sandbox";
 
 const CLI = path.join(__dirname, "..", "..", "src", "cli.ts");
 const tempDirs: string[] = [];
@@ -37,9 +38,8 @@ function freshDirs(options?: { stashDir?: string }) {
   return {
     stashDir,
     env: {
-      AKM_BUNDLE_DIR: stashDir,
       XDG_CACHE_HOME: makeTempDir("akm-rmfm-cache-"),
-      XDG_CONFIG_HOME: makeTempDir("akm-rmfm-config-"),
+      XDG_CONFIG_HOME: configHomeWithBundle(makeTempDir("akm-rmfm-config-"), stashDir),
       XDG_DATA_HOME: makeTempDir("akm-rmfm-data-"),
       XDG_STATE_HOME: makeTempDir("akm-rmfm-state-"),
     } satisfies Record<string, string>,

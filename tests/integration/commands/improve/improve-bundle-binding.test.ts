@@ -24,7 +24,7 @@ import { NotFoundError } from "../../../../src/core/errors";
 import { appendEvent } from "../../../../src/core/events";
 import { akmIndex } from "../../../../src/indexer/indexer";
 import { withTestImproveLlm } from "../../../_helpers/improve-config";
-import { type IsolatedAkmStorage, mutateScopedEnv, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
+import { type IsolatedAkmStorage, useBundleConfig, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
 let primary: string;
@@ -34,7 +34,7 @@ beforeEach(() => {
   storage = withIsolatedAkmStorage();
   primary = path.join(storage.root, "primary-bundle");
   team = path.join(storage.root, "team-bundle");
-  mutateScopedEnv("AKM_BUNDLE_DIR", primary);
+  useBundleConfig(primary);
 });
 
 afterEach(() => {

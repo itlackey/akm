@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { readPromptStdin } from "../src/commands/agent/contribute-cli";
 import { runCliCapture } from "./_helpers/cli";
-import { withEnv } from "./_helpers/sandbox";
+import { withBundle, withEnv } from "./_helpers/sandbox";
 
 const tempDirs: string[] = [];
 
@@ -57,19 +57,19 @@ async function runCli(
   if (config) writeConfig(runtime.xdgConfig, config);
   return withEnv(
     {
-      AKM_BUNDLE_DIR: stashDir,
       XDG_CACHE_HOME: runtime.xdgCache,
       XDG_CONFIG_HOME: runtime.xdgConfig,
       XDG_DATA_HOME: runtime.xdgData,
       XDG_STATE_HOME: runtime.xdgState,
     },
-    async () => {
-      const { code, stdout, stderr } = await runCliCapture(args);
-      if (code !== 0) {
-        throw new Error(`CLI exited ${code}:\n${stderr}`);
-      }
-      return stdout.trim();
-    },
+    () =>
+      withBundle(stashDir, async () => {
+        const { code, stdout, stderr } = await runCliCapture(args);
+        if (code !== 0) {
+          throw new Error(`CLI exited ${code}:\n${stderr}`);
+        }
+        return stdout.trim();
+      }),
   );
 }
 
@@ -100,13 +100,12 @@ describe("search, show and curate output", () => {
     const runtime = makeCliRuntime();
     const { code, stdout, stderr } = await withEnv(
       {
-        AKM_BUNDLE_DIR: stashDir,
         XDG_CACHE_HOME: runtime.xdgCache,
         XDG_CONFIG_HOME: runtime.xdgConfig,
         XDG_DATA_HOME: runtime.xdgData,
         XDG_STATE_HOME: runtime.xdgState,
       },
-      () => runCliCapture(["search", "architect", "--format=json", "--detail=agent"]),
+      () => withBundle(stashDir, () => runCliCapture(["search", "architect", "--format=json", "--detail=agent"])),
     );
     expect(code).toBe(0);
     expect(stderr.match(/Unknown --detail value "agent"/g)).toHaveLength(1);

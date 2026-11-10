@@ -22,7 +22,14 @@ import { setQuiet } from "../src/core/warn";
 import { akmIndex } from "../src/indexer/indexer";
 import { _resetUnknownQualityWarnings, isProposedQuality, validateStashEntry } from "../src/indexer/passes/metadata";
 import type { SourceSearchHit } from "../src/sources/types";
-import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome, withEnv } from "./_helpers/sandbox";
+import {
+  type Cleanup,
+  sandboxStashDir,
+  sandboxXdgCacheHome,
+  sandboxXdgConfigHome,
+  withBundle,
+  withDefaultBundle,
+} from "./_helpers/sandbox";
 
 // ── Temp directory tracking ─────────────────────────────────────────────────
 
@@ -59,8 +66,8 @@ function tmpStash(): string {
  * inside `run` so it reads back the stash that was just indexed.
  */
 async function withTestIndex<T>(stashDir: string, run: () => Promise<T> | T): Promise<T> {
-  return withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
-    saveConfig({ semanticSearchMode: "off" });
+  return withBundle(stashDir, async () => {
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
     await akmIndex({ stashDir, full: true });
     return run();
   });

@@ -21,7 +21,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
 import { runCliCapture } from "./_helpers/cli";
-import { makeStashDir, type SandboxedDir, withEnv } from "./_helpers/sandbox";
+import { makeStashDir, type SandboxedDir, withBundle } from "./_helpers/sandbox";
 
 const disposers: SandboxedDir[] = [];
 
@@ -31,7 +31,7 @@ afterAll(() => {
 });
 
 async function runCli(args: string[], stashDir: string): Promise<{ stdout: string; stderr: string; status: number }> {
-  return withEnv({ AKM_BUNDLE_DIR: stashDir, AKM_CONFIG_DIR: undefined }, async () => {
+  return withBundle(stashDir, async () => {
     clearEmbeddingCache();
     resetLocalEmbedder();
     const { stdout, stderr, code } = await runCliCapture(args);

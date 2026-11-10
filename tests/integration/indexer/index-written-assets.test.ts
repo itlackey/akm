@@ -22,7 +22,7 @@ import { closeDatabase, openExistingDatabase } from "../../../src/storage/reposi
 import { getMeta } from "../../../src/storage/repositories/index-meta-repository";
 import {
   type Cleanup,
-  sandboxEnvDir,
+  sandboxAkmDir,
   sandboxStashDir,
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
@@ -105,8 +105,8 @@ beforeEach(async () => {
   stashDir = stash.dir;
   let chain = sandboxXdgConfigHome(stash.cleanup).cleanup;
   chain = sandboxXdgCacheHome(chain).cleanup;
-  chain = sandboxEnvDir("akm-written-data", "AKM_DATA_DIR", chain).cleanup;
-  chain = sandboxEnvDir("akm-written-state", "AKM_STATE_DIR", chain).cleanup;
+  chain = sandboxAkmDir("akm-written-data", "data", chain).cleanup;
+  chain = sandboxAkmDir("akm-written-state", "state", chain).cleanup;
   cleanup = chain;
   writeSandboxConfig({ semanticSearchMode: "off" });
   writeMemory("seed-memory", "Seed body.");

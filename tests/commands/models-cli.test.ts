@@ -24,7 +24,7 @@ import {
 
 let storage: IsolatedAkmStorage;
 beforeEach(() => {
-  storage = withIsolatedAkmStorage();
+  storage = withIsolatedAkmStorage({}, { bundle: false });
 });
 afterEach(() => storage.cleanup());
 

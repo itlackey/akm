@@ -14,6 +14,7 @@ import {
   sandboxStashDir,
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
+  useBundleConfig,
   writeSandboxConfig,
 } from "../_helpers/sandbox";
 
@@ -370,7 +371,7 @@ describe("indexing pipeline with parameters", () => {
       '---\ndescription: "Deploy Docker container"\n---\nDeploy $1 to $2 using {{registry_url}}\n',
     );
 
-    process.env.AKM_BUNDLE_DIR = stashDir;
+    useBundleConfig(stashDir);
     await akmIndex({ stashDir });
 
     const db = openIndexDatabase();

@@ -2,8 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { slugForPath } from "../src/core/bundle-id";
 import { runCliCapture } from "./_helpers/cli";
-import { withEnv } from "./_helpers/sandbox";
+import { withBundle, withEnv } from "./_helpers/sandbox";
 
 const tempDirs: string[] = [];
 
@@ -49,18 +50,13 @@ async function runCli(
   const xdgState = envDirs?.xdgState ?? makeTempDir("akm-output-state-");
   if (config) writeConfig(xdgConfig, config);
   return withEnv(
-    {
-      AKM_BUNDLE_DIR: stashDir,
-      XDG_CACHE_HOME: xdgCache,
-      XDG_CONFIG_HOME: xdgConfig,
-      XDG_DATA_HOME: xdgData,
-      XDG_STATE_HOME: xdgState,
-    },
-    async () => {
-      const { code, stdout } = await runCliCapture(args);
-      expect(code).toBe(0);
-      return stdout.trim();
-    },
+    { XDG_CACHE_HOME: xdgCache, XDG_CONFIG_HOME: xdgConfig, XDG_DATA_HOME: xdgData, XDG_STATE_HOME: xdgState },
+    () =>
+      withBundle(stashDir, async () => {
+        const { code, stdout } = await runCliCapture(args);
+        expect(code).toBe(0);
+        return stdout.trim();
+      }),
   );
 }
 
@@ -145,16 +141,16 @@ describe("output baseline", () => {
       "template",
       "type",
     ]);
-    expect(json.origin).toBeNull();
+    expect(json.origin).toBe(slugForPath(stashDir));
   });
 
-  test("show text output includes null origin for local assets", async () => {
+  test("show text output names the default bundle as the origin of local assets", async () => {
     const stashDir = makeTempDir("akm-output-stash-");
     writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
 
     const output = await runCli(stashDir, ["show", "scripts/deploy.sh", "--format=text"]);
 
-    expect(output).toContain("# origin: null");
+    expect(output).toContain(`# origin: ${slugForPath(stashDir)}`);
     expect(output).toContain("run:");
   });
 
@@ -187,7 +183,7 @@ describe("output baseline", () => {
     for (const ref of refs) {
       const output = await runCli(stashDir, ["show", ref, "--format=json"], undefined, envDirs);
       const json = JSON.parse(output) as Record<string, unknown>;
-      expect(json.origin).toBeNull();
+      expect(json.origin).toBe(slugForPath(stashDir));
       expect(typeof json.action).toBe("string");
       expect(String(json.action).length).toBeGreaterThan(0);
     }

@@ -71,12 +71,10 @@ describe("akm setup without a TTY", () => {
     }
   });
 
-  test("the removed --config and --probe flags are unknown", async () => {
-    for (const flag of [["--config", "{}"], ["--probe"]] as const) {
-      const { code, stderr } = await runCliCapture(["setup", "--yes", ...flag]);
-      expect(code, flag.join(" ")).toBe(2);
-      expect(stderr).toContain(flag[0]);
-    }
+  test("the removed --probe flag is unknown", async () => {
+    const { code, stderr } = await runCliCapture(["setup", "--yes", "--probe"]);
+    expect(code).toBe(2);
+    expect(stderr).toContain("--probe");
   });
 });
 

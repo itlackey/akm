@@ -16,7 +16,14 @@ import type { akmImprove } from "../../../src/commands/improve/improve";
 import { _setAkmImproveForTests } from "../../../src/commands/improve/improve-cli";
 import { _resetWarnOnceForTests } from "../../../src/core/warn";
 import { runCliCapture } from "../../_helpers/cli";
-import { makeSandboxDir, makeStashDir, type SandboxedDir, withEnv, writeSandboxConfig } from "../../_helpers/sandbox";
+import {
+  configHomeWithBundle,
+  makeSandboxDir,
+  makeStashDir,
+  type SandboxedDir,
+  withEnv,
+  writeSandboxConfig,
+} from "../../_helpers/sandbox";
 import { snapshotTree } from "../../_helpers/snapshot-tree";
 
 const disposers: SandboxedDir[] = [];
@@ -33,9 +40,8 @@ function freshEnv(stashDir: string): { env: Record<string, string>; roots: strin
   ];
   return {
     env: {
-      AKM_BUNDLE_DIR: stashDir,
       HOME: home.dir,
-      XDG_CONFIG_HOME: cfg.dir,
+      XDG_CONFIG_HOME: configHomeWithBundle(cfg.dir, stashDir),
       XDG_CACHE_HOME: cache.dir,
       XDG_DATA_HOME: data.dir,
       XDG_STATE_HOME: state.dir,

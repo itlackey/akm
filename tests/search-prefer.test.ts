@@ -18,7 +18,7 @@ import {
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
-  withEnv,
+  withBundle,
 } from "./_helpers/sandbox";
 
 describe("applyPrefer", () => {
@@ -68,7 +68,7 @@ async function indexStash(): Promise<string> {
   scopes.forEach((scope, i) => {
     writeMemory(stash, `m${i + 1}`, scope, `${"gateway ".repeat(6 - i)}${"filler ".repeat(i * 4)}`);
   });
-  await withEnv({ AKM_BUNDLE_DIR: stash }, async () => {
+  await withBundle(stash, async () => {
     resetConfigCache();
     saveConfig({ semanticSearchMode: "off" });
     await akmIndex({ stashDir: stash, full: true });
@@ -77,7 +77,7 @@ async function indexStash(): Promise<string> {
 }
 
 async function names(stash: string, input: Partial<Parameters<typeof akmSearch>[0]>): Promise<string[]> {
-  return withEnv({ AKM_BUNDLE_DIR: stash }, async () => {
+  return withBundle(stash, async () => {
     resetConfigCache();
     const result = await akmSearch({ query: "gateway", ...input });
     return result.hits.map((hit) => ("name" in hit ? String(hit.name) : ""));

@@ -110,7 +110,7 @@ describe("collectSchedulerBinaryAdvisory (#953)", () => {
     let inspected = false;
     const result = await collectSchedulerBinaryAdvisory(true, {
       cliVersion: "0.10.0",
-      env: { ...DEFAULT_ENV, AKM_STATE_DIR: "/srv/state" },
+      env: { ...DEFAULT_ENV, XDG_STATE_HOME: "/srv/state" },
       backend: {
         name: "cron",
         apply: () => {},

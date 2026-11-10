@@ -10,7 +10,7 @@ import { pathToFileURL } from "node:url";
 import { loadConfig, saveConfig } from "../../../src/core/config/config";
 import { getCachePaths } from "../../../src/sources/providers/git";
 import { runCliCapture } from "../../_helpers/cli";
-import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage } from "../../_helpers/sandbox";
+import { type IsolatedAkmStorage, withDefaultBundle, withEnv, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
 
@@ -37,7 +37,7 @@ function createRemoteFixture(): string {
 
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
-  saveConfig({ semanticSearchMode: "off" });
+  saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, storage.stashDir));
 });
 
 afterEach(() => {

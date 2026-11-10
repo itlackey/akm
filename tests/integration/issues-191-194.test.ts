@@ -46,7 +46,6 @@ function makeEnv(): NodeJS.ProcessEnv {
     XDG_CONFIG_HOME: path.join(akmHome, "config"),
     XDG_CACHE_HOME: path.join(akmHome, "cache"),
     XDG_DATA_HOME: path.join(akmHome, "data"),
-    AKM_BUNDLE_DIR: path.join(akmHome, "stash"),
   };
 }
 

@@ -35,7 +35,7 @@ import { closeDatabase, openExistingDatabase } from "../../../src/storage/reposi
 import { getEmbeddingCount } from "../../../src/storage/repositories/index-vec-repository";
 import {
   type Cleanup,
-  sandboxEnvDir,
+  sandboxAkmDir,
   sandboxStashDir,
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
@@ -75,8 +75,8 @@ beforeEach(() => {
   stashDir = stash.dir;
   let chain = sandboxXdgConfigHome(stash.cleanup).cleanup;
   chain = sandboxXdgCacheHome(chain).cleanup;
-  chain = sandboxEnvDir("akm-resume-data", "AKM_DATA_DIR", chain).cleanup;
-  chain = sandboxEnvDir("akm-resume-state", "AKM_STATE_DIR", chain).cleanup;
+  chain = sandboxAkmDir("akm-resume-data", "data", chain).cleanup;
+  chain = sandboxAkmDir("akm-resume-state", "state", chain).cleanup;
   cleanup = chain;
   writeSandboxConfig({ semanticSearchMode: "auto" });
 });

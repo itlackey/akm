@@ -43,11 +43,8 @@ describe("the harness sandbox", () => {
     expect(unsandboxedDirs(env).map((d) => d.split("=")[0])).toEqual(["data"]);
   });
 
-  test("the default stash is checked too: a real HOME alone is named, so is AKM_BUNDLE_DIR", () => {
+  test("the default stash is checked too: a real HOME alone is named", () => {
     const sandboxed = { ...process.env };
-    expect(unsandboxedDirs({ ...sandboxed, AKM_BUNDLE_DIR: "/home/someone/akm" }).map((d) => d.split("=")[0])).toEqual([
-      "stash",
-    ]);
     expect(unsandboxedDirs({ ...sandboxed, HOME: "/home/someone" }).map((d) => d.split("=")[0])).toEqual(["stash"]);
   });
 
@@ -185,9 +182,7 @@ describe("the preload's afterEach", () => {
   }
 
   posixOnly("fails a test that leaves a directory akm resolves outside the temp root", () => {
-    const nested = runNested(
-      `process.env.HOME = "/home/someone"; delete process.env.XDG_DATA_HOME; delete process.env.AKM_BUNDLE_DIR;`,
-    );
+    const nested = runNested(`process.env.HOME = "/home/someone"; delete process.env.XDG_DATA_HOME;`);
     expect(nested.status).not.toBe(0);
     expect(nested.output).toContain("[sandbox tripwire]");
     expect(nested.output).toContain("outside the temp root");

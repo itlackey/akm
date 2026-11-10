@@ -17,7 +17,7 @@ import {
 import { computePlanHash } from "../../../src/workflows/ir/plan-hash";
 import type { WorkflowPlan, WorkflowPlanStep } from "../../../src/workflows/plan";
 import { completeWorkflowStep, getWorkflowStatus } from "../../../src/workflows/runtime/runs";
-import { type Cleanup, sandboxEnvDir } from "../../_helpers/sandbox";
+import { type Cleanup, sandboxAkmDir } from "../../_helpers/sandbox";
 import { withSeam } from "../../_helpers/seams";
 import {
   executeStepPlan as executeFrozenStepPlan,
@@ -101,7 +101,7 @@ function useFrozenPlan(frozen: WorkflowPlan): () => Promise<WorkflowPlan> {
 }
 
 beforeEach(() => {
-  const sandboxed = sandboxEnvDir("akm-native-exec-", "AKM_DATA_DIR");
+  const sandboxed = sandboxAkmDir("akm-native-exec-", "data");
   tmpDir = sandboxed.dir;
   cleanup = sandboxed.cleanup;
 });

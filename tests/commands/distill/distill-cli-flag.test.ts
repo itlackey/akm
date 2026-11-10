@@ -39,7 +39,6 @@ async function runCli(
 ): Promise<{ stdout: string; stderr: string; status: number }> {
   const result = await withEnv(
     {
-      AKM_BUNDLE_DIR: undefined,
       HOME: makeTempDir("akm-distill-cli-home-"),
       XDG_CACHE_HOME: makeTempDir("akm-distill-cli-cache-"),
       XDG_CONFIG_HOME: makeTempDir("akm-distill-cli-config-"),

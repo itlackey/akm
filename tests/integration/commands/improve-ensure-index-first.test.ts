@@ -26,7 +26,7 @@ import { withTestImproveLlm } from "../../_helpers/improve-config";
 import {
   type IsolatedAkmStorage,
   makeSandboxDir,
-  mutateScopedEnv,
+  useBundleConfig,
   withIsolatedAkmStorage,
 } from "../../_helpers/sandbox";
 
@@ -41,12 +41,12 @@ function makeTempDir(prefix: string): string {
 let storage: IsolatedAkmStorage;
 
 beforeEach(() => {
-  // index.db lives under AKM_DATA_DIR; isolate so we never touch the user's
+  // index.db lives under the data dir (XDG_DATA_HOME); isolate so we never touch the user's
   // real ~/.local/share/akm/index.db.
   const akmDataDir = makeSandboxDir("akm-improve-ensure-data-");
   const akmStateDir = makeSandboxDir("akm-improve-ensure-state-");
   dirCleanups.push(akmDataDir.cleanup, akmStateDir.cleanup);
-  storage = withIsolatedAkmStorage({ AKM_DATA_DIR: akmDataDir.dir, AKM_STATE_DIR: akmStateDir.dir });
+  storage = withIsolatedAkmStorage({ XDG_DATA_HOME: akmDataDir.dir, XDG_STATE_HOME: akmStateDir.dir });
 });
 
 afterEach(() => {
@@ -57,7 +57,7 @@ afterEach(() => {
 describe("akmImprove ordering: ensureIndex must run before collectEligibleRefs (#339)", () => {
   test("empty entries table on entry still produces non-empty plannedRefs after the call", async () => {
     const stashDir = makeTempDir("akm-improve-ensure-stash-");
-    mutateScopedEnv("AKM_BUNDLE_DIR", stashDir);
+    useBundleConfig(stashDir);
     saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
 
     // Seed two lessons on disk.
@@ -129,7 +129,7 @@ describe("akmImprove ordering: ensureIndex must run before collectEligibleRefs (
 
   test("R6: ensureIndexDurationMs is surfaced on the result when the inline index ran", async () => {
     const stashDir = makeTempDir("akm-improve-ensure-duration-");
-    mutateScopedEnv("AKM_BUNDLE_DIR", stashDir);
+    useBundleConfig(stashDir);
     saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
 
     writeLesson(stashDir, "prefer-ripgrep", "Prefer ripgrep over grep", "Searching large repos");
@@ -201,7 +201,7 @@ describe("akmImprove ordering: ensureIndex must run before collectEligibleRefs (
 
   test("dry-run never invokes ensureIndex and uses only the existing index", async () => {
     const stashDir = makeTempDir("akm-improve-ensure-dryrun-");
-    mutateScopedEnv("AKM_BUNDLE_DIR", stashDir);
+    useBundleConfig(stashDir);
     saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
 
     writeLesson(stashDir, "single-lesson", "Single lesson", "Trigger");

@@ -158,7 +158,7 @@ function eventsFor(ref: string, signals: Array<"positive" | "negative">) {
 }
 
 beforeEach(() => {
-  storage = withIsolatedAkmStorage();
+  storage = withIsolatedAkmStorage({}, { bundle: false });
 });
 
 afterEach(() => {

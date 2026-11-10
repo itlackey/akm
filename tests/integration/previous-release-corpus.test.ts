@@ -108,6 +108,7 @@ import { CRON_BACKEND, type CronExec, type CronExecResult } from "../../src/task
 import { readTaskHistory } from "../../src/tasks/run/task-history";
 import { parseTaskSource } from "../../src/tasks/source/parse-task-source";
 import {
+  configNamingBundle,
   type IsolatedAkmStorage,
   sandboxStashDir,
   sandboxXdgConfigHome,
@@ -195,7 +196,7 @@ describe("previous-release corpus — upgrade must not break reads", () => {
     let storage: IsolatedAkmStorage;
 
     beforeEach(() => {
-      storage = withIsolatedAkmStorage();
+      storage = withIsolatedAkmStorage({}, { bundle: false });
     });
 
     afterEach(() => {
@@ -334,7 +335,7 @@ describe("previous-release corpus — upgrade must not break reads", () => {
     let storage: IsolatedAkmStorage;
 
     beforeEach(() => {
-      storage = withIsolatedAkmStorage();
+      storage = withIsolatedAkmStorage({}, { bundle: false });
     });
 
     afterEach(() => {
@@ -417,7 +418,7 @@ describe("previous-release corpus — AKM_BUNDLE_DIR duplicate 'stash' bundle (#
   let storage: IsolatedAkmStorage;
 
   beforeEach(() => {
-    storage = withIsolatedAkmStorage();
+    storage = withIsolatedAkmStorage({}, { bundle: false });
   });
 
   afterEach(() => {
@@ -975,7 +976,11 @@ describe("previous-release corpus — a 0.9 `engines` config converts end to end
     fs.mkdirSync(path.join(storage.stashDir, "secrets"), { recursive: true });
     fs.writeFileSync(path.join(storage.stashDir, "secrets", "openai"), `${STORED_SECRET}\n`);
     const configDir = path.dirname(getConfigPath());
-    fs.writeFileSync(getConfigPath(), readFixture("config-v09-engines.json").replace("__KEY_FILE__", keyFile));
+    // The 0.9 file, plus the working bundle the stored secret lives in.
+    fs.writeFileSync(
+      getConfigPath(),
+      configNamingBundle(readFixture("config-v09-engines.json").replace("__KEY_FILE__", keyFile), storage.stashDir),
+    );
     fs.writeFileSync(path.join(configDir, "models.json"), readFixture("models-v09.json"));
     // Assets that still say `engine:`.
     for (const [relative, text] of [

@@ -17,14 +17,14 @@ import { saveConfig } from "../../src/core/config/config";
 import { getDbPath, getIndexRebuildLockPath } from "../../src/core/paths";
 import { openExistingDatabase } from "../../src/storage/repositories/index-connection";
 import { runCliCapture } from "../_helpers/cli";
-import { type Cleanup, withIsolatedAkmStorage } from "../_helpers/sandbox";
+import { type Cleanup, withDefaultBundle, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 let cleanup: Cleanup = () => {};
 
 beforeEach(() => {
   const storage = withIsolatedAkmStorage();
   cleanup = storage.cleanup;
-  saveConfig({ semanticSearchMode: "off" });
+  saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, storage.stashDir));
 });
 
 afterEach(() => {

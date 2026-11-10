@@ -41,7 +41,7 @@ function spawnCli(args: string[]): { stdout: string; stderr: string; status: num
     encoding: "utf8",
     timeout: 10_000,
     cwd: repoRoot,
-    env: { ...process.env, AKM_BUNDLE_DIR: undefined },
+    env: { ...process.env },
   });
   return { stdout: result.stdout ?? "", stderr: result.stderr ?? "", status: result.status ?? 1 };
 }

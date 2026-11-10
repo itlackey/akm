@@ -11,12 +11,12 @@ import {
   akmProposalReject,
   akmProposalReopen,
   akmProposalRevert,
+  defaultProposalStash,
   type ProposalAcceptResult,
 } from "../commands/proposal/proposal";
 import { isRetireProposal, type Proposal, proposalWaitingSince } from "../commands/proposal/proposal-types";
 import { diffLoadedProposal, resolveProposalIdIn } from "../commands/proposal/repository";
 import { validateProposal } from "../commands/proposal/validators/proposals";
-import { resolveStashDir } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { AkmError, NotFoundError, UsageError } from "../core/errors";
 import { buildFileContext } from "../indexer/walk/file-context";
@@ -103,7 +103,7 @@ export function list(input: ListInput = {}) {
   return withReadonlyStateDb(
     (db) => {
       // A list shows summaries, so the proposed content is not read.
-      const all = listStateProposals(db, { stashDir: resolveStashDir(), withContent: false });
+      const all = listStateProposals(db, { stashDir: defaultProposalStash(), withContent: false });
       const picked =
         status === "pending"
           ? all
@@ -177,7 +177,7 @@ function proposalDiffView(proposal: Proposal) {
 export function get(input: { id: string }) {
   const { id } = input;
   const detail = withReadonlyStateDb((db) => {
-    const proposal = resolveProposalIdIn(db, resolveStashDir(), id);
+    const proposal = resolveProposalIdIn(db, defaultProposalStash(), id);
     let diff: ReturnType<typeof proposalDiffView> | null = null;
     let diffError: string | null = null;
     try {

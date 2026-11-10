@@ -18,7 +18,7 @@ import { secretLockPath, setSecret, withSecretLock } from "../src/commands/env/s
 import { readValue } from "../src/core/secret-value";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
 import { runCliCapture } from "./_helpers/cli";
-import { makeStashDir, type SandboxedDir, withEnv } from "./_helpers/sandbox";
+import { makeStashDir, type SandboxedDir, withBundle, withEnv } from "./_helpers/sandbox";
 
 // ── Core-module fixtures (tracked tmp dirs) ──────────────────────────────────
 
@@ -56,14 +56,16 @@ afterEach(() => {
 
 async function runCli(
   args: string[],
-  extraEnv: Record<string, string | undefined> = {},
+  options: { stashDir?: string; env?: Record<string, string | undefined> } = {},
 ): Promise<{ stdout: string; stderr: string; status: number }> {
-  return withEnv({ AKM_CONFIG_DIR: undefined, ...extraEnv }, async () => {
-    clearEmbeddingCache();
-    resetLocalEmbedder();
-    const { stdout, stderr, code } = await runCliCapture(args);
-    return { stdout, stderr, status: code };
-  });
+  return withEnv({ ...options.env }, () =>
+    withBundle(options.stashDir, async () => {
+      clearEmbeddingCache();
+      resetLocalEmbedder();
+      const { stdout, stderr, code } = await runCliCapture(args);
+      return { stdout, stderr, status: code };
+    }),
+  );
 }
 
 // ── Core module ──────────────────────────────────────────────────────────────
@@ -149,9 +151,7 @@ describe("secret set", () => {
     const pem = "-----BEGIN OPENSSH PRIVATE KEY-----\nline1\nline2\n-----END OPENSSH PRIVATE KEY-----\n";
     fs.writeFileSync(src, pem);
 
-    const { status } = await runCli(["secret", "set", "secrets/key", "--from-file", src], {
-      AKM_BUNDLE_DIR: stashDir,
-    });
+    const { status } = await runCli(["secret", "set", "secrets/key", "--from-file", src], { stashDir: stashDir });
     expect(status).toBe(0);
     expect(fs.readFileSync(path.join(stashDir, "secrets", "key"), "utf8")).toBe(pem);
   });
@@ -159,8 +159,8 @@ describe("secret set", () => {
   test("--from-env reads the value from the named environment variable", async () => {
     const stashDir = makeStash();
     const { status } = await runCli(["secret", "set", "secrets/demo", "--from-env", "AKM_VALUE"], {
-      AKM_BUNDLE_DIR: stashDir,
-      AKM_VALUE: "from-the-env",
+      stashDir: stashDir,
+      env: { AKM_VALUE: "from-the-env" },
     });
     expect(status).toBe(0);
     expect(fs.readFileSync(path.join(stashDir, "secrets", "demo"), "utf8")).toBe("from-the-env");
@@ -170,7 +170,7 @@ describe("secret set", () => {
     const stashDir = makeStash();
     const { status, stderr } = await runCli(
       ["secret", "set", "secrets/demo", "--from-file", "/tmp/x", "--from-env", "AKM_VALUE"],
-      { AKM_BUNDLE_DIR: stashDir, AKM_VALUE: "v" },
+      { stashDir: stashDir, env: { AKM_VALUE: "v" } },
     );
     expect(status).toBe(2);
     expect(JSON.parse(stderr.trim()).ok).toBe(false);
@@ -182,7 +182,7 @@ describe("secret list", () => {
     const stashDir = makeStash();
     setSecret(path.join(stashDir, "secrets", "deploy-key"), Buffer.from("the-actual-secret-value"));
 
-    const { stdout, status } = await runCli(["secret", "list", "--format", "json"], { AKM_BUNDLE_DIR: stashDir });
+    const { stdout, status } = await withBundle(stashDir, () => runCli(["secret", "list", "--format", "json"]));
     expect(status).toBe(0);
     const parsed = JSON.parse(stdout.trim());
     const refs = parsed.secrets.map((s: { ref: string }) => s.ref);
@@ -202,12 +202,12 @@ describe("secret remove", () => {
     fs.writeFileSync(`${fp}.sensitive`, "");
 
     const { stdout, status } = await runCli(["secret", "remove", "secrets/demo", "--yes", "--format", "json"], {
-      AKM_BUNDLE_DIR: stashDir,
+      stashDir: stashDir,
     });
 
     expect(status).toBe(0);
     expect(JSON.parse(stdout)).toMatchObject({ shape: "secret-remove", removed: true });
-    expect(JSON.parse(stdout).ref).toEndWith("//secrets/demo");
+    expect(JSON.parse(stdout).ref).toBe("secrets/demo");
     expect(stdout).not.toContain("topsecret-value");
     expect(fs.existsSync(fp)).toBe(false);
     expect(fs.existsSync(`${fp}.sensitive`)).toBe(false);
@@ -218,9 +218,7 @@ describe("secret remove", () => {
     const other = path.join(stashDir, "secrets", "other");
     setSecret(other, Buffer.from("v"));
 
-    const { stderr, status } = await runCli(["secret", "remove", "secrets/demo", "--yes"], {
-      AKM_BUNDLE_DIR: stashDir,
-    });
+    const { stderr, status } = await runCli(["secret", "remove", "secrets/demo", "--yes"], { stashDir: stashDir });
 
     expect(status).toBe(1);
     expect(JSON.parse(stderr).code).toBe("ASSET_NOT_FOUND");
@@ -232,7 +230,7 @@ describe("secret remove", () => {
     const fp = path.join(stashDir, "secrets", "demo");
     setSecret(fp, Buffer.from("v"));
 
-    const { status } = await runCli(["secret", "remove", "secrets/demo"], { AKM_BUNDLE_DIR: stashDir });
+    const { status } = await withBundle(stashDir, () => runCli(["secret", "remove", "secrets/demo"]));
 
     expect(status).not.toBe(0);
     expect(fs.existsSync(fp)).toBe(true);
@@ -254,8 +252,8 @@ describe("secret slash ref form", () => {
     setSecret(fp, Buffer.from("v"));
 
     const { status } = await runCli(["secret", "set", "secrets/deploy-key", "--from-env", "AKM_VALUE"], {
-      AKM_BUNDLE_DIR: stashDir,
-      AKM_VALUE: "updated-value",
+      stashDir: stashDir,
+      env: { AKM_VALUE: "updated-value" },
     });
 
     expect(status).toBe(0);
