@@ -916,7 +916,7 @@ describe("lint-cache-path-anchoring", () => {
 /**
  * #884 — `akm lint --prune-dangling-edges`, the OPT-IN half of the fix.
  *
- * Resolving prune tombstones (see `lint-archived-memory-belief-edge.test.ts`)
+ * Resolving prune tombstones (see the archived-memory belief-edge tests above)
  * stops NEW dangling edges appearing, but cannot help an edge whose target was
  * removed outside the prune path — a hand `git rm`, or a pre-fix release. That
  * is the shape of the 224 findings #884 reported, and clearing them deletes

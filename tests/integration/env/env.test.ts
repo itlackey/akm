@@ -197,8 +197,8 @@ describe("buildShellExportScript", () => {
   });
 
   // NOTE: the real-bash sourcing test ("eval-ing the emitted script populates
-  // env without executing payloads") lives in
-  // tests/integration/env-export-bash.test.ts — it requires a real subprocess.
+  // env without executing payloads") is in the real-subprocess `env-export-bash`
+  // describe of this file.
 
   test("round-trips shell-metachar values through dotenv.parse", () => {
     const dir = tmpDir();

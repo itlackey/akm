@@ -25,9 +25,8 @@ import {
  * the secret value is injected into the CHILD process's environment. That
  * injection is unobservable from an in-process harness (the value never enters
  * this process's env or capture buffers), so this test spawns the real CLI and
- * reads what the child prints. Moved here from tests/secret-path-run.test.ts;
- * the validation-failure `secret run` cases (which fail before any spawn)
- * remain in-process in that file.
+ * reads what the child prints. The validation-failure `secret run` cases
+ * (which fail before any spawn) remain in-process in tests/secret.test.ts.
  */
 
 const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");

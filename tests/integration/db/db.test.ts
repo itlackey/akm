@@ -1023,7 +1023,7 @@ describe("sqlite-journal-mode", () => {
    * (Chunk-8 WI-8.3: openWorkflowDatabase() is deleted with workflow.db; its rows
    * live in state.db, already covered by openStateDatabase() above.)
    *
-   * Modeled on tests/db-busy-timeout.test.ts: mkdtempSync temp dirs + afterEach
+   * Modeled on tests/integration/db/db.test.ts: mkdtempSync temp dirs + afterEach
    * cleanup, no host state.
    */
 

@@ -7,7 +7,7 @@
  *
  * Everything here runs in-process via the shared harness. The stdin path
  * (default `secret set` pipes the value through process.stdin, which the
- * harness cannot feed) lives in tests/integration/secret-stdin.test.ts.
+ * harness cannot feed) lives in tests/integration/secret/secret-run.test.ts.
  */
 
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";

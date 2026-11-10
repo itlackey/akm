@@ -418,7 +418,7 @@ describe("akm workflow plan <ref> — lowering notices from freeze surface in no
   // once silently discarded — it is exactly the freeze-time notice row B-57
   // requires `akm workflow plan` to surface, through the same
   // {code, severity, adapter, field, message} projection `akm workflow run`
-  // already renders (tests/output-workflow-lowering-notices.test.ts).
+  // already renders (tests/output-notices.test.ts).
   function writeLoweringNoticeWorkflow(): void {
     write(
       "workflows/plan-lowering-notice.md",

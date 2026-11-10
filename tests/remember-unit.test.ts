@@ -106,7 +106,7 @@ describe("buildMemoryFrontmatter — YAML injection guard", () => {
     expect(parsed.tags).toEqual(["x"]);
   });
 
-  // Precondition for consolidate-wave2-e.test.ts's D4 deletion (Phase 2
+  // Precondition for tests/commands/consolidate/consolidate-coverage.test.ts's D4 deletion (Phase 2
   // triage): the exact empty-string input, distinct from the whitespace-only
   // case above.
   test("omits an empty-string description", () => {

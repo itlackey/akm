@@ -105,7 +105,7 @@ describe("health-no-probe-flag", () => {
    * This test exercises the CLI end-to-end (not just `runConnectionsAndHarnessesCheck`
    * directly) specifically so a regression in the flag NAME/wiring — not just
    * the underlying probe logic already covered by
-   * `tests/health-connections-and-harnesses-check.test.ts` — fails loudly.
+   * `tests/health-checks.test.ts` — fails loudly.
    */
 
   let storage: IsolatedAkmStorage;

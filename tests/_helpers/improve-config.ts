@@ -35,7 +35,7 @@ export function withTestImproveLlm(config: AkmConfig): AkmConfig {
  * passes, or triage `applyMode: "promote"`. Tests of the gate itself must NOT
  * use this: they need the shipped review-first default and build their configs
  * directly (`tests/improve-autonomy-gate.test.ts`,
- * `tests/improve-plan-autonomy-wiring.test.ts`).
+ * `tests/improve-autonomy-gate.test.ts`).
  */
 export function withImproveAutonomy(config: AkmConfig): AkmConfig {
   return {

@@ -552,7 +552,7 @@ describe("R-032: citty CLIError family exits 2, not 1", () => {
   // 0.9.0 CLI overhaul (S3): `log` and `lessons` dropped out of this list —
   // `log` is now a terminal leaf command (bare `akm log` is a valid
   // invocation, not a bare-group usage error; see
-  // tests/commands/observability-cli-envelope.test.ts) and `lessons` was
+  // tests/commands/cli-envelopes.test.ts) and `lessons` was
   // removed entirely.
   // Groups with a read-only `list` (config, bundle, env, secret, proposal, registry,
   // workflow) run it instead; see the bare-listing test below.

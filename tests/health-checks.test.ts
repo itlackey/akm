@@ -424,7 +424,7 @@ describe("health-plugin-version-wiring", () => {
    * freelist ratio (fraction of pages VACUUM could reclaim).
    *
    * The check is a pure projection of ctx.stateDbIntegrity / ctx.stateDbFreelist
-   * (see health-active-runs-check.test.ts for the established pattern), so it
+   * (see the active-runs check above for the established pattern), so it
    * is driven directly with synthetic pragma results — no real database.
    */
 
