@@ -99,10 +99,8 @@ Moving an item between bundles is copy/import followed by deletion from the
 source; both the bundle and the concept identity change. There is no
 `akm mv`.
 
-To carry an asset's earned signal (feedback, usage, salience/outcome history)
-across a rename, the maintainer script `scripts/rekey-asset-ref.ts` re-keys
-those rows onto the new ref before `akm index` runs. It is internal tooling,
-not a supported command.
+A rename or move changes the asset's identity, so its earned signal (feedback,
+usage, salience/outcome history) resets.
 
 ## Refs in prose
 

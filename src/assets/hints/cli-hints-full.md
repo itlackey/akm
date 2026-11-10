@@ -230,11 +230,9 @@ A memory's `.derived.md` twin must move with its base. Moving an item between
 bundles is `akm clone` (or a copy) followed by deleting the source — both the
 bundle and the concept identity change.
 
-There is no `akm mv` — the procedure above is the whole story. To carry an
-asset's earned signal (feedback, usage, salience/outcome history) across the
-rename instead of starting fresh, run `bun scripts/rekey-asset-ref.ts <old-ref>
-<new-ref>` from a source clone after the move and before `akm index`
-(`--dry-run` previews the row counts).
+There is no `akm mv` — the procedure above is the whole story. A rename changes
+the asset's identity, so its earned signal (feedback, usage, salience/outcome
+history) resets.
 
 ## Sync
 

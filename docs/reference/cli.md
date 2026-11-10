@@ -1296,7 +1296,7 @@ akm bundle add https://docs.example.com --max-pages 100 --max-depth 5
 | `--name` | The bundle key. A contract, not a hint: it must be a legal bundle slug (no `:` `.` `#` `/` or whitespace) and not already taken by a different bundle, or the add fails before any write. Re-adding an already-installed source under a different `--name` than it already carries also fails — use `akm bundle rename <old> <new>` instead. Omit it and akm derives a name (falling back to a `-<hash>` suffix on a collision). |
 | `--provider` | Explicit provider for declarative source configuration; normally inferred from the input |
 | `--writable` | Mark a git source as writable so `akm sync` also pushes (default: false) |
-| `--options` | Provider options as JSON (e.g. `'{"ref":"main"}'`) |
+| `--options` | Provider options as JSON (e.g. `'{"maxPages":100}'`) |
 | `--allow-insecure-transport` | Allow a plain-HTTP source URL after explicitly accepting transport substitution risk |
 | `--allow-dangerous-env-keys` | Deprecated, no effect. `bundle add` no longer scans env files for process-hijacking keys. Accepted through 0.10 so existing scripts keep working. |
 | `--max-pages` | Maximum pages to crawl for website sources (default: 50) |
@@ -2269,7 +2269,7 @@ akm registry add https://skills.sh --name skills.sh --provider skills-sh
 | --- | --- |
 | `--name` | Human-friendly label for the registry |
 | `--provider` | Provider type (e.g. `static-index`, `skills-sh`). Default: `static-index` |
-| `--options` | Provider-specific options as JSON (e.g. `'{"apiKey":"key"}'`) |
+| `--options` | Provider-specific options as JSON |
 | `--allow-insecure-transport` | Allow a plain HTTP registry URL (rejected by default) |
 
 Duplicate URLs are rejected.
@@ -3786,7 +3786,7 @@ akm proposal drain --strategy default --promote -y  # Read the triage block from
 | `--dry-run` | List what would be accepted/rejected/deferred, without writing |
 | `--max-accepts` | Hard per-run accept ceiling; accepts beyond this are reported as `skippedByCap` |
 | `--older-than` | Only consider proposals created (or last reopened) more than this many days ago |
-| `--judgment` | Explicitly enable the judgment tier for this standalone drain, including when the selected strategy says `judgment.enabled: false`; it accepts only consolidate promotions (#1132); execution overrides still come from that strategy. Without this flag, strategy judgment config does not enable standalone drain judgment. A missing runner remains a no-op with a logged `triage_deferred` summary. |
+| `--judgment` | Explicitly enable the judgment tier for this standalone drain, including when the selected strategy says `judgment.enabled: false`; it accepts only consolidate promotions; execution overrides still come from that strategy. Without this flag, strategy judgment config does not enable standalone drain judgment. A missing runner remains a no-op with a logged `triage_deferred` summary. |
 | `-y`, `--yes` | Skip the confirmation prompt (required in non-interactive mode for promotion) |
 
 ### feedback (`--reason`)
