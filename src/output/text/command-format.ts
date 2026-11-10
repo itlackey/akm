@@ -383,9 +383,8 @@ export function formatCuratePlain(r: Record<string, unknown>, detail: DetailLeve
 
   lines.push("");
   lines.push("Next steps:");
-  lines.push("  1. Run `akm show <ref>` for the best result above to read the full schema.");
-  lines.push("  2. Edit the workspace file using the schema field names and your task-specific values.");
-  lines.push("  3. Run `akm feedback <ref> --positive` when the task succeeds.");
+  lines.push("  1. Run `akm show <ref>` to read the best result above.");
+  lines.push("  2. Run `akm feedback <ref> --positive` when the task succeeds.");
   lines.push("To search further: akm search '<query>'");
 
   return lines.join("\n");

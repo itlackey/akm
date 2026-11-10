@@ -112,9 +112,7 @@ for the domain — the *only* handle that co-locates cross-project reuse.
 
   A memory's `.derived.md` twin must move with its base. Citing files in
   read-only sources cannot be fixed at all — another reason not to rename. The
-  asset's accumulated usage-ranking history resets unless you carry it over
-  with `bun scripts/rekey-asset-ref.ts <old-ref> <new-ref>` (a maintainer
-  script, run from a source clone after the move and before `akm index`).
+  asset's accumulated usage-ranking history (its learned signals) resets.
 - When a project-scoped note turns out to be domain-general, **append, don't
   promote**: write a new `knowledge/<domain>/…` asset that xrefs the originating
   memory. Never rename the memory up a rung — that breaks its ref. The atomic

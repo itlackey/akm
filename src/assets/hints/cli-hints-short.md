@@ -31,7 +31,7 @@ akm proposal list|show|diff|accept|reject   # Review queued changes
 akm improve <ref>                    # Propose an improvement (a proposal)
 ```
 
-Improvement is review-first: `improve` and the other generators emit proposals. By default `improve` accepts a proposal whose quality check passed on that exact content; the rest wait for `akm proposal accept`. An `akm feedback --replace` fix is applied at once (`akm proposal revert` undoes it). `improve` also purges graced archives and commits (and pushes a writable git bundle) what it accepted.
+Generators emit proposals. By default `improve` accepts a proposal whose quality check passed on that exact content; the rest wait for `akm proposal accept`. An `akm feedback --replace` fix is applied at once (`akm proposal revert` undoes it). `improve` also purges graced archives and commits (and pushes a writable git bundle) what it accepted.
 
 ## Errors and exit codes
 
