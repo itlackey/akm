@@ -5,8 +5,7 @@
 /**
  * The consolidate pair pass end-to-end (0.9.17-alpha.9): a real index.db
  * with crafted unit-vector embeddings (so cosine similarity is exact and
- * deterministic, the same technique consolidate-incremental.test.ts uses for
- * `getNeighborsByEntryId`), a fake judge via the `chat` test seam
+ * deterministic, the technique used for `getNeighborsByEntryId`), a fake judge via the `chat` test seam
  * (`CallStructuredRequest["chat"]`, "transport override for tests"), and the
  * real proposal/ledger repositories.
  *

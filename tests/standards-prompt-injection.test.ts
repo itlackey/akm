@@ -5,8 +5,7 @@
 /**
  * Unit tests for standards PROMPT INJECTION.
  *
- * The resolvers/dispatch are tested in standards-resolvers.test.ts and
- * standards-dispatch.test.ts. THIS file proves that every LLM prompt that
+ * This file proves that every LLM prompt that
  * authors or edits a stash asset actually renders the resolved
  * `standardsContext` into its output — and omits the section when there are no
  * standards (so a stash without convention/meta facts pays zero prompt cost).

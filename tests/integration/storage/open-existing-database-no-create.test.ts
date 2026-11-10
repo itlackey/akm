@@ -16,7 +16,7 @@
  * `indexWrittenAssets` returned false — turning proposal finalization into a
  * file-order-dependent hard failure. The two-file shard repro was
  * `tests/curate-logic.test.ts` before
- * `tests/commands/proposal/adapter-precommit-check.test.ts`; this suite pins
+ * a proposal adapter test; this suite pins
  * the same sequence in-process, order-independently.
  */
 

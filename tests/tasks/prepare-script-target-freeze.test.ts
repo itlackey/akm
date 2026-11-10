@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Ported from the deleted `tests/tasks-runtime-v3.test.ts` (removed by this
+ * Ported from the removed v3 task-runtime test (removed by this
  * stabilization PR; see `origin/release/0.9.2:tests/tasks-runtime-v3.test.ts`
  * ~line 142 and ~line 225). That file held the ONLY coverage for two
  * invariants of a task's frozen script/run-target snapshot:
@@ -66,7 +66,7 @@ function contextFor(root: string): PrepareTaskExecutionContext {
   };
 }
 
-describe("prepareTaskExecution's frozen script/run-target snapshot (ported from the deleted tests/tasks-runtime-v3.test.ts)", () => {
+describe("prepareTaskExecution's frozen script/run-target snapshot (ported from the removed v3 task-runtime test)", () => {
   test("a uses: scripts/<file> target freezes byte-exact sha256/bytesBase64 and carries no live resumable file path", async () => {
     const root = sandboxRoot();
     fs.mkdirSync(path.join(root, "scripts"), { recursive: true });

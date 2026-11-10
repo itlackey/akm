@@ -119,8 +119,8 @@ describe("collectDataDirUsageAdvisory (#896)", () => {
   // files (task logs, npm logs). Asserts the observable RESULT of the full
   // walk, not a wall-clock delta: `expect(elapsed).toBeLessThan(...)` is flaky
   // under this repo's sharded runners (up to min(nproc, 8) concurrent `bun
-  // test` processes) — see tests/integration/ranking-salience-boost.test.ts:155
-  // for the same reasoning. The duration is logged for observability, and the
+  // test` processes) — the same reasoning as elsewhere in
+  // the integration tests. The duration is logged for observability, and the
   // test-level timeout is the loose promptness guard.
   test("walks a data dir of ~50k small files without truncating", () => {
     const dataDir = makeTempDir("akm-ddu-manyfiles-");

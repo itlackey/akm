@@ -76,7 +76,7 @@ type TaskSourceV4Document = TaskSourceV4Module.TaskSourceV4Document;
 const ROOT = path.resolve(import.meta.dir, "../..");
 const FIXTURES_DIR = path.join(ROOT, "tests/fixtures/execution-contracts/tasks/v4");
 
-// ── Fixture table (mirrors tests/tasks/parse-v3-adapter.test.ts's convention: ──
+// ── Fixture table (mirrors the former parse-v3-adapter convention: ──
 // ── "maps every fixture in tests/fixtures/execution-contracts/tasks/v4/") ──
 
 interface ManifestFixture {

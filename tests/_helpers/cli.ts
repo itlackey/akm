@@ -353,7 +353,7 @@ export async function runCliCapture(args: string[]): Promise<CliResult> {
 }
 
 /**
- * Shared `*-cli-envelope.test.ts` harness (DUP-12): identical `runCli`
+ * Shared harness for tests/commands/cli-envelopes.test.ts (DUP-12): identical `runCli`
  * wrapper — call {@link runCliCapture} and rename `code` to `status` — was
  * copy-pasted across 7 envelope-snapshot suites. Import this instead of
  * redefining it locally.

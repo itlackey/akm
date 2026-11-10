@@ -56,7 +56,7 @@ import {
 import { parseTaskSource } from "../../src/tasks/source/parse-task-source";
 import { parseTaskSourceV4, parseTaskSourceV4Document } from "../../src/tasks/source/task-source-v4";
 
-/** Reused verbatim from the deleted tests/tasks/source-v3.test.ts's hostile-YAML `test.each` list (an aliased mapping) — converted to task source v4. */
+/** Reused verbatim from the former v3 task-source hostile-YAML `test.each` list (an aliased mapping) — converted to task source v4. */
 const ALIASED_YAML = "version: 4\nuses: commands/a\ninputs: &a {}\ncopy: *a\n";
 const FILE_PATH = "/bundle/tasks/hostile.yml";
 
@@ -157,7 +157,7 @@ describe("sourceError — the per-field funnel renders both source labels via it
 });
 
 /**
- * Ported from the deleted tests/tasks/source-v3.test.ts's
+ * Ported from the former v3 task-source test's
  * "task v3 hostile input and resource bounds" describe block (commit
  * 09691628 deleted the v3 parser it directly exercised — parseTaskV3Document
  * / parseTaskV3Yaml). Review finding

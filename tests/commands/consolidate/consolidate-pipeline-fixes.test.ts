@@ -414,7 +414,7 @@ describe("ConsolidateResult.skipReasons / judgedNoAction — emitter contract", 
   //
   // This is a shape contract; it validates the typed surface without driving
   // the full LLM-backed runConsolidate. The aggregation behaviour is covered
-  // end-to-end in tests/health-command.test.ts.
+  // end-to-end in the health integration tests.
   it("envelope carries judgedNoAction and structured skipReasons", () => {
     type ConsolidateResultShape = {
       judgedNoAction?: number;

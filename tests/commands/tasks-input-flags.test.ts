@@ -199,7 +199,7 @@ describe("akm task run — exact-name input flags materialize literal bindings (
   // implementation (one production code never actually reads) could satisfy
   // without ever attaching `.inputs` to a real `TaskInvocation`. The seam
   // below still exists (test-only observability is otherwise impossible — the
-  // model-purity ratchet, tests/tasks/parse-v3-adapter.test.ts, keeps
+  // model-purity ratchet, tests/tasks/model-contracts.test.ts, keeps
   // `TaskInvocation` a pure, IO-free type, so nothing production reads it back
   // from in P2a either, per spec §0), but it now hands back the CONSTRUCTED
   // `TaskInvocation` itself, and the load-bearing assertion is

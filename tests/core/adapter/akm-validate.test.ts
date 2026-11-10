@@ -186,7 +186,7 @@ describe("akm adapter — validate fires each type's positive finding (§6)", ()
   // The runtime reads only task source v4 (#987): what `akm migrate apply`
   // rewrites — a retired schedule[].enabled, a v2/v3 document — is flagged
   // naming that command. The migrator reports any shape it cannot convert
-  // itself (tests/tasks/migrate-v2-to-v3.test.ts).
+  // itself.
   test("a task with source-owned schedule[].enabled is flagged naming `akm migrate apply`", async () => {
     const ctx = overlayCtx(ROOT, {});
     const diags = await akmAdapter.validate(
