@@ -86,7 +86,7 @@ Every command exits with one of the following codes:
 | 4 | Health warning (`akm health` only) | — |
 | 70 | Internal / unclassified error | unexpected throw |
 | 75 | Transient — retry shortly (sysexits `EX_TEMPFAIL`); another akm process holds a lock or is writing `state.db` or `index.db` right now, not a bad command line | `TransientError` |
-| 78 | Configuration error | `ConfigError` |
+| 78 | Configuration or environment error, including an OS scheduler (`crontab`, `launchctl`, `schtasks`) that is missing or fails (`SCHEDULER_UNAVAILABLE`) | `ConfigError` |
 
 Failures classified by akm emit a JSON error envelope on **stderr** before
 exiting; stdout is normally left empty:

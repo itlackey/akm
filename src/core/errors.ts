@@ -46,6 +46,9 @@ export type ConfigErrorCode =
   // A connection or harness was named (a flag, an asset, a config key) that is not configured: never replaced by a default.
   | "SELECTION_NOT_CONFIGURED"
   | "INVALID_CONFIG_FILE"
+  // The OS scheduler (crontab, launchctl, schtasks) is missing, refused a read or write, or exited non-zero. A host
+  // problem, not a bad akm config file; same exit class as every ConfigError.
+  | "SCHEDULER_UNAVAILABLE"
   | "UNKNOWN_IMPROVE_STRATEGY"
   // Refused stashDir that would clobber a sensitive system path or the user's
   // home directory (#473). Triggered by `akm bundle create`/`akm setup` when the

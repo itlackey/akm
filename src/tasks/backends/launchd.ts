@@ -231,7 +231,7 @@ function defaultLaunchdFs(): LaunchdFs {
         // Genuinely absent is an empty listing; anything else (e.g. EACCES)
         // is not "no plists".
         if (hasErrnoCode(error, "ENOENT")) return [];
-        throw new ConfigError(`Unable to read LaunchAgents directory at "${dir}".`, "INVALID_CONFIG_FILE");
+        throw new ConfigError(`Unable to read LaunchAgents directory at "${dir}".`, "SCHEDULER_UNAVAILABLE");
       }
     },
     exists(file) {

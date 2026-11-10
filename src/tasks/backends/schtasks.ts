@@ -215,7 +215,7 @@ function resolveCurrentUserSid(exec: SchtasksExec): string {
     message: (r) => `whoami /user failed (exit ${r.status}): ${r.stderr || r.stdout || "no output"}.`,
   });
   const match = `${result.stdout ?? ""}\n${result.stderr ?? ""}`.match(/\bS-\d+(?:-\d+){2,}\b/i);
-  if (!match) throw new ConfigError("whoami /user returned no Windows user SID.", "INVALID_CONFIG_FILE");
+  if (!match) throw new ConfigError("whoami /user returned no Windows user SID.", "SCHEDULER_UNAVAILABLE");
   return `S${match[0].slice(1)}`;
 }
 
