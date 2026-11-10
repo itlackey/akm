@@ -507,7 +507,7 @@
             >{/if}
         </div>
       {:else if tab === "Move"}
-        {#key canonical}<AssetOrganize ref={canonical} {bundles} on:changed={() => onChanged?.()} />{/key}
+        {#key canonical}<AssetOrganize ref={canonical} {bundles} {onChanged} />{/key}
       {:else if tab === "Related"}
         {#key canonical}<AssetRelated
             ref={canonical}

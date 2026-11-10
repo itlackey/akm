@@ -5,23 +5,35 @@
 -->
 
 <script lang="ts">
-  import { createEventDispatcher } from "svelte";
+  import { untrack } from "svelte";
   import { api } from "./client";
   import type { Bundle, CloneResponse, Retirement, Source } from "./types";
-  const dispatch = createEventDispatcher<{ changed: void }>();
-  export let ref: string;
-  export let bundles: Bundle[];
-  let bundle = ref.split("//")[0],
-    name = ref.split("//")[1]?.split("/").slice(1).join("/") ?? "";
-  let busy = false,
-    error = "";
+  let {
+    ref,
+    bundles,
+    onChanged,
+  }: {
+    ref: string;
+    bundles: Bundle[];
+    /** The asset was copied to its new place and the original retired. */
+    onChanged?: () => void;
+  } = $props();
+  // The form starts at the asset's own place.
+  let bundle = $state(untrack(() => ref.split("//")[0])),
+    name = $state(untrack(() => ref.split("//")[1]?.split("/").slice(1).join("/") ?? ""));
+  let busy = $state(false),
+    error = $state("");
   type Moved = { ref: string; proposalId?: string; retireError?: string };
-  let moved: Moved | null = null;
-  $: writable = bundles.filter(
-    (bundle) => bundle.enabled && bundle.writable && bundle.components.some((component) => component.adapter === "akm"),
+  let moved = $state<Moved | null>(null);
+  const writable = $derived(
+    bundles.filter(
+      (bundle) =>
+        bundle.enabled && bundle.writable && bundle.components.some((component) => component.adapter === "akm"),
+    ),
   );
-  $: unchanged =
-    bundle === ref.split("//")[0] && name.trim() === (ref.split("//")[1]?.split("/").slice(1).join("/") ?? "");
+  const unchanged = $derived(
+    bundle === ref.split("//")[0] && name.trim() === (ref.split("//")[1]?.split("/").slice(1).join("/") ?? ""),
+  );
   // A move is AKM's copy, then AKM's retire of the original, so the original is recoverable from Review.
   async function move() {
     busy = true;
@@ -41,7 +53,7 @@
       } catch (cause) {
         moved = { ref: destination, retireError: (cause as Error).message };
       }
-      dispatch("changed");
+      onChanged?.();
     } catch (cause) {
       error = (cause as Error).message;
     } finally {
@@ -65,7 +77,13 @@
     <a class="btn" href={"/library/asset?ref=" + encodeURIComponent(moved.ref)}>Open the copy</a>
   </section>
 {:else}
-  <form class="organize-form" on:submit|preventDefault={move}>
+  <form
+    class="organize-form"
+    onsubmit={(event) => {
+      event.preventDefault();
+      void move();
+    }}
+  >
     <div class="destination-fields">
       <label
         >Bundle<select bind:value={bundle} disabled={busy}
