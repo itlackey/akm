@@ -167,4 +167,30 @@ test("workspace pages, panels and menus fit the shortest windows", { timeout: 18
     .getByRole("button", { name: "Apply filters", exact: true })
     .evaluate((e) => ({ bottom: Math.round(e.getBoundingClientRect().bottom), viewport: innerHeight }));
   assert.ok(apply.bottom <= apply.viewport, `Apply filters must be inside the window: ${JSON.stringify(apply)}`);
+
+  // A long title wraps inside the editor pane; the return link keeps one line and stays in view.
+  for (const viewport of [
+    { width: 900, height: 593 },
+    { width: 1024, height: 600 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await open(`/library/edit?ref=${longRef}`, 'textarea[name="content"]');
+    const header = await page.evaluate(() => {
+      const pane = document.querySelector(".files-content");
+      const link = document.querySelector(".editor-return a");
+      const r = link.getBoundingClientRect();
+      const style = getComputedStyle(link);
+      const inner = r.height - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+      return {
+        sideways: pane.scrollWidth - pane.clientWidth,
+        linkRight: Math.round(r.right),
+        linkLines: Math.round(inner / parseFloat(style.lineHeight)),
+        viewport: innerWidth,
+      };
+    });
+    assert.ok(header.sideways <= 0, `${viewport.width}: the editor pane must not scroll sideways (${header.sideways}px)`);
+    assert.ok(header.linkRight <= header.viewport, `${viewport.width}: Back to file must be on screen: ${JSON.stringify(header)}`);
+    assert.ok(header.linkLines <= 1, `${viewport.width}: Back to file must stay on one line: ${JSON.stringify(header)}`);
+  }
+  await page.setViewportSize({ width: 900, height: 593 });
 });

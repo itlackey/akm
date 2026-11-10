@@ -436,12 +436,16 @@
     line-height: 1.25;
     letter-spacing: -0.02em;
     margin: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
   .editor-header h2[tabindex="-1"]:focus {
     outline: none;
   }
+  /* The title wraps; the return link keeps its line and its place beside it. */
   .editor-return {
     display: flex;
+    flex: none;
     flex-wrap: wrap;
     justify-content: end;
     gap: 8px 20px;
@@ -452,6 +456,7 @@
     align-items: center;
     gap: 6px;
     padding: 8px 0;
+    white-space: nowrap;
   }
   .editor-form {
     margin: 0;
