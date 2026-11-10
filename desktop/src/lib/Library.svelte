@@ -5,7 +5,7 @@
 -->
 
 <script lang="ts">
-  import { onMount, onDestroy, tick } from "svelte";
+  import { onDestroy, tick, untrack } from "svelte";
   import { afterNavigate } from "$app/navigation";
   import { assetSource, title, toggleSelection, date, matchesAssetRef, type ApiError } from "./client";
   import { libraryRead, resultContext, searchHref, documentTitle } from "./library-model";
@@ -22,135 +22,163 @@
   import Diff from "./Diff.svelte";
   import Icon from "./Icon.svelte";
   import { navigate } from "./navigation";
-  export let route = "/search";
-  export let query = new URLSearchParams();
-  export let bundles: Bundle[] = [];
-  export let defaultWriteTarget = "";
-  export let bundleRevision = 0;
+  let {
+    route = "/search",
+    query = new URLSearchParams(),
+    bundles = [],
+    defaultWriteTarget = "",
+    bundleRevision = 0,
+  }: {
+    route?: string;
+    query?: URLSearchParams;
+    bundles?: Bundle[];
+    defaultWriteTarget?: string;
+    bundleRevision?: number;
+  } = $props();
+  // Plain, not state, like `observed` below: what the two effects last acted on.
   let seenRevision = -1;
-  let q = "",
-    bundle = "",
-    type = "",
-    belief = "current",
-    limit = "50",
-    scope = { user: "", agent: "", run: "", channel: "" };
-  let result: SearchResult | null = null,
-    selected: string[] = [],
-    error = "",
-    errorCode = "",
-    loading = false;
-  let searchParams = new URLSearchParams(),
+  let q = $state(""),
+    bundle = $state(""),
+    type = $state(""),
+    belief = $state("current"),
+    limit = $state("50"),
+    scope = $state({ user: "", agent: "", run: "", channel: "" });
+  let result = $state<SearchResult | null>(null),
+    selected = $state<string[]>([]),
+    error = $state(""),
+    errorCode = $state(""),
+    loading = $state(false);
+  let searchParams = $state(new URLSearchParams()),
     observed = "",
     searchKey = "",
-    mounted = false,
     controller: AbortController;
-  let compared: AssetRead[] = [],
-    compareBusy = false,
+  let compared = $state<AssetRead[]>([]),
+    compareBusy = $state(false),
     compareKey = "",
     compareController: AbortController;
-  let resultList: HTMLElement,
+  let resultList = $state<HTMLElement>(),
     lastRef = "",
-    comparisonMode = false;
-  let filterDetails: HTMLDetailsElement, filterTrigger: HTMLElement;
-  let lastFiles = "",
-    lastSearch = "/library/search",
-    loadedAsset: AssetRead | null = null,
-    locatedRef = "",
-    localFileRevision = 0,
-    mutationRevision = 0;
-  let resolvingLocation = false,
+    comparisonMode = $state(false);
+  let filterDetails = $state<HTMLDetailsElement>(),
+    filterTrigger = $state<HTMLElement>();
+  let lastFiles = $state(""),
+    lastSearch = $state("/library/search"),
+    loadedAsset = $state<AssetRead | null>(null),
+    locatedRef = $state(""),
+    localFileRevision = $state(0),
+    mutationRevision = $state(0);
+  let resolvingLocation = $state(false),
     locationController: AbortController,
     searchScroll = 0,
     searchWindowScroll = 0,
-    searchContainer: HTMLElement;
+    searchContainer = $state<HTMLElement>();
   const filesViewState: FilesViewState = {};
   let pendingResultFocus = "";
-  let newFiles: HTMLElement,
-    writeWarnings: string[] = [];
+  let newFiles = $state<HTMLElement>(),
+    writeWarnings = $state<string[]>([]);
   afterNavigate(() => {
     if (newFiles?.matches(":popover-open")) newFiles.hidePopover();
   });
-  let misses: {
+  let misses = $state<{
     searches: number;
     foundNothing: number;
     misses: Array<{ query: string; count: number; days: number; lastAt: string }>;
-  } | null = null;
-  $: types = [
-    ...new Set([
-      ...bundles.flatMap((b) => Object.keys(b.byType ?? {})),
-      ...(result?.hits ?? []).map((h) => h.type ?? ""),
-    ]),
-  ]
-    .filter(Boolean)
-    .sort();
-  $: defaultBundle = bundles.find((b) => b.default)?.name ?? "";
-  $: normalizedRoute = route.replace(/^#?\//, "");
-  $: editing = normalizedRoute === "edit" || normalizedRoute === "new";
-  $: newSensitive = normalizedRoute === "new-sensitive";
-  $: inFiles = normalizedRoute === "files" || editing || newSensitive;
-  $: ref = query.get("ref") ?? "";
-  $: compareRefs = query.getAll("compare");
-  $: fileQuery = normalizedRoute === "files" ? query : (parseFilesHref(query.get("returnTo")) ?? new URLSearchParams());
-  $: fileBundle =
-    fileQuery.get("bundle") || query.get("bundle") || defaultWriteTarget || bundles.find((b) => b.enabled)?.name || "";
-  $: filePath = fileQuery.get("path") ?? query.get("path") ?? "";
-  $: selectedFilePath = fileQuery.get("file") ?? "";
-  $: readingHref = query.get("readingFrom") || fileQuery.get("readingFrom") || "";
-  $: reviewHref = query.get("reviewFrom") || fileQuery.get("reviewFrom") || "";
-  $: returnTo =
+  } | null>(null);
+  const types = $derived(
+    [
+      ...new Set([
+        ...bundles.flatMap((b) => Object.keys(b.byType ?? {})),
+        ...(result?.hits ?? []).map((h) => h.type ?? ""),
+      ]),
+    ]
+      .filter(Boolean)
+      .sort(),
+  );
+  const defaultBundle = $derived(bundles.find((b) => b.default)?.name ?? "");
+  const normalizedRoute = $derived(route.replace(/^#?\//, ""));
+  const editing = $derived(normalizedRoute === "edit" || normalizedRoute === "new");
+  const newSensitive = $derived(normalizedRoute === "new-sensitive");
+  const inFiles = $derived(normalizedRoute === "files" || editing || newSensitive);
+  const ref = $derived(query.get("ref") ?? "");
+  const compareRefs = $derived(query.getAll("compare"));
+  const fileQuery = $derived(
+    normalizedRoute === "files" ? query : (parseFilesHref(query.get("returnTo")) ?? new URLSearchParams()),
+  );
+  const fileBundle = $derived(
+    fileQuery.get("bundle") || query.get("bundle") || defaultWriteTarget || bundles.find((b) => b.enabled)?.name || "",
+  );
+  const filePath = $derived(fileQuery.get("path") ?? query.get("path") ?? "");
+  const selectedFilePath = $derived(fileQuery.get("file") ?? "");
+  const readingHref = $derived(query.get("readingFrom") || fileQuery.get("readingFrom") || "");
+  const reviewHref = $derived(query.get("reviewFrom") || fileQuery.get("reviewFrom") || "");
+  const returnTo = $derived(
     normalizedRoute === "new" && query.get("returnTo") === "/"
       ? "/"
       : inFiles
         ? filesHref({ bundle: fileBundle, path: filePath, file: selectedFilePath, ref, open: !!ref }, readingHref)
-        : searchHref(resultContext(query));
-  $: currentHref = "/library/" + normalizedRoute + (query.size ? "?" + query : "");
-  $: activeLocation = locatedRef === ref ? loadedAsset?.location : null;
-  $: folderHref = activeLocation
-    ? filesHref(
-        { bundle: activeLocation.bundle, path: activeLocation.parent, file: activeLocation.path },
-        inFiles ? readingHref : currentHref,
-      )
-    : "";
-  $: sourceHref = activeLocation
-    ? filesHref(
-        {
-          bundle: activeLocation.bundle,
-          path: activeLocation.parent,
-          file: activeLocation.path,
-          ref: loadedAsset?.durableRef || ref,
-          open: true,
-        },
-        inFiles ? readingHref : currentHref,
-      )
-    : inFiles
-      ? returnTo
-      : "";
-  $: editHref = sourceHref
-    ? "/library/edit?" +
-      new URLSearchParams({
-        ref: loadedAsset?.durableRef || ref,
-        returnTo: withReview(sourceHref),
-        ...(inFiles ? (readingHref ? { readingFrom: readingHref } : {}) : { readingFrom: currentHref }),
-      })
-    : "";
-  $: active =
+        : searchHref(resultContext(query)),
+  );
+  const currentHref = $derived("/library/" + normalizedRoute + (query.size ? "?" + query : ""));
+  const activeLocation = $derived(locatedRef === ref ? loadedAsset?.location : null);
+  const folderHref = $derived(
+    activeLocation
+      ? filesHref(
+          { bundle: activeLocation.bundle, path: activeLocation.parent, file: activeLocation.path },
+          inFiles ? readingHref : currentHref,
+        )
+      : "",
+  );
+  const sourceHref = $derived(
+    activeLocation
+      ? filesHref(
+          {
+            bundle: activeLocation.bundle,
+            path: activeLocation.parent,
+            file: activeLocation.path,
+            ref: loadedAsset?.durableRef || ref,
+            open: true,
+          },
+          inFiles ? readingHref : currentHref,
+        )
+      : inFiles
+        ? returnTo
+        : "",
+  );
+  const editHref = $derived(
+    sourceHref
+      ? "/library/edit?" +
+          new URLSearchParams({
+            ref: loadedAsset?.durableRef || ref,
+            returnTo: withReview(sourceHref),
+            ...(inFiles ? (readingHref ? { readingFrom: readingHref } : {}) : { readingFrom: currentHref }),
+          })
+      : "",
+  );
+  const active = $derived(
     ["type", "bundle", "scope_user", "scope_agent", "scope_run", "scope_channel"].filter((key) => searchParams.get(key))
       .length +
-    (searchParams.get("belief") && searchParams.get("belief") !== "current" ? 1 : 0) +
-    (searchParams.get("limit") && searchParams.get("limit") !== "50" ? 1 : 0);
-  $: if (mounted && currentHref !== observed) {
+      (searchParams.get("belief") && searchParams.get("belief") !== "current" ? 1 : 0) +
+      (searchParams.get("limit") && searchParams.get("limit") !== "50" ? 1 : 0),
+  );
+  // The address decides what is shown. When it changes, the search, the open asset and the comparison are brought in
+  // line with it before the page updates, so nothing is drawn for the new address from the state of the one before.
+  $effect.pre(() => {
+    if (currentHref === observed) return;
     observed = currentHref;
-    synchronize();
-  }
-  $: if (mounted && seenRevision !== bundleRevision) {
+    untrack(synchronize);
+  });
+  // Bundles were added, removed, renamed or reindexed: the results on screen are searched again.
+  $effect.pre(() => {
+    if (seenRevision === bundleRevision) return;
     seenRevision = bundleRevision;
-    if (!inFiles) void search();
-  }
+    untrack(() => {
+      if (!inFiles) void search();
+    });
+  });
   function fail(cause: unknown) {
     error = (cause as Error).message;
     errorCode = (cause as ApiError).code ?? "";
   }
-  $: if (!error) errorCode = "";
   function withReview(href: string) {
     if (!reviewHref || !href) return href;
     const [base, params = ""] = href.split("?"),
@@ -197,6 +225,7 @@
     const signal = locationController.signal;
     resolvingLocation = true;
     error = "";
+    errorCode = "";
     try {
       const read = await libraryRead<AssetRead>("/asset", { ref }, signal);
       if (signal.aborted) return;
@@ -316,6 +345,7 @@
     const signal = controller.signal;
     loading = true;
     error = "";
+    errorCode = "";
     try {
       if (searchParams.get("tab") === "misses") {
         const next = await libraryRead<NonNullable<typeof misses>>("/search/misses", { since: "30d" }, signal);
@@ -376,6 +406,7 @@
     const signal = compareController.signal;
     compareBusy = true;
     error = "";
+    errorCode = "";
     try {
       const data = await Promise.all(refs.map((ref) => libraryRead<AssetRead>("/asset", { ref }, signal)));
       if (!signal.aborted) compared = data;
@@ -459,9 +490,6 @@
       }),
     );
   }
-  onMount(() => {
-    mounted = true;
-  });
   onDestroy(() => {
     controller?.abort();
     compareController?.abort();
@@ -469,7 +497,13 @@
   });
 </script>
 
-<svelte:window on:click={dismissFilters} on:keydown={dismissFilters} on:keydown={searchShortcut} />
+<svelte:window
+  onclick={dismissFilters}
+  onkeydown={(event) => {
+    dismissFilters(event);
+    searchShortcut(event);
+  }}
+/>
 {#if !(ref && !inFiles) && !(normalizedRoute === "asset" && query.get("view") === "files")}
   <nav class="library-views" aria-label="Library views">
     <a href={lastSearch} aria-current={!inFiles ? "page" : undefined}>Search</a>
@@ -488,9 +522,8 @@
     {#if errorCode === "STASH_DIR_NOT_FOUND"}<a href="/setup">Set up akm</a>{/if}
     {#if resolvingLocation}<span>Resolving location…</span>{:else if query.get("view") === "files"}<a
         href={"/library/asset?ref=" + encodeURIComponent(ref)}>Read in Search</a
-      >{:else}<button
-        class="btn-secondary"
-        on:click={() => (compareRefs.length === 2 ? compare(compareRefs) : search())}>Retry</button
+      >{:else}<button class="btn-secondary" onclick={() => (compareRefs.length === 2 ? compare(compareRefs) : search())}
+        >Retry</button
       >{/if}
   </p>{/if}
 {#if comparisonMode && compareRefs.length !== 2}<div class="comparison-selection">
@@ -509,8 +542,8 @@
     </div>
     {#if selected.length === 2}<a class="btn" href={compareHref()}>Compare</a>{/if}{#if selected.length}<button
         class="quiet"
-        on:click={() => (selected = [])}>Clear selection</button
-      >{/if}<button class="quiet" on:click={cancelComparison}><Icon name="close" size={16} />Cancel comparison</button>
+        onclick={() => (selected = [])}>Clear selection</button
+      >{/if}<button class="quiet" onclick={cancelComparison}><Icon name="close" size={16} />Cancel comparison</button>
   </div>{/if}
 
 {#snippet comparison()}
@@ -519,7 +552,7 @@
       <h1>Compare assets</h1>
       <p class="muted small">Changes between the two source files.</p>
     </div>
-    <a href={closeComparison()} on:click={() => (comparisonMode = true)}
+    <a href={closeComparison()} onclick={() => (comparisonMode = true)}
       ><Icon name="arrow-left" size={16} />Close comparison</a
     >
   </header>
@@ -626,7 +659,7 @@
           {#if comparisonMode && !selected.includes(ref)}<button
               class="btn-secondary candidate-button"
               disabled={selected.length === 2}
-              on:click={() => (selected = toggleSelection(selected, ref, 2))}>Use for comparison</button
+              onclick={() => (selected = toggleSelection(selected, ref, 2))}>Use for comparison</button
             >{/if}
           {#key bundleRevision + ":" + localFileRevision}<LibraryAsset
               {ref}
@@ -735,14 +768,21 @@
 {:else}
   <section class="search-page" bind:this={searchContainer}>
     <h1>Library</h1>
-    <form class="search-form" role="search" on:submit|preventDefault={submit}>
+    <form
+      class="search-form"
+      role="search"
+      onsubmit={(event) => {
+        event.preventDefault();
+        submit();
+      }}
+    >
       <input type="search" bind:value={q} placeholder="Search the library" aria-label="Search library" />
       <button disabled={loading}><Icon name="search" size={18} />Search</button>
       <details class="search-filters" bind:this={filterDetails}>
         <summary
           bind:this={filterTrigger}
-          on:click={() => {
-            if (filterDetails.open) resetFilterInputs();
+          onclick={() => {
+            if (filterDetails?.open) resetFilterInputs();
           }}><Icon name="sliders" size={18} />Filters{active ? " (" + active + ")" : ""}</summary
         >
         <div class="filter-panel">
@@ -773,7 +813,7 @@
             {#each ["user", "agent", "run", "channel"] as key}<label
                 >Scope: {key}<input
                   value={scope[key as keyof typeof scope]}
-                  on:input={(event) => (scope = { ...scope, [key]: event.currentTarget.value })}
+                  oninput={(event) => (scope = { ...scope, [key]: event.currentTarget.value })}
                   placeholder="Any"
                 /></label
               >{/each}
@@ -782,8 +822,8 @@
             <button type="submit">Apply filters</button><button
               type="button"
               class="btn-secondary"
-              on:click={closeFilters}>Cancel</button
-            >{#if active}<a href="/library/search" on:click={closeFilters}>Clear filters</a>{/if}
+              onclick={closeFilters}>Cancel</button
+            >{#if active}<a href="/library/search" onclick={closeFilters}>Clear filters</a>{/if}
           </div>
         </div>
       </details>
@@ -795,7 +835,7 @@
       <div>
         <a href={tabHref("misses")}>Search gaps</a>{#if !comparisonMode}<button
             class="quiet"
-            on:click={() => (comparisonMode = true)}>Compare assets</button
+            onclick={() => (comparisonMode = true)}>Compare assets</button
           >{/if}
       </div>
     </div>
@@ -824,11 +864,11 @@
                 aria-label={"Select " + title(hit) + " for comparison"}
                 checked={selected.includes(hit.ref)}
                 disabled={!selected.includes(hit.ref) && selected.length === 2}
-                on:change={() => (selected = toggleSelection(selected, hit.ref, 2))}
+                onchange={() => (selected = toggleSelection(selected, hit.ref, 2))}
               />{/if}
             <article>
               <h2>
-                <a class="library-hit-content" href={searchHref(searchParams, hit.ref)} on:click={rememberSearch}
+                <a class="library-hit-content" href={searchHref(searchParams, hit.ref)} onclick={rememberSearch}
                   >{title(hit)}</a
                 >
               </h2>
