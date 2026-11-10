@@ -43,6 +43,29 @@ test("pages are addressable; history, unsaved drafts and appearance survive navi
     await expect(page).toHaveURL(server.origin + filesUrl);
   });
 
+  await t.test("a view inside a section has a title of its own, and the route announcer says it", async () => {
+    const announcer = page.locator("#svelte-announcer");
+    const tab = (views, name) => page.getByRole("navigation", { name: views }).getByRole("link", { name, exact: true });
+    await page.goto(`${server.origin}/library/search`);
+    await expect(page).toHaveTitle("Search · Library · AKM Desktop");
+    await tab("Library views", "Files").click();
+    await expect(page).toHaveTitle("Files · Library · AKM Desktop");
+    await expect(announcer).toHaveText("Files · Library · AKM Desktop");
+    await nav("Review").click();
+    await expect(announcer).toHaveText("Pending · Review · AKM Desktop");
+    await tab("Proposal status", "Recent decisions").click();
+    await expect(announcer).toHaveText("Recent decisions · Review · AKM Desktop");
+    await nav("Activity").click();
+    await expect(announcer).toHaveText("Health · Activity · AKM Desktop");
+    await tab("Activity views", "Runs").click();
+    await expect(announcer).toHaveText("Runs · Activity · AKM Desktop");
+    await nav("Settings").click();
+    await tab("Settings views", "Configuration").click();
+    await expect(announcer).toHaveText("Configuration · Settings · AKM Desktop");
+    // The announcer is the one live region for routes: no second, silent one is kept beside it.
+    await expect(page.locator("#route-status")).toHaveCount(0);
+  });
+
   await t.test("a draft asks before it is left, is kept when left, and survives a reload", async () => {
     await page.goto(`${server.origin}/library/edit?${new URLSearchParams({ ref: server.refs.document })}`);
     const draft = `${await editor.inputValue()}\nAn unsaved line.\n`;
