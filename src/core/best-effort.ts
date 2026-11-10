@@ -46,20 +46,3 @@ export function bestEffort<T>(fn: () => T, context?: string): T | undefined {
     return undefined;
   }
 }
-
-/**
- * Async variant of {@link bestEffort}. Awaits `fn()`, swallowing any rejection
- * and resolving to `undefined` on failure — byte-identical to a bare
- * `try { await … } catch {}` at the default verbosity level. Surfaces the
- * swallowed error on the verbose seam only when verbose output is enabled.
- */
-export async function bestEffortAsync<T>(fn: () => Promise<T>, context?: string): Promise<T | undefined> {
-  try {
-    return await fn();
-  } catch (err) {
-    if (isVerbose()) {
-      warnVerbose(`[akm:best-effort] ${context ? `${context}: ` : ""}swallowed error`, err);
-    }
-    return undefined;
-  }
-}

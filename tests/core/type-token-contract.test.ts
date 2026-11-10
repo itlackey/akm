@@ -23,7 +23,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { DEPRECATED_REJECTED_TYPES, isKnownType, KNOWN_TYPES } from "../../src/core/recognition-util";
+import { isKnownType, KNOWN_TYPES } from "../../src/core/recognition-util";
 import { presentationFor, TYPE_PRESENTATION } from "../../src/core/type-presentation";
 import { validateStashEntry } from "../../src/indexer/passes/metadata";
 
@@ -93,11 +93,7 @@ describe("presentationFor — open-string fallback (§2.3)", () => {
   });
 });
 
-describe("DEPRECATED_REJECTED_TYPES ownership list", () => {
-  test("the deny-list is exactly {tool, vault}", () => {
-    expect([...DEPRECATED_REJECTED_TYPES].sort()).toEqual(["tool", "vault"]);
-  });
-
+describe("retired type names are ordinary adapter-owned types in the index projection", () => {
   test("the format-neutral index projection accepts retired AKM names as adapter-owned types", () => {
     expect(validateStashEntry({ name: "x", type: "tool" })?.type).toBe("tool");
     expect(validateStashEntry({ name: "x", type: "vault" })?.type).toBe("vault");

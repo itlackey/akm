@@ -15,7 +15,6 @@
  * Pure module: no IO, no engine imports.
  */
 
-import { createHash } from "node:crypto";
 import type { UsageError } from "../core/errors";
 import { validateJsonSchemaSubset } from "../core/json-schema";
 
@@ -308,11 +307,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  */
 export function canonicalInputJson(value: unknown): string {
   return JSON.stringify(sortInputJsonKeys(value));
-}
-
-/** sha256 hex digest of {@link canonicalInputJson}'s output — a stable input-value fingerprint (B-39, for P2b execution identity). */
-export function canonicalInputHash(value: unknown): string {
-  return createHash("sha256").update(canonicalInputJson(value)).digest("hex");
 }
 
 function sortInputJsonKeys(value: unknown): unknown {

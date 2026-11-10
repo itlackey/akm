@@ -43,7 +43,7 @@ import { resolveTypeConventions, typeConventionRef } from "../../core/standards/
 import { getStateDbPath, openStateDatabase } from "../../core/state-db";
 import { repairTruncatedDescription } from "../../core/text-truncation";
 import { DURATION_UNITS, parseDuration } from "../../core/time";
-import { warn, warnOnce, warnVerbose } from "../../core/warn";
+import { warn, warnVerbose } from "../../core/warn";
 import { noticeSet } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";

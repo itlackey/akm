@@ -3,7 +3,6 @@ import {
   findEndOfTable,
   findFenceRegions,
   findSafeInsertionPoint,
-  findSafeInsertionPointInText,
   isInsideCodeFence,
   isInsideHtmlTable,
   isInsideIndentedCode,
@@ -296,21 +295,6 @@ describe("findSafeInsertionPoint", () => {
   test("indented code block: insertion inside lands after the block", () => {
     const ls = ["Prose.", "", "    code line 1", "    code line 2", "", "After."];
     expect(findSafeInsertionPoint(ls, 2)).toBe(4);
-  });
-});
-
-// ── findSafeInsertionPointInText ─────────────────────────────────────────────
-
-describe("findSafeInsertionPointInText", () => {
-  test("treats raw text input correctly", () => {
-    const text = ["# Foo", "", "| A | B |", "|---|---|", "| 1 | 2 |", "", "After."].join("\n");
-    // Line 4 (0-based) is the data row, should be pushed past the table.
-    expect(findSafeInsertionPointInText(text, 4)).toBe(5);
-  });
-
-  test("handles CRLF line endings", () => {
-    const text = ["A", "B", "C"].join("\r\n");
-    expect(findSafeInsertionPointInText(text, 1)).toBe(1);
   });
 });
 
