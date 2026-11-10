@@ -182,7 +182,7 @@ describe("F-2 (D8) — every NEW history row stores the result vocabulary and no
 describe("§5.6 C-7 — the exit-78 rewire survives the vocabulary re-code", () => {
   // NEW test required by spec §5.6: "a shell task whose command exits 78 ->
   // CLI exit 78" — pinned as a code path, not merely as prose (the existing
-  // documented-behavior prose pin is tests/cli/exit-code-hints.test.ts).
+  // documented-behavior prose pin is tests/cli/exit-code-classification.test.ts).
   //
   // At head, src/commands/tasks/tasks.ts's exit-78 passthrough branch reads
   // `result.target.kind === "command"`, which today (pre-F-2) IS the native

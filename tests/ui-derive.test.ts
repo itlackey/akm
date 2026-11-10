@@ -4,6 +4,7 @@
 
 import { describe, expect, test } from "bun:test";
 import type { Proposal } from "../src/commands/proposal/proposal-types";
+import { parseCommandResponse } from "../src/workspace/cli-child";
 import { againstUsual, classifyOutcome, decidedAt, pChart, weekRange } from "../src/workspace/derive";
 import { missesFromRows } from "../src/workspace/misses";
 import { binomialQuantile } from "../src/workspace/stats";
@@ -115,5 +116,29 @@ describe("missesFromRows", () => {
       ["deploy guide", 2, 2, true],
       ["oneoff", 1, 1, false],
     ]);
+  });
+});
+
+test("workspace command responses require the expected JSON result and never report false success", () => {
+  for (const stdout of [
+    "",
+    "not JSON",
+    "null",
+    "[]",
+    "{}",
+    '{"shape":"remove","schemaVersion":1}',
+    '{"shape":"import","schemaVersion":1,"ok":false}',
+  ]) {
+    expect(() => parseCommandResponse(stdout, "import")).toThrow("State may already have changed");
+    try {
+      parseCommandResponse(stdout, "import");
+    } catch (error) {
+      expect((error as Error).message).toContain("Reload the view before retrying");
+      expect(error).toMatchObject({ code: "INVALID_COMMAND_RESPONSE" });
+    }
+  }
+  // The result comes back without its envelope.
+  expect(parseCommandResponse('{"shape":"import","schemaVersion":1,"ref":"knowledge/new"}', "import")).toEqual({
+    ref: "knowledge/new",
   });
 });

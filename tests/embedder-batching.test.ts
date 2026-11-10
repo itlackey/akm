@@ -2,27 +2,23 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-/**
- * #954: per-provider-batch commit, a bounded in-flight window (default 1 for
- * a loopback endpoint, 2 for a remote one; overridable via
- * `embedding.concurrency` per #954), and context-size
- * split-and-retry for RemoteEmbedder.embedBatch.
- *
- * All network I/O here is mocked via `withMockedFetch` (no real socket
- * opened), so this stays a pure unit test rather than an integration test.
- * The real-server
- * variants of the concurrency and context-split behavior live in
- * tests/integration/embedder.test.ts.
- */
-
 import { afterEach, describe, expect, test } from "bun:test";
 import type { EmbeddingConnectionConfig } from "../src/core/config/config";
 import { writeCredential } from "../src/core/config/credentials";
 import { EmbeddingConnectionConfigSchema } from "../src/core/config/schema/embedding";
 import { _setWarnSinkForTests } from "../src/core/warn";
+import { deriveSemanticProviderFingerprint } from "../src/indexer/materialize-embeddings";
+import { clearEmbeddingCache, getCachedEmbedding, setCachedEmbedding } from "../src/llm/embedders/cache";
+import {
+  applyEmbeddingTemplate,
+  documentTemplateFingerprint,
+  resolveEmbeddingProfile,
+} from "../src/llm/embedders/profile";
 import {
   _setEmbeddingTimeoutBackoffForTests,
+  capEmbeddingText,
   DEFAULT_EMBEDDING_TIMEOUT_MS,
+  DEFAULT_MAX_INPUT_TOKENS,
   DEFAULT_TOKEN_BUDGET,
   describeEmbeddingCredential,
   embeddingTimeoutRetryBackoffMs,
@@ -36,6 +32,19 @@ import type { EmbeddingVector } from "../src/llm/embedders/types";
 import { clearCredentials } from "./_helpers/credentials";
 import { withMockedFetch } from "./_helpers/sandbox";
 import { overrideSeam } from "./_helpers/seams";
+
+/**
+ * #954: per-provider-batch commit, a bounded in-flight window (default 1 for
+ * a loopback endpoint, 2 for a remote one; overridable via
+ * `embedding.concurrency` per #954), and context-size
+ * split-and-retry for RemoteEmbedder.embedBatch.
+ *
+ * All network I/O here is mocked via `withMockedFetch` (no real socket
+ * opened), so this stays a pure unit test rather than an integration test.
+ * The real-server
+ * variants of the concurrency and context-split behavior live in
+ * tests/integration/embedder.test.ts.
+ */
 
 /** A fetch mock that hangs until its request's abort signal fires, then rejects like real `fetch` does. */
 function hungFetch(_url: string, init?: RequestInit): Promise<Response> {
@@ -719,5 +728,223 @@ describe("describeEmbeddingCredential (#953)", () => {
     expect(describeEmbeddingCredential({ apiKey: "$LAB_API_KEY" })).toBe("$LAB_API_KEY (env)");
     const braced = "$" + "{LAB_API_KEY}";
     expect(describeEmbeddingCredential({ apiKey: braced })).toBe(`${braced} (env)`);
+  });
+});
+
+/**
+ * The embedding cache is a module-level LRU (capacity 100). These tests pin
+ * the eviction contract, including the regression where overwriting an
+ * already-present key at capacity evicted an unrelated oldest entry.
+ */
+describe("embedding cache LRU eviction", () => {
+  const CAP = 100;
+
+  afterEach(() => clearEmbeddingCache());
+
+  function fill(n: number): void {
+    for (let i = 0; i < n; i++) setCachedEmbedding(`k${i}`, [i]);
+  }
+
+  test("evicts the oldest entry when a NEW key is inserted at capacity", () => {
+    fill(CAP); // k0..k99
+    setCachedEmbedding("k100", [100]); // new key → oldest (k0) evicted
+    expect(getCachedEmbedding("k0")).toBeUndefined();
+    expect(getCachedEmbedding("k100")).toEqual([100]);
+    expect(getCachedEmbedding("k99")).toEqual([99]);
+  });
+
+  test("overwriting an EXISTING key at capacity does NOT evict another entry", () => {
+    fill(CAP); // k0..k99, k0 is the oldest
+    // Overwrite an existing key. A Map.set on an existing key does not grow the
+    // map, so nothing should be evicted — k0 must survive.
+    setCachedEmbedding("k50", [500]);
+    expect(getCachedEmbedding("k0")).toEqual([0]);
+    expect(getCachedEmbedding("k50")).toEqual([500]);
+  });
+
+  test("re-inserting an existing key refreshes its LRU recency", () => {
+    fill(CAP); // k0 oldest
+    setCachedEmbedding("k0", [0]); // touch k0 → now most-recently-used
+    setCachedEmbedding("k100", [100]); // new key evicts the now-oldest (k1)
+    expect(getCachedEmbedding("k0")).toEqual([0]); // survived
+    expect(getCachedEmbedding("k1")).toBeUndefined(); // evicted instead
+  });
+
+  test("getCachedEmbedding promotes an entry so it survives the next eviction", () => {
+    fill(CAP); // k0 oldest
+    getCachedEmbedding("k0"); // promote k0 to MRU
+    setCachedEmbedding("k100", [100]); // evicts k1 (new oldest), not k0
+    expect(getCachedEmbedding("k0")).toEqual([0]);
+    expect(getCachedEmbedding("k1")).toBeUndefined();
+  });
+});
+
+/**
+ * #956: the per-document embedding cap (`embedding.maxInputTokens`,
+ * default 512) truncates the embedded text to its head instead of skipping
+ * the whole document — this pins the pure truncation helper in isolation
+ * from the materializer that calls it (tests/materialize-embeddings-cap.test.ts).
+ */
+
+describe("DEFAULT_MAX_INPUT_TOKENS", () => {
+  test("is 512", () => {
+    expect(DEFAULT_MAX_INPUT_TOKENS).toBe(512);
+  });
+});
+
+describe("capEmbeddingText", () => {
+  test("leaves text under the cap unchanged", () => {
+    const result = capEmbeddingText("short text", 512);
+    expect(result).toEqual({ text: "short text", truncated: false });
+  });
+
+  test("leaves text exactly at the cap unchanged", () => {
+    const text = "x".repeat(2048); // estimateTokenCount = 512
+    expect(estimateTokenCount(text)).toBe(512);
+    const result = capEmbeddingText(text, 512);
+    expect(result.truncated).toBe(false);
+    expect(result.text).toBe(text);
+  });
+
+  test("truncates a 2000-token entry to its head instead of skipping it", () => {
+    const text = "x".repeat(8000); // estimateTokenCount = 2000
+    const result = capEmbeddingText(text, 512);
+    expect(result.truncated).toBe(true);
+    expect(result.text.length).toBeGreaterThan(0);
+    expect(result.text.length).toBeLessThan(text.length);
+    expect(result.text).toBe(text.slice(0, result.text.length));
+    // The truncated head itself must fit the cap.
+    expect(estimateTokenCount(result.text)).toBeLessThanOrEqual(512);
+  });
+
+  test("empty text stays empty and is not reported as truncated", () => {
+    const result = capEmbeddingText("", 512);
+    expect(result).toEqual({ text: "", truncated: false });
+  });
+
+  test("never splits a UTF-16 surrogate pair at the cut boundary", () => {
+    // U+1F600 (😀) is a surrogate pair in UTF-16. Pad so the cut boundary
+    // would otherwise land exactly between its two code units.
+    const emoji = "\u{1F600}"; // 2 UTF-16 code units
+    const padLen = 512 * 4 - 1; // cap's char budget minus 1, so the pair straddles the cut
+    const text = "x".repeat(padLen) + emoji + "y".repeat(100);
+    const result = capEmbeddingText(text, 512);
+    expect(result.truncated).toBe(true);
+    // A valid string never contains a lone surrogate.
+    expect(result.text).toBe(Array.from(result.text).join(""));
+    for (let i = 0; i < result.text.length; i++) {
+      const code = result.text.charCodeAt(i);
+      const isLowSurrogate = code >= 0xdc00 && code <= 0xdfff;
+      if (isLowSurrogate) {
+        // Must be paired with a preceding high surrogate, never dangling.
+        const prev = result.text.charCodeAt(i - 1);
+        expect(prev >= 0xd800 && prev <= 0xdbff).toBe(true);
+      }
+    }
+  });
+});
+
+/**
+ * Embedding profiles: query and document templates matched on the model
+ * name, config overrides, template application, and the document template's
+ * place in the embedding fingerprint.
+ */
+
+const remote = (model: string, extra: Record<string, unknown> = {}) => ({
+  endpoint: "https://embed.example/v1/embeddings",
+  model,
+  ...extra,
+});
+
+const QWEN3_QUERY = "Instruct: Given a question or task, retrieve the knowledge asset that helps with it\nQuery:{text}";
+const RETRIEVAL_QUERY = "Represent this sentence for searching relevant passages: {text}";
+
+describe("resolveEmbeddingProfile presets", () => {
+  test.each([
+    ["embed/qwen3-embedding-0.6b", { queryTemplate: QWEN3_QUERY }],
+    ["Qwen/Qwen3-Embedding-8B", { queryTemplate: QWEN3_QUERY }],
+    ["nomic-embed-text:v1.5", { queryTemplate: "search_query: {text}", documentTemplate: "search_document: {text}" }],
+    ["BAAI/bge-base-en-v1.5", { queryTemplate: RETRIEVAL_QUERY }],
+    ["mxbai-embed-large", { queryTemplate: RETRIEVAL_QUERY }],
+    ["Snowflake/snowflake-arctic-embed-m", { queryTemplate: RETRIEVAL_QUERY }],
+    ["intfloat/e5-large-v2", { queryTemplate: "query: {text}", documentTemplate: "passage: {text}" }],
+    ["intfloat/multilingual-e5-small", { queryTemplate: "query: {text}", documentTemplate: "passage: {text}" }],
+    ["BAAI/bge-m3", {}],
+    ["intfloat/multilingual-e5-large-instruct", {}],
+    ["text-embedding-3-small", {}],
+  ])("%s", (model, profile) => {
+    expect(resolveEmbeddingProfile(remote(model))).toEqual(profile);
+  });
+
+  test("a local model matches on localModel, defaulting to bge-small-en-v1.5", () => {
+    expect(resolveEmbeddingProfile(undefined)).toEqual({ queryTemplate: RETRIEVAL_QUERY });
+    expect(resolveEmbeddingProfile({ localModel: "nomic-ai/nomic-embed-text-v1.5" }).documentTemplate).toBe(
+      "search_document: {text}",
+    );
+  });
+});
+
+describe("resolveEmbeddingProfile overrides", () => {
+  test("a configured template replaces the preset for its side only", () => {
+    expect(resolveEmbeddingProfile(remote("nomic-embed-text", { queryTemplate: "find: {text}" }))).toEqual({
+      queryTemplate: "find: {text}",
+      documentTemplate: "search_document: {text}",
+    });
+  });
+
+  test("an empty template turns the preset off", () => {
+    expect(resolveEmbeddingProfile(remote("qwen3-embedding-0.6b", { queryTemplate: "" }))).toEqual({});
+    expect(resolveEmbeddingProfile(remote("e5-base-v2", { documentTemplate: "" }))).toEqual({
+      queryTemplate: "query: {text}",
+    });
+  });
+
+  test("a model with no preset takes the configured templates", () => {
+    expect(resolveEmbeddingProfile(remote("house-model", { documentTemplate: "doc: {text}" }))).toEqual({
+      documentTemplate: "doc: {text}",
+    });
+  });
+});
+
+describe("applyEmbeddingTemplate", () => {
+  test("puts the text where {text} is, keeping its case", () => {
+    expect(applyEmbeddingTemplate(QWEN3_QUERY, "Docker HealthCheck")).toBe(
+      "Instruct: Given a question or task, retrieve the knowledge asset that helps with it\nQuery:Docker HealthCheck",
+    );
+  });
+
+  test("treats a template without {text} as a prefix, and no template as none", () => {
+    expect(applyEmbeddingTemplate("search_query: ", "Kafka")).toBe("search_query: Kafka");
+    expect(applyEmbeddingTemplate(undefined, "Kafka")).toBe("Kafka");
+  });
+
+  test("inserts replacement-pattern characters in the text literally", () => {
+    expect(applyEmbeddingTemplate("query: {text}", "cost $& and $1")).toBe("query: cost $& and $1");
+  });
+});
+
+describe("embedding fingerprint", () => {
+  test("is unchanged for a model whose profile has no document template", () => {
+    expect(documentTemplateFingerprint(remote("embed/qwen3-embedding-0.6b"))).toBe("");
+    expect(deriveSemanticProviderFingerprint(remote("embed/qwen3-embedding-0.6b", { dimension: 1024 }))).toBe(
+      "remote:embed/qwen3-embedding-0.6b|1024",
+    );
+    expect(deriveSemanticProviderFingerprint(undefined)).toBe("local:Xenova/bge-small-en-v1.5");
+  });
+
+  test("changes with the document template", () => {
+    const preset = deriveSemanticProviderFingerprint(remote("nomic-embed-text"));
+    const custom = deriveSemanticProviderFingerprint(remote("nomic-embed-text", { documentTemplate: "doc: {text}" }));
+    const none = deriveSemanticProviderFingerprint(remote("nomic-embed-text", { documentTemplate: "" }));
+    expect(preset).toStartWith("remote:nomic-embed-text|default|doc:");
+    expect(custom).toStartWith("remote:nomic-embed-text|default|doc:");
+    expect(custom).not.toBe(preset);
+    expect(none).toBe("remote:nomic-embed-text|default");
+  });
+
+  test("ignores the query template", () => {
+    expect(deriveSemanticProviderFingerprint(remote("house-model", { queryTemplate: "q: {text}" }))).toBe(
+      deriveSemanticProviderFingerprint(remote("house-model")),
+    );
   });
 });

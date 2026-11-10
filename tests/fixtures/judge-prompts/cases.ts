@@ -1,5 +1,5 @@
 /**
- * Inputs for the judge-prompt golden test (tests/judges/judge-prompts.test.ts), in the shape
+ * Inputs for the judge-prompt golden test (tests/judges/judge-registry.test.ts), in the shape
  * `akm judge <name>` reads. `goldens.json` holds the messages the pipeline sent for each of
  * them before the judges moved behind the registry (#1306), captured from that code.
  */

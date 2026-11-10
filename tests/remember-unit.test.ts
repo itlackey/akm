@@ -1,11 +1,16 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { parse as yamlParse } from "yaml";
 import {
   buildMemoryFrontmatter,
   parseDuration,
   runAutoHeuristics,
+  runLlmEnrich,
   synthesizeMemoryDescription,
 } from "../src/commands/remember";
+import { _setWarnSinkForTests } from "../src/core/warn";
+import { _setChatCompletionForTests, LlmCallError } from "../src/llm/client";
+import { sandboxXdgConfigHome, writeSandboxConfig } from "./_helpers/sandbox";
+import { overrideSeam } from "./_helpers/seams";
 
 describe("parseDuration", () => {
   test("parses days", () => {
@@ -101,7 +106,7 @@ describe("buildMemoryFrontmatter — YAML injection guard", () => {
     expect(parsed.tags).toEqual(["x"]);
   });
 
-  // Precondition for consolidate-wave2-e.test.ts's D4 deletion (Phase 2
+  // Precondition for tests/commands/consolidate/consolidate-coverage.test.ts's D4 deletion (Phase 2
   // triage): the exact empty-string input, distinct from the whitespace-only
   // case above.
   test("omits an empty-string description", () => {
@@ -273,5 +278,62 @@ describe("synthesizeMemoryDescription", () => {
     const out = synthesizeMemoryDescription("Upgraded to 0.9.12 on 192.168.0.203. Then rebooted the box.", 40);
     expect(out).toBe("Upgraded to 0.9.12 on 192.168.0.203.");
     expect(synthesizeMemoryDescription("Is it 0.9.12? Yes! Done.", 14)).toBe("Is it 0.9.12?");
+  });
+});
+
+describe("remember-enrich", () => {
+  /**
+   * `remember --enrich`'s model call (`runLlmEnrich`): it is bounded by its own
+   * 10 s timeout, which rides on the request like any other call's, and a failed
+   * call writes the memory without enrichment and says why.
+   */
+
+  let restoreConfigEnv: (() => void) | undefined;
+  let warnings: string[] = [];
+
+  beforeEach(() => {
+    restoreConfigEnv = sandboxXdgConfigHome().cleanup;
+    writeSandboxConfig({
+      connections: { enrich: { endpoint: "http://localhost:1/v1", models: { fast: "m" } } },
+      improve: { connection: "enrich" },
+    });
+    warnings = [];
+    overrideSeam(_setWarnSinkForTests, (level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+  });
+
+  afterEach(() => {
+    restoreConfigEnv?.();
+    restoreConfigEnv = undefined;
+  });
+
+  describe("runLlmEnrich", () => {
+    test("the call carries its 10 s timeout, and the reply becomes tags and a description", async () => {
+      let timeoutMs: number | null | undefined;
+      overrideSeam(_setChatCompletionForTests, async (_config, _messages, options) => {
+        timeoutMs = options?.timeoutMs;
+        return '{"tags":["ops"],"description":"Deploys need the VPN.","observed":"2026-04-24"}';
+      });
+
+      const result = await runLlmEnrich("Deploys need the VPN.");
+
+      expect(timeoutMs).toBe(10_000);
+      expect(result).toMatchObject({ tags: ["ops"], description: "Deploys need the VPN.", observed_at: "2026-04-24" });
+      expect(warnings).toEqual([]);
+    });
+
+    test("a failed call writes without enrichment and says why", async () => {
+      overrideSeam(_setChatCompletionForTests, async () => {
+        throw new LlmCallError("Request timed out after 10000ms", "timeout");
+      });
+
+      const result = await runLlmEnrich("Deploys need the VPN.");
+
+      expect(result.tags).toEqual([]);
+      expect(warnings).toEqual([
+        "Warning: --enrich failed (Request timed out after 10000ms). Writing memory without enrichment.",
+      ]);
+    });
   });
 });

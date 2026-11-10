@@ -36,8 +36,7 @@
  * `FrozenWorkflowTarget` (schema-v4.ts) — every child-workflow fixture
  * funnels through the single `asFrozenTarget` cast below (RED-PHASE TYPE
  * PINS: "Implement removes ONE `@ts-expect-error` directive, not one per
- * call site" — the exact convention `tests/workflows/task-input-bindings.test.ts`'s
- * `frozenInputBindings` helper established for the mirror-image case, A-N7
+ * call site" — the same convention the `frozenInputBindings` helper established for the mirror-image case, A-N7
  * there vs A-N1's frozen-target union growth here). This cast is a
  * *type-level* suppression only — unlike a missing module, it has no effect
  * on whether the file LOADS at runtime, so it does not block A-11/A-12.

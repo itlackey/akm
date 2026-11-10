@@ -805,7 +805,7 @@ describe("akm improve memory cleanup", () => {
     expect(distilledRefs).toEqual([]);
   });
 
-  // ── Merged from improve-memory-cleanup2.test.ts (same describe title) ────────
+  // ── Cleanup planning ────────
 
   test("requireFeedbackSignal restricts planning to refs with recent feedback", async () => {
     const stashDir = makeTempDir("akm-improve-memory-signal-filter-");

@@ -12,7 +12,7 @@
  * dependency on any external tool beyond `git` for the worktree case.
  *
  * The authoring surface (parser / freeze / decoder / hashing) is covered purely
- * in `tests/workflows/exec-unit-authoring.test.ts`.
+ * in tests/workflows/.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";

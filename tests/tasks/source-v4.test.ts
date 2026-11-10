@@ -122,7 +122,7 @@ type TaskSourceV4Document = TaskSourceV4Module.TaskSourceV4Document;
 const ROOT = path.resolve(import.meta.dir, "../..");
 const FIXTURES_DIR = path.join(ROOT, "tests/fixtures/execution-contracts/tasks/v4");
 
-/** No default target/schedule — every call site supplies exactly the keys it means to exercise, mirroring task-source.test.ts's `scheduled()` helper (which also defaults nothing but `version`/`akm.schedule`). */
+/** No default target/schedule — every call site supplies exactly the keys it means to exercise. */
 function v4Doc(overrides: Record<string, unknown>): Record<string, unknown> {
   return { version: TASK_SOURCE_V4_VERSION, ...overrides };
 }

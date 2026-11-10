@@ -9,7 +9,7 @@
  * names (C-xx) refer to that spec's crawl-behavior table.
  *
  * Follows the fixture patterns in add-website-source.test.ts (Bun.serve
- * loopback fixture) and website-ssrf.test.ts (no real network, private-host
+ * loopback fixture) and website-fetch-safety.test.ts (no real network, private-host
  * hatch). `ensureWebsiteMirror` is called in-process (as in
  * tests/integration/source-source.test.ts) rather than spawning the CLI, and
  * loopback hosts are allowed via the `allowPrivateHosts` test escape hatch

@@ -4,7 +4,7 @@
 
 /**
  * Shared markdown-fixture writer, factored out of
- * tests/integration/bundle-update-embedding-durability.test.ts so
+ * tests/integration/bundle-update.test.ts so
  * tests/integration/indexer/embedding-mid-run-visibility.test.ts (#954,
  * field-report follow-up) can reuse it rather than duplicating it.
  */

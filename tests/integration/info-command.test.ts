@@ -292,7 +292,7 @@ describe("assembleInfo", () => {
     expect(Array.isArray(info.sourceProviders)).toBe(true);
   });
 
-  // Precondition for consolidate-wave2-e.test.ts's D5 deletion (Phase 2
+  // Precondition for tests/commands/consolidate/consolidate-coverage.test.ts's D5 deletion (Phase 2
   // triage): that file's "assembleInfo — sourceProviders populated" test only
   // asserted `typeof assembleInfo === "function"`. This strengthens the real
   // coverage: sourceProviders is empty with no configured bundle, and once a

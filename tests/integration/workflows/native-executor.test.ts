@@ -755,7 +755,7 @@ describe("executeStepPlan — empty free-text output is 'no output' (PR #714 com
     // is empty), not a per-unit one. Reading `computeStepWorkList`'s
     // unit-construction loop confirms there is no remaining code path that
     // produces a per-unit `resolved: { ok: false }` — reported to the
-    // orchestrating agent (see the identical note in `step-work.test.ts`).
+    // orchestrating agent.
     // The still-true parts of the original narrative — deterministic failure,
     // "resolved to null" in the message, zero dispatch — are preserved below.
     seedRun({

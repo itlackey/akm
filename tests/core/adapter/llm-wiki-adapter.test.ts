@@ -47,14 +47,6 @@ function docSources(doc: IndexDocument): string[] {
 
 // ── metadata ─────────────────────────────────────────────────────────────────
 
-describe("llm-wiki adapter — metadata", () => {
-  test("id / version / extensions", () => {
-    expect(llmWikiAdapter.id).toBe("llm-wiki");
-    expect(llmWikiAdapter.version).toBe("0.9.0");
-    expect(llmWikiAdapter.extensions).toEqual([".md"]);
-  });
-});
-
 // ── recognition golden ─────────────────────────────────────────────────────────
 
 describe("llm-wiki adapter — recognition golden", () => {

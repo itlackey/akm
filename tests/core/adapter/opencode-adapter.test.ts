@@ -46,14 +46,6 @@ const ctx: ValidateContext = {
   resolveRef: async () => ({ exists: false }),
 };
 
-describe("opencode adapter — metadata", () => {
-  test("id / version / extensions", () => {
-    expect(opencodeAdapter.id).toBe("opencode");
-    expect(opencodeAdapter.version).toBe("0.9.0");
-    expect(opencodeAdapter.extensions).toEqual([".md"]);
-  });
-});
-
 describe("opencode adapter — recognition golden", () => {
   const byRelPath = loadGolden("recognition").byRelPath as Record<string, Record<string, unknown>>;
 

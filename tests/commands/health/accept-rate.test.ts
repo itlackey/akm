@@ -7,8 +7,7 @@
  * `akm history --accept-rate-by-source` flag (F-4 / #385) into `akm health
  * --report`. This pins the aggregation logic directly against the proposal
  * repository, independent of the CLI wiring (covered end-to-end in
- * tests/integration/html-output-cli.test.ts's "akm health --report" describe
- * block).
+ * the health integration tests).
  */
 
 import { afterEach, describe, expect, test } from "bun:test";

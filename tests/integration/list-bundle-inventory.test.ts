@@ -85,8 +85,7 @@ describe("akm list bundle inventory", () => {
   // 0.9 CLI overhaul (S7): `akm bundle` is now the canonical group housing
   // `create`/`add`/`list`/`show`/`remove`/`update` (src/commands/sources/
   // bundle-cli.ts) — the guard that used to pin its ABSENCE here predates the
-  // overhaul and is obsolete; see tests/integration/commands/bundle-cli-
-  // envelope.test.ts for the group's own envelope coverage.
+  // overhaul and is obsolete; see tests/commands/cli-envelopes.test.ts for the group's own envelope coverage.
   test("the bundle command namespace is registered exactly once", () => {
     expect(typeof (main.subCommands as Record<string, unknown>).bundle).toBe("object");
   });

@@ -7,7 +7,6 @@
  *
  * A secret is discoverable by NAME, but the file's bytes (the value) must never
  * reach the FTS index, the embedding input, document_json, or `akm show` output.
- * Mirrors tests/vault.test.ts "vault indexer safety".
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";

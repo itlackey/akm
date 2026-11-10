@@ -1,8 +1,18 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, it, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { mutateFrontmatter, parseFrontmatter, parseFrontmatterBlock } from "../src/core/asset/frontmatter";
+import { buildSessionAssetContent } from "../src/commands/improve/session-asset";
+import { buildMemoryFrontmatter, parseEnrichObserved } from "../src/commands/remember";
+import { assembleAsset, serializeFrontmatter } from "../src/core/asset/asset-serialize";
+import {
+  mutateFrontmatter,
+  parseFrontmatter,
+  parseFrontmatterBlock,
+  readFrontmatterDate,
+} from "../src/core/asset/frontmatter";
+import { checkUnquotedDescriptionColon } from "../src/core/asset/frontmatter-lint";
 import { asNonEmptyString } from "../src/core/common";
+import type { SessionData } from "../src/integrations/session-logs/types";
 import { makeSandboxDir, type SandboxedDir } from "./_helpers/sandbox";
 
 // ── parseFrontmatter ────────────────────────────────────────────────────────
@@ -302,5 +312,184 @@ describe("asNonEmptyString", () => {
     expect(asNonEmptyString(undefined)).toBeUndefined();
     expect(asNonEmptyString(true)).toBeUndefined();
     expect(asNonEmptyString({})).toBeUndefined();
+  });
+});
+
+describe("checkUnquotedDescriptionColon", () => {
+  test("flags a plain colon-bearing description", () => {
+    expect(checkUnquotedDescriptionColon("description: Proposal lint:blocks invalid output.")).toContain(
+      "unquoted colon",
+    );
+  });
+
+  test("accepts quoted descriptions wrapped across physical lines", () => {
+    expect(
+      checkUnquotedDescriptionColon(
+        'description: "A long quoted description: remains valid when YAML wraps it\n  across physical lines."',
+      ),
+    ).toBeNull();
+  });
+
+  test("accepts folded and literal block descriptions containing colons", () => {
+    expect(checkUnquotedDescriptionColon("description: >-\n  Folded: description")).toBeNull();
+    expect(checkUnquotedDescriptionColon("description: |-\n  Literal: description")).toBeNull();
+  });
+
+  test("retains a finding for an ambiguous malformed plain scalar", () => {
+    expect(checkUnquotedDescriptionColon("description: Proposal lint: blocks invalid output.")).toContain(
+      "unquoted colon",
+    );
+  });
+});
+
+/**
+ * Date-valued frontmatter keys have bare names (`observed`, `started`, `ended`),
+ * like `created`, `updated` and `expires`. Readers take the new name first and
+ * fall back to the old `_at` spelling; writers write only the new name.
+ */
+
+describe("readFrontmatterDate", () => {
+  test("the new name wins over the old one", () => {
+    expect(readFrontmatterDate({ observed: "2026-05-01", observed_at: "2026-04-20" }, "observed")).toBe("2026-05-01");
+  });
+
+  test("an old name alone still works", () => {
+    expect(readFrontmatterDate({ observed_at: " 2026-04-20 " }, "observed")).toBe("2026-04-20");
+    expect(readFrontmatterDate({ started_at: "s", ended_at: "e" }, "started")).toBe("s");
+    expect(readFrontmatterDate({ started_at: "s", ended_at: "e" }, "ended")).toBe("e");
+  });
+
+  test("a blank new name falls back to the old one, and neither is undefined", () => {
+    expect(readFrontmatterDate({ observed: "  ", observed_at: "2026-04-20" }, "observed")).toBe("2026-04-20");
+    expect(readFrontmatterDate({}, "observed")).toBeUndefined();
+  });
+});
+
+describe("writers emit only the new name", () => {
+  test("remember writes `observed`", () => {
+    const fm = parseFrontmatter(buildMemoryFrontmatter({ tags: ["ops"], observed_at: "2026-04-24" })).data;
+    expect(fm.observed).toBe("2026-04-24");
+    expect(fm).not.toHaveProperty("observed_at");
+  });
+
+  test("a session asset writes `started` and `ended`", () => {
+    const data: SessionData = {
+      ref: {
+        harness: "claude",
+        sessionId: "s-12345678",
+        filePath: "/tmp/s.jsonl",
+        startedAt: 1_790_000_000_000,
+        endedAt: 1_790_000_600_000,
+      },
+      events: [],
+      inlineRefs: [],
+    };
+    const { frontmatter, content } = buildSessionAssetContent(data, { summary: "Did work.", keyTopics: [] });
+    expect(frontmatter.started).toBe(new Date(1_790_000_000_000).toISOString());
+    expect(frontmatter.ended).toBe(new Date(1_790_000_600_000).toISOString());
+    const written = parseFrontmatter(content).data;
+    expect(written).not.toHaveProperty("started_at");
+    expect(written).not.toHaveProperty("ended_at");
+    expect(written.started).toBe(frontmatter.started);
+  });
+});
+
+describe("remember --enrich parser", () => {
+  test("accepts `observed` and the older `observed_at`, the new name first", () => {
+    expect(parseEnrichObserved({ observed: "2026-04-24" })).toBe("2026-04-24");
+    expect(parseEnrichObserved({ observed_at: "2026-04-24" })).toBe("2026-04-24");
+    expect(parseEnrichObserved({ observed: "2026-05-01", observed_at: "2026-04-24" })).toBe("2026-05-01");
+  });
+
+  test("ignores anything that is not a plain YYYY-MM-DD", () => {
+    expect(parseEnrichObserved({ observed: "yesterday", observed_at: "2026-04-24" })).toBe("2026-04-24");
+    expect(parseEnrichObserved({ observed: "yesterday" })).toBeUndefined();
+    expect(parseEnrichObserved({})).toBeUndefined();
+  });
+});
+
+/**
+ * Tests for `|`-block scalar parsing in `parseFrontmatter` (#495).
+ *
+ * `yaml.stringify` (used by `serializeFrontmatter` in asset-serialize.ts)
+ * emits multi-line strings as `|`-block scalars.  Until this fix, the
+ * hand-rolled YAML-subset parser in `frontmatter.ts` silently dropped those
+ * values, causing round-trip data loss and forcing `reflect.ts` to keep a
+ * cloned defensive serializer.  These tests pin the corrected behaviour.
+ */
+
+describe("parseFrontmatter — |‑block scalar support", () => {
+  it("parses a clip block scalar (|) — single trailing newline", () => {
+    // `|` chomping adds exactly one trailing newline.
+    const raw = "---\ndescription: |\n  line one\n  line two\n---\nBody\n";
+    const result = parseFrontmatter(raw);
+    expect(result.data.description).toBe("line one\nline two\n");
+  });
+
+  it("parses a strip block scalar (|-) — no trailing newline", () => {
+    // `|-` chomping removes all trailing newlines.
+    const raw = "---\ndescription: |-\n  line one\n  line two\n---\nBody\n";
+    const result = parseFrontmatter(raw);
+    expect(result.data.description).toBe("line one\nline two");
+  });
+
+  it("parses a keep block scalar (|+) — preserves trailing newlines", () => {
+    // `|+` keeps the trailing newlines exactly as stored.
+    const raw = "---\ndescription: |+\n  line one\n  line two\n\n---\nBody\n";
+    const result = parseFrontmatter(raw);
+    // The blank line at the end is included verbatim.
+    expect((result.data.description as string).startsWith("line one\nline two")).toBe(true);
+  });
+
+  it("block scalar followed by another top-level key", () => {
+    const raw = "---\ndescription: |-\n  multi\n  line\ntitle: hello\n---\n";
+    const result = parseFrontmatter(raw);
+    expect(result.data.description).toBe("multi\nline");
+    expect(result.data.title).toBe("hello");
+  });
+
+  it("round-trips through serializeFrontmatter → parseFrontmatter without data loss", () => {
+    const fm: Record<string, unknown> = {
+      title: "My Asset",
+      description: "First line.\nSecond line.\nThird line.",
+      tags: ["a", "b"],
+      count: 3,
+    };
+    // serializeFrontmatter uses yaml.stringify, which emits |-block scalars for
+    // multi-line strings.  parseFrontmatter must recover the original value.
+    const serialized = serializeFrontmatter(fm);
+    const assembled = `---\n${serialized}\n---\n\nBody text\n`;
+    const parsed = parseFrontmatter(assembled);
+
+    expect(parsed.data.title).toBe(fm.title);
+    // Description was multi-line; |-strip chomping removes trailing newline.
+    // yaml.stringify uses |-  for strings without a trailing newline.
+    expect(typeof parsed.data.description).toBe("string");
+    const desc = parsed.data.description as string;
+    // The content of the lines must be preserved (chomping only affects trailing \n).
+    expect(desc).toContain("First line.");
+    expect(desc).toContain("Second line.");
+    expect(desc).toContain("Third line.");
+    expect(parsed.data.tags).toEqual(["a", "b"]);
+    expect(parsed.data.count).toBe(3);
+  });
+
+  it("assembleAsset → parseFrontmatter round-trip (idempotency contract)", () => {
+    const fm: Record<string, unknown> = {
+      ref: "lessons/test-lesson",
+      description: "A lesson that\nspans multiple lines.",
+      tags: ["ops"],
+    };
+    const body = "## Section\n\nSome content here.\n";
+    const assembled = assembleAsset(fm, body);
+    const parsed = parseFrontmatter(assembled);
+
+    expect(parsed.data.ref).toBe(fm.ref);
+    const desc = parsed.data.description as string;
+    expect(desc).toContain("A lesson that");
+    expect(desc).toContain("spans multiple lines.");
+    expect(parsed.data.tags).toEqual(["ops"]);
+    // assembleAsset emits `---\n\n<body>` so the content includes the leading blank line.
+    expect(parsed.content).toContain(body);
   });
 });

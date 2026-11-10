@@ -15,9 +15,9 @@
  * (`ChildWorkflowRunsRepositoryV4`) intersected onto the real repository
  * instance, exactly the convention already established for this same
  * "repository gains a new method" situation by
- * tests/integration/workflows/v4-atomic-publication-red.test.ts
+ * tests/integration/workflows/v4-atomic-publication.test.ts
  * (`RepositoryWithV4Publisher`, `publishV4`) and
- * tests/integration/workflows/durable-attempt-journal-v4-red.test.ts
+ * tests/integration/workflows/durable-attempt-journal-v4.test.ts
  * (`DurableAttemptRepositoryV4`, `durableAttempts`). `WorkflowRunsRepository &
  * Partial<ChildWorkflowRunsRepositoryV4>` is valid whether or not the class
  * already declares those members, so this produces no compile error to

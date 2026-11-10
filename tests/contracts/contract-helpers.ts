@@ -15,7 +15,6 @@ const NON_USER_FACING_DOC_DIRS = new Set([
 const ACTIVE_ROOT_DOCS = ["README.md", ".github/README.npm.md", "SECURITY.md", "STABILITY.md"];
 const HELP_DOCS_ROOT = path.join(repoRoot, "src", "assets", "help");
 
-export const ARCHITECTURE_PATH = path.join(repoRoot, "docs", "architecture", "architecture.md");
 export const CLI_DOC_PATH = path.join(repoRoot, "docs", "reference", "cli.md");
 export const CONFIG_DOC_PATH = path.join(repoRoot, "docs", "reference", "configuration.md");
 

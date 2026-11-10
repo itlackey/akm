@@ -7,9 +7,8 @@
  * docs/plans/specs/p1b-model-extraction.md §5.1, §9 "Structure"). Sibling to
  * `tests/tasks/prepare-split.test.ts` (Lane B's caller-shape parity contract)
  * but for Lane C, and narrower in scope on purpose: Lane C's *behavior* is
- * already pinned exhaustively elsewhere — the flipped P0 characterization
- * files (tasks-provenance-characterization.test.ts,
- * tasks-legacy-vocabulary-characterization.test.ts), the two P1b files
+ * already pinned exhaustively elsewhere — tests/integration/tasks/tasks-provenance-context.test.ts,
+ * tests/integration/tasks/tasks-result-vocabulary.test.ts, the two P1b files
  * (tasks-provenance-context.test.ts, tasks-result-vocabulary.test.ts), and
  * cli-errors.test.ts. What NONE of those files pins is whether
  * `src/tasks/run/**` actually holds the real logic, independent of any other

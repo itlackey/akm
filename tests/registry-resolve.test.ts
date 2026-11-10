@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { ConfigError, NotFoundError, UsageError } from "../src/core/errors";
+import { _setWarnSinkForTests } from "../src/core/warn";
 import {
   gitCredentialEnvironment,
   parseRegistryRef,
@@ -8,7 +9,10 @@ import {
   validateGitUrl,
   validateNpmTarballUrl,
 } from "../src/registry/resolve";
-import { withEnvSync, withMockedFetch } from "./_helpers/sandbox";
+import { highestVersion, isExactSemver, isSemverRange, maxSatisfying } from "../src/registry/semver";
+import { fetchCachedJson, withRegistryCacheDb } from "../src/storage/repositories/registry-index-cache-repository";
+import { type IsolatedAkmStorage, withEnvSync, withIsolatedAkmStorage, withMockedFetch } from "./_helpers/sandbox";
+import { overrideSeam } from "./_helpers/seams";
 
 // ── validateGitUrl ───────────────────────────────────────────────────────────
 
@@ -375,5 +379,189 @@ describe("resolveRegistryArtifact — npm metadata honors AKM_NPM_REGISTRY (R-03
     );
 
     expect(requestedUrls).toEqual(["https://registry.npmjs.org/public-pkg"]);
+  });
+});
+
+/**
+ * Registry stale-cache fallback past TTL (§24.2 "Durability" release gate).
+ *
+ * The fetch skeleton's stale fallback used to consult only the TTL-filtered
+ * row: once the cached index aged past `ttlMs`, an unreachable registry
+ * hard-failed `akm search --from registry` / `akm registry list` even though
+ * a perfectly serviceable index sat in the cache. A failed fetch now serves
+ * the expired row too — loudly, via warn().
+ */
+
+const KEY = "https://registry.example/index.json";
+
+function opts(fetchFresh: () => Promise<{ value: string; cacheJson: string }>, ttlMs = 60_000) {
+  return {
+    cacheKey: KEY,
+    ttlMs,
+    parseCache: (json: string) => (JSON.parse(json) as { v: string }).v,
+    fetchFresh,
+  };
+}
+
+async function backdateCacheRow(ageMs: number): Promise<void> {
+  await withRegistryCacheDb(async (db) => {
+    if (!db) throw new Error("expected a cache db in the sandbox");
+    db.prepare("UPDATE registry_index_cache SET fetched_at = ? WHERE registry_url = ?").run(
+      new Date(Date.now() - ageMs).toISOString(),
+      KEY,
+    );
+  });
+}
+
+describe("registry cache fallback past TTL", () => {
+  let storage: IsolatedAkmStorage;
+  beforeEach(() => {
+    storage = withIsolatedAkmStorage();
+  });
+  afterEach(() => storage.cleanup());
+
+  test("a failed fetch serves the EXPIRED cached index with a warning instead of throwing", async () => {
+    // Seed the cache with a successful fetch, then age it past the TTL.
+    await fetchCachedJson(opts(async () => ({ value: "seeded", cacheJson: JSON.stringify({ v: "seeded" }) })));
+    await backdateCacheRow(2 * 60_000);
+
+    const warned: string[] = [];
+    overrideSeam(_setWarnSinkForTests, (level, args) => {
+      if (level === "warn") warned.push(args.map(String).join(" "));
+    });
+
+    const result = await fetchCachedJson(
+      opts(async () => {
+        throw new Error("ECONNREFUSED registry.example");
+      }),
+    );
+    expect(result).toBe("seeded");
+    expect(warned.some((w) => w.includes("registry.example"))).toBe(true);
+  });
+
+  test("with no cached row at all, the fetch failure still propagates", async () => {
+    await expect(
+      fetchCachedJson(
+        opts(async () => {
+          throw new Error("ECONNREFUSED registry.example");
+        }),
+      ),
+    ).rejects.toThrow(/ECONNREFUSED/);
+  });
+});
+
+/**
+ * R-068 #3: the hand-rolled `satisfiesRange` in `src/registry/semver.ts`
+ * silently rejected a long list of valid npm range forms even though the
+ * looser `isSemverRange` classifier correctly recognized them as ranges —
+ * `1.2.x`, `>1.0.0`, `<2.0.0`, `>=1.0.0 <2.0.0`, `^1.2`, OR-ranges (`a || b`),
+ * hyphen ranges, and plain exact versions used as a range. The module now
+ * delegates to the real `semver` package (already a runtime dependency).
+ * These tests pin every form the register called out, plus the
+ * previously-supported forms, so a future re-inlining regresses loudly.
+ */
+
+describe("isExactSemver", () => {
+  test("true for exact versions", () => {
+    expect(isExactSemver("1.2.3")).toBe(true);
+    expect(isExactSemver("0.0.1")).toBe(true);
+    expect(isExactSemver("1.2.3-beta.1")).toBe(true);
+  });
+
+  test("false for ranges, wildcards, and partial versions", () => {
+    expect(isExactSemver("^1.2.3")).toBe(false);
+    expect(isExactSemver("~1.2.3")).toBe(false);
+    expect(isExactSemver("*")).toBe(false);
+    expect(isExactSemver("latest")).toBe(false);
+    expect(isExactSemver("1.2")).toBe(false);
+    expect(isExactSemver("not-a-version")).toBe(false);
+  });
+});
+
+describe("isSemverRange — every form R-068 #3 called out", () => {
+  test.each([
+    ["1.2.x", true],
+    [">1.0.0", true],
+    ["<2.0.0", true],
+    [">=1.0.0 <2.0.0", true],
+    ["^1.2", true],
+    ["^1.2.3", true],
+    ["~1.2.3", true],
+    ["1.x || 2.x", true], // OR-range
+    ["1.2.3 - 2.3.4", true], // hyphen range
+    ["1.2.3", true], // exact version used as a range
+    ["*", true],
+  ])("isSemverRange(%s) -> %s", (input, expected) => {
+    expect(isSemverRange(input)).toBe(expected);
+  });
+
+  test("false for npm dist-tag conventions and garbage", () => {
+    expect(isSemverRange("latest")).toBe(false);
+    expect(isSemverRange("not-a-range-at-all")).toBe(false);
+  });
+});
+
+describe("maxSatisfying — resolves a satisfiable version for every previously-rejected form", () => {
+  const versions = ["1.0.0", "1.2.0", "1.2.5", "1.2.9", "1.3.0", "2.0.0", "2.3.4", "3.0.0"];
+
+  test.each([
+    ["1.2.x", "1.2.9"],
+    [">1.0.0", "3.0.0"],
+    ["<2.0.0", "1.3.0"],
+    [">=1.0.0 <2.0.0", "1.3.0"],
+    ["^1.2", "1.3.0"],
+    ["^1.2.3", "1.3.0"], // caret allows minor bumps within the same major
+    ["~1.2.3", "1.2.9"], // tilde is patch-only
+
+    ["1.x || 2.x", "2.3.4"],
+    ["1.2.3 - 2.3.4", "2.3.4"],
+    ["1.2.5", "1.2.5"], // exact version used as a range
+    ["*", "3.0.0"],
+  ])("maxSatisfying(versions, %s) -> %s", (range, expected) => {
+    expect(maxSatisfying(versions, range)).toBe(expected);
+  });
+
+  test("returns undefined when nothing satisfies the range", () => {
+    expect(maxSatisfying(versions, "^5.0.0")).toBeUndefined();
+    expect(maxSatisfying(versions, ">10.0.0")).toBeUndefined();
+  });
+
+  test("prerelease versions are excluded by default (matching npm's own semver semantics)", () => {
+    const withPrerelease = [...versions, "1.4.0-beta.1"];
+    // A plain range does not admit a prerelease of a version it doesn't
+    // explicitly reference — the released 1.3.0 still wins over 1.4.0-beta.1.
+    expect(maxSatisfying(withPrerelease, "^1.2.0")).toBe("1.3.0");
+    // A range that explicitly targets the same [major, minor, patch] with a
+    // prerelease tag DOES admit it (narrowed version list so no released
+    // version in the same range outranks the prerelease).
+    expect(maxSatisfying(["1.3.0", "1.4.0-beta.1"], ">=1.4.0-alpha")).toBe("1.4.0-beta.1");
+  });
+
+  test("hyphen range with only a partial upper bound", () => {
+    expect(maxSatisfying(versions, "1.0.0 - 1.2.5")).toBe("1.2.5");
+  });
+});
+
+describe("highestVersion — orders known versions with prereleases included", () => {
+  test("stable, beta and alpha of the same month: the stable release is highest, then beta, then alpha", () => {
+    expect(highestVersion(["0.10.261013-alpha", "0.10.261013", "0.10.261013-beta"])).toBe("0.10.261013");
+    expect(highestVersion(["0.10.261013-alpha", "0.10.261013-beta"])).toBe("0.10.261013-beta");
+  });
+
+  test("across months a later build is highest whatever its stage", () => {
+    expect(highestVersion(["0.10.261013", "0.10.261015-beta", "0.10.261101-alpha"])).toBe("0.10.261101-alpha");
+    expect(highestVersion(["0.10.261101-alpha", "0.10.261015", "0.10.261015-beta"])).toBe("0.10.261101-alpha");
+  });
+
+  test("a 0.10 prerelease sorts above the 0.9 stable line, which maxSatisfying '*' would skip", () => {
+    const versions = ["0.9.30202610090106", "0.10.261013-beta"];
+    expect(maxSatisfying(versions, "*")).toBe("0.9.30202610090106");
+    expect(highestVersion(versions)).toBe("0.10.261013-beta");
+  });
+
+  test("invalid entries are ignored; none valid is undefined", () => {
+    expect(highestVersion(["latest", "0.9.1", "not-a-version"])).toBe("0.9.1");
+    expect(highestVersion(["latest"])).toBeUndefined();
+    expect(highestVersion([])).toBeUndefined();
   });
 });
