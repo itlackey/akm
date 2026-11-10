@@ -843,20 +843,16 @@ describe("task source v4 — inputs: names that collide with akm task's own flag
 // ── Every schedule binding must be independently runnable (0.9.2 review) ────
 
 /**
- * A scheduled firing supplies NO input flags — `compileTaskSchedulerBindings`
- * appends only the entry's own `schedule[i].inputs` to the invocation tail
- * (`src/tasks/scheduler-binding.ts`) — so an entry's literals PLUS the
+ * A scheduled firing supplies NO input flags — `akm task dispatch` passes only
+ * the entry's own `schedule[i].inputs` as flags to `akm task run` — so an entry's literals PLUS the
  * declared defaults are the complete value set the run will see. A
  * `required: true` declaration may not carry a `default` (D2-N3), so a
  * schedule entry that names no value for it can never satisfy the contract.
  *
  * Before this gate, only an entry that AUTHORED an `inputs:` mapping was
  * checked at parse time; the string shorthand and a list entry with no
- * `inputs:` key parsed clean and deferred to `akm task sync`'s own
- * projectability proof (`src/tasks/scheduler-sync.ts`) — which does reject
- * the desired set before mutation, so no unrunnable schedule was ever
- * installed, but the author only learned at sync time and only for the
- * install path. The source document alone knows both the contract and the
+ * `inputs:` key parsed clean and deferred to the first firing, so the author
+ * only learned when the task failed to run. The source document alone knows both the contract and the
  * schedule, so the contradiction is a grammar error (p2a review log:
  * "The natural P2b fix is a sync-time warn (or a parse-time rejection) when a
  * scheduled v4 task declares a required input that no schedule entry or

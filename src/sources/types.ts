@@ -141,7 +141,7 @@ export interface SearchResponse {
   source: SearchSource;
   /** The bundles a repeated `--from` searched; absent for a single `--from`. */
   bundles?: string[];
-  hits: SearchHit[];
+  results: SearchHit[];
   registryHits?: RegistrySearchResultHit[];
   tip?: string;
   warnings?: string[];

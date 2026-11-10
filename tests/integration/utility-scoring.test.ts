@@ -18,7 +18,6 @@ import { getDbPath } from "../../src/core/paths";
 import { openStateDatabase } from "../../src/core/state-db";
 import { akmIndex, recomputeUtilityScores } from "../../src/indexer/indexer";
 import { deriveEntryProvenance } from "../../src/indexer/installations";
-import { ensureUsageEventsSchema } from "../../src/indexer/usage/usage-events";
 import type { SourceSearchHit } from "../../src/sources/types";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { getItemRefById, upsertEntry } from "../../src/storage/repositories/index-entries-repository";
@@ -30,7 +29,7 @@ import {
   sandboxXdgConfigHome,
   withDefaultBundle,
 } from "../_helpers/sandbox";
-import { recordUsageEvent } from "../_helpers/usage-events";
+import { ensureUsageEventsSchema, recordUsageEvent } from "../_helpers/usage-events";
 
 // ── Temp directory tracking ─────────────────────────────────────────────────
 
@@ -230,7 +229,7 @@ describe("Utility scores and search ranking", () => {
 
     await buildTestIndex(stashDir, {});
     const search = async () =>
-      (await akmSearch({ query: "deployment automation", source: "local", skipLogging: true })).hits
+      (await akmSearch({ query: "deployment automation", source: "local", skipLogging: true })).results
         .filter((h): h is SourceSearchHit => h.type !== "registry")
         .map((h) => [h.name, h.score]);
     const before = await search();
@@ -405,7 +404,7 @@ describe("Production path end-to-end", () => {
 
     // Search to trigger usage event logging
     const result = await akmSearch({ query: "end-to-end test", source: "local" });
-    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+    const localHits = result.results.filter((h): h is SourceSearchHit => h.type !== "registry");
     expect(localHits.length).toBeGreaterThan(0);
 
     // Verify usage_events have entry_ref (usage_events lives in state.db, WI-8.3)

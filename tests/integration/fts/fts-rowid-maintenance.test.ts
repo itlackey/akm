@@ -5,8 +5,8 @@
 // Covers the FTS rowid maintenance contract: entries_fts.rowid = entry_id,
 // constant upsert cost as the tables grow, and that a targeted delete removes
 // exactly its own entry's FTS row and fragment source. (The layout-23 → 24
-// rebuild that establishes the contract on an older index is covered by
-// tests/integration/indexer/index-layout-migration.test.ts.)
+// rebuild that establishes the contract on an older index is no longer a
+// migration: an index below the layout floor is rebuilt from the sources.)
 import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";

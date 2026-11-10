@@ -73,7 +73,7 @@ describe("search-mode telemetry", () => {
   test("keyword-only search (semanticSearchMode off) reports mode 'keyword'", async () => {
     const result = await runSearch({ semanticSearchMode: "off" });
     // FTS matched the query, so this did real work — but no vector search ran.
-    expect(result.hits.length).toBeGreaterThan(0);
+    expect(result.results.length).toBeGreaterThan(0);
     expect(result.mode).toBe("keyword");
   });
 
@@ -83,7 +83,7 @@ describe("search-mode telemetry", () => {
     // mode must be keyword, not inferred from how long the concurrent FTS work
     // took.
     const result = await runSearch({ semanticSearchMode: "auto" });
-    expect(result.hits.length).toBeGreaterThan(0);
+    expect(result.results.length).toBeGreaterThan(0);
     expect(result.mode).toBe("keyword");
   });
 

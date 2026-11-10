@@ -68,39 +68,6 @@ export function deleteEntryLinks(db: Database, entryIds: readonly number[]): voi
 }
 
 /**
- * Derive every entry's links from its stored `document_json`, replacing
- * whatever the table held — the in-place migration to layout 26, which needs
- * no file read. An entry whose JSON does not parse keeps no links until it is
- * next indexed.
- */
-export function rebuildAllEntryLinks(db: Database): void {
-  db.exec("DELETE FROM asset_links");
-  const page = db.prepare(
-    "SELECT id, bundle_id, concept_id, document_json FROM entries WHERE id > ? ORDER BY id LIMIT 500",
-  );
-  let afterId = -1;
-  for (;;) {
-    const rows = page.all(afterId) as Array<{
-      id: number;
-      bundle_id: string;
-      concept_id: string;
-      document_json: string;
-    }>;
-    if (rows.length === 0) break;
-    afterId = rows[rows.length - 1]!.id;
-    for (const row of rows) {
-      let document: IndexDocument;
-      try {
-        document = JSON.parse(row.document_json) as IndexDocument;
-      } catch {
-        continue;
-      }
-      replaceEntryLinks(db, row.id, document, { bundleId: row.bundle_id, conceptId: row.concept_id });
-    }
-  }
-}
-
-/**
  * The id of the entry a link row resolves to, or NULL: the exact target, else
  * (for a memory) its `.derived` child, never the declaring entry itself.
  * Expects `l` (the link) and `o` (its owner) in scope.

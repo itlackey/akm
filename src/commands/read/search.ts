@@ -196,7 +196,7 @@ export async function akmSearch(input: {
       schemaVersion: 1,
       bundleDir: "",
       source,
-      hits: [],
+      results: [],
       warnings: ["No bundles configured. Run `akm bundle create` to create your working bundle."],
       timing: { totalMs: Date.now() - t0 },
     };
@@ -244,7 +244,7 @@ export async function akmSearch(input: {
     source === "local" ? undefined : await searchRegistry(query, { limit, registries: config.registries });
 
   if (source === "local") {
-    const localHits = localResult?.hits ?? [];
+    const localHits = localResult?.results ?? [];
     const warnings = [
       ...(localResult?.warnings ?? []),
       ...duplicateConceptWarnings(localHits, config.defaultBundle),
@@ -259,7 +259,7 @@ export async function akmSearch(input: {
       bundleDir: stashDir,
       source,
       ...bundlesField(namedSourceNames),
-      hits: localHits,
+      results: localHits,
       tip: hasResults ? undefined : localResult?.tip,
       warnings: warnings.length ? warnings : undefined,
       searchMode: localResult?.mode ?? "keyword",
@@ -291,7 +291,7 @@ export async function akmSearch(input: {
       schemaVersion: 1,
       bundleDir: stashDir,
       source,
-      hits: [],
+      results: [],
       registryHits: slicedRegistryHits,
       tip: hasResults ? undefined : "No matching registry entries were found.",
       warnings: registryResult?.warnings.length ? registryResult.warnings : undefined,
@@ -302,7 +302,7 @@ export async function akmSearch(input: {
   }
 
   // source === "all"
-  const allStashHits = (localResult?.hits ?? []).slice(0, limit);
+  const allStashHits = (localResult?.results ?? []).slice(0, limit);
   const warnings = [
     ...(localResult?.warnings ?? []),
     ...duplicateConceptWarnings(allStashHits, config.defaultBundle),
@@ -315,7 +315,7 @@ export async function akmSearch(input: {
     bundleDir: stashDir,
     source,
     ...bundlesField(namedSourceNames),
-    hits: allStashHits,
+    results: allStashHits,
     registryHits,
     tip: hasResults ? undefined : "No matching assets or registry entries were found.",
     warnings: warnings.length ? warnings : undefined,
@@ -360,7 +360,7 @@ export function narrowSourcesToName<T extends { registryId?: string; path: strin
  * Never blocks the caller; errors are silently ignored.
  *
  * Result count semantics:
- *   - `stashHitCount`: number of local stash hits (response.hits, source-only
+ *   - `stashHitCount`: number of local stash hits (response.results, source-only
  *     entries). Always 0 for registry-only searches.
  *   - `registryHitCount`: number of registry hits (response.registryHits).
  *     Only non-zero when source is "registry" or "all".
@@ -385,7 +385,7 @@ function logSearchEvent(
   const query = redactCredentialPatterns(rawQuery);
   // Emit a structured event to events.jsonl so workflow-trace consumers
   // detect akm search invocations without relying on stdout scraping.
-  const stashHits = response.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+  const stashHits = response.results.filter((h): h is SourceSearchHit => h.type !== "registry");
   // Include registry hit refs so a show following a registry-only search generates a select event
   const registryHitRefs = (response.registryHits ?? []).map((h) => `registry:${h.id}`);
   // Lets a later `select` name the search it came from, so metrics can dedupe
@@ -402,7 +402,7 @@ function logSearchEvent(
     // connection is opened here. Short busy timeout: telemetry must never stall
     // the search result behind a background write on state.db.
     const resolved = stashHits.slice(0, 50).flatMap((hit) => (hit.itemRef ? [{ ref: hit.itemRef, hit }] : []));
-    const stashHitCount = response.hits.length;
+    const stashHitCount = response.results.length;
     const registryHitCount = Array.isArray(response.registryHits) ? response.registryHits.length : 0;
     withStateDbTelemetry((stateDb) => {
       for (const { ref, hit } of resolved) {
@@ -415,7 +415,7 @@ function logSearchEvent(
         });
       }
       // Count registry hits separately so registry-only searches record a
-      // non-zero resultCount. response.hits is always [] when source="registry".
+      // non-zero resultCount. response.results is always [] when source="registry".
       insertUsageEvent(stateDb, {
         event_type: "search",
         query,

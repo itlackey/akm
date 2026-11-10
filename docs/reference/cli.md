@@ -1020,7 +1020,7 @@ event polling.
 akm workflow run workflows/ship-release --version 1.2.3
 akm workflow run workflows/review --files a.ts --files b.ts
 akm workflow run <run-id> --max-steps 3
-akm workflow run <run-id> --max-retries 2 --timeout 10m
+akm workflow run <run-id> --max-retries 2 --timeout-ms 600000
 akm workflow run <run-id> --skip-if-locked   # for scheduled runs: skip (exit 0) instead of failing on contention
 ```
 
@@ -1044,8 +1044,7 @@ run already has its parameters.
 | --- | --- |
 | `--max-steps <n>` | Stop once this many steps have finished, leaving a partial run active. Must be at least 1. |
 | `--max-retries <n>` | When a step fails, reopen the same run and retry the failed step up to this many additional times. Range: 0 through 100; default 0. Gate rejection and interruption are not retried. |
-| `--timeout <duration>` | Abort the whole invocation after `N`, `Nms`, `Ns`, or `Nm`; bare `N` is milliseconds. The active step remains resumable. |
-| `--new` | Deprecated, no effect (accepted through 0.10): a workflow ref always starts a new run. |
+| `--timeout-ms <ms>` | Abort the whole invocation after this many milliseconds. The active step remains resumable. |
 | `--skip-if-locked` | If another akm process is already driving this run (it holds the run's lock file: `RUN_LEASE_HELD`), when starting a ref an active run of that ref is held by a live process, or `state.db` is busy with another writer (`STATE_DB_CONTENDED`), skip gracefully (exit 0) instead of failing (exit 75, `TransientError`). The envelope reports `{ skipped: { reason: "lock-held" \| "state-db-contended", message } }`. Every other failure (a bad flag, an unresolvable target) still fails loudly regardless of this flag. Use for high-frequency scheduled runs so they don't pile up failures while a longer-running invocation is in progress — same family as `improve --skip-if-locked`. |
 
 **A ref always starts a new run.** `workflow run <ref>` never resumes: use
@@ -1061,7 +1060,7 @@ The result includes the current `run`, an `executed` step report list, a
 `gateRejection`, `aborted`, or `timedOut` markers. A failed run, rejected
 verification gate, timeout, or interrupt exits nonzero. `SIGINT` and `SIGTERM`
 map to 130 and 143; a timeout maps to exit 1. Reaching `--max-steps` with an
-active resumable run is successful. A `--timeout` that lands during the run's
+active resumable run is successful. A `--timeout-ms` that lands during the run's
 final bookkeeping is not reported as a timeout: a run that reached `completed`
 has nothing left to abort and nothing left to resume.
 
@@ -3895,7 +3894,7 @@ values) remain the non-CLI way a scheduled definition supplies its new-run
 parameter snapshot.
 
 **Workflow-task run bounds.** Top-level `timeout`, `maxSteps`, and
-`maxRetries` correspond to `akm workflow run --timeout`, `--max-steps`, and
+`maxRetries` correspond to `akm workflow run --timeout-ms`, `--max-steps`, and
 `--max-retries`. Unlike the interactive command, a scheduled workflow task gets
 a **default whole-run timeout of 6 hours**
 (`DEFAULT_WORKFLOW_TASK_TIMEOUT_MS`): nobody is at the terminal to Ctrl-C an

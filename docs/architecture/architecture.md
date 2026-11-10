@@ -722,7 +722,7 @@ Agent programs are reachable by two execution paths, both behind
 
 Long-lived mutable operations each take their own lock file, one `O_EXCL`
 create (`src/core/file-lock.ts`, `src/core/run-lock.ts`): index writers, improve
-and extract process locks, lockfile writers, the scheduler lock, and each
+and extract process locks, lockfile writers, and each
 workflow run's lock. A lock whose holder process is gone is reclaimed; nothing
 expires by age. There is no shared barrier or activity registry around them;
 `state.db` writers serialize on SQLite's own `BEGIN IMMEDIATE`.

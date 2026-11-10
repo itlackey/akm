@@ -485,37 +485,6 @@ export function buildProposePrompt(input: ProposePromptInput): string {
 }
 
 /**
- * Parse agent stdout into a proposal payload. The agent contract requires a
- * single JSON object; anything else is reported as a parse error so callers
- * can map to {@link AgentFailureReason} `parse_error`.
- *
- * Resilient to two common local-LLM failure modes:
- *  1. `<think>…</think>` blocks emitted before the JSON (stripped before parsing).
- *  2. Prose preamble / postamble around the JSON object (handled by `extractEmbeddedJson`).
- */
-export function parseAgentProposalPayload(stdout: string): AgentProposalPayload {
-  // Strip <think> blocks and fences, then attempt full parse with embedded fallback.
-  const trimmed = stripCodeFences(stripThinkBlocks(stdout)).trim();
-  if (!trimmed) throw new Error("agent produced empty output");
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(trimmed);
-  } catch (directErr) {
-    // Agent output contains prose before/after the JSON object (e.g. a local
-    // LLM that narrates before responding). Try extracting the first balanced
-    // top-level `{…}` from the text rather than failing immediately.
-    const embedded = parseEmbeddedJsonResponse<Record<string, unknown>>(trimmed);
-    if (!embedded) throw directErr;
-    parsed = embedded;
-  }
-
-  const verdict = validateProposalPayload(parsed);
-  if (!verdict.ok) throw new Error(verdict.errors.join("; "));
-  return verdict.value;
-}
-
-/**
  * The proposal in a parsed reply, or why the reply is not one: `ref` and
  * `content` must be non-empty strings. A malformed optional field is dropped,
  * never refused.

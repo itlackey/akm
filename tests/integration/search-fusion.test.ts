@@ -81,13 +81,13 @@ describe("fused search", () => {
 
     const result = await search("gizmo");
     expect(result.mode).toBe("semantic");
-    expect(result.hits.map((hit) => [hit.name, hit.whyMatched])).toEqual([
+    expect(result.results.map((hit) => [hit.name, hit.whyMatched])).toEqual([
       ["lexical", ["lexical rank 1", "vector rank 3"]],
       ["both", ["lexical rank 2", "vector rank 2"]],
       ["vector", ["vector rank 1"]],
     ]);
     const fused = (ranks: number[]) => Math.round(ranks.reduce((sum, rank) => sum + 1 / (RRF_K + rank), 0) * 1e6) / 1e6;
-    expect(result.hits.map((hit) => hit.score)).toEqual([fused([1, 3]), fused([2, 2]), fused([1])]);
+    expect(result.results.map((hit) => hit.score)).toEqual([fused([1, 3]), fused([2, 2]), fused([1])]);
   });
 
   test("sends the query to the embedder with its case and the model's query template", async () => {
@@ -130,7 +130,7 @@ describe("fused search", () => {
     });
     expect(Date.now() - started).toBeLessThan(2000);
     expect(result.mode).toBe("fts-fallback");
-    expect(result.hits.map((hit) => hit.name)).toEqual(["lexical"]);
+    expect(result.results.map((hit) => hit.name)).toEqual(["lexical"]);
     expect(result.warnings).toEqual([
       "Vector search unavailable: embedding endpoint http://127.0.0.1:9/v1/embeddings is unavailable (request timed out) — falling back to keyword search.",
     ]);
@@ -146,13 +146,15 @@ describe("fused search", () => {
     overrideSeam(_setEmbedderForTests, { embed: async () => [1, 0, 0, 0] });
 
     const first = await search("gizmo");
-    expect(first.hits.map((hit) => [hit.name, hit.whyMatched])).toEqual([
+    expect(first.results.map((hit) => [hit.name, hit.whyMatched])).toEqual([
       ["alpha", ["lexical rank 1", "vector rank 1"]],
       ["mid", ["lexical rank 2", "vector rank 2"]],
       ["zeta", ["lexical rank 3", "vector rank 3"]],
     ]);
     const second = await search("gizmo");
-    expect(second.hits.map((hit) => [hit.name, hit.score])).toEqual(first.hits.map((hit) => [hit.name, hit.score]));
+    expect(second.results.map((hit) => [hit.name, hit.score])).toEqual(
+      first.results.map((hit) => [hit.name, hit.score]),
+    );
   });
 
   test("keeps one hit per file path", async () => {
@@ -161,7 +163,7 @@ describe("fused search", () => {
     overrideSeam(_setEmbedderForTests, { embed: async () => [1, 0, 0, 0] });
 
     const result = await search("gizmo");
-    expect(result.hits.map((hit) => hit.name)).toEqual(["first"]);
+    expect(result.results.map((hit) => hit.name)).toEqual(["first"]);
   });
 
   // No word matches "gizmo", so the order below is the vector order alone.
@@ -175,7 +177,7 @@ describe("fused search", () => {
 
     const result = await search("gizmo");
     // Entries without content are never duplicates of each other.
-    expect(result.hits.map((hit) => hit.name)).toEqual(["original", "other", "blank-a", "blank-b"]);
+    expect(result.results.map((hit) => hit.name)).toEqual(["original", "other", "blank-a", "blank-b"]);
   });
 });
 
@@ -200,7 +202,7 @@ describe("curate over fused search", () => {
 
     expect(result.items).toHaveLength(1);
     // Curate keeps the fused order: its one item is the search's top hit.
-    const top = (await search("gizmo")).hits[0];
+    const top = (await search("gizmo")).results[0];
     expect(result.items[0] && "ref" in result.items[0] ? result.items[0].ref : undefined).toBe(top?.ref);
   });
 });

@@ -23,8 +23,8 @@
  * `TaskSourceV4Document` — this is not a bug this file should paper over:
  *
  *   - host-local activation has no task-source projection
- *     (D2-N5) — it is carried separately to the scheduler seam, which is
- *     Lane C's `scheduler-sync.ts` edit, not this function.
+ *     (D2-N5) — it is carried separately to the scheduler seam, which
+ *     `akm task dispatch` reads from the config, not from this function.
  *   - `inputs` (the document's typed input declarations) is NOT projected
  *     anywhere — input delivery is P2b (spec §0).
  *   - `schedule[i].inputs` (per-binding literal overrides) is NOT projected

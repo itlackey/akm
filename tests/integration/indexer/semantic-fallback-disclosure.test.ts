@@ -81,7 +81,7 @@ test("query-embedding failure preserves FTS results and returns one sanitized ft
       config,
     });
 
-    expect(result.hits.map((hit) => hit.ref)).toContain("knowledge/deploy-guide");
+    expect(result.results.map((hit) => hit.ref)).toContain("knowledge/deploy-guide");
     expect(result.mode).toBe("fts-fallback");
     expect(result.warnings).toEqual([
       "Vector search unavailable: cannot reach embedding endpoint http://127.0.0.1:1234/v1/embeddings (connection failed) — falling back to keyword search.",

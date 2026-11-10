@@ -8,10 +8,9 @@
  * docs/plans/specs/p2a-task-source-v4.md:530: only 1 of the 7 §3.6 "ROUTE"
  * call sites (`run/load-task.ts`) was exercised anywhere in the RED-phase
  * commit. `tests/integration/lint-task-yaml.test.ts` (F-2) and
- * `tests/tasks/scheduler-binding.test.ts` stay byte-unchanged, so this v4
- * coverage lands as a new file, and `scheduler-sync.ts:480` is covered
- * separately in tests/integration/tasks-scheduler-sync-v4.test.ts (B-07/B-38)
- * rather than duplicated here.
+ * the scheduler-binding tests stayed byte-unchanged, so this v4 coverage
+ * landed as a new file. (Those tests and `scheduler-sync.ts` are gone: one
+ * dispatch entry replaced the per-task bindings.)
  *
  * Each call site below is now routed through `parseTaskSource`, which
  * accepts exactly one version (spec docs/plans/specs/p4-deletions-closeout.md

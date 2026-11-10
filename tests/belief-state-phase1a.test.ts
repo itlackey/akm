@@ -187,7 +187,7 @@ describe("Phase 1A: matchBeliefFilter classification", () => {
       type: "memory",
       belief: "current",
     });
-    const currentNames = currentResult.hits.filter((hit) => hit.type !== "registry").map((hit) => hit.name);
+    const currentNames = currentResult.results.filter((hit) => hit.type !== "registry").map((hit) => hit.name);
     expect(currentNames).toContain("alpha-asserted.derived");
     expect(currentNames).not.toContain("alpha-deprecated.derived");
   });
@@ -230,7 +230,7 @@ describe("Phase 1A: matchBeliefFilter classification", () => {
       type: "memory",
       belief: "historical",
     });
-    const historicalNames = historicalResult.hits.filter((hit) => hit.type !== "registry").map((hit) => hit.name);
+    const historicalNames = historicalResult.results.filter((hit) => hit.type !== "registry").map((hit) => hit.name);
     expect(historicalNames).toContain("alpha-deprecated.derived");
     expect(historicalNames).not.toContain("alpha-asserted.derived");
   });

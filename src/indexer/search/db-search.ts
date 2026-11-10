@@ -195,7 +195,7 @@ export interface SearchLocalInput {
 }
 
 export async function searchLocal(input: SearchLocalInput): Promise<{
-  hits: SourceSearchHit[];
+  results: SourceSearchHit[];
   tip?: string;
   warnings?: string[];
   embedMs?: number;
@@ -229,7 +229,7 @@ export async function searchLocal(input: SearchLocalInput): Promise<{
   assertIndexPathReadable(dbPath);
   if (classifyPathAccess(dbPath).access === "absent") {
     return {
-      hits: [],
+      results: [],
       tip: "No search index available. Run 'akm index' to build one.",
       warnings: warnings.length > 0 ? warnings : undefined,
       mode: "keyword",
@@ -244,7 +244,7 @@ export async function searchLocal(input: SearchLocalInput): Promise<{
     const entryCount = getEntryCount(db);
     if (entryCount === 0) {
       return {
-        hits: [],
+        results: [],
         tip: "Index is empty. Run 'akm index' to populate it.",
         warnings: warnings.length > 0 ? warnings : undefined,
         mode: "keyword",
@@ -254,12 +254,12 @@ export async function searchLocal(input: SearchLocalInput): Promise<{
     const staleHint = buildStaleIndexHint(db);
     if (staleHint) warnings.push(staleHint);
 
-    const { hits, embedMs, rankMs, mode, semanticWarning, feedbackWarning } = await searchDatabase(db, input);
+    const { results, embedMs, rankMs, mode, semanticWarning, feedbackWarning } = await searchDatabase(db, input);
     if (semanticWarning) warnings.push(semanticWarning);
     if (feedbackWarning) warnings.push(feedbackWarning);
     return {
-      hits,
-      tip: hits.length === 0 ? emptyResultTip(db, input.searchType) : undefined,
+      results,
+      tip: results.length === 0 ? emptyResultTip(db, input.searchType) : undefined,
       warnings: warnings.length > 0 ? warnings : undefined,
       embedMs,
       rankMs,
@@ -278,7 +278,7 @@ async function searchDatabase(
   db: Database,
   input: SearchLocalInput,
 ): Promise<{
-  hits: SourceSearchHit[];
+  results: SourceSearchHit[];
   embedMs?: number;
   rankMs?: number;
   mode: SearchExecutionMode;
@@ -315,7 +315,7 @@ async function searchDatabase(
   const refPrefix = searchType === "any" ? parseRefPrefixQuery(query) : null;
   if (refPrefix) {
     return {
-      hits: await enumerateEntries({
+      results: await enumerateEntries({
         ...filterOptions,
         limit,
         prefer,
@@ -333,7 +333,7 @@ async function searchDatabase(
   // enumerate matching entries instead of returning nothing.
   if (ftsQueryTokens(query).length === 0) {
     return {
-      hits: await enumerateEntries({
+      results: await enumerateEntries({
         ...filterOptions,
         limit,
         prefer,
@@ -374,7 +374,7 @@ async function searchDatabase(
   const selected = selectFusedEntries(db, fused, limit, filterOptions);
   const rankMs = Date.now() - tRank0;
 
-  const hits = await Promise.all(
+  const results = await Promise.all(
     selected.map(({ candidate, row }) =>
       buildDbHit({
         entry: row.entry,
@@ -394,7 +394,7 @@ async function searchDatabase(
   );
 
   const mode: SearchExecutionMode = vector.warning ? "fts-fallback" : vector.neighbors ? "semantic" : "keyword";
-  return { embedMs, rankMs, hits, mode, semanticWarning: vector.warning, feedbackWarning: feedback.warning };
+  return { embedMs, rankMs, results, mode, semanticWarning: vector.warning, feedbackWarning: feedback.warning };
 }
 
 /**

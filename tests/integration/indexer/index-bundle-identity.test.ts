@@ -97,7 +97,7 @@ describe("full-index bundle identity", () => {
     await akmIndex({ stashDir: storage.stashDir, full: true });
 
     const result = await akmSearch({ query: "envprecedencemarker", skipLogging: true });
-    const ref = result.hits.flatMap((hit) => ("ref" in hit ? [hit.ref] : []))[0];
+    const ref = result.results.flatMap((hit) => ("ref" in hit ? [hit.ref] : []))[0];
     expect(ref).toContain("//knowledge/env-only");
     expect((await akmShowUnified({ ref: ref as string, skipLogging: true })).path).toBe(envPath);
   });
@@ -109,7 +109,7 @@ describe("full-index bundle identity", () => {
     await akmIndex({ stashDir: storage.stashDir, full: true });
 
     const result = await akmSearch({ query: "crossbundlemarker", skipLogging: true });
-    const refs = result.hits.flatMap((hit) => ("ref" in hit ? [hit.ref] : [])).sort();
+    const refs = result.results.flatMap((hit) => ("ref" in hit ? [hit.ref] : [])).sort();
     expect(refs).toEqual(["knowledge/shared", "team//knowledge/shared"]);
     expect(result.warnings).toContain(
       'Multiple bundles provide "knowledge/shared": primary, team. Unqualified refs resolve by configured bundle priority; use a bundle-qualified ref to select explicitly.',
@@ -144,7 +144,7 @@ describe("full-index bundle identity", () => {
       await akmIndex({ stashDir: storage.stashDir });
 
       const result = await akmSearch({ query: "crossbundlemarker", skipLogging: true });
-      const refs = result.hits.flatMap((hit) => ("ref" in hit ? [hit.ref] : [])).sort();
+      const refs = result.results.flatMap((hit) => ("ref" in hit ? [hit.ref] : [])).sort();
       expect(refs).toEqual(["knowledge/shared", "team//knowledge/shared"]);
     } finally {
       websiteSpy.mockRestore();
@@ -169,7 +169,7 @@ describe("full-index bundle identity", () => {
     await akmIndex({ stashDir: storage.stashDir });
 
     const result = await akmSearch({ query: "crossbundlemarker", skipLogging: true });
-    const refs = result.hits.flatMap((hit) => ("ref" in hit ? [hit.ref] : [])).sort();
+    const refs = result.results.flatMap((hit) => ("ref" in hit ? [hit.ref] : [])).sort();
     expect(refs).toEqual(["knowledge/shared", "team//knowledge/shared"]);
   });
 
@@ -234,19 +234,19 @@ describe("full-index bundle identity", () => {
 
         const updated = await akmSearch({ query: "healthyupdatedmarker", skipLogging: true });
         expect(
-          updated.hits.flatMap((hit) => ("ref" in hit ? [hit.ref] : []).map((ref) => ref.split("#", 1)[0])),
+          updated.results.flatMap((hit) => ("ref" in hit ? [hit.ref] : []).map((ref) => ref.split("#", 1)[0])),
         ).toContain("knowledge/healthy");
         const added = await akmSearch({ query: "newhealthysourcemarker", skipLogging: true });
         expect(
-          added.hits.flatMap((hit) => ("ref" in hit ? [hit.ref] : []).map((ref) => ref.split("#", 1)[0])),
+          added.results.flatMap((hit) => ("ref" in hit ? [hit.ref] : []).map((ref) => ref.split("#", 1)[0])),
         ).toContain("fresh//knowledge/new-source");
         const preserved = await akmSearch({ query: "crossbundlemarker from team", skipLogging: true });
         expect(
-          preserved.hits.flatMap((hit) => ("ref" in hit ? [hit.ref] : []).map((ref) => ref.split("#", 1)[0])),
+          preserved.results.flatMap((hit) => ("ref" in hit ? [hit.ref] : []).map((ref) => ref.split("#", 1)[0])),
         ).toContain("team//knowledge/shared");
         const removed = await akmSearch({ query: "removedhealthymarker", skipLogging: true });
         expect(
-          removed.hits.flatMap((hit) => ("ref" in hit ? [hit.ref] : []).map((ref) => ref.split("#", 1)[0])),
+          removed.results.flatMap((hit) => ("ref" in hit ? [hit.ref] : []).map((ref) => ref.split("#", 1)[0])),
         ).not.toContain("knowledge/removed");
       } finally {
         websiteSpy.mockRestore();
@@ -280,31 +280,31 @@ describe("full-index bundle identity", () => {
     }
 
     const healthy = await akmSearch({ query: "healthywhileincompletemarker", skipLogging: true });
-    expect(healthy.hits.flatMap((hit) => ("ref" in hit ? [hit.ref] : []).map((ref) => ref.split("#", 1)[0]))).toContain(
-      "knowledge/healthy",
-    );
+    expect(
+      healthy.results.flatMap((hit) => ("ref" in hit ? [hit.ref] : []).map((ref) => ref.split("#", 1)[0])),
+    ).toContain("knowledge/healthy");
     const old = await akmSearch({ query: "incompletesourceoldmarker", skipLogging: true });
-    expect(old.hits.flatMap((hit) => ("ref" in hit ? [hit.ref] : []).map((ref) => ref.split("#", 1)[0]))).toContain(
+    expect(old.results.flatMap((hit) => ("ref" in hit ? [hit.ref] : []).map((ref) => ref.split("#", 1)[0]))).toContain(
       "team//knowledge/good",
     );
     const notPartiallyUpdated = await akmSearch({ query: "incompletesourcenewmarker", skipLogging: true });
     expect(
-      notPartiallyUpdated.hits.flatMap((hit) => ("ref" in hit ? [hit.ref] : []).map((ref) => ref.split("#", 1)[0])),
+      notPartiallyUpdated.results.flatMap((hit) => ("ref" in hit ? [hit.ref] : []).map((ref) => ref.split("#", 1)[0])),
     ).not.toContain("team//knowledge/good");
     const deferredRemoval = await akmSearch({ query: "incompleteremovedmarker", skipLogging: true });
     expect(
-      deferredRemoval.hits.flatMap((hit) => ("ref" in hit ? [hit.ref] : []).map((ref) => ref.split("#", 1)[0])),
+      deferredRemoval.results.flatMap((hit) => ("ref" in hit ? [hit.ref] : []).map((ref) => ref.split("#", 1)[0])),
     ).toContain("team//knowledge/removed");
 
     await akmIndex({ stashDir: storage.stashDir });
 
     const updated = await akmSearch({ query: "incompletesourcenewmarker", skipLogging: true });
-    expect(updated.hits.flatMap((hit) => ("ref" in hit ? [hit.ref] : []).map((ref) => ref.split("#", 1)[0]))).toContain(
-      "team//knowledge/good",
-    );
+    expect(
+      updated.results.flatMap((hit) => ("ref" in hit ? [hit.ref] : []).map((ref) => ref.split("#", 1)[0])),
+    ).toContain("team//knowledge/good");
     const removed = await akmSearch({ query: "incompleteremovedmarker", skipLogging: true });
     expect(
-      removed.hits.flatMap((hit) => ("ref" in hit ? [hit.ref] : []).map((ref) => ref.split("#", 1)[0])),
+      removed.results.flatMap((hit) => ("ref" in hit ? [hit.ref] : []).map((ref) => ref.split("#", 1)[0])),
     ).not.toContain("team//knowledge/removed");
   });
 
@@ -328,7 +328,7 @@ describe("full-index bundle identity", () => {
     await akmIndex({ stashDir: storage.stashDir, full: true });
 
     const result = await akmSearch({ query: "escapedrootscanmarker", skipLogging: true });
-    expect(result.hits).toEqual([]);
+    expect(result.results).toEqual([]);
   });
 
   test("an existing unresolved placeholder cannot wipe the prior source snapshot", async () => {
@@ -362,6 +362,6 @@ describe("full-index bundle identity", () => {
     await akmIndex({ stashDir: unresolvedPath, full: true });
 
     const retained = await akmSearch({ query: "unresolvedplaceholderretainedmarker", skipLogging: true });
-    expect(retained.hits.flatMap((hit) => ("ref" in hit ? [hit.ref] : []))).toContain("retained");
+    expect(retained.results.flatMap((hit) => ("ref" in hit ? [hit.ref] : []))).toContain("retained");
   });
 });

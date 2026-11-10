@@ -58,7 +58,7 @@ describe("search and state.db", () => {
     expect(fs.existsSync(dbPath)).toBe(false);
 
     const result = await search();
-    expect(result.hits.length).toBeGreaterThan(0);
+    expect(result.results.length).toBeGreaterThan(0);
 
     expect(fs.existsSync(dbPath)).toBe(false);
   });

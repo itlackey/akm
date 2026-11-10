@@ -24,8 +24,6 @@ warning that names their ids and the `akm workflow run <id>` /
 `akm workflow abandon <id>` commands. Starting is never refused.
 `akm workflow resume <id>` is only for a blocked or failed run: it re-activates
 the run so `akm workflow run <id>` can continue it.
-`--new` is a deprecated no-op (a ref always starts a new run), kept through
-0.10 so existing scripts keep working.
 
 Every new run compiles its source and freezes the plan (`irVersion: 8`) before
 publishing the run. A workflow ref is a Markdown `.md` source.
@@ -33,7 +31,7 @@ publishing the run. A workflow ref is a Markdown `.md` source.
 ```sh
 akm workflow run workflows/ship-release --version 1.2.3
 akm workflow run workflows/review --changed_files a.ts --changed_files b.ts
-akm workflow run <run-id> --max-retries 2 --timeout 10m
+akm workflow run <run-id> --max-retries 2 --timeout-ms 600000
 ```
 
 Parameters are accepted on every ref start. They cannot be combined with a run
@@ -48,8 +46,7 @@ active run rejects parameter flags.
 
 `--max-steps <n>` leaves a partial run active after at most `n` steps.
 `--max-retries <n>` retries a failed step on the same run up to `n` additional
-times. `--timeout <duration>` bounds the whole invocation and
-accepts `N`, `Nms`, `Ns`, or `Nm`; bare `N` is milliseconds. A timeout or
+times. `--timeout-ms <ms>` bounds the whole invocation. A timeout or
 signal abort releases the run's lock without advancing the active step, so the
 run remains resumable. Failed, gate-rejected, timed-out, and interrupted runs
 exit nonzero.

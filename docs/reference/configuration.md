@@ -322,7 +322,7 @@ default connection. The npm package and the standalone binary do the same.
   own runtime does this; a harness is your program, with whatever limits it has.
 - A run that keeps making different calls is not stopped by that. Its timeout
   bounds it: the connection's `timeoutMs`, one the run is given (`akm agent
-  --timeout-ms`, `akm workflow run --timeout`, a workflow unit's `timeout`) or,
+  --timeout-ms`, `akm workflow run --timeout-ms`, a workflow unit's `timeout`) or,
   in a scheduled task, the task's `timeout:` (six hours when unset). With none,
   as for `akm agent` and `akm workflow run` by default, it runs until it
   finishes.

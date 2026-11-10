@@ -70,7 +70,7 @@ for (const mode of ["off", "auto"] as const) {
         beliefFilter: "historical",
         config: { defaultBundle: "stash", semanticSearchMode: mode },
       });
-      expect(result.hits.map((hit) => hit.ref)).toEqual(["selected//knowledge/same-name"]);
+      expect(result.results.map((hit) => hit.ref)).toEqual(["selected//knowledge/same-name"]);
       expect(result.mode).toBe(mode === "off" ? "keyword" : "semantic");
     }
   });

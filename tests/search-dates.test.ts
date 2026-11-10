@@ -65,7 +65,7 @@ async function search(stash: string, input: Parameters<typeof akmSearch>[0]) {
 }
 
 function hitNames(result: Awaited<ReturnType<typeof akmSearch>>): string[] {
-  return result.hits.map((hit) => ("name" in hit ? String(hit.name) : ""));
+  return result.results.map((hit) => ("name" in hit ? String(hit.name) : ""));
 }
 
 /** Memories that all match "gateway", dated differently. */
@@ -86,7 +86,7 @@ function writeDatedStash(stash: string): void {
 describe("date fields on search hits", () => {
   test("observed, created, updated and expires are returned as written", async () => {
     const stash = await indexStash(writeDatedStash);
-    const { hits } = await search(stash, { query: "gateway", limit: 20 });
+    const { results: hits } = await search(stash, { query: "gateway", limit: 20 });
     const byName = new Map(hits.map((hit) => [hit.name, hit as unknown as Record<string, unknown>]));
     const early = byName.get("observed-early");
     expect(early?.observed).toBe("2026-01-10");
@@ -97,13 +97,13 @@ describe("date fields on search hits", () => {
 
   test("the legacy observed_at spelling fills `observed`", async () => {
     const stash = await indexStash(writeDatedStash);
-    const { hits } = await search(stash, { query: "gateway", limit: 20 });
+    const { results: hits } = await search(stash, { query: "gateway", limit: 20 });
     expect((hits.find((hit) => hit.name === "legacy-observed") as { observed?: string }).observed).toBe("2026-03-03");
   });
 
   test("a hit omits the dates it does not have, and a value that is not a date is not indexed", async () => {
     const stash = await indexStash(writeDatedStash);
-    const { hits } = await search(stash, { query: "gateway", limit: 20 });
+    const { results: hits } = await search(stash, { query: "gateway", limit: 20 });
     for (const name of ["undated", "bad-date"]) {
       const hit = hits.find((candidate) => candidate.name === name) as unknown as Record<string, unknown>;
       expect(hit).toBeDefined();
@@ -118,7 +118,7 @@ describe("date fields on search hits", () => {
     const stash = await indexStash((dir) =>
       writeMemory(dir, "stamped", { observed: "'2026-04-01T09:30:00Z'" }, "gateway stamped"),
     );
-    const { hits } = await search(stash, { query: "gateway" });
+    const { results: hits } = await search(stash, { query: "gateway" });
     expect((hits[0] as { observed?: string }).observed).toBe("2026-04-01T09:30:00Z");
   });
 });

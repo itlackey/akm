@@ -5,8 +5,8 @@
 /**
  * #910: exercises the cron backend's REAL exec path (`defaultCronExec`,
  * which shells out via `node:child_process.spawnSync("crontab", ...)`) —
- * not the in-memory `CronExec` mock the rest of `tasks-cron-backend.test.ts`
- * injects. This is the only way to prove `spawnSync`'s ENOENT is actually
+ * not the in-memory `CronExec` mock the other cron backend tests
+ * inject. This is the only way to prove `spawnSync`'s ENOENT is actually
  * detected and distinguished from a fake `crontab` binary on PATH that
  * merely exits nonzero, so it belongs under `tests/integration/` per the
  * "spawns a real process" rule rather than

@@ -201,7 +201,7 @@ export type NotFoundErrorCode =
  * imperative. Returning undefined means "no canned hint".
  */
 const CONFIG_HINTS: Partial<Record<ConfigErrorCode, string>> = {
-  STASH_DIR_NOT_FOUND: "Run `akm setup` to create and configure your bundle, or configure a defaultBundle path.",
+  STASH_DIR_NOT_FOUND: "Run `akm bundle create` to create your bundle, or configure a defaultBundle path.",
   STASH_DIR_NOT_A_DIRECTORY:
     "The configured default bundle path exists but isn't a directory. Update it to point at a folder.",
   STASH_DIR_UNREADABLE: "Check the path exists and your user has read permission, or update the default bundle path.",

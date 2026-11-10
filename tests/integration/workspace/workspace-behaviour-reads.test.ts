@@ -628,26 +628,28 @@ describe("reads", () => {
     await seed();
     const viaOp = await out(assets.search({ q: "deploy", limit: 10 }));
     const direct = await akmSearch({ query: "deploy", limit: 10, readOnly: true });
-    expect(viaOp.hits.map((h: { ref: string }) => h.ref)).toEqual(direct.hits.map((h) => (h as { ref: string }).ref));
-    expect(viaOp.hits.length).toBeGreaterThanOrEqual(2);
+    expect(viaOp.results.map((h: { ref: string }) => h.ref)).toEqual(
+      direct.results.map((h) => (h as { ref: string }).ref),
+    );
+    expect(viaOp.results.length).toBeGreaterThanOrEqual(2);
 
     // ...and the same refs `akm search` prints.
     const cli = await runCliCapture(["search", "deploy", "--limit", "10", "--format", "json"]);
     const cliRefs = (JSON.parse(cli.stdout) as { results: Array<{ ref: string }> }).results.map((h) => h.ref);
-    expect(viaOp.hits.map((h: { ref: string }) => h.ref)).toEqual(cliRefs);
+    expect(viaOp.results.map((h: { ref: string }) => h.ref)).toEqual(cliRefs);
 
     // A blank scope value is omitted, not "without the key".
     const blank = await out(assets.search({ q: "deploy", limit: 10, scope: { channel: "" } }));
-    expect(blank.hits.map((h: { ref: string }) => h.ref)).toEqual(viaOp.hits.map((h: { ref: string }) => h.ref));
+    expect(blank.results.map((h: { ref: string }) => h.ref)).toEqual(viaOp.results.map((h: { ref: string }) => h.ref));
 
     // A non-string value is omitted too, never thrown on.
     const odd = await out(assets.search({ q: "deploy", limit: 10, scope: { channel: 5, user: [null, " "] } as never }));
-    expect(odd.hits.map((h: { ref: string }) => h.ref)).toEqual(viaOp.hits.map((h: { ref: string }) => h.ref));
+    expect(odd.results.map((h: { ref: string }) => h.ref)).toEqual(viaOp.results.map((h: { ref: string }) => h.ref));
 
     const typed = await out(assets.search({ q: "deploy", type: "knowledge" }));
-    expect(typed.hits.every((h: { type: string }) => h.type === "knowledge")).toBe(true);
+    expect(typed.results.every((h: { type: string }) => h.type === "knowledge")).toBe(true);
     const named = await out(assets.search({ q: "deploy", bundle: "stash" }));
-    expect(named.hits.length).toBeGreaterThan(0);
+    expect(named.results.length).toBeGreaterThan(0);
     await expectUsage(() => assets.search({ q: "deploy", bundle: "nope" }));
   });
 

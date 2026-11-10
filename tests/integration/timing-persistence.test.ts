@@ -50,7 +50,7 @@ describe("timing persistence", () => {
   test("the search summary usage row records totalMs", async () => {
     await akmIndex({ stashDir: storage.stashDir, full: true });
     const response = await akmSearch({ query: "timing", source: "local" });
-    expect(response.hits.length).toBeGreaterThan(0);
+    expect(response.results.length).toBeGreaterThan(0);
 
     const rows = readStateRows<{ metadata: string }>(
       "SELECT metadata FROM usage_events WHERE event_type = 'search' AND entry_ref IS NULL",

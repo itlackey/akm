@@ -713,7 +713,7 @@ describe("R-015: akm bundle update --all with mixed plain and managed sources", 
       },
     });
     await akmIndex({ stashDir, full: true });
-    expect((await akmSearch({ query: marker, skipLogging: true })).hits).toHaveLength(1);
+    expect((await akmSearch({ query: marker, skipLogging: true })).results).toHaveLength(1);
     fs.rmSync(secondaryRoot, { recursive: true, force: true });
     return secondaryRoot;
   }
@@ -742,8 +742,8 @@ describe("R-015: akm bundle update --all with mixed plain and managed sources", 
 
     expect(result.index.mode).toBe("incremental");
     expect(result.plainSynced).toContainEqual({ id: "local-fs", kind: "filesystem", ref: fsDir });
-    expect((await akmSearch({ query: "currentnarwhalmarker", skipLogging: true })).hits).toHaveLength(1);
-    expect((await akmSearch({ query: "obsoletewalrusmarker", skipLogging: true })).hits).toHaveLength(0);
+    expect((await akmSearch({ query: "currentnarwhalmarker", skipLogging: true })).results).toHaveLength(1);
+    expect((await akmSearch({ query: "obsoletewalrusmarker", skipLogging: true })).results).toHaveLength(0);
   });
 
   test("targeted filesystem update reports an incomplete scan without claiming reconciliation", async () => {
@@ -761,7 +761,7 @@ describe("R-015: akm bundle update --all with mixed plain and managed sources", 
       code: "SOURCE_SCAN_INCOMPLETE",
       reason: expect.stringContaining("not scanned completely"),
     });
-    expect((await akmSearch({ query: marker, skipLogging: true })).hits).toHaveLength(1);
+    expect((await akmSearch({ query: marker, skipLogging: true })).results).toHaveLength(1);
   });
 
   test("filesystem update --all reports an incomplete scan without claiming reconciliation", async () => {
@@ -779,7 +779,7 @@ describe("R-015: akm bundle update --all with mixed plain and managed sources", 
       code: "SOURCE_SCAN_INCOMPLETE",
       reason: expect.stringContaining("not scanned completely"),
     });
-    expect((await akmSearch({ query: marker, skipLogging: true })).hits).toHaveLength(1);
+    expect((await akmSearch({ query: marker, skipLogging: true })).results).toHaveLength(1);
   });
 
   test("filters disabled managed and plain sources from --all without changing explicit targeting", async () => {

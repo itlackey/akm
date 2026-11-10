@@ -67,7 +67,7 @@ async function search(input: Parameters<typeof akmSearch>[0]): Promise<SourceSea
     skipLogging: true,
     ...input,
   });
-  return result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+  return result.results.filter((h): h is SourceSearchHit => h.type !== "registry");
 }
 
 const PROJECTA_MEMORIES = ["projecta/auth-tip", "projecta/deploy-note", "projecta/nested/db-tip"] as const;
@@ -363,7 +363,7 @@ describe("akm search conceptId-prefix enumeration (D4)", () => {
       source: "local",
       skipLogging: true,
     });
-    const hits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+    const hits = result.results.filter((h): h is SourceSearchHit => h.type !== "registry");
     expect(hits).toHaveLength(0);
     expect(result.tip ?? "").toContain("No matching assets");
   });
@@ -399,7 +399,7 @@ describe("akm search conceptId-prefix enumeration (D4)", () => {
       source: "local",
       skipLogging: true,
     });
-    const hits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+    const hits = result.results.filter((h): h is SourceSearchHit => h.type !== "registry");
 
     // No fixture carries a "memor…" token in an indexed field, so the retired
     // spelling can only come back empty.

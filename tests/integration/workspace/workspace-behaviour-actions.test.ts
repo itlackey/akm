@@ -90,8 +90,8 @@ describe("reads that follow a document", () => {
     const current = await out(assets.search({ q: "gateway", type: "memory", scope }));
     const historical = await out(assets.search({ q: "gateway", type: "memory", belief: "historical", scope }));
     const all = await out(assets.search({ q: "gateway", type: "memory", belief: "all", scope }));
-    expect(current.hits.map((h: Json) => h.name)).toEqual(["current"]);
-    expect(historical.hits.map((h: Json) => h.name)).toEqual(["old"]);
+    expect(current.results.map((h: Json) => h.name)).toEqual(["current"]);
+    expect(historical.results.map((h: Json) => h.name)).toEqual(["old"]);
     const direct = await akmSearch({
       query: "gateway",
       type: "memory",
@@ -100,7 +100,7 @@ describe("reads that follow a document", () => {
       filters: { user: "alice" },
       readOnly: true,
     });
-    expect(all.hits.map((h: Json) => h.ref)).toEqual(direct.hits.flatMap((h) => ("ref" in h ? [h.ref] : [])));
+    expect(all.results.map((h: Json) => h.ref)).toEqual(direct.results.flatMap((h) => ("ref" in h ? [h.ref] : [])));
     await expectUsage(() => assets.search({ q: "", belief: "invalid" }));
   });
 
@@ -439,7 +439,7 @@ describe("bundle lifecycle", () => {
     expect((await out(bundles.list())).bundles.map((b: Json) => b.name)).toContain("extra");
     // The asset view reads a local-dir bundle live from disk, so the update is observed through the index.
     const indexed = async () =>
-      (await out(assets.search({ q: "zephyrrevision", bundle: "extra" }))).hits.map((h: Json) => h.ref);
+      (await out(assets.search({ q: "zephyrrevision", bundle: "extra" }))).results.map((h: Json) => h.ref);
     fs.writeFileSync(path.join(source, "knowledge", "extra.md"), "# Extra\nUpdated zephyrrevision.\n");
     expect(await indexed()).toEqual([]);
     await bundles.update({ bundle: "extra" });
@@ -596,7 +596,7 @@ describe("documents", () => {
     expect(saved).toContain("# Keep comment\ntitle: 'Live title'\ncustom: [keep, me]");
     expect(saved).toContain("quasarprocedure verified");
     expect(fs.readFileSync(knowledge("guide.md"), "utf8")).toBe(GUIDE);
-    expect((await out(assets.search({ q: "quasarprocedure" }))).hits.map((h: Json) => h.ref)).toContain(
+    expect((await out(assets.search({ q: "quasarprocedure" }))).results.map((h: Json) => h.ref)).toContain(
       "knowledge/review/guide",
     );
     const indexBefore = dbSnapshot(getDbPath());

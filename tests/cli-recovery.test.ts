@@ -68,7 +68,7 @@ describe("empty search with a misspelled --type", () => {
     expect(tip).toContain("--type knowledge");
     expect(tip).not.toContain("stash");
     const r = await akmSearch({ query: "deploy", type: "knowledge", source: "local", skipLogging: true });
-    expect(r.hits.length).toBeGreaterThan(0);
+    expect(r.results.length).toBeGreaterThan(0);
   });
 
   test("an unrelated type keeps the generic tip", async () => {

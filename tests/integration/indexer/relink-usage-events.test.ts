@@ -6,10 +6,10 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import path from "node:path";
 import { deriveEntryProvenance } from "../../../src/indexer/installations";
-import { ensureUsageEventsSchema } from "../../../src/indexer/usage/usage-events";
 import type { Database as AkmDatabase } from "../../../src/storage/database";
 import { openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { relinkUsageEvents, upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
+import { ensureUsageEventsSchema } from "../../_helpers/usage-events";
 
 /**
  * Focused tests for {@link relinkUsageEvents}.

@@ -11,12 +11,10 @@
  * so production callers did not all need rewiring in the same change-set.
  * P4 (docs/plans/specs/p4-deletions-closeout.md §3.2.7, row B-25, F-A2.15)
  * DELETED that shim once every caller was rewired to import `prepare/prepare`
- * directly — today's three callers are `src/tasks/run/load-task.ts`,
- * `src/tasks/scheduler-sync.ts`, and `src/workflows/freeze/targets/task.ts`
- * (`resolveTaskForComposition`/`taskDispatch`; `src/workflows/ir/source-freeze-v4.ts`,
- * the file this comment used to cite, is itself a P4-deleted shim, row B-27).
+ * directly. Its callers are `src/tasks/run/load-task.ts` and
+ * `src/commands/tasks/tasks.ts` (`task explain`).
  *
- * This file pins that each caller's EXACT context shape — as literally
+ * This file pins that `load-task.ts`'s EXACT context shape — as literally
  * constructed at its call site today — produces the expected
  * `PreparedTaskExecution` once routed through `prepare/prepare`'s entry
  * point. The context objects are typed against `PrepareTaskExecutionContext`
@@ -38,7 +36,7 @@
  * suites and this phase's Lane A/C tests). Each stub below throws if invoked,
  * so an accidental call is itself a loud test failure.
  *
- * STRUCTURAL RATCHET: the three caller-shape tests above pin BEHAVIOR only.
+ * STRUCTURAL RATCHET: the caller-shape test above pins BEHAVIOR only.
  * They say nothing about whether `src/tasks/runtime-v3.ts` still exists as a
  * second copy of this logic for some caller to have been missed rewiring off
  * of. The check below closes that gap — mirrors
@@ -84,7 +82,7 @@ function shellDocument(root: string) {
   return projectTaskSourceV4(parsed.v4);
 }
 
-describe("prepare/prepare.ts's entry — three-caller shape parity (P1b spec §4.1/§4.2, D4; P4 shim deletion)", () => {
+describe("prepare/prepare.ts's entry — caller shape parity (P1b spec §4.1/§4.2, D4; P4 shim deletion)", () => {
   test("run/load-task.ts's context shape — bundleName/bundleRoot/config + resolveAsset({bundle,type,name})", async () => {
     const root = sandboxRoot();
     const document = shellDocument(root);
@@ -99,60 +97,6 @@ describe("prepare/prepare.ts's entry — three-caller shape parity (P1b spec §4
       // invoked for a run: task — a call here is itself a failure.
       resolveAsset: async ({ bundle, type, name }) => {
         throw new Error(`unexpected resolveAsset(${bundle}, ${type}, ${name}) while preparing a run: task`);
-      },
-    };
-
-    const prepared = await prepareTaskExecution(document, context);
-    expect(prepared).toMatchObject({ kind: "shell", command: "printf ok" });
-  });
-
-  test("scheduler-sync.ts's context shape — readFile + commandSourceLoader, no resolveAsset in the common case", async () => {
-    const root = sandboxRoot();
-    const document = shellDocument(root);
-    const bundleName = "bundle";
-    const context: PrepareTaskExecutionContext = {
-      taskId: "nightly",
-      taskRef: makeBundleRef(bundleName, "tasks/nightly"),
-      bundleName,
-      bundleRoot: root,
-      config,
-      // scheduler-sync.ts's readFile/commandSourceLoader. Neither is invoked
-      // for a run: task — a call here is itself a failure.
-      readFile: (file, bundleRootArg) => {
-        throw new Error(`unexpected readFile(${file}, ${bundleRootArg}) while preparing a run: task`);
-      },
-      commandSourceLoader: (ref, kind) => {
-        throw new Error(`unexpected commandSourceLoader(${ref}, ${kind}) while preparing a run: task`);
-      },
-    };
-
-    const prepared = await prepareTaskExecution(document, context);
-    expect(prepared).toMatchObject({ kind: "shell", command: "printf ok" });
-  });
-
-  test("workflows/freeze/targets/task.ts's context shape — commandSourceLoader + resolveAsset({ref,type}) + a defaulted readFile", async () => {
-    const root = sandboxRoot();
-    const document = shellDocument(root);
-    const bundleName = "bundle";
-    const context: PrepareTaskExecutionContext = {
-      taskId: "nightly",
-      taskRef: makeBundleRef(bundleName, "tasks/nightly"),
-      bundleName,
-      bundleRoot: root,
-      config,
-      commandSourceLoader: (ref, kind) => {
-        throw new Error(`unexpected commandSourceLoader(${ref}, ${kind}) while preparing a run: task`);
-      },
-      // taskDispatch's resolveAsset destructures {ref, type} (ignoring
-      // bundle/name) and always returns the {file, bundleRoot} object form,
-      // never the bare-string form of the union return type.
-      resolveAsset: async ({ ref, type }) => {
-        throw new Error(`unexpected resolveAsset(${ref}, ${type}) while preparing a run: task`);
-      },
-      // taskDispatch's readFile defaults its second parameter to owned.root
-      // via a default parameter, not `??`.
-      readFile: (file, bundleRootArg = root) => {
-        throw new Error(`unexpected readFile(${file}, ${bundleRootArg}) while preparing a run: task`);
       },
     };
 

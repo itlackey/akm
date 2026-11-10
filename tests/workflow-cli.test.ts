@@ -186,10 +186,10 @@ describe("workflow CLI", () => {
     ]);
   });
 
-  test("--timeout tags an unfinished run, and never a run that reached completed", async () => {
+  test("--timeout-ms tags an unfinished run, and never a run that reached completed", async () => {
     // An exec unit needs no engine, so both runs below execute for real.
     await createWorkflow("wedged", execWorkflow(["bun", "-e", "await Bun.sleep(30000)"]));
-    const wedged = await runCliCapture(["workflow", "run", "workflows/wedged", "--timeout=150ms"]);
+    const wedged = await runCliCapture(["workflow", "run", "workflows/wedged", "--timeout-ms=150"]);
     expect(wedged.code).toBe(1);
     // #918: `ok` must mirror the same failed/blocked/gateRejection/aborted
     // predicate that already drives the nonzero exit code — an aborted run
@@ -211,7 +211,7 @@ describe("workflow CLI", () => {
 
     // Re-running a completed run is a no-op that returns `done`; a deadline
     // that fires around it describes nothing an operator could resume.
-    const rerun = await runCliCapture(["workflow", "run", finished.id, "--timeout=1ms"]);
+    const rerun = await runCliCapture(["workflow", "run", finished.id, "--timeout-ms=1"]);
     expect(rerun.code).toBe(0);
     const rendered = JSON.parse(rerun.stdout) as { run: { status: string }; done?: true; timedOut?: true };
     expect(rendered.run.status).toBe("completed");
@@ -294,7 +294,7 @@ describe("workflow CLI", () => {
     const args = Object.keys(workflow?.subCommands?.run?.args ?? {});
     expect(args).toContain("max-steps");
     expect(args).toContain("max-retries");
-    expect(args).toContain("timeout");
+    expect(args).toContain("timeout-ms");
     expect(args).not.toContain("params");
   });
 });

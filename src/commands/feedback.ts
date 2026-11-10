@@ -11,7 +11,7 @@ import { assembleAsset, serializeFrontmatter } from "../core/asset/asset-seriali
 import { parseFrontmatter, parseFrontmatterBlock, spliceFrontmatterLine } from "../core/asset/frontmatter";
 import type { AssetRef } from "../core/asset/resolve-ref";
 import { isWithin, resolveStashDir, safeRealpath, writeFileAtomic } from "../core/common";
-import { loadConfig } from "../core/config/config";
+import { type AkmConfig, loadConfig } from "../core/config/config";
 import { ConfigError, NotFoundError, UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
 import { isPathAbsent } from "../core/path-access";
@@ -521,6 +521,244 @@ export interface FeedbackInput {
   appliedTo?: string;
 }
 
+/** What `--replace/--with`, `--source`, `--superseded-by` and `--outdated` ask of the asset's text, read from the input. */
+interface FixRequest {
+  pairs: Array<{ old: string; new: string }>;
+  source: string | undefined;
+  supersededBy: string | undefined;
+  outdated: boolean;
+  hasMark: boolean;
+}
+
+function readFixRequest(input: FeedbackInput): FixRequest {
+  const supersededBy = input.supersededBy;
+  const outdated = input.outdated === true;
+  return {
+    pairs: (input.fix ?? []).map((pair) => ({ old: pair.replace, new: pair.with })),
+    source: input.source?.trim() || undefined,
+    supersededBy,
+    outdated,
+    hasMark: supersededBy !== undefined || outdated,
+  };
+}
+
+/** A fix: an exact edit of the asset's text, a mark of its history (--superseded-by or --outdated), or both. */
+function assertFixFlags(signal: FeedbackInput["signal"], reason: string | undefined, request: FixRequest): void {
+  const { pairs, source, supersededBy, outdated, hasMark } = request;
+  if (pairs.length === 0 && source === undefined && !hasMark) return;
+  if (signal !== "negative") {
+    throw new UsageError(
+      "--replace, --with, --source, --superseded-by and --outdated are only for negative feedback.",
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  if (supersededBy !== undefined && outdated) {
+    throw new UsageError(
+      "--superseded-by names the asset that replaces this one and --outdated says none does; use one.",
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  if (supersededBy !== undefined && !supersededBy.trim()) {
+    throw new UsageError(
+      "--superseded-by needs the ref of the asset that replaces this one.",
+      "MISSING_REQUIRED_ARGUMENT",
+    );
+  }
+  if (pairs.length === 0 && !hasMark) {
+    throw new UsageError("Each --replace needs one --with (got 0 --replace and 0 --with).", "INVALID_FLAG_VALUE");
+  }
+  if (!source) {
+    throw new UsageError(
+      "A fix needs --source: the URL, command or file that shows the correct fact.",
+      "MISSING_REQUIRED_ARGUMENT",
+    );
+  }
+  if (!reason?.trim()) {
+    throw new UsageError("A fix needs --reason: say what is wrong.", "MISSING_REQUIRED_ARGUMENT");
+  }
+}
+
+function assertNegativeReason(ref: string, reason: string | undefined): void {
+  if (reason?.trim()) return;
+  // F-3 / #384: Default requireReason is now true. Load config to allow
+  // operators to opt out via feedback.requireReason: false in config.json.
+  const requireReason = loadConfig().feedback?.requireReason ?? true;
+  if (requireReason) {
+    throw new UsageError(
+      "Negative feedback requires --reason: say what is wrong and what should change. " +
+        "Set feedback.requireReason: false in config.json to downgrade to a warning.",
+      "MISSING_REQUIRED_ARGUMENT",
+      `Hint: akm feedback ${ref} --negative --reason "<what is wrong and what should change>"`,
+    );
+  }
+  warn("Warning: negative feedback without --reason says nothing about what is wrong.");
+}
+
+interface PreparedFix {
+  content: string;
+  target: { source: string; root: string };
+  marked?: { beliefState: string; supersededBy?: string };
+}
+
+/** The asset's text after the fix, checked against its file; nothing is written, so a fix that does not apply leaves no trace. */
+function prepareFix(
+  db: Database,
+  config: AkmConfig,
+  sources: SearchSource[],
+  itemRef: string,
+  entryType: string | undefined,
+  filePath: string | undefined,
+  request: FixRequest,
+): PreparedFix {
+  if (!filePath || !fs.existsSync(filePath)) {
+    throw new NotFoundError(`The file for ${itemRef} is missing on disk.`, "ASSET_NOT_FOUND");
+  }
+  // The existing asset is written where it is: its bundle picks the target, and
+  // assertProposalWritesFile checks its write address is this file.
+  const { bundle, conceptId } = parseBundleRef(itemRef);
+  const assetRef: AssetRef = { type: entryType ?? "", name: conceptId, origin: bundle };
+  const resolved = resolveMutationTarget(config, assetRef, undefined, { requireWritable: true });
+  if (!isWithin(filePath, resolved.target.source.path)) {
+    throw new UsageError(`${itemRef} is outside bundle "${resolved.target.source.name}".`);
+  }
+  assertProposalWritesFile(itemRef, resolved.target.source.path, filePath);
+  let mark: HistoryMark | undefined;
+  if (request.hasMark) {
+    if (entryType === "env" || entryType === "secret" || !filePath.toLowerCase().endsWith(".md")) {
+      throw new UsageError(
+        `--superseded-by and --outdated mark the frontmatter of a markdown asset, and ${itemRef} is not one.`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
+    mark =
+      request.supersededBy !== undefined
+        ? { supersededBy: resolveSuccessorRef(db, request.supersededBy.trim(), itemRef, sources) }
+        : { outdated: true };
+  }
+  const before = fs.readFileSync(filePath, "utf8");
+  let after = applyExactReplacements(before, request.pairs, filePath);
+  if (mark) after = applyHistoryMark(after, mark, filePath);
+  if (after === before) throw new UsageError("The fix changes nothing.", "INVALID_FLAG_VALUE");
+  assertFrontmatterStillParses(before, after, filePath);
+  // What the proposal leaves the asset saying, for the output and the event.
+  const marked = mark && {
+    beliefState: String(parseFrontmatter(after).data.beliefState),
+    ...("supersededBy" in mark ? { supersededBy: mark.supersededBy } : {}),
+  };
+  return {
+    content: after,
+    target: { source: resolved.target.source.name, root: resolved.target.source.path },
+    ...(marked ? { marked } : {}),
+  };
+}
+
+/**
+ * A person typed the fix, so it is applied now: the proposal is minted for the audit trail, `akm proposal
+ * revert` and reflect's "already acted on" rule, then accepted through the ordinary accept path (the same
+ * checks and git commit). If that refuses, the proposal is rejected and the command fails.
+ */
+async function applyFix(
+  durableRef: string,
+  fix: PreparedFix,
+  reason: string,
+  fixSource: string,
+): Promise<ReturnType<typeof createProposal>> {
+  const stashDir = resolveStashDir();
+  const minted = createProposal(stashDir, {
+    ref: durableRef,
+    itemRef: durableRef,
+    target: fix.target,
+    source: "feedback",
+    payload: { content: fix.content },
+    feedback: { reason, source: fixSource },
+  });
+  try {
+    recordGateDecision(stashDir, minted.id, { outcome: "auto-accepted", reason: "manual-fix", gate: "feedback" });
+    return (await akmProposalAccept({ stashDir, id: minted.id })).proposal;
+  } catch (err) {
+    try {
+      rejectProposalDurably(
+        stashDir,
+        minted.id,
+        `manual fix not applied: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    } catch (rejectErr) {
+      warn(
+        `[feedback] could not reject proposal ${minted.id}: ${rejectErr instanceof Error ? rejectErr.message : String(rejectErr)}`,
+      );
+    }
+    throw err;
+  }
+}
+
+/**
+ * F-5 / #386: When a high-utility asset crosses below the review threshold,
+ * emit a structured review-needed event so a human can confirm whether the
+ * negative feedback is valid before the asset falls out of the improve loop.
+ * An event rather than a proposal, so the signal cannot overwrite an asset if
+ * it is accepted. Best-effort: a failure is logged but does not fail the
+ * feedback command.
+ */
+function escalateIfBelowReview(
+  ref: string,
+  durableRef: string,
+  utilityResult: RecordFeedbackUsageResult["utilityResult"],
+  reason: string | undefined,
+): void {
+  if (
+    !utilityResult ||
+    utilityResult.previousUtility < UTILITY_REVIEW_THRESHOLD ||
+    utilityResult.nextUtility >= UTILITY_REVIEW_THRESHOLD
+  ) {
+    return;
+  }
+  try {
+    appendEvent({
+      eventType: "improve_review_needed",
+      ref: durableRef,
+      metadata: {
+        previousUtility: utilityResult.previousUtility,
+        nextUtility: utilityResult.nextUtility,
+        reason: reason?.trim() ?? null,
+      },
+    });
+  } catch (escalationErr) {
+    warn(
+      `[feedback] Could not emit review-needed event for ${ref}: ${escalationErr instanceof Error ? escalationErr.message : String(escalationErr)}`,
+    );
+  }
+}
+
+/**
+ * Phase 7A / Advantage D4b: --applied-to credits a lesson. On a positive
+ * signal, the feedback ref is appended to the target lesson's `lessonStrength[]`
+ * frontmatter array (dedup, idempotent). Non-lesson targets are REJECTED
+ * with a loud warning (R-033b) rather than silently doing nothing.
+ * Failures here are warnings: feedback recording is the primary contract and
+ * must not regress on lesson-write errors.
+ */
+function creditAppliedLesson(
+  appliedTo: string | undefined,
+  signal: FeedbackInput["signal"],
+  durableRef: string,
+): { lessonRef: string; strength: number } | null {
+  const appliedToRaw = appliedTo?.trim();
+  if (!appliedToRaw) return null;
+  if (signal !== "positive") {
+    warn("[feedback] --applied-to is ignored without --positive; lesson credit is only recorded on positive signals.");
+    return null;
+  }
+  let appliedOrigin: BundleRef | undefined;
+  try {
+    appliedOrigin = parseBundleRef(appliedToRaw);
+  } catch (err) {
+    warn(`[feedback] --applied-to failed for ${appliedToRaw}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (!appliedOrigin) return null;
+  const updated = appendLessonStrength(appliedToRaw, appliedOrigin.bundle, durableRef);
+  return updated ? { lessonRef: updated.ref, strength: updated.strength } : null;
+}
+
 /**
  * Record feedback on an indexed asset, with an optional fix or history mark: what `akm feedback` does once its flags
  * are read. The usage event's source is the ambient `AKM_EVENT_SOURCE`, else `user`.
@@ -538,63 +776,10 @@ export async function akmFeedback(input: FeedbackInput) {
   const signal = input.signal;
   const reason = input.reason;
 
-  // A fix: an exact edit of the asset's text, a mark of its history (--superseded-by or --outdated), or both.
-  const fixSource = input.source?.trim() || undefined;
-  const fixPairs = (input.fix ?? []).map((pair) => ({ old: pair.replace, new: pair.with }));
-  const supersededBy = input.supersededBy;
-  const outdated = input.outdated === true;
-  const hasMark = supersededBy !== undefined || outdated;
-  if (fixPairs.length > 0 || fixSource !== undefined || hasMark) {
-    if (signal !== "negative") {
-      throw new UsageError(
-        "--replace, --with, --source, --superseded-by and --outdated are only for negative feedback.",
-        "INVALID_FLAG_VALUE",
-      );
-    }
-    if (supersededBy !== undefined && outdated) {
-      throw new UsageError(
-        "--superseded-by names the asset that replaces this one and --outdated says none does; use one.",
-        "INVALID_FLAG_VALUE",
-      );
-    }
-    if (supersededBy !== undefined && !supersededBy.trim()) {
-      throw new UsageError(
-        "--superseded-by needs the ref of the asset that replaces this one.",
-        "MISSING_REQUIRED_ARGUMENT",
-      );
-    }
-    if (fixPairs.length === 0 && !hasMark) {
-      throw new UsageError("Each --replace needs one --with (got 0 --replace and 0 --with).", "INVALID_FLAG_VALUE");
-    }
-    if (!fixSource) {
-      throw new UsageError(
-        "A fix needs --source: the URL, command or file that shows the correct fact.",
-        "MISSING_REQUIRED_ARGUMENT",
-      );
-    }
-    if (!reason?.trim()) {
-      throw new UsageError("A fix needs --reason: say what is wrong.", "MISSING_REQUIRED_ARGUMENT");
-    }
-  }
-
-  if (signal === "negative" && !reason?.trim()) {
-    // F-3 / #384: Default requireReason is now true. Load config to allow
-    // operators to opt out via feedback.requireReason: false in config.json.
-    const cfg = loadConfig();
-    const requireReason = cfg.feedback?.requireReason ?? true; // Default: true (F-3 / #384)
-    if (requireReason) {
-      throw new UsageError(
-        "Negative feedback requires --reason: say what is wrong and what should change. " +
-          "Set feedback.requireReason: false in config.json to downgrade to a warning.",
-        "MISSING_REQUIRED_ARGUMENT",
-        `Hint: akm feedback ${ref} --negative --reason "<what is wrong and what should change>"`,
-      );
-    } else {
-      warn("Warning: negative feedback without --reason says nothing about what is wrong.");
-    }
-  }
-  const rawTags = input.tags ?? [];
-  const validatedTags = validateFeedbackTags(rawTags);
+  const request = readFixRequest(input);
+  assertFixFlags(signal, reason, request);
+  if (signal === "negative") assertNegativeReason(ref, reason);
+  const validatedTags = validateFeedbackTags(input.tags ?? []);
   const metadataObj: Record<string, unknown> = {
     signal,
     ...(reason?.trim() ? { reason: reason.trim() } : {}),
@@ -630,13 +815,7 @@ export async function akmFeedback(input: FeedbackInput) {
   let countsTowardRanking = false;
   let rankingSkippedReason: string | undefined;
   let durableRef = ref;
-  let fix:
-    | {
-        content: string;
-        target: { source: string; root: string };
-        marked?: { beliefState: string; supersededBy?: string };
-      }
-    | undefined;
+  let fix: PreparedFix | undefined;
   const db = openExistingDatabase();
   try {
     const config = loadConfig();
@@ -672,49 +851,10 @@ export async function akmFeedback(input: FeedbackInput) {
     const entryType = getEntryById(db, entryId)?.entry.type;
     const textHash = judgedTextHash(entryType, filePath);
     if (textHash) metadataObj.contentHash = textHash;
-    if (fixPairs.length > 0 || hasMark) {
+    if (request.pairs.length > 0 || request.hasMark) {
       // Checked before anything is recorded, so a fix that does not apply leaves no trace.
-      if (!filePath || !fs.existsSync(filePath)) {
-        throw new NotFoundError(`The file for ${itemRef} is missing on disk.`, "ASSET_NOT_FOUND");
-      }
-      // The existing asset is written where it is: its bundle picks the target, and
-      // assertProposalWritesFile checks its write address is this file.
-      const { bundle, conceptId } = parseBundleRef(itemRef);
-      const assetRef: AssetRef = { type: entryType ?? "", name: conceptId, origin: bundle };
-      const resolved = resolveMutationTarget(config, assetRef, undefined, { requireWritable: true });
-      if (!isWithin(filePath, resolved.target.source.path)) {
-        throw new UsageError(`${itemRef} is outside bundle "${resolved.target.source.name}".`);
-      }
-      assertProposalWritesFile(itemRef, resolved.target.source.path, filePath);
-      let mark: HistoryMark | undefined;
-      if (hasMark) {
-        if (entryType === "env" || entryType === "secret" || !filePath.toLowerCase().endsWith(".md")) {
-          throw new UsageError(
-            `--superseded-by and --outdated mark the frontmatter of a markdown asset, and ${itemRef} is not one.`,
-            "INVALID_FLAG_VALUE",
-          );
-        }
-        mark =
-          supersededBy !== undefined
-            ? { supersededBy: resolveSuccessorRef(db, supersededBy.trim(), itemRef, sources) }
-            : { outdated: true };
-      }
-      const before = fs.readFileSync(filePath, "utf8");
-      let after = applyExactReplacements(before, fixPairs, filePath);
-      if (mark) after = applyHistoryMark(after, mark, filePath);
-      if (after === before) throw new UsageError("The fix changes nothing.", "INVALID_FLAG_VALUE");
-      assertFrontmatterStillParses(before, after, filePath);
-      // What the proposal leaves the asset saying, for the output and the event.
-      const marked = mark && {
-        beliefState: String(parseFrontmatter(after).data.beliefState),
-        ...("supersededBy" in mark ? { supersededBy: mark.supersededBy } : {}),
-      };
-      fix = {
-        content: after,
-        target: { source: resolved.target.source.name, root: resolved.target.source.path },
-        ...(marked ? { marked } : {}),
-      };
-      metadataObj.fix = { source: fixSource, replacements: fixPairs.length, ...marked };
+      fix = prepareFix(db, config, sources, itemRef, entryType, filePath, request);
+      metadataObj.fix = { source: request.source, replacements: request.pairs.length, ...fix.marked };
     }
     const metadataStr = Object.keys(metadataObj).length > 1 ? JSON.stringify(metadataObj) : undefined;
     const recordResult = recordFeedbackUsage(db, entryId, itemRef, signal, metadataStr);
@@ -731,94 +871,12 @@ export async function akmFeedback(input: FeedbackInput) {
     metadata: metadataObj,
   });
 
-  // A person typed the fix, so it is applied now: the proposal is minted for the audit trail, `akm proposal
-  // revert` and reflect's "already acted on" rule, then accepted through the ordinary accept path (the same
-  // checks and git commit). If that refuses, the proposal is rejected and the command fails.
-  let fixProposal: ReturnType<typeof createProposal> | undefined;
-  if (fix && reason?.trim() && fixSource) {
-    const stashDir = resolveStashDir();
-    const minted = createProposal(stashDir, {
-      ref: durableRef,
-      itemRef: durableRef,
-      target: fix.target,
-      source: "feedback",
-      payload: { content: fix.content },
-      feedback: { reason: reason.trim(), source: fixSource },
-    });
-    try {
-      recordGateDecision(stashDir, minted.id, { outcome: "auto-accepted", reason: "manual-fix", gate: "feedback" });
-      fixProposal = (await akmProposalAccept({ stashDir, id: minted.id })).proposal;
-    } catch (err) {
-      try {
-        rejectProposalDurably(
-          stashDir,
-          minted.id,
-          `manual fix not applied: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      } catch (rejectErr) {
-        warn(
-          `[feedback] could not reject proposal ${minted.id}: ${rejectErr instanceof Error ? rejectErr.message : String(rejectErr)}`,
-        );
-      }
-      throw err;
-    }
-  }
-
-  // F-5 / #386: When a high-utility asset crosses below the review threshold,
-  // auto-create a review-needed escalation proposal so a human can confirm
-  // whether the negative feedback is valid before the asset falls out of
-  // the improve loop. Best-effort — failure is logged but does not fail the
-  // feedback command.
-  // Emit a structured event rather than a proposal so the review-needed
-  // signal doesn't risk an accidental asset overwrite if the proposal is
-  // accepted.
-  if (
-    utilityResult &&
-    utilityResult.previousUtility >= UTILITY_REVIEW_THRESHOLD &&
-    utilityResult.nextUtility < UTILITY_REVIEW_THRESHOLD
-  ) {
-    try {
-      appendEvent({
-        eventType: "improve_review_needed",
-        ref: durableRef,
-        metadata: {
-          previousUtility: utilityResult.previousUtility,
-          nextUtility: utilityResult.nextUtility,
-          reason: reason?.trim() ?? null,
-        },
-      });
-    } catch (escalationErr) {
-      warn(
-        `[feedback] Could not emit review-needed event for ${ref}: ${escalationErr instanceof Error ? escalationErr.message : String(escalationErr)}`,
-      );
-    }
-  }
-
-  // Phase 7A / Advantage D4b: --applied-to credits a lesson. When the
-  // target is a `lessons/<name>` ref and the signal is positive, append
-  // the feedback ref to the target lesson's `lessonStrength[]`
-  // frontmatter array (dedup, idempotent). Non-lesson targets are REJECTED
-  // with a loud warning (R-033b) rather than silently doing nothing.
-  // Failures here are warnings — feedback recording is the primary
-  // contract and must not regress on lesson-write errors.
-  const appliedToRaw = input.appliedTo?.trim();
-  let appliedToResult: { lessonRef: string; strength: number } | null = null;
-  if (appliedToRaw && signal === "positive") {
-    let appliedOrigin: BundleRef | undefined;
-    try {
-      appliedOrigin = parseBundleRef(appliedToRaw);
-    } catch (err) {
-      warn(`[feedback] --applied-to failed for ${appliedToRaw}: ${err instanceof Error ? err.message : String(err)}`);
-    }
-    if (appliedOrigin) {
-      const updated = appendLessonStrength(appliedToRaw, appliedOrigin.bundle, durableRef);
-      if (updated) {
-        appliedToResult = { lessonRef: updated.ref, strength: updated.strength };
-      }
-    }
-  } else if (appliedToRaw && signal !== "positive") {
-    warn("[feedback] --applied-to is ignored without --positive; lesson credit is only recorded on positive signals.");
-  }
+  const fixProposal =
+    fix && reason?.trim() && request.source
+      ? await applyFix(durableRef, fix, reason.trim(), request.source)
+      : undefined;
+  escalateIfBelowReview(ref, durableRef, utilityResult, reason);
+  const appliedToResult = creditAppliedLesson(input.appliedTo, signal, durableRef);
 
   return {
     ok: true,
@@ -833,8 +891,8 @@ export async function akmFeedback(input: FeedbackInput) {
       ? {
           fix: {
             proposalId: fixProposal.id,
-            replacements: fixPairs.length,
-            source: fixSource,
+            replacements: request.pairs.length,
+            source: request.source,
             ...fix?.marked,
           },
         }

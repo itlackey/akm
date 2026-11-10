@@ -251,9 +251,9 @@ export function shapeEventEntry(entry: Record<string, unknown>, detail: DetailLe
 }
 
 export function shapeSearchOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
-  const hits = Array.isArray(result.hits) ? (result.hits as Record<string, unknown>[]) : [];
+  const results = Array.isArray(result.results) ? (result.results as Record<string, unknown>[]) : [];
   const registryHits = Array.isArray(result.registryHits) ? (result.registryHits as Record<string, unknown>[]) : [];
-  const shapedHits = hits.map((hit) => shapeSearchHit(hit, detail));
+  const shapedHits = results.map((hit) => shapeSearchHit(hit, detail));
   const shapedRegistryHits = registryHits.map((hit) => shapeSearchHit(hit, detail));
   const searchMode = typeof result.searchMode === "string" ? result.searchMode : undefined;
   const bundles = Array.isArray(result.bundles) ? result.bundles : undefined;

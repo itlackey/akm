@@ -161,7 +161,7 @@ describe("akm search --filter narrows by scope", () => {
 
     // Unscoped query sees all three memories
     const all = await akmSearch({ query: "deployment", source: "local" });
-    const allLocal = all.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+    const allLocal = all.results.filter((h): h is SourceSearchHit => h.type !== "registry");
     const allNames = allLocal.map((h) => h.name).sort();
     expect(allNames).toContain("alice-note");
     expect(allNames).toContain("bob-note");
@@ -172,7 +172,7 @@ describe("akm search --filter narrows by scope", () => {
       source: "local",
       filters: { user: "alice" },
     });
-    const filteredLocal = filtered.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+    const filteredLocal = filtered.results.filter((h): h is SourceSearchHit => h.type !== "registry");
     const filteredNames = filteredLocal.map((h) => h.name);
     expect(filteredNames).toEqual(["alice-note"]);
   });
@@ -191,7 +191,7 @@ describe("akm search --filter narrows by scope", () => {
     note("carol-ops", "carol", "ops");
     await akmIndex({ stashDir, full: true });
     const names = async (filters: NonNullable<Parameters<typeof akmSearch>[0]["filters"]>) =>
-      (await akmSearch({ query: "deployment", source: "local", filters })).hits
+      (await akmSearch({ query: "deployment", source: "local", filters })).results
         .filter((h): h is SourceSearchHit => h.type !== "registry")
         .map((h) => h.name)
         .sort();
@@ -213,7 +213,7 @@ describe("akm search --filter narrows by scope", () => {
     await akmIndex({ stashDir, full: true });
 
     const result = await akmSearch({ query: "legacy", source: "local" });
-    const hits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+    const hits = result.results.filter((h): h is SourceSearchHit => h.type !== "registry");
     expect(hits.some((h) => h.name === "legacy")).toBe(true);
   });
 
@@ -233,7 +233,7 @@ describe("akm search --filter narrows by scope", () => {
       source: "local",
       filters: { user: "alice" },
     });
-    const hits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+    const hits = result.results.filter((h): h is SourceSearchHit => h.type !== "registry");
     expect(hits.length).toBe(0);
   });
 });

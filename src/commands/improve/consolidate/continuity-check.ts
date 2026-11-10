@@ -84,7 +84,7 @@ export function createContinuitySearch(stashDir: string, config: AkmConfig): Con
     const callConfig: AkmConfig = keywordOnly ? { ...config, semanticSearchMode: "off" } : config;
     const result = await searchLocal({ ...base, query, config: callConfig });
     if (result.mode === "fts-fallback") keywordOnly = true;
-    return { hits: result.hits, mode: result.mode, forcedKeywordOnly };
+    return { hits: result.results, mode: result.mode, forcedKeywordOnly };
   };
 }
 

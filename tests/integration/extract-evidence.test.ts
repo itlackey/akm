@@ -164,7 +164,7 @@ for (const type of ["memory", "lesson", "knowledge"] as const) {
     expect((await akmShowUnified({ ref: source })).ref).toBe(source);
     expect((await akmShowUnified({ ref: accepted.ref, detail: "brief" })).evidence).toBeUndefined();
     const found = await akmSearch({ query: "VPN deployment", limit: 5 });
-    expect(found.hits.some((hit) => "ref" in hit && hit.ref === accepted.ref.replace("stash//", ""))).toBe(true);
+    expect(found.results.some((hit) => "ref" in hit && hit.ref === accepted.ref.replace("stash//", ""))).toBe(true);
     const recalled = await akmCurate({ query: "VPN deployment", limit: 5 });
     expect(
       recalled.items.some((item) => item.source === "local" && item.ref === accepted.ref.replace("stash//", "")),

@@ -184,7 +184,7 @@ describe("downstream value attribution", () => {
 
   test("an asset outside memory-inference exposure records control usage metadata", async () => {
     const plain = await akmSearch({ query: "plainneedle", limit: 10 });
-    expect(plain.hits.map((hit) => ("ref" in hit ? hit.ref : undefined))).toContain("knowledge/plain-target");
+    expect(plain.results.map((hit) => ("ref" in hit ? hit.ref : undefined))).toContain("knowledge/plain-target");
     expect(metadataFor("plainneedle", "stash//knowledge/plain-target")).toEqual({
       downstreamAttribution: { version: 1, control: true },
     });
@@ -239,7 +239,7 @@ describe("downstream value attribution", () => {
     expect(indexedRefs).toContain("team//memories/team-only");
     expect(indexedRefs).toContain("team//memories/team-only.derived");
     const result = await akmSearch({ query: "team surface needle", source: "team", limit: 10 });
-    const teamHit = result.hits.find((hit) => hit.type !== "registry" && hit.name === "team-only" && "ref" in hit);
+    const teamHit = result.results.find((hit) => hit.type !== "registry" && hit.name === "team-only" && "ref" in hit);
     expect(teamHit && "ref" in teamHit ? teamHit.ref : undefined).toBe("team//memories/team-only");
     expect(teamHit && "expandTo" in teamHit ? teamHit.expandTo : undefined).toBe("team//memories/team-only.derived");
     expect(
@@ -262,7 +262,7 @@ describe("downstream value attribution", () => {
 
   test("duplicate-bundle expansion follows the same child that supplied the surface", async () => {
     const result = await akmSearch({ query: "team-parent-needle", source: "team", skipLogging: true });
-    const parent = result.hits.find((hit) => hit.type === "memory" && hit.name === "parent");
+    const parent = result.results.find((hit) => hit.type === "memory" && hit.name === "parent");
     expect(parent && "ref" in parent ? parent.ref : undefined).toBe("team//memories/parent");
     const expandTo = parent && "expandTo" in parent ? parent.expandTo : undefined;
     expect(expandTo).toBe("team//memories/parent.derived");
@@ -310,7 +310,7 @@ describe("downstream value attribution", () => {
 
   test("curate drops MI surface attribution when an internal path replaces the derived description", async () => {
     const searchResponse = await akmSearch({ query: "surface-parent-needle", limit: 10, skipLogging: true });
-    const parentHit = searchResponse.hits.find((hit) => hit.type === "memory" && hit.name === "parent");
+    const parentHit = searchResponse.results.find((hit) => hit.type === "memory" && hit.name === "parent");
     expect(parentHit?.description).toBe("direct-child-needle");
     if (parentHit) parentHit.description = "internal replacement";
 
@@ -325,7 +325,7 @@ describe("downstream value attribution", () => {
 
 test("real authored qualifications and tags survive search and curate without invented exposure", async () => {
   const result = await akmSearch({ query: "qualifiedneedle", skipLogging: true });
-  const hit = result.hits.find((candidate) => candidate.name === "qualified");
+  const hit = result.results.find((candidate) => candidate.name === "qualified");
   expect(hit?.description).toBe("Do not restart production; staging only, pending confirmation.");
   expect(hit && "tags" in hit ? hit.tags : undefined).toEqual(["manual", "production"]);
   expect(hit && "expandTo" in hit ? hit.expandTo : undefined).toBe("memories/qualified.derived");
@@ -394,7 +394,7 @@ test("filename-generated parent description and tags fall back independently to 
   expect(indexed.description.trim()).not.toBe("");
   expect(indexed.tags).toEqual(["parent"]);
   const result = await akmSearch({ query: "surface-parent-needle", skipLogging: true });
-  const hit = result.hits.find((candidate) => candidate.name === "parent");
+  const hit = result.results.find((candidate) => candidate.name === "parent");
   expect(hit?.description).toBe("direct-child-needle");
   expect(hit && "tags" in hit ? hit.tags : undefined).toEqual(["derived insight"]);
   expect(hit && getSearchHitAttribution(hit)?.memoryInference?.surfaceFields).toEqual(["description", "tags"]);
@@ -419,7 +419,7 @@ for (const authoredTags of [undefined, ["auth"], ["manual", "auth"]]) {
     );
     await akmIndex({ stashDir: storage.stashDir, full: true });
     const result = await akmSearch({ query: "nestedtagneedle", skipLogging: true });
-    const hit = result.hits.find((candidate) => candidate.name === name);
+    const hit = result.results.find((candidate) => candidate.name === name);
     expect(hit?.description).toBe("nestedtagneedle Staging only.");
     const preservesTags = authoredTags?.includes("manual");
     expect(hit && "tags" in hit ? hit.tags : undefined).toEqual(

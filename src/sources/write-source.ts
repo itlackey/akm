@@ -97,7 +97,7 @@ export function isSourceWriteActivated(source: { writable?: boolean }): boolean 
 }
 
 /** The two kinds writes are defined for; scheduler state binds only to these. */
-export function isWriteCapableSourceKind(kind: string): kind is "filesystem" | "git" {
+function isWriteCapableSourceKind(kind: string): kind is "filesystem" | "git" {
   return kind === "filesystem" || kind === "git";
 }
 
