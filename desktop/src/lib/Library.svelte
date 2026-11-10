@@ -290,7 +290,12 @@
     searchContainer?.querySelector<HTMLInputElement>('input[type="search"]')?.focus();
   }
   function submit() {
-    if (filterDetails) filterDetails.open = false;
+    if (filterDetails?.open) {
+      // Applied from inside the panel: focus goes back to Filters instead of being dropped with the panel.
+      const inside = filterDetails.contains(document.activeElement);
+      filterDetails.open = false;
+      if (inside) filterTrigger?.focus();
+    }
     const next = new URLSearchParams();
     for (const [key, value] of Object.entries({
       q,
@@ -323,6 +328,17 @@
     if (filterDetails) filterDetails.open = false;
     resetFilterInputs();
     filterTrigger?.focus();
+  }
+  /** Focus that moves out of an open overlay closes it, so it is not left open over the control that has focus. */
+  function leaveFilters(event: FocusEvent) {
+    if (!filterDetails?.open || !(event.relatedTarget instanceof Node)) return;
+    if (filterDetails.contains(event.relatedTarget)) return;
+    filterDetails.open = false;
+    resetFilterInputs();
+  }
+  function leaveNewFiles(event: FocusEvent) {
+    if (!(event.relatedTarget instanceof Node) || newFiles?.contains(event.relatedTarget)) return;
+    if (newFiles?.matches(":popover-open")) newFiles.hidePopover();
   }
   function dismissFilters(event: MouseEvent | KeyboardEvent) {
     if (!filterDetails?.open) return;
@@ -620,6 +636,7 @@
             role="group"
             aria-label="Create file"
             bind:this={newFiles}
+            onfocusout={leaveNewFiles}
           >
             <a href={createSensitiveHref("env", fileBundle, filePath)}>Environment file</a><a
               href={createSensitiveHref("secret", fileBundle, filePath)}>Secret</a
@@ -777,14 +794,14 @@
     >
       <input type="search" bind:value={q} placeholder="Search the library" aria-label="Search library" />
       <button disabled={loading}><Icon name="search" size={18} />Search</button>
-      <details class="search-filters" bind:this={filterDetails}>
+      <details class="search-filters" bind:this={filterDetails} onfocusout={leaveFilters}>
         <summary
           bind:this={filterTrigger}
           onclick={() => {
             if (filterDetails?.open) resetFilterInputs();
           }}><Icon name="sliders" size={18} />Filters{active ? " (" + active + ")" : ""}</summary
         >
-        <div class="filter-panel">
+        <div class="filter-panel" role="group" aria-label="Filters">
           <div class="form-grid library-filters">
             <label
               >Bundle<select bind:value={bundle}

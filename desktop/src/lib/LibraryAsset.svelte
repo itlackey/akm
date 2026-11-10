@@ -146,6 +146,11 @@
   $effect(() => {
     if (query.get("section") && data) void revealHeading(query.get("section")!);
   });
+  /** Focus that moves out of the open menu closes it, so it is not left open over the control that has focus. */
+  function leaveMore(event: FocusEvent) {
+    if (!(event.relatedTarget instanceof Node) || more?.contains(event.relatedTarget)) return;
+    if (more?.matches(":popover-open")) more.hidePopover();
+  }
   async function revealHeading(slug: string) {
     await tick();
     document.getElementById(headingId(slug))?.scrollIntoView({ block: "start" });
@@ -422,6 +427,7 @@
               role="group"
               aria-label="Page actions"
               bind:this={more}
+              onfocusout={leaveMore}
             >
               <div class="menu-group" role="group" aria-label="Inspect page">
                 <span class="menu-label">Inspect</span>

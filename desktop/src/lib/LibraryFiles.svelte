@@ -64,6 +64,7 @@
     tree = $state<HTMLElement>(),
     treePane = $state<HTMLElement>(),
     contentPane = $state<HTMLElement>(),
+    foldersButton = $state<HTMLButtonElement>(),
     filter = $state(""),
     showTree = $state(false),
     showHidden = $state(kept.showHidden ?? false),
@@ -199,6 +200,15 @@
     item?.focus({ preventScroll: true });
     item?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }
+  /** Close the folder drawer a phone shows in place of the page; focus goes back to the button that opened it. */
+  async function closeTree() {
+    showTree = false;
+    await tick();
+    foldersButton?.focus();
+  }
+  function drawerKey(event: KeyboardEvent) {
+    if (event.key === "Escape" && showTree && !event.defaultPrevented) void closeTree();
+  }
   function open(bundle: string, entry: FileEntry) {
     showTree = false;
     onNavigate?.(
@@ -269,10 +279,11 @@
   });
 </script>
 
+<svelte:window onkeydown={drawerKey} />
 <div class="files-workspace" class:tree-open={showTree}>
   <aside class="files-tree-pane" aria-label="Bundle navigation">
     <div class="tree-heading">
-      <span>Bundles & folders</span><button class="quiet mobile-control" onclick={() => (showTree = false)}
+      <span>Bundles & folders</span><button class="quiet mobile-control" onclick={closeTree}
         ><Icon name="close" size={16} />Close</button
       >
     </div>
@@ -323,6 +334,7 @@
     <div class="files-location">
       <button
         class="quiet mobile-control"
+        bind:this={foldersButton}
         onclick={() => {
           showTree = true;
           void focus(focused || selectedKey);
