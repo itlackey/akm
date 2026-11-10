@@ -17,39 +17,40 @@
   import type { Bundle } from "./types";
   import { navigate } from "./navigation";
   import { bundleRenamed, refreshBundles } from "./state/workspace.svelte";
-  export let bundles: Bundle[] = [];
-  export let route = "bundles";
-  export let query = new URLSearchParams();
-  let config: SettingsConfig | null = null,
-    listing: SettingsBundleResponse | null = null,
-    initialized: SettingsConfig | null = null;
-  let error = "",
-    errorCode = "",
-    busy = false,
-    loading = true,
-    receipt = "",
+  let {
+    bundles = [],
+    route = "bundles",
+    query = new URLSearchParams(),
+  }: { bundles?: Bundle[]; route?: string; query?: URLSearchParams } = $props();
+  let config = $state<SettingsConfig | null>(null),
+    listing = $state<SettingsBundleResponse | null>(null);
+  let error = $state(""),
+    errorCode = $state(""),
+    busy = $state(false),
+    loading = $state(true),
+    receipt = $state(""),
     generation = 0;
-  let sourceInput: HTMLInputElement,
-    source = "",
-    name = "",
-    writable = false,
-    key = "",
-    value = "",
-    unset = false;
-  let initial: Record<string, string> = {},
-    drafts: Record<string, string> = {};
+  let refreshButton = $state<HTMLButtonElement>();
+  let sourceInput = $state<HTMLInputElement>(),
+    source = $state(""),
+    name = $state(""),
+    writable = $state(false),
+    key = $state(""),
+    value = $state(""),
+    unset = $state(false);
+  let initial = $state<Record<string, string>>({}),
+    drafts = $state<Record<string, string>>({});
   let resetKeys = new Set<string>();
-  let savedKeys: string[] = [];
-  let renameNotes: string[] = [];
-  $: if (!error) errorCode = "";
-  $: groups = buildGroups(config, listing, bundles);
-  $: selectedGroup = query.get("section") || "library-settings";
-  $: manageName = route === "bundles" ? (query.get("manage") ?? "") : "";
-  $: if (config && initialized !== config) {
-    initialized = config;
+  let savedKeys = $state<string[]>([]);
+  let renameNotes = $state<string[]>([]);
+  const groups = $derived(buildGroups(config, listing, bundles));
+  const selectedGroup = $derived(query.get("section") || "library-settings");
+  const manageName = $derived(route === "bundles" ? (query.get("manage") ?? "") : "");
+  /** A newly loaded configuration becomes the form's baseline; edits not yet saved in other groups are kept. */
+  function resetDrafts(loaded: SettingsConfig) {
     const next = Object.fromEntries(
       groups.flatMap((group) =>
-        group.fields.map((field) => [field.key, fieldText(valueAt(config!.config, field.key), field.kind)]),
+        group.fields.map((field) => [field.key, fieldText(valueAt(loaded.config, field.key), field.kind)]),
       ),
     );
     const retained = Object.fromEntries(
@@ -64,13 +65,20 @@
     drafts = { ...next, ...retained };
     resetKeys = new Set();
   }
-  $: sourceMap = new Map(config?.entries.map((entry) => [entry.path, entry.source]) ?? []);
-  $: editCounts = Object.fromEntries(groups.map((group) => [group.id, changed(group, initial, drafts)]));
-  $: effectiveGroups = [...new Set((config?.entries ?? []).map((entry) => entry.path.split(".")[0]))].sort();
-  $: filteredEffective = (config?.entries ?? []).filter(
-    (entry) => !query.get("filter") || entry.path.toLowerCase().includes(query.get("filter")!.toLowerCase()),
+  const sourceMap = $derived(new Map(config?.entries.map((entry) => [entry.path, entry.source]) ?? []));
+  const editCounts = $derived(Object.fromEntries(groups.map((group) => [group.id, changed(group, initial, drafts)])));
+  const effectiveGroups = $derived(
+    [...new Set((config?.entries ?? []).map((entry) => entry.path.split(".")[0]))].sort(),
   );
-  $: if (config && route === "config") revealSection(query.get("section"));
+  const filteredEffective = $derived(
+    (config?.entries ?? []).filter(
+      (entry) => !query.get("filter") || entry.path.toLowerCase().includes(query.get("filter")!.toLowerCase()),
+    ),
+  );
+  // The section the address names is opened, focused and scrolled to once the configuration is on screen.
+  $effect(() => {
+    if (config && route === "config") void revealSection(query.get("section"));
+  });
   async function revealSection(id: string | null) {
     if (!id) return;
     await tick();
@@ -201,6 +209,7 @@
     const mine = ++generation;
     loading = true;
     error = "";
+    errorCode = "";
     try {
       const [nextConfig, nextListing] = await Promise.all([
         api<SettingsConfig>("/config"),
@@ -209,6 +218,7 @@
       if (mine === generation) {
         listing = nextListing;
         config = nextConfig;
+        resetDrafts(nextConfig);
       }
     } catch (cause) {
       if (mine === generation) {
@@ -222,6 +232,7 @@
   async function action(path: string, body: unknown) {
     busy = true;
     error = "";
+    errorCode = "";
     receipt = "";
     savedKeys = [];
     renameNotes = [];
@@ -271,12 +282,16 @@
       busy = false;
     }
   }
+  /** Refresh is disabled while it loads, which drops focus: the button has it again when the page is back. */
   async function refresh() {
     await refreshBundles();
     await load();
+    await tick();
+    if (document.activeElement === document.body) refreshButton?.focus();
   }
   async function browse() {
     error = "";
+    errorCode = "";
     try {
       const folder = await pickFolder(source);
       if (folder !== null) source = folder;
@@ -284,7 +299,7 @@
       error = (cause as Error).message;
     }
     await tick();
-    sourceInput.focus();
+    sourceInput?.focus();
   }
   onMount(load);
   onDestroy(() => {
@@ -296,11 +311,12 @@
   <h1>Settings</h1>
   {#if route !== "software" && route !== "connections"}<button
       class="quiet"
+      bind:this={refreshButton}
       disabled={busy || loading}
-      on:click={refresh}><Icon name="refresh" size={16} /> Refresh settings</button
+      onclick={refresh}><Icon name="refresh" size={16} /> Refresh settings</button
     >{/if}
 </div>
-<nav class="settings-tabs" aria-label="Settings views">
+<nav class="settings-tabs" aria-label="Settings views" data-sveltekit-reset="false">
   <a href="/settings/bundles" class:active={route === "bundles"} aria-current={route === "bundles" ? "page" : undefined}
     >Bundles & index</a
   ><a
@@ -331,7 +347,7 @@
               </li>{/each}
           </ul>{/if}
       </div>
-      <button class="btn-secondary" on:click={() => (receipt = "")}>Dismiss</button>
+      <button class="btn-secondary" onclick={() => (receipt = "")}>Dismiss</button>
     </div>{/if}
   {#if loading && !config}<p role="status">Loading settings…</p>{:else if route !== "config"}
     <p class="muted" hidden={!!manageName}>
@@ -386,7 +402,10 @@
         </div>
         <form
           class="card settings-card"
-          on:submit|preventDefault={() => action("/bundles/add", { source, name, writable })}
+          onsubmit={(event) => {
+            event.preventDefault();
+            void action("/bundles/add", { source, name, writable });
+          }}
         >
           <div class="settings-fields">
             <div class="field">
@@ -399,7 +418,7 @@
                   required
                   placeholder="Local folder, Git source, npm package or docs URL"
                   autocomplete="off"
-                /><button class="btn-secondary" type="button" on:click={browse}>Browse folders…</button>
+                /><button class="btn-secondary" type="button" onclick={browse}>Browse folders…</button>
               </div>
             </div>
             <label class="field">Name (optional)<input bind:value={name} /></label><label class="check-label"
@@ -472,7 +491,7 @@
         <label class="configuration-select"
           >Settings section<select
             value={selectedGroup}
-            on:change={(event) => navigate(`/settings/config?section=${event.currentTarget.value}`)}
+            onchange={(event) => navigate(`/settings/config?section=${event.currentTarget.value}`)}
             >{#each groups as group}<option value={group.id}>{group.title}</option>{/each}<option
               value="advanced-settings">Advanced</option
             ></select
@@ -493,8 +512,10 @@
             </div>
             <form
               class="card settings-card"
-              on:submit|preventDefault={() =>
-                action("/config/set", configurationChanges(group.fields, initial, drafts))}
+              onsubmit={(event) => {
+                event.preventDefault();
+                void action("/config/set", configurationChanges(group.fields, initial, drafts));
+              }}
             >
               <div class="settings-fields">
                 {#each group.fields as field (field.key)}<SettingsFieldControl
@@ -513,7 +534,7 @@
                     class="btn-secondary"
                     type="button"
                     disabled={busy || !editCounts[group.id]}
-                    on:click={() =>
+                    onclick={() =>
                       (drafts = {
                         ...drafts,
                         ...Object.fromEntries(group.fields.map((field) => [field.key, initial[field.key]])),
@@ -534,8 +555,10 @@
             </div>
             <form
               class="card settings-card"
-              on:submit|preventDefault={() =>
-                action("/config/set", unset ? { unset: [key] } : { set: { [key]: value } })}
+              onsubmit={(event) => {
+                event.preventDefault();
+                void action("/config/set", unset ? { unset: [key] } : { set: { [key]: value } });
+              }}
             >
               <div class="settings-fields">
                 <label class="field"
@@ -656,6 +679,7 @@
   .configuration-workspace {
     display: grid;
     grid-template-columns: 190px minmax(0, 760px);
+    justify-content: center;
     gap: 48px;
     align-items: start;
     margin-top: 28px;
@@ -777,6 +801,14 @@
     color: var(--muted);
     text-decoration: none;
   }
+  /* Touch: every tab is at least as tall as a control. */
+  @media (width < 48rem) {
+    .settings-tabs a {
+      display: inline-flex;
+      align-items: center;
+      min-block-size: var(--control-height);
+    }
+  }
   /* Phones: four even cells in two rows, so no tab wraps alone. */
   @media (width < 30rem) {
     .settings-tabs {
@@ -786,7 +818,6 @@
     }
     .settings-tabs a {
       justify-self: start;
-      min-block-size: 2rem;
     }
   }
   .settings-tabs a.active {

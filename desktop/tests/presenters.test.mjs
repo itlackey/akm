@@ -12,6 +12,7 @@ import {
   rollingSearch,
   tokens,
 } from "../src/lib/activity-presenter.ts";
+import { pageTitle } from "../src/lib/page-title.ts";
 import { configurationChanges } from "../src/lib/settings-presenter.ts";
 
 test("activity/settings presentation keeps measured zero separate from missing observations", () => {
@@ -74,4 +75,45 @@ test("rolling retrieval does not turn missing daily observations into measured z
     })),
   };
   assert.equal(rollingSearch(complete, [], 7).rates.at(-1), 100);
+});
+
+test("every view has a document title of its own, most specific part first", () => {
+  const title = (address) => pageTitle(new URL(address, "http://desktop.test"));
+  assert.equal(title("/"), "Home · AKM Desktop");
+  assert.equal(title("/setup"), "Set up · AKM Desktop");
+  assert.equal(title("/library/search"), "Search · Library · AKM Desktop");
+  assert.equal(title("/library/search?tab=misses"), "Search gaps · Library · AKM Desktop");
+  assert.equal(
+    title("/library/search?ref=personal%2F%2Fknowledge%2Frestore-laptop"),
+    "restore laptop · Library · AKM Desktop",
+  );
+  assert.equal(
+    title("/library/asset?ref=personal%2F%2Fknowledge%2Frestore-laptop"),
+    "restore laptop · Library · AKM Desktop",
+  );
+  assert.equal(title("/library/files?bundle=personal&path=knowledge"), "Files · Library · AKM Desktop");
+  assert.equal(
+    title("/library/files?bundle=personal&path=notes&file=notes%2Ftodo.txt&open=1"),
+    "todo.txt · Library · AKM Desktop",
+  );
+  assert.equal(title("/library/search?compare=a%2F%2Fx&compare=b%2F%2Fy"), "Compare assets · Library · AKM Desktop");
+  assert.equal(
+    title("/library/edit?ref=personal%2F%2Fknowledge%2Frestore-laptop"),
+    "Edit restore laptop · Library · AKM Desktop",
+  );
+  assert.equal(title("/library/new"), "New knowledge · Library · AKM Desktop");
+  assert.equal(title("/library/new-sensitive?kind=secret"), "New secret · Library · AKM Desktop");
+  assert.equal(title("/review"), "Pending · Review · AKM Desktop");
+  assert.equal(title("/review?status=recent"), "Recent decisions · Review · AKM Desktop");
+  assert.equal(title("/review/8f0c"), "Proposal · Review · AKM Desktop");
+  assert.equal(title("/activity/overview"), "Health · Activity · AKM Desktop");
+  assert.equal(title("/activity/overview?view=runs"), "Runs · Activity · AKM Desktop");
+  assert.equal(title("/activity/overview?view=retrieval"), "Usage & retrieval · Activity · AKM Desktop");
+  assert.equal(title("/activity/improve"), "Improve impact · Activity · AKM Desktop");
+  assert.equal(title("/activity/history"), "Source history · Activity · AKM Desktop");
+  assert.equal(title("/settings/bundles"), "Bundles & index · Settings · AKM Desktop");
+  assert.equal(title("/settings/config"), "Configuration · Settings · AKM Desktop");
+  assert.equal(title("/projects"), "Projects · AKM Desktop");
+  assert.equal(title("/projects/docs"), "docs · Projects · AKM Desktop");
+  assert.equal(title("/projects/docs/edit"), "Edit docs · Projects · AKM Desktop");
 });
