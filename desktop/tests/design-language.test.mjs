@@ -120,9 +120,10 @@ test("workspace pages, panels and menus fit the shortest windows", { timeout: 18
   };
   const longRef = encodeURIComponent(`personal//knowledge/${longName}`);
 
-  // The page must not scroll while its panes do: one scroll owner at the native minimum (and below).
+  // The page must not scroll while its panes do: one scroll owner at the native minimum (and below). Files is ready
+  // when its rows are: it draws the folder once, empty, before it asks for the listing, and then draws it again.
   for (const [route, ready] of [
-    ["/library/files?bundle=personal&path=knowledge", ".folder-table"],
+    ["/library/files?bundle=personal&path=knowledge", ".folder-table tbody tr"],
     [`/library/edit?ref=${longRef}`, 'textarea[name="content"]'],
     [`/review/${app.proposals.fresh}`, ".change-preview"],
   ]) {
@@ -331,7 +332,11 @@ test("keyboard order, focus hand-back and names at the shortest windows", { time
   await expect(menu).toBeHidden();
   await expect(more).toBeFocused();
   await page.keyboard.press("Enter");
-  await menu.locator("button:not([disabled])").last().focus();
+  // Retire, the last button, is enabled by a request of its own. Enabled between the focus and the Tab, it would be the
+  // next stop and the menu would stay open, so the menu is settled before its last button is chosen.
+  const lastAction = menu.locator("button").last();
+  await expect(lastAction).toBeEnabled();
+  await lastAction.focus();
   await page.keyboard.press("Tab");
   await expect(menu, "tabbing out of the asset menu closes it").toBeHidden();
 
@@ -387,7 +392,7 @@ test("keyboard order, focus hand-back and names at the shortest windows", { time
     assert.equal(headings.length, 1, `${state}: one h1 on the page, found ${JSON.stringify(headings)}`);
   }
   // In Files: the folder filter has a label that is shown, and the icon-only button says what it is on hover too.
-  await open(`${files}knowledge`, ".folder-table");
+  await open(`${files}knowledge`, ".folder-table tbody tr");
   const filterLabelled = await page
     .locator('.folder-tools input[type="search"]')
     .evaluate((input) => [...input.labels].some((label) => label.getClientRects().length && label.textContent.trim()));
@@ -411,7 +416,7 @@ test("keyboard order, focus hand-back and names at the shortest windows", { time
     violations.push(...results.violations.map(({ id, nodes }) => `${state}: ${id} ${nodes[0].target}`));
   };
   for (const [state, route, ready] of [
-    ["files", "/library/files?bundle=personal&path=knowledge", ".folder-table"],
+    ["files", "/library/files?bundle=personal&path=knowledge", ".folder-table tbody tr"],
     ["editor", `/library/edit?ref=${longRef}`, 'textarea[name="content"]'],
     ["review queue", "/review", '[aria-label="Queue summary"]'],
     ["review proposal", `/review/${app.proposals.fresh}`, ".change-preview"],
