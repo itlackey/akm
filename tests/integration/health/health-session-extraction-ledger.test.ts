@@ -123,6 +123,9 @@ describe("session-extraction is derived from the extract_sessions_seen ledger (#
     const advisory = findAdvisory(result.advisories, "session-extraction");
     expect(advisory.status).toBe("warn");
     expect(advisory.message).toBe('3 of 3 sessions in the last 7 days skipped or failed: exception (engine "lab").');
+    // A heuristic warning is still a warning: the overall verdict (and exit code 4) says so too (F4).
+    expect(result.status).toBe("warn");
+    expect(result.ok).toBe(true);
   });
 
   test("a legacy skipped row with no metadata still warns as an unknown reason, not pass", async () => {

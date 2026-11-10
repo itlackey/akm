@@ -66,9 +66,10 @@ describe("reads", () => {
     expect(overview.errors).toBeUndefined();
     expect(overview.health.hardChecks.length).toBeGreaterThan(0);
     expect(overview.health.windows).toHaveLength(2);
-    // The round-trip probe writes a row; a read-only run reports it skipped.
+    // The round-trip probe writes a row; a read-only run reports it skipped, which proved nothing (F9).
     const roundTrip = overview.health.hardChecks.find((c: { name: string }) => c.name === "state-db-round-trip");
     expect(roundTrip.message).toContain("skipped");
+    expect(roundTrip.status).toBe("unknown");
     expect(overview.metrics.schemaVersion).toBeDefined();
 
     expect(overview.improveRuns).toHaveLength(1);
@@ -738,6 +739,8 @@ describe("secrets and read-only guarantees", () => {
     const overview = await out(activity.overview());
     expect(overview.health.status).toBe("fail");
     expect(overview.health.hardChecks[0].name).toBe("state-db-readable");
+    // The remedy is one the person can take from the app, not only a CLI command (F8).
+    expect(overview.health.hardChecks[0].message).toContain("Index the library");
     expect(overview.improveRuns).toEqual([]);
     expect(await out(proposals.list())).toMatchObject({ totalCount: 0 });
     expect(fs.existsSync(getStateDbPath())).toBe(false);

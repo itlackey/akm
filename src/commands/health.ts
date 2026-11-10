@@ -125,7 +125,16 @@ export function parseHealthSince(since?: string): string {
   if (durationMs !== null) {
     return new Date(Date.now() - durationMs).toISOString();
   }
-  return parseSinceToIso(trimmed);
+  try {
+    return parseSinceToIso(trimmed);
+  } catch (error) {
+    if (!(error instanceof UsageError)) throw error;
+    // Name every form this command takes, the duration shorthand included.
+    throw new UsageError(
+      `Invalid --since value: ${trimmed}. Expected ISO timestamp (e.g. 2026-04-01T00:00:00Z), a date (YYYY-MM-DD), epoch ms, or a duration such as 24h or 7d.`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
 }
 
 function validateAkmHealthOptions(options: AkmHealthOptions): void {
@@ -668,6 +677,29 @@ function degradedStateDbReport(hardCheck: HealthCheckResult, options: AkmHealthO
   };
 }
 
+/** SQLite refused the file: garbage, a truncated copy, or a non-database file left where state.db belongs. */
+function isNotADatabase(error: unknown): boolean {
+  return (
+    (error as { code?: unknown } | undefined)?.code === "SQLITE_NOTADB" ||
+    /not a database/i.test(error instanceof Error ? error.message : String(error))
+  );
+}
+
+function corruptStateDbCheck(stateDbPath: string, detail: string): HealthCheckResult {
+  return {
+    name: "state-db-readable",
+    kind: "deterministic",
+    status: "fail",
+    confidence: "high",
+    message:
+      `state.db at ${stateDbPath} is not a SQLite database (${detail}). Every other health check is skipped because ` +
+      'none of them can read it. Repair: back up state.db, run `sqlite3 -readonly state.db ".recover" | sqlite3 state.new.db`, ' +
+      "stop every akm process, delete state.db-wal and state.db-shm, then swap state.new.db in as state.db; if nothing " +
+      "can be recovered, move state.db aside and the next akm command creates a new one.",
+    evidence: { path: stateDbPath, detail },
+  };
+}
+
 function unreadableStateDbCheck(detail: string): HealthCheckResult {
   return {
     name: "state-db-readable",
@@ -694,7 +726,8 @@ function readOnlyStateDbUnavailable(stateDbPath: string): HealthCheckResult | un
       kind: "deterministic",
       status: "fail",
       confidence: "high",
-      message: `state.db does not exist at ${stateDbPath}; a read-only health run does not create it. Run any akm command that records state, such as \`akm health\`.`,
+      // Only a read-only run (the workspace, AKM Desktop) reports this, so it names what the app offers.
+      message: `state.db does not exist at ${stateDbPath}: nothing has recorded state yet, and a read-only health run does not create it. Index the library (Settings → Bundles & index → Update / reindex, or \`akm index\`) or run any akm command that records state, such as \`akm health\`.`,
       evidence: { path: stateDbPath },
     };
   }
@@ -732,6 +765,12 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
     const { access, code } = classifyPathAccess(stateDbPath);
     if (access === "inaccessible") {
       return degradedStateDbReport(unreadableStateDbCheck(describeInaccessiblePath(stateDbPath, code)), options);
+    }
+    if (isNotADatabase(error)) {
+      return degradedStateDbReport(
+        corruptStateDbCheck(stateDbPath, error instanceof Error ? error.message : String(error)),
+        options,
+      );
     }
     // A migration that failed to apply rolled back and is still pending:
     // name it from a read-only listing (which never applies anything) rather
@@ -841,10 +880,9 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
     };
 
     const hardFailure = hardChecks.some((check) => check.status === "fail");
-    const deterministicWarnings = [...hardChecks, ...advisories].some(
-      (check) => check.status === "warn" && check.kind === "deterministic",
-    );
-    const status: AkmHealthResult["status"] = hardFailure ? "fail" : deterministicWarnings ? "warn" : "pass";
+    // Every `warn` counts, heuristic or not: the text header, Desktop and exit code 4 then say the same thing.
+    const warnings = [...hardChecks, ...advisories].some((check) => check.status === "warn");
+    const status: AkmHealthResult["status"] = hardFailure ? "fail" : warnings ? "warn" : "pass";
 
     // ── Per-run mode ────────────────────────────────────────────
     const runs: ImproveRunSummary[] | undefined = options.groupBy === "run" ? perRunSummaries : undefined;

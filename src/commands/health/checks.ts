@@ -249,7 +249,8 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
     run: (ctx) => ({
       name: "state-db-round-trip",
       kind: "deterministic",
-      status: ctx.probe.ok ? "pass" : "fail",
+      // A skipped probe proved nothing: it is unknown, not a pass.
+      status: ctx.probe.skipped ? "unknown" : ctx.probe.ok ? "pass" : "fail",
       confidence: "high",
       message: ctx.probe.skipped
         ? "state.db append/read round-trip skipped: this run is read-only."
