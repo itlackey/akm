@@ -7,6 +7,7 @@ import { parsePlacementRef } from "../../../core/asset/resolve-ref";
 import { proposalContent } from "../../../core/file-change";
 import { lintLessonContent } from "../../../core/lesson-lint";
 import { resolveWriteAddress } from "../../../indexer/lookup/adapter-concept-owner";
+import { isLegacyProposalRef } from "../../../storage/repositories/proposals-repository";
 import { parseTaskSource } from "../../../tasks/source/parse-task-source";
 import { compileWorkflowSource } from "../../../workflows/compile";
 import type {
@@ -34,6 +35,23 @@ const genericProposalValidator: ProposalValidator = {
 
     if (!proposal.payload || typeof proposal.payload.content !== "string" || proposal.payload.content.trim() === "") {
       findings.push({ kind: "empty-content", message: `Proposal ${proposal.id} has empty content.` });
+    }
+
+    // A row written before concept IDs (#1513) is shown as written and never applied.
+    if (isLegacyProposalRef(proposal.ref)) {
+      const missing = [
+        ...(proposal.changes.length === 0 ? ["changes"] : []),
+        ...(proposal.proposedTarget === undefined ? ["proposedTarget"] : []),
+      ];
+      findings.push({
+        kind: "legacy-ref",
+        message:
+          `Proposal ${proposal.id} predates concept IDs: its ref "${proposal.ref}" names no asset` +
+          `${missing.length > 0 ? `, and it records no ${missing.join(" or ")}` : ""}. It cannot be accepted; ` +
+          `\`akm proposal reject ${proposal.id} --reason <why>\` archives it with its content and ref kept.`,
+      });
+      ctx.stop = true;
+      return findings;
     }
 
     try {

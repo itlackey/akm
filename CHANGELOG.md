@@ -96,6 +96,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A `$schema` key in `config.json` is accepted without an unknown-key warning.
 - Wrong text: the feedback error named `akm.json` (the file is `config.json`); Desktop labelled `archiveRetentionDays` "archived assets" (it expires pending proposals) and `feedback.requireReason` as gating positive feedback (it gates negative feedback); `configuration.md` cited the gone `setup --config`; the comment at the top of `config-schema.ts` described behaviour the code does not have. Docs now state the working-bundle order, `improve.eventRetentionDays` and `improve.stateGc.collect`; `STABILITY.md` lists `AKM_STATE_DIR` as Supported and `AKM_UPGRADE_SKIP_CHECKSUM` as Internal (as `cli.md` already said) and names the other Internal variables; the eight flags `cli.md` missed are listed.
 
+## [0.10.261116] - 2026-11-09
+
+### Fixed
+
+- A pending proposal recorded before concept IDs (its ref is the retired `<type>:<name>` grammar, such as `lesson:<name>`, and its metadata has no `changes` or `proposedTarget`) is read as written instead of being skipped with a warning on every read while `akm migrate status` reported nothing to do. `akm proposal show` prints it with a `legacy-ref` finding (Experimental) naming what it lacks, `akm proposal reject` archives it with its content, ref and decision kept, `akm proposal accept` and `diff` refuse it with the same reason, and `akm proposal drain` leaves it for a person. A fragment ref is still skipped. A decision on a proposal that has no change list no longer writes an empty one, which made the row unreadable afterwards (#1513).
+- AKM Desktop (Linux AppImage): the launcher honours electron-updater's `APPIMAGE_EXIT_AFTER_INSTALL`, so an update installed on quit no longer starts a second AKM Desktop while the quitting one still holds the single-instance lock. Ordinary launches, and the updater's silent runs that are not install-only, start Electron with their arguments as before (#1517).
+
 ## [0.10.261115] - 2026-11-08
 
 ### Added

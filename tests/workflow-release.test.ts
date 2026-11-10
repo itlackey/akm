@@ -80,10 +80,19 @@ describe("release workflow", () => {
     // Only a stage changes the version the artifacts carry; it is stamped into this run's package.json.
     expect(source).toContain('npm pkg set version="$CANDIDATE_VERSION"');
     expect(source).toContain('echo "CANDIDATE_VERSION=$CANDIDATE_VERSION" >> "$GITHUB_ENV"');
-    // Prereleases go to the `next` tag, stable builds to `latest`.
-    expect(source).toContain('[[ "$CANDIDATE_VERSION" == *-* ]]');
-    expect(source).toContain("DIST_TAG=next");
-    expect(source).toContain("DIST_TAG=latest");
+  });
+
+  test("a stable is `latest`; a prerelease is `next` unless a newer line's prerelease already holds it", () => {
+    const choose = workflow.jobs.release?.steps?.find((step) => step.name === "Choose the npm dist-tag");
+    expect(choose?.run).toContain("DIST_TAG=latest");
+    expect(choose?.run).toContain("DIST_TAG=next");
+    expect(choose?.run).toContain("npm view akm-cli dist-tags.next");
+    expect(choose?.run).toContain('require("semver").gt(process.argv[1], process.argv[2])');
+    // An older line's prerelease gets its line's tag, so `next` never moves backwards.
+    expect(choose?.run).toContain('DIST_TAG="next-$(cut -d. -f1,2 <<<"$CANDIDATE_VERSION")"');
+    // akm-web publishes under the tag the release job chose.
+    expect(source).toContain("dist_tag: $" + "{{ steps.dist-tag.outputs.dist_tag }}");
+    expect(source).toContain("DIST_TAG: $" + "{{ needs.release.outputs.dist_tag }}");
   });
 
   test("the changelog is cut: its newest released section names the shipping version", () => {

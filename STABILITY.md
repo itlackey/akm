@@ -124,7 +124,7 @@ covers beyond the table.
 | `akm improve report` | Evolving | Subcommand since 0.10 (was a magic `scope` value); owns `--run` and `--since`. |
 | `akm judge` | Evolving | Runs a registered judge (`reflect.quality`, `distill.lesson`, `consolidate.pair`, `proposal.judgment`) on one JSON input from stdin, on the runner `--connection`, `--harness` and `--model` select. Output is one envelope (`judge`, `schemaVersion`, `runner`, `outcome`, `verdict?`, `reason?`); each judge carries its own `schemaVersion`. |
 | `akm proposal list` | Stable | |
-| `akm proposal show` | Evolving | |
+| `akm proposal show` | Evolving | The `legacy-ref` validation finding on a proposal recorded before concept IDs (#1513) is Experimental for its first release. |
 | `akm proposal diff` | Evolving | |
 | `akm proposal accept` | Evolving | |
 | `akm proposal reject` | Evolving | |

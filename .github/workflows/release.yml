@@ -48,6 +48,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      dist_tag: ${{ steps.dist-tag.outputs.dist_tag }}
     # tests/release-check.sh proves the packaged artifact; the build and
     # publish steps follow it.
     timeout-minutes: 30
@@ -154,6 +155,24 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
 
+      # A stable release is `latest`. A prerelease is `next` only when it is higher than the prerelease `next` points
+      # at; one from an older line published after a newer line's gets its line's tag (`next-0.10`), so `next` never
+      # moves backwards. akm-web publishes under the same tag.
+      - name: Choose the npm dist-tag
+        id: dist-tag
+        run: |
+          if [[ "$CANDIDATE_VERSION" != *-* ]]; then
+            DIST_TAG=latest
+          elif current="$(npm view akm-cli dist-tags.next 2>/dev/null)" && [ -n "$current" ] \
+            && ! node -e 'process.exit(require("semver").gt(process.argv[1], process.argv[2]) ? 0 : 1)' "$CANDIDATE_VERSION" "$current"; then
+            DIST_TAG="next-$(cut -d. -f1,2 <<<"$CANDIDATE_VERSION")"
+          else
+            DIST_TAG=next
+          fi
+          echo "DIST_TAG=$DIST_TAG" >> "$GITHUB_ENV"
+          echo "dist_tag=$DIST_TAG" >> "$GITHUB_OUTPUT"
+          echo "npm dist-tag: $DIST_TAG"
+
       # npm trusted publishing: the job's OIDC token (id-token: write) authenticates; no npm token is stored.
       - name: Publish to npm
         if: ${{ !inputs.dry_run }}
@@ -161,11 +180,6 @@ jobs:
           if npm view "akm-cli@$CANDIDATE_VERSION" version >/dev/null 2>&1; then
             echo "akm-cli@$CANDIDATE_VERSION is already published"
             exit 0
-          fi
-          if [[ "$CANDIDATE_VERSION" == *-* ]]; then
-            DIST_TAG=next
-          else
-            DIST_TAG=latest
           fi
           npm publish "./artifacts/akm-cli-$CANDIDATE_VERSION.tgz" \
             --ignore-scripts \
@@ -273,6 +287,7 @@ jobs:
     timeout-minutes: 30
     env:
       VERSION: ${{ needs.release.outputs.version }}
+      DIST_TAG: ${{ needs.release.outputs.dist_tag }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
         with:
@@ -311,10 +326,5 @@ jobs:
           if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
             echo "$NAME@$VERSION is already published"
             exit 0
-          fi
-          if [[ "$VERSION" == *-* ]]; then
-            DIST_TAG=next
-          else
-            DIST_TAG=latest
           fi
           npm publish "$STAGE" --ignore-scripts --provenance --access public --tag "$DIST_TAG"
