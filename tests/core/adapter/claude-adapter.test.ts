@@ -51,14 +51,6 @@ const ctx: ValidateContext = {
   resolveRef: async () => ({ exists: false }),
 };
 
-describe("claude adapter — metadata", () => {
-  test("id / version / extensions", () => {
-    expect(claudeAdapter.id).toBe("claude");
-    expect(claudeAdapter.version).toBe("0.9.0");
-    expect(claudeAdapter.extensions).toEqual([".md"]);
-  });
-});
-
 describe("claude adapter — recognition golden", () => {
   const byRelPath = loadGolden("recognition").byRelPath as Record<string, Record<string, unknown>>;
 

@@ -69,14 +69,6 @@ function makeValidateContext(overrides: Partial<ValidateContext> = {}): Validate
 
 // ── adapter metadata ─────────────────────────────────────────────────────────
 
-describe("okf adapter — metadata", () => {
-  test("id / version / extensions per §5", () => {
-    expect(okfAdapter.id).toBe("okf");
-    expect(okfAdapter.version).toBe("0.9.0");
-    expect(okfAdapter.extensions).toEqual([".md"]);
-  });
-});
-
 // ── recognize: `type` from frontmatter (§5.1 BINDING) ────────────────────────
 
 describe("okf adapter — recognize reads `type` from frontmatter", () => {

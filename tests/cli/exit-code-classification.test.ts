@@ -2,6 +2,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import { describe, expect, it, test } from "bun:test";
+import { emitJsonError } from "../../src/cli/shared";
+import { ConfigError, NotFoundError, TransientError, UsageError } from "../../src/core/errors";
+import { EMBEDDED_HINTS } from "../../src/output/cli-hints";
+
 // H6 (code-health round-2 audit) — typed error envelope + distinct INTERNAL
 // exit code 70.
 //
@@ -23,10 +28,6 @@
 // Scripts can therefore distinguish "akm threw unexpectedly" from an ordinary
 // `NotFoundError` (still exit 1). Every existing classified exit code is
 // asserted UNCHANGED below to lock that in.
-
-import { describe, expect, it } from "bun:test";
-import { emitJsonError } from "../../src/cli/shared";
-import { ConfigError, NotFoundError, TransientError, UsageError } from "../../src/core/errors";
 
 interface Captured {
   exitCode: number;
@@ -110,5 +111,72 @@ describe("classifyExitCode via emitJsonError (H6)", () => {
     const { exitCode, envelope } = runEmit("boom");
     expect(exitCode).toBe(70);
     expect(envelope.error).toBe("boom");
+  });
+});
+
+describe("embedded exit-code hints", () => {
+  for (const [name, hints] of [["brief", EMBEDDED_HINTS]] as const) {
+    test(`${name} pins health/internal codes and command failure semantics`, () => {
+      expect(hints).toContain("| 4 | Health warning (`akm health` only) |");
+      expect(hints).toContain("| 70 | Internal / unclassified error |");
+      expect(hints).toContain("Not found or command-reported failure");
+      expect(hints).toContain("| 75 | Transient");
+    });
+  }
+});
+
+/**
+ * "Not found" must mean exit 1 everywhere.
+ *
+ * STABILITY.md documents exit 1 as "requested resource missing" and scripts
+ * branch on it, but three commands disagreed: `feedback` and `sync` raised
+ * UsageError (exit 2, "you typed it wrong") for a well-formed ref that simply
+ * did not exist, and `registry remove` returned a SUCCESS envelope with
+ * `removed: false` and exit 0 — so `akm registry remove typo && deploy` ran
+ * the deploy. A missing proposal additionally reported FILE_NOT_FOUND, whose
+ * canned hint ("Check the path exists and is readable") describes a
+ * filesystem path, not the id or ref the user actually passed.
+ */
+
+describe("not-found error classification", () => {
+  test("PROPOSAL_NOT_FOUND hints at the command that lists valid ids", () => {
+    const err = new NotFoundError('Proposal "p-123" not found.', "PROPOSAL_NOT_FOUND");
+
+    expect(err.hint()).toContain("akm proposal list");
+    // The old FILE_NOT_FOUND hint pointed at a filesystem path, which a
+    // proposal id never is.
+    expect(err.hint()).not.toContain("path exists");
+  });
+
+  test("every not-found code carries the not-found kind (which maps to exit 1)", () => {
+    for (const code of [
+      "ASSET_NOT_FOUND",
+      "SOURCE_NOT_FOUND",
+      "WORKFLOW_NOT_FOUND",
+      "PROPOSAL_NOT_FOUND",
+      "FILE_NOT_FOUND",
+      "IMPROVE_RUN_NOT_FOUND",
+    ] as const) {
+      expect(new NotFoundError("missing", code).kind).toBe("not-found");
+    }
+  });
+
+  test("IMPROVE_RUN_NOT_FOUND hints at akm improve report, not raw sqlite3 (#944)", () => {
+    const err = new NotFoundError("akm improve report: no improve runs recorded yet.", "IMPROVE_RUN_NOT_FOUND");
+
+    expect(err.hint()).toContain("akm improve report --since 30d");
+    // #944 exists specifically to make querying state.db by hand unnecessary
+    // for this — the hint must not send operators back to raw sqlite3.
+    expect(err.hint()).not.toContain("sqlite3");
+  });
+
+  test("an explicit hint overrides the code's canned one", () => {
+    const err = new NotFoundError(
+      'No registry matching "x" is configured.',
+      "SOURCE_NOT_FOUND",
+      "Run `akm registry list` to see configured registries.",
+    );
+
+    expect(err.hint()).toContain("akm registry list");
   });
 });

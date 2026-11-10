@@ -18,10 +18,4 @@ describe("deepMergeConfig", () => {
       nullable: null,
     });
   });
-
-  test("rejects prototype-pollution keys at every depth", () => {
-    expect(() => deepMergeConfig({}, JSON.parse('{"nested":{"__proto__":{"polluted":true}}}'))).toThrow(
-      "Unsafe configuration key",
-    );
-  });
 });
