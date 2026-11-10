@@ -396,7 +396,6 @@
       display: inline;
     }
     .desktop-topbar nav {
-      order: 3;
       flex: 1 0 100%;
       display: grid;
       grid-template-columns: repeat(6, minmax(0, 1fr));

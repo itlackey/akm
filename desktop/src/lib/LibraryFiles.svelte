@@ -721,9 +721,9 @@
     .file-breadcrumbs button {
       min-height: var(--control-height, 44px);
     }
+    /* Beside Folders and before the actions, as in the markup: wide enough that the actions take the next line. */
     .file-breadcrumbs {
-      order: 2;
-      flex-basis: 100%;
+      flex-basis: 60%;
     }
     .folder-content {
       padding: 24px 20px;

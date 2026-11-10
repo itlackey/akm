@@ -21,7 +21,8 @@
   const current = $derived(detail.proposal as ReviewProposal);
 </script>
 
-<!-- Reading order, visual and DOM: what it is, what to watch for, why it was proposed, then the change itself. -->
+<!-- Reading order, visual and DOM, at every window size: what it is, what to watch for, the change itself, then why it
+     was proposed. A short window has room for the change or for the reasons, and the change is what is decided. -->
 <nav class="crumbs proposal-back" aria-label="Proposal breadcrumb">
   <a class="back" href={proposalHref("", query)}><Icon name="arrow-left" size={16} /><span>Back to queue</span></a>
 </nav>
@@ -43,17 +44,18 @@
       >{/if}
   </div>
 </header>
-{#key current.id}<ReviewEvidence {detail} {noop} />{/key}
-<section class="change" aria-label="Proposed change">
-  <h3>Proposed change</h3>
-  {#if detail.diff}<Diff
-      before={detail.diff.before}
-      after={detail.diff.after}
-      unified={detail.diff.unified ?? ""}
-      redacted={detail.diff.redacted ?? false}
-      truncated={detail.diff.truncated ?? false}
-    />{:else}<p class="muted">No change preview is available.</p>{/if}
-</section>
+{#key current.id}<ReviewEvidence {detail} {noop}>
+    <section class="change" aria-label="Proposed change">
+      <h3>Proposed change</h3>
+      {#if detail.diff}<Diff
+          before={detail.diff.before}
+          after={detail.diff.after}
+          unified={detail.diff.unified ?? ""}
+          redacted={detail.diff.redacted ?? false}
+          truncated={detail.diff.truncated ?? false}
+        />{:else}<p class="muted">No change preview is available.</p>{/if}
+    </section>
+  </ReviewEvidence>{/key}
 
 <style>
   .proposal-back {

@@ -603,12 +603,6 @@
               : "activity"}</a
           >{/if}
       </div>
-      <div class="refresh">
-        <span class="refresh-note muted small" role="status">{refreshNote}</span>
-        <button class="btn-quiet" bind:this={refreshButton} onclick={refreshClicked} disabled={busy || loading}
-          ><Icon name="refresh" size={16} /> Refresh queue</button
-        >
-      </div>
     </div>
     <div class="review-filters">
       <nav class="tabs" aria-label="Proposal status">
@@ -636,6 +630,13 @@
               >{label}</option
             >{/each}</select
         ></label
+      >
+    </div>
+    <!-- Last in the row and last in the markup: the heading, the tabs and the filters are read before it. -->
+    <div class="refresh">
+      <span class="refresh-note muted small" role="status">{refreshNote}</span>
+      <button class="btn-quiet" bind:this={refreshButton} onclick={refreshClicked} disabled={busy || loading}
+        ><Icon name="refresh" size={16} /> Refresh queue</button
       >
     </div>
   </div>
@@ -807,13 +808,20 @@
     height: 100%;
     min-height: 0;
   }
+  /* One wrapping row in markup order: the heading, the tabs and filters, then Refresh at the end of the last line. */
   .review-top {
-    display: contents;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0 1rem;
+    flex: none;
   }
   .refresh {
     position: relative;
     display: flex;
     align-items: center;
+    margin-inline-start: auto;
+    margin-bottom: 0.5rem;
   }
   /* Beside the button, out of the flow, so showing it never moves anything. */
   .refresh-note {
@@ -831,7 +839,7 @@
   }
   .page-heading {
     margin-bottom: 0.5rem;
-    flex: none;
+    flex: 1 1 auto;
   }
   .page-heading h1 {
     margin: 0;
@@ -839,7 +847,7 @@
   .review-filters {
     justify-content: flex-start;
     margin-bottom: 0.5rem;
-    flex: none;
+    flex: 1 1 100%;
   }
   .review-filters .tabs {
     margin: 0;
@@ -986,20 +994,15 @@
   /* Wide: the heading, tabs, filters and Refresh share one row, so the proposal gets the height. */
   @media (min-width: 851px) {
     .review-top {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
       gap: var(--space-2) var(--space-5);
       margin-bottom: 0.5rem;
-      flex: none;
     }
     .review-top > .page-heading,
     .review-top > .review-filters {
       display: contents;
     }
     .review-top .refresh {
-      order: 9;
-      margin-inline-start: auto;
+      margin-bottom: 0;
     }
   }
   @media (max-width: 850px) {
@@ -1056,18 +1059,9 @@
     }
   }
   @media (min-width: 851px) and (max-height: 700px) {
-    .review-page[data-detail] .page-heading {
+    .review-page[data-detail] .page-heading,
+    .review-page[data-detail] .refresh {
       display: none;
-    }
-    /* The pane has room for the facts or the change, not both: the change follows the title and the warnings, and
-       "Why AKM proposed this" comes after it. */
-    .review-scroll {
-      display: flex;
-      flex-direction: column;
-      padding-block-start: var(--space-2);
-    }
-    .review-scroll > :global(.why) {
-      order: 1;
     }
     .review-workspace[data-detail] {
       display: block;
