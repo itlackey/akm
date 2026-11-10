@@ -49,7 +49,12 @@
     probedAt = $state(""),
     historyFilter = $state(""),
     historyOrigin = $state(""),
-    refreshButton = $state<HTMLButtonElement>();
+    refreshButton = $state<HTMLButtonElement>(),
+    // A refresh reloads the view that is on screen; `refreshSaid` is what the status line says once it is back.
+    refreshing = $state(false),
+    refreshSaid = $state("");
+  // A first load or a change of view hides the view until its measurements arrive; a refresh keeps it on screen.
+  const shown = $derived(!loading || refreshing);
   const view = $derived(
     route === "improve"
       ? "Improve impact"
@@ -110,6 +115,7 @@
     const request = ++generation;
     loading = true;
     error = "";
+    refreshSaid = "";
     try {
       if (view === "Health" || view === "Runs" || view === "Usage & retrieval") {
         const [next, nextPulse, nextRetrieval] = await Promise.all([
@@ -165,7 +171,10 @@
   }
   /** Refresh is disabled while it loads, which drops focus: the button has it again when the page is back. */
   async function refresh() {
+    refreshing = true;
     await load();
+    refreshing = false;
+    if (!error && !loading) refreshSaid = `${view} refreshed.`;
     await tick();
     if (document.activeElement === document.body) refreshButton?.focus();
   }
@@ -234,9 +243,12 @@
 {#if error}<div class="notice notice-warn" role="alert">
     {error}<button class="btn-secondary" onclick={load}>Retry activity</button>
   </div>{/if}
-{#if loading}<p role="status">
-    Loading {view.toLowerCase()}…
-  </p>{:else if view === "Health" || view === "Runs" || view === "Usage & retrieval"}{#if overview}{#if view !== "Health"}<p
+<!-- Always in the page, so loading and a finished refresh are heard. While a view loads the line stands in for it;
+  during and after a refresh the view stays and the line is for screen readers. -->
+<p id="activity-status" role="status" class:sr-only={shown}>
+  {loading ? `${refreshing ? "Refreshing" : "Loading"} ${view.toLowerCase()}…` : refreshSaid}
+</p>
+{#if shown && (view === "Health" || view === "Runs" || view === "Usage & retrieval")}{#if overview}{#if view !== "Health"}<p
         class="muted small"
       >
         {overview.metrics
@@ -254,12 +266,12 @@
       {probedAt}
       requestedTask={query.get("task") ?? ""}
     />{/if}
-{:else if view === "Improve impact"}{#if impact}<ActivityImpact
+{:else if shown && view === "Improve impact"}{#if impact}<ActivityImpact
       {impact}
       {retrieval}
       bind:selectedProcess={impactProcess}
     />{/if}
-{:else if view === "Source history" && changes}<h2>Write-target history</h2>
+{:else if shown && view === "Source history" && changes}<h2>Write-target history</h2>
   <p class="muted">{changes.bundle} · <span class="mono wrap">{changes.path}</span></p>
   {#if !changes.git}<p class="empty">
       This write target is not a Git repository. AKM does not retain general manual-edit undo for a non-Git bundle.

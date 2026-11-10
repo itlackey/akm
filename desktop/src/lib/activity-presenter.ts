@@ -19,6 +19,7 @@ export type AttentionItem = {
   action: string;
   check?: string;
 };
+const plural = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
 /** Rank recorded faults before ordinary work. Missing pulse data never means an all-clear. */
 export function attentionItems(data: ActivityOverview, pulse: ActivityPulse | null): AttentionItem[] {
   const items: AttentionItem[] = [];
@@ -28,7 +29,7 @@ export function attentionItems(data: ActivityOverview, pulse: ActivityPulse | nu
     if (matches.length)
       items.push({
         tone: status,
-        text: `${matches.length} ${status === "fail" ? "failing checks" : "health warnings"}`,
+        text: plural(matches.length, status === "fail" ? "failing check" : "health warning"),
         check: matches[0].name,
         href: `/activity/overview?view=health&anchor=health-${encodeURIComponent(status)}`,
         action: "Inspect checks",
@@ -40,7 +41,12 @@ export function attentionItems(data: ActivityOverview, pulse: ActivityPulse | nu
   if (failedImprove || failedTasks)
     items.splice(checks.some((check) => check.status === "fail") ? 1 : 0, 0, {
       tone: "fail",
-      text: `${failedImprove} failed improve runs in latest records · ${failedTasks} failed task runs this week`,
+      text: [
+        failedImprove && `${plural(failedImprove, "failed improve run")} in latest records`,
+        failedTasks && `${plural(failedTasks, "failed task run")} this week`,
+      ]
+        .filter(Boolean)
+        .join(" and "),
       href: "/activity/overview?view=runs",
       action: "Inspect runs",
     });
@@ -48,21 +54,21 @@ export function attentionItems(data: ActivityOverview, pulse: ActivityPulse | nu
   if (pending?.count)
     items.push({
       tone: "work",
-      text: `${pending.count} proposals waiting for review`,
+      text: `${plural(pending.count, "proposal")} waiting for review`,
       href: "/review",
       action: "Review changes",
     });
   if (pulse?.attention?.misses.queries)
     items.push({
       tone: "work",
-      text: `${pulse.attention.misses.queries} queries found nothing on multiple days`,
+      text: `${plural(pulse.attention.misses.queries, "query", "queries")} found nothing on multiple days`,
       href: "/activity/overview?view=misses",
       action: "Inspect search gaps",
     });
   if (pulse?.attention?.harm.reverted)
     items.push({
       tone: "work",
-      text: `${pulse.attention.harm.reverted} changes reverted this week`,
+      text: `${plural(pulse.attention.harm.reverted, "change")} reverted this week`,
       href: "/activity/improve?anchor=harm",
       action: "Inspect reversions",
     });

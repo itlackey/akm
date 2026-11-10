@@ -83,18 +83,28 @@
     selectedRun = $state<ActivityRun | null>(null),
     selection = 0,
     probing = $state(false);
+  // `said` is the group's count inside a sentence ("1 warning, 3 not checked"), for the line that reports a probe.
   const groups = [
-    { key: "fail", label: "Failing" },
-    { key: "warn", label: "Warnings" },
-    { key: "off", label: "Turned off" },
-    { key: "unchecked", label: "Not checked" },
-    { key: "blocked", label: "Could not check" },
-    { key: "idle", label: "No data yet" },
-    { key: "pass", label: "Passing" },
+    { key: "fail", label: "Failing", said: (n: number) => `${n} failing` },
+    { key: "warn", label: "Warnings", said: (n: number) => `${n} ${n === 1 ? "warning" : "warnings"}` },
+    { key: "off", label: "Turned off", said: (n: number) => `${n} turned off` },
+    { key: "unchecked", label: "Not checked", said: (n: number) => `${n} not checked` },
+    { key: "blocked", label: "Could not check", said: (n: number) => `${n} could not be checked` },
+    { key: "idle", label: "No data yet", said: (n: number) => `${n} with no data yet` },
+    { key: "pass", label: "Passing", said: (n: number) => `${n} passing` },
   ];
+  // What the last "Run all checks" came to, for the status line; empty until one has run.
+  let probeSaid = $state("");
   const checks = $derived([...(data.health?.hardChecks ?? []), ...(data.health?.advisories ?? [])]);
   const classified = $derived(checks.map((check) => ({ check, group: healthGroup(check, checks) })));
   const grouped = (key: string) => classified.filter((item) => item.group === key).length;
+  // What did not run, for the header.
+  const notRun = $derived(
+    groups
+      .filter((group) => ["off", "unchecked", "blocked"].includes(group.key) && grouped(group.key))
+      .map((group) => group.said(grouped(group.key)))
+      .join(", "),
+  );
   const metrics = $derived(data.metrics);
   const weekly = $derived(retrieval?.weekly ?? []);
   const activity = $derived(metrics?.usage.daily ?? []);
@@ -124,13 +134,23 @@
       }
     }
   }
+  /** The button stays focusable while it runs (aria-disabled), so this refuses a second run. */
   async function runChecks() {
+    if (probing) return;
     probing = true;
+    probeSaid = "";
+    const before = probedAt;
     try {
       await probe();
     } finally {
       probing = false;
     }
+    // A probe that failed leaves `probedAt` as it was, and the view above this one shows why as an alert.
+    if (probedAt !== before)
+      probeSaid = `Checks finished: ${groups
+        .filter((group) => grouped(group.key))
+        .map((group) => group.said(grouped(group.key)))
+        .join(", ")}.`;
   }
   onDestroy(() => {
     selection++;
@@ -147,10 +167,7 @@
   <div class="health-overview">
     <strong>AKM diagnostic status: {data.health?.status ?? "Unavailable"}</strong>
     <p>
-      Observation window: last 24 hours{#if grouped("off")}
-        · {grouped("off")} turned off{/if}{#if grouped("unchecked")}
-        · {grouped("unchecked")} not checked{/if}{#if grouped("blocked")}
-        · {grouped("blocked")} could not be checked{/if}
+      Observation window: last 24 hours{notRun ? `. ${notRun}.` : "."}
     </p>
   </div>
   <p class="muted small view-note">
@@ -165,14 +182,18 @@
           >
             <h3>{group.label}</h3>
             <ul class="attention-list">
-              {#each group.items as item}<li>
-                  <a href={item.href}
+              {#each group.items as item}{@const line = `${item.text}${item.check ? `: ${checkLabel(item.check)}` : ""}`}
+                <li>
+                  <!-- The name says the dot's colour in words and keeps the text and the action apart as two phrases. -->
+                  <a
+                    href={item.href}
+                    aria-label={`${item.tone === "fail" ? "Failure: " : item.tone === "warn" ? "Warning: " : ""}${line}. ${item.action}`}
                     ><i
                       class="signal"
                       class:fail={item.tone === "fail"}
                       class:warn={item.tone === "warn"}
                       aria-hidden="true"
-                    ></i><span>{item.text}{item.check ? ` · ${checkLabel(item.check)}` : ""}</span><span
+                    ></i><span>{line}</span><span class="attention-action"
                       >{item.action}<Icon name="arrow-right" size={16} /></span
                     ></a
                   >
@@ -185,24 +206,36 @@
           : "Attention coverage is incomplete; unavailable measurements are not an all-clear."}
       </p>{/if}
   </section>
-  <section id="health" class="activity-section">
+  <section id="health" class="activity-section" aria-busy={probing}>
     <div class="trends-head">
       <h2>Health checks</h2>
-      <button onclick={runChecks} disabled={probing}>{probing ? "Checking…" : "Run all checks"}</button>
+      <!-- Busy, not disabled: a disabled button drops keyboard focus to the page. -->
+      <button onclick={runChecks} aria-disabled={probing} aria-describedby="health-probe-note"
+        >{probing ? "Checking…" : "Run all checks"}</button
+      >
     </div>
-    <p class="muted small">Includes connection, release-source and scheduler probes. May contact the network.</p>
+    <p class="muted small" id="health-probe-note">
+      Includes connection, release-source and scheduler probes. May contact the network.
+    </p>
+    <!-- Always in the page, so the start and the result of a probe are heard, not only repainted. -->
+    <p class="muted small probe-said" role="status">{probing ? "Running all checks…" : probeSaid}</p>
     {#each groups as group}{@const items = classified.filter(
         (item) => item.group === group.key,
       )}{#if items.length}<section id={`health-${group.key}`} class="check-group" aria-label={group.label}>
           <h3>
-            {group.label}<span class="muted">{items.length}</span>
+            {group.label}{" "}<span class="muted"
+              >{items.length}<span class="sr-only">{items.length === 1 ? " check" : " checks"}</span></span
+            >
           </h3>
           <ul class="checks">
             {#each items as { check }}<li class="check" id={healthCheckAnchor(check.name)}>
-                <strong>{checkLabel(check.name)} <span class="muted small mono">{check.name}</span></strong>
+                <div class="check-name">
+                  <h4>{checkLabel(check.name)}</h4>
+                  <span class="check-id muted small mono"><span class="sr-only">{"Check id: "}</span>{check.name}</span>
+                </div>
                 <p>{check.message}</p>
                 {#if check.evidence}<details class="check-evidence">
-                    <summary>Evidence for {check.name}</summary>
+                    <summary>Evidence for {checkLabel(check.name)}</summary>
                     <pre class="code">{JSON.stringify(check.evidence, null, 2)}</pre>
                   </details>{/if}
               </li>{/each}
@@ -657,11 +690,9 @@
   .attention-list a:hover {
     color: var(--accent);
   }
-  .attention-list a span:last-child {
+  .attention-action {
     color: var(--accent);
     font-size: 0.8125rem;
-  }
-  .attention-list a span:last-child {
     display: flex;
     align-items: center;
     gap: 0.5rem;
@@ -696,9 +727,22 @@
     border-bottom: 1px solid var(--border);
     font-size: 0.8125rem;
   }
-  .check strong {
-    font-weight: 500;
+  .check-name {
     overflow-wrap: anywhere;
+  }
+  /* A heading for navigation, drawn as the label it always was: inline, with its id after it. */
+  .check h4 {
+    display: inline;
+    margin: 0;
+    font-size: inherit;
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: 0;
+    color: inherit;
+  }
+  /* Empty until a probe has run; then it takes a line. */
+  .probe-said:empty {
+    margin: 0;
   }
   .check p {
     margin: 0;
@@ -833,7 +877,7 @@
     .attention-list a {
       grid-template-columns: 0.65rem minmax(0, 1fr);
     }
-    .attention-list a span:last-child {
+    .attention-action {
       grid-column: 2;
     }
     .check {

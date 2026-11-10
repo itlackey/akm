@@ -74,11 +74,14 @@ test("attention ranks real faults before review work and never treats unknown ru
     items.map((item) => item.tone),
     ["fail", "fail", "warn", "work", "work"],
   );
-  assert.match(items[1].text, /1 failed improve runs/);
+  assert.equal(items[0].text, "1 failing check");
+  assert.equal(items[1].text, "1 failed improve run in latest records");
   // The view names the check by its label, so the item carries the id apart from the text (F16).
-  assert.equal(items[2].text, "1 health warnings");
+  assert.equal(items[2].text, "1 health warning");
   assert.equal(items[2].check, "index");
   assert.equal(items[3].href, "/review");
+  assert.equal(items[3].text, "3 proposals waiting for review");
+  assert.equal(items[4].text, "1 query found nothing on multiple days");
   assert.equal(attentionItems({ health: null, improveRuns: [{ ok: null }] }, null).length, 0);
 });
 

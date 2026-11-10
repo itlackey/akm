@@ -148,6 +148,63 @@ test("reviewed human workflows prevent dead ends and preserve focus and source",
     await expect(page.locator(".home-concerns")).toBeVisible();
     await page.unroute("**/api/overview?*");
   });
+  await t.test(
+    "Activity health: checks are headings, counts and tones are said, a probe and a refresh keep the view and are announced",
+    async () => {
+      await navigate("/activity/overview");
+      const health = page.locator("#health");
+      await expect(health).toBeVisible();
+      // The header says what did not run as a sentence, in the words the status line uses.
+      await expect(page.locator(".health-overview p")).toHaveText(
+        "Observation window: last 24 hours. 1 turned off, 3 not checked.",
+      );
+      // A group's heading says its count in words; a check is a heading of its own, with the id as separate text and
+      // its evidence named by the same label.
+      await expect(page.getByRole("heading", { level: 3, name: "Warnings 1 check", exact: true })).toBeVisible();
+      const check = page.locator("#health-check-task-fail-rate");
+      await expect(check.getByRole("heading", { level: 4, name: "Task failure rate", exact: true })).toBeVisible();
+      await expect(check.locator(".check-id")).toHaveText("Check id: task-fail-rate");
+      await expect(check.locator("summary")).toHaveText("Evidence for Task failure rate");
+      // An attention link says its tone, and its text and action are separate phrases in a correct singular.
+      await expect(
+        page.getByRole("link", {
+          name: "Warning: 1 health warning: Task failure rate. Inspect checks",
+          exact: true,
+        }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("link", { name: "Failure: 1 failed task run this week. Inspect runs", exact: true }),
+      ).toBeVisible();
+      // Run all checks from the keyboard: its note is its description, the section is busy, one status line says the
+      // start and the result, and focus stays on the button.
+      const run = page.getByRole("button", { name: "Run all checks", exact: true });
+      await expect(run).toHaveAccessibleDescription(/May contact the network/);
+      const said = health.getByRole("status");
+      await expect(said).toHaveText("");
+      await page.route("**/api/health?*", async (route) => {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        await route.continue();
+      });
+      await run.focus();
+      await page.keyboard.press("Enter");
+      await expect(health).toHaveAttribute("aria-busy", "true");
+      await expect(said).toHaveText("Running all checks…");
+      await expect(said).toHaveText(/^Checks finished: .*\b1 warning\b.* passing\.$/, { timeout: 60000 });
+      await expect(health).toHaveAttribute("aria-busy", "false");
+      await expect(run).toBeFocused();
+      await page.unroute("**/api/health?*");
+      // Refresh activity keeps the loaded view on screen (the same nodes) and says when it is done.
+      await health.evaluate((section) => {
+        section.dataset.kept = "yes";
+      });
+      const refresh = page.getByRole("button", { name: "Refresh activity", exact: true });
+      await refresh.focus();
+      await page.keyboard.press("Enter");
+      await expect(page.locator("#activity-status")).toHaveText("Health refreshed.");
+      await expect(health).toHaveAttribute("data-kept", "yes");
+      await expect(refresh).toBeFocused();
+    },
+  );
   await t.test("read-only bundles are not selectable write targets", async () => {
     await navigate("/settings/config");
     const target = page.getByRole("combobox", { name: "Default write target", exact: true });
