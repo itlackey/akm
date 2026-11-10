@@ -193,6 +193,50 @@ describe("gone flags", () => {
       expect(hint).toContain("akm proposal drain --promote --yes");
     }
   });
+
+  const hintFor = (argv: string[]): string => {
+    try {
+      assertKnownFlags(main as unknown as FlagScanCommand, argv);
+    } catch (err) {
+      expect(err).toBeInstanceOf(UsageError);
+      expect((err as UsageError).code).toBe("UNKNOWN_FLAG");
+      return (err as UsageError).hint() ?? "";
+    }
+    throw new Error("expected a rejection");
+  };
+
+  test.each([
+    [["improve", "--require-engines"], "`--require-engines` is gone", "akm health && akm improve"],
+    [["workflow", "list", "--all-scopes"], "`--all-scopes` is gone", "drop it"],
+    [["workflow", "status", "r1", "--all-scopes"], "`--all-scopes` is gone", "drop it"],
+    [["bundle", "add", "x", "--allow-dangerous-env-keys"], "`--allow-dangerous-env-keys` is gone", "drop it"],
+    [["bundle", "update", "--allow-dangerous-env-keys"], "`--allow-dangerous-env-keys` is gone", "drop it"],
+    [["env", "run", "--allow-dangerous-env-keys"], "`--allow-dangerous-env-keys` is gone", "drop it"],
+    [["bundle", "update", "--yes"], "`--yes` is gone", "drop it"],
+    [["registry", "add", "http://x", "--options", "{}"], "`--options` is gone", "drop it"],
+    [["task", "sync", "--dry-run"], "`--dry-run` is gone", "akm migrate status"],
+    [["task", "sync", "--bundle", "b"], "`--bundle` is gone", "drop it"],
+    [["task", "add", "--rebind"], "`--rebind` is gone", "drop it"],
+    [["task", "history", "--id", "t1"], "`--id` is gone", "akm task history <id>"],
+    [["lint", "--auto-fix"], "`--auto-fix` is gone", "use `--fix`"],
+    [["migrate", "apply", "--dry-run"], "`--dry-run` is gone", "use `akm migrate status`"],
+    [["bundle", "update", "--yes"], "`--yes` is gone: it did nothing, so drop it.", "drop it"],
+    [["setup", "--probe"], "`--probe` is gone: probing is the default", "--no-probe"],
+  ])("%j names its replacement", (argv, gone, use) => {
+    const hint = hintFor(argv);
+    expect(hint).toContain(gone);
+    expect(hint).toContain(use);
+  });
+
+  test.each([
+    [["bundle", "list", "--yes"]],
+    [["workflow", "list", "--id", "x"]],
+    [["workflow", "list", "--rebind"]],
+    [["registry", "list", "--dry-run"]],
+    [["bundle", "list", "--options", "x"]],
+  ])("%j is unknown but not a gone flag where the name is scoped elsewhere", (argv) => {
+    expect(hintFor(argv)).not.toContain("is gone");
+  });
 });
 
 describe("GITHUB_TOKEN set but empty", () => {

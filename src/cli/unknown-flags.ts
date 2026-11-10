@@ -137,8 +137,10 @@ function collectKnownArgs(root: FlagScanCommand, rawArgs: readonly string[]): Kn
 }
 
 /**
- * Flags STABILITY.md lists under "Gone / Use", checked before edit distance so
+ * Flags removed in 0.10 and 0.11, checked before edit distance so
  * the hint names the real replacement (`--shape` is not a typo of `--type`).
+ * The 0.10 replacements are in the "Gone / Use" table of
+ * `docs/migration/v0.9-to-v0.10.md`; the 0.11 ones are in CHANGELOG.md.
  * `commands` limits an entry to those command paths; absent means every command.
  */
 const GONE_FLAGS: ReadonlyArray<{ flag: string; use: string; commands?: readonly string[] }> = [
@@ -166,6 +168,29 @@ const GONE_FLAGS: ReadonlyArray<{ flag: string; use: string; commands?: readonly
     commands: ["improve"],
   },
   { flag: "--probe", use: "no flag: probing is the default, and `--no-probe` runs offline", commands: ["setup"] },
+  {
+    flag: "--require-engines",
+    use: "no flag: `akm health && akm improve` checks that each connection answers and each harness is installed",
+    commands: ["improve"],
+  },
+  { flag: "--all-scopes", use: "no flag: it did nothing, so drop it", commands: ["workflow list", "workflow status"] },
+  {
+    flag: "--allow-dangerous-env-keys",
+    use: "no flag: it did nothing, so drop it",
+    commands: ["bundle add", "bundle update", "env run"],
+  },
+  { flag: "--yes", use: "no flag: it did nothing, so drop it", commands: ["bundle update"] },
+  { flag: "--options", use: "no flag: it did nothing, so drop it", commands: ["registry add"] },
+  { flag: "--dry-run", use: "`akm migrate status`, which reports what `task sync` would do", commands: ["task sync"] },
+  { flag: "--bundle", use: "no flag: it was ignored, so drop it", commands: ["task sync"] },
+  {
+    flag: "--rebind",
+    use: "no flag: it was ignored, so drop it (`akm task sync --rebind` stays)",
+    commands: ["task add"],
+  },
+  { flag: "--id", use: "the id as the argument: `akm task history <id>`", commands: ["task history"] },
+  { flag: "--auto-fix", use: "`--fix`", commands: ["lint"] },
+  { flag: "--dry-run", use: "`akm migrate status`", commands: ["migrate apply"] },
 ];
 
 /**
@@ -183,10 +208,11 @@ function throwUnknownFlag(shown: string, attempted: string, known: KnownArgs): n
     (entry) => entry.flag === attempted && (!entry.commands || entry.commands.includes(command)),
   );
   if (gone) {
+    const advice = gone.use.startsWith("no flag: ") ? gone.use.slice("no flag: ".length) : `use ${gone.use}`;
     throw new UsageError(
       `Unknown flag "${shown}".`,
       "UNKNOWN_FLAG",
-      `\`${gone.flag}\` is gone: use ${gone.use}. Run the command with \`--help\` to see its accepted flags.`,
+      `\`${gone.flag}\` is gone: ${advice}. Run the command with \`--help\` to see its accepted flags.`,
     );
   }
   const threshold = Math.max(2, Math.ceil(attempted.length / 3));
