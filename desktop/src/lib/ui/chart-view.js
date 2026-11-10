@@ -55,13 +55,17 @@ export function chart(ctx, id, label, options, { height, onSelect } = {}) {
         nameTextStyle: { color: token("--muted"), align: "left" },
         splitLine: { show: value?.splitLine?.show ?? true, lineStyle: { color: token("--border") } },
       });
+      // The y-axis title is drawn text a screen reader is not given, so the chart's name says what the axis measures.
+      const measure = [option.yAxis].flat()[0]?.name;
+      const named = measure ? `${label} Vertical axis: ${measure}.` : label;
+      element.setAttribute("aria-label", named);
       chart.setOption(
         {
           animation: false,
           textStyle: { color: token("--text"), fontFamily: font },
           aria: {
             enabled: true,
-            label: { description: element.getAttribute("aria-label") },
+            label: { description: named },
             decal: { show: patterns.matches },
           },
           grid: { left: 12, right: 22, top: 24, bottom: 16, containLabel: true },
