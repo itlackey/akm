@@ -74,6 +74,22 @@ test("populated workspace accessibility and reflow across both themes", { timeou
         }));
         const label = `${state.id}-${theme}-${width}`;
         if (geometry.scrollWidth > width + 1) failures.push({ state: label, rule: "document-overflow", ...geometry });
+        // Chart text stays inside its drawing: an axis title cut at the left edge is unreadable.
+        const clipped = await page.evaluate(() =>
+          [...document.querySelectorAll("main svg")].flatMap((svg) => {
+            const box = svg.getBoundingClientRect();
+            return [...svg.querySelectorAll("text")]
+              .filter((text) => {
+                const r = text.getBoundingClientRect();
+                return (
+                  r.width > 0 &&
+                  (r.left < box.left - 1 || r.right > box.right + 1 || r.top < box.top - 1 || r.bottom > box.bottom + 1)
+                );
+              })
+              .map((text) => text.textContent);
+          }),
+        );
+        if (clipped.length) failures.push({ state: label, rule: "chart-text-clipped", clipped });
         let violations = [];
         if (width === 390 || width === 1280) {
           const results = await new AxeBuilder({ page })

@@ -50,7 +50,9 @@ export function chart(ctx, id, label, options, { height, onSelect } = {}) {
       const axis = (value) => ({
         ...value,
         axisLabel: { color: token("--muted"), ...value?.axisLabel },
-        nameTextStyle: { color: token("--muted") },
+        // The name starts at the axis and sits just above it, so a y-axis title is not cut off at the drawing's edges.
+        nameGap: 8,
+        nameTextStyle: { color: token("--muted"), align: "left" },
         splitLine: { show: value?.splitLine?.show ?? true, lineStyle: { color: token("--border") } },
       });
       chart.setOption(
