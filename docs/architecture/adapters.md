@@ -188,7 +188,7 @@ source v4). A task source v4 document declares exactly one executable
 selector (`uses` or `run`), but its scheduling is optional — a document with
 no `schedule:` is valid and runnable manually. A `version: 3` or `version: 2`
 document is not read: it raises `TASK_SCHEMA_VERSION_UNSUPPORTED`, naming the
-0.9.32 recipe (nothing converts it). The `akm-task` probe still
+0.9.32 recipe (this release converts none). The `akm-task` probe still
 recognizes a root of v2/v3 task files so `akm task sync` can report them. Targets are
 `akm/command` and canonical `commands/`, `workflows/`, and `scripts/` refs;
 the github-action `uses:` variant, agent refs, and task refs are refused.

@@ -23,9 +23,8 @@ the bundle directory layout, and the metadata every asset carries.
 - Ten additional *bundle formats* beyond akm's own (Claude Code and OpenCode
   tool directories, OKF, LLM wikis, and more) are recognized, indexed, and
   validated in place by their own adapters — see
-  [Supported Formats](supported-formats.md) for the full type-by-type table (purpose,
-  what the agent gets, and example ref) and the other-format read/write
-  picture.
+  [Supported Formats](supported-formats.md) for the format-by-format table (what is indexed,
+  detection marker, read/write support).
 
 ## Directory layout
 

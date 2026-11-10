@@ -39,6 +39,8 @@ and [migration guides](migration/README.md) have their own indexes.
 - [CLI](reference/cli.md) -- All `akm` commands and flags
 - [Configuration](reference/configuration.md) -- Connections, harnesses, strategies, bundles, and settings
 - [Supported Formats](reference/supported-formats.md) -- Every bundle format akm recognizes, its detection marker, and current read/write support
+- [Programmatic API](reference/api.md) -- `akm-cli/api`: in-process `curate()` for the akm plugins
+- [Workspace](reference/workspace.md) -- The operations of `akm-cli/workspace` and the JSON they return
 - [Asset Types](reference/asset-types.md) -- The capability taxonomy, directory conventions, and per-type examples
 - [Refs](reference/refs.md) -- The ref grammar `akm search` emits and `akm show` consumes
 - [Memory](reference/memory.md) -- The `memory` asset type: capture, belief states, and derived memories

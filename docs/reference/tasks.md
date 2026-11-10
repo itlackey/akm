@@ -280,7 +280,6 @@ workflow step's own composition uses); for every other target — `run:`
 shell, `scripts/<ref>`, `commands/<ref>` — the values are validated and then
 **discarded**. `akm task run`'s own flags never populate an
 `AKM_TASK_INPUTS` environment variable or a `## Task inputs` prompt block.
-Those two surfaces do not exist.
 A scheduled run (`schedule[].inputs`, above) reaches the target through this
 same `akm task run` path, so it inherits the identical rule: delivered as
 params for a `workflows/<ref>` target, otherwise validated and discarded.
