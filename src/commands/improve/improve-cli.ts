@@ -198,11 +198,7 @@ export const improveCommand = defineCommand({
       const scopeArg = getStringArg(args, "scope");
       // `improve judge` (removed in 0.11) would otherwise run as the scope `judge`. A root asset named `judge` is still a scope.
       if (scopeArg === "judge" && !namesIndexedRootAsset("judge")) {
-        throw new UsageError(
-          "`akm improve judge` is gone.",
-          "UNKNOWN_COMMAND",
-          "`akm improve judge` is gone: use `akm judge reflect.quality`.",
-        );
+        throw new UsageError("`akm improve judge` is gone.", "UNKNOWN_COMMAND", "Use `akm judge reflect.quality`.");
       }
       const effectiveConfig = loadConfig();
       const scopeRef = scopeArg && isFullRefInput(scopeArg) ? parsePlacementRef(scopeArg) : undefined;
