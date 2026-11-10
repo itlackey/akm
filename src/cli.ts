@@ -83,6 +83,7 @@ import {
 } from "./cli/invocation";
 import {
   defineGroupCommand,
+  defineJsonCommand,
   EXIT_CODES,
   emitJsonError,
   GLOBAL_OUTPUT_ARGS,
@@ -588,6 +589,21 @@ const commands = {
   hints: hintsCommand,
 };
 
+/**
+ * A command that takes a positional and also has subcommands (`improve [SCOPE]` / `improve report`)
+ * would read `akm improve [OPTIONS] [SCOPE] report`, as if `report` were an argument. Its subcommands
+ * are listed under COMMANDS, so the USAGE line drops them.
+ */
+function withoutSubcommandsInUsageLine(command: AnyCittyCommand, usage: string): string {
+  const args = Object.values((command.args ?? {}) as Record<string, { type?: string }>);
+  const subCommands = Object.keys((command.subCommands ?? {}) as Record<string, unknown>);
+  if (subCommands.length === 0 || !args.some((arg) => arg.type === "positional")) return usage;
+  return usage
+    .split("\n")
+    .map((line) => (line.includes("USAGE") ? line.replace(` ${subCommands.join("|")}`, "") : line))
+    .join("\n");
+}
+
 /** Leaf `--help`: usage without the hidden args and the shared global flags, then one pointer line. */
 async function showCommandUsage(command: AnyCittyCommand, path: readonly string[]): Promise<void> {
   const usage = await renderUsage(
@@ -595,33 +611,43 @@ async function showCommandUsage(command: AnyCittyCommand, path: readonly string[
     buildUsageParentForPath(path) as CommandDef,
   );
   console.log(
-    formatHelp(`${usage}\nGlobal flags: --format, --detail, --output, -q/--quiet, --verbose (see \`akm --help\`)`),
+    formatHelp(
+      `${withoutSubcommandsInUsageLine(command, usage)}\nGlobal flags: --format, --detail, --output, -q/--quiet, --verbose (see \`akm --help\`)`,
+    ),
   );
 }
 
-function commandHelpTopic(name: string, command: AnyCittyCommand): AnyCittyCommand {
-  return defineCommand({
-    meta: { name, description: `Print help for akm ${name}` },
-    async run() {
-      await showCommandUsage(command, [name]);
-    },
-  });
-}
-
-const commandHelpTopics = Object.fromEntries(
-  Object.entries(commands).map(([name, command]) => [name, commandHelpTopic(name, command)]),
-);
-
-const helpCommand = defineGroupCommand({
+/**
+ * `akm help [command...]` prints exactly what `akm <command...> --help` prints
+ * (`bundle add` may arrive as two words or one quoted word). No command prints
+ * the root overview.
+ */
+const helpCommand = defineJsonCommand({
   meta: {
     name: "help",
-    description: "Print the command overview or detailed help for a command",
+    description: "Print the command overview, or the same help as `akm <command> --help`",
   },
-  subCommands: {
-    ...commandHelpTopics,
+  args: {
+    command: { type: "positional", description: "Command to show help for, such as `bundle add`", required: false },
   },
-  async defaultRun() {
-    process.stdout.write(`${formatHelp(await renderSectionedRootHelp())}\n`);
+  async run({ args }) {
+    const words = ((args._ as string[] | undefined) ?? []).flatMap((word) => word.split(/\s+/)).filter(Boolean);
+    const attempt = findUnknownCommandAttempt(words);
+    if (attempt) {
+      const suggestion = closestCommandMatch(attempt.attempted, attempt.candidates);
+      const pointer = `Run \`${["akm", ...resolveCittyCommandPath(main, words), "--help"].join(" ")}\` for usage.`;
+      throw new UsageError(
+        `Unknown command ${attempt.attempted}`,
+        "UNKNOWN_COMMAND",
+        suggestion ? `Did you mean \`${suggestion}\`? ${pointer}` : pointer,
+      );
+    }
+    const resolved = resolveDeepestCittyCommand(main, words);
+    if (resolved === (main as AnyCittyCommand)) {
+      process.stdout.write(`${formatHelp(await renderSectionedRootHelp())}\n`);
+    } else {
+      await showCommandUsage(resolved, resolveCittyCommandPath(main, words));
+    }
   },
 });
 
@@ -651,9 +677,7 @@ export const main = defineCommand({
   meta: {
     name: "akm",
     version: pkgVersion,
-    description:
-      "Agent Knowledge Manager — search, show, and manage assets from your bundle.\n\n" +
-      `Exit codes:\n${renderExitCodesHelp()}`,
+    description: "Agent Knowledge Manager — search, show, and manage assets from your bundle.",
   },
   args: {
     // Single-sourced from GLOBAL_OUTPUT_ARGS (src/cli/shared.ts) so root help
@@ -958,12 +982,17 @@ async function renderSectionedRootHelp(): Promise<string> {
   const cutIndex = commandsHeadingIndex === -1 ? -1 : base.lastIndexOf("\n", commandsHeadingIndex);
   const head = (cutIndex === -1 ? base : base.slice(0, cutIndex)).replace(/\n+$/, "");
   const epilogue = [
-    'A "bundle" is your managed directory of assets (skills, agents, memories, workflows, ...). Refs use the ' +
-      "grammar [bundle//]conceptId[#fragment], where the concept id is the bundle's own path for the asset — " +
-      "e.g. `akm show skills/deploy`, or `akm show work//skills/deploy` for a named bundle. Copy ids from " +
-      "`akm search` output rather than synthesizing them.",
+    "CONCEPTS",
+    "  bundle      A managed directory of assets; refs are [bundle//]conceptId[#fragment]",
+    "  registry    A remote catalogue to search and install bundles from",
+    "  connection  An OpenAI-compatible endpoint akm sends model requests to",
+    "  harness     An agent program you already have (Claude Code, Codex, OpenCode)",
+    "  project     Named directories you work in; scopes search and where writes go",
     "",
     "Run `akm help <command>` or `akm <command> --help` for details on any command.",
+    "",
+    `Exit codes:\n${renderExitCodesHelp()}`,
+    "",
     "Agents: run `akm hints` for the short guide.",
   ].join("\n");
   return [head, "", renderCommandSections(), "", epilogue].join("\n");
