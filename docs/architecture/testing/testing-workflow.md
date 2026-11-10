@@ -22,12 +22,12 @@ covers the automated test workflow and test-authoring guidance.
 
 `bun run check` runs lint and the typecheck, then both targets in sequence.
 
-- `bun run test:unit` (`scripts/test-unit.sh`) runs every `*.test.ts` under
+- `bun run test:unit` (`scripts/test-shards.sh unit`) runs every `*.test.ts` under
   `tests/` except `tests/integration/`. That includes the top-level
   `tests/commands/` and `tests/workflows/` directories; do not confuse them with
   the separate `tests/integration/commands/` and `tests/integration/workflows/`
   directories.
-- `bun run test:integration` (`scripts/test-integration.sh`) runs
+- `bun run test:integration` (`scripts/test-shards.sh integration`) runs
   `tests/integration/**` only.
 
 **Where a test goes.** A file belongs under `tests/integration/` if it opens a
@@ -76,10 +76,9 @@ Relevant coverage:
 
 ### Writing deterministic, isolated tests
 
-Both `scripts/test-unit.sh` (`bun run test:unit`) and `scripts/test-integration.sh`
-(`bun run test:integration`) shard their target across up to `min(nproc, 8)`
+`scripts/test-shards.sh` (`bun run test:unit` and `bun run test:integration`) shards its target across up to `min(nproc, 8)`
 concurrent `bun test` processes, splitting the file list round-robin — neither
-runner is a single shared process. Within one shard, every file assigned to that
+suite runs in a single shared process. Within one shard, every file assigned to that
 process still runs in **one shared process**: one `process.env`, one
 module-singleton namespace, and (under fake timers) one global clock for every
 file in that shard. A test that mutates shared state without restoring it, or
@@ -509,7 +508,7 @@ extending it:
 
 - `tests/integration/db/`, `tests/integration/fts/`, `tests/integration/indexer/`,
   `tests/integration/storage/` — database, full-text search, and index behavior
-- `tests/search-rrf.test.ts`, `tests/integration/search-fusion.test.ts` — search ranking
+- `tests/integration/search-fusion.test.ts` — search ranking
 - `tests/integration/registry/` — registry install, search, and update flows
 - `tests/integration/workflows/`, `tests/integration/tasks/` — workflow and task behavior
 - `tests/integration/vector-search.test.ts`, `tests/integration/semantic-search-e2e.test.ts` — vectors and embeddings

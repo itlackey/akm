@@ -39,11 +39,9 @@ describe("preload safety invariants", () => {
     expect(process.env.XDG_CONFIG_HOME).not.toBe(path.dirname(processStartConfig));
   });
 
-  test("both broad shard runners seed a unique HOME before Bun starts", () => {
-    for (const runner of ["scripts/test-unit.sh", "scripts/test-integration.sh"]) {
-      const source = fs.readFileSync(path.join(repoRoot, runner), "utf8");
-      expect(source).toMatch(/runtime_home="\$\{logdir\}\/runtime-home-\$\(\(k \+ 1\)\)"/);
-      expect(source).toContain('HOME="$runtime_home" bun test');
-    }
+  test("the shard runner seeds a unique HOME before Bun starts", () => {
+    const source = fs.readFileSync(path.join(repoRoot, "scripts/test-shards.sh"), "utf8");
+    expect(source).toMatch(/runtime_home="\$\{logdir\}\/runtime-home-\$\(\(k \+ 1\)\)"/);
+    expect(source).toContain('HOME="$runtime_home" bun test');
   });
 });

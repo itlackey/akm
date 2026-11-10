@@ -37,8 +37,7 @@ function makeStashDir(): string {
 }
 
 function writeLocallyDisabledCommandTask(stashDir: string): void {
-  // P4 (docs/plans/specs/p4-deletions-closeout.md §3.2.7, row B-22, F-A2.18)
-  // DELETED run-task.ts's shouldSkipUnactivatedTask entirely — task source v4
+  // P4 DELETED run-task.ts's shouldSkipUnactivatedTask entirely — task source v4
   // has no document-level enabled/disabled concept. Scheduling activation is
   // host-local config, and its absence must not prevent manual dispatch.
   fs.writeFileSync(

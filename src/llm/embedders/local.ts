@@ -51,7 +51,7 @@ export class LocalRuntimeUnavailableError extends Error {
 // ── Test seam ────────────────────────────────────────────────────────────────
 // Swap-and-restore override for the model loader (model files, runtime, tokenizer).
 // Inert in production; only tests install fakes, via tests/_helpers/seams.ts
-// (which restores them automatically). See docs/architecture/specs/di-seams-plan.md.
+// (which restores them automatically).
 
 export type LocalPipelineLoader = (modelName: string) => Promise<LocalPipeline>;
 

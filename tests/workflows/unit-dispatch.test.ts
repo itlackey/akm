@@ -63,8 +63,7 @@ describe("collectWorkflowDispatchSensitiveValues", () => {
 });
 
 /**
- * Code-review regression, round 2 (spec docs/plans/specs/p1b-model-extraction.md
- * §5.2 point 2). A prior code-review pass fixed a gap where `dispatchWorkflowExecution`
+ * Code-review regression, round 2. A prior code-review pass fixed a gap where `dispatchWorkflowExecution`
  * (src/workflows/exec/unit-dispatch.ts) never forwarded its resolved provenance
  * `eventSource` into `runExecution`'s options at all, so a
  * "command" (agent/sdk) frozen target's dispatched child never observed

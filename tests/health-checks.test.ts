@@ -151,7 +151,7 @@ describe("scheduler-binary check (#953)", () => {
   // rows to be a real signal) crosses the same threshold. The check is a pure
   // projection of ctx.taskFailRate / ctx.taskRowCount / ctx.worstTaskFailRate,
   // so we drive it directly with synthetic inputs (the task_id grouping itself
-  // is covered end-to-end in tests/integration/health-task-fail-rate.test.ts).
+  // is covered end-to-end in tests/integration/health/health-task-fail-rate.test.ts).
 
   const check = HEALTH_CHECKS.find((c) => c.name === "task-fail-rate");
 

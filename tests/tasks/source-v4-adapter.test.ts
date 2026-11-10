@@ -3,9 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Tests-first contract for P2a's task source v4 -> prepare-seam PROJECTION
- * (spec docs/plans/specs/p2a-task-source-v4.md §3.5, D2-N5, D2-N6). Lane A
- * TESTS — this file owns `projectTaskSourceV4()`; the grammar/router half
+ * Tests-first contract for P2a's task source v4 -> prepare-seam PROJECTION.
+ * Lane A TESTS — this file owns `projectTaskSourceV4()`; the grammar/router half
  * lives in tests/tasks/source-v4.test.ts.
  *
  * Scope clarification (read before "fixing" this file to test something

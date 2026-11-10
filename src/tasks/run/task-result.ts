@@ -117,10 +117,9 @@ export interface RunTaskOptions {
    * TEST-ONLY. Runs once, with the `TaskInvocation` Stage 2 constructs,
    * before dispatch — never read by production code. `TaskInvocation`
    * (`src/tasks/model/invocation.ts`) is otherwise unobservable from outside
-   * `load-task.ts` in P2a (the model-purity ratchet,
-   * tests/tasks/parse-v3-adapter.test.ts, keeps it a pure, IO-free type that
+   * `load-task.ts` in P2a (a pure, IO-free type that
    * nothing production reads back either), so this is the seam
-   * tests/integration/commands/tasks-input-flags.test.ts uses to assert
+   * tests/commands/tasks-input-flags.test.ts uses to assert
    * against the real constructed value rather than a bespoke side channel.
    */
   captureTaskInvocation?: (invocation: TaskInvocation) => void;

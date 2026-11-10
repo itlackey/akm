@@ -5,8 +5,7 @@
 /**
  * lint-secret-resolver-boundary.ts
  *
- * Enforces the secret-resolver injection boundary (P4 architecture review,
- * docs/architecture/reviews/env-secret-access.md): every MATERIALIZING call to
+ * Enforces the secret-resolver injection boundary: every MATERIALIZING call to
  * `ensureSourceCaches` must supply a `secrets` resolver, and any direct call to
  * `ensureWebsiteMirror` must supply `resolveSecret`.
  *

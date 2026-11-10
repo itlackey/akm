@@ -11,7 +11,7 @@
 // `<type>:<slug>` -> on-disk-asset question and MUST agree on the set of
 // reachable refs for any given stash layout.
 //
-// The lock is enforced by `tests/integration/contracts/ref-resolver-contract.test.ts`,
+// The lock is enforced by `tests/contracts/ref-resolver-contract.test.ts`,
 // which drives this implementation through a canonical fixture set. The
 // akm-plugins repo ships an equivalent test that drives its copy through the
 // SAME inputs and asserts identical outcomes. Any change to the resolver

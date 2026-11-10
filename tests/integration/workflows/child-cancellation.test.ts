@@ -3,11 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * P3b Lane A TESTS — cancellation across the parent/child boundary
- * (docs/plans/specs/p3b-child-executor.md §2.4 "Cancellation, provenance,
- * nesting" rows A-28…A-30; §3.5 "Cancellation and leases"). This file owns
+ * P3b Lane A TESTS — cancellation across the parent/child boundary.
+ * This file owns
  * ONLY these three rows (A-31…A-36 belong to
- * tests/integration/workflows/child-nesting.test.ts, per the spec's own §7
+ * tests/workflows/child-nesting.test.ts, per the spec's own §7
  * new-suites table).
  *
  * GREEN: this file's one import of `driveChildWorkflowUnit` from

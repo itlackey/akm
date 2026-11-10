@@ -17,7 +17,7 @@
  *
  * Test/CI only — deliberately under `scripts/` rather than `src/`, so it is not
  * shipped in the published bundle. Tests importing from `scripts/` is the
- * established direction here (see tests/integration/package-install.test.ts);
+ * established direction here (see tests/integration/install/package-install.test.ts);
  * no script imports from `tests/`.
  */
 

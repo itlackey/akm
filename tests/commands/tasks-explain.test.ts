@@ -3,8 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * P2b Lane B — `akm task explain <ref> [input flags]` (spec
- * docs/plans/specs/p2b-input-bindings.md §4.5, §1.7 B-N4, rows B-52..B-59).
+ * P2b Lane B — `akm task explain <ref> [input flags]`.
  *
  * A NEW, read-only verb: it never prepares an execution that spawns
  * anything, never writes history, never touches the scheduler. It prints
@@ -36,7 +35,7 @@
  * Because the exact rendering layout is Implement's call (the spec pins the
  * CONTENT contract, not a literal template), this file's assertions are
  * deliberately CONTENT-presence checks — the same style
- * tests/integration/commands/tasks-input-flags.test.ts already uses for an
+ * tests/commands/tasks-input-flags.test.ts already uses for an
  * under-specified message shape ("check the whole serialized envelope, not
  * one specific field") — rather than a pin on exact text layout.
  */
@@ -880,7 +879,7 @@ describe("akm task explain <ref> — secret-shaped VALUE redaction (Finding 1: e
   });
 });
 
-// P4 (docs/plans/specs/p4-deletions-closeout.md §3.2, row B-57) DELETES this
+// P4 DELETES this
 // describe block, not flips it: task source v3 acceptance is retired from
 // `src` entirely, so "akm task explain resolves a genuine legacy-schema
 // (version:3) task" is no longer a claim any fixture can demonstrate — there

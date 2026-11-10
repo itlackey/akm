@@ -77,7 +77,7 @@ describe("akm distill CLI removal (0.8.0 hard break)", () => {
 // ── #284 GAP-CRIT 3: distill happy-path via injected chat seam ─────────────
 //
 // Spawning the real CLI cannot exercise the LLM happy path without a real
-// endpoint, so we drive `akmDistill` with the same seams as `tests/distill.test.ts`
+// endpoint, so we drive `akmDistill` with the same seams as `tests/integration/distill.test.ts`
 // to lock the success contract: outcome=queued, exit=0 (when wrapped via
 // runWithJsonErrors in the CLI), proposal materialised in the queue.
 

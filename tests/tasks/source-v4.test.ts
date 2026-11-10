@@ -4,8 +4,7 @@
 
 /**
  * Tests-first contract for P2a's task source v4 GRAMMAR and its version
- * ROUTER (spec docs/plans/specs/p2a-task-source-v4.md §1.2 D2, §1.5
- * D2-N1..D2-N7, §3). Lane A TESTS — this file owns the grammar/router half;
+ * ROUTER. Lane A TESTS — this file owns the grammar/router half;
  * tests/tasks/source-v4-adapter.test.ts owns the prepare-seam projection.
  *
  * RED phase: `src/tasks/source/task-source-v4.ts` and
@@ -59,8 +58,7 @@
  * produce — the derivation ties this file's pins to real, already-shipped
  * behavior instead of speculative prose.
  *
- * D2-N2/B-16 routing (P4 docs/plans/specs/p4-deletions-closeout.md §3.2.2
- * closed the P2a-era wart this paragraph used to record): task source v3
+ * D2-N2/B-16 routing (P4 closed the P2a-era wart this paragraph used to record): task source v3
  * acceptance is retired from `src` entirely (§3.2). `version: 2` AND
  * `version: 3` both raise TASK_SCHEMA_VERSION_UNSUPPORTED now, with the SAME
  * migrate hint (rows B-14/B-15) — the migrator runs both the v2->v3 and

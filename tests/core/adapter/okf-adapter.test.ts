@@ -4,8 +4,7 @@
 
 /**
  * WI-A gate — the reference `okf` adapter
- * (`src/core/adapter/adapters/okf-adapter.ts`), implementing
- * `docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §5 / §5.1 / §9.
+ * (`src/core/adapter/adapters/okf-adapter.ts`).
  *
  * Recognition is driven off a real, conformant OKF fixture bundle
  * (`tests/fixtures/bundles/okf-sample/`) via the core `buildFileContext`

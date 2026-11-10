@@ -150,9 +150,7 @@ describe("task lifecycle", () => {
     ).rejects.toMatchObject({ code: "INVALID_FLAG_VALUE" });
   });
 
-  // P4 FLIP (docs/plans/specs/p4-deletions-closeout.md §3.2.6, row B-20;
-  // implementer addition to §7.2, recorded in the commit body and the Review
-  // log): `renderTaskYaml` now authors `version: 4` (sub-step (b)), so a
+  // P4 FLIP: `renderTaskYaml` now authors `version: 4` (sub-step (b)), so a
   // github-action-shaped --workflow value hits task source v4's OWN
   // `classifyTaskSourceV4Uses` shape check first (row B-11, unchanged by
   // §3.1's deletion of the v3 locator grammar) rather than v3's generic

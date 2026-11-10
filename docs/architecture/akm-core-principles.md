@@ -164,7 +164,7 @@ that reads a developer's real config passes on one machine and fails on
 the next.
 
 Enforced by: `tests/_preload.ts` (the sandbox and the tripwire),
-`scripts/test-unit.sh` and `scripts/test-integration.sh` (the split and the
+`scripts/test-shards.sh` (the unit/integration split and the
 per-shard `HOME`), `tests/_helpers/isolation-guard.ts` (the directory and child-process
 checks the preload installs). Reads
 through `os.homedir()` outside the runner scripts are held by review.

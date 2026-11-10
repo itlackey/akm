@@ -21,7 +21,7 @@ import { overrideSeam } from "./_helpers/seams";
 /**
  * P4 — unit coverage for the SecretResolver capability on provider sync(). The
  * real `akm bundle update` composition is covered separately in
- * tests/integration/source-qa-fixes.test.ts with a stored bearer-token file.
+ * tests/source-qa-fixes.test.ts with a stored bearer-token file.
  *
  * This test resolves the website provider factory and drives
  * `sync()` directly with a stub SecretResolver and asserts it is consulted for

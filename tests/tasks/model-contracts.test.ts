@@ -3,12 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Contract for `src/tasks/model/invocation.ts` (spec
- * docs/plans/specs/p1b-model-extraction.md §1.1 D4 module map, §3.1) — the
+ * Contract for `src/tasks/model/invocation.ts` — the
  * one surviving module of P1b's original three-file `src/tasks/model/**`
  * package.
  *
- * P4 (docs/plans/specs/p4-deletions-closeout.md §3.2.7, F-A2.4) deleted
+ * P4 deleted
  * `src/tasks/model/definition.ts` and `src/tasks/model/schedule.ts` along
  * with `src/tasks/source/parse-v3-adapter.ts`, the v3-to-model transition
  * adapter that was their only importer (D11's "transition period" ends with

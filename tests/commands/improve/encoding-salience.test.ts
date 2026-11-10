@@ -171,7 +171,7 @@ describe("scoreEncodingSalience — combined scoring", () => {
 // These tests exercise the SCORE produced by scoreEncodingSalience.
 // The actual admission gate that reads encoding_salience from state.db and
 // admits zero-feedback refs is in improve.ts; wiring tests live in
-// tests/commands/improve/salience-wiring.test.ts.
+// tests/integration/commands/improve/salience-wiring.test.ts.
 
 describe("scoreEncodingSalience — threshold boundary scores", () => {
   test("high-magnitude + high-novelty body scores above default threshold (0.75)", () => {

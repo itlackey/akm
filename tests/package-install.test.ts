@@ -5,7 +5,7 @@
 /**
  * RUNTIME-03/ORG-03: the one test here that shelled out to a real `npm pack`
  * + `npm install --global` moved to
- * `tests/integration/package-install.test.ts` — a unit test should not shell
+ * `tests/integration/install/package-install.test.ts` — a unit test should not shell
  * out to a global npm install. Every test remaining in this file exercises
  * pure logic (string/command building, rollback bookkeeping) against injected
  * fakes, with no real subprocess or global-state dependency.
@@ -186,7 +186,7 @@ describe("package install orchestration", () => {
   });
 
   // "installs only the exact tarball under an explicit temporary npm prefix"
-  // moved to tests/integration/package-install.test.ts (RUNTIME-03/ORG-03) —
+  // moved to tests/integration/install/package-install.test.ts (RUNTIME-03/ORG-03) —
   // it shells out to a real `npm pack` + `npm install --global`.
 
   test("preflights, preserves the prior package, and restores it after verification failure", async () => {

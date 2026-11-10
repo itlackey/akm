@@ -5,10 +5,10 @@
 /**
  * Schema-drift gate for `schemas/akm-task.json`.
  *
- * P2a (spec docs/plans/specs/p2a-task-source-v4.md §5.3, §6 F-1) turned the
+ * P2a turned the
  * published schema into a two-arm `oneOf` at the document root: "arm 1:
  * the v3 object"; "arm 2: the v4 object". P4
- * (docs/plans/specs/p4-deletions-closeout.md §3.2) retires task source v3
+ * retires task source v3
  * acceptance from `src` entirely, and the published schema's v3 arm goes
  * with it (per the commit-2 F-A1.12 flip's own forward note: "the v3 arm
  * itself is removed from the published schema in commit 3") — the schema
@@ -124,7 +124,7 @@ test("every published pattern is valid ECMAScript and the executable-ref pattern
     expect(executableRef.test(candidate), candidate).toBe(false);
     expect(() => classifyTaskSourceV4Uses(candidate), candidate).toThrow();
   }
-  // P4 (docs/plans/specs/p4-deletions-closeout.md §3.1.2, F-A1.11): the
+  // P4: the
   // githubActionRef definition and its probes are deleted along with the
   // locator grammar itself — every github-locator-shaped value is exactly as
   // rejected by the production classifier as any other unrecognized shape.
@@ -203,7 +203,7 @@ test("published task schema's root oneOf rejects an akm: or on: key — retired 
   );
 });
 
-// P4 (docs/plans/specs/p4-deletions-closeout.md §3.1.2/§3.2, F-A1.12): the
+// P4: the
 // githubActionRef definition and both $refs to it were deleted from the
 // published schema in commit 2; the v3 arm's own rejection half this test
 // used to pin here is gone in commit 3 along with the arm itself.

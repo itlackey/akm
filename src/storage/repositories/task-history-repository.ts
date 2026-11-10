@@ -310,36 +310,6 @@ export function queryTaskHistory(
 }
 
 /**
- * Slim projection of a `task_history` row used by health interval analysis.
- */
-export interface TaskIntervalRow {
-  started_at: string;
-  completed_at: string;
-}
-
-/**
- * Read COMPLETED `akm-improve` task_history runs whose `started_at` falls in
- * `[since, until)` (or `started_at >= since` when `until` is omitted), ordered
- * oldest-first by `started_at`. Only rows with a non-null `completed_at` are
- * returned (in-flight runs are excluded). The `task_id = 'akm-improve'`
- * predicate is fixed because the only caller (commands/health.ts
- * `loadTaskIntervals`) builds wall-time intervals for the improve cron task.
- *
- * Owns the SQL formerly inlined in commands/health.ts. Note the bound is
- * EXCLUSIVE on the upper end (`started_at < ?`) — callers pass an already
- * widened window; this helper does not widen.
- *
- * Connection-lifetime rule (WS5): `.all()` materializes a plain array before
- * returning.
- */
-export function queryCompletedTaskIntervals(db: Database, since: string, until?: string): TaskIntervalRow[] {
-  const sql = until
-    ? "SELECT started_at, completed_at FROM task_history WHERE task_id = 'akm-improve' AND started_at >= ? AND started_at < ? AND completed_at IS NOT NULL ORDER BY started_at"
-    : "SELECT started_at, completed_at FROM task_history WHERE task_id = 'akm-improve' AND started_at >= ? AND completed_at IS NOT NULL ORDER BY started_at";
-  return (until ? db.prepare(sql).all(since, until) : db.prepare(sql).all(since)) as TaskIntervalRow[];
-}
-
-/**
  * Preview counterpart of {@link renameTaskHistoryTargetRefs} for `akm bundle
  * rename --dry-run`: the same `WHERE` predicate, read-only.
  */

@@ -63,8 +63,7 @@ written are in [Core Principles](akm-core-principles.md).
   session extraction writes session assets, and `improve` purges graced
   archives, commits accepted proposals and auto-syncs a git-backed bundle.
   Pinned by
-  `tests/improve-plan-autonomy-wiring.test.ts` and
-  `tests/config-experimental-improve-autonomy.test.ts`.
+  `tests/improve-autonomy-gate.test.ts`.
 - **Writes resolve one way.** An explicit `--bundle`, then
   the working bundle, then an error. A
   destination that is not writable is an error, never a fallback. Env and

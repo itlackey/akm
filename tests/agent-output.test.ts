@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { readPromptStdin } from "../src/commands/agent/contribute-cli";
+import { _resetWarnOnceForTests } from "../src/core/warn";
 import { runCliCapture } from "./_helpers/cli";
 import { withBundle, withEnv } from "./_helpers/sandbox";
 
@@ -95,6 +96,7 @@ describe("search, show and curate output", () => {
   }
 
   test("--detail agent warns once and gives the normal output", async () => {
+    _resetWarnOnceForTests(); // an earlier file in the same process may already have warned
     const stashDir = makeStash();
     const normal = await runCli(stashDir, ["search", "architect", "--format=json", "--detail=normal"]);
     const runtime = makeCliRuntime();

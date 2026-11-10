@@ -196,7 +196,7 @@ describe("shapeSearchHit — registry brief projects name + score (#28)", () => 
 
 // #35's listEntries ({key, comment} pairs) was DELETED with the env
 // comment-leak fix: comment text can contain commented-out credentials and no
-// production code consumed it. Key-name listing is covered by tests/env.test.ts.
+// production code consumed it. Key-name listing is covered by tests/integration/env/env.test.ts.
 
 // D5 (Phase 2 triage): the "assembleInfo — sourceProviders populated from
 // stashDir (#2)" describe block was DELETED here. Its sole test asserted only

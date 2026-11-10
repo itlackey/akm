@@ -2,7 +2,7 @@
  * Proposal storage consolidation (#578) — the `proposals` table in state.db
  * is the single source of truth.
  *
- * Covers what tests/proposals.test.ts (API behaviour) deliberately does not:
+ * Covers what tests/integration/proposal/proposals.test.ts (API behaviour) deliberately does not:
  *   • rows physically land in state.db, and no `.akm/proposals/` tree appears;
  *   • the full lifecycle (create → list → show → diff → accept / reject →
  *     revert) round-trips through the table;

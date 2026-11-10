@@ -15,10 +15,7 @@
  * `AssetOutcomeRow` lives here (not in outcome-loop.ts) so this file imports
  * NOTHING from commands/improve/outcome-loop.ts: outcome-loop.ts re-exports
  * this module's functions (a mandatory edge in that direction), so an import
- * back from here would form a 2-node cycle —
- * `tests/architecture/import-cycle-ratchet.test.ts` enforces a zero-tolerance,
- * shrink-only baseline (currently empty) over the whole `src/` import graph,
- * counting type-only imports as graph edges same as value imports.
+ * back from here would form a 2-node cycle (type-only imports count as graph edges, same as value imports).
  * outcome-loop.ts imports `AssetOutcomeRow` back from here (one direction
  * only) and re-exports it, so external importers are unaffected.
  *

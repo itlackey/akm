@@ -170,7 +170,7 @@ const BUILTIN_PLACEMENT_SPECS = {
   // `sessions/<harness>/<session-id>.md`.
   session: { stashDir: "sessions", ...markdownSpec },
   // Durable stash-level semantic knowledge — facts about the user, team, or
-  // project. A plain markdown spec; see docs/architecture/specs/fact-asset-type.md.
+  // project. A plain markdown spec.
   fact: { stashDir: "facts", ...markdownSpec },
   // Short agent rules for a project (`rules/<project>/<name>.md`); see docs/guides/author-bundles.md.
   rule: { stashDir: "rules", ...markdownSpec },

@@ -1053,7 +1053,7 @@ Summarize the reviews (declared inputs above carry the full array and its first 
 `;
 
   test("the documented addressing works end-to-end: solo result feeds map.over, collect array feeds a later unit", async () => {
-    // The flagship docs example shape (docs/reference/workflows.md): a solo
+    // The flagship docs example shape (docs/guides/author-workflows.md): a solo
     // unit's structured result is the step output — NOT the internal
     // evidence envelope {units, itemCount} — and a collect fan-out's output
     // is the array of per-item results in item order. `summarize` addresses

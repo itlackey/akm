@@ -9,11 +9,7 @@
  * to change. This is a pure, typed transform from an already-parsed
  * `TaskSourceV4Document` into a `PreparableTaskDocument`
  * (`src/tasks/task-source.ts`) — no YAML string is fabricated
- * and nothing is re-parsed (no file under `src/` may spell out a fabricated task-v3 header
- * line immediately followed by a synthetic executable-selector line — see
- * `tests/workflows/direct-script-typed.test.ts`'s source-text scan, which
- * this file's own prose is careful not to trip by literally reproducing
- * that two-line needle).
+ * and nothing is re-parsed.
  *
  * The projection is DELIBERATELY LOSSY relative to the parsed document:
  *

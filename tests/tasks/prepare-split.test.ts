@@ -3,14 +3,12 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Contract for `src/tasks/prepare/**`'s three-caller shape parity (spec
- * docs/plans/specs/p1b-model-extraction.md §4, Lane B / D4 module map).
+ * Contract for `src/tasks/prepare/**`'s three-caller shape parity.
  *
  * `prepareTaskExecution` moved body-intact to `src/tasks/prepare/prepare.ts`
  * at the P1b split, behind a `src/tasks/runtime-v3.ts` compat shim kept only
  * so production callers did not all need rewiring in the same change-set.
- * P4 (docs/plans/specs/p4-deletions-closeout.md §3.2.7, row B-25, F-A2.15)
- * DELETED that shim once every caller was rewired to import `prepare/prepare`
+ * P4 DELETED that shim once every caller was rewired to import `prepare/prepare`
  * directly. Its callers are `src/tasks/run/load-task.ts` and
  * `src/commands/tasks/tasks.ts` (`task explain`).
  *

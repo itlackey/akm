@@ -2,7 +2,7 @@
  * Smoke tests for the shared fixture-stash loader.
  *
  * Validates that loadFixtureStash, fixtureContentHash, and listFixtures
- * behave as advertised in docs/technical/benchmark.md §5.5.
+ * behave as advertised.
  *
  * ISOLATION-06 / RUNTIME-04: `loadFixtureStash`'s DEFAULT behaviour (no
  * `{ skipIndex: true }`) shells out to a real `akm index` CLI subprocess

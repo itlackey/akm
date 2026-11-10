@@ -3,14 +3,12 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * P3a Lane A TESTS — the unit/gate `hashVersion` vocabulary (spec
- * docs/plans/specs/p3a-plan-v5-child-freeze.md §3.3, rows A-11…A-16).
+ * P3a Lane A TESTS — the unit/gate `hashVersion` vocabulary.
  *
  * NOW AT `hashVersion` 7: the R-R15 fix (PR #844 review finding F6) added the
  * conditional `taskInputs` preimage field — the RESOLVED values of a target's
  * `inputBindings`, striking §3.3's documented exclusion #4 — and bumped the
- * unit AND gate prefixes 6 → 7 in lockstep (P4's own recorded imperative,
- * docs/plans/specs/p4-deletions-closeout.md §8 criterion 8; ADR-0002's rule
+ * unit AND gate prefixes 6 → 7 in lockstep (P4's own recorded imperative; ADR-0002's rule
  * that changing the preimage's coverage requires a bump). `hashVersion` 6
  * never shipped in any released tag (v0.9.2-alpha.1…4 all carry v5), so the
  * bump invalidates no released user's journal. The file KEEPS its historical
@@ -217,7 +215,7 @@ function buildOrdinaryShellTarget(options: { inputBindings?: readonly TaskInputB
  * A minimal `command` target carrying a resolved persona snapshot
  * (`request.persona.content`) — the byte-exact persona text resolved at
  * freeze time (A-N9: "persona snapshots ARE in the preimage... transitively
- * and wholesale", `docs/plans/specs/p3a-plan-v5-child-freeze.md`).
+ * and wholesale").
  * `ResolvedExecutionRequestV1`'s `command`/`persona` content types carry
  * private module-local brand symbols (`src/execution/resolved-request.ts`)
  * this test file has no access to construct directly, so this fixture routes

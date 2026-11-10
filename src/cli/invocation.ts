@@ -62,7 +62,7 @@
  *    search-cli, stash-cli, cli.ts) is unaffected.
  *  - `findCittyTopLevelCommand`/`findCittyTopLevelCommandIndex` (moved from
  *    `cli/parse-args.ts`, which had zero internal imports for this cluster) —
- *    re-exported from `cli/parse-args.ts` for `tests/tasks-embedded.test.ts`.
+ *    re-exported from `cli/parse-args.ts` for `tests/tasks-core.test.ts`.
  */
 
 // ── Repeated-flag / `--`-passthrough primitives (byte-identical to the

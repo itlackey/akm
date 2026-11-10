@@ -6,7 +6,7 @@
  * P3b Lane B TESTS — `akm workflow plan <ref>` (spec docs/plans/specs/
  * p3b-child-executor.md §4.6, rows B-46…B-59; named in §7's new-suites table
  * as this file). Drives the REAL `akm` CLI in-process (`runCliCapture`),
- * exactly like `tests/integration/commands/tasks-explain.test.ts`'s P2b
+ * exactly like `tests/commands/tasks-explain.test.ts`'s P2b
  * precedent for a brand-new read-only verb — no not-yet-existing TypeScript
  * export is referenced directly anywhere in this file, so no
  * `@ts-expect-error` directive is needed.

@@ -228,7 +228,7 @@ describe("Parallel search: FTS result ordering", () => {
   test("FTS search returns results sorted by score descending (semanticSearchMode off)", async () => {
     // NOTE: Despite the original "hybrid" naming, this test runs with
     // semanticSearchMode: "off", so only FTS scoring is exercised. True hybrid
-    // (FTS + vector) coverage lives in tests/vector-search.test.ts.
+    // (FTS + vector) coverage lives in tests/integration/vector-search.test.ts.
     const stashDir = tmpStash();
 
     // #39: sidecars retired — seed via knowledge/*.md frontmatter (this test pins

@@ -178,7 +178,7 @@ describe("secret-path-run", () => {
    *     injection (no block, #1237) also runs in-process; the child writes the
    *     value it saw to a file instead of inheriting stdio.
    *   - The happy-path `secret run` injection test lives in
-   *     tests/integration/secret-run.test.ts: it needs a real process boundary
+   *     tests/integration/secret/secret-run.test.ts: it needs a real process boundary
    *     to observe the CHILD's env.
    */
 
@@ -256,7 +256,7 @@ describe("secret-path-run", () => {
 
   describe("secret run", () => {
     // The happy-path injection test (secret value visible in the CHILD's env)
-    // lives in tests/integration/secret-run.test.ts — it requires a real
+    // lives in tests/integration/secret/secret-run.test.ts — it requires a real
     // subprocess. The cases below fail validation before any child spawn.
     test("injects a dangerous target variable name from the primary stash with no block or warning (#1237)", async () => {
       const stashDir = makeStash();

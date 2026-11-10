@@ -18,8 +18,7 @@
  *       format-neutral index projection accepts them when another adapter owns
  *       those open type values.
  *
- * Replaces (not just deletes) the taxonomy-pin tests identified in
- * `docs/design/execution/chunk-1.5/anchors.md` §D.1.
+ * Replaces (not just deletes) the taxonomy-pin tests.
  */
 
 import { describe, expect, test } from "bun:test";

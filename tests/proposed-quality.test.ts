@@ -9,7 +9,7 @@
  *  - SearchHit projection surfaces optional `quality` when present
  *
  * Mirrors the harness in `tests/parallel-search.test.ts` and
- * `tests/issue-36-repro.test.ts`.
+ * `tests/integration/issue-36-repro.test.ts`.
  */
 
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
