@@ -138,4 +138,25 @@ test("workspace pages, panels and menus fit the shortest windows", { timeout: 18
     inline.scrollWidth <= inline.clientWidth + 1,
     `the inline diff must wrap long lines, not scroll sideways: ${JSON.stringify(inline)}`,
   );
+
+  // Short and wide (a laptop browser, the native minimum): the proposed change is readable without scrolling the pane.
+  for (const viewport of [
+    { width: 900, height: 593 },
+    { width: 1280, height: 600 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await open(`/review/${app.proposals.fresh}`, ".dcol.inline");
+    const visibleRows = await page.evaluate(() => {
+      const pane = document.querySelector(".review-scroll").getBoundingClientRect();
+      return [...document.querySelectorAll(".dcol .drow")].filter((row) => {
+        const r = row.getBoundingClientRect();
+        return r.top >= pane.top && r.bottom <= pane.bottom;
+      }).length;
+    });
+    assert.ok(
+      visibleRows >= 5,
+      `${viewport.width}×${viewport.height}: at least five diff rows must be visible without scrolling, saw ${visibleRows}`,
+    );
+  }
+  await page.setViewportSize({ width: 900, height: 593 });
 });

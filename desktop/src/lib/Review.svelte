@@ -1059,6 +1059,16 @@
     .review-page[data-detail] .page-heading {
       display: none;
     }
+    /* The pane has room for the facts or the change, not both: the change follows the title and the warnings, and
+       "Why AKM proposed this" comes after it. */
+    .review-scroll {
+      display: flex;
+      flex-direction: column;
+      padding-block-start: var(--space-2);
+    }
+    .review-scroll > :global(.why) {
+      order: 1;
+    }
     .review-workspace[data-detail] {
       display: block;
     }
