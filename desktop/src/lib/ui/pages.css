@@ -23,13 +23,6 @@
     border-radius: var(--radius);
   }
 
-  .strip-main .badge {
-    font-size: var(--text-s);
-    padding: var(--space-1) var(--space-3);
-    letter-spacing: var(--tracking-caps);
-    text-transform: uppercase;
-  }
-
   .strip-label {
     color: var(--muted);
   }
@@ -193,10 +186,6 @@
     box-shadow: var(--shadow-float);
   }
 
-  .batch-results ul {
-    margin: var(--space-2) 0 0;
-  }
-
   .attention-list {
     list-style: none;
     margin: 0;
@@ -228,7 +217,6 @@
     }
   }
 
-  .attention-clear,
   .improve-line {
     line-height: var(--leading-snug);
     margin: 0;

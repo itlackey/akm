@@ -35,51 +35,6 @@
     }
   }
 
-  .nav-links {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    align-self: stretch;
-    flex: 1;
-    gap: var(--space-4);
-    @media (width >= 90rem) {
-      gap: var(--space-5);
-    }
-    & li {
-      display: flex;
-    }
-    & svg {
-      display: none;
-      flex: none;
-      inline-size: 18px;
-      block-size: 18px;
-      stroke: currentColor;
-      fill: none;
-      stroke-width: 1.75;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-    }
-  }
-
-  .nav-links a {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    color: var(--muted);
-    text-decoration: none;
-    font-weight: 500;
-    white-space: nowrap;
-    &:hover {
-      color: var(--text);
-    }
-    &[aria-current="page"] {
-      color: var(--text);
-      font-weight: var(--weight-strong);
-      box-shadow: var(--edge-underline);
-    }
-  }
-
   .topbar-search {
     display: flex;
     flex: none;
@@ -129,13 +84,6 @@
     }
   }
 
-  .menu-toggle {
-    display: none;
-    align-items: center;
-    gap: var(--space-2);
-    margin-inline-start: auto;
-  }
-
   @media (width < 72rem) {
     /* Within thumb reach: the bar sits at the bottom and the menu opens upward from it. */
     .topbar {
@@ -148,14 +96,6 @@
 
     .shell {
       padding-block-end: var(--bottom-inset);
-    }
-
-    .menu-toggle {
-      display: inline-flex;
-    }
-
-    .nav-open .nav-panel {
-      display: flex;
     }
 
     .topbar-search {
@@ -173,26 +113,6 @@
           border-color: var(--link);
           box-shadow: var(--focus-halo);
         }
-      }
-    }
-
-    .nav-links {
-      flex: none;
-      flex-direction: column;
-      align-self: auto;
-      gap: var(--space-1);
-      & svg {
-        display: block;
-      }
-    }
-
-    .nav-links a {
-      inline-size: 100%;
-      min-block-size: var(--control-height);
-      padding-inline: var(--space-3);
-      &[aria-current="page"] {
-        background: var(--accent-bg);
-        box-shadow: var(--edge-accent);
       }
     }
 

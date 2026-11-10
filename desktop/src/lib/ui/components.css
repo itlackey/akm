@@ -19,12 +19,6 @@
     gap: var(--space-3);
   }
 
-  :where(.edit-form textarea) {
-    min-block-size: 16rem;
-    max-block-size: 65dvh;
-    resize: vertical;
-  }
-
   .echarts-view {
     inline-size: 100%;
     block-size: 280px;
@@ -954,12 +948,6 @@
     &[data-dirty] {
       border-color: var(--accent);
     }
-  }
-
-  .add-card > summary {
-    margin: 0;
-    padding: var(--space-2) var(--space-3);
-    font-weight: var(--weight-strong);
   }
 
   .field input[type="number"] {
