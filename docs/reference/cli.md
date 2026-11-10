@@ -1296,7 +1296,7 @@ akm bundle add https://docs.example.com --max-pages 100 --max-depth 5
 | `--name` | The bundle key. A contract, not a hint: it must be a legal bundle slug (no `:` `.` `#` `/` or whitespace) and not already taken by a different bundle, or the add fails before any write. Re-adding an already-installed source under a different `--name` than it already carries also fails — use `akm bundle rename <old> <new>` instead. Omit it and akm derives a name (falling back to a `-<hash>` suffix on a collision). |
 | `--provider` | Explicit provider for declarative source configuration; normally inferred from the input |
 | `--writable` | Mark a git source as writable so `akm sync` also pushes (default: false) |
-| `--options` | Provider options as JSON (e.g. `'{"ref":"main"}'`) |
+| `--options` | Provider options as JSON (e.g. `'{"maxPages":100}'`) |
 | `--allow-insecure-transport` | Allow a plain-HTTP source URL after explicitly accepting transport substitution risk |
 | `--allow-dangerous-env-keys` | Deprecated, no effect. `bundle add` no longer scans env files for process-hijacking keys. Accepted through 0.10 so existing scripts keep working. |
 | `--max-pages` | Maximum pages to crawl for website sources (default: 50) |
@@ -2269,7 +2269,7 @@ akm registry add https://skills.sh --name skills.sh --provider skills-sh
 | --- | --- |
 | `--name` | Human-friendly label for the registry |
 | `--provider` | Provider type (e.g. `static-index`, `skills-sh`). Default: `static-index` |
-| `--options` | Provider-specific options as JSON (e.g. `'{"maxPages":100}'`) |
+| `--options` | Provider-specific options as JSON |
 | `--allow-insecure-transport` | Allow a plain HTTP registry URL (rejected by default) |
 
 Duplicate URLs are rejected.
