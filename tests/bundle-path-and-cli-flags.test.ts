@@ -193,6 +193,46 @@ describe("gone flags", () => {
       expect(hint).toContain("akm proposal drain --promote --yes");
     }
   });
+
+  const hintFor = (argv: string[]): string => {
+    try {
+      assertKnownFlags(main as unknown as FlagScanCommand, argv);
+    } catch (err) {
+      expect(err).toBeInstanceOf(UsageError);
+      expect((err as UsageError).code).toBe("UNKNOWN_FLAG");
+      return (err as UsageError).hint() ?? "";
+    }
+    throw new Error("expected a rejection");
+  };
+
+  test.each([
+    [["improve", "--require-engines"], "`--require-engines` is gone", "akm health && akm improve"],
+    [["workflow", "list", "--all-scopes"], "`--all-scopes` is gone", "drop it"],
+    [["workflow", "status", "r1", "--all-scopes"], "`--all-scopes` is gone", "drop it"],
+    [["bundle", "add", "x", "--allow-dangerous-env-keys"], "`--allow-dangerous-env-keys` is gone", "drop it"],
+    [["bundle", "update", "--allow-dangerous-env-keys"], "`--allow-dangerous-env-keys` is gone", "drop it"],
+    [["env", "run", "--allow-dangerous-env-keys"], "`--allow-dangerous-env-keys` is gone", "drop it"],
+    [["bundle", "update", "--yes"], "`--yes` is gone", "drop it"],
+    [["registry", "add", "http://x", "--options", "{}"], "`--options` is gone", "drop it"],
+    [["task", "sync", "--dry-run"], "`--dry-run` is gone", "akm migrate status"],
+    [["task", "sync", "--bundle", "b"], "`--bundle` is gone", "drop it"],
+    [["task", "add", "--rebind"], "`--rebind` is gone", "drop it"],
+    [["task", "history", "--id", "t1"], "`--id` is gone", "akm task history <id>"],
+  ])("%j names its replacement", (argv, gone, use) => {
+    const hint = hintFor(argv);
+    expect(hint).toContain(gone);
+    expect(hint).toContain(use);
+  });
+
+  test("a gone flag stays valid on the commands that still declare it", () => {
+    const run = (argv: string[]) => assertKnownFlags(main as unknown as FlagScanCommand, argv);
+    expect(() => run(["task", "sync", "--rebind"])).not.toThrow();
+    expect(() => run(["proposal", "accept", "p1", "--yes"])).not.toThrow();
+    expect(() => run(["bundle", "remove", "b", "--yes"])).not.toThrow();
+    expect(() => run(["bundle", "add", "x", "--options", "{}"])).not.toThrow();
+    expect(() => run(["task", "run", "t1", "--bundle", "b"])).not.toThrow();
+    expect(() => run(["improve", "--dry-run"])).not.toThrow();
+  });
 });
 
 describe("GITHUB_TOKEN set but empty", () => {

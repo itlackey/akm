@@ -94,6 +94,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - `akm remember --help` advertised `-showSimilar`, which was rejected; it now shows `--show-similar` only, and `--showSimilar` still works.
 - `akm improve --auto-accept` names its replacement (`akm proposal drain --promote --yes`, or a `triage` block with `applyMode: "promote"`).
+- The flags removed in 0.11 that still reach the unknown-flag check (`improve --require-engines`, `workflow list|status --all-scopes`, `--allow-dangerous-env-keys`, `bundle update --yes`, `registry add --options`, `task sync --dry-run|--bundle`, `task add --rebind`, `task history --id`) now name their replacement or say to drop them, like `--auto-accept`.
 - A `$schema` key in `config.json` is accepted without an unknown-key warning.
 - Wrong text: the feedback error named `akm.json` (the file is `config.json`); Desktop labelled `archiveRetentionDays` "archived assets" (it expires pending proposals) and `feedback.requireReason` as gating positive feedback (it gates negative feedback); `configuration.md` cited the gone `setup --config`; the comment at the top of `config-schema.ts` described behaviour the code does not have. Docs now state the working-bundle order, `improve.eventRetentionDays` and `improve.stateGc.collect`; `STABILITY.md` lists `AKM_STATE_DIR` as Supported and `AKM_UPGRADE_SKIP_CHECKSUM` as Internal (as `cli.md` already said) and names the other Internal variables; the eight flags `cli.md` missed are listed.
 
@@ -127,7 +128,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 
-- The no-op flags `workflow list|status --all-scopes`, `workflow run --new`, `--allow-dangerous-env-keys` (`bundle add`, `bundle update`, `env run`), `bundle update --yes` and `registry add --options` are gone; they now fail as unknown flags. Dead internal exports were deleted. The package `exports` map no longer has `./dist/*`: `akm-cli/dist/...` deep imports stop resolving (`akm-cli/api`, `akm-cli/workspace` and `akm-cli/package.json` remain). The OpenCode runtime's `akm_curate` and `akm_search` now pass `--project none`, so embedded model work no longer picks up the project of the run's working directory.
 
 - The curate reranker is gone (#1468): `search.curateRerank` (`enabled`, `endpoint`, `model`, `apiKey`, `timeoutMs`, `topN`), the rerank client, curate's rerank pass and its candidate expansion, the `curate-rerank` row in `akm config targets` and `akm health`, the Desktop setting, and the schema and docs entries. `akm curate` takes the top `--limit` hits of one search. A config that still has `search.curateRerank` loads, warns once that the key is ignored, enables nothing, and `akm migrate apply` drops it; a `curateRerank` key in `credentials.json` is left alone.
 - `ensureIndex` and search drop three things (#1469): the rebuild of an indexed empty stash on every read (`builtAt`, written after a complete scan, now means "built"), the separate freshness walker and the uncalled `isIndexStale`, and the reverse path-to-id-to-ref lookups in search and curate telemetry and in nested command/persona read telemetry, which use the ref they already hold and open no index connection of their own.
@@ -219,7 +219,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 
-- The no-op flags `workflow list|status --all-scopes`, `workflow run --new`, `--allow-dangerous-env-keys` (`bundle add`, `bundle update`, `env run`), `bundle update --yes` and `registry add --options` are gone; they now fail as unknown flags. Dead internal exports were deleted. The package `exports` map no longer has `./dist/*`: `akm-cli/dist/...` deep imports stop resolving (`akm-cli/api`, `akm-cli/workspace` and `akm-cli/package.json` remain). The OpenCode runtime's `akm_curate` and `akm_search` now pass `--project none`, so embedded model work no longer picks up the project of the run's working directory.
 
 - `improve.strategies.*.processes.reflect.excludeRefPrefixes` is removed; reflect's default `allowedTypes` already excludes `wiki-source`. A config that still has the key warns once and the key is ignored.
 
@@ -231,7 +230,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 
-- The no-op flags `workflow list|status --all-scopes`, `workflow run --new`, `--allow-dangerous-env-keys` (`bundle add`, `bundle update`, `env run`), `bundle update --yes` and `registry add --options` are gone; they now fail as unknown flags. Dead internal exports were deleted. The package `exports` map no longer has `./dist/*`: `akm-cli/dist/...` deep imports stop resolving (`akm-cli/api`, `akm-cli/workspace` and `akm-cli/package.json` remain). The OpenCode runtime's `akm_curate` and `akm_search` now pass `--project none`, so embedded model work no longer picks up the project of the run's working directory.
 
 - `akm show --filter` is removed (#1413). `show` reads the ref it is given and never filters by
   scope, belief or any other metadata, so a valid ref is no longer refused because its `scope_*`
@@ -341,7 +339,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 
-- The no-op flags `workflow list|status --all-scopes`, `workflow run --new`, `--allow-dangerous-env-keys` (`bundle add`, `bundle update`, `env run`), `bundle update --yes` and `registry add --options` are gone; they now fail as unknown flags. Dead internal exports were deleted. The package `exports` map no longer has `./dist/*`: `akm-cli/dist/...` deep imports stop resolving (`akm-cli/api`, `akm-cli/workspace` and `akm-cli/package.json` remain). The OpenCode runtime's `akm_curate` and `akm_search` now pass `--project none`, so embedded model work no longer picks up the project of the run's working directory.
 
 - `akm improve judge --strategy`: a strategy never chose where the judge ran. The command
   is now `akm judge reflect.quality` in its older input and output shape.
@@ -870,7 +867,6 @@ changes are in the 0.10 sections below; the upgrade from 0.9 is in
 
 ### Removed
 
-- The no-op flags `workflow list|status --all-scopes`, `workflow run --new`, `--allow-dangerous-env-keys` (`bundle add`, `bundle update`, `env run`), `bundle update --yes` and `registry add --options` are gone; they now fail as unknown flags. Dead internal exports were deleted. The package `exports` map no longer has `./dist/*`: `akm-cli/dist/...` deep imports stop resolving (`akm-cli/api`, `akm-cli/workspace` and `akm-cli/package.json` remain). The OpenCode runtime's `akm_curate` and `akm_search` now pass `--project none`, so embedded model work no longer picks up the project of the run's working directory.
 
 - The `onnxruntime-node` dependency, and with it the install script that
   downloaded about 317 MB of CUDA providers on every Linux x64 `npm install`
@@ -1326,7 +1322,6 @@ changes are in the 0.10 sections below; the upgrade from 0.9 is in
 
 ### Removed
 
-- The no-op flags `workflow list|status --all-scopes`, `workflow run --new`, `--allow-dangerous-env-keys` (`bundle add`, `bundle update`, `env run`), `bundle update --yes` and `registry add --options` are gone; they now fail as unknown flags. Dead internal exports were deleted. The package `exports` map no longer has `./dist/*`: `akm-cli/dist/...` deep imports stop resolving (`akm-cli/api`, `akm-cli/workspace` and `akm-cli/package.json` remain). The OpenCode runtime's `akm_curate` and `akm_search` now pass `--project none`, so embedded model work no longer picks up the project of the run's working directory.
 
 - `engines`, the `defaults` block (`defaults.engine`, `defaults.llmEngine`, with
   `defaults.improveStrategy` now `improve.strategy`), `workflow.judgeEngine`, a
@@ -1572,7 +1567,6 @@ changes are in the 0.10 sections below; the upgrade from 0.9 is in
 
 ### Removed
 
-- The no-op flags `workflow list|status --all-scopes`, `workflow run --new`, `--allow-dangerous-env-keys` (`bundle add`, `bundle update`, `env run`), `bundle update --yes` and `registry add --options` are gone; they now fail as unknown flags. Dead internal exports were deleted. The package `exports` map no longer has `./dist/*`: `akm-cli/dist/...` deep imports stop resolving (`akm-cli/api`, `akm-cli/workspace` and `akm-cli/package.json` remain). The OpenCode runtime's `akm_curate` and `akm_search` now pass `--project none`, so embedded model work no longer picks up the project of the run's working directory.
 
 - The dangerous-key audit on `bundle add` and `bundle update`, its prompt, its
   rollback of a freshly installed bundle, and the `blocked` per-bundle status in
@@ -1963,7 +1957,6 @@ changes are in the 0.10 sections below; the upgrade from 0.9 is in
 
 ### Removed
 
-- The no-op flags `workflow list|status --all-scopes`, `workflow run --new`, `--allow-dangerous-env-keys` (`bundle add`, `bundle update`, `env run`), `bundle update --yes` and `registry add --options` are gone; they now fail as unknown flags. Dead internal exports were deleted. The package `exports` map no longer has `./dist/*`: `akm-cli/dist/...` deep imports stop resolving (`akm-cli/api`, `akm-cli/workspace` and `akm-cli/package.json` remain). The OpenCode runtime's `akm_curate` and `akm_search` now pass `--project none`, so embedded model work no longer picks up the project of the run's working directory.
 
 - **Reflect's retrieval regression gate (#1171).** After the quality judge passed a revision, reflect graded the old and the new text against up to five of the asset's own retrieval queries and refused the revision (`quality_rejected`, a 14-day window) when the mean grade fell at all. Re-measured on 0.10 it refused 12-17% of the revisions the judge had passed and lowered defects fixed from 84 to 77 (35B) and from 92 to 77 (27B) of 96, now that reflect edits frontmatter only. A judge-passed revision is now minted as a proposal with no further check. This also removes the `retrieval-ungraded` review reason, the `retrievalRegression`/`retrievalUngraded` event metadata and the `retrieval-relevance-judge.md` prompt. No config key existed for the gate, so no config changes.
 
@@ -2108,7 +2101,6 @@ changes are in the 0.10 sections below; the upgrade from 0.9 is in
 
 ### Removed
 
-- The no-op flags `workflow list|status --all-scopes`, `workflow run --new`, `--allow-dangerous-env-keys` (`bundle add`, `bundle update`, `env run`), `bundle update --yes` and `registry add --options` are gone; they now fail as unknown flags. Dead internal exports were deleted. The package `exports` map no longer has `./dist/*`: `akm-cli/dist/...` deep imports stop resolving (`akm-cli/api`, `akm-cli/workspace` and `akm-cli/package.json` remain). The OpenCode runtime's `akm_curate` and `akm_search` now pass `--project none`, so embedded model work no longer picks up the project of the run's working directory.
 
 - **The GitHub-shaped YAML workflow format (#1096).** A `.yml` workflow (`name`/`on`/`jobs`, one job, `uses:` and `run:`
   steps) is gone, with everything that existed only to carry it: workflow-step `uses: tasks/<ref>` (task composition),
@@ -2213,7 +2205,6 @@ changes are in the 0.10 sections below; the upgrade from 0.9 is in
 
 ### Removed
 
-- The no-op flags `workflow list|status --all-scopes`, `workflow run --new`, `--allow-dangerous-env-keys` (`bundle add`, `bundle update`, `env run`), `bundle update --yes` and `registry add --options` are gone; they now fail as unknown flags. Dead internal exports were deleted. The package `exports` map no longer has `./dist/*`: `akm-cli/dist/...` deep imports stop resolving (`akm-cli/api`, `akm-cli/workspace` and `akm-cli/package.json` remain). The OpenCode runtime's `akm_curate` and `akm_search` now pass `--project none`, so embedded model work no longer picks up the project of the run's working directory.
 
 - **Six improve knobs that measured no effect (#1131).** Each is removed with the code that served only it; a config
   that still sets one loads (named once by the unknown-key warning, dropped by `akm migrate apply`).
@@ -2713,7 +2704,6 @@ When upgrading from 0.9.26:
 
 ### Removed
 
-- The no-op flags `workflow list|status --all-scopes`, `workflow run --new`, `--allow-dangerous-env-keys` (`bundle add`, `bundle update`, `env run`), `bundle update --yes` and `registry add --options` are gone; they now fail as unknown flags. Dead internal exports were deleted. The package `exports` map no longer has `./dist/*`: `akm-cli/dist/...` deep imports stop resolving (`akm-cli/api`, `akm-cli/workspace` and `akm-cli/package.json` remain). The OpenCode runtime's `akm_curate` and `akm_search` now pass `--project none`, so embedded model work no longer picks up the project of the run's working directory.
 
 - **The `scripts/akm-eval` toolkit has moved out of this repository.** The
   read-only measurement toolkit (the case runner and its suites, the twin
@@ -3074,7 +3064,6 @@ changes in this section. When upgrading from 0.9.25:
 
 ### Removed
 
-- The no-op flags `workflow list|status --all-scopes`, `workflow run --new`, `--allow-dangerous-env-keys` (`bundle add`, `bundle update`, `env run`), `bundle update --yes` and `registry add --options` are gone; they now fail as unknown flags. Dead internal exports were deleted. The package `exports` map no longer has `./dist/*`: `akm-cli/dist/...` deep imports stop resolving (`akm-cli/api`, `akm-cli/workspace` and `akm-cli/package.json` remain). The OpenCode runtime's `akm_curate` and `akm_search` now pass `--project none`, so embedded model work no longer picks up the project of the run's working directory.
 
 - **`akm feedback --failure-mode` and the `feedback.allowedFailureModes` config
   key.** The flag labelled negative feedback `incorrect`, `outdated`,
@@ -3268,7 +3257,6 @@ sections below list every change. When upgrading from 0.9.24:
 
 ### Removed
 
-- The no-op flags `workflow list|status --all-scopes`, `workflow run --new`, `--allow-dangerous-env-keys` (`bundle add`, `bundle update`, `env run`), `bundle update --yes` and `registry add --options` are gone; they now fail as unknown flags. Dead internal exports were deleted. The package `exports` map no longer has `./dist/*`: `akm-cli/dist/...` deep imports stop resolving (`akm-cli/api`, `akm-cli/workspace` and `akm-cli/package.json` remain). The OpenCode runtime's `akm_curate` and `akm_search` now pass `--project none`, so embedded model work no longer picks up the project of the run's working directory.
 
 - **Everything reflect needed to rewrite a body.** The prompt's "Content
   preservation rules" and the size bounds computed for them; the related
@@ -3353,7 +3341,6 @@ sections below list every change. When upgrading from 0.9.24:
 
 ### Removed
 
-- The no-op flags `workflow list|status --all-scopes`, `workflow run --new`, `--allow-dangerous-env-keys` (`bundle add`, `bundle update`, `env run`), `bundle update --yes` and `registry add --options` are gone; they now fail as unknown flags. Dead internal exports were deleted. The package `exports` map no longer has `./dist/*`: `akm-cli/dist/...` deep imports stop resolving (`akm-cli/api`, `akm-cli/workspace` and `akm-cli/package.json` remain). The OpenCode runtime's `akm_curate` and `akm_search` now pass `--project none`, so embedded model work no longer picks up the project of the run's working directory.
 
 - **The agent-engine inference fields,** which 0.9.25-alpha.1 accepted: they
   fail to load again.
@@ -3437,7 +3424,6 @@ sections below list every change. When upgrading from 0.9.24:
 
 ### Removed
 
-- The no-op flags `workflow list|status --all-scopes`, `workflow run --new`, `--allow-dangerous-env-keys` (`bundle add`, `bundle update`, `env run`), `bundle update --yes` and `registry add --options` are gone; they now fail as unknown flags. Dead internal exports were deleted. The package `exports` map no longer has `./dist/*`: `akm-cli/dist/...` deep imports stop resolving (`akm-cli/api`, `akm-cli/workspace` and `akm-cli/package.json` remain). The OpenCode runtime's `akm_curate` and `akm_search` now pass `--project none`, so embedded model work no longer picks up the project of the run's working directory.
 
 - **Dead code; nothing you run changes:** each harness's unused `pattern` and
   `structuredOutput` fields, `resolveLlmEngineUse`'s swap of an agent engine
@@ -4071,7 +4057,6 @@ sections below list every change. When upgrading from 0.9.24:
 
 ### Removed
 
-- The no-op flags `workflow list|status --all-scopes`, `workflow run --new`, `--allow-dangerous-env-keys` (`bundle add`, `bundle update`, `env run`), `bundle update --yes` and `registry add --options` are gone; they now fail as unknown flags. Dead internal exports were deleted. The package `exports` map no longer has `./dist/*`: `akm-cli/dist/...` deep imports stop resolving (`akm-cli/api`, `akm-cli/workspace` and `akm-cli/package.json` remain). The OpenCode runtime's `akm_curate` and `akm_search` now pass `--project none`, so embedded model work no longer picks up the project of the run's working directory.
 
 - **The LLM entity-graph extraction pass.** `akm improve`'s per-file
   entity/relation extraction, its tables, and `akm show`'s `related` list are
@@ -5632,7 +5617,6 @@ reach 74 GB with nothing reporting it.
 
 ### Removed
 
-- The no-op flags `workflow list|status --all-scopes`, `workflow run --new`, `--allow-dangerous-env-keys` (`bundle add`, `bundle update`, `env run`), `bundle update --yes` and `registry add --options` are gone; they now fail as unknown flags. Dead internal exports were deleted. The package `exports` map no longer has `./dist/*`: `akm-cli/dist/...` deep imports stop resolving (`akm-cli/api`, `akm-cli/workspace` and `akm-cli/package.json` remain). The OpenCode runtime's `akm_curate` and `akm_search` now pass `--project none`, so embedded model work no longer picks up the project of the run's working directory.
 
 - **`akm health --clean-dead-residue` and every other compensating shim.**
   A special-purpose flag on `health` that deleted files existed because
@@ -5841,7 +5825,6 @@ reach 74 GB with nothing reporting it.
 
 ### Removed
 
-- The no-op flags `workflow list|status --all-scopes`, `workflow run --new`, `--allow-dangerous-env-keys` (`bundle add`, `bundle update`, `env run`), `bundle update --yes` and `registry add --options` are gone; they now fail as unknown flags. Dead internal exports were deleted. The package `exports` map no longer has `./dist/*`: `akm-cli/dist/...` deep imports stop resolving (`akm-cli/api`, `akm-cli/workspace` and `akm-cli/package.json` remain). The OpenCode runtime's `akm_curate` and `akm_search` now pass `--project none`, so embedded model work no longer picks up the project of the run's working directory.
 
 - **The `frequent` and `memory-focus` improve strategies.** Zero recorded
   invocations, and both were mid-points of other presets (`frequent` ≈
@@ -5920,7 +5903,6 @@ justification.
 
 ### Removed
 
-- The no-op flags `workflow list|status --all-scopes`, `workflow run --new`, `--allow-dangerous-env-keys` (`bundle add`, `bundle update`, `env run`), `bundle update --yes` and `registry add --options` are gone; they now fail as unknown flags. Dead internal exports were deleted. The package `exports` map no longer has `./dist/*`: `akm-cli/dist/...` deep imports stop resolving (`akm-cli/api`, `akm-cli/workspace` and `akm-cli/package.json` remain). The OpenCode runtime's `akm_curate` and `akm_search` now pass `--project none`, so embedded model work no longer picks up the project of the run's working directory.
 
 - **The index writer lease (#872).** It guarded a *regenerable cache*, had zero
   lease events in telemetry, and a live-but-wedged holder stranded all indexing
@@ -6128,7 +6110,6 @@ install's cron schedule, not their worth.
 
 ### Removed
 
-- The no-op flags `workflow list|status --all-scopes`, `workflow run --new`, `--allow-dangerous-env-keys` (`bundle add`, `bundle update`, `env run`), `bundle update --yes` and `registry add --options` are gone; they now fail as unknown flags. Dead internal exports were deleted. The package `exports` map no longer has `./dist/*`: `akm-cli/dist/...` deep imports stop resolving (`akm-cli/api`, `akm-cli/workspace` and `akm-cli/package.json` remain). The OpenCode runtime's `akm_curate` and `akm_search` now pass `--project none`, so embedded model work no longer picks up the project of the run's working directory.
 
 - **Three defensive checks that only ever refused work a human explicitly
   asked for, with no evidence (via telemetry) they ever caught a real
@@ -7896,7 +7877,6 @@ See `docs/migration/v0.8-to-v0.9.md` and
 
 ### Removed
 
-- The no-op flags `workflow list|status --all-scopes`, `workflow run --new`, `--allow-dangerous-env-keys` (`bundle add`, `bundle update`, `env run`), `bundle update --yes` and `registry add --options` are gone; they now fail as unknown flags. Dead internal exports were deleted. The package `exports` map no longer has `./dist/*`: `akm-cli/dist/...` deep imports stop resolving (`akm-cli/api`, `akm-cli/workspace` and `akm-cli/package.json` remain). The OpenCode runtime's `akm_curate` and `akm_search` now pass `--project none`, so embedded model work no longer picks up the project of the run's working directory.
 
 - **The experimental `akm workflow brief` / `akm workflow report`
   external-driver protocol is removed**, along with the
@@ -9219,7 +9199,6 @@ See `docs/migration/v0.8-to-v0.9.md` and
 
 ### Removed
 
-- The no-op flags `workflow list|status --all-scopes`, `workflow run --new`, `--allow-dangerous-env-keys` (`bundle add`, `bundle update`, `env run`), `bundle update --yes` and `registry add --options` are gone; they now fail as unknown flags. Dead internal exports were deleted. The package `exports` map no longer has `./dist/*`: `akm-cli/dist/...` deep imports stop resolving (`akm-cli/api`, `akm-cli/workspace` and `akm-cli/package.json` remain). The OpenCode runtime's `akm_curate` and `akm_search` now pass `--project none`, so embedded model work no longer picks up the project of the run's working directory.
 
 - **BREAKING: `akm upgrade --skip-checksum` is removed.** STABILITY.md has
   always said checksum verification is not optional and that the recovery hatch
@@ -10131,7 +10110,6 @@ proposal and log storage, `--format html` output, and per-stage LLM telemetry.
 
 ### Removed
 
-- The no-op flags `workflow list|status --all-scopes`, `workflow run --new`, `--allow-dangerous-env-keys` (`bundle add`, `bundle update`, `env run`), `bundle update --yes` and `registry add --options` are gone; they now fail as unknown flags. Dead internal exports were deleted. The package `exports` map no longer has `./dist/*`: `akm-cli/dist/...` deep imports stop resolving (`akm-cli/api`, `akm-cli/workspace` and `akm-cli/package.json` remain). The OpenCode runtime's `akm_curate` and `akm_search` now pass `--project none`, so embedded model work no longer picks up the project of the run's working directory.
 
 - **`akm config edit`** — the interactive menu-based editor was removed. A
   prompt-driven drill-down was clunkier than just editing the file. Edit the
@@ -10735,7 +10713,6 @@ behind an interactive prompt (or `-y` / `--yes` in non-interactive use).
 
 ### Removed
 
-- The no-op flags `workflow list|status --all-scopes`, `workflow run --new`, `--allow-dangerous-env-keys` (`bundle add`, `bundle update`, `env run`), `bundle update --yes` and `registry add --options` are gone; they now fail as unknown flags. Dead internal exports were deleted. The package `exports` map no longer has `./dist/*`: `akm-cli/dist/...` deep imports stop resolving (`akm-cli/api`, `akm-cli/workspace` and `akm-cli/package.json` remain). The OpenCode runtime's `akm_curate` and `akm_search` now pass `--project none`, so embedded model work no longer picks up the project of the run's working directory.
 
 - **Install-time security audit (`security.installAudit`) and the `--trust`
   flag**. The audit scanned incoming stash assets for risky patterns (e.g.
@@ -10955,7 +10932,6 @@ See `docs/migration/v0.7-to-v0.8.md` for the user-facing migration guide.
 
 ### Removed
 
-- The no-op flags `workflow list|status --all-scopes`, `workflow run --new`, `--allow-dangerous-env-keys` (`bundle add`, `bundle update`, `env run`), `bundle update --yes` and `registry add --options` are gone; they now fail as unknown flags. Dead internal exports were deleted. The package `exports` map no longer has `./dist/*`: `akm-cli/dist/...` deep imports stop resolving (`akm-cli/api`, `akm-cli/workspace` and `akm-cli/package.json` remain). The OpenCode runtime's `akm_curate` and `akm_search` now pass `--project none`, so embedded model work no longer picks up the project of the run's working directory.
 
 - **Legacy registry `curated` boolean** — legacy v2 index JSON parses and silently ignores it; renderers no longer surface a `curated` column. The per-asset `quality` field replaces it. Publishers do not need to migrate existing JSON.
 - **Phantom config keys** (#284 Wave B, PR #285): `llm.features.{tag_dedup, memory_consolidation, embedding_fallback_score}`, `llm.capabilities.{longContext, toolUse}`, and `llm.contextWindow`. These were parsed and persisted by the loader but never read at any call site, and the docs that described their behaviour were misleading. Operators with these keys in `config.json` will see them silently ignored — `akm config get llm.features.tag_dedup` (etc.) will return undefined.
@@ -11159,7 +11135,6 @@ See `docs/migration/v0.7-to-v0.8.md` for the user-facing migration guide.
 
 ### Removed
 
-- The no-op flags `workflow list|status --all-scopes`, `workflow run --new`, `--allow-dangerous-env-keys` (`bundle add`, `bundle update`, `env run`), `bundle update --yes` and `registry add --options` are gone; they now fail as unknown flags. Dead internal exports were deleted. The package `exports` map no longer has `./dist/*`: `akm-cli/dist/...` deep imports stop resolving (`akm-cli/api`, `akm-cli/workspace` and `akm-cli/package.json` remain). The OpenCode runtime's `akm_curate` and `akm_search` now pass `--project none`, so embedded model work no longer picks up the project of the run's working directory.
 
 - `manifest` subcommand (adds no value over `search`)
 - URI schemes (`viking://`, `context-hub://`) from user-facing refs — assets are addressed as `type:name`; sources use URLs
@@ -11204,7 +11179,6 @@ cleans up the CLI surface, and renames the package from `agent-i-kit` to `akm-cl
 
 ### Removed
 
-- The no-op flags `workflow list|status --all-scopes`, `workflow run --new`, `--allow-dangerous-env-keys` (`bundle add`, `bundle update`, `env run`), `bundle update --yes` and `registry add --options` are gone; they now fail as unknown flags. Dead internal exports were deleted. The package `exports` map no longer has `./dist/*`: `akm-cli/dist/...` deep imports stop resolving (`akm-cli/api`, `akm-cli/workspace` and `akm-cli/package.json` remain). The OpenCode runtime's `akm_curate` and `akm_search` now pass `--project none`, so embedded model work no longer picks up the project of the run's working directory.
 
 - `submit` command
 - Provider presets (configure providers with raw JSON)
@@ -11244,7 +11218,6 @@ rewrites all documentation against the final asset model.
 
 ### Removed
 
-- The no-op flags `workflow list|status --all-scopes`, `workflow run --new`, `--allow-dangerous-env-keys` (`bundle add`, `bundle update`, `env run`), `bundle update --yes` and `registry add --options` are gone; they now fail as unknown flags. Dead internal exports were deleted. The package `exports` map no longer has `./dist/*`: `akm-cli/dist/...` deep imports stop resolving (`akm-cli/api`, `akm-cli/workspace` and `akm-cli/package.json` remain). The OpenCode runtime's `akm_curate` and `akm_search` now pass `--project none`, so embedded model work no longer picks up the project of the run's working directory.
 
 - `tool` asset type (fully removed across all documentation and code)
 - `registryUrls` config field (replaced by `registries`)

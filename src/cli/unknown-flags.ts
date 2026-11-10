@@ -166,6 +166,27 @@ const GONE_FLAGS: ReadonlyArray<{ flag: string; use: string; commands?: readonly
     commands: ["improve"],
   },
   { flag: "--probe", use: "no flag: probing is the default, and `--no-probe` runs offline", commands: ["setup"] },
+  {
+    flag: "--require-engines",
+    use: "no flag: `akm health && akm improve` checks that each connection answers and each harness is installed",
+    commands: ["improve"],
+  },
+  { flag: "--all-scopes", use: "no flag: it did nothing, so drop it", commands: ["workflow list", "workflow status"] },
+  {
+    flag: "--allow-dangerous-env-keys",
+    use: "no flag: it did nothing, so drop it",
+    commands: ["bundle add", "bundle update", "env run"],
+  },
+  { flag: "--yes", use: "no flag: it did nothing, so drop it", commands: ["bundle update"] },
+  { flag: "--options", use: "no flag: it did nothing, so drop it", commands: ["registry add"] },
+  { flag: "--dry-run", use: "`akm migrate status`, which reports what `task sync` would do", commands: ["task sync"] },
+  { flag: "--bundle", use: "no flag: it was ignored, so drop it", commands: ["task sync"] },
+  {
+    flag: "--rebind",
+    use: "no flag: it was ignored, so drop it (`akm task sync --rebind` stays)",
+    commands: ["task add"],
+  },
+  { flag: "--id", use: "the id as the argument: `akm task history <id>`", commands: ["task history"] },
 ];
 
 /**
