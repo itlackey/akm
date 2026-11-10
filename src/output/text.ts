@@ -5,100 +5,98 @@
 /**
  * Plain-text formatters for command output.
  *
- * Built-in formatters are assembled EXPLICITLY here: each per-command module
- * under `src/output/text/` EXPORTS a pure `TextFormatterEntry[]` (no top-level
- * side effect), and this barrel imports those exports and registers them in a
- * single deterministic, order-independent pass (`BUILT_IN_TEXT_FORMATTERS`).
- * Dropping a module from the assembly array is a COMPILE error, not a silent
- * runtime gap.
- *
- * `formatPlain` dispatches to those formatters. Returning `null` means "no
- * plain rendering available"; the caller (`output()` in `src/cli/shared.ts`)
- * falls back to `renderGenericText`'s flat `key=value` rendering of the
- * shaped envelope (`src/output/generic-render.ts` — NOT `renderGenericMarkdown`;
- * markdown syntax is markup, not plain text, so `text` gets its own generic
- * renderer rather than reusing `md`'s). NOT YAML either: this comment (and
- * the one on `formatPlain` below) used to say the fallback was YAML, but it
- * never was — the fallback was pretty-printed JSON until it became a generic
- * renderer.
+ * Built-in formatters are registered once, in one explicit pass
+ * (`BUILT_IN_TEXT_FORMATTERS`). `formatPlain` dispatches to them. Returning
+ * `null` means "no plain rendering available"; the caller (`output()` in
+ * `src/cli/shared.ts`) falls back to `renderGenericText`'s flat `key=value`
+ * rendering of the shaped envelope (`src/output/generic-render.ts`).
  *
  * Pure functions — no IO.
  */
 
+import { type ProjectView, withProjectLine } from "../core/projects";
 import type { DetailLevel } from "./context";
 import type { OutputCommandName } from "./shapes";
 import { writeStdout } from "./stdout";
-import { addFormatters } from "./text/add";
-import { bundleCreateFormatters } from "./text/bundle-create";
-import { bundleRenameFormatters } from "./text/bundle-rename";
-import { bundleShowFormatters } from "./text/bundle-show";
-import { cloneFormatters } from "./text/clone";
-import { configFormatters } from "./text/config";
-import { curateFormatters } from "./text/curate";
 import { envFormatters } from "./text/env";
 import { eventsFormatters } from "./text/events";
-import { feedbackFormatters } from "./text/feedback";
-import { healthFormatters } from "./text/health";
-import { importFormatters } from "./text/import";
+import {
+  formatAddPlain,
+  formatBundleRenamePlain,
+  formatBundleShowPlain,
+  formatClonePlain,
+  formatConfigPlain,
+  formatCuratePlain,
+  formatFeedbackPlain,
+  formatHealthPlain,
+  formatImportPlain,
+  formatIndexPlain,
+  formatInfoPlain,
+  formatInitPlain,
+  formatLintPlain,
+  formatListPlain,
+  formatModelsPlain,
+  formatModelsSetPlain,
+  formatRegistryAddPlain,
+  formatRegistryListPlain,
+  formatRegistryRemovePlain,
+  formatRememberPlain,
+  formatRemovePlain,
+  formatSearchPlain,
+  formatShowPlain,
+  formatSyncPlain,
+  formatUpdatePlain,
+  formatUpgradePlain,
+} from "./text/helpers";
 import { improveReportFormatters } from "./text/improve-report";
-import { indexFormatters } from "./text/index";
-import { infoFormatters } from "./text/info";
-import { lintFormatters } from "./text/lint";
-import { listFormatters } from "./text/list";
 import { metricsFormatters } from "./text/metrics";
 import { migrateFormatters } from "./text/migrate";
-import { modelsFormatters } from "./text/models";
 import { proposalProducerFormatters } from "./text/proposal/producer";
 import { proposalFormatters } from "./text/proposal/proposal";
 import { getTextFormatterHandler, registerTextFormatters, type TextFormatterEntry } from "./text/registry";
-import { registryCommandFormatters } from "./text/registry-commands";
-import { rememberFormatters } from "./text/remember";
-import { removeFormatters } from "./text/remove";
-import { searchFormatters } from "./text/search";
-import { showFormatters } from "./text/show";
-import { syncFormatters } from "./text/sync";
-import { updateFormatters } from "./text/update";
-import { upgradeFormatters } from "./text/upgrade";
 import { workflowFormatters } from "./text/workflow";
 
-// ── Explicit built-in formatter assembly ──────────────────────────────────────
-// Each entry below is a pure exported `TextFormatterEntry[]` from a per-command
-// module. The set is registered ONCE, deterministically, with no reliance on
-// import order. Removing a module from this list removes its registration —
-// and because each name is referenced statically, a deleted export fails to
-// compile instead of silently disappearing at runtime.
 const BUILT_IN_TEXT_FORMATTERS: TextFormatterEntry[] = [
-  ...bundleCreateFormatters,
-  ...bundleRenameFormatters,
-  ...bundleShowFormatters,
-  ...indexFormatters,
-  ...showFormatters,
-  ...searchFormatters,
-  ...curateFormatters,
+  { command: "bundle-create", handler: (r) => formatInitPlain(r) },
+  { command: "bundle-rename", handler: (r) => formatBundleRenamePlain(r) },
+  { command: "bundle-show", handler: (r) => formatBundleShowPlain(r) },
+  { command: "index", handler: (r) => formatIndexPlain(r) },
+  { command: "show", handler: (r, detail) => formatShowPlain(r, detail) },
+  {
+    command: "search",
+    handler: (r, detail) => withProjectLine(formatSearchPlain(r, detail), r.project as ProjectView | undefined),
+  },
+  {
+    command: "curate",
+    handler: (r, detail) => withProjectLine(formatCuratePlain(r, detail), r.project as ProjectView | undefined),
+  },
   ...workflowFormatters,
-  ...listFormatters,
-  ...addFormatters,
-  ...removeFormatters,
-  ...updateFormatters,
-  ...upgradeFormatters,
-  ...cloneFormatters,
+  { command: "list", handler: (r) => formatListPlain(r) },
+  { command: "add", handler: (r) => formatAddPlain(r) },
+  { command: "remove", handler: (r) => formatRemovePlain(r) },
+  { command: "update", handler: (r) => formatUpdatePlain(r) },
+  { command: "upgrade", handler: (r) => formatUpgradePlain(r) },
+  { command: "clone", handler: (r) => formatClonePlain(r) },
   ...eventsFormatters,
   ...proposalFormatters,
   ...proposalProducerFormatters,
-  ...infoFormatters,
-  ...healthFormatters,
+  { command: "info", handler: (r) => formatInfoPlain(r) },
+  { command: "health", handler: (r, detail) => formatHealthPlain(r, detail) },
   ...metricsFormatters,
   ...improveReportFormatters,
-  ...lintFormatters,
-  ...configFormatters,
-  ...feedbackFormatters,
-  ...rememberFormatters,
-  ...importFormatters,
-  ...syncFormatters,
-  ...registryCommandFormatters,
+  { command: "lint", handler: (r) => formatLintPlain(r) },
+  { command: "config", handler: (r) => formatConfigPlain(r) },
+  { command: "feedback", handler: (r) => formatFeedbackPlain(r) },
+  { command: "remember", handler: (r) => formatRememberPlain(r) },
+  { command: "import", handler: (r) => formatImportPlain(r) },
+  { command: "sync", handler: (r) => formatSyncPlain(r) },
+  { command: "registry-list", handler: (r) => formatRegistryListPlain(r) },
+  { command: "registry-add", handler: (r) => formatRegistryAddPlain(r) },
+  { command: "registry-remove", handler: (r) => formatRegistryRemovePlain(r) },
   ...envFormatters,
   ...migrateFormatters,
-  ...modelsFormatters,
+  { command: "models", handler: (r) => formatModelsPlain(r) },
+  { command: "models-set", handler: (r) => formatModelsSetPlain(r) },
 ];
 
 registerTextFormatters(BUILT_IN_TEXT_FORMATTERS);
@@ -140,5 +138,5 @@ export function formatPlain(command: OutputCommandName, result: unknown, detail:
   if (handler) {
     return handler(result as Record<string, unknown>, detail);
   }
-  return null; // fall through to the generic text renderer, not YAML
+  return null;
 }

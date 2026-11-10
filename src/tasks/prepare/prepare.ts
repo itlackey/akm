@@ -131,8 +131,6 @@ export async function prepareTaskExecution(
     throw new UsageError("Script refs do not accept with.", "COMPOSITION_INVALID");
   }
   const resolved = await resolvedOwnedAsset(qualified, "script", context);
-  // Shared with prepare-script-target.ts's prepareScriptTarget():
-  // one implementation of the byte/interpreter capture, not two.
   const captured = captureScriptTarget(
     qualified,
     resolved.file,

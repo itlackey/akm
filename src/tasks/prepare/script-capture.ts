@@ -3,11 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The one shared implementation of frozen-script byte/interpreter capture.
- * Both prepare.ts's script arm (prepareTaskExecution) and
- * prepare-script-target.ts's typed prepareScriptTarget() call
- * captureScriptTarget() below, so the two never drift into two copies of the
- * same capture logic.
+ * Frozen-script byte/interpreter capture for prepare.ts's script arm
+ * (prepareTaskExecution).
  */
 
 import { createHash } from "node:crypto";
@@ -85,7 +82,7 @@ export function scriptInterpreter(extension: string, ref: string, bytes?: Uint8A
   );
 }
 
-/** The fields both script-projection call sites (prepare.ts, prepare-script-target.ts) freeze identically. */
+/** The fields the script projection freezes. */
 export interface CapturedScriptTarget {
   readonly interpreter: TaskScriptInterpreter;
   readonly extension: string;
