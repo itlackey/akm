@@ -49,6 +49,7 @@
     Off unless you turn it on. Learning is akm's own model calls (improving assets, judging, and extracting what a
     session taught when it ends), and it uses model quota. Turning it on also schedules akm's improve task.
     {learningRuns(detected) ? `Now: on, ${detected.modelCalls.description.replace(/\.$/, "")}.` : "Now: off."}
+    {library ? "" : "Create your library first. Until then this cannot be changed."}
   </p>
   {#if plan.on}
     <fieldset class="learn-where">

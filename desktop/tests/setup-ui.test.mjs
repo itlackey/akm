@@ -368,6 +368,35 @@ test("a machine with the same akm as the app is not offered an update", { timeou
   await expect(page.getByRole("button", { name: "Update CLI & plugins" })).toHaveCount(0);
 });
 
+test("learning that is already on with no library says why its switch cannot be changed", {
+  timeout: 120000,
+}, async (t) => {
+  const server = await launchFixture({
+    empty: true,
+    // A config that only names a model connection: learning runs on it, and there is no library yet. Nothing on PATH.
+    configureFixture: async (fixture) => {
+      await mkdir(path.join(fixture.root, "bin"));
+      fixture.env.PATH = path.join(fixture.root, "bin");
+      await mkdir(fixture.env.AKM_CONFIG_DIR, { recursive: true });
+      await writeFile(
+        path.join(fixture.env.AKM_CONFIG_DIR, "config.json"),
+        JSON.stringify({ connections: { default: { endpoint: "http://127.0.0.1:9/v1", models: { fast: "small" } } } }),
+      );
+    },
+  });
+  t.after(() => server.stop());
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
+  await page.goto(server.url);
+  await page.goto(`${server.origin}/setup`);
+  await expect(page.getByText("Not created yet")).toBeVisible();
+  const learning = page.getByRole("checkbox", { name: "Let akm learn in the background" });
+  await expect(learning).toBeChecked();
+  await expect(learning).toBeDisabled();
+  await expect(learning).toHaveAccessibleDescription(/Create your library first\./);
+});
+
 test("errors that say the library is missing lead to setup", { timeout: 120000 }, async (t) => {
   const server = await launchFixture({
     empty: true,
