@@ -40,9 +40,9 @@ jobs:
       - run: bun run build
 
   release-branch-only:
-    # Only a release branch merges to main, and it ships the version it is named for: package.json carries it (the
-    # release commit, `bun run release:stable`). The ruleset on main requires this check, and the platform jobs
-    # below run after it (docs/maintainers/release-checklist.md, "Repository settings").
+    # Only a release branch merges to main, and it ships a new stable version: package.json is a bare version (the
+    # release commit, `bun run release:stable`) that is not on npm yet. The ruleset on main requires this check, and
+    # the platform jobs below run after it (docs/maintainers/release-checklist.md, "Repository settings").
     if: github.event_name == 'pull_request' && github.base_ref == 'main' && !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -50,6 +50,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
       - env:
           HEAD: ${{ github.head_ref }}
+        shell: bash
         run: |
           case "$HEAD" in
             release/*) ;;
@@ -59,8 +60,16 @@ jobs:
               ;;
           esac
           VERSION="$(node -p "require('./package.json').version")"
-          if [ "$VERSION" != "${HEAD#release/}" ]; then
-            echo "package.json is $VERSION; $HEAD ships ${HEAD#release/}. Run bun run release:stable first." >&2
+          if [[ "$VERSION" == *-* ]]; then
+            echo "package.json is $VERSION, a prerelease; a release into main carries the stable version. Run bun run release:stable first." >&2
+            exit 1
+          fi
+          if out="$(npm view "akm-cli@$VERSION" version 2>&1)"; then
+            echo "akm-cli@$VERSION is already published; a release carries a new version." >&2
+            exit 1
+          elif ! grep -q E404 <<<"$out"; then
+            echo "Could not check npm for akm-cli@$VERSION (rerun the job):" >&2
+            echo "$out" >&2
             exit 1
           fi
 
