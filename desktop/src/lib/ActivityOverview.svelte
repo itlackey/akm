@@ -5,7 +5,7 @@
 -->
 
 <script lang="ts">
-  import { onDestroy, tick } from "svelte";
+  import { onDestroy, tick, untrack } from "svelte";
   import { api, date } from "./client";
   import ActivityChart from "./ActivityChart.svelte";
   import Icon from "./Icon.svelte";
@@ -20,21 +20,36 @@
     ActivityTaskHistory,
     ActivityRun,
   } from "./activity-types";
-  export let data: ActivityOverview;
-  export let retrieval: ActivityRetrieval | null;
-  export let pulse: ActivityPulse | null;
-  export let mode: "health" | "runs" | "usage" = "health";
-  export let requestedTask = "";
-  export let refreshedAt = "";
-  export let probedAt = "";
+  let {
+    data,
+    retrieval,
+    pulse,
+    mode = "health",
+    requestedTask = "",
+    refreshedAt = "",
+    probedAt = "",
+    probe,
+  }: {
+    data: ActivityOverview;
+    retrieval: ActivityRetrieval | null;
+    pulse: ActivityPulse | null;
+    mode?: "health" | "runs" | "usage";
+    requestedTask?: string;
+    refreshedAt?: string;
+    probedAt?: string;
+    probe: () => Promise<void>;
+  } = $props();
+  // Plain, not state: it only stops the same requested task being looked up twice.
   let inspectedTask = "";
-  $: attention = attentionItems(data, pulse);
-  $: if (mode === "runs" && requestedTask && requestedTask !== inspectedTask) {
+  const attention = $derived(attentionItems(data, pulse));
+  // A task named by the route is looked up when the Runs view asks for it.
+  $effect(() => {
+    if (mode !== "runs" || !requestedTask || requestedTask === inspectedTask) return;
     inspectedTask = requestedTask;
-    void inspectTask(requestedTask);
-  }
-  let taskPanel: HTMLElement,
-    runPanel: HTMLElement,
+    untrack(() => void inspectTask(requestedTask));
+  });
+  let taskPanel = $state<HTMLElement>(),
+    runPanel = $state<HTMLElement>(),
     runTrigger: HTMLElement | null = null,
     taskTrigger: HTMLElement | null = null;
   function inspectRun(run: ActivityRun | null) {
@@ -53,19 +68,21 @@
     await tick();
     taskTrigger?.focus();
   }
-  $: if (selectedRun) revealRun(selectedRun);
+  // Opening a run moves focus to its panel.
+  $effect(() => {
+    if (selectedRun) void revealRun(selectedRun);
+  });
   async function revealRun(_run: ActivityRun) {
     await tick();
     runPanel?.focus();
   }
-  export let probe: () => Promise<void>;
-  let taskId = "",
-    history: ActivityTaskHistory | null = null,
-    taskError = "",
-    taskBusy = false,
-    selectedRun: ActivityRun | null = null,
+  let taskId = $state(""),
+    history = $state<ActivityTaskHistory | null>(null),
+    taskError = $state(""),
+    taskBusy = $state(false),
+    selectedRun = $state<ActivityRun | null>(null),
     selection = 0,
-    probing = false;
+    probing = $state(false);
   const groups = [
     { key: "fail", label: "Failing" },
     { key: "warn", label: "Warnings" },
@@ -75,15 +92,15 @@
     { key: "idle", label: "No data yet" },
     { key: "pass", label: "Passing" },
   ];
-  $: checks = [...(data.health?.hardChecks ?? []), ...(data.health?.advisories ?? [])];
-  $: classified = checks.map((check) => ({ check, group: healthGroup(check, checks) }));
-  $: grouped = (key: string) => classified.filter((item) => item.group === key).length;
-  $: metrics = data.metrics;
-  $: weekly = retrieval?.weekly ?? [];
-  $: activity = metrics?.usage.daily ?? [];
-  $: processes = Object.entries(metrics?.llm.byProcess ?? {}).sort((a, b) => b[1].calls - a[1].calls);
-  $: tasks = metrics?.tasks.byTask ?? data.taskFailures ?? [];
-  $: runs = data.improveRuns;
+  const checks = $derived([...(data.health?.hardChecks ?? []), ...(data.health?.advisories ?? [])]);
+  const classified = $derived(checks.map((check) => ({ check, group: healthGroup(check, checks) })));
+  const grouped = (key: string) => classified.filter((item) => item.group === key).length;
+  const metrics = $derived(data.metrics);
+  const weekly = $derived(retrieval?.weekly ?? []);
+  const activity = $derived(metrics?.usage.daily ?? []);
+  const processes = $derived(Object.entries(metrics?.llm.byProcess ?? {}).sort((a, b) => b[1].calls - a[1].calls));
+  const tasks = $derived(metrics?.tasks.byTask ?? data.taskFailures ?? []);
+  const runs = $derived(data.improveRuns);
   async function inspectTask(id = taskId) {
     taskTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const mine = ++selection;
@@ -136,7 +153,7 @@
         · {grouped("blocked")} could not be checked{/if}
     </p>
   </div>
-  <p class="muted small">
+  <p class="muted small view-note">
     View refreshed: {refreshedAt ? date(refreshedAt) : "Not recorded"}. {probedAt
       ? `Connection checks requested: ${date(probedAt)}.`
       : "Connection checks have not been requested in this view."} Individual check timestamps are not reported by AKM.
@@ -171,7 +188,7 @@
   <section id="health" class="activity-section">
     <div class="trends-head">
       <h2>Health checks</h2>
-      <button on:click={runChecks} disabled={probing}>{probing ? "Checking…" : "Run all checks"}</button>
+      <button onclick={runChecks} disabled={probing}>{probing ? "Checking…" : "Run all checks"}</button>
     </div>
     <p class="muted small">Includes connection, release-source and scheduler probes. May contact the network.</p>
     {#each groups as group}{@const items = classified.filter(
@@ -292,7 +309,7 @@
                       ><td>{date(run.startedAt)}</td><td
                         >{run.ok === true ? "Finished" : run.ok === false ? "Failed" : "Unknown"}</td
                       ><td
-                        ><button class="btn-quiet" aria-label={`Inspect run ${run.id}`} on:click={() => inspectRun(run)}
+                        ><button class="btn-quiet" aria-label={`Inspect run ${run.id}`} onclick={() => inspectRun(run)}
                           >Inspect run <Icon name="arrow-right" size={16} /></button
                         ></td
                       ></tr
@@ -445,7 +462,7 @@
             .ok}/{pulse.tiles.runs.tasks.total}</span
         >{#each pulse.tiles.runs.failedTasks as task}<button
             class="btn-secondary"
-            on:click={() => inspectTask(task.taskId)}>Inspect failed task {task.taskId}</button
+            onclick={() => inspectTask(task.taskId)}>Inspect failed task {task.taskId}</button
           >{/each}
       </div>
     </section>{/if}
@@ -460,7 +477,7 @@
           ><tbody
             >{#each tasks as task}<tr
                 ><th
-                  ><button class="btn-quiet" on:click={() => inspectTask(task.taskId)}
+                  ><button class="btn-quiet" onclick={() => inspectTask(task.taskId)}
                     >{task.taskId}<Icon name="arrow-right" size={16} /></button
                   ></th
                 ><td>{task.failed} / {task.runs}</td><td>{duration(task.medianMs)}</td></tr
@@ -468,7 +485,13 @@
           >
         </table>
       </div>{:else if data.taskFailures !== null}<p>No task runs recorded in this window.</p>{/if}
-    <form class="task-lookup" on:submit|preventDefault={() => inspectTask()}>
+    <form
+      class="task-lookup"
+      onsubmit={(event) => {
+        event.preventDefault();
+        void inspectTask();
+      }}
+    >
       <label>Task ID<input bind:value={taskId} required placeholder="tasks/daily-review" /></label><button
         disabled={taskBusy}>View runs</button
       >
@@ -481,7 +504,7 @@
         aria-label="Task run details"
         aria-live="polite"
       >
-        <button class="btn-quiet return-action" on:click={closeTask}
+        <button class="btn-quiet return-action" onclick={closeTask}
           ><Icon name="arrow-left" size={16} /> Back to tasks</button
         >
         <h3>{taskId}</h3>
@@ -538,7 +561,7 @@
         ><tbody
           >{#each runs as run}<tr
               ><th
-                ><button class="btn-quiet" aria-label={`Inspect run ${run.id}`} on:click={() => inspectRun(run)}
+                ><button class="btn-quiet" aria-label={`Inspect run ${run.id}`} onclick={() => inspectRun(run)}
                   >{run.id}<Icon name="arrow-right" size={16} /></button
                 >
                 <div class="muted small">{date(run.startedAt)}</div></th
@@ -558,7 +581,7 @@
     aria-label="Improve run details"
     aria-live="polite"
   >
-    <button class="btn-quiet return-action" on:click={closeRun}
+    <button class="btn-quiet return-action" onclick={closeRun}
       ><Icon name="arrow-left" size={16} /> Back to run records</button
     >
     <h2>Run {selectedRun.id}</h2>
@@ -599,6 +622,12 @@
     margin: 0;
     font-size: 0.8125rem;
     color: var(--muted);
+  }
+  /* Prose keeps a readable measure on a wide monitor instead of running edge to edge. */
+  .view-note,
+  .check p,
+  .coverage {
+    max-width: 75ch;
   }
   .attention {
     margin-block: 2rem;

@@ -5,15 +5,17 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import AxeBuilder from "@axe-core/playwright";
 import { chromium, expect } from "@playwright/test";
-import { go, launchFixture } from "./support.mjs";
+import { go, launchFixture, tabStops } from "./support.mjs";
 
 test("reviewed human workflows prevent dead ends and preserve focus and source", { timeout: 180000 }, async (t) => {
   const app = await launchFixture({ proposals: true, metrics: true });
   t.after(() => app.stop());
   const browser = await chromium.launch();
   t.after(() => browser.close());
-  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const page = await context.newPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto(app.url);
@@ -151,6 +153,113 @@ test("reviewed human workflows prevent dead ends and preserve focus and source",
     const target = page.getByRole("combobox", { name: "Default write target", exact: true });
     await expect(target.locator('option[value="vendor"]')).toBeDisabled();
     await expect(target.locator('option[value="shared"]')).toBeEnabled();
+  });
+  await t.test("phone layout: the filter panel stays inside the viewport", async () => {
+    await navigate("/library/search?q=backup");
+    await page.locator("summary", { hasText: "Filters" }).click();
+    const panel = await page.evaluate(() => {
+      const width = document.documentElement.clientWidth;
+      const outside = [...document.querySelectorAll(".filter-panel :is(select, input, button)")]
+        .map((e) => ({
+          control: e.closest("label")?.firstChild?.textContent?.trim() || e.textContent.trim(),
+          left: Math.round(e.getBoundingClientRect().left),
+          right: Math.round(e.getBoundingClientRect().right),
+        }))
+        .filter((e) => e.right > width || e.left < 0);
+      const region = document.querySelector(".search-page");
+      return { outside, sideways: region.scrollWidth - region.clientWidth };
+    });
+    assert.deepEqual(panel.outside, [], "every filter control is inside the viewport");
+    assert.ok(panel.sideways <= 0, `the search page must not scroll sideways (${panel.sideways}px)`);
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  });
+  await t.test("phone chrome: a one-row bar, tabs that wrap, and 44px targets", async () => {
+    const small = [];
+    for (const [href, ready] of [
+      ["/library/search?q=backup", ".library-views"],
+      ["/library/files?bundle=personal&path=knowledge", ".file-breadcrumbs"],
+      ["/review", ".tabs"],
+      ["/settings/config", ".settings-tabs"],
+      ["/activity/overview", ".activity-tabs"],
+    ]) {
+      await navigate(href);
+      await expect(page.locator(ready).first()).toBeVisible();
+      const facts = await page.evaluate(() => {
+        const width = document.documentElement.clientWidth;
+        const tabs = document.querySelector(".activity-tabs");
+        const selector =
+          ".desktop-topbar nav a, .library-views a, .file-breadcrumbs button, .tabs button, .settings-tabs a, .activity-tabs a";
+        return {
+          barHeight: Math.round(document.querySelector(".desktop-topbar").getBoundingClientRect().height),
+          tabsSideways: tabs ? tabs.scrollWidth - tabs.clientWidth : 0,
+          width,
+          targets: [...document.querySelectorAll(selector)]
+            .filter((e) => e.getClientRects().length)
+            .map((e) => ({
+              label: e.textContent.trim(),
+              height: Math.round(e.getBoundingClientRect().height),
+              right: Math.round(e.getBoundingClientRect().right),
+            })),
+        };
+      });
+      assert.ok(facts.barHeight <= 64, `${href}: the bar must be one row on a phone (${facts.barHeight}px)`);
+      assert.ok(facts.tabsSideways <= 0, `${href}: tabs must wrap, not scroll sideways (${facts.tabsSideways}px)`);
+      small.push(
+        ...facts.targets
+          .filter((target) => target.height < 44 || target.right > facts.width)
+          .map((target) => `${href}: ${target.label} ${target.height}px, right ${target.right}`),
+      );
+    }
+    assert.deepEqual(small, [], "tabs and bar links meet the 44px floor and stay inside the viewport");
+  });
+  await t.test("phone keyboard: Files reads in focus order, the folder drawer hands focus back", async () => {
+    await navigate("/library/files?bundle=personal&path=knowledge");
+    await expect(page.locator(".file-breadcrumbs")).toBeVisible();
+    const bar = await tabStops(page, ".files-location");
+    assert.ok(bar.length >= 4, `the location bar has its controls in the tab order (${bar.length})`);
+    assert.deepEqual(
+      bar.filter((stop) => stop.moved).map((stop) => `${stop.name}: ${stop.moved}`),
+      [],
+      "Files on a phone: focus order is reading order across the location bar",
+    );
+    const folders = page.getByRole("button", { name: "Folders", exact: true });
+    const drawer = page.locator(".files-workspace");
+    await folders.focus();
+    await page.keyboard.press("Enter");
+    await expect(drawer).toHaveClass(/tree-open/);
+    await expect(page.locator('[role="treeitem"]:focus')).toBeVisible();
+    await page.getByRole("button", { name: "Close", exact: true }).focus();
+    await page.keyboard.press("Enter");
+    await expect(drawer).not.toHaveClass(/tree-open/);
+    await expect(folders, "Close hands focus back to Folders").toBeFocused();
+    await folders.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.locator('[role="treeitem"]:focus')).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(drawer, "Escape closes the folder drawer").not.toHaveClass(/tree-open/);
+    await expect(folders, "Escape hands focus back to Folders").toBeFocused();
+  });
+  await t.test("phone overlays pass axe while open", async () => {
+    const violations = [];
+    const audit = async (state) => {
+      const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze();
+      violations.push(...results.violations.map(({ id, nodes }) => `${state}: ${id} ${nodes[0].target}`));
+    };
+    await navigate("/library/search?q=backup");
+    await page.locator("summary", { hasText: "Filters" }).click();
+    await expect(page.locator(".filter-panel")).toBeVisible();
+    await audit("filter panel open");
+    await page.keyboard.press("Escape");
+    await navigate(`/library/search?ref=${encodeURIComponent(app.refs.document)}`);
+    await page.getByRole("button", { name: "More", exact: true }).click();
+    await expect(page.locator("#asset-actions")).toBeVisible();
+    await audit("asset menu open");
+    await page.keyboard.press("Escape");
+    await navigate("/library/files?bundle=personal&path=knowledge");
+    await page.getByRole("button", { name: "Folders", exact: true }).click();
+    await expect(page.locator('[role="tree"]')).toBeVisible();
+    await audit("folder drawer open");
+    assert.deepEqual(violations, [], "axe at 390 with an overlay open");
   });
   await t.test("usage charts are directly visible", async () => {
     await page.setViewportSize({ width: 1280, height: 860 });

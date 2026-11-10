@@ -195,7 +195,7 @@
         defaultWriteTarget={workspace.defaultWriteTarget}
         mode="search"
         hideBack
-        on:loaded={(event) => (assetTitle = documentTitle(event.detail.asset))}
+        onLoaded={(read) => (assetTitle = documentTitle(read.asset))}
       />{/key}
   {:else if row}
     <ProjectOverview {row} bundles={workspace.bundles} />

@@ -5,58 +5,74 @@
 -->
 
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onDestroy, tick, untrack, type Snippet } from "svelte";
   import { chart } from "./ui/chart-view.js";
   import { mount } from "./ui/lib.js";
-  export let id: string;
-  export let heading: string;
-  export let description = "";
-  export let option: (token: (name: string) => string) => Record<string, unknown>;
-  export let height: "short" | "strip" | undefined = undefined;
-  export let onSelect: ((event: { dataIndex: number; seriesIndex: number }) => void) | undefined = undefined;
-  export let legend: Array<{ name: string; index: number; marker?: boolean; band?: boolean }> = [];
-  export let initialView: "chart" | "table" = "chart";
-  let view = initialView;
-  let root: HTMLDivElement;
-  let started = false;
+  let {
+    id,
+    heading,
+    description = "",
+    option,
+    height = undefined,
+    onSelect = undefined,
+    legend = [],
+    initialView = "chart",
+    controls,
+    children,
+  }: {
+    id: string;
+    heading: string;
+    description?: string;
+    option: (token: (name: string) => string) => Record<string, unknown>;
+    height?: "short" | "strip";
+    onSelect?: (event: { dataIndex: number; seriesIndex: number }) => void;
+    legend?: Array<{ name: string; index: number; marker?: boolean; band?: boolean }>;
+    initialView?: "chart" | "table";
+    /** Controls beside the Chart / Table switch. */
+    controls?: Snippet;
+    /** The table of the same figures. */
+    children?: Snippet;
+  } = $props();
+  let view = $state(untrack(() => initialView));
+  let root = $state<HTMLDivElement>();
   let dispose: Array<() => void> = [];
   function draw(build: typeof option) {
+    const element = root;
+    if (!element) return;
     dispose.forEach((stop) => stop());
     const context = { after: [] as Array<(element: HTMLElement) => (() => void) | void> };
     mount(
-      root,
+      element,
       chart(context, id, `${heading}. ${description} Use Table for exact values and record links.`, build, {
         height,
         onSelect,
       }),
     );
     dispose = context.after
-      .map((callback) => callback(root))
+      .map((callback) => callback(element))
       .filter((value): value is () => void => typeof value === "function");
   }
-  $: if (started) draw(option);
+  // Draw once the element exists, and again whenever the builder changes.
+  $effect(() => {
+    const build = option;
+    untrack(() => draw(build));
+  });
   async function changeView(next: "chart" | "table") {
     view = next;
     await tick();
-    if (next === "chart" && started) draw(option);
+    if (next === "chart") draw(option);
   }
-  onMount(() => {
-    started = true;
-    return () => {
-      started = false;
-      dispose.forEach((stop) => stop());
-    };
-  });
+  onDestroy(() => dispose.forEach((stop) => stop()));
 </script>
 
 <section class="chart-card" aria-label={heading}>
   <header class="chart-heading">
     <h2>{heading}</h2>
     <div class="chart-tools">
-      <slot name="controls" />
+      {@render controls?.()}
       <div class="chart-views" role="group" aria-label={`${heading} view`}>
-        <button class="btn-quiet" aria-pressed={view === "chart"} on:click={() => changeView("chart")}>Chart</button
-        ><button class="btn-quiet" aria-pressed={view === "table"} on:click={() => changeView("table")}>Table</button>
+        <button class="btn-quiet" aria-pressed={view === "chart"} onclick={() => changeView("chart")}>Chart</button
+        ><button class="btn-quiet" aria-pressed={view === "table"} onclick={() => changeView("table")}>Table</button>
       </div>
     </div>
   </header>
@@ -74,7 +90,7 @@
       </ul>{/if}
     <div bind:this={root}></div>
   </div>
-  <div class="table-wrap chart-data" hidden={view !== "table"}><slot /></div>
+  <div class="table-wrap chart-data" hidden={view !== "table"}>{@render children?.()}</div>
 </section>
 
 <style>

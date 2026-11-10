@@ -5,7 +5,7 @@
 -->
 
 <script lang="ts">
-  import { createEventDispatcher, onDestroy, tick } from "svelte";
+  import { onDestroy, tick, untrack } from "svelte";
   import { afterNavigate } from "$app/navigation";
   import { api, assetSource, date, bodyOf } from "./client";
   import { documentTitle, libraryRead, typedLinks } from "./library-model";
@@ -19,48 +19,71 @@
   import AssetRelated from "./AssetRelated.svelte";
   import AssetOrganize from "./AssetOrganize.svelte";
   import SensitiveAsset from "./SensitiveAsset.svelte";
-  export let ref: string;
-  export let query = new URLSearchParams();
-  export let returnTo = "/library/search";
-  export let bundles: Bundle[] = [];
-  export let defaultWriteTarget = "";
-  export let match: SearchHit | null = null;
-  export let mode: "search" | "files" = "search";
-  /** Another view supplies the way back (project crumbs), so the reader's own link is left out. */
-  export let hideBack = false;
-  export let filesHref = "";
-  export let editHref = "";
-  export let readingHref = "";
-  const dispatch = createEventDispatcher<{
-    loaded: AssetRead;
-    compare: string;
-    comparePair: string[];
-    changed: void;
-  }>();
-  let retired: Retirement | null = null,
-    retireRevision = "";
-  let data: AssetRead | null = null,
-    improve: Improvement | null = null,
-    history: History | null = null;
-  let error = "",
-    loading = false,
-    tab = "Read",
-    busy = false,
-    notice = "";
-  let signal = "positive",
-    reason = "",
-    tags = "",
-    replace = "",
-    replacement = "",
-    fixReason = "",
-    fixSource = "";
-  let copying = false,
-    target = "",
-    newName = "",
-    receipt: WriteResult | null = null;
-  let more: HTMLElement, moreTrigger: HTMLButtonElement, copyDestination: HTMLSelectElement;
-  let heading: HTMLHeadingElement, viewHeading: HTMLHeadingElement;
-  let outlineOpen = false;
+  let {
+    ref,
+    query = new URLSearchParams(),
+    returnTo = "/library/search",
+    bundles = [],
+    defaultWriteTarget = "",
+    match = null,
+    mode = "search",
+    hideBack = false,
+    filesHref = "",
+    editHref = "",
+    readingHref = "",
+    onLoaded,
+    onCompare,
+    onComparePair,
+    onChanged,
+  }: {
+    ref: string;
+    query?: URLSearchParams;
+    returnTo?: string;
+    bundles?: Bundle[];
+    defaultWriteTarget?: string;
+    match?: SearchHit | null;
+    mode?: "search" | "files";
+    /** Another view supplies the way back (project crumbs), so the reader's own link is left out. */
+    hideBack?: boolean;
+    filesHref?: string;
+    editHref?: string;
+    readingHref?: string;
+    /** The asset was read. */
+    onLoaded?: (read: AssetRead) => void;
+    /** Compare this asset with one still to be chosen. */
+    onCompare?: (ref: string) => void;
+    /** Compare these two assets. */
+    onComparePair?: (refs: string[]) => void;
+    /** The asset was retired, restored, moved or (a sensitive file) rewritten. */
+    onChanged?: () => void;
+  } = $props();
+  let retired = $state<Retirement | null>(null),
+    retireRevision = $state("");
+  let data = $state<AssetRead | null>(null),
+    improve = $state<Improvement | null>(null),
+    history = $state<History | null>(null);
+  let error = $state(""),
+    loading = $state(false),
+    tab = $state("Read"),
+    busy = $state(false),
+    notice = $state("");
+  let signal = $state("positive"),
+    reason = $state(""),
+    tags = $state(""),
+    replace = $state(""),
+    replacement = $state(""),
+    fixReason = $state(""),
+    fixSource = $state("");
+  let copying = $state(false),
+    target = $state(""),
+    newName = $state(""),
+    receipt = $state<WriteResult | null>(null);
+  let more = $state<HTMLElement>(),
+    moreTrigger = $state<HTMLButtonElement>(),
+    copyDestination = $state<HTMLSelectElement>();
+  let heading = $state<HTMLHeadingElement>(),
+    viewHeading = $state<HTMLHeadingElement>();
+  let outlineOpen = $state(false);
   let controller: AbortController,
     previous = "",
     generation = 0;
@@ -69,9 +92,9 @@
   afterNavigate(() => {
     if (more?.isConnected && more.matches(":popover-open")) more.hidePopover();
   });
-  $: canonical = data?.durableRef ?? ref;
-  $: pending = improve?.proposals.filter((p) => p.status === "pending") ?? [];
-  $: viewTitle =
+  const canonical = $derived(data?.durableRef ?? ref);
+  const pending = $derived(improve?.proposals.filter((p) => p.status === "pending") ?? []);
+  const viewTitle = $derived(
     (
       {
         Move: "Rename or move",
@@ -83,32 +106,51 @@
         Fix: "Suggest a fix",
         Copy: "Copy to a bundle",
       } as Record<string, string>
-    )[tab] ?? "";
-  $: editorHref =
+    )[tab] ?? "",
+  );
+  const editorHref = $derived(
     editHref ||
-    `/library/edit?ref=${encodeURIComponent(canonical)}&returnTo=${encodeURIComponent(filesHref || returnTo)}&readingFrom=${encodeURIComponent(readingHref || `/library/asset?ref=${encodeURIComponent(canonical)}&returnTo=${encodeURIComponent(returnTo)}`)}`;
-  $: source = assetSource(data?.asset);
-  $: fields = splitFrontmatter(source).fields;
-  $: openingTitle = bodyOf(source)
-    .match(/^#[ \t]+([^\n]+)(?:\n|$)/)?.[1]
-    ?.trim();
-  $: titleAnchor =
+      `/library/edit?ref=${encodeURIComponent(canonical)}&returnTo=${encodeURIComponent(filesHref || returnTo)}&readingFrom=${encodeURIComponent(readingHref || `/library/asset?ref=${encodeURIComponent(canonical)}&returnTo=${encodeURIComponent(returnTo)}`)}`,
+  );
+  const source = $derived(assetSource(data?.asset));
+  const fields = $derived(splitFrontmatter(source).fields);
+  const openingTitle = $derived(
+    bodyOf(source)
+      .match(/^#[ \t]+([^\n]+)(?:\n|$)/)?.[1]
+      ?.trim(),
+  );
+  const titleAnchor = $derived(
     openingTitle === documentTitle(data?.asset) && data?.headings?.[0]?.text === openingTitle
       ? headingId(data.headings[0].slug)
-      : undefined;
-  $: links = typedLinks(data?.asset?.links);
-  $: usageSpark = sparkline(
-    (improve?.usageByWeek ?? []).map((week) => week.hits),
-    "Weekly finds and opens, last 90 days",
+      : undefined,
   );
-  $: writable = bundles.filter((b) => b.enabled && b.writable && b.components.some((c) => c.adapter === "akm"));
-  $: sameBundle = target === (data?.bundle ?? data?.asset?.origin);
-  $: copyNameInvalid = sameBundle && (!newName.trim() || newName.trim() === canonical.split("/").at(-1));
-  $: if (ref && ref !== previous) {
+  const links = $derived(typedLinks(data?.asset?.links));
+  const usageSpark = $derived(
+    sparkline(
+      (improve?.usageByWeek ?? []).map((week) => week.hits),
+      "Weekly finds and opens, last 90 days",
+    ),
+  );
+  const writable = $derived(
+    bundles.filter((b) => b.enabled && b.writable && b.components.some((c) => c.adapter === "akm")),
+  );
+  const sameBundle = $derived(target === (data?.bundle ?? data?.asset?.origin));
+  const copyNameInvalid = $derived(sameBundle && (!newName.trim() || newName.trim() === canonical.split("/").at(-1)));
+  // A new reference is read before the page updates, so the asset before it is never drawn under the new address.
+  $effect.pre(() => {
+    if (!ref || ref === previous) return;
     previous = ref;
-    load(ref);
+    untrack(() => void load(ref));
+  });
+  // The section the address names is scrolled to once the asset is on screen.
+  $effect(() => {
+    if (query.get("section") && data) void revealHeading(query.get("section")!);
+  });
+  /** Focus that moves out of the open menu closes it, so it is not left open over the control that has focus. */
+  function leaveMore(event: FocusEvent) {
+    if (!(event.relatedTarget instanceof Node) || more?.contains(event.relatedTarget)) return;
+    if (more?.matches(":popover-open")) more.hidePopover();
   }
-  $: if (query.get("section") && data) revealHeading(query.get("section")!);
   async function revealHeading(slug: string) {
     await tick();
     document.getElementById(headingId(slug))?.scrollIntoView({ block: "start" });
@@ -138,7 +180,7 @@
       const read = await libraryRead<AssetRead>("/asset", { ref: selected }, controller.signal);
       if (request !== generation) return;
       data = read;
-      dispatch("loaded", read);
+      onLoaded?.(read);
       if (!read.redacted) {
         if (read.asset.editable && !["skill", "secret", "env", "session"].includes(read.asset.type ?? ""))
           api<Source>("/desktop/file", { ref: read.durableRef ?? selected })
@@ -176,7 +218,7 @@
     }
   }
   async function copyRef() {
-    more.hidePopover();
+    more?.hidePopover();
     try {
       await navigator.clipboard.writeText(canonical);
       notice = "Reference copied.";
@@ -188,7 +230,7 @@
   }
   async function retire() {
     if (busy || !retireRevision) return;
-    more.hidePopover();
+    more?.hidePopover();
     busy = true;
     error = "";
     const request = generation,
@@ -196,7 +238,7 @@
     try {
       const result = await api<Retirement>("/asset/retire", {}, { ref: selected, revision: retireRevision });
       if (request === generation) retired = result;
-      dispatch("changed");
+      onChanged?.();
     } catch (cause) {
       error = (cause as Error).message;
     } finally {
@@ -211,7 +253,7 @@
       await api("/proposals/" + encodeURIComponent(retired.proposalId) + "/revert", {}, {});
       await load(ref);
       notice = "Asset restored.";
-      dispatch("changed");
+      onChanged?.();
     } catch (cause) {
       error = (cause as Error).message;
     } finally {
@@ -291,7 +333,7 @@
     moreTrigger?.focus();
   }
   async function beginCopy() {
-    more.hidePopover();
+    more?.hidePopover();
     copying = true;
     tab = "Copy";
     newName = "";
@@ -309,8 +351,8 @@
     target?.scrollIntoView({ block: "nearest" });
   }
   function compare() {
-    more.hidePopover();
-    dispatch("compare", canonical);
+    more?.hidePopover();
+    onCompare?.(canonical);
   }
   function measureReader(node: HTMLElement) {
     let wide: boolean | undefined;
@@ -343,7 +385,7 @@
 </script>
 
 {#if error}<div class="notice notice-warn" role="alert">
-    {error}{#if !data}<p><button class="btn-secondary" on:click={() => load(ref)}>Retry loading asset</button></p>{/if}
+    {error}{#if !data}<p><button class="btn-secondary" onclick={() => load(ref)}>Retry loading asset</button></p>{/if}
   </div>{/if}
 {#if loading}<p class="state" role="status">Loading asset…</p>
 {:else if retired}
@@ -351,7 +393,7 @@
     <h2>Asset archived</h2>
     <p>Recorded as an accepted retirement. Undo it here, or revert it later from Review.</p>
     <div class="page-actions">
-      <button on:click={undoRetirement} disabled={busy}>{busy ? "Restoring…" : "Undo retirement"}</button><a
+      <button onclick={undoRetirement} disabled={busy}>{busy ? "Restoring…" : "Undo retirement"}</button><a
         class="btn btn-secondary"
         href={returnTo}>Back to {mode === "files" ? "folder" : "results"}</a
       >
@@ -361,7 +403,7 @@
     {#each retired.archiveDirs as dir}<p class="mono wrap small">{retired.bundle}: {dir}</p>{/each}
   </section>
 {:else if data}
-  {#if data.redacted}{#key canonical}<SensitiveAsset ref={canonical} on:changed={() => dispatch("changed")} />{/key}
+  {#if data.redacted}{#key canonical}<SensitiveAsset ref={canonical} {onChanged} />{/key}
   {:else}
     {#if mode === "search" && !hideBack}<div class="reader-navigation">
         <a href={returnTo}><Icon name="arrow-left" size={16} />Search results</a>
@@ -385,23 +427,24 @@
               role="group"
               aria-label="Page actions"
               bind:this={more}
+              onfocusout={leaveMore}
             >
               <div class="menu-group" role="group" aria-label="Inspect page">
                 <span class="menu-label">Inspect</span>
-                <button on:click={() => showView("Source")}><Icon name="file" size={16} />Source</button>
-                <button on:click={() => showView("History")}><Icon name="history" size={16} />History</button>
-                <button on:click={() => showView("Details")}><Icon name="sliders" size={16} />Details</button>
+                <button onclick={() => showView("Source")}><Icon name="file" size={16} />Source</button>
+                <button onclick={() => showView("History")}><Icon name="history" size={16} />History</button>
+                <button onclick={() => showView("Details")}><Icon name="sliders" size={16} />Details</button>
               </div>
               <div class="menu-group" role="group" aria-label="Organize page">
                 <span class="menu-label">Organize</span>
-                <button on:click={compare}>Compare with another asset</button>
-                <button on:click={copyRef}><Icon name="link" size={16} />Copy ref</button>
-                {#if writable.length}<button on:click={beginCopy}><Icon name="copy" size={16} />Copy to bundle…</button
+                <button onclick={compare}>Compare with another asset</button>
+                <button onclick={copyRef}><Icon name="link" size={16} />Copy ref</button>
+                {#if writable.length}<button onclick={beginCopy}><Icon name="copy" size={16} />Copy to bundle…</button
                   >{/if}
                 {#if data.asset.editable && !["env", "secret", "session", "skill"].includes(data.asset.type ?? "")}
-                  <button on:click={() => showView("Move")}><Icon name="folder" size={16} />Rename or move…</button>
+                  <button onclick={() => showView("Move")}><Icon name="folder" size={16} />Rename or move…</button>
                   <button
-                    on:click={retire}
+                    onclick={retire}
                     disabled={busy || !retireRevision}
                     title="Move to the recoverable archive now"><Icon name="history" size={16} />Retire</button
                   >
@@ -418,7 +461,7 @@
             : ""}</span
         >
         {#if mode === "search" && filesHref}<a href={filesHref}><Icon name="folder" size={15} />View in folder</a>{/if}
-        <button class="text-action" on:click={() => showView("Related")}
+        <button class="text-action" onclick={() => showView("Related")}
           ><Icon name="link" size={15} />Related assets</button
         >
         {#if pending.length}<a class="pending-review" href={"/review/" + encodeURIComponent(pending[0].id)}
@@ -439,8 +482,7 @@
     <div class="asset-main" use:measureReader>
       {#if tab !== "Read"}<div class="view-heading">
           <h3 bind:this={viewHeading} tabindex="-1">{viewTitle}</h3>
-          <button class="text-action" on:click={() => showView("Read")}><Icon name="arrow-left" size={16} />Read</button
-          >
+          <button class="text-action" onclick={() => showView("Read")}><Icon name="arrow-left" size={16} />Read</button>
         </div>{/if}
       {#if tab === "Read"}
         <div class="reading-layout" class:has-outline={(data.headings?.length ?? 0) > 1}>
@@ -465,20 +507,19 @@
           </section>
         </div>
         <div class="reading-feedback">
-          <span>Help improve this page</span><button class="text-action" on:click={() => showView("Feedback")}
+          <span>Help improve this page</span><button class="text-action" onclick={() => showView("Feedback")}
             >Add feedback</button
-          >{#if data.durableRef}<button class="text-action" on:click={() => showView("Fix")}
-              >Suggest a correction</button
+          >{#if data.durableRef}<button class="text-action" onclick={() => showView("Fix")}>Suggest a correction</button
             >{/if}
         </div>
       {:else if tab === "Move"}
-        {#key canonical}<AssetOrganize ref={canonical} {bundles} on:changed={() => dispatch("changed")} />{/key}
+        {#key canonical}<AssetOrganize ref={canonical} {bundles} {onChanged} />{/key}
       {:else if tab === "Related"}
         {#key canonical}<AssetRelated
             ref={canonical}
             links={data.asset.links}
             href={assetHref}
-            on:compare={(event) => dispatch("comparePair", event.detail)}
+            onCompare={onComparePair}
           />{/key}
       {:else if tab === "Source"}
         <pre class="code raw-source" role="group" aria-label="Markdown source">{source ||
@@ -491,7 +532,7 @@
         {:else}
           <ul class="history-list">
             {#each history.commits as c}<li>
-                <button class="btn-secondary" on:click={() => loadHistory(c.sha)}>{c.sha.slice(0, 8)}</button>
+                <button class="btn-secondary" onclick={() => loadHistory(c.sha)}>{c.sha.slice(0, 8)}</button>
                 <div>
                   {c.subject}
                   <p class="muted small">{date(c.time)} · {c.author}</p>
@@ -508,7 +549,13 @@
             />{/if}
         {/if}
       {:else if tab === "Copy" && copying}
-        <form class="task-form form-grid" on:submit|preventDefault={copy}>
+        <form
+          class="task-form form-grid"
+          onsubmit={(event) => {
+            event.preventDefault();
+            void copy();
+          }}
+        >
           <p class="muted">The original stays unchanged. Existing files are never overwritten.</p>
           <label
             >Destination bundle<select bind:this={copyDestination} bind:value={target}
@@ -531,14 +578,20 @@
             <button disabled={busy || copyNameInvalid}>Confirm copy</button><button
               type="button"
               class="text-action"
-              on:click={closeCopy}>Cancel</button
+              onclick={closeCopy}>Cancel</button
             >
           </div>
           <p class="muted small">The destination’s AKM write and Git publication policy applies.</p>
         </form>
       {:else if tab === "Feedback"}
         <section class="feedback-view" id="asset-feedback" aria-label="Feedback">
-          <form class="task-form form-grid" on:submit|preventDefault={() => feedback()}>
+          <form
+            class="task-form form-grid"
+            onsubmit={(event) => {
+              event.preventDefault();
+              void feedback();
+            }}
+          >
             <label
               >How was this page?<select bind:value={signal}
                 ><option value="positive">Helpful</option><option value="negative">Incorrect or stale</option></select
@@ -563,7 +616,7 @@
               <button disabled={busy}>Record feedback</button><button
                 type="button"
                 class="text-action"
-                on:click={() => showView("Read")}>Cancel</button
+                onclick={() => showView("Read")}>Cancel</button
               >
             </div>
           </form>
@@ -587,7 +640,14 @@
           </section>
         </section>
       {:else if tab === "Fix" && data.durableRef}
-        <form class="task-form form-grid" id="asset-fix" on:submit|preventDefault={() => feedback(true)}>
+        <form
+          class="task-form form-grid"
+          id="asset-fix"
+          onsubmit={(event) => {
+            event.preventDefault();
+            void feedback(true);
+          }}
+        >
           <p class="muted">Propose a specific correction for review. This does not edit the original page.</p>
           <label>Replace this exact text<textarea bind:value={replace} required rows="3"></textarea></label>
           <label>With<textarea bind:value={replacement} required rows="3"></textarea></label>
@@ -603,7 +663,7 @@
             <button disabled={busy}>Send suggested fix</button><button
               type="button"
               class="text-action"
-              on:click={() => showView("Read")}>Cancel</button
+              onclick={() => showView("Read")}>Cancel</button
             >
           </div>
         </form>
@@ -823,18 +883,19 @@
     border-radius: 8px;
     box-shadow: 0 8px 24px rgb(0 0 0 / 0.12);
   }
+  /* Menu rows are shorter than buttons, so the eight items fit the native minimum window without a scrollbar. */
   .action-menu button {
     display: flex;
     align-items: center;
     justify-content: start;
     gap: 8px;
-    min-height: var(--control-height, 40px);
+    min-height: 32px;
     width: 100%;
     text-align: left;
     background: none;
     border: 0;
     color: var(--text);
-    padding: 8px 10px;
+    padding: 6px 10px;
     font-size: 13px;
     font-weight: 400;
   }
@@ -1055,6 +1116,9 @@
   @media (max-width: 850px) {
     .reader-navigation {
       margin-bottom: 16px;
+    }
+    .action-menu button {
+      min-height: var(--control-height, 44px);
     }
     .asset-heading h2 {
       font-size: 28px;

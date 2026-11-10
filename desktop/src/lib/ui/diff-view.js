@@ -125,7 +125,7 @@ function inlineView(list) {
       ? html`<div class="drow gap">${gapButton(line)}</div>`
       : html`<div class="drow ${line.kind}" ${line.revealed ? html`data-revealed tabindex="-1"` : ""}><span class="ln">${line.old}</span><span class="ln">${line.now}</span>${sign(line.kind)}<span class="code">${code(line.cell)}</span></div>`,
   );
-  return html`<div class="dcol inline" tabindex="0" role="region" aria-label="Changes, scrolls sideways"><div class="dcol-body">${rows}</div></div>`;
+  return html`<div class="dcol inline" tabindex="0" role="region" aria-label="Changes"><div class="dcol-body">${rows}</div></div>`;
 }
 
 // ---- the section -----------------------------------------------------------

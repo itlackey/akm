@@ -3,9 +3,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { writeFile } from "node:fs/promises";
+import path from "node:path";
 import test from "node:test";
+import AxeBuilder from "@axe-core/playwright";
 import { chromium, expect } from "@playwright/test";
-import { launchFixture } from "./support.mjs";
+import { launchFixture, tabStops } from "./support.mjs";
 
 // Visual judgement still needs screenshots. These checks prevent specific
 // regressions: noisy control chrome, font-glyph icons, and an oversized shell.
@@ -77,4 +81,296 @@ test("desktop chrome and action groups share one readable control language", { t
       assert.ok(!/mono/i.test(label.font));
     }
   }
+});
+
+// A knowledge document with a long title and an unbreakable token, for the headers that must wrap it.
+const longName = "a-very-long-knowledge-file-name-that-keeps-going-for-breadcrumb-and-title-truncation-checks";
+async function longDocument(fixture) {
+  await writeFile(
+    path.join(fixture.root, `personal/knowledge/${longName}.md`),
+    `---\ntitle: Long reference with a wide table, long code and an unbreakable identifier ${"Z".repeat(40)}\ndescription: Synthetic long title\n---\n# Long reference\n\nBody.\n`,
+  );
+  execFileSync(process.execPath, [fixture.launcher, "index", "--full", "--format=json", "-q"], {
+    env: fixture.env,
+    stdio: "pipe",
+  });
+}
+
+// The native window's minimum is 900×620; its content area is 593px tall on Linux. Short laptop browsers are shorter
+// still. These are the sizes where the workspace pages, the review pane, the filter panel and the asset menu broke.
+test("workspace pages, panels and menus fit the shortest windows", { timeout: 180000 }, async (t) => {
+  const app = await launchFixture({ proposals: true, configureFixture: longDocument });
+  t.after(() => app.stop());
+  const browser = await chromium.launch();
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 900, height: 593 } });
+  await page.goto(app.url);
+  await expect(page.locator(".home-attention")).toBeVisible();
+  const open = async (route, ready) => {
+    await page.goto(`${app.origin}${route}`);
+    await expect(page.locator(ready).first()).toBeVisible();
+    await page.evaluate(() => document.fonts.ready);
+  };
+  const longRef = encodeURIComponent(`personal//knowledge/${longName}`);
+
+  // The page must not scroll while its panes do: one scroll owner at the native minimum (and below).
+  for (const [route, ready] of [
+    ["/library/files?bundle=personal&path=knowledge", ".folder-table"],
+    [`/library/edit?ref=${longRef}`, 'textarea[name="content"]'],
+    [`/review/${app.proposals.fresh}`, ".change-preview"],
+  ]) {
+    await open(route, ready);
+    const geometry = await page.evaluate(() => ({
+      pageHeight: document.documentElement.scrollHeight,
+      viewport: innerHeight,
+    }));
+    assert.ok(
+      geometry.pageHeight <= geometry.viewport,
+      `${route}: the workspace shell must fit a ${geometry.viewport}px window exactly, not scroll the page (${geometry.pageHeight}px)`,
+    );
+  }
+
+  // The inline diff wraps a proposal's prose inside its box instead of running sideways.
+  await open(`/review/${app.proposals.fresh}`, ".dcol.inline");
+  const inline = await page
+    .locator(".dcol.inline")
+    .evaluate((e) => ({ scrollWidth: e.scrollWidth, clientWidth: e.clientWidth }));
+  assert.ok(
+    inline.scrollWidth <= inline.clientWidth + 1,
+    `the inline diff must wrap long lines, not scroll sideways: ${JSON.stringify(inline)}`,
+  );
+
+  // Short and wide (a laptop browser, the native minimum): the proposed change is readable without scrolling the pane.
+  for (const viewport of [
+    { width: 900, height: 593 },
+    { width: 1280, height: 600 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await open(`/review/${app.proposals.fresh}`, ".dcol.inline");
+    const visibleRows = await page.evaluate(() => {
+      const pane = document.querySelector(".review-scroll").getBoundingClientRect();
+      return [...document.querySelectorAll(".dcol .drow")].filter((row) => {
+        const r = row.getBoundingClientRect();
+        return r.top >= pane.top && r.bottom <= pane.bottom;
+      }).length;
+    });
+    assert.ok(
+      visibleRows >= 5,
+      `${viewport.width}×${viewport.height}: at least five diff rows must be visible without scrolling, saw ${visibleRows}`,
+    );
+  }
+  await page.setViewportSize({ width: 900, height: 593 });
+
+  // The filter panel's footer is reachable without scrolling the page at the native minimum.
+  await open("/library/search", ".library-hit-content");
+  await page.locator("summary", { hasText: "Filters" }).click();
+  const apply = await page
+    .getByRole("button", { name: "Apply filters", exact: true })
+    .evaluate((e) => ({ bottom: Math.round(e.getBoundingClientRect().bottom), viewport: innerHeight }));
+  assert.ok(apply.bottom <= apply.viewport, `Apply filters must be inside the window: ${JSON.stringify(apply)}`);
+
+  // A long title wraps inside the editor pane; the return link keeps one line and stays in view.
+  for (const viewport of [
+    { width: 900, height: 593 },
+    { width: 1024, height: 600 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await open(`/library/edit?ref=${longRef}`, 'textarea[name="content"]');
+    const header = await page.evaluate(() => {
+      const pane = document.querySelector(".files-content");
+      const link = document.querySelector(".editor-return a");
+      const r = link.getBoundingClientRect();
+      const style = getComputedStyle(link);
+      const inner = r.height - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+      return {
+        sideways: pane.scrollWidth - pane.clientWidth,
+        linkRight: Math.round(r.right),
+        linkLines: Math.round(inner / parseFloat(style.lineHeight)),
+        viewport: innerWidth,
+      };
+    });
+    assert.ok(
+      header.sideways <= 0,
+      `${viewport.width}: the editor pane must not scroll sideways (${header.sideways}px)`,
+    );
+    assert.ok(
+      header.linkRight <= header.viewport,
+      `${viewport.width}: Back to file must be on screen: ${JSON.stringify(header)}`,
+    );
+    assert.ok(
+      header.linkLines <= 1,
+      `${viewport.width}: Back to file must stay on one line: ${JSON.stringify(header)}`,
+    );
+  }
+  await page.setViewportSize({ width: 900, height: 593 });
+
+  // The asset menu fits the native minimum window without a scrollbar of its own.
+  await open(`/library/search?ref=${encodeURIComponent(app.refs.document)}`, ".markdown");
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  const menu = await page.locator(".action-menu").evaluate((e) => ({
+    scrolls: e.scrollHeight - e.clientHeight,
+    bottom: Math.round(e.getBoundingClientRect().bottom),
+    viewport: innerHeight,
+  }));
+  assert.ok(
+    menu.scrolls <= 0 && menu.bottom <= menu.viewport,
+    `the asset menu must fit the window without scrolling: ${JSON.stringify(menu)}`,
+  );
+});
+
+// The same window, with the keyboard only. Focus follows the order things are read in, an overlay does not stay open
+// over the control that took focus from it and hands focus back when it is dismissed, changing the view does not drop
+// focus on the page, and the automated accessibility rules pass where the usability suite does not run them.
+test("keyboard order, focus hand-back and names at the shortest windows", { timeout: 240000 }, async (t) => {
+  const app = await launchFixture({ proposals: true, metrics: true, configureFixture: longDocument });
+  t.after(() => app.stop());
+  const browser = await chromium.launch();
+  t.after(() => browser.close());
+  const context = await browser.newContext({ viewport: { width: 900, height: 593 } });
+  const page = await context.newPage();
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto(app.url);
+  await expect(page.locator(".home-attention")).toBeVisible();
+  const open = async (route, ready) => {
+    await page.goto(`${app.origin}${route}`);
+    await expect(page.locator(ready).first()).toBeVisible();
+    await page.evaluate(() => document.fonts.ready);
+  };
+  const longRef = encodeURIComponent(`personal//knowledge/${longName}`);
+  const out = (stops, key) => stops.filter((stop) => stop[key]).map((stop) => `${stop.name}: ${stop[key]}`);
+
+  // Review: Tab never moves up, or left on the same row, from the control before; and no focus ring is cut.
+  await open(`/review/${app.proposals.fresh}`, ".dcol.inline");
+  const proposal = await tabStops(page, ".review-pane");
+  assert.ok(proposal.length >= 6, `the proposal pane has its controls in the tab order (${proposal.length})`);
+  assert.deepEqual(out(proposal, "moved"), [], "Review, short window: focus order is reading order in the proposal");
+  assert.deepEqual(out(proposal, "clipped"), [], "Review, short window: no focus ring is cut in the proposal");
+  await open("/review", '[aria-label="Queue summary"]');
+  const heading = await tabStops(page, ".review-top");
+  assert.ok(heading.length >= 5, `the Review heading has its controls in the tab order (${heading.length})`);
+  assert.deepEqual(out(heading, "moved"), [], "Review: focus order is reading order across the heading row");
+  const queue = await tabStops(page, ".review-list");
+  assert.deepEqual(out(queue, "clipped"), [], "Review: no focus ring is cut in the queue");
+  // Opening a proposal with the keyboard puts focus on it: here the queue it was opened from is no longer shown.
+  await page.locator(".review-item").first().focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".proposal-title h2")).toBeFocused();
+
+  // The filter panel: a named group; Escape and Apply hand focus back to Filters; tabbing out of it closes it.
+  await open("/library/search", ".library-hit-content");
+  const filters = page.locator(".search-filters > summary");
+  const filterPanel = page.locator(".search-filters");
+  const openFilters = async () => {
+    if ((await filterPanel.getAttribute("open")) !== null) await page.keyboard.press("Escape");
+    await filters.focus();
+    await page.keyboard.press("Enter");
+  };
+  await openFilters();
+  await expect(page.getByRole("group", { name: "Filters", exact: true })).toBeVisible();
+  const unlabelled = await page.evaluate(
+    () =>
+      [...document.querySelectorAll(".filter-panel :is(select, input)")].filter(
+        (field) => !field.labels?.length || ![...field.labels].some((label) => label.textContent.trim()),
+      ).length,
+  );
+  assert.equal(unlabelled, 0, "every filter field has a visible label");
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Escape");
+  await expect(filters).toBeFocused();
+  await expect(filterPanel).not.toHaveAttribute("open", "");
+  await openFilters();
+  await page.getByRole("button", { name: "Cancel", exact: true }).focus();
+  await page.keyboard.press("Tab");
+  await expect(filterPanel, "tabbing out of the filter panel closes it").not.toHaveAttribute("open", "");
+  await openFilters();
+  await page.locator(".library-filters select").first().selectOption("personal");
+  await page.getByRole("button", { name: "Apply filters", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await expect(filters, "Apply filters hands focus back to Filters").toBeFocused();
+  await expect(filters).toContainText("(1)");
+  await openFilters();
+  await page.getByRole("link", { name: "Clear filters", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await page.waitForURL((url) => !url.search);
+  await expect(filters).not.toContainText("(1)");
+  await expect(filters, "Clear filters hands focus back to Filters").toBeFocused();
+
+  // The asset menu: Escape hands focus back to More; tabbing out of it closes it.
+  await open(`/library/search?ref=${encodeURIComponent(app.refs.document)}`, ".markdown");
+  const more = page.getByRole("button", { name: "More", exact: true });
+  const menu = page.locator("#asset-actions");
+  await more.focus();
+  await page.keyboard.press("Enter");
+  await expect(menu).toBeVisible();
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  await expect(more).toBeFocused();
+  await page.keyboard.press("Enter");
+  await menu.locator("button:not([disabled])").last().focus();
+  await page.keyboard.press("Tab");
+  await expect(menu, "tabbing out of the asset menu closes it").toBeHidden();
+
+  // A view change keeps focus on the tab that made it; a section link shows the section it moves focus to.
+  await open("/activity/overview", "#attention-title");
+  const tabs = await tabStops(page, ".activity-tabs");
+  assert.deepEqual(out(tabs, "clipped"), [], "Activity: no focus ring is cut on the view tabs");
+  const runs = page.locator(".activity-tabs a", { hasText: "Runs" });
+  await runs.focus();
+  await page.keyboard.press("Enter");
+  await expect(runs).toHaveAttribute("aria-current", "page");
+  await expect(runs, "a view tab keeps focus when it is followed").toBeFocused();
+  // Refresh is disabled while it loads, which drops focus: it has focus again when the page is back.
+  for (const [route, ready, name, request] of [
+    ["/activity/overview", "#attention-title", "Refresh activity", "/api/overview"],
+    ["/settings/bundles", "#configured-bundles", "Refresh settings", "/api/config"],
+  ]) {
+    await open(route, ready);
+    const refresh = page.getByRole("button", { name, exact: true });
+    await refresh.focus();
+    const reloaded = page.waitForResponse((response) => new URL(response.url()).pathname === request);
+    await page.keyboard.press("Enter");
+    await reloaded;
+    await expect(refresh).toBeEnabled();
+    await expect(refresh, `${name} has focus again once the page is back`).toBeFocused();
+  }
+  await open("/activity/improve", ".impact-links");
+  await page.locator(".impact-links a", { hasText: "Review flow" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#flow")).toBeFocused();
+  await expect(page.locator("#flow"), "the section a link moves focus to is on screen").toBeInViewport();
+
+  await open("/settings/bundles", "#configured-bundles");
+  const card = await tabStops(page, "form.settings-card");
+  assert.ok(card.length >= 4, `the add-bundle form has its controls in the tab order (${card.length})`);
+  assert.deepEqual(out(card, "clipped"), [], "Settings: no focus ring is cut in the add-bundle form");
+
+  // axe at the native minimum, on the pages this window changed and with each overlay open.
+  const violations = [];
+  const audit = async (state) => {
+    const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze();
+    violations.push(...results.violations.map(({ id, nodes }) => `${state}: ${id} ${nodes[0].target}`));
+  };
+  for (const [state, route, ready] of [
+    ["files", "/library/files?bundle=personal&path=knowledge", ".folder-table"],
+    ["editor", `/library/edit?ref=${longRef}`, 'textarea[name="content"]'],
+    ["review queue", "/review", '[aria-label="Queue summary"]'],
+    ["review proposal", `/review/${app.proposals.fresh}`, ".change-preview"],
+    ["activity runs", "/activity/overview?view=runs", ".activity-tabs"],
+    ["activity improve", "/activity/improve", ".impact-links"],
+    ["settings bundles", "/settings/bundles", "#configured-bundles"],
+    ["settings software", "/settings/software", ".software"],
+  ]) {
+    await open(route, ready);
+    await audit(state);
+  }
+  await open("/library/search", ".library-hit-content");
+  await filters.click();
+  await audit("filter panel open");
+  await open(`/library/search?ref=${encodeURIComponent(app.refs.document)}`, ".markdown");
+  await more.click();
+  await audit("asset menu open");
+  assert.deepEqual(violations, [], "axe at 900×593");
+  assert.deepEqual(errors, [], "no browser runtime errors");
 });

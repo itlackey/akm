@@ -16,49 +16,67 @@
   import Icon from "./Icon.svelte";
   import { navigate } from "./navigation";
   import { formatMarkdown, markdownCommands } from "./editor-commands.mjs";
-  export let ref = "";
-  export let file: { bundle: string; path: string } | undefined = undefined;
-  export let bundles: Bundle[] = [];
-  export let defaultWriteTarget = "";
-  export let query = new URLSearchParams();
-  export let returnTo = "/library/search";
-  export let cancelHref = "";
-  export let readingHref = "";
-  export let onSaved: ((ref: string, unchanged: boolean) => void | Promise<void>) | undefined = undefined;
-  let source: Source | null = null,
-    latest: Source | null = null,
-    draft = "",
-    error = "",
-    busy = false,
-    loaded = false,
-    preview = false;
-  let bundle = "",
-    name = "",
-    folder = "",
-    folderInput: HTMLInputElement;
-  let writeTab: HTMLButtonElement, previewTab: HTMLButtonElement;
+  let {
+    ref = "",
+    file = undefined,
+    bundles = [],
+    defaultWriteTarget = "",
+    query = new URLSearchParams(),
+    returnTo = "/library/search",
+    cancelHref = "",
+    readingHref = "",
+    onSaved = undefined,
+  }: {
+    ref?: string;
+    file?: { bundle: string; path: string };
+    bundles?: Bundle[];
+    defaultWriteTarget?: string;
+    query?: URLSearchParams;
+    returnTo?: string;
+    cancelHref?: string;
+    readingHref?: string;
+    onSaved?: (ref: string, unchanged: boolean) => void | Promise<void>;
+  } = $props();
+  let source = $state<Source | null>(null),
+    latest = $state<Source | null>(null),
+    draft = $state(""),
+    error = $state(""),
+    busy = $state(false),
+    loaded = $state(false),
+    preview = $state(false);
+  let bundle = $state(""),
+    name = $state(""),
+    folder = $state(""),
+    folderInput = $state<HTMLInputElement>();
+  let writeTab = $state<HTMLButtonElement>(),
+    previewTab = $state<HTMLButtonElement>();
   let controller = new AbortController();
   let alive = true;
-  let recovered = false,
-    retained = false,
-    discarding = false;
+  let recovered = $state(false),
+    retained = $state(false),
+    discarding = $state(false);
   let initialDraft = "",
     initialName = "",
     initialBundle = "",
     initialFolder = "";
-  let editorHeading: HTMLHeadingElement, errorBox: HTMLDivElement;
-  let textarea: HTMLTextAreaElement;
-  let sourceParams: Record<string, string>;
-  $: creating = !ref && !file;
-  $: if (file) sourceParams = { bundle: file.bundle, file: file.path };
-  else sourceParams = { ref };
-  $: markdown = source?.markdown !== false;
-  $: documentHref = "/library/asset?ref=" + encodeURIComponent(ref) + "&returnTo=" + encodeURIComponent(returnTo);
-  $: backHref = cancelHref || (returnTo.startsWith("/library/files") ? returnTo : creating ? returnTo : documentHref);
-  $: readerHref = readingHref || query.get("readingFrom") || "";
-  $: writable = bundles.filter((b) => b.enabled && b.writable && b.components.some((c) => c.adapter === "akm"));
-  $: bundlePath = bundles.find((b) => b.name === bundle)?.path;
-  $: root = bundlePath ? bundlePath.replace(/[\\/]+$/, "") + "/knowledge" : "";
+  let editorHeading = $state<HTMLHeadingElement>(),
+    errorBox = $state<HTMLDivElement>();
+  let textarea = $state<HTMLTextAreaElement>();
+  const creating = $derived(!ref && !file);
+  const sourceParams = $derived<Record<string, string>>(file ? { bundle: file.bundle, file: file.path } : { ref });
+  const markdown = $derived(source?.markdown !== false);
+  const documentHref = $derived(
+    "/library/asset?ref=" + encodeURIComponent(ref) + "&returnTo=" + encodeURIComponent(returnTo),
+  );
+  const backHref = $derived(
+    cancelHref || (returnTo.startsWith("/library/files") ? returnTo : creating ? returnTo : documentHref),
+  );
+  const readerHref = $derived(readingHref || query.get("readingFrom") || "");
+  const writable = $derived(
+    bundles.filter((b) => b.enabled && b.writable && b.components.some((c) => c.adapter === "akm")),
+  );
+  const bundlePath = $derived(bundles.find((b) => b.name === bundle)?.path);
+  const root = $derived(bundlePath ? bundlePath.replace(/[\\/]+$/, "") + "/knowledge" : "");
   const key = () => draftKey({ file, ref });
   function persist() {
     retained = true;
@@ -209,7 +227,7 @@
     event.preventDefault();
     preview = event.key === "ArrowRight" || event.key === "End";
     await tick();
-    (preview ? previewTab : writeTab).focus();
+    (preview ? previewTab : writeTab)?.focus();
   }
   async function browse() {
     error = "";
@@ -230,9 +248,10 @@
     folderInput?.focus();
   }
   async function format(command: string) {
-    if (busy || preview || !textarea) return;
-    const scrollTop = textarea.scrollTop;
-    const formatted = formatMarkdown(draft, textarea.selectionStart, textarea.selectionEnd, command);
+    const area = textarea;
+    if (busy || preview || !area) return;
+    const scrollTop = area.scrollTop;
+    const formatted = formatMarkdown(draft, area.selectionStart, area.selectionEnd, command);
     // Chromium's plain-text edit command retains native Undo/Redo. Assigning
     // textarea.value (or setRangeText) does not. Never insert HTML here.
     let first = 0,
@@ -243,24 +262,24 @@
       oldEnd--;
       newEnd--;
     }
-    textarea.focus({ preventScroll: true });
-    textarea.setSelectionRange(first, oldEnd);
+    area.focus({ preventScroll: true });
+    area.setSelectionRange(first, oldEnd);
     const replacement = formatted.content.slice(first, newEnd);
     if (typeof document.execCommand !== "function" || !document.execCommand("insertText", false, replacement))
-      textarea.setRangeText(replacement, first, oldEnd);
-    draft = textarea.value;
+      area.setRangeText(replacement, first, oldEnd);
+    draft = area.value;
     persist();
     await tick();
-    textarea.focus({ preventScroll: true });
-    textarea.setSelectionRange(formatted.start, formatted.end);
-    textarea.scrollTop = scrollTop;
+    area.focus({ preventScroll: true });
+    area.setSelectionRange(formatted.start, formatted.end);
+    area.scrollTop = scrollTop;
   }
   function editorKey(event: KeyboardEvent) {
     if (!event.ctrlKey && !event.metaKey) return;
     const key = event.key.toLowerCase();
     if (key === "s") {
       event.preventDefault();
-      textarea.form?.requestSubmit();
+      textarea?.form?.requestSubmit();
     } else if (markdown && !event.shiftKey && !event.altKey && ["b", "i", "k"].includes(key)) {
       event.preventDefault();
       format(key === "b" ? "bold" : key === "i" ? "italic" : "link");
@@ -301,27 +320,33 @@
 {#if creating && !writable.length}<p class="state">
     No enabled writable AKM bundle is available. Check bundle settings.
   </p>
-{:else if loaded}<form class="editor-form" on:submit|preventDefault={() => save()}>
+{:else if loaded}<form
+    class="editor-form"
+    onsubmit={(event) => {
+      event.preventDefault();
+      void save();
+    }}
+  >
     <fieldset class="editor-fields" disabled={busy}>
       {#if creating}<div class="settings-grid">
           <label
-            >Bundle<select bind:value={bundle} on:change={persist}
+            >Bundle<select bind:value={bundle} onchange={persist}
               >{#each writable as b}<option value={b.name}>{b.name}</option>{/each}</select
             ></label
-          ><label>File name<input bind:value={name} required on:input={persist} placeholder="recovery-guide" /></label
+          ><label>File name<input bind:value={name} required oninput={persist} placeholder="recovery-guide" /></label
           ><label
             >Folder under knowledge/
             <div class="field-control">
-              <input bind:this={folderInput} bind:value={folder} on:input={persist} placeholder="Optional" /><button
+              <input bind:this={folderInput} bind:value={folder} oninput={persist} placeholder="Optional" /><button
                 type="button"
                 class="btn-secondary"
-                on:click={browse}>Browse…</button
+                onclick={browse}>Browse…</button
               >
             </div></label
           >
         </div>{/if}
       <div class="editor-toolbar">
-        <div class="editor-tabs" role="tablist" tabindex="-1" aria-label="Editor view" on:keydown={tabKey}>
+        <div class="editor-tabs" role="tablist" tabindex="-1" aria-label="Editor view" onkeydown={tabKey}>
           <button
             type="button"
             role="tab"
@@ -330,7 +355,7 @@
             aria-selected={!preview}
             tabindex={preview ? -1 : 0}
             bind:this={writeTab}
-            on:click={() => (preview = false)}>{markdown ? "Markdown" : "Source"}</button
+            onclick={() => (preview = false)}>{markdown ? "Markdown" : "Source"}</button
           ><button
             type="button"
             role="tab"
@@ -339,7 +364,7 @@
             aria-selected={preview}
             tabindex={preview ? 0 : -1}
             bind:this={previewTab}
-            on:click={() => (preview = true)}>Preview</button
+            onclick={() => (preview = true)}>Preview</button
           >
         </div>
         <button class="save-action" disabled={busy || !!latest || (!creating && !retained)}
@@ -360,17 +385,17 @@
               : "Saved to the file; Git is not changed."}</span
           >
         </div>
-        {#if retained}<button type="button" class="discard-action quiet" on:click={() => (discarding = true)}
+        {#if retained}<button type="button" class="discard-action quiet" onclick={() => (discarding = true)}
             >Discard draft…</button
           >{/if}
       </div>
       {#if discarding}<div class="notice" role="alert">
           <p>Discard this unsaved draft? Your saved asset will not change.</p>
           <div class="btn-row">
-            <button type="button" class="btn-secondary" on:click={keepEditing}>Keep editing</button><button
+            <button type="button" class="btn-secondary" onclick={keepEditing}>Keep editing</button><button
               type="button"
               class="btn-danger"
-              on:click={discard}>Discard draft</button
+              onclick={discard}>Discard draft</button
             >
           </div>
         </div>{/if}
@@ -382,8 +407,8 @@
                 class:italic-tool={command.id === "italic"}
                 aria-label={command.label}
                 title={command.label + (command.shortcut ? ` (${command.shortcut})` : "")}
-                on:mousedown|preventDefault
-                on:click={() => format(command.id)}
+                onmousedown={(event) => event.preventDefault()}
+                onclick={() => format(command.id)}
                 >{command.id === "link"
                   ? "Link"
                   : command.id === "bullet"
@@ -402,8 +427,8 @@
             bind:value={draft}
             rows="24"
             spellcheck={markdown}
-            on:input={persist}
-            on:keydown={editorKey}></textarea></label
+            oninput={persist}
+            onkeydown={editorKey}></textarea></label
         >
       </div>
       <div hidden={!preview} role="tabpanel" id="editor-preview" aria-labelledby="editor-preview-tab">
@@ -419,7 +444,7 @@
     </p>
     <Diff before={latest.content} after={draft} afterLabel="Your retained draft" /><button
       disabled={busy}
-      on:click={() => save(true)}>Save reviewed version</button
+      onclick={() => save(true)}>Save reviewed version</button
     >
   </section>{/if}
 
@@ -436,12 +461,16 @@
     line-height: 1.25;
     letter-spacing: -0.02em;
     margin: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
   .editor-header h2[tabindex="-1"]:focus {
     outline: none;
   }
+  /* The title wraps; the return link keeps its line and its place beside it. */
   .editor-return {
     display: flex;
+    flex: none;
     flex-wrap: wrap;
     justify-content: end;
     gap: 8px 20px;
@@ -452,6 +481,7 @@
     align-items: center;
     gap: 6px;
     padding: 8px 0;
+    white-space: nowrap;
   }
   .editor-form {
     margin: 0;

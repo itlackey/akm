@@ -171,6 +171,65 @@ export function go(page, href) {
   }, href);
 }
 
+/**
+ * Tab through `within` from its start until focus leaves it, and say of each stop where it sits against the stop
+ * before it and whether its focus ring is cut. Both stops are measured at the same moment, so scrolling between them
+ * does not matter. `moved` is "up" or "left" when the stop is above the one before, or left of it on the same row:
+ * reading order and focus order have parted. `clipped` names the sides on which an ancestor cuts the ring where
+ * scrolling that ancestor cannot bring it back.
+ */
+export async function tabStops(page, within, limit = 80) {
+  await page.evaluate((within) => {
+    const scope = document.querySelector(within);
+    if (!scope.hasAttribute("tabindex")) scope.tabIndex = -1;
+    scope.focus({ preventScroll: true });
+    window.__previousStop = null;
+  }, within);
+  const stops = [];
+  for (let step = 0; step < limit; step++) {
+    await page.keyboard.press("Tab");
+    const stop = await page.evaluate((within) => {
+      const el = document.activeElement;
+      if (!el || el === document.body || !document.querySelector(within)?.contains(el)) return null;
+      const rect = el.getBoundingClientRect();
+      const previous = window.__previousStop?.isConnected ? window.__previousStop.getBoundingClientRect() : null;
+      window.__previousStop = el;
+      let moved = "";
+      if (previous?.width) {
+        if (rect.bottom <= previous.top + 1) moved = "up";
+        else if (rect.top < previous.bottom && previous.top < rect.bottom && rect.right <= previous.left + 1)
+          moved = "left";
+      }
+      // The ring is the outline, which reaches width + offset beyond the box; the top layer is never clipped.
+      const style = getComputedStyle(el);
+      const ring = style.outlineStyle === "none" ? 0 : parseFloat(style.outlineWidth) + parseFloat(style.outlineOffset);
+      let clipped = "";
+      if (ring > 0 && !el.closest(":popover-open, dialog[open]"))
+        for (let node = el.parentElement; node && node !== document.documentElement; node = node.parentElement) {
+          const overflow = getComputedStyle(node);
+          const box = node.getBoundingClientRect();
+          const across = overflow.overflowX !== "visible" && node.scrollWidth <= node.clientWidth;
+          const down = overflow.overflowY !== "visible" && node.scrollHeight <= node.clientHeight;
+          const cut = [
+            ["left", across && box.left - (rect.left - ring)],
+            ["right", across && rect.right + ring - box.right],
+            ["top", down && box.top - (rect.top - ring)],
+            ["bottom", down && rect.bottom + ring - box.bottom],
+          ].filter(([, px]) => px > 1);
+          if (cut.length) {
+            clipped = cut.map(([side, px]) => `${side} ${Math.round(px)}px`).join(", ");
+            break;
+          }
+        }
+      const name = (el.getAttribute("aria-label") || el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 40);
+      return { name: `${el.tagName.toLowerCase()} "${name}"`, moved, clipped };
+    }, within);
+    if (!stop) break;
+    stops.push(stop);
+  }
+  return stops;
+}
+
 export async function launchFixture({
   proposals = false,
   metrics = false,

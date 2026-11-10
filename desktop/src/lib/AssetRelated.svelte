@@ -5,25 +5,33 @@
 -->
 
 <script lang="ts">
-  import { createEventDispatcher, onDestroy } from "svelte";
+  import { onDestroy } from "svelte";
   import { libraryRead, typedLinks } from "./library-model";
   import type { Json } from "./types";
   import Icon from "./Icon.svelte";
-  export let ref: string;
-  export let links: Json | undefined;
-  export let href: (ref: string) => string;
-  const dispatch = createEventDispatcher<{ compare: string[] }>();
-  let view = "connections",
-    scope = "all",
-    loading = false,
-    error = "";
-  let result: {
+  let {
+    ref,
+    links,
+    href,
+    onCompare,
+  }: {
+    ref: string;
+    links: Json | undefined;
+    href: (ref: string) => string;
+    /** Compare this asset with the one chosen. */
+    onCompare?: (refs: string[]) => void;
+  } = $props();
+  let view = $state("connections"),
+    scope = $state("all"),
+    loading = $state(false),
+    error = $state("");
+  let result = $state<{
     available: boolean;
     note?: string;
     matches: Array<{ ref: string; title: string; type: string; cosine: number }>;
-  } | null = null;
+  } | null>(null);
   let controller: AbortController;
-  $: connections = typedLinks(links);
+  const connections = $derived(typedLinks(links));
   const kinds: Record<string, string> = {
     xref: "Cross-reference",
     superseded_by: "Superseded by",
@@ -62,9 +70,9 @@
   <button
     class:active={view === "connections"}
     aria-pressed={view === "connections"}
-    on:click={() => choose("connections")}>Connections</button
+    onclick={() => choose("connections")}>Connections</button
   >
-  <button class:active={view === "similar"} aria-pressed={view === "similar"} on:click={() => choose("similar")}
+  <button class:active={view === "similar"} aria-pressed={view === "similar"} onclick={() => choose("similar")}
     >Similar content</button
   >
 </div>
@@ -84,7 +92,7 @@
           <li>
             <a href={href(target)}><strong>{label(target)}</strong><span>{target.split("//")[0]}</span></a><button
               class="btn-secondary"
-              on:click={() => dispatch("compare", [ref, target])}>Compare</button
+              onclick={() => onCompare?.([ref, target])}>Compare</button
             >
           </li>
         {/each}
@@ -98,7 +106,7 @@
   <div class="similar-toolbar">
     <p class="muted small">Compare existing embeddings. A high score suggests overlap—not proof of duplication.</p>
     <label
-      >Look in<select bind:value={scope} on:change={similar}
+      >Look in<select bind:value={scope} onchange={similar}
         ><option value="all">All enabled bundles</option><option value="bundle">This bundle</option></select
       ></label
     >
@@ -106,7 +114,7 @@
   {#if loading}<p class="state" role="status">Finding similar content…</p>
   {:else if error}<div class="notice notice-warn" role="alert">
       {error}
-      <p><button class="btn-secondary" on:click={similar}>Try again</button></p>
+      <p><button class="btn-secondary" onclick={similar}>Try again</button></p>
     </div>
   {:else if result}
     {#if result.note}<p class="muted small">{result.note}</p>{/if}
@@ -120,7 +128,7 @@
             ><strong>{match.title}</strong><span>{match.ref.split("//")[0]} · {match.type}</span></a
           ><span class="score" title="Cosine similarity, from −1 to 1"
             >Cosine <strong>{match.cosine.toFixed(3)}</strong></span
-          ><button class="btn-secondary" on:click={() => dispatch("compare", [ref, match.ref])}
+          ><button class="btn-secondary" onclick={() => onCompare?.([ref, match.ref])}
             ><Icon name="file" size={15} />Compare</button
           >
         </li>

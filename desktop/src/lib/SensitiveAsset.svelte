@@ -5,26 +5,34 @@
 -->
 
 <script lang="ts">
-  import { onMount, onDestroy, createEventDispatcher } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import { afterNavigate } from "$app/navigation";
   import { api } from "./client";
   import SensitiveEditor from "./SensitiveEditor.svelte";
   import Icon from "./Icon.svelte";
   import type { SensitiveInfo, SensitiveValue } from "./types";
-  export let ref = "";
-  export let bundle = "";
-  export let file = "";
-  const dispatch = createEventDispatcher<{ changed: void }>();
-  let info: SensitiveInfo | null = null;
-  let content: string | null = null,
-    busy = false,
-    error = "",
+  let {
+    ref = "",
+    bundle = "",
+    file = "",
+    onChanged,
+  }: {
+    ref?: string;
+    bundle?: string;
+    file?: string;
+    /** The file was rewritten or deleted. */
+    onChanged?: () => void;
+  } = $props();
+  let info = $state<SensitiveInfo | null>(null);
+  let content = $state<string | null>(null),
+    busy = $state(false),
+    error = $state(""),
     generation = 0;
-  let editing = false,
-    deleting = false,
-    deleted = false,
-    notice = "",
-    warnings: string[] = [];
+  let editing = $state(false),
+    deleting = $state(false),
+    deleted = $state(false),
+    notice = $state(""),
+    warnings = $state<string[]>([]);
   const selector = (): Record<string, string> => (ref ? { ref } : { bundle, file });
   function hide() {
     generation++;
@@ -58,20 +66,20 @@
       hide();
       deleted = true;
       warnings = result.warnings;
-      dispatch("changed");
+      onChanged?.();
     } catch (cause) {
       error = (cause as Error).message;
     } finally {
       busy = false;
     }
   }
-  async function saved(event: CustomEvent<{ warnings: string[] }>) {
+  async function saved(result: { warnings: string[] }) {
     editing = false;
     hide();
     notice = "Changes saved.";
-    warnings = event.detail.warnings;
+    warnings = result.warnings;
     await load();
-    dispatch("changed");
+    onChanged?.();
   }
   async function show() {
     const request = ++generation;
@@ -100,8 +108,8 @@
       bundle={info.bundle}
       file={info.location.path}
       type={info.type}
-      on:saved={saved}
-      on:cancel={() => {
+      onSaved={saved}
+      onCancel={() => {
         editing = false;
         hide();
       }}
@@ -117,13 +125,13 @@
           class="btn-secondary"
           disabled={busy}
           aria-pressed={content !== null}
-          on:click={() => (content === null ? show() : hide())}
+          onclick={() => (content === null ? show() : hide())}
           >{busy ? "Opening…" : content === null ? "Show" : "Hide"}</button
         >
         {#if info.writable}<button
             class="btn-secondary"
             disabled={busy}
-            on:click={() => {
+            onclick={() => {
               hide();
               editing = true;
               notice = "";
@@ -131,7 +139,7 @@
           ><button
             class="btn-secondary"
             disabled={busy}
-            on:click={() => {
+            onclick={() => {
               hide();
               deleting = true;
             }}>Delete…</button
@@ -143,10 +151,10 @@
         <p class="mono wrap">{info.path}</p>
         <p>This removes the file and its sensitive marker. There is no Undo; existing Git history is unchanged.</p>
         <div class="btn-row">
-          <button class="btn-secondary" disabled={busy} on:click={() => (deleting = false)}>Keep file</button><button
+          <button class="btn-secondary" disabled={busy} onclick={() => (deleting = false)}>Keep file</button><button
             class="btn-danger"
             disabled={busy}
-            on:click={remove}>Delete file</button
+            onclick={remove}>Delete file</button
           >
         </div>
       </section>{/if}
