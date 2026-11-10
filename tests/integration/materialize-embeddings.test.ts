@@ -25,7 +25,7 @@ import { overrideSeam } from "../_helpers/seams";
  * string observed in the field as
  * `[index:verify] Semantic search verification failed: database is locked`.
  *
- * Modeled on `materialize-embeddings-partial-commit.test.ts`'s "provider
+ * Modeled on the "partial-commit" describe in this file's "provider
  * crash" case: a fake `embedBatch` (via `_setEmbedderForTests`) throws
  * synchronously instead of reporting a per-document skip, exercising the
  * SAME outer catch a real contention-shaped driver error would hit — no

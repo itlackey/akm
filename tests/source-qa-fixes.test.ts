@@ -418,7 +418,7 @@ describe("issue #19: akm bundle update website sources", () => {
     // diff). R-015-adjacent: this success must still be reported somewhere,
     // via `plainSynced`, instead of `processed: []` rendering as the same
     // "nothing to update" text a true no-op would (pinned in
-    // output-text-add-update-formatters.test.ts).
+    // output-text-formatters.test.ts).
     expect(result).toBeDefined();
     expect(result.schemaVersion).toBe(1);
     expect(result.processed).toEqual([]);

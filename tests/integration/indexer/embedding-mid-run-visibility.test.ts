@@ -4,7 +4,7 @@
 
 /**
  * #954, field-report follow-up: the owner asked for the SAME mid-run
- * visibility proof `bundle-update-embedding-durability.test.ts` gives the
+ * visibility proof `bundle-update.test.ts` gives the
  * post-commit pass, on the plain `akm index` path too — per-batch
  * commits must be independently observable by a second connection WHILE the
  * embedding phase is still running, not just true-in-aggregate at the end.

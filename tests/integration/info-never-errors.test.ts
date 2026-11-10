@@ -19,7 +19,7 @@
  * `shouldBypassConfigStartup` no longer allowlists `info` (a10-info
  * follow-up: bypassing it also skipped a user's configured
  * `output.format`/`output.detail`) — that contract is pinned in
- * `help-hints-config-bypass.test.ts` instead, alongside its `help`/`hints`
+ * `help-output.test.ts` instead, alongside its `help`/`hints`
  * siblings.
  *
  * Integration-scoped (ORG-03/06): spawns real child processes and opens a
