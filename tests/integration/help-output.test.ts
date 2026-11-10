@@ -2,16 +2,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-/**
- * `help` and `hints` are pure-text surfaces — the embedded agent-guide text
- * and command usage rendered from `meta` alone — none of their run bodies
- * read config. But before this fix, `shouldBypassConfigStartup`
- * (src/cli.ts) only allowlisted `setup`/`migrate`/`config path`/`task run
- * --id`/`--help`/`--version`, so the CLI's own startup config load ran first
- * and threw `UNSUPPORTED_CONFIG_VERSION` against any pre-0.9 (or otherwise
- * invalid) config — taking down `akm help` and `akm hints`.
- */
-
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -25,6 +15,68 @@ import {
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
 } from "../_helpers/sandbox";
+
+/**
+ * `--help` of the commands that take `--no-probe`: probing is the default, so
+ * only the opt-out is offered. (The in-process harness answers `--help` with
+ * the root overview, so the real CLI is spawned.)
+ */
+
+const cli = path.resolve(import.meta.dir, "..", "..", "src", "cli.ts");
+const helpOf = (...args: string[]) =>
+  spawnSync("bun", [cli, ...args, "--help"], { encoding: "utf8", timeout: 20_000 }).stdout ?? "";
+
+describe("--no-probe in --help", () => {
+  for (const command of [["setup"], ["models"], ["models", "set"]]) {
+    test(`akm ${command.join(" ")} lists --no-probe and no --probe`, () => {
+      const help = helpOf(...command);
+      expect(help).toContain("--no-probe");
+      expect(help).not.toContain("--probe");
+    });
+  }
+});
+
+{
+  /**
+   * A retired flag still parses, so a scheduled command written for 0.9 keeps
+   * running, and `--help` does not advertise it. (The in-process harness answers
+   * `--help` with the root overview, so the real CLI is spawned.)
+   */
+
+  const cli = path.resolve(import.meta.dir, "..", "..", "src", "cli.ts");
+  const helpOf = (...args: string[]) =>
+    spawnSync("bun", [cli, ...args, "--help"], { encoding: "utf8", timeout: 20_000 }).stdout ?? "";
+
+  describe("--help leaves out the retired flags and lists their replacements", () => {
+    test("akm improve leaves out --require-engines, which has no replacement", () => {
+      const help = helpOf("improve");
+      expect(help).not.toContain("--require-engines");
+      expect(help).not.toContain("--require-targets");
+    });
+
+    test.each([
+      [["agent"], "--engine", "--harness"],
+      [["command"], "--engine", "--harness"],
+      [["proposal", "new"], "--engine", "--harness"],
+      [["proposal", "extract"], "--engine", "--harness"],
+      [["task", "add"], "--engine", "--harness"],
+    ])("akm %p", (command, retired, replacement) => {
+      const help = helpOf(...command);
+      expect(help).toContain(replacement);
+      expect(help).not.toContain(retired);
+    });
+  });
+}
+
+/**
+ * `help` and `hints` are pure-text surfaces — the embedded agent-guide text
+ * and command usage rendered from `meta` alone — none of their run bodies
+ * read config. But before this fix, `shouldBypassConfigStartup`
+ * (src/cli.ts) only allowlisted `setup`/`migrate`/`config path`/`task run
+ * --id`/`--help`/`--version`, so the CLI's own startup config load ran first
+ * and threw `UNSUPPORTED_CONFIG_VERSION` against any pre-0.9 (or otherwise
+ * invalid) config — taking down `akm help` and `akm hints`.
+ */
 
 const repoRoot = path.resolve(import.meta.dir, "..", "..");
 
