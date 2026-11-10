@@ -7,9 +7,15 @@ import os from "node:os";
 import { activity, assets, bundles, config, documents, feedback, proposals, sensitive, setup } from "akm-cli/workspace";
 import { hostUpgradeOutrunsDesktop } from "../engine-skew.js";
 import { readFile, saveFile } from "./features/files.js";
-import { readPreferences, saveTheme, validTheme } from "./features/preferences.js";
+import {
+  readPreferences,
+  savePreferences,
+  validPluginChannel,
+  validTheme,
+  validUpdateChannel,
+} from "./features/preferences.js";
 import { reveal } from "./features/reveal.js";
-import { desktopApp, hostTools } from "./features/software.js";
+import { desktopApp, followUpdateChannel, hostTools } from "./features/software.js";
 import { count, fields, flag, HttpFailure, text } from "./input.js";
 
 const require = createRequire(import.meta.url);
@@ -78,15 +84,38 @@ export const routes: Route[] = [
   })),
   get("/api/desktop/preferences", () => readPreferences()),
   post("/api/desktop/preferences", async (value) => {
-    const { theme } = fields(value, ["theme"], "preferences");
-    if (!validTheme(theme))
+    const { theme, updateChannel, pluginChannel } = fields<{
+      theme?: unknown;
+      updateChannel?: unknown;
+      pluginChannel?: unknown;
+    }>(value, ["theme", "updateChannel", "pluginChannel"], "preferences");
+    if (theme !== undefined && !validTheme(theme))
       throw new HttpFailure(400, "INVALID_PREFERENCE", "Choose system, light, or dark appearance.");
-    return saveTheme(theme);
+    if (updateChannel !== undefined && !validUpdateChannel(updateChannel))
+      throw new HttpFailure(
+        400,
+        "INVALID_PREFERENCE",
+        "Desktop updates follow stable releases, or stable and prereleases.",
+      );
+    if (pluginChannel !== undefined && !validPluginChannel(pluginChannel))
+      throw new HttpFailure(
+        400,
+        "INVALID_PREFERENCE",
+        "Plugins install from the stable (latest) or prerelease (next) channel.",
+      );
+    const saved = await savePreferences({
+      ...(validTheme(theme) ? { theme } : {}),
+      ...(validUpdateChannel(updateChannel) ? { updateChannel } : {}),
+      ...(validPluginChannel(pluginChannel) ? { pluginChannel } : {}),
+    });
+    if (updateChannel !== undefined) await followUpdateChannel(saved.updateChannel);
+    return saved;
   }),
   get("/api/desktop/software", async () => ({
     host: hostTools.snapshot(),
     desktop: await desktopApp(),
     engine: akmPackage.version,
+    preferences: await readPreferences(),
   })),
   post("/api/desktop/software", async (value) => {
     const request = fields<{ action?: unknown; harness?: unknown; channel?: unknown }>(

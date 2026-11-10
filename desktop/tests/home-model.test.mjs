@@ -4,7 +4,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { healthCheckAnchor, homeConcerns, homeCoverage, taskOutcomes } from "../src/lib/home-model.ts";
+import { checkLabel, healthCheckAnchor, homeConcerns, homeCoverage, taskOutcomes } from "../src/lib/home-model.ts";
 
 const overview = () => ({
   health: { status: "pass", hardChecks: [], advisories: [] },
@@ -31,6 +31,16 @@ test("Home shows actual task failure totals, not the three-row preview, and igno
   assert.match(concerns[2].description, /3 latest records, across all time/);
   assert.match(concerns[1].href, /window=7d/);
   assert.equal(new URLSearchParams(concerns[3].href.split("?")[1]).get("anchor"), healthCheckAnchor("source/access"));
+});
+test("a health check is titled by what it looks at, not its id; an unknown id is spaced out (F16)", () => {
+  assert.equal(checkLabel("cli-version"), "akm CLI version");
+  assert.equal(checkLabel("state-db-round-trip"), "State database write and read");
+  assert.equal(checkLabel("opencode-v2-plugin-version"), "OpenCode 2 plugin");
+  assert.equal(checkLabel("codex-plugin-version"), "Codex plugin");
+  assert.equal(checkLabel("some-new-check"), "Some new check");
+  const data = overview();
+  data.health.advisories.push({ name: "cli-version", status: "warn", message: "v2 is available" });
+  assert.equal(homeConcerns(data).find((row) => row.key === "cli-version").title, "akm CLI version");
 });
 test("Home keeps other task outcomes separate from failures and refuses unavailable or inconsistent data", () => {
   assert.deepEqual(taskOutcomes(overview(), pulse()), { completed: 4, failed: 12, other: 2, total: 18 });

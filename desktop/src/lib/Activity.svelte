@@ -45,12 +45,16 @@
   let loading = $state(false),
     error = $state(""),
     generation = 0,
-    probed = $state(false),
     refreshedAt = $state(""),
     probedAt = $state(""),
     historyFilter = $state(""),
     historyOrigin = $state(""),
-    refreshButton = $state<HTMLButtonElement>();
+    refreshButton = $state<HTMLButtonElement>(),
+    // A refresh reloads the view that is on screen; `refreshSaid` is what the status line says once it is back.
+    refreshing = $state(false),
+    refreshSaid = $state("");
+  // A first load or a change of view hides the view until its measurements arrive; a refresh keeps it on screen.
+  const shown = $derived(!loading || refreshing);
   const view = $derived(
     route === "improve"
       ? "Improve impact"
@@ -73,9 +77,14 @@
     loaded = key;
     untrack(() => void load());
   });
-  // An anchor in the address is opened, focused and scrolled to once its view is on screen.
+  // An anchor in the address is opened, focused and scrolled to once per arrival, when its view is on screen. A
+  // refresh reloads the same address, so it reveals nothing and leaves focus and the page where they are. Plain, not
+  // state: the address whose anchor was last revealed (each arrival hands this view a new `query`).
+  let revealed: URLSearchParams | undefined;
   $effect(() => {
-    if (!loading) void revealAnchor(query.get("anchor"));
+    if (loading || revealed === query) return;
+    revealed = query;
+    void revealAnchor(query.get("anchor"));
   });
   const filteredCommits = $derived(
     (changes?.commits ?? []).filter(
@@ -111,6 +120,7 @@
     const request = ++generation;
     loading = true;
     error = "";
+    refreshSaid = "";
     try {
       if (view === "Health" || view === "Runs" || view === "Usage & retrieval") {
         const [next, nextPulse, nextRetrieval] = await Promise.all([
@@ -122,7 +132,6 @@
           overview = next;
           pulse = nextPulse;
           retrieval = nextRetrieval;
-          probed = false;
           refreshedAt = new Date().toISOString();
           probedAt = "";
         }
@@ -152,13 +161,6 @@
         const next = await api<NonNullable<typeof misses>>("/search/misses", { since: window });
         if (request === generation) misses = next;
       }
-      await tick();
-      const anchor = query.get("anchor");
-      if (request === generation && anchor) {
-        const target = document.getElementById(anchor);
-        if (target instanceof HTMLDetailsElement) target.open = true;
-        target?.scrollIntoView({ block: "start" });
-      }
     } catch (cause) {
       if (request === generation) error = (cause as Error).message;
     } finally {
@@ -167,7 +169,10 @@
   }
   /** Refresh is disabled while it loads, which drops focus: the button has it again when the page is back. */
   async function refresh() {
+    refreshing = true;
     await load();
+    refreshing = false;
+    if (!error && !loading) refreshSaid = `${view} refreshed.`;
     await tick();
     if (document.activeElement === document.body) refreshButton?.focus();
   }
@@ -178,7 +183,6 @@
       const health = await api<ActivityHealth>("/health", { probe: "1" });
       if (request === generation && overview) {
         overview = { ...overview, health };
-        probed = true;
         probedAt = new Date().toISOString();
       }
     } catch (cause) {
@@ -237,9 +241,12 @@
 {#if error}<div class="notice notice-warn" role="alert">
     {error}<button class="btn-secondary" onclick={load}>Retry activity</button>
   </div>{/if}
-{#if loading}<p role="status">
-    Loading {view.toLowerCase()}…
-  </p>{:else if view === "Health" || view === "Runs" || view === "Usage & retrieval"}{#if overview}{#if view !== "Health"}<p
+<!-- Always in the page, so loading and a finished refresh are heard. While a view loads the line stands in for it;
+  during and after a refresh the view stays and the line is for screen readers. -->
+<p id="activity-status" role="status" class:sr-only={shown}>
+  {loading ? `${refreshing ? "Refreshing" : "Loading"} ${view.toLowerCase()}…` : refreshSaid}
+</p>
+{#if shown && (view === "Health" || view === "Runs" || view === "Usage & retrieval")}{#if overview}{#if view !== "Health"}<p
         class="muted small"
       >
         {overview.metrics
@@ -252,18 +259,17 @@
       data={overview}
       {pulse}
       {retrieval}
-      {probed}
       {probe}
       {refreshedAt}
       {probedAt}
       requestedTask={query.get("task") ?? ""}
     />{/if}
-{:else if view === "Improve impact"}{#if impact}<ActivityImpact
+{:else if shown && view === "Improve impact"}{#if impact}<ActivityImpact
       {impact}
       {retrieval}
       bind:selectedProcess={impactProcess}
     />{/if}
-{:else if view === "Source history" && changes}<h2>Write-target history</h2>
+{:else if shown && view === "Source history" && changes}<h2>Write-target history</h2>
   <p class="muted">{changes.bundle} · <span class="mono wrap">{changes.path}</span></p>
   {#if !changes.git}<p class="empty">
       This write target is not a Git repository. AKM does not retain general manual-edit undo for a non-Git bundle.

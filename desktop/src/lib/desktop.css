@@ -69,6 +69,14 @@
     background: var(--surface-2);
     color: var(--faint);
   }
+  /* Busy, or waiting on something said beside it: it looks disabled and ignores the pointer, but stays focusable, so
+     keyboard focus is not dropped to the page when the button that started an action goes busy. */
+  .desktop-shell :is(button, a.btn)[aria-disabled="true"] {
+    border-color: transparent;
+    background: var(--surface-2);
+    color: var(--faint);
+    pointer-events: none;
+  }
   .desktop-shell .icon-label {
     display: inline-flex;
     align-items: center;

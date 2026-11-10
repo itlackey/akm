@@ -5,22 +5,64 @@
 -->
 
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { classifyEngineSkew, hostUpgradeOutrunsDesktop } from "./engine-skew";
   import Icon from "./Icon.svelte";
-  import { harnessNames as names } from "./setup-model";
-  import { actSoftware as act, software, watchSoftware } from "./state/software.svelte";
+  import { harnessLabel, installedChannel, pluginChannel, pluginLine } from "./setup-model";
+  import { actSoftware as act, runSoftware, savePreference, software, watchSoftware } from "./state/software.svelte";
   const releases = "https://github.com/itlackey/akm/releases";
   const data = $derived(software.data),
     error = $derived(software.error),
     submitting = $derived(software.submitting);
-  let channel = $state("latest");
+  // The channel new plugins install from: the saved choice, else Desktop's own release stage (the same rule as setup).
+  const channel = $derived(pluginChannel(data?.engine, data?.preferences?.pluginChannel));
   const hostBusy = $derived(submitting || Boolean(data && data.host.phase !== "idle"));
   const updateBusy = $derived(submitting || Boolean(data?.desktop.menu?.busy));
   const skew = $derived(classifyEngineSkew(data?.engine, data?.host.cli?.version));
   const desktopBehind = $derived(hostUpgradeOutrunsDesktop(data?.engine, data?.host.upgrade?.latestVersion));
   // Desktop's own update state, from the main process (electron-updater).
   const update = $derived(data?.desktop.update);
+  const embeddedPrerelease = $derived(/^\d+\.\d+\.\d+-/.test(data?.desktop.version ?? ""));
+  // The line followed: what the updater reports, else the saved choice, else the embedded version's own stage.
+  const updateChannel = $derived(
+    update?.channel ?? data?.preferences?.updateChannel ?? (embeddedPrerelease ? "prerelease" : "stable"),
+  );
+  // The note that belongs to the "Desktop updates" choice; it is that control's description.
+  const updatesHint = $derived(
+    updateChannel === "stable" && embeddedPrerelease
+      ? "This build is a prerelease. Stable releases are offered from the next stable release on; it is never replaced by an older one."
+      : !update
+        ? "The release line applies when the AKM Desktop app checks for updates."
+        : "",
+  );
+  // What the host is doing, in words, for the status line a screen reader hears.
+  const phases: Record<string, string> = {
+    check: "Checking the CLI and plugins…",
+    "install-cli": "Installing the AKM CLI…",
+    "upgrade-cli": "Updating the CLI and plugins…",
+    "install-plugin": "Installing the AKM plugin…",
+  };
+  // A saved choice is said in a live region beside its control; a failed save is the page's alert.
+  let saved = $state({ updateChannel: "", pluginChannel: "" });
+  async function choose(key: "updateChannel" | "pluginChannel", value: string) {
+    saved[key] = "";
+    await savePreference(key, value);
+    if (software.error) return;
+    saved[key] =
+      key === "updateChannel"
+        ? `Saved. AKM Desktop follows ${value === "prerelease" ? "stable and prerelease releases" : "stable releases only"}.`
+        : `Saved. New plugins install from the ${value === "next" ? "prerelease" : "stable"} channel.`;
+  }
+  /**
+   * Run a host action from its button and wait for it. The button stays focusable while busy; if it is gone when the
+   * action ends (an installed plugin has no install button), focus goes to `fallback`, never to the page.
+   */
+  async function run(action: string, details: Record<string, unknown>, fallback: string) {
+    if (hostBusy) return;
+    await runSoftware(action, details);
+    await tick();
+    if (document.activeElement === document.body) document.getElementById(fallback)?.focus();
+  }
   onMount(watchSoftware);
 </script>
 
@@ -37,29 +79,49 @@
       <div class="software-row">
         <div>
           <h3 id="desktop-software">AKM Desktop <span class="muted mono">{data.desktop.version ?? ""}</span></h3>
-          {#if update?.state === "checking"}<p role="status">Checking for updates…</p>
-          {:else if update?.state === "current"}<p role="status">AKM Desktop is up to date.</p>
-          {:else if update?.state === "downloading"}<p role="status">
-              Downloading version {update.version}. It installs when you quit AKM Desktop.
-            </p>
-          {:else if update?.state === "downloaded"}<p role="status">
-              Version {update.version} is ready. It installs when you quit AKM Desktop.
-            </p>
-          {:else if update?.state === "available"}<p role="status">
-              Version {update.version} is available.
-              <a href="{releases}/tag/v{update.version}">Download it from the release page</a>.
-            </p>
-          {:else if update?.state === "error"}<p role="status">
-              Could not check for updates. <a href={releases}>Download a newer version</a> if you need one.
-            </p>
-            {#if update.error}<details class="field-hint">
-                <summary>Details</summary>
-                <pre class="mono">{update.error}</pre>
-              </details>{/if}
-          {:else}<p role="status">To update, download a newer AKM Desktop.</p>{/if}
+          <!-- One live region whose text changes, so each update state is heard and not only repainted. -->
+          <p role="status" id="desktop-update-status">
+            {#if update?.state === "checking"}Checking for updates…
+            {:else if update?.state === "current"}AKM Desktop is up to date.
+            {:else if update?.state === "downloading"}Downloading version {update.version}. It installs when you quit
+              AKM Desktop.
+            {:else if update?.state === "downloaded"}Version {update.version} is ready. It installs when you quit AKM Desktop.
+            {:else if update?.state === "available"}Version {update.version} is available.
+              <a href="{releases}/tag/v{update.version}"
+                >Download version {update.version} from its GitHub release page</a
+              >.
+            {:else if update?.state === "error"}{update.during === "download"
+                ? `Could not download version ${update.version ?? ""}. The next check is in six hours.`
+                : "Could not check for updates."}
+              <a href={releases}>Download a newer version from the GitHub releases page</a> if you need one.
+            {:else if update?.state === "unsupported"}{update.reason === "off"
+                ? "Update checks are turned off (AKM_DESKTOP_UPDATES=off)."
+                : update.reason === "not-appimage"
+                  ? "This Linux build is not an AppImage, so it does not check for updates."
+                  : "A development run does not check for updates."} To update, download a newer AKM Desktop.
+            {:else}To update, download a newer AKM Desktop.{/if}
+          </p>
+          {#if update?.state === "error" && update.error}<details class="field-hint">
+              <summary>Details</summary>
+              <pre class="mono">{update.error}</pre>
+            </details>{/if}
           <p class="field-hint">Built-in AKM engine {data.engine}.</p>
         </div>
+        {#if data.preferences}
+          <label class="field"
+            >Desktop updates<select
+              value={updateChannel}
+              aria-describedby={updatesHint ? "desktop-updates-hint" : undefined}
+              onchange={(event) => choose("updateChannel", event.currentTarget.value)}
+              ><option value="stable">Stable releases</option><option value="prerelease"
+                >Stable and prerelease releases</option
+              ></select
+            ></label
+          >
+        {/if}
       </div>
+      {#if updatesHint}<p id="desktop-updates-hint" class="field-hint">{updatesHint}</p>{/if}
+      <p class="field-hint saved" role="status">{saved.updateChannel}</p>
       {#if data.desktop.menu?.supported}
         <div class="menu-install">
           <div class="software-row">
@@ -73,7 +135,11 @@
                     : "Open AKM Desktop without finding the download."}
               </p>
             </div>
-            <button class="btn-secondary" disabled={updateBusy} onclick={() => act("desktop-menu-install")}>
+            <button
+              class="btn-secondary"
+              aria-disabled={updateBusy}
+              onclick={() => !updateBusy && act("desktop-menu-install")}
+            >
               {data.desktop.menu.installed
                 ? data.desktop.menu.runningInstalledCopy
                   ? "Repair menu entry"
@@ -91,13 +157,15 @@
         </div>
       {/if}
     </section>
-    <section aria-labelledby="host-cli">
+    <section aria-labelledby="host-cli" aria-busy={hostBusy}>
       <div class="software-row">
         <div>
-          <h3 id="host-cli">Host AKM CLI <span class="muted mono">{data.host.cli?.version ?? ""}</span></h3>
+          <h3 id="host-cli" tabindex="-1">
+            Host AKM CLI <span class="muted mono">{data.host.cli?.version ?? ""}</span>
+          </h3>
           <p role="status">
             {data.host.phase !== "idle"
-              ? "Working…"
+              ? (phases[data.host.phase] ?? "Working…")
               : !data.host.cli
                 ? "Not checked"
                 : !data.host.cli.installed
@@ -105,22 +173,25 @@
                   : !data.host.cli.runnable
                     ? "Installed, but not runnable"
                     : data.host.upgrade?.updateAvailable
-                      ? `Update available · ${data.host.upgrade.latestVersion}`
+                      ? `Update available: ${data.host.upgrade.latestVersion}`
                       : data.host.upgrade
                         ? "Checked by AKM"
                         : "Installed"}
           </p>
         </div>
+        <!-- Busy buttons stay focusable (aria-disabled, not disabled): a disabled button drops keyboard focus to the page. -->
         <div class="btn-row">
-          <button class="btn-quiet icon-label" disabled={hostBusy} onclick={() => act("check")}
+          <button class="btn-quiet icon-label" aria-disabled={hostBusy} onclick={() => run("check", {}, "host-cli")}
             ><Icon name="refresh" />Check CLI & plugins</button
           >
-          {#if data.host.cli && !data.host.cli.installed}<button disabled={hostBusy} onclick={() => act("install-cli")}
-              >Install AKM CLI</button
+          {#if data.host.cli && !data.host.cli.installed}<button
+              aria-disabled={hostBusy}
+              onclick={() => run("install-cli", {}, "host-cli")}>Install AKM CLI</button
             >
           {:else if data.host.cli?.runnable}<button
-              disabled={hostBusy || desktopBehind}
-              onclick={() => act("upgrade-cli")}>Update CLI & plugins</button
+              aria-disabled={hostBusy || desktopBehind}
+              aria-describedby={desktopBehind ? "host-cli-behind" : undefined}
+              onclick={() => !desktopBehind && run("upgrade-cli", {}, "host-cli")}>Update CLI & plugins</button
             >{/if}
         </div>
       </div>
@@ -129,8 +200,11 @@
             <summary>Details</summary>
             <pre class="mono">{data.host.errorDetail}</pre>
           </details>{/if}{/if}
-      {#if data.host.receipt}<p class="notice" role="status">{data.host.receipt}</p>{/if}
-      {#if desktopBehind}<p class="notice notice-warn" role="status">
+      <!-- The region is always there, so a receipt arriving in it is announced. -->
+      <div role="status">
+        {#if data.host.receipt}<p class="notice">{data.host.receipt}</p>{/if}
+      </div>
+      {#if desktopBehind}<p class="notice notice-warn" role="status" id="host-cli-behind">
           A newer AKM is available than the one built into this app. Update AKM Desktop first, then update the CLI.
         </p>
       {:else if skew === "host-older"}<p class="notice" role="status">
@@ -157,32 +231,32 @@
         </dl>
       </details>
     </section>
-    <section aria-labelledby="harness-plugins">
+    <section aria-labelledby="harness-plugins" aria-busy={hostBusy}>
       <div class="plugin-heading">
         <div>
           <h3 id="harness-plugins">Harness plugins</h3>
           <p class="muted">Add AKM to a harness you already use.</p>
         </div>
         <label class="field"
-          >New plugin channel<select bind:value={channel} disabled={hostBusy}
+          >New plugin channel<select
+            value={channel}
+            aria-describedby="plugin-channel-hint"
+            onchange={(event) => choose("pluginChannel", event.currentTarget.value)}
             ><option value="latest">Stable</option><option value="next">Prerelease</option></select
           ></label
         >
       </div>
-      <div class="plugin-list">
+      <p class="field-hint saved" role="status">{saved.pluginChannel}</p>
+      <!-- A list: each item is one harness, named first, then its plugin's state and channel in words. -->
+      <ul class="plugin-list" aria-labelledby="harness-plugins">
         {#each data.host.harnesses as harness (harness.id)}
-          <div class="plugin-row">
+          {@const followed = installedChannel(harness, data.host.upgrade?.plugins)}
+          <li class="plugin-row">
             <div>
-              <h4>{names[harness.id]} <span class="muted small">{harness.version ?? ""}</span></h4>
-              <p class="muted small">
-                {!harness.installed
-                  ? "Harness not found"
-                  : !harness.runnable
-                    ? "Harness could not start"
-                    : harness.plugin?.state === "missing"
-                      ? "AKM plugin not installed"
-                      : `AKM · ${harness.plugin?.state ?? "not checked"} ${harness.plugin?.version ?? harness.plugin?.spec ?? ""}`}
-              </p>
+              <h4 id="plugin-{harness.id}" tabindex="-1">
+                {harnessLabel(harness)} <span class="muted small">{harness.version ?? ""}</span>
+              </h4>
+              <p class="muted small">{pluginLine(harness)}{followed ? `, ${followed}` : ""}.</p>
               {#if harness.plugin?.note}<p class="field-hint">{harness.plugin.note}</p>{/if}
               {#if harness.plugin?.detail}<details class="field-hint">
                   <summary>Details</summary>
@@ -191,15 +265,17 @@
             </div>
             {#if harness.plugin?.state === "missing"}<button
                 class="btn-secondary"
-                disabled={hostBusy || !data.host.cli?.runnable}
-                onclick={() => act("install-plugin", { harness: harness.id, channel })}>Install AKM plugin</button
+                aria-disabled={hostBusy}
+                onclick={() => run("install-plugin", { harness: harness.id, channel }, `plugin-${harness.id}`)}
+                >Install AKM plugin for {harnessLabel(harness)}</button
               >{/if}
-          </div>
+          </li>
         {/each}
-      </div>
-      <p class="field-hint">
-        Native installers preserve existing configuration and marketplace channels. Plugin installation does not sign
-        you in or approve hooks.
+      </ul>
+      <p class="field-hint" id="plugin-channel-hint">
+        The channel is remembered and is also what setup installs. Native installers preserve existing configuration and
+        marketplace channels; an installed plugin's channel is shown once the host CLI has been checked. Plugin
+        installation does not sign you in or approve hooks.
       </p>
     </section>
   {/if}
@@ -300,6 +376,11 @@
     font-size: 12px;
     min-width: 145px;
   }
+  .plugin-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
   .plugin-row {
     padding: 20px 0;
     border-bottom: 1px solid var(--border);
@@ -320,6 +401,10 @@
     max-width: 75ch;
     margin-top: 12px;
   }
+  /* The "Saved" line is a live region that must stay in the page; empty, it takes no room. */
+  .saved:empty {
+    margin: 0;
+  }
   @media (max-width: 700px) {
     .software-row,
     .plugin-heading,
@@ -330,6 +415,10 @@
     }
     .software-row > .btn-row {
       width: 100%;
+    }
+    /* A long name ("Install AKM plugin for Claude Code") wraps instead of widening the page. */
+    .plugin-row button {
+      flex-shrink: 1;
     }
     dl {
       grid-template-columns: 1fr;

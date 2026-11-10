@@ -5,12 +5,26 @@
 import { api } from "../client";
 import type { HostHarness, HostSnapshot } from "../setup-model";
 
-export type Harness = HostHarness & { path?: string; major?: number };
+export type Harness = HostHarness & { path?: string };
+/** Desktop's own update state, from the main process (electron-updater); absent in the web process. */
+export interface UpdateState {
+  state: string;
+  version?: string;
+  error?: string;
+  /** What the error interrupted. */
+  during?: "check" | "download";
+  /** Why this run never checks. */
+  reason?: "development" | "off" | "not-appimage";
+  /** The release line followed: the saved choice, else the stage of the embedded version. */
+  channel: "stable" | "prerelease";
+}
 export interface SoftwareSnapshot {
   engine: string;
+  /** The saved Desktop choices that Software offers; absent means the default derived from the engine's stage. */
+  preferences?: { updateChannel?: "stable" | "prerelease"; pluginChannel?: "latest" | "next" };
   desktop: {
     version?: string;
-    update?: { state: string; version?: string; error?: string };
+    update?: UpdateState;
     menu?: {
       supported: boolean;
       installed: boolean;
@@ -36,6 +50,8 @@ export interface SoftwareSnapshot {
       updateAvailable?: boolean;
       installMethod?: string;
       channel?: string;
+      /** Each harness plugin `akm upgrade --check` found, with the channel it follows. */
+      plugins?: Array<{ harness: string; channel?: string }>;
     };
   };
 }
@@ -67,6 +83,17 @@ export async function actSoftware(action: string, details: Record<string, unknow
     software.error = (cause as Error).message;
   } finally {
     software.submitting = false;
+  }
+}
+
+/** Save one Desktop choice (the update or plugin channel) and show the state it leads to. */
+export async function savePreference(key: "updateChannel" | "pluginChannel", value: string) {
+  software.error = "";
+  try {
+    await api("/desktop/preferences", {}, { [key]: value });
+    await refreshSoftware();
+  } catch (cause) {
+    software.error = (cause as Error).message;
   }
 }
 

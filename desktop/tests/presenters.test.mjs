@@ -25,6 +25,25 @@ test("activity/settings presentation keeps measured zero separate from missing o
   const checks = [{ name: "connections-and-harnesses", status: "unknown", message: "No model configured" }];
   assert.equal(healthGroup(checks[0], checks), "off");
   assert.equal(healthGroup({ name: "cli-version", status: "unknown", message: "Not probed" }, checks), "unchecked");
+  // Not run, could not run, and run with nothing to report are three different things (F9, F17).
+  const unknown = (name, message) => healthGroup({ name, status: "unknown", message }, []);
+  assert.equal(
+    unknown("state-db-round-trip", "state.db append/read round-trip skipped: this run is read-only."),
+    "unchecked",
+  );
+  assert.equal(
+    unknown("scheduler-binary", "No scheduler is available on this host (crontab -l failed: …)."),
+    "unchecked",
+  );
+  assert.equal(
+    unknown("cli-version", "akm v1 is installed; the update check could not reach the release source."),
+    "blocked",
+  );
+  assert.equal(
+    unknown("plugin-version", "akm@akm-plugins: installed 1 — the newest release could not be read"),
+    "blocked",
+  );
+  assert.equal(unknown("session-extraction", "No extraction recorded in the last 7 days."), "idle");
   assert.deepEqual(
     configurationChanges(
       [
@@ -56,8 +75,14 @@ test("attention ranks real faults before review work and never treats unknown ru
     items.map((item) => item.tone),
     ["fail", "fail", "warn", "work", "work"],
   );
-  assert.match(items[1].text, /1 failed improve runs/);
+  assert.equal(items[0].text, "1 failing check");
+  assert.equal(items[1].text, "1 failed improve run in latest records");
+  // The view names the check by its label, so the item carries the id apart from the text (F16).
+  assert.equal(items[2].text, "1 health warning");
+  assert.equal(items[2].check, "index");
   assert.equal(items[3].href, "/review");
+  assert.equal(items[3].text, "3 proposals waiting for review");
+  assert.equal(items[4].text, "1 query found nothing on multiple days");
   assert.equal(attentionItems({ health: null, improveRuns: [{ ok: null }] }, null).length, 0);
 });
 

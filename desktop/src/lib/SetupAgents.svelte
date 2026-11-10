@@ -9,15 +9,7 @@
   import { classifyEngineSkew, hostUpgradeOutrunsDesktop } from "./engine-skew";
   import Icon from "./Icon.svelte";
   import SetupLearning from "./SetupLearning.svelte";
-  import {
-    akmPlatform,
-    learnPlan,
-    learnReceipt,
-    learningRuns,
-    pluginChannel,
-    type AgentCard,
-    type Detected,
-  } from "./setup-model";
+  import { learnPlan, learnReceipt, learningRuns, pluginChannel, type AgentCard, type Detected } from "./setup-model";
   import { actSoftware, runSoftware, software, type Outcome } from "./state/software.svelte";
   import { workspace } from "./state/workspace.svelte";
 
@@ -44,11 +36,13 @@
     keyEnv = $state(""),
     busy = $state(false),
     outcomes = $state<Array<Outcome & { label: string }>>([]),
+    // The harnesses whose plugin this page installed: only they need the restart note.
+    installedNow = $state<string[]>([]),
     copied = $state(false);
 
   const host = $derived(software.data?.host),
     cli = $derived(host?.cli),
-    channel = $derived(pluginChannel(engine)),
+    channel = $derived(pluginChannel(engine, software.data?.preferences?.pluginChannel)),
     skew = $derived(classifyEngineSkew(engine, cli?.version)),
     desktopBehind = $derived(hostUpgradeOutrunsDesktop(engine, host?.upgrade?.latestVersion)),
     version = $derived(software.data?.desktop.version),
@@ -66,16 +60,18 @@
     plan = $derived(
       learnPlan(
         detected,
-        allowed.map((card) => akmPlatform(card.id)),
+        allowed.map((card) => card.id),
         { learn, where, endpoint, model, keyEnv },
       ),
     ),
-    agent = $derived(allowed.find((card) => akmPlatform(card.id) === plan.learning?.harness)),
+    agent = $derived(allowed.find((card) => card.id === plan.learning?.harness)),
     moves = $derived(library && plan.changed),
     work = $derived((cliMissing && wantsCli ? 1 : 0) + pending.length + enabling.length + (moves ? 1 : 0)),
     hostBusy = $derived(busy || Boolean(host && host.phase !== "idle"));
 
+  // The buttons stay focusable while busy or with nothing to do (aria-disabled), so these handlers do the refusing.
   async function run() {
+    if (hostBusy || work === 0) return;
     busy = true;
     outcomes = [];
     try {
@@ -90,10 +86,12 @@
           outcomes.push({ label: card.name, error: "Skipped: the akm command-line tool is not installed." });
           continue;
         }
-        outcomes.push({ label: card.name, ...(await runSoftware("install-plugin", { harness: card.id, channel })) });
+        const outcome = await runSoftware("install-plugin", { harness: card.id, channel });
+        if (!outcome.error) installedNow.push(card.id);
+        outcomes.push({ label: card.name, ...outcome });
       }
       if (enabling.length || moves) {
-        const enabled = new Set([...detected.enabled, ...enabling.map((card) => akmPlatform(card.id))]);
+        const enabled = new Set([...detected.enabled, ...enabling.map((card) => card.id)]);
         const { learning, connection } = plan;
         const agentName = agent?.name;
         try {
@@ -126,6 +124,7 @@
     }
   }
   async function update() {
+    if (hostBusy) return;
     outcomes = [{ label: "akm command-line tool", ...(await runSoftware("upgrade-cli")) }];
   }
   async function copy(text: string) {
@@ -136,15 +135,15 @@
       copied = false;
     }
   }
+  // Said once, after this page installed the plugin; a plugin found installed was loaded long ago.
   const after: Record<string, string> = {
     claude: "Restart Claude Code, or run /reload-plugins in a session that is already open.",
     codex: "Open Codex, run /hooks, and trust the two AKM hooks. Installing the plugin does not approve them.",
     opencode: "Restart OpenCode to load the plugin.",
-    opencode2: "Restart OpenCode to load the plugin.",
   };
 </script>
 
-<section class="setup-step" aria-labelledby="setup-agents">
+<section class="setup-step" aria-labelledby="setup-agents" aria-busy={hostBusy}>
   <div class="step-head">
     <h2 id="setup-agents">2. Connect your agents</h2>
     <span class="badge" data-tone={cards.some((card) => card.state === "connected") ? "ok" : "warn"}
@@ -159,14 +158,20 @@
       without a plugin use akm too.
     </p>
 
-    <div class="item">
-      <h3>akm command-line tool</h3>
+    <!-- Each card is a named group; a hint is the description of the control it explains. -->
+    <div class="item" role="group" aria-labelledby="setup-cli-name">
+      <h3 id="setup-cli-name">akm command-line tool</h3>
       {#if cliMissing}
         <label class="check-label">
-          <input type="checkbox" checked={wantsCli} onchange={(event) => (installCli = event.currentTarget.checked)} />
+          <input
+            type="checkbox"
+            checked={wantsCli}
+            aria-describedby="setup-cli-hint"
+            onchange={(event) => (installCli = event.currentTarget.checked)}
+          />
           Install {release} to <code>{host?.cliDirectory}</code>
         </label>
-        <p class="field-hint">
+        <p class="field-hint" id="setup-cli-hint">
           Uses the official release installer, which checks its download. No administrator password. Desktop finds akm
           there; your terminal needs that folder on its PATH.
         </p>
@@ -177,7 +182,7 @@
           </p>
         {:else if skew === "host-older"}<p class="notice">
             This akm is older than the engine built into this app ({engine}).
-            <button class="btn-secondary" disabled={hostBusy} onclick={update}>Update CLI &amp; plugins</button>
+            <button class="btn-secondary" aria-disabled={hostBusy} onclick={update}>Update CLI &amp; plugins</button>
           </p>
         {:else if skew === "host-newer"}<p class="notice">
             This akm is newer than the engine built into this app ({engine}). If Desktop says the library was upgraded
@@ -189,12 +194,19 @@
     </div>
 
     {#each cards as card (card.id)}
-      <div class="item">
-        <h3>
+      {@const restart = card.state === "connected" && installedNow.includes(card.id)}
+      <div
+        class="item"
+        role="group"
+        aria-labelledby="agent-{card.id}-name"
+        aria-describedby={restart ? `agent-${card.id}-after` : undefined}
+      >
+        <h3 id="agent-{card.id}-name">
           {card.name}
           <span class="muted small">{card.version ?? ""}</span>
+          <!-- The tick is for a plugin that matches this akm; a mismatch is the warning below, not a ticked badge in another colour. -->
           {#if card.state === "connected"}<span class="badge" data-tone={card.plugin?.mismatch ? "warn" : "ok"}
-              >✓ {card.plugin?.text}</span
+              >{card.plugin?.mismatch ? "" : "✓ "}{card.plugin?.text}</span
             >{/if}
         </h3>
         {#if card.state === "stopped"}
@@ -214,9 +226,10 @@
               type="checkbox"
               checked={(plugins[card.id] ?? true) && !card.needsBun}
               disabled={card.needsBun}
+              aria-describedby={card.needsBun ? `agent-${card.id}-bun` : undefined}
               onchange={(event) => (plugins[card.id] = event.currentTarget.checked)}
             />
-            Install the akm plugin ({channel === "next" ? "prerelease" : "stable"} channel, for akm {builtFor})
+            Install the akm plugin for {card.name} ({channel === "next" ? "prerelease" : "stable"} channel, for akm {builtFor})
           </label>
         {:else if card.plugin?.mismatch}
           <p class="notice notice-warn">
@@ -226,33 +239,44 @@
         {/if}
         {#if card.needsBun}
           <div class="notice notice-warn">
-            <p>
+            <p id="agent-{card.id}-bun">
               The {card.name} plugin's hooks run on Bun, and Bun is not installed. Desktop does not install it. Run this in
               a terminal, then check again:
             </p>
             <div class="command">
               <code>{host?.bun?.installCommand}</code>
-              <button class="btn-secondary" onclick={() => copy(host?.bun?.installCommand ?? "")}
+              <!-- The names say what is copied and what is checked; they start with the visible words. -->
+              <button
+                class="btn-secondary"
+                aria-label={copied ? "Copied Bun's install command" : "Copy Bun's install command"}
+                onclick={() => copy(host?.bun?.installCommand ?? "")}
                 ><Icon name="copy" size={16} />{copied ? "Copied" : "Copy"}</button
               >
-              <button class="btn-secondary" disabled={hostBusy} onclick={() => actSoftware("check")}
-                ><Icon name="refresh" size={16} />Check again</button
+              <button
+                class="btn-secondary"
+                aria-label="Check again for Bun"
+                aria-disabled={hostBusy}
+                onclick={() => !hostBusy && actSoftware("check")}><Icon name="refresh" size={16} />Check again</button
               >
+              <span class="sr-only" role="status">{copied ? "Bun's install command copied." : ""}</span>
             </div>
           </div>
         {/if}
-        {#if card.state === "connected"}<p class="field-hint">{after[card.id]}</p>{/if}
+        {#if restart}<p class="field-hint" id="agent-{card.id}-after">
+            {after[card.id]}
+          </p>{/if}
         {#if card.state !== "stopped"}
           <label class="check-label">
             <input
               type="checkbox"
               checked={card.learning.enabled || (use[card.id] ?? true)}
               disabled={card.learning.enabled || !card.learning.available || !library}
+              aria-describedby="agent-{card.id}-use-hint"
               onchange={(event) => (use[card.id] = event.currentTarget.checked)}
             />
             Let akm use {card.name}
           </label>
-          <p class="field-hint">
+          <p class="field-hint" id="agent-{card.id}-use-hint">
             {card.learning.enabled
               ? "Enabled: akm can run work on this agent (akm agent, tasks)."
               : !card.learning.available
@@ -272,26 +296,30 @@
     {/if}
 
     <div class="btn-row">
-      <button disabled={hostBusy || work === 0} onclick={run}
+      <!-- Not `disabled`: the button keeps keyboard focus while it works, so the results below can be reached from it. -->
+      <button aria-disabled={hostBusy || work === 0} onclick={run}
         >{busy ? "Working…" : work ? `Install ${work} selected` : "Nothing selected"}</button
       >
       <a href="#setup-try">Skip this step</a>
     </div>
-    {#each outcomes as outcome}
-      {#if outcome.error}
-        <div class="notice notice-warn" role="alert">
-          <p><strong>{outcome.label}.</strong> {outcome.error}</p>
-          {#if outcome.errorDetail}<details>
-              <summary>Details</summary>
-              <pre class="mono">{outcome.errorDetail}</pre>
-            </details>{/if}
-        </div>
-      {:else}<p class="notice notice-ok" role="status">
-          <strong>{outcome.label}.</strong>
-          {outcome.receipt ?? "Done."}
-        </p>
-      {/if}
-    {/each}
+    <!-- The region is always there, so each result arriving in it is announced. -->
+    <div aria-live="polite">
+      {#each outcomes as outcome}
+        {#if outcome.error}
+          <div class="notice notice-warn" role="alert">
+            <p><strong>{outcome.label}.</strong> {outcome.error}</p>
+            {#if outcome.errorDetail}<details>
+                <summary>Details</summary>
+                <pre class="mono">{outcome.errorDetail}</pre>
+              </details>{/if}
+          </div>
+        {:else}<p class="notice notice-ok">
+            <strong>{outcome.label}.</strong>
+            {outcome.receipt ?? "Done."}
+          </p>
+        {/if}
+      {/each}
+    </div>
     {#if software.error}<p class="notice notice-warn" role="alert">{software.error}</p>{/if}
   {/if}
 </section>

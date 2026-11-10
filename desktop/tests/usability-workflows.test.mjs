@@ -119,6 +119,103 @@ test("reviewed human workflows prevent dead ends and preserve focus and source",
       await expect(item).toBeFocused();
     },
   );
+  await t.test("Home: a refresh keeps focus and is announced; counts and links carry their meaning", async () => {
+    await navigate("/");
+    const check = page.getByRole("button", { name: "Check health" });
+    await expect(check).toBeVisible();
+    // The count beside the heading is read with what it counts, and the item link says where it goes.
+    await expect(page.locator(".home-count")).toHaveText(/^\d+ items? needs? attention$/);
+    await expect(page.getByRole("link", { name: /^Inspect: Task failure rate, in health details$/ })).toBeVisible();
+    await expect(page.getByRole("link", { name: /^View runs: 1 task run failed, in run history$/ })).toBeVisible();
+    // Started from the keyboard, the refresh says so in a live region and leaves focus on its button.
+    const snapshot = page.getByRole("status").filter({ hasText: /Snapshot refreshed|Refreshing your snapshot/ });
+    await check.focus();
+    await page.keyboard.press("Enter");
+    await expect(snapshot).toHaveText(/Snapshot refreshed/);
+    await expect(check).toBeFocused();
+    await expect(page.locator(".home-attention")).toBeVisible();
+    // A retry takes its own button away when it starts, so focus goes to the refresh control, never to the page.
+    let failing = true;
+    await page.route("**/api/overview?*", (route) => (failing ? route.abort() : route.continue()));
+    await page.keyboard.press("Enter");
+    const retry = page.getByRole("button", { name: "Retry overview" });
+    await expect(retry).toBeVisible();
+    failing = false;
+    await retry.focus();
+    await page.keyboard.press("Enter");
+    await expect(retry).toHaveCount(0);
+    await expect(check).toBeFocused();
+    await expect(page.locator(".home-concerns")).toBeVisible();
+    await page.unroute("**/api/overview?*");
+  });
+  await t.test(
+    "Activity health: checks are headings, counts and tones are said, a probe and a refresh keep the view and are announced",
+    async () => {
+      await navigate("/activity/overview");
+      const health = page.locator("#health");
+      await expect(health).toBeVisible();
+      // The header says what did not run as a sentence, in the words the status line uses.
+      await expect(page.locator(".health-overview p")).toHaveText(
+        "Observation window: last 24 hours. 1 turned off, 3 not checked.",
+      );
+      // A group's heading says its count in words; a check is a heading of its own, with the id as separate text and
+      // its evidence named by the same label.
+      await expect(page.getByRole("heading", { level: 3, name: "Warnings 1 check", exact: true })).toBeVisible();
+      const check = page.locator("#health-check-task-fail-rate");
+      await expect(check.getByRole("heading", { level: 4, name: "Task failure rate", exact: true })).toBeVisible();
+      await expect(check.locator(".check-id")).toHaveText("Check id: task-fail-rate");
+      await expect(check.locator("summary")).toHaveText("Evidence for Task failure rate");
+      // An attention link says its tone, and its text and action are separate phrases in a correct singular.
+      await expect(
+        page.getByRole("link", {
+          name: "Warning: 1 health warning: Task failure rate. Inspect checks",
+          exact: true,
+        }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("link", { name: "Failure: 1 failed task run this week. Inspect runs", exact: true }),
+      ).toBeVisible();
+      // Run all checks from the keyboard: its note is its description, the section is busy, one status line says the
+      // start and the result, and focus stays on the button.
+      const run = page.getByRole("button", { name: "Run all checks", exact: true });
+      await expect(run).toHaveAccessibleDescription(/May contact the network/);
+      const said = health.getByRole("status");
+      await expect(said).toHaveText("");
+      await page.route("**/api/health?*", async (route) => {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        await route.continue();
+      });
+      await run.focus();
+      await page.keyboard.press("Enter");
+      await expect(health).toHaveAttribute("aria-busy", "true");
+      await expect(said).toHaveText("Running all checks…");
+      await expect(said).toHaveText(/^Checks finished: .*\b1 warning\b.* passing\.$/, { timeout: 60000 });
+      await expect(health).toHaveAttribute("aria-busy", "false");
+      await expect(run).toBeFocused();
+      await page.unroute("**/api/health?*");
+      // Refresh activity keeps the loaded view on screen (the same nodes) and says when it is done.
+      await health.evaluate((section) => {
+        section.dataset.kept = "yes";
+      });
+      const refresh = page.getByRole("button", { name: "Refresh activity", exact: true });
+      await refresh.focus();
+      await page.keyboard.press("Enter");
+      await expect(page.locator("#activity-status")).toHaveText("Health refreshed.");
+      await expect(health).toHaveAttribute("data-kept", "yes");
+      await expect(refresh).toBeFocused();
+      // Home's link arrives with the check in the address: it is revealed and focused once, on arrival. A refresh
+      // after that reloads the same address and leaves focus on its button and the button on screen.
+      await navigate("/");
+      await page.getByRole("link", { name: "Inspect: Task failure rate, in health details", exact: true }).focus();
+      await page.keyboard.press("Enter");
+      await expect(check).toBeFocused();
+      await refresh.focus();
+      await page.keyboard.press("Enter");
+      await expect(page.locator("#activity-status")).toHaveText("Health refreshed.");
+      await expect(refresh).toBeFocused();
+      await expect(refresh).toBeInViewport();
+    },
+  );
   await t.test("read-only bundles are not selectable write targets", async () => {
     await navigate("/settings/config");
     const target = page.getByRole("combobox", { name: "Default write target", exact: true });

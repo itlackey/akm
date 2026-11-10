@@ -37,7 +37,14 @@ test("host environment finds conventional user tools without running profiles or
   assert.ok(!env.PATH.split(":").includes("."));
 });
 
-async function hostFixture({ absent = false, failure = false, desktopVersion, bun = true, platform = "linux" } = {}) {
+async function hostFixture({
+  absent = false,
+  failure = false,
+  desktopVersion,
+  bun = true,
+  platform = "linux",
+  opencodeVersion = "1.18.34",
+} = {}) {
   const home = await mkdtemp(path.join(os.tmpdir(), "akm-host-test-"));
   temporary.push(home);
   const calls = [],
@@ -69,8 +76,7 @@ async function hostFixture({ absent = false, failure = false, desktopVersion, bu
       assert.equal(options.env.AKM_LAUNCHER_NODE, undefined);
       calls.push({ file, args, installDir: options.env.AKM_INSTALL_DIR });
       const name = path.basename(file);
-      if (args[0] === "--version")
-        return name.startsWith("opencode") ? (name === "opencode2" ? "2.1.4" : "1.18.34") : "0.10.261104";
+      if (args[0] === "--version") return name === "opencode" ? opencodeVersion : "0.10.261104";
       if (name === "akm") {
         if (failure && !args.includes("--check"))
           throw Object.assign(new Error("Command failed: akm upgrade"), {
@@ -109,14 +115,15 @@ async function hostFixture({ absent = false, failure = false, desktopVersion, bu
         configured.add(name);
         return "{}";
       }
-      if (name.startsWith("opencode")) {
+      if (name === "opencode") {
         const configDir = path.join(home, ".config/opencode");
         await mkdir(configDir, { recursive: true });
         let config = {};
         try {
           config = JSON.parse(await readFile(path.join(configDir, "opencode.json"), "utf8"));
         } catch {}
-        config[name === "opencode2" ? "plugins" : "plugin"] = [args[name === "opencode2" ? 2 : 1]];
+        const v2 = opencodeVersion.startsWith("2.");
+        config[v2 ? "plugins" : "plugin"] = [args[v2 ? 2 : 1]];
         await writeFile(path.join(configDir, "opencode.json"), JSON.stringify(config));
       } else installed.add(name);
       return "{}";
@@ -147,6 +154,16 @@ test("host checks are read-only and upgrades invoke the existing CLI, not the bu
   assert.deepEqual(
     summarizeUpgrade({ latestVersion: "1.0.0", credentials: "secret", migration: { files: ["private"] } }),
     { latestVersion: "1.0.0" },
+  );
+  // Which plugin follows which channel is kept (F14); the entries' messages and backups are not.
+  assert.deepEqual(
+    summarizeUpgrade({
+      plugins: [
+        { harness: "claude-code", channel: "next", message: "private", backups: ["x"] },
+        { harness: "codex", outcome: "skipped" },
+      ],
+    }),
+    { plugins: [{ harness: "claude-code", channel: "next" }, { harness: "codex" }] },
   );
 });
 
@@ -190,9 +207,9 @@ test("on Windows the CLI installs through install.ps1 of Desktop's release, into
   assert.ok(env.PATH.split(path.delimiter).includes(path.join("/la", "akm")), "Desktop finds what it installed");
 });
 
-test("all four harness paths use standard native installation commands and verify afterward", async () => {
+test("all three harnesses use standard native installation commands and verify afterward", async () => {
   const f = await hostFixture();
-  for (const id of ["claude", "codex", "opencode", "opencode2"]) {
+  for (const id of ["claude", "codex", "opencode"]) {
     f.manager.start("install-plugin", id, "next");
     await f.manager.pending;
     assert.equal(f.manager.snapshot().error, undefined, id);
@@ -206,13 +223,33 @@ test("all four harness paths use standard native installation commands and verif
   assert.ok(commands.includes("codex plugin marketplace add itlackey/akm-plugins --ref next"));
   assert.ok(commands.includes("codex plugin add akm@akm-plugins"));
   assert.ok(commands.includes("opencode plugin akm-opencode@next --global"));
-  assert.ok(commands.includes("opencode2 plugin add akm-opencode-v2@next"));
   assert.ok(!commands.some((command) => /trust|approve|--force/.test(command)));
   const count = commands.length;
   f.manager.start("install-plugin", "codex");
   await f.manager.pending;
   assert.match(f.manager.snapshot().error, /already present/);
   assert.ok(f.calls.slice(count).every((call) => call.args.includes("--version") || call.args.includes("list")));
+});
+
+// OpenCode 2 is the same `opencode` program; its major picks the v2 plugin and there is no separate row for it (F2).
+test("OpenCode 2 is detected by its version on the one OpenCode row and takes the v2 plugin", async () => {
+  const f = await hostFixture({ opencodeVersion: "2.1.4" });
+  f.manager.start("check");
+  await f.manager.pending;
+  assert.deepEqual(
+    f.manager.snapshot().harnesses.map((item) => item.id),
+    ["claude", "codex", "opencode"],
+  );
+  const opencode = f.manager.snapshot().harnesses.find((item) => item.id === "opencode");
+  assert.equal(opencode.major, 2);
+  assert.equal(opencode.plugin.state, "missing");
+  f.manager.start("install-plugin", "opencode", "next");
+  await f.manager.pending;
+  assert.equal(f.manager.snapshot().error, undefined);
+  const commands = f.calls.map((call) => [path.basename(call.file), ...call.args].join(" "));
+  assert.ok(commands.includes("opencode plugin add akm-opencode-v2@next"));
+  const after = f.manager.snapshot().harnesses.find((item) => item.id === "opencode").plugin;
+  assert.deepEqual([after.state, after.spec, after.note], ["configured", "akm-opencode-v2@next", undefined]);
 });
 
 test("Claude and Codex plugins need Bun, which Desktop shows the official command for and re-detects but never runs", async () => {
@@ -252,32 +289,37 @@ test("Bun's install command follows the platform", async () => {
 });
 
 test("OpenCode plugin detection reads config files in the order akm does", async () => {
-  const f = await hostFixture();
-  const dir = path.join(f.home, ".config/opencode");
-  await mkdir(dir, { recursive: true });
-  const plugin = async (id) => {
+  const v1 = await hostFixture();
+  const v2 = await hostFixture({ opencodeVersion: "2.1.4" });
+  const plugin = async (f) => {
     f.manager.start("check");
     await f.manager.pending;
-    return f.manager.snapshot().harnesses.find((item) => item.id === id).plugin;
+    return f.manager.snapshot().harnesses.find((item) => item.id === "opencode").plugin;
   };
-  // opencode.jsonc is read before opencode.json; OpenCode 1 stops at the first file that sets the list.
-  await writeFile(
-    path.join(dir, "opencode.json"),
-    JSON.stringify({ plugin: ["akm-opencode@latest"], plugins: ["akm-opencode-v2@next"] }),
-  );
-  await writeFile(
-    path.join(dir, "opencode.jsonc"),
-    '// comment\n{ "plugin": ["another-plugin"], "plugins": ["another-plugin"], }',
-  );
-  assert.equal((await plugin("opencode")).state, "missing");
+  for (const f of [v1, v2]) {
+    const dir = path.join(f.home, ".config/opencode");
+    await mkdir(dir, { recursive: true });
+    // opencode.jsonc is read before opencode.json; OpenCode 1 stops at the first file that sets the list.
+    await writeFile(
+      path.join(dir, "opencode.json"),
+      JSON.stringify({ plugin: ["akm-opencode@latest"], plugins: ["akm-opencode-v2@next"] }),
+    );
+    await writeFile(
+      path.join(dir, "opencode.jsonc"),
+      '// comment\n{ "plugin": ["another-plugin"], "plugins": ["another-plugin"], }',
+    );
+  }
+  assert.equal((await plugin(v1)).state, "missing");
   // OpenCode 2 keeps looking, and does not read OPENCODE_CONFIG.
-  assert.equal((await plugin("opencode2")).spec, "akm-opencode-v2@next");
-  await rm(path.join(dir, "opencode.json"));
-  const explicit = path.join(f.home, "explicit.json");
+  assert.equal((await plugin(v2)).spec, "akm-opencode-v2@next");
+  const explicit = path.join(v1.home, "explicit.json");
   await writeFile(explicit, JSON.stringify({ plugin: ["akm-opencode"], plugins: ["akm-opencode-v2"] }));
-  f.manager.sourceEnv.OPENCODE_CONFIG = explicit;
-  assert.equal((await plugin("opencode")).spec, "akm-opencode");
-  assert.equal((await plugin("opencode2")).state, "missing");
+  for (const f of [v1, v2]) {
+    await rm(path.join(f.home, ".config/opencode/opencode.json"));
+    f.manager.sourceEnv.OPENCODE_CONFIG = explicit;
+  }
+  assert.equal((await plugin(v1)).spec, "akm-opencode");
+  assert.equal((await plugin(v2)).state, "missing");
 });
 
 test("a failed native command is not reported as success; its cause is bounded detail, not the user-facing message", async () => {
