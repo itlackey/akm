@@ -94,5 +94,3 @@ after indexing so the guidance matches the installed version.
 
 - [configuration.md](../../reference/configuration.md) — full configuration
   key reference
-- [docs/agents/agent-install.md](../../agents/agent-install.md) — agent-facing
-  entry point that links here

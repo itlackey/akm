@@ -50,7 +50,7 @@ In order, every run applies (or, under `status`, plans):
    `harness:` by what the name is now, under one backup directory per run. A
    bundle akm may not change is skipped.
 4. **Content refs** (`assetContentRefs`): refs in the text files akm indexes in writable
-   bundles that still use the pre-#1432 spelling (`knowledge/WORK/x`, now
+   bundles that still use the old spelling (`knowledge/WORK/x`, now
    `WORK/x`), in frontmatter and body, rewritten under one backup directory per
    run. An old spelling that is now another file's ref is listed in `shadowed`
    and left as written. The same step re-keys the `state.db` rows (usage events,
@@ -252,13 +252,7 @@ akm health --format json      # read this JSON; act on ok/status, never on messa
 
 A bundler that controls the filesystem layout should set `AKM_CONFIG_FILE` (or
 pass `--config <file>`) and name the rest in that file, rather than rely on
-`$HOME`-derived defaults. `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR` and
-`AKM_CACHE_DIR` are retired: with one set and `AKM_CONFIG_FILE` unset, akm exits 78 and
-names `akm migrate apply`, which writes what they named into the file's `paths`.
-`AKM_BUNDLE_DIR` is retired too: the working bundle is the config's `defaultBundle`. An
-image that still sets it to that bundle works unchanged (the value is ignored); one that
-sets it to anything else exits 78 until `akm migrate apply` has registered the directory
-as `defaultBundle` and the variable is unset.
+`$HOME`-derived defaults. The old `AKM_*_DIR` location variables are retired; see [Retired location variables](../reference/configuration.md#retired-location-variables).
 
 | Variable or key | What it points at |
 | --- | --- |

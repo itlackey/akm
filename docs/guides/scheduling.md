@@ -142,26 +142,9 @@ well before the 02:00 nightly.
 
 Rerunning `akm setup` does not rebind an entry that is already installed.
 
-## Upgrading from akm 0.9
+## Upgrading from an older akm
 
-akm 0.9 wrote one scheduler row per task (a `# akm:task <id>` crontab block and a
-shared `# akm:env` PATH block, a `com.akm.task.<id>` LaunchAgent, a `\akm\<id>`
-task). akm 0.10 replaces all of them with the one entry, in the same operation,
-so nothing fires twice: `akm migrate apply` (which `akm upgrade` runs) does it,
-and so does `akm task sync`. The old rows keep working until then — they run
-`akm task run <id> --scheduled`, which still exists. A row that names another
-installation's directories (a sandbox's `AKM_BUNDLE_DIR` or `AKM_STATE_DIR`) is
-left where it is and reported; remove it from the OS scheduler by hand once its
-bundle directory is gone. A row that names the working bundle in `AKM_BUNDLE_DIR`
-(every row 0.9.32 and 0.10 wrote does) keeps running and is replaced by the sync:
-akm ignores a value that names the bundle it resolves without it. A row that sets
-`AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR` or `AKM_CACHE_DIR`, or an
-`AKM_BUNDLE_DIR` naming another bundle, stops working with this release: akm no
-longer reads them and refuses to start with one set (see
-[Retired location variables](../reference/configuration.md#retired-location-variables)).
-The report says so. Run `akm migrate apply` with that installation's environment,
-then run `akm task dispatch` from its own supervisor with `AKM_CONFIG_FILE` set, and
-remove the row.
+An older akm wrote one scheduler row per task. `akm migrate apply` (which `akm upgrade` runs) and `akm task sync` replace them with the one entry. See [The scheduler and tasks](../migration/v0.10-to-v0.11.md#the-scheduler-and-tasks).
 
 ## Migrating or repairing the entry (`--rebind`)
 

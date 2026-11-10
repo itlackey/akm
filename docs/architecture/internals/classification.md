@@ -36,7 +36,7 @@ validated against the ids above) wins over probing. The probe order puts
 `claude`, `opencode`, and `dotenv` ahead of `akm`, and `akm` ahead of `okf`,
 because AKM Markdown is an OKF-compatible superset.
 
-[Bundle Types](../../reference/bundle-types.md) has the user-facing detail per
+[Supported Formats](../../reference/supported-formats.md) has the user-facing detail per
 adapter: conceptId shape, what is indexed, `validate()` checks, and whether the
 adapter can write.
 

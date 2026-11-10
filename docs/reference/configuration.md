@@ -9,13 +9,10 @@ inheritance: `extends` is retired (see "Config inheritance (`extends`)" below).
 
 ## Shape
 
-There is no config version field. akm 0.9 wrote `configVersion: "0.9.0"`; this
-release ignores it silently and writes none. An ordinary write
-(`akm config set`, etc.) leaves a `configVersion` the file already holds as it
-is; `akm migrate apply`'s config step drops it. Pre-0.9.32
-config, task and database layouts are not read at all: run the 0.9.32 recipe
-(`npm i -g akm-cli@0.9.32 && akm migrate apply && akm task sync`) first.
-Ordinary runtime code reads only the current shape; `akm migrate apply` (which `akm upgrade` also runs) converts the retired config forms.
+There is no config version field. A `configVersion` already in the file is ignored.
+akm reads only the current shape; `akm migrate apply` (which `akm upgrade` also
+runs) converts retired forms. Config, task and database layouts older than 0.9.32
+are not read at all: see the [0.10 to 0.11 migration guide](../migration/v0.10-to-v0.11.md).
 
 ```jsonc
 {
@@ -565,14 +562,13 @@ and `improve.harness`, and over the defaults. Enabling it with no connection or
 harness configured fails before the run starts, naming `akm setup`.
 
 The `default` strategy runs triage in `promote` mode with judgment off and
-`maxAcceptsPerRun: 200` (#1143), so the proposal backlog drains through the
+`maxAcceptsPerRun: 200`, so the proposal backlog drains through the
 deterministic gates without `experimental.improveAutonomy`. Turning judgment on
 in a promote strategy is what that opt-in gates.
 
 Judgment is off in every built-in strategy, and the judgment tier may accept
 only a consolidate promotion. Retirements and reflect revisions it
-would accept are left for a person. This is measured, not cautious by habit
-(#1132, #1094): with `experimental.improveAutonomy` and judgment over every
+would accept are left for a person. This is measured, not cautious by habit: with `experimental.improveAutonomy` and judgment over every
 proposal kind, the nightly eval solved 0.49 (gpt-5.6-terra) and 0.53
 (qwen3.8-27b) of its items while harming 14 and 11, and changed 18 and 21 notes
 outside the planted set; the judge accepted unsafe retirements and applied exact
@@ -679,7 +675,7 @@ other shipped strategy. It plans stable assets that have had no feedback: at mos
 inherits the `default` value; set `processes.proactiveMaintenance.enabled: false` in the
 selected strategy to turn the lane off. A proposal from this lane is never
 accepted by `proposal drain`: it waits for a person (reason
-`proactive-needs-review`, #1147). User strategy overrides
+`proactive-needs-review`). User strategy overrides
 are applied last, so an explicit `enabled: true` still opts the selected
 strategy in.
 
@@ -888,7 +884,7 @@ and `defaultBundle` are the 0.9 source configuration shape — see
 full bundle model (`path`, `git`, `website`, `npm`, `writable`, `registryId`,
 `components`). `defaultBundle` must name a key in `bundles` when set. A
 bundle's `components.<id>.adapter` key pins it to a specific format adapter
-instead of relying on auto-detection — see [Bundle Types](bundle-types.md)
+instead of relying on auto-detection — see [Supported Formats](supported-formats.md)
 for the full adapter list and what each one reads/writes.
 
 A bundle's `path` is read like a project's `paths`: `~` expands to your home
@@ -1123,7 +1119,7 @@ the same installation.
 
 A chosen file other than the default is a separate installation: akm does not
 write the OS scheduler entry for it, and its supervisor runs `akm task dispatch`
-itself (see [`akm task`](cli.md#akm-task)).
+itself (see [`akm task`](cli.md#task)).
 
 ### `paths`
 

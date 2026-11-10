@@ -120,8 +120,7 @@ comes from the name the script has in the bundle, not from the file the link
 points to, so `scripts/deploy.sh` linked to `real-script.txt` runs under the
 shell.
 
-Every field that used to live under v3's `akm:` options bag is a top-level
-key in task source v4: `agent`, `connection`, `harness`, `model`, `inference`, `timeout`,
+These are top-level keys in task source v4 (there is no `akm:` options bag): `agent`, `connection`, `harness`, `model`, `inference`, `timeout`,
 `redact`, `maxSteps`, and `maxRetries`, plus `description`, `when_to_use`, and
 `tags`. A v4 `tools` is
 ignored with a warning. Environment entries (`env`) are literal string,
@@ -254,8 +253,7 @@ redact: [TOKEN]
   consumer — a native run's status comes from its exit code alone — so
   declaring `output:` on them fails parsing with `TASK_SOURCE_INVALID`
   instead of silently recording a contract nothing enforces.
-- A workflow step cannot target a task: the GitHub-shaped YAML workflow format
-  that carried `uses: tasks/<ref>` was removed in 0.10. A task runs a workflow
+- A workflow step cannot target a task. A task runs a workflow
   (`uses: workflows/<ref>`), not the other way round.
 
 ### Input flags
@@ -282,8 +280,7 @@ workflow step's own composition uses); for every other target — `run:`
 shell, `scripts/<ref>`, `commands/<ref>` — the values are validated and then
 **discarded**. `akm task run`'s own flags never populate an
 `AKM_TASK_INPUTS` environment variable or a `## Task inputs` prompt block.
-Those two surfaces existed only for a workflow step composing a task through
-`uses: tasks/<ref>`, which was removed in 0.10.
+Those two surfaces do not exist.
 A scheduled run (`schedule[].inputs`, above) reaches the target through this
 same `akm task run` path, so it inherits the identical rule: delivered as
 params for a `workflows/<ref>` target, otherwise validated and discarded.

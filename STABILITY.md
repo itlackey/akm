@@ -52,9 +52,8 @@ else. AKM Desktop's child-process runner
 an integer `schemaVersion`, and rejects `ok: false`.
 
 **Failure.** A failed command prints `{ "ok": false, "error", "code"?, "hint" }`
-to stderr and exits non-zero. Exit codes: `0` success, `1` general or not found,
-`2` usage, `4` health warn (`akm health` only), `70` internal, `75` busy (another
-akm process holds a lock or is writing `state.db`; retry shortly), `78` config (a missing or failing OS scheduler is `SCHEDULER_UNAVAILABLE`).
+to stderr and exits non-zero. The exit codes are in the
+[CLI reference](docs/reference/cli.md#exit-codes-and-error-envelope).
 
 **Plugin call set.** The akm plugins call only these: `info`, `curate`, `search`
 (`--type`, `--by-usage`, `--project`), `show`, `feedback`, `remember`, `proposal
