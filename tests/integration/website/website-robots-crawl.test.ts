@@ -5,9 +5,6 @@
 /**
  * P1 — robots.txt compliance: loopback-fixture crawl integration tests.
  *
- * Authoritative spec: a retired design doc §4.6/§4.7. Row IDs in test
- * names (C-xx) refer to that spec's crawl-behavior table.
- *
  * Follows the fixture patterns in add-website-source.test.ts (Bun.serve
  * loopback fixture) and website-fetch-safety.test.ts (no real network, private-host
  * hatch). `ensureWebsiteMirror` is called in-process (as in

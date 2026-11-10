@@ -4,7 +4,7 @@
 
 /**
  * #733 — orphan-GC pass for unresolvable `asset_salience` / `asset_outcome`
- * state rows (Workstream C, a retired design doc).
+ * state rows.
  *
  * The pass is deliberately lean: one maintenance pass (`runOrphanStateGcPass`),
  * one additive migration (`021-asset-state-missing-since`), one event type

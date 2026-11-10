@@ -95,8 +95,7 @@ describe("akm workflow — JSON envelope snapshot (WS6)", () => {
     expect(env.ok).toBe(true);
     expect(typeof env.path).toBe("string");
     expect(fs.existsSync(env.path as string)).toBe(true);
-    // 0.9.2 review round 2 (P4 sweep criterion-21 caveat, spec
-    // a retired design doc §4.1 row B-49): the
+    // 0.9.2 review round 2 (P4 sweep criterion-21 caveat): the
     // envelope's third member is `bundleDir` — BREAKING vs 0.9.1, which
     // leaked `stashDir` here (src/workflows/authoring/authoring.ts).
     expect(env.bundleDir).toBe(stash);
@@ -185,7 +184,7 @@ describe("akm workflow — JSON envelope snapshot (WS6)", () => {
     expect(env.code).toBe("UNKNOWN_COMMAND");
   });
 
-  // P3b Lane B (a retired design doc §4.6, §6 F-B2):
+  // P3b Lane B:
   // ONE additive arm, in the same additive convention P2b used for
   // `task explain` (tests/commands/tasks-explain.test.ts) —
   // every pre-existing test above is byte-unchanged.

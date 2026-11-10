@@ -480,7 +480,7 @@ test("validateStashEntry preserves captureMode, whenToUse, lessonStrength, evide
 // Convention facts are selected for prompt injection by their `category:`
 // frontmatter (resolveStashStandards), but the indexer never captured that key
 // onto IndexDocument — so no rank-time or filter policy can see it. SPEC-6 step 1
-// (a retired design doc) captures it in
+// captures it in
 // applyCuratedFrontmatter (alongside beliefState) and whitelists it through
 // validateStashEntry so it survives the document_json projection.
 
@@ -572,8 +572,7 @@ test("category is NOT folded into FTS search fields — capture only (SPEC-6 pin
 // (canonicalName) during recognize, independent of where the stash root is
 // anchored. Filename tokens are
 // deliberately NOT merged when explicit tags exist (they already live in the
-// FTS name column and aliases). See
-// a retired design doc SPEC-2.
+// FTS name column and aliases).
 
 /** Frontmatter memory doc with an explicit tags list. */
 function memoryDocWithTags(tags: string[]): string {

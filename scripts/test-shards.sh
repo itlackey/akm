@@ -29,15 +29,13 @@
 #
 # Usage:  scripts/test-shards.sh <unit|integration>   # auto shards (min(nproc, 8))
 #         TEST_SHARDS=4 scripts/test-shards.sh unit
-#         scripts/test-shards.sh unit <file>...       # explicit file list
 set -uo pipefail
 
 suite="${1:-}"
-[ "$#" -gt 0 ] && shift
 case "$suite" in
   unit) find_args=(tests -name '*.test.ts' -not -path 'tests/integration/*') ;;
   integration) find_args=(tests/integration -name '*.test.ts') ;;
-  *) echo "usage: $0 <unit|integration> [test-file...]" >&2; exit 2 ;;
+  *) echo "usage: $0 <unit|integration>" >&2; exit 2 ;;
 esac
 
 cores="$(nproc 2>/dev/null || echo 4)"
@@ -47,13 +45,8 @@ N="${TEST_SHARDS:-$cores}"
 
 bun run sweep:tmp >/dev/null 2>&1 || true
 
-# Deterministic file list; sort so every machine shards identically. Explicit
-# files after the suite name replace discovery (used to dry-run the runner).
-if [ "$#" -gt 0 ]; then
-  files=("$@")
-else
-  mapfile -t files < <(find "${find_args[@]}" | sort)
-fi
+# Deterministic file list; sort so every machine shards identically.
+mapfile -t files < <(find "${find_args[@]}" | sort)
 total="${#files[@]}"
 
 if [ "$total" -eq 0 ]; then

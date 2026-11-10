@@ -6,9 +6,6 @@
  * P1b Lane C — F-2 result-vocabulary re-code (D8) + F-4 attempt-error
  * allowlist widening, new coverage.
  *
- * a retired design doc §5.3 (result vocabulary), §5.5 +
- * §5.6 (F-4 + the C-7 exit-78 rewire), §6 (the F-2 AUTHORIZED-FLIPS table).
- *
  * The former legacy-vocabulary characterization test (the
  * flipped P0 file) pins the per-arm stored `target_kind` STRING and the
  * `readTaskHistory()` round-trip SHAPE, including legacy (unmarked) rows.

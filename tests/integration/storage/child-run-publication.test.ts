@@ -5,8 +5,6 @@
 /**
  * P3a Lane C TESTS — `publishChildWorkflowRun` and its accessors.
  *
- * Spec: a retired design doc §5.2-§5.5 (binding
- * design), §1.4(2-4) (Lane C design), §1.8 A-N12 (spawnedByUnitId naming).
  * Behavior-table rows covered: C-07…C-15 (§2.9).
  *
  * RED phase: `WorkflowRunsRepository.publishChildWorkflowRun`, `childRunsOf`,

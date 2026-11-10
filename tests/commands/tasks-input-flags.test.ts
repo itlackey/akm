@@ -3,9 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * P2a Lane C — `akm task run`'s exact-name input flags (spec
- * a retired design doc §5.1, §1.4 "Lane C — CLI + schema +
- * docs"). This lane owns ONLY this file plus the AUTHORIZED updates to
+ * P2a Lane C — `akm task run`'s exact-name input flags. This lane owns ONLY this file plus the AUTHORIZED updates to
  * tests/tasks-schema.test.ts (§6 F-1).
  *
  * RED phase: task source v4 (`src/tasks/source/task-source-v4.ts`, Lane A),
@@ -389,8 +387,7 @@ describe("akm task run — B-31 array grouping and its failure modes, end to end
 });
 
 // ── B-26 / §0 — a valid input flag set is byte-identical; a manual-only v4 ──
-// ── task runs end-to-end. Test-review remediation (finding recorded against ──
-// ── a retired design doc:520): §0's central observable ────
+// ── task runs end-to-end. Test-review remediation: the central observable ──
 // ── contract had no end-to-end pin at all — the one v4 run test stopped at ──
 // ── loadPreparedTask, never reaching `akm task run` itself. ─────────────────
 
@@ -433,8 +430,7 @@ describe("akm task run — end to end (B-26, §0: a valid flag set is byte-ident
 });
 
 // ── B-32 / B-33 — retired --target and akm task run's own declared flags ────
-// ── are PRESERVED, never treated as inputs. Test-review remediation (finding ──
-// ── recorded against a retired design doc:526): neither ───
+// ── are PRESERVED, never treated as inputs. Test-review remediation: neither ───
 // ── B-32 nor B-33 nor F-5's isTaskRunWithId test existed anywhere. ──────────
 
 describe("akm task run <id> --target x — the retired flag is an unknown input, never a rename hint", () => {

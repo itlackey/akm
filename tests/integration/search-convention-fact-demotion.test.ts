@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * SPEC-6 (a retired design doc) — deterministic
+ * SPEC-6 — deterministic
  * MEASUREMENT + regression test for convention-fact crowding of domain-term
  * queries, plus the index-capture (document_json) round-trip for the fact
  * `category:` frontmatter key.

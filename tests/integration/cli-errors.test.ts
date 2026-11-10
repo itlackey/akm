@@ -180,8 +180,7 @@ describe("CLI error handling", () => {
   });
 });
 
-// P1a carried advisory, wired here per a retired design doc
-// §1.5 (binding choice: "the envelope tests extend
+// P1a carried advisory, wired here (binding choice: "the envelope tests extend
 // tests/integration/cli-errors.test.ts. No tasks-cli-envelope family exists
 // at head … and minting one for two cases would fragment the CLI-envelope
 // surface.") and §5.5. Both codes were declared and WIRED by P1a (D7,
@@ -193,8 +192,7 @@ describe("CLI envelope coverage for P1a's diagnostic codes (COMPOSITION_INVALID,
     const stash = makeStashDir();
     disposers.push(stash);
     fs.mkdirSync(path.join(stash.dir, "tasks"), { recursive: true });
-    // P4 (a retired design doc §3.2.2, row B-18/B-19,
-    // F-A2.35) retired the R-06 shape this fixture used to pin — task source
+    // P4 retired the R-06 shape this fixture used to pin — task source
     // v4 makes scheduling OPTIONAL, so "neither akm.schedule nor on:
     // declared" is no longer an error at all (D2-N6). `run:` and `uses:`
     // both present is task source v4's own "exactly one executable selector"
@@ -270,8 +268,7 @@ describe("CLI envelope coverage for P1a's diagnostic codes (COMPOSITION_INVALID,
   });
 });
 
-// P4 (a retired design doc §5.2, carried advisory R-R7):
-// investigated adding CLI-envelope + exit-2 coverage for TARGET_REF_INVALID
+// P4 investigated adding CLI-envelope + exit-2 coverage for TARGET_REF_INVALID
 // and TASK_TARGET_UNSUPPORTED — the two D7 codes with no test at this level
 // before P4's INVALID_FLAG_VALUE re-coding sweep — and found BOTH
 // unreachable through any real `akm` invocation, so no test is added for

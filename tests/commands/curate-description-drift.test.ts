@@ -3,8 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * #951 (item E, a retired design doc
- * Q-10): `akm curate` has no reranking step, and the command's own description
+ * #951: `akm curate` has no reranking step, and the command's own description
  * string must not claim one. Pin that, so the claim cannot silently drift back
  * in without a matching implementation.
  */

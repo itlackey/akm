@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * D4 (a retired design doc) — conceptId-prefix browse.
+ * D4 — conceptId-prefix browse.
  *
  * Subtree enumeration is spelled in the grammar refs are actually emitted in:
  * `akm search "memories/projecta/"`, not the retired `"memory:projecta/"`.

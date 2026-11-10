@@ -93,7 +93,7 @@ function cwdTarget(overrides: Record<string, unknown> = {}) {
 function commandPlan(options: { isolation?: "none" | "worktree"; target?: Record<string, unknown> } = {}) {
   const isolation = options.isolation ?? "none";
   const target = options.target ?? cwdTarget(isolation === "worktree" ? { gitCommitOid: "a".repeat(40) } : {});
-  // F-A9 (a retired design doc §6): mechanical value
+  // F-A9: mechanical value
   // bump only, no assertion below this fixture builder changes. This plan is
   // fed to decodeWorkflowPlan as `unknown`, so the literal here carries no
   // type-level consequence — it is red today only because the decoder still

@@ -3,8 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * P2b Lane B — `akm task explain <ref> [input flags]` (spec
- * a retired design doc §4.5, §1.7 B-N4, rows B-52..B-59).
+ * P2b Lane B — `akm task explain <ref> [input flags]`.
  *
  * A NEW, read-only verb: it never prepares an execution that spawns
  * anything, never writes history, never touches the scheduler. It prints
@@ -880,7 +879,7 @@ describe("akm task explain <ref> — secret-shaped VALUE redaction (Finding 1: e
   });
 });
 
-// P4 (a retired design doc §3.2, row B-57) DELETES this
+// P4 DELETES this
 // describe block, not flips it: task source v3 acceptance is retired from
 // `src` entirely, so "akm task explain resolves a genuine legacy-schema
 // (version:3) task" is no longer a claim any fixture can demonstrate — there

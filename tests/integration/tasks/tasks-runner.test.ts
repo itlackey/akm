@@ -539,7 +539,7 @@ describe("runTask — workflow target", () => {
   });
 
   test("threads declared maxSteps / maxRetries into the orchestrator", async () => {
-    // P4 (a retired design doc §3.2, row B-28) retired
+    // P4 retired
     // this test's v3 fixture along with task source v3 acceptance itself —
     // the `with:` -> child-run-params path it exercised on a
     // `uses: workflows/<ref>` target is now UNREACHABLE (task source v4
@@ -1328,8 +1328,7 @@ describe("runTask — prompt target", () => {
   });
 });
 
-// P4 (a retired design doc §3.2.7, row B-22, F-A2.17)
-// DELETED src/tasks/run/run-task.ts's shouldSkipUnactivatedTask call and the
+// P4 DELETED src/tasks/run/run-task.ts's shouldSkipUnactivatedTask call and the
 // helper itself, along with prepare-support.ts's source-owned `enabled`
 // derivation — task source v4 has no enablement field. Host-local
 // `scheduler.enabled` is checked both while reconciling bindings and when a

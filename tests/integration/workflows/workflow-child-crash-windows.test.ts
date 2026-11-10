@@ -3,8 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * MULTI-PROCESS crash-window resume for a CHILD-composing parent (spec
- * a retired design doc §5.2-§5.3, rows C-01…C-04). A real
+ * MULTI-PROCESS crash-window resume for a CHILD-composing parent. A real
  * `bun` driver is SIGKILLed at a precise durable window around child
  * publication/execution, and a fresh process converges the run exactly once —
  * the CHILD-level analogue of tests/integration/workflows/workflow-crash-windows.test.ts,
