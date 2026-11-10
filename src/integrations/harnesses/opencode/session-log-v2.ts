@@ -16,8 +16,7 @@
  * that role, a tool call becomes `[tool:<name>] <input>` and its outcome a
  * `tool` event `[tool_result] <output>`, so the inline-ref scanner sees shell
  * commands. The akm plugin's `akm_remember` and `akm_feedback` calls are inline refs
- * too, and its reading tools (`akm_search`, `akm_show`, `akm_curate`) are left out
- * as lookups. Reasoning, compaction, synthetic/system and bookkeeping messages
+ * too. Reasoning, compaction, synthetic/system and bookkeeping messages
  * are skipped.
  */
 
@@ -62,9 +61,6 @@ function structuredErrorText(err: unknown): string {
   if (typeof e?.message === "string") return e.message;
   return typeof e?.type === "string" ? e.type : "error";
 }
-
-/** The akm plugin's reading tools: lookups, not session content. */
-const AKM_READ_TOOLS = new Set(["akm_search", "akm_show", "akm_curate"]);
 
 /** What an akm plugin `akm_remember` / `akm_feedback` call saved, as the shell form's inline mention would say. */
 function akmToolMentions(name: string, input: Json | undefined, ts: number | undefined): InlineRefMention[] {
@@ -114,8 +110,6 @@ export function opencodeMessageEvents(
         if (tool?.type !== "tool") continue;
         const state = asObject(tool.state);
         const name = typeof tool.name === "string" ? tool.name : "tool";
-        // The akm plugin's reads are lookups, not session content; its writes are what the agent already saved.
-        if (AKM_READ_TOOLS.has(name)) continue;
         const toolTime = asObject(tool.time);
         const callTs = asNumber(toolTime?.created) ?? ts;
         push("assistant", `[tool:${name}] ${toolInputText(state?.input)}`, callTs);

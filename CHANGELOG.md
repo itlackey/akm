@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- OpenCode session extraction (`akm proposal extract`, the improve extract process) now recognises the akm plugin's tools as well as the shell commands. An `akm_remember` or `akm_feedback` call is recorded as already saved, with the content, ref and note it was given and the call's time, so the extractor does not propose it again, and `akm_search`, `akm_show` and `akm_curate` calls and their results are left out of the session content as the lookups they are. The shell forms `akm remember "…"` and `akm feedback <ref> --note "…"` are read as before (#1577).
+- OpenCode session extraction (`akm proposal extract`, the improve extract process) now recognises the akm plugin's tools as well as the shell commands. An `akm_remember` or `akm_feedback` call is recorded as already saved, with the content, ref and note it was given and the call's time, so the extractor does not propose it again, and `akm_search`, `akm_show` and `akm_curate` calls are dropped from the extraction input as lookups, as `akm search` and `akm show` already were. The shell forms `akm remember "…"` and `akm feedback <ref> --note "…"` are read as before (#1577).
 
 ## [0.10.261116] - 2026-11-09
 

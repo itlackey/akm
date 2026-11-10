@@ -909,10 +909,16 @@ describe("OpenCode 2 messages with the akm plugin's tools (#1577)", () => {
     ]);
   });
 
-  test("akm_search, akm_show and akm_curate calls and their results are not session content", () => {
+  test("every tool call stays an event, in order; the lookups are the pre-filter's to drop", () => {
     expect(read().events.map((e) => [e.role, e.text])).toEqual([
       ["user", "Check what we know about the deploy pipeline, then note the cert thing."],
       ["assistant", "Checking akm first."],
+      ["assistant", '[tool:akm_search] {"query":"deploy pipeline"}'],
+      ["tool", "[tool_result] knowledge/deploy — Deploy pipeline"],
+      ["assistant", '[tool:akm_curate] {"query":"deploy pipeline"}'],
+      ["tool", "[tool_result] knowledge/deploy"],
+      ["assistant", '[tool:akm_show] {"ref":"knowledge/deploy"}'],
+      ["tool", "[tool_result] # Deploy pipeline\nRollback: ..."],
       ["assistant", '[tool:akm_remember] {"content":"Staging deploys need the corp VPN cert"}'],
       ["tool", "[tool_result] Saved memory/staging-deploys-need-the-corp-vpn-cert"],
       ["assistant", '[tool:akm_feedback] {"ref":"knowledge/deploy","note":"the rollback section is current"}'],
