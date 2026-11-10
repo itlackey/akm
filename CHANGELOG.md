@@ -47,6 +47,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - AKM Desktop: a proposal's diff is announced as one region ("Current compared with Proposed") instead of three nested ones, and the inline diff, which no longer scrolls sideways, is no longer a Tab stop of its own. The two panes of the side-by-side diff are named groups.
 - AKM Desktop: on Improve impact, "Decisions by week" is drawn again when Process changes. The table followed the choice, but the chart kept showing the first process.
 - AKM Desktop: **Stable and prerelease releases** offers the highest version published, as npm's `next` does, instead of the first release in GitHub's release feed, which is ordered by publish date. With two release lines open, a 0.10 release published after a 0.11 prerelease made a 0.11 prerelease build say it was up to date while a newer 0.11 prerelease existed. rc releases, which this line never offered, are offered like the other prereleases. **Stable releases** follows GitHub's Latest release, and a stable release of an older line published after a newer line's no longer takes Latest.
+- AKM Desktop: opening a folder in Files shows "Loading folder…" until its listing answers. For an instant it drew the folder with no rows and "This folder is empty.", then the loading line, then the rows.
 
 ## [0.10.261116] - 2026-11-09
 

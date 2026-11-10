@@ -121,7 +121,7 @@ test("workspace pages, panels and menus fit the shortest windows", { timeout: 18
   const longRef = encodeURIComponent(`personal//knowledge/${longName}`);
 
   // The page must not scroll while its panes do: one scroll owner at the native minimum (and below). Files is ready
-  // when its rows are: it draws the folder once, empty, before it asks for the listing, and then draws it again.
+  // when its rows are.
   for (const [route, ready] of [
     ["/library/files?bundle=personal&path=knowledge", ".folder-table tbody tr"],
     [`/library/edit?ref=${longRef}`, 'textarea[name="content"]'],

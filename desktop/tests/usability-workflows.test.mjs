@@ -3,7 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
+import path from "node:path";
 import test from "node:test";
 import AxeBuilder from "@axe-core/playwright";
 import { chromium, expect } from "@playwright/test";
@@ -306,6 +307,39 @@ test("reviewed human workflows prevent dead ends and preserve focus and source",
     await page.keyboard.press("Escape");
     await expect(drawer, "Escape closes the folder drawer").not.toHaveClass(/tree-open/);
     await expect(folders, "Escape hands focus back to Folders").toBeFocused();
+  });
+  await t.test("opening a folder draws its loading state until the listing answers, never an empty table", async () => {
+    await mkdir(path.join(app.root, "personal/knowledge/empty-folder"));
+    await page.goto(`${app.origin}/library/files?bundle=personal&path=knowledge`);
+    const opened = page.locator(".folder-table").getByRole("button", { name: "empty-folder", exact: true });
+    await expect(opened).toBeVisible();
+    // Every state of the page while the folder opens: whether the opened folder's table is drawn, and what it says.
+    await page.evaluate(() => {
+      window.folderStates = [];
+      new MutationObserver(() => {
+        const section = document.querySelector(".folder-content");
+        if (section?.querySelector("h1")?.textContent === "empty-folder" && section.querySelector(".folder-table"))
+          window.folderStates.push(section.textContent.replace(/\s+/g, " ").trim());
+      }).observe(document.body, { childList: true, subtree: true, characterData: true });
+    });
+    let answer = () => {};
+    const held = new Promise((resolve) => {
+      answer = resolve;
+    });
+    await page.route("**/api/bundles/files?*", async (route) => {
+      await held;
+      await route.continue();
+    });
+    await opened.click();
+    await expect(page.getByRole("status").filter({ hasText: "Loading folder…" })).toBeVisible();
+    assert.deepEqual(
+      await page.evaluate(() => window.folderStates),
+      [],
+      "the opened folder's table is not drawn before its listing answers",
+    );
+    answer();
+    await expect(page.locator(".folder-content").getByText("This folder is empty.", { exact: true })).toBeVisible();
+    await page.unroute("**/api/bundles/files?*");
   });
   await t.test("phone overlays pass axe while open", async () => {
     const violations = [];
