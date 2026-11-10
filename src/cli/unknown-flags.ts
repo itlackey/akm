@@ -140,7 +140,8 @@ function collectKnownArgs(root: FlagScanCommand, rawArgs: readonly string[]): Kn
  * Flags removed in 0.10 and 0.11, checked before edit distance so
  * the hint names the real replacement (`--shape` is not a typo of `--type`).
  * The 0.10 replacements are in the "Gone / Use" table of
- * `docs/migration/v0.9-to-v0.10.md`; the 0.11 ones are in CHANGELOG.md.
+ * `docs/migration/v0.9-to-v0.10.md`; the 0.11 ones are in the "Removed flags and commands"
+ * table of `docs/migration/v0.10-to-v0.11.md`.
  * `commands` limits an entry to those command paths; absent means every command.
  */
 const GONE_FLAGS: ReadonlyArray<{ flag: string; use: string; commands?: readonly string[] }> = [

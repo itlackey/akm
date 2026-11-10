@@ -12,7 +12,8 @@ also has its own README indexing everything inside it: [Guides](guides/README.md
 - [Getting Started](guides/getting-started.md) -- Install akm, connect a source, and pull a curated shortlist
 - [Concepts](guides/concepts.md) -- Capabilities, bundles, adapters, and refs: the mental model in one page
 - [Agent Install Guide](agents/agent-install.md) -- Automated, non-interactive install for agents
-- [Upgrade from 0.9 to 0.10](migration/v0.9-to-v0.10.md) -- The current upgrade path: the order to follow, every removed CLI spelling, config key and workflow feature with its replacement, and what a scheduled `akm improve` now does
+- [Upgrade from 0.10 to 0.11](migration/v0.10-to-v0.11.md) -- The current upgrade path: the order to follow, the retired location variables and the working bundle, every removed flag and command, the output and scheduler changes, and the new error codes
+- [Upgrade from 0.9 to 0.10](migration/v0.9-to-v0.10.md) -- The 0.10 changes: every removed CLI spelling, config key and workflow feature with its replacement, and what a scheduled `akm improve` now does
 - `akm hints` -- The CLI guide agents load (the short guide; `akm help <command>` for one command)
 
 ## Use
@@ -52,7 +53,7 @@ also has its own README indexing everything inside it: [Guides](guides/README.md
 
 ## Migration
 
-- [Migration](migration/README.md) -- The 0.9 to 0.10 upgrade guide
+- [Migration](migration/README.md) -- The 0.10 to 0.11 and 0.9 to 0.10 upgrade guides
 
 ## Official Ecosystem Repositories
 
