@@ -5,7 +5,7 @@
 -->
 
 <script lang="ts">
-  import { onMount, onDestroy, tick } from "svelte";
+  import { onDestroy, tick, untrack } from "svelte";
   import { api, date } from "./client";
   import { navigate } from "./navigation";
   import ActivityOverview from "./ActivityOverview.svelte";
@@ -19,32 +19,38 @@
     ActivityHealth,
   } from "./activity-types";
   import type { Commit } from "./types";
-  export let route = "overview";
-  export let query = new URLSearchParams();
-  let overview: Overview | null = null,
-    impact: Impact | null = null,
-    retrieval: Retrieval | null = null,
-    pulse: Pulse | null = null,
-    impactProcess = "";
-  $: if (route === "improve" && query.has("process")) impactProcess = query.get("process") ?? "";
-  let changes: { bundle: string; path: string; git: boolean; commits: Array<Commit & { shortSha?: string }> } | null =
-    null;
-  let misses: {
+  let { route = "overview", query = new URLSearchParams() }: { route?: string; query?: URLSearchParams } = $props();
+  let overview = $state<Overview | null>(null),
+    impact = $state<Impact | null>(null),
+    retrieval = $state<Retrieval | null>(null),
+    pulse = $state<Pulse | null>(null),
+    impactProcess = $state("");
+  // A latch, not a derivation: the process the address last named stays selected when a later address names none.
+  $effect.pre(() => {
+    if (route === "improve" && query.has("process")) impactProcess = query.get("process") ?? "";
+  });
+  let changes = $state<{
+    bundle: string;
+    path: string;
+    git: boolean;
+    commits: Array<Commit & { shortSha?: string }>;
+  } | null>(null);
+  let misses = $state<{
     searches: number;
     foundNothing: number;
     misses: Array<{ query: string; count: number; days: number; lastAt: string }>;
-  } | null = null;
-  let mounted = false,
-    loaded = "",
-    loading = false,
-    error = "",
+  } | null>(null);
+  // Plain, not state: the key of the view that was last asked for.
+  let loaded = "";
+  let loading = $state(false),
+    error = $state(""),
     generation = 0,
-    probed = false,
-    refreshedAt = "",
-    probedAt = "",
-    historyFilter = "",
-    historyOrigin = "";
-  $: view =
+    probed = $state(false),
+    refreshedAt = $state(""),
+    probedAt = $state(""),
+    historyFilter = $state(""),
+    historyOrigin = $state("");
+  const view = $derived(
     route === "improve"
       ? "Improve impact"
       : route === "history"
@@ -53,25 +59,34 @@
           ? "Runs"
           : ["retrieval", "usage", "misses"].includes(query.get("view") ?? "")
             ? "Usage & retrieval"
-            : "Health";
-  $: window = query.get("window") === "7d" ? "7d" : query.get("window") === "90d" ? "90d" : "30d";
-  $: since = query.get("since") === "365d" ? "365d" : "90d";
+            : "Health",
+  );
+  const window = $derived(query.get("window") === "7d" ? "7d" : query.get("window") === "90d" ? "90d" : "30d");
+  const since = $derived(query.get("since") === "365d" ? "365d" : "90d");
   // In-page evidence links must not discard chart/run drill state or reload measurements.
-  $: key = `${route}|${view}|${window}|${since}|${route === "history" ? query.toString() : ""}`;
-  $: if (mounted && key !== loaded) {
+  const key = $derived(`${route}|${view}|${window}|${since}|${route === "history" ? query.toString() : ""}`);
+  // Load when the view, its window or (for history) its filters change: before the page updates, so the new view is
+  // never drawn with the measurements of the one before.
+  $effect.pre(() => {
+    if (key === loaded) return;
     loaded = key;
-    void load();
-  }
-  $: if (mounted && !loading) void revealAnchor(query.get("anchor"));
-  $: filteredCommits = (changes?.commits ?? []).filter(
-    (commit) =>
-      (!historyOrigin || commit.origin === historyOrigin) &&
-      (!historyFilter.trim() ||
-        [commit.subject, commit.author, commit.sha, commit.origin, ...(commit.paths ?? [])].some((value) =>
-          String(value ?? "")
-            .toLowerCase()
-            .includes(historyFilter.trim().toLowerCase()),
-        )),
+    untrack(() => void load());
+  });
+  // An anchor in the address is opened, focused and scrolled to once its view is on screen.
+  $effect(() => {
+    if (!loading) void revealAnchor(query.get("anchor"));
+  });
+  const filteredCommits = $derived(
+    (changes?.commits ?? []).filter(
+      (commit) =>
+        (!historyOrigin || commit.origin === historyOrigin) &&
+        (!historyFilter.trim() ||
+          [commit.subject, commit.author, commit.sha, commit.origin, ...(commit.paths ?? [])].some((value) =>
+            String(value ?? "")
+              .toLowerCase()
+              .includes(historyFilter.trim().toLowerCase()),
+          )),
+    ),
   );
   const views = [
     { name: "Health", path: "/activity/overview" },
@@ -174,9 +189,6 @@
     if (historyOrigin) params.set("origin", historyOrigin);
     void navigate(`/activity/history${params.size ? `?${params}` : ""}`);
   }
-  onMount(() => {
-    mounted = true;
-  });
   onDestroy(() => {
     generation++;
   });
@@ -204,19 +216,19 @@
     {#if view !== "Source history" && view !== "Health"}<label
         >{route === "improve" ? "Impact window" : "Trend window"}<select
           value={route === "improve" ? since : window}
-          on:change={(event) => changeWindow(event.currentTarget.value)}
+          onchange={(event) => changeWindow(event.currentTarget.value)}
           >{#if route === "improve"}<option value="90d">90 days</option><option value="365d">1 year</option
             >{:else}<option value="7d">7 days</option><option value="30d">30 days</option><option value="90d"
               >90 days</option
             >{/if}</select
         ></label
-      >{/if}<button class="btn-quiet" on:click={load} disabled={loading}
+      >{/if}<button class="btn-quiet" onclick={load} disabled={loading}
       ><Icon name="refresh" size={16} /> Refresh activity</button
     >
   </div>
 </div>
 {#if error}<div class="notice notice-warn" role="alert">
-    {error}<button class="btn-secondary" on:click={load}>Retry activity</button>
+    {error}<button class="btn-secondary" onclick={load}>Retry activity</button>
   </div>{/if}
 {#if loading}<p role="status">
     Loading {view.toLowerCase()}…
@@ -252,7 +264,10 @@
       class="history-filter"
       role="search"
       aria-label="Filter commits"
-      on:submit|preventDefault={filterHistory}
+      onsubmit={(event) => {
+        event.preventDefault();
+        filterHistory();
+      }}
     >
       <label>Subject, author or path<input type="search" bind:value={historyFilter} /></label><label
         >Made by<select bind:value={historyOrigin}
