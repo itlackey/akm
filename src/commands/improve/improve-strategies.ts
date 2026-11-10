@@ -51,7 +51,7 @@ export function resolveProcessEnabled(
 }
 
 export function shouldSkipRef(
-  { ref, type }: Pick<ImproveEligibleRef, "ref" | "type">,
+  { type }: Pick<ImproveEligibleRef, "ref" | "type">,
   processName: "reflect" | "distill" | "consolidate",
   strategy: ImproveProfileConfig,
 ): { skip: boolean; reason: string } {

@@ -567,7 +567,7 @@ export async function runMemoryInferenceMaintenancePass(
   action?: ImproveActionResult;
   warnings: string[];
 }> {
-  const { config, sources, primaryStashDir, resolvedPlan } = ctx;
+  const { config, sources, resolvedPlan } = ctx;
   const settings = ctx.improveProfile?.processes?.memoryInference;
   if (settings?.enabled === false) {
     info("[improve] memory inference skipped (disabled by improve profile)");

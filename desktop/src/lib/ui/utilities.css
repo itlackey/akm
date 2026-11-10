@@ -40,10 +40,6 @@
     color: var(--ok);
   }
 
-  .text-warn {
-    color: var(--warn);
-  }
-
   .text-fail {
     color: var(--fail);
   }

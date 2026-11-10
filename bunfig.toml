@@ -8,8 +8,8 @@
 preload = ["./tests/_preload.ts"]
 # Raise the per-test timeout from the 5 s default. NOTE: bun 1.3.14 does NOT
 # honor this key (verified 2026-07-02: a 7s test dies at 5s with this set), so
-# every `bun test` invocation in scripts/package.json ALSO passes
-# --timeout=30000 — keep the flag when adding new invocations. Several tests make
+# every `bun test` invocation in scripts/test-*.sh ALSO passes
+# --timeout=120000 — keep a --timeout flag when adding new invocations. Several tests make
 # localhost HTTP connections that take 2–4 s to fail gracefully, and
 # under parallel load that can exceed 5 s and produce spurious failures.
 timeout = 30000

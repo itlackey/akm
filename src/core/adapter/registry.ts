@@ -10,10 +10,7 @@
  * (`./adapters`) and this module exposes read-only lookups over it. There is NO
  * mutable registration step and NO load-order dependency — `getAdapters()` and
  * `adapterForId()` are populated at MODULE LOAD, so every production call site
- * sees the full set without anyone first calling a registration function. This
- * replaces the earlier mutable module-level singleton, whose "someone must
- * register the built-ins first" contract left the registry empty in production
- * (every source then fell back to `akm`).
+ * sees the full set without anyone first calling a registration function.
  *
  * PRODUCTION CONSUMERS (all install/index-time, never query-time): the ordered
  * `looksLikeRoot` probe in `installations.ts#detectAdapterId`, and the

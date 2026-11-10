@@ -4,8 +4,7 @@
 
 /**
  * The PreparedTask* type family. Pure types only; prepare.ts
- * (prepareTaskExecution) and prepare-script-target.ts build values of
- * these shapes.
+ * (prepareTaskExecution) builds values of these shapes.
  */
 
 import type {
@@ -14,7 +13,7 @@ import type {
   prepareCommandInvocation,
 } from "../../commands/command/command-execution";
 import type { AkmConfig } from "../../core/config/config-types";
-import type { PreparableTaskDocument, TaskHostShell } from "../task-source";
+import type { TaskHostShell } from "../task-source";
 
 export type TaskScriptInterpreter =
   | "sh"

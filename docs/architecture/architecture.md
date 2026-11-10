@@ -109,13 +109,13 @@ The `akm` adapter's fourteen built-in asset types (`skill`, `command`,
 `lesson`, `fact`, `env`, `secret`, `task`, `session`) each map to a
 canonical source directory through `src/core/asset/asset-placement.ts`'s
 `PLACEMENT_SPECS` map. See
-[Bundle Types](../reference/bundle-types.md) for the full table.
+[Asset Types](../reference/asset-types.md#directory-layout) for the full table.
 
 `env` holds whole `.env` files and `secret` holds single-value secret files.
 `wiki` is not an item type: multi-page wikis are a bundle *format* owned by the
 `llm-wiki` adapter, not a per-file type stamped by the classifier (see
 [Classification](internals/classification.md) and
-[Bundle Types](../reference/bundle-types.md) for the ten other formats akm
+[Supported Formats](../reference/supported-formats.md) for the ten other formats akm
 recognizes besides its own native one).
 
 ---

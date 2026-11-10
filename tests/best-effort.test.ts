@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { bestEffort, bestEffortAsync } from "../src/core/best-effort";
+import { bestEffort } from "../src/core/best-effort";
 import { isQuiet, resetVerbose, setQuiet, setVerbose } from "../src/core/warn";
 
 describe("bestEffort (sync)", () => {
@@ -53,33 +53,5 @@ describe("bestEffort (sync)", () => {
     expect(firstArg).toContain("verbose-visible");
     warnSpy.mockRestore();
     setQuiet(prevQuiet);
-  });
-});
-
-describe("bestEffortAsync", () => {
-  afterEach(() => {
-    resetVerbose();
-  });
-
-  test("resolves the value when fn succeeds", async () => {
-    expect(await bestEffortAsync(async () => "ok")).toBe("ok");
-  });
-
-  test("swallows a rejection and resolves to undefined", async () => {
-    expect(
-      await bestEffortAsync(async () => {
-        throw new Error("boom");
-      }),
-    ).toBeUndefined();
-  });
-
-  test("emits NOTHING at default verbosity", async () => {
-    resetVerbose();
-    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
-    await bestEffortAsync(async () => {
-      throw new Error("boom");
-    }, "async-default");
-    expect(warnSpy).not.toHaveBeenCalled();
-    warnSpy.mockRestore();
   });
 });

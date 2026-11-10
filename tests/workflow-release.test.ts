@@ -64,16 +64,15 @@ describe("release workflow", () => {
     expect(source).toContain("gh release create");
   });
 
-  test("a stable publishes the version committed in package.json; a prerelease the release branch's version", () => {
+  test("both publish package.json's version; a prerelease only from a release branch", () => {
     expect(resolve?.run).toContain(`VERSION_INPUT="$(node -p "require('./package.json').version")"`);
-    expect(resolve?.run).toContain(`release/*) VERSION_INPUT="$` + `{GITHUB_REF_NAME#release/}" ;;`);
-    // A dispatch anywhere but a release branch publishes nothing.
+    expect(resolve?.run).toContain("push:*|workflow_dispatch:release/*");
     expect(resolve?.run).toContain("A prerelease is dispatched on a release branch");
     expect(source).not.toContain("inputs.version");
     expect(source).not.toContain("npm version");
   });
 
-  test("validates the version format and appends the stage through scripts/release-version.ts (#1089)", () => {
+  test("scripts/release-version.ts validates the version and appends the stage", () => {
     // A push carries no inputs, so a stable release resolves with an empty stage.
     expect(source).toContain(`STAGE_INPUT: ${STAGE_INPUT}`);
     expect(source).toContain("bun scripts/release-version.ts resolve");
@@ -95,15 +94,13 @@ describe("release workflow", () => {
     expect(source).toContain("DIST_TAG: $" + "{{ needs.release.outputs.dist_tag }}");
   });
 
-  test("the changelog is cut: its newest released section names the shipping version", () => {
-    // The release-cut step nothing else enforces. `release.yml` publishes the
-    // committed package.json version, and the test above pins that — but
-    // nothing checks the CHANGELOG was cut alongside it. CI runs it on the
-    // release commit: on the release pull request for a stable, and as the
-    // Release workflow's own `ci` job for a prerelease.
+  test("a release's changelog is cut: its newest released section names a bare package.json version", () => {
+    // The release-cut step nothing else enforces; CI runs it on the release pull request.
     const root = path.resolve(import.meta.dir, "..");
     const version = (JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as { version: string })
       .version;
+    // A release in progress (0.11.0-beta.0) has not cut its changelog yet.
+    if (version.includes("-")) return;
     const changelog = fs.readFileSync(path.join(root, "CHANGELOG.md"), "utf8");
     const newestReleased = [...changelog.matchAll(/^## \[([^\]]+)\]/gm)]
       .map((match) => match[1])

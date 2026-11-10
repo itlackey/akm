@@ -337,14 +337,3 @@ export function findSafeInsertionPoint(lines: string[], proposedLineNumber: numb
   // Defensive fallback — should be unreachable given the guard above.
   return Math.min(target, lines.length);
 }
-
-/**
- * Convenience wrapper that operates on a raw string (splits on `\r?\n` and
- * accepts 0-based line numbers). Returns the adjusted 0-based line.
- *
- * Useful when a caller has the markdown as a single string and only wants
- * to know "where can I safely splice in N more lines?"
- */
-export function findSafeInsertionPointInText(content: string, proposedLineNumber: number): number {
-  return findSafeInsertionPoint(content.split(/\r?\n/), proposedLineNumber);
-}

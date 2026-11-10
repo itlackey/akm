@@ -8,7 +8,6 @@ import {
   mutateFrontmatter,
   parseFrontmatter,
   parseFrontmatterBlock,
-  parseYamlScalar,
   readFrontmatterDate,
 } from "../src/core/asset/frontmatter";
 import { checkUnquotedDescriptionColon } from "../src/core/asset/frontmatter-lint";
@@ -289,40 +288,6 @@ describe("mutateFrontmatter", () => {
       /malformed YAML frontmatter/i,
     );
     expect(fs.readFileSync(filePath, "utf8")).toBe(original);
-  });
-});
-
-// ── parseYamlScalar ─────────────────────────────────────────────────────────
-
-describe("parseYamlScalar", () => {
-  test("returns empty string for empty input", () => {
-    expect(parseYamlScalar("")).toBe("");
-  });
-
-  test("returns boolean for true/false", () => {
-    expect(parseYamlScalar("true")).toBe(true);
-    expect(parseYamlScalar("false")).toBe(false);
-  });
-
-  test("returns number for numeric strings", () => {
-    expect(parseYamlScalar("42")).toBe(42);
-    expect(parseYamlScalar("3.14")).toBe(3.14);
-    expect(parseYamlScalar("0")).toBe(0);
-    expect(parseYamlScalar("-1")).toBe(-1);
-  });
-
-  test("strips quotes from quoted strings", () => {
-    expect(parseYamlScalar('"hello"')).toBe("hello");
-    expect(parseYamlScalar("'world'")).toBe("world");
-  });
-
-  test("returns plain string for unquoted non-boolean non-numeric", () => {
-    expect(parseYamlScalar("hello")).toBe("hello");
-    expect(parseYamlScalar("some-value")).toBe("some-value");
-  });
-
-  test("does not strip mismatched quotes", () => {
-    expect(parseYamlScalar("\"hello'")).toBe("\"hello'");
   });
 });
 

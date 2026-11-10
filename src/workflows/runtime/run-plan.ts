@@ -18,7 +18,6 @@
  */
 
 import { UsageError } from "../../core/errors";
-import { warnOnce } from "../../core/warn";
 import type { TaskInputBinding } from "../../execution/input-contract";
 import { decodeResolvedExecutionRequest, type ResolvedExecutionRequestV1 } from "../../execution/resolved-request";
 import { decodeFrozenRunnerSpec, type RunnerSpec } from "../../integrations/agent/runner";
