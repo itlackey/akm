@@ -346,7 +346,8 @@ test("keyboard order, focus hand-back and names at the shortest windows", { time
   assert.ok(card.length >= 4, `the add-bundle form has its controls in the tab order (${card.length})`);
   assert.deepEqual(out(card, "clipped"), [], "Settings: no focus ring is cut in the add-bundle form");
 
-  // axe at the native minimum, on the pages this window changed and with each overlay open.
+  // axe at the native minimum, on the pages this window changed and with each overlay open. Software is left to
+  // software-ui.test.mjs: the page runs the host's own tools, which can outlive this test and write into its fixture.
   const violations = [];
   const audit = async (state) => {
     const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze();
@@ -360,7 +361,6 @@ test("keyboard order, focus hand-back and names at the shortest windows", { time
     ["activity runs", "/activity/overview?view=runs", ".activity-tabs"],
     ["activity improve", "/activity/improve", ".impact-links"],
     ["settings bundles", "/settings/bundles", "#configured-bundles"],
-    ["settings software", "/settings/software", ".software"],
   ]) {
     await open(route, ready);
     await audit(state);
