@@ -168,11 +168,11 @@
           )}
         onSelect={inspectMark}
       >
-        <label slot="controls" class="process-control"
-          >Process<select value={activeProcess} onchange={(event) => changeProcess(event.currentTarget.value)}
-            >{#each availableProcesses as process}<option value={process}>{process}</option>{/each}</select
-          ></label
-        >
+        {#snippet controls()}<label class="process-control"
+            >Process<select value={activeProcess} onchange={(event) => changeProcess(event.currentTarget.value)}
+              >{#each availableProcesses as process}<option value={process}>{process}</option>{/each}</select
+            ></label
+          >{/snippet}
         <table>
           <caption>Weekly decisions for the selected process</caption><thead
             ><tr
