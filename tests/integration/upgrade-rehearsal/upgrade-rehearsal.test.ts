@@ -235,6 +235,23 @@ for (const origin of ["previous", "0.9.32"] as const) {
     });
 
     test("3. candidate migrate apply succeeds, removes experimental.workflowEngine, and status then reports current", async () => {
+      // What the origin wrote under the loose file's old spelling (`knowledge/reports/<name>`), read before the
+      // migration: a release that already spells the ref by path leaves nothing to re-key.
+      const seeded = findFile(home.env.XDG_DATA_HOME ?? "", "state.db");
+      expect(seeded).toBeDefined();
+      const seededDb = openDatabase(seeded as string, { readonly: true });
+      let oldSpellingRows: number;
+      try {
+        const row = seededDb
+          .prepare("SELECT COUNT(*) AS n FROM usage_events WHERE entry_ref LIKE ?")
+          .get(`%knowledge/reports/${home.looseName}`) as { n: number };
+        oldSpellingRows = row.n;
+      } finally {
+        seededDb.close();
+      }
+      // The 0.9 origin spells it the old way, so the re-key must be proven there.
+      if (origin === "0.9.32") expect(oldSpellingRows).toBeGreaterThanOrEqual(1);
+
       const apply = await runLauncher(candidateLauncher, ["migrate", "apply"], home.env);
       expect(apply.status, apply.stderr).toBe(0);
       applied = JSON.parse(apply.stdout) as typeof applied & {
@@ -243,7 +260,11 @@ for (const origin of ["previous", "0.9.32"] as const) {
 
       // The feedback the previous release recorded under the loose file's old spelling (`knowledge/reports/<name>`)
       // is re-keyed by this step, not by the index.
-      expect(applied.assetContentRefs?.stateRows).toBeGreaterThanOrEqual(1);
+      // `stateRows` also counts rows in other state tables, so it is at least the usage rows seen before, and
+      // zero when the origin wrote none in the old spelling.
+      const stateRows = applied.assetContentRefs?.stateRows ?? 0;
+      if (oldSpellingRows === 0) expect(stateRows).toBe(0);
+      else expect(stateRows).toBeGreaterThanOrEqual(oldSpellingRows);
 
       // `migrate apply` also runs `task sync`: the one entry replaces every row of the previous release, in the
       // crontab write that installs it, so nothing fires twice.
