@@ -5,7 +5,7 @@
 -->
 
 <script lang="ts">
-  import { akmPlatform, learningRuns, type AgentCard, type Detected, type LearnPlan } from "./setup-model";
+  import { learningRuns, type AgentCard, type Detected, type LearnPlan } from "./setup-model";
 
   let {
     detected,
@@ -68,12 +68,7 @@
       </p>
       {#each allowed as card (card.id)}
         <label class="check-label">
-          <input
-            type="radio"
-            name="learn-where"
-            checked={plan.where === akmPlatform(card.id)}
-            onchange={() => (where = akmPlatform(card.id))}
-          />
+          <input type="radio" name="learn-where" checked={plan.where === card.id} onchange={() => (where = card.id)} />
           {card.name}
         </label>
         <p class="field-hint">

@@ -7,12 +7,15 @@ import test from "node:test";
 import {
   agentCards,
   checkPrompt,
+  harnessLabel,
   hasStarter,
+  installedChannel,
   isUnconfigured,
   learningRuns,
   learnPlan,
   learnReceipt,
   pluginChannel,
+  pluginLine,
   pluginMatches,
   searchCount,
 } from "../src/lib/setup-model.ts";
@@ -21,6 +24,9 @@ test("plugins follow Desktop's release stage and match on akm's major and minor"
   assert.equal(pluginChannel("0.10.261105"), "latest");
   assert.equal(pluginChannel("0.10.261105-beta"), "next");
   assert.equal(pluginChannel(undefined), "latest");
+  // A saved choice wins over the stage (F14).
+  assert.equal(pluginChannel("0.10.261105", "next"), "next");
+  assert.equal(pluginChannel("0.10.261105-beta", "latest"), "latest");
   assert.equal(pluginMatches("0.10.261105", "0.10.261020"), true);
   assert.equal(pluginMatches("0.10.261105-beta", "0.10.261020"), true);
   assert.equal(pluginMatches("0.10.261105", "0.9.15"), false);
@@ -55,7 +61,6 @@ test("one card per harness found, with the plugin's version, the Bun gate and ak
       { id: "claude", installed: true, runnable: true, version: "2.1.0", plugin: { state: "missing" } },
       { id: "codex", installed: true, runnable: true, plugin: { state: "installed", version: "0.9.1" } },
       { id: "opencode", installed: true, runnable: true, plugin: { state: "configured", spec: "akm-opencode@next" } },
-      { id: "opencode2", installed: false },
     ]),
     "0.10.261105",
     {
@@ -98,6 +103,61 @@ test("one card per harness found, with the plugin's version, the Bun gate and ak
   );
   assert.deepEqual(cards[1].plugin, { text: "AKM plugin 0.9.1", mismatch: true });
   assert.deepEqual(cards[2].plugin, { text: "AKM plugin akm-opencode@next", mismatch: false });
+  assert.deepEqual(
+    cards.map((card) => card.name),
+    ["Claude Code", "Codex", "OpenCode"],
+  );
+});
+
+test("OpenCode 2 is the same program told apart by its major, and the plugin rows read as sentences (F2, F14, F18)", () => {
+  assert.equal(harnessLabel({ id: "opencode", major: 2 }), "OpenCode 2");
+  assert.equal(harnessLabel({ id: "opencode", major: 1 }), "OpenCode");
+  assert.equal(harnessLabel({ id: "codex" }), "Codex");
+  assert.equal(pluginLine({ id: "opencode", installed: false }), "Harness not found");
+  assert.equal(pluginLine({ id: "claude", installed: true, runnable: false }), "Harness could not start");
+  assert.equal(pluginLine({ id: "claude", installed: true, runnable: true }), "AKM plugin not checked");
+  assert.equal(
+    pluginLine({
+      id: "claude",
+      installed: true,
+      runnable: true,
+      plugin: { state: "installed", version: "0.10.261118" },
+    }),
+    "AKM plugin 0.10.261118 installed",
+  );
+  assert.equal(
+    pluginLine({
+      id: "claude",
+      installed: true,
+      runnable: true,
+      plugin: { state: "disabled", version: "0.10.261118" },
+    }),
+    "AKM plugin 0.10.261118 installed but turned off in the harness",
+  );
+  assert.equal(
+    pluginLine({
+      id: "opencode",
+      installed: true,
+      runnable: true,
+      plugin: { state: "configured", spec: "akm-opencode@next" },
+    }),
+    "AKM plugin akm-opencode@next configured; OpenCode installs it when it starts",
+  );
+  assert.equal(
+    pluginLine({ id: "codex", installed: true, runnable: true, plugin: { state: "unknown" } }),
+    "AKM plugin could not be verified",
+  );
+  const plugins = [
+    { harness: "claude-code", channel: "next" },
+    { harness: "codex", channel: "latest" },
+    { harness: "opencode", channel: "pinned" },
+    { harness: "opencode-v2", channel: "unknown" },
+  ];
+  assert.equal(installedChannel({ id: "claude", installed: true }, plugins), "Prerelease channel");
+  assert.equal(installedChannel({ id: "codex", installed: true }, plugins), "Stable channel");
+  assert.equal(installedChannel({ id: "opencode", installed: true, major: 1 }, plugins), "Pinned to a version");
+  assert.equal(installedChannel({ id: "opencode", installed: true, major: 2 }, plugins), undefined);
+  assert.equal(installedChannel({ id: "claude", installed: true }, undefined), undefined);
 });
 
 test("a plugin that is turned off, or that the harness cannot report, is not offered an install", () => {
@@ -121,7 +181,7 @@ test("a plugin that is turned off, or that the harness cannot report, is not off
 test("each harness gets a prompt for its own surface, and searches are counted across days", () => {
   assert.equal(checkPrompt("claude", "deploy"), "/akm-search deploy");
   assert.match(checkPrompt("codex", "deploy"), /akm skill/);
-  assert.match(checkPrompt("opencode2", "deploy"), /akm_search tool/);
+  assert.match(checkPrompt("opencode", "deploy"), /akm_search tool/);
   assert.equal(searchCount({ daily: [{ searches: 2 }, { searches: 3 }] }), 5);
   assert.equal(searchCount(null), 0);
 });

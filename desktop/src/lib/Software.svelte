@@ -8,19 +8,25 @@
   import { onMount } from "svelte";
   import { classifyEngineSkew, hostUpgradeOutrunsDesktop } from "./engine-skew";
   import Icon from "./Icon.svelte";
-  import { harnessNames as names } from "./setup-model";
-  import { actSoftware as act, software, watchSoftware } from "./state/software.svelte";
+  import { harnessLabel, installedChannel, pluginChannel, pluginLine } from "./setup-model";
+  import { actSoftware as act, savePreference, software, watchSoftware } from "./state/software.svelte";
   const releases = "https://github.com/itlackey/akm/releases";
   const data = $derived(software.data),
     error = $derived(software.error),
     submitting = $derived(software.submitting);
-  let channel = $state("latest");
+  // The channel new plugins install from: the saved choice, else Desktop's own release stage (the same rule as setup).
+  const channel = $derived(pluginChannel(data?.engine, data?.preferences?.pluginChannel));
   const hostBusy = $derived(submitting || Boolean(data && data.host.phase !== "idle"));
   const updateBusy = $derived(submitting || Boolean(data?.desktop.menu?.busy));
   const skew = $derived(classifyEngineSkew(data?.engine, data?.host.cli?.version));
   const desktopBehind = $derived(hostUpgradeOutrunsDesktop(data?.engine, data?.host.upgrade?.latestVersion));
   // Desktop's own update state, from the main process (electron-updater).
   const update = $derived(data?.desktop.update);
+  const embeddedPrerelease = $derived(/^\d+\.\d+\.\d+-/.test(data?.desktop.version ?? ""));
+  // The line followed: what the updater reports, else the saved choice, else the embedded version's own stage.
+  const updateChannel = $derived(
+    update?.channel ?? data?.preferences?.updateChannel ?? (embeddedPrerelease ? "prerelease" : "stable"),
+  );
   onMount(watchSoftware);
 </script>
 
@@ -50,16 +56,45 @@
               <a href="{releases}/tag/v{update.version}">Download it from the release page</a>.
             </p>
           {:else if update?.state === "error"}<p role="status">
-              Could not check for updates. <a href={releases}>Download a newer version</a> if you need one.
+              {update.during === "download"
+                ? `Could not download version ${update.version ?? ""}. The next check is in six hours.`
+                : "Could not check for updates."}
+              <a href={releases}>Download a newer version</a> if you need one.
             </p>
             {#if update.error}<details class="field-hint">
                 <summary>Details</summary>
                 <pre class="mono">{update.error}</pre>
               </details>{/if}
+          {:else if update?.state === "unsupported"}<p role="status">
+              {update.reason === "off"
+                ? "Update checks are turned off (AKM_DESKTOP_UPDATES=off)."
+                : update.reason === "not-appimage"
+                  ? "This Linux build is not an AppImage, so it does not check for updates."
+                  : "A development run does not check for updates."} To update, download a newer AKM Desktop.
+            </p>
           {:else}<p role="status">To update, download a newer AKM Desktop.</p>{/if}
           <p class="field-hint">Built-in AKM engine {data.engine}.</p>
         </div>
+        {#if data.preferences}
+          <label class="field"
+            >Desktop updates<select
+              value={updateChannel}
+              disabled={updateBusy}
+              onchange={(event) => savePreference("updateChannel", event.currentTarget.value)}
+              ><option value="stable">Stable releases</option><option value="prerelease"
+                >Stable and prerelease releases</option
+              ></select
+            ></label
+          >
+        {/if}
       </div>
+      {#if updateChannel === "stable" && embeddedPrerelease}<p class="field-hint">
+          This build is a prerelease. Stable releases are offered from the next stable release on; it is never replaced
+          by an older one.
+        </p>
+      {:else if !update}<p class="field-hint">
+          The release line applies when the AKM Desktop app checks for updates.
+        </p>{/if}
       {#if data.desktop.menu?.supported}
         <div class="menu-install">
           <div class="software-row">
@@ -164,25 +199,21 @@
           <p class="muted">Add AKM to a harness you already use.</p>
         </div>
         <label class="field"
-          >New plugin channel<select bind:value={channel} disabled={hostBusy}
+          >New plugin channel<select
+            value={channel}
+            disabled={hostBusy}
+            onchange={(event) => savePreference("pluginChannel", event.currentTarget.value)}
             ><option value="latest">Stable</option><option value="next">Prerelease</option></select
           ></label
         >
       </div>
       <div class="plugin-list">
         {#each data.host.harnesses as harness (harness.id)}
+          {@const followed = installedChannel(harness, data.host.upgrade?.plugins)}
           <div class="plugin-row">
             <div>
-              <h4>{names[harness.id]} <span class="muted small">{harness.version ?? ""}</span></h4>
-              <p class="muted small">
-                {!harness.installed
-                  ? "Harness not found"
-                  : !harness.runnable
-                    ? "Harness could not start"
-                    : harness.plugin?.state === "missing"
-                      ? "AKM plugin not installed"
-                      : `AKM · ${harness.plugin?.state ?? "not checked"} ${harness.plugin?.version ?? harness.plugin?.spec ?? ""}`}
-              </p>
+              <h4>{harnessLabel(harness)} <span class="muted small">{harness.version ?? ""}</span></h4>
+              <p class="muted small">{pluginLine(harness)}{followed ? ` · ${followed}` : ""}</p>
               {#if harness.plugin?.note}<p class="field-hint">{harness.plugin.note}</p>{/if}
               {#if harness.plugin?.detail}<details class="field-hint">
                   <summary>Details</summary>
@@ -198,8 +229,9 @@
         {/each}
       </div>
       <p class="field-hint">
-        Native installers preserve existing configuration and marketplace channels. Plugin installation does not sign
-        you in or approve hooks.
+        The channel is remembered and is also what setup installs. Native installers preserve existing configuration and
+        marketplace channels; an installed plugin's channel is shown once the host CLI has been checked. Plugin
+        installation does not sign you in or approve hooks.
       </p>
     </section>
   {/if}

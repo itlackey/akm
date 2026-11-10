@@ -9,15 +9,7 @@
   import { classifyEngineSkew, hostUpgradeOutrunsDesktop } from "./engine-skew";
   import Icon from "./Icon.svelte";
   import SetupLearning from "./SetupLearning.svelte";
-  import {
-    akmPlatform,
-    learnPlan,
-    learnReceipt,
-    learningRuns,
-    pluginChannel,
-    type AgentCard,
-    type Detected,
-  } from "./setup-model";
+  import { learnPlan, learnReceipt, learningRuns, pluginChannel, type AgentCard, type Detected } from "./setup-model";
   import { actSoftware, runSoftware, software, type Outcome } from "./state/software.svelte";
   import { workspace } from "./state/workspace.svelte";
 
@@ -44,11 +36,13 @@
     keyEnv = $state(""),
     busy = $state(false),
     outcomes = $state<Array<Outcome & { label: string }>>([]),
+    // The harnesses whose plugin this page installed: only they need the restart note.
+    installedNow = $state<string[]>([]),
     copied = $state(false);
 
   const host = $derived(software.data?.host),
     cli = $derived(host?.cli),
-    channel = $derived(pluginChannel(engine)),
+    channel = $derived(pluginChannel(engine, software.data?.preferences?.pluginChannel)),
     skew = $derived(classifyEngineSkew(engine, cli?.version)),
     desktopBehind = $derived(hostUpgradeOutrunsDesktop(engine, host?.upgrade?.latestVersion)),
     version = $derived(software.data?.desktop.version),
@@ -66,11 +60,11 @@
     plan = $derived(
       learnPlan(
         detected,
-        allowed.map((card) => akmPlatform(card.id)),
+        allowed.map((card) => card.id),
         { learn, where, endpoint, model, keyEnv },
       ),
     ),
-    agent = $derived(allowed.find((card) => akmPlatform(card.id) === plan.learning?.harness)),
+    agent = $derived(allowed.find((card) => card.id === plan.learning?.harness)),
     moves = $derived(library && plan.changed),
     work = $derived((cliMissing && wantsCli ? 1 : 0) + pending.length + enabling.length + (moves ? 1 : 0)),
     hostBusy = $derived(busy || Boolean(host && host.phase !== "idle"));
@@ -90,10 +84,12 @@
           outcomes.push({ label: card.name, error: "Skipped: the akm command-line tool is not installed." });
           continue;
         }
-        outcomes.push({ label: card.name, ...(await runSoftware("install-plugin", { harness: card.id, channel })) });
+        const outcome = await runSoftware("install-plugin", { harness: card.id, channel });
+        if (!outcome.error) installedNow.push(card.id);
+        outcomes.push({ label: card.name, ...outcome });
       }
       if (enabling.length || moves) {
-        const enabled = new Set([...detected.enabled, ...enabling.map((card) => akmPlatform(card.id))]);
+        const enabled = new Set([...detected.enabled, ...enabling.map((card) => card.id)]);
         const { learning, connection } = plan;
         const agentName = agent?.name;
         try {
@@ -136,11 +132,11 @@
       copied = false;
     }
   }
+  // Said once, after this page installed the plugin; a plugin found installed was loaded long ago.
   const after: Record<string, string> = {
     claude: "Restart Claude Code, or run /reload-plugins in a session that is already open.",
     codex: "Open Codex, run /hooks, and trust the two AKM hooks. Installing the plugin does not approve them.",
     opencode: "Restart OpenCode to load the plugin.",
-    opencode2: "Restart OpenCode to load the plugin.",
   };
 </script>
 
@@ -241,7 +237,9 @@
             </div>
           </div>
         {/if}
-        {#if card.state === "connected"}<p class="field-hint">{after[card.id]}</p>{/if}
+        {#if card.state === "connected" && installedNow.includes(card.id)}<p class="field-hint">
+            {after[card.id]}
+          </p>{/if}
         {#if card.state !== "stopped"}
           <label class="check-label">
             <input

@@ -30,16 +30,27 @@ the application menu; desktop environments normally notice the new entry.
 Desktop's version is the AKM version it embeds; it is built from the released `akm-cli`
 package, in the same release. The app checks this repository's GitHub releases
 (`itlackey/akm`) when it starts and every six hours, with no token and no other server.
-A stable build follows stable releases only. A build of a stage release (alpha, beta, rc)
-takes the newest alpha, beta or stable release; rc releases are installed by hand, because
-electron-updater's GitHub provider confines an rc build to rc releases.
+
+**Desktop updates** on the Software page chooses the release line it follows: **Stable
+releases**, or **Stable and prerelease releases** (alpha and beta). The choice is saved with
+Desktop's preferences (`akm-desktop/preferences.json` under the config directory) and a change
+checks again at once. Until you choose, the line is the stage of the embedded version: a
+stable build follows stable releases only, a build of a stage release (alpha, beta, rc)
+follows prereleases and stable releases. Desktop never replaces itself with an older
+release, so a prerelease build set to stable stays until the next stable release.
+Prereleases are followed as electron-updater's `alpha` channel: it takes the newest alpha,
+beta or stable release and skips rc releases, so an rc is installed by hand from its release
+page (the library's own rule, which the channel overrides, would confine an rc build to rc
+releases).
 
 - **Linux AppImage and Windows:** the update downloads in the background and installs when
-  you quit AKM Desktop. Software shows the state. A Linux build that is not an AppImage does
-  not check for updates.
+  you quit AKM Desktop. Software shows the state, and says when a download, not the check,
+  failed. A Linux build that is not an AppImage does not check for updates, and Software says
+  so.
 - **macOS:** Software says a newer version is available and links to its release page.
   macOS applies an update only to a signed app, so download and replace the app yourself.
-- Set `AKM_DESKTOP_UPDATES=off` to turn the check off.
+- Set `AKM_DESKTOP_UPDATES=off` to turn the check off; Software says that it is off. A
+  development run never checks, and says that too.
 
 ## Unsigned installers
 
@@ -84,11 +95,13 @@ Nothing runs until you press a button.
    - **akm command-line tool**, ticked when it is missing: it installs akm of Desktop's own release to
      `~/.local/bin` (`%LOCALAPPDATA%\akm` on Windows), so that an agent without a plugin can use akm from a shell. When one is installed, setup shows its
      version, and offers **Update CLI & plugins** only when it is older than the engine built into the app.
-   - One card per harness found (Claude Code, Codex, OpenCode, OpenCode 2), with the installed plugin's version. The
-     plugin installs from the channel Desktop is on: a stable Desktop installs the stable plugin, and a prerelease
-     Desktop the `next` one. Plugins share akm's major and minor version and number their builds on their own, so a
-     plugin built for another minor is flagged. OpenCode resolves its plugin's exact version when it starts, so its card
-     shows the package it configured.
+   - One card per harness found (Claude Code, Codex, and OpenCode or OpenCode 2: the same `opencode` program, told
+     apart by its version), with the installed plugin's version. The plugin installs from the channel chosen on
+     Settings → Software (**New plugin channel**); until one is chosen, the channel Desktop is on: a stable Desktop
+     installs the stable plugin, and a prerelease Desktop the `next` one. Plugins share akm's major and minor version
+     and number their builds on their own, so a plugin built for another minor is flagged. OpenCode resolves its
+     plugin's exact version when it starts, so its card shows the package it configured. The restart note is shown
+     only for a plugin this run installed.
    - **Let akm use this agent** (ticked) enables the agent in akm's config (`akm setup --yes --harness=<agents>` through
      `setup.apply`) so that `akm agent` and tasks can run on it. The first agent enabled is the default harness, so
      several never leave the default ambiguous. Enabling does not turn learning on: while learning is off, setup writes
@@ -126,9 +139,13 @@ Nothing runs until you press a button.
    compatibility handling. Desktop does not switch an existing installation's
    channel, force downgrades or replace a package-local CLI.
 3. Install AKM for an existing Claude Code, Codex, OpenCode 1 or OpenCode 2
-   harness using its native installer. New plugins can use Stable or Prerelease;
-   an existing marketplace's channel stays unchanged. Claude/Codex hooks need
-   Bun. Codex still requires native `/hooks` review: installation is not approval.
+   harness using its native installer. OpenCode 1 and 2 are one row, labelled by the
+   installed version. **New plugin channel** (Stable or Prerelease) is remembered with
+   Desktop's preferences and is what first-run setup installs too; until chosen it is
+   Desktop's own stage. An existing marketplace's channel stays unchanged, and once
+   **Check CLI & plugins** has run each installed plugin's row says which channel it
+   follows (Stable, Prerelease or Pinned), as `akm upgrade --check` read it. Claude/Codex
+   hooks need Bun. Codex still requires native `/hooks` review: installation is not approval.
    Restart the harness to load a newly installed plugin.
 
 The bundled engine runs the desktop workspace. The host CLI runs terminal jobs
