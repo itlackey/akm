@@ -13,36 +13,43 @@
   import { number, percent, rollingSearch, outcomeClasses } from "./activity-presenter";
   import type { ActivityImpact, ActivityRetrieval } from "./activity-types";
   import type { Proposal } from "./types";
-  export let impact: ActivityImpact;
-  export let retrieval: ActivityRetrieval | null;
-  export let selectedProcess = "";
-  let drillPanel: HTMLElement,
+  let {
+    impact,
+    retrieval,
+    selectedProcess = $bindable(""),
+  }: { impact: ActivityImpact; retrieval: ActivityRetrieval | null; selectedProcess?: string } = $props();
+  let drillPanel = $state<HTMLElement>(),
     drillTrigger: HTMLElement | null = null;
-  $: availableProcesses = (impact.outcomes ?? []).map((row) => row.source);
-  $: if (!availableProcesses.includes(selectedProcess)) selectedProcess = availableProcesses[0] ?? "";
-  $: weeklyOutcomes = impact.outcomes.find((row) => row.source === selectedProcess)?.weeks ?? [];
-  let drill: { source: string; week: string; kind: string } | null = null,
-    proposals: Proposal[] = [],
-    drillError = "",
-    drilling = false,
-    generation = 0;
-  $: flow = impact.reviewFlow ?? [];
-  $: cost = impact.cost ?? [];
-  $: library = impact.library ?? [];
-  $: processes = [...new Set(cost.flatMap((row) => Object.keys(row.byProcess)))].sort();
-  $: rolling = retrieval ? rollingSearch(retrieval, impact.changedAssets ?? []) : null;
-  $: outcomeRows = (impact.outcomes ?? []).flatMap((process) =>
-    process.weeks
-      .filter((row) => outcomeClasses.some((item) => row[item.key] > 0))
-      .map((row) => ({ source: process.source, ...row })),
+  const availableProcesses = $derived((impact.outcomes ?? []).map((row) => row.source));
+  // The process shown: the selection when the data has it, else the first one.
+  const activeProcess = $derived(
+    availableProcesses.includes(selectedProcess) ? selectedProcess : (availableProcesses[0] ?? ""),
   );
-  $: costCalls = cost.reduce((sum, row) => sum + row.calls, 0);
-  $: reportedCalls = cost.reduce((sum, row) => sum + row.usageCalls, 0);
+  const weeklyOutcomes = $derived(impact.outcomes.find((row) => row.source === activeProcess)?.weeks ?? []);
+  let drill = $state<{ source: string; week: string; kind: string } | null>(null),
+    proposals = $state<Proposal[]>([]),
+    drillError = $state(""),
+    drilling = $state(false),
+    generation = 0;
+  const flow = $derived(impact.reviewFlow ?? []);
+  const cost = $derived(impact.cost ?? []);
+  const library = $derived(impact.library ?? []);
+  const processes = $derived([...new Set(cost.flatMap((row) => Object.keys(row.byProcess)))].sort());
+  const rolling = $derived(retrieval ? rollingSearch(retrieval, impact.changedAssets ?? []) : null);
+  const outcomeRows = $derived(
+    (impact.outcomes ?? []).flatMap((process) =>
+      process.weeks
+        .filter((row) => outcomeClasses.some((item) => row[item.key] > 0))
+        .map((row) => ({ source: process.source, ...row })),
+    ),
+  );
+  const costCalls = $derived(cost.reduce((sum, row) => sum + row.calls, 0));
+  const reportedCalls = $derived(cost.reduce((sum, row) => sum + row.usageCalls, 0));
   const assetHref = (ref: string) => `/library/asset?ref=${encodeURIComponent(ref)}`;
   function proposalHref(id: string, scoped = false) {
     const params = new URLSearchParams({
       status: "recent",
-      returnTo: `/activity/improve?since=${impact.since}&process=${encodeURIComponent(selectedProcess)}&anchor=${scoped ? "impact-drill" : "harm"}`,
+      returnTo: `/activity/improve?since=${impact.since}&process=${encodeURIComponent(activeProcess)}&anchor=${scoped ? "impact-drill" : "harm"}`,
     });
     if (scoped && drill) {
       params.set("source", drill.source);
@@ -73,7 +80,7 @@
   function inspectMark(event: { dataIndex: number; seriesIndex: number }) {
     const row = weeklyOutcomes[event.dataIndex],
       outcome = outcomeClasses[event.seriesIndex];
-    if (row && outcome && row[outcome.key] > 0) void inspect(selectedProcess, row.week, outcome.key);
+    if (row && outcome && row[outcome.key] > 0) void inspect(activeProcess, row.week, outcome.key);
   }
   const harmLabels: Record<string, string> = {
     reverted: "Reverted",
@@ -162,7 +169,7 @@
         onSelect={inspectMark}
       >
         <label slot="controls" class="process-control"
-          >Process<select value={selectedProcess} on:change={(event) => changeProcess(event.currentTarget.value)}
+          >Process<select value={activeProcess} onchange={(event) => changeProcess(event.currentTarget.value)}
             >{#each availableProcesses as process}<option value={process}>{process}</option>{/each}</select
           ></label
         >
@@ -176,8 +183,8 @@
                 ><th>{row.week}</th>{#each outcomeClasses as item}<td
                     >{#if row[item.key] > 0}<button
                         class="btn-secondary"
-                        aria-label={`${item.label}: ${row[item.key]}, ${selectedProcess}, ${row.week}`}
-                        on:click={() => inspect(selectedProcess, row.week, item.key)}>{row[item.key]}</button
+                        aria-label={`${item.label}: ${row[item.key]}, ${activeProcess}, ${row.week}`}
+                        onclick={() => inspect(activeProcess, row.week, item.key)}>{row[item.key]}</button
                       >{:else}0{/if}</td
                   >{/each}</tr
               >{/each}</tbody
@@ -213,13 +220,12 @@
             ><tbody
               >{#each outcomeRows as row}<tr
                   ><th>{row.source}</th><td
-                    ><button class="btn-secondary" on:click={() => inspect(row.source, row.week)}>{row.week}</button
-                    ></td
+                    ><button class="btn-secondary" onclick={() => inspect(row.source, row.week)}>{row.week}</button></td
                   >{#each outcomeClasses as item}<td
                       >{#if row[item.key]}<button
                           class="btn-secondary"
                           aria-label={`${item.label}: ${row[item.key]}, ${row.source}, ${row.week}`}
-                          on:click={() => inspect(row.source, row.week, item.key)}>{row[item.key]}</button
+                          onclick={() => inspect(row.source, row.week, item.key)}>{row[item.key]}</button
                         >{:else}0{/if}</td
                     >{/each}</tr
                 >{/each}</tbody
@@ -249,7 +255,7 @@
             </ul>
             {#if !proposals.length}<p>No matching proposals.</p>{/if}{/if}<button
             class="btn-secondary"
-            on:click={closeDrill}>Close decision details</button
+            onclick={closeDrill}>Close decision details</button
           >
         </section>{/if}
     </section>
