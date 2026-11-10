@@ -55,7 +55,7 @@ export const addCommand = defineJsonCommand({
       required: true,
     },
     provider: { type: "string", description: "Provider type (e.g. website, npm). Required for URL sources." },
-    options: { type: "string", description: 'Provider options as JSON (e.g. \'{"apiKey":"key"}\').' },
+    options: { type: "string", description: "Provider options as JSON (e.g. '{\"maxPages\":100}')." },
     name: { type: "string", description: "Human-friendly name for the source" },
     adapter: {
       type: "string",

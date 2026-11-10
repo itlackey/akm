@@ -5,29 +5,34 @@
 -->
 
 <script lang="ts">
-  /** One stroke language for navigation and actions; never font glyphs as icons. */
-  export let name:
-    | "arrow-left"
-    | "arrow-right"
-    | "chevron-right"
-    | "chevron-down"
-    | "search"
-    | "folder"
-    | "file"
-    | "edit"
-    | "more"
-    | "refresh"
-    | "plus"
-    | "close"
-    | "check"
-    | "external"
-    | "sliders"
-    | "link"
-    | "copy"
-    | "history"
-    | "alert"
-    | "warning" = "file";
-  export let size = 18;
+  let {
+    name = "file",
+    size = 18,
+  }: {
+    /** One stroke language for navigation and actions; never font glyphs as icons. */
+    name?:
+      | "arrow-left"
+      | "arrow-right"
+      | "chevron-right"
+      | "chevron-down"
+      | "search"
+      | "folder"
+      | "file"
+      | "edit"
+      | "more"
+      | "refresh"
+      | "plus"
+      | "close"
+      | "check"
+      | "external"
+      | "sliders"
+      | "link"
+      | "copy"
+      | "history"
+      | "alert"
+      | "warning";
+    size?: number;
+  } = $props();
   const paths: Record<typeof name, string> = {
     "arrow-left": "m12 5-7 7 7 7M5 12h14",
     "arrow-right": "m12 5 7 7-7 7M5 12h14",

@@ -72,12 +72,16 @@ export async function collectSchedulerBinaryAdvisory(
   try {
     installed = await (deps.backend ?? selectBackend()).list();
   } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
     return {
       name: "scheduler-binary",
       kind: "deterministic",
       status: "unknown",
       confidence: "high",
-      message: `Installed scheduled tasks could not be inspected: ${error instanceof Error ? error.message : String(error)}`,
+      // A host without the scheduler's own binary (no crontab) runs no scheduled task: nothing is drifting there.
+      message: /not found on PATH/.test(detail)
+        ? `No scheduler is available on this host (${detail}), so no scheduled task is installed or runs here.`
+        : `Installed scheduled tasks could not be inspected: ${detail}`,
     };
   }
   // task sync rewrites every installed binding to the same current

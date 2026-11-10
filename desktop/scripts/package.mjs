@@ -9,6 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { packager } from "@electron/packager";
+import { releases } from "../electron/release-feed.mjs";
 import { releaseRefusal } from "./release-guard.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -95,12 +96,11 @@ if (dist) {
       // biome-ignore lint/suspicious/noTemplateCurlyInString: builder macros, not a template
       artifactName: "AKM-Desktop-${version}-${arch}.${ext}",
       directories: { output: installers },
-      // electron-updater reads the repository from here (resources/app-update.yml) and, per release, the
-      // channel file builder writes next to the installers: latest*.yml, or <stage>*.yml for a stage release.
+      // Builder writes the channel file next to the installers (latest*.yml, or <stage>*.yml for a stage release),
+      // which the updater reads per release, and resources/app-update.yml.
       publish: {
         provider: "github",
-        owner: "itlackey",
-        repo: "akm",
+        ...releases,
         channel: version.match(/-([a-z]+)/)?.[1] ?? "latest",
       },
       linux: {

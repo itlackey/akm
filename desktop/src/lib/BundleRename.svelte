@@ -6,19 +6,21 @@
 
 <script lang="ts">
   import { api } from "./client";
-  export let bundle: string;
-  export let action: (path: string, body: unknown) => Promise<void>;
-  export let disabled = false;
-  let open = false,
-    name = "",
-    busy = false,
-    error = "";
-  let plan: {
+  let {
+    bundle,
+    action,
+    disabled = false,
+  }: { bundle: string; action: (path: string, body: unknown) => Promise<void>; disabled?: boolean } = $props();
+  let open = $state(false),
+    name = $state(""),
+    busy = $state(false),
+    error = $state("");
+  let plan = $state<{
     index: { entries: number };
     contentRefs: string[];
     activeWorkflowRuns: Array<{ id: string }>;
     nativeSchedulerRows: string[];
-  } | null = null;
+  } | null>(null);
   async function preview() {
     busy = true;
     error = "";
@@ -37,16 +39,21 @@
   {#if !open}<button
       class="btn-secondary"
       {disabled}
-      on:click={() => {
+      onclick={() => {
         open = true;
         name = bundle;
       }}>Rename bundle…</button
     >
-  {:else}<form on:submit|preventDefault={preview}>
+  {:else}<form
+      onsubmit={(event) => {
+        event.preventDefault();
+        void preview();
+      }}
+    >
       <label class="field"
         >New bundle name<input
           bind:value={name}
-          on:input={() => (plan = null)}
+          oninput={() => (plan = null)}
           disabled={disabled || busy}
           required
           autocomplete="off"
@@ -74,7 +81,7 @@
           type="button"
           class="btn-secondary"
           disabled={disabled || busy}
-          on:click={() => {
+          onclick={() => {
             open = false;
             plan = null;
             error = "";
@@ -82,7 +89,7 @@
         >{#if plan}<button
             type="button"
             disabled={disabled || busy}
-            on:click={() => action("/bundles/rename", { bundle, name: name.trim() })}>Rename bundle</button
+            onclick={() => action("/bundles/rename", { bundle, name: name.trim() })}>Rename bundle</button
           >{:else}<button disabled={disabled || busy || !name.trim() || name.trim() === bundle}
             >{busy ? "Checking…" : "Preview rename"}</button
           >{/if}

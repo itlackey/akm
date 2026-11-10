@@ -29,6 +29,7 @@
  * (never a false `warn`).
  */
 
+import { isPrerelease } from "../../registry/semver";
 import { pkgVersion } from "../../version";
 import { checkForUpdate } from "../sources/self-update";
 import type { HealthCheckResult } from "./types";
@@ -76,10 +77,13 @@ export async function collectVersionDriftAdvisory(
     };
   }
   try {
-    const result = await (deps.checkForUpdate ?? checkForUpdate)(cliVersion, {
-      timeout: CLI_VERSION_CHECK_TIMEOUT_MS,
-      retries: 0,
-    });
+    // The channel `akm upgrade` would use for this install: a prerelease follows `next` too, so a newer prerelease is
+    // reported, not only the latest stable release.
+    const result = await (deps.checkForUpdate ?? checkForUpdate)(
+      cliVersion,
+      { timeout: CLI_VERSION_CHECK_TIMEOUT_MS, retries: 0 },
+      isPrerelease(cliVersion) ? "next" : "latest",
+    );
     return {
       name: "cli-version",
       kind: "deterministic",

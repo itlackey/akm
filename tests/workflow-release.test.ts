@@ -95,6 +95,17 @@ describe("release workflow", () => {
     expect(source).toContain("DIST_TAG: $" + "{{ needs.release.outputs.dist_tag }}");
   });
 
+  test("a stable is GitHub's Latest release only when it is higher than the one that is", () => {
+    // GitHub makes every newly published stable release Latest, whatever its version, and AKM Desktop's stable line
+    // reads Latest: an older line's stable published after a newer line's must not take it.
+    const create = workflow.jobs.release?.steps?.find((step) => step.name === "Create GitHub release");
+    expect(create?.run).toContain("gh release view --json tagName --jq .tagName");
+    expect(create?.run).toContain('require("semver").gt(process.argv[1], process.argv[2])');
+    expect(create?.run).toContain("FLAGS=(--latest=false)");
+    expect(create?.run).toContain("FLAGS=(--prerelease)");
+    expect(create?.run).toContain('"$' + '{FLAGS[@]}"');
+  });
+
   test("the changelog is cut: its newest released section names the shipping version", () => {
     // The release-cut step nothing else enforces. `release.yml` publishes the
     // committed package.json version, and the test above pins that — but

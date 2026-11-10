@@ -6,7 +6,7 @@ state.db, `task-history-read`, `active-runs`, connection and harness, and
 semantic-search checks) or `advisories` (the rest). The list comes from
 `HEALTH_CHECKS` in `src/commands/health/checks.ts`, `akmHealth` in
 `src/commands/health.ts`, and the collectors in `src/commands/health/`. The
-checks from `index-state-generation` down to `opencode-plugin-version` appear
+checks from `index-state-generation` down to `opencode-plugin-version` (with `codex-plugin-version`) appear
 only when they have something to report, and `state-db-readable` only in place
 of every other check; the others are always present.
 
@@ -15,9 +15,12 @@ of every other check; the others are always present.
 Each check is `pass`, `warn`, `fail`, or `unknown`, and `deterministic` or
 `heuristic`.
 
-- Any `fail` in `hardChecks` makes the overall status `fail` and the exit code 1.
-- Otherwise, any `warn` from a `deterministic` check (hard or advisory) makes it `warn` and the exit code 4.
-- `heuristic` warns (`session-extraction`, `auto-accept-validation`) and `unknown` results do not change the overall status.
+- Any `fail` in `hardChecks` makes the overall status `fail` and the exit code 1. A `state.db` that cannot be
+  opened at all (unreadable, not a SQLite database, or a migration that failed to apply) is one failing
+  `state-db-readable` or `state-db-migrations` check in place of every other, with the same exit code.
+- Otherwise, any `warn` (hard or advisory, `deterministic` or `heuristic`) makes it `warn` and the exit code 4, so
+  the text header, AKM Desktop and the exit code count the same warnings.
+- `unknown` results do not change the overall status.
 
 `--since` sets the window the task and improve checks read. The default is 24 hours.
 
@@ -27,16 +30,20 @@ Probing is on by default; `--no-probe` turns it off. With probing on, health sen
 `GET` to `<endpoint>/models` of each configured connection (3 second timeout; any HTTP
 response counts as reachable, so a cold local server is never asked to load a model; one
 request per distinct endpoint per invocation, with no cross-run cache), runs each configured
-harness's `--version`, looks up the latest akm release on GitHub for `cli-version`
-(5 second timeout, no retries), and runs the akm binary recorded by the scheduler with
+harness's `--version`, looks up the latest akm release on GitHub for `cli-version` (and
+the npm `next` tag too for a prerelease install, the channel `akm upgrade` would use; 5
+second timeout, no retries), and runs the akm binary recorded by the scheduler with
 `--version` for `scheduler-binary`. `plugin-version` runs `git ls-remote --symref origin`
 (it lists refs and fetches nothing) against the Claude plugin marketplace clone whenever a
-Claude plugin is installed. With
+Claude plugin is installed, and `codex-plugin-version` the same against the marketplace
+remote whenever Codex's config registers it. With
 `--no-probe` none of these runs: the connection rows carry no `reachable` field and the
-message says reachability was not probed, and `plugin-version` reports `unknown` (its
-`AKM_MIN_VERSION` (or legacy `AKM_VERSION_RANGE`) check is local and still runs). The `plugin-version` and `cli-version`
-lookups are best-effort and silent on failure; see `src/commands/health/plugin-staleness.ts`
-and `src/commands/health/version-drift.ts`.
+message says reachability was not probed, and the plugin checks report `unknown`
+(`plugin-version`'s comparison of the plugin's pinned `akm-cli` with the running CLI is local
+and still runs). The plugin and `cli-version` lookups are best-effort: a lookup that fails
+says so in the message (`remoteUnavailable` in the evidence) and is `unknown`, never a false
+`pass` or `warn`; see `src/commands/health/plugin-staleness.ts` and
+`src/commands/health/version-drift.ts`.
 
 ## Checks
 
@@ -54,8 +61,8 @@ and `src/commands/health/version-drift.ts`.
 | `session-extraction` | `heuristic`. Reads the last 7 days of the extract ledger. `unknown`: nothing recorded. `warn`: every session was skipped or failed for an infrastructure reason (`llm_unavailable`, `read_failed`, `exception`, `locked_concurrent`); the message names the reason and the connection or harness that ran extraction. Also `warn`: some sessions harvested but others had candidate writes fail (`proposal_write_failed`, including a session that queued only some of its candidates) and were not extracted again; a write only the validator refused does not count, and extracting the session again clears it. | Fix the named connection or harness; for write failures, run `akm proposal extract --session-id <id>` once the cause (a busy state.db, I/O, config) has cleared. `unknown` is normal on a machine that does not extract sessions. |
 | `proposal-queue` | `deterministic`. Resolves the primary stash's proposal queue owner through the resolver extract calls before it spends model work. `unknown`: learning is off (the active strategy does not enable extract and no extraction ran in the last 7 days). `warn`: learning is on and no configured bundle owns the queue, or its owner is not writable; the message gives the resolver's reason. | Register the stash as a writable bundle (`akm bundle add`) or mark its owner writable. akm never picks a replacement. |
 | `auto-accept-validation` | `heuristic`. Reads `triage.promoted` and `gateAutoAcceptFailedCount` (only rows an older release wrote carry it) from the improve runs in the window. `warn`: proposals passed the confidence gate but failed validation (truncated description, invalid frontmatter); they stay pending. | Review them with `akm proposal list`. |
-| `cli-version` | `warn`: a newer akm release exists on GitHub. `unknown`: `--no-probe`, or the release lookup failed. | Run `akm upgrade`. |
-| `scheduler-binary` | `warn`: the akm binary recorded in the scheduler reports a different version than the running CLI. `unknown`: `--no-probe`, no scheduled task installed, or the recorded binary cannot be run. | Run `akm task sync` to rebind the schedule. |
+| `cli-version` | `warn`: a newer akm release exists on the channel this install follows (GitHub's latest release; for a prerelease install also npm's `next` tag, as `akm upgrade` reads it). `unknown`: `--no-probe`, or the release lookup failed. | Run `akm upgrade`. |
+| `scheduler-binary` | `warn`: the akm binary recorded in the scheduler reports a different version than the running CLI. `unknown`: `--no-probe`, no scheduled task installed, no scheduler binary on this host (no `crontab`), or the recorded binary cannot be run. | Run `akm task sync` to rebind the schedule. |
 | `index-state-generation` | `warn`: usage links in state.db point at index entries that no longer match (an index and state.db from different generations). | Stop concurrent writers and run `akm index --full`. |
 | `stash-git-exposure` | `warn`, one per bundle: `env/` or `secrets/` files are tracked by git in a configured bundle (the working stash included) and that bundle has a remote. Skipped for a bundle with no `.git` at its root. | Run `git rm --cached` on the listed files and add `env/` and `secrets/` to `.gitignore`. A `.gitignore` rule alone does not untrack files. To keep tracking them on purpose, add `# akm: intentionally track env and secrets` to the stash `.gitignore`; the advisory is then not reported. |
 | `binary-config-skew` | `warn`: `config.json` has a `configVersion` newer than this binary knows. | Upgrade this install. |
@@ -63,9 +70,10 @@ and `src/commands/health/version-drift.ts`.
 | `type-directory-disagreement` | `warn`: an indexed asset's resolved type differs from the type its directory declares. Each line gives the file, both types, and the classifier signal that won (`winner`). | Review the listed files. Explicit frontmatter overrides (for example `agent:` declaring a command) are marked `known-good override`. A body mention of `$ARGUMENTS` is not command intent; run `akm index` to repair old classifications without editing the documents. |
 | `memory-cleanup-archive` | `pass` with size and file count when the working bundle has `.akm/memory-cleanup/archive` content and no git history (the purge does not run there). `warn` when a git-backed bundle has archived files the purge cannot remove (untracked, modified, or unverifiable in git). | Commit the archived files so the purge can remove them once they age out. |
 | `data-dir-usage` | `warn`: the data directory is over 1 GB and either more than 3 times the size of `state.db`, `index.db`, and `logs.db` (with their WAL and SHM files), or one top-level subdirectory holds more than half of it. The message names that subdirectory and its size. | Inspect the named subdirectory. `backups/tasks/` holds task-file snapshots written by `akm migrate apply`. |
-| `plugin-version` | One row per native `claude plugin list --json` AKM installation, with scope, enabled state and install path; cached versions are never used to choose an installation. `AKM_MIN_VERSION` takes precedence over legacy `AKM_VERSION_RANGE`. Disabled and other-project installations are inert. Missing metadata or multiple applicable paths/versions produce `unknown`, since the native list does not identify which conflicting installation a running session loaded. The newest version is read on the channel the marketplace clone follows: on the remote's default branch the newest stable tag, on any other branch (such as `next`) the release tag on that branch's head, and on a clone pinned to a tag that tag. The newest-tag lookup is `--probe`-gated: with `--no-probe` the row is `unknown` ("not probed") and only the local range check still runs. `warn`: the plugin is stale, or its range does not admit the running CLI. | Run the `claude plugin update <ref>` command in the message. |
-| `opencode-plugin-version` | The same check for the OpenCode plugin's own bundled `akm-cli` (read from its `package.json`, never executed): it runs in-process and shares the host's databases, so its lag matters the same way. OpenCode 1 caches each spec in its own folder, so it reads the one folder of the spec the global OpenCode config names under `plugin` (`akm-opencode`, read as `akm-opencode@latest`, or `akm-opencode@next`), and for `akm-opencode@<version>` reports the plugin as pinned with no staleness verdict; with no entry, or no folder for it, it reads `packages/akm-opencode`, and it never scans the other cached specs. It reads local files only and is never `--probe`-gated. `warn`: the bundled version differs from the running CLI. Omitted when the OpenCode plugin is not installed. | Update the OpenCode plugin. |
-| `state-db-readable` | `fail`: `state.db` cannot be read, or is missing in a read-only run (which does not create it). Every other check is skipped, because none of them can read it. | Check the owner and mode of the data directory (or point `AKM_DATA_DIR` / `XDG_DATA_HOME` at one you own); run any akm command that records state, such as `akm health`, to create it. |
+| `plugin-version` | One row per native `claude plugin list --json` AKM installation, with scope, enabled state and install path; cached versions are never used to choose an installation. Disabled and other-project installations are inert. Missing metadata or multiple applicable paths/versions produce `unknown`, since the native list does not identify which conflicting installation a running session loaded. The newest version is read on the channel the marketplace clone follows: on the remote's default branch the newest stable tag, on any other branch (such as `next`) the release tag on that branch's head, and on a clone pinned to a tag that tag. The newest-tag lookup is `--probe`-gated: with `--no-probe` the row is `unknown` ("not probed"); a lookup that fails (offline) is `unknown` and says the remote could not be read. The plugin runs the `akm-cli` its `package.json` pins (`dependencies["akm-cli"]`, an exact version), never an `akm` on `PATH`, and that copy shares the host's databases with the running CLI, so the pin is compared locally whatever `--probe` says: `pinnedCliVersion` and `cliMatches` in the evidence, `unknown` when the manifest has no exact pin. `warn`: the plugin is stale, or its pin differs from the running CLI — the message says which side is older. | A stale plugin: run the `claude plugin update <ref>` command in the message. A pin newer than the CLI: `akm upgrade`. A pin older than the CLI on a plugin that is current on its channel: nothing to update until that channel publishes a build for the running akm. |
+| `codex-plugin-version` | The same for Codex, when its `config.toml` registers the `akm-plugins` marketplace: the installed version from `codex plugin list --marketplace akm-plugins --json`, and the newest release on the channel the marketplace entry's `ref` follows (none or `main`: the newest stable tag; `next`: the tag at that branch's head; a tag: that release), read with `git ls-remote` against `https://github.com/itlackey/akm-plugins` (`--probe`-gated; a failed read says so). `unknown` when `codex` is not on `PATH` or the listing fails; omitted when the marketplace is not registered or the plugin is not installed. Codex gives no path to the plugin's files, so its `akm-cli` pin is not compared. | Run `codex plugin marketplace upgrade akm-plugins`. |
+| `opencode-plugin-version` | The same check for the OpenCode plugin's own bundled `akm-cli` (read from its `package.json`, never executed): it runs in-process and shares the host's databases, so its lag matters the same way. OpenCode 1 caches each spec in its own folder, so it reads the one folder of the spec the global OpenCode config names under `plugin` (`akm-opencode`, read as `akm-opencode@latest`, or `akm-opencode@next`), and for `akm-opencode@<version>` reports the plugin as pinned with no staleness verdict; with no entry, or no folder for it, it reads `packages/akm-opencode`, and it never scans the other cached specs. OpenCode 2 (`opencode-v2-plugin-version`) reads `npm/<spec>/<newest build>/node_modules` for the spec the config names under `plugins` or `plugin` (a bare `akm-opencode-v2` is its `@latest`), so a folder another spec left behind is not reported; with no entry every cached spec is. It reads local files only and is never `--probe`-gated. `warn`: the bundled version differs from the running CLI; the message says which side is older. Omitted when the OpenCode plugin is not installed. | Bundled akm-cli newer than the CLI: `akm upgrade`. Older: update the plugin once its channel publishes a build for the running akm (`akm upgrade` checks and updates it). |
+| `state-db-readable` | `fail`: `state.db` cannot be read, is not a SQLite database (garbage or a truncated copy), or is missing in a read-only run (which does not create it). Every other check is skipped, because none of them can read it. | Check the owner and mode of the data directory (or point `AKM_DATA_DIR` / `XDG_DATA_HOME` at one you own). Not a database: the message carries the `.recover` steps, or move the file aside for a fresh one. Missing: index the library (AKM Desktop: Settings → Bundles & index → Update / reindex; `akm index`) or run any akm command that records state, such as `akm health`. |
 
 ## Connections, harnesses and the work on them
 

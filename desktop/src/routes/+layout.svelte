@@ -11,6 +11,7 @@
   import { api } from "../lib/client";
   import { hasStoredDrafts, hasUnsaved } from "../lib/drafts";
   import { navigate } from "../lib/navigation";
+  import { pageTitle } from "../lib/page-title";
   import Toasts from "../lib/Toasts.svelte";
   import { applyTheme, refreshBundles, refreshPending, workspace } from "../lib/state/workspace.svelte";
   import "../lib/ui/tokens.css";
@@ -179,12 +180,7 @@
   });
 </script>
 
-<svelte:head
-  ><title>{prefix === "setup" ? "Set up" : section.name} · AKM Desktop</title><meta
-    name="color-scheme"
-    content="light dark"
-  /></svelte:head
->
+<svelte:head><title>{pageTitle(page.url)}</title><meta name="color-scheme" content="light dark" /></svelte:head>
 <svelte:window onkeydown={shortcuts} onbeforeunload={unload} />
 <a
   href="#main"
@@ -265,7 +261,6 @@
   {/if}
 </dialog>
 {#if themeError}<p role="status" class="notice notice-warn">{themeError}</p>{/if}
-<div id="route-status" class="sr-only" role="status" aria-live="polite"></div>
 
 <style>
   .build-label {

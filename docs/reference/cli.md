@@ -451,28 +451,40 @@ akm health --report --window-compare 7d --format md
 | `--window-compare` | Compare the current window against the prior window of the same duration (e.g. `24h`, `7d`). With `--report`, overrides the default trend window. |
 | `--group-by` | Group rows by `run` (one row per `improve_runs` entry). Omit for the default summary. |
 | `--windows` | Explicit comparison window(s) as `name=...,since=ISO,until=ISO` (repeatable, up to 4). Mutually exclusive with `--window-compare`. |
-| `--no-probe` | Skip the `connections-and-harnesses` reachability probes and harness `--version` runs, the `cli-version` update check, the `plugin-version` newest-tag lookup, and the `scheduler-binary` version check (for an offline or air-gapped host). |
+| `--no-probe` | Skip the `connections-and-harnesses` reachability probes and harness `--version` runs, the `cli-version` update check, the `plugin-version` and `codex-plugin-version` newest-tag lookups, and the `scheduler-binary` version check (for an offline or air-gapped host). |
 
 The command reads `state.db`, verifies that the required tables exist, performs a
 write-read probe against the events stream, inspects `task_history`, checks the
 configured connections and harnesses (the `connections-and-harnesses` table), and summarizes recent `improve_*` events. Unless
 `--no-probe` is given, it also sends a bounded (3s timeout) reachability probe
 to each connection's endpoint, one probe per distinct endpoint, checks the
-installed akm-cli version against the latest GitHub release (`cli-version`),
+installed akm-cli version against the latest release on its channel (`cli-version`:
+GitHub's latest release, and for a prerelease install also npm's `next` tag, as
+`akm upgrade` reads it), and
 runs the scheduler's recorded akm binary with `--version` to check it
 against the running CLI (`scheduler-binary`).
 The `plugin-version` advisory compares the installed Claude Code plugin with the
 channel its marketplace clone follows: the newest stable tag on the remote's
 default branch, the release tag on the branch head for another branch such as
-`next`, and the pinned tag for a marketplace added at a tag.
+`next`, and the pinned tag for a marketplace added at a tag. It also compares
+the `akm-cli` the plugin's `package.json` pins (the copy its hooks run, which
+shares the host's databases) with the running CLI, and says which side is older.
+`codex-plugin-version` does the same for a Codex install from the `akm-plugins`
+marketplace (the version from `codex plugin list`, the newest release on the
+`ref` its marketplace entry follows), and `opencode-plugin-version` /
+`opencode-v2-plugin-version` compare the `akm-cli` bundled in the OpenCode plugin
+the config loads with the running CLI. A plugin ahead of the CLI is fixed by
+`akm upgrade`, one behind it by updating the plugin once its channel has a
+newer build; a lookup that could not reach the marketplace is `unknown` and
+says so.
 
 Primary result fields:
 
 | Field | Description |
 | --- | --- |
-| `status` | Overall health verdict: `pass`, `warn`, or `fail` |
-| `hardChecks` | Deterministic checks such as `state-db-schema`, `state-db-round-trip`, `state-db-integrity`, `state-db-migrations`, `active-runs`, `connections-and-harnesses`, and `semantic-search` |
-| `advisories` | Non-fatal warnings including `session-extraction` (akmExtract pipeline health), `cli-version` (installed vs latest release), and `scheduler-binary` |
+| `status` | Overall health verdict: `fail` when a hard check fails, `warn` when any check (hard or advisory, heuristic included) warns, else `pass`; `unknown` checks do not count. Exit code 1, 4 and 0 respectively |
+| `hardChecks` | Deterministic checks such as `state-db-schema`, `state-db-round-trip` (`unknown` in a read-only run, which skips it), `state-db-integrity`, `state-db-migrations`, `task-history-read`, `active-runs`, `connections-and-harnesses`, and `semantic-search` |
+| `advisories` | Non-fatal warnings including `session-extraction` (akmExtract pipeline health), `cli-version` (installed vs latest release on its channel), `plugin-version`, `codex-plugin-version`, `opencode-plugin-version` and `opencode-v2-plugin-version` (harness plugins), and `scheduler-binary` |
 | `metrics` | Aggregate task/runtime metrics: `taskFailRate`, `agentFailureRate`, `stuckActiveRuns` |
 | `improve` | Recent improve-loop counts derived from `improve_invoked`, `improve_skipped`, and `improve_completed` events |
 
@@ -487,7 +499,10 @@ applied. Every open applies pending migrations (copying the file to
 names the applied IDs (`evidence.applied`) and the copy (`evidence.backupPath`).
 It `fail`s only when a pending migration could not be applied — naming it and
 pointing at `akm migrate apply` — rather than the command crashing. Read this
-check's `status` instead of grepping akm's error text.
+check's `status` instead of grepping akm's error text. A `state.db` that cannot
+be read at all, or that is not a SQLite database (garbage, a truncated copy),
+is likewise one failing `state-db-readable` check with the repair steps, and the
+command exits 1, never 78.
 
 `connections-and-harnesses` is one table: a row for each configured connection (endpoint, whether
 its key is held, whether the endpoint answers) and harness (platform, whether
@@ -517,10 +532,12 @@ here after the next `akm index`. `evidence` carries the recorded `status`,
 `unavailable` (`platform` or `load`), `provider`, `runtime`, `reason`, the index's `builtAt`, `entryCount` and
 `embeddingCount`.
 
-`cli-version` compares the installed akm-cli version against the latest
-GitHub release — the same source `akm upgrade` trusts — and `warn`s with the
-upgrade command when a newer release exists. `--no-probe`, offline, or a
-rate-limited request all degrade it to `unknown`, never a false `warn`.
+`cli-version` compares the installed akm-cli version against the latest release
+on the channel this install follows — GitHub's latest release, and for a
+prerelease install also npm's `next` tag, the same sources `akm upgrade` trusts —
+and `warn`s with the upgrade command when a newer release exists. `--no-probe`,
+offline, or a rate-limited request all degrade it to `unknown`, never a false
+`warn`.
 
 The `session-extraction` advisory is derived from the `extract_sessions_seen`
 ledger for the last 7 days — not `improve_runs`, which the hook-driven `akm
@@ -1279,7 +1296,7 @@ akm bundle add https://docs.example.com --max-pages 100 --max-depth 5
 | `--name` | The bundle key. A contract, not a hint: it must be a legal bundle slug (no `:` `.` `#` `/` or whitespace) and not already taken by a different bundle, or the add fails before any write. Re-adding an already-installed source under a different `--name` than it already carries also fails — use `akm bundle rename <old> <new>` instead. Omit it and akm derives a name (falling back to a `-<hash>` suffix on a collision). |
 | `--provider` | Explicit provider for declarative source configuration; normally inferred from the input |
 | `--writable` | Mark a git source as writable so `akm sync` also pushes (default: false) |
-| `--options` | Provider options as JSON (e.g. `'{"ref":"main"}'`) |
+| `--options` | Provider options as JSON (e.g. `'{"maxPages":100}'`) |
 | `--allow-insecure-transport` | Allow a plain-HTTP source URL after explicitly accepting transport substitution risk |
 | `--allow-dangerous-env-keys` | Deprecated, no effect. `bundle add` no longer scans env files for process-hijacking keys. Accepted through 0.10 so existing scripts keep working. |
 | `--max-pages` | Maximum pages to crawl for website sources (default: 50) |
@@ -2252,7 +2269,7 @@ akm registry add https://skills.sh --name skills.sh --provider skills-sh
 | --- | --- |
 | `--name` | Human-friendly label for the registry |
 | `--provider` | Provider type (e.g. `static-index`, `skills-sh`). Default: `static-index` |
-| `--options` | Provider-specific options as JSON (e.g. `'{"apiKey":"key"}'`) |
+| `--options` | Provider-specific options as JSON |
 | `--allow-insecure-transport` | Allow a plain HTTP registry URL (rejected by default) |
 
 Duplicate URLs are rejected.
@@ -3769,7 +3786,7 @@ akm proposal drain --strategy default --promote -y  # Read the triage block from
 | `--dry-run` | List what would be accepted/rejected/deferred, without writing |
 | `--max-accepts` | Hard per-run accept ceiling; accepts beyond this are reported as `skippedByCap` |
 | `--older-than` | Only consider proposals created (or last reopened) more than this many days ago |
-| `--judgment` | Explicitly enable the judgment tier for this standalone drain, including when the selected strategy says `judgment.enabled: false`; it accepts only consolidate promotions (#1132); execution overrides still come from that strategy. Without this flag, strategy judgment config does not enable standalone drain judgment. A missing runner remains a no-op with a logged `triage_deferred` summary. |
+| `--judgment` | Explicitly enable the judgment tier for this standalone drain, including when the selected strategy says `judgment.enabled: false`; it accepts only consolidate promotions; execution overrides still come from that strategy. Without this flag, strategy judgment config does not enable standalone drain judgment. A missing runner remains a no-op with a logged `triage_deferred` summary. |
 | `-y`, `--yes` | Skip the confirmation prompt (required in non-interactive mode for promotion) |
 
 ### feedback (`--reason`)

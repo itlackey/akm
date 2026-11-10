@@ -916,7 +916,7 @@ export function ambiguousDefaultAdvice(config: AkmConfig): string | undefined {
     const names = Object.keys((kind === "connection" ? config.connections : config.harnesses) ?? {});
     if (names.length < 2 || names.includes("default")) return [];
     return [
-      `Several ${kind}s are configured (${names.join(", ")}) and none is named "default": name one default in config.json, or pick one with --${kind}`,
+      `Several ${kind === "harness" ? "harnesses" : "connections"} are configured (${names.join(", ")}) and none is named "default": name one default in config.json, or pick one with --${kind}`,
     ];
   });
   return advice.length > 0 ? advice.join("; ") : undefined;

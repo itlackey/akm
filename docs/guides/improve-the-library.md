@@ -5,7 +5,7 @@ whether a capability helped, akm records the report; when the report says the
 content was wrong, a later `akm improve` run drafts a concrete edit as a
 proposal. A proposal changes your bundle when you accept it, or when the
 improve run's triage pass accepts it (see
-[Review-first](#review-first-and-the-autonomy-opt-in)).
+[Proposals first](#proposals-first-and-the-autonomy-opt-in)).
 
 ```text
 agent selects capability -> agent records outcome -> AKM updates utility and analyzes evidence ->
@@ -134,7 +134,7 @@ akm improve --limit 20       # process at most 20 refs
 akm proposal list            # review what was generated
 ```
 
-### Review-first, and the autonomy opt-in
+### Proposals first, and the autonomy opt-in
 
 `akm improve` writes its changes as proposals. With the `default` strategy, the
 triage pass at the start of each run (`applyMode: "promote"`) accepts pending

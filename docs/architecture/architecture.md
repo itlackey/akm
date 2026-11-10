@@ -52,7 +52,7 @@ written are in [Core Principles](akm-core-principles.md).
   bundle's `scripts/wiki-fetchers/` directory during website sync. `search`
   and `show` execute nothing; a script runs only as a task or workflow
   target. Held by review.
-- **Improvement is review-first.** Proposals are the unit of change: reflect,
+- **Improvement is proposal-first.** Proposals are the unit of change: reflect,
   distill, extract and consolidate only emit proposals. Three lanes act
   without a person, and only with `experimental.improveAutonomy` on: memory
   inference, memory cleanup, and a triage promote that runs the judgment

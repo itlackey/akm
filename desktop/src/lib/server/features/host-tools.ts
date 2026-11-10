@@ -34,6 +34,20 @@ export interface Detected {
   plugin?: PluginState;
   major?: number;
 }
+/** The lifecycle fields of an `akm upgrade` result, never its migration or file payloads. */
+export interface UpgradeSummary {
+  currentVersion?: string;
+  latestVersion?: string;
+  newVersion?: string;
+  updateAvailable?: boolean;
+  upgraded?: boolean;
+  installMethod?: string;
+  channel?: string;
+  currentChannel?: string;
+  targetChannel?: string;
+  /** Each harness plugin akm found, with the channel it follows (`latest`, `next`, `pinned`, `unknown`). */
+  plugins?: Array<{ harness: string; channel?: string }>;
+}
 export interface HostState {
   phase: string;
   cli: Detected | null;
@@ -49,7 +63,7 @@ export interface HostState {
   errorDetail?: string;
   receipt?: string;
   command?: string;
-  upgrade?: Record<string, string | boolean>;
+  upgrade?: UpgradeSummary;
 }
 
 const exec = promisify(execFile);
@@ -57,7 +71,8 @@ const exec = promisify(execFile);
 // purpose, with no akm surface. The source of truth is akm's src/commands/sources/plugin-channels.ts and
 // plugin-upgrade.ts: change them together.
 const pluginId = "akm@akm-plugins";
-export const harnessIds = ["claude", "codex", "opencode", "opencode2"];
+// OpenCode 1 and 2 are the same `opencode` program; its `--version` says which plugin it takes.
+export const harnessIds = ["claude", "codex", "opencode"];
 /** Bun's own installer, shown for the person to run: Desktop never runs it. https://bun.sh/docs/installation */
 export const bunInstallCommand = (platform: string) =>
   platform === "win32" ? 'powershell -c "irm bun.sh/install.ps1 | iex"' : "curl -fsSL https://bun.sh/install | bash";
@@ -292,9 +307,7 @@ export class HostTools {
             const major = Number(harness.version?.split(".")[0]);
             if (![1, 2].includes(major)) throw new Error("Unsupported OpenCode major.");
             const configured = await openCodePlugin(env, this.home, major);
-            harness.plugin = configured
-              ? { state: "configured", ...configured, note: "Restart OpenCode to load this plugin." }
-              : { state: "missing" };
+            harness.plugin = configured ? { state: "configured", ...configured } : { state: "missing" };
             harness.major = major;
           }
         } catch (error) {
@@ -475,8 +488,8 @@ export class HostTools {
   }
 }
 
-export function summarizeUpgrade(result: Loose) {
-  return Object.fromEntries(
+export function summarizeUpgrade(result: Loose): UpgradeSummary {
+  const summary: UpgradeSummary = Object.fromEntries(
     [
       "currentVersion",
       "latestVersion",
@@ -491,4 +504,14 @@ export function summarizeUpgrade(result: Loose) {
       .filter((key) => ["string", "boolean"].includes(typeof result?.[key]))
       .map((key) => [key, result[key]]),
   );
+  // Only which plugin follows which channel: the entries' messages and backups stay out of the snapshot.
+  if (Array.isArray(result?.plugins)) {
+    summary.plugins = result.plugins
+      .filter((entry: Loose) => typeof entry?.harness === "string")
+      .map((entry: Loose) => ({
+        harness: entry.harness as string,
+        ...(typeof entry.channel === "string" ? { channel: entry.channel as string } : {}),
+      }));
+  }
+  return summary;
 }

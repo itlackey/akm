@@ -90,12 +90,12 @@ export const indexCommand = defineCommand({
     "export-vectors": {
       type: "string",
       description:
-        "Write the current model's embedding vectors to <file> (no model calls) instead of indexing. Experimental.",
+        "Write the current model's embedding vectors to <file> (no model calls) instead of indexing, so another host can import them. Experimental.",
     },
     "import-vectors": {
       type: "string",
       description:
-        "Index as usual, but store vectors found in <file> instead of embedding those entries. Experimental.",
+        "Index as usual, but store vectors found in <file> instead of embedding those entries, so a new host skips embedding. Experimental.",
     },
     "skip-if-locked": {
       type: "boolean",

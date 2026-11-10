@@ -5,11 +5,21 @@
 -->
 
 <script lang="ts">
+  import type { Snippet } from "svelte";
   import type { ProposalDetail } from "./types";
   import { plural, record, relativeAge, rows, text, type ReviewProposal } from "./review-model";
   import { date } from "./client";
 
-  let { detail, noop }: { detail: ProposalDetail; noop: boolean } = $props();
+  let {
+    detail,
+    noop,
+    children,
+  }: {
+    detail: ProposalDetail;
+    noop: boolean;
+    /** The proposed change: it is read after the warnings and before the reasons. */
+    children?: Snippet;
+  } = $props();
   const p = $derived(detail.proposal as ReviewProposal);
   const validation = $derived(record(detail.validation));
   const findings = $derived(rows(validation.findings));
@@ -39,7 +49,7 @@
   );
 </script>
 
-<!-- Actionable warnings come first and are never hidden beneath the diff. -->
+<!-- Actionable warnings come first and are never hidden beneath the diff; the reasons and the evidence follow it. -->
 {#if validation.ok === false}<div class="notice notice-fail">
     <strong>Validation did not pass.</strong> Read the findings below before deciding.
   </div>{/if}
@@ -57,6 +67,7 @@
     {detail.diffError}. AKM still validates a decision.
   </div>{/if}
 
+{@render children?.()}
 <section class="why" aria-labelledby="review-why">
   <h3 id="review-why">Why AKM proposed this</h3>
   {#if reasonText}<p class="reason">{reasonText}</p>{:else}<p class="reason muted">No reason recorded.</p>{/if}

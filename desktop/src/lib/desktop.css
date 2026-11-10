@@ -69,6 +69,14 @@
     background: var(--surface-2);
     color: var(--faint);
   }
+  /* Busy, or waiting on something said beside it: it looks disabled and ignores the pointer, but stays focusable, so
+     keyboard focus is not dropped to the page when the button that started an action goes busy. */
+  .desktop-shell :is(button, a.btn)[aria-disabled="true"] {
+    border-color: transparent;
+    background: var(--surface-2);
+    color: var(--faint);
+    pointer-events: none;
+  }
   .desktop-shell .icon-label {
     display: inline-flex;
     align-items: center;
@@ -119,8 +127,14 @@
     border: 0;
     border-radius: var(--radius);
   }
+  /* No border or fill to clip to the corners here, so a focus ring at the card's edge stays whole. */
   .desktop-shell .settings-card {
     background: transparent;
+    overflow: visible;
+  }
+  /* A pane that scrolls brings a focused control clear of its edge, so the ring is not cut there either. */
+  .desktop-shell :is(.files-content, .tree-scroll, .review-scroll, .review-list) {
+    scroll-padding-block: var(--space-2);
   }
   .desktop-shell :is(.tabs, .settings-tabs, .library-mode-tabs) {
     border-bottom: 0;
@@ -347,7 +361,6 @@
   @media (width > 850px) {
     .desktop-shell.workspace-active {
       block-size: 100dvh;
-      min-block-size: 620px;
     }
     .desktop-shell.workspace-active > main {
       display: flex;
@@ -377,19 +390,26 @@
       display: inline;
     }
   }
+  /* Phones: the bar is the six tabs in one row; the brand and the host leave it (the footer names the host). */
   @media (width < 48rem) {
     :root {
-      --top-inset: 7rem;
+      --top-inset: 3.5rem;
       --workspace-height: calc(100dvh - 190px);
       --control-height: 2.75rem;
     }
     .desktop-topbar {
       gap: var(--space-4);
       padding-inline: var(--space-4);
-      flex-wrap: wrap;
+      min-block-size: 3.5rem;
+    }
+    .desktop-topbar > .brand,
+    .desktop-topbar .host {
+      display: none;
+    }
+    .footer-host {
+      display: inline;
     }
     .desktop-topbar nav {
-      order: 3;
       flex: 1 0 100%;
       display: grid;
       grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -402,34 +422,18 @@
       padding-inline: 2px;
       font-size: 13px;
       min-width: 0;
+      min-block-size: var(--control-height);
     }
     @media (width < 24rem) {
       .desktop-topbar nav > a {
         font-size: 12px;
       }
     }
-    .desktop-topbar .version {
-      display: none;
-    }
-    .desktop-topbar > .brand {
-      padding-block-start: var(--space-3);
-    }
-    .desktop-topbar .host {
-      margin-inline-start: auto;
-      padding-block-start: var(--space-3);
-    }
     .desktop-shell > main {
       padding: var(--space-4);
     }
     .desktop-footer {
       padding-inline: var(--space-4);
-    }
-    .host {
-      font-size: 12px;
-      gap: var(--space-2);
-    }
-    .version {
-      padding-inline-start: var(--space-2);
     }
   }
   @media (width < 26rem) {

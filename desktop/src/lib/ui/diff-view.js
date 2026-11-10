@@ -83,7 +83,7 @@ function sidePane(title, list, side) {
     const kind = row.kind === "ctx" ? "ctx" : side === "left" ? "del" : "add";
     return sideRow(row[side], kind, item.revealed && side === "left");
   });
-  return html`<div class="sbs-pane"><div class="sbs-head">${title}</div><div class="dcol" tabindex="0" role="region" aria-label="${title} version, scrolls sideways"><div class="dcol-body">${rows}</div></div></div>`;
+  return html`<div class="sbs-pane"><div class="sbs-head">${title}</div><div class="dcol" tabindex="0" role="group" aria-label="${title} version, scrolls sideways"><div class="dcol-body">${rows}</div></div></div>`;
 }
 
 function sideBySide(parts, expanded, opened, labels) {
@@ -125,7 +125,7 @@ function inlineView(list) {
       ? html`<div class="drow gap">${gapButton(line)}</div>`
       : html`<div class="drow ${line.kind}" ${line.revealed ? html`data-revealed tabindex="-1"` : ""}><span class="ln">${line.old}</span><span class="ln">${line.now}</span>${sign(line.kind)}<span class="code">${code(line.cell)}</span></div>`,
   );
-  return html`<div class="dcol inline" tabindex="0" role="region" aria-label="Changes, scrolls sideways"><div class="dcol-body">${rows}</div></div>`;
+  return html`<div class="dcol inline"><div class="dcol-body">${rows}</div></div>`;
 }
 
 // ---- the section -----------------------------------------------------------

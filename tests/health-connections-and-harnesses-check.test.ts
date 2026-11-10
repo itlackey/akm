@@ -211,6 +211,16 @@ describe("runConnectionsAndHarnessesCheck", () => {
       expect(rowsOf(result).find((row) => row.process === "improve")?.problem).toBeTruthy();
     });
 
+    test("several harnesses and none called default is said with the word spelled out (F12)", async () => {
+      const result = await runConnectionsAndHarnessesCheck({
+        loadConfig: () => cfg({ harnesses: { claude: {}, codex: {} } }) as AkmConfig,
+        which: onPath("claude", "codex"),
+      });
+      expect(result.status).toBe("warn");
+      expect(result.message).toContain("Several harnesses are configured (claude, codex)");
+      expect(result.message).not.toContain("harnesss");
+    });
+
     test("is still reported with a harness, which gives the work a place to run but does not make the connections' default clear", async () => {
       const result = await runConnectionsAndHarnessesCheck({
         loadConfig: () => ({ ...ambiguous, harnesses: { claude: {} } }) as AkmConfig,

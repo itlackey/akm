@@ -25,6 +25,8 @@ export default defineConfig({
           "frame-ancestors": ["none"],
         },
       },
+      // Desktop's own components are compiled in runes mode, so a legacy one does not build. Dependencies keep theirs.
+      dynamicCompileOptions: ({ filename }) => (filename.includes("node_modules") ? undefined : { runes: true }),
     }),
   ],
   ssr: { external: ["akm-cli/workspace"] },
