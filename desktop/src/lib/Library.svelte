@@ -683,7 +683,7 @@
           {#key fileBundle + ":" + selectedFilePath}<SensitiveAsset
               bundle={fileBundle}
               file={selectedFilePath}
-              on:changed={() => mutationRevision++}
+              onChanged={() => mutationRevision++}
             />{/key}
         {:else if folderError}<p role="alert">{folderError}</p>
           <a href={withReview(filesHref({ bundle: fileBundle, path: filePath }, readingHref))}>Back to folder</a>

@@ -398,7 +398,7 @@
     {#each retired.archiveDirs as dir}<p class="mono wrap small">{retired.bundle}: {dir}</p>{/each}
   </section>
 {:else if data}
-  {#if data.redacted}{#key canonical}<SensitiveAsset ref={canonical} on:changed={() => onChanged?.()} />{/key}
+  {#if data.redacted}{#key canonical}<SensitiveAsset ref={canonical} {onChanged} />{/key}
   {:else}
     {#if mode === "search" && !hideBack}<div class="reader-navigation">
         <a href={returnTo}><Icon name="arrow-left" size={16} />Search results</a>
