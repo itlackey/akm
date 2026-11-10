@@ -23,9 +23,8 @@ the bundle directory layout, and the metadata every asset carries.
 - Ten additional *bundle formats* beyond akm's own (Claude Code and OpenCode
   tool directories, OKF, LLM wikis, and more) are recognized, indexed, and
   validated in place by their own adapters — see
-  [Bundle Types](bundle-types.md) for the full type-by-type table (purpose,
-  what the agent gets, and example ref) and the other-format read/write
-  picture.
+  [Supported Formats](supported-formats.md) for the format-by-format table (what is indexed,
+  detection marker, read/write support).
 
 ## Directory layout
 
@@ -188,6 +187,6 @@ distillation triggers and ranking are Experimental tuning targets. See
 - [Concepts](../guides/concepts.md) — the four core ideas asset types fit into
 - [Refs](refs.md) — how a conceptId is built from an asset's placement
 - [Memory](memory.md) — the memory asset type's belief-state and derived-memory model
-- [Bundle Types](bundle-types.md) — every bundle format akm recognizes, not just its own
+- [Supported Formats](supported-formats.md) — every bundle format akm recognizes, not just its own
 - [Classification](../architecture/internals/classification.md) — the specificity-based matcher
 - [Storage Locations](../architecture/internals/storage-locations.md) — the on-disk inventory: databases, locks, caches and asset directories

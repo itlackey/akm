@@ -52,9 +52,8 @@ else. AKM Desktop's child-process runner
 an integer `schemaVersion`, and rejects `ok: false`.
 
 **Failure.** A failed command prints `{ "ok": false, "error", "code"?, "hint" }`
-to stderr and exits non-zero. Exit codes: `0` success, `1` general or not found,
-`2` usage, `4` health warn (`akm health` only), `70` internal, `75` busy (another
-akm process holds a lock or is writing `state.db`; retry shortly), `78` config (a missing or failing OS scheduler is `SCHEDULER_UNAVAILABLE`).
+to stderr and exits non-zero. The exit codes are in the
+[CLI reference](docs/reference/cli.md#exit-codes-and-error-envelope).
 
 **Plugin call set.** The akm plugins call only these: `info`, `curate`, `search`
 (`--type`, `--by-usage`, `--project`), `show`, `feedback`, `remember`, `proposal
@@ -93,9 +92,9 @@ covers beyond the table.
 | `akm search` | Stable | |
 | `akm curate` | Stable | |
 | `akm show` | Stable | |
-| `akm workflow status` | Experimental | `--all-scopes` added in 0.9.15 (#942) and removed in 0.10 (#1239). |
+| `akm workflow status` | Experimental | `--all-scopes` added in 0.9.15 and removed in 0.10. |
 | `akm workflow plan` | Experimental | New in 0.9.2; secret-free provenance output; envelope shape may change. |
-| `akm workflow list` | Experimental | `--all-scopes` and a top-level `scopeKey` envelope field added in 0.9.15 (#942); since 0.10 (#1239) `--all-scopes` is removed, and the `scopeKey` field is removed from the list result. |
+| `akm workflow list` | Experimental | `--all-scopes` and a top-level `scopeKey` envelope field added in 0.9.15; since 0.10 `--all-scopes` is removed, and the `scopeKey` field is removed from the list result. |
 | `akm workflow create` | Experimental | |
 | `akm workflow resume` | Experimental | |
 | `akm workflow abandon` | Experimental | |
@@ -125,14 +124,14 @@ covers beyond the table.
 | `akm improve report` | Evolving | Subcommand since 0.10 (was a magic `scope` value); owns `--run` and `--since`. |
 | `akm judge` | Evolving | Runs a registered judge (`reflect.quality`, `distill.lesson`, `consolidate.pair`, `proposal.judgment`) on one JSON input from stdin, on the runner `--connection`, `--harness` and `--model` select. Output is one envelope (`judge`, `schemaVersion`, `runner`, `outcome`, `verdict?`, `reason?`); each judge carries its own `schemaVersion`. |
 | `akm proposal list` | Stable | |
-| `akm proposal show` | Evolving | The `legacy-ref` validation finding on a proposal recorded before concept IDs (#1513) is Experimental for its first release. |
+| `akm proposal show` | Evolving | The `legacy-ref` validation finding on a proposal recorded before concept IDs is Experimental for its first release. |
 | `akm proposal diff` | Evolving | |
 | `akm proposal accept` | Evolving | |
 | `akm proposal reject` | Evolving | |
 | `akm proposal reopen` | Evolving | Undoes a rejection. |
 | `akm proposal revert` | Evolving | |
 | `akm proposal drain` | Evolving | |
-| `akm proposal extract` | Evolving | Former top-level `akm extract`. Promoted from Experimental in 0.10 (#1133): the extract eval measures it. Evolving, not Stable, because 0.10 is still settling the improve defaults. |
+| `akm proposal extract` | Evolving | Former top-level `akm extract`. Promoted from Experimental in 0.10: the extract eval measures it. Evolving, not Stable, because 0.10 is still settling the improve defaults. |
 | `akm proposal new` | Evolving | Former top-level `akm propose`. |
 | `akm help` | Stable | |
 | `akm hints` | Stable | Format-exempt agent guide; one short guide; `--detail` is ignored. |
@@ -293,7 +292,7 @@ CHANGELOG with a migration note.
   `akm improve && akm proposal drain --promote --yes`, or a `triage` block
   with `applyMode: "promote"` in your strategy.
   **Session extraction** (`akm proposal extract` and the improve `extract`
-  process) is Evolving as of 0.10 (#1133): the extract eval (insights saved,
+  process) is Evolving as of 0.10: the extract eval (insights saved,
   routine sessions left empty, planted instructions refused) is its gate. It
   is Evolving, not Stable, because 0.10 is still settling the improve
   defaults; what it extracts and its output may still be tuned.
@@ -414,9 +413,9 @@ for scripted use.
   contradiction edges, and the consolidate journal are observable, but the
   algorithm that writes them is tuning across patch releases.
 - **Improve built-in strategies and lanes** — the built-in strategies other
-  than `default` and `consolidate` and the proactive-maintenance lane. 0.10 measures each and keeps, folds or removes it
-  (#1094). `quick`, `reflect-distill`, `thorough` and `catchup` were removed
-  in 0.10 (#1130), as were `proactive-maintenance` and the high-salience lane (#1129); a user-defined strategy of the same name keeps working.
+  than `default` and `consolidate` and the proactive-maintenance lane. 0.10 measures each and keeps, folds or removes it.
+  `quick`, `reflect-distill`, `thorough` and `catchup` were removed
+  in 0.10, as were `proactive-maintenance` and the high-salience lane; a user-defined strategy of the same name keeps working.
 - **Improve tuning config** — `improve.strategies.*.processes.*` (limits,
   gates, and the CLS knobs), `improve.processes.*` and `improve.qualityGate`
   (where each process runs; `improve.*` is the base for all model work). The 0.9.x series is explicitly still settling
@@ -452,7 +451,7 @@ review-first config correctly shows `queue`.
 | `triage` `applyMode: "promote"` **with judgment on** | The judgment tier auto-accepts consolidate promotions into the bundle | downgraded to `queue` — triage still runs, it just does not auto-accept |
 
 A deterministic-only `promote` (triage with judgment off) is **not** a gated
-lane (#1143): the `default` strategy runs it without the opt-in, bounded by
+lane: the `default` strategy runs it without the opt-in, bounded by
 `maxAcceptsPerRun` (200), through the same deterministic gates as
 `akm proposal drain --promote`. Only a promote that turns the judgment tier on
 needs `experimental.improveAutonomy`.
@@ -466,7 +465,7 @@ model must accommodate them. The pair judge supplies distinct-claim lists; AKM
 derives duplicate/subsumed/overlap outcomes and retirement direction from those
 lists. Historical queued retirement labels remain readable. Before unattended drain after an upgrade, review pending/staged
 retirements produced by older builds from notes over 12,000 body characters:
-upgrading does not revalidate their evidence (#1195).
+upgrading does not revalidate their evidence.
 
 Because the gate is applied before the LLM preflight, a review-first workspace
 also needs fewer connections or harnesses configured: a strategy whose only

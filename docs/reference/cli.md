@@ -9,7 +9,7 @@ This page is authoritative for the current CLI. For per-release behavior
 changes, see [`CHANGELOG.md`](../../CHANGELOG.md) and
 [`docs/migration/`](../migration/). For the bundle formats akm recognizes
 (detection, ref shapes, indexing, validation, read/write), see
-[Bundle Types](bundle-types.md).
+[Supported Formats](supported-formats.md).
 
 ## Global Flags
 
@@ -104,7 +104,7 @@ code to detect failure. Scripts can rely on the exit code alone.
 
 Every success envelope produced by the passthrough stamp — `config`, `clone`,
 `models`, `task-*`, `workflow-*`, `registry-*`, and the rest of that shared
-handler — also carries `ok: true` (0.9.12+), so a caller branching on `.ok`
+handler — also carries `ok: true`, so a caller branching on `.ok`
 sees the same field on both sides — success and failure — instead of
 `undefined` on success. A command that already computes its own `ok` from a
 graded outcome (e.g. `task run`'s exit-code mapping, `akm lint`, `akm proposal
@@ -284,7 +284,7 @@ warnings instead of aborting the full run. `verification.embeddingRuntime` is
 `onnxruntime-node` when the local embedder embedded in this run; it is absent
 for a remote embedding provider and when nothing was embedded locally.
 
-**Progress in non-verbose JSON mode (default output format, #954):** even
+**Progress in non-verbose JSON mode (default output format):** even
 without `--verbose`, phase-start messages and the embedding heartbeat
 (`Still generating embeddings: X/N stored, F failed; waiting on embedding
 provider.`) are now written to stderr, and a failed embedding batch logs at
@@ -343,7 +343,7 @@ import is ignored with a warning.
 
 **`--skip-if-locked` flag:** Every explicit `akm index` run acquires an
 opt-in, PID-liveness-only rebuild lock and releases it on exit — this is
-advisory, never the blocking lock #872 removed (see
+advisory, never a blocking lock (see
 [Locks](https://github.com/itlackey/akm/blob/main/docs/architecture/internals/indexing.md#locks)). A human-typed
 `akm index` with no flag is never gated by it: if another run already holds
 the lock, it warns and proceeds anyway, contending with the existing run. If
@@ -362,8 +362,8 @@ contention between two legitimate runs, never a broken config file.
 `--skip-if-locked` changes that only for the invocation that passes it: if
 the lock is already held by a live process, it skips gracefully (exit 0,
 `{ ok: true, skipped: { reason: "lock-held", pid, launcherPid, startedAt } }`
-— `launcherPid` is the holder's launcher pid when known, `null` otherwise,
-#956) instead of contending. `akm index` and `akm curate` are both safe to call frequently —
+— `launcherPid` is the holder's launcher pid when known, `null` otherwise)
+instead of contending. `akm index` and `akm curate` are both safe to call frequently —
 `curate` never blocks on a rebuild in progress ([read-path indexing stays
 non-blocking](#curate)) — but a hook, cron job, or scheduled task that
 invokes `akm index` directly should pass `--skip-if-locked` so it steps
@@ -679,7 +679,7 @@ it.
 
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |
-| `--type` | `skill`, `command`, `agent`, `knowledge`, `instruction`, `rule`, `workflow`, `script`, `memory`, `env`, `secret`, `lesson`, `task`, `session`, `fact`, `any` | `any` | Filter by asset type. Free-form and unvalidated — an unknown type returns no hits. Also accepts any adapter-defined type (e.g. `website`) — see [Bundle Types](bundle-types.md) for the open types each adapter emits. |
+| `--type` | `skill`, `command`, `agent`, `knowledge`, `instruction`, `rule`, `workflow`, `script`, `memory`, `env`, `secret`, `lesson`, `task`, `session`, `fact`, `any` | `any` | Filter by asset type. Free-form and unvalidated — an unknown type returns no hits. Also accepts any adapter-defined type (e.g. `website`) — see [Supported Formats](supported-formats.md) for the open types each adapter emits. |
 | `--limit` | number | `20` | Maximum results |
 | `--from` | `local`, `registry`, `all`, bundle name | `local` | Where to search. A bundle name narrows to that bundle; repeat `--from` (`--from team --from personal`) to search several bundles as one ranked set (OR). A keyword cannot be mixed with bundle names, and an unknown name is a usage error. With several bundles the response carries `bundles` |
 | `--filter` | `<key>=<value>` | _(none)_ | Frontmatter filter — repeatable; a repeated key matches any of its values, different keys must all match. A key is any frontmatter key (`team`, `project`, `category`, ...), `tag` (matched the way the index normalises tags), or a scope key (`user`, `agent`, `run`, `channel`). Example: `--filter team=platform --filter user=alice`. An empty value (`--filter channel=`) matches assets that do not carry the key (`tag` always carries path-derived tags, so `tag=` matches almost no assets), and combines with other values of the key by OR: `--filter channel=acme --filter channel=` keeps acme's assets plus every unscoped one. Narrows the candidates before ranking. |
@@ -690,7 +690,7 @@ it.
 | `--since` | `YYYY-MM-DD` | _(none)_ | Keep local assets dated on or after this day: the `observed` date, else `updated`. Assets with neither are dropped. Applies before the candidate budgets, like `--filter`. Search only; registry hits are unaffected. |
 | `--until` | `YYYY-MM-DD` | _(none)_ | Keep local assets dated on or before this day, by the same date. |
 | `--include-sessions` | flag | `false` | Include session assets, which are excluded from default results via `config.search.defaultExcludeTypes` |
-| `--by-usage` | flag | `false` | List instead of search: the eligible assets that were shown (`akm show`) in the [project](#projects) in force, most shown first, ties by ref. See [Usage list](#usage-list-by-usage) |
+| `--by-usage` | flag | `false` | List instead of search: the eligible assets that were shown (`akm show`) in the [project](#projects) in force, most shown first, ties by ref. See [Usage list](#usage-list---by-usage) |
 | `--format` | `json`, `jsonl`, `yaml`, `text`, `md` | `json` | Output format |
 | `--detail` | `brief`, `normal`, `full` | `brief` | Output verbosity level. An unknown value warns once and uses `normal` |
 
@@ -854,7 +854,7 @@ akm show github:owner/repo//meta    # an installed bundle's .meta/index.md
 | `--context` | `exact`, `lead` | `exact` | Fragment presentation. `exact` preserves the selected-section behavior. `lead` returns the indexed-safe first fragment followed by `[Selected matching fragment]` and the selected fragment. |
 | `--max-chars` | positive integer | `3200` for `lead` | Hard contextual content budget in characters; requires `--context lead` and is mutually exclusive with `--max-tokens`. |
 | `--max-tokens` | positive integer | _(none)_ | Approximate contextual budget using four characters per token; requires `--context lead` and is mutually exclusive with `--max-chars`. |
-| `--project` | project name, `none` | _(by directory)_ | The [project](#projects) recorded on this read's usage event, for [`akm search --by-usage`](#usage-list-by-usage); changes nothing else. `none` records no project; an unknown name is a usage error. |
+| `--project` | project name, `none` | _(by directory)_ | The [project](#projects) recorded on this read's usage event, for [`akm search --by-usage`](#usage-list---by-usage); changes nothing else. `none` records no project; an unknown name is a usage error. |
 
 `meta` is not an asset type — `[<origin>//]meta[:<name>]` direct-reads a
 human-authored orientation doc from a bundle's optional `.meta/` directory
@@ -897,7 +897,7 @@ Indexed body-link syntax depends on the bundle adapter:
 
 | Adapter | Body links that produce `links_to` relationships |
 | --- | --- |
-| `okf` | Inline `[label](./target.md)` and explicit reference `[label][id]` with `[id]: ./target.md` definitions |
+| `okf` | Inline `[label](target.md)` and explicit reference `[label][id]` with `[id]: target.md` definitions |
 | `llm-wiki` | Inline Markdown links; frontmatter `xrefs:` and `sources:` retain their separate contracts |
 | `akm` and other native adapters | Their declared frontmatter/structural relationships; ordinary Markdown body links do not automatically become `links_to` |
 
@@ -1227,7 +1227,7 @@ Workflow markdown contract:
 - An optional `### gate` inside a step section carries its gate rubric. Omitted
   or empty rubric text skips validation.
 
-See [Workflows](workflows.md) for the complete authoring contract.
+See [Workflow Schema](workflow-schema.md) for the complete authoring contract.
 
 ### How `bundle add` works
 
@@ -1249,7 +1249,7 @@ sources. Other HTTP(S) URLs are crawled as website sources.
 Add a source — a local directory, npm package, GitHub repo, git URL, or website.
 akm detects the bundle's **format** automatically (its own native workspace,
 a Claude Code or OpenCode tool directory, an OKF or LLM-wiki knowledge base,
-…) — see [Bundle Types](bundle-types.md) for how detection works and what
+…) — see [Supported Formats](supported-formats.md) for how detection works and what
 each format gives you.
 
 ```sh
@@ -1270,7 +1270,7 @@ akm bundle add https://docs.example.com --max-pages 100 --max-depth 5
 | `--name` | The bundle key. A contract, not a hint: it must be a legal bundle slug (no `:` `.` `#` `/` or whitespace) and not already taken by a different bundle, or the add fails before any write. Re-adding an already-installed source under a different `--name` than it already carries also fails — use `akm bundle rename <old> <new>` instead. Omit it and akm derives a name (falling back to a `-<hash>` suffix on a collision). |
 | `--provider` | Explicit provider for declarative source configuration; normally inferred from the input |
 | `--writable` | Mark a git source as writable so `akm sync` also pushes (default: false) |
-| `--adapter` | Component adapter for a local directory (one of the ids in [Bundle Types](bundle-types.md)); normally detected |
+| `--adapter` | Component adapter for a local directory (one of the ids in [Supported Formats](supported-formats.md)); normally detected |
 | `--before`, `--after` | Insert the new bundle before or after this configured bundle, instead of at the end |
 | `--options` | Provider options as JSON (e.g. `'{"ref":"main"}'`) |
 | `--allow-insecure-transport` | Allow a plain-HTTP source URL after explicitly accepting transport substitution risk |
@@ -2161,9 +2161,24 @@ The `--applied-to` flag records the lesson-strength signal: each credit is
 kept in the lesson's `lessonStrength[]` frontmatter. Search ranking does not
 use it.
 
+#### Writing the `--reason`
+
+`akm feedback` accepts an optional `--reason <text>` flag whose value is
+forwarded into feedback metadata and consumed by improve/distill proposal
+prompts. Negative feedback requires a reason by default: say what is wrong and
+what should change.
+
+Write the reason about the asset's content. Reflect treats it as an unverified
+report to investigate, not a fact to insert, and is told to leave the section
+unchanged when the reason asks for information the asset lacks. Distill's
+quality gate rejects a lesson that is off-subject for the asset it was
+distilled from and sends a borderline one to review. A command that failed
+(`akm show` erroring on the ref, say) says nothing about the asset, so it is
+not a reason to record against it.
+
 ### log
 
-Append-only realtime events stream (#204). Every mutating CLI verb appends an
+Append-only realtime events stream. Every mutating CLI verb appends an
 event row to `<dataDir>/state.db`; `akm log` reads it.
 
 > **Note:** there is no `akm events` command, and no `akm history` command —
@@ -2293,7 +2308,7 @@ converts none (one that is not enabled is a `legacyTaskWarnings` line). The step
    note to `assetEngineKeys.notes` listing each renamed engine and the flag that
    replaces it (see [The `engines` form](configuration.md#the-engines-form));
 4. refs in the text files akm indexes in writable bundles that still use the spelling from
-   before refs became bundle paths (`knowledge/WORK/x`, now `WORK/x`; #1432),
+   before refs became bundle paths (`knowledge/WORK/x`, now `WORK/x`),
    in frontmatter and body: `[bundle//]<folder>/<path>[.md]`, `<type>:<path>`
    and `wiki:<path>`, rewritten (`assetContentRefs`) under one backup directory
    per run. An old spelling that is now another file's ref is not rewritten
@@ -2882,7 +2897,7 @@ Scan bundle markdown files for structural issues: unquoted colons, missing
 stale paths, and broken refs — in body text and in
 `refs`/`xrefs`/`supersededBy`/`contradictedBy` frontmatter. A belief edge
 pointing at a memory that `akm improve` pruned resolves through the archive
-tombstone under `.akm/memory-cleanup/archive/` and is not reported (#884). Also reports
+tombstone under `.akm/memory-cleanup/archive/` and is not reported. Also reports
 `dangerous-env-key` findings for env files (the key set described under
 [Env files and process-hijacking keys](#env-files-and-process-hijacking-keys);
 `lint` only warns). `--type workflows` structurally parses
@@ -2905,7 +2920,7 @@ akm lint --prune-dangling-edges # Opt-in: drop belief edges whose target is gone
 | `--dir` | Override the bundle root directory (default: from config) |
 | `--type` | Only lint assets of this type (e.g. `workflows`, `tasks`, `memories`). **akm bundles only** — every other adapter validates the whole bundle and warns on stderr that the flag had no effect. |
 | `--fail-on-flagged` | Exit non-zero when `summary.flagged > 0`. Default: exit 0 regardless of findings. |
-| `--prune-dangling-edges` | Opt-in repair (#884): drop `supersededBy`/`contradictedBy` entries whose target has neither a file nor a prune tombstone. **Not** implied by `--fix` — it edits well-formed files to delete a belief-graph claim, so review a plain `akm lint` report first. Clears the same `writable: false` gate `--fix` does. |
+| `--prune-dangling-edges` | Opt-in repair: drop `supersededBy`/`contradictedBy` entries whose target has neither a file nor a prune tombstone. **Not** implied by `--fix` — it edits well-formed files to delete a belief-graph claim, so review a plain `akm lint` report first. Clears the same `writable: false` gate `--fix` does. |
 
 Returns `fixed[]` and `flagged[]` arrays plus a `summary: { fixed, flagged }`
 count. Each entry carries `file`, `issue`, `detail`, and whether it was
@@ -2953,8 +2968,8 @@ akm improve report --since 7d          # ...aggregated over every real run start
 | `--connection <name>` / `--harness <name>` | Run every call of this run, judges included, on this connection or harness instead of the default; they are mutually exclusive |
 | `--model <alias\|name>` | The model for every call of this run: an alias (`fast`, `balanced`, `reasoning`) or an exact name |
 | `--json-to-stdout` | Also emit the full persisted JSON result on stdout for a live run. Without this flag, stdout stays empty. Dry-runs always emit their result and are never persisted. |
-| `--skip-if-locked` | If another improve run already holds the lock, skip gracefully (exit 0) instead of failing with "already running" (exit 75, `TransientError`, code `IMPROVE_LOCK_HELD` — field follow-up to #948: two legitimate `improve` invocations colliding on this lock is ordinary, retryable contention, not a broken config file). Use for high-frequency scheduled runs so they don't pile up failures while a longer run is in progress. |
-| `--show-prompt` | Print the composed reflect prompt (#952) for one asset and exit — before any lock, index write, or model call. Requires a fully-qualified asset ref as the scope (`akm improve lessons/my-lesson --show-prompt`); rejected with a type or whole-bundle scope. The default output format is JSON, which carries the prompt as a `prompt` field (escaped into one line) alongside `engine` (the connection or harness reflect would run on) and `engineKind` (`connection` or `harness`); pass `--format text` to print the prompt itself, unwrapped and readable by eye. |
+| `--skip-if-locked` | If another improve run already holds the lock, skip gracefully (exit 0) instead of failing with "already running" (exit 75, `TransientError`, code `IMPROVE_LOCK_HELD`: ordinary, retryable contention). Use for high-frequency scheduled runs so they don't pile up failures while a longer run is in progress. |
+| `--show-prompt` | Print the composed reflect prompt for one asset and exit — before any lock, index write, or model call. Requires a fully-qualified asset ref as the scope (`akm improve lessons/my-lesson --show-prompt`); rejected with a type or whole-bundle scope. The default output format is JSON, which carries the prompt as a `prompt` field (escaped into one line) alongside `engine` (the connection or harness reflect would run on) and `engineKind` (`connection` or `harness`); pass `--format text` to print the prompt itself, unwrapped and readable by eye. |
 | `--sync` / `--no-sync` | Sync the git-backed primary bundle like `akm sync` (fetch and merge the upstream, commit, push) before the run, and commit (and optionally push) when it finishes. A conflict or fetch failure before the run only warns; the run continues on the local state. Default: on for git-backed bundles (per profile config). |
 | `--push` / `--no-push` | Push after the pre-run and end-of-run sync commits when writable with a remote configured. `--no-push` commits only, skipping the push. Default: per profile config (`true`). `sync.push` stays outside the autonomy gate — this is a per-run opt-out, not a default change. |
 
@@ -3093,7 +3108,7 @@ not an atomic cross-store snapshot or a reservation. Live execution re-inspects
 mutable inputs, so a later run can differ after index, state, filesystem,
 clock, or session-log changes.
 
-`plan.processes` (#947) is the resolved process -> connection or harness -> model
+`plan.processes` is the resolved process -> connection or harness -> model
 routing table: one row per improve process (`reflect`, `distill`, `consolidate`,
 `memoryInference`, `extract`, `validation`, `triage`,
 `proactiveMaintenance`), plus a `triage.judgment` row when the strategy
@@ -3116,7 +3131,7 @@ resolution for every kind of work, whichever strategy runs. `--dry-run` does not
 probe reachability over the network — run `akm health` to check whether a
 connection actually answers.
 
-`--show-prompt` (#952) is the cheapest way to exercise reflect alone: it
+`--show-prompt` is the cheapest way to exercise reflect alone: it
 builds the exact prompt reflect would send for one asset — the same source
 resolution, runner selection, feedback/schema-hint/rejected-proposal
 gathering `akm improve`'s live reflect step uses — and prints it
@@ -3134,7 +3149,7 @@ destination than `memory`.
 
 #### improve report
 
-`akm improve report` (#944) answers "which connection or harness did each model-calling process
+`akm improve report` answers "which connection or harness did each model-calling process
 use this run, how much did it cost, and which enabled processes made zero
 calls (and why)" without hand-written SQLite against `state.db`. It is a
 real subcommand (`report` is not an asset type, so it is not a scope of the
@@ -3148,7 +3163,7 @@ Every real (non-dry-run) `akm improve` invocation persists a `usageReport`
 field on the result (`result_json` in `improve_runs`, and in the
 `--json-to-stdout` / dry-run JSON): `{ byProcessEngineModel, noCalls }`.
 `byProcessEngineModel` is a cross-tab of the LLM call records this run's own
-usage sink collects (#576) — one row per distinct `(process, engine, model)` triple,
+usage sink collects — one row per distinct `(process, engine, model)` triple,
 where `engine` is the connection or harness name, each with
 `calls`, `failures`, `promptTokens`, `completionTokens`, `totalTokens`,
 `reasoningTokens`, and `totalDurationMs`. `noCalls` lists every model-calling
@@ -3428,7 +3443,7 @@ grammar (`lesson:<name>`) and whose metadata has no `changes` or
 it lacks. It cannot be accepted: `accept` and `diff` refuse it with the same
 reason and `drain` leaves it alone; `akm proposal reject <id> --reason <why>`
 archives it with its content and ref kept. The `legacy-ref` finding is
-**Experimental** for its first release (#1513).
+**Experimental** for its first release.
 
 #### proposal accept
 
@@ -3517,7 +3532,7 @@ unchanged.
 
 ```sh
 akm proposal reopen <id>
-akm proposal reopen <id> --reason "the diff was misrendered (#997)"
+akm proposal reopen <id> --reason "the diff was misrendered"
 akm proposal reopen <id> <id> <id>                 # several at once: all or none
 akm proposal reopen <id> --queue team-bundle
 # One id per call, and only the rejections whose reason says the diff was misread:
@@ -3683,7 +3698,7 @@ promotion (a memory proposed as a new knowledge note); any other kind it would
 accept, such as a retirement or a reflect revision, is left for a
 person (reason `judgment-not-promotion`). Judged over every kind, the tier
 accepted unsafe retirements, applied exact fixes unreviewed and changed notes
-nobody had touched: 6 to 14 harmed items a night on two models (#1132). A reflect revision that changes the body, and
+nobody had touched: 6 to 14 harmed items a night on two models. A reflect revision that changes the body, and
 every distill lesson or knowledge promotion, is deferred for review even when
 its judge passes it. A bare `akm proposal drain` queues: it stages its
 decisions and writes nothing to assets, whatever the default strategy's apply
@@ -3706,23 +3721,8 @@ akm proposal drain --strategy default --promote -y  # Read the triage block from
 | `--dry-run` | List what would be accepted/rejected/deferred, without writing |
 | `--max-accepts` | Hard per-run accept ceiling; accepts beyond this are reported as `skippedByCap` |
 | `--older-than` | Only consider proposals created (or last reopened) more than this many days ago |
-| `--judgment` | Explicitly enable the judgment tier for this standalone drain, including when the selected strategy says `judgment.enabled: false`; it accepts only consolidate promotions (#1132); execution overrides still come from that strategy. Without this flag, strategy judgment config does not enable standalone drain judgment. A missing runner remains a no-op with a logged `triage_deferred` summary. |
+| `--judgment` | Explicitly enable the judgment tier for this standalone drain, including when the selected strategy says `judgment.enabled: false`; it accepts only consolidate promotions; execution overrides still come from that strategy. Without this flag, strategy judgment config does not enable standalone drain judgment. A missing runner remains a no-op with a logged `triage_deferred` summary. |
 | `-y`, `--yes` | Skip the confirmation prompt (required in non-interactive mode for promotion) |
-
-### feedback (`--reason`)
-
-`akm feedback` accepts an optional `--reason <text>` flag whose value is
-forwarded into feedback metadata and consumed by improve/distill proposal
-prompts. Negative feedback requires a reason by default: say what is wrong and
-what should change.
-
-Write the reason about the asset's content. Reflect treats it as an unverified
-report to investigate, not a fact to insert, and is told to leave the section
-unchanged when the reason asks for information the asset lacks. Distill's
-quality gate rejects a lesson that is off-subject for the asset it was
-distilled from and sends a borderline one to review. A command that failed
-(`akm show` erroring on the ref, say) says nothing about the asset, so it is
-not a reason to record against it.
 
 ### task
 

@@ -81,7 +81,7 @@ sets expectations by environment.
 
 A Claude Code `.claude` directory or an OpenCode `.opencode` directory is
 recognized and indexed automatically once added as a source — see
-[Bundle Types](../reference/bundle-types.md) for the full adapter list and
+[Supported Formats](../reference/supported-formats.md) for the full adapter list and
 which formats are read-only versus writable in the current release.
 The native directory remains the source of truth: AKM translates recognized
 assets while reading the bundle and does not synchronize, copy, or write them
@@ -174,4 +174,4 @@ the OpenCode you use yourself.
 - [Improve the Library](improve-the-library.md) — feeding back usage signals
 - [CLI Reference](../reference/cli.md) — `completions`, `agent`, and `hints` command documentation
 - [Concepts](concepts.md) — bundles, adapters, refs, and the asset type system
-- [Bundle Types](../reference/bundle-types.md) — how AKM indexes existing project layouts in place
+- [Supported Formats](../reference/supported-formats.md) — how AKM indexes existing project layouts in place

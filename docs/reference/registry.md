@@ -134,7 +134,7 @@ What `bundle add` does:
    `akm lint` reports env keys that can hijack a process (`dangerous-env-key`)
    for authors who want to review their own bundle.
 3. Finds the bundle root: the package root when it looks like a bundle in any
-   layout akm recognizes (see [Bundle types](bundle-types.md)), otherwise the
+   layout akm recognizes (see [Supported formats](supported-formats.md)), otherwise the
    shallowest nested directory that does. If the package's `package.json` has
    an `akm.include` array, only those paths are copied.
 4. Saves the source to `bundles` in `config.json`, records the resolved version

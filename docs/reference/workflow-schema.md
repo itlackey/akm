@@ -15,8 +15,7 @@ detail.
 
 ## Source format
 
-A workflow is a Markdown `.md` asset. Nothing else is a workflow source: the
-GitHub-shaped `.yml` workflow format was removed in 0.10, and a stray `.yml` file
+A workflow is a Markdown `.md` asset. Nothing else is a workflow source: a `.yml` file
 under `workflows/` is skipped at index time with a message saying it must use
 `.md`. The shipped `schemas/akm-workflow.json` frontmatter schema
 validates the source.

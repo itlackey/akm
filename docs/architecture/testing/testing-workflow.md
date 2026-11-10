@@ -378,7 +378,7 @@ For curate/search ranking quality, run the retrieval eval of
 **[itlackey/akm-eval](https://github.com/itlackey/akm-eval)**
 (`evals/retrieval/run --corpus public`, with `AKM_BIN` naming the build under
 test). It scores `akm search` and `akm curate` against graded judgments and
-calls no model service. See `docs/maintainers/eval.md`.
+calls no model service.
 
 ## Recommended Workflow
 
