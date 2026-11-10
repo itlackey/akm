@@ -197,7 +197,9 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
   await expect(page.getByText("Restart Claude Code")).toBeVisible();
   await shot("setup-05-learning-agent");
   const run = await commands(server);
-  assert.ok(run.some((item) => item.args.join(" ") === "plugin marketplace add itlackey/akm-plugins"));
+  // A stage engine (0.11.0-beta.0) installs the plugins from the marketplace's next channel.
+  const marketplace = `itlackey/akm-plugins${/^\d+\.\d+\.\d+-/.test(ENGINE) ? "@next" : ""}`;
+  assert.ok(run.some((item) => item.args.join(" ") === `plugin marketplace add ${marketplace}`));
   assert.ok(run.some((item) => item.args.join(" ") === "plugin install akm@akm-plugins --scope user"));
   assert.ok(!run.some((item) => item.name === "bun"), "Bun's installer is never run");
   const onAgent = await savedConfig(server);
