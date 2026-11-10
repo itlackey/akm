@@ -293,7 +293,7 @@
 </script>
 
 <div class="editor-header">
-  <h2 bind:this={editorHeading} tabindex="-1">
+  <h1 bind:this={editorHeading} tabindex="-1">
     {creating
       ? "New knowledge"
       : file
@@ -301,7 +301,7 @@
         : source
           ? documentTitle({ ref, content: source.content })
           : "Opening editor…"}
-  </h2>
+  </h1>
   <div class="editor-return">
     <a href={backHref}
       ><Icon name="arrow-left" size={16} />{creating
@@ -456,7 +456,7 @@
     gap: 24px;
     margin-bottom: 16px;
   }
-  .editor-header h2 {
+  .editor-header h1 {
     font-size: 26px;
     line-height: 1.25;
     letter-spacing: -0.02em;
@@ -464,7 +464,7 @@
     min-width: 0;
     overflow-wrap: anywhere;
   }
-  .editor-header h2[tabindex="-1"]:focus {
+  .editor-header h1[tabindex="-1"]:focus {
     outline: none;
   }
   /* The title wraps; the return link keeps its line and its place beside it. */
@@ -643,7 +643,7 @@
       gap: 4px;
       margin-bottom: 12px;
     }
-    .editor-header h2 {
+    .editor-header h1 {
       font-size: 24px;
     }
     .editor-toolbar {

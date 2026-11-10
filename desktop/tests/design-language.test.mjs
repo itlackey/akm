@@ -4,7 +4,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import AxeBuilder from "@axe-core/playwright";
@@ -89,6 +89,13 @@ async function longDocument(fixture) {
   await writeFile(
     path.join(fixture.root, `personal/knowledge/${longName}.md`),
     `---\ntitle: Long reference with a wide table, long code and an unbreakable identifier ${"Z".repeat(40)}\ndescription: Synthetic long title\n---\n# Long reference\n\nBody.\n`,
+  );
+  // A file that is not an asset and a protected one, for the two plain file views.
+  await writeFile(path.join(fixture.root, "personal/knowledge/plain-note.txt"), "A plain note.\n");
+  await mkdir(path.join(fixture.root, "personal/env"), { recursive: true });
+  await writeFile(
+    path.join(fixture.root, "personal/env/example.env"),
+    'EXAMPLE_KEY="synthetic-key-not-a-credential"\n',
   );
   execFileSync(process.execPath, [fixture.launcher, "index", "--full", "--format=json", "-q"], {
     env: fixture.env,
@@ -341,6 +348,28 @@ test("keyboard order, focus hand-back and names at the shortest windows", { time
   await expect(page.locator("#flow")).toBeFocused();
   await expect(page.locator("#flow"), "the section a link moves focus to is on screen").toBeInViewport();
 
+  // Every page has one h1, here where the section's own heading is not shown: a document, a file or the editor open in
+  // Files, the reader, and a proposal in this short window.
+  const files = "/library/files?bundle=personal&path=";
+  const opened = encodeURIComponent(app.refs.document);
+  for (const [state, route, ready] of [
+    ["reader", `/library/search?ref=${opened}`, ".markdown"],
+    ["document in Files", `${files}knowledge&file=knowledge%2Frestore-laptop.md&ref=${opened}&open=1`, ".markdown"],
+    ["plain file in Files", `${files}knowledge&file=knowledge%2Fplain-note.txt&open=1`, "pre.code"],
+    ["protected file in Files", `${files}env&file=env%2Fexample.env&open=1`, ".sensitive-reader header"],
+    ["new protected file", "/library/new-sensitive?kind=env&bundle=personal", ".sensitive-editor form"],
+    ["editor", `/library/edit?ref=${longRef}`, 'textarea[name="content"]'],
+    ["folder in Files", `${files}knowledge`, ".folder-table tbody tr"],
+    ["proposal", `/review/${app.proposals.fresh}`, ".change-preview"],
+  ]) {
+    await open(route, ready);
+    const headings = await page.evaluate(() =>
+      [...document.querySelectorAll("main h1")]
+        .filter((h1) => h1.getClientRects().length)
+        .map((h1) => h1.textContent.trim()),
+    );
+    assert.equal(headings.length, 1, `${state}: one h1 on the page, found ${JSON.stringify(headings)}`);
+  }
   await open("/settings/bundles", "#configured-bundles");
   const card = await tabStops(page, "form.settings-card");
   assert.ok(card.length >= 4, `the add-bundle form has its controls in the tab order (${card.length})`);

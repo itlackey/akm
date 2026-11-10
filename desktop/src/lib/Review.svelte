@@ -1062,7 +1062,17 @@
     }
   }
   @media (min-width: 851px) and (max-height: 700px) {
-    .review-page[data-detail] .page-heading,
+    /* The proposal is the whole page here, so the section's heading is not drawn. It stays the page's h1 for a
+       screen reader, which is why it is clipped instead of removed. */
+    .review-page[data-detail] .page-heading h1 {
+      position: absolute;
+      inline-size: 1px;
+      block-size: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+    .review-page[data-detail] .page-heading .return-link,
     .review-page[data-detail] .refresh {
       display: none;
     }

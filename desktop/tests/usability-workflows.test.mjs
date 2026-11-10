@@ -29,7 +29,7 @@ test("reviewed human workflows prevent dead ends and preserve focus and source",
     const result = page.locator(".library-hit-content").filter({ hasText: "restore laptop" });
     await result.focus();
     await page.keyboard.press("Enter");
-    const heading = workspace.locator(".asset-heading h2");
+    const heading = workspace.locator(".asset-heading h1");
     await expect(heading).toBeFocused();
     await expect(workspace.locator(".document-body")).toContainText("Verify the checksum");
     assert.ok(

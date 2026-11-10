@@ -149,7 +149,7 @@
 
 <section class="sensitive-editor" aria-label={creating ? `Create ${noun}` : `Edit ${noun}`}>
   <header>
-    <h2>{creating ? `New ${noun}` : `Edit ${file.split("/").at(-1)}`}</h2>
+    <h1>{creating ? `New ${noun}` : `Edit ${file.split("/").at(-1)}`}</h1>
     <p class="muted small">Edits stay in memory only. Saving follows this bundle’s Git policy.</p>
   </header>
   {#if error}<p class="notice notice-warn" role="alert">{error}</p>{/if}
@@ -218,8 +218,11 @@
   .sensitive-editor {
     max-width: 960px;
   }
-  .sensitive-editor h2 {
+  /* The page's heading, with the line height and spacing it had as a second-level heading. */
+  .sensitive-editor h1 {
     font-size: 24px;
+    line-height: inherit;
+    letter-spacing: var(--tracking-snug);
     margin: 0;
   }
   .sensitive-editor header {

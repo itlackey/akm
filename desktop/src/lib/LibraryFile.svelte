@@ -29,7 +29,7 @@
 </script>
 
 <header>
-  <h2>{file.split("/").at(-1)}</h2>
+  <h1>{file.split("/").at(-1)}</h1>
   <div class="actions">
     {#if folderHref}<a href={folderHref}>Back to folder</a>{/if}{#if source?.writable}<a
         class="btn btn-secondary"
@@ -58,8 +58,12 @@
     align-items: center;
     gap: 16px;
   }
-  h2 {
+  /* The page's heading, at the size it had as a second-level heading. */
+  h1 {
     margin: 0;
+    font-size: var(--text-l);
+    line-height: inherit;
+    letter-spacing: var(--tracking-snug);
     overflow-wrap: anywhere;
   }
   pre {
