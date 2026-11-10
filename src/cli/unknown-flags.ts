@@ -137,8 +137,10 @@ function collectKnownArgs(root: FlagScanCommand, rawArgs: readonly string[]): Kn
 }
 
 /**
- * Flags STABILITY.md lists under "Gone / Use", checked before edit distance so
+ * Flags removed in 0.10 and 0.11, checked before edit distance so
  * the hint names the real replacement (`--shape` is not a typo of `--type`).
+ * The 0.10 replacements are in the "Gone / Use" table of
+ * `docs/migration/v0.9-to-v0.10.md`; the 0.11 ones are in CHANGELOG.md.
  * `commands` limits an entry to those command paths; absent means every command.
  */
 const GONE_FLAGS: ReadonlyArray<{ flag: string; use: string; commands?: readonly string[] }> = [
@@ -187,6 +189,8 @@ const GONE_FLAGS: ReadonlyArray<{ flag: string; use: string; commands?: readonly
     commands: ["task add"],
   },
   { flag: "--id", use: "the id as the argument: `akm task history <id>`", commands: ["task history"] },
+  { flag: "--auto-fix", use: "`--fix`", commands: ["lint"] },
+  { flag: "--dry-run", use: "`akm migrate status`", commands: ["migrate apply"] },
 ];
 
 /**
@@ -204,10 +208,11 @@ function throwUnknownFlag(shown: string, attempted: string, known: KnownArgs): n
     (entry) => entry.flag === attempted && (!entry.commands || entry.commands.includes(command)),
   );
   if (gone) {
+    const advice = gone.use.startsWith("no flag: ") ? gone.use.slice("no flag: ".length) : `use ${gone.use}`;
     throw new UsageError(
       `Unknown flag "${shown}".`,
       "UNKNOWN_FLAG",
-      `\`${gone.flag}\` is gone: use ${gone.use}. Run the command with \`--help\` to see its accepted flags.`,
+      `\`${gone.flag}\` is gone: ${advice}. Run the command with \`--help\` to see its accepted flags.`,
     );
   }
   const threshold = Math.max(2, Math.ceil(attempted.length / 3));

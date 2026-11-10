@@ -218,20 +218,24 @@ describe("gone flags", () => {
     [["task", "sync", "--bundle", "b"], "`--bundle` is gone", "drop it"],
     [["task", "add", "--rebind"], "`--rebind` is gone", "drop it"],
     [["task", "history", "--id", "t1"], "`--id` is gone", "akm task history <id>"],
+    [["lint", "--auto-fix"], "`--auto-fix` is gone", "use `--fix`"],
+    [["migrate", "apply", "--dry-run"], "`--dry-run` is gone", "use `akm migrate status`"],
+    [["bundle", "update", "--yes"], "`--yes` is gone: it did nothing, so drop it.", "drop it"],
+    [["setup", "--probe"], "`--probe` is gone: probing is the default", "--no-probe"],
   ])("%j names its replacement", (argv, gone, use) => {
     const hint = hintFor(argv);
     expect(hint).toContain(gone);
     expect(hint).toContain(use);
   });
 
-  test("a gone flag stays valid on the commands that still declare it", () => {
-    const run = (argv: string[]) => assertKnownFlags(main as unknown as FlagScanCommand, argv);
-    expect(() => run(["task", "sync", "--rebind"])).not.toThrow();
-    expect(() => run(["proposal", "accept", "p1", "--yes"])).not.toThrow();
-    expect(() => run(["bundle", "remove", "b", "--yes"])).not.toThrow();
-    expect(() => run(["bundle", "add", "x", "--options", "{}"])).not.toThrow();
-    expect(() => run(["task", "run", "t1", "--bundle", "b"])).not.toThrow();
-    expect(() => run(["improve", "--dry-run"])).not.toThrow();
+  test.each([
+    [["bundle", "list", "--yes"]],
+    [["workflow", "list", "--id", "x"]],
+    [["workflow", "list", "--rebind"]],
+    [["registry", "list", "--dry-run"]],
+    [["bundle", "list", "--options", "x"]],
+  ])("%j is unknown but not a gone flag where the name is scoped elsewhere", (argv) => {
+    expect(hintFor(argv)).not.toContain("is gone");
   });
 });
 

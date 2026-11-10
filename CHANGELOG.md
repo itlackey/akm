@@ -94,7 +94,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - `akm remember --help` advertised `-showSimilar`, which was rejected; it now shows `--show-similar` only, and `--showSimilar` still works.
 - `akm improve --auto-accept` names its replacement (`akm proposal drain --promote --yes`, or a `triage` block with `applyMode: "promote"`).
-- The flags removed in 0.11 that still reach the unknown-flag check (`improve --require-engines`, `workflow list|status --all-scopes`, `--allow-dangerous-env-keys`, `bundle update --yes`, `registry add --options`, `task sync --dry-run|--bundle`, `task add --rebind`, `task history --id`) now name their replacement or say to drop them, like `--auto-accept`.
+- The flags removed in 0.11 that still reach the unknown-flag check (`improve --require-engines`, `lint --auto-fix`, `migrate apply --dry-run`, `workflow list|status --all-scopes`, `--allow-dangerous-env-keys`, `bundle update --yes`, `registry add --options`, `task sync --dry-run|--bundle`, `task add --rebind`, `task history --id`) now name their replacement or say to drop them, like `--auto-accept`.
 - A `$schema` key in `config.json` is accepted without an unknown-key warning.
 - Wrong text: the feedback error named `akm.json` (the file is `config.json`); Desktop labelled `archiveRetentionDays` "archived assets" (it expires pending proposals) and `feedback.requireReason` as gating positive feedback (it gates negative feedback); `configuration.md` cited the gone `setup --config`; the comment at the top of `config-schema.ts` described behaviour the code does not have. Docs now state the working-bundle order, `improve.eventRetentionDays` and `improve.stateGc.collect`; `STABILITY.md` lists `AKM_STATE_DIR` as Supported and `AKM_UPGRADE_SKIP_CHECKSUM` as Internal (as `cli.md` already said) and names the other Internal variables; the eight flags `cli.md` missed are listed.
 
@@ -127,7 +127,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.10.261113] - 2026-11-08
 
 ### Removed
-
 
 - The curate reranker is gone (#1468): `search.curateRerank` (`enabled`, `endpoint`, `model`, `apiKey`, `timeoutMs`, `topN`), the rerank client, curate's rerank pass and its candidate expansion, the `curate-rerank` row in `akm config targets` and `akm health`, the Desktop setting, and the schema and docs entries. `akm curate` takes the top `--limit` hits of one search. A config that still has `search.curateRerank` loads, warns once that the key is ignored, enables nothing, and `akm migrate apply` drops it; a `curateRerank` key in `credentials.json` is left alone.
 - `ensureIndex` and search drop three things (#1469): the rebuild of an indexed empty stash on every read (`builtAt`, written after a complete scan, now means "built"), the separate freshness walker and the uncalled `isIndexStale`, and the reverse path-to-id-to-ref lookups in search and curate telemetry and in nested command/persona read telemetry, which use the ref they already hold and open no index connection of their own.
@@ -219,7 +218,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 
-
 - `improve.strategies.*.processes.reflect.excludeRefPrefixes` is removed; reflect's default `allowedTypes` already excludes `wiki-source`. A config that still has the key warns once and the key is ignored.
 
 ## [0.10.261107] - 2026-11-05
@@ -229,7 +227,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `code-project` adapter: `akm bundle add . --adapter code-project` indexes a coding repository (source, Markdown docs, a few named config files) into the global index, one document per file, read-only (#1411). Explicit `--adapter` only; a fixed allowlist skips binaries, lockfiles, `.env*`, keys and generated or vendored directories. With a remote embedding endpoint, indexed source code leaves the machine.
 
 ### Removed
-
 
 - `akm show --filter` is removed (#1413). `show` reads the ref it is given and never filters by
   scope, belief or any other metadata, so a valid ref is no longer refused because its `scope_*`
@@ -338,7 +335,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   accept also carries its `code`.
 
 ### Removed
-
 
 - `akm improve judge --strategy`: a strategy never chose where the judge ran. The command
   is now `akm judge reflect.quality` in its older input and output shape.
@@ -867,7 +863,6 @@ changes are in the 0.10 sections below; the upgrade from 0.9 is in
 
 ### Removed
 
-
 - The `onnxruntime-node` dependency, and with it the install script that
   downloaded about 317 MB of CUDA providers on every Linux x64 `npm install`
   (akm uses the CPU only; #1254). akm loads that package's binding from its cache
@@ -1322,7 +1317,6 @@ changes are in the 0.10 sections below; the upgrade from 0.9 is in
 
 ### Removed
 
-
 - `engines`, the `defaults` block (`defaults.engine`, `defaults.llmEngine`, with
   `defaults.improveStrategy` now `improve.strategy`), `workflow.judgeEngine`, a
   strategy's `engine`, `model`, `llm` and `timeoutMs`, `provider`, and
@@ -1566,7 +1560,6 @@ changes are in the 0.10 sections below; the upgrade from 0.9 is in
   continued, and keeps the `secret://` text it stored.
 
 ### Removed
-
 
 - The dangerous-key audit on `bundle add` and `bundle update`, its prompt, its
   rollback of a freshly installed bundle, and the `blocked` per-bundle status in
@@ -1957,7 +1950,6 @@ changes are in the 0.10 sections below; the upgrade from 0.9 is in
 
 ### Removed
 
-
 - **Reflect's retrieval regression gate (#1171).** After the quality judge passed a revision, reflect graded the old and the new text against up to five of the asset's own retrieval queries and refused the revision (`quality_rejected`, a 14-day window) when the mean grade fell at all. Re-measured on 0.10 it refused 12-17% of the revisions the judge had passed and lowered defects fixed from 84 to 77 (35B) and from 92 to 77 (27B) of 96, now that reflect edits frontmatter only. A judge-passed revision is now minted as a proposal with no further check. This also removes the `retrieval-ungraded` review reason, the `retrievalRegression`/`retrievalUngraded` event metadata and the `retrieval-relevance-judge.md` prompt. No config key existed for the gate, so no config changes.
 
 ## [0.10.26101101] - 2026-10-11
@@ -2101,7 +2093,6 @@ changes are in the 0.10 sections below; the upgrade from 0.9 is in
 
 ### Removed
 
-
 - **The GitHub-shaped YAML workflow format (#1096).** A `.yml` workflow (`name`/`on`/`jobs`, one job, `uses:` and `run:`
   steps) is gone, with everything that existed only to carry it: workflow-step `uses: tasks/<ref>` (task composition),
   `uses: scripts/<ref>` and `uses: commands/<ref>` targets, the `with:` rejection classifier for them, YAML `on.schedule`
@@ -2204,7 +2195,6 @@ changes are in the 0.10 sections below; the upgrade from 0.9 is in
   `0.9.N`. See `STABILITY.md`. (#1089)
 
 ### Removed
-
 
 - **Six improve knobs that measured no effect (#1131).** Each is removed with the code that served only it; a config
   that still sets one loads (named once by the unknown-key warning, dropped by `akm migrate apply`).
@@ -2704,7 +2694,6 @@ When upgrading from 0.9.26:
 
 ### Removed
 
-
 - **The `scripts/akm-eval` toolkit has moved out of this repository.** The
   read-only measurement toolkit (the case runner and its suites, the twin
   experiment, the real-query verdict for the proactive lane, the state
@@ -3064,7 +3053,6 @@ changes in this section. When upgrading from 0.9.25:
 
 ### Removed
 
-
 - **`akm feedback --failure-mode` and the `feedback.allowedFailureModes` config
   key.** The flag labelled negative feedback `incorrect`, `outdated`,
   `dangerous`, `incomplete` or `redundant`. None of the 195 negative feedback
@@ -3257,7 +3245,6 @@ sections below list every change. When upgrading from 0.9.24:
 
 ### Removed
 
-
 - **Everything reflect needed to rewrite a body.** The prompt's "Content
   preservation rules" and the size bounds computed for them; the related
   distilled lessons section and the companion-doc
@@ -3341,7 +3328,6 @@ sections below list every change. When upgrading from 0.9.24:
 
 ### Removed
 
-
 - **The agent-engine inference fields,** which 0.9.25-alpha.1 accepted: they
   fail to load again.
 - **The `opencode-sdk` step watcher and the git-repository refusal for model
@@ -3423,7 +3409,6 @@ sections below list every change. When upgrading from 0.9.24:
   as `reasoning_effort`.
 
 ### Removed
-
 
 - **Dead code; nothing you run changes:** each harness's unused `pattern` and
   `structuredOutput` fields, `resolveLlmEngineUse`'s swap of an agent engine
@@ -4056,7 +4041,6 @@ sections below list every change. When upgrading from 0.9.24:
   can't carve out on its own.
 
 ### Removed
-
 
 - **The LLM entity-graph extraction pass.** `akm improve`'s per-file
   entity/relation extraction, its tables, and `akm show`'s `related` list are
@@ -5617,7 +5601,6 @@ reach 74 GB with nothing reporting it.
 
 ### Removed
 
-
 - **`akm health --clean-dead-residue` and every other compensating shim.**
   A special-purpose flag on `health` that deleted files existed because
   migrations had not finished their own job. Removing a superseded layout IS
@@ -5825,7 +5808,6 @@ reach 74 GB with nothing reporting it.
 
 ### Removed
 
-
 - **The `frequent` and `memory-focus` improve strategies.** Zero recorded
   invocations, and both were mid-points of other presets (`frequent` ≈
   `reflect-distill` without distill or triage; `memory-focus` a subset of
@@ -5902,7 +5884,6 @@ justification.
   path.
 
 ### Removed
-
 
 - **The index writer lease (#872).** It guarded a *regenerable cache*, had zero
   lease events in telemetry, and a live-but-wedged holder stranded all indexing
@@ -6109,7 +6090,6 @@ install's cron schedule, not their worth.
   restructure the function.
 
 ### Removed
-
 
 - **Three defensive checks that only ever refused work a human explicitly
   asked for, with no evidence (via telemetry) they ever caught a real
@@ -7877,7 +7857,6 @@ See `docs/migration/v0.8-to-v0.9.md` and
 
 ### Removed
 
-
 - **The experimental `akm workflow brief` / `akm workflow report`
   external-driver protocol is removed**, along with the
   `experimental.workflowEngine` config key that gated it, its
@@ -9199,7 +9178,6 @@ See `docs/migration/v0.8-to-v0.9.md` and
 
 ### Removed
 
-
 - **BREAKING: `akm upgrade --skip-checksum` is removed.** STABILITY.md has
   always said checksum verification is not optional and that the recovery hatch
   is an environment variable — but the flag shipped anyway, tab-completable,
@@ -10110,7 +10088,6 @@ proposal and log storage, `--format html` output, and per-stage LLM telemetry.
 
 ### Removed
 
-
 - **`akm config edit`** — the interactive menu-based editor was removed. A
   prompt-driven drill-down was clunkier than just editing the file. Edit the
   config directly (the path is shown by `akm config path`), use
@@ -10713,7 +10690,6 @@ behind an interactive prompt (or `-y` / `--yes` in non-interactive use).
 
 ### Removed
 
-
 - **Install-time security audit (`security.installAudit`) and the `--trust`
   flag**. The audit scanned incoming stash assets for risky patterns (e.g.
   `curl ... | bash`, "ignore previous instructions") and blocked installs on
@@ -10932,7 +10908,6 @@ See `docs/migration/v0.7-to-v0.8.md` for the user-facing migration guide.
 
 ### Removed
 
-
 - **Legacy registry `curated` boolean** — legacy v2 index JSON parses and silently ignores it; renderers no longer surface a `curated` column. The per-asset `quality` field replaces it. Publishers do not need to migrate existing JSON.
 - **Phantom config keys** (#284 Wave B, PR #285): `llm.features.{tag_dedup, memory_consolidation, embedding_fallback_score}`, `llm.capabilities.{longContext, toolUse}`, and `llm.contextWindow`. These were parsed and persisted by the loader but never read at any call site, and the docs that described their behaviour were misleading. Operators with these keys in `config.json` will see them silently ignored — `akm config get llm.features.tag_dedup` (etc.) will return undefined.
 - **`disableGlobalStashes`** (#284 Wave B, PR #285) — legacy config key removed; the one-cycle deprecation window from the v1 spec has expired.
@@ -11135,7 +11110,6 @@ See `docs/migration/v0.7-to-v0.8.md` for the user-facing migration guide.
 
 ### Removed
 
-
 - `manifest` subcommand (adds no value over `search`)
 - URI schemes (`viking://`, `context-hub://`) from user-facing refs — assets are addressed as `type:name`; sources use URLs
 - Stale audit/ergonomics markdown from the repo
@@ -11179,7 +11153,6 @@ cleans up the CLI surface, and renames the package from `agent-i-kit` to `akm-cl
 
 ### Removed
 
-
 - `submit` command
 - Provider presets (configure providers with raw JSON)
 - `generated` boolean from `.stash.json`
@@ -11217,7 +11190,6 @@ rewrites all documentation against the final asset model.
 - Documentation: added registry hosting and v2 index format guides
 
 ### Removed
-
 
 - `tool` asset type (fully removed across all documentation and code)
 - `registryUrls` config field (replaced by `registries`)
