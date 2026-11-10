@@ -12,21 +12,11 @@
     font-variant-numeric: tabular-nums;
   }
 
-  .nav-open .menu-icon {
-    background:
-      linear-gradient(45deg, transparent 43%, currentColor 43% 57%, transparent 57%),
-      linear-gradient(-45deg, transparent 43%, currentColor 43% 57%, transparent 57%);
-  }
-
   .editor-actions {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
     gap: var(--space-3);
-  }
-
-  .edit-form [data-preview-panel] {
-    margin-block-start: 0;
   }
 
   :where(.edit-form textarea) {
@@ -86,13 +76,6 @@
   .state-title {
     color: var(--text);
     font-weight: var(--weight-strong);
-  }
-
-  .state-error {
-    border-style: solid;
-    border-color: var(--fail);
-    background: var(--fail-bg);
-    color: var(--text);
   }
 
   .state-loading {
@@ -211,14 +194,6 @@
     margin-inline-end: var(--space-1);
   }
 
-  .marker-key {
-    display: inline-block;
-    inline-size: 1.25rem;
-    margin-inline-end: var(--space-1);
-    border-block-start: 2px solid var(--marker);
-    vertical-align: middle;
-  }
-
   .dot-ok {
     background: var(--ok);
   }
@@ -297,11 +272,6 @@
     flex-wrap: wrap;
     align-items: center;
     gap: var(--space-1) var(--space-3);
-  }
-
-  .check-msg {
-    margin: var(--space-1) 0 0 var(--space-4);
-    overflow-wrap: anywhere;
   }
 
   .check details {
@@ -821,14 +791,6 @@
     background: var(--accent);
   }
 
-  .create-form,
-  .edit-form {
-    padding: var(--space-5);
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-  }
-
   .field {
     display: flex;
     flex-direction: column;
@@ -994,21 +956,10 @@
     }
   }
 
-  .connection-head {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    padding: var(--space-4) var(--space-5) 0;
-  }
-
   .add-card > summary {
     margin: 0;
     padding: var(--space-2) var(--space-3);
     font-weight: var(--weight-strong);
-  }
-
-  .add-card[open] > summary {
-    border-block-end: 1px solid var(--border);
   }
 
   .field input[type="number"] {
@@ -1028,16 +979,6 @@
     & h2 {
       margin: 0;
     }
-  }
-
-  .md-preview {
-    flex: 1;
-    min-block-size: 24rem;
-    padding: var(--space-4) var(--space-5);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--surface-2);
-    overflow: auto;
   }
 
   /* ---- input with an action ---- */
@@ -1082,9 +1023,6 @@
     .tab:is([aria-current], [aria-selected="true"]) {
       outline: 2px solid Highlight;
       outline-offset: -2px;
-    }
-    .nav-links a[aria-current="page"] {
-      outline: 2px solid Highlight;
     }
   }
 
@@ -1146,11 +1084,6 @@
     background: var(--surface-sunk);
   }
 
-  /* A bundle's proportion bar closes its facts list. */
-  .kv + .bar-track {
-    margin-block-start: var(--space-3);
-  }
-
   .bar-stack {
     display: flex;
     block-size: 100%;
@@ -1192,10 +1125,6 @@
       &[data-tone="fail"] {
         background: var(--fail);
       }
-    }
-    & .bar-value {
-      font-size: var(--text-s);
-      text-align: end;
     }
     & .bar-note {
       grid-column: 1 / -1;

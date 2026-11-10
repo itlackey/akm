@@ -246,12 +246,6 @@
   .page-heading p {
     margin-block-start: var(--space-2);
   }
-  .eyebrow {
-    color: var(--muted);
-    font-size: var(--text-xs);
-    letter-spacing: var(--tracking-caps);
-    text-transform: uppercase;
-  }
   .toolbar {
     display: flex;
     flex-wrap: wrap;
@@ -270,18 +264,9 @@
     gap: 8px 16px;
     margin-block: 16px;
   }
-  .section-links a {
-    padding-block: 8px;
-  }
   .trend-disclosure,
   .optional-settings {
     margin-block: 16px;
-  }
-  .trend-disclosure > summary,
-  .optional-settings > summary {
-    padding: 12px 0;
-    background: transparent;
-    border: 0;
   }
   .trend-disclosure[open] > summary,
   .optional-settings[open] > summary {
