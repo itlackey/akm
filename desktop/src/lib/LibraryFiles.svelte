@@ -688,6 +688,9 @@
     .files-location {
       padding: 8px 16px;
     }
+    .file-breadcrumbs button {
+      min-height: var(--control-height, 44px);
+    }
     .file-breadcrumbs {
       order: 2;
       flex-basis: 100%;

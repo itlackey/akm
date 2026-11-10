@@ -142,6 +142,45 @@ test("reviewed human workflows prevent dead ends and preserve focus and source",
     assert.ok(panel.sideways <= 0, `the search page must not scroll sideways (${panel.sideways}px)`);
     await page.getByRole("button", { name: "Cancel", exact: true }).click();
   });
+  await t.test("phone chrome: a one-row bar, tabs that wrap, and 44px targets", async () => {
+    const small = [];
+    for (const [href, ready] of [
+      ["/library/search?q=backup", ".library-views"],
+      ["/library/files?bundle=personal&path=knowledge", ".file-breadcrumbs"],
+      ["/review", ".tabs"],
+      ["/settings/config", ".settings-tabs"],
+      ["/activity/overview", ".activity-tabs"],
+    ]) {
+      await navigate(href);
+      await expect(page.locator(ready).first()).toBeVisible();
+      const facts = await page.evaluate(() => {
+        const width = document.documentElement.clientWidth;
+        const tabs = document.querySelector(".activity-tabs");
+        const selector =
+          ".desktop-topbar nav a, .library-views a, .file-breadcrumbs button, .tabs button, .settings-tabs a, .activity-tabs a";
+        return {
+          barHeight: Math.round(document.querySelector(".desktop-topbar").getBoundingClientRect().height),
+          tabsSideways: tabs ? tabs.scrollWidth - tabs.clientWidth : 0,
+          width,
+          targets: [...document.querySelectorAll(selector)]
+            .filter((e) => e.getClientRects().length)
+            .map((e) => ({
+              label: e.textContent.trim(),
+              height: Math.round(e.getBoundingClientRect().height),
+              right: Math.round(e.getBoundingClientRect().right),
+            })),
+        };
+      });
+      assert.ok(facts.barHeight <= 64, `${href}: the bar must be one row on a phone (${facts.barHeight}px)`);
+      assert.ok(facts.tabsSideways <= 0, `${href}: tabs must wrap, not scroll sideways (${facts.tabsSideways}px)`);
+      small.push(
+        ...facts.targets
+          .filter((target) => target.height < 44 || target.right > facts.width)
+          .map((target) => `${href}: ${target.label} ${target.height}px, right ${target.right}`),
+      );
+    }
+    assert.deepEqual(small, [], "tabs and bar links meet the 44px floor and stay inside the viewport");
+  });
   await t.test("usage charts are directly visible", async () => {
     await page.setViewportSize({ width: 1280, height: 860 });
     await navigate("/activity/overview?view=retrieval");

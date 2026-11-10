@@ -896,6 +896,7 @@
   .library-views a {
     display: flex;
     align-items: center;
+    min-height: 44px;
     border-bottom: 2px solid transparent;
     color: var(--muted);
     text-decoration: none;

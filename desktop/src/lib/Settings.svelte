@@ -777,6 +777,14 @@
     color: var(--muted);
     text-decoration: none;
   }
+  /* Touch: every tab is at least as tall as a control. */
+  @media (width < 48rem) {
+    .settings-tabs a {
+      display: inline-flex;
+      align-items: center;
+      min-block-size: var(--control-height);
+    }
+  }
   /* Phones: four even cells in two rows, so no tab wraps alone. */
   @media (width < 30rem) {
     .settings-tabs {
@@ -786,7 +794,6 @@
     }
     .settings-tabs a {
       justify-self: start;
-      min-block-size: 2rem;
     }
   }
   .settings-tabs a.active {

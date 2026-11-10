@@ -353,10 +353,18 @@
     font-size: 1.125rem;
     font-weight: 600;
   }
+  /* Phones: the five tabs wrap into rows instead of scrolling sideways, and each is as tall as a control. */
   @media (max-width: 760px) {
     .activity-tabs {
-      gap: 1.25rem;
+      flex-wrap: wrap;
+      gap: 0 1.25rem;
+      overflow-x: visible;
       margin-bottom: 1.5rem;
+    }
+    .activity-tabs a {
+      display: inline-flex;
+      align-items: center;
+      min-block-size: var(--control-height);
     }
   }
   .activity-tabs a {
