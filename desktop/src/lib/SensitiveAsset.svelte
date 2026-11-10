@@ -97,7 +97,7 @@
 </script>
 
 <section class="sensitive-reader" aria-label="Protected file">
-  {#if deleted && info}<h2>File deleted</h2>
+  {#if deleted && info}<h1>File deleted</h1>
     <p class="muted">{info.location.path}</p>
     <a
       class="btn btn-secondary"
@@ -117,7 +117,7 @@
   {:else if info}
     <header>
       <div>
-        <h2>{info.name}</h2>
+        <h1>{info.name}</h1>
         <p class="muted small">{info.bundle} · {info.type === "env" ? "Environment file" : "Secret"}</p>
       </div>
       <div class="file-actions">
@@ -184,9 +184,12 @@
     gap: 8px;
     flex-wrap: wrap;
   }
-  .sensitive-reader h2 {
+  /* The page's heading, with the line height and spacing it had as a second-level heading. */
+  .sensitive-reader h1 {
     margin: 0;
     font-size: 24px;
+    line-height: inherit;
+    letter-spacing: var(--tracking-snug);
   }
   .sensitive-reader header p {
     margin: 10px 0 0;

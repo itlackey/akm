@@ -390,7 +390,7 @@
 {#if loading}<p class="state" role="status">Loading asset…</p>
 {:else if retired}
   <section class="retirement-receipt" aria-label="Retirement receipt">
-    <h2>Asset archived</h2>
+    <h1>Asset archived</h1>
     <p>Recorded as an accepted retirement. Undo it here, or revert it later from Review.</p>
     <div class="page-actions">
       <button onclick={undoRetirement} disabled={busy}>{busy ? "Restoring…" : "Undo retirement"}</button><a
@@ -410,7 +410,7 @@
       </div>{/if}
     <header class="asset-heading">
       <div class="asset-title-row">
-        <h2 bind:this={heading} id={titleAnchor} tabindex="-1">{documentTitle(data.asset)}</h2>
+        <h1 bind:this={heading} id={titleAnchor} tabindex="-1">{documentTitle(data.asset)}</h1>
         <div class="page-actions">
           {#if data.asset.editable && !["env", "secret", "session"].includes(data.asset.type ?? "")}<a
               class="btn btn-secondary"
@@ -760,6 +760,13 @@
     max-width: 760px;
     padding: 24px 0;
   }
+  /* The page's heading in this state, at the size it had as a second-level heading. */
+  .retirement-receipt h1 {
+    margin: 0 0 var(--space-3);
+    font-size: var(--text-l);
+    line-height: inherit;
+    letter-spacing: var(--tracking-snug);
+  }
   .retirement-receipt > p {
     line-height: 1.65;
   }
@@ -800,7 +807,7 @@
     justify-content: space-between;
     gap: 24px;
   }
-  .asset-heading h2 {
+  .asset-heading h1 {
     font-size: clamp(26px, 2.5vw, 34px);
     line-height: 1.25;
     letter-spacing: -0.025em;
@@ -816,7 +823,7 @@
   .page-actions > .btn {
     white-space: nowrap;
   }
-  .asset-heading h2[tabindex="-1"]:focus {
+  .asset-heading h1[tabindex="-1"]:focus {
     outline: none;
   }
   .asset-context {
@@ -1120,7 +1127,7 @@
     .action-menu button {
       min-height: var(--control-height, 44px);
     }
-    .asset-heading h2 {
+    .asset-heading h1 {
       font-size: 28px;
     }
     .asset-title-row {

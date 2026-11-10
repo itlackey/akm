@@ -625,8 +625,11 @@
         {#if !editing && !newSensitive}<div class="new-file-actions">
             <a class="btn btn-secondary" href={createHref(fileBundle, filePath, readingHref, reviewHref)}
               ><Icon name="plus" size={16} />New knowledge</a
-            ><button class="btn-secondary new-file-trigger" popovertarget="new-file-types" aria-label="Other file types"
-              ><Icon name="chevron-down" size={16} /></button
+            ><button
+              class="btn-secondary new-file-trigger"
+              popovertarget="new-file-types"
+              aria-label="Other file types"
+              title="Other file types"><Icon name="chevron-down" size={16} /></button
             >
           </div>
           <div

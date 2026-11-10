@@ -45,7 +45,8 @@
   </div>
 </header>
 {#key current.id}<ReviewEvidence {detail} {noop}>
-    <section class="change" aria-label="Proposed change">
+    <!-- The diff below names itself (one region, not one inside another); the heading says what it is here. -->
+    <section class="change">
       <h3>Proposed change</h3>
       {#if detail.diff}<Diff
           before={detail.diff.before}

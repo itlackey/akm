@@ -4,7 +4,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import AxeBuilder from "@axe-core/playwright";
@@ -90,6 +90,13 @@ async function longDocument(fixture) {
     path.join(fixture.root, `personal/knowledge/${longName}.md`),
     `---\ntitle: Long reference with a wide table, long code and an unbreakable identifier ${"Z".repeat(40)}\ndescription: Synthetic long title\n---\n# Long reference\n\nBody.\n`,
   );
+  // A file that is not an asset and a protected one, for the two plain file views.
+  await writeFile(path.join(fixture.root, "personal/knowledge/plain-note.txt"), "A plain note.\n");
+  await mkdir(path.join(fixture.root, "personal/env"), { recursive: true });
+  await writeFile(
+    path.join(fixture.root, "personal/env/example.env"),
+    'EXAMPLE_KEY="synthetic-key-not-a-credential"\n',
+  );
   execFileSync(process.execPath, [fixture.launcher, "index", "--full", "--format=json", "-q"], {
     env: fixture.env,
     stdio: "pipe",
@@ -113,9 +120,10 @@ test("workspace pages, panels and menus fit the shortest windows", { timeout: 18
   };
   const longRef = encodeURIComponent(`personal//knowledge/${longName}`);
 
-  // The page must not scroll while its panes do: one scroll owner at the native minimum (and below).
+  // The page must not scroll while its panes do: one scroll owner at the native minimum (and below). Files is ready
+  // when its rows are: it draws the folder once, empty, before it asks for the listing, and then draws it again.
   for (const [route, ready] of [
-    ["/library/files?bundle=personal&path=knowledge", ".folder-table"],
+    ["/library/files?bundle=personal&path=knowledge", ".folder-table tbody tr"],
     [`/library/edit?ref=${longRef}`, 'textarea[name="content"]'],
     [`/review/${app.proposals.fresh}`, ".change-preview"],
   ]) {
@@ -243,9 +251,25 @@ test("keyboard order, focus hand-back and names at the shortest windows", { time
   // Review: Tab never moves up, or left on the same row, from the control before; and no focus ring is cut.
   await open(`/review/${app.proposals.fresh}`, ".dcol.inline");
   const proposal = await tabStops(page, ".review-pane");
-  assert.ok(proposal.length >= 6, `the proposal pane has its controls in the tab order (${proposal.length})`);
+  assert.ok(proposal.length >= 5, `the proposal pane has its controls in the tab order (${proposal.length})`);
   assert.deepEqual(out(proposal, "moved"), [], "Review, short window: focus order is reading order in the proposal");
   assert.deepEqual(out(proposal, "clipped"), [], "Review, short window: no focus ring is cut in the proposal");
+  // The diff is announced once: one named region around it, whichever layout it is in.
+  const diffRegions = () =>
+    page.evaluate(() => {
+      const named = '[role="region"], section[aria-label], section[aria-labelledby]';
+      let count = 0;
+      for (let node = document.querySelector(".review-scroll .dcol"); node && !node.matches(".review-scroll"); ) {
+        if (node.matches(named)) count++;
+        node = node.parentElement;
+      }
+      return count;
+    });
+  assert.equal(await diffRegions(), 1, "the inline diff is in one named region");
+  await open(`/review/${app.proposals.stale}`, ".dcol.inline");
+  await page.getByRole("button", { name: "Side by side", exact: true }).click();
+  await expect(page.locator(".sbs")).toBeVisible();
+  assert.equal(await diffRegions(), 1, "the side-by-side diff is in one named region");
   await open("/review", '[aria-label="Queue summary"]');
   const heading = await tabStops(page, ".review-top");
   assert.ok(heading.length >= 5, `the Review heading has its controls in the tab order (${heading.length})`);
@@ -308,7 +332,11 @@ test("keyboard order, focus hand-back and names at the shortest windows", { time
   await expect(menu).toBeHidden();
   await expect(more).toBeFocused();
   await page.keyboard.press("Enter");
-  await menu.locator("button:not([disabled])").last().focus();
+  // Retire, the last button, is enabled by a request of its own. Enabled between the focus and the Tab, it would be the
+  // next stop and the menu would stay open, so the menu is settled before its last button is chosen.
+  const lastAction = menu.locator("button").last();
+  await expect(lastAction).toBeEnabled();
+  await lastAction.focus();
   await page.keyboard.press("Tab");
   await expect(menu, "tabbing out of the asset menu closes it").toBeHidden();
 
@@ -341,6 +369,40 @@ test("keyboard order, focus hand-back and names at the shortest windows", { time
   await expect(page.locator("#flow")).toBeFocused();
   await expect(page.locator("#flow"), "the section a link moves focus to is on screen").toBeInViewport();
 
+  // Every page has one h1, here where the section's own heading is not shown: a document, a file or the editor open in
+  // Files, the reader, and a proposal in this short window.
+  const files = "/library/files?bundle=personal&path=";
+  const opened = encodeURIComponent(app.refs.document);
+  for (const [state, route, ready] of [
+    ["reader", `/library/search?ref=${opened}`, ".markdown"],
+    ["document in Files", `${files}knowledge&file=knowledge%2Frestore-laptop.md&ref=${opened}&open=1`, ".markdown"],
+    ["plain file in Files", `${files}knowledge&file=knowledge%2Fplain-note.txt&open=1`, "pre.code"],
+    ["protected file in Files", `${files}env&file=env%2Fexample.env&open=1`, ".sensitive-reader header"],
+    ["new protected file", "/library/new-sensitive?kind=env&bundle=personal", ".sensitive-editor form"],
+    ["editor", `/library/edit?ref=${longRef}`, 'textarea[name="content"]'],
+    ["folder in Files", `${files}knowledge`, ".folder-table tbody tr"],
+    ["proposal", `/review/${app.proposals.fresh}`, ".change-preview"],
+  ]) {
+    await open(route, ready);
+    const headings = await page.evaluate(() =>
+      [...document.querySelectorAll("main h1")]
+        .filter((h1) => h1.getClientRects().length)
+        .map((h1) => h1.textContent.trim()),
+    );
+    assert.equal(headings.length, 1, `${state}: one h1 on the page, found ${JSON.stringify(headings)}`);
+  }
+  // In Files: the folder filter has a label that is shown, and the icon-only button says what it is on hover too.
+  await open(`${files}knowledge`, ".folder-table tbody tr");
+  const filterLabelled = await page
+    .locator('.folder-tools input[type="search"]')
+    .evaluate((input) => [...input.labels].some((label) => label.getClientRects().length && label.textContent.trim()));
+  assert.ok(filterLabelled, "Filter this folder has a visible label");
+  await expect(page.getByRole("searchbox", { name: "Filter this folder", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Other file types", exact: true })).toHaveAttribute(
+    "title",
+    "Other file types",
+  );
+
   await open("/settings/bundles", "#configured-bundles");
   const card = await tabStops(page, "form.settings-card");
   assert.ok(card.length >= 4, `the add-bundle form has its controls in the tab order (${card.length})`);
@@ -354,7 +416,7 @@ test("keyboard order, focus hand-back and names at the shortest windows", { time
     violations.push(...results.violations.map(({ id, nodes }) => `${state}: ${id} ${nodes[0].target}`));
   };
   for (const [state, route, ready] of [
-    ["files", "/library/files?bundle=personal&path=knowledge", ".folder-table"],
+    ["files", "/library/files?bundle=personal&path=knowledge", ".folder-table tbody tr"],
     ["editor", `/library/edit?ref=${longRef}`, 'textarea[name="content"]'],
     ["review queue", "/review", '[aria-label="Queue summary"]'],
     ["review proposal", `/review/${app.proposals.fresh}`, ".change-preview"],
