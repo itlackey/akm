@@ -82,7 +82,7 @@ import {
   setParsedInvocation,
 } from "./cli/invocation";
 import {
-  defineGroupCommand,
+  defineJsonCommand,
   EXIT_CODES,
   emitJsonError,
   GLOBAL_OUTPUT_ARGS,
@@ -588,6 +588,21 @@ const commands = {
   hints: hintsCommand,
 };
 
+/**
+ * A command that takes a positional and also has subcommands (`improve [SCOPE]` / `improve report`)
+ * would read `akm improve [OPTIONS] [SCOPE] report`, as if `report` were an argument. Its subcommands
+ * are listed under COMMANDS, so the USAGE line drops them.
+ */
+function withoutSubcommandsInUsageLine(command: AnyCittyCommand, usage: string): string {
+  const args = Object.values((command.args ?? {}) as Record<string, { type?: string }>);
+  const subCommands = Object.keys((command.subCommands ?? {}) as Record<string, unknown>);
+  if (subCommands.length === 0 || !args.some((arg) => arg.type === "positional")) return usage;
+  return usage
+    .split("\n")
+    .map((line) => (line.includes("USAGE") ? line.replace(` ${subCommands.join("|")}`, "") : line))
+    .join("\n");
+}
+
 /** Leaf `--help`: usage without the hidden args and the shared global flags, then one pointer line. */
 async function showCommandUsage(command: AnyCittyCommand, path: readonly string[]): Promise<void> {
   const usage = await renderUsage(
@@ -595,33 +610,46 @@ async function showCommandUsage(command: AnyCittyCommand, path: readonly string[
     buildUsageParentForPath(path) as CommandDef,
   );
   console.log(
-    formatHelp(`${usage}\nGlobal flags: --format, --detail, --output, -q/--quiet, --verbose (see \`akm --help\`)`),
+    formatHelp(
+      `${withoutSubcommandsInUsageLine(command, usage)}\nGlobal flags: --format, --detail, --output, -q/--quiet, --verbose (see \`akm --help\`)`,
+    ),
   );
 }
 
-function commandHelpTopic(name: string, command: AnyCittyCommand): AnyCittyCommand {
-  return defineCommand({
-    meta: { name, description: `Print help for akm ${name}` },
-    async run() {
-      await showCommandUsage(command, [name]);
-    },
-  });
+/** The help for the command `words` name (the root overview for none): what `--help` and `akm help` both print. */
+async function printHelp(words: readonly string[]): Promise<void> {
+  const resolved = resolveDeepestCittyCommand(main, words);
+  if (resolved === (main as AnyCittyCommand)) {
+    // Root help: the sectioned overview, not citty's flat COMMANDS dump.
+    process.stdout.write(`${formatHelp(await renderSectionedRootHelp())}\n`);
+  } else {
+    await showCommandUsage(resolved, resolveCittyCommandPath(main, words));
+  }
 }
 
-const commandHelpTopics = Object.fromEntries(
-  Object.entries(commands).map(([name, command]) => [name, commandHelpTopic(name, command)]),
-);
-
-const helpCommand = defineGroupCommand({
+/**
+ * `akm help [command...]` prints exactly what `akm <command...> --help` prints
+ * (`bundle add` may arrive as two words or one quoted word). No command prints
+ * the root overview.
+ */
+const helpCommand = defineJsonCommand({
   meta: {
     name: "help",
-    description: "Print the command overview or detailed help for a command",
+    description: "Print the command overview, or the same help as `akm <command> --help`",
   },
-  subCommands: {
-    ...commandHelpTopics,
+  args: {
+    command: { type: "positional", description: "Command to show help for, such as `bundle add`", required: false },
   },
-  async defaultRun() {
-    process.stdout.write(`${formatHelp(await renderSectionedRootHelp())}\n`);
+  async run({ args }) {
+    const words = ((args._ as string[] | undefined) ?? []).flatMap((word) => word.split(/\s+/)).filter(Boolean);
+    const attempt = findUnknownCommandAttempt(words);
+    if (attempt)
+      throw new UsageError(
+        `Unknown command ${attempt.attempted}`,
+        "UNKNOWN_COMMAND",
+        unknownCommandHint(words, attempt),
+      );
+    await printHelp(words);
   },
 });
 
@@ -651,9 +679,7 @@ export const main = defineCommand({
   meta: {
     name: "akm",
     version: pkgVersion,
-    description:
-      "Agent Knowledge Manager — search, show, and manage assets from your bundle.\n\n" +
-      `Exit codes:\n${renderExitCodesHelp()}`,
+    description: "Agent Knowledge Manager — search, show, manage assets.",
   },
   args: {
     // Single-sourced from GLOBAL_OUTPUT_ARGS (src/cli/shared.ts) so root help
@@ -943,11 +969,10 @@ function renderCommandSections(): string {
 
 /**
  * Sectioned replacement for citty's root COMMANDS list. Reuses
- * `renderUsage(main)` for the banner + exit-code table (kept verbatim) +
- * USAGE line + global OPTIONS, then cuts the string before citty's own
- * "COMMANDS" heading (present because `main` has `subCommands`) and appends
- * the grouped sections plus a one-line bundle/ref-grammar tagline and the
- * `akm hints` pointer.
+ * `renderUsage(main)` for the banner + USAGE line + global OPTIONS, then cuts
+ * the string before citty's own "COMMANDS" heading (present because `main`
+ * has `subCommands`) and appends the grouped sections, the CONCEPTS list, the
+ * help pointer, the exit-code table and the `akm hints` pointer.
  */
 async function renderSectionedRootHelp(): Promise<string> {
   const base = await renderUsage(main as CommandDef, undefined);
@@ -958,12 +983,17 @@ async function renderSectionedRootHelp(): Promise<string> {
   const cutIndex = commandsHeadingIndex === -1 ? -1 : base.lastIndexOf("\n", commandsHeadingIndex);
   const head = (cutIndex === -1 ? base : base.slice(0, cutIndex)).replace(/\n+$/, "");
   const epilogue = [
-    'A "bundle" is your managed directory of assets (skills, agents, memories, workflows, ...). Refs use the ' +
-      "grammar [bundle//]conceptId[#fragment], where the concept id is the bundle's own path for the asset — " +
-      "e.g. `akm show skills/deploy`, or `akm show work//skills/deploy` for a named bundle. Copy ids from " +
-      "`akm search` output rather than synthesizing them.",
+    "CONCEPTS",
+    "  bundle      A directory of assets; refs: [bundle//]conceptId[#fragment]",
+    "  registry    A remote catalog to search and install bundles from",
+    "  connection  An OpenAI-compatible endpoint akm sends model requests to",
+    "  harness     An agent CLI you already have (e.g. Claude Code, Codex, OpenCode)",
+    "  project     Named directories you work in; scopes search and where writes go",
     "",
     "Run `akm help <command>` or `akm <command> --help` for details on any command.",
+    "",
+    `Exit codes:\n${renderExitCodesHelp()}`,
+    "",
     "Agents: run `akm hints` for the short guide.",
   ].join("\n");
   return [head, "", renderCommandSections(), "", epilogue].join("\n");
@@ -1034,6 +1064,15 @@ const RECOVERY_HINTS: Readonly<Record<string, string>> = {
   "config get": "Pass a key, for example `akm config get defaultBundle`; `akm config list` shows them all.",
 };
 
+/** The recovery hint for an unknown command: a did-you-mean when one is close, then the `--help` pointer. */
+function unknownCommandHint(rawArgs: readonly string[], attempt: ReturnType<typeof findUnknownCommandAttempt>): string {
+  const suggestion = attempt ? closestCommandMatch(attempt.attempted, attempt.candidates) : undefined;
+  const typed = [...resolveCittyCommandPath(main, rawArgs), ...(attempt ? [attempt.attempted] : [])].join(" ");
+  const recovery = RECOVERY_HINTS[typed];
+  const helpPointer = `${recovery ? `${recovery} ` : ""}Run \`${["akm", ...resolveCittyCommandPath(main, rawArgs), "--help"].join(" ")}\` for usage.`;
+  return suggestion ? `Did you mean \`${suggestion}\`? ${helpPointer}` : helpPointer;
+}
+
 /**
  * Route a citty `CLIError` through the standard JSON envelope instead of
  * citty's own usage-banner + raw `console.error(message)`: the
@@ -1045,11 +1084,7 @@ const RECOVERY_HINTS: Readonly<Record<string, string>> = {
 function toUsageErrorFromCliError(error: Error, rawArgs: readonly string[]): UsageError {
   const code = cittyCliErrorUsageCode(error as Error & { code?: string });
   const attempt = code === "UNKNOWN_COMMAND" ? findUnknownCommandAttempt(rawArgs) : undefined;
-  const suggestion = attempt ? closestCommandMatch(attempt.attempted, attempt.candidates) : undefined;
-  const typed = [...resolveCittyCommandPath(main, rawArgs), ...(attempt ? [attempt.attempted] : [])].join(" ");
-  const recovery = RECOVERY_HINTS[typed];
-  const helpPointer = `${recovery ? `${recovery} ` : ""}Run \`${["akm", ...resolveCittyCommandPath(main, rawArgs), "--help"].join(" ")}\` for usage.`;
-  const hint = suggestion ? `Did you mean \`${suggestion}\`? ${helpPointer}` : helpPointer;
+  const hint = unknownCommandHint(rawArgs, attempt);
   // citty colorizes error.message with ANSI escapes even when stdout/stderr
   // is not a TTY. Strip them so the JSON envelope's `error` field is plain
   // text instead of embedding raw escape sequences.
@@ -1183,7 +1218,7 @@ export async function runCli(): Promise<void> {
   const disposeLlmUsageSink = installLlmUsagePersistenceIfAbsent();
   try {
     if (rawArgs.length === 0) {
-      process.stdout.write(`${formatHelp(await renderSectionedRootHelp())}\n`);
+      await printHelp([]);
       return;
     }
     // Mirrors citty's own builtin-flag short-circuit in `runMain` (main's own
@@ -1197,15 +1232,7 @@ export async function runCli(): Promise<void> {
     const passthroughAt = rawArgs.indexOf("--");
     const ownArgs = passthroughAt === -1 ? rawArgs : rawArgs.slice(0, passthroughAt);
     if (HELP_FLAGS.some((flag) => ownArgs.includes(flag))) {
-      const resolved = resolveDeepestCittyCommand(main, rawArgs);
-      if (resolved === (main as AnyCittyCommand)) {
-        // Root `--help`: the sectioned overview, not citty's
-        // flat COMMANDS dump.
-        process.stdout.write(`${formatHelp(await renderSectionedRootHelp())}\n`);
-      } else {
-        const path = resolveCittyCommandPath(main, rawArgs);
-        await showCommandUsage(resolved, path);
-      }
+      await printHelp(rawArgs);
       return;
     }
     if (rawArgs.length === 1 && VERSION_FLAGS.includes(rawArgs[0] as string)) {

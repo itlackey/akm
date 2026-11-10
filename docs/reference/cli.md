@@ -1272,7 +1272,7 @@ akm bundle add https://docs.example.com --max-pages 100 --max-depth 5
 | `--writable` | Mark a git source as writable so `akm sync` also pushes (default: false) |
 | `--adapter` | Component adapter for a local directory (one of the ids in [Supported Formats](supported-formats.md)); normally detected |
 | `--before`, `--after` | Insert the new bundle before or after this configured bundle, instead of at the end |
-| `--options` | Provider options as JSON (e.g. `'{"ref":"main"}'`) |
+| `--options` | Provider options as JSON (e.g. `'{"maxPages":100}'`) |
 | `--allow-insecure-transport` | Allow a plain-HTTP source URL after explicitly accepting transport substitution risk |
 | `--max-pages` | Maximum pages to crawl for website sources (default: 50) |
 | `--max-depth` | Maximum crawl depth for website sources (default: 3) |

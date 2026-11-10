@@ -18,7 +18,7 @@ export const judgeCommand = defineJsonCommand({
   meta: {
     name: "judge",
     description:
-      "Run one of akm's judges on one JSON input read from stdin, and print its verdict, or why it gave none. --list names the judges; --schema prints one's input and output schemas.",
+      "Run one of akm's judges on one JSON input read from stdin, and print its verdict, or why it gave none. --list names the judges; --schema prints one's input and output schemas. For evaluating and tuning akm's judges.",
   },
   args: {
     name: { type: "positional", description: "Judge name, such as reflect.quality", required: false },

@@ -132,6 +132,15 @@ function walkCommandTree(cmd: AnyCmd, parentPath = ""): CommandInfo[] {
 
 export function generateBashCompletions(cmd: AnyCmd): string {
   const commands = walkCommandTree(cmd);
+  // `akm help` takes command names as words, not subcommands: offer the visible top-level commands as its topics.
+  const help = commands.find((info) => info.path === `${cmd.meta?.name ?? "akm"} help`);
+  if (help) {
+    for (const [name, sub] of Object.entries((cmd.subCommands ?? {}) as Record<string, AnyCmd>)) {
+      if (name === "help" || sub.meta?.hidden) continue;
+      help.subcommands.push(name);
+      commands.push({ path: `${help.path} ${name}`, subcommands: [], flags: [], valueFlags: [] });
+    }
+  }
   const rootName = cmd.meta?.name ?? "akm";
 
   // Collect global flags from root command

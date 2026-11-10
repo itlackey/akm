@@ -703,11 +703,14 @@ describe("S11: sectioned root help", () => {
 
   test("akm --help pins section order and command membership", () => {
     const { stdout } = spawnCli(["--help"], { cwd: repoRoot });
-    const headings = ["AGENT LOOP", "ASSETS", "AUTOMATION", "SYSTEM"];
+    const headings = ["AGENT LOOP", "ASSETS", "AUTOMATION", "SYSTEM", "CONCEPTS"];
     const sections = Object.fromEntries(
       headings.map((heading, index) => {
         const start = stdout.indexOf(`${heading}\n`);
-        const end = index + 1 < headings.length ? stdout.indexOf(`\n${headings[index + 1]}\n`, start) : stdout.length;
+        const end =
+          index + 1 < headings.length
+            ? stdout.indexOf(`\n${headings[index + 1]}\n`, start)
+            : stdout.indexOf("\nRun `akm help");
         expect(start).toBeGreaterThanOrEqual(0);
         expect(end).toBeGreaterThan(start);
         const commands = stdout
@@ -738,6 +741,7 @@ describe("S11: sectioned root help", () => {
         "upgrade",
         "completions",
       ],
+      CONCEPTS: ["bundle", "registry", "connection", "harness", "project"],
     });
     expect(stdout).toContain("Run `akm help <command>`");
     expect(stdout).toContain("Agents: run `akm hints`");
@@ -780,6 +784,36 @@ describe("S11: sectioned root help", () => {
     expect(stderr).toBe("");
     expect(stdout).toContain(`akm ${command}`);
     expect(stdout).toContain("USAGE");
+  });
+
+  test("akm help <a> <b> prints what akm <a> <b> --help prints, quoted or not", () => {
+    const direct = spawnCli(["bundle", "add", "--help"], { cwd: repoRoot });
+    for (const argv of [
+      ["help", "bundle", "add"],
+      ["help", "bundle add"],
+    ]) {
+      const viaHelp = spawnCli(argv, { cwd: repoRoot });
+      expect(viaHelp.status, argv.join(" ")).toBe(0);
+      expect(viaHelp.stdout, argv.join(" ")).toBe(direct.stdout);
+    }
+  });
+
+  test("akm help help prints help's own help; an unknown command points at its own --help", () => {
+    const own = spawnCli(["help", "help"], { cwd: repoRoot });
+    expect(own.status).toBe(0);
+    expect(own.stdout).toContain("USAGE akm help");
+    const unknown = spawnCli(["help", "bundle", "nope"], { cwd: repoRoot });
+    expect(unknown.status).toBe(2);
+    expect(JSON.parse(unknown.stderr.trim()).hint).toContain("`akm bundle --help`");
+  });
+
+  test("root help keeps the version off the exit-code lines; improve usage does not list report as an argument", () => {
+    const root = spawnCli(["--help"], { cwd: repoRoot }).stdout;
+    expect(root.split("\n").slice(0, 2).join(" ")).toMatch(/\(akm\s+v/);
+    expect(root).not.toMatch(/78 +config error \(akm v/);
+    expect(spawnCli(["improve", "--help"], { cwd: repoRoot }).stdout).toMatch(
+      /USAGE akm improve \[OPTIONS\] \[SCOPE\]\n/,
+    );
   });
 
   test("akm bundle add --help lists every registry adapter id in --adapter's description (#909)", () => {

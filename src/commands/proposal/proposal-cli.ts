@@ -403,7 +403,7 @@ const proposalDrainCommand = defineJsonCommand({
   meta: {
     name: "drain",
     description:
-      "Drain the pending proposal backlog: accept what a quality judge passed, reject empty diffs, leave the rest for judgment or review. The judgment tier accepts only consolidate promotions; it accepted unsafe retirements and unreviewed fixes in testing (#1132), so every other kind waits for a person",
+      "Drain the pending proposal backlog: accept what a quality judge passed, reject empty diffs, leave the rest for judgment or review. The judgment tier accepts only consolidate promotions; every other kind waits for a person",
   },
   args: {
     "dry-run": {
