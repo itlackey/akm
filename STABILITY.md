@@ -6,7 +6,8 @@ may include breaking changes.
 
 The 0.10 release notes (the version floor, merged CLI spellings, connections
 and harnesses, version numbers) are in the
-[0.9 to 0.10 migration guide](docs/migration/v0.9-to-v0.10.md).
+[0.9 to 0.10 migration guide](docs/migration/v0.9-to-v0.10.md). The 0.11 breaking
+changes are in the [0.10 to 0.11 migration guide](docs/migration/v0.10-to-v0.11.md).
 
 This document classifies **every** user-facing surface by stability so you can
 decide which parts of `akm` are safe to script against today and which to
