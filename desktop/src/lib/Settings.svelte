@@ -656,6 +656,7 @@
   .configuration-workspace {
     display: grid;
     grid-template-columns: 190px minmax(0, 760px);
+    justify-content: center;
     gap: 48px;
     align-items: start;
     margin-top: 28px;

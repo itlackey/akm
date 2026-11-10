@@ -188,9 +188,18 @@ test("workspace pages, panels and menus fit the shortest windows", { timeout: 18
         viewport: innerWidth,
       };
     });
-    assert.ok(header.sideways <= 0, `${viewport.width}: the editor pane must not scroll sideways (${header.sideways}px)`);
-    assert.ok(header.linkRight <= header.viewport, `${viewport.width}: Back to file must be on screen: ${JSON.stringify(header)}`);
-    assert.ok(header.linkLines <= 1, `${viewport.width}: Back to file must stay on one line: ${JSON.stringify(header)}`);
+    assert.ok(
+      header.sideways <= 0,
+      `${viewport.width}: the editor pane must not scroll sideways (${header.sideways}px)`,
+    );
+    assert.ok(
+      header.linkRight <= header.viewport,
+      `${viewport.width}: Back to file must be on screen: ${JSON.stringify(header)}`,
+    );
+    assert.ok(
+      header.linkLines <= 1,
+      `${viewport.width}: Back to file must stay on one line: ${JSON.stringify(header)}`,
+    );
   }
   await page.setViewportSize({ width: 900, height: 593 });
 

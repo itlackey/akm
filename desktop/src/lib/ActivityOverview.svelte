@@ -135,7 +135,7 @@
         ).length} not checked{/if}
     </p>
   </div>
-  <p class="muted small">
+  <p class="muted small view-note">
     View refreshed: {refreshedAt ? date(refreshedAt) : "Not recorded"}. {probedAt
       ? `Connection checks requested: ${date(probedAt)}.`
       : "Connection checks have not been requested in this view."} Individual check timestamps are not reported by AKM.
@@ -598,6 +598,12 @@
     margin: 0;
     font-size: 0.8125rem;
     color: var(--muted);
+  }
+  /* Prose keeps a readable measure on a wide monitor instead of running edge to edge. */
+  .view-note,
+  .check p,
+  .coverage {
+    max-width: 75ch;
   }
   .attention {
     margin-block: 2rem;

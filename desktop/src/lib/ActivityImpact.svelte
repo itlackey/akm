@@ -441,7 +441,7 @@
     </section>
     <section id="changed" class="chart-card">
       <h2>Changed assets, before and after</h2>
-      <p class="muted small">
+      <p class="measurement-note">
         Found and negatively rated in the 28 days before/after a change. Changes under 28 days old are partial. These
         are observations, not causal attribution.
       </p>

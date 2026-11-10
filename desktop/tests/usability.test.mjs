@@ -90,6 +90,32 @@ test("populated workspace accessibility and reflow across both themes", { timeou
           }),
         );
         if (clipped.length) failures.push({ state: label, rule: "chart-text-clipped", clipped });
+        // Wide screens: a capped block is centred, section tabs line up with their column, prose keeps a measure.
+        if (width === 1440) {
+          const wide = await page.evaluate(() => {
+            const main = document.querySelector("main").getBoundingClientRect();
+            const rect = (selector) => document.querySelector(selector)?.getBoundingClientRect();
+            const centred = (left, right) => Math.abs(left - main.left - (main.right - right)) <= 48;
+            const findings = [];
+            const [nav, content] = [rect(".configuration-navigation"), rect(".configuration-content")];
+            if (nav && content && !centred(nav.left, content.right))
+              findings.push("configuration workspace is pinned left");
+            const software = rect(".software");
+            if (software && !centred(software.left, software.right)) findings.push("software page is pinned left");
+            const [views, search] = [rect(".library-views"), rect(".search-page")];
+            if (views && search && Math.abs(views.left - search.left) > 1)
+              findings.push(
+                `library tabs start at ${Math.round(views.left)}px, the search column at ${Math.round(search.left)}px`,
+              );
+            for (const block of document.querySelectorAll("main p, main li")) {
+              const w = block.getBoundingClientRect().width;
+              if (!block.querySelector("p, div, ul, table, pre") && block.textContent.trim().length >= 150 && w > 1000)
+                findings.push(`${Math.round(w)}px line: ${block.textContent.trim().slice(0, 60)}`);
+            }
+            return findings;
+          });
+          failures.push(...wide.map((finding) => ({ state: label, rule: "wide-layout", finding })));
+        }
         let violations = [];
         if (width === 390 || width === 1280) {
           const results = await new AxeBuilder({ page })

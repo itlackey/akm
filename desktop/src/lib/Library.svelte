@@ -893,6 +893,14 @@
     min-height: 44px;
     align-items: stretch;
   }
+  /* Above the search and gaps pages the tabs share their centred column; above Files they span the page. */
+  @media (min-width: 851px) {
+    :global(.desktop-shell:not(.workspace-active)) .library-views {
+      max-width: 1040px;
+      margin-inline: auto;
+      padding-inline: 48px;
+    }
+  }
   .library-views a {
     display: flex;
     align-items: center;
@@ -1168,7 +1176,9 @@
     overflow-wrap: anywhere;
   }
   .library-gaps {
-    padding: 28px;
+    max-width: 1040px;
+    margin-inline: auto;
+    padding: 28px 48px;
     overflow: auto;
     min-height: 0;
   }

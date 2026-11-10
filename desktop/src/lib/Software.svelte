@@ -208,6 +208,7 @@
 <style>
   .software {
     max-width: 1000px;
+    margin-inline: auto;
     padding: 0 8px;
   }
   .intro {
