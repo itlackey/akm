@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261117] - 2026-11-10
+
 ### Added
 
 - AKM Desktop: **Desktop updates** on Settings → Software chooses the release line the app follows, stable releases only or stable and prereleases; the choice is saved with Desktop's preferences and a change checks again at once. Until chosen, the line is the stage of the embedded version, as before. A prerelease build set to stable is never downgraded; it waits for the next stable release.
