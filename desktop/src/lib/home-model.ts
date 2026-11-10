@@ -43,6 +43,8 @@ export interface HomeConcern {
   description: string;
   href: string;
   action: string;
+  /** Where `href` leads, for the link's name: the visible "Inspect" alone does not say. */
+  destination: string;
 }
 const plural = (count: number, one: string, many = `${one}s`) =>
   `${count.toLocaleString()} ${count === 1 ? one : many}`;
@@ -60,6 +62,7 @@ export function homeConcerns(data: ActivityOverview | null): HomeConcern[] {
         title: checkLabel(check.name),
         description: check.message,
         action: "Inspect",
+        destination: "health details",
         href: `/activity/overview?${new URLSearchParams({ view: "health", anchor: healthCheckAnchor(check.name) })}`,
       }));
   const runs: HomeConcern[] = [];
@@ -72,6 +75,7 @@ export function homeConcerns(data: ActivityOverview | null): HomeConcern[] {
       title: `${plural(failedTasks, "task run")} failed`,
       description: "Recorded in the past 7 days.",
       action: "View runs",
+      destination: "run history",
       href: "/activity/overview?view=runs&window=7d&anchor=automation",
     });
   const failedImprove = data.improveRuns.filter((run) => run.ok === false).length;
@@ -82,6 +86,7 @@ export function homeConcerns(data: ActivityOverview | null): HomeConcern[] {
       title: `${plural(failedImprove, "improvement run")} failed`,
       description: `Among the ${data.improveRuns.length} latest records, across all time.`,
       action: "View runs",
+      destination: "run history",
       href: "/activity/overview?view=runs&anchor=run-history",
     });
   return [...checkItems("fail"), ...runs, ...checkItems("warn")];

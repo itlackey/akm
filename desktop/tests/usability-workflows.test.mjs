@@ -117,6 +117,35 @@ test("reviewed human workflows prevent dead ends and preserve focus and source",
       await expect(item).toBeFocused();
     },
   );
+  await t.test("Home: a refresh keeps focus and is announced; counts and links carry their meaning", async () => {
+    await navigate("/");
+    const check = page.getByRole("button", { name: "Check health" });
+    await expect(check).toBeVisible();
+    // The count beside the heading is read with what it counts, and the item link says where it goes.
+    await expect(page.locator(".home-count")).toHaveText(/^\d+ items? needs? attention$/);
+    await expect(page.getByRole("link", { name: /^Inspect: Task failure rate, in health details$/ })).toBeVisible();
+    await expect(page.getByRole("link", { name: /^View runs: 1 task run failed, in run history$/ })).toBeVisible();
+    // Started from the keyboard, the refresh says so in a live region and leaves focus on its button.
+    const snapshot = page.getByRole("status").filter({ hasText: /Snapshot refreshed|Refreshing your snapshot/ });
+    await check.focus();
+    await page.keyboard.press("Enter");
+    await expect(snapshot).toHaveText(/Snapshot refreshed/);
+    await expect(check).toBeFocused();
+    await expect(page.locator(".home-attention")).toBeVisible();
+    // A retry takes its own button away when it starts, so focus goes to the refresh control, never to the page.
+    let failing = true;
+    await page.route("**/api/overview?*", (route) => (failing ? route.abort() : route.continue()));
+    await page.keyboard.press("Enter");
+    const retry = page.getByRole("button", { name: "Retry overview" });
+    await expect(retry).toBeVisible();
+    failing = false;
+    await retry.focus();
+    await page.keyboard.press("Enter");
+    await expect(retry).toHaveCount(0);
+    await expect(check).toBeFocused();
+    await expect(page.locator(".home-concerns")).toBeVisible();
+    await page.unroute("**/api/overview?*");
+  });
   await t.test("read-only bundles are not selectable write targets", async () => {
     await navigate("/settings/config");
     const target = page.getByRole("combobox", { name: "Default write target", exact: true });
