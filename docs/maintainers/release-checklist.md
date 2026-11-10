@@ -229,7 +229,7 @@ plan). Target branch `main`, enforcement active, no bypass list:
 
 Rulesets cannot restrict which branch a pull request comes from; the
 `release-branch-only` check does that, and also checks that package.json
-carries the branch's version. Requiring it makes a pull request from any other
+is a stable version (no prerelease part). Requiring it makes a pull request from any other
 branch, or one without its release commit, unmergeable into `main`.
 
 **Ruleset `release/*`.** Target `release/*`: block force pushes. Direct pushes
