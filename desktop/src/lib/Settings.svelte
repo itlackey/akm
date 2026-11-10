@@ -30,6 +30,7 @@
     loading = $state(true),
     receipt = $state(""),
     generation = 0;
+  let refreshButton = $state<HTMLButtonElement>();
   let sourceInput = $state<HTMLInputElement>(),
     source = $state(""),
     name = $state(""),
@@ -281,9 +282,12 @@
       busy = false;
     }
   }
+  /** Refresh is disabled while it loads, which drops focus: the button has it again when the page is back. */
   async function refresh() {
     await refreshBundles();
     await load();
+    await tick();
+    if (document.activeElement === document.body) refreshButton?.focus();
   }
   async function browse() {
     error = "";
@@ -307,11 +311,12 @@
   <h1>Settings</h1>
   {#if route !== "software" && route !== "connections"}<button
       class="quiet"
+      bind:this={refreshButton}
       disabled={busy || loading}
       onclick={refresh}><Icon name="refresh" size={16} /> Refresh settings</button
     >{/if}
 </div>
-<nav class="settings-tabs" aria-label="Settings views">
+<nav class="settings-tabs" aria-label="Settings views" data-sveltekit-reset="false">
   <a href="/settings/bundles" class:active={route === "bundles"} aria-current={route === "bundles" ? "page" : undefined}
     >Bundles & index</a
   ><a

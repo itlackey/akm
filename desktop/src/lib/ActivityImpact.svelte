@@ -143,7 +143,7 @@
           </li>{/each}
       </ul>
     </div>{/if}
-  <nav class="impact-links" aria-label="Improve sections">
+  <nav class="impact-links" aria-label="Improve sections" data-sveltekit-reset="false">
     {#each [["outcomes", "Outcomes"], ["search", "Retrieval after changes"], ["flow", "Review flow"], ["library", "Library"], ["harm", "Harm log"], ["cost", "Cost"], ["changed", "Changed assets"], ["judge", "Judge and you"]] as [id, label]}<a
         href={`/activity/improve?since=${impact.since}&anchor=${id}`}>{label}</a
       >{/each}

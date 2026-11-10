@@ -520,7 +520,7 @@
   }}
 />
 {#if !(ref && !inFiles) && !(normalizedRoute === "asset" && query.get("view") === "files")}
-  <nav class="library-views" aria-label="Library views">
+  <nav class="library-views" aria-label="Library views" data-sveltekit-reset="false">
     <a href={lastSearch} aria-current={!inFiles ? "page" : undefined}>Search</a>
     <a
       href={lastFiles || filesHref({ bundle: defaultBundle || bundles.find((b) => b.enabled)?.name || "", path: "" })}
@@ -839,7 +839,8 @@
               type="button"
               class="btn-secondary"
               onclick={closeFilters}>Cancel</button
-            >{#if active}<a href="/library/search" onclick={closeFilters}>Clear filters</a>{/if}
+            >{#if active}<a href="/library/search" data-sveltekit-reset="false" onclick={closeFilters}>Clear filters</a
+              >{/if}
           </div>
         </div>
       </details>

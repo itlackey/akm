@@ -49,7 +49,8 @@
     refreshedAt = $state(""),
     probedAt = $state(""),
     historyFilter = $state(""),
-    historyOrigin = $state("");
+    historyOrigin = $state(""),
+    refreshButton = $state<HTMLButtonElement>();
   const view = $derived(
     route === "improve"
       ? "Improve impact"
@@ -164,6 +165,12 @@
       if (request === generation) loading = false;
     }
   }
+  /** Refresh is disabled while it loads, which drops focus: the button has it again when the page is back. */
+  async function refresh() {
+    await load();
+    await tick();
+    if (document.activeElement === document.body) refreshButton?.focus();
+  }
   async function probe() {
     const request = generation;
     error = "";
@@ -194,7 +201,7 @@
   });
 </script>
 
-<nav class="activity-tabs" aria-label="Activity views">
+<nav class="activity-tabs" aria-label="Activity views" data-sveltekit-reset="false">
   {#each views as tab}<a
       class:active={view === tab.name}
       aria-current={view === tab.name ? "page" : undefined}
@@ -222,7 +229,7 @@
               >90 days</option
             >{/if}</select
         ></label
-      >{/if}<button class="btn-quiet" onclick={load} disabled={loading}
+      >{/if}<button class="btn-quiet" bind:this={refreshButton} onclick={refresh} disabled={loading}
       ><Icon name="refresh" size={16} /> Refresh activity</button
     >
   </div>

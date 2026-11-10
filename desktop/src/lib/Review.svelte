@@ -228,7 +228,8 @@
             focusNext = false;
             if (scroller) scroller.scrollTop = 0;
             detailHeading?.focus({ preventScroll: true });
-          } else if (!intent && matchMedia("(max-width:850px)").matches) {
+          } else if (!intent && matchMedia("(max-width: 850px), (max-height: 700px)").matches) {
+            // The queue the proposal was opened from is hidden at these sizes, so focus goes to the proposal.
             // The heading is already near the top: focus it where it is. Scroll only when it is out of sight.
             detailHeading?.focus({ preventScroll: true });
             const box = detailHeading?.getBoundingClientRect();
@@ -605,7 +606,7 @@
       </div>
     </div>
     <div class="review-filters">
-      <nav class="tabs" aria-label="Proposal status">
+      <nav class="tabs" aria-label="Proposal status" data-sveltekit-reset="false">
         <a
           class="tab"
           aria-current={status === "pending" ? "page" : undefined}
@@ -670,7 +671,7 @@
           />Select all shown</label
         >{/if}
       {#if loading && !queue}<p class="muted" role="status">Loading proposals…</p>{/if}
-      <ul class="review-items">
+      <ul class="review-items" data-sveltekit-reset="false">
         {#each queue?.proposals ?? [] as p (p.id)}<li class="review-row" class:active={desiredId === p.id}>
             {#if status === "pending"}<input
                 type="checkbox"
