@@ -23,33 +23,8 @@
     border-radius: var(--radius);
   }
 
-  .strip-main {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-  }
-
-  .strip-main .badge {
-    font-size: var(--text-s);
-    padding: var(--space-1) var(--space-3);
-    letter-spacing: var(--tracking-caps);
-    text-transform: uppercase;
-  }
-
-  .strip-item strong {
-    font-size: var(--text-xl);
-    font-weight: var(--weight-strong);
-    font-variant-numeric: tabular-nums;
-  }
-
   .strip-label {
     color: var(--muted);
-  }
-
-  .strip-item {
-    display: flex;
-    align-items: baseline;
-    gap: var(--space-2);
   }
 
   .strip-right {
@@ -195,12 +170,6 @@
     resize: vertical;
   }
 
-  .select-group {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-  }
-
   .batch-bar {
     position: sticky;
     inset-block-end: 0;
@@ -215,14 +184,6 @@
     border-radius: var(--radius);
     background: var(--surface);
     box-shadow: var(--shadow-float);
-  }
-
-  .batch-results {
-    flex: 1 1 100%;
-  }
-
-  .batch-results ul {
-    margin: var(--space-2) 0 0;
   }
 
   .attention-list {
@@ -256,12 +217,6 @@
     }
   }
 
-  .attention-go {
-    margin-inline-start: auto;
-    color: var(--faint);
-  }
-
-  .attention-clear,
   .improve-line {
     line-height: var(--leading-snug);
     margin: 0;
@@ -302,13 +257,6 @@
     }
   }
 
-  .attention-clear {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--space-2);
-  }
-
   .queue-summary {
     margin-block: var(--space-4) var(--space-5);
     & details {
@@ -316,21 +264,9 @@
     }
   }
 
-  .config-json {
-    max-block-size: 28rem;
-    margin-block-start: var(--space-3);
-  }
-
   .trend-summary {
     margin: var(--space-3) 0;
     font-size: var(--text-l);
-  }
-
-  .trend-figure {
-    font-size: var(--text-stat);
-    font-weight: 700;
-    letter-spacing: var(--tracking-tight);
-    line-height: var(--leading-tight);
   }
 
   /* ---- selected states that do not rely on colour, and forced colors ---- */
@@ -366,10 +302,6 @@
     font-size: var(--text-l);
   }
 
-  .review-group {
-    margin-block-start: var(--space-4);
-  }
-
   .review-items {
     list-style: none;
     margin: 0;
@@ -400,10 +332,6 @@
     &[data-decided] {
       opacity: 0.6;
     }
-  }
-
-  .review-count {
-    margin-block-start: var(--space-3);
   }
 
   .review-bar {
@@ -445,10 +373,5 @@
 
   .how-to-read {
     margin-block-end: var(--space-3);
-  }
-
-  .rail-title {
-    margin-block-start: var(--space-4);
-    font-size: var(--text-m);
   }
 }
