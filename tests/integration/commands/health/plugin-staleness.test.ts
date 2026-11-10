@@ -13,6 +13,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  type CodexPlugin,
   collectPluginStalenessAdvisories,
   type ListRemoteTagsFn,
 } from "../../../../src/commands/health/plugin-staleness";
@@ -32,7 +33,8 @@ function installPlugin(
     marketplace?: string;
     version?: string;
     manifestVersion?: string;
-    versionRange?: string | null;
+    /** The exact `akm-cli` the plugin's package.json pins; absent or `null` writes no manifest (an unknown pin). */
+    pin?: string | null;
     selected?: boolean;
   } = {},
 ): void {
@@ -54,11 +56,10 @@ function installPlugin(
         installPath: pluginDir,
       },
     ]);
-  if (opts.versionRange !== null) {
-    fs.mkdirSync(path.join(pluginDir, "shared"), { recursive: true });
+  if (opts.pin !== null && opts.pin !== undefined) {
     fs.writeFileSync(
-      path.join(pluginDir, "shared", "akm-version.ts"),
-      `export const AKM_VERSION_RANGE = "${opts.versionRange ?? "^0.9.0"}"\n`,
+      path.join(pluginDir, "package.json"),
+      JSON.stringify({ name: "akm-claude", version, dependencies: { "akm-cli": opts.pin } }),
     );
   }
 }
@@ -104,7 +105,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
 
   test("on the next channel the build on the channel head is up to date, though stable tags exist", () => {
     const pluginsRoot = makeTempDir("akm-plugin-next-current-");
-    installPlugin(pluginsRoot, { versionRange: null, version: "0.10.261013-beta" });
+    installPlugin(pluginsRoot, { version: "0.10.261013-beta" });
     makeMarketplaceDir(pluginsRoot);
 
     const [adv] = collectPluginStalenessAdvisories({
@@ -123,7 +124,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
 
   test("on the next channel an install behind the channel head is stale", () => {
     const pluginsRoot = makeTempDir("akm-plugin-next-stale-");
-    installPlugin(pluginsRoot, { versionRange: null, version: "0.10.261012-beta" });
+    installPlugin(pluginsRoot, { version: "0.10.261012-beta" });
     makeMarketplaceDir(pluginsRoot);
 
     const [adv] = collectPluginStalenessAdvisories({
@@ -140,7 +141,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
 
   test("on the default branch the newest stable tag counts", () => {
     const pluginsRoot = makeTempDir("akm-plugin-stable-channel-");
-    installPlugin(pluginsRoot, { version: "0.9.30202610090106" });
+    installPlugin(pluginsRoot, { version: "0.9.30202610090106", pin: "0.9.31" });
     makeMarketplaceDir(pluginsRoot);
 
     const [adv] = collectPluginStalenessAdvisories({
@@ -157,12 +158,8 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
 
   test("the native selected installation wins over a higher cached version", () => {
     const pluginsRoot = makeTempDir("akm-plugin-cached-builds-");
-    installPlugin(pluginsRoot, { versionRange: "*", version: "0.10.261017" });
-    installPlugin(pluginsRoot, {
-      versionRange: "^0.10.26101002-alpha",
-      version: "0.10.26101002-alpha",
-      selected: false,
-    });
+    installPlugin(pluginsRoot, { pin: "0.10.261019", version: "0.10.261017" });
+    installPlugin(pluginsRoot, { version: "0.10.26101002-alpha", selected: false });
     makeMarketplaceDir(pluginsRoot);
 
     const [adv] = collectPluginStalenessAdvisories({
@@ -178,7 +175,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
 
   test("up-to-date plugin is not flagged", () => {
     const pluginsRoot = makeTempDir("akm-plugin-uptodate-");
-    installPlugin(pluginsRoot, { version: "0.9.1202608250804" });
+    installPlugin(pluginsRoot, { version: "0.9.1202608250804", pin: "0.9.2" });
     makeMarketplaceDir(pluginsRoot);
 
     const [adv] = collectPluginStalenessAdvisories({
@@ -193,9 +190,10 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
     expect(adv?.message).not.toContain("STALE");
   });
 
-  test("range-rejects-CLI detected: ^0.9.0 does not admit 0.9.2-alpha.3", () => {
-    const pluginsRoot = makeTempDir("akm-plugin-range-");
-    installPlugin(pluginsRoot, { version: "0.9.1", versionRange: "^0.9.0" });
+  // The plugin runs the akm-cli its package.json pins, against the same databases as the running CLI (F1).
+  test("a plugin pinning an older akm-cli than the running CLI warns and names the older side", () => {
+    const pluginsRoot = makeTempDir("akm-plugin-pin-older-");
+    installPlugin(pluginsRoot, { version: "0.9.1", pin: "0.9.1" });
     makeMarketplaceDir(pluginsRoot);
 
     const [adv] = collectPluginStalenessAdvisories({
@@ -206,14 +204,34 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
     });
 
     expect(adv?.status).toBe("warn");
-    expect(adv?.evidence?.admitted).toBe(false);
-    expect(adv?.message).toContain("NOT ADMITTED");
-    expect(adv?.message).toContain("^0.9.0");
+    expect(adv?.evidence).toMatchObject({ pinnedCliVersion: "0.9.1", cliMatches: false, stale: false });
+    expect(adv?.message).toContain("bundles akm-cli 0.9.1, older than the running CLI 0.9.2-alpha.3");
+    // Current on its channel: nothing to update the plugin to.
+    expect(adv?.message).toContain("no newer plugin is published on its channel");
   });
 
-  test("running CLI admitted by the range is not flagged on that basis", () => {
-    const pluginsRoot = makeTempDir("akm-plugin-admitted-");
-    installPlugin(pluginsRoot, { version: "0.9.1", versionRange: "^0.9.0" });
+  test("a plugin pinning a newer akm-cli than the running CLI warns with akm upgrade as the remedy", () => {
+    const pluginsRoot = makeTempDir("akm-plugin-pin-newer-");
+    installPlugin(pluginsRoot, { version: "0.9.1", pin: "0.9.3" });
+    makeMarketplaceDir(pluginsRoot);
+
+    const [adv] = collectPluginStalenessAdvisories({
+      pluginsRoot,
+      cliVersion: "0.9.2",
+      listRemoteTags: fakeTags(["0.9.1"]),
+      opencodeCacheRoot: noOpencode(pluginsRoot),
+    });
+
+    expect(adv?.status).toBe("warn");
+    expect(adv?.evidence).toMatchObject({ pinnedCliVersion: "0.9.3", cliMatches: false });
+    expect(adv?.message).toContain("newer than the running CLI 0.9.2");
+    expect(adv?.message).toContain("akm upgrade");
+    expect(adv?.message).not.toContain("claude plugin update");
+  });
+
+  test("a plugin pinning the running CLI's version passes", () => {
+    const pluginsRoot = makeTempDir("akm-plugin-pin-match-");
+    installPlugin(pluginsRoot, { version: "0.9.1", pin: "0.9.2" });
     makeMarketplaceDir(pluginsRoot);
 
     const [adv] = collectPluginStalenessAdvisories({
@@ -224,7 +242,8 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
     });
 
     expect(adv?.status).toBe("pass");
-    expect(adv?.evidence?.admitted).toBe(true);
+    expect(adv?.evidence).toMatchObject({ pinnedCliVersion: "0.9.2", cliMatches: true });
+    expect(adv?.message).not.toContain("than the running CLI");
   });
 
   test("nothing installed degrades benignly (empty plugins root)", () => {
@@ -267,11 +286,14 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
     expect(adv?.status).toBe("unknown");
     expect(adv?.evidence?.availableVersion).toBeNull();
     expect(adv?.evidence?.stale).toBe(false);
+    // Nothing was asked, so nothing failed.
+    expect(adv?.evidence?.remoteUnavailable).toBeUndefined();
+    expect(adv?.message).not.toContain("could not be read");
   });
 
-  test("remote lookup failure (offline/timeout) degrades benignly, no false STALE", () => {
+  test("remote lookup failure (offline/timeout) degrades benignly, no false STALE, and says the remote was not read", () => {
     const pluginsRoot = makeTempDir("akm-plugin-offline-");
-    installPlugin(pluginsRoot, { version: "0.9.1" });
+    installPlugin(pluginsRoot, { version: "0.9.1", pin: "0.9.2" });
     makeMarketplaceDir(pluginsRoot);
 
     const [adv] = collectPluginStalenessAdvisories({
@@ -284,6 +306,9 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
     expect(adv?.status).toBe("unknown");
     expect(adv?.evidence?.availableVersion).toBeNull();
     expect(adv?.evidence?.stale).toBe(false);
+    // Distinguishable from a probe that found no newer release (F10).
+    expect(adv?.evidence?.remoteUnavailable).toBe(true);
+    expect(adv?.message).toContain("could not be read from the marketplace remote");
   });
 
   test("probe: false never asks the remote and reports unknown, not up to date", () => {
@@ -313,7 +338,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
 
   test("probe: false still runs the local range check and warns on a mismatch", () => {
     const pluginsRoot = makeTempDir("akm-plugin-no-probe-range-");
-    installPlugin(pluginsRoot, { version: "0.9.1", versionRange: "0.9.1" });
+    installPlugin(pluginsRoot, { version: "0.9.1", pin: "0.9.1" });
     makeMarketplaceDir(pluginsRoot);
 
     let calls = 0;
@@ -330,7 +355,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
 
     expect(calls).toBe(0);
     expect(adv?.status).toBe("warn");
-    expect(adv?.evidence?.admitted).toBe(false);
+    expect(adv?.evidence?.cliMatches).toBe(false);
   });
 
   test("unreadable/malformed plugin.json is skipped, not a crash", () => {
@@ -347,9 +372,9 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
     expect(result).toEqual([]);
   });
 
-  test("malformed AKM_VERSION_RANGE degrades to 'unknown compatibility', never a false NOT ADMITTED", () => {
+  test("an akm-cli dependency that is a range, not an exact pin, degrades to an unknown pin, never a false mismatch", () => {
     const pluginsRoot = makeTempDir("akm-plugin-badrange-");
-    installPlugin(pluginsRoot, { version: "0.9.1", versionRange: "not-a-real-range!!" });
+    installPlugin(pluginsRoot, { version: "0.9.1", pin: "^0.9.0" });
     makeMarketplaceDir(pluginsRoot);
 
     const [adv] = collectPluginStalenessAdvisories({
@@ -360,13 +385,14 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
     });
 
     expect(adv?.status).toBe("unknown");
-    expect(adv?.evidence?.admitted).toBeNull();
-    expect(adv?.message).not.toContain("NOT ADMITTED");
+    expect(adv?.evidence?.cliMatches).toBeNull();
+    expect(adv?.message).toContain("bundled akm-cli unknown");
+    expect(adv?.message).not.toContain("than the running CLI");
   });
 
-  test("missing shared/akm-version.ts degrades to 'unknown compatibility'", () => {
-    const pluginsRoot = makeTempDir("akm-plugin-norange-");
-    installPlugin(pluginsRoot, { version: "0.9.1", versionRange: null });
+  test("no package.json pin degrades to an unknown pin", () => {
+    const pluginsRoot = makeTempDir("akm-plugin-nopin-");
+    installPlugin(pluginsRoot, { version: "0.9.1", pin: null });
     makeMarketplaceDir(pluginsRoot);
 
     const [adv] = collectPluginStalenessAdvisories({
@@ -377,23 +403,17 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
     });
 
     expect(adv?.status).toBe("unknown");
-    expect(adv?.evidence?.admitted).toBeNull();
-    expect(adv?.evidence?.versionRange).toBeNull();
+    expect(adv?.evidence?.cliMatches).toBeNull();
+    expect(adv?.evidence?.pinnedCliVersion).toBeNull();
   });
 
   test.each([
     "0.10.261019",
     "0.10.261020-beta",
-  ])("current minimum admits %s and ignores superseded high-sorting alpha", (cliVersion) => {
+  ])("a pin equal to the running CLI %s matches, and a superseded high-sorting alpha cache is ignored", (cliVersion) => {
     const pluginsRoot = makeTempDir("akm-plugin-minimum-");
-    installPlugin(pluginsRoot, { version: "0.10.261017" });
-    installPlugin(pluginsRoot, {
-      version: "0.10.26101002-alpha",
-      versionRange: "^0.10.26101002-alpha",
-      selected: false,
-    });
-    const selected = path.join(pluginsRoot, "cache/akm-plugins/akm/0.10.261017");
-    fs.writeFileSync(path.join(selected, "shared/akm-version.ts"), 'export const AKM_MIN_VERSION = "0.10.261004";');
+    installPlugin(pluginsRoot, { version: "0.10.261017", pin: cliVersion });
+    installPlugin(pluginsRoot, { version: "0.10.26101002-alpha", pin: "0.10.26101002-alpha", selected: false });
     const [adv] = collectPluginStalenessAdvisories({
       pluginsRoot,
       cliVersion,
@@ -402,17 +422,17 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
     });
     expect(adv?.evidence).toMatchObject({
       installedVersion: "0.10.261017",
-      versionRange: ">=0.10.261004",
-      admitted: true,
+      pinnedCliVersion: cliVersion,
+      cliMatches: true,
       enabled: true,
       scope: "user",
     });
-    expect(adv?.message).not.toContain("NOT ADMITTED");
+    expect(adv?.message).not.toContain("than the running CLI");
   });
 
   test("native scopes and enabled states stay attached to their installation, and disabled plugins do not warn", () => {
     const pluginsRoot = makeTempDir("akm-plugin-scopes-");
-    installPlugin(pluginsRoot, { version: "0.9.1", versionRange: "0.9.1" });
+    installPlugin(pluginsRoot, { version: "0.9.1", pin: "0.9.1" });
     const installPath = path.join(pluginsRoot, "cache/akm-plugins/akm/0.9.1");
     selectClaudePlugin(pluginsRoot, [
       { id: "akm@akm-plugins", version: "0.9.1", scope: "user", enabled: false, installPath },
@@ -444,7 +464,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
         (r) =>
           r.status === "pass" &&
           r.message.includes("disabled in Claude settings") &&
-          !r.message.includes("NOT ADMITTED"),
+          !r.message.includes("than the running CLI"),
       ),
     ).toBe(true);
     expect(results[1]?.evidence?.projectPath).toBe("/some/project");
@@ -452,7 +472,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
 
   test("differing enabled native scopes are ambiguous, not a false inactive warning", () => {
     const pluginsRoot = makeTempDir("akm-plugin-ambiguous-");
-    installPlugin(pluginsRoot, { version: "0.9.1", versionRange: "0.9.1" });
+    installPlugin(pluginsRoot, { version: "0.9.1", pin: "0.9.1" });
     installPlugin(pluginsRoot, { version: "0.10.261017" });
     selectClaudePlugin(pluginsRoot, [
       {
@@ -486,7 +506,8 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
     });
     expect(
       results.every(
-        (r) => r.status === "unknown" && r.evidence?.selectionKnown === false && !r.message.includes("NOT ADMITTED"),
+        (r) =>
+          r.status === "unknown" && r.evidence?.selectionKnown === false && !r.message.includes("than the running CLI"),
       ),
     ).toBe(true);
   });
@@ -506,7 +527,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
   test.each([undefined, "unknown"])("a missing or unknown native scope stays uncertain (%s)", (scope) => {
     const pluginsRoot = makeTempDir("akm-scope-unknown-");
     try {
-      installPlugin(pluginsRoot, { version: "0.9.1", versionRange: "0.9.1" });
+      installPlugin(pluginsRoot, { version: "0.9.1", pin: "0.9.1" });
       const rows = JSON.parse(fs.readFileSync(path.join(pluginsRoot, "native-list.json"), "utf8"));
       rows[0].scope = scope;
       fs.writeFileSync(path.join(pluginsRoot, "native-list.json"), JSON.stringify(rows));
@@ -517,7 +538,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
       });
       expect(advisory?.status).toBe("unknown");
       expect(advisory?.evidence?.selectionKnown).toBe(false);
-      expect(advisory?.message).not.toContain("NOT ADMITTED");
+      expect(advisory?.message).not.toContain("than the running CLI");
     } finally {
       fs.rmSync(pluginsRoot, { recursive: true, force: true });
     }
@@ -534,7 +555,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
     });
     expect(adv?.status).toBe("unknown");
     expect(adv?.evidence?.installedVersion).toBeNull();
-    expect(adv?.message).not.toContain("NOT ADMITTED");
+    expect(adv?.message).not.toContain("than the running CLI");
   });
 
   // OpenCode's bundled akm-cli, checked independently of any
@@ -556,7 +577,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
       expect(result).toEqual([]);
     });
 
-    test("stale bundled akm-cli: warn naming both versions, never executed", () => {
+    test("stale bundled akm-cli: warn naming both versions and the older side, never executed", () => {
       const pluginsRoot = makeTempDir("akm-plugin-opencode-stale-");
       const opencodeCacheRoot = path.join(pluginsRoot, "opencode-cache");
       installOpencodeBundledAkm(opencodeCacheRoot, "0.9.15");
@@ -565,9 +586,24 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
 
       expect(adv?.name).toBe("opencode-plugin-version");
       expect(adv?.status).toBe("warn");
-      expect(adv?.message).toContain("0.9.15");
-      expect(adv?.message).toContain("0.9.17");
+      expect(adv?.message).toContain("v0.9.15, older than the running CLI v0.9.17");
+      expect(adv?.message).toContain("update the OpenCode plugin");
+      expect(adv?.message).not.toContain("akm upgrade` to move the CLI");
       expect(adv?.evidence).toMatchObject({ bundledVersion: "0.9.15", cliVersion: "0.9.17" });
+    });
+
+    // A plugin ahead of the CLI is not fixed by updating the plugin (F5).
+    test("a bundled akm-cli newer than the running CLI warns with akm upgrade as the remedy", () => {
+      const pluginsRoot = makeTempDir("akm-plugin-opencode-newer-");
+      const opencodeCacheRoot = path.join(pluginsRoot, "opencode-cache");
+      installOpencodeBundledAkm(opencodeCacheRoot, "0.9.18");
+
+      const [adv] = collectPluginStalenessAdvisories({ pluginsRoot, cliVersion: "0.9.17", opencodeCacheRoot });
+
+      expect(adv?.status).toBe("warn");
+      expect(adv?.message).toContain("v0.9.18, newer than the running CLI v0.9.17");
+      expect(adv?.message).toContain("run `akm upgrade`");
+      expect(adv?.message).not.toContain("update the OpenCode plugin");
     });
 
     test("matching bundled akm-cli: pass", () => {
@@ -817,7 +853,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
       expect(results[0]?.status).toBe("pass");
     });
 
-    test("each cached spec (@latest, @next, a pin) gets its own advisory", () => {
+    test("with no config entry each cached spec (@latest, @next, a pin) gets its own advisory", () => {
       const { pluginsRoot, opencodeCacheRoot } = roots("akm-plugin-v2-specs-");
       installV2BundledAkm(opencodeCacheRoot, "0.9.17", "akm-opencode-v2@latest");
       installV2BundledAkm(opencodeCacheRoot, "0.9.15", "akm-opencode-v2@0.8.0");
@@ -827,6 +863,30 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
       expect(results.map((r) => [r.evidence?.spec, r.status])).toEqual([
         ["akm-opencode-v2@0.8.0", "warn"],
         ["akm-opencode-v2@latest", "pass"],
+      ]);
+    });
+
+    // OpenCode 2 loads the spec its config names; a folder another spec left behind is not loaded (F6).
+    test("the config names one spec: only its folder is read, a leftover folder of another spec is not", () => {
+      const { pluginsRoot, opencodeCacheRoot } = roots("akm-plugin-v2-named-");
+      installV2BundledAkm(opencodeCacheRoot, "0.9.17", "akm-opencode-v2@latest");
+      installV2BundledAkm(opencodeCacheRoot, "0.9.15", "akm-opencode-v2@next");
+      const configDir = path.join(pluginsRoot, "opencode-config");
+      fs.mkdirSync(configDir, { recursive: true });
+      const collect = (spec: string) => {
+        fs.writeFileSync(path.join(configDir, "opencode.json"), JSON.stringify({ plugins: [spec] }));
+        return withEnvSync({ OPENCODE_CONFIG_DIR: configDir, OPENCODE_CONFIG: undefined }, () =>
+          collectPluginStalenessAdvisories({ pluginsRoot, cliVersion: "0.9.17", opencodeCacheRoot }),
+        );
+      };
+
+      expect(collect("akm-opencode-v2@latest").map((r) => [r.evidence?.spec, r.status])).toEqual([
+        ["akm-opencode-v2@latest", "pass"],
+      ]);
+      // A bare name is its @latest folder.
+      expect(collect("akm-opencode-v2").map((r) => r.evidence?.spec)).toEqual(["akm-opencode-v2@latest"]);
+      expect(collect("akm-opencode-v2@next").map((r) => [r.evidence?.spec, r.status])).toEqual([
+        ["akm-opencode-v2@next", "warn"],
       ]);
     });
 
@@ -882,6 +942,84 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
       ]);
     });
   });
+
+  // Codex installs the same plugin from the same marketplace; its version comes from `codex plugin list` and the
+  // newest release from the marketplace remote on the ref Codex's config.toml follows (F13).
+  describe("codex-plugin-version", () => {
+    const listed = (version: string | undefined) => ({ version });
+    const collect = (
+      codex: CodexPlugin | undefined,
+      options: Partial<Parameters<typeof collectPluginStalenessAdvisories>[0]> = {},
+    ) => {
+      const pluginsRoot = makeTempDir("akm-plugin-codex-");
+      return collectPluginStalenessAdvisories({
+        pluginsRoot,
+        cliVersion: "0.10.261116",
+        opencodeCacheRoot: noOpencode(pluginsRoot),
+        readCodex: () => codex,
+        listRemoteTagsAt: () => ["0.10.261117", "0.10.261118", "0.10.261116-beta"],
+        ...options,
+      });
+    };
+
+    test("no akm-plugins marketplace in Codex's config, or the plugin not installed: no advisory", () => {
+      expect(collect(undefined)).toEqual([]);
+      expect(collect({ ref: undefined, listed: listed(undefined) })).toEqual([]);
+    });
+
+    test("an install behind the newest stable tag is stale, with Codex's own upgrade command", () => {
+      const [adv, ...rest] = collect({ ref: undefined, listed: listed("0.10.261117") });
+      expect(rest).toEqual([]);
+      expect(adv?.name).toBe("codex-plugin-version");
+      expect(adv?.status).toBe("warn");
+      expect(adv?.message).toContain("installed 0.10.261117 (stable channel)");
+      expect(adv?.message).toContain("available 0.10.261118 (STALE)");
+      expect(adv?.message).toContain("codex plugin marketplace upgrade akm-plugins");
+      expect(adv?.evidence).toMatchObject({ harness: "codex", installedVersion: "0.10.261117", stale: true });
+    });
+
+    test("an install at the newest tag passes; the ref the config follows is passed to the remote read", () => {
+      const asked: Array<[string, string | undefined]> = [];
+      const [adv] = collect(
+        { ref: "next", listed: listed("0.10.261116-beta") },
+        {
+          listRemoteTagsAt: (remote, ref) => {
+            asked.push([remote, ref]);
+            return ["0.10.261116-beta"];
+          },
+        },
+      );
+      expect(asked).toEqual([["https://github.com/itlackey/akm-plugins", "next"]]);
+      expect(adv?.status).toBe("pass");
+      expect(adv?.message).toContain("(next channel)");
+      expect(adv?.message).toContain("up to date");
+    });
+
+    test("not probed, or the remote unreadable, is unknown and says which", () => {
+      const [unprobed] = collect({ ref: undefined, listed: listed("0.10.261118") }, { probe: false });
+      expect(unprobed?.status).toBe("unknown");
+      expect(unprobed?.message).toContain("not probed");
+      const [offline] = collect(
+        { ref: undefined, listed: listed("0.10.261118") },
+        { listRemoteTagsAt: () => undefined },
+      );
+      expect(offline?.status).toBe("unknown");
+      expect(offline?.message).toContain("could not be read from the marketplace remote");
+      expect(offline?.evidence?.remoteUnavailable).toBe(true);
+    });
+
+    test("codex off PATH, or a failed listing, is unknown with the reason", () => {
+      const [missing] = collect({ ref: undefined, listed: { error: { ok: false, missing: true, error: "ENOENT" } } });
+      expect(missing?.status).toBe("unknown");
+      expect(missing?.message).toContain("`codex` is not on PATH");
+      const [failed] = collect({
+        ref: undefined,
+        listed: { error: { ok: false, missing: false, error: "`codex plugin list` failed: boom" } },
+      });
+      expect(failed?.status).toBe("unknown");
+      expect(failed?.message).toContain("could not be listed: `codex plugin list` failed: boom");
+    });
+  });
 });
 
 /** Run git in `cwd`; throws on failure so a broken fixture fails loudly. */
@@ -926,7 +1064,7 @@ function makeMarketplaceRemote(pluginsRoot: string, ref: string): string {
 describe("the real remote probe reads the channel the marketplace clone follows", () => {
   test("a clone on next is compared with the tag on next's head, not the retired build that sorts higher", () => {
     const pluginsRoot = makeTempDir("akm-plugin-real-next-");
-    installPlugin(pluginsRoot, { versionRange: null, version: "0.10.261013-beta" });
+    installPlugin(pluginsRoot, { version: "0.10.261013-beta" });
     makeMarketplaceRemote(pluginsRoot, "next");
 
     const [adv] = collectPluginStalenessAdvisories({
@@ -941,7 +1079,7 @@ describe("the real remote probe reads the channel the marketplace clone follows"
 
   test("a clone on next behind the channel head is stale", () => {
     const pluginsRoot = makeTempDir("akm-plugin-real-next-behind-");
-    installPlugin(pluginsRoot, { versionRange: null, version: "0.10.261012-beta" });
+    installPlugin(pluginsRoot, { version: "0.10.261012-beta" });
     makeMarketplaceRemote(pluginsRoot, "next");
 
     const [adv] = collectPluginStalenessAdvisories({
@@ -957,7 +1095,7 @@ describe("the real remote probe reads the channel the marketplace clone follows"
 
   test("a clone on the default branch is compared with the newest stable tag only", () => {
     const pluginsRoot = makeTempDir("akm-plugin-real-main-");
-    installPlugin(pluginsRoot, { versionRange: null, version: "0.9.30202610090106" });
+    installPlugin(pluginsRoot, { version: "0.9.30202610090106" });
     makeMarketplaceRemote(pluginsRoot, "main");
 
     const [adv] = collectPluginStalenessAdvisories({
@@ -972,7 +1110,7 @@ describe("the real remote probe reads the channel the marketplace clone follows"
 
   test("a clone pinned to a tag is compared with that tag, not the newest stable tag or the next head", () => {
     const pluginsRoot = makeTempDir("akm-plugin-real-pin-");
-    installPlugin(pluginsRoot, { versionRange: null, version: "0.10.261012-beta" });
+    installPlugin(pluginsRoot, { version: "0.10.261012-beta" });
     makeMarketplaceRemote(pluginsRoot, "v0.10.261012-beta");
 
     const [adv] = collectPluginStalenessAdvisories({
@@ -987,7 +1125,7 @@ describe("the real remote probe reads the channel the marketplace clone follows"
 
   test("a detached clone at an untagged commit is compared with the newest stable tag, as before", () => {
     const pluginsRoot = makeTempDir("akm-plugin-real-detached-");
-    installPlugin(pluginsRoot, { versionRange: null, version: "0.9.30202610090106" });
+    installPlugin(pluginsRoot, { version: "0.9.30202610090106" });
     const clone = makeMarketplaceRemote(pluginsRoot, "main");
     git(clone, "checkout", "-q", "--detach");
 
@@ -1003,7 +1141,7 @@ describe("the real remote probe reads the channel the marketplace clone follows"
 
   test("a clone with no origin remote makes no staleness claim", () => {
     const pluginsRoot = makeTempDir("akm-plugin-real-noremote-");
-    installPlugin(pluginsRoot, { versionRange: null, version: "0.10.261012-beta" });
+    installPlugin(pluginsRoot, { version: "0.10.261012-beta" });
     const clone = makeMarketplaceRemote(pluginsRoot, "next");
     git(clone, "remote", "remove", "origin");
 
@@ -1020,7 +1158,7 @@ describe("the real remote probe reads the channel the marketplace clone follows"
 
   test("an unreachable remote (offline) makes no staleness claim", () => {
     const pluginsRoot = makeTempDir("akm-plugin-real-offline-");
-    installPlugin(pluginsRoot, { versionRange: null, version: "0.10.261012-beta" });
+    installPlugin(pluginsRoot, { version: "0.10.261012-beta" });
     const clone = makeMarketplaceRemote(pluginsRoot, "next");
     git(clone, "remote", "set-url", "origin", path.join(pluginsRoot, "gone.git"));
 
