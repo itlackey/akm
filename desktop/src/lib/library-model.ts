@@ -9,7 +9,7 @@ export interface SearchHit extends AssetSummary {
   tags?: string[];
 }
 export interface SearchResult {
-  hits: SearchHit[];
+  results: SearchHit[];
   warnings?: string[];
   tip?: string;
   searchMode?: string;

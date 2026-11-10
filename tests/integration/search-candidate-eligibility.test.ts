@@ -106,7 +106,7 @@ for (const channel of ["lexical", "vector", "combined"]) {
         const options = { ...scenario.options };
         if (scenario.rejectedBundle) options.sources = [{ path: path.join(storage.stashDir, "stash") }];
         const result = await search(channel, options);
-        expect(result.hits.map((hit) => hit.name)).toEqual(["accepted"]);
+        expect(result.results.map((hit) => hit.name)).toEqual(["accepted"]);
         expect(result.mode).toBe(channel === "lexical" ? "keyword" : "semantic");
       });
     }
@@ -118,7 +118,7 @@ for (const channel of ["lexical", "vector", "combined"]) {
       // Same concept in another bundle must not inherit the archived base.
       put("reject-0.derived", {}, true, "other");
       const result = await search(channel, { beliefFilter: "current" });
-      expect(result.hits.map((hit) => hit.ref)).toEqual(["other//memories/reject-0.derived"]);
+      expect(result.results.map((hit) => hit.ref)).toEqual(["other//memories/reject-0.derived"]);
     });
   });
 }
@@ -129,8 +129,8 @@ test("zero/multiple eligible, compound scopes, browse and prefix semantics", asy
   put("accepted-b", { scope: { user: "alice", run: "run" } }, true);
   for (const query of ["quartz", "", ".", "memories/", "stash//memories/"]) {
     const result = await search("combined", { query, limit: 2, filters: { user: "alice", run: "run" } });
-    expect(result.hits.map((hit) => hit.name).sort()).toEqual(["accepted-a", "accepted-b"]);
-    expect((await search("combined", { query, filters: { user: "nobody" } })).hits).toEqual([]);
+    expect(result.results.map((hit) => hit.name).sort()).toEqual(["accepted-a", "accepted-b"]);
+    expect((await search("combined", { query, filters: { user: "nobody" } })).results).toEqual([]);
   }
 });
 
@@ -140,7 +140,7 @@ test("missing embeddings and an actual failed embedding retain filtered keyword 
   const options = { filters: { user: "alice" } };
   const keyword = await search("combined", options);
   expect(keyword.mode).toBe("keyword");
-  expect(keyword.hits.map((hit) => hit.name)).toEqual(["accepted"]);
+  expect(keyword.results.map((hit) => hit.name)).toEqual(["accepted"]);
   put("unrelated", { description: "unrelated", scope: { user: "bob" } }, false);
   overrideSeam(_setEmbedderForTests, {
     embed: async () => {
@@ -149,7 +149,7 @@ test("missing embeddings and an actual failed embedding retain filtered keyword 
   });
   const fallback = await search("combined", options);
   expect(fallback.mode).toBe("fts-fallback");
-  expect(fallback.hits.map((hit) => hit.name)).toEqual(["accepted"]);
+  expect(fallback.results.map((hit) => hit.name)).toEqual(["accepted"]);
   expect(fallback.warnings?.join(" ")).toContain("falling back to keyword");
 });
 
@@ -158,11 +158,11 @@ test("explicit hidden-type/proposed opt-ins and normalized CLI scopes retain the
     put(`hidden-${n}`, { type: "session", quality: "proposed", scope: { user: "alice" } }, false);
   put("accepted", { scope: { user: "alice" } }, true);
   for (const channel of ["lexical", "vector", "combined"]) {
-    expect((await search(channel, { includeExcludedTypes: true, includeProposed: true })).hits[0]?.type).toBe(
+    expect((await search(channel, { includeExcludedTypes: true, includeProposed: true })).results[0]?.type).toBe(
       "session",
     );
     expect(
-      (await search(channel, { searchType: "memory", includeExcludedTypes: true, includeProposed: true })).hits[0]
+      (await search(channel, { searchType: "memory", includeExcludedTypes: true, includeProposed: true })).results[0]
         ?.name,
     ).toBe("accepted");
   }
@@ -175,7 +175,7 @@ test("explicit hidden-type/proposed opt-ins and normalized CLI scopes retain the
     },
   });
   const normalized = await akmSearch({ query: "quartz", filters: { user: " alice " }, limit: 1, skipLogging: true });
-  expect(normalized.hits.map((hit) => hit.name)).toEqual(["accepted"]);
+  expect(normalized.results.map((hit) => hit.name)).toEqual(["accepted"]);
   await expect(akmSearch({ query: "quartz", source: "disabled", skipLogging: true })).rejects.toThrow(
     'Source "disabled" is disabled',
   );

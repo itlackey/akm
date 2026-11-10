@@ -115,7 +115,7 @@ test("stale or removed source rejects before write/commit, while a matching edit
   expect(saved.unchanged).toBeUndefined();
   expect(fs.readFileSync(file(), "utf8")).toBe(changed);
   expect(git(storage.stashDir, ["status", "--porcelain"])).toBe("");
-  expect((await akmSearch({ query: "quasarprocedure", type: "knowledge", readOnly: true })).hits).toHaveLength(1);
+  expect((await akmSearch({ query: "quasarprocedure", type: "knowledge", readOnly: true })).results).toHaveLength(1);
   fs.unlinkSync(file());
   await expect(writeMarkdownAsset({ ...options(changed), expectedContentHash: hash(changed) })).rejects.toMatchObject({
     code: "ASSET_CONTENT_CHANGED",

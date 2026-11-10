@@ -80,7 +80,7 @@ async function names(stash: string, input: Partial<Parameters<typeof akmSearch>[
   return withBundle(stash, async () => {
     resetConfigCache();
     const result = await akmSearch({ query: "gateway", ...input });
-    return result.hits.map((hit) => ("name" in hit ? String(hit.name) : ""));
+    return result.results.map((hit) => ("name" in hit ? String(hit.name) : ""));
   });
 }
 

@@ -171,7 +171,7 @@ describe("OKF first-class conformance", () => {
     expect(shown.content).not.toContain("type: Some Vendor Thing");
 
     const search = await akmSearch({ query: "Fragment body", skipLogging: true });
-    const hit = search.hits.find(
+    const hit = search.results.find(
       (candidate) => "path" in candidate && candidate.path === path.join(okfRoot, "unknown.md"),
     );
     expect(hit && "ref" in hit ? hit.ref : undefined).toBe("adversarial//unknown");
@@ -660,7 +660,7 @@ describe("OKF first-class conformance", () => {
 
     const search = await akmSearch({ query: "identity marker", skipLogging: true });
     const refsByPath = new Map(
-      search.hits.flatMap((hit) => ("path" in hit && "ref" in hit ? [[hit.path, hit.ref] as const] : [])),
+      search.results.flatMap((hit) => ("path" in hit && "ref" in hit ? [[hit.path, hit.ref] as const] : [])),
     );
     expect(refsByPath.get(path.join(storage.stashDir, "shared.md"))).toBe("shared");
     expect(refsByPath.get(path.join(localRoot, "shared.md"))).toBe("local//shared");

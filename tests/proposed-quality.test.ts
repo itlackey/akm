@@ -124,7 +124,7 @@ describe("Issue #224: proposed quality is excluded from default search", () => {
     seedQualitySpread(stashDir);
     await withTestIndex(stashDir, async () => {
       const result = await akmSearch({ query: "deploy", source: "local" });
-      const hits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+      const hits = result.results.filter((h): h is SourceSearchHit => h.type !== "registry");
       const names = hits.map((h) => h.name);
 
       expect(names).toContain("deploy-curated");
@@ -138,7 +138,7 @@ describe("Issue #224: proposed quality is excluded from default search", () => {
     seedQualitySpread(stashDir);
     await withTestIndex(stashDir, async () => {
       const result = await akmSearch({ query: "deploy", source: "local", includeProposed: true });
-      const hits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+      const hits = result.results.filter((h): h is SourceSearchHit => h.type !== "registry");
       const names = hits.map((h) => h.name);
 
       expect(names).toContain("deploy-curated");
@@ -153,7 +153,7 @@ describe("Issue #224: proposed quality is excluded from default search", () => {
     await withTestIndex(stashDir, async () => {
       // Empty query path goes through getAllEntries — exercise that code path too.
       const result = await akmSearch({ query: ".", source: "local", limit: 50 });
-      const hits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+      const hits = result.results.filter((h): h is SourceSearchHit => h.type !== "registry");
       const names = hits.map((h) => h.name);
 
       expect(names).toContain("deploy-curated");
@@ -161,7 +161,7 @@ describe("Issue #224: proposed quality is excluded from default search", () => {
       expect(names).not.toContain("deploy-proposed");
 
       const opted = await akmSearch({ query: ".", source: "local", limit: 50, includeProposed: true });
-      const optedNames = opted.hits.filter((h): h is SourceSearchHit => h.type !== "registry").map((h) => h.name);
+      const optedNames = opted.results.filter((h): h is SourceSearchHit => h.type !== "registry").map((h) => h.name);
       expect(optedNames).toContain("deploy-proposed");
     });
   });
@@ -173,7 +173,7 @@ describe("Issue #224: SearchHit surfaces optional quality field", () => {
     seedQualitySpread(stashDir);
     await withTestIndex(stashDir, async () => {
       const result = await akmSearch({ query: "deploy", source: "local", includeProposed: true });
-      const hits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+      const hits = result.results.filter((h): h is SourceSearchHit => h.type !== "registry");
 
       const curated = hits.find((h) => h.name === "deploy-curated");
       const generated = hits.find((h) => h.name === "deploy-generated");
@@ -241,7 +241,7 @@ describe("Issue #224: unknown quality values warn once and remain searchable", (
     try {
       await withTestIndex(stashDir, async () => {
         const result = await akmSearch({ query: "deploy", source: "local" });
-        const hits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+        const hits = result.results.filter((h): h is SourceSearchHit => h.type !== "registry");
         const names = hits.map((h) => h.name);
         expect(names).toContain("deploy-experimental");
 

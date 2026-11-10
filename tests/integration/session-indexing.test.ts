@@ -213,7 +213,7 @@ describe("#561 session indexing — round-trip", () => {
       source: "local",
       limit: 10,
     });
-    const hit = search.hits.find((h) => h.type === "session");
+    const hit = search.results.find((h) => h.type === "session");
     expect(hit).toBeDefined();
     // Canonical name is path-derived: sessions/<harness>/<id>.md → claude/<id>.
     expect(hit?.name).toBe(`claude/${SESSION_ID}`);

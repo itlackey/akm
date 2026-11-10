@@ -1441,7 +1441,7 @@ async function fetchRelatedAssets(query: string, n: number): Promise<RelatedAsse
       RELATED_TYPES.map((type) => akmSearch({ query, type, limit: n, skipLogging: true, eventSource: "improve" })),
     );
     return results
-      .flatMap((result) => result?.hits ?? [])
+      .flatMap((result) => result?.results ?? [])
       .filter((h): h is import("../../sources/types").SourceSearchHit => "path" in h && typeof h.path === "string")
       .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
       .slice(0, n)

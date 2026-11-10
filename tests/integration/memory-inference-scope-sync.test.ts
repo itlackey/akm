@@ -91,7 +91,7 @@ function pinMtime(file: string): number {
   return fs.statSync(file).mtimeMs;
 }
 async function searchUser(user: string) {
-  return (await akmSearch({ query: "tunnel", filters: { user }, skipLogging: true })).hits.filter(
+  return (await akmSearch({ query: "tunnel", filters: { user }, skipLogging: true })).results.filter(
     (hit): hit is typeof hit & { ref: string; expandTo?: string } => "ref" in hit,
   );
 }

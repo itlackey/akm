@@ -317,7 +317,7 @@ export async function curateSearchResults(
   eventSource?: UsageEventSource,
   policy?: EvidencePolicy,
 ): Promise<CurateResponse> {
-  const allStashHits = result.hits.filter((hit): hit is SourceSearchHit => hit.type !== "registry");
+  const allStashHits = result.results.filter((hit): hit is SourceSearchHit => hit.type !== "registry");
   const registryHits = result.registryHits ?? [];
 
   // F3/R-018: `--type` NARROWS the candidate pool. The caller's search

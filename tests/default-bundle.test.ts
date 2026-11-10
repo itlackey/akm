@@ -86,7 +86,7 @@ describe("akm index", () => {
     writeSandboxConfig({ semanticSearchMode: "off", bundles: { lib: bundle(dir) } });
     const ok = await runCliCapture(["index", "--full"]);
     expect(ok.stderr).not.toContain("No default bundle");
-    expect((await akmSearch({ query: "idx note" })).hits.length).toBeGreaterThan(0);
+    expect((await akmSearch({ query: "idx note" })).results.length).toBeGreaterThan(0);
 
     fs.rmSync(getConfigPath(), { force: true });
     resetConfigCache();
@@ -111,7 +111,7 @@ describe("a defaultBundle that names no bundle", () => {
 
     await akmIndex({ stashDir: dir, full: true });
     const result = await akmSearch({ query: "ghost note" });
-    expect(result.hits.length).toBeGreaterThan(0);
+    expect(result.results.length).toBeGreaterThan(0);
     expect(() => resolveWorkingStashTarget(config)).toThrow(NO_DEFAULT_BUNDLE_MESSAGE);
   });
 
@@ -131,7 +131,7 @@ describe("a command or agent that says `engine:` does not break index, show or s
     writeSandboxConfig({ semanticSearchMode: "off", bundles: { lib: bundle(dir) }, defaultBundle: "lib" });
     await akmIndex({ stashDir: dir, full: true });
     const found = await akmSearch({ query: "review" });
-    expect(found.hits.length).toBeGreaterThan(0);
+    expect(found.results.length).toBeGreaterThan(0);
     await akmShow({ ref: "commands/review.md" });
     await akmShow({ ref: "agents/reviewer.md" });
   });

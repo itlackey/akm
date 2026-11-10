@@ -10,7 +10,7 @@
  * with `akm lint --type workflows`.
  */
 
-import { getStringArg, parseIntegerFlag } from "../cli/parse-args";
+import { getStringArg, parseIntegerFlag, parsePositiveIntFlag } from "../cli/parse-args";
 import { defineGroupCommand, defineJsonCommand, EXIT_CODES, output, outputWithExitCode } from "../cli/shared";
 import { armAbortDeadline } from "../core/abort-deadline";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../core/asset/asset-create";
@@ -178,7 +178,7 @@ const workflowRunCommand = defineJsonCommand({
     },
     "max-steps": { type: "string", description: "Stop after executing this many steps" },
     "max-retries": { type: "string", description: "Retry a failed workflow step this many additional times" },
-    timeout: { type: "string", description: "Whole-run timeout: N, Nms, Ns, or Nm (bare N is milliseconds)" },
+    "timeout-ms": { type: "string", description: "Whole-run timeout in milliseconds" },
     "skip-if-locked": {
       type: "boolean",
       description: "Skip (exit 0, not 75) if another akm process holds this run or state.db is busy",
@@ -190,7 +190,7 @@ const workflowRunCommand = defineJsonCommand({
     const parameterFlags = parseWorkflowParameterFlags(rawArgs, args.target);
     const maxSteps = parseIntegerFlag(getStringArg(args, "max-steps"), "--max-steps", 1);
     const maxRetries = parseIntegerFlag(getStringArg(args, "max-retries"), "--max-retries", 0);
-    const timeoutMs = parseWorkflowTimeout(getStringArg(args, "timeout"));
+    const timeoutMs = parseWorkflowTimeout(getStringArg(args, "timeout-ms"));
     const skipIfLocked = args["skip-if-locked"];
     const controller = new AbortController();
     let signalExitCode: number | undefined;
@@ -272,7 +272,8 @@ const WORKFLOW_RUN_VALUE_FLAGS = new Set([
   "maxSteps",
   "max-retries",
   "maxRetries",
-  "timeout",
+  "timeout-ms",
+  "timeoutMs",
   "format",
   "detail",
   "output",
@@ -349,17 +350,10 @@ export function parseWorkflowParameterFlags(rawArgs: readonly string[], target: 
 }
 
 function parseWorkflowTimeout(raw: string | undefined): number | undefined {
-  if (raw === undefined) return undefined;
-  const match = /^(\d+)(ms|s|m)?$/.exec(raw);
-  if (!match) {
-    throw new UsageError(`--timeout must be N, Nms, Ns, or Nm, got "${raw}".`, "INVALID_FLAG_VALUE");
-  }
-  const amount = Number(match[1]);
-  const multiplier = match[2] === "m" ? 60_000 : match[2] === "s" ? 1_000 : 1;
-  const timeoutMs = amount * multiplier;
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > WORKFLOW_MAX_TIMEOUT_MS) {
+  const timeoutMs = parsePositiveIntFlag(raw, "--timeout-ms");
+  if (timeoutMs !== undefined && timeoutMs > WORKFLOW_MAX_TIMEOUT_MS) {
     throw new UsageError(
-      `--timeout must resolve to 1 through ${WORKFLOW_MAX_TIMEOUT_MS} milliseconds, got "${raw}".`,
+      `--timeout-ms must be 1 through ${WORKFLOW_MAX_TIMEOUT_MS} milliseconds, got "${raw}".`,
       "INVALID_FLAG_VALUE",
     );
   }

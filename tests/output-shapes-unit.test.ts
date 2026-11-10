@@ -292,11 +292,10 @@ describe("shapeForCommand", () => {
   test("routes search results through shapeSearchOutput", () => {
     const out = shapeForCommand(
       "search",
-      { hits: [{ type: "skill", name: "x", estimatedTokens: 1 }], registryHits: [] },
+      { results: [{ type: "skill", name: "x", estimatedTokens: 1 }], registryHits: [] },
       "brief",
     ) as Record<string, unknown>;
     expect(Array.isArray(out.results)).toBe(true);
-    expect(out).not.toHaveProperty("hits");
     expect((out.results as unknown[])[0]).toEqual({
       type: "skill",
       name: "x",
@@ -329,7 +328,7 @@ describe("shapeForCommand", () => {
 describe("shapeSearchOutput", () => {
   test("respects detail level for hits", () => {
     const result = {
-      hits: [{ type: "skill", name: "x", estimatedTokens: 1, description: "desc" }],
+      results: [{ type: "skill", name: "x", estimatedTokens: 1, description: "desc" }],
       registryHits: [],
     };
     const brief = shapeSearchOutput(result, "brief") as { results: Record<string, unknown>[] };

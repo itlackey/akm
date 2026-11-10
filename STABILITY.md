@@ -44,7 +44,7 @@ and `--format json` prints it. These are the shapes as they stand:
 
 `search` and `curate` list their matches under one key, `results` (`hits` and
 `items` are gone; `akm search` adds `registryHits` for registry matches, a separate
-list with its own shape). Only the commands in the last four rows carry `schemaVersion`, and only those in
+list with its own shape; the workspace API's `assets.search` uses `results` too). Only the commands in the last four rows carry `schemaVersion`, and only those in
 the second and last rows carry `shape`: a script reads them there and nowhere
 else. AKM Desktop's child-process runner
 (`src/workspace/cli-child.ts`) requires `shape` equal to the expected shape and

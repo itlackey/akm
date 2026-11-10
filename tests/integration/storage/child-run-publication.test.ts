@@ -7,8 +7,7 @@
  *
  * Spec: docs/plans/specs/p3a-plan-v5-child-freeze.md §5.2-§5.5 (binding
  * design), §1.4(2-4) (Lane C design), §1.8 A-N12 (spawnedByUnitId naming).
- * Behavior-table rows covered: C-07…C-15 (§2.9). This lane owns ONLY this
- * file and tests/integration/state-migration-023.test.ts.
+ * Behavior-table rows covered: C-07…C-15 (§2.9).
  *
  * RED phase: `WorkflowRunsRepository.publishChildWorkflowRun`, `childRunsOf`,
  * and `getRunByInvocationKey` do not exist yet. This file references them

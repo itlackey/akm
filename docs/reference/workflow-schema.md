@@ -32,7 +32,7 @@ that authoring format.
 ## Child workflows
 
 > **Experimental.** Child workflows are part of the Experimental `akm workflow`
-> surface (see `STABILITY.md`) and may change or be removed before 0.11.
+> surface (see `STABILITY.md`) and may change or be removed.
 
 A step can run another workflow as a **child run**. It declares the child in
 its `unit:` bag:
@@ -91,7 +91,7 @@ run and drives it to completion, or as far as it gets, before the parent
 step is finalized. The drive happens **inline, in the parent's own
 process**: it is the same engine `akm workflow run` uses on the child's
 frozen plan, not a separately scheduled job. Consequently, whatever aborts
-the parent's own dispatch — `Ctrl-C`, a `--timeout`, or a budget ceiling —
+the parent's own dispatch — `Ctrl-C`, a `--timeout-ms`, or a budget ceiling —
 also aborts the child drive; both runs are left resumable, never partially
 torn down.
 
@@ -665,7 +665,7 @@ failure reason.
 | exit 0 | — (unit succeeds) | — |
 | non-zero exit | `non_zero_exit` | yes |
 | exceeded `timeout` | `timeout` | yes |
-| run cancelled (`Ctrl-C`, `--timeout`, budget) | `aborted` | yes |
+| run cancelled (`Ctrl-C`, `--timeout-ms`, budget) | `aborted` | yes |
 | binary missing / working directory missing | `spawn_failed` | yes |
 | **stdout** capture never completed | `exec_capture_incomplete` | **no** (the command already ran) |
 | **stderr** capture never completed | — (unit succeeds; a warning says the stderr tail may be missing) | — |

@@ -557,7 +557,7 @@ Recent commits of the write-target stash (the default bundle), from its git log.
     "schemaVersion": 1,
     "bundleDir": "/home/me/akm",
     "source": "local",
-    "hits": [
+    "results": [
       {
         "type": "knowledge",
         "name": "deploy",

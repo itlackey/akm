@@ -128,7 +128,7 @@ test("after an asset save the index finds the new text", async (t) => {
   t.after(() => app.stop());
   const ref = "personal//commands/check-recovery",
     marker = "zirconmarker";
-  const search = async () => value(await app.call(`/api/search?q=${marker}&belief=all`)).hits.map((hit) => hit.ref);
+  const search = async () => value(await app.call(`/api/search?q=${marker}&belief=all`)).results.map((hit) => hit.ref);
   assert.deepEqual(await search(), []);
   const source = value(await read(app, { ref }));
   assert.equal(source.ref, ref);

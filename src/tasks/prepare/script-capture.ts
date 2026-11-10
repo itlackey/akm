@@ -68,7 +68,7 @@ export function scriptInterpreter(extension: string, ref: string, bytes?: Uint8A
   const interpreter = SCRIPT_INTERPRETERS[extension] ?? (extension === "" ? interpreterFromShebang(bytes) : undefined);
   if (!interpreter) {
     throw new UsageError(
-      `Task v3 script target ${JSON.stringify(ref)} has no closed runtime interpreter for extension ${JSON.stringify(extension)}.`,
+      `Task script target ${JSON.stringify(ref)} has no closed runtime interpreter for extension ${JSON.stringify(extension)}.`,
       "TASK_TARGET_UNSUPPORTED",
     );
   }
@@ -80,7 +80,7 @@ export function scriptInterpreter(extension: string, ref: string, bytes?: Uint8A
     return "node";
   }
   throw new UsageError(
-    `Task v3 script target ${JSON.stringify(ref)} requires Bun for ${extension} execution, but this runtime cannot provide it.`,
+    `Task script target ${JSON.stringify(ref)} requires Bun for ${extension} execution, but this runtime cannot provide it.`,
     "TASK_TARGET_UNSUPPORTED",
   );
 }

@@ -101,7 +101,7 @@ afterAll(() => {
 
 async function search(query: string, limit = 20): Promise<SourceSearchHit[]> {
   const result = await akmSearch({ query, source: "local", limit });
-  return result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+  return result.results.filter((h): h is SourceSearchHit => h.type !== "registry");
 }
 
 function findHit(hits: SourceSearchHit[], name: string): SourceSearchHit | undefined {
@@ -414,12 +414,12 @@ describe("Metadata signal strength", () => {
 describe("Empty and edge case queries", () => {
   test("empty query returns all entries", async () => {
     const result = await akmSearch({ query: "", source: "local" });
-    expect(result.hits.length).toBeGreaterThan(0);
+    expect(result.results.length).toBeGreaterThan(0);
   });
 
   test("query with no matches returns empty results with tip", async () => {
     const result = await akmSearch({ query: "xyznonexistent123", source: "local" });
-    const hits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+    const hits = result.results.filter((h): h is SourceSearchHit => h.type !== "registry");
     expect(hits.length).toBe(0);
   });
 

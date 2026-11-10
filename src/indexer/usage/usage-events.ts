@@ -5,7 +5,7 @@
 /**
  * Usage event helpers for telemetry and utility-based re-ranking.
  *
- * Schema (created by ensureUsageEventsSchema):
+ * Schema (state.db baseline, src/core/state/migrations.ts):
  *   id, event_type, query, entry_id (nullable), entry_ref, signal, metadata, source, created_at
  */
 
@@ -66,28 +66,6 @@ export interface UsageEventRow {
   metadata: string | null;
   source: string;
   created_at: string;
-}
-
-// ── Schema ──────────────────────────────────────────────────────────────────
-
-export function ensureUsageEventsSchema(db: Database): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS usage_events (
-      id         INTEGER PRIMARY KEY AUTOINCREMENT,
-      event_type TEXT NOT NULL,
-      query      TEXT,
-      entry_id   INTEGER,
-      entry_ref  TEXT,
-      signal     TEXT,
-      metadata   TEXT,
-      source     TEXT NOT NULL DEFAULT 'user',
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-    CREATE INDEX IF NOT EXISTS idx_usage_events_entry ON usage_events(entry_id);
-    CREATE INDEX IF NOT EXISTS idx_usage_events_type ON usage_events(event_type);
-    CREATE INDEX IF NOT EXISTS idx_usage_events_ref ON usage_events(entry_ref);
-    CREATE INDEX IF NOT EXISTS idx_usage_events_source ON usage_events(source);
-  `);
 }
 
 // ── Insert ───────────────────────────────────────────────────────────────────

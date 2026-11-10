@@ -77,7 +77,7 @@
   $: types = [
     ...new Set([
       ...bundles.flatMap((b) => Object.keys(b.byType ?? {})),
-      ...(result?.hits ?? []).map((h) => h.type ?? ""),
+      ...(result?.results ?? []).map((h) => h.type ?? ""),
     ]),
   ]
     .filter(Boolean)
@@ -241,7 +241,7 @@
     await tick();
     if (searchContainer) searchContainer.scrollTop = searchScroll;
     window.scrollTo(0, searchWindowScroll);
-    const hit = result?.hits.find((hit) => matchesAssetRef(hit, previous, defaultBundle));
+    const hit = result?.results.find((hit) => matchesAssetRef(hit, previous, defaultBundle));
     const link = [...(resultList?.querySelectorAll<HTMLAnchorElement>(".library-hit-content") ?? [])].find(
       (link) => new URLSearchParams(link.search).get("ref") === hit?.ref,
     );
@@ -361,7 +361,7 @@
     return "/library/" + normalizedRoute + (next.size ? "?" + next : "");
   }
   function comparisonLabel(ref: string) {
-    const hit = result?.hits.find((hit) => hit.ref === ref);
+    const hit = result?.results.find((hit) => hit.ref === ref);
     return hit ? title(hit) : ref.split("/").at(-1)?.replace(/[-_]/g, " ") || ref;
   }
   function cancelComparison() {
@@ -705,7 +705,7 @@
         mutationRevision++;
         if (!inFiles) void search();
       }}
-      match={result?.hits.find((hit) => matchesAssetRef(hit, ref, defaultBundle)) ?? null}
+      match={result?.results.find((hit) => matchesAssetRef(hit, ref, defaultBundle)) ?? null}
     />
   </section>
 {:else if compareRefs.length === 2}
@@ -790,7 +790,7 @@
     </form>
     <div class="search-summary">
       <span class="muted small"
-        >{result?.hits.length ?? 0} {q ? "matches" : "assets"} shown{loading ? " · searching…" : ""}</span
+        >{result?.results.length ?? 0} {q ? "matches" : "assets"} shown{loading ? " · searching…" : ""}</span
       >
       <div>
         <a href={tabHref("misses")}>Search gaps</a>{#if !comparisonMode}<button
@@ -805,11 +805,11 @@
           {#each result.warnings as warning}<li>{warning}</li>{/each}
         </ul>
       </details>{/if}
-    {#if (result?.hits.length ?? 0) >= Number(limit)}<p class="muted small">
+    {#if (result?.results.length ?? 0) >= Number(limit)}<p class="muted small">
         First {limit} matches. Narrow your search to see more specific results.
       </p>{/if}
     <section aria-label="Search results" aria-busy={loading} bind:this={resultList}>
-      {#if result && !result.hits.length}<div class="list-empty">
+      {#if result && !result.results.length}<div class="list-empty">
           <h2>No matching assets</h2>
           <p>{result.tip ?? "Try a shorter query or another bundle."}</p>
           {#if q}<a href={"/library/new?q=" + encodeURIComponent(q) + "&returnTo=" + encodeURIComponent(returnTo)}
@@ -818,7 +818,7 @@
           <p><a href="/library/search">Clear filters</a></p>
         </div>{/if}
       <ul class="search-results">
-        {#each result?.hits ?? [] as hit (hit.ref)}<li class="search-result">
+        {#each result?.results ?? [] as hit (hit.ref)}<li class="search-result">
             {#if comparisonMode}<input
                 type="checkbox"
                 aria-label={"Select " + title(hit) + " for comparison"}

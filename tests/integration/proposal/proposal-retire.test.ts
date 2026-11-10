@@ -1716,7 +1716,7 @@ describe("an accepted retirement leaves the search index at once (#1307)", () =>
         await akmIndex({ stashDir: storage.stashDir, full: true });
 
         const refs = async (): Promise<string[]> => {
-          const searched = (await akmSearch({ query, skipLogging: true, limit: 20 })).hits.map((hit) =>
+          const searched = (await akmSearch({ query, skipLogging: true, limit: 20 })).results.map((hit) =>
             "ref" in hit ? String(hit.ref) : "",
           );
           const curated = (await akmCurate({ query, limit: 20 })).items.map((item) =>

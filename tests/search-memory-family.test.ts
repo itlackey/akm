@@ -51,7 +51,7 @@ async function search(stash: string, input: Partial<Parameters<typeof akmSearch>
   return withBundle(stash, async () => {
     resetConfigCache();
     const result = await akmSearch({ query: "gateway", ...input });
-    return result.hits.map((hit) => ("name" in hit ? String(hit.name) : ""));
+    return result.results.map((hit) => ("name" in hit ? String(hit.name) : ""));
   });
 }
 
@@ -81,7 +81,7 @@ describe("akmSearch memory families", () => {
     });
     const hits = await withBundle(stash, async () => {
       resetConfigCache();
-      return (await akmSearch({ query: "gateway", limit: 10 })).hits as Array<{ name: string; expandTo?: string }>;
+      return (await akmSearch({ query: "gateway", limit: 10 })).results as Array<{ name: string; expandTo?: string }>;
     });
     expect(hits.map((h) => h.name)).toEqual(["beta", "alpha", "gamma"]);
     expect(hits[1]?.expandTo).toContain("alpha.derived");

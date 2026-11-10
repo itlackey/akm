@@ -447,10 +447,10 @@ describe("akm improve memory cleanup", () => {
       type: "memory",
       belief: "historical",
     });
-    expect(contradictedResult.hits.some((hit) => hit.type !== "registry" && hit.name === "deploy-legacy.derived")).toBe(
-      true,
-    );
-    const contradictedHit = contradictedResult.hits.find(
+    expect(
+      contradictedResult.results.some((hit) => hit.type !== "registry" && hit.name === "deploy-legacy.derived"),
+    ).toBe(true);
+    const contradictedHit = contradictedResult.results.find(
       (hit) => hit.type !== "registry" && hit.name === "deploy-legacy.derived",
     );
     expect(contradictedHit && "beliefState" in contradictedHit ? contradictedHit.beliefState : undefined).toBe(
@@ -466,7 +466,7 @@ describe("akm improve memory cleanup", () => {
       type: "memory",
       belief: "all",
     });
-    const survivorHits = survivorResult.hits.filter((hit) => hit.type !== "registry");
+    const survivorHits = survivorResult.results.filter((hit) => hit.type !== "registry");
     expect(survivorHits[0]?.name).toBe("deploy.derived");
     expect(survivorHits[1]?.name).toBe("deploy-legacy.derived");
   });

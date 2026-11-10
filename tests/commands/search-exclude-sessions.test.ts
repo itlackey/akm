@@ -33,7 +33,7 @@ import { withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox"
 
 /** Stash (non-registry) hits — the local-search path only ever returns these. */
 function stashHits(res: SearchResponse): SourceSearchHit[] {
-  return res.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+  return res.results.filter((h): h is SourceSearchHit => h.type !== "registry");
 }
 function hitRefs(res: SearchResponse): string[] {
   return stashHits(res).map((h) => h.ref);

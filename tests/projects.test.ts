@@ -308,7 +308,7 @@ describe("curate", () => {
     expect((await workspaceSearch({ q: "widget", project: "full" })).project).toEqual(base);
     const scoped = await workspaceSearch({ q: "widget", project: "full", scope: { project: ["other"] } });
     expect(scoped.project).toEqual({ ...base, filters: { project: ["other"] } });
-    expect(scoped.hits.map((h: { name: string }) => h.name)).toEqual(["other-note"]);
+    expect(scoped.results.map((h: { name: string }) => h.name)).toEqual(["other-note"]);
     expect((await workspaceSearch({ q: "widget", project: "full", bundle: "all" })).project?.from).toBe("all");
   });
 

@@ -57,7 +57,7 @@ afterEach(() => {
 
 const names = async (input: Partial<Parameters<typeof akmSearch>[0]>) =>
   (
-    (await akmSearch({ query: "widget", skipLogging: true, ...input })).hits.map((h) =>
+    (await akmSearch({ query: "widget", skipLogging: true, ...input })).results.map((h) =>
       "name" in h ? h.name : "",
     ) as string[]
   ).sort();
@@ -65,7 +65,7 @@ const names = async (input: Partial<Parameters<typeof akmSearch>[0]>) =>
 describe("repeated --from", () => {
   test("searches the union of the named bundles and reports them", async () => {
     const result = await akmSearch({ query: "widget", source: ["one", "two"], skipLogging: true });
-    expect(result.hits.map((h) => ("name" in h ? h.name : "")).sort()).toEqual(["one-note", "two-note"]);
+    expect(result.results.map((h) => ("name" in h ? h.name : "")).sort()).toEqual(["one-note", "two-note"]);
     expect(result.bundles).toEqual(["one", "two"]);
   });
 

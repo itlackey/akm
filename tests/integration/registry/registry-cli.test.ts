@@ -40,8 +40,7 @@ beforeEach(() => {
   // the bun-test isolation guard in src/core/paths.ts (tightened in 35ec047)
   // does not fire when searchRegistry's static-index provider tries to open
   // the DB cache. Without these the guard throws TEST_ISOLATION_MISSING,
-  // which surfaces as a warning + zero hits — see
-  // tests/test-isolation-no-swallow.test.ts.
+  // which surfaces as a warning + zero hits.
   storage = withIsolatedAkmStorage();
 });
 

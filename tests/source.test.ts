@@ -60,7 +60,7 @@ describe("source commands and resolution", () => {
 
     await withBundle(stashDir, async () => {
       const result = await akmSearch({ query: "", type: "script" });
-      const localHits = result.hits.filter(isLocalHit);
+      const localHits = result.results.filter(isLocalHit);
 
       expect(localHits.length).toBe(2);
       expect(localHits.every((hit) => hit.type === "script")).toBe(true);
@@ -78,9 +78,9 @@ describe("source commands and resolution", () => {
 
     await withBundle(stashDir, async () => {
       const result = await akmSearch({ query: "job", type: "script" });
-      const hit = result.hits.filter(isLocalHit)[0];
+      const hit = result.results.filter(isLocalHit)[0];
 
-      expect(result.hits.length).toBe(1);
+      expect(result.results.length).toBe(1);
       expect(hit!.run).toContain("bun");
       expect(hit!.run).toContain("job.js");
     });
@@ -94,8 +94,8 @@ describe("source commands and resolution", () => {
 
     await withBundle(stashDir, async () => {
       const result = await akmSearch({ query: "job", type: "script" });
-      const hit = result.hits.filter(isLocalHit)[0];
-      expect(result.hits.length).toBe(1);
+      const hit = result.results.filter(isLocalHit)[0];
+      expect(result.results.length).toBe(1);
       // Search hits only expose run, not setup/cwd
       expect(hit!.run).toContain("bun");
       expect(hit!.run).toContain("job.js");
@@ -116,7 +116,7 @@ describe("source commands and resolution", () => {
       await akmIndex({ stashDir: primaryStashDir, full: true });
 
       const result = await akmSearch({ query: "job", type: "script" });
-      const searchPathHit = result.hits.filter(isLocalHit).find((hit) => hit.path.includes(searchPathDir));
+      const searchPathHit = result.results.filter(isLocalHit).find((hit) => hit.path.includes(searchPathDir));
 
       expect(searchPathHit).toBeDefined();
       expect(searchPathHit?.run ?? "").toContain("bun");
@@ -138,8 +138,8 @@ describe("source commands and resolution", () => {
         const result = await akmSearch({ query: "summarize diff", type: "script" });
 
         // The hit's rank in each candidate list that returned it.
-        expect(result.hits.length).toBe(1);
-        expect(result.hits[0]!.whyMatched).toEqual(["lexical rank 1", "vector rank 1"]);
+        expect(result.results.length).toBe(1);
+        expect(result.results[0]!.whyMatched).toEqual(["lexical rank 1", "vector rank 1"]);
       }),
     );
   });
@@ -154,7 +154,7 @@ describe("source commands and resolution", () => {
     await withBundle(stashDir, async () => {
       await akmIndex({ stashDir, full: true });
       const result = await akmSearch({ query: "deploy", type: "script" });
-      const hit = result.hits.filter(isLocalHit)[0];
+      const hit = result.results.filter(isLocalHit)[0];
 
       expect(hit!.ref).toContain("scripts/deploy.sh");
       expect(hit).not.toHaveProperty("action");
@@ -179,7 +179,7 @@ describe("source commands and resolution", () => {
       const result = await akmSearch({ query: "deploy", type: "script" });
 
       // The hit's origin is the bundle id (the slug-legal bundle key).
-      expect(result.hits.filter(isLocalHit).some((hit) => hit.origin === "deploy-stash")).toBe(true);
+      expect(result.results.filter(isLocalHit).some((hit) => hit.origin === "deploy-stash")).toBe(true);
     });
   });
 
@@ -307,9 +307,9 @@ Creates a user.
     await withBundle(stashDir, async () => {
       const result = await akmSearch({ query: "", type: "knowledge" });
 
-      expect(result.hits.length).toBe(1);
-      expect(result.hits[0]!.type).toBe("knowledge");
-      expect(result.hits[0]!.name).toBe("api-guide");
+      expect(result.results.length).toBe(1);
+      expect(result.results[0]!.type).toBe("knowledge");
+      expect(result.results[0]!.name).toBe("api-guide");
     });
   });
 
@@ -348,7 +348,7 @@ Creates a user.
     );
     await withBundle(stashDir, async () => {
       const searched = await akmSearch({ query: "NeedleFragmentCase", type: "knowledge" });
-      const hit = searched.hits[0];
+      const hit = searched.results[0];
       if (!hit || !isLocalHit(hit)) throw new Error("expected a local hit");
       expect(hit.ref).toBe("knowledge/fragment-roundtrip");
       const shown = await akmShow({ ref: hit.ref });
@@ -384,7 +384,7 @@ Creates a user.
       ].join("\n"),
     );
     await withBundle(stashDir, async () => {
-      const hit = (await akmSearch({ query: "workflowfragmentneedle", type: "workflow" })).hits.find(isLocalHit);
+      const hit = (await akmSearch({ query: "workflowfragmentneedle", type: "workflow" })).results.find(isLocalHit);
       if (!hit) throw new Error("expected a local workflow hit");
       expect(hit.ref).toBe("workflows/release");
     });
@@ -416,7 +416,7 @@ Creates a user.
         ["oversizedsectiontoken", "oversizedsectiontoken"],
       ];
       for (const [query, expected] of cases) {
-        const hit = (await akmSearch({ query, type: "knowledge" })).hits[0];
+        const hit = (await akmSearch({ query, type: "knowledge" })).results[0];
         if (!hit || !isLocalHit(hit)) throw new Error("expected a local hit");
         expect(hit.ref).not.toContain("#");
         expect((await akmShow({ ref: hit.ref })).content).toContain(expected);
@@ -506,9 +506,9 @@ Creates a user.
       await withBundle(stashDir, async () => {
         const result = await akmSearch({ query: "", type: "script" });
 
-        expect(result.hits.length).toBe(2);
-        expect(result.hits.every((hit: SearchHit) => hit.type === "script")).toBe(true);
-        expect(result.hits.some((hit: SearchHit) => hit.name === "README.md")).toBe(false);
+        expect(result.results.length).toBe(2);
+        expect(result.results.every((hit: SearchHit) => hit.type === "script")).toBe(true);
+        expect(result.results.some((hit: SearchHit) => hit.name === "README.md")).toBe(false);
       });
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true });
@@ -522,9 +522,9 @@ Creates a user.
     try {
       await withBundle(stashDir, async () => {
         const result = await akmSearch({ query: "", type: "script" });
-        const hit = result.hits.filter(isLocalHit)[0];
+        const hit = result.results.filter(isLocalHit)[0];
 
-        expect(result.hits.length).toBe(1);
+        expect(result.results.length).toBe(1);
         expect(hit!.run).toBeTruthy();
         expect(hit!.run).toContain("bash");
       });

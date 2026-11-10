@@ -88,7 +88,7 @@ describe("akm search with recorded feedback", () => {
 
   async function order(): Promise<string[]> {
     const result = await akmSearch({ query: "zebra", skipLogging: true });
-    return result.hits.map((hit) => ("ref" in hit ? hit.ref : "")).filter(Boolean);
+    return result.results.map((hit) => ("ref" in hit ? hit.ref : "")).filter(Boolean);
   }
 
   async function vote(ref: string, signal: "positive" | "negative", times: number): Promise<void> {

@@ -95,7 +95,7 @@ async function onlyHit(bundleId: string, query: string): Promise<SourceSearchHit
     source: bundleId,
     skipLogging: true,
   });
-  const hits = result.hits.filter((hit): hit is SourceSearchHit => "path" in hit);
+  const hits = result.results.filter((hit): hit is SourceSearchHit => "path" in hit);
   expect(hits).toHaveLength(1);
   const hit = hits[0];
   if (!hit) throw new Error(`expected one search hit for ${bundleId}:${query}`);
@@ -490,7 +490,7 @@ Run the tests.
 
     // Search ranks whole documents, so the hit is the parent ref; the
     // fragment selector comes from the same safe projection the index stores.
-    const hit = (await akmSearch({ query: "latefragmentneedle", type: "knowledge", skipLogging: true })).hits.find(
+    const hit = (await akmSearch({ query: "latefragmentneedle", type: "knowledge", skipLogging: true })).results.find(
       (candidate): candidate is SourceSearchHit => "path" in candidate,
     );
     expect(hit?.ref).toBe("knowledge/memory");

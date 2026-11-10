@@ -419,7 +419,7 @@ describe("akm bundle rename — applied", () => {
     await akmIndex({ stashDir: storage.stashDir, full: true });
 
     const names = async (): Promise<string[]> =>
-      (await akmSearch({ query: "zebra", skipLogging: true })).hits.map((hit) => ("name" in hit ? hit.name : ""));
+      (await akmSearch({ query: "zebra", skipLogging: true })).results.map((hit) => ("name" in hit ? hit.name : ""));
     const base = await names();
     const favourite = base[2] as string;
     for (let i = 0; i < 3; i++) {

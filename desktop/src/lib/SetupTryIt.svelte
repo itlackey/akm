@@ -29,7 +29,7 @@
     searching = true;
     searchError = "";
     try {
-      hits = (await api<{ hits?: AssetSummary[] }>("/search", { q: query, limit: "5" })).hits ?? [];
+      hits = (await api<{ results?: AssetSummary[] }>("/search", { q: query, limit: "5" })).results ?? [];
     } catch (cause) {
       searchError = (cause as Error).message;
     } finally {
@@ -56,9 +56,9 @@
   }
   onMount(() => {
     // A sample query from what the library holds, so the first search is likely to find something.
-    void api<{ hits?: AssetSummary[] }>("/search", { q: "", limit: "1" })
+    void api<{ results?: AssetSummary[] }>("/search", { q: "", limit: "1" })
       .then((first) => {
-        const hit = first.hits?.[0];
+        const hit = first.results?.[0];
         if (hit) query = title(hit).split(/\s+/).slice(0, 2).join(" ");
       })
       .catch(() => undefined);

@@ -65,7 +65,7 @@ test("retire is an accepted retire proposal; revert restores bytes, mode and bel
   const data = tombstone(dir!);
   expect(data).toMatchObject({ reason: "manual", previousBeliefState: "deprecated", proposalId: receipt.proposalId });
   expect(typeof data.retiredAt).toBe("string");
-  expect((await akmSearch({ query: "quartz", skipLogging: true })).hits).toHaveLength(0);
+  expect((await akmSearch({ query: "quartz", skipLogging: true })).results).toHaveLength(0);
 
   expect((await revert(receipt)).proposal.status).toBe("reverted");
   expect(fs.readFileSync(file(), "utf8")).toBe(body);
@@ -81,7 +81,7 @@ test("memory retirement and revert carry its derived twin", async () => {
   const receipt = await retireAsset(ref, hash());
   expect(receipt.archiveDirs).toHaveLength(2);
   expect(fs.existsSync(twin)).toBe(false);
-  expect((await akmSearch({ query: "quartz", skipLogging: true })).hits).toHaveLength(0);
+  expect((await akmSearch({ query: "quartz", skipLogging: true })).results).toHaveLength(0);
   await revert(receipt);
   expect(fs.existsSync(twin)).toBe(true);
   expect(fs.readFileSync(file(), "utf8")).toBe(body);

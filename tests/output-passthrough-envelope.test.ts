@@ -118,7 +118,7 @@ describe("passthrough envelope stamping (#484)", () => {
     // search / show / proposal-* gate schemaVersion to full per existing
     // contract — stamping should NOT bleed into those at brief.
     const result = {
-      hits: [],
+      results: [],
       mode: "keyword" as const,
     };
     const shaped = shapeForCommand("search", result, "brief") as Record<string, unknown>;

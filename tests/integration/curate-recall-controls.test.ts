@@ -340,17 +340,19 @@ test("search default current, explicit all/historical, browse and prefix share t
   for (const query of ["quartz deployment", "", "memories/"]) {
     const defaultResult = await akmSearch({ query, limit: 20 });
     const current = await akmSearch({ query, limit: 20, belief: "current" });
-    expect(defaultResult.hits.map((x) => ("ref" in x ? x.ref : x.id))).toEqual(
-      current.hits.map((x) => ("ref" in x ? x.ref : x.id)),
+    expect(defaultResult.results.map((x) => ("ref" in x ? x.ref : x.id))).toEqual(
+      current.results.map((x) => ("ref" in x ? x.ref : x.id)),
     );
     expect(
-      defaultResult.hits.some(
+      defaultResult.results.some(
         (x) => "beliefState" in x && historical.includes(x.beliefState as (typeof historical)[number]),
       ),
     ).toBe(false);
-    expect((await akmSearch({ query, limit: 20, belief: "all" })).hits.length).toBeGreaterThan(current.hits.length);
+    expect((await akmSearch({ query, limit: 20, belief: "all" })).results.length).toBeGreaterThan(
+      current.results.length,
+    );
     expect(
-      (await akmSearch({ query, limit: 20, belief: "historical" })).hits.every(
+      (await akmSearch({ query, limit: 20, belief: "historical" })).results.every(
         (x) => "beliefState" in x && historical.includes(x.beliefState as (typeof historical)[number]),
       ),
     ).toBe(true);

@@ -79,7 +79,7 @@ assert.equal(created.shape, undefined);
 assert.ok(
   fs.readFileSync(path.join(stash, "knowledge", "desktop-note.md"), "utf8").includes("Synthetic workspace evidence"),
 );
-assert.ok((await assets.search({ q: "Synthetic", bundle: "stash" })).hits.length > 0);
+assert.ok((await assets.search({ q: "Synthetic", bundle: "stash" })).results.length > 0);
 const source = await documents.readSource({ ref: "stash//knowledge/desktop-note" });
 assert.equal(source.type, "knowledge");
 assert.equal(source.revision.length, 64);

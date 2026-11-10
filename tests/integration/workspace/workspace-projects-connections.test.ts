@@ -32,7 +32,7 @@ const write = (root: string, rel: string, content: string) => {
   fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
   fs.writeFileSync(path.join(root, rel), content);
 };
-const refs = (result: Json) => result.hits.map((hit: { ref: string }) => hit.ref).sort();
+const refs = (result: Json) => result.results.map((hit: { ref: string }) => hit.ref).sort();
 
 async function seedProjects() {
   const stash = ctx.storage.stashDir;
@@ -81,7 +81,7 @@ describe("assets.search with a project", () => {
       prefer: { project: "alpha" },
       readOnly: true,
     });
-    expect(refs(alpha)).toEqual(direct.hits.map((hit) => (hit as { ref: string }).ref).sort());
+    expect(refs(alpha)).toEqual(direct.results.map((hit) => (hit as { ref: string }).ref).sort());
 
     // A filter value of "" admits the assets that lack the key.
     expect(refs(await out(assets.search({ q: "", project: "beta", limit: 50 })))).toEqual([
@@ -126,7 +126,9 @@ describe("assets.projectOverview", () => {
       { name: "team", total: { count: 3 }, eligible: { count: 2, byType: { knowledge: 1, memory: 1 } } },
     ]);
     const found = await out(assets.search({ q: "", project: "alpha", limit: 200 }));
-    expect(alpha.bundles.reduce((sum: number, bundle: Json) => sum + bundle.eligible.count, 0)).toBe(found.hits.length);
+    expect(alpha.bundles.reduce((sum: number, bundle: Json) => sum + bundle.eligible.count, 0)).toBe(
+      found.results.length,
+    );
   });
 
   test("a project without from reads every local bundle; a missing or disabled bundle is reported, not counted", async () => {
