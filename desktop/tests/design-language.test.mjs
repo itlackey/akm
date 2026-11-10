@@ -193,4 +193,17 @@ test("workspace pages, panels and menus fit the shortest windows", { timeout: 18
     assert.ok(header.linkLines <= 1, `${viewport.width}: Back to file must stay on one line: ${JSON.stringify(header)}`);
   }
   await page.setViewportSize({ width: 900, height: 593 });
+
+  // The asset menu fits the native minimum window without a scrollbar of its own.
+  await open(`/library/search?ref=${encodeURIComponent(app.refs.document)}`, ".markdown");
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  const menu = await page.locator(".action-menu").evaluate((e) => ({
+    scrolls: e.scrollHeight - e.clientHeight,
+    bottom: Math.round(e.getBoundingClientRect().bottom),
+    viewport: innerHeight,
+  }));
+  assert.ok(
+    menu.scrolls <= 0 && menu.bottom <= menu.viewport,
+    `the asset menu must fit the window without scrolling: ${JSON.stringify(menu)}`,
+  );
 });

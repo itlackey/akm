@@ -823,18 +823,19 @@
     border-radius: 8px;
     box-shadow: 0 8px 24px rgb(0 0 0 / 0.12);
   }
+  /* Menu rows are shorter than buttons, so the eight items fit the native minimum window without a scrollbar. */
   .action-menu button {
     display: flex;
     align-items: center;
     justify-content: start;
     gap: 8px;
-    min-height: var(--control-height, 40px);
+    min-height: 32px;
     width: 100%;
     text-align: left;
     background: none;
     border: 0;
     color: var(--text);
-    padding: 8px 10px;
+    padding: 6px 10px;
     font-size: 13px;
     font-weight: 400;
   }
@@ -1055,6 +1056,9 @@
   @media (max-width: 850px) {
     .reader-navigation {
       margin-bottom: 16px;
+    }
+    .action-menu button {
+      min-height: var(--control-height, 44px);
     }
     .asset-heading h2 {
       font-size: 28px;
