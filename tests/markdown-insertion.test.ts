@@ -298,8 +298,6 @@ describe("findSafeInsertionPoint", () => {
   });
 });
 
-// ── findSafeInsertionPointInText ─────────────────────────────────────────────
-
 // ── Integration: safe line insertion ─────────────────────────────────────────
 //
 // akm 0.9.0 chunk-3 (plan §12): the `BaseLinter.insertLinesSafely` protected

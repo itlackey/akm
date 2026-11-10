@@ -8,8 +8,8 @@
  * Four groups:
  *
  *   1. The four pure functions' own behavior: `applyInputDefaults`,
- *      `validateInputs`, `materializeInputFlags`, `canonicalInputJson` /
- *      `canonicalInputHash` — each against `src/execution/input-contract.ts`
+ *      `validateInputs`, `materializeInputFlags`, `canonicalInputJson` — each against
+ *      `src/execution/input-contract.ts`
  *      directly, with no workflow or task machinery involved.
  *   2. `INPUT_NAME_PATTERN` parity with the still-exported
  *      `PROGRAM_PARAM_NAME_PATTERN`.
@@ -26,7 +26,6 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
@@ -61,10 +60,6 @@ function thrown(fn: () => unknown): unknown {
     return error;
   }
   throw new Error("expected function to throw");
-}
-
-function _sha256Hex(text: string): string {
-  return createHash("sha256").update(text).digest("hex");
 }
 
 // ── applyInputDefaults ───────────────────────────────────────────────────────
@@ -547,7 +542,7 @@ describe("materializeInputFlags — exact-name matching and coercion", () => {
   });
 });
 
-// ── canonicalInputJson / canonicalInputHash ──────────────────────────────────
+// ── canonicalInputJson ──────────────────────────────────────────────────────
 
 /** Nested objects, arrays, null, unicode keys, and insertion-order permutations. */
 const CANONICAL_JSON_FIXTURES: readonly unknown[] = [

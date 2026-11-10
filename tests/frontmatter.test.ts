@@ -281,8 +281,6 @@ describe("mutateFrontmatter", () => {
   });
 });
 
-// ── parseYamlScalar ─────────────────────────────────────────────────────────
-
 // ── asNonEmptyString (was: toStringOrUndefined) ──────────────────────────────
 
 describe("asNonEmptyString", () => {
