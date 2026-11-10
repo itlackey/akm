@@ -19,6 +19,7 @@ import { getOutputMode } from "../../output/context";
 import { deliverRendered } from "../../output/stdout";
 import { resolveMutationTarget } from "../../sources/mutation-target";
 import { resolveWriteTarget } from "../../sources/write-source";
+import { namesIndexedRootAsset } from "./eligibility";
 import { akmImprove, buildLockSkippedResult, IMPROVE_TARGET_FLAG, resolveImproveReadSource } from "./improve";
 import { runImproveReportQuery } from "./improve-report";
 import {
@@ -194,8 +195,12 @@ export const improveCommand = defineCommand({
       const strategyArg = getStringArg(args, "strategy");
       // What the run selected is the nearest layer of every call in it, judges included.
       const run = selectionFromArgs(args);
-      const effectiveConfig = loadConfig();
       const scopeArg = getStringArg(args, "scope");
+      // `improve judge` (removed in 0.11) would otherwise run as the scope `judge`. A root asset named `judge` is still a scope.
+      if (scopeArg === "judge" && !namesIndexedRootAsset("judge")) {
+        throw new UsageError("`akm improve judge` is gone.", "UNKNOWN_COMMAND", "Use `akm judge reflect.quality`.");
+      }
+      const effectiveConfig = loadConfig();
       const scopeRef = scopeArg && isFullRefInput(scopeArg) ? parsePlacementRef(scopeArg) : undefined;
       // The host-wide switch (`akm setup --learning off`): nothing runs, scheduled or by hand, dry run or not.
       if (effectiveConfig.improve?.enabled === false) {
