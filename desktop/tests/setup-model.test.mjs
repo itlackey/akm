@@ -141,7 +141,7 @@ test("OpenCode 2 is the same program told apart by its major, and the plugin row
       runnable: true,
       plugin: { state: "configured", spec: "akm-opencode@next" },
     }),
-    "AKM plugin akm-opencode@next configured; OpenCode installs it when it starts",
+    "AKM plugin akm-opencode@next configured (OpenCode installs it when it starts)",
   );
   assert.equal(
     pluginLine({ id: "codex", installed: true, runnable: true, plugin: { state: "unknown" } }),
@@ -153,11 +153,15 @@ test("OpenCode 2 is the same program told apart by its major, and the plugin row
     { harness: "opencode", channel: "pinned" },
     { harness: "opencode-v2", channel: "unknown" },
   ];
-  assert.equal(installedChannel({ id: "claude", installed: true }, plugins), "Prerelease channel");
-  assert.equal(installedChannel({ id: "codex", installed: true }, plugins), "Stable channel");
-  assert.equal(installedChannel({ id: "opencode", installed: true, major: 1 }, plugins), "Pinned to a version");
-  assert.equal(installedChannel({ id: "opencode", installed: true, major: 2 }, plugins), undefined);
-  assert.equal(installedChannel({ id: "claude", installed: true }, undefined), undefined);
+  // The channel finishes the row's sentence in words, and only for a plugin that is there.
+  const present = (id, state, major) => ({ id, installed: true, runnable: true, major, plugin: { state } });
+  assert.equal(installedChannel(present("claude", "installed"), plugins), "on the prerelease channel");
+  assert.equal(installedChannel(present("codex", "disabled"), plugins), "on the stable channel");
+  assert.equal(installedChannel(present("opencode", "configured", 1), plugins), "pinned to one version");
+  assert.equal(installedChannel(present("opencode", "configured", 2), plugins), undefined);
+  assert.equal(installedChannel(present("claude", "installed"), undefined), undefined);
+  assert.equal(installedChannel(present("claude", "missing"), plugins), undefined);
+  assert.equal(installedChannel(present("claude", "unknown"), plugins), undefined);
 });
 
 test("a plugin that is turned off, or that the harness cannot report, is not offered an install", () => {

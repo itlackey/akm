@@ -72,20 +72,22 @@ export function pluginLine(harness: HostHarness): string {
     case "disabled":
       return `AKM plugin${version} installed but turned off in the harness`;
     case "configured":
-      return `AKM plugin ${plugin.spec ?? ""} configured; OpenCode installs it when it starts`.replace("  ", " ");
+      return `AKM plugin ${plugin.spec ?? ""} configured (OpenCode installs it when it starts)`.replace("  ", " ");
     default:
       return "AKM plugin could not be verified";
   }
 }
 
 /**
- * The channel an installed plugin follows, as `akm upgrade --check` read it from the harness's own configuration;
- * nothing when the host CLI has not been checked or did not say.
+ * The channel a present plugin follows, as `akm upgrade --check` read it from the harness's own configuration, as
+ * words that finish the row's sentence ("…installed, on the stable channel"); nothing for a plugin that is not there,
+ * or when the host CLI has not been checked or did not say.
  */
 export function installedChannel(
   harness: HostHarness,
   plugins: Array<{ harness: string; channel?: string }> | undefined,
 ): string | undefined {
+  if (!["installed", "configured", "disabled"].includes(harness.plugin?.state ?? "")) return undefined;
   const name =
     harness.id === "claude"
       ? "claude-code"
@@ -94,11 +96,11 @@ export function installedChannel(
         : harness.id;
   const channel = plugins?.find((plugin) => plugin.harness === name)?.channel;
   return channel === "latest"
-    ? "Stable channel"
+    ? "on the stable channel"
     : channel === "next"
-      ? "Prerelease channel"
+      ? "on the prerelease channel"
       : channel === "pinned"
-        ? "Pinned to a version"
+        ? "pinned to one version"
         : undefined;
 }
 

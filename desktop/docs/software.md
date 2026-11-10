@@ -144,7 +144,8 @@ Nothing runs until you press a button.
    Desktop's preferences and is what first-run setup installs too; until chosen it is
    Desktop's own stage. An existing marketplace's channel stays unchanged, and once
    **Check CLI & plugins** has run each installed plugin's row says which channel it
-   follows (Stable, Prerelease or Pinned), as `akm upgrade --check` read it. Claude/Codex
+   follows (the stable channel, the prerelease channel, or pinned to one version), as
+   `akm upgrade --check` read it. Claude/Codex
    hooks need Bun. Codex still requires native `/hooks` review: installation is not approval.
    Restart the harness to load a newly installed plugin.
 
