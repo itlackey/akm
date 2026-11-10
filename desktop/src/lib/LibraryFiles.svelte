@@ -387,7 +387,7 @@
           <p role="alert">{errors.get(key)}</p>
           <button class="btn-secondary" onclick={() => load(bundleName, path, true)}>Retry folder</button>
         </section>
-      {:else if loading.has(key) && !listing}<p class="folder-content" role="status">Loading folder…</p>
+      {:else if !listing}<p class="folder-content" role="status">Loading folder…</p>
       {:else}<section class="folder-content" aria-label="Folder contents" aria-busy={loading.has(key)}>
           <div class="folder-heading">
             <div>

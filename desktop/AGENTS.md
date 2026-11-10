@@ -18,7 +18,7 @@ Desktop replaces `akm ui` and akm's HTML output, which are removed; the CLI keep
     runtime-neutral web process and must run on plain Node);
   - presentation and view models in `src/lib/`: pages are Kit routes in `src/routes/` (`ssr = false`), shared state is
     `lib/state/workspace.svelte.ts`, stored drafts are `lib/drafts.ts`, and the design-system code copied from AKM is
-    Desktop's own in `lib/ui/`. Svelte components use runes; convert a legacy component when you change it.
+    Desktop's own in `lib/ui/`. Svelte components use runes: `vite.config.ts` compiles Desktop's own in runes mode, so a legacy component does not build.
   A feature may call several AKM operations and must report a partial outcome as data. It never repairs AKM state itself.
   Preferences, native host software (`host-tools.ts`, `software.ts`) and the secret reveal policy live there too.
   The harness plugin-install recipe in `host-tools.ts` stays in Desktop; `plugin-channels.ts` in akm is its source of truth.
@@ -27,7 +27,7 @@ Desktop replaces `akm ui` and akm's HTML output, which are removed; the CLI keep
 
 ## Dependencies
 
-`electron-updater` is imported only by `electron/main.mjs`, and the web process (`server/`, `src/`) never needs it.
+`electron-updater` is imported only by `electron/main.mjs` and `electron/release-feed.mjs`, and the web process (`server/`, `src/`) never needs it.
 It stays in `dependencies` anyway: the packager stages a production-only install, so a devDependency would be missing
 from the packaged app. `akm-web` (`scripts/package-web.mjs`) is that web-process-only distribution and leaves it out of its manifest.
 

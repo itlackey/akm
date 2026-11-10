@@ -5,32 +5,38 @@
 -->
 
 <script lang="ts">
-  import { tick } from "svelte";
   import { date } from "./client";
   import Icon from "./Icon.svelte";
   import BundleRename from "./BundleRename.svelte";
   import { provenance } from "./settings-presenter";
   import type { SettingsBundle } from "./settings-presenter";
-  export let bundle: SettingsBundle;
-  export let action: (path: string, body: unknown) => Promise<void>;
-  export let busy = false;
-  export let managing = false;
-  export let hidden = false;
-  let previous: SettingsBundle | null = null,
-    enabled = true,
-    writable = false,
-    components: Record<string, boolean> = {},
-    confirm = false,
-    removing = false;
-  let heading: HTMLHeadingElement,
-    wasManaging = false;
-  $: if (managing !== wasManaging) {
-    wasManaging = managing;
-    if (managing) tick().then(() => heading?.focus({ preventScroll: true }));
-  }
-  $: writableKind = ["filesystem", "git"].includes(bundle.kind);
-  $: if (bundle !== previous) {
-    previous = bundle;
+  let {
+    bundle,
+    action,
+    busy = false,
+    managing = false,
+    hidden = false,
+  }: {
+    bundle: SettingsBundle;
+    action: (path: string, body: unknown) => Promise<void>;
+    busy?: boolean;
+    managing?: boolean;
+    hidden?: boolean;
+  } = $props();
+  let enabled = $state(true),
+    writable = $state(false),
+    components = $state<Record<string, boolean>>({}),
+    confirm = $state(false),
+    removing = $state(false);
+  let heading = $state<HTMLHeadingElement>();
+  // Managing the bundle moves focus to its heading, once it is drawn.
+  $effect(() => {
+    if (managing) heading?.focus({ preventScroll: true });
+  });
+  const writableKind = $derived(["filesystem", "git"].includes(bundle.kind));
+  // The bundle as read again (after a save, or a refresh) is what its settings form starts from; this runs before the
+  // page updates, so the form is never drawn with the settings of the bundle before.
+  $effect.pre(() => {
     enabled = bundle.enabled;
     writable = bundle.writableSetting ?? bundle.kind === "filesystem";
     components = Object.fromEntries(
@@ -39,11 +45,13 @@
         item.writable ?? bundle.writableSetting ?? bundle.kind === "filesystem",
       ]),
     );
-  }
-  $: counts = Object.entries(bundle.byType ?? {})
-    .filter(([, count]) => count > 0)
-    .sort((a, b) => b[1] - a[1]);
-  $: total = counts.reduce((sum, [, count]) => sum + count, 0);
+  });
+  const counts = $derived(
+    Object.entries(bundle.byType ?? {})
+      .filter(([, count]) => count > 0)
+      .sort((a, b) => b[1] - a[1]),
+  );
+  const total = $derived(counts.reduce((sum, [, count]) => sum + count, 0));
   async function save() {
     await action("/bundles/settings", {
       bundle: bundle.name,
@@ -81,7 +89,13 @@
       >
     </header>
     <BundleRename bundle={bundle.name} {action} disabled={busy} />
-    <form class="bundle-settings" on:submit|preventDefault={save}>
+    <form
+      class="bundle-settings"
+      onsubmit={(event) => {
+        event.preventDefault();
+        void save();
+      }}
+    >
       <div class="setting-row">
         <label class="check-label"
           ><input type="checkbox" role="switch" class="switch" bind:checked={enabled} disabled={busy} /> Enabled</label
@@ -128,7 +142,7 @@
         <h3>Refresh the bundle</h3>
         <p class="muted">Use AKM’s update process to synchronize and rebuild this bundle’s index.</p>
       </div>
-      <button class="btn-secondary" disabled={busy} on:click={() => action("/bundles/update", { bundle: bundle.name })}
+      <button class="btn-secondary" disabled={busy} onclick={() => action("/bundles/update", { bundle: bundle.name })}
         ><Icon name="refresh" size={16} /> Update / reindex {bundle.name}</button
       >
     </section>
@@ -139,13 +153,16 @@
       </div>
       {#if !removing}<button
           class="quiet danger-action"
-          on:click={() => {
+          onclick={() => {
             removing = true;
             confirm = false;
           }}>Unregister {bundle.name}…</button
         >{:else}<form
           class="removal-confirmation"
-          on:submit|preventDefault={() => action("/bundles/remove", { bundle: bundle.name, confirm })}
+          onsubmit={(event) => {
+            event.preventDefault();
+            void action("/bundles/remove", { bundle: bundle.name, confirm });
+          }}
         >
           <p>
             Registration and managed installed cache may be removed. Filesystem source files remain on disk. This is not
@@ -155,7 +172,7 @@
             ><input type="checkbox" bind:checked={confirm} required /> Remove {bundle.name} registration</label
           >
           <div class="btn-row">
-            <button type="button" class="btn-secondary" disabled={busy} on:click={() => (removing = false)}
+            <button type="button" class="btn-secondary" disabled={busy} onclick={() => (removing = false)}
               >Keep bundle</button
             ><button class="btn-danger" disabled={busy || !confirm}>Confirm removal</button>
           </div>

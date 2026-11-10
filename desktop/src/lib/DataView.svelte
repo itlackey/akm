@@ -5,8 +5,8 @@
 -->
 
 <script lang="ts">
-  export let value: unknown;
-  export let depth = 0;
+  import DataView from "./DataView.svelte";
+  let { value, depth = 0 }: { value: unknown; depth?: number } = $props();
   const label = (key: string) => key.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]/g, " ");
   function rowLabel(row: unknown, index: number) {
     if (row && typeof row === "object") {
@@ -24,7 +24,7 @@
   {:else if value.every((item) => item === null || typeof item !== "object")}<p>{value.join(" · ")}</p>
   {:else}<div class="records">
       {#each value as row, i}<details open={depth === 0 && value.length < 5}>
-          <summary>{rowLabel(row, i)}</summary><svelte:self value={row} depth={depth + 1} />
+          <summary>{rowLabel(row, i)}</summary><DataView value={row} depth={depth + 1} />
         </details>{/each}
     </div>{/if}
 {:else if typeof value === "object"}
@@ -34,11 +34,11 @@
         <dt>{label(key)}</dt>
         <dd>
           {#if child !== null && typeof child === "object"}<details open={depth < 1}>
-              <summary>{Array.isArray(child) ? `${child.length} records` : "Details"}</summary><svelte:self
+              <summary>{Array.isArray(child) ? `${child.length} records` : "Details"}</summary><DataView
                 value={child}
                 depth={depth + 1}
               />
-            </details>{:else}<svelte:self value={child} depth={depth + 1} />{/if}
+            </details>{:else}<DataView value={child} depth={depth + 1} />{/if}
         </dd>
       </div>
     {/each}

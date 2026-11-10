@@ -32,16 +32,14 @@ package, in the same release. The app checks this repository's GitHub releases
 (`itlackey/akm`) when it starts and every six hours, with no token and no other server.
 
 **Desktop updates** on the Software page chooses the release line it follows: **Stable
-releases**, or **Stable and prerelease releases** (alpha and beta). The choice is saved with
+releases**, or **Stable and prerelease releases** (alpha, beta and rc). The choice is saved with
 Desktop's preferences (`akm-desktop/preferences.json` under the config directory) and a change
 checks again at once. Until you choose, the line is the stage of the embedded version: a
 stable build follows stable releases only, a build of a stage release (alpha, beta, rc)
-follows prereleases and stable releases. Desktop never replaces itself with an older
-release, so a prerelease build set to stable stays until the next stable release.
-Prereleases are followed as electron-updater's `alpha` channel: it takes the newest alpha,
-beta or stable release and skips rc releases, so an rc is installed by hand from its release
-page (the library's own rule, which the channel overrides, would confine an rc build to rc
-releases).
+follows prereleases and stable releases. Desktop offers the highest version its line allows,
+as npm does: the highest stable release (npm `latest`), or the highest stable or prerelease
+release (npm `next`), even when an older release line published after it. Desktop never replaces itself
+with an older release, so a prerelease build set to stable stays until the next stable release.
 
 - **Linux AppImage and Windows:** the update downloads in the background and installs when
   you quit AKM Desktop. Software shows the state, and says when a download, not the check,

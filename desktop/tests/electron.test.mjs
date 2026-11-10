@@ -152,6 +152,75 @@ test("native Electron window preserves size, sandbox, isolated data, and server 
     .toBe(false);
 });
 
+test("Software says why a build does not check for updates, and its Desktop updates choice reaches the updater", {
+  skip: Boolean(process.env.AKM_DESKTOP_TEST_RUNTIME),
+  timeout: 180000,
+}, async () => {
+  // An unpackaged app is a development run. packaged-run.cjs, loaded with -r, makes it answer `app.isPackaged` as an
+  // installed build does, so the reasons an installed build gives are shown without packaging it.
+  const packaged = ["-r", path.join(root, "tests/packaged-run.cjs")];
+  const runs = [
+    { reason: "development", args: [], updates: "off", says: "A development run does not check for updates." },
+    { reason: "off", args: packaged, updates: "off", says: "Update checks are turned off (AKM_DESKTOP_UPDATES=off)." },
+    // Elsewhere a packaged build with updates on would check, and reach for the network.
+    ...(process.platform === "linux"
+      ? [
+          {
+            reason: "not-appimage",
+            args: packaged,
+            updates: undefined,
+            says: "This Linux build is not an AppImage, so it does not check for updates.",
+          },
+        ]
+      : []),
+  ];
+  for (const run of runs) {
+    const fixture = await createFixture();
+    // Software looks for host tools on PATH; this test is about Desktop's own row, so there are none to start.
+    fixture.env.PATH = path.join(fixture.root, "no-host-tools");
+    await mkdir(fixture.env.PATH);
+    if (run.updates === undefined) delete fixture.env.AKM_DESKTOP_UPDATES;
+    const app = await _electron.launch({
+      chromiumSandbox: true,
+      args: [...run.args, root],
+      cwd: fixture.root,
+      env: fixture.env,
+      timeout: 45000,
+    });
+    try {
+      const page = await app.firstWindow();
+      await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible();
+      await page.getByRole("link", { name: "Settings", exact: true }).click();
+      await page.getByRole("link", { name: "Software", exact: true }).click();
+      await expect(page.locator("#desktop-update-status"), run.reason).toHaveText(
+        `${run.says} To update, download a newer AKM Desktop.`,
+      );
+      if (run.reason === "development") {
+        // electron-updater's own updater in the main process: the one electron/main.mjs configures.
+        const updater = () =>
+          app.evaluate(({ app }) => {
+            const require = process.getBuiltinModule("node:module").createRequire(`${app.getAppPath()}/package.json`);
+            const { autoUpdater } = require("electron-updater");
+            return { allowPrerelease: autoUpdater.allowPrerelease, allowDowngrade: autoUpdater.allowDowngrade };
+          });
+        assert.deepEqual(await updater(), { allowPrerelease: false, allowDowngrade: false });
+        const choice = page.getByRole("combobox", { name: "Desktop updates", exact: true });
+        await choice.selectOption("prerelease");
+        await expect.poll(updater).toEqual({ allowPrerelease: true, allowDowngrade: false });
+        await choice.selectOption("stable");
+        await expect.poll(updater).toEqual({ allowPrerelease: false, allowDowngrade: false });
+      }
+      await app.close();
+    } catch (error) {
+      await app.evaluate(({ app }) => app.exit(0)).catch(() => {});
+      await app.close().catch(() => {});
+      throw error;
+    } finally {
+      await fixture.cleanup();
+    }
+  }
+});
+
 test("AppImage installs a real per-user menu copy, confirms replacements, and launches that copy", {
   skip: !process.env.AKM_DESKTOP_TEST_RUNTIME?.endsWith(".AppImage"),
   timeout: 120000,
