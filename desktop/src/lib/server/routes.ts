@@ -5,7 +5,7 @@
 import { createRequire } from "node:module";
 import os from "node:os";
 import { activity, assets, bundles, config, documents, feedback, proposals, sensitive, setup } from "akm-cli/workspace";
-import { hostUpgradeOutrunsDesktop } from "../engine-skew.js";
+import { compareVersions } from "../engine-skew.js";
 import { readFile, saveFile } from "./features/files.js";
 import {
   readPreferences,
@@ -129,16 +129,17 @@ export const routes: Route[] = [
       (request.channel !== undefined && typeof request.channel !== "string")
     )
       throw new HttpFailure(400, "INVALID_SOFTWARE_ACTION", "Invalid software action, harness or release channel.");
-    // A host upgrade past Desktop's engine would leave Desktop unable to read an index the host migrated.
-    if (
-      request.action === "upgrade-cli" &&
-      hostUpgradeOutrunsDesktop(akmPackage.version, hostTools.snapshot().upgrade?.latestVersion as string | undefined)
-    )
-      throw new HttpFailure(409, "DESKTOP_BEHIND", "Update AKM Desktop first. The host CLI would upgrade past it.");
     try {
+      // A host upgrade past Desktop's engine would leave Desktop unable to read an index the host migrated; HostTools
+      // asks akm for the release it would install, right before it upgrades, and refuses one `within` cannot clear.
       return request.action === "desktop-menu-install"
         ? await desktopApp("menu-install")
-        : hostTools.start(request.action, request.harness as string | undefined, request.channel as string | undefined);
+        : hostTools.start(request.action, request.harness as string | undefined, request.channel as string | undefined, {
+            within: (version) => {
+              const order = compareVersions(version, akmPackage.version);
+              return order === null ? undefined : order <= 0;
+            },
+          });
     } catch (error) {
       throw new HttpFailure(
         400,

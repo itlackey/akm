@@ -48,6 +48,9 @@ export interface UpgradeSummary {
   /** Each harness plugin akm found, with the channel it follows (`latest`, `next`, `pinned`, `unknown`). */
   plugins?: Array<{ harness: string; channel?: string }>;
 }
+export interface StartOptions {
+  within?: (version: string | undefined) => boolean | undefined;
+}
 export interface HostState {
   phase: string;
   cli: Detected | null;
@@ -322,7 +325,11 @@ export class HostTools {
     );
     Object.assign(this.state, { cli, bun, harnesses });
   }
-  start(action: string, harness?: string, channel = "latest") {
+  /**
+   * `within` says whether a host release is one Desktop's own engine can still read: true when it is not newer, false
+   * when it is, undefined when it is not a version. Without it no release is refused.
+   */
+  start(action: string, harness?: string, channel = "latest", options: StartOptions = {}) {
     if (
       !["check", "install-cli", "upgrade-cli", "install-plugin"].includes(action) ||
       (action === "install-plugin" && !harnessIds.includes(harness as string)) ||
@@ -344,6 +351,7 @@ export class HostTools {
         if (action === "upgrade-cli") {
           if (!this.state.cli?.runnable || !this.state.cli.path)
             throw new SoftwareError("Install a working CLI first.");
+          await this.verifyTarget(env, options.within);
           this.state.command = "akm upgrade --format json";
           const result = json(
             await this.invoke(this.state.cli.path, ["upgrade", "--format", "json"], env, 30 * 60_000),
@@ -383,6 +391,35 @@ export class HostTools {
       });
     return this.snapshot();
   }
+  /**
+   * Ask akm which release the upgrade would install, right before it runs, so the guard never rests on an earlier
+   * check. A target Desktop cannot read, or one that cannot be verified, stops the upgrade before anything changes.
+   */
+  async verifyTarget(env: Env, within?: StartOptions["within"]) {
+    if (!within || !this.state.cli?.path) return;
+    this.state.command = "akm upgrade --check --format json";
+    let summary: UpgradeSummary;
+    try {
+      summary = summarizeUpgrade(
+        json(await this.invoke(this.state.cli.path, ["upgrade", "--check", "--format", "json"], env, 120_000)),
+      );
+    } catch {
+      throw new SoftwareError(
+        "Could not check which release the update would install, so nothing was changed. Check the connection, then use Check CLI & plugins and try again.",
+      );
+    }
+    this.state.upgrade = summary;
+    if (summary.updateAvailable === false) return;
+    const allowed = within(summary.latestVersion);
+    if (allowed === undefined)
+      throw new SoftwareError(
+        "The release the update would install could not be verified, so nothing was changed. Use Check CLI & plugins and try again.",
+      );
+    if (!allowed)
+      throw new SoftwareError(
+        `Update AKM Desktop first. The CLI would upgrade to ${summary.latestVersion}, past the engine built into this app.`,
+      );
+  }
   async installCli(env: Env) {
     if (this.state.cli?.installed) throw new SoftwareError("An existing CLI must be upgraded with its own installer.");
     if (!["linux", "darwin", "win32"].includes(this.platform))
@@ -401,10 +438,13 @@ export class HostTools {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
-    // The installer of Desktop's own release installs the same akm version, so host and engine start equal. A
-    // development run keeps desktop/package.json's unstamped 0.0.0, has no release and takes the latest.
-    const release =
-      this.desktopVersion && this.desktopVersion !== "0.0.0" ? `download/v${this.desktopVersion}` : "latest/download";
+    // The installer of Desktop's own release, told that release's tag (it defaults to `latest`), installs the same akm
+    // version, so host and engine start equal. A development run keeps desktop/package.json's unstamped 0.0.0, has no
+    // release and takes the latest.
+    const stamped = this.desktopVersion && this.desktopVersion !== "0.0.0" ? this.desktopVersion : undefined;
+    const tag = stamped ? [`v${stamped}`] : [];
+    const shown = tag.map((item) => ` ${item}`).join("");
+    const release = stamped ? `download/v${stamped}` : "latest/download";
     const script = windows ? "install.ps1" : "install.sh";
     const response = await this.fetcher(`https://github.com/itlackey/akm/releases/${release}/${script}`, {
       signal: AbortSignal.timeout(30_000),
@@ -421,22 +461,26 @@ export class HostTools {
       if (windows) {
         // A downloaded script is blocked by the default execution policy; Bypass applies to this one process only.
         this.state.command =
-          "powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 (official release installer)";
+          `powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1${shown} (official release installer)`;
         await this.invoke(
           "powershell.exe",
-          ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", file],
+          ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", file, ...tag],
           installEnv,
           10 * 60_000,
         );
       } else {
-        this.state.command = 'AKM_INSTALL_DIR="$HOME/.local/bin" bash install.sh (official release installer)';
-        await this.invoke("/bin/bash", [file], installEnv, 10 * 60_000);
+        this.state.command = `AKM_INSTALL_DIR="$HOME/.local/bin" bash install.sh${shown} (official release installer)`;
+        await this.invoke("/bin/bash", [file, ...tag], installEnv, 10 * 60_000);
       }
     } finally {
       await rm(temporary, { recursive: true, force: true });
     }
     const installed = await this.detect("akm", env);
     if (!installed.runnable) throw new Error("The installed CLI could not report a version.");
+    if (stamped && installed.version !== stamped)
+      throw new SoftwareError(
+        `The installer put akm ${installed.version} in place, not the ${stamped} that matches this app.`,
+      );
     this.state.receipt = `AKM CLI installed in ${target.shown}. ${
       windows
         ? "The installer added it to your PATH; open a new terminal to use it."

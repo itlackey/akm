@@ -44,6 +44,9 @@ async function hostFixture({
   bun = true,
   platform = "linux",
   opencodeVersion = "1.18.34",
+  installerVersion,
+  latestVersion = "0.10.261105",
+  checkFails = false,
 } = {}) {
   const home = await mkdtemp(path.join(os.tmpdir(), "akm-host-test-"));
   temporary.push(home);
@@ -52,6 +55,7 @@ async function hostFixture({
     installed = new Set(),
     configured = new Set();
   let cli = !absent;
+  let cliVersion = "0.10.261104";
   let hasBun = bun;
   const env = {
     HOME: home,
@@ -76,8 +80,9 @@ async function hostFixture({
       assert.equal(options.env.AKM_LAUNCHER_NODE, undefined);
       calls.push({ file, args, installDir: options.env.AKM_INSTALL_DIR });
       const name = path.basename(file);
-      if (args[0] === "--version") return name === "opencode" ? opencodeVersion : "0.10.261104";
+      if (args[0] === "--version") return name === "opencode" ? opencodeVersion : cliVersion;
       if (name === "akm") {
+        if (checkFails && args.includes("--check")) throw new Error("offline");
         if (failure && !args.includes("--check"))
           throw Object.assign(new Error("Command failed: akm upgrade"), {
             code: 1,
@@ -85,7 +90,7 @@ async function hostFixture({
           });
         return JSON.stringify({
           currentVersion: "0.10.261104",
-          latestVersion: "0.10.261105",
+          latestVersion,
           updateAvailable: true,
           plugins: [],
           migration: { status: "current" },
@@ -93,6 +98,8 @@ async function hostFixture({
       }
       if (name === "bash" || name === "powershell.exe") {
         cli = true;
+        // The installers take the release tag as their only argument; with none they install the latest.
+        cliVersion = installerVersion ?? args.find((arg) => /^v\d/.test(arg))?.slice(1) ?? "0.10.261105";
         return "installed";
       }
       if (args.slice(0, 2).join(" ") === "plugin list")
@@ -198,8 +205,9 @@ test("on Windows the CLI installs through install.ps1 of Desktop's release, into
   assert.equal(f.manager.snapshot().error, undefined);
   assert.deepEqual(f.installerUrls, ["https://github.com/itlackey/akm/releases/download/v0.10.261105/install.ps1"]);
   const [install] = f.calls.filter((call) => call.file === "powershell.exe");
-  assert.deepEqual(install.args.slice(0, -1), ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"]);
-  assert.equal(path.basename(install.args.at(-1)), "install.ps1");
+  assert.deepEqual(install.args.slice(0, 5), ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"]);
+  assert.equal(path.basename(install.args[5]), "install.ps1");
+  assert.equal(install.args[6], "v0.10.261105", "the script takes the release tag as its argument");
   assert.equal(install.installDir, path.join(f.home, "AppData", "Local", "akm"));
   assert.ok(!f.calls.some((call) => call.file === "/bin/bash"));
   assert.match(f.manager.snapshot().receipt, /installed in %LOCALAPPDATA%\\akm/);
@@ -335,4 +343,50 @@ test("a failed native command is not reported as success; its cause is bounded d
   assert.ok(snapshot.errorDetail.length <= 1000, "detail is bounded");
   assert.throws(() => f.manager.start("shell", "rm"), /Invalid/);
   assert.throws(() => f.manager.start("install-plugin", "other"), /Invalid/);
+});
+
+test("both installers are told Desktop's exact release tag and the installed version is verified (#1609-1)", async () => {
+  for (const platform of ["linux", "win32"]) {
+    const f = await hostFixture({ absent: true, desktopVersion: "0.11.261201-beta.1", platform });
+    f.manager.start("install-cli");
+    await f.manager.pending;
+    const installer = f.calls.find((call) => call.file === (platform === "win32" ? "powershell.exe" : "/bin/bash"));
+    assert.equal(installer.args.at(-1), "v0.11.261201-beta.1", platform);
+    assert.equal(f.manager.snapshot().error, undefined, platform);
+    assert.equal(f.manager.snapshot().cli.version, "0.11.261201-beta.1");
+  }
+  // An installer that put another version in place is not a success.
+  const wrong = await hostFixture({ absent: true, desktopVersion: "0.11.261201-beta.1", installerVersion: "0.10.261117" });
+  wrong.manager.start("install-cli");
+  await wrong.manager.pending;
+  assert.match(wrong.manager.snapshot().error, /0\.10\.261117 in place, not the 0\.11\.261201-beta\.1/);
+  assert.equal(wrong.manager.snapshot().receipt, undefined);
+});
+
+test("the CLI upgrade asks akm for its target right before it runs and refuses one Desktop cannot read (#1609-3)", async () => {
+  const within = (version) => (version === undefined ? undefined : version <= "0.10.261110");
+  // No earlier check and no cache: the guard's own check runs first, then the upgrade.
+  const ok = await hostFixture({ latestVersion: "0.10.261105" });
+  ok.manager.start("upgrade-cli", undefined, undefined, { within });
+  await ok.manager.pending;
+  const order = ok.calls.filter((call) => call.args[0] === "upgrade").map((call) => call.args.join(" "));
+  assert.deepEqual(order.slice(0, 2), ["upgrade --check --format json", "upgrade --format json"]);
+  assert.equal(ok.manager.snapshot().error, undefined);
+  // The target appeared since the last check: refused, and the mutating command never ran.
+  const newer = await hostFixture({ latestVersion: "0.10.261201" });
+  newer.manager.start("upgrade-cli", undefined, undefined, { within });
+  await newer.manager.pending;
+  assert.match(newer.manager.snapshot().error, /Update AKM Desktop first/);
+  assert.ok(!newer.calls.some((call) => call.args.join(" ") === "upgrade --format json"));
+  // The check itself failed: unverifiable, so refused with guidance and nothing changed.
+  const offline = await hostFixture({ checkFails: true });
+  offline.manager.start("upgrade-cli", undefined, undefined, { within });
+  await offline.manager.pending;
+  assert.match(offline.manager.snapshot().error, /nothing was changed/);
+  assert.ok(!offline.calls.some((call) => call.args.join(" ") === "upgrade --format json"));
+  // A target that is not a version cannot be verified either.
+  const odd = await hostFixture({ latestVersion: "soon" });
+  odd.manager.start("upgrade-cli", undefined, undefined, { within: () => undefined });
+  await odd.manager.pending;
+  assert.match(odd.manager.snapshot().error, /could not be verified/);
 });

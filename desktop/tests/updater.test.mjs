@@ -223,3 +223,39 @@ test("stable releases are GitHub's latest release, whatever the feed lists first
     ["/itlackey/akm/releases/latest", "/itlackey/akm/releases/download/v0.10.261203/latest-linux.yml"],
   );
 });
+
+test("choosing stable stops a queued or incoming prerelease from installing (#1609-2)", async () => {
+  for (const stage of ["downloading", "downloaded"]) {
+    const { autoUpdater, updater } = make({ version: "0.11.261201-beta.1" });
+    updater.start();
+    autoUpdater.emit("update-available", { version: "0.11.261201-beta.2" });
+    if (stage === "downloaded") autoUpdater.emit("update-downloaded", { version: "0.11.261201-beta.2" });
+    assert.equal(autoUpdater.autoInstallOnAppQuit, true);
+    updater.follow("stable");
+    assert.equal(autoUpdater.autoInstallOnAppQuit, false, stage);
+    assert.deepEqual(updater.status(), { state: "checking", channel: "stable" });
+    assert.equal(autoUpdater.checks, 2, "the new line is checked at once");
+    // A stable release found afterwards is installed on quit again.
+    autoUpdater.emit("update-downloaded", { version: "0.11.261202" });
+    assert.equal(autoUpdater.autoInstallOnAppQuit, true);
+    assert.equal(updater.status().version, "0.11.261202");
+  }
+  // A stable release already queued is not touched when the choice widens to prereleases.
+  const widen = make();
+  widen.autoUpdater.emit("update-downloaded", { version: "0.10.261106" });
+  widen.updater.follow("prerelease");
+  assert.deepEqual(widen.updater.status(), { state: "downloaded", version: "0.10.261106", channel: "prerelease" });
+  assert.equal(widen.autoUpdater.autoInstallOnAppQuit, true);
+});
+
+test("a check that was running when stable was chosen cannot deliver its prerelease (#1609-2)", async () => {
+  const { autoUpdater, updater } = make({ version: "0.11.261201-beta.1" });
+  updater.start();
+  updater.follow("stable");
+  autoUpdater.emit("update-available", { version: "0.11.261201-beta.2" });
+  autoUpdater.emit("update-downloaded", { version: "0.11.261201-beta.2" });
+  assert.equal(updater.status().state, "checking");
+  assert.equal(autoUpdater.autoInstallOnAppQuit, false);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.ok(autoUpdater.checks >= 2, "the stable line is asked again");
+});

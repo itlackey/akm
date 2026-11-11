@@ -53,10 +53,21 @@ export function createUpdater({ autoUpdater, version, platform, unsupportedReaso
   if (supported) autoUpdater.setFeedURL({ provider: "custom", updateProvider: HighestReleaseProvider, ...releases });
   autoUpdater.autoDownload = canInstall;
   autoUpdater.autoInstallOnAppQuit = canInstall;
+  // A release the followed line excludes: a prerelease while stable is followed. It is never installed, whether it
+  // was queued before the choice changed or its check was still running.
+  const excluded = (/** @type {string | undefined} */ release) => channel === "stable" && /^\d+\.\d+\.\d+-/.test(release ?? "");
+  const drop = () => {
+    autoUpdater.autoInstallOnAppQuit = false;
+    status = { state: "checking" };
+    setTimeout(check, 0).unref();
+  };
   autoUpdater.on("update-available", (info) => {
+    if (excluded(info.version)) return drop();
     status = { state: canInstall ? "downloading" : "available", version: info.version };
   });
   autoUpdater.on("update-downloaded", (info) => {
+    if (excluded(info.version)) return drop();
+    autoUpdater.autoInstallOnAppQuit = canInstall;
     status = { state: "downloaded", version: info.version };
   });
   autoUpdater.on("update-not-available", () => {
@@ -94,7 +105,11 @@ export function createUpdater({ autoUpdater, version, platform, unsupportedReaso
       if (next === channel) return;
       channel = next;
       configure();
-      if (!supported || status.state === "downloading" || status.state === "downloaded") return;
+      if (!supported) return;
+      const pending = status.state === "downloading" || status.state === "downloaded";
+      if (pending && !excluded(status.version)) return;
+      // A queued release the new choice excludes stops being installed on quit, and the new line is checked at once.
+      if (pending) autoUpdater.autoInstallOnAppQuit = false;
       status = { state: "checking" };
       check();
     },
