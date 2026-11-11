@@ -88,6 +88,10 @@ please file it.
 | **Experimental** | Subject to change without notice. Not recommended for scripted use. Some experimental surfaces additionally require an explicit opt-in — see [`akm improve` autonomy](#akm-improve-autonomy). |
 | **Internal** | Not a public interface. May change or disappear in any release, without a CHANGELOG note. Listed here only so you can recognize it. |
 
+**Deprecated** marks a surface scheduled for removal in **0.11.0**. Its current
+tier and behavior still apply through 0.10.x; each marked command names its
+replacement or explains its removal. Adopt replacements as they ship in 0.10.x.
+
 ## 0.10 additions and scheduled 0.11 removals
 
 This is the release schedule, not a claim that replacements already work in this
@@ -104,18 +108,27 @@ tracks availability, argument and output mappings, behavior changes, and remaini
 
 ### Execution and diagnostics: add in 0.10.x, remove old paths in 0.11
 
-| Retire in 0.11 | Replacement introduced in 0.10.x |
+| Deprecated — remove in 0.11 | Replacement introduced in 0.10.x |
 | --- | --- |
 | `akm agent <ref>` | `akm run <ref>` |
 | `akm command run <ref>` / `akm command <ref>` | `akm run <ref>` |
 | `akm task run <id>` | `akm run <task-ref>`; preserve bundle identity and task inputs |
 | `akm workflow run <ref>` | `akm run <ref>`; resume/status remain lifecycle operations |
 | `akm health`, `akm task doctor` | `akm doctor`; reporting moves to `doctor metrics` |
-| `akm metrics`, `akm improve report`, `search --by-usage` | `akm doctor metrics` |
+| `akm metrics`, `search --by-usage` | `akm doctor metrics` |
+| `akm improve report` | `akm doctor metrics`; retain run/window selection and usage, routing, and cost data |
 | `akm improve judge` / `akm judge` | `akm doctor judge` |
 | `akm improve --show-prompt` | `akm doctor prompt` |
 | `akm info`, `akm log` | `akm doctor info`, `akm doctor log` |
 | `akm task explain`, `akm workflow plan` | `akm doctor explain <ref>` |
+
+**All reporting belongs under `akm doctor` in 0.11.** Move reporting commands,
+modes, and human report tables there, including improve's automatic post-run
+usage/routing table. Use `doctor metrics` for reports and aggregates, `doctor log`
+for events and run history, and the relevant doctor subcommand for other diagnostic
+reports. Preserve recorded data and structured operation results; this changes
+the CLI presentation, not learning internals. Ordinary lifecycle status and
+operation results remain on their commands.
 
 The diagnostic family is an explicitly evolving power-user surface. Its detailed
 flags and reports may change faster than the core CLI; error/exit conventions,
@@ -129,7 +142,7 @@ Introduce all replacements below during 0.10.x with an overlap period. Exact
 first-supporting versions and unresolved argument mappings belong in the migration
 guide; all old surfaces in the left column are scheduled for 0.11 removal.
 
-| Remove in 0.11 | Add or prepare in 0.10.x |
+| Deprecated — remove in 0.11 | Add or prepare in 0.10.x |
 | --- | --- |
 | `task add` | Explicit typed-task import; retain `task enable`/`disable` for host activation and unchanged legacy `task add` behavior |
 | `task sync`, `task prune` | Explicit `doctor scheduler sync` maintenance and migration cleanup of owned orphan entries; no separate prune command |
@@ -209,25 +222,30 @@ remove a research capability or skip its replacement.
 | `--timeout-ms` | Duration-based `--timeout`, introduced alongside it in 0.10.x |
 | Invalid-value fallback and ignored incompatible legacy flags, including simultaneous `--quiet`/`--verbose` | Validate new interfaces in 0.10.x; tighten legacy behavior in 0.11 |
 | Session extraction's source-harness `--type` | Add a distinct source selector in 0.10.x; retire the overloaded spelling in 0.11 |
+| `help migrate <version>` | Read the published changelog and migration guide |
+| Standalone `akm-migrate` executable | Use `akm migrate status` and `akm migrate apply` |
 
 Before release, complete the exact mappings and synchronize this notice, the
 [recommendations](docs/reviews/cli-surface-recommendations-2026-11-11.md), and the
-migration guide. This notice does not change today's command tiers below.
+migration guide. The index below keeps current tiers and explicitly marks
+commands deprecated for 0.11 removal.
 
 ## Command tier index
 
 The canonical index: every command and subcommand group in the current tree
 (enumerated from `main.subCommands` in `src/cli.ts` and each group's own
-`subCommands`), with its tier. The sections below explain what each tier
-covers beyond the table.
+`subCommands`), plus the standalone migration executable, with current tiers and
+deprecation status. Every **Deprecated** entry is removed in 0.11.0; the notes
+name its replacement or removal action. The sections below describe current
+0.10 behavior and do not override these removal notices.
 
-| Command | Tier | Notes |
+| Command | Tier / status | Notes |
 | --- | --- | --- |
 | `akm setup` | Stable | The answer flags (`--endpoint`, `--api-key-env`, `--name`, `--harness`, `--embedding`, ...) are new in 0.10; `--config` and `--probe` are gone (see the table above). `--learning on|off` and the `improve.enabled` config key it writes are Experimental for its first release. |
 | `akm index` | Stable | `--export-vectors` and `--import-vectors` are Experimental for their first release; the vector file (`model`, `text_hash`, `embedding`) is their contract, the index file format stays internal. |
-| `akm health` | Evolving | Exit codes are Evolving; report *content* and rendered `md` layout are Experimental — do not script against report layout. |
-| `akm metrics` | Experimental | New in 0.9.28. Report content and JSON shape may change. |
-| `akm info` | Stable | The `learning` field is Experimental for its first release. |
+| `akm health` | Evolving; **Deprecated** | Removed in 0.11: use `akm doctor` for checks and `doctor metrics` for reporting. Current exit codes are Evolving; report content and rendered `md` layout are Experimental. |
+| `akm metrics` | Experimental; **Deprecated** | Removed in 0.11: use `akm doctor metrics`. Current report content and JSON shape are Experimental. |
+| `akm info` | Stable; **Deprecated** | Removed in 0.11: use `akm doctor info`. The current `learning` field is Experimental for its first release. |
 | `akm bundle create` | Stable | |
 | `akm bundle add` | Stable | |
 | `akm bundle list` | Stable | |
@@ -240,21 +258,22 @@ covers beyond the table.
 | `akm curate` | Stable | |
 | `akm show` | Stable | |
 | `akm workflow status` | Experimental | `--all-scopes` added in 0.9.15 (#942); a deprecated no-op since 0.10 (#1239), accepted through 0.10. |
-| `akm workflow plan` | Experimental | New in 0.9.2; secret-free provenance output; envelope shape may change. |
+| `akm workflow plan` | Experimental; **Deprecated** | Removed in 0.11: use `akm doctor explain <ref>`. Preserve secret-free provenance output and no execution. |
 | `akm workflow list` | Experimental | `--all-scopes` and a top-level `scopeKey` envelope field added in 0.9.15 (#942); since 0.10 (#1239) `--all-scopes` is a deprecated no-op, accepted through 0.10, and the `scopeKey` field is removed from the list result. |
 | `akm workflow create` | Experimental | |
 | `akm workflow resume` | Experimental | |
 | `akm workflow abandon` | Experimental | |
-| `akm workflow run` | Experimental | Canonical start/resume/execute command. |
+| `akm workflow run` | Experimental; **Deprecated** | Removed in 0.11: use `akm run <ref>`; retain workflow lifecycle commands for existing runs. |
 | `akm remember` | Stable | |
 | `akm import` | Stable | |
 | `akm sync` | Stable | |
-| `akm clone` | Stable | |
+| `akm clone` | Stable; **Deprecated** | Removed in 0.11: use `akm import <ref>` with equivalent asset, companion-file, and destination behavior. |
 | `akm registry list` | Evolving | |
 | `akm registry add` | Evolving | |
 | `akm registry remove` | Evolving | |
 | `akm migrate status` | Internal | Forwards to the standalone `akm-migrate` tool and renders its result through the normal `--format` pipeline. |
 | `akm migrate apply` | Internal | Forwards to the standalone `akm-migrate` tool and renders its result through the normal `--format` pipeline. |
+| `akm-migrate status` / `akm-migrate apply` | Internal; **Deprecated** | Standalone executable removed in 0.11: use `akm migrate status` / `akm migrate apply`. |
 | `akm config path` | Stable | |
 | `akm config list` | Stable | |
 | `akm config get` | Stable | Default bare-value shape unchanged; `--show-source` (opt-in) wraps it as `{ value, source }`. |
@@ -262,15 +281,15 @@ covers beyond the table.
 | `akm config unset` | Stable | |
 | `akm config diff` | Evolving | Compares effective (post-`extends`) configs. |
 | `akm feedback` | Stable | |
-| `akm log` | Evolving | |
-| `akm agent` | Evolving | |
-| `akm command run` | Evolving | Runs stored command templates through the same agent dispatch as `akm agent`. |
+| `akm log` | Evolving; **Deprecated** | Removed in 0.11: use `akm doctor log`. |
+| `akm agent` | Evolving; **Deprecated** | Removed in 0.11: use `akm run <ref>` for assets; invoke the agent's own CLI for the no-ref interactive launch. |
+| `akm command run` / `akm command <ref>` | Evolving; **Deprecated** | Removed in 0.11: use `akm run <ref>` with the same template arguments and dispatch. |
 | `akm models` | Evolving | The alias picks of a connection, then the models its endpoint lists, and `set` to change one. |
 | `akm lint` | Evolving | |
 | `akm improve` | Evolving | Gate-passed proposals are accepted and committed by default; mutating lanes require `experimental.improveAutonomy` — see below. |
-| `akm improve report` | Evolving | Subcommand since 0.10 (was a magic `scope` value); owns `--run` and `--since`. |
-| `akm improve judge` | Evolving | Subcommand since 0.10 (was a magic `scope` value); reads one revision as JSON on stdin and writes nothing. The same as `akm judge reflect.quality`, in its older input and output shape; its `--strategy` flag was removed. |
-| `akm judge` | Evolving | Runs a registered judge (`reflect.quality`, `distill.lesson`, `consolidate.pair`, `proposal.judgment`) on one JSON input from stdin, on the runner `--connection`, `--harness` and `--model` select. Output is one envelope (`judge`, `schemaVersion`, `runner`, `outcome`, `verdict?`, `reason?`); each judge carries its own `schemaVersion`. |
+| `akm improve report` | Evolving; **Deprecated** | Removed in 0.11: use `akm doctor metrics` for improve-run reports, retaining the current `--run` and `--since` selection capabilities. |
+| `akm improve judge` | Evolving; **Deprecated** | Removed in 0.11: use `akm doctor judge`. Subcommand since 0.10 (was a magic `scope` value); reads one revision as JSON on stdin and writes nothing. The same as `akm judge reflect.quality`, in its older input and output shape; its `--strategy` flag was removed. |
+| `akm judge` | Evolving; **Deprecated** | Removed in 0.11: use `akm doctor judge`. Runs a registered judge (`reflect.quality`, `distill.lesson`, `consolidate.pair`, `proposal.judgment`) on one JSON input from stdin, on the runner `--connection`, `--harness` and `--model` select. Output is one envelope (`judge`, `schemaVersion`, `runner`, `outcome`, `verdict?`, `reason?`); each judge carries its own `schemaVersion`. |
 | `akm proposal list` | Stable | |
 | `akm proposal show` | Evolving | The `legacy-ref` validation finding on a proposal recorded before concept IDs (#1513) is Experimental for its first release. |
 | `akm proposal diff` | Evolving | |
@@ -282,7 +301,7 @@ covers beyond the table.
 | `akm proposal extract` | Evolving | Former top-level `akm extract`. Promoted from Experimental in 0.10 (#1133): the extract eval measures it. Evolving, not Stable, because 0.10 is still settling the improve defaults. |
 | `akm proposal new` | Evolving | Former top-level `akm propose`. |
 | `akm help` | Stable | |
-| `akm help migrate` | Stable | Only renders release notes. |
+| `akm help migrate` | Stable; **Deprecated** | Removed in 0.11 with no CLI replacement: read the published changelog and migration guide. |
 | `akm hints` | Stable | Format-exempt agent guide; the brief guide is the default; `--detail full` selects the complete version. |
 | `akm completions` | Stable | Format-exempt (emits shell script source). |
 | `akm env list` | Stable | Read-and-inject surface. |
@@ -295,15 +314,15 @@ covers beyond the table.
 | `akm secret run` | Stable | Read-and-inject surface. |
 | `akm secret set` | Experimental | Write verb. |
 | `akm secret remove` | Experimental | Write verb; restored in 0.10 after its 0.9.0 removal. |
-| `akm task add` | Evolving | |
+| `akm task add` | Evolving; **Deprecated** | Removed in 0.11: use explicit typed-task import, then `task enable` when activation is wanted. |
 | `akm task enable` | Evolving | |
 | `akm task disable` | Evolving | |
-| `akm task run` | Evolving | |
-| `akm task history` | Evolving | |
-| `akm task sync` | Evolving | |
-| `akm task prune` | Evolving | |
-| `akm task doctor` | Evolving | |
-| `akm task explain` | Evolving | New in 0.9.2; secret-shaped values in provenance output are redacted on a best-effort heuristic basis (not a guarantee). |
+| `akm task run` | Evolving; **Deprecated** | Removed in 0.11: use `akm run <qualified-task-ref>` with the same inputs. |
+| `akm task history` | Evolving; **Deprecated** | Removed in 0.11: use `akm doctor log` for run history and `doctor metrics` for aggregates. |
+| `akm task sync` | Evolving; **Deprecated** | Removed in 0.11: use `akm doctor scheduler sync`, retaining reconciliation and rebind behavior. |
+| `akm task prune` | Evolving; **Deprecated** | Removed in 0.11: owned-orphan cleanup moves into migration/reconciliation; no separate prune command. |
+| `akm task doctor` | Evolving; **Deprecated** | Removed in 0.11: use `akm doctor` for scheduler checks. |
+| `akm task explain` | Evolving; **Deprecated** | Removed in 0.11: use `akm doctor explain <ref>` without execution. Current provenance output redacts secret-shaped values heuristically, not as a guarantee. |
 
 ## Stable
 
