@@ -853,6 +853,22 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
       expect(adv?.status).toBe("pass");
     });
 
+    test("an exact OpenCode 2 pin still compares its bundled CLI with the host CLI", () => {
+      const { pluginsRoot, opencodeCacheRoot } = roots("akm-plugin-v2-pin-");
+      const spec = "akm-opencode-v2@0.9.15";
+      installV2BundledAkm(opencodeCacheRoot, "0.9.15", spec);
+      fs.writeFileSync(path.join(opencodeConfigDir(), "opencode.json"), JSON.stringify({ plugins: [spec] }));
+
+      const [adv] = collectPluginStalenessAdvisories({ pluginsRoot, cliVersion: "0.9.17", opencodeCacheRoot });
+
+      expect(adv).toMatchObject({
+        name: "opencode-v2-plugin-version",
+        status: "warn",
+        evidence: { bundledVersion: "0.9.15", cliVersion: "0.9.17", spec },
+      });
+      expect(adv?.evidence?.pinnedVersion).toBeUndefined();
+    });
+
     test("only the newest build folder of a spec counts", () => {
       const { pluginsRoot, opencodeCacheRoot } = roots("akm-plugin-v2-builds-");
       installV2BundledAkm(opencodeCacheRoot, "0.9.1", "akm-opencode-v2@latest", "1700000000000");

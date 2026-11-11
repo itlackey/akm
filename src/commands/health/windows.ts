@@ -17,6 +17,7 @@ import {
   computeWallTimeStats,
   computeWindowProposalCoverage,
   countAgentFailureReasons,
+  type ImproveRunOutcomes,
   isAgentTaskHistoryRow,
   roundRate,
   summarizeImproveRuns,
@@ -196,6 +197,7 @@ export interface ImproveWindowSummary {
   runCount: number;
   /** Per-run rows for the same `[since, until)` — reused for `--group-by run` so callers never re-read `improve_runs`. */
   perRunSummaries: ImproveRunSummary[];
+  outcomes: ImproveRunOutcomes;
 }
 
 /**
@@ -217,7 +219,7 @@ export function buildImproveWindowSummary(
     readEvents({ since, type }, { dbPath: stateDbPath, readOnly }).events.filter(
       (event) => new Date(event.ts ?? since).getTime() < untilMs,
     );
-  const { metrics: improve, runCount } = summarizeImproveRuns(db, since, until);
+  const { metrics: improve, runCount, outcomes } = summarizeImproveRuns(db, since, until);
   improve.invoked = eventsBeforeUntil("improve_invoked").length;
   improve.completed = eventsBeforeUntil(IMPROVE_COMPLETED_EVENT).length;
   const skipSummary = buildImproveSkipSummary(eventsBeforeUntil("improve_skipped"));
@@ -231,7 +233,7 @@ export function buildImproveWindowSummary(
   );
   improve.coverage = computeWindowProposalCoverage(db, since, until);
 
-  return { improve, runCount, perRunSummaries };
+  return { improve, runCount, perRunSummaries, outcomes };
 }
 
 export function buildWindowMetrics(

@@ -819,13 +819,11 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
     // reused here for the main `--since` window's improve summary and for
     // `--group-by run`, so neither re-reads `improve_runs`.
     const until = new Date(now()).toISOString();
-    const { improve: improveSummary, perRunSummaries } = buildImproveWindowSummary(
-      db,
-      stateDbPath,
-      since,
-      until,
-      readOnly,
-    );
+    const {
+      improve: improveSummary,
+      perRunSummaries,
+      outcomes,
+    } = buildImproveWindowSummary(db, stateDbPath, since, until, readOnly);
 
     advisories.push(...gatherAncillaryAdvisories(db, options, egressConfigView));
 
@@ -861,7 +859,7 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
       sessionExtractionLedger,
       proposalQueue,
       autoAccept: improveSummary.autoAccept,
-      improveRuns: perRunSummaries,
+      improveOutcomes: outcomes,
       connectionsAndHarnesses,
       semanticSearch: readSemanticSearchState(gatherSemanticSearchMode()),
       versionDrift,

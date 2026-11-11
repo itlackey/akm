@@ -8,10 +8,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { akmHealth } from "../../../src/commands/health";
 import { buildPerRunSummaries } from "../../../src/commands/health/task-runs";
+import { recordImproveRunResult, recordTerminatedImproveRun } from "../../../src/commands/improve/improve-result-file";
 import type { AkmImproveResult } from "../../../src/core/improve-types";
 import { getDbPath } from "../../../src/core/paths";
 import { openStateDatabase } from "../../../src/core/state-db";
-import { recordImproveRun } from "../../../src/storage/repositories/improve-runs-repository";
 import { type TaskHistoryRow, upsertTaskHistory } from "../../../src/storage/repositories/task-history-repository";
 import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 
@@ -74,24 +74,7 @@ function improve(id: string, startedAt: number, overrides: Partial<AkmImproveRes
     actions: [],
     ...overrides,
   };
-  const db = openStateDatabase();
-  try {
-    recordImproveRun(db, {
-      id,
-      startedAt: at(startedAt),
-      completedAt: at(startedAt + 10_000),
-      stashDir: storage.stashDir,
-      dryRun: result.dryRun,
-      strategy: result.strategy,
-      scopeMode: "all",
-      scopeValue: null,
-      guidance: null,
-      ok: result.ok,
-      result,
-    });
-  } finally {
-    db.close();
-  }
+  recordImproveRunResult(storage.stashDir, id, result, at(startedAt));
 }
 
 describe("health reporting correctness", () => {
@@ -154,9 +137,9 @@ describe("health reporting correctness", () => {
     }
   });
 
-  test("a completed failed improve run warns even with no scheduled task", async () => {
+  test.each([true, false])("a completed processing failure warns even when the outer ok is %s", async (ok) => {
     improve("failed", now - 120_000, {
-      ok: false,
+      ok,
       actions: [
         {
           mode: "reflect-failed",
@@ -166,7 +149,7 @@ describe("health reporting correctness", () => {
       ],
     });
     const result = await health();
-    expect(result.runs?.[0]?.ok).toBe(false);
+    expect(result.runs?.[0]?.ok).toBe(ok);
     expect(result.improve.actions.reflect.failed).toBe(1);
     expect(result.advisories.find((c) => c.name === "improve-failures")).toMatchObject({
       status: "warn",
@@ -175,9 +158,139 @@ describe("health reporting correctness", () => {
     expect(result.status).toBe("warn");
   });
 
-  test("no-work successes and cancelled runs do not produce failed-processing warnings", async () => {
+  test.each(["distill", "error"] as const)("a completed %s failure warns despite outer ok", async (mode) => {
+    improve("failed", now - 120_000, {
+      actions: [
+        {
+          mode,
+          ref: "knowledge/fixture",
+          result:
+            mode === "distill"
+              ? { schemaVersion: 1, ok: false, outcome: "llm_failed", inputRef: "knowledge/fixture", proposalRef: "" }
+              : { ok: false, error: "Synthetic processing failure" },
+        },
+      ],
+    });
+    const result = await health();
+    expect(result.runs?.[0]?.ok).toBe(true);
+    expect(result.advisories.find((c) => c.name === "improve-failures")).toMatchObject({
+      status: "warn",
+      evidence: { failedRuns: 1, runIds: ["failed"] },
+    });
+  });
+
+  test("a completed consolidation with failed chunks warns despite outer ok", async () => {
+    improve("failed", now - 120_000, {
+      consolidation: {
+        schemaVersion: 1,
+        ok: true,
+        shape: "consolidate-result",
+        dryRun: false,
+        previewOnly: false,
+        target: "all",
+        processed: 1,
+        merged: 0,
+        deleted: 0,
+        promoted: [],
+        contradicted: 0,
+        failedChunks: 1,
+        totalChunks: 1,
+        warnings: [],
+        durationMs: 10,
+      },
+    });
+    const result = await health();
+    expect(result.improve.consolidation.failedChunks).toBe(1);
+    expect(result.advisories.find((c) => c.name === "improve-failures")).toMatchObject({
+      status: "warn",
+      evidence: { failedRuns: 1, runIds: ["failed"] },
+    });
+  });
+
+  test.each([
+    "exception",
+    "budget_exhausted",
+  ])("a recorded %s warns even though its result is incomplete", async (reason) => {
+    recordTerminatedImproveRun(storage.stashDir, "terminated", at(now - 120_000), reason, { strategy: "default" });
+    const result = await health();
+    expect(result.runs?.[0]).toMatchObject({ ok: false, resultComplete: false });
+    expect(result.advisories.find((c) => c.name === "improve-failures")).toMatchObject({
+      status: "warn",
+      evidence: { failedRuns: 1, runIds: ["terminated"] },
+    });
+    expect(result.status).toBe("warn");
+  });
+
+  test.each([
+    "SIGINT",
+    "SIGTERM",
+    "SIGHUP",
+  ])("%s is reported as interrupted, not assumed cancelled or failed", async (reason) => {
+    recordTerminatedImproveRun(storage.stashDir, "interrupted", at(now - 120_000), reason, { strategy: "default" });
+    const result = await health();
+    expect(result.advisories.find((c) => c.name === "improve-failures")).toMatchObject({
+      status: "unknown",
+      evidence: { failedRuns: 0, interruptedRuns: 1, interruptedRunIds: ["interrupted"] },
+    });
+  });
+
+  test("an interruption cannot hide a recorded processing failure", async () => {
+    improve("failed", now - 120_000, {
+      ok: false,
+      terminated: { reason: "SIGTERM", at: at(now - 110_000) },
+      actions: [{ mode: "error", ref: "knowledge/fixture", result: { ok: false, error: "Synthetic failure" } }],
+    });
+    const result = await health();
+    expect(result.advisories.find((c) => c.name === "improve-failures")).toMatchObject({
+      status: "warn",
+      evidence: { failedRuns: 1, interruptedRuns: 0 },
+    });
+  });
+
+  test.each([
+    0, 1,
+  ])("memory inference distinguishes no-change from unusable results (%s failures)", async (failures) => {
+    improve("inference", now - 120_000, {
+      memoryInference: {
+        considered: 1,
+        cacheHits: 0,
+        retryAttempts: 0,
+        splitParents: 0,
+        writtenFacts: 0,
+        noChange: 1 - failures,
+        skippedNoFacts: failures,
+        skippedChildExists: 0,
+        skippedAborted: 0,
+        unaccounted: 0,
+        htmlErrorCount: 0,
+        scopeSynced: 0,
+        writtenPaths: [],
+      },
+    });
+    const result = await health();
+    expect(result.advisories.find((c) => c.name === "improve-failures")).toMatchObject({
+      status: failures ? "warn" : "pass",
+      evidence: { failedRuns: failures },
+    });
+  });
+
+  test("no-work successes and normal quality decisions are not failures", async () => {
     improve("no-work", now - 180_000, { skipped: { reason: "lock-held" } });
-    improve("cancelled", now - 120_000, { ok: false, terminated: { reason: "SIGTERM", at: at(now - 110_000) } });
+    improve("quality", now - 120_000, {
+      actions: [
+        {
+          mode: "distill",
+          ref: "knowledge/fixture",
+          result: {
+            schemaVersion: 1,
+            ok: false,
+            outcome: "quality_rejected",
+            inputRef: "knowledge/fixture",
+            proposalRef: "",
+          },
+        },
+      ],
+    });
     const result = await health();
     expect(result.advisories.find((c) => c.name === "improve-failures")).toMatchObject({
       status: "pass",
@@ -188,8 +301,28 @@ describe("health reporting correctness", () => {
 
   test("failed improve runs outside the reporting window do not warn", async () => {
     improve("historical", now - 2 * DAY, { ok: false });
+    recordTerminatedImproveRun(storage.stashDir, "old-exception", at(now - 2 * DAY), "exception", {
+      strategy: "default",
+    });
+    improve("dry-run", now - 120_000, { ok: false, dryRun: true });
     const result = await health();
     expect(result.runs).toEqual([]);
     expect(result.status).toBe("pass");
+  });
+
+  test("a failed persisted run still warns when its result envelope is unreadable", async () => {
+    improve("corrupt-failure", now - 120_000, { ok: false });
+    const db = openStateDatabase();
+    try {
+      db.run("UPDATE improve_runs SET result_json = ? WHERE id = ?", "{invalid", "corrupt-failure");
+    } finally {
+      db.close();
+    }
+    const result = await health();
+    expect(result.improve.resultRows).toMatchObject({ included: 0, skipped: { invalid: 1 } });
+    expect(result.advisories.find((c) => c.name === "improve-failures")).toMatchObject({
+      status: "warn",
+      evidence: { failedRuns: 1, runIds: ["corrupt-failure"] },
+    });
   });
 });
