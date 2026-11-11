@@ -1,31 +1,43 @@
 # Visualizations
 
-Desktop draws two pictures of what AKM already reports, and lists here the pictures it cannot draw
-yet and the AKM operation each one is waiting for. Both pictures use only `akm-cli/workspace`
-operations that existed before them, the vendored chart renderer, and plain SVG. Neither adds a
-metric: every mark is a recorded run or a recorded link.
+Desktop draws five pictures of what AKM records. None adds a metric: every mark is a recorded run, a
+recorded event, a recorded link or an indexed asset. Each reads `akm-cli/workspace` operations only,
+and each has the same information as text beside it (a table or a list). The design behind them is
+in [prototypes](prototypes/README.md).
 
 ## Run timeline (Activity, Runs)
 
-One row per scheduled task, then Improve and Index builds, on one clock: the metrics window chosen
-on the page. A mark is where a run started. A circle finished, a triangle failed, a diamond ended
-another way (blocked, still active, or no outcome recorded). A gap is a time with no recorded run;
-nothing says whether a run was expected then. Selecting a task's mark opens that task's recorded
-runs below. Table gives each row's counts and latest run.
+A row per scheduled task, a row per workflow, then Improve and Index builds, on one clock: the
+metrics window chosen on the page. A mark is where a run started. A circle finished, a triangle
+failed, a diamond ended another way (blocked, still active, or no outcome recorded). A gap is a time
+with no recorded run; nothing says whether a run was expected then. A task run's tooltip says
+whether the schedule or a person started it. Selecting a task's mark opens its recorded runs;
+selecting a workflow run's mark opens its trace. Table gives each row's counts and latest run.
 
-It reads `activity.overview` (the task list, the improve runs, the index builds) and
-`activity.taskHistory` once per listed task.
-
-Limits, all from what those operations return:
+It reads `activity.taskRuns` and `activity.workflowRuns` for the window, and `activity.overview` for
+improve runs and index builds.
 
 | Limit | Why |
 | --- | --- |
-| A task row holds its latest 200 runs | `activity.taskHistory` returns at most 200 rows per call and has no offset. The table says when more were recorded. |
-| Only the 20 tasks with the most runs have a row | `activity.overview` lists the top 20 tasks of the window. |
+| At most 20,000 task runs in a window | `activity.taskRuns` stops there and says so. |
 | Improve shows its latest 10 runs, Index its latest 20 builds | `activity.overview` returns `improveRuns` (latest 10, all time) and `metrics.index.recent`. |
-| No workflow runs | The overview carries only totals (`metrics.workflows`). No workspace operation lists runs. |
 | A mark has no width | The vendored chart (bar, line, scatter) has no interval mark. A run's duration is in its tooltip. |
-| Not whether a schedule fired, a CLI call or a workflow started a task | `task_history` does not store the caller. |
+| A task run says schedule or by hand, not which workflow or script | akm records `trigger` (`schedule` or `manual`); a task started by a workflow step is `manual`. Runs recorded before this release say nothing. |
+| Child workflow runs have no row | They are part of their parent's trace, which links to them. |
+
+## Workflow run trace (Activity, Runs, a workflow run)
+
+One run: its steps in order, then every unit on one clock, with a bar per attempt. A failed attempt
+is hatched, a gate check by a judge has its own colour, and a running attempt ends at now. Selecting
+a unit lists its attempts and what it reported. The Runs page also lists the window's workflow runs
+as a table, each linking to its trace.
+
+It reads `activity.workflowRun`, which is `akm workflow status --units` with each unit's attempts.
+
+| Limit | Why |
+| --- | --- |
+| A step's span is its units' | akm records no start time for a step. |
+| A run with no units shows its steps only | Units are journaled by the workflow engine as it dispatches them. |
 
 ## Link map (Library, an asset's Related tab)
 
@@ -36,32 +48,45 @@ similarity is not a recorded link. Each asset shown is a link to its own page.
 
 It reads the `links` of `assets.show`, which the page already has, and `assets.related` when asked.
 
-Limits:
-
 | Limit | Why |
 | --- | --- |
-| One step only | Links are read one asset at a time. A second step would be one `assets.show` per neighbour, and that operation also reads the body, feedback and history. |
+| One step only | The library map shows the whole graph; this view stays on one asset. |
 | At most 10 assets per kind and direction | `assets.show` returns ten refs per group and a total; the map says how many it was not given. |
 | At most 20 similar assets | `assets.related` returns the 20 nearest. |
 
-## Not built: what each needs from AKM
+## Library map (Library, Map)
 
-These were prototyped as standalone pages against synthetic data
-([prototypes](prototypes/README.md)). None can be built from today's workspace API without Desktop
-reading AKM's databases itself, which it must not do (`AGENTS.md`). Each needs a read operation added to `akm-cli/workspace`; the data and, where named,
-the internal function already exist.
+Every asset of the enabled bundles as a point and every declared link between them as a line, drawn
+with WebGL so tens of thousands of assets stay interactive. Size is how often an asset is shown.
+Colour is its type (eight families), its bundle, or its use. Two arrangements: by meaning, where
+assets with similar stored embeddings sit together, and by bundle, a disc per bundle that needs no
+embeddings. Search, hide a group, switch link kinds off, or highlight assets never shown or
+superseded and contradicted. Selecting an asset lights it and what it links to and lists the links.
+Table lists the same assets, most shown first, each linking to its page.
 
-| View | What it shows | Needs from AKM |
-| --- | --- | --- |
-| Library map | Every asset as a point, its links as lines, coloured by type or bundle and sized by use | `assets.graph()`: every indexed entry (ref, type, bundle, title), every declared link (`asset_links`, resolved to entries), and per-asset use (`utility_scores`), in column form. Today `assets.search` stops at 200 results, `readEntryLinks` reads one asset, and nothing returns use for all assets. |
-| Library map, arranged by meaning | The same points placed so similar assets sit together | Positions computed in AKM from the stored embeddings, once per index build. Desktop cannot read vectors (`assets.related` returns scores, not vectors), and laying out tens of thousands of points in the page on every visit is too slow. Which projection to use is undecided. Arranging by bundle and type needs only `assets.graph()`. |
-| Workflow run trace | One run's steps in order, and every unit and attempt on one clock | `activity.workflowRuns()` and `activity.workflowRun({ id })`, over `listWorkflowRuns` and `getWorkflowStatus(runId, { includeUnits: true })` in `src/workflows/runtime/runs.ts`. A step has no start time of its own; the trace derives it from the step's units. |
-| Workflow rows on the run timeline | Workflow runs beside tasks, improve and index | The same `activity.workflowRuns()`, with each run's `created_at`, `completed_at` and status. |
-| Activity replay | Searches, shows, feedback and writes of a period, in order | `activity.events({ since, until })`: the usage rows of the window. `akm metrics --detail full` already builds them (`readUsageRows`); `activity.overview` leaves them out. |
-| Activity by agent | The same events grouped by harness and session | Search, show and feedback events to record who made them. They carry only `source` (`user`, `improve`, `task`, `audit`). `resolveAgentIdentity()` (`src/workflows/runtime/agent-identity.ts`) already resolves the harness and session and is recorded on workflow runs only. |
-| Longer task rows, every task | More than 200 runs per task, more than 20 tasks | An offset or cursor on `activity.taskHistory`, or one operation that returns the window's runs for all tasks. |
-| What started a task run | Schedule, CLI or workflow, on the timeline | The caller stored in `task_history`. |
+It reads `assets.graph`. The renderer is `src/lib/ui/graph-gl.js`, wrapped by `GraphView.svelte`; its
+colours are the `--map-1` to `--map-8` tokens.
 
-The library map at tens of thousands of assets also needs a WebGL renderer in Desktop (the vendored
-chart draws SVG, which does not hold that many marks). That is Desktop's to add, and is only worth
-adding once `assets.graph()` exists.
+| Limit | Why |
+| --- | --- |
+| By meaning needs stored embeddings, and leaves out an asset without one | Positions are a projection of the stored vectors; the legend says how many assets are left out. |
+| By meaning is a linear projection | `assets.graph` places assets on the three principal components of their embeddings, computed on each read. Groups overlap more than a non-linear layout would show, and a very large library pays for the projection on every visit. |
+| The table lists the 200 most shown matches | Search and filters narrow it. |
+| Needs WebGL 2 | Without it the page says so and Table still works. |
+
+## Activity replay (Activity, Replay)
+
+The searches, reads and feedback of the last 24 hours or 7 days, played over the library map:
+assets light up as they are used and stay lit, and a pulse from the one who made the event goes to
+the asset (blue a read, green or red feedback). Below, a lane per agent harness (or, where none was
+recorded, the event's source) shows how much happened when, with a lane for searches that found
+nothing; the slider moves through the period. Beside it, the running totals, the latest events and
+the searches that found nothing. With reduced motion it opens at the end of the period, paused.
+
+It reads `assets.graph` and `activity.events`.
+
+| Limit | Why |
+| --- | --- |
+| At most 20,000 events in a period | `activity.events` stops there and says so; the page says so too. |
+| Older events have no agent | akm records the harness and session on usage events from this release. |
+| "No agent recorded" mixes a person with an agent akm did not recognise | Both record source `user` and no harness. |
