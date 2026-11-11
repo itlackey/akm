@@ -1224,7 +1224,12 @@ async function runCliInvocation(): Promise<void> {
     const configFile = consumeConfigFileFlag(main as FlagScanCommand, process.argv.slice(2));
     if (configFile.file !== undefined) process.env.AKM_CONFIG_FILE = configFile.file;
     process.argv = [...process.argv.slice(0, 2), ...configFile.args];
-    if (process.env.AKM_CONFIG_FILE !== undefined) process.env.AKM_CONFIG_FILE = getConfigPath();
+    // An empty AKM_CONFIG_FILE is ignored (warned once by getConfigPath), not turned into the default path.
+    if (process.env.AKM_CONFIG_FILE?.trim()) process.env.AKM_CONFIG_FILE = getConfigPath();
+    else if (process.env.AKM_CONFIG_FILE !== undefined) {
+      getConfigPath();
+      delete process.env.AKM_CONFIG_FILE;
+    }
   } catch (error: unknown) {
     emitJsonError(error);
     return;
