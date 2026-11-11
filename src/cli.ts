@@ -72,6 +72,7 @@ process.on("uncaughtException", (err) => {
 
 import fs from "node:fs";
 import { type ArgsDef, type CommandDef, defineCommand, parseArgs, renderUsage, runCommand, showUsage } from "citty";
+import { warnDeprecatedUse } from "./cli/deprecations";
 import {
   type CittyArgsDefinitionForScan,
   cittyComparableName,
@@ -1305,6 +1306,12 @@ async function runCliInvocation(): Promise<void> {
   ) {
     warn(`[output] '--format' has no effect on 'akm ${commandPath.join(" ")}' — its output is not a result envelope.`);
   }
+
+  warnDeprecatedUse(
+    commandPath,
+    invocation,
+    resolveDeepestCittyCommand(main as AnyCittyCommand, process.argv.slice(2)).args as ArgsDef | undefined,
+  );
 
   // First-time-user breadcrumb: when run with no subcommand AND no config
   // exists yet AND stderr is a TTY, print a friendly pointer to `akm setup`
