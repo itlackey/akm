@@ -5,7 +5,7 @@ AKM reads one user configuration file: `$XDG_CONFIG_HOME/akm/config.json`
 `%APPDATA%\akm\config.json` on Windows). Set `AKM_CONFIG_DIR` to override the
 directory. `akm --config <file> <command>` selects a particular file, ahead of
 `AKM_CONFIG_FILE`, which in turn takes precedence over the directory rules.
-Relative file paths resolve from the invoking directory; empty selections fail.
+Relative file paths resolve from the invoking directory; an empty `AKM_CONFIG_FILE` is warned about once and ignored, and an empty `--config` fails. `credentials.json` and `models.json` always live in the config directory (`AKM_CONFIG_DIR`, else the platform default), never beside a selected file.
 Without either selector all existing directory overrides and defaults are
 unchanged. A missing file uses the existing defaults and can be created by setup
 or configuration writes. Project `.akm/config.json` files are not merged. A config file may
@@ -352,7 +352,7 @@ akm reads an API key from one of two places, and nowhere else:
   names an environment variable, read when the call is made. An unset or empty
   variable is warned about once and the request goes without a key.
 - **`credentials.json`.** With no `apiKey`, the key is the entry stored for the
-  block in `credentials.json`, next to the selected config file, written with mode 0600:
+  block in `credentials.json`, in the default config directory (never beside a file selected with `--config`), written with mode 0600:
 
   ```json
   { "connections": { "<name>": { "key": "…", "endpoint": "…" } },
@@ -897,6 +897,15 @@ the key is ignored, and enables nothing; `akm migrate apply` drops it.
 | --- | --- |
 | `feedback.requireReason` | Whether `akm feedback --negative` without `--reason` is a hard error. **Defaults to `true`** when unset — set `false` to downgrade the check to a warning instead |
 
+## Usage
+
+`usage` configures the local-only CLI usage counts (see
+[Data and Telemetry](data-and-telemetry.md#cli-usage-counts)):
+
+| Key | Purpose |
+| --- | --- |
+| `usage.capture` | Whether akm records counts of its own commands in `metrics.db`. **Defaults to `true`**; `false` turns the recording off. Read from the config file itself (the one `--config` or `AKM_CONFIG_FILE` selects) before the rest of the config loads, so a missing or broken file leaves it on. `--read-only` records nothing either way. |
+
 ## Bundles and write target
 
 `bundles` (replacing the retired `stashDir`/`sources[]`/`installed[]` trio)
@@ -1197,21 +1206,25 @@ akm config diff fleet//config/shared.json
 
 | Variable | Purpose |
 | --- | --- |
-| `AKM_CONFIG_FILE` | Select a config file; `--config` wins. Children inherit its absolute path, including native rows written by `task sync`. Credentials and `models.json` remain adjacent to that file. Does not change data, state, cache, or bundle locations. |
+| `AKM_CONFIG_FILE` | Select a config file; `--config` wins. Children inherit its absolute path, including native rows written by `task sync`. Credentials and `models.json` stay in the default config directory. An empty value is warned about once and ignored. Does not change data, state, cache, or bundle locations. |
 | `AKM_CONFIG_DIR` | Override the user config directory (or set `XDG_CONFIG_HOME`); used when no file selector is set |
 | `AKM_BUNDLE_DIR` | Override the bundle directory |
 | `AKM_DATA_DIR` | Override the data directory — `index.db`, durable `state.db`, and `akm.lock` (or set `XDG_DATA_HOME`) |
 | `AKM_CACHE_DIR` | Override the cache directory — regenerable caches (or set `XDG_CACHE_HOME`) |
 | `AKM_STATE_DIR` | Override the state directory — the scheduler lock and, per bundle, `akm improve`'s whole-run lock (or set `XDG_STATE_HOME`) |
-| `AKM_SQLITE_JOURNAL_MODE` | SQLite journal mode: `WAL` (default), `DELETE`, or `TRUNCATE` |
+| `AKM_SQLITE_JOURNAL_MODE` | Deprecated, no replacement; removed in 0.11. SQLite journal mode: `WAL` (default), `DELETE`, or `TRUNCATE` |
 | `AKM_NPM_REGISTRY` | Base URL of an npm mirror; replaces `registry.npmjs.org` for npm bundle resolution |
 | `AKM_REGISTRY_URL` | Comma-separated registry URLs that replace the configured `registries` in every registry search akm performs; `akm registry list`, `akm info` and the `egress-endpoints` health advisory still show the configured list (prefix an entry with `<provider>::` to choose a provider) |
 | `AKM_VERBOSE` | Truthy value enables the same diagnostics as `--verbose` |
 | `AKM_DEBUG` | `1` prints a stack trace on unexpected internal errors |
 
-Use `AKM_SQLITE_JOURNAL_MODE=DELETE` or `TRUNCATE` when WAL is unavailable,
-such as on some NFS/SMB mounts. With the default `WAL` setting, AKM detects a
-network filesystem for the data directory and falls back to `DELETE`.
+`AKM_SQLITE_JOURNAL_MODE` is Deprecated, has no replacement and is removed in
+0.11. AKM uses WAL and, on its own, falls back to `DELETE` when the data
+directory is on a detected network filesystem (NFS, SMB/CIFS, FUSE such as
+sshfs). Detection works on Linux only, so a data directory on a network
+filesystem on macOS or Windows is unsupported. In containers that are thrown
+away, keep SQLite on local disk and use snapshots. An explicit `WAL` is treated
+like the default, so the network fallback still applies.
 
 ## Retired Configuration
 

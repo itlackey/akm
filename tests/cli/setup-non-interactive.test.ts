@@ -19,6 +19,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { main as cliMain } from "../../src/cli";
+import { consumeConfigFileFlag, type FlagScanCommand } from "../../src/cli/unknown-flags";
 import { getConfigPath } from "../../src/core/paths";
 import { runCliCapture } from "../_helpers/cli";
 import {
@@ -75,6 +77,27 @@ describe("akm setup without a TTY", () => {
     const { code, stderr } = await runCliCapture(["setup", "--yes", "--probe"]);
     expect(code).toBe(2);
     expect(stderr).toContain("--probe");
+  });
+
+  // The in-process harness skips the startup selector, so assert it directly:
+  // the global --config file selector must not swallow the retired inline JSON.
+  test("the retired inline-JSON --config is rejected with the --endpoint hint, not read as a file path", () => {
+    for (const argv of [
+      ["setup", "--yes", "--config", "{}"],
+      ["setup", "--yes", "--config={}"],
+      ["--config", '{"a":1}', "setup"],
+    ]) {
+      expect(() => consumeConfigFileFlag(cliMain as FlagScanCommand, argv)).toThrow(/Unknown flag "--config"/);
+    }
+    try {
+      consumeConfigFileFlag(cliMain as FlagScanCommand, ["setup", "--config", "{}"]);
+    } catch (error) {
+      expect((error as { hint(): string }).hint()).toContain("--endpoint <url> --yes");
+    }
+    // A real file path still selects a config file for setup.
+    expect(consumeConfigFileFlag(cliMain as FlagScanCommand, ["setup", "--config", "/tmp/x.json"]).file).toBe(
+      "/tmp/x.json",
+    );
   });
 });
 

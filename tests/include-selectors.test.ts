@@ -150,9 +150,15 @@ test("malformed include values fail strictly and config warns without dropping p
   expect(warnings[0]).toContain("projects.alpha.include");
   expect(raw.projects).toEqual({ alpha: { filters: { project: "alpha" } } });
   for (const verb of ["search", "curate"]) {
-    const bad = await runCliCapture([verb, QUERY, "--include", "quality=curated", "--format", "json"]);
-    expect(bad.code).toBe(2);
+    for (const include of ["quality=curated", "type=bogus", "color=red"]) {
+      const bad = await runCliCapture([verb, QUERY, "--include", include, "--format", "json"]);
+      expect(bad.code, include).toBe(2);
+      const error = JSON.parse(bad.stderr.trim());
+      expect(error.hint).toContain("quality=proposed, type=<");
+      expect(error.hint).toContain("session");
+    }
   }
+  expect(() => normalizeInclude({ type: "bogus" } as never)).toThrow("Unsupported --include type value");
   resetConfigCache();
   expect(loadConfig().projects?.empty?.include).toEqual({});
 }, 20_000);

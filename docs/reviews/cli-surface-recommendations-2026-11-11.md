@@ -15,7 +15,7 @@ The first additive doctor entry points are also implemented: `doctor` mirrors he
 - [x] **[0.10.x] Remove the tag requirement triggered by `remember --source`, `--description`, or `--expires`.** Independent metadata should not force users to invent an unrelated tag.
 - [x] **[0.10.x] Allow `show --max-tokens` to bound a whole asset or exact fragment without requiring `--context lead`.** A content budget should work independently of the presentation mode.
 - [x] **[0.10.x] Add consistent duration-based `--timeout` support, such as `30s` or `2m`, alongside existing millisecond flags.** Users should not need different timeout conventions or manual unit conversion across commands.
-- [x] **[0.10.x / 0.11] Preserve duration shortcuts, including `3M` for three 30-day months and `3m` for three minutes, and extend the shared grammar for timeouts.** Removing millisecond-only flags must not remove the convenient time notation or change its existing meaning.
+- [x] **[0.10.x / 0.11] Preserve duration shortcuts, including `3M` for three 30-day months and `3m` for three minutes, and give every `--timeout` flag one grammar (bare milliseconds, or `ms`, `s`, `m`, `h`, `d`); the asset-file and `--since`/`--expires` grammar is unified with it in 0.11.** Removing millisecond-only flags must not remove the convenient time notation or change its existing meaning.
 - [x] **[0.10.x] Introduce `akm run <ref>` alongside `agent <ref>`, `command run <ref>` / `command <ref>`, `task run`, and `workflow run`, preserving type-specific inputs and lifecycle behavior.** Consumers can adopt one execution entry point before the old commands disappear in 0.11.
 - [ ] **[0.10.x] Introduce `akm doctor` with the existing health checks and task scheduler diagnostics, retaining `health` and `task doctor` temporarily.** Users should have one diagnostic entry point outside the normal working commands.
 - [ ] **[0.10.x] Add `doctor metrics` for metrics and improve-run usage, routing, and cost reporting, retaining the existing reporting commands temporarily.** Power-user reporting should live together under the diagnostic namespace.
@@ -24,7 +24,7 @@ The first additive doctor entry points are also implemented: `doctor` mirrors he
 - [ ] **[0.10.x] Add `doctor info`, `doctor log`, and `doctor explain <ref>` for installation information, diagnostic events, and task/workflow execution-plan inspection.** A consistent diagnostic family makes advanced investigation discoverable without adding more top-level commands.
 - [ ] **[0.10.x] Add scheduler reconciliation/rebind/owned-orphan maintenance under `doctor scheduler sync` and task history under `doctor log`, retaining every old task command.** Administrators can move to the replacement surface before 0.11 removes the old entry points.
 - [x] **[0.10.x, release version pending] Extend `import` with asset-ref copying and explicit typed-task import, preserving clone's asset/companion-file behavior and existing document imports.** Implemented as `import <ref> --asset-ref` and `import <file> --type task`; legacy commands remain unchanged.
-- [ ] **[0.10.x] Add repeatable search `--include key=value` with the scoped semantics below, retaining both old inclusion flags and their existing behavior.** Callers can adopt precise inclusion without changing established searches during a patch release.
+- [x] **[0.10.x] Add repeatable search `--include key=value` with the scoped semantics below, retaining both old inclusion flags and their existing behavior.** Callers can adopt precise inclusion without changing established searches during a patch release.
 - [x] **[0.10.x] Add show `--outline` and `--lead` alongside `--detail brief` and `--context lead`, retaining the old modes and character budget.** The simpler read interface can be adopted before its predecessors are removed.
 - [x] **[0.10.x] Add `curate --max-tokens` as an explicit way to request bounded packed context, retaining `--pack` and the existing default result.** The new budget control can ship before 0.11 changes curate's default.
 - [ ] **[0.10.x] Add the clearer session-extraction source selector alongside its old `--type` spelling and make explicit `upgrade --channel` selection consistent across CLI and plugins.** Consumers can migrate away from overloaded or duplicate selectors before removal.
@@ -125,8 +125,8 @@ All declared show arguments and shared flags were checked in the current 0.10 tr
 - [x] **[0.10.x / 0.11] Keep user/agent, scheduled, improvement-internal, audit/evaluation, and unknown traffic distinguishable, with command metrics separate from learning feedback and ranking inputs.** Background repetition and measurement activity must not masquerade as product demand or alter the learning processes.
 - [x] **[0.10.x, repeat on 0.11] Verify exactly-once invocation counting, redaction, early-exit coverage, concurrent writes, rollup/export deduplication, and bounded overhead through the real CLI entry point.** Collection failures must preserve command behavior and appear as coverage gaps rather than successful executions or evidence of zero usage.
 
-Implementation: `doctor metrics usage` and local `usage.sqlite` are available in
-the working tree; first published version is pending. Resolved `run` dispatch
+Implementation: `doctor metrics usage` and the local `cli_usage_*` tables of
+`metrics.db` are available in the working tree; first published version is pending. Resolved `run` dispatch
 wiring is tracked with the additive `run` implementation. The
 [CLI reference](../reference/cli.md#cli-invocation-usage) documents the schema,
 retention, export deduplication and observation limits.

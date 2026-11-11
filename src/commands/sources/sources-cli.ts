@@ -62,6 +62,11 @@ export const upgradeCommand = defineJsonCommand({
       description: "Skip the post-upgrade index rebuild",
       default: false,
     },
+    "skip-checksum": {
+      type: "boolean",
+      description: "Recovery only: install even when the release checksum cannot be verified (not recommended)",
+      default: false,
+    },
     channel: { type: "string", description: "Switch akm and every installed harness plugin to latest or next" },
     "allow-downgrade": {
       type: "boolean",
@@ -80,6 +85,7 @@ export const upgradeCommand = defineJsonCommand({
         check: args.check,
         force: args.force,
         skipPostUpgrade: args["skip-post-upgrade"],
+        skipChecksum: args["skip-checksum"],
         next: args.next,
         channel: args.channel,
         allowDowngrade: args["allow-downgrade"],

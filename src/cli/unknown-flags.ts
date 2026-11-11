@@ -160,6 +160,10 @@ export function consumeConfigFileFlag(
       if (value === undefined || !value.trim() || (token === "--config" && value.startsWith("-"))) {
         throw new UsageError("--config requires a non-empty file path.", "INVALID_FLAG_VALUE");
       }
+      // `setup --config '{...}'` was the retired inline-JSON form: keep its exit 2 and hint.
+      if (known.path.join(" ") === "setup" && value.trimStart().startsWith("{")) {
+        throwUnknownFlag("--config", "--config", known);
+      }
       selected = value;
       continue;
     }
@@ -208,6 +212,7 @@ const GONE_FLAGS: ReadonlyArray<{ flag: string; use: string; commands?: readonly
   { flag: "--all", use: "`akm info`", commands: ["config path"] },
   { flag: "--run", use: "`akm improve report --run`", commands: ["improve"] },
   { flag: "--since", use: "`akm improve report --since`", commands: ["improve"] },
+  { flag: "--config", use: "`--endpoint <url> --yes` and the other answer flags", commands: ["setup"] },
   { flag: "--probe", use: "no flag: probing is the default, and `--no-probe` runs offline", commands: ["setup"] },
 ];
 

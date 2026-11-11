@@ -718,6 +718,15 @@
       },
       "additionalProperties": {}
     },
+    "usage": {
+      "type": "object",
+      "properties": {
+        "capture": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": {}
+    },
     "archiveRetentionDays": {
       "type": "number",
       "minimum": 0
@@ -2311,6 +2320,15 @@
           "type": "object",
           "properties": {
             "requireReason": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": {}
+        },
+        "usage": {
+          "type": "object",
+          "properties": {
+            "capture": {
               "type": "boolean"
             }
           },

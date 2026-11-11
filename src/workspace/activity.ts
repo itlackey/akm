@@ -202,7 +202,8 @@ export function taskRuns(input: { since?: string } = {}) {
   const window = windowOf(input.since, "30d");
   return withReadonlyStateDb(
     (db) => {
-      const rows = queryTaskHistory(db, window);
+      // Newest first, so the cut drops the oldest runs.
+      const rows = queryTaskHistory(db, { ...window, limit: WINDOW_ROWS_MAX + 1 });
       const runs = rows.slice(0, WINDOW_ROWS_MAX).map((row) => {
         let metadata: ReturnType<typeof decodeTaskHistoryMetadata> | null = null;
         try {
@@ -335,9 +336,10 @@ export function events(input: { since?: string; until?: string } = {}) {
   }
   return withReadonlyStateDb(
     (db) => {
-      const rows = readUsageRows(db, window, { allSources: true });
-      const kept = rows.slice(0, WINDOW_ROWS_MAX);
-      return { available: true, window, truncated: rows.length > kept.length, events: kept };
+      // One row past the cap says "truncated"; the cut keeps the newest rows, listed oldest first.
+      const rows = readUsageRows(db, window, { allSources: true, newest: WINDOW_ROWS_MAX + 1 });
+      const kept = rows.length > WINDOW_ROWS_MAX ? rows.slice(1) : rows;
+      return { available: true, window, truncated: rows.length > WINDOW_ROWS_MAX, events: kept };
     },
     { available: false, window, truncated: false, events: [] },
   );

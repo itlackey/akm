@@ -38,13 +38,12 @@ describe("parseDuration", () => {
     expect(parseDuration("", units)).toBeNull();
   });
 
-  test("only ms extends the single-letter duration grammar", () => {
-    // Milliseconds are the only supported multi-letter unit. Custom maps
-    // still cannot introduce arbitrary multi-letter duration spellings.
+  test("the unit is exactly one letter — multi-letter shorthands do not match", () => {
+    // The contract is <digits><letter> (single unit letter). A multi-letter
+    // token like "ms" must fail the syntax match, not slip through to a
+    // map-miss. This keeps the regex honest with the documented grammar.
     const units = { m: MINUTE, h: HOUR, d: DAY };
     expect(parseDuration("30ms", units)).toBeNull();
-    expect(parseDuration("30ms")).toBe(30);
-    expect(parseDuration("30s")).toBe(30000);
     expect(parseDuration("5hh", units)).toBeNull();
     expect(parseDuration("1dd", { ...units, dd: DAY })).toBeNull();
   });

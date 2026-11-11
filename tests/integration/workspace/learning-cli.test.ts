@@ -60,7 +60,7 @@ function snapshot(): Record<string, string> {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) walk(full);
-      else if (full !== path.join(ctx.storage.dataDir, "akm", "usage.sqlite") && !/-(shm|wal)$/.test(entry.name)) {
+      else if (full !== path.join(ctx.storage.dataDir, "akm", "metrics.db") && !/-(shm|wal)$/.test(entry.name)) {
         files[full] = fs.readFileSync(full, "utf8");
       }
     }
@@ -153,7 +153,7 @@ describe("akm info", () => {
     connect();
     const before = snapshot();
     expect((await runCli(["info"])).learning).toEqual({ on: true, harness: null, scheduled: false });
-    expect(fs.statSync(path.join(ctx.storage.dataDir, "akm", "usage.sqlite")).isFile()).toBe(true);
+    expect(fs.statSync(path.join(ctx.storage.dataDir, "akm", "metrics.db")).isFile()).toBe(true);
     expect(snapshot()).toEqual(before);
   });
 });
@@ -170,7 +170,7 @@ describe("while learning is off", () => {
       expect(result.dryRun).toBe(args.includes("--dry-run"));
       expect(result.actions).toEqual([]);
     }
-    expect(fs.statSync(path.join(ctx.storage.dataDir, "akm", "usage.sqlite")).isFile()).toBe(true);
+    expect(fs.statSync(path.join(ctx.storage.dataDir, "akm", "metrics.db")).isFile()).toBe(true);
     expect(snapshot()).toEqual(before);
   });
 
@@ -187,7 +187,7 @@ describe("while learning is off", () => {
       }),
     );
     expect(result).toMatchObject({ ok: true, sessionsProcessed: 0 });
-    expect(fs.statSync(path.join(ctx.storage.dataDir, "akm", "usage.sqlite")).isFile()).toBe(true);
+    expect(fs.statSync(path.join(ctx.storage.dataDir, "akm", "metrics.db")).isFile()).toBe(true);
     expect(snapshot()).toEqual(before);
   });
 });

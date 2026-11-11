@@ -16,18 +16,25 @@ describe("selected config file paths", () => {
   test("file overrides directory selection and relative paths become absolute", () => {
     const env = { AKM_CONFIG_FILE: "custom/settings.json", AKM_CONFIG_DIR: "/ignored" };
     expect(getConfigPath(env)).toBe(path.resolve("custom/settings.json"));
-    expect(getConfigDir(env)).toBe(path.resolve("custom"));
-    expect(() => getConfigPath({ AKM_CONFIG_FILE: "" })).toThrow("non-empty file path");
+    // The selected file never moves the config directory.
+    expect(getConfigDir(env)).toBe("/ignored");
   });
 
-  test("credentials stay adjacent and write locks follow the selected filename", async () => {
+  test("an empty AKM_CONFIG_FILE is ignored, as if unset", () => {
+    const env = { AKM_CONFIG_FILE: "", AKM_CONFIG_DIR: "/dir" };
+    expect(getConfigPath(env)).toBe(path.join("/dir", "config.json"));
+  });
+
+  test("credentials stay in the default config dir and write locks follow the selected filename", async () => {
     const sandbox = makeSandboxDir("akm-selected-config-");
     const dir = sandbox.dir;
-    const selected = path.join(dir, "chosen.json");
+    const configDir = path.join(dir, "default-config");
+    const selected = path.join(dir, "elsewhere", "chosen.json");
     try {
-      await withEnv({ AKM_CONFIG_FILE: selected }, async () => {
+      await withEnv({ AKM_CONFIG_FILE: selected, AKM_CONFIG_DIR: configDir }, async () => {
         writeCredential({ connection: "test" }, "example-value", "https://example.invalid/v1");
-        expect(fs.existsSync(path.join(dir, "credentials.json"))).toBe(true);
+        expect(fs.existsSync(path.join(configDir, "credentials.json"))).toBe(true);
+        expect(fs.existsSync(path.join(path.dirname(selected), "credentials.json"))).toBe(false);
         expect(readCredential({ connection: "test" }, "https://example.invalid/v1", true)).toBe("example-value");
         expect(getConfigLockPath()).toBe(`${selected}.lck`);
         expect(akmLocations().AKM_CONFIG_FILE).toBe(selected);

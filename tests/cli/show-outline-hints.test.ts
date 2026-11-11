@@ -27,19 +27,19 @@ describe("agent guidance on reading a large document (#1259)", () => {
   ] as const) {
     test(`${name} send agents to the outline, then one section`, () => {
       const prose = fold(text);
-      expect(prose).toContain("akm show <ref> --detail brief` returns its outline (`toc`, no body)");
+      expect(prose).toContain("akm show <ref> --outline` returns its outline (`toc`, no body)");
       expect(prose).toContain("akm show <ref>#<slug>");
     });
   }
 
   test("the full hints no longer teach a deliberately unmatched fragment", () => {
     expect(EMBEDDED_HINTS_FULL).not.toContain("knowledge/guide#nope");
-    expect(EMBEDDED_HINTS_FULL).toContain("akm show knowledge/guide --detail brief");
+    expect(EMBEDDED_HINTS_FULL).toContain("akm show knowledge/guide --outline");
   });
 
   test("`akm show` help names the outline", () => {
     const args = showCommand.args as Record<string, { description?: string }>;
-    expect(args.ref?.description).toContain("`--detail brief` returns the outline (`toc`, each heading's slug)");
+    expect(args.ref?.description).toContain("`--outline` returns the outline (`toc`, each heading's slug)");
     expect(args.ref?.description).not.toContain("unmatched");
   });
 });

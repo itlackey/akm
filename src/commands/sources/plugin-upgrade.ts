@@ -713,7 +713,7 @@ export interface UpgradeRunDependencies {
   ) => Promise<UpgradeCheckResponse>;
   performUpgrade: (
     check: UpgradeCheckResponse,
-    opts: { force: boolean; skipPostUpgrade: boolean; targetVersion?: string },
+    opts: { force: boolean; skipPostUpgrade: boolean; skipChecksum?: boolean; targetVersion?: string },
   ) => Promise<UpgradeResponse>;
 }
 
@@ -921,6 +921,7 @@ export async function runUpgrade(
     check: boolean;
     force: boolean;
     skipPostUpgrade: boolean;
+    skipChecksum?: boolean;
     next?: boolean;
     channel?: string;
     allowDowngrade?: boolean;
@@ -990,6 +991,7 @@ export async function runUpgrade(
   const upgraded = await deps.performUpgrade(check, {
     force: args.force,
     skipPostUpgrade: args.skipPostUpgrade,
+    ...(args.skipChecksum ? { skipChecksum: true } : {}),
     // A package manager install must name the version, or `@latest` goes past the pin
     // (or past the prerelease that `--next` chose).
     ...(switchChannel || check.lockstep?.heldBack || (next && check.latestVersion)

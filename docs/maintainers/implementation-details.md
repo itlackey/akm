@@ -14,6 +14,7 @@ CLI commands or compatibility promises.
 
 ## Runtime and test environment
 
+`AKM_EVENT_SOURCE` is a documented input (see [STABILITY.md](../../STABILITY.md#environment-overrides)).
 The earlier policy listed `AKM_NODE_ENTRY`, `AKM_EVENT_SOURCE`, `AKM_SESSION_ID`,
 `AKM_AGENT_HARNESS`, `AKM_EMBED_DETERMINISTIC`, `AKM_CLAUDE_PROJECTS_DIR`, and
 `AKM_FORCE_INIT_TMP_STASH` as implementation variables without compatibility

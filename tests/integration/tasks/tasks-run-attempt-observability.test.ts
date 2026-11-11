@@ -15,6 +15,7 @@ import {
   getTaskHistoryRuns,
   reserveTaskHistoryAttempt,
 } from "../../../src/storage/repositories/task-history-repository";
+import { recordTaskAttemptFailure } from "../../../src/tasks/run/attempt-lifecycle";
 import { runTask } from "../../../src/tasks/run/run-task";
 import { readTaskHistory } from "../../../src/tasks/run/task-history";
 import { runCliCapture } from "../../_helpers/cli";
@@ -341,5 +342,29 @@ describe("tasks run attempt observability", () => {
 
     expect(result.code).toBe(1);
     expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, code: "ASSET_NOT_FOUND" });
+  });
+});
+
+describe("a failure before the task ran records how it was triggered", () => {
+  test.each([
+    [true, "schedule"],
+    [false, "manual"],
+    [undefined, undefined],
+  ] as const)("scheduled=%p stores trigger %p", (scheduled, trigger) => {
+    recordTaskAttemptFailure({
+      taskId: "pre-run-failure",
+      reason: "task_dispatch_failed",
+      failure: new Error("boom"),
+      startedAt: new Date(),
+      logDir,
+      ...(scheduled === undefined ? {} : { scheduled }),
+    });
+    const stateDb = openStateDatabase();
+    try {
+      const row = getTaskHistoryRuns(stateDb, "pre-run-failure")[0];
+      expect(decodeTaskHistoryMetadata(row?.metadata_json ?? "{}").trigger).toBe(trigger);
+    } finally {
+      stateDb.close();
+    }
   });
 });

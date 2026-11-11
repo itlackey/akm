@@ -561,8 +561,8 @@ test("the prerelease choice reaches the check and the upgrade, and an explicit c
   f.manager.start("switch-channel", undefined, "next");
   await f.manager.pending;
   const upgrades = f.calls.filter((call) => call.args[0] === "upgrade").map((call) => call.args.join(" "));
-  assert.ok(upgrades.includes("upgrade --check --next --format json"));
-  assert.ok(upgrades.includes("upgrade --next --format json"));
+  assert.ok(upgrades.includes("upgrade --check --next --quiet --format json"));
+  assert.ok(upgrades.includes("upgrade --next --quiet --format json"));
   assert.ok(upgrades.includes("upgrade --channel next --format json"));
   assert.match(f.manager.snapshot().receipt, /switched the CLI and installed plugins to the prerelease channel/);
 });
@@ -678,7 +678,7 @@ test("a switch checks the target channel afterwards, a timed-out check is not un
       .filter((call) => call.args[0] === "upgrade")
       .at(-1)
       .args.join(" "),
-    "upgrade --check --next --format json",
+    "upgrade --check --next --quiet --format json",
   );
   assert.ok(f.manager.snapshot().action);
   f.manager.start("check");

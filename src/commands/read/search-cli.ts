@@ -359,7 +359,7 @@ export const showCommand = defineJsonCommand({
     ref: {
       type: "positional",
       description:
-        "Asset ref [bundle//]conceptId[#fragment]; `--detail brief` returns the outline (`toc`, each heading's slug)",
+        "Asset ref [bundle//]conceptId[#fragment]; `--outline` returns the outline (`toc`, each heading's slug)",
       required: true,
     },
     outline: {
@@ -433,6 +433,8 @@ export const showCommand = defineJsonCommand({
     if (args.outline && (contextMode === "lead" || maxTokens !== undefined || maxChars !== undefined)) {
       throw new UsageError("--outline cannot be combined with lead context or a content budget.", "INVALID_FLAG_VALUE");
     }
+    // `--detail brief --context lead [--max-chars|--max-tokens]` worked in 0.10.261118 and still does; only the
+    // new forms are refused: `--lead`, or a `--max-tokens` body budget without lead context.
     if (explicitDetail === "brief" && (args.lead || (maxTokens !== undefined && contextMode === "exact"))) {
       throw new UsageError(
         "A content budget or --lead requires body output; omit --detail brief.",
@@ -443,6 +445,7 @@ export const showCommand = defineJsonCommand({
       ref: args.ref,
       detail: showDetail,
       contextMode,
+      ...(args.lead ? { contextFlag: "--lead" as const } : {}),
       maxContextChars: maxChars,
       maxTokens,
       eventSource: resolveUsageEventSource(),

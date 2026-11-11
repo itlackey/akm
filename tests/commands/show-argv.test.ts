@@ -354,8 +354,17 @@ describe("akm show additive body controls", () => {
       seed();
       const full = await json(ref!);
       const bounded = await json(ref!, "--max-tokens=25", "--detail=agent");
-      expect(bounded[payload!]).toBe(String(full[payload!]).slice(0, 100));
-      expect(bounded.contentBudget).toEqual({ maxTokens: 25, estimatedTokens: 25, truncated: true });
+      // At most 100 characters, a prefix of the full body, cut at whitespace.
+      const text = String(bounded[payload!]);
+      expect(String(full[payload!]).startsWith(text)).toBe(true);
+      expect(text.length).toBeGreaterThan(68);
+      expect(text.length).toBeLessThanOrEqual(100);
+      expect(String(full[payload!])[text.length]).toMatch(/\s/);
+      expect(bounded.contentBudget).toEqual({
+        maxTokens: 25,
+        estimatedTokens: Math.ceil(text.length / 4),
+        truncated: true,
+      });
       expect(bounded.ref).toBe(full.ref);
       expect(bounded.path).toBe(full.path);
       expect(bounded.editable).toBe(full.editable);
@@ -366,8 +375,9 @@ describe("akm show additive body controls", () => {
     seed();
     const exact = await json("knowledge/guide#details");
     const bounded = await json("knowledge/guide#details", "--max-tokens=25");
-    expect(bounded.content).toBe(String(exact.content).slice(0, 100));
-    expect(bounded.contentBudget).toEqual({ maxTokens: 25, estimatedTokens: 25, truncated: true });
+    expect(String(exact.content).startsWith(String(bounded.content))).toBe(true);
+    expect(String(bounded.content).length).toBeLessThanOrEqual(100);
+    expect(bounded.contentBudget).toMatchObject({ maxTokens: 25, truncated: true });
     expect(bounded).not.toHaveProperty("selectedRef");
     expect(bounded).not.toHaveProperty("contextMode");
     const fitting = await json("knowledge/guide#details", "--max-tokens=1000");
@@ -389,10 +399,69 @@ describe("akm show additive body controls", () => {
     expect(lead.contentBudget).toMatchObject({ maxTokens: 90, truncated: true });
     const opaque = await json(String(lead.selectedRef), "--max-tokens=25");
     expect(opaque.selectedRef).toBe(lead.selectedRef);
-    expect(String(opaque.content).length).toBe(100);
+    expect(String(opaque.content).length).toBeLessThanOrEqual(100);
     expect(opaque.contextMode).toBe("exact");
     expect(opaque.contextTruncated).toBe(true);
     expect(opaque.contentBudget).toMatchObject({ truncated: true });
+  });
+
+  test("the budget skips frontmatter, never splits a surrogate pair, and the text line is true", async () => {
+    const storage = seed();
+    const emoji = "\u{1F600}".repeat(60);
+    writeFixture(
+      path.join(storage.stashDir, "knowledge", "emoji.md"),
+      `---\ndescription: Emoji\ntags: [a, b]\n---\n# Emoji\n${emoji}\n`,
+    );
+    const bounded = await json("knowledge/emoji", "--max-tokens=5");
+    const content = String(bounded.content);
+    // Frontmatter kept whole and not counted: the 20-character body budget applies after it.
+    expect(content.startsWith("---\ndescription: Emoji\ntags: [a, b]\n---\n")).toBe(true);
+    const body = content.slice(content.indexOf("---\n", 4) + 4);
+    expect(body.length).toBeLessThanOrEqual(20);
+    expect(bounded.contentBudget).toEqual({
+      maxTokens: 5,
+      estimatedTokens: Math.ceil(body.length / 4),
+      truncated: true,
+    });
+    // No lone surrogate anywhere.
+    expect(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(content)).toBe(false);
+    const text = await runEntrypoint(["show", "knowledge/emoji", "--max-tokens=5", "--format=text"]);
+    expect(text.stdout).toContain("frontmatter excluded");
+  });
+
+  test("a cut that already falls on a word end keeps the whole word", async () => {
+    const storage = seed();
+    writeFixture(path.join(storage.stashDir, "knowledge", "wordend.md"), "12345678901234567890 tail of the note\n");
+    const bounded = await json("knowledge/wordend", "--max-tokens=5");
+    expect(bounded.content).toBe("12345678901234567890");
+    expect(bounded.contentBudget).toEqual({ maxTokens: 5, estimatedTokens: 5, truncated: true });
+  });
+
+  test("--detail brief with a budget is a usage error; --lead errors name --lead", async () => {
+    seed();
+    for (const args of [
+      ["--detail=brief", "--max-tokens=25"],
+      ["--detail=brief", "--lead"],
+      ["--outline", "--max-tokens=25"],
+      ["--outline", "--lead"],
+    ]) {
+      expect((await runEntrypoint(["show", "knowledge/guide#details", ...args])).status, args.join(" ")).toBe(2);
+    }
+    // 0.10.261118 combinations of --detail brief with lead context keep working (the akm-plugins /akm-show form).
+    for (const args of [
+      ["--detail=brief", "--context=lead"],
+      ["--detail=brief", "--context=lead", "--max-chars=100"],
+      ["--detail=brief", "--context=lead", "--max-tokens=25"],
+    ]) {
+      const ok = await runEntrypoint(["show", "knowledge/guide#details", ...args, "--format=json"]);
+      expect(ok.status, args.join(" ")).toBe(0);
+      expect(JSON.parse(ok.stdout).contextMode, args.join(" ")).toBe("lead");
+    }
+    const noFragment = await runEntrypoint(["show", "knowledge/guide", "--lead", "--format=json"]);
+    expect(noFragment.status).toBe(2);
+    expect(JSON.parse(noFragment.stderr).error).toContain("--lead requires a fragment-qualified ref");
+    const viaContext = await runEntrypoint(["show", "knowledge/guide", "--context=lead", "--format=json"]);
+    expect(JSON.parse(viaContext.stderr).error).toContain("--context lead requires");
   });
 
   test("direct .meta bodies are bounded without changing the old brief read", async () => {
@@ -400,8 +469,9 @@ describe("akm show additive body controls", () => {
     writeFixture(path.join(storage.stashDir, ".meta", "index.md"), GUIDE);
     expect((await json("meta", "--detail=brief")).content).toBe(GUIDE);
     const bounded = await json("meta", "--max-tokens=25");
-    expect(bounded.content).toBe(GUIDE.slice(0, 100));
-    expect(bounded.contentBudget).toEqual({ maxTokens: 25, estimatedTokens: 25, truncated: true });
+    expect(GUIDE.startsWith(String(bounded.content))).toBe(true);
+    expect(String(bounded.content).length).toBeLessThanOrEqual(100);
+    expect(bounded.contentBudget).toMatchObject({ maxTokens: 25, truncated: true });
     const outline = await runEntrypoint(["show", "meta", "--outline", "--format=json"]);
     expect(outline.status).toBe(2);
     expect(outline.stderr).toContain("--outline is unavailable for direct .meta reads");
@@ -412,8 +482,8 @@ describe("akm show additive body controls", () => {
     seed();
     const result = await runEntrypoint(["show", "knowledge/guide", "--max-tokens=25", "--format=text"]);
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain(
-      "body budget: ~25/25 tokens (4 characters/token; metadata excluded); truncated: true",
+    expect(result.stdout).toMatch(
+      /body budget: ~\d+\/25 tokens \(4 characters\/token; frontmatter excluded\); truncated: true/,
     );
   });
 

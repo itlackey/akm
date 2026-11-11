@@ -10,7 +10,7 @@ Ground rules for this unit:
 1. Pull knowledge on demand instead of guessing: `akm search '<query>'` to find
    relevant assets, `akm show <ref>` to read one, `akm curate '<query>'` to let
    akm select the best match. Only pull what this unit actually needs: for a
-   large document, `akm show <ref> --detail brief` returns its outline (`toc`,
+   large document, `akm show <ref> --outline` returns its outline (`toc`,
    no body), then `akm show <ref>#<slug>` reads one section.
 2. Environment values and secrets are provided through your process
    environment when the workflow declares them. Never print secret values to

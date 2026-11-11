@@ -26,7 +26,7 @@ These flags are accepted by all commands:
 
 Use `akm --config ./custom.json config path` to select a file for one invocation.
 The last explicit flag wins over `AKM_CONFIG_FILE`; relative paths resolve from
-the invoking directory. A missing or empty value fails. A file that does not yet
+the invoking directory. A missing or empty `--config` value fails; an empty `AKM_CONFIG_FILE` is warned about once and ignored. `credentials.json` and `models.json` stay in the default config directory (`AKM_CONFIG_DIR`, else the platform default), never beside the selected file. The retired `setup --config '{...}'` still exits 2 with a hint naming `--endpoint`. A file that does not yet
 exist can be created by setup or configuration writes. With neither selector,
 existing location variables and defaults keep their precedence.
 
@@ -42,6 +42,22 @@ selects the token-lean action view on `search`, `curate` and `show`; every other
 command ignores it. (`--shape`, which carried `agent` and `summary` before 0.10,
 is gone: it is an unknown flag, exit 2. `--shape summary` had a projection only
 on `show`; use `--detail brief` there.)
+
+### Deprecation notices
+
+When you use a command or flag that [STABILITY.md](../../STABILITY.md) marks
+Deprecated and its replacement exists in the same build, akm prints one line to
+stderr, once per process, naming the replacement:
+`[deprecated] akm health is deprecated and is removed in 0.11: use `akm doctor`.`
+Stdout, JSON and exit codes are unchanged, and `--quiet` silences the line. It
+is not printed for `--help`, for the scheduler's `task run --scheduled`, or for
+commands run by a task, `improve` or an audit (`AKM_EVENT_SOURCE` of `task`,
+`improve` or `audit`). The forms covered are `health`, `metrics`, `info`, `log`,
+`judge`, `improve judge`, `workflow run`, `agent <ref>`, `command`, `task run`,
+`task add`, `clone`, `improve --show-prompt`, `curate --pack`,
+`search --include-proposed` and `--include-sessions`, `show --detail brief` and
+`--context lead`, `upgrade --next` and `--timeout-ms`. A deprecated form whose
+replacement is not built yet prints nothing.
 
 ### `--format jsonl`
 
@@ -397,11 +413,13 @@ spinner with processed-versus-total source counts; structured output modes
 
 ### Timeout durations
 
-Where `--timeout-ms` is supported (`command run`, `agent`, `proposal new`,
-`proposal extract`, `improve`, and `task add`), `--timeout` accepts positive
-integer milliseconds or an elapsed duration: `250ms`, `30s`, `2m`, `1h`,
-`7d`, or `3M`. Units are case-sensitive: `3m` means three minutes; `3M`
-means 90 days (three 30-day months). Equal explicit `--timeout 30s
+Every `--timeout` flag takes one grammar: a bare positive integer is
+milliseconds, or a number with `ms`, `s`, `m`, `h` or `d` (`250ms`, `30s`,
+`2m`, `1h`, `7d`). Units are case-sensitive and there is no month unit. This
+covers `command run`, `agent`, `proposal new`, `proposal extract`, `improve`,
+`task add`, `workflow run` and `run`. `timeout:` fields in task, agent and
+workflow files and `--since`, `--expires` and `--window-compare` keep their own
+grammar. Where `--timeout-ms` also exists, equal explicit `--timeout 30s
 --timeout-ms 30000` values are accepted; conflicting budgets are rejected.
 The existing millisecond flag and each command's timeout scope and defaults
 remain unchanged: improve's budget bounds the whole run, extract's is per
@@ -434,8 +452,8 @@ akm doctor judge reflect.quality --schema
 
 Bare `doctor` keeps health's defaults: probes run and state may be initialized or
 migrated. Use `--read-only --no-probe` for an offline inspection without writes
-to the inspected state. The invocation still records diagnostic CLI usage in the
-separate `usage.sqlite` database. Health statuses retain exit codes 0 (pass),
+to the inspected state. With `--read-only` the invocation records no CLI usage either; otherwise it
+records diagnostic usage in the `cli_usage_*` tables of `metrics.db`. Health statuses retain exit codes 0 (pass),
 4 (warning) and 1 (failure).
 
 All existing top-level commands remain available in 0.10. Health's reporting flags
@@ -582,9 +600,8 @@ check instead of creating or migrating the database. The write/read round-trip
 is skipped and reported as `unknown`; the other checks and exit codes are unchanged.
 This also applies with `--report`: proposal data is read through a read-only
 connection. If state is unavailable, the native failing diagnostic is returned
-without attempting the report's additional queries. Diagnostic CLI usage is still
-recorded in the separate `usage.sqlite` database; `--read-only` protects the
-inspected state databases.
+without attempting the report's additional queries. `--read-only` writes nothing, so no CLI
+usage is recorded for it either.
 
 `connections-and-harnesses` is one table: a row for each configured connection (endpoint, whether
 its key is held, whether the endpoint answers) and harness (platform, whether
@@ -786,7 +803,7 @@ it.
 | `--filter` | `<key>=<value>` | _(none)_ | Frontmatter filter — repeatable; a repeated key matches any of its values, different keys must all match. A key is any frontmatter key (`team`, `project`, `category`, ...), `tag` (matched the way the index normalises tags), or a scope key (`user`, `agent`, `run`, `channel`). Example: `--filter team=platform --filter user=alice`. An empty value (`--filter channel=`) matches assets that do not carry the key (`tag` always carries path-derived tags, so `tag=` matches almost no assets), and combines with other values of the key by OR: `--filter channel=acme --filter channel=` keeps acme's assets plus every unscoped one. Narrows the candidates before ranking. |
 | `--prefer` | `<key>=<value>` | _(none)_ | Frontmatter preference — same keys, repetition and matching as `--filter`, but a boost, not a limit: a matching asset's score is multiplied by 1.02 (browse and ref-prefix listings put matches first). It never drops or admits an asset; `--from` and `--filter` still decide which are eligible. Example: `--prefer channel=ops`. |
 | `--project` | project name, `none` | _(by directory)_ | Use this [project](#projects)'s defaults instead of the one the working directory selects; `none` uses no project. An unknown name is a usage error. A flag you pass replaces the project's value of the same kind. When a project applies, the response carries `project` and text output opens with one line, e.g. `Project akm (~/code/akm): prefer project=akm`. |
-| `--include` | `quality=proposed`, `type=<asset-type>` | _(none, or project)_ | Repeatable: relax only the named default exclusions. Ordinary hits remain eligible; query matching, explicit type, source/project boundaries and filters still apply. Repeating `type` restores each named type in `search.defaultExcludeTypes`; other excluded types stay hidden. Explicit selectors replace the project's entire `include` value. |
+| `--include` | `quality=proposed`, `type=<asset-type>` | _(none, or project)_ | Repeatable: relax only the named default exclusions. Ordinary hits remain eligible; query matching, explicit type, source/project boundaries and filters still apply. Repeating `type` restores each named type in `search.defaultExcludeTypes`; other excluded types stay hidden. Explicit selectors replace the project's entire `include` value. An unsupported key, or a `type` that is not a known asset type, is a usage error (exit 2) whose hint lists the valid selectors. |
 | `--include-proposed` | flag | `false` | Include entries with `quality: "proposed"` in the result set. Default search excludes them; `generated` and `curated` quality entries are always included. Unknown quality values warn once and remain searchable. |
 | `--belief` | `all`, `current`, `historical` | `current` | Belief filter on any asset. `current` keeps unflagged/active/asserted assets; `historical` keeps deprecated/contradicted/superseded/archived assets. Labels do not establish truth. |
 | `--since` | `YYYY-MM-DD` | _(none)_ | Keep local assets dated on or after this day: the `observed` date, else `updated`. Assets with neither are dropped. Applies before the candidate budgets, like `--filter`. Search only; registry hits are unaffected. |
@@ -878,7 +895,7 @@ akm curate "deploy the service" --filter user=alice --pack 4000
 | `--filter` | `<key>=<value>` | _(none)_ | Repeatable exact frontmatter filter (any key, `tag`, or user, agent, run, channel); a repeated key matches any of its values, different keys are AND-joined; an empty value (`key=`) matches assets without the key |
 | `--prefer` | `<key>=<value>` | _(none)_ | Repeatable frontmatter preference with the keys and matching of `--filter`; matching hits rank slightly higher (×1.02 on the score). It never drops or admits a hit and does not change which evidence curate accepts |
 | `--project` | project name, `none` | _(by directory)_ | Use this [project](#projects)'s defaults instead of the one the working directory selects; `none` uses no project. An unknown name is a usage error. A flag you pass replaces the project's value of the same kind. When a project applies, the response carries `project` and text output opens with one line, e.g. `Project akm (~/code/akm): prefer project=akm`. |
-| `--include` | `quality=proposed`, `type=<asset-type>` | _(none, or project)_ | Repeatable: relax only the named default exclusions. Ordinary hits remain eligible; query matching, explicit type, source/project boundaries and filters still apply. Repeating `type` restores each named type in `search.defaultExcludeTypes`; other excluded types stay hidden. Explicit selectors replace the project's entire `include` value. |
+| `--include` | `quality=proposed`, `type=<asset-type>` | _(none, or project)_ | Repeatable: relax only the named default exclusions. Ordinary hits remain eligible; query matching, explicit type, source/project boundaries and filters still apply. Repeating `type` restores each named type in `search.defaultExcludeTypes`; other excluded types stay hidden. Explicit selectors replace the project's entire `include` value. An unsupported key, or a `type` that is not a known asset type, is a usage error (exit 2) whose hint lists the valid selectors. |
 | `--belief` | `all`, `current`, `historical` | `current` | Current keeps unflagged and active/asserted assets; historical keeps deprecated/contradicted/superseded/archived assets |
 | `--max-tokens` | positive token budget | _(none)_ | Alias for `--pack`, using the same shared packing budget and output. Conflicting explicit budgets are rejected; equal values are accepted. The unbudgeted default is unchanged. |
 | `--pack` | positive token budget | _(none)_ | Pack eligible local content in rank order; drop tail items before truncating the first oversized item. The budget is estimated at about 4 characters per token; a `ref#fragment` hit packs only that section; registry hits are never packed. It is a context-size target for this call, not a workflow asset's `budget` (a run-cost cap) |
@@ -963,7 +980,11 @@ akm show github:owner/repo//meta    # an installed bundle's .meta/index.md
 | `--project` | project name, `none` | _(by directory)_ | The [project](#projects) recorded on this read's usage event, for [`akm search --by-usage`](#usage-list-by-usage); changes nothing else. `none` records no project; an unknown name is a usage error. |
 
 `--max-tokens` bounds the returned `content`, `template` and `prompt` text,
-not metadata, outlines or structured fields such as workflow steps. The
+not metadata, outlines or structured fields such as workflow steps. A leading
+frontmatter block is metadata: it is kept whole and not counted, the budget
+applies to the body after it, the cut prefers a whitespace boundary within the
+last quarter (at most 32 characters) of the budget, and a UTF-16 surrogate pair
+is never split. The
 `contentBudget` object reports `maxTokens`, returned `estimatedTokens` and
 `truncated`; estimates use four characters per token, not a model tokenizer.
 Text output states the same limit and truncation. A read without a budget
@@ -971,9 +992,12 @@ still returns the complete body. Sensitive env and secret assets retain their
 metadata-only output; a budget never exposes their values.
 
 `--outline` cannot be combined with a content budget, lead context or an
-explicit `--detail` other than `brief`. `--lead` requires an indexed Markdown
-fragment and conflicts with `--context exact` and `--detail brief`. An exact
-read with `--max-tokens` also requires body output, so omit `--detail brief`.
+explicit `--detail` other than `brief`. `--detail brief` with `--lead`, or with `--max-tokens`
+without lead context, is a usage error (exit 2), as it asks for a body it does
+not show. `--detail brief --context lead [--max-chars N | --max-tokens N]`
+keeps working exactly as in 0.10.261118. `--lead` requires an indexed Markdown
+fragment and conflicts with `--context exact`; its errors name `--lead` when you
+typed `--lead`.
 Direct `.meta` reads support `--max-tokens` but not `--outline`.
 The older `--detail brief`, `--context lead` and `--max-chars` forms remain
 available with their existing behavior.
@@ -1173,7 +1197,7 @@ The old `--params <json>` bag is removed.
 | --- | --- |
 | `--max-steps <n>` | Stop once this many steps have finished, leaving a partial run active. Must be at least 1. |
 | `--max-retries <n>` | When a step fails, reopen the same run and retry the failed step up to this many additional times. Range: 0 through 100; default 0. Gate rejection and interruption are not retried. |
-| `--timeout <duration>` | Abort the whole invocation after `N`, `Nms`, `Ns`, or `Nm`; bare `N` is milliseconds. The active step remains resumable. |
+| `--timeout <duration>` | Abort the whole invocation after `N`, `Nms`, `Ns`, `Nm`, `Nh` or `Nd`; bare `N` is milliseconds. The active step remains resumable. |
 | `--new` | Deprecated, no effect (accepted through 0.10): a workflow ref always starts a new run. |
 | `--skip-if-locked` | If another akm process is already driving this run (it holds the run's lock file: `RUN_LEASE_HELD`), when starting a ref an active run of that ref is held by a live process, or `state.db` is busy with another writer (`STATE_DB_CONTENDED`), skip gracefully (exit 0) instead of failing (exit 75, `TransientError`). The envelope reports `{ skipped: { reason: "lock-held" \| "state-db-contended", message } }`. Every other failure (a bad flag, an unresolvable target) still fails loudly regardless of this flag. Use for high-frequency scheduled runs so they don't pile up failures while a longer-running invocation is in progress — same family as `improve --skip-if-locked`. |
 
@@ -1639,6 +1663,7 @@ akm upgrade              # Install a newer release if there is one, run every pe
 akm upgrade --check      # Report pending updates, CLI and plugins, without changing anything (no migration step)
 akm upgrade --force      # Force the install even if already on latest
 akm upgrade --next       # Include prereleases when selecting the newest CLI release
+akm upgrade --skip-checksum # Recovery only: install although the release checksum cannot be verified
 akm upgrade --channel next   # Switch CLI and installed harness plugins to next
 akm upgrade --channel latest # Return CLI and installed harness plugins to stable
 ```
@@ -1648,6 +1673,7 @@ akm upgrade --channel latest # Return CLI and installed harness plugins to stabl
 | `--check` | Report pending updates (CLI and per-harness plugins) without changing anything |
 | `--force` | Force upgrade even if on latest version |
 | `--skip-post-upgrade` | Skip the post-upgrade index rebuild |
+| `--skip-checksum` | Recovery only: install even when the release checksum cannot be fetched or its file is not listed. A checksum that does not match always fails. Replaces `AKM_UPGRADE_SKIP_CHECKSUM=1`, which keeps working through 0.10 |
 | `--channel latest\|next` | Switch the CLI and installed Claude, Codex and OpenCode plugins together; works with `--check` |
 | `--allow-downgrade` | Permit an older target version during an explicit `--channel` switch |
 | `--next` | Include prereleases when selecting the newest CLI release; retain configured harness channels (see below). Works with `--check`, `--force` and `-q` |
@@ -1820,10 +1846,10 @@ hooks in `/hooks` (they are in that machine's `~/.codex/config.toml`). The
 hashes stay the same across plugin version bumps and change only when a hook's
 command changes, so an upgraded plugin keeps running without a prompt.
 
-Checksum verification is not optional and has no flag. If a release's
-`checksums.txt` is genuinely unreachable, the recovery hatch is the
-`AKM_UPGRADE_SKIP_CHECKSUM=1` environment variable (Internal — deliberately
-not a discoverable, tab-completable flag). See STABILITY.md.
+Checksum verification is the default. If a release's `checksums.txt` is
+genuinely unreachable, the recovery hatch is `akm upgrade --skip-checksum`
+(the `AKM_UPGRADE_SKIP_CHECKSUM=1` environment variable it replaces keeps
+working through 0.10). See STABILITY.md.
 
 Shipping akm inside your own product (a Docker image, a plugin's own
 `node_modules`)? See [Bundling akm](../integration/bundling-akm.md) for the
@@ -3030,7 +3056,7 @@ lowering notice contains `code`, `severity`, `adapter`, optional `field`, and
 fixed `message`. Dry-run does not dispatch and does not materialize
 credentials. It uses a read-only source lookup and records no asset usage,
 execution events, or model accounting. The CLI invocation still records
-diagnostic usage in the separate `usage.sqlite` database.
+diagnostic usage in the `cli_usage_*` tables of `metrics.db`.
 
 Diagnostics exclude resolved values. They never include prompt content.
 They never include command content. They never include environment values.
@@ -4205,7 +4231,7 @@ IDs. For overlapping exports, keep the newest `generatedAt` snapshot per aggrega
 key; never sum snapshots or add detail counts to aggregate counts. Detailed rows
 are a subset of the aggregates. A report includes its own unfinished attempt.
 
-Collection is enabled at CLI entry, before configuration is read, with no network
+Collection is enabled at CLI entry, before the full configuration is read (only `usage.capture` is read, from the selected config file, and a missing or broken file leaves capture on), with no network
 transmission and no sampling. `AKM_EVENT_SOURCE=user|agent|task|improve|audit` supplies
 known provenance; absent/invalid values become `unknown`. No identity is inferred
 from a terminal. This store never feeds learning or ranking.
@@ -4218,14 +4244,18 @@ marked separately from explicit input. Arguments after `--` retain only their co
 No raw argv is stored. The resolved `run` asset type is recorded through a narrow
 hook when resolution reaches dispatch.
 
-`usage.sqlite` lives in the existing AKM data directory and is independent of
-`state.db`, `index.db` and learning events. Detailed records expire after 30 days
+The usage tables (`cli_usage_meta`, `cli_usage_invocations`,
+`cli_usage_aggregates`) live in `metrics.db` in the existing AKM data directory,
+independent of `state.db`, `index.db` and learning events; they share no table,
+`PRAGMA user_version` or migration ledger with other `metrics.db` content. Detailed records expire after 30 days
 on the next invocation. UTC daily aggregates survive detail expiry and must be
 preserved during upgrades. Collection errors preserve command output and exits;
 a failed final write leaves an unfinished attempt. Missing/unavailable storage,
 unrecorded attempts, periods before collection began, direct SDK calls, failures
 before the CLI module loads, and hard termination remain explicit coverage gaps.
-SIGKILL cannot run a completion handler. Capture has no new config settings or
-disable switch. Read-only workspace SDK operations never start CLI collection.
+SIGKILL cannot run a completion handler. `--read-only` records nothing; `help`,
+`version` and `info` are still counted. `usage.capture: false` in the config file
+turns capture off (see [Configuration](configuration.md#usage)). Read-only
+workspace SDK operations never start CLI collection.
 
 First released version: pending.

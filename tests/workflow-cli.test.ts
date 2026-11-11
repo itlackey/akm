@@ -217,6 +217,12 @@ describe("workflow CLI", () => {
     expect(rendered.run.status).toBe("completed");
     expect(rendered.done).toBe(true);
     expect(rendered.timedOut).toBeUndefined();
+
+    // One --timeout grammar: hours and days work for workflows too.
+    const hours = await runCliCapture(["workflow", "run", "workflows/quick", "--timeout", "1h"]);
+    expect(hours.code).toBe(0);
+    const bad = await runCliCapture(["workflow", "run", "workflows/quick", "--timeout", "3M"]);
+    expect(bad.code).toBe(2);
   });
 
   test("run rejects aliases and retired JSON params, and accepts params on every ref start", async () => {

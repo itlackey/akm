@@ -22,10 +22,9 @@ const MONTH_MS = 30 * DAY_MS;
 
 /**
  * Canonical duration-shorthand unit map shared by every `--since` / `--expires`
- * / `--window-compare` / `--timeout` consumer.
+ * / `--window-compare` consumer.
  *
  * The grammar is intentionally uniform across the whole CLI:
- *   - `ms` = milliseconds, `s` = seconds
  *   - `m` = MINUTES, `M` = MONTHS (30-day approximation)
  *   - `h` = hours, `d` = days
  *
@@ -37,8 +36,6 @@ const MONTH_MS = 30 * DAY_MS;
  * months.
  */
 export const DURATION_UNITS: Readonly<Record<string, number>> = {
-  ms: 1,
-  s: 1000,
   m: MINUTE_MS,
   M: MONTH_MS,
   h: HOUR_MS,
@@ -49,7 +46,7 @@ export const DURATION_UNITS: Readonly<Record<string, number>> = {
  * Parse a compact duration shorthand (e.g. `"30d"`, `"12h"`, `"5m"`, `"3M"`)
  * into a number of milliseconds using an explicit `units` map (default
  * {@link DURATION_UNITS}), or return `null` when the input does not match
- * `<digits><unit>` or the unit is not in the map.
+ * `<digits><letter>` or the unit is not in the map.
  *
  * Matching is CASE-SENSITIVE against the map keys, so `m` (minutes) and `M`
  * (months) are distinct — do NOT lower-case the spec before calling, or the
@@ -57,7 +54,7 @@ export const DURATION_UNITS: Readonly<Record<string, number>> = {
  * rather than throwing so each caller keeps its own error/fallback policy.
  */
 export function parseDuration(spec: string, units: Readonly<Record<string, number>> = DURATION_UNITS): number | null {
-  const match = spec.trim().match(/^(\d+)(ms|[a-zA-Z])$/);
+  const match = spec.trim().match(/^(\d+)([a-zA-Z])$/);
   if (!match) return null;
   const amount = Number.parseInt(match[1] ?? "", 10);
   if (!Number.isFinite(amount)) return null;

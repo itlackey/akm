@@ -139,6 +139,42 @@ describe("visualization reads", () => {
     await expectUsage(() => activity.events({ since: "1h", until: "2000-01-01T00:00:00Z" }));
   });
 
+  test("events and taskRuns keep the newest rows past the 20,000 cap and say they were cut", async () => {
+    await seed();
+    const db = openStateDatabase();
+    const total = 20_005;
+    try {
+      const insert = db.prepare(
+        "INSERT INTO usage_events (event_type, query, entry_ref, signal, metadata, source, created_at) VALUES ('search', ?, NULL, NULL, '{}', 'user', ?)",
+      );
+      const task = db.prepare(
+        "INSERT INTO task_history (task_id, status, started_at, completed_at, target_kind, target_ref, metadata_json) VALUES ('tasks/x', 'completed', ?, ?, NULL, NULL, '{}')",
+      );
+      db.transaction(() => {
+        for (let i = 0; i < total; i++) {
+          // Second-resolution, one row per second ending a minute ago; query numbers them oldest = 0.
+          const at = new Date(Date.now() - 60_000 - (total - i) * 1000).toISOString();
+          insert.run(`q${i}`, at.slice(0, 19).replace("T", " "));
+          task.run(at, at);
+        }
+      })();
+    } finally {
+      db.close();
+    }
+    const events = await out(activity.events({ since: "30d" }));
+    expect(events.truncated).toBe(true);
+    expect(events.events).toHaveLength(20_000);
+    const queries = events.events
+      .map((e: { query?: string }) => e.query)
+      .filter((q: string | undefined) => q?.startsWith("q"));
+    expect(queries).toContain(`q${total - 1}`);
+    expect(queries).not.toContain("q0");
+    const runs = await out(activity.taskRuns({ since: "30d" }));
+    expect(runs.truncated).toBe(true);
+    expect(runs.runs).toHaveLength(20_000);
+    expect(runs.runs[0].startedAt > runs.runs[19_999].startedAt).toBe(true);
+  }, 60_000);
+
   test("workflowRuns and workflowRun: the run list, and one run's steps, units and attempts", async () => {
     await seed();
     const runId = "55555555-5555-4555-8555-555555555555";

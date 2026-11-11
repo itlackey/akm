@@ -97,11 +97,12 @@ describe("real CLI config file bootstrap", () => {
     expect(result.stderr).toContain("--config requires a non-empty file path");
   });
 
-  test("empty environment path and directory instead of file fail clearly", () => {
+  test("an empty environment path is warned about once and ignored; a directory instead of a file fails clearly", () => {
     const { dir, env, selected } = fixture();
     const empty = cli(["config", "path"], { ...env, AKM_CONFIG_FILE: " " }, dir);
-    expect(empty.status).toBe(78);
-    expect(empty.stderr).toContain("AKM_CONFIG_FILE requires a non-empty file path");
+    expect(empty.status).toBe(0);
+    expect(empty.stdout.trim()).toBe(path.join(env.AKM_CONFIG_DIR, "config.json"));
+    expect(empty.stderr.match(/AKM_CONFIG_FILE is empty/g)?.length).toBe(1);
     const directory = cli(["--config", path.dirname(selected), "config", "get", "output.detail"], env, dir);
     expect(directory.status).toBe(78);
     expect(directory.stderr).toContain(path.dirname(selected));
