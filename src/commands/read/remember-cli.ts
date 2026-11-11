@@ -6,7 +6,6 @@ import { getStringArg, PROJECT_ARG } from "../../cli/parse-args";
 import { defineJsonCommand, output, parseAllFlagValues } from "../../cli/shared";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { loadConfig } from "../../core/config/config";
-import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { resolveProject } from "../../core/projects";
 import { resolveUsageEventSource, type UsageEventSource } from "../../indexer/usage/usage-events";
@@ -171,7 +170,6 @@ export const rememberCommand = defineJsonCommand({
     // `--name` is a flat name; subdirectory placement is `--path`'s job.
     assertFlatAssetName(args.name);
 
-    // Determine if the user has requested any structured metadata mode.
     // Collect all --tag occurrences directly from process.argv because citty
     // only exposes the last value for repeated string flags.
     const rawTags = parseAllFlagValues("--tag");
@@ -198,9 +196,7 @@ export const rememberCommand = defineJsonCommand({
       if (!xrefs.includes(s.ref)) xrefs.push(s.ref);
     }
 
-    // Collect scope flags. Scope alone counts as structured metadata so we
-    // emit frontmatter, but it does NOT trigger the "tags required" check —
-    // memory + scope (no tags) is a valid combination for multi-tenant use.
+    // Collect scope flags, with the project's defaults beneath explicit values.
     const scopeFields: { user?: string; agent?: string; run?: string; channel?: string } = {};
     for (const k of ["user", "agent", "run", "channel"] as const) {
       const v = getStringArg(args, k) ?? (k === "run" ? undefined : project?.write[k]);
@@ -208,14 +204,15 @@ export const rememberCommand = defineJsonCommand({
     }
     const hasScope = Object.keys(scopeFields).length > 0;
 
-    const hasTagRequiringArgs = rawTags.length > 0 || !!args.expires || !!args.source || !!args.description;
-    // --xref counts as structured metadata (it must land in frontmatter) but,
-    // like scope, does NOT trigger the tags-required check — provenance
-    // without tags is a valid write.
-    // --enrich is structured (it must reach the Mode-3 dispatch below, not the
-    // zero-flag hot path) but, like --auto, never tag-requiring: enrichment is
-    // fail-soft and a zero-tag outcome still writes.
-    const hasStructuredArgs = hasTagRequiringArgs || hasScope || args.auto || args.enrich || xrefs.length > 0;
+    const hasStructuredArgs =
+      rawTags.length > 0 ||
+      !!args.expires ||
+      !!args.source ||
+      !!args.description ||
+      hasScope ||
+      args.auto ||
+      args.enrich ||
+      xrefs.length > 0;
 
     if (!hasStructuredArgs) {
       // Phase 1B / Rec 7: even the zero-flag hot-path emits
@@ -300,23 +297,6 @@ export const rememberCommand = defineJsonCommand({
 
     // #834: no --description and no --enrich-derived one — synthesize deterministically (see zero-flag path above).
     if (!description) description = synthesizeMemoryDescription(body);
-
-    // ── Required-field check (before any write) ───────────────────────────
-    // Tags remain required when the user explicitly asked for tag-bearing
-    // metadata (--tag / --enrich / --description / --source / --expires).
-    // `--auto` alone is allowed even when its heuristics derive zero tags.
-    // Scope-only writes (`akm remember "..." --user u1`) also skip this
-    // check — scope is independent metadata and a memory with only scope is
-    // valid.
-    const missing: string[] = [];
-    if (hasTagRequiringArgs && tags.length === 0) missing.push("tags");
-
-    if (missing.length > 0) {
-      throw new UsageError(
-        `Memory is missing required frontmatter field(s): ${missing.join(", ")}. ` +
-          "Provide them via --tag <value>, --auto (heuristics), or --enrich (LLM).",
-      );
-    }
 
     // ── Build frontmatter and write ───────────────────────────────────────
     // Phase 1B / Rec 7: the hot-path CLI write always marks the memory as

@@ -2011,11 +2011,11 @@ akm remember "Deployment needs VPN access" --bundle team-bundle
 | `--name` | Optional memory name. Defaults to a slug derived from the content |
 | `--path <dir>` | Subdirectory under `memories/` to place the memory in (for example `personal/projects`). The filename still comes from `--name` or the content slug |
 | `--force` | Overwrite an existing memory with the same name |
-| `--description <text>` | Short description written to frontmatter (persisted as the memory's `description` field). Honoured by both the zero-flag form and the tagged form. |
+| `--description <text>` | Short description written to frontmatter (persisted as the memory's `description` field). No tags required. |
 | `--tag <v>` | Tag to attach to the memory. Repeatable: `--tag foo --tag bar` |
-| `--expires <dur>` | Expiry shorthand (`30d`, `12h`, `6m`). Resolved to an ISO date |
-| `--source <s>` | Free-form source reference — URL, asset ref, file path, or any string |
-| `--xref <ref>` | Cross-reference ref recorded in the memory's `xrefs:` frontmatter list. Repeatable: `--xref knowledge/auth-flow --xref memories/vpn-note`. Each ref must resolve in the write target or a configured source (read-only sources count); an unresolvable ref fails with exit 2 before anything is written. More than 5 refs warns (soft cap) but still writes. Does not trigger the tags-required check. |
+| `--expires <dur>` | Expiry shorthand (`30d`, `12h`, `6m` for minutes, `3M` for 90 days). Resolved to an ISO date. No tags required. |
+| `--source <s>` | Free-form source reference — URL, asset ref, file path, or any string. No tags required. |
+| `--xref <ref>` | Cross-reference ref recorded in the memory's `xrefs:` frontmatter list. Repeatable: `--xref knowledge/auth-flow --xref memories/vpn-note`. Each ref must resolve in the write target or a configured source (read-only sources count); an unresolvable ref fails with exit 2 before anything is written. More than 5 refs warns (soft cap) but still writes. |
 | `--supersedes <ref>` | Ref of an existing asset this memory corrects. Repeatable. Writes the correction with the old ref folded into its `xrefs:` (correction provenance) AND demotes the old asset — `beliefState: superseded` + `supersededBy: [<new ref>]`, a metadata-only frontmatter edit that preserves every other key and the body — then reindexes it so `--belief current` hides the stale version immediately. An unresolvable ref fails with exit 2 before anything is written or demoted; so does a ref naming the asset being written itself (a correction cannot supersede itself, e.g. `--force` overwriting the same name). A ref that resolves only outside the write target and the working bundle still writes the correction but skips the demotion: stderr warns and the JSON output reports `superseded: [{ref, applied: false, reason}]` — the reason names the `--bundle` remedy when the old asset lives in a configured writable source. An old asset whose existing frontmatter is not parseable YAML is skipped the same way (`applied: false`) instead of being rewritten lossily. Re-running the same correction is idempotent. On a git write target the correction and the demoted old asset land in the same single boundary commit. |
 | `--auto` | Apply heuristic tagging from the body (opt-in, zero-latency, pure TS) |
 | `--enrich` | Call the configured LLM for tag/description proposals (opt-in, 10s timeout, fails soft) |
@@ -2029,15 +2029,14 @@ akm remember "Deployment needs VPN access" --bundle team-bundle
 Pass the content as a quoted positional argument for short notes, or pipe
 markdown into stdin for longer memories.
 
-**Zero-flag form** (`akm remember "body"`) writes a bare memory with no
-frontmatter — existing agent scripts keep working unchanged. `--tag` /
-`--expires` / `--source` still trigger the required-field check: if `tags`
-cannot be derived, the command rejects *before* writing the file, so you
-never end up with an orphan. `--auto` and `--enrich` are fail-soft metadata
-helpers: if they derive nothing, the memory still writes successfully.
+**Metadata is optional and independent.** `--description`, `--expires`,
+`--source`, and scope or cross-reference flags work without `--tag`.
+The zero-flag form (`akm remember "body"`) writes capture metadata and a
+description derived from the body. Invalid expiry durations and unresolved
+cross-references fail before writing. `--auto` and `--enrich` remain opt-in,
+fail-soft metadata helpers: if they derive nothing, the memory still writes.
 
-**Scope flags** (`--user`, `--agent`, `--run`, `--channel`) are independent
-of the tag-required check. They write the four canonical top-level
+**Scope flags** (`--user`, `--agent`, `--run`, `--channel`) write the four canonical top-level
 frontmatter keys (`scope_user`, `scope_agent`, `scope_run`, `scope_channel`)
 and a memory with only scope flags is valid (no tags required). Scope is
 selection inside a set the caller is already authorised to read; the same shape

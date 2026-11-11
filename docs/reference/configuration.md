@@ -931,8 +931,8 @@ that `akm search --filter` and `akm curate --filter` read back, to select inside
 `--filter user=<id>` / `--filter agent=<id>` / `--filter run=<id>` /
 `--filter channel=<name>` (repeatable; a repeated key matches any of its values, different keys must all match) narrow results to assets
 whose frontmatter scope matches; search applies them before ranking. A memory
-with only scope flags and no tags is valid — the tag-required check is
-independent of scope. `--scope` was removed in 0.9.0 with no alias; use
+with only scope flags and no tags is valid; all memory metadata flags are
+independent of tags. `--scope` was removed in 0.9.0 with no alias; use
 `--filter`.
 
 `archiveRetentionDays` (default `90` when unset) controls how long a pending
