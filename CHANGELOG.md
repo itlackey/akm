@@ -6,12 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- `akm bundle update` on a registry-installed writable Git bundle (#1606):
+  - With local uncommitted changes, it now fast-forwards when git can do so without overwriting them.
+  - An update that would overwrite local work, or a diverged history, is refused with nothing changed.
+  - The refusal names the real bundle path and the blocking files, with a hint to commit, move or discard them, instead of a command-syntax hint.
+  - Plain git sources and a re-run of `akm bundle add` on a writable checkout still refuse any dirty worktree.
+
 ### Fixed
 
 - `akm health` fails for an unreadable search index even when semantic search is off, reports still-active tasks independently of the history window, and warns when a harness probe cannot launch or is interrupted (an unsupported `--version` alone is not a warning).
 - Health's OpenCode plugin checks ignore abandoned cache folders when the plugin is not configured and no longer substitute a different cached spec for a missing configured spec. A configured bare OpenCode 1 plugin still reads its legacy bare cache.
 - Health attributes the shipped `improve` scheduled task correctly, surfaces recorded processing failures (including exceptions, exhausted budgets and failures inside `ok: true` results) independently of scheduled-task failures, reports signal-only interruptions as unknown, and recommends `akm upgrade --next` when the available update is on the prerelease channel.
 - Health's process/connection/model token totals use the same prompt-plus-completion fallback as its aggregate, preserving explicit totals including zero; p95 uses the documented nearest-rank calculation without changing the existing upper-median convention.
+- The `assetContentRefs` migration rewrites legacy refs only in asset files, a wiki's `index.md` and `schema.md`, and an `index.md` beside assets (#1605):
+  - Frozen eval corpora, captured prompts and results, `raw/` sources, `log.md` and the root `README.md` are left byte-for-byte.
+  - When it leaves uncommitted edits in a git checkout, its report names the checkout and the next steps.
+- AKM Desktop, Settings → Software (#1609):
+  - **CLI install and repair:**
+    - Installing the CLI passes Desktop's release tag to the installer and verifies the installed version.
+    - A CLI counts as Desktop's own only when it is a regular file where Desktop installs it and akm reports it as a standalone binary. A link, a package-manager copy or an unreported file is never replaced.
+    - Repairing a CLI Desktop installed needs explicit consent.
+  - **Channels:**
+    - Update and Check follow the CLI's current channel and never change it.
+    - Switching the CLI and installed plugins between stable and prerelease is a separate, explicit action. It is not offered when stable is older than the installed CLI, and is hidden with an explanation when that cannot be told.
+    - Installing a plugin on the prerelease channel into an existing `akm-plugins` marketplace stops and asks first, because that marketplace keeps its own channel.
+  - **Upgrades:**
+    - The CLI upgrade checks its target right before it runs and refuses one Desktop cannot read.
+    - Choosing Stable stops an already queued prerelease from installing.
+    - Partial and failed upgrades keep a redacted result and show fresh versions. Deferred plugins and compatibility holds show their reasons.
+  - **Settings, status and recovery:**
+    - Preference saves no longer overwrite each other, and the screen reports whether a setting was saved or also applied.
+    - Polling no longer leaves stale errors or waits forever.
+    - A timed-out or output-flooding command has its installer's child processes ended (on Windows through `taskkill`, best effort), and retries wait until a check confirms the result.
+    - Desktop updates gain Check/Retry and download progress.
 
 ## [0.10.261117] - 2026-11-10
 

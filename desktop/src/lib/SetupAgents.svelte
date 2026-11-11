@@ -308,6 +308,10 @@
         {#if outcome.error}
           <div class="notice notice-warn" role="alert">
             <p><strong>{outcome.label}.</strong> {outcome.error}</p>
+            {#if software.data?.host.consent}<p>
+                <a href="/settings/software">Continue in Settings → Software</a>, where you can choose to install from
+                the existing marketplace or replace the CLI.
+              </p>{/if}
             {#if outcome.errorDetail}<details>
                 <summary>Details</summary>
                 <pre class="mono">{outcome.errorDetail}</pre>

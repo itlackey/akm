@@ -223,3 +223,69 @@ test("stable releases are GitHub's latest release, whatever the feed lists first
     ["/itlackey/akm/releases/latest", "/itlackey/akm/releases/download/v0.10.261203/latest-linux.yml"],
   );
 });
+
+test("choosing stable stops a queued or incoming prerelease from installing (#1609-2)", async () => {
+  for (const stage of ["downloading", "downloaded"]) {
+    const { autoUpdater, updater } = make({ version: "0.11.261201-beta.1" });
+    updater.start();
+    autoUpdater.emit("update-available", { version: "0.11.261201-beta.2" });
+    if (stage === "downloaded") autoUpdater.emit("update-downloaded", { version: "0.11.261201-beta.2" });
+    assert.equal(autoUpdater.autoInstallOnAppQuit, true);
+    updater.follow("stable");
+    assert.equal(autoUpdater.autoInstallOnAppQuit, false, stage);
+    assert.deepEqual(updater.status(), { state: "checking", channel: "stable" });
+    assert.equal(autoUpdater.checks, 2, "the new line is checked at once");
+    // A stable release found afterwards is installed on quit again.
+    autoUpdater.emit("update-downloaded", { version: "0.11.261202" });
+    assert.equal(autoUpdater.autoInstallOnAppQuit, true);
+    assert.equal(updater.status().version, "0.11.261202");
+  }
+  // A stable release already queued is not touched when the choice widens to prereleases.
+  const widen = make();
+  widen.autoUpdater.emit("update-downloaded", { version: "0.10.261106" });
+  widen.updater.follow("prerelease");
+  assert.deepEqual(widen.updater.status(), { state: "downloaded", version: "0.10.261106", channel: "prerelease" });
+  assert.equal(widen.autoUpdater.autoInstallOnAppQuit, true);
+});
+
+test("a check that was running when stable was chosen cannot deliver its prerelease (#1609-2)", async () => {
+  const { autoUpdater, updater } = make({ version: "0.11.261201-beta.1" });
+  updater.start();
+  updater.follow("stable");
+  autoUpdater.emit("update-available", { version: "0.11.261201-beta.2" });
+  autoUpdater.emit("update-downloaded", { version: "0.11.261201-beta.2" });
+  assert.equal(updater.status().state, "checking");
+  assert.equal(autoUpdater.autoInstallOnAppQuit, false);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.ok(autoUpdater.checks >= 2, "the stable line is asked again");
+});
+
+test("Check now runs without a restart, a channel change or six hours, and shows checking and progress (#1609-10)", () => {
+  const { autoUpdater, updater } = make();
+  updater.start();
+  autoUpdater.emit("error", new Error("offline"));
+  assert.equal(updater.status().state, "error");
+  updater.checkNow();
+  assert.equal(updater.status().state, "checking");
+  assert.equal(autoUpdater.checks, 2, "an error is retried on request");
+  autoUpdater.emit("update-not-available", { version: "0.10.261105" });
+  // The native event that starts a check moves a displayed "current" back to checking.
+  autoUpdater.emit("checking-for-update");
+  assert.equal(updater.status().state, "checking");
+  // A download in progress reports its percentage and is not interrupted by a check request.
+  autoUpdater.emit("update-available", { version: "0.10.261106" });
+  autoUpdater.emit("download-progress", { percent: 41.6 });
+  assert.deepEqual(updater.status(), { state: "downloading", version: "0.10.261106", percent: 42, channel: "stable" });
+  autoUpdater.emit("checking-for-update");
+  updater.checkNow();
+  assert.equal(updater.status().state, "downloading");
+  assert.equal(autoUpdater.checks, 2);
+  // A failed download is retried on request and keeps the version it was fetching until the check answers.
+  autoUpdater.emit("error", new Error("disk full"));
+  assert.equal(updater.status().during, "download");
+  updater.checkNow();
+  assert.equal(autoUpdater.checks, 3);
+  const off = make({ unsupportedReason: "off" });
+  off.updater.checkNow();
+  assert.equal(off.autoUpdater.checks, 0);
+});
