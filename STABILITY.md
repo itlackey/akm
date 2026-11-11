@@ -67,6 +67,7 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 
 | Command | Status | Contract or migration action |
 | --- | --- | --- |
+| `akm run` | Evolving | Available on this branch; first released version pending. Dispatches agent, command, task and workflow refs through their existing executors; workflow run ids continue frozen runs. |
 | `akm workflow status` | Experimental | `--all-scopes` added in 0.9.15 (#942); a deprecated no-op since 0.10 (#1239), accepted through 0.10. |
 | `akm workflow plan` | Deprecated | Removed in 0.11: use `akm doctor explain <ref>`. Preserve secret-free provenance output and no execution. |
 | `akm workflow list` | Experimental | `--all-scopes` and a top-level `scopeKey` envelope field added in 0.9.15 (#942); since 0.10 (#1239) `--all-scopes` is a deprecated no-op, accepted through 0.10, and the `scopeKey` field is removed from the list result. |

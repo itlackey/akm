@@ -209,6 +209,7 @@ export function assertKnownFlags(root: FlagScanCommand, rawArgs: readonly string
   const ownArgs = passthroughAt === -1 ? rawArgs : rawArgs.slice(0, passthroughAt);
   const known = collectKnownArgs(root, rawArgs);
   if (!known.resolved) return;
+  // `run` delegates flag validation to its selected executor.
   // `workflow run`, `task run`, and `task explain` each own one deliberately
   // dynamic namespace: long options become exact-name parameter/input flags
   // and are checked against the frozen plan / task source's own contract
@@ -217,7 +218,7 @@ export function assertKnownFlags(root: FlagScanCommand, rawArgs: readonly string
   // body, where runWithJsonErrors renders the JSON envelope, not from this
   // generic pre-dispatch gate; `task explain` reuses the identical
   // `parseTaskInputFlags` scanner, so it needs the identical exemption).
-  const dynamicNamedFlagCommands = new Set(["workflow run", "task run", "task explain"]);
+  const dynamicNamedFlagCommands = new Set(["workflow run", "task run", "task explain", "run"]);
   const dynamicWorkflowParams = dynamicNamedFlagCommands.has(known.path.join(" "));
   const tolerant = UNKNOWN_FLAG_TOLERANT_COMMANDS.has(known.path.join(" "));
 

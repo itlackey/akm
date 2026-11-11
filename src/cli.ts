@@ -114,6 +114,7 @@ import { proposalCommand } from "./commands/proposal/proposal-cli";
 import { rememberCommand } from "./commands/read/remember-cli";
 import { curateCommand, searchCommand, showCommand } from "./commands/read/search-cli";
 import { registryCommand } from "./commands/registry-cli";
+import { runAssetCommand } from "./commands/run-cli";
 import { bundleCommand } from "./commands/sources/bundle-cli";
 import { renderMigrationHelp } from "./commands/sources/migration-help";
 import { cloneCommand, syncCommand, upgradeCommand } from "./commands/sources/sources-cli";
@@ -638,6 +639,7 @@ const commands = {
   search: searchCommand,
   curate: curateCommand,
   show: showCommand,
+  run: runAssetCommand,
   workflow: workflowCommand,
   remember: rememberCommand,
   import: importKnowledgeCommand,

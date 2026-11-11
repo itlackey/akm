@@ -257,7 +257,7 @@ const tasksAddCommand = defineJsonCommand({
   },
 });
 
-const tasksRunCommand = defineCommand({
+export const tasksRunCommand = defineCommand({
   meta: {
     name: "run",
     description: "Execute a task now (this is what cron / launchd / schtasks invoke at the scheduled time)",

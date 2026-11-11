@@ -2901,6 +2901,44 @@ source <(akm completions)
 
 These commands define the self-improvement and agent-dispatch surface.
 
+### run
+
+`akm run <ref>` selects the existing executor from the resolved asset's type.
+It is additive in 0.10.x: the original execution commands retain their inputs,
+defaults, result shapes, exit codes, and side effects.
+
+```sh
+akm run agents/reviewer --prompt "Review the patch" --harness reviewer
+printf '%s' 'Review the patch' | akm run agents/reviewer --prompt-stdin
+akm run commands/review --arguments "src/cli.ts" --dry-run
+akm run team//tasks/nightly --region=us-east-1
+akm run workflows/release --version=1.2.3 --max-steps 1
+akm run <workflow-run-id>                 # Continue the frozen run
+```
+
+| Resolved type | Inputs and controls | Result |
+| --- | --- | --- |
+| Agent | `--prompt` or `--prompt-stdin`, execution selection, `--timeout-ms`, `--cwd`; a persona requires a prompt | Existing `agent-result` and exit status |
+| Command | Exact `--arguments` substitution, `--agent`, execution selection, `--timeout-ms`, `--cwd`, `--dry-run` | Existing `agent-result` or `command-dry-run` |
+| Task | Exact-name declared input flags, including repeated array values; `--bundle` and `--scheduled` | Existing `task-run`, history/log writes, and task exit status |
+| Workflow | Exact-name declared parameter flags, `--max-steps`, `--max-retries`, `--timeout`, `--skip-if-locked` | Existing `workflow-run`, journal, gates and exit status |
+
+Execution selection uses the same `--connection`, `--harness`, and `--model`
+settings as the original agent/command entry points. Global output controls work
+unchanged. Refs resolve through the existing source-order and adapter ownership
+policy; task dispatch retains the resolved bundle identity. Tasks and workflows
+can resolve from authored sources without an index, as their original commands do.
+
+A workflow ref starts a fresh run. A run id (or its accepted unique prefix)
+continues that run's frozen plan; new parameters cannot be supplied to an existing
+run. `workflow resume`, `status`, `list`, and `abandon` retain their lifecycle
+roles. The deprecated no-op `--new` is not accepted by the new entry point.
+
+Flags must apply to the selected executor or its declared inputs. Unsupported
+asset types (including scripts), fragments, extra positional values and `--`
+tails fail before execution. Supply command text through `--arguments` and agent
+text through `--prompt` or `--prompt-stdin`.
+
 ### command run
 
 Resolve a stored command through its owning bundle adapter and execute one
