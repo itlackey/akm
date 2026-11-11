@@ -29,6 +29,7 @@ type: workflow
 params:
   label: { type: string }
   tags: { type: array, items: { type: string } }
+  config: { type: string }
 steps:
   - id: first
     unit:
@@ -115,6 +116,28 @@ describe("additive akm run", () => {
     expect(snapshotTree(storage.root)).toEqual(before);
   });
 
+  for (const { ref, execution } of [
+    { ref: "commands/review", execution: ["--dry-run"] },
+    { ref: "agents/reviewer", execution: ["--prompt=review", "--harness=reviewer"] },
+  ]) {
+    test(`run rejects misplaced config selection for ${ref} before dispatch`, async () => {
+      const before = snapshotTree(storage.root);
+      for (const flag of [["--config", "/ignored.json"], ["--config=/ignored.json"], ["--config="], ["--config"]]) {
+        const result = await runCliCapture(["run", ref, ...execution, ...flag]);
+        expect(result.code, result.stderr).toBe(2);
+        expect(result.stdout).toBe("");
+        expect(result.stderr).toContain("--config must come before run");
+      }
+      expect(snapshotTree(storage.root)).toEqual(before);
+    });
+  }
+
+  test("command arguments containing config flag text remain literal input", async () => {
+    const result = await runCliCapture(["run", "commands/review", "--arguments=--config"]);
+    expect(result.code, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout).stdout).toContain("Review: [--config]");
+  });
+
   test("task inputs, scheduled marker, history and qualified bundle ownership are preserved without an index", async () => {
     const other = path.join(storage.root, "other");
     write(
@@ -153,6 +176,7 @@ describe("additive akm run", () => {
       "--label=001",
       "--tags=one",
       "--tags=two",
+      "--config=authored-config",
       "--max-steps",
       "1",
     ]);
@@ -163,7 +187,11 @@ describe("additive akm run", () => {
     const changedParams = await runCliCapture(["run", id, "--label=changed"]);
     expect(changedParams.code).toBe(2);
     expect(changedParams.stderr).toContain("existing run id");
-    expect((await getWorkflowStatus(id)).run.params).toEqual({ label: "001", tags: ["one", "two"] });
+    expect((await getWorkflowStatus(id)).run.params).toEqual({
+      label: "001",
+      tags: ["one", "two"],
+      config: "authored-config",
+    });
     write("workflows/check.md", "invalid replacement: frozen run must survive");
     const resumed = await runCliCapture(["run", id]);
     expect(resumed.code, resumed.stderr).toBe(0);

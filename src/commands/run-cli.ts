@@ -118,8 +118,11 @@ export const runAssetCommand = defineJsonCommand({
     for (const part of [...executor.path].reverse()) schema = { subCommands: { [part]: schema } };
     assertKnownFlags(schema, [...executor.path, ...forwarded]);
     if (type === "agent" || type === "command") {
-      const positional = parseArgs(forwarded, executor.command.args as ArgsDef)._;
-      if (forwarded.includes("--") || positional.length !== 1) {
+      const selectedArgs = parseArgs(forwarded, executor.command.args as ArgsDef);
+      if (selectedArgs.config !== undefined) {
+        throw new UsageError("--config must come before run: akm --config <file> run <ref>.", "INVALID_FLAG_VALUE");
+      }
+      if (forwarded.includes("--") || selectedArgs._.length !== 1) {
         throw new UsageError(
           `akm run ${ref} does not accept extra positional arguments or --. Use ${type === "agent" ? "--prompt or --prompt-stdin" : "--arguments"} for its input.`,
           "INVALID_FLAG_VALUE",
