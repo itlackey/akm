@@ -38,6 +38,7 @@ for (const executor of Object.values(EXECUTORS)) {
   }
 }
 delete args.new;
+delete args.config;
 args.ref = {
   type: "positional",
   description: "Agent, command, task or workflow ref; or an existing workflow run id",
@@ -45,6 +46,7 @@ args.ref = {
 };
 
 export const runAssetCommand = defineJsonCommand({
+  configFile: false,
   meta: {
     name: "run",
     description:

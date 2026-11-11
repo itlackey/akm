@@ -30,7 +30,7 @@ the invoking directory. A missing or empty value fails. A file that does not yet
 exist can be created by setup or configuration writes. With neither selector,
 existing location variables and defaults keep their precedence.
 
-For `task run`, `task explain`, and `workflow run`, put the selector **before the
+For `run`, `task run`, `task explain`, and `workflow run`, put the selector **before the
 top-level command**. Their existing named input/parameter `--config` after the
 command keeps its original meaning. Other commands also accept the selector at
 nested levels or after their arguments. A literal `--` ends AKM flag parsing.

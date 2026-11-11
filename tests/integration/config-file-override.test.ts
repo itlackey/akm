@@ -70,6 +70,16 @@ describe("real CLI config file bootstrap", () => {
     expect(cli(["config", "path"], env, dir).stdout.trim()).toBe(path.join(env.AKM_CONFIG_DIR, "config.json"));
   });
 
+  test("setup preflight uses the selected file before the non-interactive guard", () => {
+    const { dir, env, selected } = fixture();
+    fs.mkdirSync(env.AKM_CONFIG_DIR, { recursive: true });
+    fs.writeFileSync(path.join(env.AKM_CONFIG_DIR, "config.json"), "invalid old config");
+    const result = cli(["setup", "--config", selected], env, dir);
+    expect(result.status).toBe(2);
+    expect(JSON.parse(result.stderr.trim()).code).toBe("NON_INTERACTIVE_REQUIRES_YES");
+    expect(fs.readFileSync(path.join(env.AKM_CONFIG_DIR, "config.json"), "utf8")).toBe("invalid old config");
+  });
+
   test("a new file is usable for config writes", () => {
     const { dir, env } = fixture();
     const selected = path.join(dir, "new", "fresh.json");
@@ -107,7 +117,7 @@ describe("real CLI config file bootstrap", () => {
     expect(pass.stdout.trim()).toBe(path.join(env.AKM_CONFIG_DIR, "config.json"));
   });
 
-  test.each(["sample.json", true, "--config"])("legacy task config input remains %p with a root selector", (value) => {
+  test.each(["sample.json", true, "--config"])("task config input remains %p with a root selector", (value) => {
     const { dir, env, selected } = fixture();
     fs.mkdirSync(path.join(env.AKM_BUNDLE_DIR, "tasks"), { recursive: true });
     fs.writeFileSync(
@@ -119,6 +129,7 @@ describe("real CLI config file bootstrap", () => {
         "inputs:",
         "  config:",
         `    type: ${typeof value === "boolean" ? "boolean" : "string"}`,
+        "    required: true",
         "run: echo safe",
         "",
       ].join("\n"),
@@ -129,6 +140,12 @@ describe("real CLI config file bootstrap", () => {
     const result = cli(args, env, dir);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain(typeof value === "string" ? value : "true");
+    const runArgs = ["--config", selected, "run", "tasks/example", "--config"];
+    if (value === "--config") runArgs[runArgs.length - 1] = "--config=--config";
+    else if (typeof value === "string") runArgs.push(value);
+    const runResult = cli(runArgs, env, dir);
+    expect(runResult.status).toBe(0);
+    expect(JSON.parse(runResult.stdout).shape).toBe("task-run");
   });
 
   test("misplaced selectors on a dynamic path never select the asset's config input", () => {

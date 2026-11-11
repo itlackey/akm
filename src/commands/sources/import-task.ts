@@ -29,7 +29,17 @@ export async function importTaskFile(
   if (input.source === "-" || /^https?:\/\//i.test(input.source)) {
     throw new UsageError("--type task requires a local task definition file.", "INVALID_FLAG_VALUE");
   }
-  const yaml = fs.readFileSync(input.source, "utf8");
+  let yaml: string;
+  try {
+    if (!fs.statSync(input.source).isFile()) {
+      throw new UsageError(`Expected a readable task definition file: "${input.source}".`, "INVALID_FLAG_VALUE");
+    }
+    yaml = fs.readFileSync(input.source, "utf8");
+  } catch (error) {
+    if (error instanceof UsageError) throw error;
+    if (!(error instanceof Error) || !("code" in error)) throw error;
+    throw new UsageError(`Expected a readable task definition file: "${input.source}".`, "INVALID_FLAG_VALUE");
+  }
   parseTaskSource({ yaml, filePath: input.source });
   const id = normaliseTaskId(input.name ?? path.basename(input.source).replace(/\.ya?ml$/i, ""));
   const config = loadConfig();

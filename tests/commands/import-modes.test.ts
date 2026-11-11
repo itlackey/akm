@@ -136,6 +136,21 @@ test("CLI typed file import supports rename and force; untyped YAML stays a know
   }
 });
 
+test("typed import reports missing files and directories as input errors without writes", async () => {
+  const f = fixture([]);
+  try {
+    for (const input of [path.join(f.bundle, "missing.yml"), f.bundle]) {
+      const result = await runCliStatus(["import", input, "--type", "task"]);
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain("readable task definition file");
+    }
+    expect(fs.readdirSync(path.join(f.bundle, "tasks"))).toEqual([]);
+    expect(loadConfig().scheduler?.enabled).toEqual([]);
+  } finally {
+    f.cleanup();
+  }
+});
+
 test("asset-ref CLI delegates clone's type, companion files, provenance, rename and overwrite behavior", async () => {
   const f = fixture([]);
   const origin = makeSandboxDir("akm-import-origin");
