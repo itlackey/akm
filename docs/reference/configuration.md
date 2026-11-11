@@ -3,7 +3,12 @@
 AKM reads one user configuration file: `$XDG_CONFIG_HOME/akm/config.json`
 (normally `~/.config/akm/config.json` on Linux and macOS, or
 `%APPDATA%\akm\config.json` on Windows). Set `AKM_CONFIG_DIR` to override the
-directory. Project `.akm/config.json` files are not merged. A config file may
+directory. `akm --config <file> <command>` selects a particular file, ahead of
+`AKM_CONFIG_FILE`, which in turn takes precedence over the directory rules.
+Relative file paths resolve from the invoking directory; empty selections fail.
+Without either selector all existing directory overrides and defaults are
+unchanged. A missing file uses the existing defaults and can be created by setup
+or configuration writes. Project `.akm/config.json` files are not merged. A config file may
 optionally extend one other config via `extends` (see "Sharing configuration
 across installs" below) — this is a single, explicit, user-opted-in key, not
 automatic project-config discovery.
@@ -225,7 +230,7 @@ bindings.
 
 What asks for a harness decides how akm runs it.
 
-**Agent work** (`akm agent`, `akm command run`, `akm proposal new`, agent tasks and workflow agent steps) runs your program the way you would run it yourself. It gets your environment as it is, with nothing filtered out, and your configuration, plugins, settings and logins as they are. akm sets only its own variables for the run: the directories this akm resolved (`AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR`, `AKM_STATE_DIR`, and `AKM_BUNDLE_DIR` when you set one), so a program that runs `akm` uses the same installation, and, when a task runs it, `AKM_EVENT_SOURCE` (unless already set), so the akm commands the program runs count as machine use, not yours. A workflow unit's or task's own `env:` bindings are set over them. A run given a directory (`--cwd`, a harness's `workspace`) starts there, and `PWD` names it too, as your shell sets it when you `cd` there; OpenCode takes its directory from `PWD`. On the command line, after your `args` as you wrote them, akm adds the model or agent the asset or flag names, the agent asset's persona where the program takes one there, and what the program needs to run without a person at the terminal: its print or exec mode and its approve-all switch where it asks before acting. Codex runs with the sandbox your Codex configuration sets, or the one your `args` name; model work runs it with `--sandbox read-only` (below). The prompt goes on standard input where the program reads it there and on the command line where it does not; standard output is the reply. `akm agent` with no `--prompt` starts the program interactively instead. What akm scrubs from the output it captures is in [Architecture: Connections and Harnesses](../architecture/architecture.md#connections-and-harnesses) and, for a workflow, [Workflow Schema](workflow-schema.md#the-childs-environment).
+**Agent work** (`akm agent`, `akm command run`, `akm proposal new`, agent tasks and workflow agent steps) runs your program the way you would run it yourself. It gets your environment as it is, with nothing filtered out, and your configuration, plugins, settings and logins as they are. akm sets only its own variables for the run: the directories this akm resolved (`AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR`, `AKM_STATE_DIR`, and `AKM_BUNDLE_DIR` when you set one), plus the absolute `AKM_CONFIG_FILE` when a file was selected, so a program that runs `akm` uses the same installation, and, when a task runs it, `AKM_EVENT_SOURCE` (unless already set), so the akm commands the program runs count as machine use, not yours. A workflow unit's or task's own `env:` bindings are set over them. A run given a directory (`--cwd`, a harness's `workspace`) starts there, and `PWD` names it too, as your shell sets it when you `cd` there; OpenCode takes its directory from `PWD`. On the command line, after your `args` as you wrote them, akm adds the model or agent the asset or flag names, the agent asset's persona where the program takes one there, and what the program needs to run without a person at the terminal: its print or exec mode and its approve-all switch where it asks before acting. Codex runs with the sandbox your Codex configuration sets, or the one your `args` name; model work runs it with `--sandbox read-only` (below). The prompt goes on standard input where the program reads it there and on the command line where it does not; standard output is the reply. `akm agent` with no `--prompt` starts the program interactively instead. What akm scrubs from the output it captures is in [Architecture: Connections and Harnesses](../architecture/architecture.md#connections-and-harnesses) and, for a workflow, [Workflow Schema](workflow-schema.md#the-childs-environment).
 
 **Model work** (see [Where each process runs](#where-each-process-runs)) is akm's own process, so akm sets the call up as it needs it. The program has the same environment. akm runs it in a scratch directory that it creates for the call and removes after it, stamps the akm commands it runs `improve`, and runs no native agent of yours. Where the program can be restricted, akm also limits its tools. The "Restricted model work" column of the table says on which platforms:
 
@@ -347,7 +352,7 @@ akm reads an API key from one of two places, and nowhere else:
   names an environment variable, read when the call is made. An unset or empty
   variable is warned about once and the request goes without a key.
 - **`credentials.json`.** With no `apiKey`, the key is the entry stored for the
-  block in `credentials.json`, next to `config.json`, written with mode 0600:
+  block in `credentials.json`, next to the selected config file, written with mode 0600:
 
   ```json
   { "connections": { "<name>": { "key": "…", "endpoint": "…" } },
@@ -1192,7 +1197,8 @@ akm config diff fleet//config/shared.json
 
 | Variable | Purpose |
 | --- | --- |
-| `AKM_CONFIG_DIR` | Override the user config directory (or set `XDG_CONFIG_HOME`) |
+| `AKM_CONFIG_FILE` | Select a config file; `--config` wins. Children inherit its absolute path, including native rows written by `task sync`. Credentials and `models.json` remain adjacent to that file. Does not change data, state, cache, or bundle locations. |
+| `AKM_CONFIG_DIR` | Override the user config directory (or set `XDG_CONFIG_HOME`); used when no file selector is set |
 | `AKM_BUNDLE_DIR` | Override the bundle directory |
 | `AKM_DATA_DIR` | Override the data directory — `index.db`, durable `state.db`, and `akm.lock` (or set `XDG_DATA_HOME`) |
 | `AKM_CACHE_DIR` | Override the cache directory — regenerable caches (or set `XDG_CACHE_HOME`) |

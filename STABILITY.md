@@ -205,8 +205,11 @@ guide; all old surfaces in the left column are scheduled for 0.11 removal.
 | Search `--include-proposed`, `--include-sessions` | Search/curate `--include quality=proposed` and `--include type=<excluded-type>` are implemented in current 0.10 source, including project/API defaults; existing flags retain their behavior until 0.11. Check installed help for availability. |
 | Show `--context`, `--max-chars`, and `--detail` | Add `--lead`, independent `--max-tokens`, and `--outline` in 0.10; retain existing defaults until the 0.11 cutover to exact reads. See the [complete argument review](docs/reviews/cli-surface-recommendations-2026-11-11.md#show-argument-review). |
 
-Also ship compatible metadata/budget fixes and the shared `--config` override in
-0.10.x, preserving old location resolution when that override is absent. Update
+The shared `--config <file>` override and companion `AKM_CONFIG_FILE` are
+implemented on this branch; first released version is pending. Prefer
+`akm --config <file> <command>`; dynamic task/workflow inputs named `config`
+keep their meaning after the command. Old location resolution is unchanged when
+neither selector is set. Also ship compatible metadata/budget fixes in 0.10.x. Update
 owned consumers after replacements ship; document deprecations without changing
 old machine output. Branch-specific scheduler/storage migrations remain in 0.11.
 
@@ -724,6 +727,7 @@ existing data, state, and cache paths.
 | Variable | Status | Purpose and migration |
 | --- | --- | --- |
 | `AKM_BUNDLE_DIR` | Deprecated | Bundle location override; register the bundle and select `defaultBundle` before 0.11. |
+| `AKM_CONFIG_FILE` / `--config <file>` | Experimental | Explicit config-file selection; first released version pending. Credentials remain adjacent; existing location resolution applies when absent. |
 | `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR`, `AKM_STATE_DIR` | Deprecated | Filesystem layout overrides; migrate to `AKM_CONFIG_FILE` / `--config` and config `paths` in 0.11. `AKM_STATE_DIR` was previously undocumented as a supported control but still needs migration when in use. |
 | `AKM_VERBOSE`, `AKM_DEBUG` | Deprecated | Diagnostics; use the replacement verbosity/debug controls recorded in the migration guide. |
 | `AKM_REGISTRY_URL` | Deprecated | Comma-separated URLs replace configured registries for every registry search; `registry list` and `info` still show the configured list. Migrate the selection to config. |
@@ -801,11 +805,12 @@ and `--model <alias|name>`; how an old engine name resolves is under
 longer read implicitly: put `"apiKey": "$VAR"` on the connection, or the key in
 `credentials.json`.
 
-These are unknown flags or commands (exit 2) from 0.10, with no alias:
+These retired interfaces have no compatibility alias in 0.10. The new shared
+file selector is distinct from the former setup JSON interface:
 
 | Gone | Use |
 | --- | --- |
-| `akm setup --config <json>` and `--probe` | `akm setup --endpoint <url> --yes` and the other answer flags; `--no-probe` for an offline run (probing is the default) |
+| `akm setup --config <json>` and `--probe` | `akm setup --endpoint <url> --yes` and the other answer flags; `--no-probe` for an offline run (probing is the default). The new shared `--config <file>` selects a file and does not accept JSON answers |
 | `akm models list`, `akm models copy-defaults` | `akm models`, `akm models set <alias> <model>` |
 
 ### Release numbering (#1089)

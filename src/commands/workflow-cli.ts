@@ -179,6 +179,7 @@ const WORKFLOW_RUN_SKIP_REASONS: Partial<Record<TransientErrorCode, "lock-held" 
 };
 
 export const workflowRunCommand = defineJsonCommand({
+  configFile: false,
   meta: {
     name: "run",
     description:

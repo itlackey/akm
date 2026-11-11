@@ -66,6 +66,7 @@ const HARNESSED: readonly string[] = [
   // Storage layout overrides.
   "AKM_BUNDLE_DIR",
   "AKM_CONFIG_DIR",
+  "AKM_CONFIG_FILE",
   "AKM_CACHE_DIR",
   "AKM_DATA_DIR",
   "AKM_STATE_DIR",
@@ -129,6 +130,7 @@ function installSuiteWideSandbox(): void {
   // startup so the XDG sandbox always wins; tests that need a specific
   // AKM_*_DIR set it explicitly (and the afterEach tripwire restores it).
   delete process.env.AKM_CONFIG_DIR;
+  delete process.env.AKM_CONFIG_FILE;
   delete process.env.AKM_DATA_DIR;
   delete process.env.AKM_CACHE_DIR;
   delete process.env.AKM_STATE_DIR;

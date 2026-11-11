@@ -18,7 +18,7 @@
  *   - `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR` and `AKM_STATE_DIR`
  *     only when the process that ran `akm task sync` set them explicitly. A
  *     default resolves at fire time exactly as it does for an interactive
- *     command.
+ *     command. `AKM_CONFIG_FILE`, when selected, is carried as an absolute path.
  *
  * That is exactly what the `--scheduler-context` descriptor held.
  *
@@ -42,6 +42,7 @@ import { normaliseTaskConceptId } from "./task-id";
 export const SCHEDULED_TASK_CONTEXT_KEYS = [
   "AKM_BUNDLE_DIR",
   "AKM_CONFIG_DIR",
+  "AKM_CONFIG_FILE",
   "AKM_DATA_DIR",
   "AKM_CACHE_DIR",
   "AKM_STATE_DIR",
@@ -60,7 +61,13 @@ export type ScheduledRowEnvironment = Readonly<Partial<Record<ScheduledTaskConte
  * that directory into eight cron rows, and the scheduled improve runs then
  * held their locks in a `locks/` directory no interactive command could see.
  */
-const EXPLICIT_CONTEXT_KEYS = ["AKM_CONFIG_DIR", "AKM_DATA_DIR", "AKM_CACHE_DIR", "AKM_STATE_DIR"] as const;
+const EXPLICIT_CONTEXT_KEYS = [
+  "AKM_CONFIG_DIR",
+  "AKM_CONFIG_FILE",
+  "AKM_DATA_DIR",
+  "AKM_CACHE_DIR",
+  "AKM_STATE_DIR",
+] as const;
 
 /** The AKM directory context of the current process, so nested AKM commands stay in the same installation. */
 export function scheduledTaskContextEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {

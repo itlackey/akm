@@ -257,6 +257,8 @@ const tasksAddCommand = defineJsonCommand({
   },
 });
 
+const { config: _configFileArg, ...taskRunGlobalArgs } = GLOBAL_OUTPUT_ARGS;
+
 export const tasksRunCommand = defineCommand({
   meta: {
     name: "run",
@@ -265,7 +267,7 @@ export const tasksRunCommand = defineCommand({
   // Raw defineCommand (it forwards the task's exit code), so the global output
   // flags are declared here or `--format md nightly` loses the task id.
   args: {
-    ...GLOBAL_OUTPUT_ARGS,
+    ...taskRunGlobalArgs,
     id: { type: "positional", description: "Task id", required: true },
     ...bundleArg,
     scheduled: { type: "boolean", description: "Internal marker for scheduler-generated runs", default: false },
@@ -398,6 +400,7 @@ const tasksSyncCommand = defineJsonCommand({
 // ── `akm task explain` — read-only introspection ────────────────────────────
 
 const tasksExplainCommand = defineJsonCommand({
+  configFile: false,
   meta: {
     name: "explain",
     description:

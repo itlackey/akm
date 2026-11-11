@@ -136,6 +136,41 @@ function collectKnownArgs(root: FlagScanCommand, rawArgs: readonly string[]): Kn
   return { names, valueFlags, booleanFlags, displayNames, path, resolved: true };
 }
 
+/** Read a startup value without interpreting another flag's value as an option. */
+export function configFileFlag(root: FlagScanCommand, rawArgs: readonly string[]): string | undefined {
+  const known = collectKnownArgs(root, rawArgs);
+  // These legacy commands accept arbitrary named inputs, including `config`.
+  // Only the prefix before the top-level command belongs to the global flag.
+  const dynamic = new Set(["task run", "task explain", "workflow run", "run"]);
+  const topLevel = findCittyTopLevelCommandIndex(rawArgs, (root.args ?? {}) as CittyArgsDefinitionForScan);
+  const end = dynamic.has(known.path.join(" ")) && topLevel >= 0 ? topLevel : rawArgs.length;
+  let selected: string | undefined;
+  for (let index = 0; index < end; index += 1) {
+    const token = rawArgs[index] as string;
+    if (token === "--") break;
+    if (token === "--config" || token.startsWith("--config=")) {
+      const value = token === "--config" ? rawArgs[++index] : token.slice("--config=".length);
+      if (value === undefined || !value.trim() || (token === "--config" && value.startsWith("-"))) {
+        throw new UsageError("--config requires a non-empty file path.", "INVALID_FLAG_VALUE");
+      }
+      selected = value;
+      continue;
+    }
+    if (token.startsWith("--")) {
+      const name = cittyComparableName(token.slice(2).split("=")[0] as string);
+      if (!token.includes("=") && known.valueFlags.has(name)) index += 1;
+    } else if (token.startsWith("-") && token !== "-") {
+      for (let offset = 1; offset < token.length; offset += 1) {
+        if (known.valueFlags.has(cittyComparableName(token[offset] as string))) {
+          if (offset === token.length - 1) index += 1;
+          break;
+        }
+      }
+    }
+  }
+  return selected;
+}
+
 /**
  * Flags STABILITY.md lists under "Gone / Use", checked before edit distance so
  * the hint names the real replacement (`--shape` is not a typo of `--type`).
@@ -159,7 +194,6 @@ const GONE_FLAGS: ReadonlyArray<{ flag: string; use: string; commands?: readonly
   { flag: "--all", use: "`akm info`", commands: ["config path"] },
   { flag: "--run", use: "`akm improve report --run`", commands: ["improve"] },
   { flag: "--since", use: "`akm improve report --since`", commands: ["improve"] },
-  { flag: "--config", use: "`--endpoint <url> --yes` and the other answer flags", commands: ["setup"] },
   { flag: "--probe", use: "no flag: probing is the default, and `--no-probe` runs offline", commands: ["setup"] },
 ];
 

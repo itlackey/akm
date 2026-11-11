@@ -17,11 +17,25 @@ These flags are accepted by all commands:
 
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |
+| `--config` | file path | `AKM_CONFIG_FILE`, then existing directory resolution | Select the configuration file before startup; prefer `akm --config <file> <command>` |
 | `--format` | `json`, `jsonl`, `yaml`, `text`, `md` | `json` | Output format |
 | `--output` | path | _(none)_ | Write rendered output to a file instead of stdout (all formats except `jsonl`) |
 | `--detail` | `brief`, `normal`, `full`, `agent` | `brief` | Output **verbosity** level, or the `agent` projection |
 | `--quiet` / `-q` | boolean | `false` | Suppress stderr warnings |
 | `--verbose` | boolean | `false` | Enable verbose diagnostics gated behind `isVerbose()`. Parsed globally before any subcommand runs. The `AKM_VERBOSE` env var honours the same setting and wins when both are present (see `src/core/warn.ts`). |
+
+Use `akm --config ./custom.json config path` to select a file for one invocation.
+The last explicit flag wins over `AKM_CONFIG_FILE`; relative paths resolve from
+the invoking directory. A missing or empty value fails. A file that does not yet
+exist can be created by setup or configuration writes. With neither selector,
+existing location variables and defaults keep their precedence.
+
+For `task run`, `task explain`, and `workflow run`, put the selector **before the
+top-level command**. Their existing named input/parameter `--config` after the
+command keeps its original meaning. Other commands also accept the selector at
+nested levels or after their arguments. A literal `--` ends AKM flag parsing.
+This file selector is distinct from the retired JSON-valued `setup --config`:
+use setup answer flags to supply answers.
 
 `--detail brief|normal|full` controls **how much** is returned. `--detail agent`
 selects the token-lean action view on `search`, `curate` and `show`; every other
