@@ -9,7 +9,14 @@
   import { classifyEngineSkew, hostUpgradeOutrunsDesktop } from "./engine-skew";
   import Icon from "./Icon.svelte";
   import { harnessLabel, installedChannel, pluginChannel, pluginLine } from "./setup-model";
-  import { actSoftware as act, runSoftware, savePreference, software, watchSoftware } from "./state/software.svelte";
+  import {
+    actSoftware as act,
+    refreshSoftware,
+    runSoftware,
+    savePreference,
+    software,
+    watchSoftware,
+  } from "./state/software.svelte";
   const releases = "https://github.com/itlackey/akm/releases";
   const data = $derived(software.data),
     error = $derived(software.error),
@@ -44,10 +51,21 @@
   };
   // A saved choice is said in a live region beside its control; a failed save is the page's alert.
   let saved = $state({ updateChannel: "", pluginChannel: "" });
+  // The Desktop choice that is saved but has not reached the running updater; Retry sends it again.
+  let unapplied = $state("");
   async function choose(key: "updateChannel" | "pluginChannel", value: string) {
-    saved[key] = "";
-    await savePreference(key, value);
-    if (software.error) return;
+    saved[key] = "Saving…";
+    unapplied = "";
+    const result = await savePreference(key, value);
+    if (!result) {
+      saved[key] = "";
+      return;
+    }
+    if (result.applied === false) {
+      saved[key] = `Saved, but the running app has not applied it: ${result.applyError}`;
+      unapplied = value;
+      return;
+    }
     saved[key] =
       key === "updateChannel"
         ? `Saved. AKM Desktop follows ${value === "prerelease" ? "stable and prerelease releases" : "stable releases only"}.`
@@ -73,7 +91,8 @@
       Desktop, host CLI and integrations on this computer. <a href="/setup">Run setup again</a>
     </p>
   </div>
-  {#if error}<p class="notice notice-warn" role="alert">{error}</p>{/if}
+  {#if error}<p class="notice notice-warn" role="alert">{error}</p>
+    <button class="btn-quiet" onclick={() => refreshSoftware()}>Recheck status</button>{/if}
   {#if !data}<p role="status">Loading software status…</p>{:else}
     <section aria-labelledby="desktop-software">
       <div class="software-row">
@@ -122,6 +141,7 @@
       </div>
       {#if updatesHint}<p id="desktop-updates-hint" class="field-hint">{updatesHint}</p>{/if}
       <p class="field-hint saved" role="status">{saved.updateChannel}</p>
+      {#if unapplied}<button class="btn-quiet" onclick={() => choose("updateChannel", unapplied)}>Retry</button>{/if}
       {#if data.desktop.menu?.supported}
         <div class="menu-install">
           <div class="software-row">

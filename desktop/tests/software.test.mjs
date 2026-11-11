@@ -7,7 +7,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test, { after } from "node:test";
-import { HostTools, hostEnvironment, summarizeUpgrade } from "../src/lib/server/features/host-tools.ts";
+import { HostTools, hostEnvironment, runHost, summarizeUpgrade } from "../src/lib/server/features/host-tools.ts";
 
 const temporary = [];
 after(() => Promise.all(temporary.map((dir) => rm(dir, { recursive: true, force: true }))));
@@ -47,13 +47,16 @@ async function hostFixture({
   installerVersion,
   latestVersion = "0.10.261105",
   checkFails = false,
+  upgradeResult,
+  marketplace = false,
+  extra,
 } = {}) {
   const home = await mkdtemp(path.join(os.tmpdir(), "akm-host-test-"));
   temporary.push(home);
   const calls = [],
     installerUrls = [],
     installed = new Set(),
-    configured = new Set();
+    configured = new Set(marketplace ? ["claude", "codex"] : []);
   let cli = !absent;
   let cliVersion = "0.10.261104";
   let hasBun = bun;
@@ -83,6 +86,20 @@ async function hostFixture({
       if (args[0] === "--version") return name === "opencode" ? opencodeVersion : cliVersion;
       if (name === "akm") {
         if (checkFails && args.includes("--check")) throw new Error("offline");
+        if (extra) {
+          const reply = extra(args);
+          if (reply !== undefined) return reply;
+        }
+        if (upgradeResult && !args.includes("--check")) {
+          cliVersion = upgradeResult.after ?? cliVersion;
+          if (upgradeResult.exit)
+            throw Object.assign(new Error("Command failed: akm upgrade"), {
+              code: 1,
+              stdout: JSON.stringify(upgradeResult.body),
+              stderr: "",
+            });
+          return JSON.stringify(upgradeResult.body);
+        }
         if (failure && !args.includes("--check"))
           throw Object.assign(new Error("Command failed: akm upgrade"), {
             code: 1,
@@ -162,7 +179,8 @@ test("host checks are read-only and upgrades invoke the existing CLI, not the bu
     summarizeUpgrade({ latestVersion: "1.0.0", credentials: "secret", migration: { files: ["private"] } }),
     { latestVersion: "1.0.0" },
   );
-  // Which plugin follows which channel is kept (F14); the entries' messages and backups are not.
+  // Which plugin follows which channel, and what the run did with it, is kept; the entries' messages (other than the
+  // reason a plugin was deferred or failed) and backups are not.
   assert.deepEqual(
     summarizeUpgrade({
       plugins: [
@@ -170,7 +188,7 @@ test("host checks are read-only and upgrades invoke the existing CLI, not the bu
         { harness: "codex", outcome: "skipped" },
       ],
     }),
-    { plugins: [{ harness: "claude-code", channel: "next" }, { harness: "codex" }] },
+    { plugins: [{ harness: "claude-code", channel: "next" }, { harness: "codex", outcome: "skipped" }] },
   );
 });
 
@@ -185,7 +203,7 @@ test("missing CLI uses official user-local installer and verifies the result", a
   assert.equal(f.calls.filter((call) => call.file === "/bin/bash").length, 1);
   f.manager.start("install-cli");
   await f.manager.pending;
-  assert.match(f.manager.snapshot().error, /existing CLI/);
+  assert.match(f.manager.snapshot().error, /installer that owns it/);
   assert.deepEqual(f.installerUrls, ["https://github.com/itlackey/akm/releases/latest/download/install.sh"]);
 });
 
@@ -389,4 +407,185 @@ test("the CLI upgrade asks akm for its target right before it runs and refuses o
   odd.manager.start("upgrade-cli", undefined, undefined, { within: () => undefined });
   await odd.manager.pending;
   assert.match(odd.manager.snapshot().error, /could not be verified/);
+});
+
+test("a nonzero upgrade keeps akm's redacted result and shows the version actually installed (#1609-6)", async () => {
+  const f = await hostFixture({
+    upgradeResult: {
+      exit: true,
+      after: "0.10.261105",
+      body: {
+        currentVersion: "0.10.261104",
+        upgraded: true,
+        migration: { status: "blocked", files: ["/home/secret/index.db"], credentials: "TOKEN-SENTINEL" },
+        plugins: [{ harness: "opencode", outcome: "failed", message: "line one\nnpm ERR", backups: ["/home/secret/x.bak"] }],
+      },
+    },
+  });
+  f.manager.start("upgrade-cli");
+  await f.manager.pending;
+  const snapshot = f.manager.snapshot();
+  assert.match(snapshot.error, /the migration blocked, the opencode plugin failed/);
+  assert.equal(snapshot.cli.version, "0.10.261105", "inventory is refreshed after the partial change");
+  assert.equal(snapshot.action.upgrade.migration, "blocked");
+  assert.equal(snapshot.receipt, undefined);
+  const shown = JSON.stringify(snapshot);
+  assert.ok(!shown.includes("TOKEN-SENTINEL") && !shown.includes("/home/secret"), "no raw payloads");
+});
+
+test("deferred plugins and a compatibility hold keep their reasons, apart from the check that follows (#1609-7)", async () => {
+  const f = await hostFixture({
+    upgradeResult: {
+      body: {
+        currentVersion: "0.10.261104",
+        latestVersion: "0.10.261104",
+        updateAvailable: false,
+        plugins: [{ harness: "opencode", outcome: "deferred", message: "OpenCode is running", backups: ["/secret"] }],
+        lockstep: { plugin: "akm-opencode", pinnedVersion: "0.10.261104", newestVersion: "0.10.261105", heldBack: true },
+      },
+    },
+  });
+  f.manager.start("upgrade-cli");
+  await f.manager.pending;
+  let snapshot = f.manager.snapshot();
+  assert.deepEqual(snapshot.action.upgrade.plugins, [
+    { harness: "opencode", outcome: "deferred", reason: "OpenCode is running" },
+  ]);
+  assert.equal(snapshot.action.upgrade.lockstep.heldBack, true);
+  assert.equal(snapshot.command, "akm upgrade --format json", "the check does not replace the action's command");
+  assert.match(snapshot.receipt, /upgrade completed/);
+  // The follow-up check fails after the action went through: a partial outcome, the receipt stays.
+  const g = await hostFixture({
+    extra: (args) => {
+      if (args.includes("--check") && g.after) throw new Error("offline");
+      if (args[0] === "upgrade" && !args.includes("--check")) g.after = true;
+      return undefined;
+    },
+  });
+  g.manager.start("upgrade-cli");
+  await g.manager.pending;
+  snapshot = g.manager.snapshot();
+  assert.match(snapshot.receipt, /upgrade completed/);
+  assert.match(snapshot.error, /change completed, but checking the result afterwards failed/);
+  assert.equal(snapshot.command, "akm upgrade --format json");
+});
+
+test("a timed-out parent and its descendants are ended, and no overlapping retry starts until a check (#1609-9)", async (t) => {
+  if (process.platform === "win32") return t.skip("process groups are POSIX");
+  const dir = await mkdtemp(path.join(os.tmpdir(), "akm-descendant-"));
+  temporary.push(dir);
+  const marker = path.join(dir, "child-ran");
+  // A parent that starts a child which would write the marker after the parent's timeout.
+  await assert.rejects(
+    runHost("/bin/sh", ["-c", `(sleep 1; echo ran > "${marker}") & sleep 5`], { env: process.env, home: dir, timeout: 200 }),
+    (error) => error.killed === true && error.code === "ETIMEDOUT",
+  );
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  await assert.rejects(readFile(marker), { code: "ENOENT" }, "the descendant was ended with its parent");
+
+  let hang = true;
+  const f = await hostFixture({
+    extra: (args) => {
+      if (hang && args[0] === "upgrade" && !args.includes("--check"))
+        throw Object.assign(new Error("timed out"), { killed: true, code: "ETIMEDOUT" });
+      return undefined;
+    },
+  });
+  f.manager.start("upgrade-cli");
+  await f.manager.pending;
+  assert.match(f.manager.snapshot().error, /timed out/);
+  assert.equal(f.manager.snapshot().unsettled, "upgrade-cli");
+  hang = false;
+  assert.throws(() => f.manager.start("upgrade-cli"), /may still be running/);
+  assert.throws(() => f.manager.start("install-cli"), /may still be running/);
+  f.manager.start("check");
+  await f.manager.pending;
+  assert.equal(f.manager.snapshot().unsettled, undefined);
+  f.manager.start("upgrade-cli");
+  await f.manager.pending;
+  assert.equal(f.manager.snapshot().error, undefined);
+});
+
+test("a prerelease choice is not silently dropped when akm-plugins already exists; consent installs from it as it is (#1609-5)", async () => {
+  const f = await hostFixture({ marketplace: true });
+  f.manager.start("install-plugin", "claude", "next");
+  await f.manager.pending;
+  const stopped = f.manager.snapshot();
+  assert.match(stopped.error, /already set up and keeps the channel/);
+  assert.equal(stopped.consent, "claude");
+  assert.ok(!f.calls.some((call) => call.args.includes("install") || call.args.includes("add")), "nothing was changed");
+  f.manager.start("install-plugin", "claude", "next", { consent: true });
+  await f.manager.pending;
+  const done = f.manager.snapshot();
+  assert.equal(done.error, undefined);
+  assert.equal(done.consent, undefined);
+  assert.match(done.receipt, /existing akm-plugins marketplace was kept; its channel was not changed/);
+  assert.ok(!f.calls.some((call) => call.args.slice(0, 3).join(" ") === "plugin marketplace add"));
+  // Stable on an existing marketplace needs no question, and a missing marketplace is added on the chosen channel.
+  const stable = await hostFixture({ marketplace: true });
+  stable.manager.start("install-plugin", "codex", "latest");
+  await stable.manager.pending;
+  assert.equal(stable.manager.snapshot().error, undefined);
+  const fresh = await hostFixture();
+  fresh.manager.start("install-plugin", "claude", "next");
+  await fresh.manager.pending;
+  assert.ok(fresh.calls.some((call) => call.args.includes("itlackey/akm-plugins@next")));
+});
+
+test("the prerelease choice reaches the check and the upgrade, and an explicit channel switch uses akm's own flag (#1609-5)", async () => {
+  const f = await hostFixture();
+  f.manager.start("check", undefined, "next");
+  await f.manager.pending;
+  f.manager.start("upgrade-cli", undefined, "next");
+  await f.manager.pending;
+  f.manager.start("switch-channel", undefined, "next");
+  await f.manager.pending;
+  const upgrades = f.calls.filter((call) => call.args[0] === "upgrade").map((call) => call.args.join(" "));
+  assert.ok(upgrades.includes("upgrade --check --next --format json"));
+  assert.ok(upgrades.includes("upgrade --next --format json"));
+  assert.ok(upgrades.includes("upgrade --channel next --format json"));
+  assert.match(f.manager.snapshot().receipt, /switched the CLI and installed plugins to the prerelease channel/);
+});
+
+test("a CLI that does not run is repaired only with consent and only where Desktop installed it (#1609-12)", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "akm-repair-"));
+  temporary.push(home);
+  const target = path.join(home, ".local/bin/akm");
+  await mkdir(path.dirname(target), { recursive: true });
+  await writeFile(target, "broken");
+  let repaired = false;
+  const calls = [];
+  const manager = new HostTools({
+    home,
+    env: { HOME: home, PATH: "/fixture/bin" },
+    platform: "linux",
+    desktopVersion: "0.10.261117",
+    find: async (name) => (name === "akm" ? target : undefined),
+    fetcher: async () => ({ ok: true, text: async () => "#!/usr/bin/env bash\n" }),
+    run: async (file, args) => {
+      calls.push([file, ...args]);
+      if (args[0] === "--version") {
+        if (repaired) return "0.10.261117";
+        throw new Error("exec format error");
+      }
+      if (path.basename(file) === "bash") repaired = true;
+      return "{}";
+    },
+  });
+  manager.start("install-cli");
+  await manager.pending;
+  assert.equal(manager.snapshot().cliManaged, true);
+  assert.equal(manager.snapshot().consent, "cli");
+  assert.match(manager.snapshot().error, /does not run is already in ~\/\.local\/bin/);
+  assert.ok(!calls.some((call) => path.basename(call[0]) === "bash"), "nothing was replaced without consent");
+  manager.start("install-cli", undefined, undefined, { consent: true });
+  await manager.pending;
+  assert.equal(manager.snapshot().error, undefined);
+  assert.deepEqual(calls.find((call) => path.basename(call[0]) === "bash").slice(2), ["v0.10.261117"]);
+  // An akm somewhere else is never replaced, even with consent.
+  const other = await hostFixture();
+  other.manager.start("install-cli", undefined, undefined, { consent: true });
+  await other.manager.pending;
+  assert.match(other.manager.snapshot().error, /\/fixture\/bin\/akm, outside ~\/\.local\/bin/);
+  assert.ok(!other.calls.some((call) => path.basename(call.file) === "bash"));
 });

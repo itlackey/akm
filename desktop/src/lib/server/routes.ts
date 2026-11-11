@@ -10,6 +10,7 @@ import { readFile, saveFile } from "./features/files.js";
 import {
   readPreferences,
   savePreferences,
+  tryApply,
   validPluginChannel,
   validTheme,
   validUpdateChannel,
@@ -108,8 +109,8 @@ export const routes: Route[] = [
       ...(validUpdateChannel(updateChannel) ? { updateChannel } : {}),
       ...(validPluginChannel(pluginChannel) ? { pluginChannel } : {}),
     });
-    if (updateChannel !== undefined) await followUpdateChannel(saved.updateChannel);
-    return saved;
+    // The choice is saved either way; `applied` says whether the running updater has it yet.
+    return updateChannel === undefined ? saved : { ...saved, ...(await tryApply(() => followUpdateChannel(saved.updateChannel))) };
   }),
   get("/api/desktop/software", async () => ({
     host: hostTools.snapshot(),
