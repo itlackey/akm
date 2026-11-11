@@ -5,8 +5,8 @@
 /**
  * Read one value from the selected config file without loading the config.
  *
- * For the few settings read before (or beneath) the config load: CLI usage
- * capture runs before config is read, and SQLite opens apply the journal mode.
+ * For the setting read before the config load: CLI usage capture runs before
+ * config is read.
  * It reads only the file itself (no `extends` chain, no schema), and any
  * failure, a missing or broken file included, yields `undefined` so the caller
  * falls back to its default. It never throws and never warns.

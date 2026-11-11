@@ -3,8 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `usage` and `storage` config sections: how akm treats its own local data.
- * Both are read before the config load, from the file itself (see `./peek.ts`).
+ * `usage` config section: how akm treats its own local data. Read before the
+ * config load, from the file itself (see `./peek.ts`).
  */
 import { z } from "zod";
 
@@ -12,16 +12,5 @@ import { z } from "zod";
 export const UsageConfigSchema = z
   .object({
     capture: z.boolean().optional(),
-  })
-  .passthrough();
-
-/**
- * `storage.journalMode`: the SQLite journal mode, `WAL` (default), `DELETE` or
- * `TRUNCATE`. The `AKM_SQLITE_JOURNAL_MODE` environment variable wins over it.
- * An unrecognised value warns once and falls back to WAL, so it is a plain string here.
- */
-export const StorageConfigSchema = z
-  .object({
-    journalMode: z.string().optional(),
   })
   .passthrough();

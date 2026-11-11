@@ -13,9 +13,8 @@
  * network share.
  *
  * This module centralises that PRAGMA block behind {@link applyStandardPragmas}
- * and makes the journal mode configurable via the `storage.journalMode` config
- * key or the `AKM_SQLITE_JOURNAL_MODE` env var, which wins over the key
- * (WAL | DELETE | TRUNCATE; default WAL = unchanged behaviour). When the
+ * and makes the journal mode configurable via the `AKM_SQLITE_JOURNAL_MODE`
+ * env var (WAL | DELETE | TRUNCATE; default WAL = unchanged behaviour). When the
  * mode is the WAL default and the data directory is detected to live on a
  * network filesystem, it auto-falls-back to DELETE with a one-line warning.
  *
@@ -28,7 +27,6 @@
  * @module storage/sqlite-pragmas
  */
 
-import { peekConfigValue } from "../core/config/peek";
 import { warn } from "../core/warn";
 import { statfsType } from "../runtime";
 import type { Database } from "./database";
@@ -51,34 +49,30 @@ let warnedNetworkFallback = false;
  * WAL default; a recognised value yields its canonical form; any other
  * non-empty value warns once and falls back to WAL. Never throws.
  */
-export function resolveJournalMode(raw: string | undefined, source = "AKM_SQLITE_JOURNAL_MODE"): JournalMode {
+export function resolveJournalMode(raw: string | undefined): JournalMode {
   if (raw === undefined) return "WAL";
   const normalized = raw.trim().toUpperCase();
   if (normalized === "") return "WAL";
   if (VALID_MODES.has(normalized as JournalMode)) {
     return normalized as JournalMode;
   }
-  warnInvalidJournalModeOnce(raw, source);
+  warnInvalidJournalModeOnce(raw);
   return "WAL";
 }
 
 /**
- * The single seam: resolve the configured journal mode. A non-empty
- * `AKM_SQLITE_JOURNAL_MODE` wins; otherwise the `storage.journalMode` key of
- * the config file (read directly, see `core/config/peek.ts`); otherwise WAL.
- * Read at call time (per open) so tests that set the env per-case see the
- * right value and we avoid stale-env flakes.
+ * The single env-reading seam: resolve the configured journal mode from
+ * `process.env.AKM_SQLITE_JOURNAL_MODE`. Read at call time (per open) so tests
+ * that set the env per-case see the right value and we avoid stale-env flakes.
  */
 export function resolveConfiguredJournalMode(env: NodeJS.ProcessEnv = process.env): JournalMode {
-  if (env.AKM_SQLITE_JOURNAL_MODE?.trim()) return resolveJournalMode(env.AKM_SQLITE_JOURNAL_MODE);
-  const key = peekConfigValue(["storage", "journalMode"], env);
-  return resolveJournalMode(typeof key === "string" ? key : undefined, "storage.journalMode");
+  return resolveJournalMode(env.AKM_SQLITE_JOURNAL_MODE);
 }
 
-function warnInvalidJournalModeOnce(raw: string, source: string): void {
+function warnInvalidJournalModeOnce(raw: string): void {
   if (warnedInvalid) return;
   warnedInvalid = true;
-  warn(`[akm] invalid ${source}=${JSON.stringify(raw)} — using WAL (valid: WAL, DELETE, TRUNCATE)`);
+  warn(`[akm] invalid AKM_SQLITE_JOURNAL_MODE=${JSON.stringify(raw)} — using WAL (valid: WAL, DELETE, TRUNCATE)`);
 }
 
 // Known Linux f_type magic numbers for network filesystems. node's statfs

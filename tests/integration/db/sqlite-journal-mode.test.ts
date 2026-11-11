@@ -135,19 +135,6 @@ describe("#628 AC-c: resolveJournalMode() pure resolver", () => {
     expect(JSON.stringify(process.env)).toBe(before);
     delete process.env.AKM_SQLITE_JOURNAL_MODE;
   });
-
-  test("the storage.journalMode config key sets the mode; a non-empty env var wins; a broken file means WAL", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-journal-key-"));
-    tempDirs.push(dir);
-    const file = path.join(dir, "config.json");
-    fs.writeFileSync(file, JSON.stringify({ storage: { journalMode: "truncate" } }));
-    const env = { AKM_CONFIG_FILE: file };
-    expect(resolveConfiguredJournalMode(env)).toBe("TRUNCATE");
-    expect(resolveConfiguredJournalMode({ ...env, AKM_SQLITE_JOURNAL_MODE: "delete" })).toBe("DELETE");
-    expect(resolveConfiguredJournalMode({ ...env, AKM_SQLITE_JOURNAL_MODE: "" })).toBe("TRUNCATE");
-    fs.writeFileSync(file, "{ not json");
-    expect(resolveConfiguredJournalMode(env)).toBe("WAL");
-  });
 });
 
 // ── AC-e: pure network-filesystem classifier ────────────────────────────────
