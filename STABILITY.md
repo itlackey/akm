@@ -39,10 +39,10 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | Command | Status | Contract or migration action |
 | --- | --- | --- |
 | `akm index` | Stable | `--export-vectors` and `--import-vectors` are Experimental for their first release; the vector file (`model`, `text_hash`, `embedding`) is their contract, the index file format stays internal. |
-| `akm search` | Stable | |
-| `akm curate` | Stable | `--max-tokens` aliases the existing `--pack` budget and output. Both are opt-in; the unbudgeted default stays unchanged. Conflicting explicit budgets are rejected. |
-| `akm show` | Stable | `--outline` and `--lead` are additive aliases. `--max-tokens` bounds body fields on whole/exact/lead reads and reports estimation/truncation; legacy unbudgeted output is unchanged. |
-| `akm remember` | Stable | `--source`, `--description`, and `--expires` work independently of tags. Capture and enrichment processes are unchanged. |
+| `akm search` | Stable | `--include-proposed` and `--include-sessions` are Deprecated, removed in 0.11: use `--include quality=proposed` and `--include type=<excluded-type>`. |
+| `akm curate` | Stable | `--max-tokens` aliases the existing `--pack` budget and output. Both are opt-in; the unbudgeted default stays unchanged. Conflicting explicit budgets are rejected. `--pack` and the unpacked default are Deprecated, removed in 0.11 when curate returns bounded packed context by default. |
+| `akm show` | Stable | `--outline` and `--lead` are additive aliases. `--max-tokens` bounds body fields (after any frontmatter) on whole/exact/lead reads and reports estimation/truncation; legacy unbudgeted output is unchanged. `--detail brief` or `--outline` with a budget is a usage error. `--context`, `--max-chars` and `--detail` are Deprecated, removed in 0.11 (exact reads become the default). |
+| `akm remember` | Stable | `--source`, `--description`, and `--expires` work independently of tags. Capture and enrichment processes are unchanged. `--auto`, `--enrich` and `--show-similar` are Deprecated, removed in 0.11. |
 | `akm import` | Stable | Additive `--asset-ref` and `--type task` modes implemented for the next 0.10.x release (version pending); existing document inputs unchanged. |
 | `akm sync` | Stable | |
 | `akm clone` | Deprecated | Removed in 0.11: use `akm import <ref> --asset-ref` with equivalent asset, companion-file, and destination behavior. |
@@ -81,7 +81,7 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | `akm task enable` | Evolving | |
 | `akm task disable` | Evolving | |
 | `akm task run` | Deprecated | Removed in 0.11: use `akm run <qualified-task-ref>` with the same inputs. |
-| `akm task history` | Deprecated | Removed in 0.11: use `akm doctor log` for run history and `doctor metrics` for aggregates. |
+| `akm task history` | Deprecated | Removed in 0.11: use `akm doctor log` with a task-run source (`--task <id>`, `--bundle`) for run history, and `doctor metrics` for aggregates. The task-run source is still to be built; until then keep `task history`. |
 | `akm task sync` | Deprecated | Removed in 0.11: use `akm doctor scheduler sync`, retaining reconciliation and rebind behavior. |
 | `akm task prune` | Deprecated | Removed in 0.11: owned-orphan cleanup moves into migration/reconciliation; no separate prune command. |
 | `akm task doctor` | Deprecated | Removed in 0.11: use `akm doctor` for scheduler checks. |
@@ -91,8 +91,8 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 
 | Command | Status | Contract or migration action |
 | --- | --- | --- |
-| `akm doctor` | Evolving | Reuses health checks, flags, output, and exits in 0.10, including transitional report flags. Full task-doctor consolidation is still planned. Use `--read-only --no-probe` for offline inspection without health writes. |
-| `akm doctor metrics` | Evolving | Reuses `metrics`; its report content, layout, and JSON payload remain Experimental. Improve-run report selection is not yet consolidated here. |
+| `akm doctor` | Evolving | Reuses health checks, flags, output, and exits in 0.10, including transitional report flags. Full task-doctor consolidation is still planned. Use `--read-only --no-probe` for offline inspection without health writes; `--read-only` also records no CLI usage. |
+| `akm doctor metrics` | Evolving | Reuses `metrics`; its report content, layout, and JSON payload remain Experimental, except `doctor metrics usage --export`, whose JSON (schema version 1) is the stable part. Improve-run report selection is not yet consolidated here. |
 | `akm doctor info` | Evolving | Reuses `info`, preserving its existing fields and broken-config recovery behavior; `learning` remains Experimental. |
 | `akm doctor log` | Evolving | Reuses the existing event-stream command and output. |
 | `akm doctor prompt` | Evolving | Reuses `improve --show-prompt`, preserving task, bundle, strategy and runner selection, output, and read-only behavior. The old form remains. |
@@ -102,7 +102,7 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | `akm info` | Deprecated | Removed in 0.11: use `akm doctor info`. The current `learning` field is Experimental for its first release. |
 | `akm log` | Deprecated | Removed in 0.11: use `akm doctor log`. |
 | `akm lint` | Evolving | |
-| `akm improve` | Evolving | Gate-passed proposals are accepted and committed by default. The [three named autonomous lanes](#akm-improve-autonomy) require `experimental.improveAutonomy`; other documented writes do not. |
+| `akm improve` | Evolving | `--require-feedback-signal`, `--json-to-stdout`, `--show-prompt` and `--timeout-ms` are Deprecated, removed in 0.11 (replacements: an experimental setting, ordinary JSON output, `doctor prompt`, `--timeout`). Gate-passed proposals are accepted and committed by default. The [three named autonomous lanes](#akm-improve-autonomy) require `experimental.improveAutonomy`; other documented writes do not. |
 | `akm improve report` | Deprecated | Removed in 0.11: use `akm doctor metrics`, retaining run/window selection and usage, routing, and cost data. That consolidation is still planned; keep using this command until it is available. |
 | `akm improve judge` | Deprecated | Removed in 0.11: use `akm doctor judge`. Subcommand since 0.10 (was a magic `scope` value); reads one revision as JSON on stdin and writes nothing. The same as `akm judge reflect.quality`, in its older input and output shape; its `--strategy` flag was removed. |
 | `akm judge` | Deprecated | Removed in 0.11: use `akm doctor judge`. Runs a registered judge (`reflect.quality`, `distill.lesson`, `consolidate.pair`, `proposal.judgment`) on one JSON input from stdin, on the runner `--connection`, `--harness` and `--model` select. Output is one envelope (`judge`, `schemaVersion`, `runner`, `outcome`, `verdict?`, `reason?`); each judge carries its own `schemaVersion`. |
@@ -122,7 +122,7 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | Command | Status | Contract or migration action |
 | --- | --- | --- |
 | `akm setup` | Stable | Answer flags (`--endpoint`, `--api-key-env`, `--name`, `--harness`, `--embedding`, ...) are new in 0.10. The old JSON-valued `setup --config` and `--probe` were removed; see [upgrade history](#connections-and-harnesses-in-010-1244). `--learning on\|off` and the `improve.enabled` key it writes are Experimental for their first release. |
-| `akm upgrade` | Stable | Includes the plugin step. `--next` is Deprecated in favor of coordinated `--channel` selection. Checksums are verified by default; the explicit `AKM_UPGRADE_SKIP_CHECKSUM` recovery bypass is Deprecated for removal in 0.11. |
+| `akm upgrade` | Stable | Includes the plugin step. `--next` is Deprecated in favor of coordinated `--channel` selection. Checksums are verified by default; `--skip-checksum` is the explicit recovery bypass, and the `AKM_UPGRADE_SKIP_CHECKSUM` variable it replaces is Deprecated for removal in 0.11. |
 | `akm migrate status` | Evolving | Forwards to the standalone `akm-migrate` tool and renders its result through the normal `--format` pipeline. |
 | `akm migrate apply` | Evolving | Forwards to the standalone `akm-migrate` tool and renders its result through the normal `--format` pipeline. |
 | `akm-migrate status` / `akm-migrate apply` | Deprecated | Standalone executable removed in 0.11: use `akm migrate status` / `akm migrate apply`. |
@@ -136,7 +136,7 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | `akm models set` | Evolving | Changes a connection's model alias. |
 | `akm help` | Stable | |
 | `akm help migrate` | Deprecated | Removed in 0.11 with no CLI replacement: read the published changelog and migration guide. |
-| `akm hints` | Stable | Format-exempt agent guide; the brief guide is the default; `--detail full` selects the complete version. |
+| `akm hints` | Stable | Format-exempt agent guide; the brief guide is the default. `--detail full` (the complete guide) is Deprecated and dropped in 0.11 with global `--detail`; use the brief guide, `akm help <command>` and the CLI reference. |
 | `akm completions` | Stable | Format-exempt (emits shell script source). |
 
 ### Environment and secrets
@@ -214,11 +214,13 @@ owned consumers after replacements ship; document deprecations without changing
 old machine output. Branch-specific scheduler/storage migrations remain in 0.11.
 
 `task run`, `task doctor`, and `task explain` follow the run/doctor mappings in
-the command tables. Keep `task enable`, `task disable`, and the scheduler-facing
-`task dispatch` introduced on the 0.11 branch.
-**Keep duration shortcuts:** `3M` means 90 days, `3m` means three minutes;
-The additive `--timeout` alias accepts positive integer milliseconds or `ms`,
-`s`, `m`, `h`, `d`, `M` durations wherever `--timeout-ms` already applies.
+the command tables. Keep `task enable` and `task disable`.
+**Keep duration shortcuts:** `3M` means 90 days, `3m` means three minutes, for
+`--since`, `--expires`, `--window-compare` and the `timeout:` fields of task,
+agent and workflow files, which stay exactly as in 0.10.261118 through 0.10 (the
+files are unified in 0.11).
+Every `--timeout` flag takes one grammar: positive integer milliseconds, or
+`ms`, `s`, `m`, `h`, `d` (no month unit), including `workflow run` and `run`.
 Existing timeout scopes and defaults remain; equal explicit budgets are accepted,
 and conflicting values are rejected.
 
@@ -243,23 +245,29 @@ settings; remove their old public paths in 0.11 after parity is verified.
 
 ### Command and argument usage metrics
 
-0.10.x adds local, default-on measurement of every CLI command and supplied
+0.10.x adds local, default-on measurement (`usage.capture: false` in the config file
+turns it off; `--read-only` records nothing) of every CLI command and supplied
 argument, including help and unsuccessful attempts, for future keep/cut decisions.
 Record argument identities and safe values, not raw argv or sensitive payloads;
 separate explicit choices from defaults and AKM flags from child arguments.
 Report version, source, instance, outcomes, and usage combinations through
 `doctor metrics`, with a stable export for lab analysis and visible coverage gaps.
 Collection stays outside learning feedback/ranking and does not change process
-behavior. Preserve the collected baseline through the 0.11 storage migration;
+behavior. The data lives in `cli_usage_*` tables of `metrics.db` in the data directory,
+with no `PRAGMA user_version` or `schema_migrations` entry of its own. Preserve
+the collected baseline through the 0.11 storage migration, which keeps it in
+`metrics.db` in the resolved data directory;
 the migration guide tracks the data contract, retention, and verification.
 
 ### Remaining scheduled 0.11 removals and breaking changes
 
-The reviewed 0.11 branch already removes location environment variables, implicit
+The reviewed 0.11 branch already removes implicit
 bundle selection, old config readers, obsolete flags, duplicate result keys, and
 deep package imports, and replaces per-task OS scheduler entries. These are
 unreleased branch changes; their replacements are in the migration guide's
 [branch-change inventory](docs/migration/v0.10-to-v0.11.md#existing-011-branch-changes).
+The branch's removal of the location environment variables is reversed by decision:
+`AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR` and `AKM_CACHE_DIR` stay in 0.11.
 
 The following removals and cutovers are scheduled for **0.11.0**. Add compatible
 replacement controls in 0.10.x; keep old defaults, result shapes, and spellings
@@ -286,9 +294,11 @@ remove a research capability or skip its replacement.
 | `help migrate <version>` | Read the published changelog and migration guide |
 | Standalone `akm-migrate` executable | Use `akm migrate status` and `akm migrate apply` |
 
+In 0.11, the scheduler-facing `task dispatch` (introduced on the 0.11 branch, not in 0.10) is the one minute dispatcher: it spawns `akm run <bundle//tasks/id> --scheduled`, and `akm migrate apply` removes the 0.10 per-task rows.
+
 Before release, complete the exact mappings and synchronize this notice, the
 [recommendations](docs/reviews/cli-surface-recommendations-2026-11-11.md), and the
-migration guide. The command tables above are the current deprecation index.
+migration guide. The command tables above, including the flag notes in the `search`, `curate`, `show`, `remember` and `improve` rows, are the current deprecation index. Besides the flags named there, the output-contract removals (general YAML output, global `--output` and `--detail`, general Markdown and JSONL) are scheduled for 0.11 and listed in the table above. A deprecated form whose replacement exists in the same build prints one stderr line naming it ([CLI reference](docs/reference/cli.md#deprecation-notices)).
 
 ## Interface contracts
 
@@ -721,20 +731,20 @@ exceptions; [protected values](#protected-values) describes env/secret guarantee
 
 These are the documented 0.10 controls. Deprecated controls continue to work
 through 0.10; the 0.11 guide owns their exact replacements and conversion order.
-Do not remove location overrides until the replacement config preserves the
-existing data, state, and cache paths.
+The location overrides stay Supported in 0.11; `AKM_BUNDLE_DIR` is the retired one.
 
 | Variable | Status | Purpose and migration |
 | --- | --- | --- |
-| `AKM_BUNDLE_DIR` | Deprecated | Bundle location override; register the bundle and select `defaultBundle` before 0.11. |
-| `AKM_CONFIG_FILE` / `--config <file>` | Experimental | Explicit config-file selection; first released version pending. Credentials remain adjacent; existing location resolution applies when absent. |
-| `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR`, `AKM_STATE_DIR` | Deprecated | Filesystem layout overrides; migrate to `AKM_CONFIG_FILE` / `--config` and config `paths` in 0.11. `AKM_STATE_DIR` was previously undocumented as a supported control but still needs migration when in use. |
-| `AKM_VERBOSE`, `AKM_DEBUG` | Deprecated | Diagnostics; use the replacement verbosity/debug controls recorded in the migration guide. |
+| `AKM_BUNDLE_DIR` | Deprecated | Bundle location override; stays retired in 0.11. Register the bundle and select `defaultBundle` before then. |
+| `AKM_CONFIG_FILE` / `--config <file>` | Experimental | Explicit config-file selection; first released version pending. `AKM_CONFIG_FILE` beats `AKM_CONFIG_DIR` for the config file. `credentials.json` and `models.json` stay in the default config directory (`AKM_CONFIG_DIR`, else the platform default). An empty `AKM_CONFIG_FILE` is warned about once and ignored. Existing location resolution applies when absent. |
+| `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR`, `AKM_STATE_DIR` | Stable | Filesystem layout overrides. They stay Supported in 0.11: an environment variable beats config `paths`, which beats the default. |
+| `AKM_VERBOSE`, `AKM_DEBUG` | Deprecated | Diagnostics; use `--verbose` (removed as variables in 0.11). |
 | `AKM_REGISTRY_URL` | Deprecated | Comma-separated URLs replace configured registries for every registry search; `registry list` and `info` still show the configured list. Migrate the selection to config. |
 | `AKM_NPM_REGISTRY` | Evolving | npm mirror base URL instead of `registry.npmjs.org`; documented changes require a CHANGELOG note. |
-| `AKM_SQLITE_JOURNAL_MODE` | Deprecated | SQLite journal mode override for network filesystems; migrate to the configured storage setting. |
+| `AKM_SQLITE_JOURNAL_MODE` | Deprecated | SQLite journal mode override; keeps working in 0.10 and is removed in 0.11 with no replacement. akm uses WAL and falls back to DELETE on a detected network filesystem (NFS, SMB/CIFS, FUSE such as sshfs; Linux detection only, so a network-filesystem data directory on macOS or Windows is unsupported). Ephemeral containers keep SQLite on local disk and use snapshots. |
+| `AKM_EVENT_SOURCE` | Evolving | Documented input: `user`, `agent`, `task`, `improve` or `audit` marks the provenance of the commands a process runs (usage events and CLI usage counts); akm sets it for the programs it runs for a task. Absent or other values mean `unknown`. |
 | `AKM_INSTALL_DIR` | Stable | Install-script prefix. |
-| `AKM_UPGRADE_SKIP_CHECKSUM` | Deprecated | Explicit recovery bypass for a broken checksum in 0.10; removed in 0.11. Normal upgrade verification remains mandatory. |
+| `AKM_UPGRADE_SKIP_CHECKSUM` | Deprecated | Explicit recovery bypass for a broken checksum in 0.10; replaced by `akm upgrade --skip-checksum` and removed in 0.11. Normal upgrade verification remains mandatory. |
 
 See the [environment migration inventory](docs/migration/v0.10-to-v0.11.md#existing-011-branch-changes)
 for exact pending mappings. Runtime/test signals and repository scripts are
@@ -871,6 +881,6 @@ notes for Deprecated/Evolving changes and undocumented Experimental changes too.
   state akm reads and writes locally.
 
 CLI invocation usage is additive local diagnostic state (first release pending).
-`doctor metrics usage` exports schema version 1; preserve `usage.sqlite` and its
+`doctor metrics usage --export` is the stable part of `doctor metrics` JSON (schema version 1); preserve the `cli_usage_*` tables of `metrics.db` and their
 durable daily aggregates through the 0.11 migration. See the CLI usage reference
 for redaction and incomplete-observation limits.
