@@ -336,13 +336,21 @@ export const showCommand = defineJsonCommand({
         "Asset ref [bundle//]conceptId[#fragment]; `--detail brief` returns the outline (`toc`, each heading's slug)",
       required: true,
     },
+    outline: {
+      type: "boolean",
+      description: "Show the outline and brief metadata without the body (alias for --detail brief)",
+    },
+    lead: {
+      type: "boolean",
+      description: "Add the document lead to a Markdown fragment (alias for --context lead)",
+    },
     context: {
       type: "string",
       description: "Fragment presentation: exact (default) or lead (adds the document lead)",
     },
     "max-tokens": {
       type: "string",
-      description: "Context budget in tokens (needs --context lead; not with --max-chars)",
+      description: "Body budget estimated at four characters per token (not with --max-chars)",
     },
     "max-chars": {
       type: "string",
@@ -358,6 +366,12 @@ export const showCommand = defineJsonCommand({
     // `[origin//]meta[:name]` targets the stash `.meta/` convention, which is
     // not a typed asset ref — skip ref validation and let akmShowUnified
     // direct-read it. (the ref parser would reject the non-type `meta`.)
+    if (args.outline && parseMetaRef(args.ref)) {
+      throw new UsageError(
+        "--outline is unavailable for direct .meta reads; omit --outline to read the document.",
+        "INVALID_FLAG_VALUE",
+      );
+    }
     if (!parseMetaRef(args.ref)) parseBundleRef(args.ref);
     rejectExtraShowPositionals(args._, args.ref);
     const invocation = getParsedInvocation();
@@ -376,22 +390,35 @@ export const showCommand = defineJsonCommand({
     const explicitDetail = invocation.getFlagValue("--detail");
     // `--detail brief` forces the brief response regardless of projection.
     const showDetail: ShowDetailLevel | undefined =
-      explicitDetail === "brief" ? "brief" : explicitDetail === "full" ? "full" : undefined;
-    const contextMode = parseFragmentContextMode(typeof args.context === "string" ? args.context : undefined);
+      args.outline || explicitDetail === "brief" ? "brief" : explicitDetail === "full" ? "full" : undefined;
+    const explicitContext = typeof args.context === "string" ? parseFragmentContextMode(args.context) : undefined;
+    if (args.lead && explicitContext === "exact") {
+      throw new UsageError("--lead conflicts with --context exact.", "INVALID_FLAG_VALUE");
+    }
+    const contextMode = args.lead ? "lead" : (explicitContext ?? "exact");
     const maxTokens = parsePositiveIntFlag(args["max-tokens"] ?? undefined, "--max-tokens");
     const maxChars = parsePositiveIntFlag(args["max-chars"] ?? undefined, "--max-chars");
     if (maxTokens !== undefined && maxChars !== undefined) {
       throw new UsageError("--max-tokens and --max-chars are mutually exclusive.", "INVALID_FLAG_VALUE");
     }
-    const maxContextChars = maxChars ?? (maxTokens !== undefined ? maxTokens * 4 : undefined);
-    if (maxContextChars !== undefined && !Number.isSafeInteger(maxContextChars)) {
-      throw new UsageError("Fragment context budget is too large.", "INVALID_FLAG_VALUE");
+    if (args.outline && explicitDetail !== undefined && explicitDetail !== "brief") {
+      throw new UsageError("--outline conflicts with --detail normal, full or agent.", "INVALID_FLAG_VALUE");
+    }
+    if (args.outline && (contextMode === "lead" || maxTokens !== undefined || maxChars !== undefined)) {
+      throw new UsageError("--outline cannot be combined with lead context or a content budget.", "INVALID_FLAG_VALUE");
+    }
+    if (explicitDetail === "brief" && (args.lead || (maxTokens !== undefined && contextMode === "exact"))) {
+      throw new UsageError(
+        "A content budget or --lead requires body output; omit --detail brief.",
+        "INVALID_FLAG_VALUE",
+      );
     }
     const result = await akmShowUnified({
       ref: args.ref,
       detail: showDetail,
       contextMode,
-      maxContextChars,
+      maxContextChars: maxChars,
+      maxTokens,
       eventSource: resolveUsageEventSource(),
       project: stampedProject(resolveProject(loadConfig(), { project: getStringArg(args, "project") })),
     });

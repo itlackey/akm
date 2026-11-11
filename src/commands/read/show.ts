@@ -88,6 +88,8 @@ export async function akmShowUnified(input: {
   contextMode?: FragmentContextMode;
   /** Hard character budget for contextual fragment presentation. */
   maxContextChars?: number;
+  /** Optional body budget, estimated at four characters per token. */
+  maxTokens?: number;
   /**
    * Event source for usage logging. Defaults to `"user"`. Set to
    * `"improve"` when called from improve's reflect/distill agents
@@ -106,7 +108,23 @@ export async function akmShowUnified(input: {
   readOnly?: boolean;
 }): Promise<ShowResponse> {
   const ref = input.ref.trim();
-  validateFragmentContextRequest(input);
+  if (input.maxTokens !== undefined) {
+    if (!Number.isSafeInteger(input.maxTokens) || input.maxTokens <= 0 || !Number.isSafeInteger(input.maxTokens * 4)) {
+      throw new UsageError(
+        "--max-tokens must be a positive safe integer whose character budget is safe.",
+        "INVALID_FLAG_VALUE",
+      );
+    }
+    if (input.maxContextChars !== undefined) {
+      throw new UsageError("--max-tokens and --max-chars are mutually exclusive.", "INVALID_FLAG_VALUE");
+    }
+  }
+  const presentation = {
+    ...input,
+    maxContextChars:
+      input.contextMode === "lead" && input.maxTokens !== undefined ? input.maxTokens * 4 : input.maxContextChars,
+  };
+  validateFragmentContextRequest(presentation);
 
   // 0a. Stash `.meta/` convention: `[origin//]meta[:name]` direct-reads a
   //     human-authored orientation doc from the stash's `.meta/` directory.
@@ -114,7 +132,7 @@ export async function akmShowUnified(input: {
   //     resolved here before the index lookup; meta docs are not asset refs.
   {
     const metaRef = parseMetaRef(ref);
-    if (metaRef) return showStashMeta(metaRef, input.readOnly === true);
+    if (metaRef) return applyContentBudget(await showStashMeta(metaRef, input.readOnly === true), input.maxTokens);
   }
 
   // An opaque fragment selector is an indexed revision handle. Do not refresh
@@ -128,7 +146,7 @@ export async function akmShowUnified(input: {
   }
 
   // Try local filesystem (FTS5 index lookup)
-  const result = await showLocal(input);
+  const result = applyContentBudget(await showLocal(presentation), input.maxTokens);
   // Count prior shows of this ref before logging the current one.
   if (!input.skipLogging && !input.readOnly) {
     const consumedRef = result.ref ?? makeBundleRef(undefined, parseBundleRef(ref).conceptId);
@@ -140,6 +158,26 @@ export async function akmShowUnified(input: {
     }
   }
   return result;
+}
+
+/** Budget only rendered bodies: never reopen source files or widen sensitive renderers. */
+function applyContentBudget(response: ShowResponse, maxTokens: number | undefined): ShowResponse {
+  if (maxTokens === undefined) return response;
+  let remaining = maxTokens * 4;
+  let chars = 0;
+  let truncated = response.contextTruncated === true;
+  for (const key of ["content", "template", "prompt"] as const) {
+    const body = response[key];
+    if (body === undefined) continue;
+    const bounded = body.slice(0, remaining);
+    response[key] = bounded;
+    chars += bounded.length;
+    remaining -= bounded.length;
+    truncated ||= bounded.length < body.length;
+  }
+  response.contentBudget = { maxTokens, estimatedTokens: Math.ceil(chars / 4), truncated };
+  if (response.contextMode === "exact" && truncated) response.contextTruncated = true;
+  return response;
 }
 
 /**
@@ -203,7 +241,7 @@ function validateFragmentContextRequest(input: {
     throw new UsageError("Fragment context budget must be a positive safe integer.", "INVALID_FLAG_VALUE");
   }
   if (mode !== "lead" && input.maxContextChars !== undefined) {
-    throw new UsageError("--max-chars and --max-tokens require --context lead.", "INVALID_FLAG_VALUE");
+    throw new UsageError("--max-chars requires --context lead.", "INVALID_FLAG_VALUE");
   }
   if (mode !== "lead") return;
   if (parseMetaRef(input.ref)) {

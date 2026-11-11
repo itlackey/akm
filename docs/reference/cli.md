@@ -885,9 +885,9 @@ contends with a full `akm index` rebuild in progress.
 Display an asset by ref. On a markdown document `#fragment` selects one
 section by heading slug (falling back to case-insensitive heading text); an
 unmatched fragment lists the available slugs. For a large document, read the
-outline first and then only the sections you need: `akm show <ref> --detail
-brief` returns the document's `toc` without the body, and `akm show
-<ref>#<slug>` returns one section.
+outline first and then only the sections you need: `akm show <ref> --outline`
+returns the document's `toc` without the body, and `akm show <ref>#<slug>`
+returns one section.
 
 ```sh
 akm show scripts/deploy.sh
@@ -896,9 +896,10 @@ akm show agents/architect
 akm show commands/release
 akm show workflows/ship-release
 akm show knowledge/guide                 # the whole document, plus its toc
-akm show knowledge/guide --detail brief  # the outline (toc), no body
+akm show knowledge/guide --outline       # the outline (toc), no body
 akm show knowledge/guide#authentication  # just that section
-akm show '<search-result-ref>' --context lead --max-tokens 800
+akm show knowledge/guide --max-tokens 800 # bounded body, without needing a fragment
+akm show knowledge/guide#authentication --lead --max-tokens 800
 akm show knowledge/guide#nope            # lists the available fragment slugs
 
 # Bundle .meta/ orientation docs — direct-read, not indexed:
@@ -910,10 +911,28 @@ akm show github:owner/repo//meta    # an installed bundle's .meta/index.md
 
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |
+| `--outline` | boolean | `false` | Outline and brief metadata without the body; alias for `--detail brief`. |
+| `--lead` | boolean | `false` | Add the indexed-safe document lead to a Markdown fragment; alias for `--context lead`. |
 | `--context` | `exact`, `lead` | `exact` | Fragment presentation. `exact` preserves the selected-section behavior. `lead` returns the indexed-safe first fragment followed by `[Selected matching fragment]` and the selected fragment. |
 | `--max-chars` | positive integer | `3200` for `lead` | Hard contextual content budget in characters; requires `--context lead` and is mutually exclusive with `--max-tokens`. |
-| `--max-tokens` | positive integer | _(none)_ | Approximate contextual budget using four characters per token; requires `--context lead` and is mutually exclusive with `--max-chars`. |
+| `--max-tokens` | positive integer | _(none)_ | Approximate body budget using four characters per token, for whole assets, exact fragments or lead context; mutually exclusive with `--max-chars`. |
 | `--project` | project name, `none` | _(by directory)_ | The [project](#projects) recorded on this read's usage event, for [`akm search --by-usage`](#usage-list-by-usage); changes nothing else. `none` records no project; an unknown name is a usage error. |
+
+`--max-tokens` bounds the returned `content`, `template` and `prompt` text,
+not metadata, outlines or structured fields such as workflow steps. The
+`contentBudget` object reports `maxTokens`, returned `estimatedTokens` and
+`truncated`; estimates use four characters per token, not a model tokenizer.
+Text output states the same limit and truncation. A read without a budget
+still returns the complete body. Sensitive env and secret assets retain their
+metadata-only output; a budget never exposes their values.
+
+`--outline` cannot be combined with a content budget, lead context or an
+explicit `--detail` other than `brief`. `--lead` requires an indexed Markdown
+fragment and conflicts with `--context exact` and `--detail brief`. An exact
+read with `--max-tokens` also requires body output, so omit `--detail brief`.
+Direct `.meta` reads support `--max-tokens` but not `--outline`.
+The older `--detail brief`, `--context lead` and `--max-chars` forms remain
+available with their existing behavior.
 
 `meta` is not an asset type — `[<origin>//]meta[:<name>]` direct-reads a
 human-authored orientation doc from a bundle's optional `.meta/` directory
