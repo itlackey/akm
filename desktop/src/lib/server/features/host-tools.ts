@@ -4,7 +4,7 @@
 
 import { execFile, spawn } from "node:child_process";
 import { constants } from "node:fs";
-import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { parse } from "jsonc-parser";
@@ -151,7 +151,12 @@ export const findProgram: Find = async (name, env = process.env) => {
 function killTree(pid: number | undefined) {
   if (!pid) return;
   try {
-    if (process.platform === "win32") execFile("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true });
+    if (process.platform === "win32")
+      execFile(
+        path.win32.join(process.env.SystemRoot || "C:\\Windows", "System32", "taskkill.exe"),
+        ["/pid", String(pid), "/T", "/F"],
+        { windowsHide: true },
+      );
     else process.kill(-pid, "SIGKILL");
   } catch {
     /* already gone */
@@ -196,7 +201,7 @@ export const runHost: Run = (file, args, { env, home, timeout = 30_000 }) =>
       reject(
         Object.assign(error, {
           code: stopped === "timeout" ? "ETIMEDOUT" : stopped === "output" ? "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" : code,
-          killed: stopped === "timeout",
+          killed: Boolean(stopped),
           signal,
           stdout,
           stderr,
@@ -255,6 +260,8 @@ function errorMessage(error: Loose) {
   if (error instanceof SoftwareError) return error.message;
   if (error?.code === "EACCES" || error?.code === "EPERM")
     return "Permission denied. Use the installer that owns this CLI; Desktop will not use sudo.";
+  if (error?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER")
+    return "The command produced too much output and was stopped. Check its native status before retrying.";
   if (error?.killed || error?.code === "ETIMEDOUT")
     return "The command timed out. Check its native status before retrying.";
   return "The native command did not complete successfully. Check the connection and use the command shown in Details for diagnostics.";
@@ -381,7 +388,12 @@ export class HostTools {
       }),
     );
     const target = cliDirectory(this.platform, env, this.home).path;
-    const cliManaged = cli.path === path.join(target, this.platform === "win32" ? "akm.exe" : "akm");
+    const file = path.join(target, this.platform === "win32" ? "akm.exe" : "akm");
+    // Desktop's own install is a regular file where its installer puts it, and a standalone binary when akm says how it
+    // was installed: a package manager's link in the same directory is not Desktop's to replace.
+    const stat = await lstat(file).catch(() => undefined);
+    const method = this.state.upgrade?.installMethod;
+    const cliManaged = cli.path === file && stat?.isFile() === true && (!method || method === "binary");
     Object.assign(this.state, { cli, bun, harnesses, cliManaged });
   }
   /**
@@ -398,7 +410,7 @@ export class HostTools {
     if (this.pending) throw new Error("A software operation is already running.");
     if (action !== "check" && this.state.unsettled)
       throw new Error(
-        `The earlier ${this.state.unsettled} timed out, and its installer may still be running. Use Check CLI & plugins to confirm what it left before trying again.`,
+        `The earlier ${this.state.unsettled} was stopped, and its installer may still be running. Use Check CLI & plugins to confirm what it left before trying again.`,
       );
     if (action !== "check" && process.send) process.send({ type: "desktop-host-operation", busy: true });
     this.state.phase = action;
@@ -407,7 +419,7 @@ export class HostTools {
     this.state.receipt = undefined;
     this.state.command = undefined;
     this.state.consent = undefined;
-    if (action !== "check") this.state.action = undefined;
+    this.state.action = undefined;
     // `--next` selects the newest release, prereleases included, for a check and for the upgrade; a switch is explicit.
     const flags = action === "switch-channel" ? ["--channel", channel] : channel === "next" ? ["--next"] : [];
     this.pending = Promise.resolve()
@@ -433,7 +445,16 @@ export class HostTools {
         await this.inventory(env);
         if (this.state.cli?.runnable && this.state.cli.path) {
           const acted = this.state.command;
-          const check = action === "switch-channel" && channel === "latest" ? [] : flags.filter((f) => f === "--next");
+          // Look again the way the CLI is followed after this action: an explicit switch names its target channel, an
+          // upgrade or check keeps its own flag, and a plugin or CLI install changes no CLI channel.
+          const check =
+            action === "switch-channel"
+              ? channel === "next"
+                ? ["--next"]
+                : []
+              : action === "upgrade-cli" || action === "check"
+                ? flags
+                : [];
           const checked = ["akm upgrade --check", ...check, "--format json"].join(" ");
           this.state.command = checked;
           try {
@@ -465,7 +486,7 @@ export class HostTools {
       .catch(async (error) => {
         this.state.error = errorMessage(error);
         this.state.errorDetail = errorDetail(error);
-        if (error?.killed || error?.code === "ETIMEDOUT") this.state.unsettled = action;
+        if (action !== "check" && (error?.killed || error?.code === "ETIMEDOUT")) this.state.unsettled = action;
         // A failed or partial action may still have changed what is installed: show what is there now.
         if (action !== "check")
           await this.environment()
@@ -550,20 +571,22 @@ export class HostTools {
     const targetFile = path.join(directory, windows ? "akm.exe" : "akm");
     const detected = this.state.cli;
     // Never overwrite an install Desktop did not make: one elsewhere belongs to the installer that put it there.
-    if (detected?.installed && detected.path !== targetFile)
+    if (detected?.installed && !this.state.cliManaged)
       throw new SoftwareError(
-        `akm is installed at ${detected.path}, outside ${target.shown}. Update or repair it with the installer that owns it (for example your package manager); Desktop will not replace it.`,
+        `akm is installed at ${detected.path}, not as a standalone binary Desktop put in ${target.shown}. Update or repair it with the installer that owns it (for example your package manager); Desktop will not replace it.`,
       );
     await mkdir(directory, { recursive: true });
     await access(directory, constants.W_OK);
     // A binary already in the install directory (even off PATH, or one that does not run) is replaced only on request.
-    const present = await access(targetFile).then(
-      () => true,
-      (error) => {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-        return false;
-      },
-    );
+    const found = await lstat(targetFile).catch((error) => {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      return undefined;
+    });
+    if (found && !found.isFile())
+      throw new SoftwareError(
+        `${targetFile} is a link or not a regular file, so another installer owns it. Desktop will not replace it.`,
+      );
+    const present = Boolean(found);
     if (present && !options.consent) {
       this.state.consent = "cli";
       throw new SoftwareError(

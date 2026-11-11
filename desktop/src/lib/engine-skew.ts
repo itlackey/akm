@@ -61,3 +61,46 @@ export function hostUpgradeOutrunsDesktop(engine: string | undefined, latest: st
 /** What Desktop's own `INDEX_SCHEMA_INCOMPATIBLE` means to its user: akm's text says "upgrade akm", and Desktop is akm. */
 export const NEWER_INDEX_MESSAGE =
   "This library was upgraded by a newer AKM than the one built into this app. Update AKM Desktop to the latest release.";
+
+/**
+ * What a version difference between the host CLI and Desktop's engine asks of the person. A difference inside one release
+ * line is informational; across lines, akm's own refusal (`INDEX_SCHEMA_INCOMPATIBLE`) is the real signal, so the advice
+ * names the remedy for when it appears.
+ */
+export function skewAdvice(
+  engine: string | undefined,
+  host: string | undefined,
+): { kind: "none" | "info" | "act"; text: string } {
+  const skew = classifyEngineSkew(engine, host);
+  if (skew !== "host-older" && skew !== "host-newer") return { kind: "none", text: "" };
+  const where = `Host akm ${host} is ${skew === "host-older" ? "older" : "newer"} than this app's engine (${engine}).`;
+  if (sameReleaseLine(engine, host))
+    return {
+      kind: "info",
+      text: `${where} They are builds of the same release line, so nothing needs doing unless AKM Desktop reports an incompatible library.`,
+    };
+  return {
+    kind: "act",
+    text:
+      skew === "host-older"
+        ? `${where} If the library index changed, the CLI will ask you to upgrade: use Update CLI & plugins.`
+        : `${where} If AKM Desktop says the library was upgraded by a newer AKM, update AKM Desktop.`,
+  };
+}
+
+/**
+ * Why the CLI is not updated: its next release is newer than the engine in this app, which could not read a library the
+ * CLI migrated. Says when Desktop's own channel will not offer that release, and that plugins update with the CLI because
+ * akm has no plugins-only update.
+ */
+export function holdReason(
+  engine: string | undefined,
+  latest: string | undefined,
+  desktopChannel: "stable" | "prerelease",
+): string | undefined {
+  if (!hostUpgradeOutrunsDesktop(engine, latest)) return undefined;
+  const notOffered = desktopChannel === "stable" && /-/.test(latest ?? "");
+  return `Version ${latest} is newer than the AKM built into this app${
+    notOffered ? ", and AKM Desktop follows stable releases only, so it will not be offered to Desktop" : ""
+  }. The CLI and its plugins are updated together (akm has no plugins-only update) and are held until AKM Desktop can read what they migrate.`;
+}
