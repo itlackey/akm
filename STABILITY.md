@@ -43,9 +43,9 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | `akm curate` | Stable | `--max-tokens` aliases the existing `--pack` budget and output. Both are opt-in; the unbudgeted default stays unchanged. Conflicting explicit budgets are rejected. |
 | `akm show` | Stable | `--outline` and `--lead` are additive aliases. `--max-tokens` bounds body fields on whole/exact/lead reads and reports estimation/truncation; legacy unbudgeted output is unchanged. |
 | `akm remember` | Stable | `--source`, `--description`, and `--expires` work independently of tags. Capture and enrichment processes are unchanged. |
-| `akm import` | Stable | |
+| `akm import` | Stable | Additive `--asset-ref` and `--type task` modes implemented for the next 0.10.x release (version pending); existing document inputs unchanged. |
 | `akm sync` | Stable | |
-| `akm clone` | Deprecated | Removed in 0.11: use `akm import <ref>` with equivalent asset, companion-file, and destination behavior. |
+| `akm clone` | Deprecated | Removed in 0.11: use `akm import <ref> --asset-ref` with equivalent asset, companion-file, and destination behavior. |
 | `akm feedback` | Stable | |
 
 ### Bundles and registries
@@ -77,7 +77,7 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | `akm workflow run` | Deprecated | Removed in 0.11: use `akm run <ref>`; retain workflow lifecycle commands for existing runs. |
 | `akm agent` | Deprecated | Removed in 0.11: use `akm run <ref>` for assets; invoke the agent's own CLI for the no-ref interactive launch. |
 | `akm command run` / `akm command <ref>` | Deprecated | Removed in 0.11: use `akm run <ref>` with the same template arguments and dispatch. |
-| `akm task add` | Deprecated | Removed in 0.11: use explicit typed-task import, then `task enable` when activation is wanted. |
+| `akm task add` | Deprecated | Removed in 0.11: use `akm import <file> --type task`, then `task enable` when activation is wanted. |
 | `akm task enable` | Evolving | |
 | `akm task disable` | Evolving | |
 | `akm task run` | Deprecated | Removed in 0.11: use `akm run <qualified-task-ref>` with the same inputs. |

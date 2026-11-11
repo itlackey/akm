@@ -38,6 +38,7 @@ import { placementTypes } from "../../core/asset/asset-placement";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { isHttpUrl, resolveStashDir } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
+import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { resolveBundleWriteTarget } from "../../core/mutation-target";
 import { getRunLogDir } from "../../core/paths";
@@ -57,7 +58,9 @@ import {
   resolveXrefsForWrite,
   writeMarkdownAsset,
 } from "../read/knowledge";
+import { importTaskFile } from "./import-task";
 import { assembleInfo } from "./info";
+import { akmClone } from "./source-clone";
 
 /** Matches the high-frequency per-committed-batch progress line (#954), excluded from non-verbose JSON-mode stderr. */
 const EMBEDDED_BATCH_PROGRESS_PATTERN = /^Embedded \d+\/\d+ entries\.$/;
@@ -232,25 +235,28 @@ export const infoCommand = defineJsonCommand({
 export const importKnowledgeCommand = defineJsonCommand({
   meta: {
     name: "import",
-    description: "Import a knowledge document or URL into the default bundle",
+    description: "Import a document, explicit asset ref, or typed task file",
   },
   args: {
     source: {
       type: "positional",
-      description: 'Source file path, URL, or "-" to read from stdin',
+      description: "Document file/URL/stdin, asset ref with --asset-ref, or task file with --type task",
       required: true,
     },
     name: {
       type: "string",
-      description: "Knowledge name (flat; default: source filename or content slug)",
+      description: "Asset rename, task id, or flat knowledge name (default: source name)",
     },
+    "asset-ref": { type: "boolean", description: "Copy source as an asset ref (same behavior as clone)" },
+    type: { type: "string", description: "Explicit file type: task" },
+    dest: { type: "string", description: "Unmanaged destination directory (requires --asset-ref)" },
     path: {
       type: "string",
       description: "Subdirectory under knowledge/ (e.g. 'projects/example')",
     },
     force: {
       type: "boolean",
-      description: "Overwrite an existing knowledge document with the same name",
+      description: "Overwrite an existing destination asset with the same name",
       default: false,
     },
     bundle: {
@@ -267,6 +273,35 @@ export const importKnowledgeCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
+    if (args.type !== undefined && args.type !== "task") {
+      throw new UsageError("--type accepts only task.", "INVALID_FLAG_VALUE");
+    }
+    if (args["asset-ref"] || args.type === "task") {
+      if (
+        (args["asset-ref"] && args.type !== undefined) ||
+        args.path !== undefined ||
+        args.xref !== undefined ||
+        args.supersedes !== undefined ||
+        (args.type === "task" && args.dest !== undefined)
+      ) {
+        throw new UsageError(
+          "Asset-ref and task imports cannot combine input modes or use document-only flags; --dest requires --asset-ref.",
+          "INVALID_FLAG_VALUE",
+        );
+      }
+      const result = args["asset-ref"]
+        ? await akmClone({
+            sourceRef: args.source,
+            newName: args.name,
+            force: args.force,
+            target: args.bundle,
+            dest: args.dest,
+          })
+        : await importTaskFile({ source: args.source, name: args.name, force: args.force, target: args.bundle });
+      output("import", { ok: true, source: args.source, ...result });
+      return;
+    }
+    if (args.dest !== undefined) throw new UsageError("--dest requires --asset-ref.", "INVALID_FLAG_VALUE");
     // `--name` is a flat name; subdirectory placement is `--path`'s job.
     assertFlatAssetName(args.name);
     // Collect and validate --xref occurrences (repeatable; citty only exposes

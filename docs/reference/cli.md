@@ -2147,6 +2147,29 @@ both assets untouched — no partial correction.
 
 ### import
 
+The additive asset and task modes below are implemented for the next 0.10.x
+release (version pending); existing document imports keep their semantics.
+
+- `akm import <ref> --asset-ref` delegates to `clone`, preserving asset type,
+  companion files, provenance, `--name`, `--force`, and managed `--bundle` versus
+  unmanaged `--dest`. Remote asset locators use clone's existing resolution.
+- `akm import ./nightly.yml --type task` validates the current task-source-v4
+  schema and writes the authored YAML into `tasks/`. Only local files are
+  accepted. `--name` overrides the filename-derived task id; `--force` permits
+  replacing an existing task. `--bundle` selects the managed destination.
+  New tasks stay disabled until `task enable`; updates preserve host activation,
+  including legacy activation without `scheduler.enabled`. For a new task,
+  legacy installed activations are captured before its file exists and a stale
+  activation for that ref is removed before publishing the file. If a later
+  file write fails, that disabled host choice remains recorded. Import never
+  installs, updates, or removes
+  native scheduler entries. Run `task sync` when an enabled task's definition
+  changes and its native schedule needs reconciliation.
+
+These modes are mutually exclusive and reject document-only `--path`, `--xref`,
+and `--supersedes` before reading or writing. `--dest` requires `--asset-ref`.
+Without either new mode, YAML and ref-shaped paths remain knowledge imports.
+
 Import a knowledge document. This writes a markdown file into `knowledge/` in
 the configured write target and returns the resulting ref. The source may be a
 file path, a single HTTP/HTTPS URL, or `-` for stdin.
@@ -2176,7 +2199,10 @@ akm import ./docs/auth-flow.md --bundle team-bundle
 
 | Flag | Description |
 | --- | --- |
-| `--name` | Optional knowledge name. Defaults to the source filename, URL path, or a slug from stdin content |
+| `--asset-ref` | Copy an asset ref using clone semantics; explicitly distinguishes it from a document path. |
+| `--type task` | Import a validated local task definition file, preserving authored source. |
+| `--dest <dir>` | Unmanaged copy destination; requires `--asset-ref` and cannot combine with `--bundle`. |
+| `--name` | Asset rename or task id in explicit modes; optional knowledge name. Defaults to the source filename, URL path, or a slug from stdin content |
 | `--force` | Overwrite an existing knowledge document with the same name |
 | `--bundle <name>` | Override the write destination. Accepts a source name from your config; falls back to `defaultWriteTarget` then the working bundle. |
 | `--xref <ref>` | Cross-reference ref merged into the document's `xrefs:` frontmatter list. Repeatable. A document without frontmatter gains a block; a document with valid frontmatter keeps every existing key and value and gets the refs dedupe-appended (never a nested second block). Each ref must resolve in the write target or a configured source; an unresolvable ref fails with exit 2 before anything is written. If the document's existing frontmatter is not a parseable YAML mapping, the import fails (exit 2) rather than rewriting the block lossily — fix the frontmatter or import without `--xref`, which preserves the file verbatim. |
