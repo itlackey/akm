@@ -11,13 +11,14 @@ import type { AkmHealthResult } from "../../../src/commands/health/types";
 import { createProposal } from "../../../src/commands/proposal/repository";
 import { STATE_MIGRATIONS } from "../../../src/core/state/migrations";
 import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
-import { openDatabase } from "../../../src/storage/database";
+import { type Database, openDatabase } from "../../../src/storage/database";
 import { upsertTaskHistory } from "../../../src/storage/repositories/task-history-repository";
 import { runMigrations } from "../../../src/storage/sqlite-migrations";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
 let emptyBin: string;
+let writer: Database | undefined;
 
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
@@ -32,7 +33,11 @@ beforeEach(() => {
     },
   });
 });
-afterEach(() => storage.cleanup());
+afterEach(() => {
+  writer?.close();
+  writer = undefined;
+  storage.cleanup();
+});
 
 async function cli(args: string[]) {
   const child = Bun.spawn([process.execPath, path.resolve("src/cli.ts"), "health", ...args], {
@@ -96,13 +101,18 @@ describe("akm health --read-only", () => {
   });
 
   test.each([false, true])("current state is read without a write probe (report=%s)", async (report) => {
+    // Keep the fixture writer alive: finalizing its last connection can checkpoint
+    // WAL during the subprocess wait, independently of the read-only command.
+    writer = openStateDatabase();
     const proposal = createProposal(storage.stashDir, {
       ref: "lessons/fixture",
       source: "reflect",
       sourceRun: "fixture",
       payload: { content: "---\ndescription: Fixture guidance\nwhen_to_use: Testing health reports\n---\n\nBody.\n" },
     });
+    expect(fs.statSync(`${getStateDbPath()}-wal`).size).toBeGreaterThan(0);
     const before = dataSnapshot();
+    Bun.gc(true);
     const result = await health(["--read-only", ...(report ? ["--report"] : [])]);
     expect(result.code).toBe(0);
     expect(result.data.status).toBe("pass");
@@ -164,9 +174,9 @@ describe("akm health --read-only", () => {
   });
 
   test("warnings retain exit code 4 without modifying state", async () => {
-    const db = openStateDatabase();
+    writer = openStateDatabase();
     const now = new Date().toISOString();
-    upsertTaskHistory(db, {
+    upsertTaskHistory(writer, {
       task_id: "fixture-failure",
       status: "failed",
       started_at: now,
@@ -177,8 +187,9 @@ describe("akm health --read-only", () => {
       target_ref: null,
       metadata_json: JSON.stringify({ durationMs: 1 }),
     });
-    db.close();
+    expect(fs.statSync(`${getStateDbPath()}-wal`).size).toBeGreaterThan(0);
     const before = dataSnapshot();
+    Bun.gc(true);
     const result = await health(["--read-only"]);
     expect(result.code).toBe(4);
     expect(result.data.status).toBe("warn");
