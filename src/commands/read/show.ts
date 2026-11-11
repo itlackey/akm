@@ -727,7 +727,7 @@ function applyMarkdownResponsePayload(response: ShowResponse, content: string): 
 }
 
 const SHOW_OUTLINE_HINT =
-  "Run `akm show <ref> --detail brief` for the document's outline (`toc`, no body), then `akm show <ref>#<slug>` for one section.";
+  "Run `akm show <ref> --outline` for the document's outline (`toc`, no body), then `akm show <ref>#<slug>` for one section.";
 
 function requireMarkdownSection(
   content: string,

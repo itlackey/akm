@@ -7,7 +7,7 @@ You have access to a searchable library of scripts, skills, commands, agents, kn
 ```sh
 akm search "<query>"                          # Search local sources (or the project's `from`)
 akm curate "<task>"                          # Curate the best matches for a task
-akm curate "<task>" --pack <tokens>           # Return the hits' content as one token-budgeted bundle
+akm curate "<task>" --max-tokens <tokens>      # Return the hits' content as one token-budgeted bundle
 akm search "<query>" --type workflow          # Filter by asset type
 akm search "<query>" --from all                # Also search registries
 akm search "<query>" --from registry           # Search registries only
@@ -47,14 +47,14 @@ Combine search + follow-up hints into a dense summary for a task or prompt.
 akm curate "plan a release"                   # Pick top matches across asset types
 akm curate "deploy a Bun app" --limit 3       # Keep the summary shorter
 akm curate "review architecture" --type workflow # Restrict to one asset type
-akm curate "plan a release" --pack 4000       # Pack the hits' content into one blob of at most 4000 tokens
+akm curate "plan a release" --max-tokens 4000 # Pack the hits' content into one blob of at most 4000 tokens
 ```
 
 ## Show
 
 Display an asset by ref from the local index and materialized bundle files only.
 On a markdown document `#fragment` selects one section by heading slug. For a
-large document, `akm show <ref> --detail brief` returns its outline (`toc`, no
+large document, `akm show <ref> --outline` returns its outline (`toc`, no
 body); then `akm show <ref>#<slug>` reads only the sections you need.
 
 ```sh
@@ -64,7 +64,7 @@ akm show commands/release                     # Show command (returns template)
 akm show agents/architect                     # Show agent (returns system prompt)
 akm show workflows/ship-release               # Show parsed workflow steps
 akm show knowledge/guide                      # Whole document, plus its `toc`
-akm show knowledge/guide --detail brief       # Outline only: `toc` (level, text, slug, startLine), no body
+akm show knowledge/guide --outline             # Outline only: `toc` (level, text, slug, startLine), no body
 akm show knowledge/guide#auth                 # Just the "Auth" section
 akm show knowledge/my-doc                     # Show materialized local content
 ```
@@ -98,7 +98,7 @@ akm import https://example.com/docs/auth       # Fetch one URL and import it as 
 akm import ./doc.md --bundle my-other-bundle    # Route import to a named writable bundle source
 akm workflow create ship-release               # Create a workflow asset in the bundle
 akm lint --type workflows                      # Parse and compile every workflow source; list every error
-akm workflow run workflows/ship-release        # Start a new run and execute it
+akm run workflows/ship-release                 # Start a new run and execute it
 akm feedback skills/code-review --positive     # Record that an asset helped (ranks it higher; no rewrite)
 akm feedback agents/reviewer --negative --reason "says to run jest; the suite runs on vitest" # Content wrong or stale: lowers its ranking; improve may repair its frontmatter
 akm feedback knowledge/opencode-server --negative --reason "the default port is 4096, not 8000" --replace "port 8000" --with "port 4096" --source "https://opencode.ai/docs/server/" # Apply an exact fix
@@ -191,8 +191,8 @@ workflow. Direct run-id commands still target the exact run.
 ```sh
 akm workflow create ship-release --print     # Print a starter workflow template, without writing
 akm workflow create ship-release             # Scaffold a new workflow asset
-akm workflow run workflows/ship-release --version=1.2.3  # Start and execute with exact-name parameter flags
-akm workflow run <run-id> --max-retries 2 --timeout 10m  # Continue a run with invocation-wide controls
+akm run workflows/ship-release --version=1.2.3  # Start and execute with exact-name parameter flags
+akm run <run-id> --max-retries 2 --timeout 10m  # Continue a run with invocation-wide controls
 akm workflow status <run-id>                 # Show the exact run by id
 akm workflow resume <run-id>                 # Re-activate a blocked or failed run, then `run <run-id>`
 akm workflow list                            # List workflow runs on this host
@@ -378,7 +378,7 @@ akm task sync                                  # Reconcile activated refs from e
 akm task sync --rebind                         # Also re-pin the scheduler's akm binary/spelling
 akm task doctor                                # Scheduler binding + runtime eligibility diagnosis
 akm task history                               # Recent run rows (status, timing)
-akm task run <id>                              # Run one task immediately (works when disabled)
+akm run <bundle>//tasks/<id>                   # Run one task immediately (works when disabled)
 akm task explain <ref>                         # Read-only: declared inputs, target, schedule — spawns nothing
 akm search --type task                         # Enumerate task assets
 ```
@@ -399,24 +399,26 @@ conversion with `akm migrate apply --dry-run`.
 
 ```sh
 akm agent --prompt "summarize open proposals"   # Run an agent on your default harness (else akm's own runtime over your connection)
-akm agent agents/architect --prompt "..."       # Embody a bundle agent asset (system prompt, model)
-akm command run commands/release                # Canonical reusable-command dispatch
+akm run agents/architect --prompt "..."         # Embody a bundle agent asset (system prompt, model)
+akm run commands/release                       # Reusable-command dispatch
 akm agent --model reasoning --prompt "..."      # Model override (alias fast|balanced|reasoning, or an exact name)
 akm agent --harness claude --prompt "..."       # Run on a named harness (or --connection <name>)
 ```
 
 ## Health, Info, and the Event Log
 
+`akm health`, `info`, `metrics` and `log` still work; they are deprecated for the `akm doctor` forms below.
+
 ```sh
-akm info                                       # Capabilities, bundle dir, index stats, semantic-search status, connections and harnesses
-akm health                                     # Runtime diagnostics, connections and harnesses; exit 0 ok / 4 warn / 1 fail
-akm health --report                            # Adds accept-rate metrics
-akm metrics                                    # Usage, feedback, utility, LLM tokens, tasks, workflows (last 30d, read-only)
-akm metrics --since 7d                         # Narrow the window
-akm log                                        # Append-only event stream (mutations, feedback, indexing)
-akm log --ref <ref>                            # One asset's event trail
-akm log --since @offset:<id>                   # Durable row-id cursor — poll this to follow the stream
-akm log --run <run-id>                         # Events for one workflow-engine run
+akm doctor info                                # Capabilities, bundle dir, index stats, semantic-search status, connections and harnesses
+akm doctor                                     # Runtime diagnostics, connections and harnesses; exit 0 ok / 4 warn / 1 fail
+akm doctor --report                            # Adds accept-rate metrics
+akm doctor metrics                             # Usage, feedback, utility, LLM tokens, tasks, workflows (last 30d, read-only)
+akm doctor metrics --since 7d                  # Narrow the window
+akm doctor log                                 # Append-only event stream (mutations, feedback, indexing)
+akm doctor log --ref <ref>                     # One asset's event trail
+akm doctor log --since @offset:<id>            # Durable row-id cursor — poll this to follow the stream
+akm doctor log --run <run-id>                  # Events for one workflow-engine run
 ```
 
 ## Output Control
@@ -466,7 +468,7 @@ Exit codes:
 | 0 | Success | — |
 | 1 | Not found or command-reported failure | `NotFoundError`, command result |
 | 2 | Usage / bad input | `UsageError` |
-| 4 | Health warning (`akm health` only) | — |
+| 4 | Health warning (`akm doctor` or `akm health`) | — |
 | 70 | Internal / unclassified error | unexpected throw |
 | 75 | Transient: retry shortly | `TransientError` (another akm process holds a lock) |
 | 78 | Configuration error | `ConfigError` |

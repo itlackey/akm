@@ -359,7 +359,7 @@ export const showCommand = defineJsonCommand({
     ref: {
       type: "positional",
       description:
-        "Asset ref [bundle//]conceptId[#fragment]; `--detail brief` returns the outline (`toc`, each heading's slug)",
+        "Asset ref [bundle//]conceptId[#fragment]; `--outline` returns the outline (`toc`, each heading's slug)",
       required: true,
     },
     outline: {
