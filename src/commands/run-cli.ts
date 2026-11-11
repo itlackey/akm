@@ -87,7 +87,10 @@ export const runAssetCommand = defineJsonCommand({
       type = document?.type ?? "unknown";
       target = makeBundleRef(match.bundleId, match.owner.conceptId);
     }
-    setResolvedUsageAssetType(type);
+    setResolvedUsageAssetType(
+      type,
+      Object.hasOwn(EXECUTORS, type) ? { args: EXECUTORS[type as ExecutableType].command.args as ArgsDef } : undefined,
+    );
     if (!Object.hasOwn(EXECUTORS, type)) {
       throw new UsageError(
         `akm run cannot execute asset type "${type}". Supported types: agent, command, task, workflow.`,

@@ -1198,8 +1198,19 @@ export function insertBareListSubcommand(argv: string[]): string[] {
  * stop the rest of startup from running after a fatal early error.
  */
 export async function runCli(): Promise<void> {
-  const finishUsage = startUsage(main as UsageCommand, process.argv.slice(2), pkgVersion);
+  const originalArgs = process.argv.slice(2);
+  let schedulerError: unknown;
   try {
+    process.argv = consumeSchedulerContextArg(process.argv);
+  } catch (error) {
+    schedulerError = error;
+  }
+  const finishUsage = startUsage(main as UsageCommand, originalArgs, pkgVersion);
+  try {
+    if (schedulerError !== undefined) {
+      emitJsonError(schedulerError);
+      return;
+    }
     await runCliInvocation();
   } finally {
     // Deliver catchable signals queued during synchronous child execution.
@@ -1210,7 +1221,6 @@ export async function runCli(): Promise<void> {
 
 async function runCliInvocation(): Promise<void> {
   try {
-    process.argv = consumeSchedulerContextArg(process.argv);
     const configFile = consumeConfigFileFlag(main as FlagScanCommand, process.argv.slice(2));
     if (configFile.file !== undefined) process.env.AKM_CONFIG_FILE = configFile.file;
     process.argv = [...process.argv.slice(0, 2), ...configFile.args];

@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { getDataDir } from "../core/paths";
+import { isKnownType } from "../core/recognition-util";
 import { type Database, openDatabase } from "../storage/database";
 import { cittyComparableName, findCittyTopLevelCommandIndex, toAliasArray } from "./invocation";
 
@@ -59,8 +60,9 @@ export function describeUsage(root: UsageCommand, raw: readonly string[]): Invoc
   let command = root;
   let offset = 0;
   for (;;) {
-    Object.assign(definitions, command.args);
-    const index = findCittyTopLevelCommandIndex(own.slice(offset), command.args ?? {});
+    const scanArgs = { "scheduler-context": { type: "string" }, ...command.args };
+    Object.assign(definitions, scanArgs);
+    const index = findCittyTopLevelCommandIndex(own.slice(offset), definitions);
     const token = index < 0 ? undefined : own[offset + index];
     const sub =
       token !== undefined && Object.hasOwn(command.subCommands ?? {}, token) ? command.subCommands?.[token] : undefined;
@@ -88,23 +90,39 @@ export function describeUsage(root: UsageCommand, raw: readonly string[]): Invoc
   };
   const canonical = aliases[result.command[0] ?? ""];
   if (canonical) result.command = [...canonical, ...result.command.slice(1)];
-  const flags = new Map<string, string>();
-  for (const [name, def] of Object.entries(definitions)) {
-    if (def.type === "positional") continue;
-    for (const spelling of [name, ...toAliasArray(def.alias)]) flags.set(cittyComparableName(spelling), name);
-  }
+  const flagNames = (definitions: Record<string, ArgDefinition>) => {
+    const flags = new Map<string, string>();
+    for (const [name, def] of Object.entries(definitions)) {
+      if (def.type === "positional") continue;
+      for (const spelling of [name, ...toAliasArray(def.alias)]) flags.set(cittyComparableName(spelling), name);
+    }
+    return flags;
+  };
+  const prefixFlags = flagNames(definitions);
+  // A dynamic leaf may intentionally omit a root option such as --config:
+  // after its command token that spelling is an authored asset input.
+  const leafDefinitions: Record<string, ArgDefinition> = {
+    help: { type: "boolean", alias: "h" },
+    version: { type: "boolean", alias: "v" },
+    "scheduler-context": { type: "string" },
+    ...command.args,
+  };
+  const leafFlags = flagNames(leafDefinitions);
+  const dynamicInputs = ["run", "workflow run", "task run", "task explain"].includes(result.command.join(" "));
   const positional = Object.entries(command.args ?? {}).filter(([, def]) => def.type === "positional");
   const explicit = new Set<string>();
   let position = 0;
   for (let index = 0; index < own.length; index++) {
     if (commandIndices.has(index)) continue;
     const token = own[index]!;
+    const currentDefinitions = index < offset ? definitions : leafDefinitions;
+    const flags = index < offset ? prefixFlags : leafFlags;
     if (token.startsWith("-") && token !== "-" && !/^-\d/.test(token)) {
       if (!token.startsWith("--")) {
         for (let shortIndex = 1; shortIndex < token.length; shortIndex++) {
           const spelling = token[shortIndex]!;
           const name = flags.get(cittyComparableName(spelling));
-          const def = name ? definitions[name] : undefined;
+          const def = name ? currentDefinitions[name] : undefined;
           let value: string | boolean = def?.type === "boolean" ? true : "[redacted]";
           if (def && def.type !== "boolean") {
             const input = shortIndex + 1 < token.length ? token.slice(shortIndex + 1) : own[++index];
@@ -127,9 +145,9 @@ export function describeUsage(root: UsageCommand, raw: readonly string[]): Invoc
       const equal = token.indexOf("=");
       const spelling = (equal < 0 ? token : token.slice(0, equal)).replace(/^-+/, "");
       const negativeName = spelling.startsWith("no-") ? flags.get(cittyComparableName(spelling.slice(3))) : undefined;
-      const negated = negativeName !== undefined && definitions[negativeName]?.type === "boolean";
+      const negated = negativeName !== undefined && currentDefinitions[negativeName]?.type === "boolean";
       const name = negated ? negativeName : flags.get(cittyComparableName(spelling));
-      const def = name ? definitions[name] : undefined;
+      const def = name ? currentDefinitions[name] : undefined;
       const supplied = equal < 0 ? undefined : token.slice(equal + 1);
       let value: string | boolean = "[redacted]";
       if (def?.type === "boolean") {
@@ -141,15 +159,17 @@ export function describeUsage(root: UsageCommand, raw: readonly string[]): Invoc
         const safe = def.type === "enum" ? def.options : SAFE_VALUES[name!];
         if (input !== undefined && safe?.includes(input)) value = input;
       }
+      // Match task/workflow exact-name input scanners: a separate value belongs
+      // to its dynamic flag, rather than becoming another positional ref.
+      if (!def && dynamicInputs && supplied === undefined) {
+        const next = own[index + 1];
+        if (next !== undefined && (!next.startsWith("-") || /^-\d/.test(next))) index += 1;
+      }
       if (name) explicit.add(name);
       result.arguments.push({
         name: name ?? "[unknown]",
         spelling: name ? `-${token.startsWith("--") ? "-" : ""}${spelling}` : "[redacted]",
-        kind:
-          def?.type ??
-          (["run", "workflow run", "task run", "task explain"].includes(result.command.join(" "))
-            ? "asset-input"
-            : "unknown"),
+        kind: def?.type ?? (dynamicInputs ? "asset-input" : "unknown"),
         explicit: true,
         negated,
         value,
@@ -208,10 +228,9 @@ function openUsage(filename: string): Database {
   }
 }
 
-let resolvedAssetType: string | undefined;
-export function setResolvedUsageAssetType(type: string): void {
-  if (["agent", "command", "script", "workflow", "task", "skill", "knowledge", "env", "secret"].includes(type))
-    resolvedAssetType = type;
+let activeResolution: ((type: string, executor?: UsageCommand) => void) | undefined;
+export function setResolvedUsageAssetType(type: string, executor?: UsageCommand): void {
+  if (isKnownType(type)) activeResolution?.(type, executor);
 }
 
 export function startUsage(root: UsageCommand, raw: readonly string[], version: string): () => void {
@@ -222,7 +241,10 @@ export function startUsage(root: UsageCommand, raw: readonly string[], version: 
   let filename: string | undefined;
   let signal: string | undefined;
   let stored = false;
-  resolvedAssetType = undefined;
+  let resolvedAssetType: string | undefined;
+  let selectedExecutor: UsageCommand | undefined;
+  let dimensions: Record<string, unknown> = {};
+  let data: Record<string, unknown> = {};
   const source = CLI_USAGE_SOURCES.has(process.env.AKM_EVENT_SOURCE ?? "") ? process.env.AKM_EVENT_SOURCE! : "unknown";
   try {
     filename = usagePath();
@@ -232,14 +254,15 @@ export function startUsage(root: UsageCommand, raw: readonly string[], version: 
       const ts = new Date(started).toISOString();
       const usage = describeUsage(root, raw);
 
-      const dimensions = { day: ts.slice(0, 10), version, source, instance, ...usage };
+      dimensions = { day: ts.slice(0, 10), version, source, instance, ...usage };
+      data = { schemaVersion: 1, id, ts, version, source, instance, ...usage };
       key = JSON.stringify(dimensions);
       db.transaction(() => {
         db.prepare("INSERT INTO invocations(id,ts,aggregate_key,data) VALUES (?,?,?,?)").run(
           id,
           ts,
           key!,
-          JSON.stringify({ schemaVersion: 1, id, ts, version, source, instance, ...usage }),
+          JSON.stringify(data),
         );
         db.prepare(
           "INSERT INTO aggregates(key,dimensions,attempts) VALUES (?,?,1) ON CONFLICT(key) DO UPDATE SET attempts=attempts+1",
@@ -253,9 +276,49 @@ export function startUsage(root: UsageCommand, raw: readonly string[], version: 
   } catch {
     /* Collection never changes command behavior or prints user data. */
   }
+  // A run's union schema cannot identify which flags are asset inputs. Once
+  // dispatch selects an executor, move its pending attempt and aggregate count
+  // together, retaining the same invocation id and redacted original argv.
+  const checkpoint = (db: Database): string => {
+    if (resolvedAssetType === undefined) return key!;
+    const usage = selectedExecutor
+      ? describeUsage({ ...root, subCommands: { ...root.subCommands, run: selectedExecutor } }, raw)
+      : undefined;
+    const nextDimensions = usage ? { ...dimensions, ...usage } : dimensions;
+    const nextData = usage ? { ...data, ...usage } : data;
+    const nextKey = JSON.stringify(nextDimensions);
+    const updated = db
+      .prepare("UPDATE invocations SET aggregate_key=?,data=?,asset_type=? WHERE id=? AND category IS NULL")
+      .run(nextKey, JSON.stringify(nextData), resolvedAssetType ?? null, id);
+    if (updated.changes && nextKey !== key) {
+      db.prepare("UPDATE aggregates SET attempts=attempts-1 WHERE key=?").run(key!);
+      db.prepare("DELETE FROM aggregates WHERE key=? AND attempts=0 AND completed=0").run(key!);
+      db.prepare(
+        "INSERT INTO aggregates(key,dimensions,attempts) VALUES (?,?,1) ON CONFLICT(key) DO UPDATE SET attempts=attempts+1",
+      ).run(nextKey, nextKey);
+    }
+    return nextKey;
+  };
+  const resolve = (type: string, executor?: UsageCommand) => {
+    resolvedAssetType = type;
+    selectedExecutor = executor;
+    if (!stored) return;
+    try {
+      const db = openUsage(filename!);
+      try {
+        key = db.transaction(() => checkpoint(db))();
+      } finally {
+        db.close();
+      }
+    } catch {
+      // Finalization retries a contended checkpoint before recording outcome.
+    }
+  };
+  activeResolution = resolve;
   const finish = () => {
     if (done) return;
     done = true;
+    if (activeResolution === resolve) activeResolution = undefined;
     process.removeListener("exit", onExit);
     process.removeListener("SIGINT", onInt);
     process.removeListener("SIGTERM", onTerm);
@@ -278,21 +341,26 @@ export function startUsage(root: UsageCommand, raw: readonly string[], version: 
     try {
       const db = openUsage(filename!);
       try {
-        db.transaction(() => {
+        const nextKey = db.transaction(() => {
+          const resolvedKey = checkpoint(db);
           const updated = db
             .prepare(
               "UPDATE invocations SET duration_ms=?,exit_code=?,category=?,asset_type=?,signal=? WHERE id=? AND category IS NULL",
             )
             .run(duration, exitCode, category, resolvedAssetType ?? null, signal ?? null, id);
-          if (!updated.changes) return;
-          const row = db.prepare("SELECT outcomes FROM aggregates WHERE key=?").get(key!) as { outcomes: string };
+          if (!updated.changes) return resolvedKey;
+          const row = db.prepare("SELECT outcomes FROM aggregates WHERE key=?").get(resolvedKey) as {
+            outcomes: string;
+          };
           const outcomes = JSON.parse(row.outcomes) as Record<string, number>;
           const outcome = `${category}:${exitCode}:${resolvedAssetType ?? "unresolved"}`;
           outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
           db.prepare(
             "UPDATE aggregates SET completed=completed+1, failures=failures+?,cancelled=cancelled+?,duration_ms=duration_ms+?,max_duration_ms=MAX(max_duration_ms,?),outcomes=? WHERE key=?",
-          ).run(exitCode === 0 ? 0 : 1, signal ? 1 : 0, duration, duration, JSON.stringify(outcomes), key!);
+          ).run(exitCode === 0 ? 0 : 1, signal ? 1 : 0, duration, duration, JSON.stringify(outcomes), resolvedKey);
+          return resolvedKey;
         })();
+        key = nextKey;
       } finally {
         db.close();
       }

@@ -77,6 +77,25 @@ describe("renderReflectPromptPreview (#952)", () => {
     );
     expect(snapshotTree(storage.root)).toEqual(before);
   });
+  test("doctor prompt rejects extra positionals and -- tails without execution or writes", async () => {
+    writeLesson(storage.stashDir, "test-lesson", "existing description", "existing usage");
+    writeSandboxConfig(withTestImproveLlm(makeConfig(storage.stashDir)));
+    const before = snapshotTree(storage.root);
+    await withMockedFetch(
+      async () => {
+        for (const tail of [["extra"], ["--", "extra"], ["--"]]) {
+          const result = await runCliCapture(["doctor", "prompt", "lessons/test-lesson", ...tail]);
+          expect(result.code, result.stderr).toBe(2);
+          expect(result.stdout).toBe("");
+          expect(result.stderr).toContain("exactly one ref");
+        }
+      },
+      () => {
+        throw new Error("invalid prompt invocation must not call a model");
+      },
+    );
+    expect(snapshotTree(storage.root)).toEqual(before);
+  });
   test("renders the composed prompt for a fixture asset with the #952 framing and no engine call", async () => {
     const stashDir = storage.stashDir;
     writeLesson(stashDir, "test-lesson", "existing description", "existing usage");

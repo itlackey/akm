@@ -7,7 +7,7 @@ import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { main } from "../../src/cli";
-import type { UsageCommand } from "../../src/cli/usage";
+import { describeUsage, type UsageCommand } from "../../src/cli/usage";
 import { getConfigDir, getDataDir } from "../../src/core/paths";
 import { openDatabase } from "../../src/storage/database";
 import { withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
@@ -255,4 +255,173 @@ test("writer contention has a bounded fail-open budget", () => {
     db.exec("ROLLBACK");
     db.close();
   }
+});
+
+test("run resolves colliding asset inputs against its selected executor in details and aggregates", () => {
+  const storage = sandbox();
+  writeSandboxConfig({
+    bundles: { fixture: { path: storage.stashDir, components: { main: { root: ".", adapter: "akm" } } } },
+  });
+  fs.mkdirSync(path.join(storage.stashDir, "tasks"), { recursive: true });
+  fs.mkdirSync(path.join(storage.stashDir, "workflows"), { recursive: true });
+  fs.writeFileSync(
+    path.join(storage.stashDir, "tasks/check.yml"),
+    `version: 4
+run: printf task-ok
+shell: sh
+inputs:
+  prompt: { type: string }
+  agent: { type: string }
+  cwd: { type: string }
+`,
+  );
+  fs.writeFileSync(
+    path.join(storage.stashDir, "workflows/check.md"),
+    `---
+type: workflow
+params:
+  prompt: { type: string }
+  agent: { type: string }
+  cwd: { type: string }
+steps:
+  - id: execute
+    unit:
+      exec:
+        command: ["sh", "-c", "printf workflow-ok"]
+---
+## execute
+Execute without a model.
+`,
+  );
+  for (const ref of ["fixture//tasks/check", "fixture//tasks/check", "fixture//workflows/check"]) {
+    const result = cli(["run", ref, "--prompt=PRIVATE_PROMPT", "--agent=PRIVATE_INPUT", "--cwd=PRIVATE_WORKSPACE"]);
+    expect(result.status, result.stderr).toBe(0);
+  }
+  const result = report();
+  const runs = result.details.filter((row: { command: string[] }) => row.command[0] === "run");
+  expect(runs).toHaveLength(3);
+  for (const run of runs) {
+    expect(run.arguments.filter((arg: { kind: string }) => arg.kind === "asset-input")).toHaveLength(3);
+    expect(run.arguments.filter((arg: { kind: string }) => arg.kind === "positional")).toHaveLength(1);
+    expect(run.arguments.every((arg: { value: unknown }) => arg.value === "[redacted]")).toBe(true);
+  }
+  const aggregates = result.aggregates.filter(
+    (row: { dimensions: { command: string[] } }) => row.dimensions.command[0] === "run",
+  );
+  expect(aggregates).toHaveLength(2); // task id and workflow target are distinct positional roles
+  expect(aggregates.reduce((sum: number, row: { attempts: number }) => sum + row.attempts, 0)).toBe(3);
+  for (const aggregate of aggregates) {
+    expect(aggregate.completed).toBe(aggregate.attempts);
+    expect(aggregate.unfinished).toBe(0);
+    expect(aggregate.dimensions.arguments.filter((arg: { kind: string }) => arg.kind === "asset-input")).toHaveLength(
+      3,
+    );
+  }
+  expect(
+    aggregates.find((row: { outcomes: Record<string, number> }) => row.outcomes["success:0:task"])?.outcomes,
+  ).toEqual({ "success:0:task": 2 });
+  expect(
+    aggregates.find((row: { outcomes: Record<string, number> }) => row.outcomes["success:0:workflow"])?.outcomes,
+  ).toEqual({ "success:0:workflow": 1 });
+  expect(
+    result.details.filter((row: { command: string[] }) => ["task run", "workflow run"].includes(row.command.join(" "))),
+  ).toHaveLength(0);
+  expect(JSON.stringify(result)).not.toContain("PRIVATE_");
+});
+
+test("unsupported memory and session run attempts retain their resolved type", () => {
+  const storage = sandbox();
+  writeSandboxConfig({
+    bundles: { fixture: { path: storage.stashDir, components: { main: { root: ".", adapter: "akm" } } } },
+  });
+  for (const [directory, type] of [
+    ["memories", "memory"],
+    ["sessions/codex", "session"],
+  ]) {
+    fs.mkdirSync(path.join(storage.stashDir, directory!), { recursive: true });
+    fs.writeFileSync(
+      path.join(storage.stashDir, directory!, "private.md"),
+      `---\ntype: ${type}\n---\nPRIVATE_CONTENT\n`,
+    );
+    const result = cli(["run", `fixture//${directory}/private`]);
+    expect(result.status, result.stderr).toBe(2);
+    expect(result.stdout).toBe("");
+  }
+  const result = report();
+  const runs = result.details.filter((row: { command: string[] }) => row.command[0] === "run");
+  expect(runs.map((row: { assetType: string }) => row.assetType).sort()).toEqual(["memory", "session"]);
+  expect(runs.every((row: { category: string }) => row.category === "usage")).toBe(true);
+  expect(JSON.stringify(result)).not.toContain("PRIVATE_CONTENT");
+});
+
+test("legacy scheduler context selects usage storage before capture and retains the original command arguments", () => {
+  const storage = sandbox();
+  const scheduledData = path.join(storage.root, "scheduled-data");
+  const descriptor = path.join(storage.root, "PRIVATE_CONTEXT_PATH.json");
+  fs.mkdirSync(path.join(storage.stashDir, "tasks"), { recursive: true });
+  fs.writeFileSync(path.join(storage.stashDir, "tasks/check.yml"), "version: 4\nrun: printf task-ok\nshell: sh\n");
+  fs.writeFileSync(descriptor, JSON.stringify({ environment: { AKM_DATA_DIR: scheduledData } }));
+  const executed = cli(["--scheduler-context", descriptor, "task", "run", "tasks/check", "--scheduled"]);
+  expect(executed.status, executed.stderr).toBe(0);
+  expect(fs.existsSync(path.join(getDataDir(), "usage.sqlite"))).toBe(false);
+  const captured = cli(["doctor", "metrics", "usage", "--export"], { ...process.env, AKM_DATA_DIR: scheduledData });
+  expect(captured.status, captured.stderr).toBe(0);
+  const result = JSON.parse(captured.stdout);
+  const scheduled = result.details.find((row: { command: string[] }) => row.command.join(" ") === "task run");
+  expect(scheduled).toMatchObject({ command: ["task", "run"], exitCode: 0, category: "success" });
+  expect(scheduled.arguments.find((arg: { name: string }) => arg.name === "scheduler-context")).toMatchObject({
+    kind: "string",
+    value: "[redacted]",
+    explicit: true,
+  });
+  expect(JSON.stringify(result)).not.toContain("PRIVATE_CONTEXT_PATH");
+  expect(JSON.stringify(result)).not.toContain(scheduledData);
+  const invalid = cli([
+    "--scheduler-context",
+    path.join(storage.root, "absent.json"),
+    "task",
+    "run",
+    "tasks/check",
+    "--scheduled",
+  ]);
+  expect(invalid.status).toBe(78);
+  const failed = report().details.find((row: { command: string[] }) => row.command.join(" ") === "task run");
+  expect(failed).toMatchObject({ category: "config", exitCode: 78 });
+});
+
+test("usage keeps root config selection separate from dynamic leaf config input", () => {
+  const root = {
+    args: { config: { type: "string" } },
+    subCommands: {
+      run: { args: { ref: { type: "positional" }, format: { type: "string" } } },
+    },
+  };
+  const usage = describeUsage(root, ["--config", "PRIVATE_FILE", "run", "tasks/check", "--config", "PRIVATE_INPUT"]);
+  expect(usage.command).toEqual(["run"]);
+  expect(usage.arguments).toEqual([
+    { name: "config", spelling: "--config", kind: "string", explicit: true, negated: false, value: "[redacted]" },
+    { name: "ref", spelling: "positional", kind: "positional", explicit: true, value: "[redacted]" },
+    {
+      name: "[unknown]",
+      spelling: "[redacted]",
+      kind: "asset-input",
+      explicit: true,
+      negated: false,
+      value: "[redacted]",
+    },
+  ]);
+  expect(JSON.stringify(usage)).not.toContain("PRIVATE_");
+});
+
+test("usage command discovery honors inherited config value arity between groups", () => {
+  const root = {
+    args: { config: { type: "string" } },
+    subCommands: { config: { subCommands: { path: { args: {} } } } },
+  };
+  const usage = describeUsage(root, ["config", "--config", "PRIVATE_FILE", "path"]);
+  expect(usage.command).toEqual(["config", "path"]);
+  expect(usage.arguments).toEqual([
+    { name: "config", spelling: "--config", kind: "string", explicit: true, negated: false, value: "[redacted]" },
+  ]);
+  expect(JSON.stringify(usage)).not.toContain("PRIVATE_FILE");
 });

@@ -427,6 +427,9 @@ export const doctorPromptCommand = defineCommand({
     ...SELECTION_ARGS,
   },
   async run(context) {
+    if (context.args._.length !== 1 || context.rawArgs.includes("--")) {
+      throw new UsageError("doctor prompt accepts exactly one ref and no -- tail.", "INVALID_FLAG_VALUE");
+    }
     if (!isFullRefInput(context.args.ref)) {
       throw new UsageError("doctor prompt requires a fully-qualified asset ref.", "INVALID_FLAG_VALUE");
     }
