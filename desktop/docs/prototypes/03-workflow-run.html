@@ -1,0 +1,460 @@
+<!doctype html>
+<!--
+  This Source Code Form is subject to the terms of the Mozilla Public
+  License, v. 2.0. If a copy of the MPL was not distributed with this
+  file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+  A design prototype with synthetic data. It is not part of the app and reads nothing from akm.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>akm · Workflow run (prototype)</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    accent-color: var(--accent);
+    --bg: light-dark(#f6f6f9, #0a0a0c);
+    --surface: light-dark(#ffffff, #111115);
+    --surface-2: light-dark(#efeff4, #17171c);
+    --surface-sunk: light-dark(#e8e8ef, #0d0d10);
+    --border: light-dark(#dcdce4, #26262d);
+    --border-strong: light-dark(#767684, #6b6b78);
+    --rule: light-dark(#0f0f14, #52525e);
+    --text: light-dark(#0f0f14, #ededf0);
+    --muted: light-dark(#4a4a57, #b4b4be);
+    --faint: light-dark(#5d5d6a, #9a9aa6);
+    --accent: light-dark(#6d28d9, #9b72fa);
+    --accent-hover: light-dark(#5b21b6, #b79bfc);
+    --accent-bg: light-dark(#f0eafe, #1b1530);
+    --on-accent: light-dark(#ffffff, #0a0a0c);
+    --ok: light-dark(#17753a, #34d399);
+    --ok-bg: light-dark(#e3f4e9, #0f2a20);
+    --warn: light-dark(#8a5a00, #fbbf24);
+    --warn-bg: light-dark(#fcf0d3, #2b2210);
+    --fail: light-dark(#c4202c, #f87171);
+    --fail-bg: light-dark(#fde6e8, #2d1416);
+    --add-strong: light-dark(#a8e0bb, #1d6b49);
+    --del-strong: light-dark(#f5b3b9, #7f2a2f);
+    --hunk-bg: light-dark(#f3efff, #16162b);
+    --link: light-dark(#5b21b6, #c4b5fd);
+    --age-1: light-dark(#8f7bd1, #6a58b0);
+    --age-2: light-dark(#6d4fc0, #8f7bdc);
+    --age-3: light-dark(#4a2a9c, #c4b5fd);
+    --age-unknown: light-dark(#767684, #8a8a96);
+    --s1: light-dark(#2f64d0, #c4b5fd);
+    --s2: light-dark(#b45309, #fbbf24);
+    --s3: light-dark(#0f766e, #34d399);
+    --s4: light-dark(#be185d, #f472b6);
+    --s5: light-dark(#7c3aed, #60a5fa);
+    --s6: light-dark(#6b7280, #9a9aa6);
+    --marker: light-dark(#a16207, #fbbf24);
+    --target-min: 24px;
+    --topbar-h: 4rem; /* the sticky bar; offsets below it derive from this */
+    /* The bar sits at the top on wide screens and at the bottom on narrow ones. */
+    --top-inset: var(--topbar-h);
+    --bottom-inset: 0px;
+    --control-height: 2.75rem;
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 24px;
+    --space-6: 32px;
+    --space-7: 48px;
+    --radius: 2px;
+    --radius-pill: 999px;
+    --text-xs: 0.75rem;
+    --text-s: 0.8125rem;
+    --text-m: 0.9375rem;
+    --text-l: 1.125rem;
+    --text-xl: 1.375rem;
+    --text-2xl: clamp(2rem, 1.3rem + 2.6vw, 3.25rem);
+    --text-stat: clamp(2rem, 1.5rem + 1.6vw, 2.75rem);
+    --content-max: 82rem;
+    --leading: 1.55;
+    --leading-tight: 1.05;
+    --leading-snug: 1.5;
+    --tracking-tight: -0.045em;
+    --tracking-snug: -0.02em;
+    --tracking-caps: 0.06em;
+    --weight-strong: 600;
+    --shadow-float: 0 4px 16px rgb(0 0 0 / 0.2);
+    --edge-accent: inset 3px 0 0 var(--accent);
+    --edge-underline: inset 0 -3px 0 var(--accent);
+    --edge-ok: inset 3px 0 0 var(--ok);
+    --edge-warn: inset 3px 0 0 var(--warn);
+    --edge-fail: inset 3px 0 0 var(--fail);
+    --focus-halo: 0 0 0 3px color-mix(in srgb, var(--link) 30%, transparent);
+    --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+  }
+
+/* Prototype shell. Tokens above are copied from desktop/src/lib/ui/tokens.css; the rest imitates Desktop's chrome. */
+:root {
+  /* Categorical slots for the maps: eight hues in a fixed order, validated against --bg in both themes. */
+  --c1: light-dark(#2a78d6, #3987e5); --c2: light-dark(#eb6834, #d95926);
+  --c3: light-dark(#1baf7a, #199e70); --c4: light-dark(#eda100, #c98500);
+  --c5: light-dark(#e87ba4, #d55181); --c6: light-dark(#008300, #008300);
+  --c7: light-dark(#6250d6, #9085e9); --c8: light-dark(#e34948, #e66767);
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text); font: var(--text-m) / var(--leading) var(--font);
+  -webkit-font-smoothing: antialiased; display: flex; flex-direction: column; overflow: hidden; }
+:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; border-radius: var(--radius); }
+h1, h2, h3, p { margin: 0; }
+h1 { font-size: var(--text-l); letter-spacing: var(--tracking-snug); }
+h2 { font-size: var(--text-m); font-weight: var(--weight-strong); }
+h3 { font-size: var(--text-xs); font-weight: var(--weight-strong); color: var(--muted); }
+.muted { color: var(--muted); } .small { font-size: var(--text-s); } .xs { font-size: var(--text-xs); }
+.mono { font-family: var(--mono); font-size: var(--text-xs); }
+.num { font-variant-numeric: tabular-nums; }
+
+.topbar { flex: none; min-block-size: 3.25rem; padding: 0 var(--space-5); display: flex; gap: var(--space-5);
+  align-items: center; border-block-end: 1px solid var(--border); background: var(--surface); }
+.topbar .brand { font-weight: 700; letter-spacing: var(--tracking-snug); }
+.topbar nav { display: flex; gap: var(--space-1); flex: 1; min-inline-size: 0; overflow-x: auto; }
+.topbar nav span { color: var(--muted); font-weight: 550; padding: 6px 12px; border-radius: var(--radius); white-space: nowrap; }
+.topbar nav span[aria-current] { color: var(--text); background: var(--surface-2); font-weight: 650; }
+.proto { font-size: var(--text-xs); color: var(--warn); background: var(--warn-bg); padding: 1px 8px; border-radius: var(--radius-pill); white-space: nowrap; }
+
+.subbar { flex: none; display: flex; flex-wrap: wrap; gap: var(--space-3) var(--space-4); align-items: center;
+  padding: var(--space-3) var(--space-5); border-block-end: 1px solid var(--border); }
+.subbar .grow { flex: 1; min-inline-size: 0; }
+.seg { display: inline-flex; border: 1px solid var(--border-strong); border-radius: var(--radius); overflow: hidden; }
+.seg button { border: 0; border-radius: 0; background: none; color: var(--muted); }
+.seg button + button { border-inline-start: 1px solid var(--border); }
+.seg button[aria-pressed="true"] { background: var(--accent-bg); color: var(--text); box-shadow: var(--edge-underline); }
+button, select, input[type="search"] { font: inherit; font-size: var(--text-s); color: var(--text); background: var(--surface);
+  border: 1px solid var(--border-strong); border-radius: var(--radius); min-block-size: 2rem; padding: 2px 10px; }
+button { cursor: pointer; }
+button:hover { background: var(--surface-2); }
+label.field { display: inline-flex; gap: var(--space-2); align-items: center; font-size: var(--text-s); color: var(--muted); }
+input[type="search"] { inline-size: 15rem; max-inline-size: 100%; }
+input[type="range"] { accent-color: var(--accent); }
+
+main { flex: 1; min-block-size: 0; display: flex; }
+.stage { position: relative; flex: 1; min-inline-size: 0; }
+.stage canvas { position: absolute; inset: 0; inline-size: 100%; block-size: 100%; display: block; }
+.stage canvas.labels { pointer-events: none; }
+.side { flex: none; inline-size: 20rem; border-inline-start: 1px solid var(--border); background: var(--surface);
+  overflow-y: auto; padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-4); }
+.side section { display: flex; flex-direction: column; gap: var(--space-2); }
+.overlay { position: absolute; background: color-mix(in srgb, var(--surface) 88%, transparent); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: var(--space-3); backdrop-filter: blur(6px); }
+.legend { display: flex; flex-direction: column; gap: 2px; }
+.legend button { display: flex; align-items: center; gap: var(--space-2); border: 0; background: none; padding: 2px 6px;
+  min-block-size: 1.6rem; text-align: start; inline-size: 100%; }
+.legend button[aria-pressed="false"] { opacity: 0.4; }
+.legend i, .dot { flex: none; inline-size: 10px; block-size: 10px; border-radius: 50%; display: inline-block; }
+.legend .n { margin-inline-start: auto; color: var(--muted); font-variant-numeric: tabular-nums; font-size: var(--text-xs); }
+.tip { position: absolute; z-index: 5; pointer-events: none; background: var(--surface); border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-float); border-radius: var(--radius); padding: var(--space-2) var(--space-3); font-size: var(--text-s);
+  max-inline-size: 22rem; }
+.tip[hidden] { display: none; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 2px var(--space-3); font-size: var(--text-s); }
+.kv dt { color: var(--muted); } .kv dd { margin: 0; overflow-wrap: anywhere; }
+.badge { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: var(--radius-pill);
+  font-size: var(--text-xs); font-weight: var(--weight-strong); white-space: nowrap; background: var(--surface-2); }
+.badge[data-tone="ok"] { color: var(--ok); background: var(--ok-bg); }
+.badge[data-tone="warn"] { color: var(--warn); background: var(--warn-bg); }
+.badge[data-tone="fail"] { color: var(--fail); background: var(--fail-bg); }
+.badge[data-tone="accent"] { color: var(--link); background: var(--accent-bg); }
+.stats { display: flex; gap: var(--space-5); }
+.stats div { display: flex; flex-direction: column; line-height: 1.2; }
+.stats b { font-size: var(--text-l); font-variant-numeric: tabular-nums; font-weight: 600; }
+.stats span { font-size: var(--text-xs); color: var(--muted); }
+.list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.list li { display: flex; gap: var(--space-2); align-items: baseline; padding: 3px 0; border-block-end: 1px solid var(--border); font-size: var(--text-s); }
+.list li button { border: 0; background: none; padding: 0; min-block-size: 0; color: var(--link); text-align: start; overflow-wrap: anywhere; }
+table { border-collapse: collapse; inline-size: 100%; font-size: var(--text-s); }
+th, td { text-align: start; padding: 4px 8px; border-block-end: 1px solid var(--border); }
+th { color: var(--muted); font-weight: 500; font-size: var(--text-xs); }
+@media (width < 60rem) { main { flex-direction: column; } .side { inline-size: auto; max-block-size: 40%; border-inline-start: 0; border-block-start: 1px solid var(--border); } }
+
+body { overflow: auto; }
+main { display: grid; grid-template-columns: minmax(0, 1fr) 21rem; align-items: start; }
+.content { padding: var(--space-4) var(--space-5); display: flex; flex-direction: column; gap: var(--space-5); min-inline-size: 0; }
+.side { position: sticky; inset-block-start: 0; block-size: calc(100vh - 7.5rem); }
+.steps { display: flex; gap: var(--space-2); overflow-x: auto; padding-block-end: var(--space-2); }
+.step { flex: 1 1 0; min-inline-size: 8.5rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: var(--space-3);
+  display: flex; flex-direction: column; gap: 4px; text-align: start; min-block-size: 0; position: relative; }
+.step[data-status="completed"] { box-shadow: var(--edge-ok); } .step[data-status="failed"] { box-shadow: var(--edge-fail); }
+.step[data-status="active"] { box-shadow: var(--edge-accent); border-color: var(--accent); }
+.step[data-status="pending"] { color: var(--muted); border-style: dashed; }
+.step.uses { outline: 2px solid var(--link); outline-offset: 1px; }
+.step .n { font-size: var(--text-xs); color: var(--muted); }
+.step b { font-weight: 600; overflow-wrap: anywhere; }
+.step .meta { font-size: var(--text-xs); color: var(--muted); }
+.arrow { flex: none; align-self: center; color: var(--border-strong); }
+svg text { font: 12px var(--font); fill: var(--text); }
+svg .dim { fill: var(--muted); } svg .grid { stroke: var(--border); }
+svg .band { fill: var(--surface-2); }
+.bar { stroke: var(--bg); stroke-width: 1; cursor: pointer; }
+.bar.completed { fill: var(--ok); } .bar.failed { fill: url(#hatch); stroke: var(--fail); } .bar.running { fill: var(--accent); }
+.bar.gate { fill: var(--s2); } .bar.skipped { fill: none; stroke: var(--border-strong); stroke-dasharray: 3 3; }
+.row:hover .hit, .row.sel .hit { fill: var(--accent-bg); }
+.hit { fill: transparent; cursor: pointer; }
+.now { stroke: var(--accent); stroke-width: 1.5; }
+.key { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); font-size: var(--text-s); color: var(--muted); }
+.key span { display: inline-flex; gap: 6px; align-items: center; }
+.key i { inline-size: 18px; block-size: 10px; border-radius: 2px; display: inline-block; }
+pre { margin: 0; font: var(--text-xs) / 1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; background: var(--surface-sunk); padding: var(--space-2); border-radius: var(--radius); }
+@media (width < 60rem) { main { grid-template-columns: 1fr; } .side { position: static; block-size: auto; } }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <span class="brand">akm</span>
+  <nav aria-label="Sections"><span>Home</span><span>Library</span><span>Projects</span><span>Review</span><span aria-current="page">Activity</span><span>Settings</span></nav>
+  <span class="proto">Prototype · synthetic data</span>
+  <button id="theme"></button>
+</header>
+<div class="subbar">
+  <h1>release-readiness</h1>
+  <span class="badge" id="runStatus"></span>
+  <span class="mono muted">eng-skills//workflows/release-readiness · run 01JK7F2Q · claude-code session 8c1e</span>
+  <span class="grow"></span>
+  <div class="stats"><div><b id="sElapsed">–</b><span>elapsed</span></div><div><b id="sUnits">–</b><span>units done</span></div><div><b id="sTokens">–</b><span>tokens</span></div></div>
+  <button id="replay">Replay from start</button>
+</div>
+<main>
+  <div class="content">
+    <section>
+      <h3 style="margin-bottom:8px">Steps, in the order they run</h3>
+      <div class="steps" id="steps"></div>
+    </section>
+    <section>
+      <h3 style="margin-bottom:8px">Every unit and attempt, on one clock</h3>
+      <div id="chart" style="overflow-x:auto"></div>
+      <div class="key" style="margin-top:8px">
+        <span><i style="background:var(--ok)"></i>Completed attempt</span>
+        <span><i style="background:repeating-linear-gradient(45deg,var(--fail) 0 2px,transparent 2px 5px);outline:1px solid var(--fail)"></i>Failed attempt</span>
+        <span><i style="background:var(--accent)"></i>Running</span>
+        <span><i style="background:var(--s2)"></i>Gate check by a judge</span>
+        <span><i style="outline:1px dashed var(--border-strong)"></i>Not run</span>
+      </div>
+    </section>
+  </div>
+  <aside class="side" id="side"></aside>
+</main>
+<script>
+// Prototype helpers shared by the examples.
+const $ = (sel, root = document) => root.querySelector(sel);
+const el = (tag, props = {}, ...children) => {
+  const node = Object.assign(document.createElement(tag), props);
+  node.append(...children);
+  return node;
+};
+/** A seeded random source, so every load shows the same data. */
+function rng(seed) {
+  let a = seed >>> 0;
+  const next = () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  next.int = (n) => Math.floor(next() * n);
+  next.pick = (list) => list[Math.floor(next() * list.length)];
+  next.gauss = () => (next() + next() + next() + next() - 2) * 0.87;
+  return next;
+}
+/** The colour a design token resolves to in the scheme on screen, as [r, g, b] (the same probe chart-view.js uses). */
+function tokenRGB(name) {
+  const probe = el("span", { style: `position:absolute;visibility:hidden;color:var(${name})` });
+  document.body.append(probe);
+  const c = document.createElement("canvas").getContext("2d");
+  c.fillStyle = getComputedStyle(probe).color;
+  c.fillRect(0, 0, 1, 1);
+  probe.remove();
+  return [...c.getImageData(0, 0, 1, 1).data.slice(0, 3)];
+}
+const isDark = () => {
+  const forced = document.documentElement.dataset.theme;
+  return forced ? forced === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+};
+/** The Appearance switch: Desktop stores this choice; here it only stamps data-theme. */
+function themeToggle(button, onChange) {
+  const apply = () => { button.textContent = isDark() ? "Light theme" : "Dark theme"; onChange?.(isDark()); };
+  button.addEventListener("click", () => {
+    document.documentElement.dataset.theme = isDark() ? "light" : "dark";
+    apply();
+  });
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", apply);
+  apply();
+}
+const fmt = (n) => n.toLocaleString("en-US");
+const ago = (days) => (days < 1 ? "today" : days < 2 ? "yesterday" : days < 60 ? `${Math.round(days)} days ago` : `${Math.round(days / 30)} months ago`);
+
+
+// A run in the shape of state.db: workflow_runs, workflow_run_steps, workflow_run_units and workflow_run_unit_attempts.
+// Steps run in sequence (sequence_index); a map step fans out into units; a gate is a judge's check that can loop.
+// Steps carry no start time in akm, so a step's span here is derived from its units, as Desktop would have to.
+const steps = [
+  { id: "collect-changes", title: "Collect changes", uses: [] },
+  { id: "review-modules", title: "Review each module", uses: ["collect-changes"], map: "9 modules, 4 at a time, collect" },
+  { id: "security-scan", title: "Security scan", uses: ["collect-changes"], gate: "judge, up to 3 loops" },
+  { id: "draft-notes", title: "Draft release notes", uses: ["collect-changes", "review-modules"], gate: "judge, up to 2 loops" },
+  { id: "go-no-go", title: "Go / no-go", uses: ["draft-notes", "security-scan"], map: "3 reviewers, vote" },
+  { id: "notify", title: "Notify stakeholders", uses: ["go-no-go"], child: "workflows/notify-stakeholders" },
+];
+const units = [];
+const unit = (step, id, runner, model, attempts, extra = {}) => units.push({ step, id, runner, model, attempts, ...extra });
+const at = (start, seconds, status = "completed", reason) => ({ start, end: start + seconds, status, reason, tokens: 0 });
+unit("collect-changes", "collect-changes", "exec", null, [at(0, 9)]);
+// The map step: four units at a time. One times out and is retried; one fails every attempt and the step continues.
+{
+  const modules = [["auth", 95], ["billing", 140], ["search", 70], ["api-gateway", 120], ["notifications", 60], ["deploys", 150], ["migrations", 88], ["queues", 110], ["mobile", 75]];
+  const slots = [10, 10, 10, 10];
+  for (const [name, seconds] of modules) {
+    const k = slots.indexOf(Math.min(...slots)); let t = slots[k]; const attempts = [];
+    if (name === "search") { attempts.push(at(t, 45, "failed", "timeout")); t += 48; }
+    if (name === "migrations") { attempts.push(at(t, 30, "failed", "runner_error"), at(t + 33, 28, "failed", "runner_error")); slots[k] = t + 62; }
+    else { attempts.push(at(t, seconds)); slots[k] = t + seconds + 1; }
+    unit("review-modules", `review-modules[${name}]`, "harness", "claude-sonnet-5-5", attempts,
+      name === "migrations" ? { diagnostic: "exit 1: migration 0042 references table `ledger_v2`, which this checkout does not have.\nonError: continue (the step went on without this unit)" } : {});
+  }
+}
+// Step 3 starts when the map step is done; its gate sends it round once ("revise"), then passes.
+const T = 285;
+unit("security-scan", "security-scan", "exec", null, [at(T, 40), at(T + 57, 35)]);
+unit("security-scan", "security-scan · gate", "connection", "claude-haiku-5-5", [at(T + 41, 14, "completed", "revise: two findings have no owner"), at(T + 93, 12, "completed", "pass")], { gate: true });
+unit("draft-notes", "draft-notes", "connection", "claude-sonnet-5-5", [at(T + 106, 65)]);
+unit("draft-notes", "draft-notes · gate", "connection", "claude-haiku-5-5", [at(T + 172, 10, "completed", "pass")], { gate: true });
+unit("go-no-go", "go-no-go[release-manager]", "harness", "claude-sonnet-5-5", [at(T + 183, 38)]);
+unit("go-no-go", "go-no-go[sre]", "harness", "claude-sonnet-5-5", [at(T + 183, 44)]);
+unit("go-no-go", "go-no-go[security]", "harness", "claude-sonnet-5-5", [at(T + 183, 31)]);
+unit("notify", "notify → child run 01JK7F9W", "exec", null, [at(T + 228, 400)], { parent: true });
+unit("notify", "render-email", "connection", "claude-haiku-5-5", [at(T + 230, 20)], { child: true });
+unit("notify", "post-to-channel", "exec", null, [at(T + 251, 400)], { child: true });
+unit("notify", "update-tracker", "exec", null, [at(T + 900, 30)], { child: true });
+for (const u of units) for (const a of u.attempts) a.tokens = u.runner === "exec" ? 0 : Math.round((a.end - a.start) * (u.gate ? 60 : 135));
+const NOW = T + 268, END = 600;
+
+let clock = NOW, selected = units[3], live = false;
+const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+/** What an attempt looks like at this moment of the replay. */
+const seen = (a) => (a.start > clock ? "pending" : a.end > clock ? "running" : a.status);
+const unitStatus = (u) => { const s = u.attempts.map(seen); return s.includes("running") ? "running" : s.every((x) => x === "pending") ? "pending" : s.at(-1) === "pending" ? "running" : s.at(-1); };
+function stepStatus(step) {
+  const s = units.filter((u) => u.step === step.id).map(unitStatus);
+  if (s.every((x) => x === "pending")) return "pending";
+  if (s.some((x) => x === "running" || x === "pending")) return "active";
+  return "completed";
+}
+const LABEL = { completed: "Completed", active: "Running", pending: "Not started", failed: "Failed", running: "Running" };
+const TONE = { completed: "ok", active: "accent", running: "accent", failed: "fail", pending: "" };
+
+function renderSteps() {
+  const hover = (ids, on) => ids.forEach((id) => $(`#step-${id}`)?.classList.toggle("uses", on));
+  $("#steps").replaceChildren(...steps.flatMap((step, i) => {
+    const mine = units.filter((u) => u.step === step.id), status = stepStatus(step);
+    const started = Math.min(...mine.map((u) => u.attempts[0].start)), ended = Math.min(clock, Math.max(...mine.map((u) => u.attempts.at(-1).end)));
+    const failed = mine.filter((u) => unitStatus(u) === "failed").length;
+    const card = el("button", { className: "step", id: `step-${step.id}`,
+      onmouseenter: () => hover(step.uses, true), onmouseleave: () => hover(step.uses, false),
+      onfocus: () => hover(step.uses, true), onblur: () => hover(step.uses, false), onclick: () => { selected = mine[0]; render(); } },
+      el("span", { className: "n" }, `Step ${i + 1}`), el("b", {}, step.title),
+      Object.assign(el("span", { className: "badge" }, LABEL[status] + (failed ? ` · ${failed} unit failed` : "")), { }),
+      el("span", { className: "meta" }, status === "pending" ? "—" : `${mmss(ended - started)} · ${mine.length} unit${mine.length > 1 ? "s" : ""}`),
+      ...(step.map ? [el("span", { className: "meta" }, `Map: ${step.map}`)] : []),
+      ...(step.gate ? [el("span", { className: "meta" }, `Gate: ${step.gate}`)] : []),
+      ...(step.child ? [el("span", { className: "meta" }, `Child run: ${step.child}`)] : []),
+      el("span", { className: "meta" }, step.uses.length ? `Reads the output of step${step.uses.length > 1 ? "s" : ""} ${step.uses.map((id) => steps.findIndex((s) => s.id === id) + 1).sort().join(" and ")}` : "Reads the run's inputs"));
+    card.dataset.status = status;
+    card.querySelector(".badge").dataset.tone = failed && status === "completed" ? "warn" : TONE[status];
+    return i ? [el("span", { className: "arrow", ariaHidden: "true" }, "→"), card] : [card];
+  }));
+}
+
+function renderChart() {
+  const W = Math.max(640, $("#chart").clientWidth), LEFT = 250, RIGHT = 16, ROW = 24, TOP = 26;
+  const x = (s) => LEFT + (s / END) * (W - LEFT - RIGHT);
+  let y = TOP; const rows = []; let out = "";
+  for (const step of steps) {
+    const mine = units.filter((u) => u.step === step.id);
+    out += `<rect class="band" x="0" y="${y}" width="${W}" height="${ROW - 4}"/><text x="8" y="${y + 14}" style="font-weight:600">${steps.indexOf(step) + 1}. ${step.title}</text>`;
+    y += ROW;
+    for (const u of mine) { rows.push({ u, y }); y += ROW; }
+  }
+  const H = y + 6;
+  let grid = "";
+  for (let s = 0; s <= END; s += 60) grid += `<line class="grid" x1="${x(s)}" x2="${x(s)}" y1="${TOP - 6}" y2="${H}"/><text class="dim" x="${x(s)}" y="14" text-anchor="middle">${mmss(s)}</text>`;
+  for (const { u, y } of rows) {
+    const status = unitStatus(u), tries = u.attempts.filter((a) => seen(a) !== "pending").length;
+    out += `<g class="row${u === selected ? " sel" : ""}" data-unit="${units.indexOf(u)}" tabindex="0" role="button" aria-label="${u.id}, ${LABEL[status] ?? status}">
+      <rect class="hit" x="0" y="${y - 2}" width="${W}" height="${ROW}"/>
+      <text class="${status === "pending" ? "dim" : ""}" x="${u.child ? 36 : 22}" y="${y + 13}">${u.id.length > 30 ? u.id.slice(0, 29) + "…" : u.id}</text>
+      ${tries > 1 && !u.gate ? `<text class="dim" x="${LEFT - 10}" y="${y + 13}" text-anchor="end">try ${tries}</text>` : ""}`;
+    for (const a of u.attempts) {
+      const s = seen(a), from = x(a.start), to = x(s === "running" ? clock : a.end);
+      const cls = s === "pending" ? "skipped" : u.gate && s === "completed" ? "gate" : s;
+      out += `<rect class="bar ${cls}" x="${from}" y="${y + 3}" width="${Math.max(3, to - from)}" height="${ROW - 10}" rx="2"><title>${u.id} · attempt ${u.attempts.indexOf(a) + 1} · ${LABEL[s] ?? s}${a.reason ? ` · ${a.reason}` : ""}</title></rect>`;
+    }
+    out += "</g>";
+  }
+  $("#chart").innerHTML = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="group" aria-label="Timeline of every unit in this run">
+    <defs><pattern id="hatch" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="2" height="5" fill="var(--fail)"/></pattern></defs>
+    ${grid}${out}<line class="now" x1="${x(clock)}" x2="${x(clock)}" y1="${TOP - 10}" y2="${H}"/><text x="${x(clock) - 6}" y="${H - 4}" text-anchor="end" class="dim">now ${mmss(clock)}</text></svg>`;
+  for (const row of $("#chart").querySelectorAll(".row")) {
+    const pick = () => { selected = units[Number(row.dataset.unit)]; render(); };
+    row.onclick = pick; row.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } };
+  }
+}
+
+function renderSide() {
+  const u = selected, status = unitStatus(u), badge = el("span", { className: "badge" }, LABEL[status] ?? status);
+  badge.dataset.tone = TONE[status] ?? "";
+  $("#side").replaceChildren(
+    el("section", {}, el("h2", { style: "overflow-wrap:anywhere" }, u.id), el("div", {}, badge),
+      el("dl", { className: "kv" },
+        el("dt", {}, "Step"), el("dd", {}, steps.find((s) => s.id === u.step).title),
+        el("dt", {}, "Runner"), el("dd", {}, u.runner + (u.gate ? " (gate check)" : "")),
+        el("dt", {}, "Model"), el("dd", {}, u.model ?? "none (a command)"),
+        el("dt", {}, "Tokens"), el("dd", { className: "num" }, fmt(u.attempts.filter((a) => seen(a) !== "pending").reduce((n, a) => n + a.tokens, 0))))),
+    el("section", {}, el("h3", {}, "Attempts"),
+      el("table", {}, el("thead", {}, el("tr", {}, ...["#", "Started", "Took", "Outcome"].map((h) => el("th", {}, h)))),
+        el("tbody", {}, ...u.attempts.map((a, i) => { const s = seen(a); return el("tr", {}, el("td", {}, String(i + 1)), el("td", { className: "num" }, s === "pending" ? "—" : mmss(a.start)),
+          el("td", { className: "num" }, s === "pending" ? "—" : mmss(Math.min(clock, a.end) - a.start)), el("td", {}, (LABEL[s] ?? s) + (a.reason && s !== "pending" && s !== "running" ? ` · ${a.reason}` : ""))); })))),
+    ...(u.diagnostic && status === "failed" ? [el("section", {}, el("h3", {}, "What the unit reported"), el("pre", {}, u.diagnostic))] : []),
+    el("section", {}, el("h3", {}, "This run"),
+      el("dl", { className: "kv" }, el("dt", {}, "Started by"), el("dd", {}, "claude-code, session 8c1e"), el("dt", {}, "Plan"), el("dd", {}, "6 steps, frozen when the run started"),
+        el("dt", {}, "Child runs"), el("dd", {}, "1 (notify-stakeholders)"))),
+    el("p", { className: "xs muted" }, "A step has no start time of its own in akm, so its span is taken from its units."),
+  );
+}
+
+function render() {
+  renderSteps(); renderChart(); renderSide();
+  const done = units.filter((u) => ["completed", "failed"].includes(unitStatus(u))).length;
+  $("#sElapsed").textContent = mmss(clock); $("#sUnits").textContent = `${done} / ${units.length}`;
+  $("#sTokens").textContent = fmt(units.flatMap((u) => u.attempts).filter((a) => seen(a) !== "pending").reduce((n, a) => n + Math.round(a.tokens * Math.min(1, (clock - a.start) / (a.end - a.start))), 0));
+  const badge = $("#runStatus"); badge.textContent = "Active"; badge.dataset.tone = "accent";
+}
+// Replay: the same clock every bar is drawn against, run forward at 25 times real speed up to the present.
+$("#replay").onclick = () => {
+  if (live) return;
+  live = true; clock = 0; let last = performance.now(), drawn = 0;
+  const tick = (now) => {
+    clock = Math.min(NOW, clock + ((now - last) / 1000) * 25); last = now;
+    if (now - drawn > 90 || clock >= NOW) { drawn = now; render(); }
+    if (clock < NOW) requestAnimationFrame(tick); else live = false;
+  };
+  requestAnimationFrame(tick);
+};
+new ResizeObserver(() => renderChart()).observe($("#chart"));
+themeToggle($("#theme"));
+render();
+window.__setClock = (s) => { clock = s; render(); };
+</script>
+</body>
+</html>

@@ -46,9 +46,9 @@ Limits:
 
 ## Not built: what each needs from AKM
 
-These were prototyped as standalone pages against synthetic data. None can be built from today's
-workspace API without Desktop reading AKM's databases itself, which it must not do
-(`AGENTS.md`). Each needs a read operation added to `akm-cli/workspace`; the data and, where named,
+These were prototyped as standalone pages against synthetic data
+([prototypes](prototypes/README.md)). None can be built from today's workspace API without Desktop
+reading AKM's databases itself, which it must not do (`AGENTS.md`). Each needs a read operation added to `akm-cli/workspace`; the data and, where named,
 the internal function already exist.
 
 | View | What it shows | Needs from AKM |
