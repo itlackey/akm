@@ -127,6 +127,8 @@ export function recordTaskAttemptFailure(input: {
   logDir?: string;
   /** Internal: runTask already reserved this identity. */
   historyReserved?: boolean;
+  /** Whether the OS scheduler started the run; stored as the row's `trigger`. */
+  scheduled?: boolean;
 }): void {
   let taskId = input.taskId;
   try {
@@ -163,5 +165,5 @@ export function recordTaskAttemptFailure(input: {
     fileText: `${line}\n`,
     dbLines: [{ level: "error", line }],
   });
-  appendHistory(result, attempt.historyReserved);
+  appendHistory(result, attempt.historyReserved, input.scheduled);
 }

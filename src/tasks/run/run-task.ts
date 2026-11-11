@@ -95,6 +95,7 @@ export async function runTask(id: string, options: RunTaskOptions): Promise<Task
       finishedAt: now(),
       logDir: options.logDir,
       historyReserved: attempt.historyReserved,
+      scheduled: provenance.scheduled,
     });
     throw failure;
   }
