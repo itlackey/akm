@@ -37,7 +37,7 @@ interface OpencodeVersionInfo {
 /** Runs `<bin> --version`; the trimmed stdout, or undefined when the binary could not be run. */
 type OpencodeVersionProbe = (bin: string) => string | undefined;
 
-const defaultProbe: OpencodeVersionProbe = (bin) => probeVersion(bin, VERSION_TIMEOUT_MS);
+const defaultProbe: OpencodeVersionProbe = (bin) => probeVersion(bin, VERSION_TIMEOUT_MS).version;
 
 let probeOverride: OpencodeVersionProbe | undefined;
 const detected = new Map<string, OpencodeVersionInfo>();

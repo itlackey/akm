@@ -321,6 +321,12 @@ function compareImproveRunRecency(a: ImproveRunSummaryRow, b: ImproveRunSummaryR
   return a.id.localeCompare(b.id);
 }
 
+/** Internal advisory inputs; public per-run summaries retain the recorded envelope's status. */
+export interface ImproveRunOutcomes {
+  failedRunIds: string[];
+  interruptedRunIds: string[];
+}
+
 /**
  * Aggregate the window's `improve_runs` rows. `runCount` is every non-dry-run
  * row in the window; rows whose envelope does not decode are counted under
@@ -330,10 +336,11 @@ export function summarizeImproveRuns(
   db: Database,
   since: string,
   until?: string,
-): { metrics: ImproveHealthMetrics; runCount: number } {
+): { metrics: ImproveHealthMetrics; runCount: number; outcomes: ImproveRunOutcomes } {
   const accum = emptyImproveMetrics();
   const rows = queryImproveRuns(db, since, until);
   const resultRows = { total: rows.length, included: 0, skipped: { invalid: 0 } };
+  const outcomes: ImproveRunOutcomes = { failedRunIds: [], interruptedRunIds: [] };
 
   // memorySummary is a whole-stash snapshot per run, so the window value is the
   // newest complete run's snapshot (current state) — not a sum across runs.
@@ -343,11 +350,28 @@ export function summarizeImproveRuns(
     const result = decodeImproveResultRow(row);
     if (!result) {
       resultRows.skipped.invalid += 1;
+      if (!row.ok) outcomes.failedRunIds.push(row.id);
       continue;
     }
     resultRows.included += 1;
     const perRow = projectRunMetrics(result);
     mergeImproveMetrics(accum, perRow);
+    const terminationReason = (result.terminated as { reason: string } | undefined)?.reason;
+    const interrupted = ["SIGINT", "SIGTERM", "SIGHUP"].includes(terminationReason ?? "");
+    // Completed envelopes can be ok:true despite failed processing. Signals alone
+    // do not distinguish deliberate cancellation from a timeout or service stop.
+    if (
+      perRow.actions.reflect.failed > 0 ||
+      perRow.actions.distill.llmFailed > 0 ||
+      perRow.actions.error > 0 ||
+      perRow.consolidation.failedChunks > 0 ||
+      perRow.memoryInference.skippedNoFacts > 0 ||
+      (!interrupted && (!row.ok || terminationReason !== undefined))
+    ) {
+      outcomes.failedRunIds.push(row.id);
+    } else if (interrupted) {
+      outcomes.interruptedRunIds.push(row.id);
+    }
     if (
       result.terminated === undefined &&
       Number.isFinite(new Date(row.started_at).getTime()) &&
@@ -360,7 +384,7 @@ export function summarizeImproveRuns(
   finalizeImproveMetrics(accum);
   accum.resultRows = resultRows;
   if (latest) accum.memorySummary = latest.memorySummary;
-  return { metrics: accum, runCount: rows.length };
+  return { metrics: accum, runCount: rows.length, outcomes };
 }
 
 /** Project an improve_runs row + wall time + task attribution into one {@link ImproveRunSummary}. */
@@ -405,12 +429,14 @@ export function projectImproveRunSummary(
   };
 }
 
-/** Nearest-rank median and p95 of the window's run wall times. */
+/** Upper median and nearest-rank p95 of the window's run wall times. */
 export function computeWallTimeStats(durationsMs: number[]): ImproveHealthMetrics["wallTime"] {
   if (durationsMs.length === 0) return { medianMs: 0, p95Ms: 0 };
   const sorted = [...durationsMs].sort((a, b) => a - b);
-  const pick = (q: number) => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))] ?? 0;
-  return { medianMs: pick(0.5), p95Ms: pick(0.95) };
+  return {
+    medianMs: sorted[Math.floor(sorted.length / 2)] ?? 0,
+    p95Ms: sorted[Math.ceil(0.95 * sorted.length) - 1] ?? 0,
+  };
 }
 
 export function buildImproveSkipSummary(events: ReturnType<typeof readEvents>["events"]): {

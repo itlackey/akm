@@ -92,15 +92,14 @@ const OPENCODE_PLUGIN_LOCATIONS: readonly OpencodePluginLocation[] = [
     label: "OpenCode's",
     remedy: "update the OpenCode plugin",
     folders: (cacheRoot) => {
-      // OpenCode caches each spec in its own folder, and a bare name is its `@latest`, as `akm upgrade` reads it. With
-      // no config entry, or no folder for the spec, the bare `packages/akm-opencode` is read, as this check always has.
+      // Cache residue is not an installation. Only a configured bare name may use the legacy bare cache.
       const { pkg } = OPENCODE_V1;
       const bare = { folder: path.join(cacheRoot, OPENCODE_V1.cacheFolder(pkg)) };
       const named = openCodeConfigSpec(OPENCODE_V1)?.spec;
-      if (named === undefined) return [bare];
+      if (named === undefined) return [];
       const spec = named === pkg ? `${pkg}@latest` : named;
       const folder = path.join(cacheRoot, OPENCODE_V1.cacheFolder(spec));
-      if (!fs.existsSync(folder)) return [bare];
+      if (!fs.existsSync(folder)) return named === pkg ? [bare] : [];
       const version = spec.slice(pkg.length + 1);
       return [{ spec, folder, ...(isExactSemver(version) ? { pinned: version } : {}) }];
     },
@@ -112,22 +111,12 @@ const OPENCODE_PLUGIN_LOCATIONS: readonly OpencodePluginLocation[] = [
     label: "OpenCode 2's akm-opencode-v2",
     remedy: "update the akm-opencode-v2 plugin",
     folders: (cacheRoot) => {
-      const npmDir = path.join(cacheRoot, OPENCODE_V2.cacheFolder(""));
-      let specs: string[];
-      try {
-        specs = fs.readdirSync(npmDir).filter((name) => name.startsWith(`${OPENCODE_V2.pkg}@`));
-      } catch {
-        return [];
-      }
-      // OpenCode 2 loads the one spec its global config names and leaves the folders of other specs behind, so only
-      // that spec's folder is read (a bare name is its `@latest`). With no entry every cached spec is read, as before.
       const { pkg } = OPENCODE_V2;
       const named = openCodeConfigSpec(OPENCODE_V2)?.spec;
-      const loaded = named === undefined ? undefined : named === pkg ? `${pkg}@latest` : named;
-      return specs
-        .filter((spec) => loaded === undefined || spec === loaded)
-        .sort()
-        .map((spec) => ({ spec, folder: path.join(npmDir, spec) }));
+      if (named === undefined) return [];
+      const loaded = named === pkg ? `${pkg}@latest` : named;
+      const npmDir = path.join(cacheRoot, OPENCODE_V2.cacheFolder(""));
+      return [{ spec: loaded, folder: path.join(npmDir, loaded) }];
     },
   },
 ];

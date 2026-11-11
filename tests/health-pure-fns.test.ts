@@ -4,9 +4,25 @@
 
 import { describe, expect, test } from "bun:test";
 import { dominantAgentFailureReason } from "../src/commands/health/checks";
+import { computeWallTimeStats } from "../src/commands/health/improve-metrics";
 import { matchImproveTaskId } from "../src/commands/health/task-runs";
 import type { WindowResult } from "../src/commands/health/types";
 import { computeDeltas, readNumericPath } from "../src/commands/health/windows";
+
+describe("computeWallTimeStats", () => {
+  test("uses nearest-rank p95, retaining the existing upper median and input order", () => {
+    const values = Array.from({ length: 20 }, (_, i) => 20 - i);
+    expect(computeWallTimeStats(values)).toEqual({ medianMs: 11, p95Ms: 19 });
+    expect(values[0]).toBe(20);
+    expect(computeWallTimeStats(Array.from({ length: 100 }, (_, i) => i + 1)).p95Ms).toBe(95);
+  });
+
+  test("handles empty, single and small samples", () => {
+    expect(computeWallTimeStats([])).toEqual({ medianMs: 0, p95Ms: 0 });
+    expect(computeWallTimeStats([7])).toEqual({ medianMs: 7, p95Ms: 7 });
+    expect(computeWallTimeStats([2, 1])).toEqual({ medianMs: 2, p95Ms: 2 });
+  });
+});
 
 describe("readNumericPath", () => {
   test("walks a dotted path to a finite number", () => {

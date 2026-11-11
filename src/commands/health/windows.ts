@@ -17,6 +17,7 @@ import {
   computeWallTimeStats,
   computeWindowProposalCoverage,
   countAgentFailureReasons,
+  type ImproveRunOutcomes,
   isAgentTaskHistoryRow,
   roundRate,
   summarizeImproveRuns,
@@ -166,11 +167,16 @@ export interface TaskWindowRates {
  * (`health.ts`'s `gatherTaskHistoryPhase`) and {@link buildWindowMetrics}
  * below — previously computed twice with the only difference being whether
  * the caller had already bounded `taskRows` by an `until`. Pure projection of
- * already-queried rows; callers own the `since`/`until` query.
+ * already-queried rows; callers own the `since`/`until` query. The main health
+ * check supplies all still-active rows independently of its history window.
  */
-export function computeTaskWindowRates(taskRows: readonly TaskHistoryRow[], now: () => number): TaskWindowRates {
+export function computeTaskWindowRates(
+  taskRows: readonly TaskHistoryRow[],
+  now: () => number,
+  activeTaskRows: readonly TaskHistoryRow[] = taskRows,
+): TaskWindowRates {
   const failedTaskRows = taskRows.filter((row) => row.status === "failed");
-  const activeRows = taskRows.filter((row) => row.status === "active" && row.completed_at === null);
+  const activeRows = activeTaskRows.filter((row) => row.status === "active" && row.completed_at === null);
   const stuckActiveRows = activeRows.filter((row) => now() - new Date(row.started_at).getTime() > ACTIVE_RUN_WARN_MS);
   const agentRows = taskRows.filter((row) => isAgentTaskHistoryRow(row));
   const agentFailures = agentRows.filter((row) => {
@@ -191,6 +197,7 @@ export interface ImproveWindowSummary {
   runCount: number;
   /** Per-run rows for the same `[since, until)` — reused for `--group-by run` so callers never re-read `improve_runs`. */
   perRunSummaries: ImproveRunSummary[];
+  outcomes: ImproveRunOutcomes;
 }
 
 /**
@@ -212,7 +219,7 @@ export function buildImproveWindowSummary(
     readEvents({ since, type }, { dbPath: stateDbPath, readOnly }).events.filter(
       (event) => new Date(event.ts ?? since).getTime() < untilMs,
     );
-  const { metrics: improve, runCount } = summarizeImproveRuns(db, since, until);
+  const { metrics: improve, runCount, outcomes } = summarizeImproveRuns(db, since, until);
   improve.invoked = eventsBeforeUntil("improve_invoked").length;
   improve.completed = eventsBeforeUntil(IMPROVE_COMPLETED_EVENT).length;
   const skipSummary = buildImproveSkipSummary(eventsBeforeUntil("improve_skipped"));
@@ -226,7 +233,7 @@ export function buildImproveWindowSummary(
   );
   improve.coverage = computeWindowProposalCoverage(db, since, until);
 
-  return { improve, runCount, perRunSummaries };
+  return { improve, runCount, perRunSummaries, outcomes };
 }
 
 export function buildWindowMetrics(

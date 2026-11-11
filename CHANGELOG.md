@@ -16,6 +16,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `akm health` fails for an unreadable search index even when semantic search is off, reports still-active tasks independently of the history window, and warns when a harness probe cannot launch or is interrupted (an unsupported `--version` alone is not a warning).
+- Health's OpenCode plugin checks ignore abandoned cache folders when the plugin is not configured and no longer substitute a different cached spec for a missing configured spec. A configured bare OpenCode 1 plugin still reads its legacy bare cache.
+- Health attributes the shipped `improve` scheduled task correctly, surfaces recorded processing failures (including exceptions, exhausted budgets and failures inside `ok: true` results) independently of scheduled-task failures, reports signal-only interruptions as unknown, and recommends `akm upgrade --next` when the available update is on the prerelease channel.
+- Health's process/connection/model token totals use the same prompt-plus-completion fallback as its aggregate, preserving explicit totals including zero; p95 uses the documented nearest-rank calculation without changing the existing upper-median convention.
 - The `assetContentRefs` migration rewrites legacy refs only in asset files, a wiki's `index.md` and `schema.md`, and an `index.md` beside assets (#1605):
   - Frozen eval corpora, captured prompts and results, `raw/` sources, `log.md` and the root `README.md` are left byte-for-byte.
   - When it leaves uncommitted edits in a git checkout, its report names the checkout and the next steps.

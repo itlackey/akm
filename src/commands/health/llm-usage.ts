@@ -27,6 +27,10 @@ function emptyLlmUsageStageAggregate(): LlmUsageStageAggregate {
   };
 }
 
+function totalTokens(record: LlmUsageRecord): number {
+  return record.totalTokens ?? (record.promptTokens ?? 0) + (record.completionTokens ?? 0);
+}
+
 /** True when the provider response carried any token count. Absent usage is unknown, not zero. */
 export function hasTokenUsage(record: LlmUsageRecord): boolean {
   return (
@@ -72,7 +76,7 @@ export function summarizeLlmUsage(events: ReturnType<typeof readEvents>["events"
       target.promptTokens += record.promptTokens ?? 0;
       target.completionTokens += record.completionTokens ?? 0;
       // A call without a total counts as prompt + completion, as the per-day metrics rows do.
-      target.totalTokens += record.totalTokens ?? (record.promptTokens ?? 0) + (record.completionTokens ?? 0);
+      target.totalTokens += totalTokens(record);
       target.reasoningTokens += record.reasoningTokens ?? 0;
       if (record.outcome === "error") target.failures += 1;
     }
@@ -122,7 +126,7 @@ export function summarizeLlmUsageRecordsCrossTab(records: Iterable<LlmUsageRecor
     row.totalDurationMs += record.durationMs;
     row.promptTokens += record.promptTokens ?? 0;
     row.completionTokens += record.completionTokens ?? 0;
-    row.totalTokens += record.totalTokens ?? 0;
+    row.totalTokens += totalTokens(record);
     row.reasoningTokens += record.reasoningTokens ?? 0;
     if (record.outcome === "error") row.failures += 1;
   }
