@@ -433,7 +433,7 @@ export const showCommand = defineJsonCommand({
     if (args.outline && (contextMode === "lead" || maxTokens !== undefined || maxChars !== undefined)) {
       throw new UsageError("--outline cannot be combined with lead context or a content budget.", "INVALID_FLAG_VALUE");
     }
-    if (explicitDetail === "brief" && (args.lead || (maxTokens !== undefined && contextMode === "exact"))) {
+    if (explicitDetail === "brief" && (contextMode === "lead" || maxTokens !== undefined || maxChars !== undefined)) {
       throw new UsageError(
         "A content budget or --lead requires body output; omit --detail brief.",
         "INVALID_FLAG_VALUE",
@@ -443,6 +443,7 @@ export const showCommand = defineJsonCommand({
       ref: args.ref,
       detail: showDetail,
       contextMode,
+      ...(args.lead ? { contextFlag: "--lead" as const } : {}),
       maxContextChars: maxChars,
       maxTokens,
       eventSource: resolveUsageEventSource(),

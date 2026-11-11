@@ -88,6 +88,8 @@ export async function akmShowUnified(input: {
   contextMode?: FragmentContextMode;
   /** Hard character budget for contextual fragment presentation. */
   maxContextChars?: number;
+  /** How the user spelled lead context, so its errors name the flag they typed. Default `--context lead`. */
+  contextFlag?: "--lead" | "--context lead";
   /** Optional body budget, estimated at four characters per token. */
   maxTokens?: number;
   /**
@@ -160,17 +162,39 @@ export async function akmShowUnified(input: {
   return result;
 }
 
-/** Budget only rendered bodies: never reopen source files or widen sensitive renderers. */
+const FRONTMATTER_PREFIX = /^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/;
+
+/**
+ * Cut `text` to at most `limit` characters without splitting a UTF-16 surrogate pair,
+ * preferring to end at whitespace when one is close (within the last quarter, at most 32 characters).
+ */
+function cutAtBoundary(text: string, limit: number): string {
+  if (text.length <= limit) return text;
+  let end = limit;
+  const last = text.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+  const window = text.slice(Math.max(0, end - Math.min(32, Math.floor(end / 4))), end);
+  const space = window.search(/\s\S*$/);
+  if (space > 0) end = end - window.length + space;
+  return text.slice(0, end);
+}
+
+/**
+ * Budget only rendered bodies: never reopen source files or widen sensitive renderers.
+ * A leading frontmatter block is metadata: it is kept whole and does not count against the budget.
+ */
 function applyContentBudget(response: ShowResponse, maxTokens: number | undefined): ShowResponse {
   if (maxTokens === undefined) return response;
   let remaining = maxTokens * 4;
   let chars = 0;
   let truncated = response.contextTruncated === true;
   for (const key of ["content", "template", "prompt"] as const) {
-    const body = response[key];
-    if (body === undefined) continue;
-    const bounded = body.slice(0, remaining);
-    response[key] = bounded;
+    const text = response[key];
+    if (text === undefined) continue;
+    const frontmatter = FRONTMATTER_PREFIX.exec(text)?.[0] ?? "";
+    const body = text.slice(frontmatter.length);
+    const bounded = cutAtBoundary(body, remaining);
+    response[key] = frontmatter + bounded;
     chars += bounded.length;
     remaining -= bounded.length;
     truncated ||= bounded.length < body.length;
@@ -229,7 +253,9 @@ function validateFragmentContextRequest(input: {
   ref: string;
   contextMode?: FragmentContextMode;
   maxContextChars?: number;
+  contextFlag?: string;
 }): void {
+  const flag = input.contextFlag ?? "--context lead";
   const mode = input.contextMode ?? "exact";
   if (mode !== "exact" && mode !== "lead") {
     throw new UsageError(`Invalid --context value: "${String(mode)}". Expected exact or lead.`, "INVALID_FLAG_VALUE");
@@ -245,11 +271,11 @@ function validateFragmentContextRequest(input: {
   }
   if (mode !== "lead") return;
   if (parseMetaRef(input.ref)) {
-    throw new UsageError("--context lead requires an indexed Markdown asset fragment.", "INVALID_FLAG_VALUE");
+    throw new UsageError(`${flag} requires an indexed Markdown asset fragment.`, "INVALID_FLAG_VALUE");
   }
   const parsed = parseBundleRef(input.ref);
   if (!parsed.fragment) {
-    throw new UsageError("--context lead requires a fragment-qualified ref.", "INVALID_FLAG_VALUE");
+    throw new UsageError(`${flag} requires a fragment-qualified ref.`, "INVALID_FLAG_VALUE");
   }
 }
 
@@ -264,10 +290,11 @@ function enforceSensitiveFragmentPolicy(
   type: string,
   ref: BundleRef,
   contextMode: FragmentContextMode | undefined,
+  contextFlag = "--context lead",
 ): void {
   if (type !== "env" && type !== "secret") return;
   if (contextMode === "lead") {
-    throw new UsageError(`--context lead is unavailable for sensitive ${type} assets.`, "INVALID_FLAG_VALUE");
+    throw new UsageError(`${contextFlag} is unavailable for sensitive ${type} assets.`, "INVALID_FLAG_VALUE");
   }
   if (ref.fragment === undefined) return;
   warnOnce(
@@ -283,6 +310,7 @@ export async function showLocal(input: {
   stashDir?: string;
   contextMode?: FragmentContextMode;
   maxContextChars?: number;
+  contextFlag?: string;
   readOnly?: boolean;
 }): Promise<ShowResponse> {
   validateFragmentContextRequest(input);
@@ -333,7 +361,7 @@ export async function showLocal(input: {
         "Check the name with `akm search` or verify the asset exists in your stash.",
     );
   }
-  enforceSensitiveFragmentPolicy(indexedEntry.type, parsed, input.contextMode);
+  enforceSensitiveFragmentPolicy(indexedEntry.type, parsed, input.contextMode, input.contextFlag);
 
   try {
     fs.accessSync(assetPath, fs.constants.R_OK);
