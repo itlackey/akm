@@ -261,22 +261,21 @@ export async function checkForUpdate(
 /**
  * Whether the operator has asked to bypass upgrade checksum verification.
  *
- * Deliberately NOT a CLI flag (C6): STABILITY.md states checksum verification
- * is not optional, so the recovery hatch for a genuinely broken `checksums.txt`
- * is this internal, undocumented-on-purpose env var — not something
- * discoverable in `--help` or offered by tab completion.
+ * Verification is the default and is not optional in normal use. The recovery
+ * hatch for a genuinely broken `checksums.txt` is `akm upgrade --skip-checksum`;
+ * the `AKM_UPGRADE_SKIP_CHECKSUM=1` env var it replaces keeps working in 0.10.
  *
  * Extracted rather than read inline so `performUpgrade` stays under the
  * function-size bar (`scripts/lint-src-fn-size.ts`), whose baseline only
  * shrinks.
  */
-function checksumBypassRequested(): boolean {
-  return process.env.AKM_UPGRADE_SKIP_CHECKSUM === "1";
+function checksumBypassRequested(flag: boolean | undefined): boolean {
+  return flag === true || process.env.AKM_UPGRADE_SKIP_CHECKSUM === "1";
 }
 
 export async function performUpgrade(
   check: UpgradeCheckResponse,
-  opts?: { force?: boolean; skipPostUpgrade?: boolean; targetVersion?: string },
+  opts?: { force?: boolean; skipPostUpgrade?: boolean; skipChecksum?: boolean; targetVersion?: string },
   dependencies?: Partial<SelfUpdateDependencies>,
 ): Promise<UpgradeResponse> {
   const { currentVersion, latestVersion, installMethod } = check;
@@ -382,18 +381,18 @@ export async function performUpgrade(
 
   // Download and verify checksum (mandatory — upgrade is blocked if checksums cannot be fetched).
   let checksumVerified = false;
-  const skipChecksum = checksumBypassRequested();
+  const skipChecksum = checksumBypassRequested(opts?.skipChecksum);
   try {
     const checksumsResponse = await fetchWithRetry(checksumsUrl);
     if (!checksumsResponse.ok) {
       if (skipChecksum) {
         warn(
-          `WARNING: checksums.txt fetch failed (HTTP ${checksumsResponse.status}). Proceeding without verification because AKM_UPGRADE_SKIP_CHECKSUM=1 was set.`,
+          `WARNING: checksums.txt fetch failed (HTTP ${checksumsResponse.status}). Proceeding without verification because the checksum bypass was requested.`,
         );
       } else {
         throw new Error(
           `Checksum verification failed: could not fetch ${checksumsUrl} (HTTP ${checksumsResponse.status}). ` +
-            `Set AKM_UPGRADE_SKIP_CHECKSUM=1 to bypass (not recommended).`,
+            `Pass --skip-checksum (or set AKM_UPGRADE_SKIP_CHECKSUM=1) to bypass (not recommended).`,
         );
       }
     } else {
@@ -410,12 +409,12 @@ export async function performUpgrade(
       } else {
         if (skipChecksum) {
           warn(
-            `WARNING: ${binaryName} not found in checksums.txt. Proceeding without verification because AKM_UPGRADE_SKIP_CHECKSUM=1 was set.`,
+            `WARNING: ${binaryName} not found in checksums.txt. Proceeding without verification because the checksum bypass was requested.`,
           );
         } else {
           throw new Error(
             `Checksum verification failed: ${binaryName} not listed in checksums.txt. ` +
-              `Set AKM_UPGRADE_SKIP_CHECKSUM=1 to bypass (not recommended).`,
+              `Pass --skip-checksum (or set AKM_UPGRADE_SKIP_CHECKSUM=1) to bypass (not recommended).`,
           );
         }
       }
@@ -431,13 +430,13 @@ export async function performUpgrade(
     // Network or parse failure
     if (skipChecksum) {
       warn(
-        `WARNING: Could not fetch or parse checksums: ${err instanceof Error ? err.message : String(err)}. Proceeding because AKM_UPGRADE_SKIP_CHECKSUM=1 was set.`,
+        `WARNING: Could not fetch or parse checksums: ${err instanceof Error ? err.message : String(err)}. Proceeding because the checksum bypass was requested.`,
       );
     } else {
       removeFileBestEffort(stagedPath);
       throw new Error(
         `Checksum verification failed: ${err instanceof Error ? err.message : String(err)}. ` +
-          `Set AKM_UPGRADE_SKIP_CHECKSUM=1 to bypass (not recommended).`,
+          `Pass --skip-checksum (or set AKM_UPGRADE_SKIP_CHECKSUM=1) to bypass (not recommended).`,
       );
     }
   }

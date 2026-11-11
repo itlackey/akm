@@ -1059,11 +1059,27 @@ describe("performUpgrade", () => {
     ).rejects.toThrow(/Checksum verification failed/);
   });
 
-  // C6: the checksum bypass is no longer a `--skip-checksum` CLI option
-  // threaded through `performUpgrade`'s opts — it is the internal
-  // AKM_UPGRADE_SKIP_CHECKSUM env var, read directly inside performUpgrade
-  // (src/commands/sources/self-update.ts), so it exercises the checksum step
-  // on the binary install path rather than being a no-op npm-path option.
+  // The checksum bypass is `akm upgrade --skip-checksum` (`skipChecksum` in
+  // performUpgrade's opts) or the older AKM_UPGRADE_SKIP_CHECKSUM env var.
+  test("the skipChecksum option bypasses checksum verification without the env var", async () => {
+    const installDir = path.join(sandboxHome().dir, "self-update-skip-checksum-flag");
+    fs.mkdirSync(installDir, { recursive: true });
+    const binaryPath = path.join(installDir, "akm");
+    fs.writeFileSync(binaryPath, "old-binary");
+    mockFetch((url) =>
+      url.includes("checksums.txt") ? new Response("", { status: 404 }) : new Response("new-binary", { status: 200 }),
+    );
+    const result = await withEnv({ AKM_UPGRADE_SKIP_CHECKSUM: undefined }, () =>
+      performUpgrade(
+        { currentVersion: "0.0.13", latestVersion: "0.0.14", updateAvailable: true, installMethod: "binary" },
+        { skipPostUpgrade: true, skipChecksum: true },
+        { execPath: binaryPath, ...currentMigrator },
+      ),
+    );
+    expect(result.upgraded).toBe(true);
+    expect(fs.readFileSync(binaryPath, "utf8")).toBe("new-binary");
+  });
+
   test("AKM_UPGRADE_SKIP_CHECKSUM=1 bypasses checksum verification on the binary install path", async () => {
     const installDir = path.join(sandboxHome().dir, "self-update-skip-checksum");
     fs.mkdirSync(installDir, { recursive: true });
