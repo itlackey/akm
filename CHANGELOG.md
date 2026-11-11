@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `akm health --read-only` exposes the existing native read-only health checks without creating or migrating state or running the database write/read probe. Network probing remains independent (`--no-probe` for offline use); `--report` also keeps its proposal queries read-only and preserves native failure diagnostics when state is unavailable (#1607).
+
 ### Changed
 
 - `plugins` is a config section: the home of the akm plugins' settings (`autoFeedback`, `indexOnSessionEnd`, `curateLimit`, `curateTimeoutSeconds`, `pendingProposalTimeoutSeconds`, `redact.pii`, `redact.highEntropy`), which the plugins read from `config.json` themselves in place of their `AKM_*` environment variables. akm keeps the section, never reads or validates the keys inside it, no longer warns "Unknown config key" for it, and `akm migrate apply` no longer deletes it (#1613). Nothing else changes in akm.

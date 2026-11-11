@@ -25,6 +25,19 @@ Each check is `pass`, `warn`, `fail`, or `unknown`, and `deterministic` or
 `--since` sets the history window the task and improve checks read. The default is 24 hours.
 The `active-runs` check always reads all still-active tasks, including those that started before this window.
 
+## State access
+
+By default, health creates `state.db` when missing, applies pending migrations and
+runs the append/read/delete round-trip probe. `--read-only` reuses the same native
+read-only implementation as AKM Desktop: it never creates, migrates or repairs
+state, and the skipped round-trip is `unknown`. Missing, corrupt or unavailable
+state, including pending migrations, produces a failing diagnostic with exit 1.
+With `--report`, proposal queries also use a read-only connection; unavailable
+state returns its diagnostic without attempting those extra queries.
+
+Read-only state access and network probing are independent. Use
+`akm health --read-only --no-probe` for offline inspection.
+
 ## Network and processes
 
 Probing is on by default; `--no-probe` turns it off. With probing on, health sends a
@@ -51,9 +64,9 @@ says so in the message (`remoteUnavailable` in the evidence) and is `unknown`, n
 | Check | Fires when | Remedy |
 |---|---|---|
 | `state-db-schema` | `fail`: state.db is missing one of `events`, `proposals`, `schema_migrations`, `task_history`. | The message lists the missing tables. |
-| `state-db-round-trip` | `fail`: appending and reading back a probe event failed. The probe row is deleted again. | The message gives the error. |
+| `state-db-round-trip` | `fail`: appending and reading back a probe event failed. The probe row is deleted again. `unknown` when `--read-only` or AKM Desktop skips this write probe. | The message gives the error. |
 | `state-db-integrity` | `fail`: `PRAGMA integrity_check` failed, or reading the freelist failed. `warn`: more than 50% of the pages are free. | For a failed check, follow the repair in the message: back up state.db, run `sqlite3 -readonly state.db ".recover" \| sqlite3 state.new.db`, confirm `state.new.db` passes `integrity_check`, stop every akm process, delete `state.db-wal` and `state.db-shm`, then swap `state.new.db` in as state.db. The free-page warning clears when `akm improve`'s retention purge VACUUMs state.db. |
-| `state-db-migrations` | Always `pass` in a normal run; the message lists the migrations this open applied and the pre-migration copy (`evidence.applied`, `evidence.backupPath`). `fail` when the open could not apply a pending migration, or a read-only run (AKM Desktop's health view) finds one pending, which it must not apply; this row is then the whole report. | Run `akm migrate apply`. |
+| `state-db-migrations` | Always `pass` in a normal run; the message lists the migrations this open applied and the pre-migration copy (`evidence.applied`, `evidence.backupPath`). `fail` when the open could not apply a pending migration, or a read-only run (`--read-only` or AKM Desktop) finds one pending, which it must not apply; this row is then the whole report. | Run `akm migrate apply`. |
 | `task-history-read` | Always `pass`; reports the number of `task_history` rows read in the window. | None. |
 | `active-runs` | `warn`: a task run has been active for more than 15 minutes, regardless of `--since`. The message names the tasks and their age. | Inspect with `akm task history`. |
 | `improve-failures` | `warn`: a recorded run failed, ended with an exception or exhausted its budget, or contains processing failures (reflection, distillation LLM, generic action, consolidation chunk or memory-inference failure), even when its outer result is `ok: true`. Includes manual runs; excludes dry runs and runs outside the selected window. Signal-only interruptions (`SIGINT`, `SIGTERM`, `SIGHUP`) are `unknown`, not assumed cancellation or processing failure. Successful no-work runs, no-change decisions and quality rejections are not failures. | Inspect `akm health --since <same window> --group-by run` and the recorded result/log. |
