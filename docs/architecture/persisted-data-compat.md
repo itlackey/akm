@@ -91,7 +91,17 @@ nothing else with 0.11's tables:
   `schema_migrations` table, because 0.11 versions `metrics.db` by that ledger
   (an exact ordered prefix of its migration ids; a foreign id would be
   "inconsistent"). 0.11 opening a file 0.10 wrote finds no ledger, runs its
-  baseline migration beside the usage tables and loses nothing.
+  baseline migration beside the usage tables, and the usage rows are kept.
+  **Known gap, to be fixed in 0.11:** until 0.11's first fold migrates the
+  file, a `release/0.11.0` build's `akm health` fails its `metrics-db` check
+  ("no such table: folded_day", exit 1) and `withMetricsHistory` warns on
+  stderr, because the file has no `schema_migrations` ledger and no
+  `folded_day`. 0.10 cannot pre-create `folded_day`: that would break 0.11's
+  baseline `CREATE TABLE`. 0.11 must treat a `metrics.db` with no
+  `schema_migrations` ledger or no `folded_day` table as "no day folded yet"
+  (not an error) in its `metrics-db` health check
+  (`src/commands/health/metrics-db-check.ts`) and in `withMetricsHistory`
+  (`src/storage/repositories/metrics-rollup-repository.ts`).
 - **Content:** `cli_usage_meta` holds an opaque local instance UUID and the
   collection start; `cli_usage_invocations` holds redacted schema-version-1
   attempt documents and completion fields; `cli_usage_aggregates` holds UTC
@@ -105,7 +115,7 @@ nothing else with 0.11's tables:
 - **Off and read-only:** `usage.capture: false` and `--read-only` open and write
   nothing.
 
-**What 0.11 must do to adopt it:** nothing to the file. Its usage capture opens
+**What 0.11 must do to adopt it:** nothing to the file itself, but its readers must tolerate a `metrics.db` that holds only usage tables (see the known gap above). Its usage capture opens
 `metrics.db` in the data directory it resolves (after the location is known),
 runs the same `CREATE TABLE IF NOT EXISTS` statements for the three tables,
 keeps `cli_usage_meta.schema` as the only usage version (bump it for a new usage
@@ -119,6 +129,10 @@ absence of `user_version` and `schema_migrations` changes beside a 0.11-shaped
 `metrics.db`, retention, redaction and fail-open behaviour.
 `tests/integration/upgrade-rehearsal/upgrade-rehearsal.test.ts` (step 11b, gated
 behind `AKM_UPGRADE_REHEARSAL=1` and run in CI against the previous release)
-writes a task `trigger`, usage-event `agent` metadata and CLI usage with the
-candidate and reads them back with the previous release. Not tested: a real
-0.11 build opening this file; that check belongs to 0.11's rehearsal.
+asserts that the candidate wrote a `manual` task `trigger`, usage-event `agent`
+metadata and CLI usage rows, then that the previous release decodes the
+candidate's newest task run (same `startedAt`) and `show` with no "Skipping
+unparseable" warning, and leaves the `cli_usage_*` row count unchanged. Not
+tested: that the previous release reads the `agent` metadata or the usage
+tables (it has no command that shows them), and a real
+0.11 build opening this file: by hand, `release/0.11.0` fails its health check on it until the 0.11 fix above lands, and that check belongs to 0.11's rehearsal.

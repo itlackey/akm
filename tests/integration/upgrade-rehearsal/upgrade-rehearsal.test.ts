@@ -532,8 +532,9 @@ for (const origin of ["previous", "0.9.32"] as const) {
     });
 
     test("11b. read-back of rows only the candidate writes: task_history `trigger`, usage-event `agent` metadata, and CLI usage in metrics.db", async () => {
-      // The candidate records the agent that made a show, a `manual` trigger for step 8's task run,
-      // and one CLI usage row per command (step 1 onwards) in metrics.db's cli_usage_* tables.
+      const taskRef = `stash//tasks/${home.taskIds.manual}`;
+      const taskRun = await runLauncher(candidateLauncher, ["task", "run", taskRef], home.env);
+      expect(taskRun.status, taskRun.stderr).toBe(0);
       const search = await runLauncher(candidateLauncher, ["search", home.searchTerm], home.env);
       const ref = (JSON.parse(search.stdout) as { hits?: { ref?: string }[] }).hits?.[0]?.ref as string;
       const agentShow = await runLauncher(candidateLauncher, ["show", ref], {
@@ -542,28 +543,50 @@ for (const origin of ["previous", "0.9.32"] as const) {
         AKM_SESSION_ID: "rehearsal-session",
       });
       expect(agentShow.status, agentShow.stderr).toBe(0);
-      const before = await runLauncher(candidateLauncher, ["doctor", "metrics", "usage", "--export"], home.env);
-      expect(before.status, before.stderr).toBe(0);
-      const detailsBefore = (JSON.parse(before.stdout) as { details: unknown[] }).details.length;
-      expect(detailsBefore).toBeGreaterThan(0);
 
-      // The previous release reads the same home: it ignores the unknown `trigger` and `agent` keys and the
-      // cli_usage_* tables, and neither fails nor changes them.
-      const history = await runLauncher(
-        previousLauncher,
-        ["task", "history", `stash//tasks/${home.taskIds.manual}`, "--limit", "5"],
-        home.env,
-      );
+      // Read back, with the candidate's own code, that the candidate really wrote the new fields.
+      const stateDbPath = findFile(home.env.XDG_DATA_HOME ?? "", "state.db") as string;
+      const metricsDbPath = path.join(path.dirname(stateDbPath), "metrics.db");
+      const db = openDatabase(stateDbPath, { readonly: true });
+      let newestStartedAt: string;
+      try {
+        const row = db
+          .prepare(
+            "SELECT started_at, metadata_json FROM task_history WHERE task_id LIKE ? ORDER BY started_at DESC LIMIT 1",
+          )
+          .get(`%${home.taskIds.manual}`) as { started_at: string; metadata_json: string } | undefined;
+        expect(row, "candidate task_history row").toBeDefined();
+        expect(JSON.parse(row?.metadata_json ?? "{}").trigger).toBe("manual");
+        newestStartedAt = row?.started_at as string;
+        const usage = db
+          .prepare("SELECT metadata FROM usage_events WHERE event_type = 'show' ORDER BY id DESC LIMIT 1")
+          .get() as { metadata: string };
+        expect(JSON.parse(usage.metadata).agent).toEqual({ harness: "claude", session: "rehearsal-session" });
+      } finally {
+        db.close();
+      }
+      const cliUsageRows = () => {
+        const metrics = openDatabase(metricsDbPath, { readonly: true });
+        try {
+          return (metrics.prepare("SELECT COUNT(*) AS n FROM cli_usage_invocations").get() as { n: number }).n;
+        } finally {
+          metrics.close();
+        }
+      };
+      const usageBefore = cliUsageRows();
+      expect(usageBefore).toBeGreaterThan(0);
+
+      // The previous release reads the same home: it decodes those rows (no skip warning), sees the
+      // candidate's newest task run, and leaves the CLI usage tables alone (it records nothing).
+      const history = await runLauncher(previousLauncher, ["task", "history", taskRef, "--limit", "1"], home.env);
       expect(history.status, history.stderr).toBe(0);
-      expect(((JSON.parse(history.stdout) as { rows?: unknown[] }).rows ?? []).length).toBeGreaterThan(0);
+      expect(history.stderr).not.toMatch(/Skipping unparseable/);
+      const rows = (JSON.parse(history.stdout) as { rows?: { startedAt?: string }[] }).rows ?? [];
+      expect(rows[0]?.startedAt).toBe(newestStartedAt);
       const previousShow = await runLauncher(previousLauncher, ["show", ref], home.env);
       expect(previousShow.status, previousShow.stderr).toBe(0);
-
-      const after = await runLauncher(candidateLauncher, ["doctor", "metrics", "usage", "--export"], home.env);
-      expect(after.status, after.stderr).toBe(0);
-      const detailsAfter = (JSON.parse(after.stdout) as { details: unknown[] }).details.length;
-      // Nothing the candidate recorded was lost or rewritten by the previous release (it records nothing).
-      expect(detailsAfter).toBeGreaterThanOrEqual(detailsBefore);
+      expect(previousShow.stderr).not.toMatch(/Skipping unparseable/);
+      expect(cliUsageRows()).toBe(usageBefore);
     });
   });
 }
