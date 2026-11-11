@@ -510,7 +510,12 @@ export class HostTools {
     let result: Loose;
     try {
       result = json(
-        await this.invoke(this.state.cli?.path as string, ["upgrade", ...flags, ...quietNext(flags), "--format", "json"], env, 30 * 60_000),
+        await this.invoke(
+          this.state.cli?.path as string,
+          ["upgrade", ...flags, ...quietNext(flags), "--format", "json"],
+          env,
+          30 * 60_000,
+        ),
       );
     } catch (error) {
       let partial: UpgradeSummary | undefined;
@@ -545,7 +550,12 @@ export class HostTools {
     try {
       summary = summarizeUpgrade(
         json(
-          await this.invoke(this.state.cli.path, ["upgrade", "--check", ...flags, ...quietNext(flags), "--format", "json"], env, 120_000),
+          await this.invoke(
+            this.state.cli.path,
+            ["upgrade", "--check", ...flags, ...quietNext(flags), "--format", "json"],
+            env,
+            120_000,
+          ),
         ),
       );
     } catch {
