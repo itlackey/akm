@@ -139,6 +139,35 @@ describe("the step", () => {
     expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
   });
 
+  test("a frozen file that is not an asset keeps its legacy spelling byte-for-byte", async () => {
+    configure();
+    write("wikis/articles/schema.md", "---\ntitle: schema\n---\nSchema.\n");
+    write("wikis/articles/raw/example.md", "---\ntitle: example\n---\nRaw.\n");
+    const page = write("wikis/articles/pages/a.md", "---\ntitle: a\n---\nSee wiki:articles/raw/example.\n");
+    const frozen = write("eval/frozen/inputs.json", '{"prompt":"Historical citation: wiki:articles/raw/example"}\n');
+    const before = fs.readFileSync(frozen);
+
+    const plan = await runMigration({ apply: true });
+
+    expect(plan.assetContentRefs?.files.map((file) => file.filePath)).toEqual([page]);
+    expect(fs.readFileSync(page, "utf8")).toBe("---\ntitle: a\n---\nSee wikis/articles/raw/example.\n");
+    expect(fs.readFileSync(frozen).equals(before)).toBe(true);
+  });
+
+  test("a rewrite in a git bundle names the bundle and the next steps", async () => {
+    configure();
+    write("wikis/articles/schema.md", "---\ntitle: schema\n---\nSchema.\n");
+    write("wikis/articles/raw/example.md", "---\ntitle: example\n---\nRaw.\n");
+    write("wikis/articles/pages/a.md", "---\ntitle: a\n---\nSee wiki:articles/raw/example.\n");
+    fs.mkdirSync(path.join(stash(), ".git"));
+
+    const plan = await runMigration({ apply: true });
+
+    expect(plan.assetContentRefs?.reconcile).toHaveLength(1);
+    expect(plan.assetContentRefs?.reconcile?.[0]).toContain(stash());
+    expect(plan.assetContentRefs?.reconcile?.[0]).toContain("akm bundle update");
+  });
+
   test("a bundle akm may not write is left as written", async () => {
     configure(false);
     const links = seed();

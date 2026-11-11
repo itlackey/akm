@@ -6,7 +6,8 @@
  * The `assetContentRefs` step: a ref that names an asset by its pre-#1432 spelling (`knowledge/WORK/x`, now `WORK/x`)
  * in a writable bundle's text files is rewritten to the new one, under one backup directory per run. The old to new
  * map comes from the files themselves (each recognized asset's ref), so no index is needed. A spelling that
- * is now another file's live ref is left as written and listed ({@link ShadowedRef}). The pure rewrite is
+ * is now another file's live ref is left as written and listed ({@link ShadowedRef}). Only a file akm reads as an asset
+ * is rewritten (an active reference); frozen corpora, captured results and other fixtures stay byte-for-byte. The pure rewrite is
  * `./migrate/content-ref-planner.ts`.
  */
 
@@ -45,6 +46,8 @@ export interface ContentRefsSummary {
   backupPath?: string;
   /** Present with `backupPath`: how many files were rewritten. */
   applied?: number;
+  /** Present when the rewrite left uncommitted edits in a git bundle: what to do about each. */
+  reconcile?: string[];
 }
 
 export interface ContentRefsMigrationStatus {
@@ -68,10 +71,12 @@ function textFiles(root: string): string[] {
 
 /**
  * Every asset each bundle's adapter recognizes, by bundle: the refs that exist now. Every bundle counts, as it does
- * for the resolver, so a spelling another adapter's bundle holds is live and never rewritten.
+ * for the resolver, so a spelling another adapter's bundle holds is live and never rewritten. `files` are the
+ * recognized assets' paths: the only files whose content akm reads for refs.
  */
-function bundleDocuments(roots: readonly BundleRoot[]): Map<string, string[]> {
+function bundleDocuments(roots: readonly BundleRoot[]): { bundles: Map<string, string[]>; files: Set<string> } {
   const bundles = new Map<string, string[]>();
+  const files = new Set<string>();
   for (const root of roots) {
     const adapterId = root.adapter ?? detectAdapterId(root.root);
     const adapter = adapterForId(adapterId);
@@ -79,11 +84,12 @@ function bundleDocuments(roots: readonly BundleRoot[]): Map<string, string[]> {
     const component = { id: root.bundleId, adapter: adapterId, root: root.root, writable: root.writable };
     const documents = walkStashFlat(root.root).flatMap((file): string[] => {
       const doc = adapter.recognize(component, file);
+      if (doc) files.add(file.absPath);
       return doc?.conceptId ? [doc.conceptId] : [];
     });
     bundles.set(root.bundleId, [...(bundles.get(root.bundleId) ?? []), ...documents]);
   }
-  return bundles;
+  return { bundles, files };
 }
 
 interface PlannedFile {
@@ -91,15 +97,21 @@ interface PlannedFile {
   readonly refs: number;
 }
 
-function plan(): { readonly files: PlannedFile[]; readonly shadowed: ShadowedRef[] } {
+function plan(): {
+  readonly files: PlannedFile[];
+  readonly shadowed: ShadowedRef[];
+  readonly gitRoots: string[];
+} {
   resetConfigCache();
   const roots = bundleRoots(loadConfig());
-  const rewriter: ContentRefRewriter = contentRefRewriter(bundleDocuments(roots));
+  const documents = bundleDocuments(roots);
+  const rewriter: ContentRefRewriter = contentRefRewriter(documents.bundles);
   const files: PlannedFile[] = [];
   const seen = new Set<string>();
+  const gitRoots = new Set<string>();
   for (const root of roots.filter((candidate) => candidate.writable)) {
     for (const filePath of textFiles(root.root)) {
-      if (seen.has(filePath)) continue;
+      if (seen.has(filePath) || !documents.files.has(filePath)) continue;
       seen.add(filePath);
       const before = fs.readFileSync(filePath);
       const text = before.toString("utf8");
@@ -107,13 +119,14 @@ function plan(): { readonly files: PlannedFile[]; readonly shadowed: ShadowedRef
       if (!Buffer.from(text, "utf8").equals(before)) continue;
       const { text: rewritten, count } = rewriter.rewrite(text);
       if (count === 0) continue;
+      if (fs.existsSync(path.join(root.bundleRoot, ".git"))) gitRoots.add(root.bundleRoot);
       files.push({
         replacement: { filePath, before, after: Buffer.from(rewritten, "utf8"), mode: fs.statSync(filePath).mode & 0o777 },
         refs: count,
       });
     }
   }
-  return { files: files.sort((a, b) => a.replacement.filePath.localeCompare(b.replacement.filePath)), shadowed: [...rewriter.shadowed] };
+  return { files: files.sort((a, b) => a.replacement.filePath.localeCompare(b.replacement.filePath)), shadowed: [...rewriter.shadowed], gitRoots: [...gitRoots] };
 }
 
 function summarize(planned: ReturnType<typeof plan>): ContentRefsSummary {
@@ -163,6 +176,14 @@ export function applyContentRefsMigration(): ContentRefsMigrationStatus {
         skipped: conflicts.length,
         applied: replaced.length,
         backupPath,
+        ...(replaced.length > 0 && planned.gitRoots.length > 0
+          ? {
+              reconcile: planned.gitRoots.map(
+                (root) =>
+                  `${root} is a git bundle with uncommitted migration edits; review them with \`git -C ${root} diff\`, then commit them or restore the originals from ${backupPath}, before \`akm bundle update\` (which refuses a dirty writable checkout).`,
+              ),
+            }
+          : {}),
       },
     };
   });
