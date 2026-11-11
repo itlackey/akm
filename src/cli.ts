@@ -90,7 +90,8 @@ import {
   runWithJsonErrors,
   withoutHelpHiddenArgs,
 } from "./cli/shared";
-import { assertKnownFlags, type FlagScanCommand } from "./cli/unknown-flags";
+import { assertKnownFlags, consumeConfigFileFlag, type FlagScanCommand } from "./cli/unknown-flags";
+import { startUsage, type UsageCommand } from "./cli/usage";
 import { agentCommand, lintCommand } from "./commands/agent/contribute-cli";
 import { commandCommand } from "./commands/command/command-cli";
 import { generateBashCompletions, installBashCompletions } from "./commands/completions";
@@ -99,12 +100,13 @@ import { envCommand } from "./commands/env/env-cli";
 import { secretCommand } from "./commands/env/secret-cli";
 import { feedbackCommand } from "./commands/feedback-cli";
 import { akmHealth } from "./commands/health";
+import { doctorMetricsCommand } from "./commands/metrics/usage-cli";
 import { closestMatch } from "./core/closest-match";
 import "./commands/health/renderers";
 import "./commands/metrics/md-report";
 import type { WindowSpec } from "./commands/health/types";
 import { parseWindowSpec } from "./commands/health/windows";
-import { improveCommand } from "./commands/improve/improve-cli";
+import { doctorPromptCommand, improveCommand } from "./commands/improve/improve-cli";
 import { judgeCommand } from "./commands/judge-cli";
 import { metricsCommand } from "./commands/metrics/metrics-cli";
 import { migrateCommand } from "./commands/migrate-cli";
@@ -114,6 +116,7 @@ import { proposalCommand } from "./commands/proposal/proposal-cli";
 import { rememberCommand } from "./commands/read/remember-cli";
 import { curateCommand, searchCommand, showCommand } from "./commands/read/search-cli";
 import { registryCommand } from "./commands/registry-cli";
+import { runAssetCommand } from "./commands/run-cli";
 import { bundleCommand } from "./commands/sources/bundle-cli";
 import { renderMigrationHelp } from "./commands/sources/migration-help";
 import { cloneCommand, syncCommand, upgradeCommand } from "./commands/sources/sources-cli";
@@ -499,7 +502,8 @@ const healthCommand = defineCommand({
 });
 
 const doctorSubCommands = {
-  metrics: metricsCommand,
+  prompt: doctorPromptCommand,
+  metrics: doctorMetricsCommand,
   info: infoCommand,
   log: logCommand,
   judge: judgeCommand,
@@ -637,6 +641,7 @@ const commands = {
   search: searchCommand,
   curate: curateCommand,
   show: showCommand,
+  run: runAssetCommand,
   workflow: workflowCommand,
   remember: rememberCommand,
   import: importKnowledgeCommand,
@@ -1193,8 +1198,33 @@ export function insertBareListSubcommand(argv: string[]): string[] {
  * stop the rest of startup from running after a fatal early error.
  */
 export async function runCli(): Promise<void> {
+  const originalArgs = process.argv.slice(2);
+  let schedulerError: unknown;
   try {
     process.argv = consumeSchedulerContextArg(process.argv);
+  } catch (error) {
+    schedulerError = error;
+  }
+  const finishUsage = startUsage(main as UsageCommand, originalArgs, pkgVersion);
+  try {
+    if (schedulerError !== undefined) {
+      emitJsonError(schedulerError);
+      return;
+    }
+    await runCliInvocation();
+  } finally {
+    // Deliver catchable signals queued during synchronous child execution.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    finishUsage();
+  }
+}
+
+async function runCliInvocation(): Promise<void> {
+  try {
+    const configFile = consumeConfigFileFlag(main as FlagScanCommand, process.argv.slice(2));
+    if (configFile.file !== undefined) process.env.AKM_CONFIG_FILE = configFile.file;
+    process.argv = [...process.argv.slice(0, 2), ...configFile.args];
+    if (process.env.AKM_CONFIG_FILE !== undefined) process.env.AKM_CONFIG_FILE = getConfigPath();
   } catch (error: unknown) {
     emitJsonError(error);
     return;

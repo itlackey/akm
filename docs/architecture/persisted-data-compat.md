@@ -73,3 +73,15 @@ and named once, round-trips through ordinary writes, and is dropped by
    `akm migrate apply` drops them.
 5. Add or extend the row in the table above, including a `Gap:` note if the
    code does not yet meet the contract — do not leave a mismatch undocumented.
+
+### CLI usage store (first release pending)
+
+`usage.sqlite` in `getDataDir()` is additive local diagnostic state, independent
+of learning state. `PRAGMA user_version=1` identifies its schema. `metadata` holds
+an opaque local instance UUID and collection start. `invocations` holds redacted
+schema-version-1 attempt documents and completion fields; `aggregates` holds UTC
+daily dimensional counters. Start and completion update detail and aggregate in
+separate atomic transactions; completion's conditional update prevents duplicates.
+Detail expiry never deletes aggregates. Readers and collectors refuse newer schema
+versions without altering CLI outcomes; reports explain the gap. The 0.11 migration
+must preserve this file and its instance identity, aggregate keys and counts.

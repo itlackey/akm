@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { getStringArg, parsePositiveIntFlag } from "../../cli/parse-args";
+import { getStringArg, parsePositiveIntFlag, parseTimeoutFlags } from "../../cli/parse-args";
 import { RETIRED_ENGINE_ARG, SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
 import { defineGroupCommand, defineJsonCommand, EXIT_CODES, output } from "../../cli/shared";
 import { loadConfig } from "../../core/config/config";
@@ -42,6 +42,10 @@ export const commandRunCommand = defineJsonCommand({
     },
     ...SELECTION_ARGS,
     ...RETIRED_ENGINE_ARG,
+    timeout: {
+      type: "string",
+      description: "Timeout as a duration (30s, 2m) or milliseconds; same scope as --timeout-ms",
+    },
     "timeout-ms": { type: "string", description: "Override the execution timeout in milliseconds" },
     cwd: { type: "string", description: "Override the execution workspace/current working directory" },
     "dry-run": {
@@ -52,7 +56,10 @@ export const commandRunCommand = defineJsonCommand({
   },
   async run({ args }) {
     if (args.verbose === true) setVerbose(true);
-    const timeoutMs = parsePositiveIntFlag(exactStringArg(args, "timeout-ms"), "--timeout-ms");
+    const timeoutMs = parseTimeoutFlags(
+      exactStringArg(args, "timeout"),
+      parsePositiveIntFlag(exactStringArg(args, "timeout-ms"), "--timeout-ms"),
+    );
     const current: Record<string, unknown> = {};
     const agent = getStringArg(args, "agent");
     const workspace = getStringArg(args, "cwd");

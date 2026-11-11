@@ -40,12 +40,12 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | --- | --- | --- |
 | `akm index` | Stable | `--export-vectors` and `--import-vectors` are Experimental for their first release; the vector file (`model`, `text_hash`, `embedding`) is their contract, the index file format stays internal. |
 | `akm search` | Stable | |
-| `akm curate` | Stable | |
+| `akm curate` | Stable | `--max-tokens` aliases the existing `--pack` budget and output. Both are opt-in; the unbudgeted default stays unchanged. Conflicting explicit budgets are rejected. |
 | `akm show` | Stable | `--outline` and `--lead` are additive aliases. `--max-tokens` bounds body fields on whole/exact/lead reads and reports estimation/truncation; legacy unbudgeted output is unchanged. |
 | `akm remember` | Stable | `--source`, `--description`, and `--expires` work independently of tags. Capture and enrichment processes are unchanged. |
-| `akm import` | Stable | |
+| `akm import` | Stable | Additive `--asset-ref` and `--type task` modes implemented for the next 0.10.x release (version pending); existing document inputs unchanged. |
 | `akm sync` | Stable | |
-| `akm clone` | Deprecated | Removed in 0.11: use `akm import <ref>` with equivalent asset, companion-file, and destination behavior. |
+| `akm clone` | Deprecated | Removed in 0.11: use `akm import <ref> --asset-ref` with equivalent asset, companion-file, and destination behavior. |
 | `akm feedback` | Stable | |
 
 ### Bundles and registries
@@ -67,6 +67,7 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 
 | Command | Status | Contract or migration action |
 | --- | --- | --- |
+| `akm run` | Evolving | Available on this branch; first released version pending. Dispatches agent, command, task and workflow refs through their existing executors; workflow run ids continue frozen runs. |
 | `akm workflow status` | Experimental | `--all-scopes` added in 0.9.15 (#942); a deprecated no-op since 0.10 (#1239), accepted through 0.10. |
 | `akm workflow plan` | Deprecated | Removed in 0.11: use `akm doctor explain <ref>`. Preserve secret-free provenance output and no execution. |
 | `akm workflow list` | Experimental | `--all-scopes` and a top-level `scopeKey` envelope field added in 0.9.15 (#942); since 0.10 (#1239) `--all-scopes` is a deprecated no-op, accepted through 0.10, and the `scopeKey` field is removed from the list result. |
@@ -76,7 +77,7 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | `akm workflow run` | Deprecated | Removed in 0.11: use `akm run <ref>`; retain workflow lifecycle commands for existing runs. |
 | `akm agent` | Deprecated | Removed in 0.11: use `akm run <ref>` for assets; invoke the agent's own CLI for the no-ref interactive launch. |
 | `akm command run` / `akm command <ref>` | Deprecated | Removed in 0.11: use `akm run <ref>` with the same template arguments and dispatch. |
-| `akm task add` | Deprecated | Removed in 0.11: use explicit typed-task import, then `task enable` when activation is wanted. |
+| `akm task add` | Deprecated | Removed in 0.11: use `akm import <file> --type task`, then `task enable` when activation is wanted. |
 | `akm task enable` | Evolving | |
 | `akm task disable` | Evolving | |
 | `akm task run` | Deprecated | Removed in 0.11: use `akm run <qualified-task-ref>` with the same inputs. |
@@ -94,6 +95,7 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | `akm doctor metrics` | Evolving | Reuses `metrics`; its report content, layout, and JSON payload remain Experimental. Improve-run report selection is not yet consolidated here. |
 | `akm doctor info` | Evolving | Reuses `info`, preserving its existing fields and broken-config recovery behavior; `learning` remains Experimental. |
 | `akm doctor log` | Evolving | Reuses the existing event-stream command and output. |
+| `akm doctor prompt` | Evolving | Reuses `improve --show-prompt`, preserving task, bundle, strategy and runner selection, output, and read-only behavior. The old form remains. |
 | `akm doctor judge` | Evolving | Reuses registered judges, runner selection, JSON stdin, and versioned verdicts; invoking a judge can make model calls. |
 | `akm health` | Deprecated | Removed in 0.11: use `akm doctor` for checks and `doctor metrics` for reporting. Current exit codes are Evolving; report content and rendered `md` layout are Experimental. |
 | `akm metrics` | Deprecated | Removed in 0.11: use `akm doctor metrics`. Current report content and JSON shape are Experimental. |
@@ -200,11 +202,14 @@ guide; all old surfaces in the left column are scheduled for 0.11 removal.
 | `task sync`, `task prune` | Explicit `doctor scheduler sync` maintenance and migration cleanup of owned orphan entries; no separate prune command |
 | `task history` | Per-run history through `doctor log`; aggregate usage through `doctor metrics` |
 | `clone` | Extend `import` for asset refs/typed assets and clone destinations without reinterpreting existing document inputs |
-| Search `--include-proposed`, `--include-sessions` | Repeatable `--include key=value` to relax specified default exclusions while explicit filters remain in force |
+| Search `--include-proposed`, `--include-sessions` | Search/curate `--include quality=proposed` and `--include type=<excluded-type>` are implemented in current 0.10 source, including project/API defaults; existing flags retain their behavior until 0.11. Check installed help for availability. |
 | Show `--context`, `--max-chars`, and `--detail` | Add `--lead`, independent `--max-tokens`, and `--outline` in 0.10; retain existing defaults until the 0.11 cutover to exact reads. See the [complete argument review](docs/reviews/cli-surface-recommendations-2026-11-11.md#show-argument-review). |
 
-Also ship compatible metadata/budget fixes and the shared `--config` override in
-0.10.x, preserving old location resolution when that override is absent. Update
+The shared `--config <file>` override and companion `AKM_CONFIG_FILE` are
+implemented on this branch; first released version is pending. Prefer
+`akm --config <file> <command>`; dynamic task/workflow inputs named `config`
+keep their meaning after the command. Old location resolution is unchanged when
+neither selector is set. Also ship compatible metadata/budget fixes in 0.10.x. Update
 owned consumers after replacements ship; document deprecations without changing
 old machine output. Branch-specific scheduler/storage migrations remain in 0.11.
 
@@ -212,7 +217,10 @@ old machine output. Branch-specific scheduler/storage migrations remain in 0.11.
 the command tables. Keep `task enable`, `task disable`, and the scheduler-facing
 `task dispatch` introduced on the 0.11 branch.
 **Keep duration shortcuts:** `3M` means 90 days, `3m` means three minutes;
-timeouts adopt the same conventions instead of requiring millisecond arithmetic.
+The additive `--timeout` alias accepts positive integer milliseconds or `ms`,
+`s`, `m`, `h`, `d`, `M` durations wherever `--timeout-ms` already applies.
+Existing timeout scopes and defaults remain; equal explicit budgets are accepted,
+and conflicting values are rejected.
 
 ### Learning: change the interface, preserve the processes
 
@@ -719,6 +727,7 @@ existing data, state, and cache paths.
 | Variable | Status | Purpose and migration |
 | --- | --- | --- |
 | `AKM_BUNDLE_DIR` | Deprecated | Bundle location override; register the bundle and select `defaultBundle` before 0.11. |
+| `AKM_CONFIG_FILE` / `--config <file>` | Experimental | Explicit config-file selection; first released version pending. Credentials remain adjacent; existing location resolution applies when absent. |
 | `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR`, `AKM_STATE_DIR` | Deprecated | Filesystem layout overrides; migrate to `AKM_CONFIG_FILE` / `--config` and config `paths` in 0.11. `AKM_STATE_DIR` was previously undocumented as a supported control but still needs migration when in use. |
 | `AKM_VERBOSE`, `AKM_DEBUG` | Deprecated | Diagnostics; use the replacement verbosity/debug controls recorded in the migration guide. |
 | `AKM_REGISTRY_URL` | Deprecated | Comma-separated URLs replace configured registries for every registry search; `registry list` and `info` still show the configured list. Migrate the selection to config. |
@@ -796,11 +805,12 @@ and `--model <alias|name>`; how an old engine name resolves is under
 longer read implicitly: put `"apiKey": "$VAR"` on the connection, or the key in
 `credentials.json`.
 
-These are unknown flags or commands (exit 2) from 0.10, with no alias:
+These retired interfaces have no compatibility alias in 0.10. The new shared
+file selector is distinct from the former setup JSON interface:
 
 | Gone | Use |
 | --- | --- |
-| `akm setup --config <json>` and `--probe` | `akm setup --endpoint <url> --yes` and the other answer flags; `--no-probe` for an offline run (probing is the default) |
+| `akm setup --config <json>` and `--probe` | `akm setup --endpoint <url> --yes` and the other answer flags; `--no-probe` for an offline run (probing is the default). The new shared `--config <file>` selects a file and does not accept JSON answers |
 | `akm models list`, `akm models copy-defaults` | `akm models`, `akm models set <alias> <model>` |
 
 ### Release numbering (#1089)
@@ -859,3 +869,8 @@ notes for Deprecated/Evolving changes and undocumented Experimental changes too.
   normative ref grammar.
 - [`docs/reference/data-and-telemetry.md`](./docs/reference/data-and-telemetry.md) — what
   state akm reads and writes locally.
+
+CLI invocation usage is additive local diagnostic state (first release pending).
+`doctor metrics usage` exports schema version 1; preserve `usage.sqlite` and its
+durable daily aggregates through the 0.11 migration. See the CLI usage reference
+for redaction and incomplete-observation limits.

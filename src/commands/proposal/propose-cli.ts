@@ -19,7 +19,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import { defineCommand } from "citty";
-import { getStringArg, PROJECT_ARG, parsePositiveIntFlag, SCOPE_ARGS, scopeFromArgs } from "../../cli/parse-args";
+import {
+  getStringArg,
+  PROJECT_ARG,
+  parsePositiveIntFlag,
+  parseTimeoutFlags,
+  SCOPE_ARGS,
+  scopeFromArgs,
+} from "../../cli/parse-args";
 import { RETIRED_ENGINE_ARG, SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
 import { EXIT_CODES, GLOBAL_OUTPUT_ARGS, output, runWithJsonErrors } from "../../cli/shared";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../../core/asset/asset-create";
@@ -62,6 +69,10 @@ export const proposeCommand = defineCommand({
     ...SELECTION_ARGS,
     ...RETIRED_ENGINE_ARG,
     ...SCOPE_ARGS,
+    timeout: {
+      type: "string",
+      description: "Timeout as a duration (30s, 2m) or milliseconds; same scope as --timeout-ms",
+    },
     "timeout-ms": { type: "string", description: "Override the engine timeout in milliseconds" },
   },
   async run({ args }) {
@@ -85,7 +96,7 @@ export const proposeCommand = defineCommand({
       assertFlatAssetName(String(args.name));
       const proposedName = combineCreatePath(normalizeCreateSubPath(getStringArg(args, "path")), String(args.name));
       const taskText = fileFromFlag ? fs.readFileSync(path.resolve(fileFromFlag), "utf8") : (taskFromFlag ?? "");
-      const timeoutMs = parsePositiveIntFlag(args["timeout-ms"], "--timeout-ms");
+      const timeoutMs = parseTimeoutFlags(args.timeout, parsePositiveIntFlag(args["timeout-ms"], "--timeout-ms"));
       const project = resolveProject(loadConfig(), { project: getStringArg(args, "project") });
       const result = await akmPropose({
         type: String(args.type),

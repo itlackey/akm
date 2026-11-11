@@ -76,6 +76,8 @@ function testIsolationError(): ConfigError {
 // ── Config directory ─────────────────────────────────────────────────────────
 
 export function getConfigDir(env: NodeJS.ProcessEnv = process.env, platform = process.platform): string {
+  const file = configFileOverride(env);
+  if (file) return path.dirname(file);
   const override = env.AKM_CONFIG_DIR?.trim();
   if (override) return override;
 
@@ -132,8 +134,16 @@ export function getConfigDir(env: NodeJS.ProcessEnv = process.env, platform = pr
   return path.join(home, ".config", "akm");
 }
 
+function configFileOverride(env: NodeJS.ProcessEnv): string | undefined {
+  if (env.AKM_CONFIG_FILE === undefined) return undefined;
+  if (!env.AKM_CONFIG_FILE.trim()) {
+    throw new ConfigError("AKM_CONFIG_FILE requires a non-empty file path.", "INVALID_CONFIG_FILE");
+  }
+  return path.resolve(env.AKM_CONFIG_FILE);
+}
+
 export function getConfigPath(env: NodeJS.ProcessEnv = process.env): string {
-  return path.join(getConfigDir(env), "config.json");
+  return configFileOverride(env) ?? path.join(getConfigDir(env), "config.json");
 }
 
 // ── Cache directory ──────────────────────────────────────────────────────────
@@ -409,6 +419,7 @@ export function akmLocations(): Record<string, string> {
     AKM_CACHE_DIR: getCacheDir(),
     AKM_STATE_DIR: getStateDir(),
   };
+  if (process.env.AKM_CONFIG_FILE !== undefined) locations.AKM_CONFIG_FILE = getConfigPath();
   const bundleDir = process.env.AKM_BUNDLE_DIR?.trim();
   if (bundleDir) locations.AKM_BUNDLE_DIR = bundleDir;
   return locations;

@@ -5,6 +5,7 @@
 import type { TargetRow } from "../commands/targets";
 import type { OkfProvenance } from "../core/adapter/types";
 import type { MarkdownTocEntry } from "../core/asset/markdown";
+import type { IncludeSelectors } from "../core/include";
 import type { ProjectView } from "../core/projects";
 import type { ScopeFilters } from "../indexer/passes/metadata";
 import type { SemanticSearchRuntimeStatus } from "../indexer/walk/index-context";
@@ -17,6 +18,8 @@ export type SearchHitSize = "small" | "medium" | "large";
 export type BeliefFilterMode = "all" | "current" | "historical";
 /** Existing search controls, carried through task-evidence reads. */
 export interface RecallOptions {
+  /** Relax named default exclusions, same as repeated --include. An empty object overrides project includes. */
+  include?: IncludeSelectors;
   /** Exact scope values: AND across keys, any-of within a repeated key; CLI --filter user=…|agent=…|run=…|channel=… . */
   filters?: ScopeFilters;
   /** Same keys and match rule as `filters`, as a ranking preference: matching hits rank first, nothing is dropped; CLI --prefer. */

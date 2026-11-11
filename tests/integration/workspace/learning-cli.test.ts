@@ -53,14 +53,16 @@ function spyCrontab() {
   process.env.PATH = `${bin}${path.delimiter}${realPath}`;
   return { called: () => fs.existsSync(calls) };
 }
-/** Every file under the sandbox with its content, so a test can prove nothing was written. */
+/** Every inspected file remains unchanged; only separate diagnostic CLI usage is exempt. */
 function snapshot(): Record<string, string> {
   const files: Record<string, string> = {};
   const walk = (dir: string) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) walk(full);
-      else if (!/-(shm|wal)$/.test(entry.name)) files[full] = fs.readFileSync(full, "utf8");
+      else if (full !== path.join(ctx.storage.dataDir, "akm", "usage.sqlite") && !/-(shm|wal)$/.test(entry.name)) {
+        files[full] = fs.readFileSync(full, "utf8");
+      }
     }
   };
   walk(ctx.storage.root);
@@ -146,11 +148,12 @@ describe("akm setup --learning", () => {
 });
 
 describe("akm info", () => {
-  test("reports on, harness and scheduled, and writes nothing", async () => {
+  test("reports on, harness and scheduled without changing inspected state", async () => {
     await setup.apply({ dir: library() });
     connect();
     const before = snapshot();
     expect((await runCli(["info"])).learning).toEqual({ on: true, harness: null, scheduled: false });
+    expect(fs.statSync(path.join(ctx.storage.dataDir, "akm", "usage.sqlite")).isFile()).toBe(true);
     expect(snapshot()).toEqual(before);
   });
 });
@@ -167,6 +170,7 @@ describe("while learning is off", () => {
       expect(result.dryRun).toBe(args.includes("--dry-run"));
       expect(result.actions).toEqual([]);
     }
+    expect(fs.statSync(path.join(ctx.storage.dataDir, "akm", "usage.sqlite")).isFile()).toBe(true);
     expect(snapshot()).toEqual(before);
   });
 
@@ -183,6 +187,7 @@ describe("while learning is off", () => {
       }),
     );
     expect(result).toMatchObject({ ok: true, sessionsProcessed: 0 });
+    expect(fs.statSync(path.join(ctx.storage.dataDir, "akm", "usage.sqlite")).isFile()).toBe(true);
     expect(snapshot()).toEqual(before);
   });
 });
