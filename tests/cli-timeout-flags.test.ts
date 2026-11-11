@@ -23,7 +23,9 @@ describe("--timeout grammar", () => {
   });
   test("rejects malformed, zero, negative, fractional, month and overflowing values", () => {
     for (const input of ["", "0", "0s", "-1s", "1.5m", "3M", "30seconds", "Infinity", "999999999999999999999d"]) {
-      expect(() => parseTimeoutFlags(input, undefined)).toThrow("Invalid --timeout value");
+      expect(() => parseTimeoutFlags(input, undefined)).toThrow(
+        /Invalid --timeout value.*bare N is milliseconds, or N with ms, s, m, h or d/,
+      );
     }
   });
 });

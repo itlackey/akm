@@ -429,6 +429,14 @@ describe("akm show additive body controls", () => {
     expect(text.stdout).toContain("frontmatter excluded");
   });
 
+  test("a cut that already falls on a word end keeps the whole word", async () => {
+    const storage = seed();
+    writeFixture(path.join(storage.stashDir, "knowledge", "wordend.md"), "12345678901234567890 tail of the note\n");
+    const bounded = await json("knowledge/wordend", "--max-tokens=5");
+    expect(bounded.content).toBe("12345678901234567890");
+    expect(bounded.contentBudget).toEqual({ maxTokens: 5, estimatedTokens: 5, truncated: true });
+  });
+
   test("--detail brief with a budget is a usage error; --lead errors name --lead", async () => {
     seed();
     for (const args of [

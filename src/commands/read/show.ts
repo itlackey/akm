@@ -173,6 +173,8 @@ function cutAtBoundary(text: string, limit: number): string {
   let end = limit;
   const last = text.charCodeAt(end - 1);
   if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+  // The cut already falls on a word end: keep the whole word.
+  if (/\s/.test(text[end] ?? "")) return text.slice(0, end);
   const window = text.slice(Math.max(0, end - Math.min(32, Math.floor(end / 4))), end);
   const space = window.search(/\s\S*$/);
   if (space > 0) end = end - window.length + space;

@@ -731,13 +731,13 @@ exceptions; [protected values](#protected-values) describes env/secret guarantee
 
 These are the documented 0.10 controls. Deprecated controls continue to work
 through 0.10; the 0.11 guide owns their exact replacements and conversion order.
-The location overrides stay Supported in 0.11; `AKM_BUNDLE_DIR` is the retired one.
+The location overrides stay Stable in 0.11; `AKM_BUNDLE_DIR` is the retired one.
 
 | Variable | Status | Purpose and migration |
 | --- | --- | --- |
 | `AKM_BUNDLE_DIR` | Deprecated | Bundle location override; stays retired in 0.11. Register the bundle and select `defaultBundle` before then. |
 | `AKM_CONFIG_FILE` / `--config <file>` | Experimental | Explicit config-file selection; first released version pending. `AKM_CONFIG_FILE` beats `AKM_CONFIG_DIR` for the config file. `credentials.json` and `models.json` stay in the default config directory (`AKM_CONFIG_DIR`, else the platform default). An empty `AKM_CONFIG_FILE` is warned about once and ignored. Existing location resolution applies when absent. |
-| `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR`, `AKM_STATE_DIR` | Stable | Filesystem layout overrides. They stay Supported in 0.11: an environment variable beats config `paths`, which beats the default. |
+| `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR`, `AKM_STATE_DIR` | Stable | Filesystem layout overrides. They stay Stable in 0.11: an environment variable beats config `paths`, which beats the default. |
 | `AKM_VERBOSE`, `AKM_DEBUG` | Deprecated | Diagnostics; use `--verbose` (removed as variables in 0.11). |
 | `AKM_REGISTRY_URL` | Deprecated | Comma-separated URLs replace configured registries for every registry search; `registry list` and `info` still show the configured list. Migrate the selection to config. |
 | `AKM_NPM_REGISTRY` | Evolving | npm mirror base URL instead of `registry.npmjs.org`; documented changes require a CHANGELOG note. |

@@ -88,7 +88,7 @@ export function parseTimeoutValue(raw: string, flagName = "--timeout"): number {
   const parsed = match ? Number(match[1]) * (TIMEOUT_UNITS[match[2] ?? "ms"] as number) : Number.NaN;
   if (!Number.isSafeInteger(parsed) || parsed <= 0) {
     throw new UsageError(
-      `Invalid ${flagName} value: "${raw}". Expected positive milliseconds or N with ms, s, m, h or d (30s, 2m, 1h, 7d).`,
+      `Invalid ${flagName} value: "${raw}". Expected a positive number: bare N is milliseconds, or N with ms, s, m, h or d (30s, 2m, 1h, 7d).`,
       "INVALID_FLAG_VALUE",
     );
   }
