@@ -566,8 +566,8 @@ async function stageManagedUpdate(
     }
     const liveRepo = topLevel.stdout.trim();
     const stagingParent = createStagingParent(path.dirname(liveRepo));
+    const stagedRepo = path.join(stagingParent, path.basename(liveRepo));
     try {
-      const stagedRepo = path.join(stagingParent, path.basename(liveRepo));
       fs.cpSync(liveRepo, stagedRepo, { recursive: true, preserveTimestamps: true, verbatimSymlinks: true });
       const stagedRoot = path.join(stagedRepo, path.relative(liveRepo, fs.realpathSync(managed.localRoot)));
       const fetched = await syncFromRef(managed.ref, {
@@ -588,6 +588,10 @@ async function stageManagedUpdate(
       };
     } catch (error) {
       cleanupDirectoryBestEffort(stagingParent, "bundle update");
+      // Report the configured bundle path, not the throwaway staging copy.
+      if (error instanceof UsageError) {
+        throw new UsageError(error.message.replaceAll(stagedRepo, liveRepo), error.code, error.hint());
+      }
       throw error;
     }
   }
