@@ -104,3 +104,12 @@ export function totalsAt(steps: ReplayStep[], t: number) {
   }
   return { ...totals, misses: [...misses].sort((a, b) => b[1] - a[1]) };
 }
+
+/** The scrubber's step: one minute. */
+export const SCRUB_STEP = 60_000;
+
+/**
+ * The time a scrubber value means. A range input only reaches `start` plus whole steps, so when the window is not a
+ * whole number of steps its last step falls short of `end`; the last step is the end of the window.
+ */
+export const scrubTime = (value: number, start: number, end: number) => (value > end - SCRUB_STEP ? end : value);

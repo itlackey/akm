@@ -9,7 +9,15 @@
   import { api } from "./client";
   import GraphView from "./GraphView.svelte";
   import { buildGraph, edgePairs, type GraphPayload, type LibraryGraph } from "./graph-model";
-  import { replayBins, replaySteps, type ReplayStep, totalsAt, type UsageEventRow } from "./replay-model";
+  import {
+    replayBins,
+    replaySteps,
+    type ReplayStep,
+    SCRUB_STEP,
+    scrubTime,
+    totalsAt,
+    type UsageEventRow,
+  } from "./replay-model";
 
   // biome-ignore lint/suspicious/noExplicitAny: the renderer is untyped presentation code.
   type View = any;
@@ -318,10 +326,10 @@
           type="range"
           min={start}
           max={end}
-          step={60000}
+          step={SCRUB_STEP}
           value={clock}
           aria-valuetext={hhmm(clock)}
-          oninput={(event) => seek(Number(event.currentTarget.value))}
+          oninput={(event) => seek(scrubTime(Number(event.currentTarget.value), start, end))}
         /></label
       >
       <table class="lanes">
