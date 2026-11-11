@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- `akm bundle update`: a writable Git bundle with local uncommitted changes now fast-forwards when git can do so without overwriting them; an update that would overwrite local work, or a diverged history, is refused with nothing changed, and the refusal names the real bundle path and the blocking files instead of a command-syntax hint (#1606).
+
+### Fixed
+
+- The `assetContentRefs` migration rewrites legacy refs only in files akm reads as assets, leaving frozen eval corpora, captured prompts and results byte-for-byte; when it leaves uncommitted edits in a git bundle, its report names the bundle and the next steps (#1605).
+- AKM Desktop, Settings → Software (#1609):
+  - Installing the CLI passes Desktop's release tag to the installer and verifies the installed version.
+  - A CLI upgrade checks its target right before it runs.
+  - Choosing Stable stops an already queued prerelease from installing.
+  - Preference saves no longer overwrite each other, and the screen reports whether a setting was saved or also applied.
+  - Partial and failed upgrades keep a redacted result and show fresh versions.
+  - Deferred plugins and compatibility holds are shown with their reasons.
+  - Polling no longer leaves stale errors or waits forever.
+  - A timed-out command ends its installer's child processes.
+  - Desktop updates gain Check/Retry and download progress.
+  - The CLI channel can be shown and switched.
+  - A CLI that will not run can be repaired with consent.
+
 ## [0.10.261117] - 2026-11-10
 
 ### Added
