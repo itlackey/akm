@@ -11,7 +11,8 @@ import { chromium, expect } from "@playwright/test";
 import { akm, launchFixture } from "./support.mjs";
 
 const ENGINE = JSON.parse(await readFile(new URL("../.core/package.json", import.meta.url), "utf8")).version;
-const PLUGIN = "0.10.261020";
+// The installed plugin is on the engine's line, so Setup ticks it (a different major.minor is a mismatch warning).
+const PLUGIN = ENGINE.replace(/-.*$/, "");
 const here = path.dirname(new URL(import.meta.url).pathname);
 
 /** A harness CLI that records its arguments and keeps its plugin state in a file, like the native one. */
