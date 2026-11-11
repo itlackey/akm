@@ -35,6 +35,7 @@ describe("real CLI config file bootstrap", () => {
     [
       ["--config", "custom/chosen.json", "config", "path"],
       ["config", "--config=custom/chosen.json", "path"],
+      ["config", "--config", "custom/chosen.json", "path"],
       ["config", "path", "--config", "custom/chosen.json"],
     ].map((args) => ({ args })),
   )("selects a relative file at every command level: %j", ({ args }) => {
@@ -106,7 +107,7 @@ describe("real CLI config file bootstrap", () => {
     expect(pass.stdout.trim()).toBe(path.join(env.AKM_CONFIG_DIR, "config.json"));
   });
 
-  test.each(["sample.json", true])("legacy task config input remains %p with a root selector", (value) => {
+  test.each(["sample.json", true, "--config"])("legacy task config input remains %p with a root selector", (value) => {
     const { dir, env, selected } = fixture();
     fs.mkdirSync(path.join(env.AKM_BUNDLE_DIR, "tasks"), { recursive: true });
     fs.writeFileSync(
@@ -123,10 +124,25 @@ describe("real CLI config file bootstrap", () => {
       ].join("\n"),
     );
     const args = ["--config", selected, "task", "explain", "example", "--config"];
-    if (typeof value === "string") args.push(value);
+    if (value === "--config") args[args.length - 1] = "--config=--config";
+    else if (typeof value === "string") args.push(value);
     const result = cli(args, env, dir);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain(typeof value === "string" ? value : "true");
+  });
+
+  test("misplaced selectors on a dynamic path never select the asset's config input", () => {
+    const { dir, env, selected } = fixture();
+    const invalidInput = path.join(dir, "asset-input.json");
+    fs.writeFileSync(invalidInput, "not AKM configuration");
+    const result = cli(
+      ["--config", selected, "task", "--config", "misplaced.json", "explain", "example", "--config", invalidInput],
+      env,
+      dir,
+    );
+    expect(result.status).toBe(2);
+    expect(result.stderr).not.toContain("Unable to parse");
+    expect(result.stderr).not.toContain("INVALID_CONFIG_FILE");
   });
 
   test("nested AKM in another cwd inherits the absolute selected file", () => {

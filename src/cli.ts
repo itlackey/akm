@@ -90,7 +90,7 @@ import {
   runWithJsonErrors,
   withoutHelpHiddenArgs,
 } from "./cli/shared";
-import { assertKnownFlags, configFileFlag, type FlagScanCommand } from "./cli/unknown-flags";
+import { assertKnownFlags, consumeConfigFileFlag, type FlagScanCommand } from "./cli/unknown-flags";
 import { startUsage, type UsageCommand } from "./cli/usage";
 import { agentCommand, lintCommand } from "./commands/agent/contribute-cli";
 import { commandCommand } from "./commands/command/command-cli";
@@ -1211,8 +1211,9 @@ export async function runCli(): Promise<void> {
 async function runCliInvocation(): Promise<void> {
   try {
     process.argv = consumeSchedulerContextArg(process.argv);
-    const configFile = configFileFlag(main as FlagScanCommand, process.argv.slice(2));
-    if (configFile !== undefined) process.env.AKM_CONFIG_FILE = configFile;
+    const configFile = consumeConfigFileFlag(main as FlagScanCommand, process.argv.slice(2));
+    if (configFile.file !== undefined) process.env.AKM_CONFIG_FILE = configFile.file;
+    process.argv = [...process.argv.slice(0, 2), ...configFile.args];
     if (process.env.AKM_CONFIG_FILE !== undefined) process.env.AKM_CONFIG_FILE = getConfigPath();
   } catch (error: unknown) {
     emitJsonError(error);

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { configFileFlag, type FlagScanCommand } from "../../src/cli/unknown-flags";
+import { consumeConfigFileFlag, type FlagScanCommand } from "../../src/cli/unknown-flags";
 import { parseTaskInputFlags } from "../../src/commands/tasks/tasks-cli";
 import { parseWorkflowParameterFlags } from "../../src/commands/workflow-cli";
 
@@ -15,11 +15,12 @@ describe("startup config file flag", () => {
     [
       ["--config", "one.json", "tool", "run"],
       ["tool", "--config=one.json", "run"],
+      ["tool", "--config", "one.json", "run"],
       ["tool", "run", "--config", "one.json"],
       ["tool", "run", "--config=old.json", "--config=one.json"],
     ].map((args) => ({ args })),
   )("selects the last config file across command levels: %j", ({ args }) => {
-    expect(configFileFlag(root, args)).toBe("one.json");
+    expect(consumeConfigFileFlag(root, args)).toEqual({ file: "one.json", args: ["tool", "run"] });
   });
 
   test.each(
@@ -32,7 +33,7 @@ describe("startup config file flag", () => {
       ["tool", "run", "--prompt=--config"],
     ].map((args) => ({ args })),
   )("leaves literal values and passthrough alone: %j", ({ args }) => {
-    expect(configFileFlag(root, args)).toBeUndefined();
+    expect(consumeConfigFileFlag(root, args)).toEqual({ file: undefined, args });
   });
 
   test("dynamic commands retain their config input after command selection", () => {
@@ -41,11 +42,47 @@ describe("startup config file flag", () => {
       subCommands: { task: { subCommands: { run: {}, explain: {} } }, workflow: { subCommands: { run: {} } }, run: {} },
     };
     for (const command of [["task", "run"], ["task", "explain"], ["workflow", "run"], ["run"]]) {
-      expect(configFileFlag(dynamic, [...command, "ref", "--config", "input.json"])).toBeUndefined();
-      expect(configFileFlag(dynamic, ["--config", "selected.json", ...command, "ref", "--config", "input.json"])).toBe(
-        "selected.json",
-      );
+      expect(consumeConfigFileFlag(dynamic, [...command, "ref", "--config", "input.json"])).toEqual({
+        file: undefined,
+        args: [...command, "ref", "--config", "input.json"],
+      });
+      expect(
+        consumeConfigFileFlag(dynamic, ["--config", "selected.json", ...command, "ref", "--config", "input.json"]),
+      ).toEqual({ file: "selected.json", args: [...command, "ref", "--config", "input.json"] });
     }
+  });
+
+  test("inherited arity identifies dynamic paths across intermediate group flags", () => {
+    const dynamic: FlagScanCommand = {
+      args: { ...root.args, format: { type: "string" } },
+      subCommands: { task: { subCommands: { run: {}, explain: {} } }, workflow: { subCommands: { run: {} } } },
+    };
+    for (const command of [
+      ["task", "run"],
+      ["task", "explain"],
+      ["workflow", "run"],
+    ]) {
+      const [group, leaf] = command;
+      for (const prefix of [
+        ["--config", "misplaced.json"],
+        ["--format", "json"],
+      ]) {
+        const args = [group!, ...prefix, leaf!, "ref", "--config", "input.json"];
+        expect(consumeConfigFileFlag(dynamic, args)).toEqual({ file: undefined, args });
+        expect(consumeConfigFileFlag(dynamic, ["--config", "selected.json", ...args])).toEqual({
+          file: "selected.json",
+          args,
+        });
+      }
+    }
+  });
+
+  test("consumption preserves literal flag values and child args alongside a selector", () => {
+    const args = ["tool", "run", "--prompt", "--config", "--config", "one.json", "--", "--config", "child.json"];
+    expect(consumeConfigFileFlag(root, args)).toEqual({
+      file: "one.json",
+      args: ["tool", "run", "--prompt", "--config", "--", "--config", "child.json"],
+    });
   });
 
   test("legacy named config inputs preserve boolean and literal values", () => {
@@ -59,5 +96,5 @@ describe("startup config file flag", () => {
   test.each(
     [["--config"], ["--config="], ["--config", " "], ["--config", "--quiet"]].map((args) => ({ args })),
   )("rejects a missing or empty config path: %j", ({ args }) =>
-    expect(() => configFileFlag(root, args)).toThrow("--config requires a non-empty file path"));
+    expect(() => consumeConfigFileFlag(root, args)).toThrow("--config requires a non-empty file path"));
 });

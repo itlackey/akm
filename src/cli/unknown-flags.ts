@@ -91,10 +91,12 @@ function collectKnownArgs(root: FlagScanCommand, rawArgs: readonly string[]): Kn
   const booleanFlags = new Set<string>();
   const displayNames: string[] = [];
   const path: string[] = [];
+  const inheritedArgs: CittyArgsDefinitionForScan = {};
 
   let cmd: FlagScanCommand = root;
   let args: readonly string[] = rawArgs;
   for (;;) {
+    Object.assign(inheritedArgs, cmd.args);
     for (const [key, def] of Object.entries(cmd.args ?? {})) {
       // Positionals are not flags; including them would accept `--<positional>`.
       if (def.type === "positional") continue;
@@ -115,7 +117,7 @@ function collectKnownArgs(root: FlagScanCommand, rawArgs: readonly string[]): Kn
 
     const subCommands = cmd.subCommands;
     if (!subCommands || Object.keys(subCommands).length === 0) break;
-    const idx = findCittyTopLevelCommandIndex(args, (cmd.args ?? {}) as CittyArgsDefinitionForScan);
+    const idx = findCittyTopLevelCommandIndex(args, inheritedArgs);
     const token = idx >= 0 ? args[idx] : undefined;
     // A command that takes a positional AND has subcommands (`improve [scope]`
     // beside `improve report`) is itself the target when the token is absent
@@ -136,8 +138,11 @@ function collectKnownArgs(root: FlagScanCommand, rawArgs: readonly string[]): Kn
   return { names, valueFlags, booleanFlags, displayNames, path, resolved: true };
 }
 
-/** Read a startup value without interpreting another flag's value as an option. */
-export function configFileFlag(root: FlagScanCommand, rawArgs: readonly string[]): string | undefined {
+/** Consume the startup selector without interpreting another flag's value as an option. */
+export function consumeConfigFileFlag(
+  root: FlagScanCommand,
+  rawArgs: readonly string[],
+): { file: string | undefined; args: string[] } {
   const known = collectKnownArgs(root, rawArgs);
   // These legacy commands accept arbitrary named inputs, including `config`.
   // Only the prefix before the top-level command belongs to the global flag.
@@ -145,7 +150,9 @@ export function configFileFlag(root: FlagScanCommand, rawArgs: readonly string[]
   const topLevel = findCittyTopLevelCommandIndex(rawArgs, (root.args ?? {}) as CittyArgsDefinitionForScan);
   const end = dynamic.has(known.path.join(" ")) && topLevel >= 0 ? topLevel : rawArgs.length;
   let selected: string | undefined;
-  for (let index = 0; index < end; index += 1) {
+  const forwarded: string[] = [];
+  let index = 0;
+  for (; index < end; index += 1) {
     const token = rawArgs[index] as string;
     if (token === "--") break;
     if (token === "--config" || token.startsWith("--config=")) {
@@ -156,19 +163,26 @@ export function configFileFlag(root: FlagScanCommand, rawArgs: readonly string[]
       selected = value;
       continue;
     }
+    forwarded.push(token);
     if (token.startsWith("--")) {
       const name = cittyComparableName(token.slice(2).split("=")[0] as string);
-      if (!token.includes("=") && known.valueFlags.has(name)) index += 1;
+      if (!token.includes("=") && known.valueFlags.has(name)) {
+        const value = rawArgs[++index];
+        if (value !== undefined) forwarded.push(value);
+      }
     } else if (token.startsWith("-") && token !== "-") {
       for (let offset = 1; offset < token.length; offset += 1) {
         if (known.valueFlags.has(cittyComparableName(token[offset] as string))) {
-          if (offset === token.length - 1) index += 1;
+          if (offset === token.length - 1) {
+            const value = rawArgs[++index];
+            if (value !== undefined) forwarded.push(value);
+          }
           break;
         }
       }
     }
   }
-  return selected;
+  return { file: selected, args: [...forwarded, ...rawArgs.slice(index)] };
 }
 
 /**
