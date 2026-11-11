@@ -38,8 +38,11 @@ import {
 } from "../../storage/repositories/task-history-repository";
 import type { TaskRunResult, TaskRunStatus } from "./task-result";
 
-/** Append (or finalize a reserved attempt into) one task_history row. */
-export function appendHistory(result: TaskRunResult, historyReserved = false): void {
+/**
+ * Append (or finalize a reserved attempt into) one task_history row. `scheduled` says whether the OS scheduler started
+ * the run (stored as `trigger`); a caller that does not know leaves it out.
+ */
+export function appendHistory(result: TaskRunResult, historyReserved = false, scheduled?: boolean): void {
   const row = {
     task_id: result.id,
     status: result.status,
@@ -54,6 +57,7 @@ export function appendHistory(result: TaskRunResult, historyReserved = false): v
       durationMs: result.durationMs,
       detail: result.detail ?? null,
       ...(result.target.kind === "command" ? { engine: result.target.engine } : {}),
+      ...(scheduled === undefined ? {} : { trigger: scheduled ? "schedule" : "manual" }),
     }),
   };
   try {

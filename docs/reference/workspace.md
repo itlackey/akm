@@ -127,10 +127,69 @@ The `health` part of `activity.overview` on its own, with the same `probe` param
 
 Requires `taskId`; optional `since` (default `30d`, same syntax as metrics) and `limit` (default 50, maximum 200).
 Returns `{ available, totalCount, count, runs }`, newest first. Each run has
-recorded `status`, `startedAt`, nullable `durationMs`, and nullable
-decoded `detail` (`reason`, `error`, `exitCode`, `runId` when recorded). Invalid/missing historical detail stays
+recorded `status`, `startedAt`, nullable `durationMs`, nullable `trigger` (`schedule` when the OS scheduler started
+it, `manual` otherwise; `null` on a run recorded before akm stored it, or one that failed before it was dispatched),
+and nullable decoded `detail` (`reason`, `error`, `exitCode`, `runId` when recorded). Invalid/missing historical detail stays
 unknown. No log paths are returned or files read; these are existing state.db records. `available: false` means
 state.db is absent or needs migration, not that this task has never failed.
+
+## `activity.taskRuns`
+
+Optional `since` (default `30d`). Every scheduled-task run that started in the window, for all tasks, newest first:
+`{ available, window, truncated, runs: [{ taskId, status, startedAt, finishedAt, durationMs, trigger, targetKind,
+targetRef }] }`. `trigger` is as in `taskHistory`. At most 20,000 runs; `truncated` says the window held more.
+`taskHistory` has one task's runs with their detail.
+
+## `activity.workflowRuns`
+
+Optional `since` (default `30d`). The workflow runs created in the window, or still active, newest first, as `akm
+workflow list` lists them: `{ window, runs: [{ id, workflowRef, title, status, createdAt, updatedAt, completedAt,
+harness, session }] }`. `harness` and `session` are the agent that started the run, when it was recorded. Child runs
+are not listed; they are in their parent's `workflowRun`.
+
+## `activity.workflowRun`
+
+Requires `id`. One run as `akm workflow status <id> --units` reads it: `{ run, steps, units, children }`. `run` is the
+run summary without its params. `steps` are in order (`id`, `title`, `status`, `sequenceIndex`, `completedAt`). Each
+unit has its step, phase (`gate` for a gate check), status, runtime kind, engine, tokens, start and finish, failure
+reason, its clipped and redacted diagnostic, and `attempts` (`attempt`, `phase`, `status`, `startedAt`, `finishedAt`,
+`tokens`, `failureReason`). A step has no start time of its own; its units' times give its span. An unknown id is a
+`NotFoundError`.
+
+## `activity.events`
+
+Optional `since` (default `24h`) and `until` (default now). Every search, show, feedback and curate row of the window
+from every source, oldest first, as `akm metrics --detail full` lists them (`rows.usage`):
+`{ available, window, truncated, events }`. A search writes one summary row (no `ref`, with `resultCount`) and one row
+per hit. An event carries `agent: { harness, session? }` when the agent harness that made it was recorded (from this
+release; older rows have none). At most 20,000 events; `truncated` says the window held more.
+
+## `assets.graph`
+
+No input. Every asset of the enabled bundles (no `env`, `secret` or `session` assets) and the declared links between
+them, in column form, so 30,000 assets stay a few megabytes:
+
+```json
+{
+  "available": true,
+  "note": "…",
+  "types": ["knowledge", "memory"],
+  "bundles": ["team-wiki"],
+  "kinds": ["xref", "links_to"],
+  "nodes": { "ref": ["team-wiki//knowledge/a"], "title": ["A"], "type": [0], "bundle": [0],
+             "shows": [12], "searches": [40], "lastUsedAt": ["2026-11-10T08:00:00.000Z"] },
+  "links": { "from": [0], "to": [3], "kind": [1] },
+  "meaning": { "embedded": 29840, "xyz": [12.5, -40.1, 3.2] }
+}
+```
+
+Node `i` is index `i` of every `nodes` array; `type`, `bundle` and `kind` index `types`, `bundles` and `kinds`. A link
+runs from the asset that declares it to its target; a link whose target is not indexed is left out. `shows`,
+`searches` and `lastUsedAt` come from the index's utility scores. `meaning` places each asset with a stored embedding
+of the index's current model in three dimensions (three coordinates per node, `null` for one with no embedding): its
+projection on the three principal components of all the vectors, so assets with similar content land near each other.
+It is computed on each read, and is `null` when the index has no embeddings. `available` is `false`, with a `note`,
+when there is no index.
 
 ## `bundles.list`
 

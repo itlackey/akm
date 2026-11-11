@@ -99,7 +99,7 @@ export async function runPreparedCommandTask(input: {
         }
       : {}),
   };
-  appendHistory(out, input.historyReserved);
+  appendHistory(out, input.historyReserved, provenance.scheduled);
   return out;
 }
 
