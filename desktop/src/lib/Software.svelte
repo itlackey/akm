@@ -6,7 +6,7 @@
 
 <script lang="ts">
   import { onMount, tick } from "svelte";
-  import { classifyEngineSkew, holdReason, hostUpgradeOutrunsDesktop, skewAdvice } from "./engine-skew";
+  import { classifyEngineSkew, holdReason, hostUpgradeOutrunsDesktop, skewAdvice, stableSwitch } from "./engine-skew";
   import Icon from "./Icon.svelte";
   import { harnessLabel, installedChannel, pluginChannel, pluginLine } from "./setup-model";
   import {
@@ -32,8 +32,13 @@
   const cliChannel = $derived(
     data?.host.upgrade?.currentChannel ?? (/^\d+\.\d+\.\d+-/.test(data?.host.cli?.version ?? "") ? "next" : "latest"),
   );
-  // Stable is older than a prerelease CLI: akm refuses that switch without --allow-downgrade, so it is not offered.
-  const switchIsDowngrade = $derived(channel === "latest" && cliChannel === "next");
+  // akm refuses a switch to stable that goes backwards without --allow-downgrade, so it is offered only when stable is
+  // known to be as new as the installed CLI. Without a known stable release it stays hidden and the hint says "may be".
+  const stable = $derived(
+    channel === "latest" && cliChannel === "next"
+      ? stableSwitch(data?.host.cli?.version, data?.host.upgrade?.latestVersion)
+      : "offer",
+  );
   const channelName = (value: string) => (value === "next" ? "prerelease" : "stable");
   const lockstep = $derived(data?.host.action?.upgrade?.lockstep ?? data?.host.upgrade?.lockstep);
   const outcomes = $derived((data?.host.action?.upgrade?.plugins ?? []).filter((item) => item.outcome));
@@ -259,7 +264,7 @@
               onclick={() => !desktopBehind && run("upgrade-cli", { channel: cliChannel }, "host-cli")}
               >Update CLI & plugins</button
             >
-            {#if cliChannel !== channel && !switchIsDowngrade}<button
+            {#if cliChannel !== channel && stable === "offer"}<button
                 class="btn-secondary"
                 aria-disabled={hostBusy || desktopBehind}
                 onclick={() => !desktopBehind && run("switch-channel", { channel }, "host-cli")}
@@ -314,9 +319,9 @@
           above){data.host.cliManaged && skew === "host-older" ? ", or use Match this app's version" : ""}.
         </p>
       {:else if advice.kind !== "none"}<p class="notice" role="status">{advice.text}</p>{/if}
-      {#if cliChannel !== channel && switchIsDowngrade}<p class="field-hint">
-          This CLI follows the prerelease channel, so stable is older than what is installed and akm will not switch
-          back by itself. It moves to stable with the next stable release; to go back now, run
+      {#if stable !== "offer"}<p class="field-hint">
+          This CLI follows the prerelease channel, so stable {stable === "unknown" ? "may be" : "is"} older than what is installed,
+          and akm will not switch back by itself. It moves to stable with the next stable release; to go back now, run
           <code>akm upgrade --channel latest --allow-downgrade</code> yourself.
         </p>{/if}
       <p class="field-hint">

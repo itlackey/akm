@@ -11,6 +11,7 @@ import {
   hostUpgradeOutrunsDesktop,
   sameReleaseLine,
   skewAdvice,
+  stableSwitch,
 } from "../src/lib/engine-skew.ts";
 
 test("versions order by number, and a stage release is older than its stable release", () => {
@@ -76,4 +77,16 @@ test("a release newer than the engine is held with its reason, and one the Deskt
   const hidden = holdReason("0.10.261117", "0.11.261201-beta.1", "stable");
   assert.match(hidden, /follows stable releases only, so it will not be offered to Desktop/);
   assert.ok(!holdReason("0.10.261117", "0.11.261201-beta.1", "prerelease").includes("stable releases only"));
+});
+
+test("switching a prerelease CLI to stable is offered only when stable is not older than it (#1609)", () => {
+  assert.equal(stableSwitch("0.11.261201-beta.1", "0.10.261117"), "downgrade");
+  assert.equal(stableSwitch("0.10.261110-beta.1", "0.10.261117"), "offer", "an older prerelease is not a downgrade");
+  assert.equal(stableSwitch("0.10.261117-rc.1", "0.10.261117"), "offer");
+  assert.equal(stableSwitch("0.11.261201-beta.1", undefined), "unknown");
+  assert.equal(
+    stableSwitch("0.11.261201-beta.1", "0.11.261202-beta.1"),
+    "unknown",
+    "a prerelease is not a stable target",
+  );
 });

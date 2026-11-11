@@ -104,3 +104,15 @@ export function holdReason(
     notOffered ? ", and AKM Desktop follows stable releases only, so it will not be offered to Desktop" : ""
   }. The CLI and its plugins are updated together (akm has no plugins-only update) and are held until AKM Desktop can read what they migrate.`;
 }
+
+/**
+ * Whether a prerelease CLI can be switched to stable: akm refuses it as a downgrade when stable is older than the
+ * installed version. `unknown` when no stable release is known to compare against.
+ */
+export function stableSwitch(
+  installed: string | undefined,
+  stable: string | undefined,
+): "offer" | "downgrade" | "unknown" {
+  const order = compareVersions(stable && !/-/.test(stable) ? stable : undefined, installed);
+  return order === null ? "unknown" : order >= 0 ? "offer" : "downgrade";
+}

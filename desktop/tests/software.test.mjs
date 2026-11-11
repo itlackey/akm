@@ -592,6 +592,12 @@ test("a CLI that does not run is repaired only with consent and only where Deskt
       return "{}";
     },
   });
+  // An earlier check reported a standalone binary; before that Desktop does not claim the file.
+  manager.start("install-cli");
+  await manager.pending;
+  assert.equal(manager.snapshot().cliManaged, false);
+  assert.ok(!calls.some((call) => path.basename(call[0]) === "bash"));
+  manager.state.upgrade = { installMethod: "binary" };
   manager.start("install-cli");
   await manager.pending;
   assert.equal(manager.snapshot().cliManaged, true);
@@ -647,6 +653,9 @@ test("a link in the install directory is another installer's: never Desktop's to
   regular.manager.state.upgrade = { installMethod: "npm" };
   await regular.manager.inventory(await regular.manager.environment());
   assert.equal(regular.manager.state.cliManaged, false);
+  regular.manager.state.upgrade = undefined;
+  await regular.manager.inventory(await regular.manager.environment());
+  assert.equal(regular.manager.state.cliManaged, false, "not Desktop's until akm reports a standalone binary");
   regular.manager.state.upgrade = { installMethod: "binary" };
   await regular.manager.inventory(await regular.manager.environment());
   assert.equal(regular.manager.state.cliManaged, true);
@@ -692,7 +701,18 @@ test("a switch checks the target channel afterwards, a timed-out check is not un
   assert.equal(g.manager.snapshot().error, undefined);
 });
 
-test("a command that floods its output is stopped and reported as such (#1609-9)", async (t) => {
+test("output over the cap stops the command and leaves its action unsettled like a timeout (#1609-9)", async (t) => {
+  const f = await hostFixture({
+    extra: (args) => {
+      if (args[0] === "upgrade" && !args.includes("--check"))
+        throw Object.assign(new Error("flood"), { killed: true, code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" });
+      return undefined;
+    },
+  });
+  f.manager.start("upgrade-cli");
+  await f.manager.pending;
+  assert.match(f.manager.snapshot().error, /too much output/);
+  assert.equal(f.manager.snapshot().unsettled, "upgrade-cli");
   if (process.platform === "win32") return t.skip("POSIX shell");
   await assert.rejects(
     runHost("/bin/sh", ["-c", "head -c 6000000 /dev/zero | tr '\\0' x"], {

@@ -389,11 +389,10 @@ export class HostTools {
     );
     const target = cliDirectory(this.platform, env, this.home).path;
     const file = path.join(target, this.platform === "win32" ? "akm.exe" : "akm");
-    // Desktop's own install is a regular file where its installer puts it, and a standalone binary when akm says how it
-    // was installed: a package manager's link in the same directory is not Desktop's to replace.
+    // Desktop's own install is a regular file where its installer puts it, and a standalone binary as akm itself reports (so only after a check): a link, or a file akm has not yet reported as a standalone binary, is not Desktop's to replace.
     const stat = await lstat(file).catch(() => undefined);
     const method = this.state.upgrade?.installMethod;
-    const cliManaged = cli.path === file && stat?.isFile() === true && (!method || method === "binary");
+    const cliManaged = cli.path === file && stat?.isFile() === true && method === "binary";
     Object.assign(this.state, { cli, bun, harnesses, cliManaged });
   }
   /**
