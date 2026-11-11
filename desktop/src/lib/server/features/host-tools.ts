@@ -519,12 +519,7 @@ export class HostTools {
     try {
       summary = summarizeUpgrade(
         json(
-          await this.invoke(
-            this.state.cli.path,
-            ["upgrade", "--check", ...flags, "--format", "json"],
-            env,
-            120_000,
-          ),
+          await this.invoke(this.state.cli.path, ["upgrade", "--check", ...flags, "--format", "json"], env, 120_000),
         ),
       );
     } catch {
@@ -599,8 +594,7 @@ export class HostTools {
       const installEnv = { ...env, AKM_INSTALL_DIR: directory };
       if (windows) {
         // A downloaded script is blocked by the default execution policy; Bypass applies to this one process only.
-        this.state.command =
-          `powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1${shown} (official release installer)`;
+        this.state.command = `powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1${shown} (official release installer)`;
         await this.invoke(
           "powershell.exe",
           ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", file, ...tag],
@@ -683,14 +677,16 @@ export class HostTools {
 }
 
 const bounded = (value: unknown) =>
-  typeof value === "string" ? value.replace(/[\u0000-\u001f\u007f]+/g, " ").trim().slice(0, 200) : undefined;
+  typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, 200) : undefined;
 
 /** Why an upgrade did not finish, in words, from its summary; undefined when it finished. */
 function upgradeFailure(summary: UpgradeSummary): string | undefined {
   const parts = [
     summary.migration === "blocked" || summary.migration === "failed" ? `the migration ${summary.migration}` : "",
     summary.postUpgradeFailed ? "rebuilding the index failed" : "",
-    ...(summary.plugins ?? []).filter((item) => item.outcome === "failed").map((item) => `the ${item.harness} plugin failed`),
+    ...(summary.plugins ?? [])
+      .filter((item) => item.outcome === "failed")
+      .map((item) => `the ${item.harness} plugin failed`),
   ].filter(Boolean);
   return parts.length
     ? `AKM's upgrade did not finish: ${parts.join(", ")}. The versions shown are what is installed now. Use akm upgrade in your terminal to review its diagnostics.`

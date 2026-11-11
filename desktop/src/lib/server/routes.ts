@@ -110,7 +110,9 @@ export const routes: Route[] = [
       ...(validPluginChannel(pluginChannel) ? { pluginChannel } : {}),
     });
     // The choice is saved either way; `applied` says whether the running updater has it yet.
-    return updateChannel === undefined ? saved : { ...saved, ...(await tryApply(() => followUpdateChannel(saved.updateChannel))) };
+    return updateChannel === undefined
+      ? saved
+      : { ...saved, ...(await tryApply(() => followUpdateChannel(saved.updateChannel))) };
   }),
   get("/api/desktop/software", async () => ({
     host: hostTools.snapshot(),
@@ -119,15 +121,16 @@ export const routes: Route[] = [
     preferences: await readPreferences(),
   })),
   post("/api/desktop/software", async (value) => {
-    const request = fields<{ action?: unknown; harness?: unknown; channel?: unknown }>(
+    const request = fields<{ action?: unknown; harness?: unknown; channel?: unknown; consent?: unknown }>(
       value,
-      ["action", "harness", "channel"],
+      ["action", "harness", "channel", "consent"],
       "software action",
     );
     if (
       typeof request.action !== "string" ||
       (request.harness !== undefined && typeof request.harness !== "string") ||
-      (request.channel !== undefined && typeof request.channel !== "string")
+      (request.channel !== undefined && typeof request.channel !== "string") ||
+      (request.consent !== undefined && typeof request.consent !== "boolean")
     )
       throw new HttpFailure(400, "INVALID_SOFTWARE_ACTION", "Invalid software action, harness or release channel.");
     try {
@@ -135,12 +138,20 @@ export const routes: Route[] = [
       // asks akm for the release it would install, right before it upgrades, and refuses one `within` cannot clear.
       return request.action === "desktop-menu-install"
         ? await desktopApp("menu-install")
-        : hostTools.start(request.action, request.harness as string | undefined, request.channel as string | undefined, {
-            within: (version) => {
-              const order = compareVersions(version, akmPackage.version);
-              return order === null ? undefined : order <= 0;
-            },
-          });
+        : request.action === "desktop-update-check"
+          ? await desktopApp("update-check")
+          : hostTools.start(
+              request.action,
+              request.harness as string | undefined,
+              request.channel as string | undefined,
+              {
+                consent: request.consent === true,
+                within: (version) => {
+                  const order = compareVersions(version, akmPackage.version);
+                  return order === null ? undefined : order <= 0;
+                },
+              },
+            );
     } catch (error) {
       throw new HttpFailure(
         400,

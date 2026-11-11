@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { api } from "../client";
-import type { HostHarness, HostSnapshot } from "../setup-model";
+import { type HostHarness, type HostSnapshot, pluginChannel } from "../setup-model";
 import { snapshotFeed, waitUntilIdle } from "../software-model";
 
 export type Harness = HostHarness & { path?: string };
@@ -12,12 +12,25 @@ export interface UpdateState {
   state: string;
   version?: string;
   error?: string;
+  /** Download progress, 0 to 100, while a release downloads. */
+  percent?: number;
   /** What the error interrupted. */
   during?: "check" | "download";
   /** Why this run never checks. */
   reason?: "development" | "off" | "not-appimage";
   /** The release line followed: the saved choice, else the stage of the embedded version. */
   channel: "stable" | "prerelease";
+}
+interface UpgradeView {
+  latestVersion?: string;
+  currentVersion?: string;
+  updateAvailable?: boolean;
+  installMethod?: string;
+  channel?: string;
+  currentChannel?: string;
+  /** Each harness plugin akm found: the channel it follows and what the run did with it. */
+  plugins?: Array<{ harness: string; channel?: string; outcome?: string; reason?: string }>;
+  lockstep?: { heldBack?: boolean; plugin?: string; pinnedVersion?: string; newestVersion?: string; reason?: string };
 }
 export interface SoftwareSnapshot {
   engine: string;
@@ -45,15 +58,15 @@ export interface SoftwareSnapshot {
     receipt?: string;
     checkedAt?: string;
     command?: string;
-    upgrade?: {
-      latestVersion?: string;
-      currentVersion?: string;
-      updateAvailable?: boolean;
-      installMethod?: string;
-      channel?: string;
-      /** Each harness plugin `akm upgrade --check` found, with the channel it follows. */
-      plugins?: Array<{ harness: string; channel?: string }>;
-    };
+    upgrade?: UpgradeView;
+    /** The last action's own command and result, apart from the check that followed it. */
+    action?: { command: string; upgrade?: UpgradeView };
+    /** akm is where Install AKM CLI puts it, so Desktop may repair it with consent. */
+    cliManaged?: boolean;
+    /** What is waiting for consent after its action stopped to ask: `cli` or a harness id. */
+    consent?: string;
+    /** An action that timed out: its outcome is unknown until a check confirms it. */
+    unsettled?: string;
   };
 }
 export interface Outcome {
@@ -117,7 +130,9 @@ export async function runSoftware(action: string, details: Record<string, unknow
     () => new Promise((resolve) => setTimeout(resolve, 500)),
   );
   if (!connected)
-    return { error: "Lost contact with the status connection. The operation was not cancelled and may still be running." };
+    return {
+      error: "Lost contact with the status connection. The operation was not cancelled and may still be running.",
+    };
   const { error, errorDetail, receipt } = software.data?.host ?? {};
   return { error, errorDetail, receipt };
 }
@@ -127,7 +142,10 @@ export function watchSoftware() {
   let alive = true;
   void (async () => {
     await refreshSoftware();
-    if (alive && !software.data?.host.cli && software.data?.host.phase === "idle") await actSoftware("check");
+    if (alive && !software.data?.host.cli && software.data?.host.phase === "idle")
+      await actSoftware("check", {
+        channel: pluginChannel(software.data?.engine, software.data?.preferences?.pluginChannel),
+      });
   })();
   const timer = setInterval(() => alive && void refreshSoftware(), 2000);
   return () => {

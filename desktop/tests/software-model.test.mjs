@@ -47,7 +47,10 @@ test("a failure then a success reports the recovery so the offline banner clears
 test("waiting on an operation stops after repeated failed polls and says the connection was lost (#1609-8)", async () => {
   let calls = 0;
   const lost = await waitUntilIdle(
-    async () => (calls++, false),
+    async () => {
+      calls++;
+      return false;
+    },
     () => true,
     async () => {},
     3,

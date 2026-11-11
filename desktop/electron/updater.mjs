@@ -10,6 +10,7 @@
  *   version?: string,
  *   error?: string,
  *   during?: "check" | "download",
+ *   percent?: number,
  *   reason?: "development" | "off" | "not-appimage",
  *   channel: UpdateChannel,
  * }} UpdateStatus
@@ -55,7 +56,8 @@ export function createUpdater({ autoUpdater, version, platform, unsupportedReaso
   autoUpdater.autoInstallOnAppQuit = canInstall;
   // A release the followed line excludes: a prerelease while stable is followed. It is never installed, whether it
   // was queued before the choice changed or its check was still running.
-  const excluded = (/** @type {string | undefined} */ release) => channel === "stable" && /^\d+\.\d+\.\d+-/.test(release ?? "");
+  const excluded = (/** @type {string | undefined} */ release) =>
+    channel === "stable" && /^\d+\.\d+\.\d+-/.test(release ?? "");
   const drop = () => {
     autoUpdater.autoInstallOnAppQuit = false;
     status = { state: "checking" };
@@ -69,6 +71,13 @@ export function createUpdater({ autoUpdater, version, platform, unsupportedReaso
     if (excluded(info.version)) return drop();
     autoUpdater.autoInstallOnAppQuit = canInstall;
     status = { state: "downloaded", version: info.version };
+  });
+  autoUpdater.on("checking-for-update", () => {
+    if (status.state !== "downloading" && status.state !== "downloaded") status = { state: "checking" };
+  });
+  autoUpdater.on("download-progress", (progress) => {
+    if (status.state === "downloading")
+      status = { ...status, percent: Math.max(0, Math.min(100, Math.round(progress.percent))) };
   });
   autoUpdater.on("update-not-available", () => {
     status = { state: "current" };
@@ -89,6 +98,12 @@ export function createUpdater({ autoUpdater, version, platform, unsupportedReaso
   return {
     /** @returns {UpdateStatus} */
     status: () => ({ ...status, channel }),
+    /** Check now, for a Check/Retry button: nothing while a download runs or waits, since that update is already coming. */
+    checkNow() {
+      if (!supported || status.state === "downloading" || status.state === "downloaded") return;
+      status = { state: "checking" };
+      check();
+    },
     /** Check now and every six hours while the app runs. */
     start() {
       if (!supported) return;

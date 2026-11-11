@@ -4,7 +4,12 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { classifyEngineSkew, compareVersions, hostUpgradeOutrunsDesktop } from "../src/lib/engine-skew.ts";
+import {
+  classifyEngineSkew,
+  compareVersions,
+  hostUpgradeOutrunsDesktop,
+  sameReleaseLine,
+} from "../src/lib/engine-skew.ts";
 
 test("versions order by number, and a stage release is older than its stable release", () => {
   const order = (a, b) => Math.sign(compareVersions(a, b));
@@ -34,4 +39,12 @@ test("a host upgrade is held back only when the latest release is newer than Des
   assert.equal(hostUpgradeOutrunsDesktop("0.10.261105", "0.10.261105"), false);
   assert.equal(hostUpgradeOutrunsDesktop("0.10.261105", "0.10.261104"), false);
   assert.equal(hostUpgradeOutrunsDesktop("0.10.261105", undefined), false);
+});
+
+test("a patch difference inside one release line is told apart from a different line (#1609-11)", () => {
+  assert.equal(sameReleaseLine("0.10.261117", "0.10.261110"), true);
+  assert.equal(sameReleaseLine("0.10.261117", "0.10.261117-beta.1"), true);
+  assert.equal(sameReleaseLine("0.11.261201", "0.10.261117"), false);
+  assert.equal(sameReleaseLine("0.10.261117", undefined), false);
+  assert.equal(sameReleaseLine("0.10.261117", "not a version"), false);
 });

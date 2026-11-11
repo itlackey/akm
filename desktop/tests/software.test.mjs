@@ -188,7 +188,12 @@ test("host checks are read-only and upgrades invoke the existing CLI, not the bu
         { harness: "codex", outcome: "skipped" },
       ],
     }),
-    { plugins: [{ harness: "claude-code", channel: "next" }, { harness: "codex", outcome: "skipped" }] },
+    {
+      plugins: [
+        { harness: "claude-code", channel: "next" },
+        { harness: "codex", outcome: "skipped" },
+      ],
+    },
   );
 });
 
@@ -374,7 +379,11 @@ test("both installers are told Desktop's exact release tag and the installed ver
     assert.equal(f.manager.snapshot().cli.version, "0.11.261201-beta.1");
   }
   // An installer that put another version in place is not a success.
-  const wrong = await hostFixture({ absent: true, desktopVersion: "0.11.261201-beta.1", installerVersion: "0.10.261117" });
+  const wrong = await hostFixture({
+    absent: true,
+    desktopVersion: "0.11.261201-beta.1",
+    installerVersion: "0.10.261117",
+  });
   wrong.manager.start("install-cli");
   await wrong.manager.pending;
   assert.match(wrong.manager.snapshot().error, /0\.10\.261117 in place, not the 0\.11\.261201-beta\.1/);
@@ -418,7 +427,9 @@ test("a nonzero upgrade keeps akm's redacted result and shows the version actual
         currentVersion: "0.10.261104",
         upgraded: true,
         migration: { status: "blocked", files: ["/home/secret/index.db"], credentials: "TOKEN-SENTINEL" },
-        plugins: [{ harness: "opencode", outcome: "failed", message: "line one\nnpm ERR", backups: ["/home/secret/x.bak"] }],
+        plugins: [
+          { harness: "opencode", outcome: "failed", message: "line one\nnpm ERR", backups: ["/home/secret/x.bak"] },
+        ],
       },
     },
   });
@@ -441,7 +452,12 @@ test("deferred plugins and a compatibility hold keep their reasons, apart from t
         latestVersion: "0.10.261104",
         updateAvailable: false,
         plugins: [{ harness: "opencode", outcome: "deferred", message: "OpenCode is running", backups: ["/secret"] }],
-        lockstep: { plugin: "akm-opencode", pinnedVersion: "0.10.261104", newestVersion: "0.10.261105", heldBack: true },
+        lockstep: {
+          plugin: "akm-opencode",
+          pinnedVersion: "0.10.261104",
+          newestVersion: "0.10.261105",
+          heldBack: true,
+        },
       },
     },
   });
@@ -477,7 +493,11 @@ test("a timed-out parent and its descendants are ended, and no overlapping retry
   const marker = path.join(dir, "child-ran");
   // A parent that starts a child which would write the marker after the parent's timeout.
   await assert.rejects(
-    runHost("/bin/sh", ["-c", `(sleep 1; echo ran > "${marker}") & sleep 5`], { env: process.env, home: dir, timeout: 200 }),
+    runHost("/bin/sh", ["-c", `(sleep 1; echo ran > "${marker}") & sleep 5`], {
+      env: process.env,
+      home: dir,
+      timeout: 200,
+    }),
     (error) => error.killed === true && error.code === "ETIMEDOUT",
   );
   await new Promise((resolve) => setTimeout(resolve, 1500));
