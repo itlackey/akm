@@ -530,6 +530,41 @@ for (const origin of ["previous", "0.9.32"] as const) {
       const show = await runLauncher(previousLauncher, ["show", ref as string], home.env);
       expect(show.status, show.stderr).toBe(0);
     });
+
+    test("11b. read-back of rows only the candidate writes: task_history `trigger`, usage-event `agent` metadata, and CLI usage in metrics.db", async () => {
+      // The candidate records the agent that made a show, a `manual` trigger for step 8's task run,
+      // and one CLI usage row per command (step 1 onwards) in metrics.db's cli_usage_* tables.
+      const search = await runLauncher(candidateLauncher, ["search", home.searchTerm], home.env);
+      const ref = (JSON.parse(search.stdout) as { hits?: { ref?: string }[] }).hits?.[0]?.ref as string;
+      const agentShow = await runLauncher(candidateLauncher, ["show", ref], {
+        ...home.env,
+        AKM_AGENT_HARNESS: "claude",
+        AKM_SESSION_ID: "rehearsal-session",
+      });
+      expect(agentShow.status, agentShow.stderr).toBe(0);
+      const before = await runLauncher(candidateLauncher, ["doctor", "metrics", "usage", "--export"], home.env);
+      expect(before.status, before.stderr).toBe(0);
+      const detailsBefore = (JSON.parse(before.stdout) as { details: unknown[] }).details.length;
+      expect(detailsBefore).toBeGreaterThan(0);
+
+      // The previous release reads the same home: it ignores the unknown `trigger` and `agent` keys and the
+      // cli_usage_* tables, and neither fails nor changes them.
+      const history = await runLauncher(
+        previousLauncher,
+        ["task", "history", `stash//tasks/${home.taskIds.manual}`, "--limit", "5"],
+        home.env,
+      );
+      expect(history.status, history.stderr).toBe(0);
+      expect(((JSON.parse(history.stdout) as { rows?: unknown[] }).rows ?? []).length).toBeGreaterThan(0);
+      const previousShow = await runLauncher(previousLauncher, ["show", ref], home.env);
+      expect(previousShow.status, previousShow.stderr).toBe(0);
+
+      const after = await runLauncher(candidateLauncher, ["doctor", "metrics", "usage", "--export"], home.env);
+      expect(after.status, after.stderr).toBe(0);
+      const detailsAfter = (JSON.parse(after.stdout) as { details: unknown[] }).details.length;
+      // Nothing the candidate recorded was lost or rewritten by the previous release (it records nothing).
+      expect(detailsAfter).toBeGreaterThanOrEqual(detailsBefore);
+    });
   });
 }
 
