@@ -16,17 +16,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- The `assetContentRefs` migration rewrites legacy refs only in asset files, `index.md` and wiki `schema.md` (#1605):
-  - Frozen eval corpora, captured prompts and results, `log.md` and the root `README.md` are left byte-for-byte.
+- The `assetContentRefs` migration rewrites legacy refs only in asset files, a wiki's `index.md` and `schema.md`, and an `index.md` beside assets (#1605):
+  - Frozen eval corpora, captured prompts and results, `raw/` sources, `log.md` and the root `README.md` are left byte-for-byte.
   - When it leaves uncommitted edits in a git checkout, its report names the checkout and the next steps.
 - AKM Desktop, Settings → Software (#1609):
   - **CLI install and repair:**
     - Installing the CLI passes Desktop's release tag to the installer and verifies the installed version.
-    - A binary Desktop did not install as a standalone file (a link, a package-manager copy, one elsewhere) is never replaced.
-    - Repairing one Desktop did install needs explicit consent.
+    - A CLI counts as Desktop's own only when it is a regular file where Desktop installs it and akm reports it as a standalone binary. A link, a package-manager copy or an unreported file is never replaced.
+    - Repairing a CLI Desktop installed needs explicit consent.
   - **Channels:**
     - Update and Check follow the CLI's current channel and never change it.
-    - Switching the CLI and installed plugins between stable and prerelease is a separate, explicit action. It is not offered when it would be a downgrade.
+    - Switching the CLI and installed plugins between stable and prerelease is a separate, explicit action. It is not offered when stable is older than the installed CLI, and is hidden with an explanation when that cannot be told.
     - Installing a plugin on the prerelease channel into an existing `akm-plugins` marketplace stops and asks first, because that marketplace keeps its own channel.
   - **Upgrades:**
     - The CLI upgrade checks its target right before it runs and refuses one Desktop cannot read.
