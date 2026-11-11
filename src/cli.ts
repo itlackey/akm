@@ -91,6 +91,7 @@ import {
   withoutHelpHiddenArgs,
 } from "./cli/shared";
 import { assertKnownFlags, type FlagScanCommand } from "./cli/unknown-flags";
+import { startUsage, type UsageCommand } from "./cli/usage";
 import { agentCommand, lintCommand } from "./commands/agent/contribute-cli";
 import { commandCommand } from "./commands/command/command-cli";
 import { generateBashCompletions, installBashCompletions } from "./commands/completions";
@@ -99,6 +100,7 @@ import { envCommand } from "./commands/env/env-cli";
 import { secretCommand } from "./commands/env/secret-cli";
 import { feedbackCommand } from "./commands/feedback-cli";
 import { akmHealth } from "./commands/health";
+import { doctorMetricsCommand } from "./commands/metrics/usage-cli";
 import { closestMatch } from "./core/closest-match";
 import "./commands/health/renderers";
 import "./commands/metrics/md-report";
@@ -501,7 +503,7 @@ const healthCommand = defineCommand({
 
 const doctorSubCommands = {
   prompt: doctorPromptCommand,
-  metrics: metricsCommand,
+  metrics: doctorMetricsCommand,
   info: infoCommand,
   log: logCommand,
   judge: judgeCommand,
@@ -1196,6 +1198,17 @@ export function insertBareListSubcommand(argv: string[]): string[] {
  * stop the rest of startup from running after a fatal early error.
  */
 export async function runCli(): Promise<void> {
+  const finishUsage = startUsage(main as UsageCommand, process.argv.slice(2), pkgVersion);
+  try {
+    await runCliInvocation();
+  } finally {
+    // Deliver catchable signals queued during synchronous child execution.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    finishUsage();
+  }
+}
+
+async function runCliInvocation(): Promise<void> {
   try {
     process.argv = consumeSchedulerContextArg(process.argv);
   } catch (error: unknown) {

@@ -115,15 +115,21 @@ All declared show arguments and shared flags were checked in the current 0.10 tr
 
 ## Command and argument usage metrics
 
-- [ ] **[0.10.x] Capture every CLI invocation by default at the shared entry point, including nested commands, help/version, invalid arguments, startup failures, and cancellations, without sampling.** Starting before the removals supplies a baseline of actual command attempts.
-- [ ] **[0.10.x] Record command paths and every supplied argument's identity, positional role, repeated occurrences, negation, and canonical spelling while distinguishing explicit input from defaults.** This reveals which flags and combinations callers actually choose instead of counting parser-injected defaults as demand.
+- [x] **[0.10.x] Capture every CLI invocation by default at the shared entry point, including nested commands, help/version, invalid arguments, startup failures, and cancellations, without sampling.** Starting before the removals supplies a baseline of actual command attempts.
+- [x] **[0.10.x] Record command paths and every supplied argument's identity, positional role, repeated occurrences, negation, and canonical spelling while distinguishing explicit input from defaults.** This reveals which flags and combinations callers actually choose instead of counting parser-injected defaults as demand.
 - [ ] **[0.10.x] Record the resolved asset type for `run` and separate AKM options from asset inputs and arguments after `--`.** A unified entry point must still reveal which execution capabilities are used without attributing child-program flags to AKM.
-- [ ] **[0.10.x] Attach invocation identity, timestamp, CLI version, local instance identity, known caller/source, duration, exit status, and structured outcome/error category.** Version comparisons, adoption breadth, and failure rates distinguish useful features from repeatedly attempted or brittle ones.
-- [ ] **[0.10.x] Retain safe argument values such as declared enums and booleans, recording presence/type or redaction markers for secrets, free text, paths, URLs, and opaque payloads.** Feature analysis needs argument usage without turning metrics into a second store of prompts, credentials, or command content.
-- [ ] **[0.10.x collection/retention; 0.11 preservation] Store usage locally with additive metrics storage, retain release-comparable aggregates after detailed records expire, and preserve them through the 0.11 storage migration.** Future release decisions require durable evidence and a clear distinction between unused and unobserved surfaces.
-- [ ] **[0.10.x] Add command/argument counts, combinations, per-instance adoption, errors, and duration summaries to `doctor metrics`, with version/source/window filters and a stable JSON export for lab aggregation.** One report should show what is used, where it is used, and where callers encounter friction.
-- [ ] **[0.10.x / 0.11] Keep user/agent, scheduled, improvement-internal, audit/evaluation, and unknown traffic distinguishable, with command metrics separate from learning feedback and ranking inputs.** Background repetition and measurement activity must not masquerade as product demand or alter the learning processes.
-- [ ] **[0.10.x, repeat on 0.11] Verify exactly-once invocation counting, redaction, early-exit coverage, concurrent writes, rollup/export deduplication, and bounded overhead through the real CLI entry point.** Collection failures must preserve command behavior and appear as coverage gaps rather than successful executions or evidence of zero usage.
+- [x] **[0.10.x] Attach invocation identity, timestamp, CLI version, local instance identity, known caller/source, duration, exit status, and structured outcome/error category.** Version comparisons, adoption breadth, and failure rates distinguish useful features from repeatedly attempted or brittle ones.
+- [x] **[0.10.x] Retain safe argument values such as declared enums and booleans, recording presence/type or redaction markers for secrets, free text, paths, URLs, and opaque payloads.** Feature analysis needs argument usage without turning metrics into a second store of prompts, credentials, or command content.
+- [x] **[0.10.x collection/retention; 0.11 preservation] Store usage locally with additive metrics storage, retain release-comparable aggregates after detailed records expire, and preserve them through the 0.11 storage migration.** Future release decisions require durable evidence and a clear distinction between unused and unobserved surfaces.
+- [x] **[0.10.x] Add command/argument counts, combinations, per-instance adoption, errors, and duration summaries to `doctor metrics`, with version/source/window filters and a stable JSON export for lab aggregation.** One report should show what is used, where it is used, and where callers encounter friction.
+- [x] **[0.10.x / 0.11] Keep user/agent, scheduled, improvement-internal, audit/evaluation, and unknown traffic distinguishable, with command metrics separate from learning feedback and ranking inputs.** Background repetition and measurement activity must not masquerade as product demand or alter the learning processes.
+- [x] **[0.10.x, repeat on 0.11] Verify exactly-once invocation counting, redaction, early-exit coverage, concurrent writes, rollup/export deduplication, and bounded overhead through the real CLI entry point.** Collection failures must preserve command behavior and appear as coverage gaps rather than successful executions or evidence of zero usage.
+
+Implementation: `doctor metrics usage` and local `usage.sqlite` are available in
+the working tree; first published version is pending. Resolved `run` dispatch
+wiring is tracked with the additive `run` implementation. The
+[CLI reference](../reference/cli.md#cli-invocation-usage) documents the schema,
+retention, export deduplication and observation limits.
 
 ## Release fixes and completion
 

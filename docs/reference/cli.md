@@ -4139,3 +4139,46 @@ timeout: 3600000   # 1h whole-run bound (omit for the 6h default, null for none)
 maxSteps: 20       # optional
 maxRetries: 1      # optional
 ```
+
+### CLI invocation usage
+
+`akm doctor metrics usage` reports local command attempts, explicit argument counts,
+argument combinations, instance adoption, failures and duration summaries. Existing
+`akm metrics` and bare `akm doctor metrics` keep their existing report.
+
+```sh
+akm doctor metrics usage --since 30d --format json
+akm doctor metrics usage --cli-version 0.10.261118 --source audit --export --format json
+```
+
+`--until` selects an inclusive UTC end day. Aggregates select whole UTC days;
+`--since` accepts the existing diagnostic date/duration syntax. `--export` includes
+retained details. JSON schema version 1 includes stable aggregate keys and invocation
+IDs. For overlapping exports, keep the newest `generatedAt` snapshot per aggregate
+key; never sum snapshots or add detail counts to aggregate counts. Detailed rows
+are a subset of the aggregates. A report includes its own unfinished attempt.
+
+Collection is enabled at CLI entry, before configuration is read, with no network
+transmission and no sampling. `AKM_EVENT_SOURCE=user|agent|task|improve|audit` supplies
+known provenance; absent/invalid values become `unknown`. No identity is inferred
+from a terminal. This store never feeds learning or ranking.
+
+Only declared argument identities and recognized command spellings are retained.
+Free text, paths, URLs, refs, prompts, credentials and unknown flag/command names
+are redacted. Booleans and declared enum choices are safe; string flags retain only
+finite allowlisted `format`, `detail` and asset `type` choices. Default values are
+marked separately from explicit input. Arguments after `--` retain only their count.
+No raw argv is stored. The resolved `run` asset type is recorded through a narrow
+hook when resolution reaches dispatch.
+
+`usage.sqlite` lives in the existing AKM data directory and is independent of
+`state.db`, `index.db` and learning events. Detailed records expire after 30 days
+on the next invocation. UTC daily aggregates survive detail expiry and must be
+preserved during upgrades. Collection errors preserve command output and exits;
+a failed final write leaves an unfinished attempt. Missing/unavailable storage,
+unrecorded attempts, periods before collection began, direct SDK calls, failures
+before the CLI module loads, and hard termination remain explicit coverage gaps.
+SIGKILL cannot run a completion handler. Capture has no new config settings or
+disable switch. Read-only workspace SDK operations never start CLI collection.
+
+First released version: pending.

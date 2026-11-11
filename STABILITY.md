@@ -864,3 +864,8 @@ notes for Deprecated/Evolving changes and undocumented Experimental changes too.
   normative ref grammar.
 - [`docs/reference/data-and-telemetry.md`](./docs/reference/data-and-telemetry.md) — what
   state akm reads and writes locally.
+
+CLI invocation usage is additive local diagnostic state (first release pending).
+`doctor metrics usage` exports schema version 1; preserve `usage.sqlite` and its
+durable daily aggregates through the 0.11 migration. See the CLI usage reference
+for redaction and incomplete-observation limits.
