@@ -6,6 +6,7 @@ import { type ArgsDef, type CommandDef, parseArgs, runCommand } from "citty";
 import { findCittyTopLevelCommandIndex } from "../cli/invocation";
 import { defineJsonCommand } from "../cli/shared";
 import { assertKnownFlags, type FlagScanCommand } from "../cli/unknown-flags";
+import { setResolvedUsageAssetType } from "../cli/usage";
 import { adapterForId } from "../core/adapter/registry";
 import { makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
 import { loadConfig } from "../core/config/config";
@@ -86,6 +87,7 @@ export const runAssetCommand = defineJsonCommand({
       type = document?.type ?? "unknown";
       target = makeBundleRef(match.bundleId, match.owner.conceptId);
     }
+    setResolvedUsageAssetType(type);
     if (!Object.hasOwn(EXECUTORS, type)) {
       throw new UsageError(
         `akm run cannot execute asset type "${type}". Supported types: agent, command, task, workflow.`,

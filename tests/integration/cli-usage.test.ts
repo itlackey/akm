@@ -10,7 +10,7 @@ import { main } from "../../src/cli";
 import type { UsageCommand } from "../../src/cli/usage";
 import { getConfigDir, getDataDir } from "../../src/core/paths";
 import { openDatabase } from "../../src/storage/database";
-import { withIsolatedAkmStorage } from "../_helpers/sandbox";
+import { withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
 const CLI = path.resolve(import.meta.dir, "../../src/cli.ts");
 let cleanup = () => {};
@@ -28,6 +28,33 @@ function report(args: string[] = []) {
   expect(result.status).toBe(0);
   return JSON.parse(result.stdout);
 }
+
+test("run records one invocation with its resolved asset type and redacted asset inputs", () => {
+  const storage = sandbox();
+  writeSandboxConfig({
+    bundles: { fixture: { path: storage.stashDir, components: { main: { root: ".", adapter: "akm" } } } },
+  });
+  fs.mkdirSync(path.join(storage.stashDir, "tasks"), { recursive: true });
+  fs.writeFileSync(
+    path.join(storage.stashDir, "tasks/check.yml"),
+    "version: 4\nrun: printf task-ok\nshell: sh\ninputs:\n  label: { type: string, required: true }\n",
+  );
+  const executed = cli(["run", "fixture//tasks/check", "--label=PRIVATE_TASK_INPUT"]);
+  expect(executed.status, executed.stderr).toBe(0);
+  const result = report();
+  const runs = result.details.filter((row: { command: string[] }) => row.command[0] === "run");
+  expect(runs).toHaveLength(1);
+  expect(runs[0]).toMatchObject({ command: ["run"], assetType: "task", exitCode: 0, category: "success" });
+  expect(runs[0].arguments.some((arg: { kind: string }) => arg.kind === "asset-input")).toBe(true);
+  expect(runs[0].arguments.every((arg: { explicit: boolean }) => arg.explicit)).toBe(true);
+  expect(result.details.some((row: { command: string[] }) => row.command.join(" ") === "task run")).toBe(false);
+  expect(JSON.stringify(result)).not.toContain("PRIVATE_TASK_INPUT");
+  expect(JSON.stringify(result)).not.toContain("fixture//tasks/check");
+  const aggregate = result.aggregates.find(
+    (row: { dimensions: { command: string[] } }) => row.dimensions.command[0] === "run",
+  );
+  expect(aggregate.outcomes["success:0:task"]).toBe(1);
+});
 
 test("real entry captures help/version/invalid/config failures once and redacts secrets", () => {
   sandbox();
