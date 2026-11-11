@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `akm health --read-only` exposes the existing native read-only health checks without creating or migrating state or running the database write/read probe. Network probing remains independent (`--no-probe` for offline use); `--report` also keeps its proposal queries read-only and preserves native failure diagnostics when state is unavailable (#1607).
+
 ### Changed
 
 - `akm bundle update` on a registry-installed writable Git bundle (#1606):

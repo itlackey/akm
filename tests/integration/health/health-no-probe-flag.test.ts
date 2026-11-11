@@ -22,6 +22,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { openStateDatabase } from "../../../src/core/state-db";
 import { runCliCapture } from "../../_helpers/cli";
 import {
   type IsolatedAkmStorage,
@@ -86,11 +87,12 @@ const targetsOf = (stdout: string): ConnectionsAndHarnessesCheck =>
   ) as ConnectionsAndHarnessesCheck;
 
 describe("akm health --no-probe (#914)", () => {
-  test("without --no-probe, the reachability probe actually fires (a real fetch)", async () => {
+  test.each([false, true])("reachability remains on by default (read-only=%s)", async (readOnly) => {
+    if (readOnly) openStateDatabase().close();
     const urls: string[] = [];
     const { code, stdout } = await withNoRealCrontab(() =>
       withMockedFetch(
-        () => runCliCapture(["health", "--format", "json"]),
+        () => runCliCapture(["health", ...(readOnly ? ["--read-only"] : []), "--format", "json"]),
         (url) => {
           urls.push(url);
           return modelsResponse();
@@ -105,10 +107,11 @@ describe("akm health --no-probe (#914)", () => {
     expect(code).toBe(0);
   });
 
-  test("--no-probe skips the reachability probe entirely (no fetch call)", async () => {
+  test.each([false, true])("--no-probe skips all fetch calls (read-only=%s)", async (readOnly) => {
+    if (readOnly) openStateDatabase().close();
     let fetchCalls = 0;
     const { code, stdout } = await withMockedFetch(
-      () => runCliCapture(["health", "--no-probe", "--format", "json"]),
+      () => runCliCapture(["health", ...(readOnly ? ["--read-only"] : []), "--no-probe", "--format", "json"]),
       () => {
         fetchCalls += 1;
         return modelsResponse();
