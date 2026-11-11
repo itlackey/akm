@@ -205,24 +205,29 @@ export const CLI_USAGE_SOURCES: ReadonlySet<string> = new Set(["user", "agent", 
 
 const RETENTION_MS = 30 * 86400_000;
 function usagePath(): string {
-  return path.join(getDataDir(), "usage.sqlite");
+  return path.join(getDataDir(), "metrics.db");
 }
+// The CLI usage tables share metrics.db with 0.11's rollup tables and its
+// `schema_migrations` ledger, so they use their own `cli_usage_` names and a
+// version in `cli_usage_meta` (never PRAGMA user_version or schema_migrations).
+const USAGE_SCHEMA = 1;
 function openUsage(filename: string): Database {
   fs.mkdirSync(path.dirname(filename), { recursive: true });
   const db = openDatabase(filename);
   try {
     db.exec("PRAGMA busy_timeout=250;");
-    const schema = (db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version;
-    if (schema > 1) {
-      throw new Error("Newer usage schema");
-    }
     db.exec(`
-    CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS invocations (id TEXT PRIMARY KEY, ts TEXT NOT NULL, aggregate_key TEXT NOT NULL, data TEXT NOT NULL, duration_ms INTEGER, exit_code INTEGER, category TEXT, asset_type TEXT, signal TEXT);
-    CREATE INDEX IF NOT EXISTS invocations_ts ON invocations(ts);
-    CREATE TABLE IF NOT EXISTS aggregates (key TEXT PRIMARY KEY, dimensions TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, completed INTEGER NOT NULL DEFAULT 0, failures INTEGER NOT NULL DEFAULT 0, cancelled INTEGER NOT NULL DEFAULT 0, duration_ms INTEGER NOT NULL DEFAULT 0, max_duration_ms INTEGER NOT NULL DEFAULT 0, outcomes TEXT NOT NULL DEFAULT '{}'); PRAGMA user_version=1;`);
-    db.prepare("INSERT OR IGNORE INTO metadata VALUES ('instance', ?)").run(randomUUID());
-    db.prepare("INSERT OR IGNORE INTO metadata VALUES ('collectionStart', ?)").run(new Date().toISOString());
+    CREATE TABLE IF NOT EXISTS cli_usage_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS cli_usage_invocations (id TEXT PRIMARY KEY, ts TEXT NOT NULL, aggregate_key TEXT NOT NULL, data TEXT NOT NULL, duration_ms INTEGER, exit_code INTEGER, category TEXT, asset_type TEXT, signal TEXT);
+    CREATE INDEX IF NOT EXISTS cli_usage_invocations_ts ON cli_usage_invocations(ts);
+    CREATE TABLE IF NOT EXISTS cli_usage_aggregates (key TEXT PRIMARY KEY, dimensions TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, completed INTEGER NOT NULL DEFAULT 0, failures INTEGER NOT NULL DEFAULT 0, cancelled INTEGER NOT NULL DEFAULT 0, duration_ms INTEGER NOT NULL DEFAULT 0, max_duration_ms INTEGER NOT NULL DEFAULT 0, outcomes TEXT NOT NULL DEFAULT '{}');`);
+    db.prepare("INSERT OR IGNORE INTO cli_usage_meta VALUES ('schema', ?)").run(String(USAGE_SCHEMA));
+    const schema = Number(
+      (db.prepare("SELECT value FROM cli_usage_meta WHERE key='schema'").get() as { value: string }).value,
+    );
+    if (schema > USAGE_SCHEMA) throw new Error("Newer usage schema");
+    db.prepare("INSERT OR IGNORE INTO cli_usage_meta VALUES ('instance', ?)").run(randomUUID());
+    db.prepare("INSERT OR IGNORE INTO cli_usage_meta VALUES ('collectionStart', ?)").run(new Date().toISOString());
     return db;
   } catch (error) {
     db.close();
@@ -262,23 +267,26 @@ export function startUsage(root: UsageCommand, raw: readonly string[], version: 
     filename = usagePath();
     const db = openUsage(filename);
     try {
-      const instance = (db.prepare("SELECT value FROM metadata WHERE key='instance'").get() as { value: string }).value;
+      const instance = (db.prepare("SELECT value FROM cli_usage_meta WHERE key='instance'").get() as { value: string })
+        .value;
       const ts = new Date(started).toISOString();
 
       dimensions = { day: ts.slice(0, 10), version, source, instance, ...usage };
       data = { schemaVersion: 1, id, ts, version, source, instance, ...usage };
       key = JSON.stringify(dimensions);
       db.transaction(() => {
-        db.prepare("INSERT INTO invocations(id,ts,aggregate_key,data) VALUES (?,?,?,?)").run(
+        db.prepare("INSERT INTO cli_usage_invocations(id,ts,aggregate_key,data) VALUES (?,?,?,?)").run(
           id,
           ts,
           key!,
           JSON.stringify(data),
         );
         db.prepare(
-          "INSERT INTO aggregates(key,dimensions,attempts) VALUES (?,?,1) ON CONFLICT(key) DO UPDATE SET attempts=attempts+1",
+          "INSERT INTO cli_usage_aggregates(key,dimensions,attempts) VALUES (?,?,1) ON CONFLICT(key) DO UPDATE SET attempts=attempts+1",
         ).run(key!, key!);
-        db.prepare("DELETE FROM invocations WHERE ts < ?").run(new Date(started - RETENTION_MS).toISOString());
+        db.prepare("DELETE FROM cli_usage_invocations WHERE ts < ?").run(
+          new Date(started - RETENTION_MS).toISOString(),
+        );
       })();
       stored = true;
     } finally {
@@ -299,13 +307,13 @@ export function startUsage(root: UsageCommand, raw: readonly string[], version: 
     const nextData = usage ? { ...data, ...usage } : data;
     const nextKey = JSON.stringify(nextDimensions);
     const updated = db
-      .prepare("UPDATE invocations SET aggregate_key=?,data=?,asset_type=? WHERE id=? AND category IS NULL")
+      .prepare("UPDATE cli_usage_invocations SET aggregate_key=?,data=?,asset_type=? WHERE id=? AND category IS NULL")
       .run(nextKey, JSON.stringify(nextData), resolvedAssetType ?? null, id);
     if (updated.changes && nextKey !== key) {
-      db.prepare("UPDATE aggregates SET attempts=attempts-1 WHERE key=?").run(key!);
-      db.prepare("DELETE FROM aggregates WHERE key=? AND attempts=0 AND completed=0").run(key!);
+      db.prepare("UPDATE cli_usage_aggregates SET attempts=attempts-1 WHERE key=?").run(key!);
+      db.prepare("DELETE FROM cli_usage_aggregates WHERE key=? AND attempts=0 AND completed=0").run(key!);
       db.prepare(
-        "INSERT INTO aggregates(key,dimensions,attempts) VALUES (?,?,1) ON CONFLICT(key) DO UPDATE SET attempts=attempts+1",
+        "INSERT INTO cli_usage_aggregates(key,dimensions,attempts) VALUES (?,?,1) ON CONFLICT(key) DO UPDATE SET attempts=attempts+1",
       ).run(nextKey, nextKey);
     }
     return nextKey;
@@ -356,18 +364,18 @@ export function startUsage(root: UsageCommand, raw: readonly string[], version: 
           const resolvedKey = checkpoint(db);
           const updated = db
             .prepare(
-              "UPDATE invocations SET duration_ms=?,exit_code=?,category=?,asset_type=?,signal=? WHERE id=? AND category IS NULL",
+              "UPDATE cli_usage_invocations SET duration_ms=?,exit_code=?,category=?,asset_type=?,signal=? WHERE id=? AND category IS NULL",
             )
             .run(duration, exitCode, category, resolvedAssetType ?? null, signal ?? null, id);
           if (!updated.changes) return resolvedKey;
-          const row = db.prepare("SELECT outcomes FROM aggregates WHERE key=?").get(resolvedKey) as {
+          const row = db.prepare("SELECT outcomes FROM cli_usage_aggregates WHERE key=?").get(resolvedKey) as {
             outcomes: string;
           };
           const outcomes = JSON.parse(row.outcomes) as Record<string, number>;
           const outcome = `${category}:${exitCode}:${resolvedAssetType ?? "unresolved"}`;
           outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
           db.prepare(
-            "UPDATE aggregates SET completed=completed+1, failures=failures+?,cancelled=cancelled+?,duration_ms=duration_ms+?,max_duration_ms=MAX(max_duration_ms,?),outcomes=? WHERE key=?",
+            "UPDATE cli_usage_aggregates SET completed=completed+1, failures=failures+?,cancelled=cancelled+?,duration_ms=duration_ms+?,max_duration_ms=MAX(max_duration_ms,?),outcomes=? WHERE key=?",
           ).run(exitCode === 0 ? 0 : 1, signal ? 1 : 0, duration, duration, JSON.stringify(outcomes), resolvedKey);
           return resolvedKey;
         })();
@@ -429,19 +437,33 @@ export function readUsage(filter: UsageFilter = {}) {
   try {
     db = openDatabase(usagePath(), { readonly: true, create: false });
     db.exec("PRAGMA busy_timeout=250; PRAGMA query_only=ON;");
-    if ((db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version > 1) {
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cli_usage_meta'").get()) {
+      // A metrics.db written by 0.11 before any CLI usage was captured.
+      gaps.push("Usage storage is absent: this is unmeasured, not zero usage.");
+      return empty;
+    }
+    const schema = Number(
+      (db.prepare("SELECT value FROM cli_usage_meta WHERE key='schema'").get() as { value: string } | undefined)
+        ?.value ?? 1,
+    );
+    if (schema > USAGE_SCHEMA) {
       gaps.push("Usage storage was written by a newer release; upgrade akm to read it.");
       return empty;
     }
     empty.collectionStart =
-      (db.prepare("SELECT value FROM metadata WHERE key='collectionStart'").get() as { value: string } | undefined)
-        ?.value ?? null;
+      (
+        db.prepare("SELECT value FROM cli_usage_meta WHERE key='collectionStart'").get() as
+          | { value: string }
+          | undefined
+      )?.value ?? null;
     const selected = (dimensions: Record<string, unknown>) =>
       (!filter.since || String(dimensions.day) >= filter.since.slice(0, 10)) &&
       (!filter.until || String(dimensions.day) <= filter.until.slice(0, 10)) &&
       (!filter.version || dimensions.version === filter.version) &&
       (!filter.source || dimensions.source === filter.source);
-    for (const row of db.prepare("SELECT * FROM aggregates ORDER BY key").all() as Array<Record<string, unknown>>) {
+    for (const row of db.prepare("SELECT * FROM cli_usage_aggregates ORDER BY key").all() as Array<
+      Record<string, unknown>
+    >) {
       const dimensions = JSON.parse(String(row.dimensions)) as Record<string, unknown>;
       if (selected(dimensions))
         empty.aggregates.push({
@@ -451,7 +473,9 @@ export function readUsage(filter: UsageFilter = {}) {
           unfinished: Number(row.attempts) - Number(row.completed),
         });
     }
-    for (const row of db.prepare("SELECT * FROM invocations ORDER BY ts,id").all() as Array<Record<string, unknown>>) {
+    for (const row of db.prepare("SELECT * FROM cli_usage_invocations ORDER BY ts,id").all() as Array<
+      Record<string, unknown>
+    >) {
       const data = JSON.parse(String(row.data)) as Record<string, unknown>;
       if (selected({ ...data, day: String(data.ts).slice(0, 10) }))
         empty.details.push({

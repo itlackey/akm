@@ -57,7 +57,7 @@ async function cli(command: string, args: string[]) {
 async function health(command: string, args: string[]) {
   const result = await cli(command, [...args, "--no-probe", "--format", "json", "--quiet"]);
   // --read-only writes nothing, so usage capture is skipped too.
-  expect(fs.existsSync(path.join(storage.dataDir, "akm", "usage.sqlite"))).toBe(
+  expect(fs.existsSync(path.join(storage.dataDir, "akm", "metrics.db"))).toBe(
     args.includes("--read-only") ? false : true,
   );
   return {
@@ -71,7 +71,7 @@ async function health(command: string, args: string[]) {
   };
 }
 
-/** Durable bytes and all filenames, usage.sqlite included. SQLite readers may update SHM read-lock bookkeeping. */
+/** Durable bytes and all filenames, metrics.db included. SQLite readers may update SHM read-lock bookkeeping. */
 function dataSnapshot() {
   return fs
     .readdirSync(storage.dataDir, { recursive: true, encoding: "utf8" })

@@ -8,7 +8,7 @@
  */
 import { z } from "zod";
 
-/** `usage.capture`: record local-only CLI usage counts in `usage.sqlite`. Default `true`. */
+/** `usage.capture`: record local-only CLI usage counts in `metrics.db`. Default `true`. */
 export const UsageConfigSchema = z
   .object({
     capture: z.boolean().optional(),

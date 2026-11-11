@@ -6,7 +6,11 @@ import { z } from "zod";
 import { UsageError } from "./errors";
 import { isKnownType, KNOWN_TYPES } from "./recognition-util";
 
-const knownType = z.string().trim().min(1).refine(isKnownType, "unsupported asset type");
+const knownType = z
+  .string()
+  .trim()
+  .min(1)
+  .refine((value): boolean => isKnownType(value), "unsupported asset type");
 
 /** Selectors relax only the named default exclusions; they never select matching assets on their own. */
 export const IncludeSchema = z

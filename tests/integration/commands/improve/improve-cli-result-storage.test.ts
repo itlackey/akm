@@ -81,7 +81,7 @@ function runCli(args: string[], stashDir: string): CliRun {
       XDG_STATE_HOME: state.dir,
     },
   });
-  expect(fs.statSync(path.join(data.dir, "akm", "usage.sqlite")).isFile()).toBe(true);
+  expect(fs.statSync(path.join(data.dir, "akm", "metrics.db")).isFile()).toBe(true);
   return {
     status: result.status ?? 1,
     stdout: result.stdout ?? "",
@@ -100,7 +100,7 @@ function snapshotRoots(roots: string[]): string[] {
       const full = path.join(current, entry.name);
       // roots[2] is XDG_DATA_HOME. Exempt only the CLI usage file itself,
       // preserving checks for state.db, sidecars, logs, and every other artifact.
-      if (root === roots[2] && path.relative(root, full) === path.join("akm", "usage.sqlite") && entry.isFile())
+      if (root === roots[2] && path.relative(root, full) === path.join("akm", "metrics.db") && entry.isFile())
         continue;
       const relative = `${roots.indexOf(root)}:${path.relative(root, full)}`;
       if (entry.isDirectory()) {
@@ -372,7 +372,7 @@ describe("akm improve CLI result storage", () => {
       const stderr = Buffer.concat(stderrChunks).toString("utf8");
       expect(stderr).toContain(SIGNAL_HANDLERS_READY);
       if (exit.code === code && signal !== "SIGHUP") expect(stderr).toContain("dry-run state was not persisted");
-      expect(fs.statSync(path.join(data.dir, "akm", "usage.sqlite")).isFile()).toBe(true);
+      expect(fs.statSync(path.join(data.dir, "akm", "metrics.db")).isFile()).toBe(true);
       expect(readImproveRuns(data.dir)).toEqual([]);
       expect(snapshotRoots(roots)).toEqual(before);
       expect(fs.readdirSync(snapshotTemp.dir).filter((entry) => entry.startsWith("akm-sqlite-read-"))).toEqual([]);

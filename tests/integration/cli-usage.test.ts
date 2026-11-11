@@ -138,8 +138,8 @@ test("concurrent CLI writes and overlapping export snapshots keep stable aggrega
 test("retention expires detail without losing durable counts and unavailable capture preserves exits", () => {
   sandbox();
   expect(cli(["--version"]).status).toBe(0);
-  const db = openDatabase(path.join(getDataDir(), "usage.sqlite"));
-  db.prepare("UPDATE invocations SET ts='2000-01-01T00:00:00.000Z'").run();
+  const db = openDatabase(path.join(getDataDir(), "metrics.db"));
+  db.prepare("UPDATE cli_usage_invocations SET ts='2000-01-01T00:00:00.000Z'").run();
   db.close();
   expect(cli(["--version"]).status).toBe(0);
   const result = report();
@@ -240,7 +240,7 @@ test("writer contention has a bounded fail-open budget", () => {
   const baselineStart = Date.now();
   expect(cli(["--version"]).status).toBe(0);
   const baselineMs = Date.now() - baselineStart;
-  const db = openDatabase(path.join(getDataDir(), "usage.sqlite"));
+  const db = openDatabase(path.join(getDataDir(), "metrics.db"));
   try {
     db.exec("BEGIN IMMEDIATE");
     const lockedStart = Date.now();
@@ -363,7 +363,7 @@ test("legacy scheduler context selects usage storage before capture and retains 
   fs.writeFileSync(descriptor, JSON.stringify({ environment: { AKM_DATA_DIR: scheduledData } }));
   const executed = cli(["--scheduler-context", descriptor, "task", "run", "tasks/check", "--scheduled"]);
   expect(executed.status, executed.stderr).toBe(0);
-  expect(fs.existsSync(path.join(getDataDir(), "usage.sqlite"))).toBe(false);
+  expect(fs.existsSync(path.join(getDataDir(), "metrics.db"))).toBe(false);
   const captured = cli(["doctor", "metrics", "usage", "--export"], { ...process.env, AKM_DATA_DIR: scheduledData });
   expect(captured.status, captured.stderr).toBe(0);
   const result = JSON.parse(captured.stdout);
@@ -473,7 +473,7 @@ test("usage observers preserve a host-owned once signal handler and its asynchro
   }
 });
 
-const usageFile = () => path.join(getDataDir(), "usage.sqlite");
+const usageFile = () => path.join(getDataDir(), "metrics.db");
 
 test("--read-only records nothing; help, version and info are still counted", () => {
   sandbox();
@@ -507,4 +507,32 @@ test("usage.capture: false turns capture off; a broken or odd config keeps it on
     expect(fs.existsSync(usageFile()), text).toBe(true);
     fs.rmSync(usageFile(), { force: true });
   }
+});
+
+test("usage tables coexist with 0.11's metrics.db: own names, no user_version, no schema_migrations ledger", () => {
+  sandbox();
+  const file = path.join(getDataDir(), "metrics.db");
+  // A metrics.db as 0.11 creates it: a schema_migrations ledger and rollup tables.
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const seed = openDatabase(file);
+  seed.exec(
+    "CREATE TABLE schema_migrations (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now'))); INSERT INTO schema_migrations(id) VALUES ('001-metrics-baseline'); CREATE TABLE usage_daily (day TEXT);",
+  );
+  seed.close();
+  expect(cli(["--version"]).status).toBe(0);
+  const db = openDatabase(file);
+  const tables = (
+    db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as { name: string }[]
+  ).map((row) => row.name);
+  expect(tables).toEqual([
+    "cli_usage_aggregates",
+    "cli_usage_invocations",
+    "cli_usage_meta",
+    "schema_migrations",
+    "usage_daily",
+  ]);
+  expect((db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(0);
+  expect(db.prepare("SELECT id FROM schema_migrations").all()).toEqual([{ id: "001-metrics-baseline" }]);
+  db.close();
+  expect(report().details.length).toBeGreaterThan(0);
 });
