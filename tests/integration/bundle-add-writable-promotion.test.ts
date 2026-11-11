@@ -169,6 +169,17 @@ describe("bundle add --writable on an existing read-only Git bundle (#1296)", ()
     expect(isWritable(after.bundle)).toBe(false);
   }, 60_000);
 
+  test("a re-add of an existing writable checkout still refuses a dirty worktree", async () => {
+    await promote();
+    const root = installed().lock?.localRoot as string;
+    fs.writeFileSync(path.join(root, "knowledge", "local.md"), "local work\n");
+
+    const result = await add("--writable");
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain("uncommitted changes");
+    expect(fs.readFileSync(path.join(root, "knowledge", "local.md"), "utf8")).toBe("local work\n");
+  }, 60_000);
+
   /** Push a commit to the bare origin and return its revision. */
   function pushUpstream(files: Record<string, string>): string {
     const work = `${originDir}.work`;
@@ -199,6 +210,48 @@ describe("bundle add --writable on an existing read-only Git bundle (#1296)", ()
     expect(fs.existsSync(path.join(root, "knowledge", "new.md"))).toBe(true);
     expect(git(["-C", root, "rev-parse", "HEAD"]).trim()).toBe(revision);
     expect(installed().lock?.resolvedRevision).toBe(revision);
+    const shown = await withTTY(false, () => runCliCapture(["show", "shared//knowledge/new.md"]));
+    expect(shown.code, shown.stderr).toBe(0);
+    expect(shown.stdout).toContain("# New");
+  }, 60_000);
+
+  test("bundle update refuses safely when a live edit overlapping the update lands between staging and publication", async () => {
+    await promote();
+    const root = installed().lock?.localRoot as string;
+    const lockedBefore = installed().lock?.resolvedRevision;
+    pushUpstream({ "knowledge/note.md": "upstream\n" });
+    const head = git(["-C", root, "rev-parse", "HEAD"]).trim();
+    const note = path.join(root, "knowledge", "note.md");
+
+    // The publish step is the only `git fetch --no-tags` into the live checkout; edit just before it runs.
+    const realGit = Bun.which("git") as string;
+    const wrapperDir = path.join(path.dirname(originDir), "git-wrapper");
+    fs.mkdirSync(wrapperDir, { recursive: true });
+    const wrapper = path.join(wrapperDir, "git");
+    fs.writeFileSync(
+      wrapper,
+      `#!/bin/sh
+case "$*" in
+  *"-C ${root} fetch --no-tags"*) printf '%s\\n' 'RACED LOCAL EDIT' > ${JSON.stringify(note)} ;;
+esac
+exec ${JSON.stringify(realGit)} "$@"
+`,
+    );
+    fs.chmodSync(wrapper, 0o755);
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${wrapperDir}${path.delimiter}${previousPath ?? ""}`;
+    let result: Awaited<ReturnType<typeof update>>;
+    try {
+      result = await update();
+    } finally {
+      process.env.PATH = previousPath;
+    }
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain("cannot fast-forward without overwriting local work");
+    expect(result.stderr).toContain(root);
+    expect(fs.readFileSync(note, "utf8")).toBe("RACED LOCAL EDIT\n");
+    expect(git(["-C", root, "rev-parse", "HEAD"]).trim()).toBe(head);
+    expect(installed().lock?.resolvedRevision).toBe(lockedBefore);
   }, 60_000);
 
   test("bundle update refuses an overwrite of local work, names the real path and records nothing", async () => {
