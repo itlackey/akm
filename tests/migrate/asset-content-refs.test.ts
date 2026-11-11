@@ -154,7 +154,7 @@ describe("the step", () => {
     expect(fs.readFileSync(frozen).equals(before)).toBe(true);
   });
 
-  test("live index.md and wiki schema.md are rewritten; log.md, README.md and frozen JSON are not", async () => {
+  test("live index.md and wiki schema.md are rewritten; log.md, README.md, raw/ and frozen files are not", async () => {
     configure();
     write("wikis/articles/raw/example.md", "---\ntitle: example\n---\nRaw.\n");
     const line = "See wiki:articles/raw/example.\n";
@@ -162,14 +162,29 @@ describe("the step", () => {
     const schema = write("wikis/articles/schema.md", line);
     const log = write("wikis/articles/log.md", line);
     const readme = write("README.md", line);
+    const frozenIndex = write("eval/frozen/index.md", line);
+    const rawIndex = write("wikis/articles/raw/index.md", line);
     const frozen = write("eval/frozen/inputs.json", '{"p":"wiki:articles/raw/example"}\n');
 
     await runMigration({ apply: true });
 
     expect(fs.readFileSync(index, "utf8")).toBe("See wikis/articles/raw/example.\n");
     expect(fs.readFileSync(schema, "utf8")).toBe("See wikis/articles/raw/example.\n");
-    for (const file of [log, readme]) expect(fs.readFileSync(file, "utf8")).toBe(line);
+    for (const file of [log, readme, frozenIndex, rawIndex]) expect(fs.readFileSync(file, "utf8")).toBe(line);
     expect(fs.readFileSync(frozen, "utf8")).toBe('{"p":"wiki:articles/raw/example"}\n');
+  });
+
+  test("an llm-wiki bundle's root schema.md is rewritten", async () => {
+    write("pages/target.md", "---\ntitle: target\n---\nT.\n");
+    const schema = write("schema.md", "See knowledge/pages/target.\n");
+    writeSandboxConfig({
+      defaultBundle: "primary",
+      bundles: { primary: { path: stash(), writable: true, components: { main: { root: ".", adapter: "llm-wiki" } } } },
+    });
+
+    await runMigration({ apply: true });
+
+    expect(fs.readFileSync(schema, "utf8")).toBe("See pages/target.\n");
   });
 
   test("a rewrite in a git bundle names the bundle and the next steps", async () => {
