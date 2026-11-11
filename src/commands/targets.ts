@@ -27,7 +27,7 @@ import { SHIPPED_ALIAS } from "../core/config/model-aliases";
 import { envReferenceName } from "../core/config/schema/primitives";
 import { ConfigError } from "../core/errors";
 import { redactUrlCredentials } from "../core/redaction";
-import { defaultWhich, type WhichFn } from "../integrations/agent/detect";
+import { defaultWhich, type VersionProbeResult, type WhichFn } from "../integrations/agent/detect";
 import { resolveTarget } from "../integrations/agent/resolution";
 import type { RunnerSpec } from "../integrations/agent/runner";
 import { DEFAULT_LOCAL_MODEL } from "../llm/embedder";
@@ -62,6 +62,8 @@ export interface HarnessRow {
   readonly modelWork?: false;
   /** What `--version` printed; absent when it was not asked or nothing came back. */
   readonly version?: string;
+  /** Launch failure from an explicit health probe; absent when not probed. */
+  readonly error?: string;
 }
 
 /** A part of a kind of work that resolves to something other than the row's own target. */
@@ -99,8 +101,8 @@ export interface TargetsInput {
   readonly which?: WhichFn;
   /** Per connection name: whether its endpoint answered. */
   readonly reachability?: ReadonlyMap<string, { reachable: boolean; error?: string }>;
-  /** Per harness name: its `--version` output. */
-  readonly versions?: ReadonlyMap<string, string | undefined>;
+  /** Per harness name: its `--version` output or launch error. */
+  readonly versions?: ReadonlyMap<string, VersionProbeResult>;
 }
 
 function keyState(connection: ConnectionConfig, name: string, env: NodeJS.ProcessEnv): KeyState {
@@ -141,7 +143,7 @@ function harnessRows(input: TargetsInput): HarnessRow[] {
   const defaultName = defaultHarness(config)?.name;
   const which = input.which ?? defaultWhich;
   return Object.entries(config.harnesses ?? {}).map(([name, harness]) => {
-    const version = input.versions?.get(name);
+    const probe = input.versions?.get(name);
     const bin = harnessBin(config, name, harness);
     return {
       type: "harness",
@@ -151,7 +153,7 @@ function harnessRows(input: TargetsInput): HarnessRow[] {
       bin,
       installed: Boolean(which(bin)),
       ...(harness.modelWork === false ? { modelWork: false as const } : {}),
-      ...(version ? { version } : {}),
+      ...probe,
     };
   });
 }

@@ -21,6 +21,7 @@ interface MigrationPlanResult {
     skipped: number;
     refs: number;
     shadowed?: { bundleId: string; from: string; to: string }[];
+    reconcile?: string[];
   };
   backupPath?: string;
   applied?: number;
@@ -81,6 +82,10 @@ export function formatMigratePlain(result: unknown): string | null {
       "shadowed refs (another file holds the old spelling as its ref; not rewritten, resolve them by hand):",
       ...plan.assetContentRefs.shadowed.map((ref) => `  - ${ref.bundleId}: ${ref.from} (now ${ref.to})`),
     );
+  }
+
+  if (plan.assetContentRefs?.reconcile?.length) {
+    lines.push("", "git reconcile:", ...plan.assetContentRefs.reconcile.map((note) => `  - ${note}`));
   }
 
   if (plan.backupPath) {

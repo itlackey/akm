@@ -77,12 +77,13 @@ export async function collectVersionDriftAdvisory(
     };
   }
   try {
-    // The channel `akm upgrade` would use for this install: a prerelease follows `next` too, so a newer prerelease is
-    // reported, not only the latest stable release.
+    // Prerelease installs follow next; the remedy must request that same channel explicitly.
+    const channel = isPrerelease(cliVersion) ? "next" : "latest";
+    const command = channel === "next" ? "akm upgrade --next" : "akm upgrade";
     const result = await (deps.checkForUpdate ?? checkForUpdate)(
       cliVersion,
       { timeout: CLI_VERSION_CHECK_TIMEOUT_MS, retries: 0 },
-      isPrerelease(cliVersion) ? "next" : "latest",
+      channel,
     );
     return {
       name: "cli-version",
@@ -90,7 +91,7 @@ export async function collectVersionDriftAdvisory(
       status: result.updateAvailable ? "warn" : "pass",
       confidence: "high",
       message: result.updateAvailable
-        ? `akm v${cliVersion} is installed; v${result.latestVersion} is available — run 'akm upgrade'.`
+        ? `akm v${cliVersion} is installed; v${result.latestVersion} is available — run '${command}'.`
         : `akm v${cliVersion} is installed and up to date.`,
       evidence: { installedVersion: cliVersion, latestVersion: result.latestVersion },
     };

@@ -102,7 +102,7 @@ export interface AkmHealthOptions {
    */
   probe?: boolean;
   /**
-   * Read-only run (the workspace): state.db is opened read-only and never created
+   * Read-only run (the workspace or CLI --read-only): state.db is opened read-only and never created
    * or migrated (missing or behind on migrations is reported as a failing
    * check instead), and the append/read round-trip probe is skipped because it
    * writes a row.
@@ -320,7 +320,8 @@ function gatherTaskHistoryPhase(
   // isAgentTaskHistoryRow's header comment, referenced from
   // computeTaskWindowRates, for the full mapping).
   const taskRows = queryTaskHistory(db, { since });
-  const rates = computeTaskWindowRates(taskRows, now);
+  // Still-active runs must not age out of the historical reporting window.
+  const rates = computeTaskWindowRates(taskRows, now, queryTaskHistory(db, { status: "active" }));
 
   return {
     tableNames,
@@ -726,7 +727,7 @@ function readOnlyStateDbUnavailable(stateDbPath: string): HealthCheckResult | un
       kind: "deterministic",
       status: "fail",
       confidence: "high",
-      // Only a read-only run (the workspace, AKM Desktop) reports this, so it names what the app offers.
+      // Name both the CLI action and its Desktop equivalent.
       message: `state.db does not exist at ${stateDbPath}: nothing has recorded state yet, and a read-only health run does not create it. Index the library (Settings → Bundles & index → Update / reindex, or \`akm index\`) or run any akm command that records state, such as \`akm health\`.`,
       evidence: { path: stateDbPath },
     };
@@ -818,13 +819,11 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
     // reused here for the main `--since` window's improve summary and for
     // `--group-by run`, so neither re-reads `improve_runs`.
     const until = new Date(now()).toISOString();
-    const { improve: improveSummary, perRunSummaries } = buildImproveWindowSummary(
-      db,
-      stateDbPath,
-      since,
-      until,
-      readOnly,
-    );
+    const {
+      improve: improveSummary,
+      perRunSummaries,
+      outcomes,
+    } = buildImproveWindowSummary(db, stateDbPath, since, until, readOnly);
 
     advisories.push(...gatherAncillaryAdvisories(db, options, egressConfigView));
 
@@ -860,6 +859,7 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
       sessionExtractionLedger,
       proposalQueue,
       autoAccept: improveSummary.autoAccept,
+      improveOutcomes: outcomes,
       connectionsAndHarnesses,
       semanticSearch: readSemanticSearchState(gatherSemanticSearchMode()),
       versionDrift,

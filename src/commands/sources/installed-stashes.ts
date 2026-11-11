@@ -32,7 +32,7 @@ import { readLockfile, upsertLockEntry } from "../../integrations/lockfile";
 import { parseRegistryRef, resolveRegistryArtifact } from "../../registry/resolve";
 import type { InstalledBundle, InstallKind } from "../../registry/types";
 import { getCachePaths, parseGitRepoUrl, runGit, syncMirroredRepo } from "../../sources/providers/git";
-import { replaceDirectory } from "../../sources/providers/git-install";
+import { replaceDirectory, UPDATE_REFUSAL_HINT } from "../../sources/providers/git-install";
 import type { SourceLockData } from "../../sources/providers/install-types";
 import { installRevisionDir, isDirectory } from "../../sources/providers/provider-utils";
 import { syncFromRef } from "../../sources/providers/sync-from-ref";
@@ -483,7 +483,20 @@ function gitOrThrow(repoDir: string, args: string[]): string {
 function fastForwardCheckout(liveRepo: string, stagedRepo: string): void {
   const head = gitOrThrow(stagedRepo, ["rev-parse", "HEAD"]);
   gitOrThrow(liveRepo, ["fetch", "--no-tags", stagedRepo, head]);
-  gitOrThrow(liveRepo, ["merge", "--ff-only", "--no-overwrite-ignore", head]);
+  const merge = runGit(["-C", liveRepo, "merge", "--ff-only", "--no-overwrite-ignore", head], { timeout: 120_000 });
+  if (merge.status === null) {
+    // Spawn failure, timeout or signal: git may have been interrupted mid-checkout.
+    throw new UsageError(
+      `git merge did not finish in ${liveRepo} (${merge.error?.message ?? `killed by ${merge.signal}`}); the checkout may be partly updated. Check \`git status\` there.`,
+    );
+  }
+  if (merge.status !== 0) {
+    throw new UsageError(
+      `Writable Git install at ${liveRepo} cannot fast-forward without overwriting local work; nothing was changed. ${merge.stderr.trim()}`,
+      "INVALID_FLAG_VALUE",
+      UPDATE_REFUSAL_HINT,
+    );
+  }
 }
 
 /**
@@ -566,14 +579,15 @@ async function stageManagedUpdate(
     }
     const liveRepo = topLevel.stdout.trim();
     const stagingParent = createStagingParent(path.dirname(liveRepo));
+    const stagedRepo = path.join(stagingParent, path.basename(liveRepo));
     try {
-      const stagedRepo = path.join(stagingParent, path.basename(liveRepo));
       fs.cpSync(liveRepo, stagedRepo, { recursive: true, preserveTimestamps: true, verbatimSymlinks: true });
       const stagedRoot = path.join(stagedRepo, path.relative(liveRepo, fs.realpathSync(managed.localRoot)));
       const fetched = await syncFromRef(managed.ref, {
         force,
         writable: true,
         writableRoot: stagedRoot,
+        allowLocalChanges: true,
         writableRequiredRoots: managed.requiredRoots.map((root) =>
           path.join(stagedRoot, path.relative(managed.localRoot, root)),
         ),
@@ -588,6 +602,10 @@ async function stageManagedUpdate(
       };
     } catch (error) {
       cleanupDirectoryBestEffort(stagingParent, "bundle update");
+      // Report the configured bundle path, not the throwaway staging copy.
+      if (error instanceof UsageError) {
+        error.message = error.message.replaceAll(stagedRepo, liveRepo);
+      }
       throw error;
     }
   }

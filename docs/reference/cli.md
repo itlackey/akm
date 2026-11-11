@@ -439,6 +439,7 @@ akm health
 akm health --since 24h
 akm health --since 7d --format text
 akm health --since 2026-05-01T00:00:00Z
+akm health --read-only --no-probe          # inspect existing state without creating or migrating it
 akm health --report --format md           # full report: per-run rows, trends, proposal queue
 akm health --report --format json         # the same dataset as data
 akm health --report --window-compare 7d --format md
@@ -451,9 +452,10 @@ akm health --report --window-compare 7d --format md
 | `--window-compare` | Compare the current window against the prior window of the same duration (e.g. `24h`, `7d`). With `--report`, overrides the default trend window. |
 | `--group-by` | Group rows by `run` (one row per `improve_runs` entry). Omit for the default summary. |
 | `--windows` | Explicit comparison window(s) as `name=...,since=ISO,until=ISO` (repeatable, up to 4). Mutually exclusive with `--window-compare`. |
+| `--read-only` | Open existing state without creating, migrating or repairing it, and skip the database write/read probe (`unknown`). Missing, corrupt or unavailable state is a failing health result. Independent of network probing: add `--no-probe` for offline inspection. |
 | `--no-probe` | Skip the `connections-and-harnesses` reachability probes and harness `--version` runs, the `cli-version` update check, the `plugin-version` and `codex-plugin-version` newest-tag lookups, and the `scheduler-binary` version check (for an offline or air-gapped host). |
 
-The command reads `state.db`, verifies that the required tables exist, performs a
+By default the command opens and migrates `state.db`, verifies that the required tables exist, performs a
 write-read probe against the events stream, inspects `task_history`, checks the
 configured connections and harnesses (the `connections-and-harnesses` table), and summarizes recent `improve_*` events. Unless
 `--no-probe` is given, it also sends a bounded (3s timeout) reachability probe
@@ -494,7 +496,7 @@ session-extraction outcomes (`sessionsScanned`, `sessionsExtracted`, `proposalsC
 dead-URL detections, and skip reasons observed in the selected time window.
 
 `state-db-migrations` reports what `akm health`'s own open of `state.db`
-applied. Every open applies pending migrations (copying the file to
+applied. A normal open applies pending migrations (copying the file to
 `state.db.pre-<id>.bak` first when one drops schema), so the check passes and
 names the applied IDs (`evidence.applied`) and the copy (`evidence.backupPath`).
 It `fail`s only when a pending migration could not be applied — naming it and
@@ -503,6 +505,13 @@ check's `status` instead of grepping akm's error text. A `state.db` that cannot
 be read at all, or that is not a SQLite database (garbage, a truncated copy),
 is likewise one failing `state-db-readable` check with the repair steps, and the
 command exits 1, never 78.
+
+With `--read-only`, missing state or pending migrations are reported as a failing
+check instead of creating or migrating the database. The write/read round-trip
+is skipped and reported as `unknown`; the other checks and exit codes are unchanged.
+This also applies with `--report`: proposal data is read through a read-only
+connection. If state is unavailable, the native failing diagnostic is returned
+without attempting the report's additional queries.
 
 `connections-and-harnesses` is one table: a row for each configured connection (endpoint, whether
 its key is held, whether the endpoint answers) and harness (platform, whether

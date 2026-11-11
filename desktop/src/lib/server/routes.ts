@@ -5,11 +5,12 @@
 import { createRequire } from "node:module";
 import os from "node:os";
 import { activity, assets, bundles, config, documents, feedback, proposals, sensitive, setup } from "akm-cli/workspace";
-import { hostUpgradeOutrunsDesktop } from "../engine-skew.js";
+import { compareVersions } from "../engine-skew.js";
 import { readFile, saveFile } from "./features/files.js";
 import {
   readPreferences,
   savePreferences,
+  tryApply,
   validPluginChannel,
   validTheme,
   validUpdateChannel,
@@ -108,8 +109,10 @@ export const routes: Route[] = [
       ...(validUpdateChannel(updateChannel) ? { updateChannel } : {}),
       ...(validPluginChannel(pluginChannel) ? { pluginChannel } : {}),
     });
-    if (updateChannel !== undefined) await followUpdateChannel(saved.updateChannel);
-    return saved;
+    // The choice is saved either way; `applied` says whether the running updater has it yet.
+    return updateChannel === undefined
+      ? saved
+      : { ...saved, ...(await tryApply(() => followUpdateChannel(saved.updateChannel))) };
   }),
   get("/api/desktop/software", async () => ({
     host: hostTools.snapshot(),
@@ -118,27 +121,37 @@ export const routes: Route[] = [
     preferences: await readPreferences(),
   })),
   post("/api/desktop/software", async (value) => {
-    const request = fields<{ action?: unknown; harness?: unknown; channel?: unknown }>(
+    const request = fields<{ action?: unknown; harness?: unknown; channel?: unknown; consent?: unknown }>(
       value,
-      ["action", "harness", "channel"],
+      ["action", "harness", "channel", "consent"],
       "software action",
     );
     if (
       typeof request.action !== "string" ||
       (request.harness !== undefined && typeof request.harness !== "string") ||
-      (request.channel !== undefined && typeof request.channel !== "string")
+      (request.channel !== undefined && typeof request.channel !== "string") ||
+      (request.consent !== undefined && typeof request.consent !== "boolean")
     )
       throw new HttpFailure(400, "INVALID_SOFTWARE_ACTION", "Invalid software action, harness or release channel.");
-    // A host upgrade past Desktop's engine would leave Desktop unable to read an index the host migrated.
-    if (
-      request.action === "upgrade-cli" &&
-      hostUpgradeOutrunsDesktop(akmPackage.version, hostTools.snapshot().upgrade?.latestVersion as string | undefined)
-    )
-      throw new HttpFailure(409, "DESKTOP_BEHIND", "Update AKM Desktop first. The host CLI would upgrade past it.");
     try {
+      // A host upgrade past Desktop's engine would leave Desktop unable to read an index the host migrated; HostTools
+      // asks akm for the release it would install, right before it upgrades, and refuses one `within` cannot clear.
       return request.action === "desktop-menu-install"
         ? await desktopApp("menu-install")
-        : hostTools.start(request.action, request.harness as string | undefined, request.channel as string | undefined);
+        : request.action === "desktop-update-check"
+          ? await desktopApp("update-check")
+          : hostTools.start(
+              request.action,
+              request.harness as string | undefined,
+              request.channel as string | undefined,
+              {
+                consent: request.consent === true,
+                within: (version) => {
+                  const order = compareVersions(version, akmPackage.version);
+                  return order === null ? undefined : order <= 0;
+                },
+              },
+            );
     } catch (error) {
       throw new HttpFailure(
         400,

@@ -206,6 +206,23 @@ export function listPendingStateMigrations(dbPath: string = getStateDbPath()): s
   }
 }
 
+/**
+ * Run `fn` against state.db opened read-only, or return `fallback` when it
+ * does not exist or is behind on migrations. Health reports that state;
+ * observational readers must not create or migrate it.
+ */
+export function withReadonlyStateDb<T>(fn: (db: Database) => T, fallback: T): T {
+  const dbPath = getStateDbPath();
+  if (!fs.existsSync(dbPath) || listPendingStateMigrations(dbPath).length > 0) return fallback;
+  const db = openDatabase(dbPath, { readonly: true, create: false });
+  try {
+    applyReadonlyPragmas(db);
+    return fn(db);
+  } finally {
+    db.close();
+  }
+}
+
 export interface HistoricalStateUpgradeResult {
   /** Whether any pending migration was applied. */
   upgraded: boolean;

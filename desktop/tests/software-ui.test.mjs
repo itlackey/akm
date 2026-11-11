@@ -111,6 +111,12 @@ else {process.exitCode=1}
   const install = page.getByRole("button", { name: "Install AKM plugin for Codex", exact: true });
   await install.focus();
   await page.keyboard.press("Enter");
+  // The fixture already lists the akm-plugins marketplace and the prerelease channel is chosen: the install stops to say
+  // the marketplace keeps its own channel, and goes on only when the person agrees.
+  await expect(
+    page.getByRole("alert").filter({ hasText: "already set up and keeps the channel it follows" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Install from the existing marketplace", exact: true }).click();
   await expect(
     page
       .getByRole("status")
@@ -143,6 +149,8 @@ else {process.exitCode=1}
     .map((line) => JSON.parse(line));
   assert.ok(commands.some((item) => item.name === "akm" && item.args.join(" ") === "upgrade --format json"));
   assert.ok(commands.some((item) => item.name === "codex" && item.args.join(" ") === "plugin add akm@akm-plugins"));
+  // Update follows the CLI's own channel (stable here); the prerelease choice only drives an explicit switch.
+  assert.ok(!commands.some((item) => item.name === "akm" && item.args.includes("--next")));
   assert.ok(!commands.some((item) => item.args.includes("trust") || item.args.includes("--allow-downgrade")));
 
   const output = process.env.AKM_DESKTOP_SCREENSHOTS || path.join(server.root, "screenshots");
