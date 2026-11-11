@@ -58,6 +58,7 @@ export interface ActivityOverview {
       byStage: Record<string, ModelCount>;
     };
     tasks: { runs: number; failed: number; byTask: ActivityTask[] };
+    index?: { runs: number; recent: Array<{ at: string; mode: string; totalMs: number }> };
     proposals: { byStatus: Record<string, number> };
     notes: string[];
     workflows?: { byModel: Record<string, number> };
