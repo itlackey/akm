@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildGraph, colourSlot, edgePairs, familyOf, linksOf } from "../src/lib/graph-model.ts";
-import { actorOf, replayBins, replaySteps, totalsAt } from "../src/lib/replay-model.ts";
+import { actorOf, replayBins, replaySteps, SCRUB_STEP, scrubTime, totalsAt } from "../src/lib/replay-model.ts";
 import { traceRows } from "../src/lib/workflow-trace-model.ts";
 
 const payload = {
@@ -160,4 +160,15 @@ test("a workflow trace: a band per step, a bar per attempt, and a step's span ta
   );
   assert.equal(layout.done, 2);
   assert.equal(layout.tokens, 30);
+});
+
+test("the scrubber reaches the end of a window that is not a whole number of steps", () => {
+  const start = Date.parse("2026-11-04T10:00:00.500Z");
+  const end = start + 7 * 86_400_000 - 1;
+  // The largest value a range input with this min and step can hold is short of `end`.
+  const last = start + Math.floor((end - start) / SCRUB_STEP) * SCRUB_STEP;
+  assert.ok(last < end);
+  assert.equal(scrubTime(last, start, end), end);
+  assert.equal(scrubTime(start, start, end), start);
+  assert.equal(scrubTime(last - SCRUB_STEP, start, end), last - SCRUB_STEP);
 });

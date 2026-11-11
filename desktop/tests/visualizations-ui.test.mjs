@@ -69,6 +69,43 @@ test("visualizations survive late responses, no WebGL, a changed library and an 
     await page.close();
   });
 
+  await t.test("Replay: the slider's end shows the events of the window's last minute", async () => {
+    // A window that is not a whole number of minutes: the range input's last step falls short of its end.
+    const until = Date.parse("2026-11-11T12:00:00.000Z");
+    const since = until - 7 * 86_400_000 + 1;
+    const { page, errors } = await fresh((page) =>
+      page.route("**/api/events?since=7d", (route) =>
+        route.fulfill({
+          json: {
+            ok: true,
+            data: {
+              available: true,
+              truncated: false,
+              window: { since: new Date(since).toISOString(), until: new Date(until).toISOString() },
+              events: [
+                {
+                  id: 1,
+                  at: new Date(until - 30_000).toISOString(),
+                  eventType: "search",
+                  query: "last minute query",
+                  source: "user",
+                  resultCount: 0,
+                },
+              ],
+            },
+          },
+        }),
+      ),
+    );
+    await open(page, server, "/activity/replay");
+    await page.getByRole("combobox", { name: "Period" }).selectOption("7d");
+    await expect(slider(page)).toBeVisible();
+    await toEnd(page);
+    await expect(page.getByRole("region", { name: "Activity replay", exact: true })).toContainText("last minute query");
+    assert.deepEqual(errors, []);
+    await page.close();
+  });
+
   await t.test("Replay: without WebGL the page says so, and Play still moves the clock", async () => {
     const { page, errors } = await fresh((page) =>
       page.addInitScript(() => {
