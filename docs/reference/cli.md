@@ -411,7 +411,11 @@ All existing top-level commands remain available in 0.10. Health's reporting fla
 (`doctor --report`, `--group-by`, `--window-compare`, `--windows` and `--since`)
 are transitional aliases in 0.10; all reporting is moving under doctor commands in
 0.11. The full flag and result contracts remain documented in the linked sections.
-This regrouping does not change judge or learning behavior.
+This regrouping does not change judge or learning behavior. Put a subcommand's
+options after its name, for example `akm doctor metrics --since 7d`; health-only
+options such as `--read-only` and `--report` belong to bare `akm doctor`. Global
+output flags work before or after the subcommand. Like `info`, `doctor info`
+warns and continues when a flag is unknown.
 
 ### info
 

@@ -23,7 +23,7 @@ beforeEach(() => {
 
 afterEach(() => storage.cleanup());
 
-async function cli(args: string[], stdin = "") {
+async function cli(args: readonly string[], stdin = "") {
   const child = Bun.spawn([process.execPath, path.resolve("src/cli.ts"), ...args], {
     env: { ...process.env, PATH: emptyBin },
     stdin: new TextEncoder().encode(stdin),
@@ -86,6 +86,54 @@ describe("akm doctor entrypoints", () => {
     const doctor = await cli(["doctor", ...args, "--format", "json", "--quiet"], stdin);
     expect(original.code).toBe(2);
     expect(doctor).toEqual(original);
+  });
+
+  test.each([
+    { args: ["judge", "reflect.quality", "--schema", "--read-only"] },
+    { args: ["judge", "--list", "--no-probe"] },
+    { args: ["metrics", "--report"] },
+    { args: ["metrics", "--group-by", "run"] },
+    { args: ["log", "--readOnly"] },
+  ])("doctor rejects inherited health flags for $args", async ({ args }) => {
+    const original = await cli(args);
+    const doctor = await cli(["doctor", ...args]);
+    expect(original.code).toBe(2);
+    expect(doctor.code).toBe(2);
+    expect(doctor.stdout).toBe("");
+    expect(JSON.parse(doctor.stderr)).toMatchObject({ code: "UNKNOWN_FLAG" });
+  });
+
+  test.each([
+    { args: ["--since", "invalid", "metrics"] },
+    { args: ["--since=7d", "metrics"] },
+    { args: ["--limit", "2", "log"] },
+    { args: ["--connection", "test", "judge", "--list"] },
+    { args: ["--schema", "judge", "reflect.quality"] },
+    { args: ["--read-only", "metrics"] },
+  ])("doctor rejects misplaced child options: $args", async ({ args }) => {
+    const result = await cli(["doctor", ...args]);
+    expect(result.code).toBe(2);
+    expect(result.stdout).toBe("");
+    expect(JSON.parse(result.stderr)).toMatchObject({ code: "INVALID_FLAG_VALUE" });
+    expect(result.stderr).toContain("after the subcommand");
+  });
+
+  test("global options remain usable before the child while child options take effect after it", async () => {
+    const result = await cli(["doctor", "--format", "json", "--quiet", "metrics", "--since", "invalid"]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).not.toContain("after the subcommand");
+    const valid = await cli(["--format", "json", "doctor", "--quiet", "judge", "--list"]);
+    expect(valid.code, valid.stderr).toBe(0);
+    expect(JSON.parse(valid.stdout).judges.length).toBeGreaterThan(0);
+  });
+
+  test("info warns once per unsupported flag, including health options, without refusing", async () => {
+    const result = await cli(["doctor", "info", "--read-only", "--no-probe", "--unexpected-flag", "--format", "json"]);
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout).ok).toBe(true);
+    for (const flag of ["--read-only", "--no-probe", "--unexpected-flag"]) {
+      expect(result.stderr.split(`ignoring unknown flag "${flag}"`)).toHaveLength(2);
+    }
   });
 
   test("info still reports a broken config and tolerates unknown flags", async () => {

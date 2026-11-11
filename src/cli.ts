@@ -74,6 +74,7 @@ import fs from "node:fs";
 import { type ArgsDef, type CommandDef, defineCommand, parseArgs, renderUsage, runCommand, showUsage } from "citty";
 import {
   type CittyArgsDefinitionForScan,
+  cittyComparableName,
   findCittyTopLevelCommandIndex,
   getParsedInvocation,
   parseAllFlagValues,
@@ -497,23 +498,68 @@ const healthCommand = defineCommand({
   },
 });
 
-const doctorCommand = defineGroupCommand({
-  meta: {
-    name: "doctor",
-    description: "Check runtime health, or inspect metrics, system information, events and model judges",
-  },
-  args: healthArgs,
-  subCommands: {
-    metrics: metricsCommand,
-    info: infoCommand,
-    log: logCommand,
-    judge: judgeCommand,
-  },
-  async defaultRun(context) {
-    // The root flag scan stands down for bare groups. Doctor's bare form is
-    // the health command, so validate it as a leaf before running diagnostics.
-    assertKnownFlags({ subCommands: { doctor: healthCommand } } as FlagScanCommand, ["doctor", ...context.rawArgs]);
-    await healthCommand.run?.(context);
+const doctorSubCommands = {
+  metrics: metricsCommand,
+  info: infoCommand,
+  log: logCommand,
+  judge: judgeCommand,
+};
+const doctorScanArgs = Object.assign({}, healthArgs, ...Object.values(doctorSubCommands).map((cmd) => cmd.args));
+
+const doctorCommand = defineCommand({
+  ...defineGroupCommand({
+    meta: {
+      name: "doctor",
+      description: "Check runtime health, or inspect metrics, system information, events and model judges",
+    },
+    args: healthArgs,
+    subCommands: doctorSubCommands,
+    async defaultRun(context) {
+      await healthCommand.run?.(context);
+    },
+  }),
+  setup({ rawArgs }) {
+    const index = findCittyTopLevelCommandIndex(rawArgs, doctorScanArgs);
+    const subcommand = index >= 0 ? rawArgs[index] : undefined;
+    if (subcommand === undefined) {
+      assertKnownFlags({ subCommands: { doctor: healthCommand } } as FlagScanCommand, ["doctor", ...rawArgs]);
+      return;
+    }
+    if (!(subcommand in doctorSubCommands)) return;
+    // Citty discards parent options when dispatching a child. Only global
+    // options work before the child; they are already read from the invocation.
+    try {
+      assertKnownFlags({ args: GLOBAL_OUTPUT_ARGS }, rawArgs.slice(0, index));
+    } catch (error) {
+      if (!(error instanceof UsageError)) throw error;
+      throw new UsageError(
+        `Put options for doctor ${subcommand} after the subcommand.`,
+        "INVALID_FLAG_VALUE",
+        `Use \`akm doctor ${subcommand} <options>\`; health options belong to bare \`akm doctor\`.`,
+      );
+    }
+    let childArgs = rawArgs.slice(index + 1);
+    if (subcommand === "info") {
+      // The root already warned about unknown info flags, except health flags
+      // it treated as inherited. Warn about those once here, without refusing.
+      const separator = childArgs.indexOf("--");
+      childArgs = (separator < 0 ? childArgs : childArgs.slice(0, separator)).filter((token) => {
+        if (!token.startsWith("--")) return false;
+        const name = cittyComparableName(token.slice(2).split("=")[0]!);
+        return Object.entries(healthArgs).some(([key, def]) => {
+          if (key in GLOBAL_OUTPUT_ARGS) return false;
+          const flag = cittyComparableName(key);
+          return name === flag || (def.type === "boolean" && name === cittyComparableName(`no-${key}`));
+        });
+      });
+    }
+    // Validate the child without health's parent flags, so unsupported options
+    // cannot be silently accepted merely because bare doctor declares them.
+    assertKnownFlags({ subCommands: { doctor: { subCommands: doctorSubCommands } } } as FlagScanCommand, [
+      "doctor",
+      subcommand,
+      ...childArgs,
+    ]);
   },
 });
 
