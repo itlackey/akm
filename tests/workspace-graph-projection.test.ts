@@ -6,7 +6,7 @@ import { expect, test } from "bun:test";
 import { withAgentIdentity } from "../src/indexer/usage/usage-events";
 import { projectEmbeddings } from "../src/workspace/graph";
 
-test("positions by meaning keep similar vectors together, are the same on every read, and skip missing vectors", () => {
+test("positions by meaning keep similar vectors together, are the same on every read, and skip missing vectors", async () => {
   // Two groups of vectors in 8 dimensions, far apart, with a little spread inside each.
   const group = (centre: number[], n: number, seed: number) =>
     Array.from({ length: n }, (_, i) =>
@@ -15,7 +15,7 @@ test("positions by meaning keep similar vectors together, are the same on every 
   const a = group([1, 0, 0, 0, 0.5, 0, 0, 0], 10, 1);
   const b = group([0, 0, 1, 0, 0, 0, 0.5, 0], 10, 2);
   const vectors = [...a, undefined, ...b];
-  const placed = projectEmbeddings(vectors);
+  const placed = await projectEmbeddings(vectors);
   expect(placed.embedded).toBe(20);
   expect(placed.xyz).toHaveLength(21 * 3);
   expect(placed.xyz.slice(30, 33)).toEqual([null, null, null]);
@@ -24,10 +24,42 @@ test("positions by meaning keep similar vectors together, are the same on every 
   const within = distance(point(0), point(1));
   const across = distance(point(0), point(11));
   expect(across).toBeGreaterThan(within * 10);
-  expect(projectEmbeddings(vectors)).toEqual(placed);
+  expect(await projectEmbeddings(vectors)).toEqual(placed);
   // Too few vectors, or none: no positions.
-  expect(projectEmbeddings([a[0], undefined]).embedded).toBe(0);
-  expect(projectEmbeddings([]).xyz).toEqual([]);
+  expect((await projectEmbeddings([a[0], undefined])).embedded).toBe(0);
+  expect((await projectEmbeddings([])).xyz).toEqual([]);
+});
+
+test("the axes are kept for one index build: an asset embedded since lands on them, a new build finds new ones", async () => {
+  const vectors = Array.from({ length: 50 }, (_, i) =>
+    Float32Array.from({ length: 16 }, (_, d) => Math.sin(i * 0.3 + d)),
+  );
+  const first = await projectEmbeddings(vectors, "build-1");
+  // One more asset, same build: the others keep their places.
+  const added = await projectEmbeddings(
+    [...vectors, Float32Array.from({ length: 16 }, (_, d) => Math.cos(d))],
+    "build-1",
+  );
+  expect(added.xyz.slice(0, first.xyz.length)).toEqual(first.xyz);
+  // A different set under a new build key gets axes of its own.
+  const other = vectors.map((vector) => vector.map((value, d) => (d % 2 ? value * 3 : value)));
+  const rebuilt = await projectEmbeddings(other, "build-2");
+  const fresh = await projectEmbeddings(other);
+  expect(rebuilt.xyz).toEqual(fresh.xyz);
+});
+
+test("the projection lets other work run while it goes", async () => {
+  const vectors = Array.from({ length: 6000 }, (_, i) =>
+    Float32Array.from({ length: 64 }, (_, d) => Math.sin(i * 0.17 + d * 0.37)),
+  );
+  let ranDuring = false;
+  let done = false;
+  setImmediate(() => {
+    ranDuring = !done;
+  });
+  await projectEmbeddings(vectors);
+  done = true;
+  expect(ranDuring).toBe(true);
 });
 
 test("a usage event records the agent harness and session akm runs under, and nothing without one", () => {

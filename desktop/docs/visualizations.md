@@ -70,7 +70,7 @@ colours are the `--map-1` to `--map-8` tokens.
 | Limit | Why |
 | --- | --- |
 | By meaning needs stored embeddings, and leaves out an asset without one | Positions are a projection of the stored vectors; the legend says how many assets are left out. |
-| By meaning is a linear projection | `assets.graph` places assets on the three principal components of their embeddings, computed on each read. Groups overlap more than a non-linear layout would show, and a very large library pays for the projection on every visit. |
+| By meaning is a linear projection | `assets.graph` places assets on the three principal components of their embeddings. Groups overlap more than a non-linear layout would show. The components are found once per index build (under a second for 30,000 assets in testing) and reused after. |
 | The table lists the 200 most shown matches | Search and filters narrow it. |
 | Needs WebGL 2 | Without it the page says so and Table still works. |
 

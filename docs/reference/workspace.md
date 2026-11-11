@@ -143,9 +143,11 @@ targetRef }] }`. `trigger` is as in `taskHistory`. At most 20,000 runs; `truncat
 ## `activity.workflowRuns`
 
 Optional `since` (default `30d`). The workflow runs created in the window, or still active, newest first, as `akm
-workflow list` lists them: `{ window, runs: [{ id, workflowRef, title, status, createdAt, updatedAt, completedAt,
-harness, session }] }`. `harness` and `session` are the agent that started the run, when it was recorded. Child runs
-are not listed; they are in their parent's `workflowRun`.
+workflow list` lists them: `{ available, window, runs: [{ id, workflowRef, title, status, createdAt, updatedAt,
+completedAt, harness, session }] }`. `harness` and `session` are the agent that started the run, when it was recorded.
+Child runs are not listed; they are in their parent's `workflowRun`. Like the other activity reads it uses the read-only
+state connection: an absent state.db, or one that needs a migration, is `available: false`, and nothing is created or
+migrated.
 
 ## `activity.workflowRun`
 
@@ -153,8 +155,9 @@ Requires `id`. One run as `akm workflow status <id> --units` reads it: `{ run, s
 run summary without its params. `steps` are in order (`id`, `title`, `status`, `sequenceIndex`, `completedAt`). Each
 unit has its step, phase (`gate` for a gate check), status, runtime kind, engine, tokens, start and finish, failure
 reason, its clipped and redacted diagnostic, and `attempts` (`attempt`, `phase`, `status`, `startedAt`, `finishedAt`,
-`tokens`, `failureReason`). A step has no start time of its own; its units' times give its span. An unknown id is a
-`NotFoundError`.
+`tokens`, `failureReason`). A step has no start time of its own; its units' times give its span. An unknown id, or a
+state.db that is absent or needs a migration, is a `NotFoundError` (`WORKFLOW_NOT_FOUND`); nothing is created or
+migrated.
 
 ## `activity.events`
 
@@ -166,7 +169,7 @@ release; older rows have none). At most 20,000 events; `truncated` says the wind
 
 ## `assets.graph`
 
-No input. Every asset of the enabled bundles (no `env`, `secret` or `session` assets) and the declared links between
+No input; returns a promise. Every asset of the enabled bundles (no `env`, `secret` or `session` assets) and the declared links between
 them, in column form, so 30,000 assets stay a few megabytes:
 
 ```json
@@ -187,8 +190,11 @@ Node `i` is index `i` of every `nodes` array; `type`, `bundle` and `kind` index 
 runs from the asset that declares it to its target; a link whose target is not indexed is left out. `shows`,
 `searches` and `lastUsedAt` come from the index's utility scores. `meaning` places each asset with a stored embedding
 of the index's current model in three dimensions (three coordinates per node, `null` for one with no embedding): its
-projection on the three principal components of all the vectors, so assets with similar content land near each other.
-It is computed on each read, and is `null` when the index has no embeddings. `available` is `false`, with a `note`,
+projection on the three principal components of the vectors, so assets with similar content land near each other. The
+components are found from an evenly spaced sample of at most 4,000 vectors and kept for the life of the process until
+the index's embedding model or full build changes; an asset embedded since is projected onto them. The work yields to
+the event loop as it goes, so a host's other requests are served meanwhile. `meaning` is `null` when the index has no
+embeddings. `available` is `false`, with a `note`,
 when there is no index.
 
 ## `bundles.list`

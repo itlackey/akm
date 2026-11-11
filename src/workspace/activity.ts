@@ -8,16 +8,16 @@ import os from "node:os";
 import { akmHealth, parseHealthSince } from "../commands/health";
 import { buildTasks } from "../commands/metrics/collect";
 import { akmMetrics, metricsWindow, readUsageRows } from "../commands/metrics/metrics-cli";
-import { UsageError } from "../core/errors";
+import { NotFoundError, UsageError } from "../core/errors";
 import { listRecentImproveRuns } from "../storage/repositories/improve-runs-repository";
 import {
   decodeTaskHistoryMetadata,
   queryTaskHistory,
   type TaskHistoryRow,
 } from "../storage/repositories/task-history-repository";
-import { withWorkflowRunsRepo } from "../storage/repositories/workflow-runs-repository";
+import { WorkflowRunsRepository } from "../storage/repositories/workflow-runs-repository";
 import { pkgVersion } from "../version";
-import { getWorkflowStatus, listWorkflowRuns } from "../workflows/runtime/runs";
+import { listWorkflowRunSummaries, readWorkflowStatus } from "../workflows/runtime/runs";
 import { pChart, weekOf, weekRange } from "./derive";
 import { filledActivity, retrievalSeries } from "./metrics";
 import { clampLimit, section, withReadonlyStateDb } from "./readers";
@@ -229,44 +229,50 @@ export function taskRuns(input: { since?: string } = {}) {
 
 /**
  * The workflow runs created in the window, or still active, newest first: what `akm workflow list` lists, with the
- * agent harness and session that started each when it was recorded. Child runs are part of their parent's trace.
+ * agent harness and session that started each when it was recorded. Child runs are part of their parent's trace. Read
+ * on the read-only state connection: an absent or not yet migrated state.db is `available: false`, and nothing is
+ * created or migrated.
  */
-export async function workflowRuns(input: { since?: string } = {}) {
+export function workflowRuns(input: { since?: string } = {}) {
   const window = windowOf(input.since, "30d");
   const since = Date.parse(window.since);
-  const { runs } = await listWorkflowRuns();
-  return {
-    window,
-    runs: runs
-      .filter((run) => run.status === "active" || Date.parse(run.createdAt) >= since)
-      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
-      .map((run) => ({
-        id: run.id,
-        workflowRef: run.workflowRef,
-        title: run.workflowTitle,
-        status: run.status,
-        createdAt: run.createdAt,
-        updatedAt: run.updatedAt,
-        completedAt: run.completedAt ?? null,
-        harness: run.agentHarness ?? null,
-        session: run.agentSessionId ?? null,
-      })),
-  };
+  return withReadonlyStateDb(
+    (db) => ({
+      available: true,
+      window,
+      runs: listWorkflowRunSummaries(new WorkflowRunsRepository(db))
+        .filter((run) => run.status === "active" || Date.parse(run.createdAt) >= since)
+        .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+        .map((run) => ({
+          id: run.id,
+          workflowRef: run.workflowRef,
+          title: run.workflowTitle,
+          status: run.status,
+          createdAt: run.createdAt,
+          updatedAt: run.updatedAt,
+          completedAt: run.completedAt ?? null,
+          harness: run.agentHarness ?? null,
+          session: run.agentSessionId ?? null,
+        })),
+    }),
+    { available: false, window, runs: [] },
+  );
 }
 
 /**
  * One workflow run as `akm workflow status --units` reads it, for a trace: the run (without its params), its steps in
  * order, every unit with each of its attempts (start, finish, status, tokens, failure), and its child runs. A step has
- * no start time of its own; its units' times give its span.
+ * no start time of its own; its units' times give its span. Read on the read-only state connection; an absent or not
+ * yet migrated state.db has no run to show.
  */
-export async function workflowRun(input: { id: string }) {
+export function workflowRun(input: { id: string }) {
   const id = typeof input?.id === "string" ? input.id.trim() : "";
   if (!id) throw new UsageError("A workflow run id is required.", "MISSING_REQUIRED_ARGUMENT");
-  const detail = await getWorkflowStatus(id, { includeUnits: true });
-  const { params: _params, ...run } = detail.run;
-  const units = detail.units ?? [];
-  const attempts = await withWorkflowRunsRepo((repo) =>
-    units.map((unit) =>
+  const read = withReadonlyStateDb((db) => {
+    const repo = new WorkflowRunsRepository(db);
+    const detail = readWorkflowStatus(repo, id, { includeUnits: true });
+    const units = detail.units ?? [];
+    const attempts = units.map((unit) =>
       repo.getUnitAttempts(detail.run.id, unit.unitId).map((attempt) => ({
         attempt: attempt.attempt,
         phase: attempt.phase,
@@ -276,8 +282,16 @@ export async function workflowRun(input: { id: string }) {
         tokens: attempt.tokens,
         failureReason: attempt.failure_reason,
       })),
-    ),
-  );
+    );
+    return { detail, units, attempts };
+  }, null);
+  if (!read)
+    throw new NotFoundError(
+      `Workflow run "${id}" cannot be read: state.db is absent or needs a migration.`,
+      "WORKFLOW_NOT_FOUND",
+    );
+  const { detail, units, attempts } = read;
+  const { params: _params, ...run } = detail.run;
   return {
     run,
     steps: detail.workflow.steps.map((step) => ({

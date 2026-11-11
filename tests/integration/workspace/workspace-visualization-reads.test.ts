@@ -7,6 +7,7 @@
  * every task run of a window, workflow runs and one run's trace, and the event stream. Each is read-only.
  */
 
+import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
@@ -17,7 +18,7 @@ import { akmIndex } from "../../../src/indexer/indexer";
 import { upsertTaskHistory } from "../../../src/storage/repositories/task-history-repository";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
 import { activity, assets } from "../../../src/workspace";
-import { ctx, dbSnapshot, expectUsage, out, seed, useSandbox } from "./workspace-behaviour-helpers";
+import { ctx, dbSnapshot, expectAkmError, expectUsage, out, seed, useSandbox } from "./workspace-behaviour-helpers";
 
 useSandbox();
 
@@ -205,5 +206,20 @@ describe("visualization reads", () => {
       }),
     ]);
     await expectUsage(() => activity.workflowRun({ id: " " }));
+  });
+
+  test("workflow reads never create or migrate state.db: absent is unavailable, behind on migrations is untouched", async () => {
+    const file = getStateDbPath();
+    fs.rmSync(file, { force: true });
+    expect(await out(activity.workflowRuns())).toMatchObject({ available: false, runs: [] });
+    await expectAkmError(() => activity.workflowRun({ id: "any" }), { kind: "not-found", code: "WORKFLOW_NOT_FOUND" });
+    expect(fs.existsSync(file)).toBe(false);
+    // A database no migration has run on yet: read as unavailable, left exactly as it was.
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    new Database(file).close();
+    const before = fs.readFileSync(file);
+    expect(await out(activity.workflowRuns())).toMatchObject({ available: false, runs: [] });
+    await expectAkmError(() => activity.workflowRun({ id: "any" }), { kind: "not-found" });
+    expect(fs.readFileSync(file).equals(before)).toBe(true);
   });
 });

@@ -78,14 +78,14 @@ export namespace activity {
   /** Every scheduled-task run that started in the window, for all tasks, newest first. */
   function taskRuns(input?: { since?: string }): unknown;
   /** One workflow run with its steps, units, each unit's attempts, and its child runs. */
-  function workflowRun(input: { id: string }): Promise<unknown>;
+  function workflowRun(input: { id: string }): unknown;
   /** The workflow runs created in the window, or still active, newest first. */
-  function workflowRuns(input?: { since?: string }): Promise<unknown>;
+  function workflowRuns(input?: { since?: string }): unknown;
 }
 export namespace assets {
   function bundleFiles(input: { bundle: string; path?: string; hidden?: boolean }): unknown;
   /** Every asset of the enabled bundles and the declared links between them, in column form, with positions by meaning. */
-  function graph(): unknown;
+  function graph(): Promise<unknown>;
   function history(input: { ref: string; revision?: string; limit?: number }): Promise<unknown>;
   /** What improve proposed for one asset, how it was decided, and how the asset has been used since. */
   function improvement(input: { ref: string }): unknown;
