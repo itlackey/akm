@@ -45,6 +45,8 @@ test("--quiet silences it; --help and internal invocations do not print it", () 
   expect(notices(run(["info", "--help"]).stderr)).toHaveLength(0);
   expect(notices(run(["info"], { AKM_EVENT_SOURCE: "task" }).stderr)).toHaveLength(0);
   expect(notices(run(["info"]).stderr)).toHaveLength(1);
+  // An unknown subcommand is a usage error, not a use of the command.
+  expect(notices(run(["log", "tail"]).stderr)).toHaveLength(0);
 });
 
 test("flags name their replacement; a replacement not built yet and the no-ref agent form print nothing", () => {
@@ -55,7 +57,7 @@ test("flags name their replacement; a replacement not built yet and the no-ref a
     _setWarnSinkForTests((_level, args) => messages.push(args.join(" ")));
     const invocation = setParsedInvocation(["bun", "akm", ...userArgs]);
     const path = userArgs.filter((a) => !a.startsWith("-"));
-    warnDeprecatedUse(path.slice(0, 1), invocation, undefined, {});
+    warnDeprecatedUse(path.slice(0, 1), invocation, { ref: { type: "positional" } }, {});
     return messages.join("\n");
   };
   try {

@@ -63,6 +63,11 @@ export function warnDeprecatedUse(
 ): void {
   if (INTERNAL_SOURCES.has(env.AKM_EVENT_SOURCE ?? "")) return;
   if (invocation.hasFlag("--help") || invocation.hasFlag("-h") || invocation.hasFlag("--scheduled")) return;
+  const positionals = positionalsOf(invocation, leafArgs);
+  // An unknown subcommand (`akm log tail`) is a usage error, not a use of the command.
+  if (positionals.length > commandPath.length && !Object.values(leafArgs ?? {}).some((a) => a.type === "positional")) {
+    return;
+  }
   const joined = commandPath.join(" ");
   const hit = DEPRECATIONS.find((row) => {
     if (row.path.length > 0 && row.path.join(" ") !== joined) return false;
@@ -71,7 +76,7 @@ export function warnDeprecatedUse(
         return false;
       }
     }
-    return !row.needsRef || refGiven(invocation, commandPath, leafArgs);
+    return !row.needsRef || positionals.length > commandPath.length;
   });
   if (!hit) return;
   const what = hit.flag ? `${hit.flag}${hit.value ? ` ${hit.value}` : ""}` : `akm ${joined}`;
@@ -81,15 +86,10 @@ export function warnDeprecatedUse(
   );
 }
 
-function refGiven(
-  invocation: ParsedInvocation,
-  commandPath: readonly string[],
-  leafArgs: ArgsDef | undefined,
-): boolean {
+function positionalsOf(invocation: ParsedInvocation, leafArgs: ArgsDef | undefined): string[] {
   try {
-    const positionals = parseArgs([...invocation.userArgs], leafArgs ?? {})._;
-    return positionals.length > commandPath.length;
+    return parseArgs([...invocation.userArgs], leafArgs ?? {})._.map(String);
   } catch {
-    return false;
+    return [];
   }
 }
