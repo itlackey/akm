@@ -1,6 +1,8 @@
 # AKM CLI and product surface recommendations
 
-Release plan from the CLI review and the review of `release/0.11.0` at `4b44628eb`; these are scheduled changes, not implemented behavior.
+Release plan from the CLI review and the review of `release/0.11.0` at `4b44628eb`. Checked items are implemented on this branch; the first released version remains to be recorded in the migration guide.
+
+The first additive doctor entry points are also implemented: `doctor` mirrors health, and `doctor metrics`, `info`, `log`, and `judge` reuse their existing handlers. Improve-run reporting and the remaining doctor consolidation are still planned.
 
 **0.10.x** is the target for every compatible fix and additive replacement, including usage metrics; **0.11** removes the deprecated surface and makes incompatible default/result changes. Keep existing commands, flags, config keys, output contracts, and input interpretation working throughout 0.10.x. Introduce replacement behavior through new explicit inputs first; do not hide a breaking change inside an addition. `STABILITY.md` records the scheduled removals, and the migration guide records first supporting versions.
 
@@ -10,8 +12,8 @@ Release plan from the CLI review and the review of `release/0.11.0` at `4b44628e
 
 ## Compatible changes and preparation
 
-- [ ] **[0.10.x] Remove the tag requirement triggered by `remember --source`, `--description`, or `--expires`.** Independent metadata should not force users to invent an unrelated tag.
-- [ ] **[0.10.x] Allow `show --max-tokens` to bound a whole asset or exact fragment without requiring `--context lead`.** A content budget should work independently of the presentation mode.
+- [x] **[0.10.x] Remove the tag requirement triggered by `remember --source`, `--description`, or `--expires`.** Independent metadata should not force users to invent an unrelated tag.
+- [x] **[0.10.x] Allow `show --max-tokens` to bound a whole asset or exact fragment without requiring `--context lead`.** A content budget should work independently of the presentation mode.
 - [ ] **[0.10.x] Add consistent duration-based `--timeout` support, such as `30s` or `2m`, alongside existing millisecond flags.** Users should not need different timeout conventions or manual unit conversion across commands.
 - [ ] **[0.10.x / 0.11] Preserve duration shortcuts, including `3M` for three 30-day months and `3m` for three minutes, and extend the shared grammar for timeouts.** Removing millisecond-only flags must not remove the convenient time notation or change its existing meaning.
 - [ ] **[0.10.x] Introduce `akm run <ref>` alongside `agent <ref>`, `command run <ref>` / `command <ref>`, `task run`, and `workflow run`, preserving type-specific inputs and lifecycle behavior.** Consumers can adopt one execution entry point before the old commands disappear in 0.11.
@@ -23,7 +25,7 @@ Release plan from the CLI review and the review of `release/0.11.0` at `4b44628e
 - [ ] **[0.10.x] Add scheduler reconciliation/rebind/owned-orphan maintenance under `doctor scheduler sync` and task history under `doctor log`, retaining every old task command.** Administrators can move to the replacement surface before 0.11 removes the old entry points.
 - [ ] **[0.10.x] Extend `import` with asset-ref copying and explicit typed-task import, preserving clone's asset/companion-file behavior and existing document imports.** Clone and task-add consumers need a working migration path before either command disappears.
 - [ ] **[0.10.x] Add repeatable search `--include key=value` with the scoped semantics below, retaining both old inclusion flags and their existing behavior.** Callers can adopt precise inclusion without changing established searches during a patch release.
-- [ ] **[0.10.x] Add show `--outline` and `--lead` alongside `--detail brief` and `--context lead`, retaining the old modes and character budget.** The simpler read interface can be adopted before its predecessors are removed.
+- [x] **[0.10.x] Add show `--outline` and `--lead` alongside `--detail brief` and `--context lead`, retaining the old modes and character budget.** The simpler read interface can be adopted before its predecessors are removed.
 - [ ] **[0.10.x] Add `curate --max-tokens` as an explicit way to request bounded packed context, retaining `--pack` and the existing default result.** The new budget control can ship before 0.11 changes curate's default.
 - [ ] **[0.10.x] Add the clearer session-extraction source selector alongside its old `--type` spelling and make explicit `upgrade --channel` selection consistent across CLI and plugins.** Consumers can migrate away from overloaded or duplicate selectors before removal.
 - [ ] **[0.10.x] Add the shared `--config` file override while preserving existing location resolution for callers that do not use it.** Custom installations can prepare their invocations before 0.11 retires location variables and readers.
