@@ -169,15 +169,57 @@ describe("bundle add --writable on an existing read-only Git bundle (#1296)", ()
     expect(isWritable(after.bundle)).toBe(false);
   }, 60_000);
 
-  test("a re-add of an existing writable checkout still refuses a dirty worktree", async () => {
+  /** Push a commit to the bare origin and return its revision. */
+  function pushUpstream(files: Record<string, string>): string {
+    const work = `${originDir}.work`;
+    git(["clone", originDir, work]);
+    git(["-C", work, "config", "user.name", "akm-test"]);
+    git(["-C", work, "config", "user.email", "akm@test"]);
+    git(["-C", work, "config", "commit.gpgsign", "false"]);
+    for (const [rel, text] of Object.entries(files)) fs.writeFileSync(path.join(work, rel), text);
+    git(["-C", work, "add", "-A"]);
+    git(["-C", work, "commit", "-m", "upstream"]);
+    git(["-C", work, "push", "origin", "main"]);
+    return git(["-C", work, "rev-parse", "HEAD"]).trim();
+  }
+
+  const update = () => withTTY(false, () => runCliCapture(["bundle", "update", "shared"]));
+
+  test("bundle update fast-forwards past an unrelated dirty file and records the new revision", async () => {
     await promote();
     const root = installed().lock?.localRoot as string;
-    fs.writeFileSync(path.join(root, "knowledge", "local.md"), "local work\n");
+    const note = path.join(root, "knowledge", "note.md");
+    fs.appendFileSync(note, "local edit\n");
+    const edited = fs.readFileSync(note, "utf8");
+    const revision = pushUpstream({ "knowledge/new.md": "---\ntype: knowledge\n---\n\n# New\n" });
 
-    const result = await add("--writable");
+    const result = await update();
+    expect(result.code, result.stderr).toBe(0);
+    expect(fs.readFileSync(note, "utf8")).toBe(edited);
+    expect(fs.existsSync(path.join(root, "knowledge", "new.md"))).toBe(true);
+    expect(git(["-C", root, "rev-parse", "HEAD"]).trim()).toBe(revision);
+    expect(installed().lock?.resolvedRevision).toBe(revision);
+  }, 60_000);
+
+  test("bundle update refuses an overwrite of local work, names the real path and records nothing", async () => {
+    await promote();
+    const root = installed().lock?.localRoot as string;
+    const note = path.join(root, "knowledge", "note.md");
+    fs.appendFileSync(note, "local edit\n");
+    const edited = fs.readFileSync(note, "utf8");
+    const head = git(["-C", root, "rev-parse", "HEAD"]).trim();
+    const lockedBefore = installed().lock?.resolvedRevision;
+    pushUpstream({ "knowledge/note.md": "upstream\n" });
+
+    const result = await update();
     expect(result.code).not.toBe(0);
-    expect(result.stderr).toContain("uncommitted changes");
-    expect(fs.readFileSync(path.join(root, "knowledge", "local.md"), "utf8")).toBe("local work\n");
+    expect(result.stderr).toContain(root);
+    expect(result.stderr).toContain("knowledge/note.md");
+    expect(result.stderr).not.toContain("--help");
+    expect(result.stderr).not.toContain(".akm-update-");
+    expect(fs.readFileSync(note, "utf8")).toBe(edited);
+    expect(git(["-C", root, "rev-parse", "HEAD"]).trim()).toBe(head);
+    expect(installed().lock?.resolvedRevision).toBe(lockedBefore);
   }, 60_000);
 
   test("a re-add of an existing writable checkout still refuses a mismatched origin", async () => {
