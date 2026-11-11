@@ -25,7 +25,7 @@ afterEach(() => storage.cleanup());
 
 async function cli(args: readonly string[], stdin = "") {
   const child = Bun.spawn([process.execPath, path.resolve("src/cli.ts"), ...args], {
-    env: { ...process.env, PATH: emptyBin, NO_COLOR: "1" },
+    env: { ...process.env, PATH: emptyBin, NO_COLOR: "1", FORCE_COLOR: undefined },
     stdin: new TextEncoder().encode(stdin),
     stdout: "pipe",
     stderr: "pipe",
