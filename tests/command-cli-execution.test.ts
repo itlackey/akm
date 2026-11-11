@@ -80,6 +80,36 @@ async function installHostileInferenceKey(): Promise<void> {
 }
 
 describe("command CLI execution convergence", () => {
+  test("duration timeout aliases lower to the same execution override", async () => {
+    const base = ["command", "run", "commands/review", "--dry-run", "--format=json"];
+    const legacy = await runCliCapture([...base, "--timeout-ms", "30000"]);
+    const alias = await runCliCapture([...base, "--timeout", "30s"]);
+    expect(legacy.code).toBe(0);
+    expect(alias.code).toBe(0);
+    expect(JSON.parse(alias.stdout)).toEqual(JSON.parse(legacy.stdout));
+    expect(JSON.parse(alias.stdout).provenance).toContainEqual({
+      field: "runtime.timeoutMs",
+      layer: "current-invocation",
+      kind: "current",
+      via: "explicit",
+    });
+  });
+  test("every legacy timeout entry point rejects conflicting aliases before work", async () => {
+    const before = snapshotTree(storage.root);
+    for (const command of [
+      ["command", "run", "commands/review"],
+      ["agent"],
+      ["proposal", "new", "skill", "fixture", "--task", "fixture guidance"],
+      ["proposal", "extract", "--type", "claude"],
+      ["improve"],
+      ["task", "add", "fixture", "--schedule", "@daily", "--command", "echo fixture"],
+    ]) {
+      const result = await runCliCapture([...command, "--timeout", "30s", "--timeout-ms", "1000"]);
+      expect(result.code).toBe(2);
+      expect(result.stdout + result.stderr).toContain("conflicting budgets");
+    }
+    expect(snapshotTree(storage.root)).toEqual(before);
+  });
   test("command run --dry-run authorizes and lowers without dispatch, credentials, usage, or persistent writes", async () => {
     writeSandboxConfig({
       harnesses: undefined, // only the connection: agent work would prefer a harness

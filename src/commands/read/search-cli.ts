@@ -209,6 +209,10 @@ export const curateCommand = defineJsonCommand({
     prefer: scopePreferArg,
     ...PROJECT_ARG,
     belief: { ...beliefArg, default: "current" },
+    "max-tokens": {
+      type: "string",
+      description: "Pack full content within this shared token budget (alias for --pack)",
+    },
     pack: {
       type: "string",
       description:
@@ -216,7 +220,12 @@ export const curateCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
-    const packBudget = parsePositiveIntFlag(args.pack ?? undefined, "--pack");
+    const legacyBudget = parsePositiveIntFlag(args.pack ?? undefined, "--pack");
+    const maxTokens = parsePositiveIntFlag(args["max-tokens"], "--max-tokens");
+    if (legacyBudget !== undefined && maxTokens !== undefined && legacyBudget !== maxTokens) {
+      throw new UsageError("--max-tokens and --pack specify conflicting budgets.", "INVALID_FLAG_VALUE");
+    }
+    const packBudget = maxTokens ?? legacyBudget;
     const outputMode = getOutputMode();
     const curated = await runCurate(
       {

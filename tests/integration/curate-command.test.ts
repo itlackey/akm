@@ -239,6 +239,17 @@ describe("curate command", () => {
   });
 
   describe("--pack", () => {
+    test("--max-tokens reuses packing and keeps unbudgeted default", async () => {
+      const stashDir = makeStash();
+      const common = ["curate", "release deploy", "--format=json"];
+      const legacy = JSON.parse(await runCli(stashDir, [...common, "--pack", "4000"]));
+      expect(JSON.parse(await runCli(stashDir, [...common, "--max-tokens", "4000"]))).toEqual(legacy);
+      expect(JSON.parse(await runCli(stashDir, [...common, "--max-tokens", "4000", "--pack", "4000"]))).toEqual(legacy);
+      expect(Array.isArray(JSON.parse(await runCli(stashDir, common)))).toBe(false);
+      const conflict = await runCliCapture([...common, "--pack", "1000", "--max-tokens", "2000"]);
+      expect(conflict.code).not.toBe(0);
+      expect(conflict.stdout + conflict.stderr).toContain("conflicting budgets");
+    });
     test("--format=json returns a bare array of {ref, tokens, content}", async () => {
       const stashDir = makeStash();
       const output = await runCli(stashDir, ["curate", "release deploy", "--format=json", "--pack", "4000"]);

@@ -12,6 +12,7 @@
 import type { StashEntryScope } from "../core/adapter/types";
 import { UsageError } from "../core/errors";
 import type { ResolvedProject } from "../core/projects";
+import { parseDuration } from "../core/time";
 
 // findCittyTopLevelCommand(Index) + CittyArg(s)DefinitionForScan moved to
 // ./invocation (chunk-9 WI-9.9 argv-normalization fold — that cluster had no
@@ -65,6 +66,23 @@ export function parsePositiveIntFlag(raw: string | undefined, flagName = "--limi
   const parsed = parseInt(trimmed, 10);
   if (parsed <= 0) {
     throw new UsageError(`Invalid ${flagName} value: "${raw}". Must be a positive integer.`, "INVALID_FLAG_VALUE");
+  }
+  return parsed;
+}
+
+/** Resolve the duration alias against an already-parsed legacy millisecond flag. */
+export function parseTimeoutFlags(timeout: string | undefined, timeoutMs: number | undefined): number | undefined {
+  if (timeout === undefined) return timeoutMs;
+  const value = timeout.trim();
+  const parsed = /^\d+$/.test(value) ? Number(value) : parseDuration(value);
+  if (parsed === null || !Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new UsageError(
+      `Invalid --timeout value: "${timeout}". Expected positive milliseconds or a duration (30s, 2m, 1h, 7d, 3M).`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  if (timeoutMs !== undefined && timeoutMs !== parsed) {
+    throw new UsageError("--timeout and --timeout-ms specify conflicting budgets.", "INVALID_FLAG_VALUE");
   }
   return parsed;
 }

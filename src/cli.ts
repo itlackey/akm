@@ -104,7 +104,7 @@ import "./commands/health/renderers";
 import "./commands/metrics/md-report";
 import type { WindowSpec } from "./commands/health/types";
 import { parseWindowSpec } from "./commands/health/windows";
-import { improveCommand } from "./commands/improve/improve-cli";
+import { doctorPromptCommand, improveCommand } from "./commands/improve/improve-cli";
 import { judgeCommand } from "./commands/judge-cli";
 import { metricsCommand } from "./commands/metrics/metrics-cli";
 import { migrateCommand } from "./commands/migrate-cli";
@@ -499,6 +499,7 @@ const healthCommand = defineCommand({
 });
 
 const doctorSubCommands = {
+  prompt: doctorPromptCommand,
   metrics: metricsCommand,
   info: infoCommand,
   log: logCommand,

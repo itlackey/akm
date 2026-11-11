@@ -381,6 +381,19 @@ index, generated deterministically. In text mode, the default CLI UI shows a
 spinner with processed-versus-total source counts; structured output modes
 (`json`, `yaml`, `jsonl`) stay clean and machine-readable.
 
+### Timeout durations
+
+Where `--timeout-ms` is supported (`command run`, `agent`, `proposal new`,
+`proposal extract`, `improve`, and `task add`), `--timeout` accepts positive
+integer milliseconds or an elapsed duration: `250ms`, `30s`, `2m`, `1h`,
+`7d`, or `3M`. Units are case-sensitive: `3m` means three minutes; `3M`
+means 90 days (three 30-day months). Equal explicit `--timeout 30s
+--timeout-ms 30000` values are accepted; conflicting budgets are rejected.
+The existing millisecond flag and each command's timeout scope and defaults
+remain unchanged: improve's budget bounds the whole run, extract's is per
+session, and task add stores the target's timeout. This does not change model
+or learning defaults.
+
 ### doctor
 
 Inspect runtime health and developer diagnostics. These additive 0.10 entry points
@@ -392,6 +405,7 @@ reuse the existing handlers, flags, output shapes and exit codes:
 | `akm doctor metrics` | [`akm metrics`](#metrics) | Read-only usage and outcome reports |
 | `akm doctor info` | [`akm info`](#info) | Capabilities, configuration and index state; still reports when config is broken |
 | `akm doctor log` | [`akm log`](#log) | Filter the local event stream |
+| `akm doctor prompt <ref>` | [`akm improve <ref> --show-prompt`](#improve) | Inspect the composed reflect prompt without execution or writes |
 | `akm doctor judge` | [`akm judge`](#judge) | List, inspect and evaluate the existing model judges |
 
 ```sh
@@ -399,6 +413,7 @@ akm doctor --read-only --no-probe
 akm doctor metrics --since 7d
 akm doctor info
 akm doctor log --limit 20
+akm doctor prompt lessons/my-lesson --task "Focus on examples" --format text
 akm doctor judge --list
 akm doctor judge reflect.quality --schema
 ```
@@ -411,6 +426,10 @@ All existing top-level commands remain available in 0.10. Health's reporting fla
 (`doctor --report`, `--group-by`, `--window-compare`, `--windows` and `--since`)
 are transitional aliases in 0.10; all reporting is moving under doctor commands in
 0.11. The full flag and result contracts remain documented in the linked sections.
+`doctor prompt` accepts the same `--task`, `--bundle`, `--strategy`,
+`--connection`, `--harness`, and `--model` settings as the legacy prompt preview.
+It preserves the JSON envelope and `--format text` rendering, requires a fully-qualified
+asset ref, and does not acquire a lock, write an index, or call a model.
 This regrouping does not change judge or learning behavior. Put a subcommand's
 options after its name, for example `akm doctor metrics --since 7d`; health-only
 options such as `--read-only` and `--report` belong to bare `akm doctor`. Global
@@ -841,6 +860,7 @@ akm curate "deploy the service" --filter user=alice --pack 4000
 | `--prefer` | `<key>=<value>` | _(none)_ | Repeatable frontmatter preference with the keys and matching of `--filter`; matching hits rank slightly higher (×1.02 on the score). It never drops or admits a hit and does not change which evidence curate accepts |
 | `--project` | project name, `none` | _(by directory)_ | Use this [project](#projects)'s defaults instead of the one the working directory selects; `none` uses no project. An unknown name is a usage error. A flag you pass replaces the project's value of the same kind. When a project applies, the response carries `project` and text output opens with one line, e.g. `Project akm (~/code/akm): prefer project=akm`. |
 | `--belief` | `all`, `current`, `historical` | `current` | Current keeps unflagged and active/asserted assets; historical keeps deprecated/contradicted/superseded/archived assets |
+| `--max-tokens` | positive token budget | _(none)_ | Alias for `--pack`, using the same shared packing budget and output. Conflicting explicit budgets are rejected; equal values are accepted. The unbudgeted default is unchanged. |
 | `--pack` | positive token budget | _(none)_ | Pack eligible local content in rank order; drop tail items before truncating the first oversized item. The budget is estimated at about 4 characters per token; a `ref#fragment` hit packs only that section; registry hits are never packed. It is a context-size target for this call, not a workflow asset's `budget` (a run-cost cap) |
 
 `akm curate` takes the top `--limit` hits of one search, in search order, and
@@ -2901,6 +2921,7 @@ akm command run <command-ref> [--arguments <exact-text>] [--agent <selector>] [-
 | `--agent <selector>` | Portable `agents/...` ref or a native harness selector |
 | `--connection <name>` / `--harness <name>` | Current-invocation connection or harness override (mutually exclusive) |
 | `--model <id-or-alias>` | Current-invocation model: an alias (`fast`, `balanced`, `reasoning`) or an exact name |
+| `--timeout <duration>` | Duration alias for `--timeout-ms`; see [Timeout durations](#timeout-durations). |
 | `--timeout-ms <ms>` | Current-invocation timeout override |
 | `--cwd <path>` | Current-invocation workspace override |
 | `--dry-run` | Resolve and lower the command without dispatching or materializing credentials |
@@ -2954,6 +2975,7 @@ akm agent [<agent-ref>] [--connection <name> | --harness <name>] [--prompt <text
 | `--connection <name>` / `--harness <name\|platform>` | Connection or harness to run on, by name, a harness also by platform (mutually exclusive); default: the default harness, else akm's own runtime over the default connection |
 | `--prompt <text>` / `--prompt-stdin` | The task. Without one the harness starts interactively. |
 | `--model <model>` | An alias (`fast`, `balanced`, `reasoning`) or an exact model name; overrides the model in the agent asset |
+| `--timeout <duration>` | Duration alias for `--timeout-ms`; see [Timeout durations](#timeout-durations). |
 | `--timeout-ms <ms>` | Override the run's timeout in milliseconds |
 | `--cwd <path>` | Working directory for the run (defaults to the current directory) |
 
@@ -3077,6 +3099,7 @@ akm improve judge < revision.json      # reflect's quality judge on one revision
 | `--dry-run` | Show the schema-v2 result on stdout without creating config, data, state, cache, bundle, log, or result artifacts. Dry-run results are never persisted, including on errors or signals. |
 | `--bundle` | Select the bundle the run improves and writes to (default: `defaultWriteTarget`, else the working bundle); only that bundle's assets are planned. When the ref scope is bundle-qualified, it must name the same bundle |
 | `--limit <n>` | Cap the refs the run processes, highest salience first (refs routed to distill only come last). Overrides the strategy's `processes.reflect.limit` and `limit` |
+| `--timeout <duration>` | Duration alias for `--timeout-ms`; see [Timeout durations](#timeout-durations). |
 | `--timeout-ms <ms>` | Wall-clock budget for the run (default: `7200000` = 2 hours) |
 | `--require-feedback-signal` | Turn the proactive-maintenance lane off for the run, so only assets with recent feedback are planned |
 | `--strategy <name>` | Override the active improve strategy (a built-in or entry under `improve.strategies`); it chooses which processes run, never where |
@@ -3415,6 +3438,7 @@ akm proposal extract --type claude --location /custom/path --session-id <id>
 | `--auto` | Iterate every available harness with the default `--since`. Mutually exclusive with `--type`. |
 | `--dry-run` | Show candidates without queuing proposals. |
 | `--force` | Re-process sessions even if they were already extracted and have no new events. Default: skip already-seen sessions. |
+| `--timeout <duration>` | Duration alias for `--timeout-ms`; see [Timeout durations](#timeout-durations). |
 | `--timeout-ms <ms>` | Per-session LLM timeout in ms. Default: the selected connection's or harness's own timeout. |
 | `--connection <name>` / `--harness <name\|platform>` | Connection or harness for this invocation, by name, a harness also by platform (mutually exclusive). |
 | `--model <alias\|name>` | Model for this invocation: an alias or an exact name. |
@@ -3505,6 +3529,7 @@ akm proposal new skill code-review --bundle team --task "PR-style review skill" 
 | `--file` | Read task text from a UTF-8 file |
 | `--connection` / `--harness` | Override the default connection or harness, by name, a harness also by platform (mutually exclusive) |
 | `--model` | Override the model: an alias or an exact name |
+| `--timeout <duration>` | Duration alias for `--timeout-ms`; see [Timeout durations](#timeout-durations). |
 | `--timeout-ms` | Override the selected connection's or harness's timeout for this call |
 | `--user` / `--agent` / `--run` / `--channel` | Scope stamped on the proposal, as for `akm remember` (`scope_*` frontmatter). A scope the model writes is replaced by these flags (none given: removed), with one warning. |
 | `--project <name>` | Use this [project](#projects)'s write defaults (`write.user`, `agent`, `channel`, `metadata`, and `write.bundle` as the destination) instead of the one the working directory selects; `none` uses none. |

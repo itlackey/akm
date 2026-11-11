@@ -40,7 +40,7 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | --- | --- | --- |
 | `akm index` | Stable | `--export-vectors` and `--import-vectors` are Experimental for their first release; the vector file (`model`, `text_hash`, `embedding`) is their contract, the index file format stays internal. |
 | `akm search` | Stable | |
-| `akm curate` | Stable | |
+| `akm curate` | Stable | `--max-tokens` aliases the existing `--pack` budget and output. Both are opt-in; the unbudgeted default stays unchanged. Conflicting explicit budgets are rejected. |
 | `akm show` | Stable | `--outline` and `--lead` are additive aliases. `--max-tokens` bounds body fields on whole/exact/lead reads and reports estimation/truncation; legacy unbudgeted output is unchanged. |
 | `akm remember` | Stable | `--source`, `--description`, and `--expires` work independently of tags. Capture and enrichment processes are unchanged. |
 | `akm import` | Stable | |
@@ -94,6 +94,7 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | `akm doctor metrics` | Evolving | Reuses `metrics`; its report content, layout, and JSON payload remain Experimental. Improve-run report selection is not yet consolidated here. |
 | `akm doctor info` | Evolving | Reuses `info`, preserving its existing fields and broken-config recovery behavior; `learning` remains Experimental. |
 | `akm doctor log` | Evolving | Reuses the existing event-stream command and output. |
+| `akm doctor prompt` | Evolving | Reuses `improve --show-prompt`, preserving task, bundle, strategy and runner selection, output, and read-only behavior. The old form remains. |
 | `akm doctor judge` | Evolving | Reuses registered judges, runner selection, JSON stdin, and versioned verdicts; invoking a judge can make model calls. |
 | `akm health` | Deprecated | Removed in 0.11: use `akm doctor` for checks and `doctor metrics` for reporting. Current exit codes are Evolving; report content and rendered `md` layout are Experimental. |
 | `akm metrics` | Deprecated | Removed in 0.11: use `akm doctor metrics`. Current report content and JSON shape are Experimental. |
@@ -212,7 +213,10 @@ old machine output. Branch-specific scheduler/storage migrations remain in 0.11.
 the command tables. Keep `task enable`, `task disable`, and the scheduler-facing
 `task dispatch` introduced on the 0.11 branch.
 **Keep duration shortcuts:** `3M` means 90 days, `3m` means three minutes;
-timeouts adopt the same conventions instead of requiring millisecond arithmetic.
+The additive `--timeout` alias accepts positive integer milliseconds or `ms`,
+`s`, `m`, `h`, `d`, `M` durations wherever `--timeout-ms` already applies.
+Existing timeout scopes and defaults remain; equal explicit budgets are accepted,
+and conflicting values are rejected.
 
 ### Learning: change the interface, preserve the processes
 

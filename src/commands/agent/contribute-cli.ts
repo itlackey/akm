@@ -24,7 +24,7 @@
 
 import fs from "node:fs";
 import { defineCommand } from "citty";
-import { getStringArg, parsePositiveIntFlag } from "../../cli/parse-args";
+import { getStringArg, parsePositiveIntFlag, parseTimeoutFlags } from "../../cli/parse-args";
 import { RETIRED_ENGINE_ARG, SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
 import { EXIT_CODES, GLOBAL_OUTPUT_ARGS, output, runWithJsonErrors } from "../../cli/shared";
 import { loadConfig } from "../../core/config/config";
@@ -64,6 +64,10 @@ export const agentCommand = defineCommand({
       ...SELECTION_ARGS.model,
       description: `${SELECTION_ARGS.model.description}. Overrides the model specified in the agent asset.`,
     },
+    timeout: {
+      type: "string",
+      description: "Timeout as a duration (30s, 2m) or milliseconds; same scope as --timeout-ms",
+    },
     "timeout-ms": { type: "string", description: "Override the agent CLI timeout in milliseconds" },
     cwd: {
       type: "string",
@@ -72,7 +76,7 @@ export const agentCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const timeoutMs = parsePositiveIntFlag(args["timeout-ms"], "--timeout-ms");
+      const timeoutMs = parseTimeoutFlags(args.timeout, parsePositiveIntFlag(args["timeout-ms"], "--timeout-ms"));
 
       const config = loadConfig();
       const agentConfig = config;
