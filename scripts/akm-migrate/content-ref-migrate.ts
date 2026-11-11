@@ -7,11 +7,12 @@
  * in a writable bundle's text files is rewritten to the new one, under one backup directory per run. The old to new
  * map comes from the files themselves (each recognized asset's ref), so no index is needed. A spelling that
  * is now another file's live ref is left as written and listed ({@link ShadowedRef}). Only a file akm reads as an asset
- * is rewritten (an active reference); frozen corpora, captured results and other fixtures stay byte-for-byte. The pure rewrite is
+ * (and the live `index.md` and wiki `schema.md` navigation files) is rewritten (an active reference); frozen corpora, captured results and other fixtures stay byte-for-byte. The pure rewrite is
  * `./migrate/content-ref-planner.ts`.
  */
 
 import { randomUUID } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { detectAdapterId } from "../../src/core/adapter/detect-adapter";
@@ -92,6 +93,27 @@ function bundleDocuments(roots: readonly BundleRoot[]): { bundles: Map<string, s
   return { bundles, files };
 }
 
+/** The live structural files akm agents read but the adapter does not index: reserved `index.md`, wiki `schema.md`. `log.md` is history. */
+function isStructuralFile(root: string, filePath: string): boolean {
+  const relative = path.relative(root, filePath).split(path.sep).join("/");
+  return /(^|\/)index\.md$/i.test(relative) || /(^|\/)wikis\/[^/]+\/schema\.md$/.test(relative);
+}
+
+/** The git checkout each file belongs to, when it has one (a bundle root may be a subdirectory of a checkout). */
+function gitReconcile(filePaths: readonly string[], backupPath: string): string[] {
+  const byRoot = new Map<string, string[]>();
+  for (const filePath of filePaths) {
+    const top = spawnSync("git", ["-C", path.dirname(filePath), "rev-parse", "--show-toplevel"], { encoding: "utf8" });
+    if (top.status !== 0) continue;
+    const gitRoot = top.stdout.trim();
+    byRoot.set(gitRoot, [...(byRoot.get(gitRoot) ?? []), path.relative(gitRoot, filePath)]);
+  }
+  return [...byRoot].map(
+    ([gitRoot, paths]) =>
+      `${gitRoot} is a git checkout with uncommitted migration edits (${paths.join(", ")}); review them with \`git -C ${gitRoot} status\` and \`git -C ${gitRoot} diff\` (a rewritten untracked file does not show in diff), then commit them or restore the originals with \`git -C ${gitRoot} restore ${paths.join(" ")}\` (for an untracked file, copy it back from ${backupPath}); \`akm bundle update\` refuses an update that would overwrite them.`,
+  );
+}
+
 interface PlannedFile {
   readonly replacement: FileReplacement;
   readonly refs: number;
@@ -100,7 +122,6 @@ interface PlannedFile {
 function plan(): {
   readonly files: PlannedFile[];
   readonly shadowed: ShadowedRef[];
-  readonly gitRoots: string[];
 } {
   resetConfigCache();
   const roots = bundleRoots(loadConfig());
@@ -108,10 +129,9 @@ function plan(): {
   const rewriter: ContentRefRewriter = contentRefRewriter(documents.bundles);
   const files: PlannedFile[] = [];
   const seen = new Set<string>();
-  const gitRoots = new Set<string>();
   for (const root of roots.filter((candidate) => candidate.writable)) {
     for (const filePath of textFiles(root.root)) {
-      if (seen.has(filePath) || !documents.files.has(filePath)) continue;
+      if (seen.has(filePath) || !(documents.files.has(filePath) || isStructuralFile(root.root, filePath))) continue;
       seen.add(filePath);
       const before = fs.readFileSync(filePath);
       const text = before.toString("utf8");
@@ -119,14 +139,13 @@ function plan(): {
       if (!Buffer.from(text, "utf8").equals(before)) continue;
       const { text: rewritten, count } = rewriter.rewrite(text);
       if (count === 0) continue;
-      if (fs.existsSync(path.join(root.bundleRoot, ".git"))) gitRoots.add(root.bundleRoot);
       files.push({
         replacement: { filePath, before, after: Buffer.from(rewritten, "utf8"), mode: fs.statSync(filePath).mode & 0o777 },
         refs: count,
       });
     }
   }
-  return { files: files.sort((a, b) => a.replacement.filePath.localeCompare(b.replacement.filePath)), shadowed: [...rewriter.shadowed], gitRoots: [...gitRoots] };
+  return { files: files.sort((a, b) => a.replacement.filePath.localeCompare(b.replacement.filePath)), shadowed: [...rewriter.shadowed] };
 }
 
 function summarize(planned: ReturnType<typeof plan>): ContentRefsSummary {
@@ -166,6 +185,7 @@ export function applyContentRefsMigration(): ContentRefsMigrationStatus {
         ? { ...file, status: "skipped", reason: "it changed after it was planned, so it was left as it is; run again to plan it afresh" }
         : file,
     );
+    const reconcile = gitReconcile(replaced, backupPath);
     return {
       schemaVersion: 1,
       status: conflicts.length > 0 ? "ready" : "current",
@@ -176,14 +196,7 @@ export function applyContentRefsMigration(): ContentRefsMigrationStatus {
         skipped: conflicts.length,
         applied: replaced.length,
         backupPath,
-        ...(replaced.length > 0 && planned.gitRoots.length > 0
-          ? {
-              reconcile: planned.gitRoots.map(
-                (root) =>
-                  `${root} is a git bundle with uncommitted migration edits; review them with \`git -C ${root} diff\`, then commit them or restore the originals from ${backupPath}, before \`akm bundle update\` (which refuses a dirty writable checkout).`,
-              ),
-            }
-          : {}),
+        ...(reconcile.length > 0 ? { reconcile } : {}),
       },
     };
   });

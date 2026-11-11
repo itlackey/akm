@@ -154,17 +154,36 @@ describe("the step", () => {
     expect(fs.readFileSync(frozen).equals(before)).toBe(true);
   });
 
+  test("live index.md and wiki schema.md are rewritten; log.md, README.md and frozen JSON are not", async () => {
+    configure();
+    write("wikis/articles/raw/example.md", "---\ntitle: example\n---\nRaw.\n");
+    const line = "See wiki:articles/raw/example.\n";
+    const index = write("wikis/articles/index.md", line);
+    const schema = write("wikis/articles/schema.md", line);
+    const log = write("wikis/articles/log.md", line);
+    const readme = write("README.md", line);
+    const frozen = write("eval/frozen/inputs.json", '{"p":"wiki:articles/raw/example"}\n');
+
+    await runMigration({ apply: true });
+
+    expect(fs.readFileSync(index, "utf8")).toBe("See wikis/articles/raw/example.\n");
+    expect(fs.readFileSync(schema, "utf8")).toBe("See wikis/articles/raw/example.\n");
+    for (const file of [log, readme]) expect(fs.readFileSync(file, "utf8")).toBe(line);
+    expect(fs.readFileSync(frozen, "utf8")).toBe('{"p":"wiki:articles/raw/example"}\n');
+  });
+
   test("a rewrite in a git bundle names the bundle and the next steps", async () => {
     configure();
     write("wikis/articles/schema.md", "---\ntitle: schema\n---\nSchema.\n");
     write("wikis/articles/raw/example.md", "---\ntitle: example\n---\nRaw.\n");
     write("wikis/articles/pages/a.md", "---\ntitle: a\n---\nSee wiki:articles/raw/example.\n");
-    fs.mkdirSync(path.join(stash(), ".git"));
+    expect(Bun.spawnSync(["git", "init", "-q", stash()]).exitCode).toBe(0);
 
     const plan = await runMigration({ apply: true });
 
     expect(plan.assetContentRefs?.reconcile).toHaveLength(1);
     expect(plan.assetContentRefs?.reconcile?.[0]).toContain(stash());
+    expect(plan.assetContentRefs?.reconcile?.[0]).toContain("git -C");
     expect(plan.assetContentRefs?.reconcile?.[0]).toContain("akm bundle update");
   });
 
