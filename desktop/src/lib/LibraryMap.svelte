@@ -18,7 +18,9 @@
     linkLabel,
     linksOf,
   } from "./graph-model";
+  import { filesHref } from "./library-files-model";
   import { searchHref } from "./library-model";
+  import { workspace } from "./state/workspace.svelte";
 
   // biome-ignore lint/suspicious/noExplicitAny: the renderer is untyped presentation code.
   type View = any;
@@ -263,6 +265,15 @@
 
 <nav class="library-views" aria-label="Library views" data-sveltekit-reset="false">
   <a href="/library/search">Search</a>
+  <a
+    href={filesHref({
+      bundle:
+        workspace.bundles.find((bundle) => bundle.default)?.name ??
+        workspace.bundles.find((bundle) => bundle.enabled)?.name ??
+        "",
+      path: "",
+    })}>Files</a
+  >
   <a href="/library/map" aria-current="page">Map</a>
 </nav>
 <div class="map-page">

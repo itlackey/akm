@@ -253,6 +253,12 @@ test("built desktop UI: each section's happy path and one refusal", { timeout: 2
   await t.test("Library: the map draws every asset, and its table lists them with a link to each", async () => {
     await go(page, "/library/map");
     await expect(page.getByRole("heading", { name: "Library map", exact: true })).toBeVisible();
+    // The map keeps Library's tabs.
+    await expect(page.getByRole("navigation", { name: "Library views" }).getByRole("link")).toHaveText([
+      "Search",
+      "Files",
+      "Map",
+    ]);
     await expect(page.getByLabel(/^Map of \d+ assets/)).toBeVisible();
     await page.getByRole("button", { name: "Table", exact: true }).click();
     const table = page.getByRole("table", { name: /assets, most shown first/ });
