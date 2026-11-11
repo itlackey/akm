@@ -425,3 +425,50 @@ test("usage command discovery honors inherited config value arity between groups
   ]);
   expect(JSON.stringify(usage)).not.toContain("PRIVATE_FILE");
 });
+
+test("usage observers preserve a host-owned once signal handler and its asynchronous cleanup", async () => {
+  const storage = sandbox();
+  const marker = path.join(storage.root, "host-cleanup");
+  const entry = path.join(storage.root, "host-entry.ts");
+  fs.mkdirSync(path.join(storage.stashDir, "env"), { recursive: true });
+  fs.writeFileSync(path.join(storage.stashDir, "env/cancel.env"), "EXAMPLE=value\n");
+  fs.writeFileSync(
+    entry,
+    [
+      `import { runCli } from ${JSON.stringify(CLI)};`,
+      'import fs from "node:fs";',
+      'process.once("SIGTERM", () => {',
+      `  setTimeout(() => { fs.writeFileSync(${JSON.stringify(marker)}, "cleaned"); process.exitCode = 23; }, 50);`,
+      "});",
+      "await runCli();",
+    ].join("\n"),
+  );
+  const child = spawn(
+    "bun",
+    [entry, "env", "run", "env/cancel", "--", "bun", "-e", "console.log('READY');setTimeout(()=>{},1000)"],
+    {
+      env: { ...process.env },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("child did not start")), 10000);
+      child.stdout.on("data", (data) => {
+        if (String(data).includes("READY")) {
+          clearTimeout(timer);
+          resolve();
+        }
+      });
+      child.once("error", reject);
+    });
+    const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) =>
+      child.once("exit", (code, signal) => resolve({ code, signal })),
+    );
+    child.kill("SIGTERM");
+    expect(await exited).toEqual({ code: 23, signal: null });
+    expect(fs.readFileSync(marker, "utf8")).toBe("cleaned");
+  } finally {
+    child.kill("SIGKILL");
+  }
+});

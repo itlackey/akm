@@ -29,6 +29,7 @@
  */
 
 import { spawn as runtimeSpawn } from "../runtime";
+import { hasSignalOwner } from "./signal-observers";
 
 /** Minimum subprocess surface we need. The runtime spawn returns this shape. */
 export interface SpawnedSubprocess {
@@ -231,7 +232,7 @@ function registerLiveGroupChild(child: LiveGroupChild): () => void {
 }
 
 function installSignalGuard(): void {
-  if (!signalGuardHandlers && process.listenerCount("SIGINT") === 0 && process.listenerCount("SIGTERM") === 0) {
+  if (!signalGuardHandlers && !hasSignalOwner("SIGINT") && !hasSignalOwner("SIGTERM")) {
     const handlers: Array<[NodeJS.Signals, () => void]> = [];
     for (const signal of ["SIGINT", "SIGTERM"] as const) {
       const handler = (): void => {

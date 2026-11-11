@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { getDataDir } from "../core/paths";
 import { isKnownType } from "../core/recognition-util";
+import { hasSignalOwner, observeSignal } from "../core/signal-observers";
 import { type Database, openDatabase } from "../storage/database";
 import { cittyComparableName, findCittyTopLevelCommandIndex, toAliasArray } from "./invocation";
 
@@ -320,8 +321,8 @@ export function startUsage(root: UsageCommand, raw: readonly string[], version: 
     done = true;
     if (activeResolution === resolve) activeResolution = undefined;
     process.removeListener("exit", onExit);
-    process.removeListener("SIGINT", onInt);
-    process.removeListener("SIGTERM", onTerm);
+    stopInt();
+    stopTerm();
     if (!stored) return;
     const duration = Math.max(0, Date.now() - started);
     const exitCode = signal ? (signal === "SIGINT" ? 130 : 143) : Number(process.exitCode ?? 0);
@@ -374,15 +375,15 @@ export function startUsage(root: UsageCommand, raw: readonly string[], version: 
   };
   const onSignal = (received: "SIGINT" | "SIGTERM") => {
     signal = received;
-    const otherListeners = process.listenerCount(received) > 0;
+    const otherListeners = hasSignalOwner(received);
     finish();
     if (!otherListeners) process.kill(process.pid, received);
   };
   const onInt = () => onSignal("SIGINT");
   const onTerm = () => onSignal("SIGTERM");
   process.once("exit", onExit);
-  process.once("SIGINT", onInt);
-  process.once("SIGTERM", onTerm);
+  const stopInt = observeSignal("SIGINT", onInt);
+  const stopTerm = observeSignal("SIGTERM", onTerm);
   return finish;
 }
 
