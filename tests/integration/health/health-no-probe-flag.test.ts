@@ -86,13 +86,13 @@ const targetsOf = (stdout: string): ConnectionsAndHarnessesCheck =>
     (c) => c.name === "connections-and-harnesses",
   ) as ConnectionsAndHarnessesCheck;
 
-describe("akm health --no-probe (#914)", () => {
+describe.each(["health", "doctor"])("akm %s --no-probe (#914)", (command) => {
   test.each([false, true])("reachability remains on by default (read-only=%s)", async (readOnly) => {
     if (readOnly) openStateDatabase().close();
     const urls: string[] = [];
     const { code, stdout } = await withNoRealCrontab(() =>
       withMockedFetch(
-        () => runCliCapture(["health", ...(readOnly ? ["--read-only"] : []), "--format", "json"]),
+        () => runCliCapture([command, ...(readOnly ? ["--read-only"] : []), "--format", "json"]),
         (url) => {
           urls.push(url);
           return modelsResponse();
@@ -111,7 +111,7 @@ describe("akm health --no-probe (#914)", () => {
     if (readOnly) openStateDatabase().close();
     let fetchCalls = 0;
     const { code, stdout } = await withMockedFetch(
-      () => runCliCapture(["health", ...(readOnly ? ["--read-only"] : []), "--no-probe", "--format", "json"]),
+      () => runCliCapture([command, ...(readOnly ? ["--read-only"] : []), "--no-probe", "--format", "json"]),
       () => {
         fetchCalls += 1;
         return modelsResponse();

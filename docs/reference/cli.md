@@ -90,7 +90,7 @@ Every command exits with one of the following codes:
 | 0 | Success | — |
 | 1 | Not found or command-reported failure | `NotFoundError`, command result |
 | 2 | Usage / bad input | `UsageError` |
-| 4 | Health warning (`akm health` only) | — |
+| 4 | Health warning (`akm doctor` or `akm health`) | — |
 | 70 | Internal / unclassified error | unexpected throw |
 | 75 | Transient — retry shortly (sysexits `EX_TEMPFAIL`); another akm process holds a lock or is writing `state.db` or `index.db` right now, not a bad command line | `TransientError` |
 | 78 | Configuration error | `ConfigError` |
@@ -380,6 +380,38 @@ aside instead of piling up behind a longer rebuild (the shipped
 index, generated deterministically. In text mode, the default CLI UI shows a
 spinner with processed-versus-total source counts; structured output modes
 (`json`, `yaml`, `jsonl`) stay clean and machine-readable.
+
+### doctor
+
+Inspect runtime health and developer diagnostics. These additive 0.10 entry points
+reuse the existing handlers, flags, output shapes and exit codes:
+
+| Command | Existing 0.10 command | Purpose |
+| --- | --- | --- |
+| `akm doctor` | [`akm health`](#health) | Runtime health, durable state and improve telemetry |
+| `akm doctor metrics` | [`akm metrics`](#metrics) | Read-only usage and outcome reports |
+| `akm doctor info` | [`akm info`](#info) | Capabilities, configuration and index state; still reports when config is broken |
+| `akm doctor log` | [`akm log`](#log) | Filter the local event stream |
+| `akm doctor judge` | [`akm judge`](#judge) | List, inspect and evaluate the existing model judges |
+
+```sh
+akm doctor --read-only --no-probe
+akm doctor metrics --since 7d
+akm doctor info
+akm doctor log --limit 20
+akm doctor judge --list
+akm doctor judge reflect.quality --schema
+```
+
+Bare `doctor` keeps health's defaults: probes run and state may be initialized or
+migrated. Use `--read-only --no-probe` for an offline inspection without state
+writes. Health statuses retain exit codes 0 (pass), 4 (warning) and 1 (failure).
+
+All existing top-level commands remain available in 0.10. Health's reporting flags
+(`doctor --report`, `--group-by`, `--window-compare`, `--windows` and `--since`)
+are transitional aliases in 0.10; all reporting is moving under doctor commands in
+0.11. The full flag and result contracts remain documented in the linked sections.
+This regrouping does not change judge or learning behavior.
 
 ### info
 
