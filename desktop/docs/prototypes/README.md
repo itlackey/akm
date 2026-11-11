@@ -4,11 +4,9 @@ Four standalone pages that show what Desktop's visualizations could be, and the 
 Each page is one self-contained HTML file with no dependencies: open it in a browser. The data in them
 is synthetic, shaped like akm's real tables; they read nothing from akm and are not part of the app.
 
-What has shipped from this, and what each remaining view is waiting for, is in
-[visualizations](../visualizations.md). In short: a first run timeline (tasks, improve and index, no
-workflow rows, no zoom) and the link map on an asset's Related tab are in Desktop. The library map,
-the workflow run trace and the activity replay are not, because akm has no operation that returns
-their data yet.
+All four views have since been built in Desktop, from the akm operations the analysis below asks for;
+[visualizations](../visualizations.md) describes them as shipped and lists their limits. The run
+timeline in the app has no zoom, and its marks have no width. The analysis is kept as written.
 
 ## Recommendation
 
