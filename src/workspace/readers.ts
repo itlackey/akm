@@ -8,10 +8,7 @@ import { isDeepStrictEqual } from "node:util";
 import { resolveStashDir } from "../core/common";
 import { type AkmConfig, getConfigValueSource, loadConfig, sanitizeConfigForWrite } from "../core/config/config";
 import { UsageError } from "../core/errors";
-import { getStateDbPath, listPendingStateMigrations } from "../core/state-db";
 import { resolveWorkingStashTarget } from "../sources/write-source";
-import { type Database, openDatabase } from "../storage/database";
-import { applyReadonlyPragmas } from "../storage/sqlite-pragmas";
 
 export { withReadonlyStateDb } from "../core/state-db";
 
