@@ -100,8 +100,7 @@ function snapshotRoots(roots: string[]): string[] {
       const full = path.join(current, entry.name);
       // roots[2] is XDG_DATA_HOME. Exempt only the CLI usage file itself,
       // preserving checks for state.db, sidecars, logs, and every other artifact.
-      if (root === roots[2] && path.relative(root, full) === path.join("akm", "metrics.db") && entry.isFile())
-        continue;
+      if (root === roots[2] && path.relative(root, full) === path.join("akm", "metrics.db") && entry.isFile()) continue;
       const relative = `${roots.indexOf(root)}:${path.relative(root, full)}`;
       if (entry.isDirectory()) {
         entries.push(`${relative}/`);
