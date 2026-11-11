@@ -63,7 +63,9 @@ after a newer line's gets that line's tag instead, `next-0.10`. Versions sort
 by month and then `NN`, so semver ranges and `akm upgrade`
 order them correctly across months and years. The patch number no longer says
 how big a change is: read the CHANGELOG, which still marks breaking changes. The
-0.9 line keeps `0.9.N`, and `0.11` restarts on the same scheme.
+0.9 line keeps `0.9.N`; the planned 0.11 line returns to plain semver
+(`0.11.0`, `0.11.1`), as described in the
+[draft migration guide](docs/migration/v0.10-to-v0.11.md).
 
 The 0.10 daily alphas (`0.10.26101001-alpha` through `0.10.26101202-alpha`) used
 an 8-digit patch, `YYMMDDNN`. Semver compares the patch numerically, so every
@@ -85,6 +87,132 @@ please file it.
 | **Evolving** | Available across minor releases, but flag names, prompts, and payload shapes may shift. Breaking changes are flagged in the CHANGELOG. |
 | **Experimental** | Subject to change without notice. Not recommended for scripted use. Some experimental surfaces additionally require an explicit opt-in — see [`akm improve` autonomy](#akm-improve-autonomy). |
 | **Internal** | Not a public interface. May change or disappear in any release, without a CHANGELOG note. Listed here only so you can recognize it. |
+
+## 0.10 additions and scheduled 0.11 removals
+
+This is the release schedule, not a claim that replacements already work in this
+build. Ship compatible fixes and additive replacements in **0.10.x**; deprecate
+the old interfaces but keep their behavior working through the entire series.
+Remove the listed old commands, flags, and config paths in **0.11.0**, alongside
+the listed incompatible default/result changes. Do not change existing 0.10
+invocations, stdout schemas, or input interpretation to introduce a replacement.
+This schedule governs the listed interfaces even where their current tier allows
+faster changes.
+The [draft migration guide](docs/migration/v0.10-to-v0.11.md)
+tracks availability, argument and output mappings, behavior changes, and remaining
+`TODO(0.11:...)` work. Update it as the replacements land.
+
+### Execution and diagnostics: add in 0.10.x, remove old paths in 0.11
+
+| Retire in 0.11 | Replacement introduced in 0.10.x |
+| --- | --- |
+| `akm agent <ref>` | `akm run <ref>` |
+| `akm command run <ref>` / `akm command <ref>` | `akm run <ref>` |
+| `akm task run <id>` | `akm run <task-ref>`; preserve bundle identity and task inputs |
+| `akm workflow run <ref>` | `akm run <ref>`; resume/status remain lifecycle operations |
+| `akm health`, `akm task doctor` | `akm doctor`; reporting moves to `doctor metrics` |
+| `akm metrics`, `akm improve report`, `search --by-usage` | `akm doctor metrics` |
+| `akm improve judge` / `akm judge` | `akm doctor judge` |
+| `akm improve --show-prompt` | `akm doctor prompt` |
+| `akm info`, `akm log` | `akm doctor info`, `akm doctor log` |
+| `akm task explain`, `akm workflow plan` | `akm doctor explain <ref>` |
+
+The diagnostic family is an explicitly evolving power-user surface. Its detailed
+flags and reports may change faster than the core CLI; error/exit conventions,
+credential redaction, and any machine fields promised to plugins or automation
+still have explicit contracts. Ordinary operation previews such as `--dry-run`
+stay with their commands.
+
+### Other replacements: add in 0.10.x, remove old surface in 0.11
+
+Introduce all replacements below during 0.10.x with an overlap period. Exact
+first-supporting versions and unresolved argument mappings belong in the migration
+guide; all old surfaces in the left column are scheduled for 0.11 removal.
+
+| Remove in 0.11 | Add or prepare in 0.10.x |
+| --- | --- |
+| `task add` | Explicit typed-task import; retain `task enable`/`disable` for host activation and unchanged legacy `task add` behavior |
+| `task sync`, `task prune` | Explicit `doctor scheduler sync` maintenance and migration cleanup of owned orphan entries; no separate prune command |
+| `task history` | Per-run history through `doctor log`; aggregate usage through `doctor metrics` |
+| `clone` | Extend `import` for asset refs/typed assets and clone destinations without reinterpreting existing document inputs |
+| Search `--include-proposed`, `--include-sessions` | Repeatable `--include key=value` to relax specified default exclusions while explicit filters remain in force |
+| Show `--context`, `--max-chars`, and `--detail` | Exact reads by default, optional `--lead`, independent `--max-tokens`, and `--outline`; see the [complete argument review](docs/reviews/cli-surface-recommendations-2026-11-11.md#show-argument-review) |
+
+Also ship compatible metadata/budget fixes and the shared `--config` override in
+0.10.x, preserving old location resolution when that override is absent. Update
+owned consumers after replacements ship; document deprecations without changing
+old machine output. Branch-specific scheduler/storage migrations remain in 0.11.
+
+`task run`, `task doctor`, and `task explain` follow the existing run/doctor
+mapping above. Keep `task enable`, `task disable`, and `task dispatch`.
+**Keep duration shortcuts:** `3M` means 90 days, `3m` means three minutes;
+timeouts adopt the same conventions instead of requiring millisecond arithmetic.
+
+### Agreed constraint: learning interfaces, unchanged internals
+
+For both 0.10.x and 0.11, cleanup of improve and related automation/learning is
+limited to CLI/configuration boundaries. Preserve the existing processes,
+effective defaults, prompts/model requests, eligibility, judgment, acceptance,
+publication, and evaluation evidence. The earlier proposals for proposal-only
+defaults, a replacement strategy engine, and a unified autonomy policy are withdrawn.
+
+Keep demonstrated product controls on the supported surface, move controls with
+demonstrated evaluation/research value under `experimental`, and remove controls
+without demonstrated value only when their removal preserves process behavior.
+Migrate active research overrides without changing their values or precedence;
+do not move every existing knob into `experimental` indiscriminately. Experimental
+tuning overrides must retain existing defaults and the separate
+`experimental.improveAutonomy` semantics. Exact key mappings and parity checks
+remain completion work in the migration guide. Add the experimental aliases and
+migration support in 0.10.x, keeping old keys/flags working with identical effective
+settings; remove their old public paths in 0.11 after parity is verified.
+
+### Agreed addition: command and argument usage metrics
+
+0.10.x adds local, default-on measurement of every CLI command and supplied
+argument, including help and unsuccessful attempts, for future keep/cut decisions.
+Record argument identities and safe values, not raw argv or sensitive payloads;
+separate explicit choices from defaults and AKM flags from child arguments.
+Report version, source, instance, outcomes, and usage combinations through
+`doctor metrics`, with a stable export for lab analysis and visible coverage gaps.
+Collection stays outside learning feedback/ranking and does not change process
+behavior. Preserve the collected baseline through the 0.11 storage migration;
+the migration guide tracks the data contract, retention, and verification.
+
+### Remaining scheduled 0.11 removals and breaking changes
+
+The reviewed 0.11 branch already removes location environment variables, implicit
+bundle selection, old config readers, obsolete flags, duplicate result keys, and
+deep package imports, and replaces per-task OS scheduler entries. These are
+unreleased branch changes; their replacements are in the migration guide's
+[branch-change inventory](docs/migration/v0.10-to-v0.11.md#existing-011-branch-changes).
+
+The following removals and cutovers are scheduled for **0.11.0**. Add compatible
+replacement controls in 0.10.x; keep old defaults, result shapes, and spellings
+until 0.11. Exact mappings still marked TODO are release work, not permission to
+remove a research capability or skip its replacement.
+
+| Remove/change in 0.11 | Replacement and 0.10.x preparation |
+| --- | --- |
+| General YAML output; general Markdown/JSONL support | JSON/text generally; Markdown for reports and JSONL for useful streaming cases |
+| Global `--output`, `--detail` | Shell redirection; add command-specific limits, budgets, and outlines in 0.10.x |
+| `remember --auto`, `--enrich` | Audit and add experimental replacements for demonstrated research uses in 0.10.x; remove old flags in 0.11, preserving enrichment internals |
+| `remember --show-similar` | Separate retrieval operation |
+| Old public paths for custom-strategy definitions and research-only process knobs | Add experimental aliases in 0.10.x feeding the unchanged strategy engine; remove old paths in 0.11 |
+| `improve --require-feedback-signal` | Add an experimental setting in 0.10.x with equivalent scope, precedence, and eligibility |
+| `improve --json-to-stdout` | Keep the flag and stdout contract in 0.10.x; expose equivalent run data through ordinary JSON output at the 0.11 cutover |
+| Overlapping bulk proposal controls | Add equivalent replacement entry points in 0.10.x; enumerate retired controls in the guide and keep explicit-ID accept/reject |
+| `upgrade --next` | Make explicit `--channel` selection consistent across CLI and plugins in 0.10.x |
+| No-ref interactive `agent` launch | Invoke the agent's own CLI |
+| `curate --pack` and the unpacked default | Add opt-in `--max-tokens` in 0.10.x; switch the default to bounded packed context and remove `--pack` in 0.11 |
+| `lint --fail-on-flagged` | Nonzero exit for validation errors by default |
+| `--timeout-ms` | Duration-based `--timeout`, introduced alongside it in 0.10.x |
+| Invalid-value fallback and ignored incompatible legacy flags, including simultaneous `--quiet`/`--verbose` | Validate new interfaces in 0.10.x; tighten legacy behavior in 0.11 |
+| Session extraction's source-harness `--type` | Add a distinct source selector in 0.10.x; retire the overloaded spelling in 0.11 |
+
+Before release, complete the exact mappings and synchronize this notice, the
+[recommendations](docs/reviews/cli-surface-recommendations-2026-11-11.md), and the
+migration guide. This notice does not change today's command tiers below.
 
 ## Command tier index
 
