@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test, { after } from "node:test";
@@ -606,6 +606,100 @@ test("a CLI that does not run is repaired only with consent and only where Deskt
   const other = await hostFixture();
   other.manager.start("install-cli", undefined, undefined, { consent: true });
   await other.manager.pending;
-  assert.match(other.manager.snapshot().error, /\/fixture\/bin\/akm, outside ~\/\.local\/bin/);
+  assert.match(
+    other.manager.snapshot().error,
+    /\/fixture\/bin\/akm, not as a standalone binary Desktop put in ~\/\.local\/bin/,
+  );
   assert.ok(!other.calls.some((call) => path.basename(call.file) === "bash"));
+});
+
+test("a link in the install directory is another installer's: never Desktop's to replace, and a non-standalone akm is not managed (#1609-12)", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "akm-link-"));
+  temporary.push(home);
+  const target = path.join(home, ".local/bin/akm");
+  await mkdir(path.dirname(target), { recursive: true });
+  await writeFile(path.join(home, "real-akm"), "elsewhere");
+  await symlink(path.join(home, "real-akm"), target);
+  const calls = [];
+  const manager = new HostTools({
+    home,
+    env: { HOME: home, PATH: "/fixture/bin" },
+    platform: "linux",
+    desktopVersion: "0.10.261117",
+    find: async (name) => (name === "akm" ? target : undefined),
+    fetcher: async () => ({ ok: true, text: async () => "#!/usr/bin/env bash\n" }),
+    run: async (file, args) => {
+      calls.push([file, ...args]);
+      if (args[0] === "--version") throw new Error("broken");
+      return "{}";
+    },
+  });
+  manager.start("install-cli", undefined, undefined, { consent: true });
+  await manager.pending;
+  assert.equal(manager.snapshot().cliManaged, false);
+  assert.match(manager.snapshot().error, /installer that owns it/);
+  assert.ok(!calls.some((call) => path.basename(call[0]) === "bash"));
+  // A regular file that akm itself reports as a package-manager install is not Desktop's either.
+  const regular = await hostFixture();
+  await mkdir(path.join(regular.home, ".local/bin"), { recursive: true });
+  await writeFile(path.join(regular.home, ".local/bin/akm"), "x");
+  regular.manager.find = async () => path.join(regular.home, ".local/bin/akm");
+  regular.manager.state.upgrade = { installMethod: "npm" };
+  await regular.manager.inventory(await regular.manager.environment());
+  assert.equal(regular.manager.state.cliManaged, false);
+  regular.manager.state.upgrade = { installMethod: "binary" };
+  await regular.manager.inventory(await regular.manager.environment());
+  assert.equal(regular.manager.state.cliManaged, true);
+});
+
+test("a switch checks the target channel afterwards, a timed-out check is not unsettled, output over the cap is, and a new check clears the old action (#1609)", async () => {
+  const f = await hostFixture();
+  f.manager.start("switch-channel", undefined, "latest");
+  await f.manager.pending;
+  assert.equal(f.manager.snapshot().error, undefined);
+  const last = f.calls
+    .filter((call) => call.args[0] === "upgrade")
+    .at(-1)
+    .args.join(" ");
+  assert.equal(last, "upgrade --check --format json");
+  f.manager.start("switch-channel", undefined, "next");
+  await f.manager.pending;
+  assert.equal(
+    f.calls
+      .filter((call) => call.args[0] === "upgrade")
+      .at(-1)
+      .args.join(" "),
+    "upgrade --check --next --format json",
+  );
+  assert.ok(f.manager.snapshot().action);
+  f.manager.start("check");
+  assert.equal(f.manager.snapshot().action, undefined, "the earlier action's outcome lines go when a new check starts");
+  await f.manager.pending;
+  let hang = true;
+  const g = await hostFixture({
+    extra: (args) => {
+      if (hang && args.includes("--check"))
+        throw Object.assign(new Error("timed out"), { killed: true, code: "ETIMEDOUT" });
+      return undefined;
+    },
+  });
+  g.manager.start("check");
+  await g.manager.pending;
+  assert.equal(g.manager.snapshot().unsettled, undefined, "a read-only check changes nothing, so nothing is unsettled");
+  hang = false;
+  g.manager.start("upgrade-cli");
+  await g.manager.pending;
+  assert.equal(g.manager.snapshot().error, undefined);
+});
+
+test("a command that floods its output is stopped and reported as such (#1609-9)", async (t) => {
+  if (process.platform === "win32") return t.skip("POSIX shell");
+  await assert.rejects(
+    runHost("/bin/sh", ["-c", "head -c 6000000 /dev/zero | tr '\\0' x"], {
+      env: process.env,
+      home: os.tmpdir(),
+      timeout: 20_000,
+    }),
+    (error) => error.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" && error.killed === true,
+  );
 });

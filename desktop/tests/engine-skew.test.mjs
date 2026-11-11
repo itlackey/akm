@@ -7,8 +7,10 @@ import test from "node:test";
 import {
   classifyEngineSkew,
   compareVersions,
+  holdReason,
   hostUpgradeOutrunsDesktop,
   sameReleaseLine,
+  skewAdvice,
 } from "../src/lib/engine-skew.ts";
 
 test("versions order by number, and a stage release is older than its stable release", () => {
@@ -47,4 +49,31 @@ test("a patch difference inside one release line is told apart from a different 
   assert.equal(sameReleaseLine("0.11.261201", "0.10.261117"), false);
   assert.equal(sameReleaseLine("0.10.261117", undefined), false);
   assert.equal(sameReleaseLine("0.10.261117", "not a version"), false);
+});
+
+test("a compatible patch difference is informational, an incompatible line names its remedy (#1609-11)", () => {
+  const patch = skewAdvice("0.10.261117", "0.10.261110");
+  assert.equal(patch.kind, "info");
+  assert.match(patch.text, /same release line, so nothing needs doing/);
+  // Another release line: the index may be incompatible, so the text names the remedy for when akm refuses.
+  const older = skewAdvice("0.11.261201", "0.10.261117");
+  assert.equal(older.kind, "act");
+  assert.match(older.text, /If the library index changed, the CLI will ask you to upgrade/);
+  const newer = skewAdvice("0.10.261117", "0.11.261201");
+  assert.equal(newer.kind, "act");
+  assert.match(newer.text, /update AKM Desktop/);
+  assert.equal(skewAdvice("0.10.261117", "0.10.261117").kind, "none");
+  assert.equal(skewAdvice("0.10.261117", undefined).kind, "none");
+});
+
+test("a release newer than the engine is held with its reason, and one the Desktop channel will not offer says so (#1609-11)", () => {
+  assert.equal(holdReason("0.10.261117", "0.10.261110", "stable"), undefined);
+  assert.equal(holdReason("0.10.261117", undefined, "stable"), undefined);
+  const offered = holdReason("0.10.261117", "0.10.261201", "stable");
+  assert.match(offered, /newer than the AKM built into this app\. The CLI and its plugins are updated together/);
+  assert.match(offered, /no plugins-only update/);
+  assert.ok(!offered.includes("stable releases only"));
+  const hidden = holdReason("0.10.261117", "0.11.261201-beta.1", "stable");
+  assert.match(hidden, /follows stable releases only, so it will not be offered to Desktop/);
+  assert.ok(!holdReason("0.10.261117", "0.11.261201-beta.1", "prerelease").includes("stable releases only"));
 });

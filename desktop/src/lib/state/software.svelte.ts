@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { api } from "../client";
-import { type HostHarness, type HostSnapshot, pluginChannel } from "../setup-model";
+import type { HostHarness, HostSnapshot } from "../setup-model";
 import { snapshotFeed, waitUntilIdle } from "../software-model";
 
 export type Harness = HostHarness & { path?: string };
@@ -142,10 +142,7 @@ export function watchSoftware() {
   let alive = true;
   void (async () => {
     await refreshSoftware();
-    if (alive && !software.data?.host.cli && software.data?.host.phase === "idle")
-      await actSoftware("check", {
-        channel: pluginChannel(software.data?.engine, software.data?.preferences?.pluginChannel),
-      });
+    if (alive && !software.data?.host.cli && software.data?.host.phase === "idle") await actSoftware("check");
   })();
   const timer = setInterval(() => alive && void refreshSoftware(), 2000);
   return () => {
