@@ -9,6 +9,7 @@
   import { libraryRead, typedLinks } from "./library-model";
   import type { Json } from "./types";
   import Icon from "./Icon.svelte";
+  import AssetMap from "./AssetMap.svelte";
   let {
     ref,
     links,
@@ -22,6 +23,7 @@
     onCompare?: (refs: string[]) => void;
   } = $props();
   let view = $state("connections"),
+    withSimilar = $state(false),
     scope = $state("all"),
     loading = $state(false),
     error = $state("");
@@ -43,6 +45,7 @@
     uses: "Uses",
   };
   const label = (value: string) => value.split("//").at(-1) ?? value;
+  const kindLabel = (kind: string) => kinds[kind] ?? kind.replaceAll("_", " ");
   async function similar() {
     controller?.abort();
     controller = new AbortController();
@@ -72,6 +75,7 @@
     aria-pressed={view === "connections"}
     onclick={() => choose("connections")}>Connections</button
   >
+  <button class:active={view === "map"} aria-pressed={view === "map"} onclick={() => choose("map")}>Link map</button>
   <button class:active={view === "similar"} aria-pressed={view === "similar"} onclick={() => choose("similar")}
     >Similar content</button
   >
@@ -85,7 +89,7 @@
     <section class="connection-group">
       <h4>
         {group.direction === "incoming" ? "Linked from" : "Links to"}
-        <span>{kinds[group.kind] ?? group.kind.replaceAll("_", " ")}</span>
+        <span>{kindLabel(group.kind)}</span>
       </h4>
       <ul class="related-list">
         {#each group.refs as target}
@@ -102,6 +106,34 @@
         </p>{/if}
     </section>
   {/each}
+{:else if view === "map"}
+  <div class="similar-toolbar">
+    <p class="muted small">
+      This asset in the middle, what links to it on the left and what it links to on the right. One step only: the links
+      of the assets shown are on their own pages.
+    </p>
+    <label class="map-option"
+      ><input
+        type="checkbox"
+        bind:checked={withSimilar}
+        onchange={() => {
+          if (withSimilar && !result && !loading) void similar();
+        }}
+      />Add similar content</label
+    >
+  </div>
+  {#if withSimilar && loading}<p class="state" role="status">Finding similar content…</p>{/if}
+  {#if withSimilar && error}<div class="notice notice-warn" role="alert">{error}</div>{/if}
+  {#if withSimilar && result?.note}<p class="muted small">{result.note}</p>{/if}
+  {#if !connections.length && !(withSimilar && result?.matches.length)}<p class="state">
+      No recorded connections for this asset.
+    </p>{:else}<AssetMap
+      {ref}
+      {connections}
+      similar={withSimilar ? (result?.matches ?? []) : []}
+      {kindLabel}
+      {href}
+    />{/if}
 {:else}
   <div class="similar-toolbar">
     <p class="muted small">Compare existing embeddings. A high score suggests overlap—not proof of duplication.</p>
@@ -224,6 +256,13 @@
   .similar-toolbar p {
     flex: 1;
     line-height: 1.6;
+  }
+  .similar-toolbar .map-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    white-space: nowrap;
   }
   .similar-toolbar label {
     font-size: 12px;

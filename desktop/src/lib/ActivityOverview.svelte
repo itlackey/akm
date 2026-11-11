@@ -10,9 +10,18 @@
   import ActivityChart from "./ActivityChart.svelte";
   import Icon from "./Icon.svelte";
   import { checkLabel, healthCheckAnchor } from "./home-model";
-  import { verticalBars, lines, pChartLine, eventStrip } from "./ui/chart-view.js";
+  import { verticalBars, lines, pChartLine, eventStrip, runTimeline } from "./ui/chart-view.js";
   import { weekStart } from "./ui/lib.js";
-  import { number, percent, duration, tokens, healthGroup, attentionItems } from "./activity-presenter";
+  import {
+    number,
+    percent,
+    duration,
+    tokens,
+    healthGroup,
+    attentionItems,
+    runTimelineRows,
+    type TimelineRun,
+  } from "./activity-presenter";
   import type {
     ActivityOverview,
     ActivityRetrieval,
@@ -111,6 +120,28 @@
   const processes = $derived(Object.entries(metrics?.llm.byProcess ?? {}).sort((a, b) => b[1].calls - a[1].calls));
   const tasks = $derived(metrics?.tasks.byTask ?? data.taskFailures ?? []);
   const runs = $derived(data.improveRuns);
+  // The timeline draws each listed task's recorded runs: one history read per task, the most akm returns in one call.
+  const HISTORY_LIMIT = 200;
+  let histories = $state<Record<string, ActivityTaskHistory>>({});
+  let historiesFor = 0;
+  $effect(() => {
+    if (mode !== "runs") return;
+    const listed = tasks.map((task) => task.taskId);
+    const since = metrics?.window.since ?? "30d";
+    const mine = ++historiesFor;
+    void Promise.all(
+      listed.map((id) =>
+        api<ActivityTaskHistory>("/tasks/history", { taskId: id, since, limit: String(HISTORY_LIMIT) })
+          .then((result) => [id, result] as const)
+          .catch(() => null),
+      ),
+    ).then((results) => {
+      if (mine === historiesFor) histories = Object.fromEntries(results.filter((entry) => entry !== null));
+    });
+  });
+  const timeline = $derived(runTimelineRows(data, histories));
+  const timelineSaid = (run: TimelineRun) =>
+    run.durationMs === null ? run.said : `${run.said}, took ${duration(run.durationMs)}`;
   async function inspectTask(id = taskId) {
     taskTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const mine = ++selection;
@@ -498,6 +529,49 @@
             onclick={() => inspectTask(task.taskId)}>Inspect failed task {task.taskId}</button
           >{/each}
       </div>
+    </section>{/if}
+  {#if timeline.length && metrics}<section id="run-timeline" class="activity-section">
+      <ActivityChart
+        id="activity-run-timeline"
+        heading="Run timeline"
+        rows={timeline.length}
+        description="When each recorded run started, on one clock. A circle finished, a triangle failed and a diamond ended another way. A gap is a time with no recorded run."
+        option={(token) =>
+          runTimeline(timeline, {
+            since: metrics.window.since,
+            until: metrics.window.until,
+            token,
+            say: timelineSaid,
+          })}
+        onSelect={(event) => {
+          const task = timeline.find((row) => row.name === (event.data as { row?: string } | undefined)?.row)?.task;
+          if (task) void inspectTask(task);
+        }}
+        ><table>
+          <caption>Runs on the timeline</caption><thead
+            ><tr><th>Row</th><th>Runs drawn</th><th>Failed</th><th>Latest run</th></tr></thead
+          ><tbody
+            >{#each timeline as row}<tr
+                ><th>{row.name}</th><td
+                  >{row.runs.length}{row.recorded !== null && row.recorded > row.runs.length
+                    ? ` of ${row.recorded} recorded`
+                    : ""}</td
+                ><td>{row.runs.filter((run) => run.tone === "fail").length}</td><td
+                  >{date(
+                    row.runs
+                      .map((run) => run.at)
+                      .sort()
+                      .at(-1),
+                  )}</td
+                ></tr
+              >{/each}</tbody
+          >
+        </table>
+        <p class="muted small">
+          Each task row holds at most its latest {HISTORY_LIMIT} runs; Improve and Index builds show the latest records akm
+          returns. Workflow runs are not listed: akm does not report them run by run yet.
+        </p></ActivityChart
+      >
     </section>{/if}
   <section id="automation" class="activity-section">
     <h2>Scheduled tasks</h2>

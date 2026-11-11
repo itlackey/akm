@@ -10,6 +10,7 @@ import {
   healthGroup,
   percent,
   rollingSearch,
+  runTimelineRows,
   tokens,
 } from "../src/lib/activity-presenter.ts";
 import { pageTitle } from "../src/lib/page-title.ts";
@@ -141,4 +142,51 @@ test("every view has a document title of its own, most specific part first", () 
   assert.equal(title("/projects"), "Projects · AKM Desktop");
   assert.equal(title("/projects/docs"), "docs · Projects · AKM Desktop");
   assert.equal(title("/projects/docs/edit"), "Edit docs · Projects · AKM Desktop");
+});
+
+test("the run timeline draws only what akm recorded inside the window, one row per kind of run", () => {
+  const window = { since: "2026-11-01T00:00:00.000Z", until: "2026-11-11T00:00:00.000Z" };
+  const data = {
+    health: null,
+    taskFailures: null,
+    metrics: {
+      window,
+      tasks: { runs: 3, failed: 1, byTask: [{ taskId: "tasks/sync" }, { taskId: "tasks/unread" }] },
+      index: { runs: 40, recent: [{ at: "2026-11-10T08:00:00.000Z", mode: "incremental", totalMs: 900 }] },
+    },
+    improveRuns: [
+      { startedAt: "2026-11-09T02:00:00.000Z", ok: false, durationMs: 60000 },
+      { startedAt: "2026-11-08T02:00:00.000Z", ok: null, durationMs: null },
+      { startedAt: "2026-10-20T02:00:00.000Z", ok: true, durationMs: 1000 },
+    ],
+  };
+  const history = {
+    available: true,
+    totalCount: 900,
+    count: 3,
+    runs: [
+      { status: "completed", startedAt: "2026-11-10T00:00:00.000Z", durationMs: 42000, detail: null },
+      { status: "failed", startedAt: "2026-11-09T00:00:00.000Z", durationMs: null, detail: null },
+      { status: "blocked", startedAt: "2026-11-08T00:00:00.000Z", durationMs: 5, detail: null },
+    ],
+  };
+  const rows = runTimelineRows(data, { "tasks/sync": history });
+  // A task whose history was not read has no row; an improve run before the window is not drawn.
+  assert.deepEqual(
+    rows.map((row) => [row.name, row.task, row.recorded, row.runs.map((run) => run.tone)]),
+    [
+      ["tasks/sync", "tasks/sync", 900, ["ok", "fail", "other"]],
+      ["Improve", undefined, null, ["fail", "other"]],
+      ["Index builds", undefined, 40, ["ok"]],
+    ],
+  );
+  assert.deepEqual(rows[1].runs[1], {
+    at: "2026-11-08T02:00:00.000Z",
+    tone: "other",
+    durationMs: null,
+    said: "outcome not recorded",
+  });
+  // No metrics window, no clock to draw on; a history akm could not read gives no row.
+  assert.deepEqual(runTimelineRows({ ...data, metrics: null }, { "tasks/sync": history }), []);
+  assert.equal(runTimelineRows(data, { "tasks/sync": { ...history, available: false } })[0].name, "Improve");
 });

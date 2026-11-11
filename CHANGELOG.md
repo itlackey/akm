@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- AKM Desktop draws two pictures from what akm already reports, with no new metric and no change to `akm-cli/workspace`. Activity, Runs has a **run timeline**: a row per scheduled task, then Improve and Index builds, on one clock, with a mark where each recorded run started (a circle finished, a triangle failed, a diamond ended another way) and a table of the same rows. An asset's Related tab has a **link map**: the asset in the middle, what links to it on the left and what it links to on the right, by kind of link, with similar content added on request; a link whose target is missing is named and is not a link. `desktop/docs/visualizations.md` lists the limits of both (the latest 200 runs per task, one step of links, no workflow runs) and the akm operation each picture not yet built is waiting for (the whole library as a graph, a workflow run's trace, a replay of activity).
+
 ## [0.10.261118] - 2026-11-11
 
 ### Added

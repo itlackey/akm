@@ -26,12 +26,14 @@ function colourReader(near) {
 
 /**
  * A chart's element, drawn once the page is mounted. `options(token)` builds the ECharts option; `height` is the
- * element's `data-height`; `onSelect` receives a click on a mark. `label` names the chart for assistive technology.
+ * element's `data-height`, or `rows` makes it as tall as that many category rows; `onSelect` receives a click on a
+ * mark. `label` names the chart for assistive technology.
  */
-export function chart(ctx, id, label, options, { height, onSelect } = {}) {
+export function chart(ctx, id, label, options, { height, rows, onSelect } = {}) {
   ctx.after.push((root) => {
     const element = root.querySelector(`#${id}`);
     if (!element) return;
+    if (rows) element.style.blockSize = `${64 + rows * 28}px`;
     let disposed = false;
     let chart;
     let observer;
@@ -69,7 +71,9 @@ export function chart(ctx, id, label, options, { height, onSelect } = {}) {
             decal: { show: patterns.matches },
           },
           grid: { left: 12, right: 22, top: 24, bottom: 16, containLabel: true },
+          ...option,
           // richText draws the tooltip as chart text, never as HTML, so a series name or a query cannot inject markup.
+          // A builder's own `tooltip` adds to these settings; it does not replace them.
           tooltip: {
             trigger: "axis",
             renderMode: "richText",
@@ -78,8 +82,8 @@ export function chart(ctx, id, label, options, { height, onSelect } = {}) {
             borderColor: token("--border-strong"),
             textStyle: { color: token("--text"), fontFamily: font, fontSize: 12 },
             axisPointer: { type: "line", lineStyle: { color: token("--border-strong") } },
+            ...option.tooltip,
           },
-          ...option,
           series: option.series.map(({ colorIndex, ...series }, index) => ({
             ...series,
             itemStyle: { color: token(`--s${(colorIndex ?? index) + 1}`), ...series.itemStyle },
@@ -162,6 +166,46 @@ export function eventStrip(labels, events, { name, token }) {
           itemStyle: { color: token(event.tone === "fail" ? "--fail" : "--ok") },
         })),
       },
+    ],
+  };
+}
+
+/**
+ * Runs of several kinds on one clock: a row per entry of `rows` (`{ name, runs: [{ at, tone, durationMs }] }`) and a
+ * mark where each run started. A finished run is a small circle, a failed one a larger triangle and any other outcome
+ * a diamond, so a failure is not told apart by colour alone. `say(run)` is the tooltip's last line.
+ */
+export function runTimeline(rows, { since, until, token, say }) {
+  const marks = (tone) =>
+    rows.flatMap((row, index) =>
+      row.runs.filter((run) => run.tone === tone).map((run) => ({ value: [run.at, index], row: row.name, run })),
+    );
+  const series = (name, tone, symbol, symbolSize, colour) => ({
+    type: "scatter",
+    name,
+    symbol,
+    symbolSize,
+    itemStyle: { color: token(colour) },
+    data: marks(tone),
+  });
+  return {
+    grid: { left: 12, right: 22, top: 8, bottom: 16, containLabel: true },
+    tooltip: {
+      trigger: "item",
+      formatter: (mark) => `${mark.data.row}\n${new Date(mark.data.run.at).toLocaleString()}\n${say(mark.data.run)}`,
+    },
+    xAxis: { type: "time", min: since, max: until, axisLabel: { hideOverlap: true } },
+    yAxis: {
+      type: "category",
+      data: rows.map((row) => row.name),
+      inverse: true,
+      axisTick: { show: false },
+      axisLabel: { interval: 0, width: 180, overflow: "truncate" },
+    },
+    series: [
+      series("Finished", "ok", "circle", 7, "--muted"),
+      series("Other outcome", "other", "diamond", 11, "--warn"),
+      series("Failed", "fail", "triangle", 13, "--fail"),
     ],
   };
 }

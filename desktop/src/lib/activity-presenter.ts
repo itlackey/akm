@@ -8,6 +8,7 @@ import type {
   ActivityOverview,
   ActivityPulse,
   ActivityRetrieval,
+  ActivityTaskHistory,
   ModelCount,
 } from "./activity-types";
 
@@ -134,4 +135,61 @@ export function rollingSearch(retrieval: ActivityRetrieval, changed: ActivityImp
   const known = rates.filter((rate): rate is number => rate !== null);
   const floor = known.length ? Math.max(0, Math.floor((Math.min(...known) - 10) / 10) * 10) : 0;
   return { labels, rates, marked, floor };
+}
+
+export type TimelineRun = { at: string; tone: "ok" | "fail" | "other"; durationMs: number | null; said: string };
+/** `recorded` is how many runs the window holds when akm says; a row can draw fewer (`runs`). */
+export type TimelineRow = { name: string; task?: string; runs: TimelineRun[]; recorded: number | null };
+/**
+ * The runs Desktop is given, as rows on one clock: a row per task with history, then improve runs and index builds.
+ * Only runs that started inside the metrics window are drawn. Nothing is derived: a gap is a time with no recorded run.
+ */
+export function runTimelineRows(
+  data: ActivityOverview,
+  histories: Record<string, ActivityTaskHistory | undefined>,
+): TimelineRow[] {
+  const window = data.metrics?.window;
+  if (!window) return [];
+  const since = Date.parse(window.since);
+  const until = Date.parse(window.until);
+  const inside = (at: string) => Date.parse(at) >= since && Date.parse(at) <= until;
+  const rows: TimelineRow[] = [];
+  for (const task of data.metrics?.tasks.byTask ?? []) {
+    const history = histories[task.taskId];
+    if (!history?.available) continue;
+    rows.push({
+      name: task.taskId,
+      task: task.taskId,
+      recorded: history.totalCount,
+      runs: history.runs
+        .filter((run) => inside(run.startedAt))
+        .map((run) => ({
+          at: run.startedAt,
+          tone: run.status === "completed" ? "ok" : run.status === "failed" ? "fail" : "other",
+          durationMs: run.durationMs,
+          said: run.status,
+        })),
+    });
+  }
+  const improve = data.improveRuns.filter((run) => inside(run.startedAt));
+  if (improve.length)
+    rows.push({
+      name: "Improve",
+      recorded: null,
+      runs: improve.map((run) => ({
+        at: run.startedAt,
+        tone: run.ok === true ? "ok" : run.ok === false ? "fail" : "other",
+        durationMs: run.durationMs,
+        said: run.ok === true ? "finished" : run.ok === false ? "failed" : "outcome not recorded",
+      })),
+    });
+  const index = data.metrics?.index;
+  const builds = (index?.recent ?? []).filter((run) => inside(run.at));
+  if (index && builds.length)
+    rows.push({
+      name: "Index builds",
+      recorded: index.runs,
+      runs: builds.map((run) => ({ at: run.at, tone: "ok", durationMs: run.totalMs, said: `${run.mode} build` })),
+    });
+  return rows;
 }

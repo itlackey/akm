@@ -7,7 +7,7 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { test } from "node:test";
 import { chromium, expect } from "@playwright/test";
-import { go, launchFixture, open } from "./support.mjs";
+import { akm, go, launchFixture, open } from "./support.mjs";
 
 // Wiring only: each section shows what its operations return, reaches them, and shows a refusal. What the operations
 // decide (revisions, leases, staleness, write targets) is akm's and is tested there.
@@ -206,6 +206,19 @@ test("built desktop UI: each section's happy path and one refusal", { timeout: 2
     await expect(inspect).toBeFocused();
   });
 
+  await t.test("Activity: the run timeline draws the recorded runs and lists them as a table", async () => {
+    await go(page, "/activity/overview?view=runs");
+    const timeline = page.getByRole("region", { name: "Run timeline", exact: true });
+    // One mark per recorded run: the failed task run, the improve run and the fixture's index build.
+    await expect(timeline.locator("#activity-run-timeline svg")).toBeVisible();
+    await timeline.getByRole("button", { name: "Table", exact: true }).click();
+    const cells = (name) => timeline.getByRole("row", { name: new RegExp(`^${name}`) }).getByRole("cell");
+    await expect(cells("synthetic-failure").nth(0)).toHaveText("1");
+    await expect(cells("synthetic-failure").nth(1)).toHaveText("1");
+    await expect(cells("Improve").nth(1)).toHaveText("0");
+    await expect(timeline).toContainText("Workflow runs are not listed");
+  });
+
   await t.test("Activity: charts follow the chosen appearance", async () => {
     await go(page, "/activity/overview?view=retrieval");
     const label = page.locator("#activity-operations svg text").first();
@@ -257,4 +270,44 @@ test("built desktop UI: each section's happy path and one refusal", { timeout: 2
     },
   );
   console.log(`Screenshots: ${screenshots}`);
+});
+
+test("Library: the link map draws an asset's recorded links, both ways, and follows them", {
+  timeout: 120000,
+}, async (t) => {
+  // A page that cross-references the restore checklist and a page nobody wrote.
+  const server = await launchFixture({
+    configureFixture: async (fixture) => {
+      await writeFile(
+        path.join(fixture.root, "personal/knowledge/recovery-index.md"),
+        "---\ntitle: Recovery index\ndescription: Synthetic page of links\nxrefs:\n  - knowledge/restore-laptop\n  - knowledge/not-written-yet\n---\n# Recovery index\n\nSee the checklist.\n",
+      );
+      akm(fixture, ["index"]);
+    },
+  });
+  t.after(() => server.stop());
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  const map = page.getByRole("group", { name: /^Links of / });
+  const openMap = async () => {
+    await page.getByRole("button", { name: "Related assets", exact: true }).click();
+    await page.getByRole("button", { name: "Link map", exact: true }).click();
+  };
+  await open(page, server, `/library/asset?ref=${encodeURIComponent("personal//knowledge/recovery-index")}`);
+  await openMap();
+  await expect(map).toContainText("Links to");
+  // The target nobody wrote is named, and is not a link.
+  await expect(map).toContainText("Cross-reference (missing)");
+  await expect(map).toContainText("knowledge/not-written-yet");
+  await expect(map.getByRole("link")).toHaveCount(1);
+  await map.getByRole("link", { name: "Cross-reference: knowledge/restore-laptop", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Restore a laptop", exact: true })).toBeVisible();
+  // From the other end the same link is on the left.
+  await openMap();
+  await expect(map).toContainText("Linked from");
+  await expect(map.getByRole("link", { name: "Cross-reference: knowledge/recovery-index", exact: true })).toBeVisible();
+  assert.deepEqual(errors, []);
 });
