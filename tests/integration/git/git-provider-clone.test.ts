@@ -190,6 +190,186 @@ describe("writable Git checkout safety", () => {
     expect(fs.readFileSync(dirtyFile, "utf8")).toBe("dirty work\n");
   });
 
+  /** Commit `files` (path under content/ -> text) upstream and return the new revision. */
+  function pushUpstream(fixture: { author: string }, files: Record<string, string>): string {
+    for (const [rel, text] of Object.entries(files)) {
+      const abs = path.join(fixture.author, "content", rel);
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      fs.writeFileSync(abs, text, "utf8");
+    }
+    git(["-C", fixture.author, "add", "."]);
+    git(["-C", fixture.author, "commit", "-m", "upstream"]);
+    git(["-C", fixture.author, "push"]);
+    return git(["-C", fixture.author, "rev-parse", "HEAD"]);
+  }
+
+  function update(fixture: { remote: string; contentRoot: string }, revision: string) {
+    return syncExistingWritableCheckout(
+      parsedRef(fixture.remote),
+      resolvedRef(fixture.remote, revision),
+      fixture.contentRoot,
+      "2026-01-01T00:00:00.000Z",
+      [],
+      undefined,
+      true,
+    );
+  }
+
+  test("behind + unrelated unstaged edit fast-forwards and keeps the edit", () => {
+    const fixture = makeWritableFixture();
+    const edited = path.join(fixture.contentRoot, "lessons", "seed.md");
+    fs.writeFileSync(edited, "local edit\n", "utf8");
+    const revision = pushUpstream(fixture, { "lessons/new.md": "new\n" });
+
+    expect(update(fixture, revision).resolvedRevision).toBe(revision);
+    expect(fs.readFileSync(edited, "utf8")).toBe("local edit\n");
+    expect(fs.readFileSync(path.join(fixture.contentRoot, "lessons", "new.md"), "utf8")).toBe("new\n");
+    expect(git(["-C", fixture.checkout, "status", "--porcelain"])).toBe("M content/lessons/seed.md");
+  });
+
+  test("behind + unrelated staged edit fast-forwards and keeps the staged state", () => {
+    const fixture = makeWritableFixture();
+    const edited = path.join(fixture.contentRoot, "lessons", "seed.md");
+    fs.writeFileSync(edited, "staged edit\n", "utf8");
+    git(["-C", fixture.checkout, "add", "content/lessons/seed.md"]);
+    const revision = pushUpstream(fixture, { "lessons/new.md": "new\n" });
+
+    update(fixture, revision);
+    expect(git(["-C", fixture.checkout, "rev-parse", "HEAD"])).toBe(revision);
+    expect(fs.readFileSync(edited, "utf8")).toBe("staged edit\n");
+    expect(git(["-C", fixture.checkout, "status", "--porcelain"])).toBe("M  content/lessons/seed.md");
+  });
+
+  test("refuses an incoming overwrite of an unstaged tracked edit without losing it", () => {
+    const fixture = makeWritableFixture();
+    const edited = path.join(fixture.contentRoot, "lessons", "seed.md");
+    fs.writeFileSync(edited, "dirty work\n", "utf8");
+    const before = git(["-C", fixture.checkout, "rev-parse", "HEAD"]);
+    const revision = pushUpstream(fixture, { "lessons/seed.md": "upstream\n" });
+
+    expect(() => update(fixture, revision)).toThrow(/cannot fast-forward without overwriting local work/);
+    expect(fs.readFileSync(edited, "utf8")).toBe("dirty work\n");
+    expect(git(["-C", fixture.checkout, "rev-parse", "HEAD"])).toBe(before);
+  });
+
+  test("refuses an incoming overwrite of a staged edit without losing it", () => {
+    const fixture = makeWritableFixture();
+    const edited = path.join(fixture.contentRoot, "lessons", "seed.md");
+    fs.writeFileSync(edited, "staged work\n", "utf8");
+    git(["-C", fixture.checkout, "add", "content/lessons/seed.md"]);
+    const before = git(["-C", fixture.checkout, "rev-parse", "HEAD"]);
+    const revision = pushUpstream(fixture, { "lessons/seed.md": "upstream\n" });
+
+    expect(() => update(fixture, revision)).toThrow(/cannot fast-forward without overwriting local work/);
+    expect(fs.readFileSync(edited, "utf8")).toBe("staged work\n");
+    expect(git(["-C", fixture.checkout, "status", "--porcelain"])).toBe("M  content/lessons/seed.md");
+    expect(git(["-C", fixture.checkout, "rev-parse", "HEAD"])).toBe(before);
+  });
+
+  test("refuses an incoming overwrite of an untracked file without losing it", () => {
+    const fixture = makeWritableFixture();
+    const local = path.join(fixture.contentRoot, "lessons", "new.md");
+    fs.writeFileSync(local, "untracked work\n", "utf8");
+    const before = git(["-C", fixture.checkout, "rev-parse", "HEAD"]);
+    const revision = pushUpstream(fixture, { "lessons/new.md": "upstream\n" });
+
+    expect(() => update(fixture, revision)).toThrow(/cannot fast-forward without overwriting local work/);
+    expect(fs.readFileSync(local, "utf8")).toBe("untracked work\n");
+    expect(git(["-C", fixture.checkout, "rev-parse", "HEAD"])).toBe(before);
+  });
+
+  test("refuses an incoming overwrite of an ignored file without losing it", () => {
+    const fixture = makeWritableFixture();
+    fs.appendFileSync(path.join(fixture.checkout, ".git", "info", "exclude"), "content/lessons/ignored.md\n");
+    const local = path.join(fixture.contentRoot, "lessons", "ignored.md");
+    fs.writeFileSync(local, "ignored work\n", "utf8");
+    const before = git(["-C", fixture.checkout, "rev-parse", "HEAD"]);
+    const revision = pushUpstream(fixture, { "lessons/ignored.md": "upstream\n" });
+
+    expect(() => update(fixture, revision)).toThrow(/overwrite ignored local path/);
+    expect(fs.readFileSync(local, "utf8")).toBe("ignored work\n");
+    expect(git(["-C", fixture.checkout, "rev-parse", "HEAD"])).toBe(before);
+  });
+
+  test("refusal names the configured path, the blocking file and how to proceed", () => {
+    const fixture = makeWritableFixture();
+    fs.writeFileSync(path.join(fixture.contentRoot, "lessons", "seed.md"), "dirty work\n", "utf8");
+    const revision = pushUpstream(fixture, { "lessons/seed.md": "upstream\n" });
+    let error: (Error & { hint?: () => string | undefined }) | undefined;
+    try {
+      update(fixture, revision);
+    } catch (err) {
+      error = err as typeof error;
+    }
+    expect(error?.message).toContain(fixture.contentRoot);
+    expect(error?.message).toContain("content/lessons/seed.md");
+    expect(error?.hint?.()).toContain("akm bundle update");
+    expect(error?.hint?.()).not.toContain("--help");
+  });
+
+  test("diverged history with dirty files refuses without merging, committing or pushing", () => {
+    const fixture = makeWritableFixture();
+    fs.writeFileSync(path.join(fixture.contentRoot, "lessons", "local.md"), "local commit\n", "utf8");
+    git(["-C", fixture.checkout, "add", "."]);
+    git(["-C", fixture.checkout, "commit", "-m", "local only"]);
+    const localHead = git(["-C", fixture.checkout, "rev-parse", "HEAD"]);
+    const edited = path.join(fixture.contentRoot, "lessons", "seed.md");
+    fs.writeFileSync(edited, "dirty work\n", "utf8");
+    const revision = pushUpstream(fixture, { "lessons/up.md": "upstream\n" });
+
+    expect(() => update(fixture, revision)).toThrow(/local commits/);
+    expect(git(["-C", fixture.checkout, "rev-parse", "HEAD"])).toBe(localHead);
+    expect(git(["-C", fixture.checkout, "status", "--porcelain"])).toBe("M content/lessons/seed.md");
+    expect(git(["--git-dir", fixture.remote, "rev-parse", "main"])).toBe(revision);
+  });
+
+  test("already current with dirty files is not refused and keeps the work", () => {
+    const fixture = makeWritableFixture();
+    const edited = path.join(fixture.contentRoot, "lessons", "seed.md");
+    fs.writeFileSync(edited, "dirty work\n", "utf8");
+    fs.writeFileSync(path.join(fixture.contentRoot, "lessons", "untracked.md"), "x\n", "utf8");
+    const revision = git(["-C", fixture.checkout, "rev-parse", "HEAD"]);
+
+    expect(update(fixture, revision).resolvedRevision).toBe(revision);
+    expect(fs.readFileSync(edited, "utf8")).toBe("dirty work\n");
+  });
+
+  test("local ahead with dirty files is not refused and keeps the work", () => {
+    const fixture = makeWritableFixture();
+    fs.writeFileSync(path.join(fixture.contentRoot, "lessons", "local.md"), "local commit\n", "utf8");
+    git(["-C", fixture.checkout, "add", "."]);
+    git(["-C", fixture.checkout, "commit", "-m", "local only"]);
+    const localHead = git(["-C", fixture.checkout, "rev-parse", "HEAD"]);
+    const edited = path.join(fixture.contentRoot, "lessons", "seed.md");
+    fs.writeFileSync(edited, "dirty work\n", "utf8");
+    const remoteRevision = git(["-C", fixture.author, "rev-parse", "HEAD"]);
+
+    expect(update(fixture, remoteRevision).resolvedRevision).toBe(localHead);
+    expect(fs.readFileSync(edited, "utf8")).toBe("dirty work\n");
+  });
+
+  test("a wrong origin still refuses a dirty checkout untouched", () => {
+    const fixture = makeWritableFixture();
+    const edited = path.join(fixture.contentRoot, "lessons", "seed.md");
+    fs.writeFileSync(edited, "dirty work\n", "utf8");
+    git(["-C", fixture.checkout, "remote", "set-url", "origin", "https://example.org/other/repo.git"]);
+    const revision = git(["-C", fixture.author, "rev-parse", "HEAD"]);
+
+    expect(() => update(fixture, revision)).toThrow(/different origin/);
+    expect(fs.readFileSync(edited, "utf8")).toBe("dirty work\n");
+  });
+
+  test("a failed fetch keeps local work and reports the failure", () => {
+    const fixture = makeWritableFixture();
+    const edited = path.join(fixture.contentRoot, "lessons", "seed.md");
+    fs.writeFileSync(edited, "dirty work\n", "utf8");
+    const revision = git(["-C", fixture.author, "rev-parse", "HEAD"]);
+    fs.renameSync(fixture.remote, `${fixture.remote}.gone`);
+
+    expect(() => update(fixture, revision)).toThrow(/could not fetch its expected origin/);
+    expect(fs.readFileSync(edited, "utf8")).toBe("dirty work\n");
+  });
+
   test("ahead with nothing to fast-forward (behind === 0) is a no-op, not a refusal", () => {
     const ahead = makeWritableFixture();
     fs.writeFileSync(path.join(ahead.contentRoot, "lessons", "local.md"), "local commit\n", "utf8");

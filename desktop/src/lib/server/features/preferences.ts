@@ -45,12 +45,32 @@ export async function readPreferences(): Promise<Preferences> {
     throw error;
   }
 }
-/** Merge `changes` into the saved preferences and write the file whole, atomically. */
-export async function savePreferences(changes: Partial<Preferences>): Promise<Preferences> {
+let saving: Promise<unknown> = Promise.resolve();
+/**
+ * Merge `changes` into the saved preferences and write the file whole, atomically. Saves run one after another: the
+ * rename keeps one file whole, but two overlapping read-merge-writes would drop one of their changes.
+ */
+export function savePreferences(changes: Partial<Preferences>): Promise<Preferences> {
+  const result = saving.then(() => write(changes));
+  saving = result.catch(() => undefined);
+  return result;
+}
+async function write(changes: Partial<Preferences>): Promise<Preferences> {
   const next = { ...(await readPreferences()), ...changes };
   await mkdir(path.dirname(file), { recursive: true });
   const temporary = `${file}.${randomUUID()}.tmp`;
   await writeFile(temporary, `${JSON.stringify(next)}\n`, { mode: 0o600 });
   await rename(temporary, file);
   return next;
+}
+/** Saving a choice and applying it to the running app are separate results: the file is written either way. */
+export async function tryApply(
+  apply: () => Promise<void>,
+): Promise<{ applied: true } | { applied: false; applyError: string }> {
+  try {
+    await apply();
+    return { applied: true };
+  } catch (error) {
+    return { applied: false, applyError: error instanceof Error ? error.message : "Desktop service did not respond." };
+  }
 }

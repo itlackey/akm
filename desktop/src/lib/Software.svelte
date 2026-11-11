@@ -6,10 +6,17 @@
 
 <script lang="ts">
   import { onMount, tick } from "svelte";
-  import { classifyEngineSkew, hostUpgradeOutrunsDesktop } from "./engine-skew";
+  import { classifyEngineSkew, holdReason, hostUpgradeOutrunsDesktop, skewAdvice, stableSwitch } from "./engine-skew";
   import Icon from "./Icon.svelte";
   import { harnessLabel, installedChannel, pluginChannel, pluginLine } from "./setup-model";
-  import { actSoftware as act, runSoftware, savePreference, software, watchSoftware } from "./state/software.svelte";
+  import {
+    actSoftware as act,
+    refreshSoftware,
+    runSoftware,
+    savePreference,
+    software,
+    watchSoftware,
+  } from "./state/software.svelte";
   const releases = "https://github.com/itlackey/akm/releases";
   const data = $derived(software.data),
     error = $derived(software.error),
@@ -20,6 +27,25 @@
   const updateBusy = $derived(submitting || Boolean(data?.desktop.menu?.busy));
   const skew = $derived(classifyEngineSkew(data?.engine, data?.host.cli?.version));
   const desktopBehind = $derived(hostUpgradeOutrunsDesktop(data?.engine, data?.host.upgrade?.latestVersion));
+  const advice = $derived(skewAdvice(data?.engine, data?.host.cli?.version));
+  // The channel the installed CLI follows: akm's own report, else inferred from its version as akm does.
+  const cliChannel = $derived(
+    data?.host.upgrade?.currentChannel ?? (/^\d+\.\d+\.\d+-/.test(data?.host.cli?.version ?? "") ? "next" : "latest"),
+  );
+  // akm refuses a switch to stable that goes backwards without --allow-downgrade, so it is offered only when stable is
+  // known to be as new as the installed CLI. Without a known stable release it stays hidden and the hint says "may be".
+  const stable = $derived(
+    channel === "latest" && cliChannel === "next"
+      ? stableSwitch(data?.host.cli?.version, data?.host.upgrade?.latestVersion)
+      : "offer",
+  );
+  const channelName = (value: string) => (value === "next" ? "prerelease" : "stable");
+  const lockstep = $derived(data?.host.action?.upgrade?.lockstep ?? data?.host.upgrade?.lockstep);
+  const outcomes = $derived((data?.host.action?.upgrade?.plugins ?? []).filter((item) => item.outcome));
+  const outcomeText = (item: { harness: string; outcome?: string; reason?: string }) =>
+    `${item.harness}: ${item.outcome}${item.reason ? ` (${item.reason})` : ""}${
+      item.outcome === "deferred" ? ". Close the harness, then update again." : ""
+    }`;
   // Desktop's own update state, from the main process (electron-updater).
   const update = $derived(data?.desktop.update);
   const embeddedPrerelease = $derived(/^\d+\.\d+\.\d+-/.test(data?.desktop.version ?? ""));
@@ -40,14 +66,26 @@
     check: "Checking the CLI and plugins…",
     "install-cli": "Installing the AKM CLI…",
     "upgrade-cli": "Updating the CLI and plugins…",
+    "switch-channel": "Switching the CLI and plugins channel…",
     "install-plugin": "Installing the AKM plugin…",
   };
   // A saved choice is said in a live region beside its control; a failed save is the page's alert.
   let saved = $state({ updateChannel: "", pluginChannel: "" });
+  // The Desktop choice that is saved but has not reached the running updater; Retry sends it again.
+  let unapplied = $state("");
   async function choose(key: "updateChannel" | "pluginChannel", value: string) {
-    saved[key] = "";
-    await savePreference(key, value);
-    if (software.error) return;
+    saved[key] = "Saving…";
+    unapplied = "";
+    const result = await savePreference(key, value);
+    if (!result) {
+      saved[key] = "";
+      return;
+    }
+    if (result.applied === false) {
+      saved[key] = `Saved, but the running app has not applied it: ${result.applyError}`;
+      unapplied = value;
+      return;
+    }
     saved[key] =
       key === "updateChannel"
         ? `Saved. AKM Desktop follows ${value === "prerelease" ? "stable and prerelease releases" : "stable releases only"}.`
@@ -73,7 +111,14 @@
       Desktop, host CLI and integrations on this computer. <a href="/setup">Run setup again</a>
     </p>
   </div>
-  {#if error}<p class="notice notice-warn" role="alert">{error}</p>{/if}
+  {#if error}<p class="notice notice-warn" role="alert">{error}</p>
+    <button
+      class="btn-quiet"
+      onclick={() => {
+        software.error = "";
+        void refreshSoftware();
+      }}>Recheck status</button
+    >{/if}
   {#if !data}<p role="status">Loading software status…</p>{:else}
     <section aria-labelledby="desktop-software">
       <div class="software-row">
@@ -83,15 +128,16 @@
           <p role="status" id="desktop-update-status">
             {#if update?.state === "checking"}Checking for updates…
             {:else if update?.state === "current"}AKM Desktop is up to date.
-            {:else if update?.state === "downloading"}Downloading version {update.version}. It installs when you quit
-              AKM Desktop.
+            {:else if update?.state === "downloading"}Downloading version {update.version}{update.percent === undefined
+                ? ""
+                : ` (${update.percent}%)`}. It installs when you quit AKM Desktop.
             {:else if update?.state === "downloaded"}Version {update.version} is ready. It installs when you quit AKM Desktop.
             {:else if update?.state === "available"}Version {update.version} is available.
               <a href="{releases}/tag/v{update.version}"
                 >Download version {update.version} from its GitHub release page</a
               >.
             {:else if update?.state === "error"}{update.during === "download"
-                ? `Could not download version ${update.version ?? ""}. The next check is in six hours.`
+                ? `Could not download version ${update.version ?? ""}. Use Retry, or it is tried again in six hours.`
                 : "Could not check for updates."}
               <a href={releases}>Download a newer version from the GitHub releases page</a> if you need one.
             {:else if update?.state === "unsupported"}{update.reason === "off"
@@ -106,6 +152,17 @@
               <pre class="mono">{update.error}</pre>
             </details>{/if}
           <p class="field-hint">Built-in AKM engine {data.engine}.</p>
+          {#if update && update.state !== "unsupported" && update.state !== "downloaded"}<button
+              class="btn-quiet icon-label"
+              aria-label={update.state === "error" ? "Retry update check" : "Check for updates"}
+              aria-disabled={updateBusy || update.state === "checking" || update.state === "downloading"}
+              onclick={() =>
+                !updateBusy &&
+                update.state !== "checking" &&
+                update.state !== "downloading" &&
+                act("desktop-update-check")}
+              ><Icon name="refresh" />{update.state === "error" ? "Retry" : "Check for updates"}</button
+            >{/if}
         </div>
         {#if data.preferences}
           <label class="field"
@@ -122,6 +179,11 @@
       </div>
       {#if updatesHint}<p id="desktop-updates-hint" class="field-hint">{updatesHint}</p>{/if}
       <p class="field-hint saved" role="status">{saved.updateChannel}</p>
+      {#if unapplied}<button
+          class="btn-quiet"
+          aria-label="Retry applying the update channel"
+          onclick={() => choose("updateChannel", unapplied)}>Retry</button
+        >{/if}
       {#if data.desktop.menu?.supported}
         <div class="menu-install">
           <div class="software-row">
@@ -171,17 +233,25 @@
                 : !data.host.cli.installed
                   ? "Not installed"
                   : !data.host.cli.runnable
-                    ? "Installed, but not runnable"
+                    ? `Installed at ${data.host.cli.path ?? "an unknown path"}, but it does not run`
                     : data.host.upgrade?.updateAvailable
                       ? `Update available: ${data.host.upgrade.latestVersion}`
                       : data.host.upgrade
                         ? "Checked by AKM"
                         : "Installed"}
           </p>
+          {#if data.host.cli?.runnable}<p class="field-hint">
+              Follows the {channelName(cliChannel)} channel{data.host.upgrade?.installMethod
+                ? `, installed by ${data.host.upgrade.installMethod}`
+                : ""}.
+            </p>{/if}
         </div>
         <!-- Busy buttons stay focusable (aria-disabled, not disabled): a disabled button drops keyboard focus to the page. -->
         <div class="btn-row">
-          <button class="btn-quiet icon-label" aria-disabled={hostBusy} onclick={() => run("check", {}, "host-cli")}
+          <button
+            class="btn-quiet icon-label"
+            aria-disabled={hostBusy}
+            onclick={() => run("check", { channel: cliChannel }, "host-cli")}
             ><Icon name="refresh" />Check CLI & plugins</button
           >
           {#if data.host.cli && !data.host.cli.installed}<button
@@ -191,7 +261,28 @@
           {:else if data.host.cli?.runnable}<button
               aria-disabled={hostBusy || desktopBehind}
               aria-describedby={desktopBehind ? "host-cli-behind" : undefined}
-              onclick={() => !desktopBehind && run("upgrade-cli", {}, "host-cli")}>Update CLI & plugins</button
+              onclick={() => !desktopBehind && run("upgrade-cli", { channel: cliChannel }, "host-cli")}
+              >Update CLI & plugins</button
+            >
+            {#if cliChannel !== channel && stable === "offer"}<button
+                class="btn-secondary"
+                aria-disabled={hostBusy || desktopBehind}
+                onclick={() => !desktopBehind && run("switch-channel", { channel }, "host-cli")}
+                >Switch CLI & plugins to {channelName(channel)}</button
+              >{/if}
+            {#if data.host.cliManaged && skew === "host-older"}<button
+                class="btn-secondary"
+                aria-disabled={hostBusy}
+                onclick={() => run("install-cli", {}, "host-cli")}>Match this app's version</button
+              >{/if}
+          {:else if data.host.cli?.installed}{#if data.host.cliManaged}<button
+                aria-disabled={hostBusy}
+                onclick={() => run("install-cli", {}, "host-cli")}>Repair AKM CLI</button
+              >{/if}{/if}
+          {#if data.host.consent === "cli"}<button
+              aria-disabled={hostBusy}
+              onclick={() => run("install-cli", { consent: true }, "host-cli")}
+              >Replace it with the release that matches this app</button
             >{/if}
         </div>
       </div>
@@ -200,20 +291,38 @@
             <summary>Details</summary>
             <pre class="mono">{data.host.errorDetail}</pre>
           </details>{/if}{/if}
+      {#if data.host.cli?.installed && !data.host.cli.runnable && !data.host.cliManaged}<p class="notice notice-warn">
+          Desktop did not install this akm, so it will not replace it. Repair or reinstall it with the installer that
+          owns it (for example your package manager), or remove it and use Install AKM CLI.
+        </p>{/if}
+      {#if data.host.unsettled}<p class="notice notice-warn" role="status">
+          The earlier {data.host.unsettled} was stopped and its installer may still be running. Use Check CLI & plugins to
+          confirm what it left before trying again.
+        </p>{/if}
       <!-- The region is always there, so a receipt arriving in it is announced. -->
       <div role="status">
         {#if data.host.receipt}<p class="notice">{data.host.receipt}</p>{/if}
+        {#each outcomes as item (item.harness)}<p class="field-hint">{outcomeText(item)}</p>{/each}
+        {#if lockstep?.heldBack}<p class="field-hint">
+            The CLI is held at {lockstep.pinnedVersion ?? "its current version"}{lockstep.newestVersion
+              ? ` (newest is ${lockstep.newestVersion})`
+              : ""}{lockstep.plugin ? ` because the ${lockstep.plugin} plugin pins it` : ""}.{lockstep.reason
+              ? ` ${lockstep.reason}`
+              : ""}
+          </p>{/if}
+        {#if data.host.upgrade?.installMethod === "package-local"}<p class="field-hint">
+            This CLI belongs to another package, which owns its updates. Update it there.
+          </p>{/if}
       </div>
       {#if desktopBehind}<p class="notice notice-warn" role="status" id="host-cli-behind">
-          A newer AKM is available than the one built into this app. Update AKM Desktop first, then update the CLI.
+          {holdReason(data.engine, data.host.upgrade?.latestVersion, updateChannel)} Update AKM Desktop (Check for updates
+          above){data.host.cliManaged && skew === "host-older" ? ", or use Match this app's version" : ""}.
         </p>
-      {:else if skew === "host-older"}<p class="notice" role="status">
-          Host akm {data.host.cli?.version} is older than this app's engine ({data.engine}). If the library index
-          changed, the CLI will ask you to upgrade: use Update CLI & plugins.
-        </p>
-      {:else if skew === "host-newer"}<p class="notice" role="status">
-          Host akm {data.host.cli?.version} is newer than this app's engine ({data.engine}). If AKM Desktop says the
-          library was upgraded by a newer AKM, update AKM Desktop.
+      {:else if advice.kind !== "none"}<p class="notice" role="status">{advice.text}</p>{/if}
+      {#if stable !== "offer"}<p class="field-hint">
+          This CLI follows the prerelease channel, so stable {stable === "unknown" ? "may be" : "is"} older than what is installed,
+          and akm will not switch back by itself. It moves to stable with the next stable release; to go back now, run
+          <code>akm upgrade --channel latest --allow-downgrade</code> yourself.
         </p>{/if}
       <p class="field-hint">
         Updates use <code>akm upgrade</code>, including its migration checks and installed plugins. The desktop’s
@@ -268,6 +377,13 @@
                 aria-disabled={hostBusy}
                 onclick={() => run("install-plugin", { harness: harness.id, channel }, `plugin-${harness.id}`)}
                 >Install AKM plugin for {harnessLabel(harness)}</button
+              >{/if}
+            {#if data.host.consent === harness.id}<button
+                class="btn-secondary"
+                aria-disabled={hostBusy}
+                onclick={() =>
+                  run("install-plugin", { harness: harness.id, channel, consent: true }, `plugin-${harness.id}`)}
+                >Install from the existing marketplace</button
               >{/if}
           </li>
         {/each}
