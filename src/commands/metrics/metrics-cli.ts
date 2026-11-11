@@ -165,12 +165,13 @@ function llmEventsIn(db: Database, window: { since: string; until: string }) {
 export function readUsageRows(
   db: Database,
   window: { since: string; until: string },
-  options: { allSources?: boolean } = {},
+  options: { allSources?: boolean; newest?: number } = {},
 ): MetricsUsageRow[] {
   return listUsageEventRows(db, {
     sinceIso: window.since,
     untilIso: window.until,
     ...(options.allSources ? {} : { source: SOURCE }),
+    ...(options.newest === undefined ? {} : { newest: options.newest }),
   }).map(toUsageRow);
 }
 
