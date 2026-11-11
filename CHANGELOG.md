@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- `plugins` is a config section: the home of the akm plugins' settings (`autoFeedback`, `indexOnSessionEnd`, `curateLimit`, `curateTimeoutSeconds`, `pendingProposalTimeoutSeconds`, `redact.pii`, `redact.highEntropy`), which the plugins read from `config.json` themselves in place of their `AKM_*` environment variables. akm keeps the section, never reads or validates the keys inside it, no longer warns "Unknown config key" for it, and `akm migrate apply` no longer deletes it (#1613). Nothing else changes in akm.
 - `akm bundle update` on a registry-installed writable Git bundle (#1606):
   - With local uncommitted changes, it now fast-forwards when git can do so without overwriting them.
   - An update that would overwrite local work, or a diverged history, is refused with nothing changed.

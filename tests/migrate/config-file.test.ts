@@ -159,6 +159,16 @@ describe("the keys an engines config holds that akm no longer reads", () => {
     expect(fs.existsSync(credentialsPath())).toBe(false);
   });
 
+  test("the plugins section, nested keys included, survives two applies unchanged (#1613)", () => {
+    const plugins = { curateLimit: 8, autoFeedback: false, redact: { pii: true, highEntropy: true } };
+    writeConfig({ plugins });
+
+    normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore });
+    normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore });
+
+    expect(readConfig().plugins).toEqual(plugins);
+  });
+
   test("--dry-run lists the entries and the notes, and writes nothing", () => {
     writeConfig({
       engines: { lab: llm({ apiKey: "sk-cloud-literal" }) },
