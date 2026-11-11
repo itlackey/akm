@@ -590,6 +590,44 @@
               ]
             }
           },
+          "include": {
+            "type": "object",
+            "properties": {
+              "quality": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "const": "proposed"
+                  },
+                  {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "const": "proposed"
+                    }
+                  }
+                ]
+              },
+              "type": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
           "prefer": {
             "type": "object",
             "propertyNames": {
@@ -2149,6 +2187,44 @@
                     }
                   ]
                 }
+              },
+              "include": {
+                "type": "object",
+                "properties": {
+                  "quality": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "const": "proposed"
+                      },
+                      {
+                        "minItems": 1,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "const": "proposed"
+                        }
+                      }
+                    ]
+                  },
+                  "type": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      {
+                        "minItems": 1,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": false
               },
               "prefer": {
                 "type": "object",

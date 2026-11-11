@@ -966,6 +966,7 @@ what akm reads and writes there:
 - `from`, `filters`, `prefer`: the defaults for `akm search` and `akm curate`, in the shape of
   `--from`, `--filter` and `--prefer` (a value or a list; an empty string matches assets
   without the key).
+- `include`: retrieval exclusions to relax, e.g. `{ "quality": "proposed", "type": ["session"] }`. Only `quality=proposed` and named types are supported. Each explicit call's include value replaces this whole object; `{}` deliberately supplies no inclusions. Queries, filters, explicit type and source boundaries still apply.
 - `write`: `bundle` (a default for `remember` and `proposal new`, between `--bundle` and
   `defaultWriteTarget`; an explicit `--bundle` or a `--supersedes` ref decides first), `user`,
   `agent`, `channel` (each fills a flag you left out) and `metadata` (frontmatter keys a write

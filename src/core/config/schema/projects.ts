@@ -2,16 +2,17 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import os from "node:os";
+import path from "node:path";
+import { z } from "zod";
+import { isRecord } from "../../common";
 /**
  * `projects` config section: named places the user works on, with the
  * directories they live in and what akm reads and writes there. The shape is
  * checked piece by piece by {@link dropUnusableProjects} (a malformed piece
  * warns once and is ignored), so what reaches {@link ProjectsSchema} is valid.
  */
-import os from "node:os";
-import path from "node:path";
-import { z } from "zod";
-import { isRecord } from "../../common";
+import { IncludeSchema } from "../../include";
 import { warnOnce } from "../../warn";
 import { nonEmptyString } from "./primitives";
 
@@ -34,6 +35,7 @@ const WriteFields = {
 };
 
 const ProjectFields = {
+  include: IncludeSchema,
   from: z.union([nonEmptyString, z.array(nonEmptyString).min(1)]),
   filters: z.record(nonEmptyString, scopeValues),
   prefer: z.record(nonEmptyString, scopeValues),
@@ -85,6 +87,7 @@ export const ProjectSchema = z
     paths: z.array(projectPath).optional(),
     from: ProjectFields.from.optional(),
     filters: ProjectFields.filters.optional(),
+    include: ProjectFields.include.optional(),
     prefer: ProjectFields.prefer.optional(),
     write: ProjectWriteSchema.optional(),
   })

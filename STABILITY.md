@@ -202,7 +202,7 @@ guide; all old surfaces in the left column are scheduled for 0.11 removal.
 | `task sync`, `task prune` | Explicit `doctor scheduler sync` maintenance and migration cleanup of owned orphan entries; no separate prune command |
 | `task history` | Per-run history through `doctor log`; aggregate usage through `doctor metrics` |
 | `clone` | Extend `import` for asset refs/typed assets and clone destinations without reinterpreting existing document inputs |
-| Search `--include-proposed`, `--include-sessions` | Repeatable `--include key=value` to relax specified default exclusions while explicit filters remain in force |
+| Search `--include-proposed`, `--include-sessions` | Search/curate `--include quality=proposed` and `--include type=<excluded-type>` are implemented in current 0.10 source, including project/API defaults; existing flags retain their behavior until 0.11. Check installed help for availability. |
 | Show `--context`, `--max-chars`, and `--detail` | Add `--lead`, independent `--max-tokens`, and `--outline` in 0.10; retain existing defaults until the 0.11 cutover to exact reads. See the [complete argument review](docs/reviews/cli-surface-recommendations-2026-11-11.md#show-argument-review). |
 
 Also ship compatible metadata/budget fixes and the shared `--config` override in

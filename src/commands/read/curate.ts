@@ -22,6 +22,7 @@ import { parseBundleRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
+import { includesProposed, normalizeInclude } from "../../core/include";
 import { nonTaskInput } from "../../core/non-task-input";
 import type { ProjectView } from "../../core/projects";
 import { redactCredentialPatterns } from "../../core/redaction";
@@ -220,6 +221,7 @@ export async function akmCurate(options: CurateOptions): Promise<CurateResponse>
 
   const recall: RecallOptions = {
     source: options.source ?? "local",
+    include: normalizeInclude(options.include),
     filters: normalizeScopeFilters(options.filters),
     prefer: normalizeScopeFilters(options.prefer),
     belief: parseBeliefFilterMode(options.belief ?? "current"),
@@ -247,6 +249,7 @@ export async function akmCurate(options: CurateOptions): Promise<CurateResponse>
       type: options.type,
       limit,
       source,
+      include: recall.include,
       filters: recall.filters,
       prefer: recall.prefer,
       belief: recall.belief,
@@ -275,7 +278,7 @@ function evidencePolicy(recall: RecallOptions, project?: ProjectContext): Eviden
     sources: named === undefined ? allSources : narrowSourcesToName(allSources, named),
     restrictToSources: true,
     filters: recall.filters,
-    includeProposed: false,
+    includeProposed: includesProposed(recall.include),
     beliefFilter: recall.belief ?? "current",
     project,
   };

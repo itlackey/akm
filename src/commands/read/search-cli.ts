@@ -22,6 +22,7 @@ import { parseBundleRef } from "../../core/asset/asset-ref";
 import { parseMetaRef } from "../../core/asset/stash-meta";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
+import { type IncludeSelectors, normalizeInclude } from "../../core/include";
 import { projectView, type ResolvedProject, resolveProject, withProjectLine } from "../../core/projects";
 import { isoDay } from "../../core/time";
 import type { ProjectContext } from "../../indexer/search/db-search";
@@ -66,6 +67,10 @@ export const searchCommand = defineJsonCommand({
       type: "string",
       description: "local|registry|all or a bundle name (repeatable). Default: local, or the project's from",
     },
+    include: {
+      type: "string",
+      description: "Relax a default exclusion: quality=proposed or type=<asset-type> (repeatable)",
+    },
     filter: scopeFilterArg,
     prefer: scopePreferArg,
     ...PROJECT_ARG,
@@ -103,8 +108,9 @@ export const searchCommand = defineJsonCommand({
     // occurrences directly from argv (same pattern as `--tag`).
     const filterTokens = parseAllFlagValues("--filter");
     const project = resolveProject(loadConfig(), { project: getStringArg(args, "project") });
-    const { source, filters, prefer, view } = withProjectDefaults(project, {
+    const { source, filters, prefer, include, view } = withProjectDefaults(project, {
       source: fromValues(args.from),
+      include: parseIncludeFlags(cliIncludeTokens()),
       filters: parseScopeFilterFlags(filterTokens, "--filter"),
       prefer: parseScopeFilterFlags(parseAllFlagValues("--prefer"), "--prefer"),
     });
@@ -124,6 +130,7 @@ export const searchCommand = defineJsonCommand({
       since,
       until,
       includeProposed,
+      include,
       belief,
       includeSessions,
       eventSource: resolveUsageEventSource(),
@@ -156,16 +163,18 @@ function projectContext(project: ResolvedProject | undefined, filters: ScopeFilt
  */
 function withProjectDefaults(
   project: ResolvedProject | undefined,
-  explicit: { source?: string | string[]; filters?: ScopeFilters; prefer?: ScopeFilters },
+  explicit: { source?: string | string[]; filters?: ScopeFilters; prefer?: ScopeFilters; include?: IncludeSelectors },
 ) {
+  const include = explicit.include ?? project?.include;
   const from = explicit.source ?? project?.from;
   const filters = explicit.filters ?? project?.filters;
   const prefer = explicit.prefer ?? project?.prefer;
   return {
     source: parseSearchSource(from),
+    include,
     filters,
     prefer,
-    view: project && projectView({ ...project, from, filters, prefer: prefer ?? project.prefer }),
+    view: project && projectView({ ...project, from, filters, include, prefer: prefer ?? project.prefer }),
   };
 }
 
@@ -205,6 +214,10 @@ export const curateCommand = defineJsonCommand({
       type: "string",
       description: "local|registry|all or a bundle name (repeatable). Default: local, or the project's from",
     },
+    include: {
+      type: "string",
+      description: "Relax a default exclusion: quality=proposed or type=<asset-type> (repeatable)",
+    },
     filter: scopeFilterArg,
     prefer: scopePreferArg,
     ...PROJECT_ARG,
@@ -234,6 +247,7 @@ export const curateCommand = defineJsonCommand({
         limit: args.limit,
         from: fromValues(args.from),
         filters: parseAllFlagValues("--filter"),
+        include: cliIncludeTokens(),
         prefer: parseAllFlagValues("--prefer"),
         belief: args.belief,
         project: getStringArg(args, "project"),
@@ -267,6 +281,7 @@ export async function runCurate(
     limit?: string;
     from?: string | string[];
     filters?: string[];
+    include?: string[];
     prefer?: string[];
     belief?: string;
     /** In-process callers (an agent's tool) name the run's source; the CLI reads `AKM_EVENT_SOURCE`. */
@@ -287,8 +302,9 @@ export async function runCurate(
   }
   const limitParsed = parsePositiveIntFlag(args.limit ?? undefined);
   const project = resolveProject(loadConfig(), { project: args.project, cwd: args.cwd });
-  const { source, filters, prefer, view } = withProjectDefaults(project, {
+  const { source, filters, prefer, include, view } = withProjectDefaults(project, {
     source: args.from,
+    include: parseIncludeFlags(args.include),
     filters: parseScopeFilterFlags(args.filters ?? [], "--filter"),
     prefer: parseScopeFilterFlags(args.prefer ?? [], "--prefer"),
   });
@@ -299,6 +315,7 @@ export async function runCurate(
     source,
     filters,
     prefer,
+    include,
     belief: parseBeliefFilterMode(args.belief ?? "current"),
     eventSource: args.eventSource ?? resolveUsageEventSource(),
     attributionProjection: outputMode.shape === "agent" ? "agent" : outputMode.detail,
@@ -439,4 +456,15 @@ export function parseFragmentContextMode(raw: string | undefined): FragmentConte
   const normalized = raw?.trim().toLowerCase() || "exact";
   if (normalized === "exact" || normalized === "lead") return normalized;
   throw new UsageError(`Invalid --context value: "${raw}". Expected exact or lead.`, "INVALID_FLAG_VALUE");
+}
+
+/** CLI absence inherits the project; an explicitly empty API list overrides it. */
+function cliIncludeTokens(): string[] | undefined {
+  const tokens = parseAllFlagValues("--include");
+  return tokens.length ? tokens : undefined;
+}
+
+function parseIncludeFlags(tokens: string[] | undefined): IncludeSelectors | undefined {
+  if (tokens === undefined) return undefined;
+  return normalizeInclude(parseScopeFilterFlags(tokens, "--include") ?? {});
 }
