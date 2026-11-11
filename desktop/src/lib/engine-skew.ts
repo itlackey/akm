@@ -38,6 +38,14 @@ export function compareVersions(a: string | undefined, b: string | undefined): n
   return 0;
 }
 
+/** Same release line (major and minor): a difference between its builds is informational. Real incompatibility is reported by akm itself. */
+export function sameReleaseLine(engine: string | undefined, host: string | undefined): boolean {
+  const line = (version: string | undefined) =>
+    version ? VERSION.exec(version.trim())?.slice(1, 3).join(".") : undefined;
+  const [a, b] = [line(engine), line(host)];
+  return a !== undefined && a === b;
+}
+
 export function classifyEngineSkew(engine: string | undefined, host: string | undefined): Skew {
   const order = compareVersions(host, engine);
   if (order === null) return "unknown";

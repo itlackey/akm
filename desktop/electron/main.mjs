@@ -123,8 +123,16 @@ else
         }
         if (message?.type !== "desktop-request" || typeof message.id !== "string") return;
         try {
-          if (!message.action || !["status", "menu-install", "pick-folder", "update-channel"].includes(message.action))
+          if (
+            !message.action ||
+            !["status", "menu-install", "pick-folder", "update-channel", "update-check"].includes(message.action)
+          )
             throw new Error("Unknown software action.");
+          if (message.action === "update-check") {
+            updater.checkNow();
+            if (server.connected) server.send({ type: "desktop-response", id: message.id, data: updater.status() });
+            return;
+          }
           if (message.action === "update-channel") {
             updater.follow(message.channel === "stable" || message.channel === "prerelease" ? message.channel : null);
             if (server.connected) server.send({ type: "desktop-response", id: message.id, data: updater.status() });
