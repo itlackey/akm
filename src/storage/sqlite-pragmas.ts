@@ -75,8 +75,9 @@ function warnInvalidJournalModeOnce(raw: string): void {
   warn(`[akm] invalid AKM_SQLITE_JOURNAL_MODE=${JSON.stringify(raw)} — using WAL (valid: WAL, DELETE, TRUNCATE)`);
 }
 
-// Known Linux f_type magic numbers for network filesystems. node's statfs
-// normalises `type` to this numeric f_type magic on all platforms.
+// Known Linux f_type magic numbers for network filesystems. These match only
+// on Linux: other platforms report different statfs `type` values, so detection
+// never fires there. 9p, virtiofs and CephFS are not in the set.
 const FS_MAGIC_NFS = 0x6969; // 26985    — NFS
 const FS_MAGIC_SMB = 0x517b; // 20859    — older SMB_SUPER_MAGIC
 const FS_MAGIC_CIFS = 0xff534d42; // 4283649346 — SMB/CIFS
