@@ -8,14 +8,25 @@
   import { diffSection } from "./ui/diff-view.js";
   import { mount } from "./ui/lib.js";
   // Preserve AKM's reviewed diff algorithm, escaped markup and keyboard-operable controls.
-  export let before: string | null = "";
-  export let after: string | null = "";
-  export let beforeLabel = "Current";
-  export let afterLabel = "Proposed";
-  export let unified = "";
-  export let truncated = false;
-  export let redacted = false;
-  export let comparing = false;
+  let {
+    before = "",
+    after = "",
+    beforeLabel = "Current",
+    afterLabel = "Proposed",
+    unified = "",
+    truncated = false,
+    redacted = false,
+    comparing = false,
+  }: {
+    before?: string | null;
+    after?: string | null;
+    beforeLabel?: string;
+    afterLabel?: string;
+    unified?: string;
+    truncated?: boolean;
+    redacted?: boolean;
+    comparing?: boolean;
+  } = $props();
 
   function render(
     node: HTMLElement,

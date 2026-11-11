@@ -140,6 +140,69 @@ describe("the step", () => {
     expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
   });
 
+  test("a frozen file that is not an asset keeps its legacy spelling byte-for-byte", async () => {
+    configure();
+    write("wikis/articles/schema.md", "---\ntitle: schema\n---\nSchema.\n");
+    write("wikis/articles/raw/example.md", "---\ntitle: example\n---\nRaw.\n");
+    const page = write("wikis/articles/pages/a.md", "---\ntitle: a\n---\nSee wiki:articles/raw/example.\n");
+    const frozen = write("eval/frozen/inputs.json", '{"prompt":"Historical citation: wiki:articles/raw/example"}\n');
+    const before = fs.readFileSync(frozen);
+
+    const plan = await runMigration({ apply: true });
+
+    expect(plan.assetContentRefs?.files.map((file) => file.filePath)).toEqual([page]);
+    expect(fs.readFileSync(page, "utf8")).toBe("---\ntitle: a\n---\nSee wikis/articles/raw/example.\n");
+    expect(fs.readFileSync(frozen).equals(before)).toBe(true);
+  });
+
+  test("live index.md and wiki schema.md are rewritten; log.md, README.md, raw/ and frozen files are not", async () => {
+    configure();
+    write("wikis/articles/raw/example.md", "---\ntitle: example\n---\nRaw.\n");
+    const line = "See wiki:articles/raw/example.\n";
+    const index = write("wikis/articles/index.md", line);
+    const schema = write("wikis/articles/schema.md", line);
+    const log = write("wikis/articles/log.md", line);
+    const readme = write("README.md", line);
+    const frozenIndex = write("eval/frozen/index.md", line);
+    const rawIndex = write("wikis/articles/raw/index.md", line);
+    const frozen = write("eval/frozen/inputs.json", '{"p":"wiki:articles/raw/example"}\n');
+
+    await runMigration({ apply: true });
+
+    expect(fs.readFileSync(index, "utf8")).toBe("See wikis/articles/raw/example.\n");
+    expect(fs.readFileSync(schema, "utf8")).toBe("See wikis/articles/raw/example.\n");
+    for (const file of [log, readme, frozenIndex, rawIndex]) expect(fs.readFileSync(file, "utf8")).toBe(line);
+    expect(fs.readFileSync(frozen, "utf8")).toBe('{"p":"wiki:articles/raw/example"}\n');
+  });
+
+  test("an llm-wiki bundle's root schema.md is rewritten", async () => {
+    write("pages/target.md", "---\ntitle: target\n---\nT.\n");
+    const schema = write("schema.md", "See knowledge/pages/target.\n");
+    writeSandboxConfig({
+      defaultBundle: "primary",
+      bundles: { primary: { path: stash(), writable: true, components: { main: { root: ".", adapter: "llm-wiki" } } } },
+    });
+
+    await runMigration({ apply: true });
+
+    expect(fs.readFileSync(schema, "utf8")).toBe("See pages/target.\n");
+  });
+
+  test("a rewrite in a git bundle names the bundle and the next steps", async () => {
+    configure();
+    write("wikis/articles/schema.md", "---\ntitle: schema\n---\nSchema.\n");
+    write("wikis/articles/raw/example.md", "---\ntitle: example\n---\nRaw.\n");
+    write("wikis/articles/pages/a.md", "---\ntitle: a\n---\nSee wiki:articles/raw/example.\n");
+    expect(Bun.spawnSync(["git", "init", "-q", stash()]).exitCode).toBe(0);
+
+    const plan = await runMigration({ apply: true });
+
+    expect(plan.assetContentRefs?.reconcile).toHaveLength(1);
+    expect(plan.assetContentRefs?.reconcile?.[0]).toContain(stash());
+    expect(plan.assetContentRefs?.reconcile?.[0]).toContain("git -C");
+    expect(plan.assetContentRefs?.reconcile?.[0]).toContain("akm bundle update");
+  });
+
   test("a bundle akm may not write is left as written", async () => {
     configure(false);
     const links = seed();

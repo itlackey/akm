@@ -18,6 +18,7 @@
   let refreshedAt = $state("");
   let error = $state("");
   let generation = 0;
+  let checkButton = $state<HTMLButtonElement>();
 
   const concerns = $derived(homeConcerns(data));
   const coverage = $derived(homeCoverage(data, pulse));
@@ -42,6 +43,12 @@
     refreshedAt = new Date().toISOString();
     loading = false;
   }
+  /** A retry button may be gone once the snapshot loads, so focus goes to the refresh control first, not to the page. */
+  function retry() {
+    if (loading) return;
+    checkButton?.focus();
+    void load();
+  }
   onMount(() => {
     void load();
     return () => generation++;
@@ -52,7 +59,8 @@
   <div class="home-heading">
     <div>
       <h1>Overview</h1>
-      <p class="muted small">
+      <!-- A live region: the start and the end of a refresh are heard, not only repainted. -->
+      <p class="muted small" role="status">
         {loading
           ? "Refreshing your snapshot…"
           : refreshedAt
@@ -60,7 +68,13 @@
             : "Loading your snapshot…"}
       </p>
     </div>
-    <button class="btn-secondary" disabled={loading} onclick={load} aria-describedby="home-probe-help"
+    <!-- Busy, not disabled: a disabled button drops keyboard focus to the page. -->
+    <button
+      class="btn-secondary"
+      bind:this={checkButton}
+      aria-disabled={loading}
+      onclick={() => !loading && load()}
+      aria-describedby="home-probe-help"
       ><Icon name="refresh" size={16} />{loading ? "Checking…" : "Check health"}</button
     >
   </div>
@@ -69,10 +83,11 @@
   >
   {#if error}<div class="notice notice-fail" role="alert">
       <p>{error}</p>
-      <button class="btn-secondary" disabled={loading} onclick={load}>Retry overview</button>
+      <button class="btn-secondary" aria-disabled={loading} onclick={retry}>Retry overview</button>
     </div>{/if}
 
-  {#if !loading}
+  <!-- Once loaded, the snapshot stays on screen while it refreshes, so the page does not blank and focus is kept. -->
+  {#if !loading || refreshedAt}
     <div class="home-columns">
       <section class="home-attention" aria-labelledby="home-attention-title">
         {#if workspace.unconfigured}
@@ -87,7 +102,11 @@
         {:else}
           <div class="home-section-title">
             <h2 id="home-attention-title">Needs attention</h2>
-            {#if concerns.length}<span class="home-count">{concerns.length}</span>{/if}
+            {#if concerns.length}<span class="home-count"
+                >{concerns.length}<span class="sr-only"
+                  >{` ${concerns.length === 1 ? "item needs" : "items need"} attention`}</span
+                ></span
+              >{/if}
           </div>
           {#if concerns.length}
             <ul class="home-concerns">
@@ -104,7 +123,10 @@
                     <h3>{item.title}</h3>
                     <p>{item.description}</p>
                   </div>
-                  <a href={item.href} class="home-detail-link" aria-label={`${item.action}: ${item.title}`}
+                  <a
+                    href={item.href}
+                    class="home-detail-link"
+                    aria-label={`${item.action}: ${item.title}, in ${item.destination}`}
                     >{item.action}<Icon name="external" size={16} /></a
                   >
                 </li>
@@ -128,7 +150,7 @@
           {#if coverage.length}<div class="home-coverage" role="status">
               <strong>Incomplete snapshot</strong>
               <p>Unavailable: {coverage.join(", ")}.</p>
-              {#if !error}<button class="btn-quiet" disabled={loading} onclick={load}>Retry snapshot</button>{/if}
+              {#if !error}<button class="btn-quiet" aria-disabled={loading} onclick={retry}>Retry snapshot</button>{/if}
             </div>{/if}
         {/if}
       </section>

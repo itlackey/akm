@@ -139,10 +139,11 @@ function classifyEvent(
   if (text.trim().length < 10) return { keep: false, reason: "too-short" };
 
   // Rule 1: read-only akm meta-ops. The flattened tool_use shape from the
-  // claude-code provider looks like: `[tool:Bash] akm show knowledge:foo`.
-  // Match the verb directly after `akm ` (with or without the `[tool:...]`
-  // prefix, since some platforms surface the command differently).
-  const akmCallMatch = text.match(/\bakm\s+(\w[\w-]*)\b/);
+  // claude-code provider looks like: `[tool:Bash] akm show knowledge:foo`;
+  // the akm plugin's own tools like `[tool:akm_show] {"ref":"knowledge/foo"}`.
+  // Match the verb directly after `akm ` or `akm_` (with or without the
+  // `[tool:...]` prefix, since some platforms surface the command differently).
+  const akmCallMatch = text.match(/\bakm[\s_]+(\w[\w-]*)\b/);
   if (akmCallMatch) {
     const op = (akmCallMatch[1] ?? "").toLowerCase();
     if (akmReadOnlyOps.has(op)) {

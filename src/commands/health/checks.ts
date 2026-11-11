@@ -13,6 +13,7 @@ import {
 } from "../../storage/state-db-integrity";
 import { resolveImproveStrategy, resolveProcessEnabled } from "../improve/improve-strategies";
 import { resolveProposalQueueTarget } from "../proposal/repository";
+import type { ImproveRunOutcomes } from "./improve-metrics";
 import { type MetricsDbState, metricsDbCheck } from "./metrics-db-check";
 import { type SemanticSearchState, semanticSearchCheck } from "./semantic-search-check";
 import { ACTIVE_RUN_WARN_MS, type HealthCheckResult, type ImproveHealthMetrics, TASK_FAIL_RATE_WARN } from "./types";
@@ -74,6 +75,8 @@ export interface HealthCheckContext {
   /** #1289: whether the primary stash's proposal queue has a writable owner, resolved once (`proposalQueueState`). */
   proposalQueue: ProposalQueueState | undefined;
   autoAccept: ImproveHealthMetrics["autoAccept"];
+  /** Recorded failures and signal interruptions in the selected window, scheduled or manual. */
+  improveOutcomes: ImproveRunOutcomes;
   /** The connections, harnesses and work table, collected once (`connections-and-harnesses-check.ts`). */
   connectionsAndHarnesses: HealthCheckResult;
   /** The last index run's semantic-search record and the index's counts, read once (`semantic-search-check.ts`). */
@@ -253,7 +256,8 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
     run: (ctx) => ({
       name: "state-db-round-trip",
       kind: "deterministic",
-      status: ctx.probe.ok ? "pass" : "fail",
+      // A skipped probe proved nothing: it is unknown, not a pass.
+      status: ctx.probe.skipped ? "unknown" : ctx.probe.ok ? "pass" : "fail",
       confidence: "high",
       message: ctx.probe.skipped
         ? "state.db append/read round-trip skipped: this run is read-only."
@@ -367,6 +371,33 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
     name: "connections-and-harnesses",
     channel: "hard",
     run: (ctx) => ctx.connectionsAndHarnesses,
+  },
+  {
+    name: "improve-failures",
+    channel: "advisory",
+    run: (ctx) => {
+      const { failedRunIds, interruptedRunIds } = ctx.improveOutcomes;
+      const interruption =
+        interruptedRunIds.length > 0
+          ? `${interruptedRunIds.length} improve run(s) were interrupted by a signal; cancellation versus failure is unknown.`
+          : "";
+      return {
+        name: "improve-failures",
+        kind: "deterministic",
+        status: failedRunIds.length > 0 ? "warn" : interruptedRunIds.length > 0 ? "unknown" : "pass",
+        confidence: "high",
+        message:
+          failedRunIds.length > 0 || interruptedRunIds.length > 0
+            ? `${failedRunIds.length} improve run(s) recorded failures since ${ctx.since}.${interruption ? ` ${interruption}` : ""} Inspect \`akm health --since ${ctx.since} --group-by run\`.`
+            : "No improve runs recorded failures or signal interruptions in this window.",
+        evidence: {
+          failedRuns: failedRunIds.length,
+          runIds: failedRunIds,
+          interruptedRuns: interruptedRunIds.length,
+          interruptedRunIds,
+        },
+      };
+    },
   },
   {
     name: "semantic-search",

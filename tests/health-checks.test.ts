@@ -12,6 +12,7 @@ import {
   type ReachabilityProbe,
   runConnectionsAndHarnessesCheck,
 } from "../src/commands/health/connections-and-harnesses-check";
+import { computeWallTimeStats } from "../src/commands/health/improve-metrics";
 import { type SemanticSearchState, semanticSearchCheck } from "../src/commands/health/semantic-search-check";
 import { matchImproveTaskId } from "../src/commands/health/task-runs";
 import type { HealthCheckResult, WindowResult } from "../src/commands/health/types";
@@ -262,6 +263,21 @@ describe("health-unrunnable-tasks", () => {
   });
 });
 
+describe("computeWallTimeStats", () => {
+  test("uses nearest-rank p95, retaining the existing upper median and input order", () => {
+    const values = Array.from({ length: 20 }, (_, i) => 20 - i);
+    expect(computeWallTimeStats(values)).toEqual({ medianMs: 11, p95Ms: 19 });
+    expect(values[0]).toBe(20);
+    expect(computeWallTimeStats(Array.from({ length: 100 }, (_, i) => i + 1)).p95Ms).toBe(95);
+  });
+
+  test("handles empty, single and small samples", () => {
+    expect(computeWallTimeStats([])).toEqual({ medianMs: 0, p95Ms: 0 });
+    expect(computeWallTimeStats([7])).toEqual({ medianMs: 7, p95Ms: 7 });
+    expect(computeWallTimeStats([2, 1])).toEqual({ medianMs: 2, p95Ms: 2 });
+  });
+});
+
 describe("readNumericPath", () => {
   test("walks a dotted path to a finite number", () => {
     expect(readNumericPath({ a: { b: 5 } }, "a.b")).toBe(5);
@@ -380,17 +396,16 @@ describe("health-plugin-version-wiring", () => {
     return found;
   }
 
-  function installPlugin(pluginsRoot: string, version: string, versionRange: string): void {
+  function installPlugin(pluginsRoot: string, version: string, pinnedCli: string): void {
     const pluginDir = path.join(pluginsRoot, "cache", "akm-plugins", "akm", version);
     selectClaudePlugin(pluginsRoot, [
       { id: "akm@akm-plugins", version, scope: "user", enabled: true, installPath: pluginDir },
     ]);
     fs.mkdirSync(path.join(pluginDir, ".claude-plugin"), { recursive: true });
     fs.writeFileSync(path.join(pluginDir, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "akm", version }));
-    fs.mkdirSync(path.join(pluginDir, "shared"), { recursive: true });
     fs.writeFileSync(
-      path.join(pluginDir, "shared", "akm-version.ts"),
-      `export const AKM_VERSION_RANGE = "${versionRange}"\n`,
+      path.join(pluginDir, "package.json"),
+      JSON.stringify({ name: "akm-claude", version, dependencies: { "akm-cli": pinnedCli } }),
     );
   }
 
@@ -400,16 +415,21 @@ describe("health-plugin-version-wiring", () => {
       expect(findChecks(result.advisories, "plugin-version")).toEqual([]);
     });
 
-    test("an installed plugin whose range rejects the running CLI is surfaced as a warn advisory", async () => {
+    test("an installed plugin whose akm-cli pin differs from the running CLI is surfaced as a warn advisory", async () => {
       installPlugin(storage.claudePluginsDir, "0.9.1", "0.9.1");
 
       const result = await akmHealth({ since: "7d" });
       const advisory = findCheck(result.advisories, "plugin-version");
 
       expect(advisory.status).toBe("warn");
-      expect(advisory.evidence?.admitted).toBe(false);
-      expect(advisory.message).toContain("NOT ADMITTED");
+      expect(advisory.evidence?.cliMatches).toBe(false);
+      expect(advisory.message).toContain("older than the running CLI");
       expect(result.status).toBe("warn");
+    });
+
+    test("no Codex config produces no codex-plugin-version advisory and runs no codex command", async () => {
+      const result = await akmHealth({ since: "7d" });
+      expect(findChecks(result.advisories, "codex-plugin-version")).toEqual([]);
     });
   });
 });
@@ -606,9 +626,13 @@ describe("semantic-search check", () => {
     );
     expect(semanticSearchCheck(indexed({ status: "disabled", provider: "local" })).status).toBe("unknown");
     expect(semanticSearchCheck(indexed({ status: "pending", provider: "local" }, 0, 0)).status).toBe("unknown");
-    expect(semanticSearchCheck({ mode: "auto", error: "unreadable" }).message).toBe(
-      "Could not read the index: unreadable",
-    );
+  });
+
+  test.each(["auto", "off", undefined])("an unreadable index fails even with mode %s", (mode) => {
+    const result = semanticSearchCheck({ mode, error: "file is not a database" });
+    expect(result.status).toBe("fail");
+    expect(result.message).toContain("file is not a database");
+    expect(result.message).toContain("akm index");
   });
 });
 
@@ -720,6 +744,47 @@ describe("runConnectionsAndHarnessesCheck", () => {
     expect(rowsOf(result)[1]).not.toHaveProperty("version");
   });
 
+  test.each(["ENOEXEC", "EACCES", "ETIMEDOUT"])("a failed harness launch warns: %s", async (code) => {
+    const result = await runConnectionsAndHarnessesCheck({
+      loadConfig: () => config,
+      probeReachable: async () => ({ reachable: true }),
+      which: onPath("claude"),
+      spawnSync: (() => ({
+        status: null,
+        error: Object.assign(new Error(code), { code }),
+      })) as unknown as typeof spawnSync,
+    });
+    expect(result.status).toBe("warn");
+    expect(result.message).toContain('harness "claude" could not be probed');
+    expect(result.message).toContain(code);
+    expect(rowsOf(result)[1]).toMatchObject({ installed: true, error: code });
+    expect(result.message).not.toContain("all ready");
+  });
+
+  test("a harness version probe killed by a signal warns", async () => {
+    const result = await runConnectionsAndHarnessesCheck({
+      loadConfig: () => config,
+      probeReachable: async () => ({ reachable: true }),
+      which: onPath("claude"),
+      spawnSync: (() => ({ status: null, signal: "SIGKILL" })) as unknown as typeof spawnSync,
+    });
+    expect(result.status).toBe("warn");
+    expect(result.message).toContain("SIGKILL");
+  });
+
+  test("a thrown harness launch error is retained", async () => {
+    const result = await runConnectionsAndHarnessesCheck({
+      loadConfig: () => config,
+      probeReachable: async () => ({ reachable: true }),
+      which: onPath("claude"),
+      spawnSync: (() => {
+        throw new Error("cannot launch");
+      }) as unknown as typeof spawnSync,
+    });
+    expect(result.status).toBe("warn");
+    expect(rowsOf(result)[1]).toMatchObject({ error: "cannot launch" });
+  });
+
   test("without a probe nothing is contacted and no harness is run, and the message says so", async () => {
     const ran: string[] = [];
     const spawn = ((bin: string) => {
@@ -798,6 +863,16 @@ describe("runConnectionsAndHarnessesCheck", () => {
       });
       const result = await runConnectionsAndHarnessesCheck({ loadConfig: () => named, which: onPath() });
       expect(result.status).toBe("pass");
+    });
+
+    test("several harnesses and none called default is said with the word spelled out (F12)", async () => {
+      const result = await runConnectionsAndHarnessesCheck({
+        loadConfig: () => cfg({ harnesses: { claude: {}, codex: {} } }) as AkmConfig,
+        which: onPath("claude", "codex"),
+      });
+      expect(result.status).toBe("warn");
+      expect(result.message).toContain("Several harnesses are configured (claude, codex)");
+      expect(result.message).not.toContain("harnesss");
     });
 
     test("is still reported with a harness, which gives the work a place to run but does not make the connections' default clear", async () => {

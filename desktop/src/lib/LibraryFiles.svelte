@@ -5,78 +5,111 @@
 -->
 
 <script lang="ts">
-  import { createEventDispatcher, onDestroy, onMount, tick } from "svelte";
+  import { onDestroy, onMount, tick, untrack, type Snippet } from "svelte";
   import { libraryRead } from "./library-model";
   import { ancestorPaths, directoryKey, parentPath, treeNodes } from "./library-files-model";
   import type { FileEntry, FileListing, FileLocation, FilesViewState, TreeNode } from "./library-files-model";
   import type { Bundle } from "./types";
   import Icon from "./Icon.svelte";
-  export let bundles: Bundle[] = [];
-  export let bundleName = "";
-  export let path = "";
-  export let file = "";
-  export let documentOpen = false;
-  export let revision = 0;
-  export let comparisonMode = false;
-  export let selectedCompare: string[] = [];
-  export let viewState: FilesViewState = {};
-  const dispatch = createEventDispatcher<{
-    navigate: FileLocation;
-    select: string;
-    search: string;
-    create: FileLocation;
-  }>();
-  let listings =
-      viewState.revision === revision
-        ? (viewState.listings ?? new Map<string, FileListing>())
+  let {
+    bundles = [],
+    bundleName = "",
+    path = "",
+    file = "",
+    documentOpen = false,
+    revision = 0,
+    comparisonMode = false,
+    selectedCompare = [],
+    viewState = {},
+    onNavigate,
+    onSelect,
+    onSearch,
+    actions,
+    children,
+  }: {
+    bundles?: Bundle[];
+    bundleName?: string;
+    path?: string;
+    file?: string;
+    documentOpen?: boolean;
+    revision?: number;
+    comparisonMode?: boolean;
+    selectedCompare?: string[];
+    /** What the tree looked like when Files was last left; this view writes its own state back when it goes. */
+    viewState?: FilesViewState;
+    onNavigate?: (location: FileLocation) => void;
+    onSelect?: (ref: string) => void;
+    onSearch?: (bundle: string) => void;
+    /** Links and buttons at the end of the location bar. */
+    actions?: Snippet;
+    /** The open document, with what the folder listing knows about its file. */
+    children?: Snippet<[{ selectedFile?: FileEntry; indexAvailable?: boolean; loading: boolean; error?: string }]>;
+  } = $props();
+  // Read once, as this view starts: what the last Files view left behind, and the revision it starts from.
+  const kept = untrack(() => viewState),
+    startRevision = untrack(() => revision);
+  let listings = $state(
+      kept.revision === startRevision
+        ? (kept.listings ?? new Map<string, FileListing>())
         : new Map<string, FileListing>(),
-    expanded = viewState.expanded ?? new Set<string>(),
-    loading = new Set<string>(),
-    errors = new Map<string, string>();
+    ),
+    expanded = $state(kept.expanded ?? new Set<string>()),
+    loading = $state(new Set<string>()),
+    errors = $state(new Map<string, string>());
   let requests = new Map<string, Promise<void>>(),
     controller = new AbortController(),
-    mounted = false,
     seen = "",
-    seenRevision = revision;
-  let focused = viewState.focused ?? "",
-    tree: HTMLElement,
-    treePane: HTMLElement,
-    contentPane: HTMLElement,
-    filter = "",
-    showTree = false,
-    showHidden = viewState.showHidden ?? false,
-    notice = "",
+    seenRevision = startRevision;
+  let focused = $state(kept.focused ?? ""),
+    tree = $state<HTMLElement>(),
+    treePane = $state<HTMLElement>(),
+    contentPane = $state<HTMLElement>(),
+    foldersButton = $state<HTMLButtonElement>(),
+    filter = $state(""),
+    showTree = $state(false),
+    showHidden = $state(kept.showHidden ?? false),
+    notice = $state(""),
     generation = 0;
-  let restoreLocation = viewState.location;
-  $: names = bundles.filter((b) => b.enabled).map((b) => b.name);
-  $: nodes = treeNodes(names, listings, expanded);
-  $: focusKey = nodes.some((node) => node.key === focused) ? focused : nodes[0]?.key;
-  $: key = directoryKey(bundleName, path);
-  $: listing = listings.get(key);
-  $: selectedKey = directoryKey(bundleName, file || path);
-  $: selectedFile = listing?.entries.find((entry) => entry.path === file);
-  $: locationError = !names.length
-    ? "No enabled bundles are available in Files."
-    : bundleName && !names.includes(bundleName)
-      ? "This bundle is disabled or no longer configured."
-      : "";
-  $: visibleEntries = (listing?.entries ?? []).filter(
-    (entry) => !filter || entry.name.toLocaleLowerCase().includes(filter.toLocaleLowerCase()),
+  let restoreLocation = kept.location;
+  const names = $derived(bundles.filter((b) => b.enabled).map((b) => b.name));
+  const nodes = $derived(treeNodes(names, listings, expanded));
+  const focusKey = $derived(nodes.some((node) => node.key === focused) ? focused : nodes[0]?.key);
+  const key = $derived(directoryKey(bundleName, path));
+  const listing = $derived(listings.get(key));
+  const selectedKey = $derived(directoryKey(bundleName, file || path));
+  const selectedFile = $derived(listing?.entries.find((entry) => entry.path === file));
+  const locationError = $derived(
+    !names.length
+      ? "No enabled bundles are available in Files."
+      : bundleName && !names.includes(bundleName)
+        ? "This bundle is disabled or no longer configured."
+        : "",
   );
-  $: showStatus =
+  const visibleEntries = $derived(
+    (listing?.entries ?? []).filter(
+      (entry) => !filter || entry.name.toLocaleLowerCase().includes(filter.toLocaleLowerCase()),
+    ),
+  );
+  const showStatus = $derived(
     listing?.entries.some(
       (entry) =>
         entry.unavailable || (entry.kind !== "directory" && (!listing.indexAvailable || entry.assets.length !== 1)),
-    ) ?? false;
-  $: if (mounted && seenRevision !== revision) {
-    seenRevision = revision;
-    invalidate();
-  }
-  $: if (mounted && `${bundleName}\n${path}\n${file}` !== seen) {
-    seen = `${bundleName}\n${path}\n${file}`;
+    ) ?? false,
+  );
+  // A new location is revealed in the tree, and the folder filter starts empty again.
+  $effect(() => {
+    const location = `${bundleName}\n${path}\n${file}`;
+    if (location === seen) return;
+    seen = location;
     filter = "";
-    void revealLocation();
-  }
+    untrack(() => void revealLocation());
+  });
+  // The files changed: the folders already opened are read again.
+  $effect(() => {
+    if (seenRevision === revision) return;
+    seenRevision = revision;
+    untrack(invalidate);
+  });
   async function load(bundle: string, directory: string, force = false) {
     const id = directoryKey(bundle, directory);
     if (requests.has(id)) return requests.get(id);
@@ -167,10 +200,18 @@
     item?.focus({ preventScroll: true });
     item?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }
+  /** Close the folder drawer a phone shows in place of the page; focus goes back to the button that opened it. */
+  async function closeTree() {
+    showTree = false;
+    await tick();
+    foldersButton?.focus();
+  }
+  function drawerKey(event: KeyboardEvent) {
+    if (event.key === "Escape" && showTree && !event.defaultPrevented) void closeTree();
+  }
   function open(bundle: string, entry: FileEntry) {
     showTree = false;
-    dispatch(
-      "navigate",
+    onNavigate?.(
       entry.kind === "directory" && !entry.unavailable
         ? { bundle, path: entry.path }
         : {
@@ -222,7 +263,6 @@
     }
   }
   onMount(() => {
-    mounted = true;
     if (!focused) focused = names[0] ? directoryKey(names[0], "") : "";
   });
   onDestroy(() => {
@@ -239,10 +279,11 @@
   });
 </script>
 
+<svelte:window onkeydown={drawerKey} />
 <div class="files-workspace" class:tree-open={showTree}>
   <aside class="files-tree-pane" aria-label="Bundle navigation">
     <div class="tree-heading">
-      <span>Bundles & folders</span><button class="quiet mobile-control" on:click={() => (showTree = false)}
+      <span>Bundles & folders</span><button class="quiet mobile-control" onclick={closeTree}
         ><Icon name="close" size={16} />Close</button
       >
     </div>
@@ -260,9 +301,9 @@
             aria-busy={loading.has(node.key) || undefined}
             tabindex={focusKey === node.key ? 0 : -1}
             style:padding-left={`${8 + (node.level - 1) * 14}px`}
-            on:focus={() => (focused = node.key)}
-            on:keydown={(event) => treeKey(event, node)}
-            on:click={(event) => {
+            onfocus={() => (focused = node.key)}
+            onkeydown={(event) => treeKey(event, node)}
+            onclick={(event) => {
               if ((event.target as Element).closest("[data-expander]")) void toggle(node);
               else open(node.bundle, node);
             }}
@@ -286,26 +327,27 @@
       <p class="sr-only" role="status">{notice}</p>
     </div>
     <label class="hidden-files"
-      ><input type="checkbox" bind:checked={showHidden} on:change={invalidate} /> Show hidden entries</label
+      ><input type="checkbox" bind:checked={showHidden} onchange={invalidate} /> Show hidden entries</label
     >
   </aside>
   <div class="files-main">
     <div class="files-location">
       <button
         class="quiet mobile-control"
-        on:click={() => {
+        bind:this={foldersButton}
+        onclick={() => {
           showTree = true;
           void focus(focused || selectedKey);
         }}><Icon name="folder" size={18} />Folders</button
       >
       <nav aria-label="File location" class="file-breadcrumbs">
         {#if bundleName}<button
-            on:click={() => dispatch("navigate", { bundle: bundleName, path: "" })}
+            onclick={() => onNavigate?.({ bundle: bundleName, path: "" })}
             aria-current={!path && !documentOpen ? "location" : undefined}>{bundleName}</button
           >{/if}
         {#each path.split("/").filter(Boolean) as part, index}<Icon name="chevron-right" size={14} /><button
-            on:click={() =>
-              dispatch("navigate", {
+            onclick={() =>
+              onNavigate?.({
                 bundle: bundleName,
                 path: path
                   .split("/")
@@ -318,7 +360,7 @@
             >{file.split("/").at(-1)}</span
           >{/if}
       </nav>
-      <slot name="actions" />
+      {@render actions?.()}
     </div>
     <div class="files-content" bind:this={contentPane}>
       {#if locationError}<section class="folder-content">
@@ -331,21 +373,21 @@
           </p>
           <a href="/settings/bundles">Bundle settings</a>
         </section>
-      {:else if documentOpen}<slot
-          {selectedFile}
-          indexAvailable={listing?.indexAvailable}
-          loading={loading.has(key) || (!listing && !errors.has(key))}
-          error={errors.get(key)}
-        />
+      {:else if documentOpen}{@render children?.({
+          selectedFile,
+          indexAvailable: listing?.indexAvailable,
+          loading: loading.has(key) || (!listing && !errors.has(key)),
+          error: errors.get(key),
+        })}
       {:else if !bundleName}<section class="folder-content">
           <h1>Files</h1>
           <p>Select a bundle to browse its folders.</p>
         </section>
       {:else if errors.has(key)}<section class="folder-content">
           <p role="alert">{errors.get(key)}</p>
-          <button class="btn-secondary" on:click={() => load(bundleName, path, true)}>Retry folder</button>
+          <button class="btn-secondary" onclick={() => load(bundleName, path, true)}>Retry folder</button>
         </section>
-      {:else if loading.has(key) && !listing}<p class="folder-content" role="status">Loading folder…</p>
+      {:else if !listing}<p class="folder-content" role="status">Loading folder…</p>
       {:else}<section class="folder-content" aria-label="Folder contents" aria-busy={loading.has(key)}>
           <div class="folder-heading">
             <div>
@@ -355,14 +397,9 @@
               </p>
             </div>
             <div class="folder-tools">
-              <button class="quiet" on:click={() => dispatch("search", bundleName)}
+              <button class="quiet" onclick={() => onSearch?.(bundleName)}
                 ><Icon name="search" size={16} />Search this bundle</button
-              ><input
-                type="search"
-                bind:value={filter}
-                aria-label="Filter this folder"
-                placeholder="Filter this folder"
-              />
+              ><label class="folder-filter">Filter this folder<input type="search" bind:value={filter} /></label>
             </div>
           </div>
           {#if listing && !listing.indexAvailable}<p class="notice">
@@ -382,9 +419,9 @@
                           aria-label={`Compare ${entry.name}`}
                           checked={selectedCompare.includes(entry.assets[0].ref)}
                           disabled={selectedCompare.length === 2 && !selectedCompare.includes(entry.assets[0].ref)}
-                          on:change={() => dispatch("select", entry.assets[0].ref)}
+                          onchange={() => onSelect?.(entry.assets[0].ref)}
                         />{/if}
-                      <button class="file-link" on:click={() => open(bundleName, entry)}
+                      <button class="file-link" onclick={() => open(bundleName, entry)}
                         ><Icon name={entry.kind === "directory" ? "folder" : "file"} size={16} /><span
                           >{entry.name}</span
                         >{#if entry.symlink}<Icon name="external" size={14} />{/if}</button
@@ -572,6 +609,15 @@
     align-items: center;
     gap: 12px;
   }
+  /* The filter's name is shown: before the field, and above it where the tools stack on a phone. */
+  .folder-filter {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+    font-size: 13px;
+    white-space: nowrap;
+  }
   .folder-heading input {
     flex: none;
     max-width: 200px;
@@ -688,9 +734,12 @@
     .files-location {
       padding: 8px 16px;
     }
+    .file-breadcrumbs button {
+      min-height: var(--control-height, 44px);
+    }
+    /* Beside Folders and before the actions, as in the markup: wide enough that the actions take the next line. */
     .file-breadcrumbs {
-      order: 2;
-      flex-basis: 100%;
+      flex-basis: 60%;
     }
     .folder-content {
       padding: 24px 20px;
@@ -706,6 +755,10 @@
     .folder-tools .quiet {
       align-self: start;
       padding-inline: 0;
+    }
+    .folder-filter {
+      display: grid;
+      gap: 4px;
     }
     .folder-heading input {
       max-width: none;

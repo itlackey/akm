@@ -434,6 +434,7 @@ akm health
 akm health --since 24h
 akm health --since 7d --format text
 akm health --since 2026-05-01T00:00:00Z
+akm health --read-only --no-probe          # inspect existing state without creating or migrating it
 akm health --report --format md           # full report: per-run rows, trends, proposal queue
 akm health --report --format json         # the same dataset as data
 akm health --report --window-compare 7d --format md
@@ -446,28 +447,41 @@ akm health --report --window-compare 7d --format md
 | `--window-compare` | Compare the current window against the prior window of the same duration (e.g. `24h`, `7d`). With `--report`, overrides the default trend window. |
 | `--group-by` | Group rows by `run` (one row per `improve_runs` entry). Omit for the default summary. |
 | `--windows` | Explicit comparison window(s) as `name=...,since=ISO,until=ISO` (repeatable, up to 4). Mutually exclusive with `--window-compare`. |
-| `--no-probe` | Skip the `connections-and-harnesses` reachability probes and harness `--version` runs, the `cli-version` update check, the `plugin-version` newest-tag lookup, and the `scheduler-binary` version check (for an offline or air-gapped host). |
+| `--read-only` | Open existing state without creating, migrating or repairing it, and skip the database write/read probe (`unknown`). Missing, corrupt or unavailable state is a failing health result. Independent of network probing: add `--no-probe` for offline inspection. |
+| `--no-probe` | Skip the `connections-and-harnesses` reachability probes and harness `--version` runs, the `cli-version` update check, the `plugin-version` and `codex-plugin-version` newest-tag lookups, and the `scheduler-binary` version check (for an offline or air-gapped host). |
 
-The command reads `state.db`, verifies that the required tables exist, performs a
+By default the command opens and migrates `state.db`, verifies that the required tables exist, performs a
 write-read probe against the events stream, inspects `task_history`, checks the
 configured connections and harnesses (the `connections-and-harnesses` table), and summarizes recent `improve_*` events. Unless
 `--no-probe` is given, it also sends a bounded (3s timeout) reachability probe
 to each connection's endpoint, one probe per distinct endpoint, checks the
-installed akm-cli version against the latest GitHub release (`cli-version`),
+installed akm-cli version against the latest release on its channel (`cli-version`:
+GitHub's latest release, and for a prerelease install also npm's `next` tag, as
+`akm upgrade` reads it), and
 runs the scheduler's recorded akm binary with `--version` to check it
 against the running CLI (`scheduler-binary`).
 The `plugin-version` advisory compares the installed Claude Code plugin with the
 channel its marketplace clone follows: the newest stable tag on the remote's
 default branch, the release tag on the branch head for another branch such as
-`next`, and the pinned tag for a marketplace added at a tag.
+`next`, and the pinned tag for a marketplace added at a tag. It also compares
+the `akm-cli` the plugin's `package.json` pins (the copy its hooks run, which
+shares the host's databases) with the running CLI, and says which side is older.
+`codex-plugin-version` does the same for a Codex install from the `akm-plugins`
+marketplace (the version from `codex plugin list`, the newest release on the
+`ref` its marketplace entry follows), and `opencode-plugin-version` /
+`opencode-v2-plugin-version` compare the `akm-cli` bundled in the OpenCode plugin
+the config loads with the running CLI. A plugin ahead of the CLI is fixed by
+`akm upgrade`, one behind it by updating the plugin once its channel has a
+newer build; a lookup that could not reach the marketplace is `unknown` and
+says so.
 
 Primary result fields:
 
 | Field | Description |
 | --- | --- |
-| `status` | Overall health verdict: `pass`, `warn`, or `fail` |
-| `hardChecks` | Deterministic checks such as `state-db-schema`, `state-db-round-trip`, `state-db-integrity`, `state-db-migrations`, `metrics-db`, `active-runs`, `connections-and-harnesses`, and `semantic-search` |
-| `advisories` | Non-fatal warnings including `session-extraction` (akmExtract pipeline health), `cli-version` (installed vs latest release), and `scheduler-binary` |
+| `status` | Overall health verdict: `fail` when a hard check fails, `warn` when any check (hard or advisory, heuristic included) warns, else `pass`; `unknown` checks do not count. Exit code 1, 4 and 0 respectively |
+| `hardChecks` | Deterministic checks such as `state-db-schema`, `state-db-round-trip` (`unknown` in a read-only run, which skips it), `state-db-integrity`, `state-db-migrations`, `metrics-db`, `task-history-read`, `active-runs`, `connections-and-harnesses`, and `semantic-search` |
+| `advisories` | Non-fatal warnings including `session-extraction` (akmExtract pipeline health), `cli-version` (installed vs latest release on its channel), `plugin-version`, `codex-plugin-version`, `opencode-plugin-version` and `opencode-v2-plugin-version` (harness plugins), and `scheduler-binary` |
 | `metrics` | Aggregate task/runtime metrics: `taskFailRate`, `agentFailureRate`, `stuckActiveRuns` |
 | `improve` | Recent improve-loop counts derived from `improve_invoked`, `improve_skipped`, and `improve_completed` events |
 
@@ -477,12 +491,22 @@ session-extraction outcomes (`sessionsScanned`, `sessionsExtracted`, `proposalsC
 dead-URL detections, and skip reasons observed in the selected time window.
 
 `state-db-migrations` reports what `akm health`'s own open of `state.db`
-applied. Every open applies pending migrations (copying the file to
+applied. A normal open applies pending migrations (copying the file to
 `state.db.pre-<id>.bak` first when one drops schema), so the check passes and
 names the applied IDs (`evidence.applied`) and the copy (`evidence.backupPath`).
 It `fail`s only when a pending migration could not be applied — naming it and
 pointing at `akm migrate apply` — rather than the command crashing. Read this
-check's `status` instead of grepping akm's error text.
+check's `status` instead of grepping akm's error text. A `state.db` that cannot
+be read at all, or that is not a SQLite database (garbage, a truncated copy),
+is likewise one failing `state-db-readable` check with the repair steps, and the
+command exits 1, never 78.
+
+With `--read-only`, missing state or pending migrations are reported as a failing
+check instead of creating or migrating the database. The write/read round-trip
+is skipped and reported as `unknown`; the other checks and exit codes are unchanged.
+This also applies with `--report`: proposal data is read through a read-only
+connection. If state is unavailable, the native failing diagnostic is returned
+without attempting the report's additional queries.
 
 `connections-and-harnesses` is one table: a row for each configured connection (endpoint, whether
 its key is held, whether the endpoint answers) and harness (platform, whether
@@ -512,10 +536,12 @@ here after the next `akm index`. `evidence` carries the recorded `status`,
 `unavailable` (`platform` or `load`), `provider`, `runtime`, `reason`, the index's `builtAt`, `entryCount` and
 `embeddingCount`.
 
-`cli-version` compares the installed akm-cli version against the latest
-GitHub release — the same source `akm upgrade` trusts — and `warn`s with the
-upgrade command when a newer release exists. `--no-probe`, offline, or a
-rate-limited request all degrade it to `unknown`, never a false `warn`.
+`cli-version` compares the installed akm-cli version against the latest release
+on the channel this install follows — GitHub's latest release, and for a
+prerelease install also npm's `next` tag, the same sources `akm upgrade` trusts —
+and `warn`s with the upgrade command when a newer release exists. `--no-probe`,
+offline, or a rate-limited request all degrade it to `unknown`, never a false
+`warn`.
 
 The `session-extraction` advisory is derived from the `extract_sessions_seen`
 ledger for the last 7 days — not `improve_runs`, which the hook-driven `akm

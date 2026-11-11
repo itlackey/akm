@@ -156,7 +156,7 @@ describe("harness rows", () => {
   test("the version a caller read appears on the row", () => {
     const all = rows(cfg({ harnesses: { claude: {} } }), {
       which: onPath("claude"),
-      versions: new Map([["claude", "2.1.0 (Claude Code)"]]),
+      versions: new Map([["claude", { version: "2.1.0 (Claude Code)" }]]),
     });
     expect(harness(all, "claude")?.version).toBe("2.1.0 (Claude Code)");
   });

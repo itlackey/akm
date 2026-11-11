@@ -71,6 +71,26 @@ describe("collectVersionDriftAdvisory (#950)", () => {
     expect(result.evidence?.error).toBe("TypeError");
   });
 
+  // The remedy requests the same channel health checked.
+  test("a prerelease install checks the next channel; a stable install checks latest", async () => {
+    const channels: Array<string | undefined> = [];
+    const check: typeof import("../../../src/commands/sources/self-update").checkForUpdate = async (
+      currentVersion,
+      _options,
+      channel,
+    ) => {
+      channels.push(channel);
+      return { currentVersion, latestVersion: "0.10.261117-beta.2", updateAvailable: true, installMethod: "npm" };
+    };
+    const beta = await collectVersionDriftAdvisory(true, { cliVersion: "0.10.261117-beta.1", checkForUpdate: check });
+    expect(beta.status).toBe("warn");
+    expect(beta.message).toContain("0.10.261117-beta.2");
+    expect(beta.message).toContain("run 'akm upgrade --next'");
+    const stable = await collectVersionDriftAdvisory(true, { cliVersion: "0.10.261116", checkForUpdate: check });
+    expect(stable.message).toContain("run 'akm upgrade'");
+    expect(channels).toEqual(["next", "latest"]);
+  });
+
   test("defaults cliVersion to the running package version when omitted", async () => {
     const result = await collectVersionDriftAdvisory(false);
     expect(typeof result.evidence?.installedVersion).toBe("string");

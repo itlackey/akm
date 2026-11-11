@@ -56,6 +56,25 @@ describe("preFilterSession — drop rules", () => {
     expect(result.stats.droppedByRule["akm-readonly-info"]).toBe(1);
   });
 
+  test("drops the akm plugin's read tools and keeps its writes (#1577)", () => {
+    const result = preFilterSession(
+      makeData([
+        event({ text: '[tool:akm_search] {"query":"deploy pipeline"}' }),
+        event({ text: '[tool:akm_show] {"ref":"knowledge/deploy"}' }),
+        event({ text: '[tool:akm_curate] {"query":"deploy pipeline"}' }),
+        event({ text: '[tool:akm_remember] {"content":"Staging deploys need the corp VPN cert"}' }),
+        event({ text: '[tool:akm_feedback] {"ref":"knowledge/deploy","note":"the rollback section is current"}' }),
+      ]),
+    );
+    expect(result.events.map((e) => e.text)).toEqual([
+      '[tool:akm_remember] {"content":"Staging deploys need the corp VPN cert"}',
+      '[tool:akm_feedback] {"ref":"knowledge/deploy","note":"the rollback section is current"}',
+    ]);
+    expect(result.stats.droppedByRule["akm-readonly-search"]).toBe(1);
+    expect(result.stats.droppedByRule["akm-readonly-show"]).toBe(1);
+    expect(result.stats.droppedByRule["akm-readonly-curate"]).toBe(1);
+  });
+
   test("keeps mutating akm commands (remember, feedback, accept, reject, extract, import)", () => {
     const events = [
       event({ text: `[tool:Bash] akm remember "VPN needed before deploy"` }),

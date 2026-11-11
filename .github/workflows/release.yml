@@ -192,15 +192,20 @@ jobs:
             gh release upload "$TAG" artifacts/akm-* artifacts/install.sh artifacts/install.ps1 artifacts/checksums.txt --clobber
             exit 0
           fi
-          PRERELEASE=()
+          # GitHub makes every newly published stable release Latest, whatever its version, and AKM Desktop's stable
+          # line reads Latest: an older line's stable published after a newer line's leaves Latest where it is.
+          FLAGS=()
           if [[ "$CANDIDATE_VERSION" == *-* ]]; then
-            PRERELEASE=(--prerelease)
+            FLAGS=(--prerelease)
+          elif latest="$(gh release view --json tagName --jq .tagName 2>/dev/null)" && [ -n "$latest" ] \
+            && ! node -e 'process.exit(require("semver").gt(process.argv[1], process.argv[2]) ? 0 : 1)' "$CANDIDATE_VERSION" "${latest#v}"; then
+            FLAGS=(--latest=false)
           fi
           gh release create "$TAG" \
             --target "$GITHUB_SHA" \
             --title "$TAG" \
             --generate-notes \
-            "${PRERELEASE[@]}" \
+            "${FLAGS[@]}" \
             artifacts/akm-* \
             artifacts/install.sh \
             artifacts/install.ps1 \

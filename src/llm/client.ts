@@ -772,7 +772,10 @@ export async function probeLlmEndpoint(
     await fetch(openAiOperationUrl(config.endpoint, "models"), { signal: AbortSignal.timeout(timeoutMs) });
     return { reachable: true };
   } catch (err) {
-    return { reachable: false, error: err instanceof Error ? err.message : String(err) };
+    // Node's fetch says only "fetch failed" and keeps the cause (ECONNREFUSED, ENOTFOUND) underneath; name it too.
+    const cause = err instanceof Error && err.cause instanceof Error ? err.cause.message : undefined;
+    const message = err instanceof Error ? err.message : String(err);
+    return { reachable: false, error: cause && !message.includes(cause) ? `${message} (${cause})` : message };
   }
 }
 

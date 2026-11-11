@@ -169,6 +169,21 @@ describe("health-state-db-migrations", () => {
     expect(check.status).toBe("pass");
     expect(check.evidence?.pending).toEqual([]);
   });
+
+  test("a file that is not a SQLite database is a failing state-db-readable check with repair steps, not a config error (F11)", async () => {
+    const file = getStateDbPath();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, "garbage garbage garbage\n");
+
+    const result = await akmHealth();
+    expect(result.status).toBe("fail");
+    expect(result.hardChecks.map((check) => check.name)).toEqual(["state-db-readable"]);
+    expect(result.hardChecks[0]?.message).toContain("is not a SQLite database");
+    expect(result.hardChecks[0]?.message).toContain(".recover");
+
+    const { code } = await runCliCapture(["health", "--format", "json"]);
+    expect(code).toBe(EXIT_CODES.GENERAL);
+  });
 });
 
 /**

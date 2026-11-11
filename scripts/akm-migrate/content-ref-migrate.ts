@@ -6,7 +6,8 @@
  * The `assetContentRefs` step: a ref that names an asset by its pre-#1432 spelling (`knowledge/WORK/x`, now `WORK/x`)
  * in a writable bundle's text files is rewritten to the new one, under one backup directory per run. The old to new
  * map comes from the files themselves (each recognized asset's ref), so no index is needed. A spelling that
- * is now another file's live ref is left as written and listed ({@link ShadowedRef}). The pure rewrite is
+ * is now another file's live ref is left as written and listed ({@link ShadowedRef}). Only a file akm reads as an asset
+ * (and a wiki's live `index.md` and `schema.md`, or an `index.md` beside assets) is rewritten (an active reference); frozen corpora, captured results and other fixtures stay byte-for-byte. The pure rewrite is
  * `./migrate/content-ref-planner.ts`.
  *
  * The same old spellings key rows in state.db (usage events, proposals, events, task history, improve ledger, asset
@@ -16,6 +17,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { detectAdapterId } from "../../src/core/adapter/detect-adapter";
@@ -55,6 +57,8 @@ export interface ContentRefsSummary {
   backupPath?: string;
   /** Present with `backupPath`: how many files were rewritten. */
   applied?: number;
+  /** Present when the rewrite left uncommitted edits in a git bundle: what to do about each. */
+  reconcile?: string[];
 }
 
 export interface ContentRefsMigrationStatus {
@@ -85,13 +89,16 @@ interface StateRefMove {
 /**
  * Every asset each bundle's adapter recognizes, by bundle: the refs that exist now. Every bundle counts, as it does
  * for the resolver, so a spelling another adapter's bundle holds is live and never rewritten. `moves` are the assets
- * outside their type's folder, whose old ref differs from the new one.
+ * outside their type's folder, whose old ref differs from the new one. `files` are the recognized assets' paths: the
+ * only files whose content akm reads for refs.
  */
 function bundleDocuments(roots: readonly BundleRoot[]): {
   readonly bundles: Map<string, string[]>;
   readonly moves: StateRefMove[];
+  readonly files: Set<string>;
 } {
   const bundles = new Map<string, string[]>();
+  const files = new Set<string>();
   const found: Array<{ bundleId: string; type: string; conceptId: string }> = [];
   for (const root of roots) {
     const adapterId = root.adapter ?? detectAdapterId(root.root);
@@ -100,6 +107,7 @@ function bundleDocuments(roots: readonly BundleRoot[]): {
     const component = { id: root.bundleId, adapter: adapterId, root: root.root, writable: root.writable };
     const documents = walkStashFlat(root.root).flatMap((file): string[] => {
       const doc = adapter.recognize(component, file);
+      if (doc) files.add(file.absPath);
       if (!doc?.conceptId) return [];
       found.push({ bundleId: root.bundleId, type: doc.type, conceptId: doc.conceptId });
       return [doc.conceptId];
@@ -115,7 +123,7 @@ function bundleDocuments(roots: readonly BundleRoot[]): {
     if (live.get(bundleId)?.has(`${dir}/${conceptId}`)) continue;
     moves.push({ from: `${bundleId}//${dir}/${conceptId}`, to: `${bundleId}//${conceptId}` });
   }
-  return { bundles, moves };
+  return { bundles, moves, files };
 }
 
 /** state.db tables that store a full `bundle//conceptId` ref, with the column that holds it. */
@@ -167,6 +175,41 @@ function moveStateRows(moves: readonly StateRefMove[]): void {
   });
 }
 
+/**
+ * The live structural files akm agents read but the adapter does not index: a wiki's `index.md` and `schema.md`
+ * (a llm-wiki bundle's `schema.md` is at its root), and an `index.md` beside a recognized asset. `log.md` is history,
+ * and nothing under `raw/` (ingested source) or a frozen capture is touched.
+ */
+function isStructuralFile(root: string, adapterId: string, filePath: string, assetDirs: ReadonlySet<string>): boolean {
+  const segments = path.relative(root, filePath).split(path.sep);
+  if (segments.slice(0, -1).includes("raw")) return false;
+  const name = segments[segments.length - 1]!.toLowerCase();
+  const atWikiRoot = segments.length >= 3 && segments[segments.length - 3] === "wikis";
+  if (name === "schema.md") return atWikiRoot || (adapterId === "llm-wiki" && segments.length === 1);
+  return name === "index.md" && (atWikiRoot || assetDirs.has(path.dirname(filePath)));
+}
+
+/** The git checkout each file belongs to, when it has one (a bundle root may be a subdirectory of a checkout). */
+function gitReconcile(filePaths: readonly string[], backupPath: string): string[] {
+  const { GIT_DIR: _dir, GIT_WORK_TREE: _tree, ...env } = process.env;
+  const topOf = new Map<string, string | undefined>();
+  const byRoot = new Map<string, string[]>();
+  for (const filePath of filePaths) {
+    const real = fs.realpathSync(filePath);
+    const dir = path.dirname(real);
+    if (!topOf.has(dir)) {
+      const top = spawnSync("git", ["-C", dir, "rev-parse", "--show-toplevel"], { encoding: "utf8", env });
+      topOf.set(dir, top.status === 0 ? top.stdout.trim() : undefined);
+    }
+    const gitRoot = topOf.get(dir);
+    if (gitRoot !== undefined) byRoot.set(gitRoot, [...(byRoot.get(gitRoot) ?? []), path.relative(gitRoot, real)]);
+  }
+  return [...byRoot].map(([gitRoot, paths]) => {
+    const quoted = paths.map((file) => JSON.stringify(file)).join(" ");
+    return `${gitRoot} is a git checkout with uncommitted migration edits (${paths.join(", ")}); review them with \`git -C ${gitRoot} status\` and \`git -C ${gitRoot} diff\` (a rewritten untracked file does not show in diff), then commit them or restore the originals with \`git -C ${gitRoot} restore ${quoted}\` (for an untracked file, copy it back from ${backupPath}); \`akm bundle update\` refuses an update that would overwrite them.`;
+  });
+}
+
 interface PlannedFile {
   readonly replacement: FileReplacement;
   readonly refs: number;
@@ -179,13 +222,16 @@ function plan(): {
 } {
   resetConfigCache();
   const roots = bundleRoots(loadConfig());
-  const { bundles, moves } = bundleDocuments(roots);
+  const documents = bundleDocuments(roots);
+  const { bundles, moves } = documents;
   const rewriter: ContentRefRewriter = contentRefRewriter(bundles);
   const files: PlannedFile[] = [];
   const seen = new Set<string>();
+  const assetDirs = new Set([...documents.files].map((file) => path.dirname(file)));
   for (const root of roots.filter((candidate) => candidate.writable)) {
+    const adapterId = root.adapter ?? detectAdapterId(root.root);
     for (const filePath of textFiles(root.root)) {
-      if (seen.has(filePath)) continue;
+      if (seen.has(filePath) || !(documents.files.has(filePath) || isStructuralFile(root.root, adapterId, filePath, assetDirs))) continue;
       seen.add(filePath);
       const before = fs.readFileSync(filePath);
       const text = before.toString("utf8");
@@ -241,6 +287,7 @@ export function applyContentRefsMigration(): ContentRefsMigrationStatus {
         ? { ...file, status: "skipped", reason: "it changed after it was planned, so it was left as it is; run again to plan it afresh" }
         : file,
     );
+    const reconcile = gitReconcile(replaced, backupPath);
     return {
       schemaVersion: 1,
       status: conflicts.length > 0 ? "ready" : "current",
@@ -251,6 +298,7 @@ export function applyContentRefsMigration(): ContentRefsMigrationStatus {
         skipped: conflicts.length,
         applied: replaced.length,
         backupPath,
+        ...(reconcile.length > 0 ? { reconcile } : {}),
       },
     };
   });

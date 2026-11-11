@@ -10,7 +10,7 @@ import { DESKTOP_ID, DesktopMenu } from "./menu-install.mjs";
 import { createFolderPicker } from "./pick-folder.mjs";
 import { createUpdater } from "./updater.mjs";
 
-/** @typedef {{ type?: string, busy?: boolean, id?: string, action?: string, start?: string, url?: string, origin?: string }} ChildMessage */
+/** @typedef {{ type?: string, busy?: boolean, id?: string, action?: string, start?: string, channel?: unknown, url?: string, origin?: string }} ChildMessage */
 /** @type {import("node:child_process").ChildProcess | undefined} */
 let child;
 /** @type {import("electron").BrowserWindow | undefined} */
@@ -95,10 +95,13 @@ else
         version: app.getVersion(),
         platform: process.platform,
         // electron-updater replaces a Linux AppImage in place and cannot update any other Linux layout.
-        supported:
-          app.isPackaged &&
-          process.env.AKM_DESKTOP_UPDATES !== "off" &&
-          (process.platform !== "linux" || Boolean(process.env.APPIMAGE)),
+        unsupportedReason: !app.isPackaged
+          ? "development"
+          : process.env.AKM_DESKTOP_UPDATES === "off"
+            ? "off"
+            : process.platform === "linux" && !process.env.APPIMAGE
+              ? "not-appimage"
+              : undefined,
       });
       const pickFolder = createFolderPicker({ dialog, window: () => window });
       const server = fork(fileURLToPath(new URL("../server/server.mjs", import.meta.url)), [], {
@@ -120,8 +123,21 @@ else
         }
         if (message?.type !== "desktop-request" || typeof message.id !== "string") return;
         try {
-          if (!message.action || !["status", "menu-install", "pick-folder"].includes(message.action))
+          if (
+            !message.action ||
+            !["status", "menu-install", "pick-folder", "update-channel", "update-check"].includes(message.action)
+          )
             throw new Error("Unknown software action.");
+          if (message.action === "update-check") {
+            updater.checkNow();
+            if (server.connected) server.send({ type: "desktop-response", id: message.id, data: updater.status() });
+            return;
+          }
+          if (message.action === "update-channel") {
+            updater.follow(message.channel === "stable" || message.channel === "prerelease" ? message.channel : null);
+            if (server.connected) server.send({ type: "desktop-response", id: message.id, data: updater.status() });
+            return;
+          }
           if (message.action === "pick-folder") {
             const folder = await pickFolder(message.start);
             if (server.connected) server.send({ type: "desktop-response", id: message.id, data: folder });
