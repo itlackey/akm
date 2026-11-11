@@ -433,10 +433,21 @@ describe("akm show additive body controls", () => {
     seed();
     for (const args of [
       ["--detail=brief", "--max-tokens=25"],
-      ["--detail=brief", "--context=lead", "--max-tokens=25"],
+      ["--detail=brief", "--lead"],
       ["--outline", "--max-tokens=25"],
+      ["--outline", "--lead"],
     ]) {
       expect((await runEntrypoint(["show", "knowledge/guide#details", ...args])).status, args.join(" ")).toBe(2);
+    }
+    // 0.10.261118 combinations of --detail brief with lead context keep working (the akm-plugins /akm-show form).
+    for (const args of [
+      ["--detail=brief", "--context=lead"],
+      ["--detail=brief", "--context=lead", "--max-chars=100"],
+      ["--detail=brief", "--context=lead", "--max-tokens=25"],
+    ]) {
+      const ok = await runEntrypoint(["show", "knowledge/guide#details", ...args, "--format=json"]);
+      expect(ok.status, args.join(" ")).toBe(0);
+      expect(JSON.parse(ok.stdout).contextMode, args.join(" ")).toBe("lead");
     }
     const noFragment = await runEntrypoint(["show", "knowledge/guide", "--lead", "--format=json"]);
     expect(noFragment.status).toBe(2);

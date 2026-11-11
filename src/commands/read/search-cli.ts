@@ -433,7 +433,9 @@ export const showCommand = defineJsonCommand({
     if (args.outline && (contextMode === "lead" || maxTokens !== undefined || maxChars !== undefined)) {
       throw new UsageError("--outline cannot be combined with lead context or a content budget.", "INVALID_FLAG_VALUE");
     }
-    if (explicitDetail === "brief" && (contextMode === "lead" || maxTokens !== undefined || maxChars !== undefined)) {
+    // `--detail brief --context lead [--max-chars|--max-tokens]` worked in 0.10.261118 and still does; only the
+    // new forms are refused: `--lead`, or a `--max-tokens` body budget without lead context.
+    if (explicitDetail === "brief" && (args.lead || (maxTokens !== undefined && contextMode === "exact"))) {
       throw new UsageError(
         "A content budget or --lead requires body output; omit --detail brief.",
         "INVALID_FLAG_VALUE",

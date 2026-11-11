@@ -992,9 +992,10 @@ still returns the complete body. Sensitive env and secret assets retain their
 metadata-only output; a budget never exposes their values.
 
 `--outline` cannot be combined with a content budget, lead context or an
-explicit `--detail` other than `brief`. `--detail brief` with `--max-tokens`,
-`--max-chars` or lead context is a usage error (exit 2), as it asks for a body
-it does not show. `--lead` requires an indexed Markdown
+explicit `--detail` other than `brief`. `--detail brief` with `--lead`, or with `--max-tokens`
+without lead context, is a usage error (exit 2), as it asks for a body it does
+not show. `--detail brief --context lead [--max-chars N | --max-tokens N]`
+keeps working exactly as in 0.10.261118. `--lead` requires an indexed Markdown
 fragment and conflicts with `--context exact`; its errors name `--lead` when you
 typed `--lead`.
 Direct `.meta` reads support `--max-tokens` but not `--outline`.
