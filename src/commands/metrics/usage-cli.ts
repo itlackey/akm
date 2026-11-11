@@ -5,7 +5,7 @@
 import { type ArgsDef, defineCommand } from "citty";
 import { findCittyTopLevelCommandIndex } from "../../cli/invocation";
 import { defineJsonCommand, GLOBAL_OUTPUT_ARGS, output } from "../../cli/shared";
-import { assertKnownFlags } from "../../cli/unknown-flags";
+import { assertKnownFlags, type FlagScanCommand } from "../../cli/unknown-flags";
 import { CLI_USAGE_SOURCES, readUsage } from "../../cli/usage";
 import { UsageError } from "../../core/errors";
 import { parseHealthSince } from "../health";
@@ -100,7 +100,12 @@ export const doctorMetricsCommand = defineCommand({
   subCommands: { usage: usageCommand },
   setup({ rawArgs }) {
     const index = findCittyTopLevelCommandIndex(rawArgs, metricsCommand.args as ArgsDef);
-    if (index < 0 || rawArgs[index] !== "usage") return;
+    if (index < 0 || rawArgs[index] !== "usage") {
+      // The bare report remains a leaf for flag validation even though this
+      // wrapper also routes usage; health-only flags must still be rejected.
+      assertKnownFlags(metricsCommand as FlagScanCommand, rawArgs);
+      return;
+    }
     try {
       assertKnownFlags({ args: GLOBAL_OUTPUT_ARGS }, rawArgs.slice(0, index));
     } catch (error) {
