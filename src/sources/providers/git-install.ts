@@ -22,7 +22,7 @@ import type { SourceLockData, SyncOptions } from "./install-types";
 import { applyAkmIncludeConfig, buildInstallCacheDir, detectStashRoot, isDirectory } from "./provider-utils";
 
 const DIRTY_PATHS_SHOWN = 5;
-const UPDATE_REFUSAL_HINT =
+export const UPDATE_REFUSAL_HINT =
   "Local work was preserved. Commit, move or discard the paths or commits named above in the checkout, then run `akm bundle update` again.";
 
 /**
@@ -236,6 +236,7 @@ async function doSyncGit(parsed: ParsedGitRef, options?: SyncOptions): Promise<S
       syncedAt,
       options.writableRequiredRoots,
       options.credential,
+      options.allowLocalChanges,
     );
   }
   const cacheRootDir = options?.cacheRootDir ?? getRegistryCacheDir();
@@ -264,6 +265,7 @@ async function doSyncGit(parsed: ParsedGitRef, options?: SyncOptions): Promise<S
         syncedAt,
         options.writableRequiredRoots,
         options.credential,
+        options.allowLocalChanges,
       );
     }
     try {
@@ -393,6 +395,7 @@ export function syncExistingWritableCheckout(
   syncedAt: string,
   requiredRoots: readonly string[] = [],
   credential?: string,
+  allowLocalChanges = false,
 ): SourceLockData {
   const root = path.resolve(contentRoot);
   const repoResult = runGit(["-C", root, "rev-parse", "--show-toplevel"]);
@@ -410,6 +413,15 @@ export function syncExistingWritableCheckout(
   if (remote.status !== 0 || normalizeRemoteUrl(remote.stdout) !== normalizeRemoteUrl(parsed.url)) {
     throw new UsageError(
       `Writable Git install at ${root} points at a different origin; refusing to update or replace the checkout.`,
+    );
+  }
+
+  // Only the staged `bundle update` path leaves local changes to git's own fast-forward protection.
+  if (!allowLocalChanges) {
+    assertCleanWorktree(
+      repoDir,
+      `Writable Git install at ${root}`,
+      "has uncommitted changes; commit or discard them before update.",
     );
   }
 
@@ -486,6 +498,13 @@ export function syncExistingWritableCheckout(
       }
     }
 
+    if (!allowLocalChanges) {
+      assertCleanWorktree(
+        repoDir,
+        `Writable Git install at ${root}`,
+        "changed while its update was prepared; local work was preserved.",
+      );
+    }
     assertNoIgnoredPathOverwrite(repoDir, targetRevision);
     // Git itself refuses (and changes nothing) when the fast-forward would overwrite local work.
     const merge = runGit(["-C", repoDir, "merge", "--ff-only", "--no-overwrite-ignore", targetRevision], {

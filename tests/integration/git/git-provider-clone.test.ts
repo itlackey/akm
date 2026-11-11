@@ -174,6 +174,22 @@ describe("writable Git checkout safety", () => {
     expect(fs.readFileSync(path.join(fixture.contentRoot, "lessons", "seed.md"), "utf8")).toBe("updated\n");
   });
 
+  test("rejects a dirty checkout without deleting local work", () => {
+    const dirty = makeWritableFixture();
+    const dirtyFile = path.join(dirty.contentRoot, "lessons", "seed.md");
+    fs.writeFileSync(dirtyFile, "dirty work\n", "utf8");
+    const dirtyRevision = git(["-C", dirty.author, "rev-parse", "HEAD"]);
+    expect(() =>
+      syncExistingWritableCheckout(
+        parsedRef(dirty.remote),
+        resolvedRef(dirty.remote, dirtyRevision),
+        dirty.contentRoot,
+        "2026-01-01T00:00:00.000Z",
+      ),
+    ).toThrow(/uncommitted changes/);
+    expect(fs.readFileSync(dirtyFile, "utf8")).toBe("dirty work\n");
+  });
+
   /** Commit `files` (path under content/ -> text) upstream and return the new revision. */
   function pushUpstream(fixture: { author: string }, files: Record<string, string>): string {
     for (const [rel, text] of Object.entries(files)) {
@@ -193,6 +209,9 @@ describe("writable Git checkout safety", () => {
       resolvedRef(fixture.remote, revision),
       fixture.contentRoot,
       "2026-01-01T00:00:00.000Z",
+      [],
+      undefined,
+      true,
     );
   }
 
@@ -254,8 +273,21 @@ describe("writable Git checkout safety", () => {
     const before = git(["-C", fixture.checkout, "rev-parse", "HEAD"]);
     const revision = pushUpstream(fixture, { "lessons/new.md": "upstream\n" });
 
-    expect(() => update(fixture, revision)).toThrow(fixture.contentRoot);
+    expect(() => update(fixture, revision)).toThrow(/cannot fast-forward without overwriting local work/);
     expect(fs.readFileSync(local, "utf8")).toBe("untracked work\n");
+    expect(git(["-C", fixture.checkout, "rev-parse", "HEAD"])).toBe(before);
+  });
+
+  test("refuses an incoming overwrite of an ignored file without losing it", () => {
+    const fixture = makeWritableFixture();
+    fs.appendFileSync(path.join(fixture.checkout, ".git", "info", "exclude"), "content/lessons/ignored.md\n");
+    const local = path.join(fixture.contentRoot, "lessons", "ignored.md");
+    fs.writeFileSync(local, "ignored work\n", "utf8");
+    const before = git(["-C", fixture.checkout, "rev-parse", "HEAD"]);
+    const revision = pushUpstream(fixture, { "lessons/ignored.md": "upstream\n" });
+
+    expect(() => update(fixture, revision)).toThrow(/overwrite ignored local path/);
+    expect(fs.readFileSync(local, "utf8")).toBe("ignored work\n");
     expect(git(["-C", fixture.checkout, "rev-parse", "HEAD"])).toBe(before);
   });
 
