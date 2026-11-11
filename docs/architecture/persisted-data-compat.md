@@ -76,12 +76,49 @@ and named once, round-trips through ordinary writes, and is dropped by
 
 ### CLI usage store (first release pending)
 
-`usage.sqlite` in `getDataDir()` is additive local diagnostic state, independent
-of learning state. `PRAGMA user_version=1` identifies its schema. `metadata` holds
-an opaque local instance UUID and collection start. `invocations` holds redacted
-schema-version-1 attempt documents and completion fields; `aggregates` holds UTC
-daily dimensional counters. Start and completion update detail and aggregate in
-separate atomic transactions; completion's conditional update prevents duplicates.
-Detail expiry never deletes aggregates. Readers and collectors refuse newer schema
-versions without altering CLI outcomes; reports explain the gap. The 0.11 migration
-must preserve this file and its instance identity, aggregate keys and counts.
+The CLI usage tables live in `metrics.db` in `getDataDir()`, the file 0.11 also
+uses for its rollup history (`src/core/metrics-db.ts` on `release/0.11.0`). They
+are additive local diagnostic state, independent of learning state, and share
+nothing else with 0.11's tables:
+
+- **Names:** `cli_usage_meta`, `cli_usage_invocations` (index
+  `cli_usage_invocations_ts`) and `cli_usage_aggregates`. 0.11's baseline
+  migration creates `folded_day`, `improve_runs`, `event_daily`, `llm_daily`,
+  `usage_daily`, `query_daily`, `feedback_tag_daily`, `select_daily`,
+  `latency_daily` and `improve_skip_daily`; none collides.
+- **Version:** the usage schema version (1) is the `schema` row of
+  `cli_usage_meta`. 0.10 never sets `PRAGMA user_version` and never creates a
+  `schema_migrations` table, because 0.11 versions `metrics.db` by that ledger
+  (an exact ordered prefix of its migration ids; a foreign id would be
+  "inconsistent"). 0.11 opening a file 0.10 wrote finds no ledger, runs its
+  baseline migration beside the usage tables and loses nothing.
+- **Content:** `cli_usage_meta` holds an opaque local instance UUID and the
+  collection start; `cli_usage_invocations` holds redacted schema-version-1
+  attempt documents and completion fields; `cli_usage_aggregates` holds UTC
+  daily dimensional counters. Start and completion update detail and aggregate
+  in separate atomic transactions; completion's conditional update prevents
+  duplicates. Detail expires after 30 days and never deletes aggregates.
+- **Skew:** readers and collectors refuse a newer `schema` without altering CLI
+  outcomes, and reports explain the gap. A 0.10.261119 build opening a
+  `metrics.db` 0.11 created adds only its own tables, which 0.11 ignores. An
+  unwritable, locked or corrupt file never changes a command's output or exit code.
+- **Off and read-only:** `usage.capture: false` and `--read-only` open and write
+  nothing.
+
+**What 0.11 must do to adopt it:** nothing to the file. Its usage capture opens
+`metrics.db` in the data directory it resolves (after the location is known),
+runs the same `CREATE TABLE IF NOT EXISTS` statements for the three tables,
+keeps `cli_usage_meta.schema` as the only usage version (bump it for a new usage
+schema, not `user_version` or `schema_migrations`), and reads the instance UUID,
+aggregate keys and counts as they are. Its upgrade rehearsal must carry
+`metrics.db` across a relocation of the data directory with the instance UUID
+and counts intact. The fold and purges of 0.11 must leave `cli_usage_*` alone.
+
+**Tested:** `tests/integration/cli-usage.test.ts` pins the table names, the
+absence of `user_version` and `schema_migrations` changes beside a 0.11-shaped
+`metrics.db`, retention, redaction and fail-open behaviour.
+`tests/integration/upgrade-rehearsal/upgrade-rehearsal.test.ts` (step 11b, gated
+behind `AKM_UPGRADE_REHEARSAL=1` and run in CI against the previous release)
+writes a task `trigger`, usage-event `agent` metadata and CLI usage with the
+candidate and reads them back with the previous release. Not tested: a real
+0.11 build opening this file; that check belongs to 0.11's rehearsal.
