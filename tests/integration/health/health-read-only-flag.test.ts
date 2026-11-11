@@ -56,6 +56,7 @@ async function cli(command: string, args: string[]) {
 
 async function health(command: string, args: string[]) {
   const result = await cli(command, [...args, "--no-probe", "--format", "json", "--quiet"]);
+  expect(fs.statSync(path.join(storage.dataDir, "akm", "usage.sqlite")).isFile()).toBe(true);
   return {
     ...result,
     data: JSON.parse(result.stdout) as AkmHealthResult & {
@@ -67,10 +68,12 @@ async function health(command: string, args: string[]) {
   };
 }
 
-/** Durable bytes and all filenames. SQLite readers may update SHM read-lock bookkeeping. */
+/** Inspected-state bytes and filenames; only the separate CLI usage database is exempt.
+ * SQLite readers may update SHM read-lock bookkeeping. */
 function dataSnapshot() {
   return fs
     .readdirSync(storage.dataDir, { recursive: true, encoding: "utf8" })
+    .filter((file) => file !== path.join("akm", "usage.sqlite"))
     .filter((file) => fs.statSync(path.join(storage.dataDir, file)).isFile())
     .sort()
     .map((file) => [

@@ -433,8 +433,10 @@ akm doctor judge reflect.quality --schema
 ```
 
 Bare `doctor` keeps health's defaults: probes run and state may be initialized or
-migrated. Use `--read-only --no-probe` for an offline inspection without state
-writes. Health statuses retain exit codes 0 (pass), 4 (warning) and 1 (failure).
+migrated. Use `--read-only --no-probe` for an offline inspection without writes
+to the inspected state. The invocation still records diagnostic CLI usage in the
+separate `usage.sqlite` database. Health statuses retain exit codes 0 (pass),
+4 (warning) and 1 (failure).
 
 All existing top-level commands remain available in 0.10. Health's reporting flags
 (`doctor --report`, `--group-by`, `--window-compare`, `--windows` and `--since`)
@@ -580,7 +582,9 @@ check instead of creating or migrating the database. The write/read round-trip
 is skipped and reported as `unknown`; the other checks and exit codes are unchanged.
 This also applies with `--report`: proposal data is read through a read-only
 connection. If state is unavailable, the native failing diagnostic is returned
-without attempting the report's additional queries.
+without attempting the report's additional queries. Diagnostic CLI usage is still
+recorded in the separate `usage.sqlite` database; `--read-only` protects the
+inspected state databases.
 
 `connections-and-harnesses` is one table: a row for each configured connection (endpoint, whether
 its key is held, whether the endpoint answers) and harness (platform, whether
@@ -3024,8 +3028,9 @@ lowering `notices`. It has no fake exit code, stdout, stderr, or duration.
 Each provenance entry contains only `field`, `layer`, `kind`, and `via`. Each
 lowering notice contains `code`, `severity`, `adapter`, optional `field`, and
 fixed `message`. Dry-run does not dispatch and does not materialize
-credentials. It uses a read-only source lookup and records no usage, events, or
-accounting.
+credentials. It uses a read-only source lookup and records no asset usage,
+execution events, or model accounting. The CLI invocation still records
+diagnostic usage in the separate `usage.sqlite` database.
 
 Diagnostics exclude resolved values. They never include prompt content.
 They never include command content. They never include environment values.
@@ -3176,7 +3181,7 @@ akm improve judge < revision.json      # reflect's quality judge on one revision
 | Flag | Description |
 | --- | --- |
 | `--task` | Optional extra guidance for this improvement pass |
-| `--dry-run` | Show the schema-v2 result on stdout without creating config, data, state, cache, bundle, log, or result artifacts. Dry-run results are never persisted, including on errors or signals. |
+| `--dry-run` | Show the schema-v2 result on stdout without creating config, learning data, state, cache, bundle, log, or result artifacts. Dry-run results are never persisted, including on errors or signals. Diagnostic CLI usage is still recorded separately in `usage.sqlite`. |
 | `--bundle` | Select the bundle the run improves and writes to (default: `defaultWriteTarget`, else the working bundle); only that bundle's assets are planned. When the ref scope is bundle-qualified, it must name the same bundle |
 | `--limit <n>` | Cap the refs the run processes, highest salience first (refs routed to distill only come last). Overrides the strategy's `processes.reflect.limit` and `limit` |
 | `--timeout <duration>` | Duration alias for `--timeout-ms`; see [Timeout durations](#timeout-durations). |
