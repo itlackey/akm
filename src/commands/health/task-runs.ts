@@ -21,8 +21,7 @@ interface ImproveTaskRun {
 }
 
 /**
- * Load `task_history` rows whose `task_id` begins `akm-improve` (the scheduled
- * improve tasks: `akm-improve-frequent`, `akm-improve-proactive-weekly`, …) in
+ * Load the shipped `improve` task and older `akm-improve*` tasks in
  * the window, widened ±5 min so a task that fired just before the window opened
  * still matches a run inside it. Used to attribute each improve run to the task
  * that launched it.
@@ -34,7 +33,7 @@ function loadImproveTaskRuns(db: Database, since: string, until?: string): Impro
   const widenedUntil = untilMs !== undefined ? new Date(untilMs + 5 * 60 * 1000).toISOString() : undefined;
   const runs: ImproveTaskRun[] = [];
   for (const row of queryTaskHistory(db, { since: widenedSince, until: widenedUntil })) {
-    if (!row.task_id.startsWith("akm-improve")) continue;
+    if (row.task_id !== "improve" && !row.task_id.startsWith("akm-improve")) continue;
     const startMs = new Date(row.started_at).getTime();
     if (!Number.isFinite(startMs)) continue;
     const endIso = row.completed_at ?? row.failed_at;

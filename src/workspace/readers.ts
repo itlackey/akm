@@ -4,33 +4,13 @@
 
 /** Readers shared by the workspace operations: the read-only state database, the stash directory, per-section isolation and caps. */
 
-import fs from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import { resolveStashDir } from "../core/common";
 import { type AkmConfig, getConfigValueSource, loadConfig, sanitizeConfigForWrite } from "../core/config/config";
 import { UsageError } from "../core/errors";
-import { getStateDbPath, listPendingStateMigrations } from "../core/state-db";
 import { resolveWorkingStashTarget } from "../sources/write-source";
-import { type Database, openDatabase } from "../storage/database";
-import { applyReadonlyPragmas } from "../storage/sqlite-pragmas";
 
-/**
- * Run `fn` against `state.db` opened read-only, or return `fallback` when it
- * does not exist or is behind on migrations (a read-only open must not apply
- * them; `akm health` reports that state). The handle is closed before returning,
- * so no request holds a lock past its own read.
- */
-export function withReadonlyStateDb<T>(fn: (db: Database) => T, fallback: T): T {
-  const dbPath = getStateDbPath();
-  if (!fs.existsSync(dbPath) || listPendingStateMigrations(dbPath).length > 0) return fallback;
-  const db = openDatabase(dbPath, { readonly: true, create: false });
-  try {
-    applyReadonlyPragmas(db);
-    return fn(db);
-  } finally {
-    db.close();
-  }
-}
+export { withReadonlyStateDb } from "../core/state-db";
 
 export function tryStashDir(): string | null {
   try {

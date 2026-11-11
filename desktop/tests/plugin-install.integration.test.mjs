@@ -14,13 +14,10 @@ test("native harness installers configure AKM only in isolated homes", {
   const programs = await hostEnvironment();
   const found = Object.fromEntries(
     await Promise.all(
-      ["akm", "bun", "claude", "codex", "opencode", "opencode2"].map(async (name) => [
-        name,
-        await findProgram(name, programs),
-      ]),
+      ["akm", "bun", "claude", "codex", "opencode"].map(async (name) => [name, await findProgram(name, programs)]),
     ),
   );
-  for (const id of ["claude", "codex", "opencode", "opencode2"])
+  for (const id of ["claude", "codex", "opencode"])
     await t.test(id, { skip: !found[id] }, async () => {
       const fixture = await createFixture({ index: false });
       t.after(() => fixture.cleanup());

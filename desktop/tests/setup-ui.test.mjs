@@ -11,7 +11,8 @@ import { chromium, expect } from "@playwright/test";
 import { akm, launchFixture } from "./support.mjs";
 
 const ENGINE = JSON.parse(await readFile(new URL("../.core/package.json", import.meta.url), "utf8")).version;
-const PLUGIN = "0.10.261020";
+// The installed plugin is on the engine's line, so Setup ticks it (a different major.minor is a mismatch warning).
+const PLUGIN = ENGINE.replace(/-.*$/, "");
 const here = path.dirname(new URL(import.meta.url).pathname);
 
 /** A harness CLI that records its arguments and keeps its plugin state in a file, like the native one. */
@@ -132,14 +133,34 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
   await expect(page.getByRole("heading", { name: /Claude Code/ })).toBeVisible();
   const claudeBox = page.getByRole("checkbox", { name: /Install the akm plugin/ });
   await expect(claudeBox).toBeDisabled();
+  // The box that cannot be ticked says why: the Bun note is its description.
+  await expect(claudeBox).toHaveAccessibleDescription(/hooks run on Bun, and Bun is not installed/);
   await expect(page.getByText("The Claude Code plugin's hooks run on Bun")).toBeVisible();
   await expect(page.getByText("curl -fsSL https://bun.sh/install | bash")).toBeVisible();
+  // Keyboard and screen readers: a card is a named group, each control says what it acts on, and a hint is the
+  // description of its control, not loose text beside it.
+  const claudeCard = page.getByRole("group", { name: /^Claude Code/ });
+  await expect(claudeCard).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: /Install the akm plugin for Claude Code/ })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Copy Bun's install command" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Check again for Bun" })).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: "Let akm use Claude Code" })).toHaveAccessibleDescription(
+    /Lets akm run agent work and tasks on it/,
+  );
+  await expect(cli).toHaveAccessibleDescription(/official release installer/);
   await shot("setup-03-agents-before");
   // The agent is offered as "let akm use it" (ticked); learning is a separate choice, off.
   await expect(page.getByRole("checkbox", { name: "Let akm use Claude Code" })).toBeChecked();
   await expect(page.getByRole("checkbox", { name: "Let akm learn in the background" })).not.toBeChecked();
   await expect(page.getByRole("radio")).toHaveCount(0);
-  await page.getByRole("button", { name: "Install 2 selected" }).click();
+  // Started from the keyboard: the results arrive in a live region and focus stays on the button that ran them.
+  const installSelected = page.locator('section[aria-labelledby="setup-agents"] .btn-row button');
+  await page.getByRole("button", { name: "Install 2 selected" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.locator('[aria-live="polite"]').filter({ hasText: /AKM CLI installed in ~\/.local\/bin/ }),
+  ).toBeVisible();
+  await expect(installSelected).toBeFocused();
   await expect(page.getByText(/AKM CLI installed in ~\/.local\/bin/)).toBeVisible();
   // Enabled, and learning stays off: nothing is scheduled, and the learning switch stays off.
   await expect(page.getByText(/1 agent is enabled for akm. Background learning is off./)).toBeVisible();
@@ -165,6 +186,17 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
   await expect(page.getByRole("radio", { name: /akm itself/ })).toBeDisabled();
   await expect(page.getByText(/akm itself needs a model connection/)).toBeVisible();
   await expect(page.getByText(/model calls are limited to reading and searching|cannot be restricted/)).toBeVisible();
+  // The learning choices and fields carry their hints as descriptions; a placeholder is an example, not the instruction.
+  await expect(page.getByRole("radio", { name: /akm itself/ })).toHaveAccessibleDescription(
+    /akm has no model connection/,
+  );
+  await expect(page.getByRole("radio", { name: "Claude Code" })).toHaveAccessibleDescription(
+    /akm runs Claude Code for this/,
+  );
+  await expect(page.getByLabel("Model", { exact: true })).toHaveAccessibleDescription(/model name the endpoint serves/);
+  await expect(page.getByLabel("Model", { exact: true })).not.toHaveAttribute("placeholder", /endpoint serves/);
+  await expect(page.getByLabel(/API key variable/)).toHaveAccessibleDescription(/never the key itself/);
+  await expect(learning).toHaveAccessibleDescription(/Off unless you turn it on/);
   await shot("setup-04-learning-needs-connection");
   // Enter a connection (the key's variable name only): akm itself becomes the default choice.
   await page.getByLabel("Endpoint").fill("http://localhost:11434");
@@ -195,6 +227,8 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
   await expect(page.getByRole("radio", { name: "Claude Code" })).toBeChecked();
   await expect(page.getByText(`✓ AKM plugin ${PLUGIN}`)).toBeVisible();
   await expect(page.getByText("Restart Claude Code")).toBeVisible();
+  // The restart note belongs to its card: it is the card's description.
+  await expect(claudeCard).toHaveAccessibleDescription(/Restart Claude Code, or run \/reload-plugins/);
   await shot("setup-05-learning-agent");
   const run = await commands(server);
   // A stage engine (0.11.0-beta.0) installs the plugins from the marketplace's next channel.
@@ -244,17 +278,23 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
   await expect(page.getByText("✓ 1 connected")).toBeVisible();
   await expect(page.getByRole("checkbox", { name: /AKM starter bundle/ })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Nothing selected" })).toBeDisabled();
-  const axe = await new AxeBuilder({ page }).analyze();
-  assert.deepEqual(
-    axe.violations.map((v) => v.id),
-    [],
-  );
-  for (const width of [900, 600, 390]) {
-    await page.setViewportSize({ width, height: 900 });
+  for (const [width, height] of [
+    [1280, 860],
+    [900, 593],
+    [600, 900],
+    [390, 740],
+  ]) {
+    await page.setViewportSize({ width, height });
     assert.equal(
       await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
       false,
       `overflow at ${width}`,
+    );
+    const axe = await new AxeBuilder({ page }).analyze();
+    assert.deepEqual(
+      axe.violations.map((v) => v.id),
+      [],
+      `axe at ${width}×${height}`,
     );
   }
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -330,6 +370,35 @@ test("a machine with the same akm as the app is not offered an update", { timeou
   await expect(page.getByText(`akm ${ENGINE} at`)).toBeVisible();
   await expect(page.getByText(/older than the engine/)).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Update CLI & plugins" })).toHaveCount(0);
+});
+
+test("learning that is already on with no library says why its switch cannot be changed", {
+  timeout: 120000,
+}, async (t) => {
+  const server = await launchFixture({
+    empty: true,
+    // A config that only names a model connection: learning runs on it, and there is no library yet. Nothing on PATH.
+    configureFixture: async (fixture) => {
+      await mkdir(path.join(fixture.root, "bin"));
+      fixture.env.PATH = path.join(fixture.root, "bin");
+      await mkdir(path.dirname(fixture.env.AKM_CONFIG_FILE), { recursive: true });
+      await writeFile(
+        fixture.env.AKM_CONFIG_FILE,
+        JSON.stringify({ connections: { default: { endpoint: "http://127.0.0.1:9/v1", models: { fast: "small" } } } }),
+      );
+    },
+  });
+  t.after(() => server.stop());
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
+  await page.goto(server.url);
+  await page.goto(`${server.origin}/setup`);
+  await expect(page.getByText("Not created yet")).toBeVisible();
+  const learning = page.getByRole("checkbox", { name: "Let akm learn in the background" });
+  await expect(learning).toBeChecked();
+  await expect(learning).toBeDisabled();
+  await expect(learning).toHaveAccessibleDescription(/Create your library first\./);
 });
 
 test("errors that say the library is missing lead to setup", { timeout: 120000 }, async (t) => {

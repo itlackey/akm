@@ -5,7 +5,7 @@
 -->
 
 <script lang="ts">
-  import { onMount, onDestroy, tick } from "svelte";
+  import { onDestroy, tick, untrack } from "svelte";
   import { api, date } from "./client";
   import { navigate } from "./navigation";
   import ActivityOverview from "./ActivityOverview.svelte";
@@ -19,32 +19,43 @@
     ActivityHealth,
   } from "./activity-types";
   import type { Commit } from "./types";
-  export let route = "overview";
-  export let query = new URLSearchParams();
-  let overview: Overview | null = null,
-    impact: Impact | null = null,
-    retrieval: Retrieval | null = null,
-    pulse: Pulse | null = null,
-    impactProcess = "";
-  $: if (route === "improve" && query.has("process")) impactProcess = query.get("process") ?? "";
-  let changes: { bundle: string; path: string; git: boolean; commits: Array<Commit & { shortSha?: string }> } | null =
-    null;
-  let misses: {
+  let { route = "overview", query = new URLSearchParams() }: { route?: string; query?: URLSearchParams } = $props();
+  let overview = $state<Overview | null>(null),
+    impact = $state<Impact | null>(null),
+    retrieval = $state<Retrieval | null>(null),
+    pulse = $state<Pulse | null>(null),
+    impactProcess = $state("");
+  // A latch, not a derivation: the process the address last named stays selected when a later address names none.
+  $effect.pre(() => {
+    if (route === "improve" && query.has("process")) impactProcess = query.get("process") ?? "";
+  });
+  let changes = $state<{
+    bundle: string;
+    path: string;
+    git: boolean;
+    commits: Array<Commit & { shortSha?: string }>;
+  } | null>(null);
+  let misses = $state<{
     searches: number;
     foundNothing: number;
     misses: Array<{ query: string; count: number; days: number; lastAt: string }>;
-  } | null = null;
-  let mounted = false,
-    loaded = "",
-    loading = false,
-    error = "",
+  } | null>(null);
+  // Plain, not state: the key of the view that was last asked for.
+  let loaded = "";
+  let loading = $state(false),
+    error = $state(""),
     generation = 0,
-    probed = false,
-    refreshedAt = "",
-    probedAt = "",
-    historyFilter = "",
-    historyOrigin = "";
-  $: view =
+    refreshedAt = $state(""),
+    probedAt = $state(""),
+    historyFilter = $state(""),
+    historyOrigin = $state(""),
+    refreshButton = $state<HTMLButtonElement>(),
+    // A refresh reloads the view that is on screen; `refreshSaid` is what the status line says once it is back.
+    refreshing = $state(false),
+    refreshSaid = $state("");
+  // A first load or a change of view hides the view until its measurements arrive; a refresh keeps it on screen.
+  const shown = $derived(!loading || refreshing);
+  const view = $derived(
     route === "improve"
       ? "Improve impact"
       : route === "history"
@@ -53,25 +64,39 @@
           ? "Runs"
           : ["retrieval", "usage", "misses"].includes(query.get("view") ?? "")
             ? "Usage & retrieval"
-            : "Health";
-  $: window = query.get("window") === "7d" ? "7d" : query.get("window") === "90d" ? "90d" : "30d";
-  $: since = query.get("since") === "365d" ? "365d" : "90d";
+            : "Health",
+  );
+  const window = $derived(query.get("window") === "7d" ? "7d" : query.get("window") === "90d" ? "90d" : "30d");
+  const since = $derived(query.get("since") === "365d" ? "365d" : "90d");
   // In-page evidence links must not discard chart/run drill state or reload measurements.
-  $: key = `${route}|${view}|${window}|${since}|${route === "history" ? query.toString() : ""}`;
-  $: if (mounted && key !== loaded) {
+  const key = $derived(`${route}|${view}|${window}|${since}|${route === "history" ? query.toString() : ""}`);
+  // Load when the view, its window or (for history) its filters change: before the page updates, so the new view is
+  // never drawn with the measurements of the one before.
+  $effect.pre(() => {
+    if (key === loaded) return;
     loaded = key;
-    void load();
-  }
-  $: if (mounted && !loading) void revealAnchor(query.get("anchor"));
-  $: filteredCommits = (changes?.commits ?? []).filter(
-    (commit) =>
-      (!historyOrigin || commit.origin === historyOrigin) &&
-      (!historyFilter.trim() ||
-        [commit.subject, commit.author, commit.sha, commit.origin, ...(commit.paths ?? [])].some((value) =>
-          String(value ?? "")
-            .toLowerCase()
-            .includes(historyFilter.trim().toLowerCase()),
-        )),
+    untrack(() => void load());
+  });
+  // An anchor in the address is opened, focused and scrolled to once per arrival, when its view is on screen. A
+  // refresh reloads the same address, so it reveals nothing and leaves focus and the page where they are. Plain, not
+  // state: the address whose anchor was last revealed (each arrival hands this view a new `query`).
+  let revealed: URLSearchParams | undefined;
+  $effect(() => {
+    if (loading || revealed === query) return;
+    revealed = query;
+    void revealAnchor(query.get("anchor"));
+  });
+  const filteredCommits = $derived(
+    (changes?.commits ?? []).filter(
+      (commit) =>
+        (!historyOrigin || commit.origin === historyOrigin) &&
+        (!historyFilter.trim() ||
+          [commit.subject, commit.author, commit.sha, commit.origin, ...(commit.paths ?? [])].some((value) =>
+            String(value ?? "")
+              .toLowerCase()
+              .includes(historyFilter.trim().toLowerCase()),
+          )),
+    ),
   );
   const views = [
     { name: "Health", path: "/activity/overview" },
@@ -95,6 +120,7 @@
     const request = ++generation;
     loading = true;
     error = "";
+    refreshSaid = "";
     try {
       if (view === "Health" || view === "Runs" || view === "Usage & retrieval") {
         const [next, nextPulse, nextRetrieval] = await Promise.all([
@@ -106,7 +132,6 @@
           overview = next;
           pulse = nextPulse;
           retrieval = nextRetrieval;
-          probed = false;
           refreshedAt = new Date().toISOString();
           probedAt = "";
         }
@@ -136,18 +161,20 @@
         const next = await api<NonNullable<typeof misses>>("/search/misses", { since: window });
         if (request === generation) misses = next;
       }
-      await tick();
-      const anchor = query.get("anchor");
-      if (request === generation && anchor) {
-        const target = document.getElementById(anchor);
-        if (target instanceof HTMLDetailsElement) target.open = true;
-        target?.scrollIntoView({ block: "start" });
-      }
     } catch (cause) {
       if (request === generation) error = (cause as Error).message;
     } finally {
       if (request === generation) loading = false;
     }
+  }
+  /** Refresh is disabled while it loads, which drops focus: the button has it again when the page is back. */
+  async function refresh() {
+    refreshing = true;
+    await load();
+    refreshing = false;
+    if (!error && !loading) refreshSaid = `${view} refreshed.`;
+    await tick();
+    if (document.activeElement === document.body) refreshButton?.focus();
   }
   async function probe() {
     const request = generation;
@@ -156,7 +183,6 @@
       const health = await api<ActivityHealth>("/health", { probe: "1" });
       if (request === generation && overview) {
         overview = { ...overview, health };
-        probed = true;
         probedAt = new Date().toISOString();
       }
     } catch (cause) {
@@ -174,15 +200,12 @@
     if (historyOrigin) params.set("origin", historyOrigin);
     void navigate(`/activity/history${params.size ? `?${params}` : ""}`);
   }
-  onMount(() => {
-    mounted = true;
-  });
   onDestroy(() => {
     generation++;
   });
 </script>
 
-<nav class="activity-tabs" aria-label="Activity views">
+<nav class="activity-tabs" aria-label="Activity views" data-sveltekit-reset="false">
   {#each views as tab}<a
       class:active={view === tab.name}
       aria-current={view === tab.name ? "page" : undefined}
@@ -204,23 +227,26 @@
     {#if view !== "Source history" && view !== "Health"}<label
         >{route === "improve" ? "Impact window" : "Trend window"}<select
           value={route === "improve" ? since : window}
-          on:change={(event) => changeWindow(event.currentTarget.value)}
+          onchange={(event) => changeWindow(event.currentTarget.value)}
           >{#if route === "improve"}<option value="90d">90 days</option><option value="365d">1 year</option
             >{:else}<option value="7d">7 days</option><option value="30d">30 days</option><option value="90d"
               >90 days</option
             >{/if}</select
         ></label
-      >{/if}<button class="btn-quiet" on:click={load} disabled={loading}
+      >{/if}<button class="btn-quiet" bind:this={refreshButton} onclick={refresh} disabled={loading}
       ><Icon name="refresh" size={16} /> Refresh activity</button
     >
   </div>
 </div>
 {#if error}<div class="notice notice-warn" role="alert">
-    {error}<button class="btn-secondary" on:click={load}>Retry activity</button>
+    {error}<button class="btn-secondary" onclick={load}>Retry activity</button>
   </div>{/if}
-{#if loading}<p role="status">
-    Loading {view.toLowerCase()}…
-  </p>{:else if view === "Health" || view === "Runs" || view === "Usage & retrieval"}{#if overview}{#if view !== "Health"}<p
+<!-- Always in the page, so loading and a finished refresh are heard. While a view loads the line stands in for it;
+  during and after a refresh the view stays and the line is for screen readers. -->
+<p id="activity-status" role="status" class:sr-only={shown}>
+  {loading ? `${refreshing ? "Refreshing" : "Loading"} ${view.toLowerCase()}…` : refreshSaid}
+</p>
+{#if shown && (view === "Health" || view === "Runs" || view === "Usage & retrieval")}{#if overview}{#if view !== "Health"}<p
         class="muted small"
       >
         {overview.metrics
@@ -233,18 +259,17 @@
       data={overview}
       {pulse}
       {retrieval}
-      {probed}
       {probe}
       {refreshedAt}
       {probedAt}
       requestedTask={query.get("task") ?? ""}
     />{/if}
-{:else if view === "Improve impact"}{#if impact}<ActivityImpact
+{:else if shown && view === "Improve impact"}{#if impact}<ActivityImpact
       {impact}
       {retrieval}
       bind:selectedProcess={impactProcess}
     />{/if}
-{:else if view === "Source history" && changes}<h2>Write-target history</h2>
+{:else if shown && view === "Source history" && changes}<h2>Write-target history</h2>
   <p class="muted">{changes.bundle} · <span class="mono wrap">{changes.path}</span></p>
   {#if !changes.git}<p class="empty">
       This write target is not a Git repository. AKM does not retain general manual-edit undo for a non-Git bundle.
@@ -252,7 +277,10 @@
       class="history-filter"
       role="search"
       aria-label="Filter commits"
-      on:submit|preventDefault={filterHistory}
+      onsubmit={(event) => {
+        event.preventDefault();
+        filterHistory();
+      }}
     >
       <label>Subject, author or path<input type="search" bind:value={historyFilter} /></label><label
         >Made by<select bind:value={historyOrigin}
@@ -323,10 +351,11 @@
     display: grid;
     gap: 0.35rem;
   }
+  /* The tabs wrap when they do not fit: a scrolling row would clip the focus ring and the mark under the current tab. */
   .activity-tabs {
     display: flex;
-    gap: 1.75rem;
-    overflow-x: auto;
+    flex-wrap: wrap;
+    gap: 0 1.75rem;
     border-bottom: 1px solid var(--border);
     margin-bottom: 2rem;
   }
@@ -353,10 +382,16 @@
     font-size: 1.125rem;
     font-weight: 600;
   }
+  /* Phones: the wrapped tabs sit closer together, and each is as tall as a control. */
   @media (max-width: 760px) {
     .activity-tabs {
-      gap: 1.25rem;
+      gap: 0 1.25rem;
       margin-bottom: 1.5rem;
+    }
+    .activity-tabs a {
+      display: inline-flex;
+      align-items: center;
+      min-block-size: var(--control-height);
     }
   }
   .activity-tabs a {

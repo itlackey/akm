@@ -66,7 +66,7 @@ export function collectEgressAdvisory(config: EgressConfigView | undefined): Hea
     confidence: "high",
     message:
       `${endpoints.length} remote endpoint(s) in the effective config (registries/sources/LLM/embedding) — ` +
-      "review the evidence list for unexpected destinations.",
+      "the evidence lists them (`--detail normal`); review it for unexpected destinations.",
     evidence: { endpoints: safe },
   };
 }

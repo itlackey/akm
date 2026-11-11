@@ -228,7 +228,8 @@
             focusNext = false;
             if (scroller) scroller.scrollTop = 0;
             detailHeading?.focus({ preventScroll: true });
-          } else if (!intent && matchMedia("(max-width:850px)").matches) {
+          } else if (!intent && matchMedia("(max-width: 850px), (max-height: 700px)").matches) {
+            // The queue the proposal was opened from is hidden at these sizes, so focus goes to the proposal.
             // The heading is already near the top: focus it where it is. Scroll only when it is out of sight.
             detailHeading?.focus({ preventScroll: true });
             const box = detailHeading?.getBoundingClientRect();
@@ -299,7 +300,7 @@
   }
   /** The reject form takes room from the pane: put the change at its top, so the diff stays readable beside the form. */
   function showChange() {
-    const change = region?.querySelector<HTMLElement>('section[aria-label="Proposed change"]');
+    const change = region?.querySelector<HTMLElement>(".review-scroll .change");
     if (!change) return;
     if (matchMedia("(max-width:850px)").matches) change.scrollIntoView({ block: "start" });
     else if (scroller) scroller.scrollTop += change.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
@@ -603,15 +604,9 @@
               : "activity"}</a
           >{/if}
       </div>
-      <div class="refresh">
-        <span class="refresh-note muted small" role="status">{refreshNote}</span>
-        <button class="btn-quiet" bind:this={refreshButton} onclick={refreshClicked} disabled={busy || loading}
-          ><Icon name="refresh" size={16} /> Refresh queue</button
-        >
-      </div>
     </div>
     <div class="review-filters">
-      <nav class="tabs" aria-label="Proposal status">
+      <nav class="tabs" aria-label="Proposal status" data-sveltekit-reset="false">
         <a
           class="tab"
           aria-current={status === "pending" ? "page" : undefined}
@@ -636,6 +631,13 @@
               >{label}</option
             >{/each}</select
         ></label
+      >
+    </div>
+    <!-- Last in the row and last in the markup: the heading, the tabs and the filters are read before it. -->
+    <div class="refresh">
+      <span class="refresh-note muted small" role="status">{refreshNote}</span>
+      <button class="btn-quiet" bind:this={refreshButton} onclick={refreshClicked} disabled={busy || loading}
+        ><Icon name="refresh" size={16} /> Refresh queue</button
       >
     </div>
   </div>
@@ -669,7 +671,7 @@
           />Select all shown</label
         >{/if}
       {#if loading && !queue}<p class="muted" role="status">Loading proposals…</p>{/if}
-      <ul class="review-items">
+      <ul class="review-items" data-sveltekit-reset="false">
         {#each queue?.proposals ?? [] as p (p.id)}<li class="review-row" class:active={desiredId === p.id}>
             {#if status === "pending"}<input
                 type="checkbox"
@@ -807,13 +809,20 @@
     height: 100%;
     min-height: 0;
   }
+  /* One wrapping row in markup order: the heading, the tabs and filters, then Refresh at the end of the last line. */
   .review-top {
-    display: contents;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0 1rem;
+    flex: none;
   }
   .refresh {
     position: relative;
     display: flex;
     align-items: center;
+    margin-inline-start: auto;
+    margin-bottom: 0.5rem;
   }
   /* Beside the button, out of the flow, so showing it never moves anything. */
   .refresh-note {
@@ -831,7 +840,7 @@
   }
   .page-heading {
     margin-bottom: 0.5rem;
-    flex: none;
+    flex: 1 1 auto;
   }
   .page-heading h1 {
     margin: 0;
@@ -839,7 +848,7 @@
   .review-filters {
     justify-content: flex-start;
     margin-bottom: 0.5rem;
-    flex: none;
+    flex: 1 1 100%;
   }
   .review-filters .tabs {
     margin: 0;
@@ -898,10 +907,11 @@
     font-size: var(--text-s);
     margin-top: 0.5rem;
   }
+  /* A scroller clips what is outside its padding box, so each has room at its edges for a focus ring (2px, 2px away). */
   .review-list {
     min-width: 0;
-    margin: 0;
-    padding: 1rem 1rem 1rem 0;
+    margin: 0 0 0 calc(-1 * var(--space-1));
+    padding: 1rem 1rem 1rem var(--space-1);
     overflow-y: auto;
   }
   .queue-summary {
@@ -927,7 +937,7 @@
     padding: 1rem 1.5rem 1.5rem;
   }
   /* While the reject form is open, the change can scroll to the pane's top even when it is short. */
-  .review-scroll.rejecting :global(section[aria-label="Proposed change"]) {
+  .review-scroll.rejecting :global(.change) {
     min-height: 100%;
   }
   .review-items {
@@ -986,20 +996,15 @@
   /* Wide: the heading, tabs, filters and Refresh share one row, so the proposal gets the height. */
   @media (min-width: 851px) {
     .review-top {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
       gap: var(--space-2) var(--space-5);
       margin-bottom: 0.5rem;
-      flex: none;
     }
     .review-top > .page-heading,
     .review-top > .review-filters {
       display: contents;
     }
     .review-top .refresh {
-      order: 9;
-      margin-inline-start: auto;
+      margin-bottom: 0;
     }
   }
   @media (max-width: 850px) {
@@ -1025,7 +1030,8 @@
       min-height: 0;
     }
     .review-list {
-      padding-right: 0;
+      margin-inline-end: calc(-1 * var(--space-1));
+      padding-right: var(--space-1);
     }
     .review-workspace[data-detail] > .review-list {
       display: none;
@@ -1056,7 +1062,18 @@
     }
   }
   @media (min-width: 851px) and (max-height: 700px) {
-    .review-page[data-detail] .page-heading {
+    /* The proposal is the whole page here, so the section's heading is not drawn. It stays the page's h1 for a
+       screen reader, which is why it is clipped instead of removed. */
+    .review-page[data-detail] .page-heading h1 {
+      position: absolute;
+      inline-size: 1px;
+      block-size: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+    .review-page[data-detail] .page-heading .return-link,
+    .review-page[data-detail] .refresh {
       display: none;
     }
     .review-workspace[data-detail] {
@@ -1070,7 +1087,8 @@
       border-left: 0;
     }
     .review-scroll {
-      padding: 0.75rem 0;
+      margin-inline: calc(-1 * var(--space-1));
+      padding: 0.75rem var(--space-1);
     }
   }
 </style>

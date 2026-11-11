@@ -403,6 +403,11 @@ const healthCommand = defineCommand({
       description: "Fetch the full report dataset (per-run rows, trend deltas, pending proposals)",
       default: false,
     },
+    "read-only": {
+      type: "boolean",
+      default: false,
+      description: "Read existing state without creating or migrating it; skip the database write/read probe",
+    },
     // #914: citty strips any `--no-X` argument and treats it as negating `X`
     // (see `parseArgs` in citty's dist), regardless of whether an arg literally
     // named "no-X" is declared — declaring "no-probe" directly would silently
@@ -456,6 +461,7 @@ const healthCommand = defineCommand({
         windowCompare,
         windows,
         probe: args.probe !== false,
+        readOnly: args["read-only"] === true,
       });
       const reportCompare =
         windowCompare ??
@@ -467,17 +473,32 @@ const healthCommand = defineCommand({
           : undefined) ??
         "24h";
       resultStatus = base.status;
-      if (report) {
-        const { listPendingProposals } = await import("./commands/proposal/proposal");
+      // A degraded state-db result has no runs. Keep its native failure instead
+      // of reopening the unavailable database to build the report's extra data.
+      if (report && base.runs !== undefined) {
+        const { resolveStashDir } = await import("./core/common");
+        const { withReadonlyStateDb } = await import("./core/state-db");
+        const { listProposalsReadOnly } = await import("./commands/proposal/repository");
         const { computeAcceptRateBySource } = await import("./commands/health/accept-rate");
+        const proposals = withReadonlyStateDb(
+          (db) => {
+            const stash = resolveStashDir();
+            return {
+              pendingProposals: listProposalsReadOnly(stash, { status: "pending" }, { db }).map(
+                ({ ref, source, createdAt }) => ({ ref, source, createdAt }),
+              ),
+              acceptRateBySource: computeAcceptRateBySource(stash, { db }),
+            };
+          },
+          { pendingProposals: [], acceptRateBySource: [] },
+        );
         output("health", {
           ...base,
           report: {
             window: args.since ?? "24h",
             compare: reportCompare,
             comparisonMode: explicitWindows ? "custom" : "duration",
-            pendingProposals: listPendingProposals().map(({ ref, source, createdAt }) => ({ ref, source, createdAt })),
-            acceptRateBySource: computeAcceptRateBySource(),
+            ...proposals,
           },
         });
         return;

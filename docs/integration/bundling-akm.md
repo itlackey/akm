@@ -125,7 +125,7 @@ Key fields:
 | --- | --- |
 | `stateMigrations` | `{ pending: string[] }` under `status`; `{ applied: string[] }` after a real `apply`. |
 | `assetEngineKeys` | `changed`/`skipped` counts and a `files[]` array with each rewritten file's `rewrites` (`at`, `from`, `to`). |
-| `assetContentRefs` | `changed`/`skipped` file counts, `refs` (old-spelling refs found), a `files[]` array with each file's `refs`, and `shadowed[]` (`bundleId`, `from`, `to`): old spellings another file holds as its ref, not rewritten; `stateRows`, the `state.db` rows keyed by an old spelling that move to the new one. |
+| `assetContentRefs` | `changed`/`skipped` file counts, `refs` (old-spelling refs found), a `files[]` array with each file's `refs`, and `shadowed[]` (`bundleId`, `from`, `to`): old spellings another file holds as its ref, not rewritten; `stateRows`, the `state.db` rows keyed by an old spelling that move to the new one; and `reconcile[]`, present after an apply that rewrote files inside a git checkout: the checkout path and how to review, commit or restore the edits. Only asset files, `index.md` and wiki `schema.md` are rewritten. |
 | `scheduler` | `backend`, `entry` (`installed`, `updated`, `unchanged`, `removed`, `absent` or `unmanaged`), `removedLegacy[]` (akm 0.9 per-task rows removed), `keptLegacy[]` (rows that name another installation), `warnings[]`. |
 
 **Backups and their retention:**

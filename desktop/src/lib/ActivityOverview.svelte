@@ -5,11 +5,11 @@
 -->
 
 <script lang="ts">
-  import { onDestroy, tick } from "svelte";
+  import { onDestroy, tick, untrack } from "svelte";
   import { api, date } from "./client";
   import ActivityChart from "./ActivityChart.svelte";
   import Icon from "./Icon.svelte";
-  import { healthCheckAnchor } from "./home-model";
+  import { checkLabel, healthCheckAnchor } from "./home-model";
   import { verticalBars, lines, pChartLine, eventStrip } from "./ui/chart-view.js";
   import { weekStart } from "./ui/lib.js";
   import { number, percent, duration, tokens, healthGroup, attentionItems } from "./activity-presenter";
@@ -20,22 +20,36 @@
     ActivityTaskHistory,
     ActivityRun,
   } from "./activity-types";
-  export let data: ActivityOverview;
-  export let retrieval: ActivityRetrieval | null;
-  export let pulse: ActivityPulse | null;
-  export let probed = false;
-  export let mode: "health" | "runs" | "usage" = "health";
-  export let requestedTask = "";
-  export let refreshedAt = "";
-  export let probedAt = "";
+  let {
+    data,
+    retrieval,
+    pulse,
+    mode = "health",
+    requestedTask = "",
+    refreshedAt = "",
+    probedAt = "",
+    probe,
+  }: {
+    data: ActivityOverview;
+    retrieval: ActivityRetrieval | null;
+    pulse: ActivityPulse | null;
+    mode?: "health" | "runs" | "usage";
+    requestedTask?: string;
+    refreshedAt?: string;
+    probedAt?: string;
+    probe: () => Promise<void>;
+  } = $props();
+  // Plain, not state: it only stops the same requested task being looked up twice.
   let inspectedTask = "";
-  $: attention = attentionItems(data, pulse);
-  $: if (mode === "runs" && requestedTask && requestedTask !== inspectedTask) {
+  const attention = $derived(attentionItems(data, pulse));
+  // A task named by the route is looked up when the Runs view asks for it.
+  $effect(() => {
+    if (mode !== "runs" || !requestedTask || requestedTask === inspectedTask) return;
     inspectedTask = requestedTask;
-    void inspectTask(requestedTask);
-  }
-  let taskPanel: HTMLElement,
-    runPanel: HTMLElement,
+    untrack(() => void inspectTask(requestedTask));
+  });
+  let taskPanel = $state<HTMLElement>(),
+    runPanel = $state<HTMLElement>(),
     runTrigger: HTMLElement | null = null,
     taskTrigger: HTMLElement | null = null;
   function inspectRun(run: ActivityRun | null) {
@@ -54,35 +68,49 @@
     await tick();
     taskTrigger?.focus();
   }
-  $: if (selectedRun) revealRun(selectedRun);
+  // Opening a run moves focus to its panel.
+  $effect(() => {
+    if (selectedRun) void revealRun(selectedRun);
+  });
   async function revealRun(_run: ActivityRun) {
     await tick();
     runPanel?.focus();
   }
-  export let probe: () => Promise<void>;
-  let taskId = "",
-    history: ActivityTaskHistory | null = null,
-    taskError = "",
-    taskBusy = false,
-    selectedRun: ActivityRun | null = null,
+  let taskId = $state(""),
+    history = $state<ActivityTaskHistory | null>(null),
+    taskError = $state(""),
+    taskBusy = $state(false),
+    selectedRun = $state<ActivityRun | null>(null),
     selection = 0,
-    probing = false;
+    probing = $state(false);
+  // `said` is the group's count inside a sentence ("1 warning, 3 not checked"), for the line that reports a probe.
   const groups = [
-    { key: "fail", label: "Failing" },
-    { key: "warn", label: "Warnings" },
-    { key: "off", label: "Turned off" },
-    { key: "unchecked", label: "Not checked" },
-    { key: "idle", label: "No data yet" },
-    { key: "pass", label: "Passing" },
+    { key: "fail", label: "Failing", said: (n: number) => `${n} failing` },
+    { key: "warn", label: "Warnings", said: (n: number) => `${n} ${n === 1 ? "warning" : "warnings"}` },
+    { key: "off", label: "Turned off", said: (n: number) => `${n} turned off` },
+    { key: "unchecked", label: "Not checked", said: (n: number) => `${n} not checked` },
+    { key: "blocked", label: "Could not check", said: (n: number) => `${n} could not be checked` },
+    { key: "idle", label: "No data yet", said: (n: number) => `${n} with no data yet` },
+    { key: "pass", label: "Passing", said: (n: number) => `${n} passing` },
   ];
-  $: checks = [...(data.health?.hardChecks ?? []), ...(data.health?.advisories ?? [])];
-  $: classified = checks.map((check) => ({ check, group: healthGroup(check, checks, probed) }));
-  $: metrics = data.metrics;
-  $: weekly = retrieval?.weekly ?? [];
-  $: activity = metrics?.usage.daily ?? [];
-  $: processes = Object.entries(metrics?.llm.byProcess ?? {}).sort((a, b) => b[1].calls - a[1].calls);
-  $: tasks = metrics?.tasks.byTask ?? data.taskFailures ?? [];
-  $: runs = data.improveRuns;
+  // What the last "Run all checks" came to, for the status line; empty until one has run.
+  let probeSaid = $state("");
+  const checks = $derived([...(data.health?.hardChecks ?? []), ...(data.health?.advisories ?? [])]);
+  const classified = $derived(checks.map((check) => ({ check, group: healthGroup(check, checks) })));
+  const grouped = (key: string) => classified.filter((item) => item.group === key).length;
+  // What did not run, for the header.
+  const notRun = $derived(
+    groups
+      .filter((group) => ["off", "unchecked", "blocked"].includes(group.key) && grouped(group.key))
+      .map((group) => group.said(grouped(group.key)))
+      .join(", "),
+  );
+  const metrics = $derived(data.metrics);
+  const weekly = $derived(retrieval?.weekly ?? []);
+  const activity = $derived(metrics?.usage.daily ?? []);
+  const processes = $derived(Object.entries(metrics?.llm.byProcess ?? {}).sort((a, b) => b[1].calls - a[1].calls));
+  const tasks = $derived(metrics?.tasks.byTask ?? data.taskFailures ?? []);
+  const runs = $derived(data.improveRuns);
   async function inspectTask(id = taskId) {
     taskTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const mine = ++selection;
@@ -106,13 +134,23 @@
       }
     }
   }
+  /** The button stays focusable while it runs (aria-disabled), so this refuses a second run. */
   async function runChecks() {
+    if (probing) return;
     probing = true;
+    probeSaid = "";
+    const before = probedAt;
     try {
       await probe();
     } finally {
       probing = false;
     }
+    // A probe that failed leaves `probedAt` as it was, and the view above this one shows why as an alert.
+    if (probedAt !== before)
+      probeSaid = `Checks finished: ${groups
+        .filter((group) => grouped(group.key))
+        .map((group) => group.said(grouped(group.key)))
+        .join(", ")}.`;
   }
   onDestroy(() => {
     selection++;
@@ -129,13 +167,10 @@
   <div class="health-overview">
     <strong>AKM diagnostic status: {data.health?.status ?? "Unavailable"}</strong>
     <p>
-      Observation window: last 24 hours{#if classified.some((item) => item.group === "off" || item.group === "unchecked")}
-        · {classified.filter((item) => item.group === "off").length} checks turned off · {classified.filter(
-          (item) => item.group === "unchecked",
-        ).length} not checked{/if}
+      Observation window: last 24 hours{notRun ? `. ${notRun}.` : "."}
     </p>
   </div>
-  <p class="muted small">
+  <p class="muted small view-note">
     View refreshed: {refreshedAt ? date(refreshedAt) : "Not recorded"}. {probedAt
       ? `Connection checks requested: ${date(probedAt)}.`
       : "Connection checks have not been requested in this view."} Individual check timestamps are not reported by AKM.
@@ -147,14 +182,20 @@
           >
             <h3>{group.label}</h3>
             <ul class="attention-list">
-              {#each group.items as item}<li>
-                  <a href={item.href}
+              {#each group.items as item}{@const line = `${item.text}${item.check ? `: ${checkLabel(item.check)}` : ""}`}
+                <li>
+                  <!-- The name says the dot's colour in words and keeps the text and the action apart as two phrases. -->
+                  <a
+                    href={item.href}
+                    aria-label={`${item.tone === "fail" ? "Failure: " : item.tone === "warn" ? "Warning: " : ""}${line}. ${item.action}`}
                     ><i
                       class="signal"
                       class:fail={item.tone === "fail"}
                       class:warn={item.tone === "warn"}
                       aria-hidden="true"
-                    ></i><span>{item.text}</span><span>{item.action}<Icon name="arrow-right" size={16} /></span></a
+                    ></i><span>{line}</span><span class="attention-action"
+                      >{item.action}<Icon name="arrow-right" size={16} /></span
+                    ></a
                   >
                 </li>{/each}
             </ul>
@@ -165,26 +206,36 @@
           : "Attention coverage is incomplete; unavailable measurements are not an all-clear."}
       </p>{/if}
   </section>
-  <section id="health" class="activity-section">
+  <section id="health" class="activity-section" aria-busy={probing}>
     <div class="trends-head">
       <h2>Health checks</h2>
-      <button on:click={runChecks} disabled={probing}>{probing ? "Checking…" : "Run all checks"}</button>
+      <!-- Busy, not disabled: a disabled button drops keyboard focus to the page. -->
+      <button onclick={runChecks} aria-disabled={probing} aria-describedby="health-probe-note"
+        >{probing ? "Checking…" : "Run all checks"}</button
+      >
     </div>
-    <p class="muted small">Includes connection, release-source and scheduler probes. May contact the network.</p>
+    <p class="muted small" id="health-probe-note">
+      Includes connection, release-source and scheduler probes. May contact the network.
+    </p>
+    <!-- Always in the page, so the start and the result of a probe are heard, not only repainted. -->
+    <p class="muted small probe-said" role="status">{probing ? "Running all checks…" : probeSaid}</p>
     {#each groups as group}{@const items = classified.filter(
         (item) => item.group === group.key,
       )}{#if items.length}<section id={`health-${group.key}`} class="check-group" aria-label={group.label}>
           <h3>
-            {probed && group.key === "unchecked" ? "Could not check" : group.label}<span class="muted"
-              >{items.length}</span
+            {group.label}{" "}<span class="muted"
+              >{items.length}<span class="sr-only">{items.length === 1 ? " check" : " checks"}</span></span
             >
           </h3>
           <ul class="checks">
             {#each items as { check }}<li class="check" id={healthCheckAnchor(check.name)}>
-                <strong>{check.name}</strong>
+                <div class="check-name">
+                  <h4>{checkLabel(check.name)}</h4>
+                  <span class="check-id muted small mono"><span class="sr-only">{"Check id: "}</span>{check.name}</span>
+                </div>
                 <p>{check.message}</p>
                 {#if check.evidence}<details class="check-evidence">
-                    <summary>Evidence for {check.name}</summary>
+                    <summary>Evidence for {checkLabel(check.name)}</summary>
                     <pre class="code">{JSON.stringify(check.evidence, null, 2)}</pre>
                   </details>{/if}
               </li>{/each}
@@ -291,7 +342,7 @@
                       ><td>{date(run.startedAt)}</td><td
                         >{run.ok === true ? "Finished" : run.ok === false ? "Failed" : "Unknown"}</td
                       ><td
-                        ><button class="btn-quiet" aria-label={`Inspect run ${run.id}`} on:click={() => inspectRun(run)}
+                        ><button class="btn-quiet" aria-label={`Inspect run ${run.id}`} onclick={() => inspectRun(run)}
                           >Inspect run <Icon name="arrow-right" size={16} /></button
                         ></td
                       ></tr
@@ -444,7 +495,7 @@
             .ok}/{pulse.tiles.runs.tasks.total}</span
         >{#each pulse.tiles.runs.failedTasks as task}<button
             class="btn-secondary"
-            on:click={() => inspectTask(task.taskId)}>Inspect failed task {task.taskId}</button
+            onclick={() => inspectTask(task.taskId)}>Inspect failed task {task.taskId}</button
           >{/each}
       </div>
     </section>{/if}
@@ -459,7 +510,7 @@
           ><tbody
             >{#each tasks as task}<tr
                 ><th
-                  ><button class="btn-quiet" on:click={() => inspectTask(task.taskId)}
+                  ><button class="btn-quiet" onclick={() => inspectTask(task.taskId)}
                     >{task.taskId}<Icon name="arrow-right" size={16} /></button
                   ></th
                 ><td>{task.failed} / {task.runs}</td><td>{duration(task.medianMs)}</td></tr
@@ -467,7 +518,13 @@
           >
         </table>
       </div>{:else if data.taskFailures !== null}<p>No task runs recorded in this window.</p>{/if}
-    <form class="task-lookup" on:submit|preventDefault={() => inspectTask()}>
+    <form
+      class="task-lookup"
+      onsubmit={(event) => {
+        event.preventDefault();
+        void inspectTask();
+      }}
+    >
       <label>Task ID<input bind:value={taskId} required placeholder="tasks/daily-review" /></label><button
         disabled={taskBusy}>View runs</button
       >
@@ -480,7 +537,7 @@
         aria-label="Task run details"
         aria-live="polite"
       >
-        <button class="btn-quiet return-action" on:click={closeTask}
+        <button class="btn-quiet return-action" onclick={closeTask}
           ><Icon name="arrow-left" size={16} /> Back to tasks</button
         >
         <h3>{taskId}</h3>
@@ -537,7 +594,7 @@
         ><tbody
           >{#each runs as run}<tr
               ><th
-                ><button class="btn-quiet" aria-label={`Inspect run ${run.id}`} on:click={() => inspectRun(run)}
+                ><button class="btn-quiet" aria-label={`Inspect run ${run.id}`} onclick={() => inspectRun(run)}
                   >{run.id}<Icon name="arrow-right" size={16} /></button
                 >
                 <div class="muted small">{date(run.startedAt)}</div></th
@@ -557,7 +614,7 @@
     aria-label="Improve run details"
     aria-live="polite"
   >
-    <button class="btn-quiet return-action" on:click={closeRun}
+    <button class="btn-quiet return-action" onclick={closeRun}
       ><Icon name="arrow-left" size={16} /> Back to run records</button
     >
     <h2>Run {selectedRun.id}</h2>
@@ -599,6 +656,12 @@
     font-size: 0.8125rem;
     color: var(--muted);
   }
+  /* Prose keeps a readable measure on a wide monitor instead of running edge to edge. */
+  .view-note,
+  .check p,
+  .coverage {
+    max-width: 75ch;
+  }
   .attention {
     margin-block: 2rem;
   }
@@ -627,11 +690,9 @@
   .attention-list a:hover {
     color: var(--accent);
   }
-  .attention-list a span:last-child {
+  .attention-action {
     color: var(--accent);
     font-size: 0.8125rem;
-  }
-  .attention-list a span:last-child {
     display: flex;
     align-items: center;
     gap: 0.5rem;
@@ -666,9 +727,22 @@
     border-bottom: 1px solid var(--border);
     font-size: 0.8125rem;
   }
-  .check strong {
-    font-weight: 500;
+  .check-name {
     overflow-wrap: anywhere;
+  }
+  /* A heading for navigation, drawn as the label it always was: inline, with its id after it. */
+  .check h4 {
+    display: inline;
+    margin: 0;
+    font-size: inherit;
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: 0;
+    color: inherit;
+  }
+  /* Empty until a probe has run; then it takes a line. */
+  .probe-said:empty {
+    margin: 0;
   }
   .check p {
     margin: 0;
@@ -803,7 +877,7 @@
     .attention-list a {
       grid-template-columns: 0.65rem minmax(0, 1fr);
     }
-    .attention-list a span:last-child {
+    .attention-action {
       grid-column: 2;
     }
     .check {

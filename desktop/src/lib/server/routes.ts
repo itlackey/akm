@@ -5,11 +5,18 @@
 import { createRequire } from "node:module";
 import os from "node:os";
 import { activity, assets, bundles, config, documents, feedback, proposals, sensitive, setup } from "akm-cli/workspace";
-import { hostUpgradeOutrunsDesktop } from "../engine-skew.js";
+import { compareVersions } from "../engine-skew.js";
 import { readFile, saveFile } from "./features/files.js";
-import { readPreferences, saveTheme, validTheme } from "./features/preferences.js";
+import {
+  readPreferences,
+  savePreferences,
+  tryApply,
+  validPluginChannel,
+  validTheme,
+  validUpdateChannel,
+} from "./features/preferences.js";
 import { reveal } from "./features/reveal.js";
-import { desktopApp, hostTools } from "./features/software.js";
+import { desktopApp, followUpdateChannel, hostTools } from "./features/software.js";
 import { count, fields, flag, HttpFailure, text } from "./input.js";
 
 const require = createRequire(import.meta.url);
@@ -78,38 +85,73 @@ export const routes: Route[] = [
   })),
   get("/api/desktop/preferences", () => readPreferences()),
   post("/api/desktop/preferences", async (value) => {
-    const { theme } = fields(value, ["theme"], "preferences");
-    if (!validTheme(theme))
+    const { theme, updateChannel, pluginChannel } = fields<{
+      theme?: unknown;
+      updateChannel?: unknown;
+      pluginChannel?: unknown;
+    }>(value, ["theme", "updateChannel", "pluginChannel"], "preferences");
+    if (theme !== undefined && !validTheme(theme))
       throw new HttpFailure(400, "INVALID_PREFERENCE", "Choose system, light, or dark appearance.");
-    return saveTheme(theme);
+    if (updateChannel !== undefined && !validUpdateChannel(updateChannel))
+      throw new HttpFailure(
+        400,
+        "INVALID_PREFERENCE",
+        "Desktop updates follow stable releases, or stable and prereleases.",
+      );
+    if (pluginChannel !== undefined && !validPluginChannel(pluginChannel))
+      throw new HttpFailure(
+        400,
+        "INVALID_PREFERENCE",
+        "Plugins install from the stable (latest) or prerelease (next) channel.",
+      );
+    const saved = await savePreferences({
+      ...(validTheme(theme) ? { theme } : {}),
+      ...(validUpdateChannel(updateChannel) ? { updateChannel } : {}),
+      ...(validPluginChannel(pluginChannel) ? { pluginChannel } : {}),
+    });
+    // The choice is saved either way; `applied` says whether the running updater has it yet.
+    return updateChannel === undefined
+      ? saved
+      : { ...saved, ...(await tryApply(() => followUpdateChannel(saved.updateChannel))) };
   }),
   get("/api/desktop/software", async () => ({
     host: hostTools.snapshot(),
     desktop: await desktopApp(),
     engine: akmPackage.version,
+    preferences: await readPreferences(),
   })),
   post("/api/desktop/software", async (value) => {
-    const request = fields<{ action?: unknown; harness?: unknown; channel?: unknown }>(
+    const request = fields<{ action?: unknown; harness?: unknown; channel?: unknown; consent?: unknown }>(
       value,
-      ["action", "harness", "channel"],
+      ["action", "harness", "channel", "consent"],
       "software action",
     );
     if (
       typeof request.action !== "string" ||
       (request.harness !== undefined && typeof request.harness !== "string") ||
-      (request.channel !== undefined && typeof request.channel !== "string")
+      (request.channel !== undefined && typeof request.channel !== "string") ||
+      (request.consent !== undefined && typeof request.consent !== "boolean")
     )
       throw new HttpFailure(400, "INVALID_SOFTWARE_ACTION", "Invalid software action, harness or release channel.");
-    // A host upgrade past Desktop's engine would leave Desktop unable to read an index the host migrated.
-    if (
-      request.action === "upgrade-cli" &&
-      hostUpgradeOutrunsDesktop(akmPackage.version, hostTools.snapshot().upgrade?.latestVersion as string | undefined)
-    )
-      throw new HttpFailure(409, "DESKTOP_BEHIND", "Update AKM Desktop first. The host CLI would upgrade past it.");
     try {
+      // A host upgrade past Desktop's engine would leave Desktop unable to read an index the host migrated; HostTools
+      // asks akm for the release it would install, right before it upgrades, and refuses one `within` cannot clear.
       return request.action === "desktop-menu-install"
         ? await desktopApp("menu-install")
-        : hostTools.start(request.action, request.harness as string | undefined, request.channel as string | undefined);
+        : request.action === "desktop-update-check"
+          ? await desktopApp("update-check")
+          : hostTools.start(
+              request.action,
+              request.harness as string | undefined,
+              request.channel as string | undefined,
+              {
+                consent: request.consent === true,
+                within: (version) => {
+                  const order = compareVersions(version, akmPackage.version);
+                  return order === null ? undefined : order <= 0;
+                },
+              },
+            );
     } catch (error) {
       throw new HttpFailure(
         400,

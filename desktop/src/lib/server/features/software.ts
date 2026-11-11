@@ -4,6 +4,7 @@
 
 import { randomUUID } from "node:crypto";
 import { HostTools } from "./host-tools.js";
+import { readPreferences, type UpdateChannel } from "./preferences.js";
 
 export const hostTools = new HostTools();
 interface Waiting {
@@ -21,9 +22,16 @@ process.on("message", (message: { type?: string; id?: string; error?: string; da
   if (message.error) item.reject(new Error(message.error));
   else item.resolve(message.data);
 });
-/** Ask Electron's main process for the app's version and menu-entry state, to install the menu entry, or to pick a folder. */
-export function desktopApp(action = "status", params: { start?: string } = {}): Promise<unknown> {
-  if (!process.send || process.env.AKM_DESKTOP_NATIVE !== "1") {
+const native = () => Boolean(process.send) && process.env.AKM_DESKTOP_NATIVE === "1";
+/**
+ * Ask Electron's main process for the app's version and menu-entry state, to install the menu entry, to pick a folder,
+ * or to follow a release line for its own updates.
+ */
+export function desktopApp(
+  action = "status",
+  params: { start?: string; channel?: UpdateChannel | null } = {},
+): Promise<unknown> {
+  if (!native()) {
     if (action === "menu-install")
       return Promise.reject(new Error("Menu installation is available in the Linux AppImage."));
     if (action === "pick-folder")
@@ -49,3 +57,12 @@ export function desktopApp(action = "status", params: { start?: string } = {}): 
     process.send?.({ type: "desktop-request", id, action, ...params });
   });
 }
+/** Tell the updater which release line to follow; `undefined` is the embedded version's own stage. Nothing to tell in the web process. */
+export async function followUpdateChannel(channel: UpdateChannel | undefined): Promise<void> {
+  if (!native()) return;
+  await desktopApp("update-channel", { channel: channel ?? null });
+}
+// The saved choice reaches the updater before its first check; the main process is listening before it forks this one.
+void readPreferences()
+  .then((preferences) => followUpdateChannel(preferences.updateChannel))
+  .catch(() => undefined);

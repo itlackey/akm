@@ -166,6 +166,19 @@ test("loopback session bootstrap, authentication and strict write origin", async
       .theme,
     "dark",
   );
+  // The update and plugin channels are saved beside the theme, validated, and reported with the software snapshot (F3, F14).
+  assert.equal((await app.request("/desktop/preferences", { updateChannel: "weekly" })).status, 400);
+  assert.equal((await app.request("/desktop/preferences", { pluginChannel: "beta" })).status, 400);
+  assert.equal(
+    (await app.request("/desktop/preferences", { updateChannel: "prerelease", pluginChannel: "next" })).status,
+    200,
+  );
+  assert.deepEqual((await (await app.request("/desktop/preferences")).json()).data, {
+    theme: "dark",
+    updateChannel: "prerelease",
+    pluginChannel: "next",
+  });
+  assert.equal((await (await app.request("/desktop/software")).json()).data.preferences.pluginChannel, "next");
   const configResponse = await app.request("/config");
   const configText = await configResponse.text();
   const token = new URL(app.url).searchParams.get("desktop_session");

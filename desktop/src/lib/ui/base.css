@@ -266,8 +266,10 @@
   }
 
   @media (prefers-reduced-motion: no-preference) {
+    /* The label moves with its fill: a button coming back from busy never shows its enabled label on the disabled fill. */
     :where(button, a.btn, input, select, textarea) {
       transition:
+        color 120ms,
         background-color 120ms,
         border-color 120ms,
         box-shadow 120ms;

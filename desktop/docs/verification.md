@@ -36,7 +36,7 @@ the databases the CLI created. No test imports akm internals.
 | UI: one happy path and one refusal per section, navigation and drafts, protected files, Software, first-run setup | `e2e`, `navigation`, `sensitive-ui`, `software-ui`, `setup-ui` (`npm run test:e2e`) |
 | Accessibility, reflow and design language | `usability*`, `design-language` (`npm run test:usability`) |
 | The web process without Electron: starts under plain Node, answers the shell and two reads | `scripts/server-guard.mjs` (`npm run test:server`, after a build) |
-| Electron main: sandbox, isolation, navigation, lifecycle | `electron` (`npm run test:electron`, needs a display: `xvfb-run -a`) |
+| Electron main: sandbox, isolation, navigation, lifecycle, why updates do not run, the update choice reaching the updater | `electron` (`npm run test:electron`, needs a display: `xvfb-run -a`) |
 
 What an operation decides (revisions, leases, staleness, write targets) is tested in akm
 (`tests/integration/workspace/`), not here.

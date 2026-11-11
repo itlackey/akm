@@ -13,22 +13,64 @@ const file = path.join(
   "akm-desktop",
   "preferences.json",
 );
-export function validTheme(value: unknown): value is "system" | "light" | "dark" {
+export type Theme = "system" | "light" | "dark";
+/** Which release line Desktop's own updater follows; absent means the stage of the embedded version. */
+export type UpdateChannel = "stable" | "prerelease";
+/** The npm/marketplace channel new harness plugins install from; absent means the stage of the embedded version. */
+export type PluginChannel = "latest" | "next";
+export interface Preferences {
+  theme: Theme;
+  updateChannel?: UpdateChannel;
+  pluginChannel?: PluginChannel;
+}
+export function validTheme(value: unknown): value is Theme {
   return value === "system" || value === "light" || value === "dark";
 }
-export async function readPreferences() {
+export function validUpdateChannel(value: unknown): value is UpdateChannel {
+  return value === "stable" || value === "prerelease";
+}
+export function validPluginChannel(value: unknown): value is PluginChannel {
+  return value === "latest" || value === "next";
+}
+export async function readPreferences(): Promise<Preferences> {
   try {
     const value = JSON.parse(await readFile(file, "utf8"));
-    return { theme: validTheme(value?.theme) ? value.theme : "system" };
+    return {
+      theme: validTheme(value?.theme) ? value.theme : "system",
+      ...(validUpdateChannel(value?.updateChannel) ? { updateChannel: value.updateChannel } : {}),
+      ...(validPluginChannel(value?.pluginChannel) ? { pluginChannel: value.pluginChannel } : {}),
+    };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT" || error instanceof SyntaxError) return { theme: "system" };
     throw error;
   }
 }
-export async function saveTheme(theme: "system" | "light" | "dark") {
+let saving: Promise<unknown> = Promise.resolve();
+/**
+ * Merge `changes` into the saved preferences and write the file whole, atomically. Saves run one after another: the
+ * rename keeps one file whole, but two overlapping read-merge-writes would drop one of their changes.
+ */
+export function savePreferences(changes: Partial<Preferences>): Promise<Preferences> {
+  const result = saving.then(() => write(changes));
+  saving = result.catch(() => undefined);
+  return result;
+}
+async function write(changes: Partial<Preferences>): Promise<Preferences> {
+  const next = { ...(await readPreferences()), ...changes };
   await mkdir(path.dirname(file), { recursive: true });
   const temporary = `${file}.${randomUUID()}.tmp`;
-  await writeFile(temporary, `${JSON.stringify({ theme })}\n`, { mode: 0o600 });
+  await writeFile(temporary, `${JSON.stringify(next)}\n`, { mode: 0o600 });
   await rename(temporary, file);
-  return { theme };
+  return next;
+}
+/** Saving a choice and applying it to the running app are separate results: the file is written either way. */
+export async function tryApply(
+  apply: () => Promise<void>,
+): Promise<{ applied: true } | { applied: false; applyError: string }> {
+  try {
+    await apply();
+    return { applied: true };
+  } catch (error) {
+    return { applied: false, applyError: error instanceof Error ? error.message : "Desktop service did not respond." };
+  }
 }

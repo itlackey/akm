@@ -32,6 +32,8 @@ export interface HostHarness {
   installed: boolean;
   runnable?: boolean;
   version?: string;
+  /** OpenCode's major, from its `--version`: 1 and 2 take different plugins. */
+  major?: number;
   plugin?: { state: string; version?: string; spec?: string; note?: string; detail?: string };
 }
 export interface HostSnapshot {
@@ -44,12 +46,65 @@ export const harnessNames: Record<string, string> = {
   claude: "Claude Code",
   codex: "Codex",
   opencode: "OpenCode",
-  opencode2: "OpenCode 2",
 };
 
-/** Desktop is the release stage of the akm it embeds, so its plugins follow the same channel (see plugin-upgrade.ts). */
-export const pluginChannel = (engine: string | undefined): "latest" | "next" =>
-  engine && /^\d+\.\d+\.\d+-/.test(engine) ? "next" : "latest";
+/** The harness's name for a person: OpenCode 2 installs as the same `opencode` program and is told apart by its major. */
+export const harnessLabel = (harness: { id: string; major?: number }) =>
+  harness.id === "opencode" && harness.major === 2 ? "OpenCode 2" : (harnessNames[harness.id] ?? harness.id);
+
+/**
+ * The channel new plugins install from: the saved choice, else Desktop's own release stage, so its plugins follow the
+ * same channel (see plugin-upgrade.ts).
+ */
+export const pluginChannel = (engine: string | undefined, saved?: "latest" | "next"): "latest" | "next" =>
+  saved ?? (engine && /^\d+\.\d+\.\d+-/.test(engine) ? "next" : "latest");
+
+/** What the harness says about the akm plugin, in words. */
+export function pluginLine(harness: HostHarness): string {
+  if (!harness.installed) return "Harness not found";
+  if (!harness.runnable) return "Harness could not start";
+  const plugin = harness.plugin;
+  if (!plugin) return "AKM plugin not checked";
+  const version = plugin.version ? ` ${plugin.version}` : "";
+  switch (plugin.state) {
+    case "missing":
+      return "AKM plugin not installed";
+    case "installed":
+      return `AKM plugin${version} installed`;
+    case "disabled":
+      return `AKM plugin${version} installed but turned off in the harness`;
+    case "configured":
+      return `AKM plugin ${plugin.spec ?? ""} configured (OpenCode installs it when it starts)`.replace("  ", " ");
+    default:
+      return "AKM plugin could not be verified";
+  }
+}
+
+/**
+ * The channel a present plugin follows, as `akm upgrade --check` read it from the harness's own configuration, as
+ * words that finish the row's sentence ("…installed, on the stable channel"); nothing for a plugin that is not there,
+ * or when the host CLI has not been checked or did not say.
+ */
+export function installedChannel(
+  harness: HostHarness,
+  plugins: Array<{ harness: string; channel?: string }> | undefined,
+): string | undefined {
+  if (!["installed", "configured", "disabled"].includes(harness.plugin?.state ?? "")) return undefined;
+  const name =
+    harness.id === "claude"
+      ? "claude-code"
+      : harness.id === "opencode" && harness.major === 2
+        ? "opencode-v2"
+        : harness.id;
+  const channel = plugins?.find((plugin) => plugin.harness === name)?.channel;
+  return channel === "latest"
+    ? "on the stable channel"
+    : channel === "next"
+      ? "on the prerelease channel"
+      : channel === "pinned"
+        ? "pinned to one version"
+        : undefined;
+}
 
 const majorMinor = (version: string | undefined) =>
   version
@@ -65,9 +120,6 @@ export function pluginMatches(engine: string | undefined, plugin: string | undef
   const [a, b] = [majorMinor(engine), majorMinor(plugin)];
   return a && b ? a === b : null;
 }
-
-/** The name akm's own `harnesses` setting uses for a harness Desktop installs a plugin into. */
-export const akmPlatform = (id: string) => (id === "opencode2" ? "opencode" : id);
 
 /** Nothing is configured: no bundle. Home shows setup instead of health failures then. */
 export const isUnconfigured = (listing: { bundles: unknown[] }) => listing.bundles.length === 0;
@@ -103,7 +155,7 @@ export function agentCards(host: HostSnapshot, engine: string | undefined, detec
   return host.harnesses
     .filter((harness) => harness.installed)
     .map((harness) => {
-      const platform = akmPlatform(harness.id);
+      const platform = harness.id;
       const seen = detected.harnesses.find((found) => found.platform === platform);
       const state: AgentCard["state"] = !harness.runnable
         ? "stopped"
@@ -117,7 +169,7 @@ export function agentCards(host: HostSnapshot, engine: string | undefined, detec
       const version = harness.plugin?.version;
       return {
         id: harness.id,
-        name: harnessNames[harness.id] ?? harness.id,
+        name: harnessLabel(harness),
         version: harness.version,
         state,
         ...(state === "connected"
@@ -212,7 +264,7 @@ export function learnReceipt(next: Detected, wantedOn: boolean, agentName: strin
   return `Background learning is on and runs on ${where}: ${next.modelCalls.description.replace(/\.$/, "")}.`;
 }
 
-/** The prompt to paste into a harness so that it searches akm, written for each harness's own surface. */
+/** The prompt to paste into a harness so that it searches akm, written for each harness's own surface (OpenCode 1 and 2 share one). */
 export function checkPrompt(id: string, query: string): string {
   if (id === "claude") return `/akm-search ${query}`;
   if (id === "codex") return `Use the akm skill to search akm for "${query}".`;

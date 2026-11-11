@@ -90,18 +90,6 @@ export interface ProposalListResult {
   proposals: Proposal[];
 }
 
-/**
- * Thin in-process read of the pending proposal queue, used by the health HTML
- * report builder (#582) so it never shells out to `akm proposal list`.
- *
- * Deliberately narrow (one optional arg, returns the storage-layer rows) so
- * the parallel proposal-storage-to-SQLite consolidation only has to swap this
- * one function's body.
- */
-export function listPendingProposals(stashDir?: string): Proposal[] {
-  return listProposals(resolveStash(stashDir), { status: "pending" });
-}
-
 export function akmProposalList(options: ProposalListOptions = {}): ProposalListResult {
   const { stashDir: stash } = resolveProposalQueue(options.stashDir, options.queue, options.config);
   // `--status accepted|rejected|reverted` implies archive-inclusion since the

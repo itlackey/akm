@@ -581,6 +581,20 @@
     padding-inline-end: var(--space-4);
   }
 
+  /* Inline has one pane, so prose wraps in place; side by side keeps `pre` so its two panes stay in step. */
+  .dcol.inline .dcol-body {
+    min-inline-size: 0;
+  }
+
+  .dcol.inline .drow {
+    white-space: pre-wrap;
+  }
+
+  .dcol.inline .drow .code {
+    min-inline-size: 0;
+    overflow-wrap: anywhere;
+  }
+
   .drow.add {
     background: var(--ok-bg);
   }

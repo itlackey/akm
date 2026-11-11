@@ -74,6 +74,63 @@ test("populated workspace accessibility and reflow across both themes", { timeou
         }));
         const label = `${state.id}-${theme}-${width}`;
         if (geometry.scrollWidth > width + 1) failures.push({ state: label, rule: "document-overflow", ...geometry });
+        // Chart text stays inside its drawing: an axis title cut at the left edge is unreadable.
+        const clipped = await page.evaluate(() =>
+          [...document.querySelectorAll("main svg")].flatMap((svg) => {
+            const box = svg.getBoundingClientRect();
+            return [...svg.querySelectorAll("text")]
+              .filter((text) => {
+                const r = text.getBoundingClientRect();
+                return (
+                  r.width > 0 &&
+                  (r.left < box.left - 1 || r.right > box.right + 1 || r.top < box.top - 1 || r.bottom > box.bottom + 1)
+                );
+              })
+              .map((text) => text.textContent);
+          }),
+        );
+        if (clipped.length) failures.push({ state: label, rule: "chart-text-clipped", clipped });
+        // The y-axis title is drawn at the top of the chart and is not read out: the chart's name says it too.
+        if (width === 1280) {
+          const untold = await page.evaluate(() =>
+            [...document.querySelectorAll("main .echarts-view")].flatMap((chart) => {
+              const drawn = [...chart.querySelectorAll("svg text")]
+                .filter((text) => text.textContent.trim() && text.getBoundingClientRect().width > 0)
+                .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)[0];
+              const title = drawn?.textContent.trim() ?? "";
+              return /[A-Za-z]{3}/.test(title) && !chart.getAttribute("aria-label").includes(title)
+                ? [`${chart.id}: ${title}`]
+                : [];
+            }),
+          );
+          if (untold.length) failures.push({ state: label, rule: "chart-axis-title-not-in-name", untold });
+        }
+        // Wide screens: a capped block is centred, section tabs line up with their column, prose keeps a measure.
+        if (width === 1440) {
+          const wide = await page.evaluate(() => {
+            const main = document.querySelector("main").getBoundingClientRect();
+            const rect = (selector) => document.querySelector(selector)?.getBoundingClientRect();
+            const centred = (left, right) => Math.abs(left - main.left - (main.right - right)) <= 48;
+            const findings = [];
+            const [nav, content] = [rect(".configuration-navigation"), rect(".configuration-content")];
+            if (nav && content && !centred(nav.left, content.right))
+              findings.push("configuration workspace is pinned left");
+            const software = rect(".software");
+            if (software && !centred(software.left, software.right)) findings.push("software page is pinned left");
+            const [views, search] = [rect(".library-views"), rect(".search-page")];
+            if (views && search && Math.abs(views.left - search.left) > 1)
+              findings.push(
+                `library tabs start at ${Math.round(views.left)}px, the search column at ${Math.round(search.left)}px`,
+              );
+            for (const block of document.querySelectorAll("main p, main li")) {
+              const w = block.getBoundingClientRect().width;
+              if (!block.querySelector("p, div, ul, table, pre") && block.textContent.trim().length >= 150 && w > 1000)
+                findings.push(`${Math.round(w)}px line: ${block.textContent.trim().slice(0, 60)}`);
+            }
+            return findings;
+          });
+          failures.push(...wide.map((finding) => ({ state: label, rule: "wide-layout", finding })));
+        }
         let violations = [];
         if (width === 390 || width === 1280) {
           const results = await new AxeBuilder({ page })

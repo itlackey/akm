@@ -52,7 +52,7 @@ const PREFETCH_TIMEOUT_MS = 180_000;
 
 // ── Running external commands ───────────────────────────────────────────────
 
-type CommandFailure = { ok: false; missing: boolean; error: string };
+export type CommandFailure = { ok: false; missing: boolean; error: string };
 type CommandResult = { ok: true; stdout: string } | CommandFailure;
 
 function runCommand(command: string, args: string[], timeoutMs: number, opts?: { cwd?: string }): CommandResult {
@@ -230,7 +230,7 @@ function refreshClaudeCode(
 
 // ── Codex ───────────────────────────────────────────────────────────────────
 
-function codexPluginVersion(): { version: string | undefined } | { error: CommandFailure } {
+export function codexPluginVersion(): { version: string | undefined } | { error: CommandFailure } {
   const listed = runCommand("codex", ["plugin", "list", "--marketplace", MARKETPLACE, "--json"], READ_TIMEOUT_MS);
   if (!listed.ok) return { error: listed };
   const parsed = parseJson(listed.stdout) as { installed?: Array<{ pluginId?: string; version?: string }> } | undefined;
@@ -238,11 +238,11 @@ function codexPluginVersion(): { version: string | undefined } | { error: Comman
   return { version: plugin ? String(plugin.version ?? "") : undefined };
 }
 
-function codexConfigFile(): string {
+export function codexConfigFile(): string {
   return path.join(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"), "config.toml");
 }
 
-function codexMarketplaceRef(): string | undefined {
+export function codexMarketplaceRef(): string | undefined {
   try {
     const ref = codexMarketplace(codexConfigFile())?.ref;
     return typeof ref === "string" ? ref : undefined;

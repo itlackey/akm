@@ -5,7 +5,7 @@
 -->
 
 <script lang="ts">
-  import { onMount, onDestroy, tick } from "svelte";
+  import { onDestroy, tick, untrack } from "svelte";
   import { afterNavigate } from "$app/navigation";
   import { assetSource, title, toggleSelection, date, matchesAssetRef, type ApiError } from "./client";
   import { libraryRead, resultContext, searchHref, documentTitle } from "./library-model";
@@ -22,134 +22,161 @@
   import Diff from "./Diff.svelte";
   import Icon from "./Icon.svelte";
   import { navigate } from "./navigation";
-  export let route = "/search";
-  export let query = new URLSearchParams();
-  export let bundles: Bundle[] = [];
-  export let bundleRevision = 0;
+  let {
+    route = "/search",
+    query = new URLSearchParams(),
+    bundles = [],
+    bundleRevision = 0,
+  }: {
+    route?: string;
+    query?: URLSearchParams;
+    bundles?: Bundle[];
+    bundleRevision?: number;
+  } = $props();
+  // Plain, not state, like `observed` below: what the two effects last acted on.
   let seenRevision = -1;
-  let q = "",
-    bundle = "",
-    type = "",
-    belief = "current",
-    limit = "50",
-    scope = { user: "", agent: "", run: "", channel: "" };
-  let result: SearchResult | null = null,
-    selected: string[] = [],
-    error = "",
-    errorCode = "",
-    loading = false;
-  let searchParams = new URLSearchParams(),
+  let q = $state(""),
+    bundle = $state(""),
+    type = $state(""),
+    belief = $state("current"),
+    limit = $state("50"),
+    scope = $state({ user: "", agent: "", run: "", channel: "" });
+  let result = $state<SearchResult | null>(null),
+    selected = $state<string[]>([]),
+    error = $state(""),
+    errorCode = $state(""),
+    loading = $state(false);
+  let searchParams = $state(new URLSearchParams()),
     observed = "",
     searchKey = "",
-    mounted = false,
     controller: AbortController;
-  let compared: AssetRead[] = [],
-    compareBusy = false,
+  let compared = $state<AssetRead[]>([]),
+    compareBusy = $state(false),
     compareKey = "",
     compareController: AbortController;
-  let resultList: HTMLElement,
+  let resultList = $state<HTMLElement>(),
     lastRef = "",
-    comparisonMode = false;
-  let filterDetails: HTMLDetailsElement, filterTrigger: HTMLElement;
-  let lastFiles = "",
-    lastSearch = "/library/search",
-    loadedAsset: AssetRead | null = null,
-    locatedRef = "",
-    localFileRevision = 0,
-    mutationRevision = 0;
-  let resolvingLocation = false,
+    comparisonMode = $state(false);
+  let filterDetails = $state<HTMLDetailsElement>(),
+    filterTrigger = $state<HTMLElement>();
+  let lastFiles = $state(""),
+    lastSearch = $state("/library/search"),
+    loadedAsset = $state<AssetRead | null>(null),
+    locatedRef = $state(""),
+    localFileRevision = $state(0),
+    mutationRevision = $state(0);
+  let resolvingLocation = $state(false),
     locationController: AbortController,
     searchScroll = 0,
     searchWindowScroll = 0,
-    searchContainer: HTMLElement;
+    searchContainer = $state<HTMLElement>();
   const filesViewState: FilesViewState = {};
   let pendingResultFocus = "";
-  let newFiles: HTMLElement,
-    writeWarnings: string[] = [];
+  let newFiles = $state<HTMLElement>(),
+    writeWarnings = $state<string[]>([]);
   afterNavigate(() => {
     if (newFiles?.matches(":popover-open")) newFiles.hidePopover();
   });
-  let misses: {
+  let misses = $state<{
     searches: number;
     foundNothing: number;
     misses: Array<{ query: string; count: number; days: number; lastAt: string }>;
-  } | null = null;
-  $: types = [
-    ...new Set([
-      ...bundles.flatMap((b) => Object.keys(b.byType ?? {})),
-      ...(result?.results ?? []).map((h) => h.type ?? ""),
-    ]),
-  ]
-    .filter(Boolean)
-    .sort();
-  $: defaultBundle = bundles.find((b) => b.default)?.name ?? "";
-  $: normalizedRoute = route.replace(/^#?\//, "");
-  $: editing = normalizedRoute === "edit" || normalizedRoute === "new";
-  $: newSensitive = normalizedRoute === "new-sensitive";
-  $: inFiles = normalizedRoute === "files" || editing || newSensitive;
-  $: ref = query.get("ref") ?? "";
-  $: compareRefs = query.getAll("compare");
-  $: fileQuery = normalizedRoute === "files" ? query : (parseFilesHref(query.get("returnTo")) ?? new URLSearchParams());
-  $: fileBundle =
-    fileQuery.get("bundle") || query.get("bundle") || defaultBundle || bundles.find((b) => b.enabled)?.name || "";
-  $: filePath = fileQuery.get("path") ?? query.get("path") ?? "";
-  $: selectedFilePath = fileQuery.get("file") ?? "";
-  $: readingHref = query.get("readingFrom") || fileQuery.get("readingFrom") || "";
-  $: reviewHref = query.get("reviewFrom") || fileQuery.get("reviewFrom") || "";
-  $: returnTo =
+  } | null>(null);
+  const types = $derived(
+    [
+      ...new Set([
+        ...bundles.flatMap((b) => Object.keys(b.byType ?? {})),
+        ...(result?.results ?? []).map((h) => h.type ?? ""),
+      ]),
+    ]
+      .filter(Boolean)
+      .sort(),
+  );
+  const defaultBundle = $derived(bundles.find((b) => b.default)?.name ?? "");
+  const normalizedRoute = $derived(route.replace(/^#?\//, ""));
+  const editing = $derived(normalizedRoute === "edit" || normalizedRoute === "new");
+  const newSensitive = $derived(normalizedRoute === "new-sensitive");
+  const inFiles = $derived(normalizedRoute === "files" || editing || newSensitive);
+  const ref = $derived(query.get("ref") ?? "");
+  const compareRefs = $derived(query.getAll("compare"));
+  const fileQuery = $derived(
+    normalizedRoute === "files" ? query : (parseFilesHref(query.get("returnTo")) ?? new URLSearchParams()),
+  );
+  const fileBundle = $derived(
+    fileQuery.get("bundle") || query.get("bundle") || defaultBundle || bundles.find((b) => b.enabled)?.name || "",
+  );
+  const filePath = $derived(fileQuery.get("path") ?? query.get("path") ?? "");
+  const selectedFilePath = $derived(fileQuery.get("file") ?? "");
+  const readingHref = $derived(query.get("readingFrom") || fileQuery.get("readingFrom") || "");
+  const reviewHref = $derived(query.get("reviewFrom") || fileQuery.get("reviewFrom") || "");
+  const returnTo = $derived(
     normalizedRoute === "new" && query.get("returnTo") === "/"
       ? "/"
       : inFiles
         ? filesHref({ bundle: fileBundle, path: filePath, file: selectedFilePath, ref, open: !!ref }, readingHref)
-        : searchHref(resultContext(query));
-  $: currentHref = "/library/" + normalizedRoute + (query.size ? "?" + query : "");
-  $: activeLocation = locatedRef === ref ? loadedAsset?.location : null;
-  $: folderHref = activeLocation
-    ? filesHref(
-        { bundle: activeLocation.bundle, path: activeLocation.parent, file: activeLocation.path },
-        inFiles ? readingHref : currentHref,
-      )
-    : "";
-  $: sourceHref = activeLocation
-    ? filesHref(
-        {
-          bundle: activeLocation.bundle,
-          path: activeLocation.parent,
-          file: activeLocation.path,
-          ref: loadedAsset?.durableRef || ref,
-          open: true,
-        },
-        inFiles ? readingHref : currentHref,
-      )
-    : inFiles
-      ? returnTo
-      : "";
-  $: editHref = sourceHref
-    ? "/library/edit?" +
-      new URLSearchParams({
-        ref: loadedAsset?.durableRef || ref,
-        returnTo: withReview(sourceHref),
-        ...(inFiles ? (readingHref ? { readingFrom: readingHref } : {}) : { readingFrom: currentHref }),
-      })
-    : "";
-  $: active =
+        : searchHref(resultContext(query)),
+  );
+  const currentHref = $derived("/library/" + normalizedRoute + (query.size ? "?" + query : ""));
+  const activeLocation = $derived(locatedRef === ref ? loadedAsset?.location : null);
+  const folderHref = $derived(
+    activeLocation
+      ? filesHref(
+          { bundle: activeLocation.bundle, path: activeLocation.parent, file: activeLocation.path },
+          inFiles ? readingHref : currentHref,
+        )
+      : "",
+  );
+  const sourceHref = $derived(
+    activeLocation
+      ? filesHref(
+          {
+            bundle: activeLocation.bundle,
+            path: activeLocation.parent,
+            file: activeLocation.path,
+            ref: loadedAsset?.durableRef || ref,
+            open: true,
+          },
+          inFiles ? readingHref : currentHref,
+        )
+      : inFiles
+        ? returnTo
+        : "",
+  );
+  const editHref = $derived(
+    sourceHref
+      ? "/library/edit?" +
+          new URLSearchParams({
+            ref: loadedAsset?.durableRef || ref,
+            returnTo: withReview(sourceHref),
+            ...(inFiles ? (readingHref ? { readingFrom: readingHref } : {}) : { readingFrom: currentHref }),
+          })
+      : "",
+  );
+  const active = $derived(
     ["type", "bundle", "scope_user", "scope_agent", "scope_run", "scope_channel"].filter((key) => searchParams.get(key))
       .length +
-    (searchParams.get("belief") && searchParams.get("belief") !== "current" ? 1 : 0) +
-    (searchParams.get("limit") && searchParams.get("limit") !== "50" ? 1 : 0);
-  $: if (mounted && currentHref !== observed) {
+      (searchParams.get("belief") && searchParams.get("belief") !== "current" ? 1 : 0) +
+      (searchParams.get("limit") && searchParams.get("limit") !== "50" ? 1 : 0),
+  );
+  // The address decides what is shown. When it changes, the search, the open asset and the comparison are brought in
+  // line with it before the page updates, so nothing is drawn for the new address from the state of the one before.
+  $effect.pre(() => {
+    if (currentHref === observed) return;
     observed = currentHref;
-    synchronize();
-  }
-  $: if (mounted && seenRevision !== bundleRevision) {
+    untrack(synchronize);
+  });
+  // Bundles were added, removed, renamed or reindexed: the results on screen are searched again.
+  $effect.pre(() => {
+    if (seenRevision === bundleRevision) return;
     seenRevision = bundleRevision;
-    if (!inFiles) void search();
-  }
+    untrack(() => {
+      if (!inFiles) void search();
+    });
+  });
   function fail(cause: unknown) {
     error = (cause as Error).message;
     errorCode = (cause as ApiError).code ?? "";
   }
-  $: if (!error) errorCode = "";
   function withReview(href: string) {
     if (!reviewHref || !href) return href;
     const [base, params = ""] = href.split("?"),
@@ -196,6 +223,7 @@
     const signal = locationController.signal;
     resolvingLocation = true;
     error = "";
+    errorCode = "";
     try {
       const read = await libraryRead<AssetRead>("/asset", { ref }, signal);
       if (signal.aborted) return;
@@ -260,7 +288,12 @@
     searchContainer?.querySelector<HTMLInputElement>('input[type="search"]')?.focus();
   }
   function submit() {
-    if (filterDetails) filterDetails.open = false;
+    if (filterDetails?.open) {
+      // Applied from inside the panel: focus goes back to Filters instead of being dropped with the panel.
+      const inside = filterDetails.contains(document.activeElement);
+      filterDetails.open = false;
+      if (inside) filterTrigger?.focus();
+    }
     const next = new URLSearchParams();
     for (const [key, value] of Object.entries({
       q,
@@ -294,6 +327,17 @@
     resetFilterInputs();
     filterTrigger?.focus();
   }
+  /** Focus that moves out of an open overlay closes it, so it is not left open over the control that has focus. */
+  function leaveFilters(event: FocusEvent) {
+    if (!filterDetails?.open || !(event.relatedTarget instanceof Node)) return;
+    if (filterDetails.contains(event.relatedTarget)) return;
+    filterDetails.open = false;
+    resetFilterInputs();
+  }
+  function leaveNewFiles(event: FocusEvent) {
+    if (!(event.relatedTarget instanceof Node) || newFiles?.contains(event.relatedTarget)) return;
+    if (newFiles?.matches(":popover-open")) newFiles.hidePopover();
+  }
   function dismissFilters(event: MouseEvent | KeyboardEvent) {
     if (!filterDetails?.open) return;
     if (event instanceof KeyboardEvent) {
@@ -315,6 +359,7 @@
     const signal = controller.signal;
     loading = true;
     error = "";
+    errorCode = "";
     try {
       if (searchParams.get("tab") === "misses") {
         const next = await libraryRead<NonNullable<typeof misses>>("/search/misses", { since: "30d" }, signal);
@@ -375,6 +420,7 @@
     const signal = compareController.signal;
     compareBusy = true;
     error = "";
+    errorCode = "";
     try {
       const data = await Promise.all(refs.map((ref) => libraryRead<AssetRead>("/asset", { ref }, signal)));
       if (!signal.aborted) compared = data;
@@ -384,20 +430,20 @@
       if (!signal.aborted) compareBusy = false;
     }
   }
-  function receiveAsset(event: CustomEvent<AssetRead>) {
-    loadedAsset = event.detail;
+  function receiveAsset(read: AssetRead) {
+    loadedAsset = read;
     locatedRef = ref;
   }
-  function beginCompare(event: CustomEvent<string>) {
-    selected = [event.detail];
+  function beginCompare(chosen: string) {
+    selected = [chosen];
     comparisonMode = true;
     // Continue in the user's current discovery view, rather than changing
     // Search readers into file-management sessions just to find a second page.
     if (inFiles && folderHref) void navigate(withReview(folderHref));
     else void navigate(searchHref(searchParams));
   }
-  function comparePair(event: CustomEvent<string[]>) {
-    selected = event.detail;
+  function comparePair(refs: string[]) {
+    selected = refs;
     comparisonMode = false;
     void navigate(compareHref());
   }
@@ -445,8 +491,7 @@
   function createSensitiveHref(kind: string, bundle: string, path: string) {
     return "/library/new-sensitive?" + new URLSearchParams({ kind, bundle, returnTo: filesHref({ bundle, path }) });
   }
-  async function savedSensitive(event: CustomEvent<{ bundle: string; file: string; ref: string; warnings: string[] }>) {
-    const saved = event.detail;
+  async function savedSensitive(saved: { bundle: string; file: string; ref: string; warnings: string[] }) {
     writeWarnings = saved.warnings;
     mutationRevision++;
     await navigate(
@@ -458,9 +503,6 @@
       }),
     );
   }
-  onMount(() => {
-    mounted = true;
-  });
   onDestroy(() => {
     controller?.abort();
     compareController?.abort();
@@ -468,9 +510,15 @@
   });
 </script>
 
-<svelte:window on:click={dismissFilters} on:keydown={dismissFilters} on:keydown={searchShortcut} />
+<svelte:window
+  onclick={dismissFilters}
+  onkeydown={(event) => {
+    dismissFilters(event);
+    searchShortcut(event);
+  }}
+/>
 {#if !(ref && !inFiles) && !(normalizedRoute === "asset" && query.get("view") === "files")}
-  <nav class="library-views" aria-label="Library views">
+  <nav class="library-views" aria-label="Library views" data-sveltekit-reset="false">
     <a href={lastSearch} aria-current={!inFiles ? "page" : undefined}>Search</a>
     <a
       href={lastFiles || filesHref({ bundle: defaultBundle || bundles.find((b) => b.enabled)?.name || "", path: "" })}
@@ -487,9 +535,8 @@
     {#if errorCode === "STASH_DIR_NOT_FOUND"}<a href="/setup">Set up akm</a>{/if}
     {#if resolvingLocation}<span>Resolving location…</span>{:else if query.get("view") === "files"}<a
         href={"/library/asset?ref=" + encodeURIComponent(ref)}>Read in Search</a
-      >{:else}<button
-        class="btn-secondary"
-        on:click={() => (compareRefs.length === 2 ? compare(compareRefs) : search())}>Retry</button
+      >{:else}<button class="btn-secondary" onclick={() => (compareRefs.length === 2 ? compare(compareRefs) : search())}
+        >Retry</button
       >{/if}
   </p>{/if}
 {#if comparisonMode && compareRefs.length !== 2}<div class="comparison-selection">
@@ -508,8 +555,8 @@
     </div>
     {#if selected.length === 2}<a class="btn" href={compareHref()}>Compare</a>{/if}{#if selected.length}<button
         class="quiet"
-        on:click={() => (selected = [])}>Clear selection</button
-      >{/if}<button class="quiet" on:click={cancelComparison}><Icon name="close" size={16} />Cancel comparison</button>
+        onclick={() => (selected = [])}>Clear selection</button
+      >{/if}<button class="quiet" onclick={cancelComparison}><Icon name="close" size={16} />Cancel comparison</button>
   </div>{/if}
 
 {#snippet comparison()}
@@ -518,7 +565,7 @@
       <h1>Compare assets</h1>
       <p class="muted small">Changes between the two source files.</p>
     </div>
-    <a href={closeComparison()} on:click={() => (comparisonMode = true)}
+    <a href={closeComparison()} onclick={() => (comparisonMode = true)}
       ><Icon name="arrow-left" size={16} />Close comparison</a
     >
   </header>
@@ -565,125 +612,128 @@
     revision={bundleRevision + localFileRevision + mutationRevision}
     {comparisonMode}
     selectedCompare={selected}
-    on:navigate={(event) => navigateFiles(event.detail)}
-    on:select={(event) => (selected = toggleSelection(selected, event.detail, 2))}
-    on:search={(event) => navigate(searchHref(new URLSearchParams({ bundle: event.detail })))}
-    let:selectedFile
-    let:indexAvailable
-    let:loading={folderLoading}
-    let:error={folderError}
+    onNavigate={navigateFiles}
+    onSelect={(chosen) => (selected = toggleSelection(selected, chosen, 2))}
+    onSearch={(name) => navigate(searchHref(new URLSearchParams({ bundle: name })))}
   >
-    <div slot="actions" class="files-actions">
-      {#if reviewHref}<a href={reviewHref}>Back to review</a>{:else if readingHref && !editing}<a href={readingHref}
-          >Back to reading</a
-        >{/if}
-      {#if !editing && !newSensitive}<div class="new-file-actions">
-          <a class="btn btn-secondary" href={createHref(fileBundle, filePath, readingHref, reviewHref)}
-            ><Icon name="plus" size={16} />New knowledge</a
-          ><button class="btn-secondary new-file-trigger" popovertarget="new-file-types" aria-label="Other file types"
-            ><Icon name="chevron-down" size={16} /></button
-          >
-        </div>
-        <div
-          id="new-file-types"
-          class="new-file-menu"
-          popover="auto"
-          role="group"
-          aria-label="Create file"
-          bind:this={newFiles}
-        >
-          <a href={createSensitiveHref("env", fileBundle, filePath)}>Environment file</a><a
-            href={createSensitiveHref("secret", fileBundle, filePath)}>Secret</a
-          >
-        </div>{/if}
-    </div>
-    <section class="inspector files-inspector" aria-label="Asset workspace">
-      {#if newSensitive}
-        {#key query.get("kind")}<SensitiveEditor
-            creating
-            type={query.get("kind") === "secret" ? "secret" : "env"}
-            bundle={fileBundle}
-            {bundles}
-            on:saved={savedSensitive}
-            on:cancel={() => navigate(query.get("returnTo") || "/library/files")}
-          />{/key}
-      {:else if editing}
-        {#key normalizedRoute + ":" + ref + ":" + query.get("file")}<LibraryEditor
-            ref={normalizedRoute === "new" ? "" : ref}
-            file={normalizedRoute === "edit" && !ref && query.get("file")
-              ? { bundle: fileBundle, path: query.get("file")! }
-              : undefined}
-            {query}
-            {bundles}
-            {defaultBundle}
-            returnTo={withReview(returnTo)}
-            cancelHref={query.get("file") ? query.get("returnTo")! : withReview(returnTo)}
-            {readingHref}
-            onSaved={savedAsset}
-          />{/key}
-      {:else if compareRefs.length === 2}{@render comparison()}
-      {:else if ref}
-        {#if comparisonMode && !selected.includes(ref)}<button
-            class="btn-secondary candidate-button"
-            disabled={selected.length === 2}
-            on:click={() => (selected = toggleSelection(selected, ref, 2))}>Use for comparison</button
+    {#snippet actions()}<div class="files-actions">
+        {#if reviewHref}<a href={reviewHref}>Back to review</a>{:else if readingHref && !editing}<a href={readingHref}
+            >Back to reading</a
           >{/if}
-        {#key bundleRevision + ":" + localFileRevision}<LibraryAsset
-            {ref}
-            {query}
-            returnTo={withReview(filesHref({ bundle: fileBundle, path: filePath }, readingHref))}
-            {bundles}
-            {defaultBundle}
-            mode="files"
-            filesHref={folderHref}
-            {editHref}
-            {readingHref}
-            on:loaded={receiveAsset}
-            on:compare={beginCompare}
-            on:comparePair={comparePair}
-            on:changed={() => {
-              mutationRevision++;
-              if (!inFiles) void search();
-            }}
-          />{/key}
-      {:else if /^(env|secrets)\//.test(selectedFilePath)}
-        {#key fileBundle + ":" + selectedFilePath}<SensitiveAsset
-            bundle={fileBundle}
-            file={selectedFilePath}
-            on:changed={() => mutationRevision++}
-          />{/key}
-      {:else if folderError}<p role="alert">{folderError}</p>
-        <a href={withReview(filesHref({ bundle: fileBundle, path: filePath }, readingHref))}>Back to folder</a>
-      {:else if folderLoading}<p role="status">Checking file…</p>
-      {:else if selectedFile?.unavailable}<h1>{selectedFile.name}</h1>
-        <p class="notice">{selectedFile.unavailable}</p>
-      {:else if selectedFile && selectedFile.assets.length > 1}<h1>{selectedFile.name}</h1>
-        <p>This file contains multiple indexed assets. Choose the one to read.</p>
-        <ul class="asset-choices">
-          {#each selectedFile.assets as { ref: choice }}<li>
-              <a
-                href={withReview(
-                  filesHref(
-                    { bundle: fileBundle, path: filePath, file: selectedFile.path, ref: choice, open: true },
-                    readingHref,
-                  ),
-                )}>{choice}</a
-              >
-            </li>{/each}
-        </ul>
-      {:else if selectedFile}
-        {#key fileBundle + ":" + selectedFilePath + ":" + localFileRevision}<LibraryFile
-            bundle={fileBundle}
-            file={selectedFilePath}
-            returnTo={currentHref}
-            folderHref={withReview(filesHref({ bundle: fileBundle, path: filePath }, readingHref))}
-          />{/key}
-      {:else}<h1>{selectedFilePath.split("/").at(-1) || "File"}</h1>
-        <p class="notice">This file is no longer present in the folder listing.</p>
-        <a href={withReview(filesHref({ bundle: fileBundle, path: filePath, file: selectedFilePath }, readingHref))}
-          >Back to folder</a
-        >{/if}
-    </section>
+        {#if !editing && !newSensitive}<div class="new-file-actions">
+            <a class="btn btn-secondary" href={createHref(fileBundle, filePath, readingHref, reviewHref)}
+              ><Icon name="plus" size={16} />New knowledge</a
+            ><button
+              class="btn-secondary new-file-trigger"
+              popovertarget="new-file-types"
+              aria-label="Other file types"
+              title="Other file types"><Icon name="chevron-down" size={16} /></button
+            >
+          </div>
+          <div
+            id="new-file-types"
+            class="new-file-menu"
+            popover="auto"
+            role="group"
+            aria-label="Create file"
+            bind:this={newFiles}
+            onfocusout={leaveNewFiles}
+          >
+            <a href={createSensitiveHref("env", fileBundle, filePath)}>Environment file</a><a
+              href={createSensitiveHref("secret", fileBundle, filePath)}>Secret</a
+            >
+          </div>{/if}
+      </div>{/snippet}
+    {#snippet children({ selectedFile, loading: folderLoading, error: folderError })}<section
+        class="inspector files-inspector"
+        aria-label="Asset workspace"
+      >
+        {#if newSensitive}
+          {#key query.get("kind")}<SensitiveEditor
+              creating
+              type={query.get("kind") === "secret" ? "secret" : "env"}
+              bundle={fileBundle}
+              {bundles}
+              onSaved={savedSensitive}
+              onCancel={() => navigate(query.get("returnTo") || "/library/files")}
+            />{/key}
+        {:else if editing}
+          {#key normalizedRoute + ":" + ref + ":" + query.get("file")}<LibraryEditor
+              ref={normalizedRoute === "new" ? "" : ref}
+              file={normalizedRoute === "edit" && !ref && query.get("file")
+                ? { bundle: fileBundle, path: query.get("file")! }
+                : undefined}
+              {query}
+              {bundles}
+              {defaultBundle}
+              returnTo={withReview(returnTo)}
+              cancelHref={query.get("file") ? query.get("returnTo")! : withReview(returnTo)}
+              {readingHref}
+              onSaved={savedAsset}
+            />{/key}
+        {:else if compareRefs.length === 2}{@render comparison()}
+        {:else if ref}
+          {#if comparisonMode && !selected.includes(ref)}<button
+              class="btn-secondary candidate-button"
+              disabled={selected.length === 2}
+              onclick={() => (selected = toggleSelection(selected, ref, 2))}>Use for comparison</button
+            >{/if}
+          {#key bundleRevision + ":" + localFileRevision}<LibraryAsset
+              {ref}
+              {query}
+              returnTo={withReview(filesHref({ bundle: fileBundle, path: filePath }, readingHref))}
+              {bundles}
+              {defaultBundle}
+              mode="files"
+              filesHref={folderHref}
+              {editHref}
+              {readingHref}
+              onLoaded={receiveAsset}
+              onCompare={beginCompare}
+              onComparePair={comparePair}
+              onChanged={() => {
+                mutationRevision++;
+                if (!inFiles) void search();
+              }}
+            />{/key}
+        {:else if /^(env|secrets)\//.test(selectedFilePath)}
+          {#key fileBundle + ":" + selectedFilePath}<SensitiveAsset
+              bundle={fileBundle}
+              file={selectedFilePath}
+              onChanged={() => mutationRevision++}
+            />{/key}
+        {:else if folderError}<p role="alert">{folderError}</p>
+          <a href={withReview(filesHref({ bundle: fileBundle, path: filePath }, readingHref))}>Back to folder</a>
+        {:else if folderLoading}<p role="status">Checking file…</p>
+        {:else if selectedFile?.unavailable}<h1>{selectedFile.name}</h1>
+          <p class="notice">{selectedFile.unavailable}</p>
+        {:else if selectedFile && selectedFile.assets.length > 1}<h1>{selectedFile.name}</h1>
+          <p>This file contains multiple indexed assets. Choose the one to read.</p>
+          <ul class="asset-choices">
+            {#each selectedFile.assets as { ref: choice }}<li>
+                <a
+                  href={withReview(
+                    filesHref(
+                      { bundle: fileBundle, path: filePath, file: selectedFile.path, ref: choice, open: true },
+                      readingHref,
+                    ),
+                  )}>{choice}</a
+                >
+              </li>{/each}
+          </ul>
+        {:else if selectedFile}
+          {#key fileBundle + ":" + selectedFilePath + ":" + localFileRevision}<LibraryFile
+              bundle={fileBundle}
+              file={selectedFilePath}
+              returnTo={currentHref}
+              folderHref={withReview(filesHref({ bundle: fileBundle, path: filePath }, readingHref))}
+            />{/key}
+        {:else}<h1>{selectedFilePath.split("/").at(-1) || "File"}</h1>
+          <p class="notice">This file is no longer present in the folder listing.</p>
+          <a href={withReview(filesHref({ bundle: fileBundle, path: filePath, file: selectedFilePath }, readingHref))}
+            >Back to folder</a
+          >{/if}
+      </section>{/snippet}
   </LibraryFiles>
 {:else if normalizedRoute === "asset" && query.get("view") === "files"}
   {#if resolvingLocation}<p role="status">Opening the asset’s folder…</p>{/if}
@@ -698,10 +748,10 @@
       mode="search"
       filesHref={folderHref}
       {editHref}
-      on:loaded={receiveAsset}
-      on:compare={beginCompare}
-      on:comparePair={comparePair}
-      on:changed={() => {
+      onLoaded={receiveAsset}
+      onCompare={beginCompare}
+      onComparePair={comparePair}
+      onChanged={() => {
         mutationRevision++;
         if (!inFiles) void search();
       }}
@@ -735,17 +785,24 @@
 {:else}
   <section class="search-page" bind:this={searchContainer}>
     <h1>Library</h1>
-    <form class="search-form" role="search" on:submit|preventDefault={submit}>
+    <form
+      class="search-form"
+      role="search"
+      onsubmit={(event) => {
+        event.preventDefault();
+        submit();
+      }}
+    >
       <input type="search" bind:value={q} placeholder="Search the library" aria-label="Search library" />
       <button disabled={loading}><Icon name="search" size={18} />Search</button>
-      <details class="search-filters" bind:this={filterDetails}>
+      <details class="search-filters" bind:this={filterDetails} onfocusout={leaveFilters}>
         <summary
           bind:this={filterTrigger}
-          on:click={() => {
-            if (filterDetails.open) resetFilterInputs();
+          onclick={() => {
+            if (filterDetails?.open) resetFilterInputs();
           }}><Icon name="sliders" size={18} />Filters{active ? " (" + active + ")" : ""}</summary
         >
-        <div class="filter-panel">
+        <div class="filter-panel" role="group" aria-label="Filters">
           <div class="form-grid library-filters">
             <label
               >Bundle<select bind:value={bundle}
@@ -773,7 +830,7 @@
             {#each ["user", "agent", "run", "channel"] as key}<label
                 >Scope: {key}<input
                   value={scope[key as keyof typeof scope]}
-                  on:input={(event) => (scope = { ...scope, [key]: event.currentTarget.value })}
+                  oninput={(event) => (scope = { ...scope, [key]: event.currentTarget.value })}
                   placeholder="Any"
                 /></label
               >{/each}
@@ -782,8 +839,9 @@
             <button type="submit">Apply filters</button><button
               type="button"
               class="btn-secondary"
-              on:click={closeFilters}>Cancel</button
-            >{#if active}<a href="/library/search" on:click={closeFilters}>Clear filters</a>{/if}
+              onclick={closeFilters}>Cancel</button
+            >{#if active}<a href="/library/search" data-sveltekit-reset="false" onclick={closeFilters}>Clear filters</a
+              >{/if}
           </div>
         </div>
       </details>
@@ -795,7 +853,7 @@
       <div>
         <a href={tabHref("misses")}>Search gaps</a>{#if !comparisonMode}<button
             class="quiet"
-            on:click={() => (comparisonMode = true)}>Compare assets</button
+            onclick={() => (comparisonMode = true)}>Compare assets</button
           >{/if}
       </div>
     </div>
@@ -824,11 +882,11 @@
                 aria-label={"Select " + title(hit) + " for comparison"}
                 checked={selected.includes(hit.ref)}
                 disabled={!selected.includes(hit.ref) && selected.length === 2}
-                on:change={() => (selected = toggleSelection(selected, hit.ref, 2))}
+                onchange={() => (selected = toggleSelection(selected, hit.ref, 2))}
               />{/if}
             <article>
               <h2>
-                <a class="library-hit-content" href={searchHref(searchParams, hit.ref)} on:click={rememberSearch}
+                <a class="library-hit-content" href={searchHref(searchParams, hit.ref)} onclick={rememberSearch}
                   >{title(hit)}</a
                 >
               </h2>
@@ -892,9 +950,18 @@
     min-height: 44px;
     align-items: stretch;
   }
+  /* Above the search and gaps pages the tabs share their centred column; above Files they span the page. */
+  @media (min-width: 851px) {
+    :global(.desktop-shell:not(.workspace-active)) .library-views {
+      max-width: 1040px;
+      margin-inline: auto;
+      padding-inline: 48px;
+    }
+  }
   .library-views a {
     display: flex;
     align-items: center;
+    min-height: 44px;
     border-bottom: 2px solid transparent;
     color: var(--muted);
     text-decoration: none;
@@ -970,9 +1037,14 @@
     border-radius: 8px;
     box-shadow: 0 8px 24px rgb(0 0 0 / 0.1);
   }
+  /* Eight fields in two rows, so the panel's footer stays on screen in a short window. */
   .library-filters {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 16px;
+  }
+  .library-filters :is(select, input) {
+    inline-size: 100%;
+    min-inline-size: 0;
   }
   .filter-footer {
     display: flex;
@@ -1161,7 +1233,9 @@
     overflow-wrap: anywhere;
   }
   .library-gaps {
-    padding: 28px;
+    max-width: 1040px;
+    margin-inline: auto;
+    padding: 28px 48px;
     overflow: auto;
     min-height: 0;
   }
@@ -1206,11 +1280,15 @@
       display: inline-flex;
       padding-left: 0;
     }
+    /* The panel spans the search form, which is the page column, so no field is cut at the edge. */
     .filter-panel {
       left: 0;
-      right: auto;
-      width: min(680px, calc(100vw - 48px));
+      right: 0;
+      width: auto;
       padding: 16px;
+    }
+    .library-filters {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
     .search-summary {
       align-items: start;

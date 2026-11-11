@@ -7,11 +7,13 @@
 <script lang="ts">
   import { provenance } from "./settings-presenter";
   import type { SettingsField } from "./settings-presenter";
-  export let field: SettingsField;
-  export let value: string;
-  export let source: string | null | undefined;
-  export let disabled = false;
-  $: id = `setting-${field.key.replace(/[^a-zA-Z0-9-]/g, "-")}`;
+  let {
+    field,
+    value = $bindable(),
+    source,
+    disabled = false,
+  }: { field: SettingsField; value: string; source: string | null | undefined; disabled?: boolean } = $props();
+  const id = $derived(`setting-${field.key.replace(/[^a-zA-Z0-9-]/g, "-")}`);
 </script>
 
 <div class="field" class:field-row={field.kind === "boolean"}>
@@ -28,7 +30,7 @@
       {id}
       {disabled}
       checked={value === "true"}
-      on:change={(event) => (value = String(event.currentTarget.checked))}
+      onchange={(event) => (value = String(event.currentTarget.checked))}
       aria-describedby={field.hint ? `${id}-hint` : undefined}
     />
   {:else if field.kind === "select"}<select

@@ -185,6 +185,13 @@ the same way, with the akm version already published. The Claude marketplace
 reads the plugins repository's `main`, so stable plugin releases come from
 `main`.
 
+A plugin release that reads a new `config.json` key, under `plugins` or
+anywhere else, waits for a published akm release whose config schema declares
+that key, and requires that version. `akm migrate apply` deletes every key the
+schema does not declare, and hosts run it at startup (#1613). Before releasing
+the plugin, set the key, run the published CLI's `akm migrate apply` twice, and
+check the key is still there.
+
 ## 5. Upgrade
 
 `akm upgrade` (stable) or `akm upgrade --next` (prerelease) updates akm and the

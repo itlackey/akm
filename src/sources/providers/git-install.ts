@@ -22,6 +22,8 @@ import type { SourceLockData, SyncOptions } from "./install-types";
 import { applyAkmIncludeConfig, buildInstallCacheDir, detectStashRoot, isDirectory } from "./provider-utils";
 
 const DIRTY_PATHS_SHOWN = 5;
+export const UPDATE_REFUSAL_HINT =
+  "Local work was preserved. Commit, move or discard the paths or commits named above in the checkout, then run `akm bundle update` again.";
 
 /**
  * Throw a UsageError unless the worktree is clean. A failing `git status` is reported as a
@@ -148,6 +150,8 @@ export function assertNoIgnoredPathOverwrite(repoDir: string, targetRevision: st
   if (conflict) {
     throw new UsageError(
       `Git update would overwrite ignored local path ${path.join(repoDir, conflict)}; move or remove it before update.`,
+      "INVALID_FLAG_VALUE",
+      UPDATE_REFUSAL_HINT,
     );
   }
 }
@@ -232,6 +236,7 @@ async function doSyncGit(parsed: ParsedGitRef, options?: SyncOptions): Promise<S
       syncedAt,
       options.writableRequiredRoots,
       options.credential,
+      options.allowLocalChanges,
     );
   }
   const cacheRootDir = options?.cacheRootDir ?? getRegistryCacheDir();
@@ -260,6 +265,7 @@ async function doSyncGit(parsed: ParsedGitRef, options?: SyncOptions): Promise<S
         syncedAt,
         options.writableRequiredRoots,
         options.credential,
+        options.allowLocalChanges,
       );
     }
     try {
@@ -389,6 +395,7 @@ export function syncExistingWritableCheckout(
   syncedAt: string,
   requiredRoots: readonly string[] = [],
   credential?: string,
+  allowLocalChanges = false,
 ): SourceLockData {
   const root = path.resolve(contentRoot);
   const repoResult = runGit(["-C", root, "rev-parse", "--show-toplevel"]);
@@ -409,11 +416,14 @@ export function syncExistingWritableCheckout(
     );
   }
 
-  assertCleanWorktree(
-    repoDir,
-    `Writable Git install at ${root}`,
-    "has uncommitted changes; commit or discard them before update.",
-  );
+  // Only the staged `bundle update` path leaves local changes to git's own fast-forward protection.
+  if (!allowLocalChanges) {
+    assertCleanWorktree(
+      repoDir,
+      `Writable Git install at ${root}`,
+      "has uncommitted changes; commit or discard them before update.",
+    );
+  }
 
   if (parsed.requestedRef) {
     const branch = runGit(["-C", repoDir, "branch", "--show-current"]);
@@ -469,6 +479,8 @@ export function syncExistingWritableCheckout(
     if (relation.ahead > 0) {
       throw new UsageError(
         `Writable Git install at ${root} has local commits that are not in the requested upstream revision; push or reconcile them before update.`,
+        "INVALID_FLAG_VALUE",
+        UPDATE_REFUSAL_HINT,
       );
     }
 
@@ -486,18 +498,23 @@ export function syncExistingWritableCheckout(
       }
     }
 
-    assertCleanWorktree(
-      repoDir,
-      `Writable Git install at ${root}`,
-      "changed while its update was prepared; local work was preserved.",
-    );
+    if (!allowLocalChanges) {
+      assertCleanWorktree(
+        repoDir,
+        `Writable Git install at ${root}`,
+        "changed while its update was prepared; local work was preserved.",
+      );
+    }
     assertNoIgnoredPathOverwrite(repoDir, targetRevision);
+    // Git itself refuses (and changes nothing) when the fast-forward would overwrite local work.
     const merge = runGit(["-C", repoDir, "merge", "--ff-only", "--no-overwrite-ignore", targetRevision], {
       timeout: 120_000,
     });
     if (merge.status !== 0) {
       throw new UsageError(
-        `Writable Git install at ${root} cannot fast-forward; local commits were preserved. ${merge.stderr.trim()}`,
+        `Writable Git install at ${root} cannot fast-forward without overwriting local work; nothing was changed. ${merge.stderr.trim()}`,
+        "INVALID_FLAG_VALUE",
+        UPDATE_REFUSAL_HINT,
       );
     }
   }

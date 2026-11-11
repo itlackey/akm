@@ -104,6 +104,25 @@ describe("collectSchedulerBinaryAdvisory (#953)", () => {
       },
     });
     expect(result.status).toBe("unknown");
+    expect(result.message).toContain("could not be inspected");
+  });
+
+  // A host with no scheduler binary runs no scheduled task, so the row says that instead of reading as a fault (F22).
+  test("a missing scheduler binary is reported as no scheduler on this host", async () => {
+    const result = await collectSchedulerBinaryAdvisory(true, {
+      cliVersion: "0.9.15",
+      env: DEFAULT_ENV,
+      backend: {
+        name: "cron",
+        apply: () => {},
+        inspect: () => {
+          throw new Error("crontab -l failed: the `crontab` binary was not found on PATH");
+        },
+      },
+    });
+    expect(result.status).toBe("unknown");
+    expect(result.message).toContain("No scheduler is available on this host");
+    expect(result.message).toContain("crontab");
   });
 
   test("an installation that moves its locations does not own the entry: unknown, never inspected", async () => {

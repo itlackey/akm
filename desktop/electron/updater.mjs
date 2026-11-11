@@ -3,15 +3,28 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * @typedef {{ state: "unsupported" | "checking" | "current" | "downloading" | "downloaded" | "available" | "error", version?: string, error?: string }} UpdateStatus
+ * @typedef {"stable" | "prerelease"} UpdateChannel The release line followed: stable releases only, or stable and
+ * prereleases (alpha, beta).
+ * @typedef {{
+ *   state: "unsupported" | "checking" | "current" | "downloading" | "downloaded" | "available" | "error",
+ *   version?: string,
+ *   error?: string,
+ *   during?: "check" | "download",
+ *   percent?: number,
+ *   reason?: "development" | "off" | "not-appimage",
+ *   channel: UpdateChannel,
+ * }} UpdateStatus
  */
+
+import { HighestReleaseProvider, releases } from "./release-feed.mjs";
 
 const SIX_HOURS = 6 * 60 * 60 * 1000;
 
 /**
- * Updates come from this repository's GitHub releases (electron-updater's `github` provider; the repository is
- * written into the app by package.mjs). A stable build follows stable releases only; a build of a stage release (alpha,
- * beta, rc) follows prereleases and stable releases, so Desktop's channel is the akm release stage it embeds.
+ * Updates come from this repository's GitHub releases (`HighestReleaseProvider`, electron-updater's GitHub provider
+ * with the release line's highest version). The release line followed is the person's saved choice, else the stage
+ * of the embedded akm version: a stable build follows stable releases only, a build of a stage release (alpha, beta,
+ * rc) follows prereleases and stable releases.
  *
  * macOS cannot apply an unsigned update, and akm does not sign its macOS packages, so there the app only reports that
  * one exists.
@@ -19,48 +32,101 @@ const SIX_HOURS = 6 * 60 * 60 * 1000;
  *   autoUpdater: import("electron-updater").AppUpdater,
  *   version: string,
  *   platform: string,
- *   supported: boolean,
- * }} options `supported` is false for development runs and for a Linux build that is not an AppImage.
+ *   unsupportedReason?: "development" | "off" | "not-appimage",
+ * }} options `unsupportedReason` names why this run never checks: a development run, `AKM_DESKTOP_UPDATES=off`, or
+ * a Linux build that is not an AppImage; absent, updates are checked.
  */
-export function createUpdater({ autoUpdater, version, platform, supported }) {
-  /** @type {UpdateStatus} */
-  let status = { state: supported ? "checking" : "unsupported" };
+export function createUpdater({ autoUpdater, version, platform, unsupportedReason }) {
+  const supported = unsupportedReason === undefined;
+  /** @type {Omit<UpdateStatus, "channel">} */
+  let status = supported ? { state: "checking" } : { state: "unsupported", reason: unsupportedReason };
   const canInstall = platform !== "darwin";
-  const prerelease = /^\d+\.\d+\.\d+-/.test(version);
-  autoUpdater.allowPrerelease = prerelease;
-  if (prerelease) {
-    // akm's stages are one line of releases, each with its own number. electron-updater's GitHub provider follows a
-    // stage by name: beta skips alpha, and rc follows only rc, so an rc build never reaches the next stable release.
-    // As "alpha" it takes the newest alpha, beta or stable release; rc releases are not offered. Setting a channel
-    // also allows downgrades, which this must not.
-    autoUpdater.channel = "alpha";
+  const embeddedPrerelease = /^\d+\.\d+\.\d+-/.test(version);
+  /** @type {UpdateChannel} */
+  let channel = embeddedPrerelease ? "prerelease" : "stable";
+  const configure = () => {
+    // Stable releases are GitHub's latest release; stable and prerelease releases are the highest version in the
+    // release feed. Never a downgrade: a prerelease build that chooses stable stays until the next stable release.
+    autoUpdater.allowPrerelease = channel === "prerelease";
     autoUpdater.allowDowngrade = false;
-  }
+  };
+  configure();
+  if (supported) autoUpdater.setFeedURL({ provider: "custom", updateProvider: HighestReleaseProvider, ...releases });
   autoUpdater.autoDownload = canInstall;
   autoUpdater.autoInstallOnAppQuit = canInstall;
+  // A release the followed line excludes: a prerelease while stable is followed. It is never installed, whether it
+  // was queued before the choice changed or its check was still running.
+  const excluded = (/** @type {string | undefined} */ release) =>
+    channel === "stable" && /^\d+\.\d+\.\d+-/.test(release ?? "");
+  const drop = () => {
+    autoUpdater.autoInstallOnAppQuit = false;
+    status = { state: "checking" };
+    setTimeout(check, 0).unref();
+  };
   autoUpdater.on("update-available", (info) => {
+    if (excluded(info.version)) return drop();
     status = { state: canInstall ? "downloading" : "available", version: info.version };
   });
   autoUpdater.on("update-downloaded", (info) => {
+    if (excluded(info.version)) return drop();
+    autoUpdater.autoInstallOnAppQuit = canInstall;
     status = { state: "downloaded", version: info.version };
+  });
+  autoUpdater.on("checking-for-update", () => {
+    if (status.state !== "downloading" && status.state !== "downloaded") status = { state: "checking" };
+  });
+  autoUpdater.on("download-progress", (progress) => {
+    if (status.state === "downloading")
+      status = { ...status, percent: Math.max(0, Math.min(100, Math.round(progress.percent))) };
   });
   autoUpdater.on("update-not-available", () => {
     status = { state: "current" };
   });
   autoUpdater.on("error", (error) => {
-    status = { state: "error", error: error.message };
+    // A failed download is not a failed check; the version it was fetching is kept for the message.
+    status = {
+      state: "error",
+      error: error.message,
+      during: status.state === "downloading" ? "download" : "check",
+      ...(status.version ? { version: status.version } : {}),
+    };
   });
   const check = () => {
-    if (status.state === "downloading" || status.state === "downloaded" || status.state === "available") return;
+    if (status.state === "downloading" || status.state === "downloaded") return;
     autoUpdater.checkForUpdates().catch(() => {});
   };
   return {
-    status: () => status,
+    /** @returns {UpdateStatus} */
+    status: () => ({ ...status, channel }),
+    /** Check now, for a Check/Retry button: nothing while a download runs or waits, since that update is already coming. */
+    checkNow() {
+      if (!supported || status.state === "downloading" || status.state === "downloaded") return;
+      status = { state: "checking" };
+      check();
+    },
     /** Check now and every six hours while the app runs. */
     start() {
       if (!supported) return;
       check();
       setInterval(check, SIX_HOURS).unref();
+    },
+    /**
+     * Follow a release line: the saved preference, or `null` for the embedded version's own stage. A change checks
+     * again at once.
+     * @param {UpdateChannel | null} preference
+     */
+    follow(preference) {
+      const next = preference ?? (embeddedPrerelease ? "prerelease" : "stable");
+      if (next === channel) return;
+      channel = next;
+      configure();
+      if (!supported) return;
+      const pending = status.state === "downloading" || status.state === "downloaded";
+      if (pending && !excluded(status.version)) return;
+      // A queued release the new choice excludes stops being installed on quit, and the new line is checked at once.
+      if (pending) autoUpdater.autoInstallOnAppQuit = false;
+      status = { state: "checking" };
+      check();
     },
   };
 }

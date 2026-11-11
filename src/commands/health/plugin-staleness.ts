@@ -14,6 +14,7 @@ import { type SpawnSyncReturns, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { tryParseJson } from "../../core/common";
 import {
   OPENCODE_V1,
   OPENCODE_V2,
@@ -21,8 +22,14 @@ import {
   readPackageVersion,
 } from "../../integrations/harnesses/opencode/plugin-layout";
 import { opencodeCacheDir } from "../../integrations/harnesses/opencode/roots";
-import { highestVersion, isExactSemver, isPrerelease, isSemverRange, satisfiesRange } from "../../registry/semver";
-import { openCodeConfigSpec } from "../sources/plugin-upgrade";
+import { highestVersion, isExactSemver, isPrerelease } from "../../registry/semver";
+import { codexMarketplace } from "../sources/plugin-channels";
+import {
+  codexConfigFile,
+  codexMarketplaceRef,
+  codexPluginVersion,
+  openCodeConfigSpec,
+} from "../sources/plugin-upgrade";
 import type { HealthCheckResult } from "./types";
 
 /**
@@ -71,15 +78,14 @@ const OPENCODE_PLUGIN_LOCATIONS: readonly OpencodePluginLocation[] = [
     label: "OpenCode's",
     remedy: "update the OpenCode plugin",
     folders: (cacheRoot) => {
-      // OpenCode caches each spec in its own folder, and a bare name is its `@latest`, as `akm upgrade` reads it. With
-      // no config entry, or no folder for the spec, the bare `packages/akm-opencode` is read, as this check always has.
+      // Cache residue is not an installation. Only a configured bare name may use the legacy bare cache.
       const { pkg } = OPENCODE_V1;
       const bare = { folder: path.join(cacheRoot, OPENCODE_V1.cacheFolder(pkg)) };
       const named = openCodeConfigSpec(OPENCODE_V1)?.spec;
-      if (named === undefined) return [bare];
+      if (named === undefined) return [];
       const spec = named === pkg ? `${pkg}@latest` : named;
       const folder = path.join(cacheRoot, OPENCODE_V1.cacheFolder(spec));
-      if (!fs.existsSync(folder)) return [bare];
+      if (!fs.existsSync(folder)) return named === pkg ? [bare] : [];
       const version = spec.slice(pkg.length + 1);
       return [{ spec, folder, ...(isExactSemver(version) ? { pinned: version } : {}) }];
     },
@@ -91,14 +97,12 @@ const OPENCODE_PLUGIN_LOCATIONS: readonly OpencodePluginLocation[] = [
     label: "OpenCode 2's akm-opencode-v2",
     remedy: "update the akm-opencode-v2 plugin",
     folders: (cacheRoot) => {
+      const { pkg } = OPENCODE_V2;
+      const named = openCodeConfigSpec(OPENCODE_V2)?.spec;
+      if (named === undefined) return [];
+      const loaded = named === pkg ? `${pkg}@latest` : named;
       const npmDir = path.join(cacheRoot, OPENCODE_V2.cacheFolder(""));
-      let specs: string[];
-      try {
-        specs = fs.readdirSync(npmDir).filter((name) => name.startsWith(`${OPENCODE_V2.pkg}@`));
-      } catch {
-        return [];
-      }
-      return specs.sort().map((spec) => ({ spec, folder: path.join(npmDir, spec) }));
+      return [{ spec: loaded, folder: path.join(npmDir, loaded) }];
     },
   },
 ];
@@ -124,6 +128,9 @@ function buildOpencodeBundledAdvisory(
 ): HealthCheckResult {
   const bundledVersion = bundled.version;
   const stale = bundledVersion !== cliVersion;
+  // Which side is behind decides the remedy: a plugin ahead of the CLI is fixed by `akm upgrade`, not by updating the
+  // plugin, and a plugin behind it can only move once its channel publishes a newer build.
+  const bundledNewer = stale && highestVersion([bundledVersion, cliVersion]) === bundledVersion;
   const where = bundled.spec ? ` (${bundled.spec})` : "";
   if (bundled.pinned) {
     // The config chose this build: there is nothing to update it to, so no staleness verdict.
@@ -141,9 +148,11 @@ function buildOpencodeBundledAdvisory(
     kind: "deterministic",
     status: stale ? "warn" : "pass",
     confidence: "high",
-    message: stale
-      ? `${plugin.label} bundled akm-cli${where} is v${bundledVersion}, but the running CLI is v${cliVersion} — it shares the same databases in-process; ${plugin.remedy}.`
-      : `${plugin.label} bundled akm-cli${where} matches the running v${cliVersion}.`,
+    message: !stale
+      ? `${plugin.label} bundled akm-cli${where} matches the running v${cliVersion}.`
+      : bundledNewer
+        ? `${plugin.label} bundled akm-cli${where} is v${bundledVersion}, newer than the running CLI v${cliVersion} — it shares the same databases in-process; run \`akm upgrade\` to move the CLI up to it.`
+        : `${plugin.label} bundled akm-cli${where} is v${bundledVersion}, older than the running CLI v${cliVersion} — it shares the same databases in-process; ${plugin.remedy} when its channel publishes a build for v${cliVersion} (\`akm upgrade\` checks and updates it).`,
     evidence: bundled.spec ? { bundledVersion, cliVersion, spec: bundled.spec } : { bundledVersion, cliVersion },
   };
 }
@@ -226,22 +235,21 @@ function detectInstalledPlugins(pluginsRoot: string): DetectedPlugin[] | undefin
   }
 }
 
-/** Read the contract, never execute plugin source. A minimum admits later prereleases too. */
-function readCompatibility(pluginDir: string, cliVersion: string): { versionRange?: string; admitted?: boolean } {
+/**
+ * The exact `akm-cli` the plugin's `package.json` pins: the copy Claude Code installs beside it and its hooks run (it
+ * never uses an `akm` on PATH), which shares the host's databases with the running CLI. Read, never executed;
+ * `undefined` when the manifest is missing or pins no exact version.
+ */
+function readPinnedCli(pluginDir: string): string | undefined {
   let text: string;
   try {
-    text = fs.readFileSync(path.join(pluginDir, "shared", "akm-version.ts"), "utf8");
+    text = fs.readFileSync(path.join(pluginDir, "package.json"), "utf8");
   } catch {
-    return {};
+    return undefined;
   }
-  const minimum = text.match(/export\s+const\s+AKM_MIN_VERSION\s*=\s*["']([^"']+)["']/)?.[1];
-  if (minimum !== undefined) {
-    if (!isExactSemver(minimum) || !isExactSemver(cliVersion)) return {};
-    return { versionRange: `>=${minimum}`, admitted: highestVersion([minimum, cliVersion]) === cliVersion };
-  }
-  const range = text.match(/export\s+const\s+AKM_VERSION_RANGE\s*=\s*["']([^"']+)["']/)?.[1];
-  if (!range || !isSemverRange(range) || !isExactSemver(cliVersion)) return {};
-  return { versionRange: range, admitted: satisfiesRange(cliVersion, range) };
+  const manifest = tryParseJson(text) as { dependencies?: Record<string, unknown> } | undefined;
+  const pin = manifest?.dependencies?.["akm-cli"];
+  return typeof pin === "string" && isExactSemver(pin) ? pin : undefined;
 }
 
 /**
@@ -268,28 +276,19 @@ const LS_REMOTE_TIMEOUT_MS = 5_000;
  * command fails/times out (e.g. offline): all "cannot determine availability", not "up to date". A channel head
  * with no release tag returns `[]`, which reads the same way.
  */
-const realListRemoteTags: ListRemoteTagsFn = (marketplaceDir) => {
-  let result: SpawnSyncReturns<string>;
-  let branch: string;
-  try {
-    branch =
-      spawnSync("git", ["-C", marketplaceDir, "branch", "--show-current"], {
-        encoding: "utf8",
-        timeout: LS_REMOTE_TIMEOUT_MS,
-      }).stdout?.trim() ?? "";
-    result = spawnSync("git", ["-C", marketplaceDir, "ls-remote", "--symref", "origin"], {
-      encoding: "utf8",
-      timeout: LS_REMOTE_TIMEOUT_MS,
-    });
-  } catch {
-    return undefined;
-  }
-  if (result.status !== 0 || !result.stdout) return undefined;
-  const refs = result.stdout
+const splitRefs = (lsRemote: string): string[][] =>
+  lsRemote
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => line.split("\t"));
+
+/**
+ * The release versions one channel offers, from `git ls-remote --symref` output: the tags at `branch`'s head when it
+ * is not the remote's default branch, the tags at `pinnedSha` when given and tagged, else every stable tag.
+ */
+function channelVersions(lsRemote: string, branch: string, pinnedSha: string | undefined): string[] {
+  const refs = splitRefs(lsRemote);
   const defaultBranch = refs
     .find(([value, name]) => name === "HEAD" && value?.startsWith("ref: refs/heads/"))?.[0]
     ?.replace(/^ref: refs\/heads\//, "");
@@ -308,17 +307,140 @@ const realListRemoteTags: ListRemoteTagsFn = (marketplaceDir) => {
   ];
   const onChannelBranch = branch !== "" && defaultBranch !== undefined && branch !== defaultBranch;
   if (onChannelBranch) return tagsAt(refs.find(([, name]) => name === `refs/heads/${branch}`)?.[0]);
-  if (branch === "") {
-    const pinned = tagsAt(
-      spawnSync("git", ["-C", marketplaceDir, "rev-parse", "HEAD"], {
-        encoding: "utf8",
-        timeout: LS_REMOTE_TIMEOUT_MS,
-      }).stdout?.trim(),
-    );
+  if (branch === "" && pinnedSha !== undefined) {
+    const pinned = tagsAt(pinnedSha);
     if (pinned.length > 0) return pinned;
   }
   return [...new Set(tags.map((tag) => tag.version).filter((version) => !isPrerelease(version)))];
+}
+
+const realListRemoteTags: ListRemoteTagsFn = (marketplaceDir) => {
+  let result: SpawnSyncReturns<string>;
+  let branch: string;
+  try {
+    branch =
+      spawnSync("git", ["-C", marketplaceDir, "branch", "--show-current"], {
+        encoding: "utf8",
+        timeout: LS_REMOTE_TIMEOUT_MS,
+      }).stdout?.trim() ?? "";
+    result = spawnSync("git", ["-C", marketplaceDir, "ls-remote", "--symref", "origin"], {
+      encoding: "utf8",
+      timeout: LS_REMOTE_TIMEOUT_MS,
+    });
+  } catch {
+    return undefined;
+  }
+  if (result.status !== 0 || !result.stdout) return undefined;
+  const pinnedSha =
+    branch === ""
+      ? spawnSync("git", ["-C", marketplaceDir, "rev-parse", "HEAD"], {
+          encoding: "utf8",
+          timeout: LS_REMOTE_TIMEOUT_MS,
+        }).stdout?.trim()
+      : undefined;
+  return channelVersions(result.stdout, branch, pinnedSha);
 };
+
+/**
+ * The same read against a remote named by URL and the ref a marketplace entry follows (Codex keeps no clone akm
+ * reads): a branch, a tag (that release alone), or none for the remote's default branch. `undefined` when the
+ * remote cannot be read.
+ */
+export type ListRemoteTagsAtFn = (remote: string, ref: string | undefined) => string[] | undefined;
+
+const realListRemoteTagsAt: ListRemoteTagsAtFn = (remote, ref) => {
+  let result: SpawnSyncReturns<string>;
+  try {
+    result = spawnSync("git", ["ls-remote", "--symref", remote], { encoding: "utf8", timeout: LS_REMOTE_TIMEOUT_MS });
+  } catch {
+    return undefined;
+  }
+  if (result.status !== 0 || !result.stdout) return undefined;
+  if (ref !== undefined && splitRefs(result.stdout).some(([, name]) => name === `refs/tags/${ref}`)) {
+    const version = ref.replace(/^v/, "");
+    return isExactSemver(version) ? [version] : [];
+  }
+  return channelVersions(result.stdout, ref ?? "", undefined);
+};
+
+/** The marketplace every akm Codex install registers (`codex plugin marketplace add itlackey/akm-plugins`). */
+const CODEX_MARKETPLACE_REMOTE = "https://github.com/itlackey/akm-plugins";
+
+/** What Codex's own config and listing say about the akm plugin; `undefined` when the marketplace is not registered. */
+export interface CodexPlugin {
+  /** The marketplace entry's `ref`: a branch such as `next`, a tag, or none for the default (stable) branch. */
+  ref: string | undefined;
+  listed: ReturnType<typeof codexPluginVersion>;
+}
+
+/** Codex is checked only when its config registers the akm-plugins marketplace, so a host without Codex runs nothing. */
+function readCodexPlugin(): CodexPlugin | undefined {
+  try {
+    if (codexMarketplace(codexConfigFile()) === undefined) return undefined;
+  } catch {
+    return undefined;
+  }
+  return { ref: codexMarketplaceRef(), listed: codexPluginVersion() };
+}
+
+/** One `codex-plugin-version` advisory, or none when the marketplace is registered but the plugin is not installed. */
+function buildCodexAdvisory(
+  codex: CodexPlugin,
+  probe: boolean,
+  listRemoteTagsAt: ListRemoteTagsAtFn,
+): HealthCheckResult | undefined {
+  const base = { name: "codex-plugin-version", kind: "deterministic", confidence: "high" } as const;
+  if ("error" in codex.listed) {
+    return {
+      ...base,
+      status: "unknown",
+      message: codex.listed.error.missing
+        ? "Codex's config registers the akm-plugins marketplace, but `codex` is not on PATH, so its akm plugin was not checked."
+        : `Codex's akm plugin could not be listed: ${codex.listed.error.error}`,
+      evidence: { harness: "codex", installedVersion: null },
+    };
+  }
+  const installed = codex.listed.version;
+  if (!installed) return undefined;
+  const { ref } = codex;
+  const channel =
+    ref === undefined || ref === "main" || ref === "master" ? "stable" : ref === "next" ? "next" : `pinned to ${ref}`;
+  let availableVersion: string | undefined;
+  let remoteUnavailable = false;
+  if (probe) {
+    const tags = listRemoteTagsAt(CODEX_MARKETPLACE_REMOTE, ref);
+    if (tags === undefined) remoteUnavailable = true;
+    else availableVersion = highestVersion(tags);
+  }
+  const stale =
+    availableVersion !== undefined &&
+    installed !== availableVersion &&
+    highestVersion([installed, availableVersion]) === availableVersion;
+  const messageParts = [`akm@akm-plugins (Codex): installed ${installed} (${channel} channel)`];
+  if (!probe) messageParts.push("newest tag was not probed");
+  else if (remoteUnavailable) messageParts.push(REMOTE_UNAVAILABLE_NOTE);
+  if (availableVersion !== undefined) {
+    messageParts.push(stale ? `available ${availableVersion} (STALE)` : `available ${availableVersion} (up to date)`);
+  }
+  if (stale) messageParts.push("-> codex plugin marketplace upgrade akm-plugins");
+  return {
+    ...base,
+    status: stale ? "warn" : probe && availableVersion !== undefined ? "pass" : "unknown",
+    message: messageParts.join(" — "),
+    evidence: {
+      harness: "codex",
+      installedVersion: installed,
+      ref: ref ?? null,
+      availableVersion: availableVersion ?? null,
+      ...(probe ? {} : { probed: false }),
+      ...(remoteUnavailable ? { remoteUnavailable: true } : {}),
+      stale,
+    },
+  };
+}
+
+/** Said when a probe asked the marketplace remote and got no answer, so "unknown" is not mistaken for "no newer release". */
+const REMOTE_UNAVAILABLE_NOTE = "the newest release could not be read from the marketplace remote (offline?)";
 
 /** Options for {@link collectPluginStalenessAdvisories}. */
 export interface PluginStalenessOptions {
@@ -334,17 +456,20 @@ export interface PluginStalenessOptions {
   probe?: boolean;
   /** Injectable remote-tag lister; defaults to the real `git ls-remote`. */
   listRemoteTags?: ListRemoteTagsFn;
+  /** Injectable remote-tag lister by URL and ref, for Codex; defaults to the real `git ls-remote`. */
+  listRemoteTagsAt?: ListRemoteTagsAtFn;
+  /** Injectable Codex reader; defaults to Codex's config.toml and `codex plugin list`. */
+  readCodex?: () => CodexPlugin | undefined;
   /** Root of OpenCode's package cache. Defaults to `opencodeCacheDir()` (`$XDG_CACHE_HOME/opencode`). */
   opencodeCacheRoot?: string;
 }
 
 /**
- * Build one `plugin-version` advisory per detected `akm` harness plugin,
- * plus one `opencode-plugin-version` advisory when the
- * OpenCode plugin's bundled `akm-cli` is found — it shares the host's
- * databases in-process, so its lag matters the same way a stale Claude
- * plugin's does. Returns `[]` when neither is installed — the benign,
- * common case.
+ * Build one `plugin-version` advisory per detected `akm` Claude Code plugin, a `codex-plugin-version` advisory when
+ * Codex has the plugin installed from the akm-plugins marketplace, plus one `opencode-plugin-version` /
+ * `opencode-v2-plugin-version` advisory when an OpenCode plugin's bundled `akm-cli` is found — every plugin runs its
+ * own akm against the host's databases, so its lag matters the same way. Returns `[]` when none is installed — the
+ * benign, common case.
  */
 export function collectPluginStalenessAdvisories(options: PluginStalenessOptions): HealthCheckResult[] {
   const pluginsRoot = options.pluginsRoot ?? claudePluginsDir();
@@ -365,8 +490,14 @@ export function collectPluginStalenessAdvisories(options: PluginStalenessOptions
       confidence: "high",
       message:
         "Claude plugin installation and enabled state could not be resolved with `claude plugin list --json`; cached versions do not establish the selected installation.",
-      evidence: { harness: "claude", installedVersion: null, enabled: null, admitted: null },
+      evidence: { harness: "claude", installedVersion: null, enabled: null, cliMatches: null },
     });
+  }
+
+  const codex = (options.readCodex ?? readCodexPlugin)();
+  if (codex) {
+    const advisory = buildCodexAdvisory(codex, probe, options.listRemoteTagsAt ?? realListRemoteTagsAt);
+    if (advisory) results.push(advisory);
   }
 
   const opencodeCacheRoot = options.opencodeCacheRoot ?? opencodeCacheDir();
@@ -390,23 +521,29 @@ function buildAdvisory(
 
   // Point 2: newest available vs. installed, via the marketplace clone's remote.
   const marketplaceDir = path.join(pluginsRoot, "marketplaces", plugin.marketplace);
+  const asked = probe && plugin.selectionKnown && plugin.enabled !== false && fs.existsSync(marketplaceDir);
   let availableVersion: string | undefined;
+  let remoteUnavailable = false;
   try {
-    const tags =
-      probe && plugin.selectionKnown && plugin.enabled !== false && fs.existsSync(marketplaceDir)
-        ? listRemoteTags(marketplaceDir)
-        : undefined;
+    const tags = asked ? listRemoteTags(marketplaceDir) : undefined;
+    remoteUnavailable = asked && tags === undefined;
     availableVersion = tags && tags.length > 0 ? highestVersion(tags) : undefined;
   } catch {
     availableVersion = undefined;
+    remoteUnavailable = asked;
   }
   const stale =
     availableVersion !== undefined &&
     plugin.version !== availableVersion &&
     highestVersion([plugin.version, availableVersion]) === availableVersion;
 
-  // Point 3: does the plugin's own declared range admit the running CLI?
-  const { versionRange, admitted } = readCompatibility(plugin.pluginDir, cliVersion);
+  // Point 3: does the akm-cli the plugin runs match the running CLI? Both read and write the same databases.
+  const pinnedCliVersion = readPinnedCli(plugin.pluginDir);
+  const cliMatches = pinnedCliVersion === undefined ? undefined : pinnedCliVersion === cliVersion;
+  const pinNewer =
+    pinnedCliVersion !== undefined &&
+    cliMatches === false &&
+    highestVersion([pinnedCliVersion, cliVersion]) === pinnedCliVersion;
 
   const messageParts = [
     `${pluginRef}: installed ${plugin.version} (${plugin.scope}${plugin.projectPath ? `: ${plugin.projectPath}` : ""})`,
@@ -415,15 +552,20 @@ function buildAdvisory(
   else if (!plugin.selectionKnown) messageParts.push("effective selection unknown across native installations");
   if (plugin.enabled === false) messageParts.push("disabled in Claude settings");
   else if (plugin.enabled === undefined) messageParts.push("enabled state unknown");
-  if (admitted === undefined) messageParts.push("CLI compatibility unknown");
+  if (cliMatches === undefined) messageParts.push("bundled akm-cli unknown (no exact akm-cli pin in package.json)");
   if (!probe) messageParts.push("newest tag was not probed");
+  else if (remoteUnavailable) messageParts.push(REMOTE_UNAVAILABLE_NOTE);
   if (availableVersion !== undefined) {
     messageParts.push(stale ? `available ${availableVersion} (STALE)` : `available ${availableVersion} (up to date)`);
   }
   if (stale) messageParts.push(`-> claude plugin update ${pluginRef}`);
-  if (plugin.selectionKnown && plugin.enabled === true && admitted === false) {
+  if (plugin.selectionKnown && plugin.enabled === true && cliMatches === false) {
     messageParts.push(
-      `installed plugin requires akm-cli ${versionRange}; running ${cliVersion} -> NOT ADMITTED by the plugin compatibility contract`,
+      pinNewer
+        ? `bundles akm-cli ${pinnedCliVersion}, newer than the running CLI ${cliVersion}; both share the same databases -> akm upgrade`
+        : `bundles akm-cli ${pinnedCliVersion}, older than the running CLI ${cliVersion}; both share the same databases${
+            !stale && availableVersion === plugin.version ? " and no newer plugin is published on its channel" : ""
+          }`,
     );
   }
 
@@ -431,15 +573,15 @@ function buildAdvisory(
     name: "plugin-version",
     kind: "deterministic",
     // Not probed => staleness is unknown, not "up to date"; only the local
-    // range check can still warn.
+    // pin comparison can still warn.
     status:
       plugin.enabled === false || !plugin.applicable
         ? "pass"
         : !plugin.selectionKnown || plugin.enabled === undefined
           ? "unknown"
-          : stale || admitted === false
+          : stale || cliMatches === false
             ? "warn"
-            : probe && availableVersion !== undefined && admitted !== undefined && plugin.enabled === true
+            : probe && availableVersion !== undefined && cliMatches !== undefined && plugin.enabled === true
               ? "pass"
               : "unknown",
     confidence: "high",
@@ -457,10 +599,11 @@ function buildAdvisory(
       installPath: plugin.pluginDir,
       availableVersion: availableVersion ?? null,
       ...(probe ? {} : { probed: false }),
+      ...(remoteUnavailable ? { remoteUnavailable: true } : {}),
       stale,
-      versionRange: versionRange ?? null,
+      pinnedCliVersion: pinnedCliVersion ?? null,
       cliVersion,
-      admitted: admitted ?? null,
+      cliMatches: cliMatches ?? null,
     },
   };
 }
