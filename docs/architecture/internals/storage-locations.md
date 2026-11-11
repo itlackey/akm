@@ -46,9 +46,9 @@ removes them (`scripts/akm-migrate/migrate/dead-residue.ts`).
 
 Managed openers set a 30,000 ms `busy_timeout`; the fire-and-forget usage-telemetry
 writes lower it to 250 ms, and `akm info` reads the index with 750 ms. `AKM_SQLITE_JOURNAL_MODE`
-(`WAL`, `DELETE`, `TRUNCATE`) selects the journal mode; the default is WAL, and
+(`WAL`, `DELETE`, `TRUNCATE`; Deprecated, removed in 0.11, no replacement) selects the journal mode; the default is WAL, and
 WAL falls back to DELETE when the data directory is on a detected network
-filesystem. The rollback-journal modes also set `synchronous = FULL`
+filesystem (Linux detection only). The rollback-journal modes also set `synchronous = FULL`
 (`src/storage/sqlite-pragmas.ts`). Foreign keys are on for `index.db` and
 `state.db` and off for `logs.db`.
 
