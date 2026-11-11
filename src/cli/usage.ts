@@ -5,6 +5,7 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { peekConfigValue } from "../core/config/peek";
 import { getDataDir } from "../core/paths";
 import { isKnownType } from "../core/recognition-util";
 import { hasSignalOwner, observeSignal } from "../core/signal-observers";
@@ -234,6 +235,11 @@ export function setResolvedUsageAssetType(type: string, executor?: UsageCommand)
   if (isKnownType(type)) activeResolution?.(type, executor);
 }
 
+/** `usage.capture: false` in the config file turns capture off; anything else, or an unreadable file, leaves it on. */
+function captureDisabledByConfig(): boolean {
+  return peekConfigValue(["usage", "capture"]) === false;
+}
+
 export function startUsage(root: UsageCommand, raw: readonly string[], version: string): () => void {
   const started = Date.now();
   const id = randomUUID();
@@ -248,12 +254,16 @@ export function startUsage(root: UsageCommand, raw: readonly string[], version: 
   let data: Record<string, unknown> = {};
   const source = CLI_USAGE_SOURCES.has(process.env.AKM_EVENT_SOURCE ?? "") ? process.env.AKM_EVENT_SOURCE! : "unknown";
   try {
+    const usage = describeUsage(root, raw);
+    // `--read-only` promises no writes, and the config key turns capture off.
+    // Either way nothing is opened, written or finalized.
+    if (usage.arguments.some((a) => a.name === "read-only" && a.explicit && a.value === true)) return () => {};
+    if (captureDisabledByConfig()) return () => {};
     filename = usagePath();
     const db = openUsage(filename);
     try {
       const instance = (db.prepare("SELECT value FROM metadata WHERE key='instance'").get() as { value: string }).value;
       const ts = new Date(started).toISOString();
-      const usage = describeUsage(root, raw);
 
       dimensions = { day: ts.slice(0, 10), version, source, instance, ...usage };
       data = { schemaVersion: 1, id, ts, version, source, instance, ...usage };

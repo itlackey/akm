@@ -472,3 +472,39 @@ test("usage observers preserve a host-owned once signal handler and its asynchro
     child.kill("SIGKILL");
   }
 });
+
+const usageFile = () => path.join(getDataDir(), "usage.sqlite");
+
+test("--read-only records nothing; help, version and info are still counted", () => {
+  sandbox();
+  const result = cli(["doctor", "--read-only", "--no-probe", "--format", "json", "--quiet"]);
+  expect(result.status).toBeLessThanOrEqual(1);
+  expect(fs.existsSync(usageFile())).toBe(false);
+  for (const args of [["--version"], ["--help"], ["info"]]) {
+    cli(args);
+    expect(fs.existsSync(usageFile()), args.join(" ")).toBe(true);
+    fs.rmSync(usageFile(), { force: true });
+  }
+});
+
+test("usage.capture: false turns capture off; a broken or odd config keeps it on", () => {
+  sandbox();
+  const configFile = path.join(getConfigDir(), "config.json");
+  fs.mkdirSync(getConfigDir(), { recursive: true });
+  fs.writeFileSync(configFile, JSON.stringify({ usage: { capture: false } }));
+  expect(cli(["--version"]).status).toBe(0);
+  expect(fs.existsSync(usageFile())).toBe(false);
+  // Selected with --config too.
+  expect(cli(["--config", configFile, "--version"]).status).toBe(0);
+  expect(fs.existsSync(usageFile())).toBe(false);
+  for (const text of [
+    "{broken",
+    JSON.stringify({ usage: { capture: "no" } }),
+    JSON.stringify({ usage: { capture: true } }),
+  ]) {
+    fs.writeFileSync(configFile, text);
+    cli(["--version"]);
+    expect(fs.existsSync(usageFile()), text).toBe(true);
+    fs.rmSync(usageFile(), { force: true });
+  }
+});

@@ -1205,10 +1205,23 @@ export async function runCli(): Promise<void> {
   } catch (error) {
     schedulerError = error;
   }
+  // Select the config file first, so usage capture can read its `usage.capture` key.
+  // A selection error is reported below, after usage capture starts, as before.
+  let selectionError: unknown;
+  try {
+    applyEarlyStderrFlags(process.argv); // so --quiet silences the empty-AKM_CONFIG_FILE warning
+    selectConfigFile();
+  } catch (error) {
+    selectionError = error;
+  }
   const finishUsage = startUsage(main as UsageCommand, originalArgs, pkgVersion);
   try {
     if (schedulerError !== undefined) {
       emitJsonError(schedulerError);
+      return;
+    }
+    if (selectionError !== undefined) {
+      emitJsonError(selectionError);
       return;
     }
     await runCliInvocation();
@@ -1219,21 +1232,20 @@ export async function runCli(): Promise<void> {
   }
 }
 
-async function runCliInvocation(): Promise<void> {
-  try {
-    const configFile = consumeConfigFileFlag(main as FlagScanCommand, process.argv.slice(2));
-    if (configFile.file !== undefined) process.env.AKM_CONFIG_FILE = configFile.file;
-    process.argv = [...process.argv.slice(0, 2), ...configFile.args];
-    // An empty AKM_CONFIG_FILE is ignored (warned once by getConfigPath), not turned into the default path.
-    if (process.env.AKM_CONFIG_FILE?.trim()) process.env.AKM_CONFIG_FILE = getConfigPath();
-    else if (process.env.AKM_CONFIG_FILE !== undefined) {
-      getConfigPath();
-      delete process.env.AKM_CONFIG_FILE;
-    }
-  } catch (error: unknown) {
-    emitJsonError(error);
-    return;
+/** Apply `--config <file>` (stripping it from argv) and normalise `AKM_CONFIG_FILE` to an absolute path. */
+function selectConfigFile(): void {
+  const configFile = consumeConfigFileFlag(main as FlagScanCommand, process.argv.slice(2));
+  if (configFile.file !== undefined) process.env.AKM_CONFIG_FILE = configFile.file;
+  process.argv = [...process.argv.slice(0, 2), ...configFile.args];
+  // An empty AKM_CONFIG_FILE is ignored (warned once by getConfigPath), not turned into the default path.
+  if (process.env.AKM_CONFIG_FILE?.trim()) process.env.AKM_CONFIG_FILE = getConfigPath();
+  else if (process.env.AKM_CONFIG_FILE !== undefined) {
+    getConfigPath();
+    delete process.env.AKM_CONFIG_FILE;
   }
+}
+
+async function runCliInvocation(): Promise<void> {
   process.argv = insertBareListSubcommand(process.argv);
   // Mint the ParsedInvocation singleton from the (normalized) argv — the ONE
   // place argv is parsed for the whole process.

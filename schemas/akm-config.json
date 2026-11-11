@@ -718,6 +718,24 @@
       },
       "additionalProperties": {}
     },
+    "usage": {
+      "type": "object",
+      "properties": {
+        "capture": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": {}
+    },
+    "storage": {
+      "type": "object",
+      "properties": {
+        "journalMode": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": {}
+    },
     "archiveRetentionDays": {
       "type": "number",
       "minimum": 0
@@ -2312,6 +2330,24 @@
           "properties": {
             "requireReason": {
               "type": "boolean"
+            }
+          },
+          "additionalProperties": {}
+        },
+        "usage": {
+          "type": "object",
+          "properties": {
+            "capture": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": {}
+        },
+        "storage": {
+          "type": "object",
+          "properties": {
+            "journalMode": {
+              "type": "string"
             }
           },
           "additionalProperties": {}
