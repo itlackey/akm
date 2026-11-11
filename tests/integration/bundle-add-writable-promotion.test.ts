@@ -275,6 +275,40 @@ exec ${JSON.stringify(realGit)} "$@"
     expect(installed().lock?.resolvedRevision).toBe(lockedBefore);
   }, 60_000);
 
+  test("bundle update reports an interrupted publication merge without claiming nothing changed", async () => {
+    await promote();
+    const root = installed().lock?.localRoot as string;
+    const lockedBefore = installed().lock?.resolvedRevision;
+    pushUpstream({ "knowledge/new.md": "new\n" });
+
+    const realGit = Bun.which("git") as string;
+    const wrapperDir = path.join(path.dirname(originDir), "git-kill-wrapper");
+    fs.mkdirSync(wrapperDir, { recursive: true });
+    const wrapper = path.join(wrapperDir, "git");
+    fs.writeFileSync(
+      wrapper,
+      `#!/bin/sh
+case "$*" in
+  *"-C ${root} merge"*) kill -9 $$ ;;
+esac
+exec ${JSON.stringify(realGit)} "$@"
+`,
+    );
+    fs.chmodSync(wrapper, 0o755);
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${wrapperDir}${path.delimiter}${previousPath ?? ""}`;
+    let result: Awaited<ReturnType<typeof update>>;
+    try {
+      result = await update();
+    } finally {
+      process.env.PATH = previousPath;
+    }
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain("did not finish");
+    expect(result.stderr).not.toContain("nothing was changed");
+    expect(installed().lock?.resolvedRevision).toBe(lockedBefore);
+  }, 60_000);
+
   test("a re-add of an existing writable checkout still refuses a mismatched origin", async () => {
     await promote();
     const root = installed().lock?.localRoot as string;

@@ -484,6 +484,12 @@ function fastForwardCheckout(liveRepo: string, stagedRepo: string): void {
   const head = gitOrThrow(stagedRepo, ["rev-parse", "HEAD"]);
   gitOrThrow(liveRepo, ["fetch", "--no-tags", stagedRepo, head]);
   const merge = runGit(["-C", liveRepo, "merge", "--ff-only", "--no-overwrite-ignore", head], { timeout: 120_000 });
+  if (merge.status === null) {
+    // Spawn failure, timeout or signal: git may have been interrupted mid-checkout.
+    throw new UsageError(
+      `git merge did not finish in ${liveRepo} (${merge.error?.message ?? `killed by ${merge.signal}`}); the checkout may be partly updated. Check \`git status\` there.`,
+    );
+  }
   if (merge.status !== 0) {
     throw new UsageError(
       `Writable Git install at ${liveRepo} cannot fast-forward without overwriting local work; nothing was changed. ${merge.stderr.trim()}`,
