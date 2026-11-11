@@ -203,6 +203,19 @@ export function getNeighborsByEntryId(
   return searchVec(db, new Float32Array(row.embedding.slice().buffer), k, scope, filterCandidates);
 }
 
+/** Every stored vector of the index's current embedding model, by entry id. A vector of another model is left out. */
+export function listCurrentEmbeddings(db: Database): Map<number, Float32Array> {
+  const current = modelPredicate(db, currentEmbeddingModel(db));
+  const rows = db.prepare(`SELECT id, embedding FROM embeddings WHERE ${current.sql}`).all(...current.params) as Array<{
+    id: number;
+    embedding: Uint8Array;
+  }>;
+  const vectors = new Map<number, Float32Array>();
+  for (const row of rows)
+    if (row.embedding.byteLength % 4 === 0) vectors.set(row.id, new Float32Array(row.embedding.slice().buffer));
+  return vectors;
+}
+
 /** Whether the entry has a stored vector (what {@link getNeighborsByEntryId} reads). */
 export function hasStoredEmbedding(db: Database, id: number): boolean {
   return db.prepare("SELECT 1 FROM embeddings WHERE id = ?").get(id) != null;

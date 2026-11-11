@@ -8,7 +8,8 @@ import type {
   ActivityOverview,
   ActivityPulse,
   ActivityRetrieval,
-  ActivityTaskHistory,
+  ActivityTaskRun,
+  ActivityWorkflowRun,
   ModelCount,
 } from "./activity-types";
 
@@ -137,16 +138,27 @@ export function rollingSearch(retrieval: ActivityRetrieval, changed: ActivityImp
   return { labels, rates, marked, floor };
 }
 
-export type TimelineRun = { at: string; tone: "ok" | "fail" | "other"; durationMs: number | null; said: string };
+export type TimelineRun = {
+  at: string;
+  tone: "ok" | "fail" | "other";
+  durationMs: number | null;
+  said: string;
+  /** A workflow run's id, for its trace. */
+  runId?: string;
+};
 /** `recorded` is how many runs the window holds when akm says; a row can draw fewer (`runs`). */
 export type TimelineRow = { name: string; task?: string; runs: TimelineRun[]; recorded: number | null };
+const trigger = (value: ActivityTaskRun["trigger"]) =>
+  value === "schedule" ? ", started by the schedule" : value === "manual" ? ", started by hand" : "";
 /**
- * The runs Desktop is given, as rows on one clock: a row per task with history, then improve runs and index builds.
- * Only runs that started inside the metrics window are drawn. Nothing is derived: a gap is a time with no recorded run.
+ * The runs Desktop is given, as rows on one clock: a row per task, a row per workflow, then improve runs and index
+ * builds. Only runs that started inside the metrics window are drawn. Nothing is derived: a gap is a time with no
+ * recorded run.
  */
 export function runTimelineRows(
   data: ActivityOverview,
-  histories: Record<string, ActivityTaskHistory | undefined>,
+  taskRuns: ActivityTaskRun[],
+  workflowRuns: ActivityWorkflowRun[],
 ): TimelineRow[] {
   const window = data.metrics?.window;
   if (!window) return [];
@@ -154,23 +166,37 @@ export function runTimelineRows(
   const until = Date.parse(window.until);
   const inside = (at: string) => Date.parse(at) >= since && Date.parse(at) <= until;
   const rows: TimelineRow[] = [];
-  for (const task of data.metrics?.tasks.byTask ?? []) {
-    const history = histories[task.taskId];
-    if (!history?.available) continue;
-    rows.push({
-      name: task.taskId,
-      task: task.taskId,
-      recorded: history.totalCount,
-      runs: history.runs
-        .filter((run) => inside(run.startedAt))
-        .map((run) => ({
-          at: run.startedAt,
-          tone: run.status === "completed" ? "ok" : run.status === "failed" ? "fail" : "other",
-          durationMs: run.durationMs,
-          said: run.status,
-        })),
+  const byTask = new Map<string, TimelineRun[]>();
+  for (const run of taskRuns) {
+    if (!inside(run.startedAt)) continue;
+    const list = byTask.get(run.taskId) ?? [];
+    list.push({
+      at: run.startedAt,
+      tone: run.status === "completed" ? "ok" : run.status === "failed" ? "fail" : "other",
+      durationMs: run.durationMs,
+      said: `${run.status}${trigger(run.trigger)}`,
     });
+    byTask.set(run.taskId, list);
   }
+  for (const [task, runs] of [...byTask].sort((a, b) => a[0].localeCompare(b[0])))
+    rows.push({ name: task, task, recorded: null, runs });
+  const byWorkflow = new Map<string, TimelineRun[]>();
+  for (const run of workflowRuns) {
+    if (!inside(run.createdAt)) continue;
+    const name = `Workflow ${run.title || run.workflowRef}`;
+    const end = run.completedAt ? Date.parse(run.completedAt) : Number.NaN;
+    const list = byWorkflow.get(name) ?? [];
+    list.push({
+      at: run.createdAt,
+      tone: run.status === "completed" ? "ok" : run.status === "failed" ? "fail" : "other",
+      durationMs: Number.isFinite(end) ? Math.max(0, end - Date.parse(run.createdAt)) : null,
+      said: `${run.status}${run.harness ? `, started by ${run.harness}` : ""}`,
+      runId: run.id,
+    });
+    byWorkflow.set(name, list);
+  }
+  for (const [name, runs] of [...byWorkflow].sort((a, b) => a[0].localeCompare(b[0])))
+    rows.push({ name, recorded: null, runs });
   const improve = data.improveRuns.filter((run) => inside(run.startedAt));
   if (improve.length)
     rows.push({

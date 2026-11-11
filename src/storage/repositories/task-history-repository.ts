@@ -27,6 +27,8 @@ export interface TaskHistoryMetadata {
   durationMs: number;
   detail: TaskHistoryDetail | null;
   engine?: string | null;
+  /** Whether the OS scheduler (`schedule`) or a person or script (`manual`) started the run; absent when not recorded. */
+  trigger?: "schedule" | "manual";
 }
 
 function metadataError(message: string): never {
@@ -85,6 +87,7 @@ export function decodeTaskHistoryMetadata(input: string | unknown): TaskHistoryM
   // A malformed `engine` (wrong type) is dropped like any other unrecognized
   // field rather than rejecting the whole row over a non-essential value.
   const engine = parsed.engine === null || typeof parsed.engine === "string" ? parsed.engine : undefined;
+  const trigger = parsed.trigger === "schedule" || parsed.trigger === "manual" ? parsed.trigger : undefined;
   validateDetail(detail);
   const cleanDetail: TaskHistoryDetail | null = detail
     ? {
@@ -99,6 +102,7 @@ export function decodeTaskHistoryMetadata(input: string | unknown): TaskHistoryM
     durationMs: parsed.durationMs,
     detail: cleanDetail,
     ...(engine !== undefined ? { engine } : {}),
+    ...(trigger !== undefined ? { trigger } : {}),
   };
 }
 

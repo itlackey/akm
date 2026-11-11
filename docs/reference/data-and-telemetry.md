@@ -147,11 +147,17 @@ regenerable. akm also writes into it:
   feedback. They feed utility scores and `akm metrics`, and the feedback recorded
   as the user adjusts search ranking. Each record is stamped with its source
   (`user`, `improve`, `task`, `audit` or `unknown`); only `user` records count.
+  When akm runs under an agent harness it can recognize (the same detection
+  workflow runs use: `AKM_AGENT_HARNESS`, a harness's session variable such as
+  `CLAUDE_CODE_SESSION_ID`, or a harness presence flag), the record's metadata
+  also carries `agent: { harness, session }`, the session only when the harness
+  names one.
 - **Proposals**: pending, accepted, rejected and reverted improvement proposals,
   with their full content, plus the improve ledger of what each stage last did
   with each asset.
 - **Task history and workflow runs**: scheduled task runs and workflow run
-  state.
+  state. A task run records whether the OS scheduler started it (`trigger`:
+  `schedule` or `manual`).
 
 `index_completed` metadata carries the phase timings plus `totalEntries`
 (library size after the run). Runs recorded before this field was added omit it;

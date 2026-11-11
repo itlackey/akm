@@ -28,6 +28,7 @@ import { bundleFileLocation, listBundleFiles } from "./bundle-files";
 import { readFileRevision, readRecentCommits } from "./git-read";
 import { automaticWriteTarget, capSide, clampLimit, DIFF_SIDE_MAX_CHARS, withReadonlyStateDb } from "./readers";
 
+export { graph } from "./graph";
 export { searchMisses } from "./misses";
 
 export interface SearchInput {
