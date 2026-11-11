@@ -90,7 +90,7 @@ Every command exits with one of the following codes:
 | 0 | Success | — |
 | 1 | Not found or command-reported failure | `NotFoundError`, command result |
 | 2 | Usage / bad input | `UsageError` |
-| 4 | Health warning (`akm health` only) | — |
+| 4 | Health warning (`akm doctor` or `akm health`) | — |
 | 70 | Internal / unclassified error | unexpected throw |
 | 75 | Transient — retry shortly (sysexits `EX_TEMPFAIL`); another akm process holds a lock or is writing `state.db` or `index.db` right now, not a bad command line | `TransientError` |
 | 78 | Configuration error | `ConfigError` |
@@ -380,6 +380,42 @@ aside instead of piling up behind a longer rebuild (the shipped
 index, generated deterministically. In text mode, the default CLI UI shows a
 spinner with processed-versus-total source counts; structured output modes
 (`json`, `yaml`, `jsonl`) stay clean and machine-readable.
+
+### doctor
+
+Inspect runtime health and developer diagnostics. These additive 0.10 entry points
+reuse the existing handlers, flags, output shapes and exit codes:
+
+| Command | Existing 0.10 command | Purpose |
+| --- | --- | --- |
+| `akm doctor` | [`akm health`](#health) | Runtime health, durable state and improve telemetry |
+| `akm doctor metrics` | [`akm metrics`](#metrics) | Read-only usage and outcome reports |
+| `akm doctor info` | [`akm info`](#info) | Capabilities, configuration and index state; still reports when config is broken |
+| `akm doctor log` | [`akm log`](#log) | Filter the local event stream |
+| `akm doctor judge` | [`akm judge`](#judge) | List, inspect and evaluate the existing model judges |
+
+```sh
+akm doctor --read-only --no-probe
+akm doctor metrics --since 7d
+akm doctor info
+akm doctor log --limit 20
+akm doctor judge --list
+akm doctor judge reflect.quality --schema
+```
+
+Bare `doctor` keeps health's defaults: probes run and state may be initialized or
+migrated. Use `--read-only --no-probe` for an offline inspection without state
+writes. Health statuses retain exit codes 0 (pass), 4 (warning) and 1 (failure).
+
+All existing top-level commands remain available in 0.10. Health's reporting flags
+(`doctor --report`, `--group-by`, `--window-compare`, `--windows` and `--since`)
+are transitional aliases in 0.10; all reporting is moving under doctor commands in
+0.11. The full flag and result contracts remain documented in the linked sections.
+This regrouping does not change judge or learning behavior. Put a subcommand's
+options after its name, for example `akm doctor metrics --since 7d`; health-only
+options such as `--read-only` and `--report` belong to bare `akm doctor`. Global
+output flags work before or after the subcommand. Like `info`, `doctor info`
+warns and continues when a flag is unknown.
 
 ### info
 
@@ -853,9 +889,9 @@ contends with a full `akm index` rebuild in progress.
 Display an asset by ref. On a markdown document `#fragment` selects one
 section by heading slug (falling back to case-insensitive heading text); an
 unmatched fragment lists the available slugs. For a large document, read the
-outline first and then only the sections you need: `akm show <ref> --detail
-brief` returns the document's `toc` without the body, and `akm show
-<ref>#<slug>` returns one section.
+outline first and then only the sections you need: `akm show <ref> --outline`
+returns the document's `toc` without the body, and `akm show <ref>#<slug>`
+returns one section.
 
 ```sh
 akm show scripts/deploy.sh
@@ -864,9 +900,10 @@ akm show agents/architect
 akm show commands/release
 akm show workflows/ship-release
 akm show knowledge/guide                 # the whole document, plus its toc
-akm show knowledge/guide --detail brief  # the outline (toc), no body
+akm show knowledge/guide --outline       # the outline (toc), no body
 akm show knowledge/guide#authentication  # just that section
-akm show '<search-result-ref>' --context lead --max-tokens 800
+akm show knowledge/guide --max-tokens 800 # bounded body, without needing a fragment
+akm show knowledge/guide#authentication --lead --max-tokens 800
 akm show knowledge/guide#nope            # lists the available fragment slugs
 
 # Bundle .meta/ orientation docs — direct-read, not indexed:
@@ -878,10 +915,28 @@ akm show github:owner/repo//meta    # an installed bundle's .meta/index.md
 
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |
+| `--outline` | boolean | `false` | Outline and brief metadata without the body; alias for `--detail brief`. |
+| `--lead` | boolean | `false` | Add the indexed-safe document lead to a Markdown fragment; alias for `--context lead`. |
 | `--context` | `exact`, `lead` | `exact` | Fragment presentation. `exact` preserves the selected-section behavior. `lead` returns the indexed-safe first fragment followed by `[Selected matching fragment]` and the selected fragment. |
 | `--max-chars` | positive integer | `3200` for `lead` | Hard contextual content budget in characters; requires `--context lead` and is mutually exclusive with `--max-tokens`. |
-| `--max-tokens` | positive integer | _(none)_ | Approximate contextual budget using four characters per token; requires `--context lead` and is mutually exclusive with `--max-chars`. |
+| `--max-tokens` | positive integer | _(none)_ | Approximate body budget using four characters per token, for whole assets, exact fragments or lead context; mutually exclusive with `--max-chars`. |
 | `--project` | project name, `none` | _(by directory)_ | The [project](#projects) recorded on this read's usage event, for [`akm search --by-usage`](#usage-list-by-usage); changes nothing else. `none` records no project; an unknown name is a usage error. |
+
+`--max-tokens` bounds the returned `content`, `template` and `prompt` text,
+not metadata, outlines or structured fields such as workflow steps. The
+`contentBudget` object reports `maxTokens`, returned `estimatedTokens` and
+`truncated`; estimates use four characters per token, not a model tokenizer.
+Text output states the same limit and truncation. A read without a budget
+still returns the complete body. Sensitive env and secret assets retain their
+metadata-only output; a budget never exposes their values.
+
+`--outline` cannot be combined with a content budget, lead context or an
+explicit `--detail` other than `brief`. `--lead` requires an indexed Markdown
+fragment and conflicts with `--context exact` and `--detail brief`. An exact
+read with `--max-tokens` also requires body output, so omit `--detail brief`.
+Direct `.meta` reads support `--max-tokens` but not `--outline`.
+The older `--detail brief`, `--context lead` and `--max-chars` forms remain
+available with their existing behavior.
 
 `meta` is not an asset type — `[<origin>//]meta[:<name>]` direct-reads a
 human-authored orientation doc from a bundle's optional `.meta/` directory
@@ -2011,11 +2066,11 @@ akm remember "Deployment needs VPN access" --bundle team-bundle
 | `--name` | Optional memory name. Defaults to a slug derived from the content |
 | `--path <dir>` | Subdirectory under `memories/` to place the memory in (for example `personal/projects`). The filename still comes from `--name` or the content slug |
 | `--force` | Overwrite an existing memory with the same name |
-| `--description <text>` | Short description written to frontmatter (persisted as the memory's `description` field). Honoured by both the zero-flag form and the tagged form. |
+| `--description <text>` | Short description written to frontmatter (persisted as the memory's `description` field). No tags required. |
 | `--tag <v>` | Tag to attach to the memory. Repeatable: `--tag foo --tag bar` |
-| `--expires <dur>` | Expiry shorthand (`30d`, `12h`, `6m`). Resolved to an ISO date |
-| `--source <s>` | Free-form source reference — URL, asset ref, file path, or any string |
-| `--xref <ref>` | Cross-reference ref recorded in the memory's `xrefs:` frontmatter list. Repeatable: `--xref knowledge/auth-flow --xref memories/vpn-note`. Each ref must resolve in the write target or a configured source (read-only sources count); an unresolvable ref fails with exit 2 before anything is written. More than 5 refs warns (soft cap) but still writes. Does not trigger the tags-required check. |
+| `--expires <dur>` | Expiry shorthand (`30d`, `12h`, `6m` for minutes, `3M` for 90 days). Resolved to an ISO date. No tags required. |
+| `--source <s>` | Free-form source reference — URL, asset ref, file path, or any string. No tags required. |
+| `--xref <ref>` | Cross-reference ref recorded in the memory's `xrefs:` frontmatter list. Repeatable: `--xref knowledge/auth-flow --xref memories/vpn-note`. Each ref must resolve in the write target or a configured source (read-only sources count); an unresolvable ref fails with exit 2 before anything is written. More than 5 refs warns (soft cap) but still writes. |
 | `--supersedes <ref>` | Ref of an existing asset this memory corrects. Repeatable. Writes the correction with the old ref folded into its `xrefs:` (correction provenance) AND demotes the old asset — `beliefState: superseded` + `supersededBy: [<new ref>]`, a metadata-only frontmatter edit that preserves every other key and the body — then reindexes it so `--belief current` hides the stale version immediately. An unresolvable ref fails with exit 2 before anything is written or demoted; so does a ref naming the asset being written itself (a correction cannot supersede itself, e.g. `--force` overwriting the same name). A ref that resolves only outside the write target and the working bundle still writes the correction but skips the demotion: stderr warns and the JSON output reports `superseded: [{ref, applied: false, reason}]` — the reason names the `--bundle` remedy when the old asset lives in a configured writable source. An old asset whose existing frontmatter is not parseable YAML is skipped the same way (`applied: false`) instead of being rewritten lossily. Re-running the same correction is idempotent. On a git write target the correction and the demoted old asset land in the same single boundary commit. |
 | `--auto` | Apply heuristic tagging from the body (opt-in, zero-latency, pure TS) |
 | `--enrich` | Call the configured LLM for tag/description proposals (opt-in, 10s timeout, fails soft) |
@@ -2029,15 +2084,14 @@ akm remember "Deployment needs VPN access" --bundle team-bundle
 Pass the content as a quoted positional argument for short notes, or pipe
 markdown into stdin for longer memories.
 
-**Zero-flag form** (`akm remember "body"`) writes a bare memory with no
-frontmatter — existing agent scripts keep working unchanged. `--tag` /
-`--expires` / `--source` still trigger the required-field check: if `tags`
-cannot be derived, the command rejects *before* writing the file, so you
-never end up with an orphan. `--auto` and `--enrich` are fail-soft metadata
-helpers: if they derive nothing, the memory still writes successfully.
+**Metadata is optional and independent.** `--description`, `--expires`,
+`--source`, and scope or cross-reference flags work without `--tag`.
+The zero-flag form (`akm remember "body"`) writes capture metadata and a
+description derived from the body. Invalid expiry durations and unresolved
+cross-references fail before writing. `--auto` and `--enrich` remain opt-in,
+fail-soft metadata helpers: if they derive nothing, the memory still writes.
 
-**Scope flags** (`--user`, `--agent`, `--run`, `--channel`) are independent
-of the tag-required check. They write the four canonical top-level
+**Scope flags** (`--user`, `--agent`, `--run`, `--channel`) write the four canonical top-level
 frontmatter keys (`scope_user`, `scope_agent`, `scope_run`, `scope_channel`)
 and a memory with only scope flags is valid (no tags required). Scope is
 selection inside a set the caller is already authorised to read; the same shape

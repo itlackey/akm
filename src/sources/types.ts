@@ -550,6 +550,8 @@ export interface ShowResponse extends FragmentProvenance {
   contextMaxChars?: number;
   /** True when either lead or selected-fragment bytes were omitted for the budget. */
   contextTruncated?: boolean;
+  /** Opt-in content/template/prompt budget; estimates use four characters per token, excluding metadata. */
+  contentBudget?: { maxTokens: number; estimatedTokens: number; truncated: boolean };
 }
 
 /** An agent harness whose akm plugin `akm upgrade` keeps current. */

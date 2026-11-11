@@ -44,7 +44,7 @@ import {
  * resolved subcommand, so this gate stands down entirely). `info` is a leaf
  * command, so it needs an explicit opt-in here instead.
  */
-const UNKNOWN_FLAG_TOLERANT_COMMANDS: ReadonlySet<string> = new Set(["info"]);
+const UNKNOWN_FLAG_TOLERANT_COMMANDS: ReadonlySet<string> = new Set(["info", "doctor info"]);
 
 /** The structural subset of a citty command this module reads. */
 export interface FlagScanCommand {

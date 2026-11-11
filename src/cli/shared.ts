@@ -33,7 +33,7 @@ export { parseAllFlagValues };
  *   0  success
  *   1  general / not-found
  *   2  usage error
- *   4  health warn (health command only)
+ *   4  health warn (doctor or health command)
  *  70  internal / unclassified (sysexits EX_SOFTWARE — akm threw unexpectedly)
  *  75  transient (sysexits EX_TEMPFAIL — retry shortly; another akm process
  *      holds a lock or is writing state.db right now, not a bad command line)

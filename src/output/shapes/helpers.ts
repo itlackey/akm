@@ -430,6 +430,7 @@ export function shapeShowOutput(
       "provenance",
       ...FRAGMENT_PROVENANCE_FIELDS,
       ...FRAGMENT_CONTEXT_FIELDS,
+      "contentBudget",
     ]);
     if (shaped.editable !== false) delete shaped.editHint;
     return shaped;
@@ -463,6 +464,7 @@ export function shapeShowOutput(
     "provenance",
     ...FRAGMENT_PROVENANCE_FIELDS,
     ...FRAGMENT_CONTEXT_FIELDS,
+    "contentBudget",
     // ref, path, and editable are always projected — at every --detail level,
     // not just --detail full — so JSON consumers can locate and edit the
     // asset without needing --detail full (QA #7 / D-14).
