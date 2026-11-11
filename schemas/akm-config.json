@@ -626,7 +626,7 @@
                 ]
               }
             },
-            "additionalProperties": false
+            "additionalProperties": {}
           },
           "prefer": {
             "type": "object",
@@ -2224,7 +2224,7 @@
                     ]
                   }
                 },
-                "additionalProperties": false
+                "additionalProperties": {}
               },
               "prefer": {
                 "type": "object",

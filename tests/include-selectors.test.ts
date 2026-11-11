@@ -8,7 +8,7 @@ import path from "node:path";
 import { curate } from "../src/api";
 import { akmCurate } from "../src/commands/read/curate";
 import { akmSearch } from "../src/commands/read/search";
-import { loadConfig, resetConfigCache } from "../src/core/config/config";
+import { loadConfig, resetConfigCache, saveConfig } from "../src/core/config/config";
 import { dropUnusableProjects } from "../src/core/config/schema/projects";
 import { normalizeInclude } from "../src/core/include";
 import { akmIndex } from "../src/indexer/indexer";
@@ -174,4 +174,27 @@ test("include never bypasses a selected named source", async () => {
   const include = { quality: "proposed" as const, type: "session" };
   expect(names(await akmSearch({ query: QUERY, include }))).toContain("foreign");
   expect(names(await akmSearch({ query: QUERY, source: "stash", include }))).not.toContain("foreign");
+});
+
+test("project includes preserve unknown config keys across writes without passing them into retrieval", async () => {
+  const config = loadConfig();
+  saveConfig({
+    ...config,
+    projects: {
+      ...config.projects,
+      alpha: {
+        ...config.projects?.alpha,
+        include: { quality: "proposed", futureOption: { enabled: true } },
+      },
+    },
+  });
+  resetConfigCache();
+  const loaded = loadConfig();
+  expect(loaded.projects?.alpha?.include).toEqual({ quality: "proposed", futureOption: { enabled: true } });
+  saveConfig(loaded);
+  resetConfigCache();
+  expect(loadConfig().projects?.alpha?.include).toEqual({ quality: "proposed", futureOption: { enabled: true } });
+  const result = JSON.parse(await curate(QUERY, { project: "alpha", limit: 20 }));
+  expect(result.items.map((hit: { name: string }) => hit.name).sort()).toEqual(["draft", "live"]);
+  expect(result.project.include).toEqual({ quality: "proposed" });
 });

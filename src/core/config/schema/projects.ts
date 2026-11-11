@@ -35,7 +35,7 @@ const WriteFields = {
 };
 
 const ProjectFields = {
-  include: IncludeSchema,
+  include: IncludeSchema.passthrough(),
   from: z.union([nonEmptyString, z.array(nonEmptyString).min(1)]),
   filters: z.record(nonEmptyString, scopeValues),
   prefer: z.record(nonEmptyString, scopeValues),

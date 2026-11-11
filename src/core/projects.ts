@@ -15,7 +15,7 @@ import { isWithin, safeRealpath } from "./common";
 import type { AkmConfig } from "./config/config-types";
 import { expandProjectPath, NO_PROJECT, type ProjectConfig } from "./config/schema/projects";
 import { UsageError } from "./errors";
-import { type IncludeSelectors, normalizeInclude } from "./include";
+import { IncludeSchema, type IncludeSelectors } from "./include";
 
 type FrontmatterScalar = string | number | boolean;
 
@@ -72,7 +72,7 @@ function toResolved(name: string, project: ProjectConfig, matchedPath?: string):
     ...(matchedPath !== undefined ? { path: matchedPath } : {}),
     ...(project.from !== undefined ? { from: project.from } : {}),
     ...(project.filters !== undefined ? { filters: project.filters } : {}),
-    ...(project.include !== undefined ? { include: normalizeInclude(project.include) } : {}),
+    ...(project.include !== undefined ? { include: IncludeSchema.strip().parse(project.include) } : {}),
     prefer: project.prefer ?? { project: name },
     write: {
       ...(write.bundle !== undefined ? { bundle: write.bundle } : {}),
