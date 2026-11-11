@@ -405,12 +405,14 @@ export function projectImproveRunSummary(
   };
 }
 
-/** Nearest-rank median and p95 of the window's run wall times. */
+/** Upper median and nearest-rank p95 of the window's run wall times. */
 export function computeWallTimeStats(durationsMs: number[]): ImproveHealthMetrics["wallTime"] {
   if (durationsMs.length === 0) return { medianMs: 0, p95Ms: 0 };
   const sorted = [...durationsMs].sort((a, b) => a - b);
-  const pick = (q: number) => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))] ?? 0;
-  return { medianMs: pick(0.5), p95Ms: pick(0.95) };
+  return {
+    medianMs: sorted[Math.floor(sorted.length / 2)] ?? 0,
+    p95Ms: sorted[Math.ceil(0.95 * sorted.length) - 1] ?? 0,
+  };
 }
 
 export function buildImproveSkipSummary(events: ReturnType<typeof readEvents>["events"]): {

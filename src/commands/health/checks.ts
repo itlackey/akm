@@ -14,7 +14,13 @@ import {
 import { resolveImproveStrategy, resolveProcessEnabled } from "../improve/improve-strategies";
 import { resolveProposalQueueTarget } from "../proposal/repository";
 import { type SemanticSearchState, semanticSearchCheck } from "./semantic-search-check";
-import { ACTIVE_RUN_WARN_MS, type HealthCheckResult, type ImproveHealthMetrics, TASK_FAIL_RATE_WARN } from "./types";
+import {
+  ACTIVE_RUN_WARN_MS,
+  type HealthCheckResult,
+  type ImproveHealthMetrics,
+  type ImproveRunSummary,
+  TASK_FAIL_RATE_WARN,
+} from "./types";
 
 /**
  * Pre-computed inputs shared by the health-check registry. `akmHealth` runs the
@@ -71,6 +77,8 @@ export interface HealthCheckContext {
   /** #1289: whether the primary stash's proposal queue has a writable owner, resolved once (`proposalQueueState`). */
   proposalQueue: ProposalQueueState | undefined;
   autoAccept: ImproveHealthMetrics["autoAccept"];
+  /** Improve runs in the selected reporting window, whether scheduled or manual. */
+  improveRuns: readonly ImproveRunSummary[];
   /** The connections, harnesses and work table, collected once (`connections-and-harnesses-check.ts`). */
   connectionsAndHarnesses: HealthCheckResult;
   /** The last index run's semantic-search record and the index's counts, read once (`semantic-search-check.ts`). */
@@ -359,6 +367,25 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
     name: "connections-and-harnesses",
     channel: "hard",
     run: (ctx) => ctx.connectionsAndHarnesses,
+  },
+  {
+    name: "improve-failures",
+    channel: "advisory",
+    run: (ctx) => {
+      // Terminated runs are incomplete, not completed processing failures (a user may have cancelled them).
+      const failed = ctx.improveRuns.filter((run) => run.resultComplete && !run.ok);
+      return {
+        name: "improve-failures",
+        kind: "deterministic",
+        status: failed.length > 0 ? "warn" : "pass",
+        confidence: "high",
+        message:
+          failed.length > 0
+            ? `${failed.length} completed improve run(s) failed since ${ctx.since}; inspect \`akm health --group-by run\`.`
+            : "No completed improve runs failed in this window.",
+        evidence: { failedRuns: failed.length, runIds: failed.map((run) => run.id) },
+      };
+    },
   },
   {
     name: "semantic-search",

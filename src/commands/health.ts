@@ -320,7 +320,8 @@ function gatherTaskHistoryPhase(
   // isAgentTaskHistoryRow's header comment, referenced from
   // computeTaskWindowRates, for the full mapping).
   const taskRows = queryTaskHistory(db, { since });
-  const rates = computeTaskWindowRates(taskRows, now);
+  // Still-active runs must not age out of the historical reporting window.
+  const rates = computeTaskWindowRates(taskRows, now, queryTaskHistory(db, { status: "active" }));
 
   return {
     tableNames,
@@ -860,6 +861,7 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
       sessionExtractionLedger,
       proposalQueue,
       autoAccept: improveSummary.autoAccept,
+      improveRuns: perRunSummaries,
       connectionsAndHarnesses,
       semanticSearch: readSemanticSearchState(gatherSemanticSearchMode()),
       versionDrift,

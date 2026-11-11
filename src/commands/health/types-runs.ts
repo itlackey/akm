@@ -24,7 +24,7 @@ export interface ImproveRunSummary {
   /**
    * The scheduled task that launched this improve run (e.g.
    * `akm-improve-frequent`), resolved by matching the run's start time to a
-   * `task_history` row with a `task_id` beginning `akm-improve` (±5 min).
+   * `task_history` row named `improve` or beginning `akm-improve` (±5 min).
    * `"manual"` when no scheduled task matches (a hand-run `akm improve`).
    */
   taskId: string;

@@ -67,8 +67,13 @@ export function semanticSearchCheck(state: SemanticSearchState): HealthCheckResu
     ...(evidence ? { evidence } : {}),
   });
 
+  // Keyword search needs a readable index too, even when embeddings are off.
+  if (state.error)
+    return result(
+      "fail",
+      `Could not read the index: ${state.error}. Repair or move aside index.db, then run \`akm index\`.`,
+    );
   if (state.mode === "off") return result("pass", "Semantic search is off (semanticSearchMode: off).", { mode: "off" });
-  if (state.error) return result("unknown", `Could not read the index: ${state.error}`);
   const index = state.index;
   if (!index?.record) return result("unknown", "No semantic-search state recorded yet; run `akm index`.");
 

@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `akm health` fails for an unreadable search index even when semantic search is off, reports still-active tasks independently of the history window, and warns when a harness probe cannot launch or is interrupted (an unsupported `--version` alone is not a warning).
+- Health's OpenCode plugin checks ignore abandoned cache folders when the plugin is not configured and no longer substitute a different cached spec for a missing configured spec. A configured bare OpenCode 1 plugin still reads its legacy bare cache.
+- Health attributes the shipped `improve` scheduled task correctly, warns about completed failed improve runs even without a scheduled-task failure, and recommends `akm upgrade --next` when the available update is on the prerelease channel.
+- Health's process/connection/model token totals use the same prompt-plus-completion fallback as its aggregate, preserving explicit totals including zero; p95 uses the documented nearest-rank calculation without changing the existing upper-median convention.
+
 ## [0.10.261117] - 2026-11-10
 
 ### Added

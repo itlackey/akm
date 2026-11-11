@@ -104,8 +104,12 @@ describe("semantic-search check", () => {
     );
     expect(semanticSearchCheck(indexed({ status: "disabled", provider: "local" })).status).toBe("unknown");
     expect(semanticSearchCheck(indexed({ status: "pending", provider: "local" }, 0, 0)).status).toBe("unknown");
-    expect(semanticSearchCheck({ mode: "auto", error: "unreadable" }).message).toBe(
-      "Could not read the index: unreadable",
-    );
+  });
+
+  test.each(["auto", "off", undefined])("an unreadable index fails even with mode %s", (mode) => {
+    const result = semanticSearchCheck({ mode, error: "file is not a database" });
+    expect(result.status).toBe("fail");
+    expect(result.message).toContain("file is not a database");
+    expect(result.message).toContain("akm index");
   });
 });

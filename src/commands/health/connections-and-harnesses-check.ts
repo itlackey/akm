@@ -12,7 +12,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { type AkmConfig, ambiguousDefaultAdvice, loadConfig } from "../../core/config/config";
-import { defaultWhich, probeVersion, type WhichFn } from "../../integrations/agent/detect";
+import { defaultWhich, probeVersion, type VersionProbeResult, type WhichFn } from "../../integrations/agent/detect";
 import { resolveTarget } from "../../integrations/agent/resolution";
 import { type ChatCompletionConfig, probeEndpointOnce } from "../../llm/client";
 import { type TargetRow, targetRows } from "../targets";
@@ -47,16 +47,19 @@ async function probeConnections(config: AkmConfig, probe: ReachabilityProbe): Pr
 }
 
 /** Each installed harness's `--version`, its first line; none when it will not say. */
-function harnessVersions(config: AkmConfig, which: WhichFn, spawn: typeof spawnSync): Map<string, string | undefined> {
-  const versions = new Map<string, string | undefined>();
+function harnessVersions(config: AkmConfig, which: WhichFn, spawn: typeof spawnSync): Map<string, VersionProbeResult> {
+  const versions = new Map<string, VersionProbeResult>();
   for (const name of Object.keys(config.harnesses ?? {})) {
     try {
       const target = resolveTarget({ config, layers: [{ harness: name }] });
       if (target.kind !== "harness" || !which(target.bin)) continue;
-      const version = probeVersion(target.bin, VERSION_TIMEOUT_MS, spawn);
-      if (version !== undefined) versions.set(name, version.split("\n")[0] || undefined);
-    } catch {
-      // A harness that cannot be resolved or run has no version to report.
+      const result = probeVersion(target.bin, VERSION_TIMEOUT_MS, spawn);
+      versions.set(name, {
+        ...(result.version ? { version: result.version.split("\n")[0] } : {}),
+        ...(result.error ? { error: result.error } : {}),
+      });
+    } catch (error) {
+      versions.set(name, { error: error instanceof Error ? error.message : String(error) });
     }
   }
   return versions;
@@ -77,6 +80,7 @@ function problems(rows: readonly TargetRow[], ambiguous: string | undefined): st
       }
     } else if (row.type === "harness") {
       if (!row.installed) found.push(`harness "${row.name}" (${row.platform}) was not found on PATH`);
+      else if (row.error) found.push(`harness "${row.name}" could not be probed (${row.error})`);
     } else if (row.problem) {
       const problem = row.problem.replace(/\.$/, "");
       if (problem !== ambiguous) shared.set(problem, [...(shared.get(problem) ?? []), row.process]);
@@ -123,11 +127,13 @@ export async function runConnectionsAndHarnessesCheck(
   const config = deps.loadConfig?.() ?? loadConfig();
   const which = deps.which ?? defaultWhich;
   const reachability = deps.probeReachable ? await probeConnections(config, deps.probeReachable) : undefined;
+  const versions = reachability ? harnessVersions(config, which, deps.spawnSync ?? spawnSync) : undefined;
   const rows = targetRows({
     config,
     env: deps.env,
     which,
-    ...(reachability ? { reachability, versions: harnessVersions(config, which, deps.spawnSync ?? spawnSync) } : {}),
+    reachability,
+    versions,
   });
   return connectionsAndHarnessesCheck(rows, reachability !== undefined, ambiguousDefaultAdvice(config));
 }

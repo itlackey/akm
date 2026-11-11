@@ -69,16 +69,18 @@ export function defaultWhich(bin: string, envSource: NodeJS.ProcessEnv = process
   return undefined;
 }
 
-/**
- * `<bin> --version`: its trimmed standard output, or undefined when it could not be run or did not
- * exit 0. The one version probe: OpenCode's major detection and `akm health` both ask it, and like
- * any program akm starts it gets the environment akm runs in.
- */
+export interface VersionProbeResult {
+  version?: string;
+  /** A launch failure or interruption, not merely an unsupported --version flag. */
+  error?: string;
+}
+
+/** The one version probe, retaining launch failures for callers reporting readiness. */
 export function probeVersion(
   bin: string,
   timeoutMs: number,
   spawn: typeof childProcess.spawnSync = childProcess.spawnSync,
-): string | undefined {
+): VersionProbeResult {
   const result = spawn(bin, ["--version"], {
     encoding: "utf8",
     stdio: "pipe",
@@ -87,8 +89,11 @@ export function probeVersion(
     // Passed explicitly: Bun 1.3 gives a child the process's environment as it was at startup otherwise.
     env: childProcessEnv(),
   });
-  if (result.error || result.status !== 0) return undefined;
-  return String(result.stdout ?? "").trim();
+  if (result.error) return { error: result.error.message };
+  if (result.signal) return { error: `Version probe ended with ${result.signal}` };
+  if (result.status === null) return { error: "Version probe did not exit" };
+  if (result.status !== 0) return {};
+  return { version: String(result.stdout ?? "").trim() };
 }
 
 /** Windows PATHEXT default, used when the env carries no explicit list. */

@@ -66,6 +66,33 @@ describe("summarizeLlmUsage failures counter (#944)", () => {
 });
 
 describe("summarizeLlmUsageRecordsCrossTab", () => {
+  test.each([
+    { promptTokens: 10, completionTokens: 5, expected: 15 },
+    { promptTokens: 10, expected: 10 },
+    { completionTokens: 5, expected: 5 },
+    { promptTokens: 10, completionTokens: 5, totalTokens: 0, expected: 0 },
+    { promptTokens: 10, completionTokens: 5, totalTokens: 20, expected: 20 },
+    { expected: 0 },
+  ])("all projections agree on token totals: %j", ({ expected, ...tokens }) => {
+    const events = [
+      usageEvent({
+        durationMs: 1,
+        stage: "reflect",
+        process: "reflect",
+        engine: "fixture",
+        model: "fixture",
+        ...tokens,
+      }),
+    ];
+    const aggregate = summarizeLlmUsage(events);
+    const crossTab = summarizeLlmUsageCrossTab(events);
+    expect(aggregate.totalTokens).toBe(expected);
+    expect(aggregate.byStage.reflect?.totalTokens).toBe(expected);
+    expect(aggregate.byProcess.reflect?.totalTokens).toBe(expected);
+    expect(aggregate.byEngine.fixture?.totalTokens).toBe(expected);
+    expect(crossTab[0]?.totalTokens).toBe(expected);
+  });
+
   test("gives the same rows as the events form for the same input", () => {
     const events = [
       usageEvent({ durationMs: 10, process: "reflect", engine: "fast", model: "m1", totalTokens: 5 }),
@@ -118,7 +145,7 @@ describe("summarizeLlmUsageCrossTab (#944)", () => {
       failures: 1,
       promptTokens: 12,
       completionTokens: 5,
-      totalTokens: 15,
+      totalTokens: 17,
       reasoningTokens: 1,
       totalDurationMs: 150,
     });

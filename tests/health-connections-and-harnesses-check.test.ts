@@ -121,6 +121,47 @@ describe("runConnectionsAndHarnessesCheck", () => {
     expect(rowsOf(result)[1]).not.toHaveProperty("version");
   });
 
+  test.each(["ENOEXEC", "EACCES", "ETIMEDOUT"])("a failed harness launch warns: %s", async (code) => {
+    const result = await runConnectionsAndHarnessesCheck({
+      loadConfig: () => config,
+      probeReachable: async () => ({ reachable: true }),
+      which: onPath("claude"),
+      spawnSync: (() => ({
+        status: null,
+        error: Object.assign(new Error(code), { code }),
+      })) as unknown as typeof spawnSync,
+    });
+    expect(result.status).toBe("warn");
+    expect(result.message).toContain('harness "claude" could not be probed');
+    expect(result.message).toContain(code);
+    expect(rowsOf(result)[1]).toMatchObject({ installed: true, error: code });
+    expect(result.message).not.toContain("all ready");
+  });
+
+  test("a harness version probe killed by a signal warns", async () => {
+    const result = await runConnectionsAndHarnessesCheck({
+      loadConfig: () => config,
+      probeReachable: async () => ({ reachable: true }),
+      which: onPath("claude"),
+      spawnSync: (() => ({ status: null, signal: "SIGKILL" })) as unknown as typeof spawnSync,
+    });
+    expect(result.status).toBe("warn");
+    expect(result.message).toContain("SIGKILL");
+  });
+
+  test("a thrown harness launch error is retained", async () => {
+    const result = await runConnectionsAndHarnessesCheck({
+      loadConfig: () => config,
+      probeReachable: async () => ({ reachable: true }),
+      which: onPath("claude"),
+      spawnSync: (() => {
+        throw new Error("cannot launch");
+      }) as unknown as typeof spawnSync,
+    });
+    expect(result.status).toBe("warn");
+    expect(rowsOf(result)[1]).toMatchObject({ error: "cannot launch" });
+  });
+
   test("without a probe nothing is contacted and no harness is run, and the message says so", async () => {
     const ran: string[] = [];
     const spawn = ((bin: string) => {

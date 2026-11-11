@@ -7,7 +7,7 @@
  * Integration: native metadata fixtures and real Git subprocesses for remote tag probing.
  */
 
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -17,10 +17,21 @@ import {
   collectPluginStalenessAdvisories,
   type ListRemoteTagsFn,
 } from "../../../../src/commands/health/plugin-staleness";
+import { opencodeConfigDir } from "../../../../src/integrations/harnesses/opencode/roots";
 import { mockClaudePluginList, selectClaudePlugin } from "../../../_helpers/claude-plugins";
-import { withEnvSync } from "../../../_helpers/sandbox";
+import { type IsolatedAkmStorage, withEnvSync, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 
-beforeEach(mockClaudePluginList);
+let storage: IsolatedAkmStorage;
+beforeEach(() => {
+  storage = withIsolatedAkmStorage({ OPENCODE_CONFIG: undefined, OPENCODE_CONFIG_DIR: undefined });
+  mockClaudePluginList();
+  fs.mkdirSync(opencodeConfigDir(), { recursive: true });
+  fs.writeFileSync(
+    path.join(opencodeConfigDir(), "opencode.json"),
+    JSON.stringify({ plugin: ["akm-opencode"], plugins: ["akm-opencode-v2"] }),
+  );
+});
+afterEach(() => storage.cleanup());
 
 function makeTempDir(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -726,22 +737,22 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
       expect(results[0]?.evidence).toMatchObject({ bundledVersion: "0.9.15", spec: "akm-opencode@latest" });
     });
 
-    test("a bare name, or none, with only the bare folder cached reads that folder, as before", () => {
+    test("a configured bare name with only the legacy bare folder cached reads that folder", () => {
       const cacheRoot = cacheRootOf();
       cacheSpec(cacheRoot, "akm-opencode", "0.9.15");
 
-      for (const config of [named("akm-opencode"), undefined]) {
-        const results = collect(config, "0.9.17", cacheRoot);
-        expect(results.map((r) => [r.name, r.status])).toEqual([["opencode-plugin-version", "warn"]]);
-        expect(results[0]?.evidence).toEqual({ bundledVersion: "0.9.15", cliVersion: "0.9.17" });
-      }
+      const results = collect(named("akm-opencode"), "0.9.17", cacheRoot);
+      expect(results.map((r) => [r.name, r.status])).toEqual([["opencode-plugin-version", "warn"]]);
+      expect(results[0]?.evidence).toEqual({ bundledVersion: "0.9.15", cliVersion: "0.9.17" });
+      expect(collect(undefined, "0.9.17", cacheRoot)).toEqual([]);
+      expect(collect({ file: "opencode.json", text: '{"plugin":[]}' }, "0.9.17", cacheRoot)).toEqual([]);
     });
 
-    test("a config naming a spec with no cache folder falls back to the bare folder", () => {
+    test("a configured spec with no cache does not claim a different bare cache", () => {
       const cacheRoot = cacheRootOf();
       cacheSpec(cacheRoot, "akm-opencode", "0.9.17");
 
-      expect(collect(named("akm-opencode@next"), "0.9.17", cacheRoot).map((r) => r.status)).toEqual(["pass"]);
+      expect(collect(named("akm-opencode@next"), "0.9.17", cacheRoot)).toEqual([]);
     });
 
     test("no config entry does not scan the other cached specs", () => {
@@ -853,17 +864,15 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
       expect(results[0]?.status).toBe("pass");
     });
 
-    test("with no config entry each cached spec (@latest, @next, a pin) gets its own advisory", () => {
+    test("with no config entry cached specs do not establish an installed plugin", () => {
       const { pluginsRoot, opencodeCacheRoot } = roots("akm-plugin-v2-specs-");
       installV2BundledAkm(opencodeCacheRoot, "0.9.17", "akm-opencode-v2@latest");
       installV2BundledAkm(opencodeCacheRoot, "0.9.15", "akm-opencode-v2@0.8.0");
+      fs.writeFileSync(path.join(opencodeConfigDir(), "opencode.json"), JSON.stringify({ plugins: [] }));
 
       const results = collectPluginStalenessAdvisories({ pluginsRoot, cliVersion: "0.9.17", opencodeCacheRoot });
 
-      expect(results.map((r) => [r.evidence?.spec, r.status])).toEqual([
-        ["akm-opencode-v2@0.8.0", "warn"],
-        ["akm-opencode-v2@latest", "pass"],
-      ]);
+      expect(results).toEqual([]);
     });
 
     // OpenCode 2 loads the spec its config names; a folder another spec left behind is not loaded (F6).
