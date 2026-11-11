@@ -91,7 +91,8 @@ const NETWORK_FS_MAGICS: ReadonlySet<number> = new Set([
   // FUSE is a judgment call: it backs BOTH network mounts (sshfs) and local
   // mounts (some encrypted/overlay FS). Treating it as network falls back to
   // DELETE — conservative-but-safe (DELETE works everywhere; the only cost is
-  // losing WAL concurrency). An operator can always force WAL via the env var.
+  // losing WAL concurrency). An explicit WAL in the env var is treated like the
+  // default, so the network fallback still applies; it cannot be forced.
   FS_MAGIC_FUSE,
 ]);
 
