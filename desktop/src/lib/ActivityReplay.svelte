@@ -45,7 +45,12 @@
     return out;
   });
 
+  /** The latest load: a response to an earlier one (an earlier Period) changes nothing. */
+  let generation = 0;
+  /** A new graph gets a new renderer: its buffers are sized and ordered for the graph it was made with. */
+  let mapKey = $state(0);
   async function load() {
+    const mine = ++generation;
     loading = true;
     error = "";
     pause();
@@ -56,6 +61,7 @@
           since: period,
         }),
       ]);
+      if (mine !== generation) return;
       const built = buildGraph(payload);
       steps = replaySteps(events.events, built.index);
       range = events.window;
@@ -64,24 +70,23 @@
       lit = new Float32Array(built.count);
       litState = new Uint8Array(built.count).fill(1);
       used = new Uint8Array(built.count);
-      if (!data || !graph || graph.count !== built.count) {
-        const meaning = built.meaning;
-        data = {
-          count: built.count,
-          pos: Float32Array.from(meaning ?? built.byBundle),
-          color: colours,
-          size: built.size,
-          edges: edgePairs(built, () => true),
-          anchors: [],
-          label: (i: number) => built.name(i),
-        };
-      }
+      view = null;
+      data = {
+        count: built.count,
+        pos: Float32Array.from(built.meaning ?? built.byBundle),
+        color: colours,
+        size: built.size,
+        edges: edgePairs(built, () => true),
+        anchors: [],
+        label: (i: number) => built.name(i),
+      };
+      mapKey++;
       graph = built;
       seek(reduced ? Date.parse(events.window.until) : Date.parse(events.window.since));
     } catch (cause) {
-      error = (cause as Error).message;
+      if (mine === generation) error = (cause as Error).message;
     } finally {
-      loading = false;
+      if (mine === generation) loading = false;
     }
   }
   $effect(() => {
@@ -129,12 +134,14 @@
     return [Math.cos(angle) * reach, 420, Math.sin(angle) * reach];
   }
   function apply(step: ReplayStep) {
-    if (step.node < 0 || !view) return;
+    if (step.node < 0) return;
+    const first = step.kind !== "hit" && !used[step.node];
+    if (first) used[step.node] = 1;
+    if (!view) return;
     lit[step.node] = 1;
     litState[step.node] = 2;
     if (step.kind === "hit") return;
-    if (!used[step.node]) {
-      used[step.node] = 1;
+    if (first) {
       colours.set(slots[graph!.family[step.node]!]!, step.node * 4);
       colours[step.node * 4 + 3] = 240;
       view.setColors(colours);
@@ -177,26 +184,35 @@
           if (lit[i]! <= 0) litState[i] = 1;
           changed = true;
         }
-      if (playing) {
-        // One played minute per real second at speed 1, so a day takes 24 minutes; speed multiplies it.
-        clock = Math.min(end, clock + dt * 60 * speed * (period === "7d" ? 7 : 1));
-        while (cursor < steps.length && steps[cursor]!.t <= clock) {
-          apply(steps[cursor++]!);
-          changed = true;
-        }
-        if (clock >= end) playing = false;
-      }
       if (changed) view.setState(litState);
     };
     paint();
+    view.setState(litState);
   }
 
+  // The clock has its own frames, so playback works without WebGL: the figures, ticker and timeline still move.
+  let ticking = 0;
+  let lastTick = 0;
+  function tick(now: number) {
+    const dt = Math.min(64, now - lastTick);
+    lastTick = now;
+    // A day plays in 24 minutes at Normal and a week in 168 (one played minute per second, scaled by the period
+    // loaded); speed multiplies it.
+    clock = Math.min(end, clock + dt * 60 * speed * ((end - start) / 86_400_000));
+    while (cursor < steps.length && steps[cursor]!.t <= clock) apply(steps[cursor++]!);
+    if (clock >= end) playing = false;
+    ticking = playing ? requestAnimationFrame(tick) : 0;
+  }
   function play() {
     if (clock >= end) seek(start);
     playing = true;
+    cancelAnimationFrame(ticking);
+    lastTick = performance.now();
+    ticking = requestAnimationFrame(tick);
   }
   function pause() {
     playing = false;
+    cancelAnimationFrame(ticking);
   }
   const hhmm = (t: number) =>
     new Date(t).toLocaleString(
@@ -216,7 +232,7 @@
           ? `${step.signal ?? ""} feedback on ${step.ref ?? "an asset"}`
           : `${step.ref ?? ""}`;
   onDestroy(() => {
-    playing = false;
+    pause();
     view = null;
   });
 </script>
@@ -251,12 +267,13 @@
   {#if graph && range}
     <div class="replay-body">
       <div class="replay-map">
-        {#if data}<GraphView
-            {data}
-            label="The library map. Assets light up as they are searched, read and given feedback. The panel beside it lists the same events."
-            onReady={ready}
-            onTheme={readTokens}
-          />{/if}
+        {#if data}{#key mapKey}<GraphView
+              {data}
+              label="The library map. Assets light up as they are searched, read and given feedback. The panel beside it lists the same events."
+              onReady={ready}
+              onTheme={readTokens}
+              fallback="This view needs WebGL 2, which this window does not have. The figures, the latest events and the timeline below still play."
+            />{/key}{/if}
         <ul class="replay-key">
           <li><span class="dot" style="background:var(--map-1)"></span>Asset read</li>
           <li><span class="dot" style="background:var(--ok)"></span>Positive feedback</li>

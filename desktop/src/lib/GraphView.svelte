@@ -16,6 +16,7 @@
     label,
     onReady,
     onTheme,
+    fallback = "This view needs WebGL 2, which this window does not have. The table lists the same assets.",
   }: {
     /** What `createGraphView` draws; the page keeps a reference and changes it through the view. */
     data: Record<string, unknown>;
@@ -23,6 +24,8 @@
     onReady: (view: View) => void;
     /** Called with the token colours on mount and whenever the appearance changes, so the page can recolour. */
     onTheme?: (read: (token: string) => number[]) => void;
+    /** What the page says when the window has no WebGL 2: what still works without the drawing. */
+    fallback?: string;
   } = $props();
   let canvas = $state<HTMLCanvasElement>();
   let labels = $state<HTMLCanvasElement>();
@@ -60,7 +63,7 @@
       view = createGraphView({ canvas, labels, data, theme: theme() });
       onReady(view);
     } catch {
-      failed = "This view needs WebGL 2, which this window does not have. The table lists the same assets.";
+      failed = fallback;
     }
     scheme.addEventListener("change", retheme);
     appearance.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });

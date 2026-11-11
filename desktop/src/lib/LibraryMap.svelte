@@ -39,6 +39,8 @@
   let hover = $state<{ i: number; x: number; y: number } | null>(null);
   let frameMs = $state(0);
   let view: View;
+  /** The frame of the arrangement transition in progress, cancelled on teardown. */
+  let arranging = 0;
   let data: Record<string, unknown> | null = $state.raw(null);
   let colours: Uint8Array;
   let positions: Float32Array;
@@ -207,13 +209,16 @@
     const began = performance.now();
     const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
     const step = (now: number) => {
+      if (!view) return;
       const t = reduce ? 1 : Math.min(1, (now - began) / 1000);
       const k = t * t * (3 - 2 * t);
       for (let n = 0; n < positions.length; n++) positions[n] = start[n]! + (target[n]! - start[n]!) * k;
       view.setPositions(positions);
-      if (t < 1) requestAnimationFrame(step);
+      arranging = t < 1 ? requestAnimationFrame(step) : 0;
     };
-    requestAnimationFrame(step);
+    // A second switch replaces the transition in progress; it starts from wherever the first had got to.
+    cancelAnimationFrame(arranging);
+    arranging = requestAnimationFrame(step);
     filter();
   }
 
@@ -259,6 +264,7 @@
   const unplaced = $derived(graph?.meaning ? graph.count - graph.placed.reduce((a, b) => a + b, 0) : 0);
   const detail = $derived(graph && selected >= 0 ? linksOf(graph, selected) : []);
   onDestroy(() => {
+    cancelAnimationFrame(arranging);
     view = null;
   });
 </script>
