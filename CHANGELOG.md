@@ -8,23 +8,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- `akm bundle update`: a writable Git bundle with local uncommitted changes now fast-forwards when git can do so without overwriting them; an update that would overwrite local work, or a diverged history, is refused with nothing changed, and the refusal names the real bundle path and the blocking files instead of a command-syntax hint (#1606).
+- `akm bundle update` on a registry-installed writable Git bundle (#1606):
+  - With local uncommitted changes, it now fast-forwards when git can do so without overwriting them.
+  - An update that would overwrite local work, or a diverged history, is refused with nothing changed.
+  - The refusal names the real bundle path and the blocking files, with a hint to commit, move or discard them, instead of a command-syntax hint.
+  - Plain git sources and a re-run of `akm bundle add` on a writable checkout still refuse any dirty worktree.
 
 ### Fixed
 
-- The `assetContentRefs` migration rewrites legacy refs only in files akm reads as assets, leaving frozen eval corpora, captured prompts and results byte-for-byte; when it leaves uncommitted edits in a git bundle, its report names the bundle and the next steps (#1605).
+- The `assetContentRefs` migration rewrites legacy refs only in asset files, `index.md` and wiki `schema.md` (#1605):
+  - Frozen eval corpora, captured prompts and results, `log.md` and the root `README.md` are left byte-for-byte.
+  - When it leaves uncommitted edits in a git checkout, its report names the checkout and the next steps.
 - AKM Desktop, Settings → Software (#1609):
-  - Installing the CLI passes Desktop's release tag to the installer and verifies the installed version.
-  - A CLI upgrade checks its target right before it runs.
-  - Choosing Stable stops an already queued prerelease from installing.
-  - Preference saves no longer overwrite each other, and the screen reports whether a setting was saved or also applied.
-  - Partial and failed upgrades keep a redacted result and show fresh versions.
-  - Deferred plugins and compatibility holds are shown with their reasons.
-  - Polling no longer leaves stale errors or waits forever.
-  - A timed-out command ends its installer's child processes.
-  - Desktop updates gain Check/Retry and download progress.
-  - The CLI channel can be shown and switched.
-  - A CLI that will not run can be repaired with consent.
+  - **CLI install and repair:**
+    - Installing the CLI passes Desktop's release tag to the installer and verifies the installed version.
+    - A binary Desktop did not install as a standalone file (a link, a package-manager copy, one elsewhere) is never replaced.
+    - Repairing one Desktop did install needs explicit consent.
+  - **Channels:**
+    - Update and Check follow the CLI's current channel and never change it.
+    - Switching the CLI and installed plugins between stable and prerelease is a separate, explicit action. It is not offered when it would be a downgrade.
+    - Installing a plugin on the prerelease channel into an existing `akm-plugins` marketplace stops and asks first, because that marketplace keeps its own channel.
+  - **Upgrades:**
+    - The CLI upgrade checks its target right before it runs and refuses one Desktop cannot read.
+    - Choosing Stable stops an already queued prerelease from installing.
+    - Partial and failed upgrades keep a redacted result and show fresh versions. Deferred plugins and compatibility holds show their reasons.
+  - **Settings, status and recovery:**
+    - Preference saves no longer overwrite each other, and the screen reports whether a setting was saved or also applied.
+    - Polling no longer leaves stale errors or waits forever.
+    - A timed-out or output-flooding command has its installer's child processes ended (on Windows through `taskkill`, best effort), and retries wait until a check confirms the result.
+    - Desktop updates gain Check/Retry and download progress.
 
 ## [0.10.261117] - 2026-11-10
 
