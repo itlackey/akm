@@ -112,7 +112,7 @@ import { judgeCommand } from "./commands/judge-cli";
 import { metricsCommand } from "./commands/metrics/metrics-cli";
 import { migrateCommand } from "./commands/migrate-cli";
 import { modelsCommand } from "./commands/models-cli";
-import { logCommand } from "./commands/observability-cli";
+import { doctorLogCommand, logCommand } from "./commands/observability-cli";
 import { proposalCommand } from "./commands/proposal/proposal-cli";
 import { rememberCommand } from "./commands/read/remember-cli";
 import { curateCommand, searchCommand, showCommand } from "./commands/read/search-cli";
@@ -506,7 +506,7 @@ const doctorSubCommands = {
   prompt: doctorPromptCommand,
   metrics: doctorMetricsCommand,
   info: infoCommand,
-  log: logCommand,
+  log: doctorLogCommand,
   judge: judgeCommand,
 };
 const doctorScanArgs = Object.assign({}, healthArgs, ...Object.values(doctorSubCommands).map((cmd) => cmd.args));
