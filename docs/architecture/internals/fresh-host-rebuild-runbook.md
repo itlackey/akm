@@ -27,8 +27,8 @@ restore it from.
    `akm bundle add <ref>`.
 7. **Rebuild the index:** `akm index --full`. `index.db` is derived from your
    bundles and is rebuilt from scratch.
-8. **Verify health:** `akm health`, then `akm info` for index stats and the
-   effective config. `akm health` creates `state.db` if it is missing and
+8. **Verify health:** `akm doctor`, then `akm doctor info` for index stats and the
+   effective config. `akm doctor` creates `state.db` if it is missing and
    applies its migrations. It exits 0 when every check passes, 4 on warnings,
    and 1 when a hard check fails. See [Health Checks](health-advisories.md) for
    what each check means.

@@ -168,7 +168,7 @@ The default allowlist is `["akm"]`. Two command families widen it explicitly:
 
 Every other adapter (`agent-skills`, `claude`, `opencode`, `akm-task`,
 `generic-files`, and so on) is rejected by every AKM-native write command.
-`akm task add` in particular uses the *default* allowlist (`akm` only), so a
+`akm import --type task` in particular uses the *default* allowlist (`akm` only), so a
 standalone `akm-task` bundle is read-only through AKM-native write commands.
 
 Reading, searching, and `akm lint` are unaffected by this allowlist — only

@@ -14,7 +14,7 @@ Three lines cover it:
 2. **At boot, run `akm migrate apply`** (or `akm upgrade`, which runs it).
    It is offline, idempotent, needs no root, takes its own safety copies,
    prints one JSON plan, and exits `0` unless a file is genuinely blocked.
-3. **Read `akm health --format json`.** Never grep error text — akm's
+3. **Read `akm doctor --format json`.** Never grep error text — akm's
    wording is not a stable interface; the JSON fields are.
 
 Everything below is detail in service of those three lines.
@@ -209,10 +209,10 @@ version lockstep and the Codex hook-trust entries a headless image needs.
 and reports `updateAvailable` (plus the pending per-harness plugin updates). Use it for a version-drift alert, not as your
 boot check.
 
-## `akm health`
+## `akm doctor`
 
 ```sh
-akm health --format json
+akm doctor --format json
 ```
 
 Read the JSON. Never parse the human-readable text or grep for a phrase —
@@ -269,8 +269,8 @@ on stdout and a plain exit code.
 set -e
 akm --version                 # optional: confirm the pinned version actually landed
 akm migrate apply             # offline, idempotent — exits 1 only if genuinely blocked
-akm task sync --rebind        # only if you schedule akm tasks inside this image
-akm health --format json      # read this JSON; act on ok/status, never on message text
+akm doctor scheduler sync --rebind        # only if you schedule akm tasks inside this image
+akm doctor --format json      # read this JSON; act on ok/status, never on message text
 ```
 
 ### Environment variables

@@ -164,9 +164,9 @@ Installed bundles are cache-managed and `akm bundle update` can overwrite
 them. To edit an asset, clone it into your working bundle:
 
 ```sh
-akm clone "npm:@scope/my-bundle//scripts/deploy.sh"
-akm clone "npm:@scope/my-bundle//scripts/deploy.sh" --name my-deploy.sh
-akm clone "npm:@scope/my-bundle//scripts/deploy.sh" --dest ./project/.claude
+akm import "npm:@scope/my-bundle//scripts/deploy.sh" --asset-ref
+akm import "npm:@scope/my-bundle//scripts/deploy.sh" --asset-ref --name my-deploy.sh
+akm import "npm:@scope/my-bundle//scripts/deploy.sh" --asset-ref --dest ./project/.claude
 ```
 
 `--dest` copies into a directory instead of a bundle; the type directory is

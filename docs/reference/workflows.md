@@ -1,6 +1,6 @@
 # Workflows
 
-A workflow is a multi-step procedure authored as AKM Markdown. `akm workflow run`
+A workflow is a multi-step procedure authored as AKM Markdown. `akm run`
 compiles the source, freezes a durable plan, persists run and unit state,
 dispatches work, verifies declared gates, and can resume after an interruption
 without replaying completed units.
@@ -39,7 +39,7 @@ owners and executable targets, then freeze a durable plan at `irVersion` 8. A
 stored plan is read back as it is: one frozen at an older `irVersion` that
 still decodes runs with a single warning; one frozen by a newer akm asks you to
 upgrade; and one this akm cannot decode is abandoned by
-`akm workflow run` with a message naming how to start a new run. See
+`akm run` with a message naming how to start a new run. See
 [Architecture: The Workflow Engine](../architecture/workflow-engine.md#resume-skips-completed-units).
 
 A step can run another workflow as a child (`unit: { workflow: workflows/<ref> }`,
@@ -52,7 +52,7 @@ same engine the parent uses, then maps the child's final status onto the
 composing step: a completed child's last step output becomes the step's own
 output and the parent continues; a failed child fails the step and the run; a blocked
 child blocks the composing step and the run, with recovery notes naming the
-exact `akm workflow resume`/`akm workflow run` sequence. `akm workflow
+exact `akm workflow resume`/`akm run` sequence. `akm workflow
 status` on a run that composes children renders a `children:` tree showing
 every descendant run's ref and status. See
 [Workflow Schema: Child execution](workflow-schema.md#child-execution)
@@ -62,7 +62,7 @@ walkthrough.
 
 ## Inspecting a workflow without running it
 
-`akm workflow plan <ref>` compiles, resolves, and freezes a workflow exactly
+`akm doctor explain <ref>` compiles, resolves, and freezes a workflow exactly
 as starting a run would, then stops — zero durable writes, no published run.
 It prints the canonical step graph, per-step frozen target kinds,
 task/child expansion, input bindings, and freeze-time lowering notices. Use
@@ -75,7 +75,7 @@ workflows it would compose — before committing to a run. See
 The GitHub-shaped YAML workflow format (`.yml` with `name`/`on`/`jobs`), `route`
 steps, `unit.isolation: worktree`, and top-level `outputs:` were removed in 0.10;
 see the CHANGELOG. A task that runs a workflow (`uses: workflows/<name>`, or a
-`run:` that calls `akm workflow run`) is unaffected.
+`run:` that calls `akm run`) is unaffected.
 
 ## See also
 

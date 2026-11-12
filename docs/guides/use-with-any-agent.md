@@ -53,7 +53,7 @@ akm feedback workflows/deploy-to-prod --positive --reason "Completed without iss
 discover refs rather than guess them. Both return a `ref` at the default detail
 level; pass it to `akm show`. `--detail agent` additionally returns each hit's
 `path` and `editable` flag, for agents that read or edit the file directly. For
-a long document, `akm show <ref> --detail brief` returns its outline (`toc`, no
+a long document, `akm show <ref> --outline` returns its outline (`toc`, no
 body), and `akm show <ref>#<slug>` then loads only the sections the task needs.
 
 Feedback closes the loop. Record `--negative` only when the asset's content is
@@ -75,7 +75,7 @@ sets expectations by environment.
 | Environment | Core support | Optional/extended support |
 | --- | --- | --- |
 | Shell-capable coding agent | `curate` / `show` / `feedback` via the CLI | Generated prompt block (`akm hints`) or a platform plugin |
-| Claude/OpenCode project layout | Indexed in place through a `BundleAdapter` — no migration needed | `akm clone` selected assets into a writable bundle for editing |
+| Claude/OpenCode project layout | Indexed in place through a `BundleAdapter` — no migration needed | `akm import --asset-ref` selected assets into a writable bundle for editing |
 | IDE assistant without shell access | Not a direct core integration | Requires a plugin, an `akm task`, or an external bridge that can shell out on the assistant's behalf |
 
 A Claude Code `.claude` directory or an OpenCode `.opencode` directory is
@@ -101,7 +101,7 @@ than replacing either.
 
 - **Tab completion.** `akm completions --install` sets up shell completions
   for subcommands and flags. See [CLI Reference](../reference/cli.md#completions).
-- **Dispatching a bundle agent asset.** `akm agent agents/<name> --harness
+- **Dispatching a bundle agent asset.** `akm run agents/<name> --harness
   <harness> --prompt "..."` runs a bundle `agents/<name>` persona and model
   default on a harness (or on akm's own runtime over a connection, with
   `--connection <name>`), with the aliases `fast`, `balanced` and `reasoning`
@@ -111,7 +111,7 @@ than replacing either.
   for how dispatch reaches each harness. The harness runs as you would run it by
   hand ([how](../reference/configuration.md#how-akm-runs-a-harness)).
 - **Install refs vs. asset refs.** `npm:@scope/pkg` and `github:owner/repo`
-  are install refs, accepted only by `akm bundle add`/`akm clone`, and are a
+  are install refs, accepted only by `akm bundle add`/`akm import --asset-ref`, and are a
   different grammar from the `[bundle//]conceptId` refs `show`/`search` use.
   See [Refs](../reference/refs.md) for the full grammar.
 - **Plugin integrations.** For tighter editor and agent integrations,
@@ -154,9 +154,9 @@ This installs the package and adds it to `plugins` in the global config.
 **Updating.** `akm upgrade` refreshes the cached plugin of each major it finds,
 holds the CLI to the `akm-cli` those plugins pin, and leaves a plugin alone
 whose config pins another spec such as `akm-opencode@0.8.0`. Use
-`akm upgrade --next` with `akm-opencode@next` / `akm-opencode-v2@next` in the
+`akm upgrade --channel next` with `akm-opencode@next` / `akm-opencode-v2@next` in the
 config to follow prereleases. The exact rules are in the
-[`akm upgrade` reference](../reference/cli.md#harness-plugins). `akm health`
+[`akm upgrade` reference](../reference/cli.md#harness-plugins). `akm doctor`
 warns when either plugin's bundled `akm-cli` differs from the running CLI.
 
 **Which OpenCode akm runs** does not depend on the plugin: the `opencode`

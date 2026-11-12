@@ -40,12 +40,6 @@ akm remember "VPN required for staging deploys" \
   --expires 90d \
   --source "skills/deploy"
 
-# Heuristic tagging (zero-latency, pure TS):
-akm remember "Found this snippet: curl -fsSL ... | bash" --tag ops --auto
-
-# LLM-assisted enrichment (requires a configured LLM; fails soft):
-cat long-meeting-notes.md | akm remember --name meeting-2026-05 --enrich
-
 # Route to a named writable bundle:
 akm remember "Use staging cluster for blue-green" --bundle team-bundle
 ```
@@ -93,7 +87,7 @@ belief-state and provenance model these flags drive.
 ## How captured material becomes available to every agent
 
 A memory or import is a normal asset the moment it's written: `remember`,
-`import` and `clone` add it to the search index immediately (run `akm index`
+`import` (including `--asset-ref`) add it to the search index immediately (run `akm index`
 after editing files by hand), and from then on any agent (Claude Code,
 OpenCode, or any other shell-capable assistant pointed at the same bundle)
 finds it through the same `akm search` / `akm curate` / `akm show` calls it
@@ -103,13 +97,6 @@ feedback, proposal) treats an `akm remember` note the same way it treats a
 bundled skill.
 
 ## Common problems
-
-**`akm remember` rejects the write with a tags-required error.** Passing
-`--expires`, `--source`, or `--description` without any `--tag` triggers a
-required-field check before anything is written. Either add at least one
-`--tag` (or pass `--auto` or `--enrich` to generate tags), or drop those flags;
-plain `akm remember "body"` writes a memory with generated frontmatter and no
-tags.
 
 **A URL import didn't pick up the rest of the site.** That's expected — an
 import fetches exactly the page you pass. To keep a whole site or repo in

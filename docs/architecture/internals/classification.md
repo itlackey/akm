@@ -112,7 +112,7 @@ Classification changes bump the AKM adapter version, which participates in
 directory freshness. The next ordinary `akm index` reclassifies unchanged
 documents and replaces stale refs; no full reset or source-file edit is needed.
 
-For the `akm health` type-directory advisory, `SKILL.md` under the component's
+For the `akm doctor` type-directory advisory, `SKILL.md` under the component's
 `skills/` tree declares a skill, even when the skill directory is named
 `knowledge`, `memories`, or `commands`. Those names identify the skill, not a
 competing asset type. A copied `knowledge/.../SKILL.md` does not have that
@@ -129,7 +129,7 @@ skills-directory intent and is still checked against its knowledge directory.
 | `generated` | Derived automatically from the file; in default search |
 | `curated` | Human-authored; in default search |
 | `enriched` | Accepted on entries an earlier release enriched; nothing sets it now; in default search |
-| `proposed` | Pending review; left out of search unless `--include-proposed` |
+| `proposed` | Pending review; left out of search unless `--include quality=proposed` |
 
 An unknown value warns once and stays searchable.
 

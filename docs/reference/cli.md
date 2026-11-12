@@ -53,16 +53,26 @@ Stdout, JSON and exit codes are unchanged, and `--quiet` silences the line. It
 is not printed for `--help`, for the scheduler's `task run --scheduled`, or for
 commands run by a task, `improve` or an audit (`AKM_EVENT_SOURCE` of `task`,
 `improve` or `audit`). The forms covered are `health`, `metrics`, `info`, `log`,
-`judge`, `improve judge`, `workflow run`, `agent <ref>`, `command`, `task run`,
-`task add`, `clone`, `improve --show-prompt`, `curate --pack`,
-`search --include-proposed` and `--include-sessions`, `show --detail brief` and
-`--context lead`, `upgrade --next` and `--timeout-ms`. A deprecated form whose
-replacement is not built yet prints nothing.
+`judge`, `improve judge`, `workflow run`, `workflow plan`, `agent <ref>`,
+`command`, `task run`, `task add`, `task sync`, `task prune`, `task doctor`,
+`task explain`, `task history`, `clone`, `improve report`,
+`improve --show-prompt`, `improve --require-feedback-signal`, `curate --pack`,
+`search --by-usage`, `search --include-proposed` and `--include-sessions`,
+`show --detail brief` and `--context lead`, `proposal extract --type`,
+`remember --auto`, `--enrich` and `--show-similar` (no replacement flag),
+`upgrade --next` and `--timeout-ms`. A deprecated form whose replacement is not
+built yet prints nothing.
+
+The deprecated environment variables `AKM_UPGRADE_SKIP_CHECKSUM` (during
+`upgrade`), `AKM_SQLITE_JOURNAL_MODE`, `AKM_VERBOSE` and `AKM_DEBUG=1` print the
+same one-line notice, once per process, and `--quiet` silences it.
+`AKM_SQLITE_JOURNAL_MODE` has no replacement; the others name `akm upgrade
+--skip-checksum` and `--verbose`.
 
 ### `--format jsonl`
 
 Outputs one JSON object per line. For `search` (including `--from registry`),
-each hit is a separate line, and `curate --pack` writes each packed item on its own line. For other commands, the entire result is a single line.
+each hit is a separate line, and `curate --max-tokens` writes each packed item on its own line. For other commands, the entire result is a single line.
 Useful for streaming consumption by scripts or agents.
 
 ### `--format md`
@@ -71,7 +81,7 @@ Useful for streaming consumption by scripts or agents.
 supports all five.
 
 A command may register a renderer for a document format when it has something
-better to say than the generic one: `akm health --group-by run --format md`
+better to say than the generic one: `akm doctor --group-by run --format md`
 emits its per-run table. The renderers are
 data-driven — they fire when the result carries the report dataset, never on
 the format alone, so the same dataset is available as JSON too. Every other command falls back to a
@@ -120,7 +130,7 @@ Every command exits with one of the following codes:
 | 0 | Success | — |
 | 1 | Not found or command-reported failure | `NotFoundError`, command result |
 | 2 | Usage / bad input | `UsageError` |
-| 4 | Health warning (`akm doctor` or `akm health`) | — |
+| 4 | Health warning (`akm doctor`, or the Deprecated `akm health`) | — |
 | 70 | Internal / unclassified error | unexpected throw |
 | 75 | Transient — retry shortly (sysexits `EX_TEMPFAIL`); another akm process holds a lock or is writing `state.db` or `index.db` right now, not a bad command line | `TransientError` |
 | 78 | Configuration error | `ConfigError` |
@@ -439,6 +449,11 @@ reuse the existing handlers, flags, output shapes and exit codes:
 | `akm doctor log` | [`akm log`](#log) | Filter the local event stream |
 | `akm doctor prompt <ref>` | [`akm improve <ref> --show-prompt`](#improve) | Inspect the composed reflect prompt without execution or writes |
 | `akm doctor judge` | [`akm judge`](#judge) | List, inspect and evaluate the existing model judges |
+| `akm doctor scheduler sync` | [`akm task sync`](#task) / `akm task prune` | Reconcile or prune the OS scheduler entries |
+| `akm doctor explain <ref>` | [`akm task explain`](#task) / [`akm workflow plan`](#workflow-plan) | Print what a task or workflow would run, without running it |
+| `akm doctor log --task <id>` | [`akm task history`](#task) | One task's run history |
+| `akm doctor metrics improve` | [`akm improve report`](#improve-report) | Improve-run LLM usage and routing report |
+| `akm doctor metrics assets` | [`akm search --by-usage`](#usage-list-by-usage) (Deprecated) | Assets shown in the project, most shown first |
 
 ```sh
 akm doctor --read-only --no-probe
@@ -448,7 +463,41 @@ akm doctor log --limit 20
 akm doctor prompt lessons/my-lesson --task "Focus on examples" --format text
 akm doctor judge --list
 akm doctor judge reflect.quality --schema
+akm doctor scheduler sync --dry-run
+akm doctor scheduler sync --prune --yes
+akm doctor explain team//tasks/nightly
+akm doctor log --task nightly --limit 20
+akm doctor metrics improve --since 7d
+akm doctor metrics assets --limit 10
 ```
+
+`akm doctor scheduler sync` reconciles enabled task and workflow schedules with
+the OS scheduler, as `akm task sync` does, and takes the same `--bundle`,
+`--rebind` and `--dry-run` flags. With `--prune` it instead removes the owned
+scheduler entries a plain sync can never reclaim. Prune is a preview that exits
+non-zero when it finds candidates; `--yes` removes every candidate and `--id
+<id1,id2,...>` limits it to the named binding ids (a name that is not a current
+orphan is a usage error and removes nothing).
+
+`akm doctor explain <ref>` takes a task ref or id (`--bundle` selects the
+bundle), or a workflow ref (`workflows/<name>`), and prints the same secret-free,
+read-only plan as `akm task explain` or `akm workflow plan`. It never runs
+anything.
+
+Bare `akm doctor` prints health's result with one more field, `scheduler`: the
+scheduler backend, paths and task state `akm task doctor` reports. Diagnosis
+alone never repairs or removes an entry.
+
+`akm doctor log --task <id>` lists that task's run history instead of events
+(add `--bundle <name>` for a task in another bundle and `--limit <n>` for the most
+recent runs). Each row carries `trigger`: `schedule` when the OS scheduler started
+the run, `manual` otherwise; it is absent when the run did not record one. The
+Deprecated `akm task history` prints the same `trigger`.
+
+`akm doctor metrics improve [--run <id> | --since <window>]` is the
+[`improve report`](#improve-report) over the same handler. `akm doctor metrics
+assets` is [`search --by-usage`](#usage-list-by-usage): the same filters as
+`search` and the same result fields, and it records no usage.
 
 Bare `doctor` keeps health's defaults: probes run and state may be initialized or
 migrated. Use `--read-only --no-probe` for an offline inspection without writes
@@ -468,9 +517,13 @@ This regrouping does not change judge or learning behavior. Put a subcommand's
 options after its name, for example `akm doctor metrics --since 7d`; health-only
 options such as `--read-only` and `--report` belong to bare `akm doctor`. Global
 output flags work before or after the subcommand. Like `info`, `doctor info`
-warns and continues when a flag is unknown.
+warns and continues when a flag is unknown. The deprecated forms in the right
+column above print a stderr notice naming the replacement (see
+[Deprecation notices](#deprecation-notices)); their output is unchanged.
 
 ### info
+
+Deprecated; use `akm doctor info`; removed in 0.11.
 
 Show system capabilities, configuration, and index state.
 
@@ -520,6 +573,8 @@ differs between a host install and a container) can read them with
 `akm info --format json | jq -r .dataDir` instead of hardcoding a path.
 
 ### health
+
+Deprecated; use `akm doctor` for checks and `akm doctor metrics` for reports; removed in 0.11.
 
 Check akm runtime health, durable state, and recent improve-loop telemetry.
 
@@ -575,7 +630,7 @@ Primary result fields:
 | --- | --- |
 | `status` | Overall health verdict: `fail` when a hard check fails, `warn` when any check (hard or advisory, heuristic included) warns, else `pass`; `unknown` checks do not count. Exit code 1, 4 and 0 respectively |
 | `hardChecks` | Deterministic checks such as `state-db-schema`, `state-db-round-trip` (`unknown` in a read-only run, which skips it), `state-db-integrity`, `state-db-migrations`, `task-history-read`, `active-runs`, `connections-and-harnesses`, and `semantic-search` |
-| `advisories` | Non-fatal warnings including `session-extraction` (akmExtract pipeline health), `cli-version` (installed vs latest release on its channel), `plugin-version`, `codex-plugin-version`, `opencode-plugin-version` and `opencode-v2-plugin-version` (harness plugins), and `scheduler-binary` |
+| `advisories` | Non-fatal warnings including `session-extraction` (akmExtract pipeline health), `cli-version` (installed vs latest release on its channel), `plugin-version`, `codex-plugin-version`, `opencode-plugin-version` and `opencode-v2-plugin-version` (harness plugins), `scheduler-binary`, and `cli-usage-store` |
 | `metrics` | Aggregate task/runtime metrics: `taskFailRate`, `agentFailureRate`, `stuckActiveRuns` |
 | `improve` | Recent improve-loop counts derived from `improve_invoked`, `improve_skipped`, and `improve_completed` events |
 
@@ -631,6 +686,12 @@ here after the next `akm index`. `evidence` carries the recorded `status`,
 `unavailable` (`platform` or `load`), `provider`, `runtime`, `reason`, the index's `builtAt`, `entryCount` and
 `embeddingCount`.
 
+`cli-usage-store` `warn`s when `metrics.db`, which holds the CLI usage tables
+(`cli_usage_*`), cannot be read. Usage capture is fail-open, so an unreadable store
+stops collection without failing any command, and this is the only place it shows.
+The check is silent when the file is absent or readable, and it never recreates
+tables; move or delete `metrics.db` to restart collection.
+
 `cli-version` compares the installed akm-cli version against the latest release
 on the channel this install follows — GitHub's latest release, and for a
 prerelease install also npm's `next` tag, the same sources `akm upgrade` trusts —
@@ -651,6 +712,8 @@ harvested but others had candidate writes fail and were not yet extracted again
 Otherwise it is `pass`, with per-outcome counts.
 
 ### metrics
+
+Deprecated; use `akm doctor metrics`; removed in 0.11.
 
 **Experimental** (see [STABILITY.md](../../STABILITY.md)): the report, its JSON shape and the
 dashboard may change in any release.
@@ -725,7 +788,7 @@ akm search "deploy" --filter user=alice --filter agent=claude
 akm search "deploy" --prefer user=alice
 
 # Include proposal-queue entries:
-akm search "deploy" --include-proposed
+akm search "deploy" --include quality=proposed
 
 # Only assets dated within a range (observed date, else updated):
 akm search "deploy host" --since 2026-06-01 --until 2026-09-30
@@ -803,13 +866,13 @@ it.
 | `--filter` | `<key>=<value>` | _(none)_ | Frontmatter filter — repeatable; a repeated key matches any of its values, different keys must all match. A key is any frontmatter key (`team`, `project`, `category`, ...), `tag` (matched the way the index normalises tags), or a scope key (`user`, `agent`, `run`, `channel`). Example: `--filter team=platform --filter user=alice`. An empty value (`--filter channel=`) matches assets that do not carry the key (`tag` always carries path-derived tags, so `tag=` matches almost no assets), and combines with other values of the key by OR: `--filter channel=acme --filter channel=` keeps acme's assets plus every unscoped one. Narrows the candidates before ranking. |
 | `--prefer` | `<key>=<value>` | _(none)_ | Frontmatter preference — same keys, repetition and matching as `--filter`, but a boost, not a limit: a matching asset's score is multiplied by 1.02 (browse and ref-prefix listings put matches first). It never drops or admits an asset; `--from` and `--filter` still decide which are eligible. Example: `--prefer channel=ops`. |
 | `--project` | project name, `none` | _(by directory)_ | Use this [project](#projects)'s defaults instead of the one the working directory selects; `none` uses no project. An unknown name is a usage error. A flag you pass replaces the project's value of the same kind. When a project applies, the response carries `project` and text output opens with one line, e.g. `Project akm (~/code/akm): prefer project=akm`. |
-| `--include` | `quality=proposed`, `type=<asset-type>` | _(none, or project)_ | Repeatable: relax only the named default exclusions. Ordinary hits remain eligible; query matching, explicit type, source/project boundaries and filters still apply. Repeating `type` restores each named type in `search.defaultExcludeTypes`; other excluded types stay hidden. Explicit selectors replace the project's entire `include` value. An unsupported key, or a `type` that is not a known asset type, is a usage error (exit 2) whose hint lists the valid selectors. |
-| `--include-proposed` | flag | `false` | Include entries with `quality: "proposed"` in the result set. Default search excludes them; `generated` and `curated` quality entries are always included. Unknown quality values warn once and remain searchable. |
+| `--include` | `quality=proposed`, `type=<asset-type>` | _(none, or project)_ | Repeatable: relax only the named default exclusions. Ordinary hits remain eligible; query matching, explicit type, source/project boundaries and filters still apply. Repeating `type` restores each named type in `search.defaultExcludeTypes`; other excluded types stay hidden. Explicit selectors replace the project's entire `include` value. An unsupported key, or a `type` that is neither a known asset type nor a custom type listed in `search.defaultExcludeTypes` (read from the config file only, not from `extends` layers), is a usage error (exit 2) whose hint lists the valid selectors. |
+| `--include-proposed` | flag | `false` | Deprecated; use `--include quality=proposed`; removed in 0.11. Include entries with `quality: "proposed"` in the result set. Default search excludes them; `generated` and `curated` quality entries are always included. Unknown quality values warn once and remain searchable. |
 | `--belief` | `all`, `current`, `historical` | `current` | Belief filter on any asset. `current` keeps unflagged/active/asserted assets; `historical` keeps deprecated/contradicted/superseded/archived assets. Labels do not establish truth. |
 | `--since` | `YYYY-MM-DD` | _(none)_ | Keep local assets dated on or after this day: the `observed` date, else `updated`. Assets with neither are dropped. Applies before the candidate budgets, like `--filter`. Search only; registry hits are unaffected. |
 | `--until` | `YYYY-MM-DD` | _(none)_ | Keep local assets dated on or before this day, by the same date. |
-| `--include-sessions` | flag | `false` | Include session assets, which are excluded from default results via `config.search.defaultExcludeTypes` |
-| `--by-usage` | flag | `false` | List instead of search: the eligible assets that were shown (`akm show`) in the [project](#projects) in force, most shown first, ties by ref. See [Usage list](#usage-list-by-usage) |
+| `--include-sessions` | flag | `false` | Deprecated; use `--include type=session`; removed in 0.11. Include session assets, which are excluded from default results via `config.search.defaultExcludeTypes` |
+| `--by-usage` | flag | `false` | Deprecated in 0.10.261120; use `akm doctor metrics assets`; removed in 0.11. List instead of search: the eligible assets that were shown (`akm show`) in the [project](#projects) in force, most shown first, ties by ref. See [Usage list](#usage-list-by-usage) |
 | `--format` | `json`, `jsonl`, `yaml`, `text`, `md` | `json` | Output format |
 | `--detail` | `brief`, `normal`, `full`, `agent` | `brief` | Output verbosity level, or the `agent` projection |
 
@@ -884,7 +947,7 @@ akm curate "learn the release workflow" --from all --format text
 akm curate "deploy the service" --from team --filter user=alice --filter channel=ops
 akm curate "investigate the previous deployment port" --belief historical
 akm curate "compare deployment decisions" --belief all
-akm curate "deploy the service" --filter user=alice --pack 4000
+akm curate "deploy the service" --filter user=alice --max-tokens 4000
 ```
 
 | Flag | Values | Default | Description |
@@ -895,10 +958,10 @@ akm curate "deploy the service" --filter user=alice --pack 4000
 | `--filter` | `<key>=<value>` | _(none)_ | Repeatable exact frontmatter filter (any key, `tag`, or user, agent, run, channel); a repeated key matches any of its values, different keys are AND-joined; an empty value (`key=`) matches assets without the key |
 | `--prefer` | `<key>=<value>` | _(none)_ | Repeatable frontmatter preference with the keys and matching of `--filter`; matching hits rank slightly higher (×1.02 on the score). It never drops or admits a hit and does not change which evidence curate accepts |
 | `--project` | project name, `none` | _(by directory)_ | Use this [project](#projects)'s defaults instead of the one the working directory selects; `none` uses no project. An unknown name is a usage error. A flag you pass replaces the project's value of the same kind. When a project applies, the response carries `project` and text output opens with one line, e.g. `Project akm (~/code/akm): prefer project=akm`. |
-| `--include` | `quality=proposed`, `type=<asset-type>` | _(none, or project)_ | Repeatable: relax only the named default exclusions. Ordinary hits remain eligible; query matching, explicit type, source/project boundaries and filters still apply. Repeating `type` restores each named type in `search.defaultExcludeTypes`; other excluded types stay hidden. Explicit selectors replace the project's entire `include` value. An unsupported key, or a `type` that is not a known asset type, is a usage error (exit 2) whose hint lists the valid selectors. |
+| `--include` | `quality=proposed`, `type=<asset-type>` | _(none, or project)_ | Repeatable: relax only the named default exclusions. Ordinary hits remain eligible; query matching, explicit type, source/project boundaries and filters still apply. Repeating `type` restores each named type in `search.defaultExcludeTypes`; other excluded types stay hidden. Explicit selectors replace the project's entire `include` value. An unsupported key, or a `type` that is neither a known asset type nor a custom type listed in `search.defaultExcludeTypes` (read from the config file only, not from `extends` layers), is a usage error (exit 2) whose hint lists the valid selectors. |
 | `--belief` | `all`, `current`, `historical` | `current` | Current keeps unflagged and active/asserted assets; historical keeps deprecated/contradicted/superseded/archived assets |
-| `--max-tokens` | positive token budget | _(none)_ | Alias for `--pack`, using the same shared packing budget and output. Conflicting explicit budgets are rejected; equal values are accepted. The unbudgeted default is unchanged. |
-| `--pack` | positive token budget | _(none)_ | Pack eligible local content in rank order; drop tail items before truncating the first oversized item. The budget is estimated at about 4 characters per token; a `ref#fragment` hit packs only that section; registry hits are never packed. It is a context-size target for this call, not a workflow asset's `budget` (a run-cost cap) |
+| `--max-tokens` | positive token budget | _(none)_ | The replacement for `--pack`. It uses the same shared packing budget and output. Conflicting explicit budgets are rejected; equal values are accepted. The unbudgeted default is unchanged. |
+| `--pack` | positive token budget | _(none)_ | Deprecated; use `--max-tokens`; removed in 0.11. Pack eligible local content in rank order; drop tail items before truncating the first oversized item. The budget is estimated at about 4 characters per token; a `ref#fragment` hit packs only that section; registry hits are never packed. It is a context-size target for this call, not a workflow asset's `budget` (a run-cost cap) |
 
 `akm curate` takes the top `--limit` hits of one search, in search order, and
 enriches each with a preview, run details and up to two support refs: the
@@ -972,12 +1035,12 @@ akm show github:owner/repo//meta    # an installed bundle's .meta/index.md
 
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |
-| `--outline` | boolean | `false` | Outline and brief metadata without the body; alias for `--detail brief`. |
-| `--lead` | boolean | `false` | Add the indexed-safe document lead to a Markdown fragment; alias for `--context lead`. |
-| `--context` | `exact`, `lead` | `exact` | Fragment presentation. `exact` preserves the selected-section behavior. `lead` returns the indexed-safe first fragment followed by `[Selected matching fragment]` and the selected fragment. |
-| `--max-chars` | positive integer | `3200` for `lead` | Hard contextual content budget in characters; requires `--context lead` and is mutually exclusive with `--max-tokens`. |
+| `--outline` | boolean | `false` | Outline and brief metadata without the body; the replacement for `--detail brief`. |
+| `--lead` | boolean | `false` | Add the indexed-safe document lead to a Markdown fragment; the replacement for `--context lead`. |
+| `--context` | `exact`, `lead` | `exact` | `--context lead` is Deprecated; use `--lead`; removed in 0.11. Fragment presentation. `exact` preserves the selected-section behavior. `lead` returns the indexed-safe first fragment followed by `[Selected matching fragment]` and the selected fragment. |
+| `--max-chars` | positive integer | `3200` for `lead` | Deprecated; use `--max-tokens`; removed in 0.11. Hard contextual content budget in characters; requires `--context lead` and is mutually exclusive with `--max-tokens`. |
 | `--max-tokens` | positive integer | _(none)_ | Approximate body budget using four characters per token, for whole assets, exact fragments or lead context; mutually exclusive with `--max-chars`. |
-| `--project` | project name, `none` | _(by directory)_ | The [project](#projects) recorded on this read's usage event, for [`akm search --by-usage`](#usage-list-by-usage); changes nothing else. `none` records no project; an unknown name is a usage error. |
+| `--project` | project name, `none` | _(by directory)_ | The [project](#projects) recorded on this read's usage event, for [`akm doctor metrics assets`](#usage-list-by-usage); changes nothing else. `none` records no project; an unknown name is a usage error. |
 
 `--max-tokens` bounds the returned `content`, `template` and `prompt` text,
 not metadata, outlines or structured fields such as workflow steps. A leading
@@ -999,8 +1062,9 @@ keeps working exactly as in 0.10.261118. `--lead` requires an indexed Markdown
 fragment and conflicts with `--context exact`; its errors name `--lead` when you
 typed `--lead`.
 Direct `.meta` reads support `--max-tokens` but not `--outline`.
-The older `--detail brief`, `--context lead` and `--max-chars` forms remain
-available with their existing behavior.
+`--detail brief` is Deprecated; use `--outline`. `--context lead` is Deprecated;
+use `--lead`. `--max-chars` is Deprecated; use `--max-tokens`. All are removed in
+0.11 and keep their existing behavior until then.
 
 `meta` is not an asset type — `[<origin>//]meta[:<name>]` direct-reads a
 human-authored orientation doc from a bundle's optional `.meta/` directory
@@ -1121,16 +1185,16 @@ Author, inspect, and execute structured workflow assets.
 akm workflow create ship-release --print
 akm workflow create ship-release
 akm workflow create ship-release --from ./ship-release.md
-akm workflow run workflows/ship-release --version 1.2.3   # always starts a new run
-akm workflow run <run-id>                  # continue an active partial run
+akm run workflows/ship-release --version 1.2.3   # always starts a new run
+akm run <run-id>                           # continue an active partial run
 akm workflow status <run-id>
 akm workflow status workflows/ship-release
 akm workflow status 7c115132               # 8+ char run-id prefix also works
-akm workflow resume <run-id>               # re-activate a blocked or failed run, then run <run-id>
+akm workflow resume <run-id>               # re-activate a blocked or failed run, then `akm run <run-id>`
 akm workflow abandon <run-id>
 akm workflow list --active
 akm workflow list --children               # also list child workflow runs (Experimental)
-akm workflow plan workflows/ship-release    # compile+freeze preview, zero writes
+akm doctor explain workflows/ship-release  # compile+freeze preview, zero writes
 ```
 
 Bare `akm workflow` (no subcommand) runs `akm workflow list`.
@@ -1163,10 +1227,12 @@ compatibility aliases.
 
 There is also no `akm workflow template`, `validate`, or `watch`.
 `workflow create --print` prints a starter, `akm lint --type workflows`
-validates it, and `akm log --run <id> --since '@offset:<id>'` provides durable
+validates it, and `akm doctor log --run <id> --since '@offset:<id>'` provides durable
 event polling.
 
 #### workflow run
+
+Deprecated; use `akm run <workflow-ref>` to start a run and `akm run <run-id>` to continue one; removed in 0.11. The other `workflow` subcommands stay.
 
 ```sh
 akm workflow run workflows/ship-release --version 1.2.3
@@ -1205,7 +1271,7 @@ The old `--params <json>` bag is removed.
 `workflow run <run-id>` to continue a run and `workflow resume <run-id>` to
 reopen a blocked or failed one so `run <run-id>` can continue it. When other
 runs of the same ref are still active, the start prints one warning naming
-their ids and the `akm workflow run <id>` / `akm workflow abandon <id>`
+their ids and the `akm run <id>` / `akm workflow abandon <id>`
 commands, and starts anyway. `--skip-if-locked` is the guard for scheduled callers: it skips (exit
 0) instead of starting when an active run of the ref is held by a live process.
 
@@ -1294,6 +1360,8 @@ owns it).
 
 #### workflow plan
 
+Deprecated in 0.10.261120; use `akm doctor explain workflows/<name>`; removed in 0.11.
+
 ```sh
 akm workflow plan workflows/release
 akm workflow plan workflows/release --format json
@@ -1369,7 +1437,7 @@ akm workflow resume <run-id>
 ```
 
 Flips a `blocked` or `failed` run back to `active`; it does not execute
-anything. Run `akm workflow run <run-id>` afterwards to continue it. Completed
+anything. Run `akm run <run-id>` afterwards to continue it. Completed
 runs cannot be resumed. Use `workflow list` to find runs by status.
 
 Workflow markdown contract:
@@ -1580,7 +1648,7 @@ power-loss guarantee. Both `index.db` and `state.db` remain in WAL mode, where
 SQLite does not guarantee an atomic commit across attached database files after
 `SIGKILL`, abrupt power loss, or storage failure. The durable outcome may
 therefore combine approved old/new source bytes and lock state with adjacent
-index/state generations. `akm health` reports `index-state-generation` when a
+index/state generations. `akm doctor` reports `index-state-generation` when a
 durable usage link disagrees with the searchable index, but that advisory
 cannot identify every theoretical split. Stop concurrent writers, rerun the
 targeted bundle update if the checkout/lock is not the intended approved
@@ -1598,7 +1666,7 @@ half-publishing a failed one.
 Rename a configured bundle's key everywhere akm itself persists it — the one
 command allowed to change it (renaming by hand-editing `config.json`'s
 `bundles` key strands every durable ref the tool minted under the old id; see
-`akm health` / the startup warning that names this).
+`akm doctor` / the startup warning that names this).
 
 ```sh
 akm bundle rename old-name new-name
@@ -1622,7 +1690,7 @@ rows, so search and improve keep counting the bundle's feedback; the old name
 is matched case-sensitively). The result's
 `activeWorkflowRuns` lists the active and blocked runs of the renamed bundle,
 each with its `status`: their frozen plans keep the old qualified refs, so
-continue them with `akm workflow run <id>` (after `akm workflow resume <id>` for
+continue them with `akm run <id>` (after `akm workflow resume <id>` for
 a blocked one) or give up with `akm workflow abandon <id>`. Reported, never
 rewritten: refs inside the bundle's own CONTENT (cross-references, `uses:` in
 a task, `supersededBy`) — the result's `contentRefs` lists the indexed files
@@ -1633,7 +1701,7 @@ already renamed by then). `taskSync.ok` is `false` both when the sync call
 itself fails and when it comes back reporting one or more
 `taskSync.result.failures` — a binding that failed to prepare has already
 lost its old native row and stays unscheduled until you re-run
-`akm task sync`; `--dry-run` lists the installed native rows that still name
+`akm doctor scheduler sync`; `--dry-run` lists the installed native rows that still name
 the old bundle (`nativeSchedulerRows`) so you can see what that sync will
 replace.
 
@@ -1662,7 +1730,7 @@ computed, with a 256 MiB binary limit. Release/checksum metadata is capped at
 akm upgrade              # Install a newer release if there is one, run every pending migration, then update the harness plugins
 akm upgrade --check      # Report pending updates, CLI and plugins, without changing anything (no migration step)
 akm upgrade --force      # Force the install even if already on latest
-akm upgrade --next       # Include prereleases when selecting the newest CLI release
+akm upgrade --next       # Deprecated; use --channel. Include prereleases when selecting the newest CLI release
 akm upgrade --skip-checksum # Recovery only: install although the release checksum cannot be verified
 akm upgrade --channel next   # Switch CLI and installed harness plugins to next
 akm upgrade --channel latest # Return CLI and installed harness plugins to stable
@@ -1673,10 +1741,10 @@ akm upgrade --channel latest # Return CLI and installed harness plugins to stabl
 | `--check` | Report pending updates (CLI and per-harness plugins) without changing anything |
 | `--force` | Force upgrade even if on latest version |
 | `--skip-post-upgrade` | Skip the post-upgrade index rebuild |
-| `--skip-checksum` | Recovery only: install even when the release checksum cannot be fetched or its file is not listed. A checksum that does not match always fails. Replaces `AKM_UPGRADE_SKIP_CHECKSUM=1`, which keeps working through 0.10 |
+| `--skip-checksum` | Recovery only: install even when the release checksum cannot be fetched or its file is not listed. A checksum that does not match always fails. Replaces `AKM_UPGRADE_SKIP_CHECKSUM=1`, which keeps working through 0.10 with a stderr notice and is removed in 0.11 |
 | `--channel latest\|next` | Switch the CLI and installed Claude, Codex and OpenCode plugins together; works with `--check` |
 | `--allow-downgrade` | Permit an older target version during an explicit `--channel` switch |
-| `--next` | Include prereleases when selecting the newest CLI release; retain configured harness channels (see below). Works with `--check`, `--force` and `-q` |
+| `--next` | Deprecated; use `--channel next`; removed in 0.11. Include prereleases when selecting the newest CLI release; retain configured harness channels (see below). Works with `--check`, `--force` and `-q` |
 
 Offline, or to migrate without a release check, run `akm migrate apply`
 directly: it is the same step.
@@ -1752,6 +1820,8 @@ OpenCode entry is `failed` and the run exits `1`; the next `akm upgrade`
 retries.
 
 #### Prereleases (`--next`)
+
+`--next` is Deprecated; use `--channel`; removed in 0.11.
 
 `akm upgrade --next` means "newest available, prereleases included". The result
 carries `channel: "next"` (`"latest"` otherwise), plus the CLI's inferred `currentChannel` and each installed plugin's configured `channel` and `channelMismatch`.
@@ -1856,14 +1926,16 @@ Shipping akm inside your own product (a Docker image, a plugin's own
 full boot contract, JSON shapes, and exit codes.
 
 `akm upgrade` replaces the binary in place for its own install method, but a
-scheduler binding recorded by an earlier `akm task sync` under a *different*
+scheduler binding recorded by an earlier `akm doctor scheduler sync` under a *different*
 install method is not repointed automatically — the scheduler runs the
 binary path recorded at sync time, not whichever akm `upgrade` just
-installed. Run `akm task sync` after switching installers so scheduled runs
-pick up the new binary; see [`task sync`](#task) and `akm health`'s
+installed. Run `akm doctor scheduler sync` after switching installers so scheduled runs
+pick up the new binary; see [`doctor scheduler sync`](#doctor) and `akm doctor`'s
 `scheduler-binary` advisory.
 
 ### clone
+
+Deprecated; use `akm import <ref> --asset-ref`; removed in 0.11.
 
 Copy an asset from any source into a managed writable bundle or an unmanaged
 custom destination for editing.
@@ -2052,7 +2124,9 @@ listing: it also returns `README` and scripts under `rules/` and stops at 20.
 
 #### Usage list (`--by-usage`)
 
-`akm search --by-usage` lists the eligible assets that were shown in the project in force,
+`search --by-usage` is Deprecated in 0.10.261120; use `akm doctor metrics assets`, which takes the same flags and returns the same fields; removed in 0.11.
+
+`akm doctor metrics assets` (formerly `akm search --by-usage`) lists the eligible assets that were shown in the project in force,
 most shown first. It applies the project's `from`, `filters` and your flags like any search, takes no
 query (one given is ignored with a warning) and no `--from registry|all` (warned; local is
 used), orders by use instead of `--prefer`, records no usage event, and leaves rules out
@@ -2068,10 +2142,10 @@ only. `--project none` counts every show. Reads that must not raise their own co
 session-start hook, an automatic rule read) run with `AKM_EVENT_SOURCE` set to `unknown`
 (or `audit`), which is not user demand.
 
-**Plugin recipe.** With the project resolved: `akm search --by-usage --detail normal
+**Plugin recipe.** With the project resolved: `akm doctor metrics assets --detail normal
 [--project <p>]`, run in the session directory. With no project resolved, read the default
 bundle with no selection: `--project none --from <defaultBundle>` on both the rules listing
-and `--by-usage`, where `<defaultBundle>` is `akm config get defaultBundle`. If none is
+and `doctor metrics assets`, where `<defaultBundle>` is `akm config get defaultBundle`. If none is
 configured there is no bundle to name (neither `--from <name>` nor `--from <path>` accepts the
 primary stash), so pass `--project none` without `--from`; every enabled bundle is then read.
 
@@ -2103,12 +2177,6 @@ akm remember "VPN required for staging deploys" \
   --expires 90d \
   --source "skills/deploy"
 
-# Opt-in heuristic tagging — derives `code`, `source`, `observed`, `subjective`:
-akm remember "Found this snippet: \`curl -fsSL ... | bash\`" --tag ops --auto
-
-# Opt-in LLM enrichment (requires configured LLM endpoint; fails soft):
-akm remember "Long meeting notes..." --enrich
-
 # Scope a memory to a user, agent, run or channel:
 akm remember "Use staging cluster for blue-green" \
   --user alice --agent claude --run run-42 --channel "#ops"
@@ -2138,8 +2206,8 @@ akm remember "Deployment needs VPN access" --bundle team-bundle
 | `--source <s>` | Free-form source reference — URL, asset ref, file path, or any string. No tags required. |
 | `--xref <ref>` | Cross-reference ref recorded in the memory's `xrefs:` frontmatter list. Repeatable: `--xref knowledge/auth-flow --xref memories/vpn-note`. Each ref must resolve in the write target or a configured source (read-only sources count); an unresolvable ref fails with exit 2 before anything is written. More than 5 refs warns (soft cap) but still writes. |
 | `--supersedes <ref>` | Ref of an existing asset this memory corrects. Repeatable. Writes the correction with the old ref folded into its `xrefs:` (correction provenance) AND demotes the old asset — `beliefState: superseded` + `supersededBy: [<new ref>]`, a metadata-only frontmatter edit that preserves every other key and the body — then reindexes it so `--belief current` hides the stale version immediately. An unresolvable ref fails with exit 2 before anything is written or demoted; so does a ref naming the asset being written itself (a correction cannot supersede itself, e.g. `--force` overwriting the same name). A ref that resolves only outside the write target and the working bundle still writes the correction but skips the demotion: stderr warns and the JSON output reports `superseded: [{ref, applied: false, reason}]` — the reason names the `--bundle` remedy when the old asset lives in a configured writable source. An old asset whose existing frontmatter is not parseable YAML is skipped the same way (`applied: false`) instead of being rewritten lossily. Re-running the same correction is idempotent. On a git write target the correction and the demoted old asset land in the same single boundary commit. |
-| `--auto` | Apply heuristic tagging from the body (opt-in, zero-latency, pure TS) |
-| `--enrich` | Call the configured LLM for tag/description proposals (opt-in, 10s timeout, fails soft) |
+| `--auto` | Deprecated in 0.10.261120; removed in 0.11 with no replacement flag. Apply heuristic tagging from the body (opt-in, zero-latency, pure TS) |
+| `--enrich` | Deprecated in 0.10.261120; removed in 0.11 with no replacement flag (enrichment moves to improve). Call the configured LLM for tag/description proposals (opt-in, 10s timeout, fails soft) |
 | `--user <id>` | Scope this memory to a user id. Persisted as the canonical `scope_user` frontmatter key. |
 | `--agent <id>` | Scope this memory to an agent id. Persisted as `scope_agent`. |
 | `--run <id>` | Scope this memory to a run id. Persisted as `scope_run`. |
@@ -2191,8 +2259,8 @@ both assets untouched — no partial correction.
 
 ### import
 
-The additive asset and task modes below are implemented for the next 0.10.x
-release (version pending); existing document imports keep their semantics.
+The additive asset and task modes below first shipped in 0.10.261119 and replace
+`akm clone` and `akm task add`; existing document imports keep their semantics.
 
 - `akm import <ref> --asset-ref` delegates to `clone`, preserving asset type,
   companion files, provenance, `--name`, `--force`, and managed `--bundle` versus
@@ -2201,13 +2269,15 @@ release (version pending); existing document imports keep their semantics.
   schema and writes the authored YAML into `tasks/`. Only local files are
   accepted. `--name` overrides the filename-derived task id; `--force` permits
   replacing an existing task. `--bundle` selects the managed destination.
-  New tasks stay disabled until `task enable`; updates preserve host activation,
+  New tasks stay disabled until `akm task enable`; updates preserve host activation,
   including legacy activation without `scheduler.enabled`. For a new task,
   legacy installed activations are captured before its file exists and a stale
-  activation for that ref is removed before publishing the file. If a later
+  activation for that ref is removed before publishing the file. Writing
+  `scheduler.enabled` here is deliberate: it keeps a stale scheduler row from
+  activating the new task. If a later
   file write fails, that disabled host choice remains recorded. Import never
   installs, updates, or removes
-  native scheduler entries. Run `task sync` when an enabled task's definition
+  native scheduler entries. Run `akm doctor scheduler sync` when an enabled task's definition
   changes and its native schedule needs reconciliation.
 
 These modes are mutually exclusive and reject document-only `--path`, `--xref`,
@@ -2309,7 +2379,7 @@ margin between them. When embeddings contribute too, the two channels' ranks spr
 and a vote breaks only near-ties. Only feedback recorded as the user in the last 90 days counts, not
 feedback from improve, task or audit runs; the output's `rankingUpdate.applied`
 says which it was (`true`, or `false` with a `reason`).
-Feedback also updates the utility score that improve and `akm metrics` read.
+Feedback also updates the utility score that improve and `akm doctor metrics` read.
 
 ```sh
 akm feedback scripts/deploy.sh --positive
@@ -2350,6 +2420,8 @@ kept in the lesson's `lessonStrength[]` frontmatter. Search ranking does not
 use it.
 
 ### log
+
+Deprecated; use `akm doctor log`; removed in 0.11.
 
 Append-only realtime events stream (#204). Every mutating CLI verb appends an
 event row to `<dataDir>/state.db`; `akm log` reads it.
@@ -2990,8 +3062,8 @@ akm run <workflow-run-id>                 # Continue the frozen run
 
 | Resolved type | Inputs and controls | Result |
 | --- | --- | --- |
-| Agent | `--prompt` or `--prompt-stdin`, execution selection, `--timeout-ms`, `--cwd`; a persona requires a prompt | Existing `agent-result` and exit status |
-| Command | Exact `--arguments` substitution, `--agent`, execution selection, `--timeout-ms`, `--cwd`, `--dry-run` | Existing `agent-result` or `command-dry-run` |
+| Agent | `--prompt` or `--prompt-stdin`, execution selection, `--timeout`, `--cwd`; a persona requires a prompt | Existing `agent-result` and exit status |
+| Command | Exact `--arguments` substitution, `--agent`, execution selection, `--timeout`, `--cwd`, `--dry-run` | Existing `agent-result` or `command-dry-run` |
 | Task | Exact-name declared input flags, including repeated array values; `--bundle` and `--scheduled` | Existing `task-run`, history/log writes, and task exit status |
 | Workflow | Exact-name declared parameter flags, `--max-steps`, `--max-retries`, `--timeout`, `--skip-if-locked` | Existing `workflow-run`, journal, gates and exit status |
 
@@ -3013,13 +3085,15 @@ text through `--prompt` or `--prompt-stdin`.
 
 ### command run
 
+Deprecated; use `akm run <command-ref>`; removed in 0.11.
+
 Resolve a stored command through its owning bundle adapter and execute one
 fresh session. It runs on the default harness, else on akm's own runtime over
 the default connection, unless a flag or the command's own frontmatter names a
 connection or harness (see [Configuration](configuration.md#where-each-process-runs)):
 
 ```sh
-akm command run <command-ref> [--arguments <exact-text>] [--agent <selector>] [--connection <name> | --harness <name>] [--model <id-or-alias>] [--timeout-ms <ms>] [--cwd <path>] [--dry-run]
+akm command run <command-ref> [--arguments <exact-text>] [--agent <selector>] [--connection <name> | --harness <name>] [--model <id-or-alias>] [--timeout <duration>] [--cwd <path>] [--dry-run]
 ```
 
 `--dry-run` does not dispatch and does not materialize credentials.
@@ -3031,8 +3105,8 @@ akm command run <command-ref> [--arguments <exact-text>] [--agent <selector>] [-
 | `--agent <selector>` | Portable `agents/...` ref or a native harness selector |
 | `--connection <name>` / `--harness <name>` | Current-invocation connection or harness override (mutually exclusive) |
 | `--model <id-or-alias>` | Current-invocation model: an alias (`fast`, `balanced`, `reasoning`) or an exact name |
-| `--timeout <duration>` | Duration alias for `--timeout-ms`; see [Timeout durations](#timeout-durations). |
-| `--timeout-ms <ms>` | Current-invocation timeout override |
+| `--timeout <duration>` | The replacement for `--timeout-ms`, as a duration; see [Timeout durations](#timeout-durations). |
+| `--timeout-ms <ms>` | Deprecated; use `--timeout`; removed in 0.11. Current-invocation timeout override |
 | `--cwd <path>` | Current-invocation workspace override |
 | `--dry-run` | Resolve and lower the command without dispatching or materializing credentials |
 
@@ -3071,13 +3145,15 @@ that consume stdout.
 
 ### agent
 
+Deprecated for an agent ref; use `akm run <agent-ref>`; removed in 0.11. The no-ref interactive launch has no replacement: run the agent's own CLI.
+
 Run an agent on a harness, or on akm's own runtime over a connection, optionally
 embodying a bundle agent persona. Run `akm agent --help` for the options. Stored
-command assets execute only through `akm command run`; `akm agent` has no
+command assets execute only through `akm command run` (or `akm run <command-ref>`); `akm agent` has no
 command compatibility alias.
 
 ```sh
-akm agent [<agent-ref>] [--connection <name> | --harness <name>] [--prompt <text>] [--model <model>] [--timeout-ms <ms>] [--cwd <path>]
+akm agent [<agent-ref>] [--connection <name> | --harness <name>] [--prompt <text>] [--model <model>] [--timeout <duration>] [--cwd <path>]
 ```
 
 | Argument / Flag | Description |
@@ -3086,8 +3162,8 @@ akm agent [<agent-ref>] [--connection <name> | --harness <name>] [--prompt <text
 | `--connection <name>` / `--harness <name\|platform>` | Connection or harness to run on, by name, a harness also by platform (mutually exclusive); default: the default harness, else akm's own runtime over the default connection |
 | `--prompt <text>` / `--prompt-stdin` | The task. Without one the harness starts interactively. |
 | `--model <model>` | An alias (`fast`, `balanced`, `reasoning`) or an exact model name; overrides the model in the agent asset |
-| `--timeout <duration>` | Duration alias for `--timeout-ms`; see [Timeout durations](#timeout-durations). |
-| `--timeout-ms <ms>` | Override the run's timeout in milliseconds |
+| `--timeout <duration>` | The replacement for `--timeout-ms`, as a duration; see [Timeout durations](#timeout-durations). |
+| `--timeout-ms <ms>` | Deprecated; use `--timeout`; removed in 0.11. Override the run's timeout in milliseconds |
 | `--cwd <path>` | Working directory for the run (defaults to the current directory) |
 
 With a prompt the agent runs the task, and its reply is the result's `stdout`.
@@ -3114,10 +3190,10 @@ akm agent --harness opencode
 akm agent --harness claude --prompt "summarize recent changes"
 
 # Embody a bundle agent asset:
-akm agent agents/code-reviewer --harness opencode --prompt "review src/"
+akm run agents/code-reviewer --harness opencode --prompt "review src/"
 
 # Model override with alias:
-akm agent agents/planner --harness claude --model reasoning --prompt "plan the sprint"
+akm run agents/planner --harness claude --model reasoning --prompt "plan the sprint"
 
 # Exact model name override:
 akm agent --harness opencode --model anthropic/claude-opus-4-7 --prompt "audit the API"
@@ -3197,11 +3273,11 @@ akm improve --harness claude            # run every call of this run, judges inc
 akm improve --no-sync                  # skip the pre-run and end-of-run git sync entirely (default: on for git-backed bundles)
 akm improve --sync --no-push           # commit only, skip the push after it
 akm improve --dry-run --strategy consolidate # preview which connection or harness and model each consolidate process would use; nothing is dispatched
-akm improve lessons/my-lesson --show-prompt --format text # print the composed reflect prompt for one asset, unwrapped; no lock/index/model call
-akm improve report                     # LLM usage/routing report for the most recent real run
-akm improve report --run <id>          # ...for one specific improve_runs id
-akm improve report --since 7d          # ...aggregated over every real run started in the last 7 days
-akm improve judge < revision.json      # reflect's quality judge on one revision (same as akm judge reflect.quality); writes nothing
+akm doctor prompt lessons/my-lesson --format text # print the composed reflect prompt for one asset, unwrapped; no lock/index/model call
+akm doctor metrics improve             # LLM usage/routing report for the most recent real run
+akm doctor metrics improve --run <id>  # ...for one specific improve_runs id
+akm doctor metrics improve --since 7d  # ...aggregated over every real run started in the last 7 days
+akm doctor judge reflect.quality < revision.json # reflect's quality judge on one revision; writes nothing
 ```
 
 | Flag | Description |
@@ -3210,15 +3286,15 @@ akm improve judge < revision.json      # reflect's quality judge on one revision
 | `--dry-run` | Show the schema-v2 result on stdout without creating config, learning data, state, cache, bundle, log, or result artifacts. Dry-run results are never persisted, including on errors or signals. Diagnostic CLI usage is still recorded separately in `metrics.db`. |
 | `--bundle` | Select the bundle the run improves and writes to (default: `defaultWriteTarget`, else the working bundle); only that bundle's assets are planned. When the ref scope is bundle-qualified, it must name the same bundle |
 | `--limit <n>` | Cap the refs the run processes, highest salience first (refs routed to distill only come last). Overrides the strategy's `processes.reflect.limit` and `limit` |
-| `--timeout <duration>` | Duration alias for `--timeout-ms`; see [Timeout durations](#timeout-durations). |
-| `--timeout-ms <ms>` | Wall-clock budget for the run (default: `7200000` = 2 hours) |
-| `--require-feedback-signal` | Turn the proactive-maintenance lane off for the run, so only assets with recent feedback are planned |
+| `--timeout <duration>` | The replacement for `--timeout-ms`, as a duration; see [Timeout durations](#timeout-durations). |
+| `--timeout-ms <ms>` | Deprecated; use `--timeout`; removed in 0.11. Wall-clock budget for the run (default: `7200000` = 2 hours) |
+| `--require-feedback-signal` | Deprecated; use a strategy with `processes.proactiveMaintenance.enabled: false`, selected with `--strategy`; removed in 0.11. Turn the proactive-maintenance lane off for the run, so only assets with recent feedback are planned |
 | `--strategy <name>` | Override the active improve strategy (a built-in or entry under `improve.strategies`); it chooses which processes run, never where |
 | `--connection <name>` / `--harness <name>` | Run every call of this run, judges included, on this connection or harness instead of the default; they are mutually exclusive |
 | `--model <alias\|name>` | The model for every call of this run: an alias (`fast`, `balanced`, `reasoning`) or an exact name |
 | `--json-to-stdout` | Also emit the full persisted JSON result on stdout for a live run. Without this flag, stdout stays empty. Dry-runs always emit their result and are never persisted. |
 | `--skip-if-locked` | If another improve run already holds the lock, skip gracefully (exit 0) instead of failing with "already running" (exit 75, `TransientError`, code `IMPROVE_LOCK_HELD` — field follow-up to #948: two legitimate `improve` invocations colliding on this lock is ordinary, retryable contention, not a broken config file). Use for high-frequency scheduled runs so they don't pile up failures while a longer run is in progress. |
-| `--show-prompt` | Print the composed reflect prompt (#952) for one asset and exit — before any lock, index write, or model call. Requires a fully-qualified asset ref as the scope (`akm improve lessons/my-lesson --show-prompt`); rejected with a type or whole-bundle scope. The default output format is JSON, which carries the prompt as a `prompt` field (escaped into one line) alongside `engine` (the connection or harness reflect would run on) and `engineKind` (`connection` or `harness`); pass `--format text` to print the prompt itself, unwrapped and readable by eye. |
+| `--show-prompt` | Deprecated; use `akm doctor prompt <ref>`; removed in 0.11. Print the composed reflect prompt (#952) for one asset and exit — before any lock, index write, or model call. Requires a fully-qualified asset ref as the scope (`akm improve lessons/my-lesson --show-prompt`); rejected with a type or whole-bundle scope. The default output format is JSON, which carries the prompt as a `prompt` field (escaped into one line) alongside `engine` (the connection or harness reflect would run on) and `engineKind` (`connection` or `harness`); pass `--format text` to print the prompt itself, unwrapped and readable by eye. |
 | `--sync` / `--no-sync` | Sync the git-backed primary bundle like `akm sync` (fetch and merge the upstream, commit, push) before the run, and commit (and optionally push) when it finishes. A conflict or fetch failure before the run only warns; the run continues on the local state. Default: on for git-backed bundles (per profile config). |
 | `--push` / `--no-push` | Push after the pre-run and end-of-run sync commits when writable with a remote configured. `--no-push` commits only, skipping the push. Default: per profile config (`true`). `sync.push` stays outside the autonomy gate — this is a per-run opt-out, not a default change. |
 
@@ -3308,7 +3384,13 @@ at most once a month. It picks only refs in the
 `search`, `curate` or `show`, or named by feedback, in the last 90 days, or new
 material no improve stage has processed. The planned refs are ranked by salience
 and cut to the limit; an explicit ref scope bypasses every gate. Use
-`--require-feedback-signal` to turn that lane off for the run.
+a strategy with `processes.proactiveMaintenance.enabled: false` (select it with
+`--strategy`) to turn that lane off for a run. The planned refs are the same as with
+the Deprecated `--require-feedback-signal`; only the skip label differs. With the
+flag, a candidate left out is always reported as `no_new_signal` ("no new signal
+since last proposal"). With the strategy it is `not_retrieved` ("not retrieved
+inside the usage window") when it has no feedback and search, curate and show
+did not return it in the last 90 days (and it is not new material).
 
 When the active strategy enables a process (or the triage judgment) that has no
 connection or harness to run on, the run does not silently do nothing for it:
@@ -3325,11 +3407,11 @@ with exit 78, naming what is missing, before it takes a lock, writes the index
 or opens a log, and `--dry-run` stops the same way. No flag asks for that. (The
 0.9 `--require-engines` is still accepted and does nothing, with one warning, so
 a task installed for 0.9 keeps running. It used to refuse the run unless every
-enabled process had a usable target; that check is gone, and `akm health`
-(`akm health && akm improve`, which stops on exit 4) is what checks whether each
+enabled process had a usable target; that check is gone, and `akm doctor`
+(`akm doctor && akm improve`, which stops on exit 4) is what checks whether each
 connection answers and each harness is installed.)
 
-`--timeout-ms` is a run-wide wall-clock budget: when it expires, the run
+`--timeout` (or the Deprecated `--timeout-ms`) is a run-wide wall-clock budget: when it expires, the run
 cooperatively aborts any in-flight model request (the same `AbortSignal`
 every LLM call already honors) instead of waiting out the call's own,
 much longer, timeout — the run then finishes and reports normally
@@ -3375,12 +3457,12 @@ step's summary) the field is named `engine` and always holds a connection or
 harness name; scripts can rely on it. This table is resolved
 before any dispatch on every invocation (dry or live), so
 `akm improve --dry-run --strategy <name>` previews an ad-hoc strategy override
-without changing config first; `akm health` and `akm info` print the same
+without changing config first; `akm doctor` and `akm doctor info` print the same
 resolution for every kind of work, whichever strategy runs. `--dry-run` does not
-probe reachability over the network — run `akm health` to check whether a
+probe reachability over the network — run `akm doctor` to check whether a
 connection actually answers.
 
-`--show-prompt` (#952) is the cheapest way to exercise reflect alone: it
+`akm doctor prompt <ref>` (formerly `--show-prompt`, #952) is the cheapest way to exercise reflect alone: it
 builds the exact prompt reflect would send for one asset — the same source
 resolution, runner selection, feedback/schema-hint/rejected-proposal
 gathering `akm improve`'s live reflect step uses — and prints it
@@ -3397,6 +3479,8 @@ When reinforced facts need promotion, `knowledge` is the higher-authority
 destination than `memory`.
 
 #### improve report
+
+Deprecated in 0.10.261120; use `akm doctor metrics improve` (same `--run` and `--since`); removed in 0.11.
 
 `akm improve report` (#944) answers "which connection or harness did each model-calling process
 use this run, how much did it cost, and which enabled processes made zero
@@ -3442,6 +3526,8 @@ support.
 
 #### improve judge
 
+Deprecated; use `akm doctor judge`; removed in 0.11.
+
 `akm improve judge` (a real subcommand; no flags) is `akm judge reflect.quality`
 for one revision, kept for callers that read its older shape. It reads
 `{"source": "...", "candidate": "...", "feedback": "...", "ref": "..."}` JSON from
@@ -3453,6 +3539,8 @@ harness that judged. A `score` of `-1` means the judge gave no verdict. It write
 nothing. Its `--strategy` flag is gone: a strategy never chose where a judge runs.
 
 ### judge
+
+Deprecated; use `akm doctor judge`; removed in 0.11.
 
 ```sh
 akm judge --list                                  # the registered judges
@@ -3532,32 +3620,33 @@ false` stops it: the run then makes no model call, resolves no connection or har
 returns `ok: true` with no sessions and a warning that says so.
 
 ```sh
-akm proposal extract --type claude --session-id <id>
-akm proposal extract --type claude --since 24h
-akm proposal extract --type opencode --since 7d --dry-run
-akm proposal extract --type codex --since 24h
+akm proposal extract --sessions claude --session-id <id>
+akm proposal extract --sessions claude --since 24h
+akm proposal extract --sessions opencode --since 7d --dry-run
+akm proposal extract --sessions codex --since 24h
 akm proposal extract --auto                 # iterate every available harness
-akm proposal extract --type claude --location /custom/path --session-id <id>
+akm proposal extract --sessions claude --location /custom/path --session-id <id>
 ```
 
 | Flag | Description |
 | --- | --- |
-| `--type <harness>` | Harness name (`claude`, `codex`, `opencode`). Required unless `--auto`. |
+| `--sessions <harness>` | Session source: `claude`, `codex` or `opencode`. Required unless `--auto`. |
+| `--type <harness>` | Deprecated in 0.10.261120; use `--sessions`; removed in 0.11. Same values and behavior. |
 | `--session-id <id>` | Process only this session ID. When absent, discover sessions via `--since`. |
 | `--location <path>` | Override the harness's default session-discovery location. |
 | `--since <cutoff>` | Discovery cutoff. ISO timestamp or duration (`24h`, `7d`, `30m`). Default `24h`. |
-| `--auto` | Iterate every available harness with the default `--since`. Mutually exclusive with `--type`. |
+| `--auto` | Iterate every available harness with the default `--since`. Mutually exclusive with `--sessions`. |
 | `--dry-run` | Show candidates without queuing proposals. |
 | `--force` | Re-process sessions even if they were already extracted and have no new events. Default: skip already-seen sessions. |
-| `--timeout <duration>` | Duration alias for `--timeout-ms`; see [Timeout durations](#timeout-durations). |
-| `--timeout-ms <ms>` | Per-session LLM timeout in ms. Default: the selected connection's or harness's own timeout. |
+| `--timeout <duration>` | The replacement for `--timeout-ms`, as a duration; see [Timeout durations](#timeout-durations). |
+| `--timeout-ms <ms>` | Deprecated; use `--timeout`; removed in 0.11. Per-session LLM timeout in ms. Default: the selected connection's or harness's own timeout. |
 | `--connection <name>` / `--harness <name\|platform>` | Connection or harness for this invocation, by name, a harness also by platform (mutually exclusive). |
 | `--model <alias\|name>` | Model for this invocation: an alias or an exact name. |
 | `--strategy <name>` | Improve strategy supplying extract behavior; it never chooses where the model runs. |
 | `--user <id>` / `--agent <id>` / `--run <id>` / `--channel <name>` | Scope stamped on every proposal, as for `akm remember` (`scope_*` frontmatter). A scope the model writes is never used. |
 | `--project <name>` | Use this [project](#projects)'s `write.user`, `agent`, `channel` and `metadata` for every session, instead of the project each session's own directory selects; `none` uses none. `write.bundle` is never used by extract. |
 
-`--type` and `--auto` are mutually exclusive; one of them is required.
+`--sessions` (or the Deprecated `--type`) and `--auto` are mutually exclusive; one of them is required.
 `--auto` iterates `getAvailableHarnesses()` — every harness with a detectable
 session-log location on the current machine — and returns an aggregated
 `extract-auto-result` envelope (`harnessesProcessed`, `totalProposals`,
@@ -3640,8 +3729,8 @@ akm proposal new skill code-review --bundle team --task "PR-style review skill" 
 | `--file` | Read task text from a UTF-8 file |
 | `--connection` / `--harness` | Override the default connection or harness, by name, a harness also by platform (mutually exclusive) |
 | `--model` | Override the model: an alias or an exact name |
-| `--timeout <duration>` | Duration alias for `--timeout-ms`; see [Timeout durations](#timeout-durations). |
-| `--timeout-ms` | Override the selected connection's or harness's timeout for this call |
+| `--timeout <duration>` | The replacement for `--timeout-ms`, as a duration; see [Timeout durations](#timeout-durations). |
+| `--timeout-ms` | Deprecated; use `--timeout`; removed in 0.11. Override the selected connection's or harness's timeout for this call |
 | `--user` / `--agent` / `--run` / `--channel` | Scope stamped on the proposal, as for `akm remember` (`scope_*` frontmatter). A scope the model writes is replaced by these flags (none given: removed), with one warning. |
 | `--project <name>` | Use this [project](#projects)'s write defaults (`write.user`, `agent`, `channel`, `metadata`, and `write.bundle` as the destination) instead of the one the working directory selects; `none` uses none. |
 
@@ -4009,63 +4098,77 @@ not a reason to record against it.
 shell commands. It manages on-disk task definitions under
 `<bundle>/tasks/<id>.yml` and reconciles them with the OS-native scheduler
 (cron / launchd / schtasks). Task source v4 YAML (`version: 4`) is the only
-executable source contract this release accepts; `akm task add` writes v4 —
-see the canonical [Tasks reference](tasks.md). The
+executable source contract this release accepts; `akm import <file> --type task`
+imports a v4 file — see the canonical [Tasks reference](tasks.md). The
 group is `add | enable | disable | run | explain | validate | sync | doctor | history | prune`
 — there is no `show` or `remove`; use `akm show tasks/<id>` to inspect one
-task. Use `task enable` / `task disable` for host-local activation; edit the
+task. Only `enable`, `disable` and `validate` are current. The rest are
+Deprecated, removed in 0.11:
+
+| Deprecated | Use |
+| --- | --- |
+| `task add` | `akm import <file> --type task`, then `akm task enable <ref>` |
+| `task run` | `akm run <bundle>//tasks/<id>` |
+| `task sync` | `akm doctor scheduler sync` |
+| `task prune` | `akm doctor scheduler sync --prune` (preview; `--yes` to remove) |
+| `task doctor` | `akm doctor` (its `scheduler` field) |
+| `task explain` | `akm doctor explain <ref>` |
+| `task history` | `akm doctor log --task <id>` |
+
+`task sync`, `prune`, `doctor`, `explain` and `history` are Deprecated in
+0.10.261120; `task add` and `task run` since 0.10.261119. The sections below
+describe the Deprecated commands and name the replacement. Use `task enable` / `task disable` for host-local activation; edit the
 file only to change the authored schedule or remove the task.
 List tasks with `akm search --type task`.
 
 ```sh
 akm search --type task                       # List tasks (cross-bundle)
 akm show tasks/<id>                          # Inspect one task
-akm task add <id> --schedule "@daily" \     # Register a new task and install it
-  --command "akm improve --strategy default"
-akm task add review --schedule "@daily" --prompt "Review recent changes" --harness reviewer
-akm task add nightly --schedule "@daily" --command "akm improve" --disabled  # register but leave off
-akm task add nightly --schedule "@daily" --command "akm improve" --force    # overwrite an existing task id
+akm import ./nightly.yml --type task         # Import a task file (disabled; --name sets the id)
+akm import ./nightly.yml --type task --force # Overwrite an existing task id
 akm task enable team//tasks/nightly       # Add local activation and sync its bundle
 akm task disable team//tasks/nightly      # Remove local activation and unschedule it
-akm task run <id>                           # Execute now (what the scheduler calls)
-akm task explain <ref>                      # Read-only: declared inputs, target, schedule — spawns nothing
-akm task history [<id>] [--id <id>] [--limit <n>]  # Recent runs from state.db (positional id == --id)
-akm task sync                               # Reconcile activated refs from all enabled configured bundles
-akm task sync --dry-run                     # Preview the reconcile — zero scheduler writes
-akm task sync --rebind                      # Also capture the current installed runtime
-akm task doctor                             # Report scheduler backend + paths
-akm task prune                              # Preview orphaned scheduler entries — zero writes
-akm task prune --yes                        # Remove every currently-computed orphan
-akm task prune --id ghost,stale --yes       # Remove only the named orphan ids
+akm run team//tasks/nightly                 # Execute now (what the scheduler calls)
+akm doctor explain team//tasks/nightly      # Read-only: declared inputs, target, schedule — spawns nothing
+akm doctor log --task <id> [--bundle <name>] [--limit <n>]  # Recent runs from state.db
+akm doctor scheduler sync                   # Reconcile activated refs from all enabled configured bundles
+akm doctor scheduler sync --dry-run         # Preview the reconcile — zero scheduler writes
+akm doctor scheduler sync --rebind          # Also capture the current installed runtime
+akm doctor                                  # Health, plus a `scheduler` field: backend + paths
+akm doctor scheduler sync --prune           # Preview orphaned scheduler entries — zero writes
+akm doctor scheduler sync --prune --yes     # Remove every currently-computed orphan
+akm doctor scheduler sync --prune --id ghost,stale --yes  # Remove only the named orphan ids
 ```
 
-`task add` also accepts `--disabled` (write the task but leave its ref out of
+The Deprecated `task add` also accepts `--disabled` (write the task but leave its ref out of
 this host's scheduler activation), `--force` (overwrite an existing task with
 the same id), and `--rebind` (also point the bundle's installed scheduler rows
-at this akm invocation, as `akm task sync --rebind` does).
+at this akm invocation, as `akm doctor scheduler sync --rebind` does).
 
-`akm task explain <ref> [input flags]` prints a task's declared `inputs:`,
+`akm doctor explain <ref> [input flags]` (formerly `akm task explain`) prints a task's declared `inputs:`,
 the values that would actually be supplied (with provenance), the resolved
 target, effective execution settings, and schedule bindings — **read-only**:
 it never spawns anything, writes history, or touches the scheduler. A
 secret-shaped value prints as `<redacted>`. See
-[`akm task explain`](tasks.md#akm-task-explain).
+[`akm doctor explain`](tasks.md#akm-task-explain).
 
-`akm task run` is what cron / launchd / schtasks invoke at the scheduled
-time. Each run is recorded as a row in the durable `task_history` table
-(`state.db`), surfaced by `akm task history` — **not** by `akm log`; there is
-no `task_invoked`/`task_completed` event type on the `akm log` stream.
+Through 0.10 the OS scheduler invokes `akm task run <id> --scheduled` at the
+scheduled time (that invocation prints no deprecation notice); run a task by hand
+with `akm run <ref>`. Each run is recorded as a row in the durable `task_history`
+table (`state.db`), surfaced by `akm doctor log --task <id>` — **not** by the
+event stream (`akm doctor log` without `--task`); there is no
+`task_invoked`/`task_completed` event type on that stream.
 
 Task source cannot enable itself. `akm task enable <fully-qualified-ref>` adds
 the ref to this host's `scheduler.enabled` list and syncs that bundle; `akm task disable` removes it and unschedules the task.
-Manual `akm task run` remains available. To remove a task, delete its file
-(`<bundle>/tasks/<id>.yml`) and run `akm task sync` — sync uninstalls the
+Manual `akm run <ref>` remains available. To remove a task, delete its file
+(`<bundle>/tasks/<id>.yml`) and run `akm doctor scheduler sync` — sync uninstalls the
 orphaned scheduler entry.
 
 A config with no `scheduler.enabled` list at all (written before 0.9.17)
-means "keep what is installed": `akm task sync` takes the akm-written rows
+means "keep what is installed": `akm doctor scheduler sync` takes the akm-written rows
 already in the scheduler as this host's choice and writes the list; an
-explicit list is never second-guessed. `akm task sync --dry-run` prints the
+explicit list is never second-guessed. `akm doctor scheduler sync --dry-run` prints the
 planned adds/updates/removes (removals carry their owning bundle) without
 touching the scheduler — zero writes. Exits non-zero when removals are pending, so it can
 gate a CI/health check on "sync would change something."
@@ -4085,7 +4188,7 @@ non-empty `failures` still exits non-zero, same as a pending removal. A
 crontab whose akm markers are malformed is refused unmodified, and another
 akm process holding the scheduler lock makes sync exit 75 (retry shortly).
 
-`akm task prune` reclaims installed scheduler entries that `sync` can never
+`akm doctor scheduler sync --prune` reclaims installed scheduler entries that `sync` can never
 clean up on its own: entries that no longer resolve to a live bundle (a row
 whose `AKM_BUNDLE_DIR` names a directory that is gone, or a row written
 before 0.9.17-alpha.7 whose `--scheduler-context` descriptor cannot be
@@ -4099,37 +4202,35 @@ candidate (not installed, or it still resolves to a live bundle) is
 refused with a usage error and removes nothing.
 
 Scheduler activation is host-local config and captures the installed akm
-runtime. Ordinary `task sync` reconciles activated refs from all enabled
-configured bundles while preserving that runtime binding. Use `task sync
---rebind` only after intentionally moving or
+runtime. Ordinary `akm doctor scheduler sync` reconciles activated refs from all enabled
+configured bundles while preserving that runtime binding. Use `akm doctor scheduler sync --rebind` only after intentionally moving or
 replacing the installation, or to repair a stale runtime path, then verify the
-result with `akm task doctor`. Interactive `akm setup` reviews every embedded
+result with `akm doctor`. Interactive `akm setup` reviews every embedded
 task template (both the core set and the improve-schedule set) and asks once
 before changing task files or scheduler state; non-interactive setup changes
 neither.
 
-Because the scheduler runs the exact binary path recorded at the last `task
-sync`, upgrading akm through a different installer than the one active at
+Because the scheduler runs the exact binary path recorded at the last `akm doctor scheduler sync`, upgrading akm through a different installer than the one active at
 that sync (npm-global to a standalone download, or vice versa) leaves
-scheduled runs invoking the old, now-stale binary — `task sync` re-resolves
-the current path and repoints them. `akm health --probe`'s `scheduler-binary`
+scheduled runs invoking the old, now-stale binary — `akm doctor scheduler sync` re-resolves
+the current path and repoints them. `akm doctor`'s `scheduler-binary`
 advisory warns when the two diverge, naming both versions.
 
 Setup reconfiguration preserves existing scheduler runtime bindings. Changing
 the AKM storage path or installed runtime path therefore requires an explicit
-`akm task sync --rebind`; setup does not silently migrate those entries.
+`akm doctor scheduler sync --rebind`; setup does not silently migrate those entries.
 
 **Bundle targeting (`--bundle <bundle>`).** By default read/write commands
 operate on the primary/default bundle, while an unscoped `sync` reconciles all
 enabled configured bundles. `add`, `enable`, `disable`, `history`, `sync`,
 `run`, and `explain` accept `--bundle <bundle>` to schedule, reconcile, or inspect
-tasks that live in another configured bundle (`doctor` reports scheduler-wide
+tasks that live in another configured bundle (`akm doctor` reports scheduler-wide
 state and takes no `--bundle`; `validate` takes a bare filesystem path
 instead of a ref, so it has no bundle to target either):
 
 ```sh
-akm task add nightly --schedule "@daily" --command "akm improve" --bundle team-bundle
-akm task sync --bundle team-bundle             # reconcile only that bundle
+akm import ./nightly.yml --type task --bundle team-bundle
+akm doctor scheduler sync --bundle team-bundle             # reconcile only that bundle
 ```
 
 A non-default bundle is recorded in the installed scheduler entry as a
@@ -4140,7 +4241,7 @@ transaction. Scheduler ids are the bare task id and
 are never namespaced: registering a task whose id is already scheduled from a
 different bundle is a hard error.
 
-`task add` accepts exactly one CLI target selector (`--workflow <ref>`,
+The Deprecated `task add` accepts exactly one CLI target selector (`--workflow <ref>`,
 `--prompt <text-or-ref>`, or `--command <shell>`) and writes a task source v4
 document (`version: 4`). In the file, exactly one of `uses` or `run` is
 allowed. `uses` accepts command, workflow, and script refs plus `akm/command`;
@@ -4188,7 +4289,7 @@ values) remain the non-CLI way a scheduled definition supplies its new-run
 parameter snapshot.
 
 **Workflow-task run bounds.** Top-level `timeout`, `maxSteps`, and
-`maxRetries` correspond to `akm workflow run --timeout`, `--max-steps`, and
+`maxRetries` correspond to `akm run --timeout`, `--max-steps`, and
 `--max-retries`. Unlike the interactive command, a scheduled workflow task gets
 a **default whole-run timeout of 6 hours**
 (`DEFAULT_WORKFLOW_TASK_TIMEOUT_MS`): nobody is at the terminal to Ctrl-C an
@@ -4196,7 +4297,7 @@ unattended run, so without one a single wedged unit hangs the task forever. An
 explicit `timeout` always wins, and `timeout: null` opts out entirely. On
 expiry the runner aborts the run's signal, which the engine treats as a
 graceful break at the next step boundary — the journal is kept and the run
-stays active, and `akm workflow run <run-id>` continues it (the run id is in the task
+stays active, and `akm run <run-id>` continues it (the run id is in the task
 run's `detail.error` and log). The attempt itself is recorded as `failed`, so
 the OS scheduler sees a non-zero exit.
 
@@ -4217,7 +4318,7 @@ maxRetries: 1      # optional
 
 `akm doctor metrics usage` reports local command attempts, explicit argument counts,
 argument combinations, instance adoption, failures and duration summaries. Existing
-`akm metrics` and bare `akm doctor metrics` keep their existing report.
+`akm metrics` (Deprecated) and bare `akm doctor metrics` keep their existing report.
 
 ```sh
 akm doctor metrics usage --since 30d --format json
@@ -4233,8 +4334,11 @@ are a subset of the aggregates. A report includes its own unfinished attempt.
 
 Collection is enabled at CLI entry, before the full configuration is read (only `usage.capture` is read, from the selected config file, and a missing or broken file leaves capture on), with no network
 transmission and no sampling. `AKM_EVENT_SOURCE=user|agent|task|improve|audit` supplies
-known provenance; absent/invalid values become `unknown`. No identity is inferred
-from a terminal. This store never feeds learning or ranking.
+known provenance and wins. Without it the source is `agent` when an agent harness
+is detected from the environment (the way usage events detect it), else `unknown`;
+nothing is inferred from a terminal. When a harness is detected, rows and aggregates
+also carry its name as an optional `harness` field (absent otherwise; no schema
+change). This store never feeds learning or ranking.
 
 Only declared argument identities and recognized command spellings are retained.
 Free text, paths, URLs, refs, prompts, credentials and unknown flag/command names
@@ -4258,4 +4362,4 @@ SIGKILL cannot run a completion handler. `--read-only` records nothing; `help`,
 turns capture off (see [Configuration](configuration.md#usage)). Read-only
 workspace SDK operations never start CLI collection.
 
-First released version: pending.
+First released in 0.10.261119; the inferred `source` and the `harness` field are new in 0.10.261120.
