@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261120] - 2026-11-12
+
 ### Deprecated
 
 - The `extends` config key is Deprecated and removed in 0.11: a config that sets it now prints one line to stderr per process (`--quiet` silences it), and `extends` works as before. Copy the inherited settings into the config file; `config get <key> --show-source` shows which keys come from the base.
