@@ -268,6 +268,8 @@ export function startUsage(root: UsageCommand, raw: readonly string[], version: 
   let dimensions: Record<string, unknown> = {};
   let data: Record<string, unknown> = {};
   const source = resolveCliUsageSource(process.env);
+  const harness = resolveAgentIdentity(process.env).harness;
+  const harnessField = harness ? { harness } : {};
   try {
     const usage = describeUsage(root, raw);
     // `--read-only` promises no writes, and the config key turns capture off.
@@ -281,8 +283,8 @@ export function startUsage(root: UsageCommand, raw: readonly string[], version: 
         .value;
       const ts = new Date(started).toISOString();
 
-      dimensions = { day: ts.slice(0, 10), version, source, instance, ...usage };
-      data = { schemaVersion: 1, id, ts, version, source, instance, ...usage };
+      dimensions = { day: ts.slice(0, 10), version, source, ...harnessField, instance, ...usage };
+      data = { schemaVersion: 1, id, ts, version, source, ...harnessField, instance, ...usage };
       key = JSON.stringify(dimensions);
       db.transaction(() => {
         db.prepare("INSERT INTO cli_usage_invocations(id,ts,aggregate_key,data) VALUES (?,?,?,?)").run(

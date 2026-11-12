@@ -567,6 +567,49 @@ test("a CLI run under a harness records source agent", () => {
   expect(rows[0].source).toBe("agent");
 });
 
+test("harness id is recorded in details and aggregates only when detected; old rows still report", () => {
+  sandbox();
+  const base = { ...process.env, AKM_EVENT_SOURCE: undefined, AKM_AGENT_HARNESS: undefined };
+  expect(cli(["--version"], { ...base, AKM_AGENT_HARNESS: "opencode" }).status).toBe(0);
+  expect(cli(["--version"], base).status).toBe(0);
+  const result = report();
+  const roots = result.details.filter((row: { command: string[] }) => row.command.length === 0);
+  const withHarness = roots.find((row: { harness?: string }) => row.harness !== undefined);
+  const without = roots.find((row: { harness?: string }) => row.harness === undefined);
+  expect(withHarness).toMatchObject({ source: "agent", harness: "opencode" });
+  expect(without).toBeDefined();
+  expect("harness" in without).toBe(false);
+  const aggs = result.aggregates.filter(
+    (row: { dimensions: { command: string[] } }) => row.dimensions.command.length === 0,
+  );
+  expect(aggs).toHaveLength(2);
+  expect(
+    aggs.filter((row: { dimensions: { harness?: string } }) => row.dimensions.harness === "opencode"),
+  ).toHaveLength(1);
+  const plain = aggs.find((row: { dimensions: { harness?: string } }) => !("harness" in row.dimensions));
+  // The no-harness aggregate identity is exactly the pre-change shape (no harness key).
+  expect(plain.key).not.toContain("harness");
+  expect(Object.keys(plain.dimensions).slice(0, 4)).toEqual(["day", "version", "source", "instance"]);
+
+  // A row written before this field existed (same shape, no harness) reads alongside new rows.
+  const db = openDatabase(path.join(getDataDir(), "metrics.db"));
+  const old = JSON.parse(JSON.stringify(without));
+  old.id = "00000000-old";
+  db.prepare("INSERT INTO cli_usage_invocations(id,ts,aggregate_key,data) VALUES (?,?,?,?)").run(
+    old.id,
+    old.ts,
+    plain.key,
+    JSON.stringify({ ...old, durationMs: undefined, exitCode: undefined, category: undefined }),
+  );
+  db.close();
+  const mixed = report();
+  const ids = mixed.details.filter((row: { command: string[] }) => row.command.length === 0);
+  expect(ids).toHaveLength(3);
+  expect(ids.filter((row: { harness?: string }) => row.harness === "opencode")).toHaveLength(1);
+  expect(ids.filter((row: { harness?: string }) => row.harness === undefined)).toHaveLength(2);
+  expect(mixed.schemaVersion).toBe(1);
+});
+
 test("a corrupt usage store is reported by bare akm doctor and is not recreated", () => {
   sandbox();
   const store = path.join(getDataDir(), "metrics.db");
