@@ -73,6 +73,35 @@ test("flags name their replacement; the no-ref agent form print nothing", () => 
   }
 });
 
+test("task history points at doctor log --task only when it names a task; the cross-task form says there is no replacement", () => {
+  const messages: string[] = [];
+  const noticeFor = (userArgs: string[]) => {
+    _resetWarnOnceForTests();
+    messages.length = 0;
+    _setWarnSinkForTests((_level, args) => messages.push(args.join(" ")));
+    const invocation = setParsedInvocation(["bun", "akm", ...userArgs]);
+    warnDeprecatedUse(
+      ["task", "history"],
+      invocation,
+      { task: { type: "positional" }, id: { type: "string" }, limit: { type: "string" } },
+      {},
+    );
+    return messages.join("\n");
+  };
+  try {
+    expect(noticeFor(["task", "history", "nightly"])).toContain("`akm doctor log --task <id>`");
+    expect(noticeFor(["task", "history", "--id", "nightly"])).toContain("`akm doctor log --task <id>`");
+    const bare = noticeFor(["task", "history", "--limit", "5"]);
+    expect(bare).not.toContain("doctor log");
+    expect(bare).toContain("no replacement");
+    expect(bare).toContain("akm doctor metrics");
+    expect(bare.split("\n")).toHaveLength(1);
+  } finally {
+    _setWarnSinkForTests(undefined);
+    _resetParsedInvocationForTests();
+  }
+});
+
 test("deprecated environment variables print one notice naming the replacement, once per process", () => {
   const messages: string[] = [];
   const notice = (userArgs: string[], env: NodeJS.ProcessEnv) => {

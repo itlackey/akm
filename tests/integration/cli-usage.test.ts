@@ -500,6 +500,45 @@ test("--read-only records nothing; help, version and info are still counted", ()
   }
 });
 
+function treeHash(...roots: string[]): string[] {
+  const out: string[] = [];
+  const walk = (entry: string) => {
+    if (!fs.existsSync(entry)) return;
+    const stat = fs.lstatSync(entry);
+    if (stat.isDirectory()) {
+      out.push(`${entry}/`);
+      for (const name of fs.readdirSync(entry).sort()) walk(path.join(entry, name));
+    } else {
+      out.push(`${entry} ${new Bun.CryptoHasher("sha256").update(fs.readFileSync(entry)).digest("hex")}`);
+    }
+  };
+  for (const root of roots) walk(root);
+  return out;
+}
+
+test("migrate status --read-only writes nothing, with and without an existing metrics.db", () => {
+  const storage = sandbox();
+  const roots = [storage.configDir, storage.dataDir, storage.stateDir];
+  // No metrics.db and no config directory yet: the plan must not create either.
+  fs.rmSync(getConfigDir(), { recursive: true, force: true });
+  let before = treeHash(...roots);
+  let result = cli(["migrate", "status", "--read-only", "--format", "json"]);
+  expect(result.status, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout).status).toBe("current");
+  expect(fs.existsSync(usageFile())).toBe(false);
+  expect(treeHash(...roots)).toEqual(before);
+  // An existing metrics.db is left byte-for-byte alone.
+  expect(cli(["--version"]).status).toBe(0);
+  expect(fs.existsSync(usageFile())).toBe(true);
+  before = treeHash(...roots);
+  result = cli(["migrate", "status", "--read-only", "--format", "json"]);
+  expect(result.status, result.stderr).toBe(0);
+  expect(treeHash(...roots)).toEqual(before);
+  // Without the flag the invocation is recorded as before.
+  expect(cli(["migrate", "status", "--format", "json"]).status).toBe(0);
+  expect(treeHash(...roots)).not.toEqual(before);
+});
+
 test("usage.capture: false turns capture off; a broken or odd config keeps it on", () => {
   sandbox();
   const configFile = path.join(getConfigDir(), "config.json");
