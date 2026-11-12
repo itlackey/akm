@@ -880,7 +880,7 @@ notes for Deprecated/Evolving changes and undocumented Experimental changes too.
 - [`docs/reference/data-and-telemetry.md`](./docs/reference/data-and-telemetry.md) — what
   state akm reads and writes locally.
 
-CLI invocation usage is additive local diagnostic state (first release pending).
+CLI invocation usage is additive local diagnostic state (first in 0.10.261119).
 `doctor metrics usage --export` is the stable part of `doctor metrics` JSON (schema version 1); preserve the `cli_usage_*` tables of `metrics.db` and their
 durable daily aggregates through the 0.11 migration. See the CLI usage reference
 for redaction and incomplete-observation limits.

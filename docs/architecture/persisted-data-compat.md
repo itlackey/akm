@@ -74,7 +74,7 @@ and named once, round-trips through ordinary writes, and is dropped by
 5. Add or extend the row in the table above, including a `Gap:` note if the
    code does not yet meet the contract — do not leave a mismatch undocumented.
 
-### CLI usage store (first release pending)
+### CLI usage store (since 0.10.261119)
 
 The CLI usage tables live in `metrics.db` in `getDataDir()`, the file 0.11 also
 uses for its rollup history (`src/core/metrics-db.ts` on `release/0.11.0`). They
