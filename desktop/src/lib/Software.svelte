@@ -40,7 +40,6 @@
       : "offer",
   );
   const channelName = (value: string) => (value === "next" ? "prerelease" : "stable");
-  const lockstep = $derived(data?.host.action?.upgrade?.lockstep ?? data?.host.upgrade?.lockstep);
   const outcomes = $derived((data?.host.action?.upgrade?.plugins ?? []).filter((item) => item.outcome));
   const outcomeText = (item: { harness: string; outcome?: string; reason?: string }) =>
     `${item.harness}: ${item.outcome}${item.reason ? ` (${item.reason})` : ""}${
@@ -303,13 +302,6 @@
       <div role="status">
         {#if data.host.receipt}<p class="notice">{data.host.receipt}</p>{/if}
         {#each outcomes as item (item.harness)}<p class="field-hint">{outcomeText(item)}</p>{/each}
-        {#if lockstep?.heldBack}<p class="field-hint">
-            The CLI is held at {lockstep.pinnedVersion ?? "its current version"}{lockstep.newestVersion
-              ? ` (newest is ${lockstep.newestVersion})`
-              : ""}{lockstep.plugin ? ` because the ${lockstep.plugin} plugin pins it` : ""}.{lockstep.reason
-              ? ` ${lockstep.reason}`
-              : ""}
-          </p>{/if}
         {#if data.host.upgrade?.installMethod === "package-local"}<p class="field-hint">
             This CLI belongs to another package, which owns its updates. Update it there.
           </p>{/if}

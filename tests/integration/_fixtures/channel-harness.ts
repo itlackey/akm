@@ -66,7 +66,7 @@ if (command === "git") {
   } else process.exit(2);
 } else if (command === "npm") {
   const channel = args[1]!.endsWith("@next") ? "next" : "latest";
-  output({ version: native(channel), "dependencies.akm-cli": native(channel) });
+  output({ version: native(channel) });
 } else if (command === "pgrep") {
   process.exit(1);
 } else if (command === "opencode") {

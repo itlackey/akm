@@ -46,8 +46,6 @@ export interface UpgradeSummary {
   targetChannel?: string;
   /** Each harness plugin akm found: the channel it follows (`latest`, `next`, `pinned`, `unknown`) and what the run did. */
   plugins?: Array<{ harness: string; channel?: string; outcome?: string; reason?: string }>;
-  /** Why the CLI is held below the newest release (an OpenCode plugin's pin), when akm says so. */
-  lockstep?: { heldBack?: boolean; plugin?: string; pinnedVersion?: string; newestVersion?: string; reason?: string };
   /** The status of the migration the upgrade ran: `current`, `applied`, `blocked`, `failed`, and so on. */
   migration?: string;
   postUpgradeFailed?: boolean;
@@ -761,15 +759,6 @@ export function summarizeUpgrade(result: Loose): UpgradeSummary {
           : {}),
       }));
   }
-  const lock = result?.lockstep;
-  if (lock && typeof lock === "object")
-    summary.lockstep = {
-      ...(typeof lock.heldBack === "boolean" ? { heldBack: lock.heldBack } : {}),
-      ...(typeof lock.plugin === "string" ? { plugin: lock.plugin } : {}),
-      ...(typeof lock.pinnedVersion === "string" ? { pinnedVersion: lock.pinnedVersion } : {}),
-      ...(typeof lock.newestVersion === "string" ? { newestVersion: lock.newestVersion } : {}),
-      ...(bounded(lock.reason) ? { reason: bounded(lock.reason) } : {}),
-    };
   if (typeof result?.migration?.status === "string") summary.migration = result.migration.status;
   if (result?.postUpgrade?.ok === false) summary.postUpgradeFailed = true;
   return summary;

@@ -4,8 +4,7 @@
 
 /**
  * The plugin half of `akm upgrade` (#1007): refresh the akm plugin of each
- * installed agent harness, and keep the CLI in version lockstep with the
- * OpenCode plugin. Update only: a plugin that is not installed is never
+ * installed agent harness. Update only: a plugin that is not installed is never
  * installed, and a harness without one is skipped. Every external command
  * runs with a timeout and its failure is captured on that harness's entry,
  * so a broken harness never aborts the CLI upgrade.
@@ -28,13 +27,7 @@ import { opencodeCacheDir, opencodeConfigDir } from "../../integrations/harnesse
 import { detectOpencodeMajor, OPENCODE_BIN, resolveOpencodeBin } from "../../integrations/harnesses/opencode/version";
 import { isExactSemver, isPrerelease } from "../../registry/semver";
 import { semverOrder } from "../../runtime";
-import type {
-  PluginUpgradeEntry,
-  UpgradeChannel,
-  UpgradeCheckResponse,
-  UpgradeLockstep,
-  UpgradeResponse,
-} from "../../sources/types";
+import type { PluginUpgradeEntry, UpgradeChannel, UpgradeCheckResponse, UpgradeResponse } from "../../sources/types";
 import {
   ChannelWriteError,
   claudeChannelEdits,
@@ -301,7 +294,7 @@ export interface OpenCodeCache {
   version: string | undefined;
 }
 
-export type OpenCodeLatest = { version: string; akmCli: string | undefined } | { error: string };
+export type OpenCodeLatest = { version: string } | { error: string };
 
 /** The spec in a config's plugin entry (a spec string or a `[spec, options]` pair). */
 function entrySpec(entry: unknown): string | undefined {
@@ -378,19 +371,15 @@ export function detectOpenCodeCache(tag: UpgradeChannel, flavor: OpenCodeFlavor)
   return { dir, version: nodeModules && readPackageVersion(path.join(nodeModules, flavor.pkg, "package.json")) };
 }
 
-/** What npm's `<pkg>@<tag>` is, and which akm-cli it pins. */
+/** What npm's `<pkg>@<tag>` is. */
 export function lookupOpenCodeLatest(tag: UpgradeChannel, flavor: OpenCodeFlavor): OpenCodeLatest {
   const spec = `${flavor.pkg}@${tag}`;
-  const view = runCommand(
-    IS_WINDOWS ? "npm.cmd" : "npm",
-    ["view", spec, "version", "dependencies.akm-cli", "--json"],
-    READ_TIMEOUT_MS,
-  );
+  const view = runCommand(IS_WINDOWS ? "npm.cmd" : "npm", ["view", spec, "version", "--json"], READ_TIMEOUT_MS);
   if (!view.ok) return { error: view.error };
-  const parsed = parseJson(view.stdout) as { version?: unknown; "dependencies.akm-cli"?: unknown } | undefined;
-  if (typeof parsed?.version !== "string") return { error: `npm did not report a version for ${spec}` };
-  const akmCli = parsed["dependencies.akm-cli"];
-  return { version: parsed.version, akmCli: typeof akmCli === "string" ? akmCli : undefined };
+  const parsed = parseJson(view.stdout) as { version?: unknown } | string | undefined;
+  const version = typeof parsed === "string" ? parsed : parsed?.version;
+  if (typeof version !== "string") return { error: `npm did not report a version for ${spec}` };
+  return { version };
 }
 
 const CONTAINER_CGROUP = /docker|containerd|podman|libpod|lxc/;
@@ -468,6 +457,26 @@ function upgradeOpenCode(dryRun: boolean, target: OpenCodeTarget): PluginUpgrade
   if (!target.switchChannel && cache.version === latest.version)
     return { harness, outcome: "current", from: cache.version, to: latest.version };
   const base = { harness, from: cache.version, to: latest.version };
+  if (target.keepInstalled) {
+    const kept = {
+      harness,
+      outcome: "current" as const,
+      from: cache.version,
+      to: cache.version,
+      message: `${flavor.pkg} stays at ${cache.version}; ${tag} has nothing newer`,
+    };
+    if (dryRun) return kept;
+    const configured = openCodeConfigSpec(flavor);
+    if (!configured) return failed(harness, "the configured plugin entry disappeared before switching its channel");
+    try {
+      return {
+        ...kept,
+        backups: writeChannelEdits([editChannelJson(configured.file, configured.jsonPath, target.spec)]),
+      };
+    } catch (error) {
+      return channelWriteFailure(harness, error, target.currentChannel ?? "unknown");
+    }
+  }
   // OpenCode 1's refresh replaces the cache the running OpenCode is using, so it waits for the exit.
   // OpenCode 2's `plugin update` installs beside the old build, which a running service keeps using until it restarts.
   if (flavor.replacesCache) {
@@ -602,6 +611,8 @@ export interface OpenCodeTarget {
   skip?: string;
   currentChannel?: NonNullable<PluginUpgradeEntry["channel"]>;
   switchChannel?: UpgradeChannel;
+  /** A channel switch whose newest plugin build is older than the installed one: the installed build stays. */
+  keepInstalled?: boolean;
 }
 
 export function upgradePlugins(opts: {
@@ -635,76 +646,6 @@ export function upgradePlugins(opts: {
   }));
 }
 
-/**
- * When an OpenCode plugin is present the CLI target is the akm-cli that
- * `<pkg>@latest` pins, not the newest release: the plugin runs that
- * exact akm in-process, against databases a newer CLI may already have
- * migrated. The CLI never moves backwards to meet the pin.
- *
- * It fails closed: when the plugin is present but its pin cannot be read (the
- * npm lookup failed, or the package declares no akm-cli), the CLI is held where
- * it is (`updateAvailable: false`, `latestVersion` = the current version) and
- * `lockstep.reason` says why. Moving the CLI ahead of a pin nobody could read is
- * what lockstep exists to prevent; the OpenCode entry reports the failure.
- */
-export function applyLockstep<T extends UpgradeCheckResponse>(
-  check: T,
-  latest: OpenCodeLatest | undefined,
-  tag: UpgradeChannel,
-  pkg: OpenCodeFlavor["pkg"],
-): T & { lockstep?: UpgradeLockstep } {
-  if (!latest) return check;
-  // Held back only when there is a release this upgrade would otherwise install.
-  const wouldInstall = semverOrder(check.currentVersion, check.latestVersion) < 0;
-  const pinned = "error" in latest ? undefined : latest.akmCli;
-  if (!pinned) {
-    const reason =
-      "error" in latest
-        ? `could not read the akm-cli pin of ${pkg}@${tag}: ${latest.error}`
-        : `${pkg}@${tag} declares no akm-cli dependency`;
-    return {
-      ...check,
-      latestVersion: check.currentVersion,
-      updateAvailable: false,
-      lockstep: {
-        plugin: pkg,
-        pinnedVersion: null,
-        newestVersion: check.latestVersion,
-        heldBack: wouldInstall,
-        reason,
-      },
-    };
-  }
-  const heldBack = semverOrder(pinned, check.latestVersion) < 0 && wouldInstall;
-  const lockstep: UpgradeLockstep = {
-    plugin: pkg,
-    pinnedVersion: pinned,
-    newestVersion: check.latestVersion,
-    heldBack,
-  };
-  if (!heldBack) return { ...check, lockstep };
-  return {
-    ...check,
-    latestVersion: pinned,
-    updateAvailable: semverOrder(check.currentVersion, pinned) < 0,
-    lockstep,
-  };
-}
-
-/**
- * The plugin the CLI is held to when several are present: one whose pin could not be read (the
- * CLI stays put), else the one pinning the oldest akm-cli, since every plugin runs the CLI that is installed.
- */
-function lockstepSource(targets: OpenCodeTarget[]): OpenCodeTarget | undefined {
-  const readable = (t: OpenCodeTarget): t is OpenCodeTarget & { latest: { akmCli: string } } =>
-    t.latest !== undefined && !("error" in t.latest) && typeof t.latest.akmCli === "string";
-  const pinned = targets.filter((t) => t.latest);
-  return (
-    pinned.find((t) => !readable(t)) ??
-    pinned.filter(readable).sort((a, b) => semverOrder(a.latest.akmCli, b.latest.akmCli))[0]
-  );
-}
-
 export interface UpgradeRunDependencies {
   checkForUpdate: (
     currentVersion: string,
@@ -722,12 +663,11 @@ export type UpgradeRunResult =
   | { mode: "upgrade"; result: UpgradeResponse & { plugins: PluginUpgradeEntry[] }; failed: boolean };
 
 /**
- * Which build of one OpenCode plugin the CLI is held to, and which cache refreshes.
+ * Which build of one OpenCode plugin refreshes, and which cache.
  * Under `--next` that is `<pkg>@next`, but only when the user's OpenCode
- * config names that tag: a bare one keeps resolving `@latest`, so the lockstep
- * stays against the `@latest` pin and the entry is reported as skipped. A config
- * naming any other spec (an exact version, or `@next` on a plain run) is left
- * alone, with no lockstep.
+ * config names that tag: a bare one keeps resolving `@latest` and the entry is
+ * reported as skipped. A config naming any other spec (an exact version, or
+ * `@next` on a plain run) is left alone.
  */
 function resolveOpenCodeTarget(
   next: boolean,
@@ -786,7 +726,7 @@ function resolveOpenCodeTarget(
   }
   const followsLatest = spec === flavor.pkg || spec === `${flavor.pkg}@latest`;
   const followNext = next && spec === nextSpec(flavor);
-  // Any other spec loads a cache this run does not refresh, and pins no akm-cli it should be held to.
+  // Any other spec loads a cache this run does not refresh.
   if (!followsLatest && !followNext) return leftAlone(otherSpecNote(flavor, spec));
   const tag: UpgradeChannel = followNext ? "next" : "latest";
   const cache = detectOpenCodeCache(tag, flavor);
@@ -915,7 +855,7 @@ function preflightMarketplaceChannels(channel: UpgradeChannel, allowDowngrade: b
   }
 }
 
-/** `akm upgrade`: the CLI step (held to the OpenCode plugin's akm), then the plugins. */
+/** `akm upgrade`: the CLI step, then the plugins. */
 export async function runUpgrade(
   args: {
     check: boolean;
@@ -938,28 +878,12 @@ export async function runUpgrade(
   const channel: UpgradeChannel = next ? "next" : "latest";
   const currentChannel: UpgradeChannel = isPrerelease(currentVersion) ? "next" : "latest";
   const openCode = resolveOpenCodeTargets(next, switchChannel);
-  const held = lockstepSource(openCode);
   const check = {
-    ...applyLockstep(
-      await deps.checkForUpdate(currentVersion, channel, switchChannel !== undefined),
-      held?.latest,
-      held?.tag ?? "latest",
-      held?.flavor.pkg ?? OPENCODE_V1.pkg,
-    ),
+    ...(await deps.checkForUpdate(currentVersion, channel, switchChannel !== undefined)),
     channel,
     currentChannel,
     ...(switchChannel ? { targetChannel: switchChannel } : {}),
   };
-  if (
-    switchChannel &&
-    held?.latest &&
-    !("error" in held.latest) &&
-    held.latest.akmCli &&
-    semverOrder(held.latest.akmCli, check.latestVersion) < 0
-  ) {
-    check.latestVersion = held.latest.akmCli;
-    check.updateAvailable = semverOrder(currentVersion, check.latestVersion) < 0;
-  }
   if (args.check) {
     return {
       mode: "check",
@@ -969,11 +893,14 @@ export async function runUpgrade(
       },
     };
   }
+  let stayMessage: string | undefined;
   if (switchChannel && !args.allowDowngrade) {
-    if (semverOrder(check.latestVersion, currentVersion) < 0)
-      throw new UsageError(
-        `Switching to ${channel} would downgrade akm from ${currentVersion} to ${check.latestVersion}; repeat with --allow-downgrade`,
-      );
+    // A channel whose newest akm is older than the installed one leaves akm where it is; the channel still switches.
+    if (semverOrder(check.latestVersion, currentVersion) < 0) {
+      stayMessage = `akm stays at ${currentVersion}; ${channel} has nothing newer`;
+      check.latestVersion = currentVersion;
+      check.updateAvailable = false;
+    }
     for (const target of openCode) {
       if (
         target.cache?.version &&
@@ -981,9 +908,7 @@ export async function runUpgrade(
         !("error" in target.latest) &&
         semverOrder(target.latest.version, target.cache.version) < 0
       )
-        throw new UsageError(
-          `Switching to ${channel} would downgrade ${target.flavor.pkg} from ${target.cache.version} to ${target.latest.version}; repeat with --allow-downgrade`,
-        );
+        target.keepInstalled = true;
     }
   }
   if (switchChannel) preflightMarketplaceChannels(switchChannel, args.allowDowngrade === true);
@@ -992,11 +917,8 @@ export async function runUpgrade(
     force: args.force,
     skipPostUpgrade: args.skipPostUpgrade,
     ...(args.skipChecksum ? { skipChecksum: true } : {}),
-    // A package manager install must name the version, or `@latest` goes past the pin
-    // (or past the prerelease that `--next` chose).
-    ...(switchChannel || check.lockstep?.heldBack || (next && check.latestVersion)
-      ? { targetVersion: check.latestVersion }
-      : {}),
+    // A package manager install must name the version, or `@latest` goes past the prerelease that `--next` chose.
+    ...(switchChannel || (next && check.latestVersion) ? { targetVersion: check.latestVersion } : {}),
   });
   if (
     switchChannel &&
@@ -1022,7 +944,7 @@ export async function runUpgrade(
     channel,
     currentChannel,
     ...(switchChannel ? { targetChannel: switchChannel } : {}),
-    ...(check.lockstep ? { lockstep: check.lockstep } : {}),
+    ...(stayMessage ? { message: stayMessage } : {}),
     plugins,
   };
   // The install may have succeeded, but an upgrade whose migration is

@@ -202,8 +202,7 @@ already-current install with nothing pending it is a fast no-op that exits 0.
 
 After the install step it also updates the akm plugin of each agent harness
 present in the image (Claude Code, Codex, OpenCode), reported under `plugins`;
-see [`akm upgrade`](../reference/cli.md#upgrade) for the rules, the OpenCode
-version lockstep and the Codex hook-trust entries a headless image needs.
+see [`akm upgrade`](../reference/cli.md#upgrade) for the rules and the Codex hook-trust entries a headless image needs.
 
 **`--check`** skips the migration step entirely — it only compares versions
 and reports `updateAvailable` (plus the pending per-harness plugin updates). Use it for a version-drift alert, not as your

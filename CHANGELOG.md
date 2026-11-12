@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `akm upgrade` no longer holds the CLI to the akm version an OpenCode plugin pins, and a `--channel` switch to a channel whose newest akm (or plugin build) is older keeps the installed version and still switches instead of failing. The result no longer carries `lockstep`; releasing akm does not need a plugin release.
 - Time-window reads of `usage_events` (`activity.events`, `akm metrics`, the retention delete) no longer scan the whole table: state.db migration `030-usage-events-created-at-index` adds an index on `datetime(created_at)`. Results are unchanged and no row is rewritten; an older akm opening the file warns once about the newer ledger and keeps working.
 
 ## [0.10.261119] - 2026-11-12

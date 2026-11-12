@@ -1798,26 +1798,11 @@ an update is due. A `failed` plugin makes `akm upgrade` exit `1` (not
 `--check`). On an up-to-date machine the text output prints nothing for
 plugins.
 
-**Version lockstep.** The OpenCode plugin runs its own exact-pinned akm-cli
-in-process, so a CLI newer than the plugin's pin would run the plugin against
-databases it did not migrate. When the OpenCode plugin is present, the CLI
-target is the akm-cli that `akm-opencode@latest` depends on
-(`npm view akm-opencode@latest dependencies.akm-cli`), not the newest release.
-The result then carries `lockstep: { plugin, pinnedVersion, newestVersion, heldBack }`,
-`latestVersion` is the pinned version, the install names that exact version
-rather than `@latest`, and the text output says the CLI is held back. The CLI
-is never moved backwards to meet the pin unless an explicit channel switch also names `--allow-downgrade`. With both OpenCode plugins present
-(`akm-opencode` and `akm-opencode-v2`), the CLI is held to the older of their
-two pins, and `lockstep.plugin` names the one that sets it. Claude Code and Codex have no
-in-process copy and are not part of this rule.
-
-Lockstep fails closed. When the OpenCode plugin is cached but the pin cannot
-be read (the npm lookup failed, or `akm-opencode@latest` declares no
-`akm-cli`), the CLI is not upgraded: `updateAvailable` is `false`,
-`latestVersion` is the current version, and `lockstep` is
-`{ plugin, pinnedVersion: null, newestVersion, heldBack: true, reason }`. The
-OpenCode entry is `failed` and the run exits `1`; the next `akm upgrade`
-retries.
+**The CLI does not wait for plugins.** The CLI target is the newest akm on the
+selected channel (`latest`, or `next` for `--next` and `--channel next`), whatever
+the plugins pin. Plugins update to their own channel's newest build; a plugin
+running an older bundled akm reports itself stale through `akm doctor` and
+updates with its own release.
 
 #### Prereleases (`--next`)
 
@@ -1842,18 +1827,16 @@ carries `channel: "next"` (`"latest"` otherwise), plus the CLI's inferred `curre
   ```
 
   With that line in the global OpenCode config (`~/.config/opencode/opencode.json`
-  or `.jsonc`, or the file named by `OPENCODE_CONFIG`), lockstep and the cache
-  refresh use `akm-opencode@next` (its version and its `akm-cli` pin) instead of
-  `@latest`. If `akm-opencode@next` is missing or its `akm-cli` pin is unreadable,
-  the CLI is held where it is and the OpenCode entry is `failed`, exactly as in the stable lockstep above.
+  or `.jsonc`, or the file named by `OPENCODE_CONFIG`), the cache refresh uses
+  `akm-opencode@next` instead of `@latest`. If `akm-opencode@next` is missing,
+  the OpenCode entry is `failed`; the CLI upgrade is unaffected.
 
   OpenCode 2's `akm-opencode-v2` follows the same rule with its own spec:
   `{ "plugins": ["akm-opencode-v2@next"] }`, cached under
   `$XDG_CACHE_HOME/opencode/npm/akm-opencode-v2@next/`.
 
-  Without that line the OpenCode entry is `skipped`, its message names the line
-  to add, and lockstep stays against the `@latest` pin, so the CLI does not go
-  past what OpenCode will run.
+  Without that line the OpenCode entry is `skipped` and its message names the line
+  to add.
 - **Claude Code and Codex.** Their plugin comes from the `akm-plugins` git
   marketplace, and the channel is the ref the marketplace follows: the default
   branch is stable, the `next` branch carries prereleases. `akm upgrade` updates
@@ -1868,8 +1851,11 @@ carries `channel: "next"` (`"latest"` otherwise), plus the CLI's inferred `curre
 `akm upgrade --channel next` selects the actual npm `next` CLI tag and changes
 installed harness plugins to their `next` branch or package tag.
 `--channel latest` selects stable and removes those prerelease refs. An explicit
-switch may replace a pinned plugin spec. The command checks target CLI and plugin
-versions first; if any would go backwards, repeat with `--allow-downgrade`.
+switch may replace a pinned plugin spec. If the channel's newest akm, or a
+plugin build, is older than the installed one, akm keeps the installed version
+(`updateAvailable: false`, with a message saying so) and still switches the
+channel; `--allow-downgrade` moves back to the channel's version. A Claude Code
+or Codex marketplace build that would go backwards still needs `--allow-downgrade`.
 A failed CLI install or migration stops the plugin switch.
 
 Claude and Codex retain their marketplace registrations, plugin enablement,

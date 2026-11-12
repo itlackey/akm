@@ -171,16 +171,60 @@ afterEach(() => cleanup());
     expect(rest.plugins.map((p) => p.harness)).toEqual(viaNext.result.plugins.map((p) => p.harness));
   });
 
-  test("CLI downgrades are refused before edits, and --allow-downgrade permits them", async () => {
-    await expect(
-      withEnv(env, () => runUpgrade({ ...opts, channel: "latest" }, "0.10.4-beta", deps("0.10.4-beta", "0.10.2"))),
-    ).rejects.toThrow("--allow-downgrade");
-    expect(read("claude/settings.json")).toBe(originalClaude);
-    const run = await withEnv(env, () =>
-      runUpgrade({ ...opts, channel: "latest", allowDowngrade: true }, "0.10.4-beta", deps("0.10.4-beta", "0.10.2")),
-    );
+  test("a channel whose newest akm is older keeps the installed akm and still switches; --allow-downgrade moves back", async () => {
+    state({
+      versions: { latest: "0.10.261120", next: "0.10.261120-beta" },
+      claudeVersion: "0.10.261100",
+      codexVersion: "0.10.261100",
+    });
+    const older = () => deps("0.10.261119", "0.10.261119-beta.1");
+    const dependency = older();
+    const run = await withEnv(env, () => runUpgrade({ ...opts, channel: "next" }, "0.10.261119", dependency));
     expect(run.mode === "upgrade" && run.failed).toBe(false);
-    expect(run.result.currentVersion).toBe("0.10.4-beta");
+    expect(dependency.calls).toEqual([{ force: false, skipPostUpgrade: true, targetVersion: "0.10.261119" }]);
+    expect((run.result as { upgraded?: boolean }).upgraded).toBe(false);
+    expect((run.result as { message?: string }).message).toBe("akm stays at 0.10.261119; next has nothing newer");
+    expect(run.result.plugins.every((p) => p.channel === "next")).toBe(true);
+    expect(JSON.parse(read("claude/settings.json")).extraKnownMarketplaces["akm-plugins"].source.ref).toBe("next");
+    const back = older();
+    const moved = await withEnv(env, () =>
+      runUpgrade({ ...opts, channel: "next", allowDowngrade: true }, "0.10.261119", back),
+    );
+    expect(moved.mode === "upgrade" && moved.failed).toBe(false);
+    expect(back.calls).toEqual([{ force: false, skipPostUpgrade: true, targetVersion: "0.10.261119-beta.1" }]);
+    expect((moved.result as { newVersion?: string }).newVersion).toBe("0.10.261119-beta.1");
+  });
+
+  test("the OpenCode plugin's next build pinning an older akm does not hold the CLI back", async () => {
+    state({
+      versions: { latest: "0.10.261119", next: "0.10.261115-beta" },
+      claudeVersion: "0.10.261100",
+      codexVersion: "0.10.261100",
+    });
+    const dependency = deps("0.10.261119", "0.10.261120-beta.1");
+    const run = await withEnv(env, () => runUpgrade({ ...opts, channel: "next" }, "0.10.261119", dependency));
+    expect(run.mode === "upgrade" && run.failed).toBe(false);
+    expect(dependency.calls).toEqual([{ force: false, skipPostUpgrade: true, targetVersion: "0.10.261120-beta.1" }]);
+    expect((run.result as { newVersion?: string }).newVersion).toBe("0.10.261120-beta.1");
+    expect(run.result).not.toHaveProperty("lockstep");
+  });
+
+  test("a channel whose newest plugin build is older keeps the installed plugin build and still switches its channel", async () => {
+    write("cache/opencode/packages/akm-opencode@latest/node_modules/akm-opencode/package.json", '{"version":"0.10.9"}');
+    const run = await withEnv(env, () => runUpgrade({ ...opts, channel: "next" }, "0.10.1", deps()));
+    expect(run.mode === "upgrade" && run.failed).toBe(false);
+    expect(run.result.plugins.find((p) => p.harness === "opencode")).toMatchObject({
+      outcome: "current",
+      channel: "next",
+      from: "0.10.9",
+      to: "0.10.9",
+    });
+    expect((parseJsonc(read("config/opencode/opencode.jsonc")) as { plugin: unknown[] }).plugin).toEqual([
+      "other",
+      ["akm-opencode@next", { keep: true }],
+    ]);
+    expect(read("calls.jsonl")).not.toContain("debug config");
+    expect(fs.existsSync(file("cache/opencode/packages/akm-opencode@latest/node_modules"))).toBe(true);
   });
 
   test.each([
