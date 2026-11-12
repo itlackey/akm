@@ -71,7 +71,16 @@ process.on("uncaughtException", (err) => {
 });
 
 import fs from "node:fs";
-import { type ArgsDef, type CommandDef, defineCommand, parseArgs, renderUsage, runCommand, showUsage } from "citty";
+import {
+  type ArgsDef,
+  type CommandDef,
+  defineCommand,
+  type ParsedArgs,
+  parseArgs,
+  renderUsage,
+  runCommand,
+  showUsage,
+} from "citty";
 import { warnDeprecatedUse } from "./cli/deprecations";
 import {
   type CittyArgsDefinitionForScan,
@@ -97,11 +106,13 @@ import { agentCommand, lintCommand } from "./commands/agent/contribute-cli";
 import { commandCommand } from "./commands/command/command-cli";
 import { generateBashCompletions, installBashCompletions } from "./commands/completions";
 import { configCommand } from "./commands/config-cli";
+import { doctorExplainCommand, doctorSchedulerCommand } from "./commands/doctor-cli";
 import { envCommand } from "./commands/env/env-cli";
 import { secretCommand } from "./commands/env/secret-cli";
 import { feedbackCommand } from "./commands/feedback-cli";
 import { akmHealth } from "./commands/health";
 import { doctorMetricsCommand } from "./commands/metrics/usage-cli";
+import { akmTasksDoctor } from "./commands/tasks/tasks";
 import { closestMatch } from "./core/closest-match";
 import "./commands/health/renderers";
 import "./commands/metrics/md-report";
@@ -402,7 +413,14 @@ const healthCommand = defineCommand({
     description: "Check akm runtime health, artifacts, and improve metrics",
   },
   args: healthArgs,
-  async run({ args }) {
+  async run(context) {
+    await runHealth(context.args, false);
+  },
+});
+
+/** `akm health`, and bare `akm doctor` with the task scheduler checks (`task doctor`) added. */
+async function runHealth(args: ParsedArgs<typeof healthArgs>, scheduler: boolean): Promise<void> {
+  {
     let resultStatus: "pass" | "warn" | "fail" | undefined;
     const exitCodeBeforeRun = process.exitCode;
     await runWithJsonErrors(async () => {
@@ -453,6 +471,7 @@ const healthCommand = defineCommand({
           : undefined) ??
         "24h";
       resultStatus = base.status;
+      const schedulerChecks = scheduler ? { scheduler: await akmTasksDoctor() } : {};
       // A degraded state-db result has no runs. Keep its native failure instead
       // of reopening the unavailable database to build the report's extra data.
       if (report && base.runs !== undefined) {
@@ -474,6 +493,7 @@ const healthCommand = defineCommand({
         );
         output("health", {
           ...base,
+          ...schedulerChecks,
           report: {
             window: args.since ?? "24h",
             compare: reportCompare,
@@ -483,7 +503,7 @@ const healthCommand = defineCommand({
         });
         return;
       }
-      output("health", base);
+      output("health", { ...base, ...schedulerChecks });
     });
     // `emitJsonError` (src/cli/shared.ts) does not force-exit on the error
     // path — it sets `process.exitCode` and returns, so a `--report`
@@ -499,8 +519,8 @@ const healthCommand = defineCommand({
     if (resultStatus === "warn") {
       process.exitCode = EXIT_HEALTH_WARN;
     }
-  },
-});
+  }
+}
 
 const doctorSubCommands = {
   prompt: doctorPromptCommand,
@@ -508,6 +528,8 @@ const doctorSubCommands = {
   info: infoCommand,
   log: logCommand,
   judge: judgeCommand,
+  scheduler: doctorSchedulerCommand,
+  explain: doctorExplainCommand,
 };
 const doctorScanArgs = Object.assign({}, healthArgs, ...Object.values(doctorSubCommands).map((cmd) => cmd.args));
 
@@ -520,7 +542,7 @@ const doctorCommand = defineCommand({
     args: healthArgs,
     subCommands: doctorSubCommands,
     async defaultRun(context) {
-      await healthCommand.run?.(context);
+      await runHealth(context.args, true);
     },
   }),
   setup({ rawArgs }) {
