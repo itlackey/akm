@@ -35,9 +35,13 @@ export const extractCommand = defineJsonCommand({
       "Extract durable insights from native session files (claude, codex, opencode) and queue them as proposals.",
   },
   args: {
+    sessions: {
+      type: "string",
+      description: "Session source: claude, codex or opencode. Required unless --auto.",
+    },
     type: {
       type: "string",
-      description: "Harness name (claude, codex, opencode). Required unless --auto.",
+      description: "Deprecated alias of --sessions.",
     },
     "session-id": {
       type: "string",
@@ -53,7 +57,7 @@ export const extractCommand = defineJsonCommand({
     },
     auto: {
       type: "boolean",
-      description: "Iterate every available harness with default --since. Mutually exclusive with --type.",
+      description: "Iterate every available harness with default --since. Mutually exclusive with --sessions.",
       default: false,
     },
     "dry-run": {
@@ -81,7 +85,12 @@ export const extractCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
-    const type = getStringArg(args, "type") ?? "";
+    const sessionsFlag = getStringArg(args, "sessions");
+    const typeFlag = getStringArg(args, "type");
+    if (sessionsFlag !== undefined && typeFlag !== undefined) {
+      throw new UsageError("--sessions and --type are the same selector. Pass only --sessions.", "INVALID_FLAG_VALUE");
+    }
+    const type = sessionsFlag ?? typeFlag ?? "";
     const sessionId = getStringArg(args, "session-id") ?? "";
     const location = getStringArg(args, "location") ?? "";
     const since = getStringArg(args, "since") ?? "";
@@ -101,11 +110,11 @@ export const extractCommand = defineJsonCommand({
     }
     const timeoutMs = parseTimeoutFlags(args.timeout, legacyTimeoutMs);
     if (auto && type) {
-      throw new UsageError("--auto and --type are mutually exclusive. Pick one.", "INVALID_FLAG_VALUE");
+      throw new UsageError("--auto and --sessions are mutually exclusive. Pick one.", "INVALID_FLAG_VALUE");
     }
     if (!auto && !type) {
       throw new UsageError(
-        "--type is required (or pass --auto to try every available harness).",
+        "--sessions is required (or pass --auto to try every available harness).",
         "MISSING_REQUIRED_ARGUMENT",
       );
     }
