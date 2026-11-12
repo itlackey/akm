@@ -166,30 +166,46 @@ function seedRunViews(fixture) {
     improve("synthetic-improve-b", 60 * 24 * 2, true, {
       byProcessEngineModel: [{ process: "reflect", calls: 4, failures: 1 }],
     });
-    improve(runViewIds.failedImprove, 60 * 24 * 4, false, {
-      byProcessEngineModel: [
-        {
-          process: "reflect",
-          engine: "lab",
-          model: "synthetic-model",
-          calls: 5,
-          failures: 3,
-          promptTokens: 4000,
-          completionTokens: 1000,
-          totalTokens: 5000,
-          usageCalls: 3,
-        },
-        { process: "consolidate", engine: "lab", model: "synthetic-model", calls: 2, failures: 2, usageCalls: 0 },
-      ],
-      noCalls: [{ process: "distill", reason: "no_signal" }],
-    }, {
-      actions: [{ ref: "memory:synthetic", mode: "reflect-failed", result: { ok: false, error: "Synthetic: model timed out" } }],
-    });
+    improve(
+      runViewIds.failedImprove,
+      60 * 24 * 4,
+      false,
+      {
+        byProcessEngineModel: [
+          {
+            process: "reflect",
+            engine: "lab",
+            model: "synthetic-model",
+            calls: 5,
+            failures: 3,
+            promptTokens: 4000,
+            completionTokens: 1000,
+            totalTokens: 5000,
+            usageCalls: 3,
+          },
+          { process: "consolidate", engine: "lab", model: "synthetic-model", calls: 2, failures: 2, usageCalls: 0 },
+        ],
+        noCalls: [{ process: "distill", reason: "no_signal" }],
+      },
+      {
+        actions: [
+          {
+            ref: "memory:synthetic",
+            mode: "reflect-failed",
+            result: { ok: false, error: "Synthetic: model timed out" },
+          },
+        ],
+      },
+    );
     improve(runViewIds.oldImprove, 60 * 24 * 9, true, null);
     // A run older than the latest ten, recorded as stopped by a signal.
     for (let n = 0; n < 10; n++) improve(`synthetic-improve-filler-${n}`, 60 * 24 * (10 + n), true, null);
     improve(runViewIds.terminatedImprove, 60 * 24 * 40, false, null, {
-      terminated: { reason: "SIGTERM", at: at(60 * 24 * 40 - 3), errorMessage: "Synthetic: stopped by the scheduler timeout" },
+      terminated: {
+        reason: "SIGTERM",
+        at: at(60 * 24 * 40 - 3),
+        errorMessage: "Synthetic: stopped by the scheduler timeout",
+      },
     });
     taskRun("akm-improve-frequent", "completed", 60 * 5 + 1, 60 * 5 - 5, null);
     taskRun("akm-improve-frequent", "completed", 60 * 24 * 2 + 1, 60 * 24 * 2 - 5, null);
