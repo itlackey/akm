@@ -294,7 +294,7 @@ describe("scheduler runtime binding", () => {
         status: ["invalid-context"],
       });
       expect(result.caller.via).toBe("standalone");
-      expect(result.remediation).toBe("akm task sync --rebind");
+      expect(result.remediation).toBe("akm doctor scheduler sync --rebind");
     } finally {
       storage.cleanup();
     }
@@ -322,7 +322,7 @@ describe("scheduler runtime binding", () => {
 
       expect(result.bindings).toContainEqual({ argv: checkout, taskIds: ["dev"], status: ["checkout"] });
       expect(result.bindings).toContainEqual({ argv: other, taskIds: ["stable"], status: ["ok"] });
-      expect(result.remediation).toBe("akm task sync --rebind");
+      expect(result.remediation).toBe("akm doctor scheduler sync --rebind");
     } finally {
       storage.cleanup();
     }

@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Engine-driven workflow execution — the `akm workflow run` start/resume/
+ * Engine-driven workflow execution — the `akm run` start/resume/
  * execute path. akm walks the frozen plan (read from `plan_json`, never live
  * source) and dispatches every unit itself; every step advances through
  * `completeWorkflowStep`; one O_EXCL lock file per run keeps a second driver
@@ -88,7 +88,7 @@ export interface RunWorkflowOptions {
   /**
    * The task runner's provenance event source, stamped as `AKM_EVENT_SOURCE`
    * into every unit's and the gate judge's child environment (an authored
-   * `env:` binding still wins). Undefined for `akm workflow run` itself.
+   * `env:` binding still wins). Undefined for `akm run` itself.
    */
   eventSource?: string;
 }
@@ -121,7 +121,7 @@ export interface RunWorkflowResult {
    * Present when the verification judge FAILED (missing/unresolvable judge,
    * thrown judge call, or malformed verdict) — infrastructure, not a verdict.
    * No gate loop was consumed; the step and run are left `blocked`, and
-   * `akm workflow resume` then `akm workflow run` retries the gate over the
+   * `akm workflow resume` then `akm run` retries the gate over the
    * journaled units.
    */
   judgeFailure?: { stepId: string; message: string };
@@ -219,7 +219,7 @@ async function runWorkflowAttempt(
   }
 
   // One driver per run: the per-run lock file is taken BEFORE the plan is
-  // read or anything dispatches, so a second `akm workflow run` on a run
+  // read or anything dispatches, so a second `akm run` on a run
   // another process is driving refuses up front (exit 75) instead of racing
   // its spine. A done run takes no lock: nothing will dispatch.
   const runId = next.run.id;
@@ -238,7 +238,7 @@ async function runWorkflowAttempt(
         // not an exception: the run is abandoned and the message names how to
         // start afresh.
         const abandoned = await abandonWorkflowRun(runId);
-        const message = `${read.problem} The run was abandoned; start a new run with 'akm workflow run ${row.workflow_ref}'.`;
+        const message = `${read.problem} The run was abandoned; start a new run with 'akm run ${row.workflow_ref}'.`;
         return {
           run: abandoned.run,
           executed: [],
@@ -307,7 +307,7 @@ function acquireWorkflowRunLock(runId: string): LockOwnership {
   const since = result.holder.startedAt ? `, since ${result.holder.startedAt}` : "";
   throw new TransientError(
     `Workflow run ${runId} is already being driven by another akm process ` +
-      `(pid ${formatLockHolderPid(result.holder)}${since}). A second \`akm workflow run\` would race it — ` +
+      `(pid ${formatLockHolderPid(result.holder)}${since}). A second \`akm run\` would race it — ` +
       "wait for that invocation to finish.",
     "RUN_LEASE_HELD",
   );
@@ -344,7 +344,7 @@ async function workflowSourceDriftWarning(
   if (current === plan.sourceHash) return undefined;
   return (
     `Workflow run ${runId}: ${workflowRef} (${sourcePath}) has changed since this run was frozen; ` +
-    `continuing with the frozen plan. Start a new run with 'akm workflow run ${workflowRef}' to pick up the edit.`
+    `continuing with the frozen plan. Start a new run with 'akm run ${workflowRef}' to pick up the edit.`
   );
 }
 
@@ -610,7 +610,7 @@ async function runStepGateLoop(
                 childRunId: child.childRunId,
                 childRef: child.childRef,
                 resume: `akm workflow resume ${child.childRunId}`,
-                resumeParentCommand: `akm workflow resume ${next.run.id} && akm workflow run ${next.run.id}`,
+                resumeParentCommand: `akm workflow resume ${next.run.id} && akm run ${next.run.id}`,
               },
             }
           : {}),

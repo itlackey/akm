@@ -215,7 +215,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
   return withSchedulerLock(async () => {
     if (fs.existsSync(assetPath) && !input.force) {
       throw new UsageError(
-        `Task "${id}" already exists. Pass --force to overwrite, or delete its file and run \`akm task sync\` first.`,
+        `Task "${id}" already exists. Pass --force to overwrite, or delete its file and run \`akm doctor scheduler sync\` first.`,
         "RESOURCE_ALREADY_EXISTS",
       );
     }
@@ -249,7 +249,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
       throw new ConfigError(
         `Task "${id}" was written to ${assetPath}${input.disabled ? "" : " and enabled"}, but it could not be scheduled: ${failure.reason}`,
         "INVALID_CONFIG_FILE",
-        "Fix the cause and run `akm task sync`.",
+        "Fix the cause and run `akm doctor scheduler sync`.",
       );
     }
     return {
@@ -548,7 +548,7 @@ export async function akmTasksSync(
 }
 
 /**
- * `akm task sync --dry-run` (#849): the exact plan `akmTasksSync` would
+ * `akm doctor scheduler sync --dry-run` (#849): the exact plan `akmTasksSync` would
  * apply, previewed. It writes nothing: no config, no row.
  */
 export async function akmTasksSyncPlan(
@@ -673,7 +673,7 @@ async function buildSchedulerSyncPlan(
       : plan.installed.length > 0;
   if (runtime.via === "checkout" && writesLauncher) {
     warnings.push(
-      `Scheduled tasks now run akm from a source checkout (${runtime.options.binding?.join(" ")}); they run whatever the checkout holds when they fire. Install akm with \`npm install --global akm-cli\` or a standalone release, then run \`akm task sync --rebind\`.`,
+      `Scheduled tasks now run akm from a source checkout (${runtime.options.binding?.join(" ")}); they run whatever the checkout holds when they fire. Install akm with \`npm install --global akm-cli\` or a standalone release, then run \`akm doctor scheduler sync --rebind\`.`,
     );
   }
   return { sched, plan: { ...plan, failures: [...failures, ...plan.failures] }, warnings };
@@ -816,12 +816,12 @@ export interface TasksDoctorResult {
   caller: { argv: string[]; via: string };
   bindings: Array<{
     argv: string[];
-    /** A row written before 0.9.17-alpha.7: the descriptor it names. The next `akm task sync` rewrites it. */
+    /** A row written before 0.9.17-alpha.7: the descriptor it names. The next `akm doctor scheduler sync` rewrites it. */
     contextPath?: string;
     taskIds: string[];
     status: string[];
   }>;
-  remediation?: "akm task sync --rebind";
+  remediation?: "akm doctor scheduler sync --rebind";
   logDir: string;
   engine: { defaultEngine?: string; available: string[] };
   scheduleSubset: string;
@@ -911,7 +911,7 @@ export async function akmTasksDoctor(
     caller: invocation,
     bindings,
     ...(bindings.some((binding) => !binding.status.includes("ok"))
-      ? { remediation: "akm task sync --rebind" as const }
+      ? { remediation: "akm doctor scheduler sync --rebind" as const }
       : {}),
     logDir: getTaskLogDir(),
     engine: { defaultEngine, available: engines },

@@ -209,9 +209,9 @@ const GONE_FLAGS: ReadonlyArray<{ flag: string; use: string; commands?: readonly
       "proposal revert",
     ],
   },
-  { flag: "--all", use: "`akm info`", commands: ["config path"] },
-  { flag: "--run", use: "`akm improve report --run`", commands: ["improve"] },
-  { flag: "--since", use: "`akm improve report --since`", commands: ["improve"] },
+  { flag: "--all", use: "`akm doctor info`", commands: ["config path"] },
+  { flag: "--run", use: "`akm doctor metrics improve --run`", commands: ["improve"] },
+  { flag: "--since", use: "`akm doctor metrics improve --since`", commands: ["improve"] },
   { flag: "--config", use: "`--endpoint <url> --yes` and the other answer flags", commands: ["setup"] },
   { flag: "--probe", use: "no flag: probing is the default, and `--no-probe` runs offline", commands: ["setup"] },
 ];

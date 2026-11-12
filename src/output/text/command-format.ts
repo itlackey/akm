@@ -582,7 +582,7 @@ export function formatBundleRenamePlain(r: Record<string, unknown>): string {
   ];
   if (activeWorkflowRuns.length > 0) {
     lines.push(
-      "Active and blocked workflow runs keep the old bundle name in their frozen plan; continue them (`akm workflow run <id>`, after `akm workflow resume <id>` for a blocked one) or abandon them (`akm workflow abandon <id>`):",
+      "Active and blocked workflow runs keep the old bundle name in their frozen plan; continue them (`akm run <id>`, after `akm workflow resume <id>` for a blocked one) or abandon them (`akm workflow abandon <id>`):",
     );
     for (const run of activeWorkflowRuns) lines.push(`  - ${run.id} (${run.workflowRef}, ${run.status})`);
   }
@@ -611,10 +611,12 @@ export function formatBundleRenamePlain(r: Record<string, unknown>): string {
           `Native scheduler sync after rename: ${installed} installed, ${updated} updated, ${removed} removed, ${failures.length} failed.`,
         );
         for (const failure of failures) lines.push(`  - ${failure.ref ?? failure.path}: ${failure.reason}`);
-        lines.push("Run `akm task sync` to retry.");
+        lines.push("Run `akm doctor scheduler sync` to retry.");
       }
     } else if (taskSync?.ok === false && taskSync.error) {
-      lines.push(`Re-syncing native scheduler bindings failed: ${taskSync.error}. Run \`akm task sync\` to retry.`);
+      lines.push(
+        `Re-syncing native scheduler bindings failed: ${taskSync.error}. Run \`akm doctor scheduler sync\` to retry.`,
+      );
     }
   }
   if (contentRefs.length > 0) {
@@ -713,7 +715,7 @@ function formatUpgradeHead(r: Record<string, unknown>): string | null {
     return `akm v${r.currentVersion} → v${r.latestVersion} requires --allow-downgrade (run 'akm upgrade --channel ${r.targetChannel} --allow-downgrade' to install)`;
   }
   if (r.updateAvailable === true) {
-    return `akm v${r.currentVersion} → v${r.latestVersion} available (run 'akm upgrade${r.targetChannel ? ` --channel ${r.targetChannel}` : r.channel === "next" ? " --next" : ""}' to install)`;
+    return `akm v${r.currentVersion} → v${r.latestVersion} available (run 'akm upgrade${r.targetChannel ? ` --channel ${r.targetChannel}` : r.channel === "next" ? " --channel next" : ""}' to install)`;
   }
   if (r.updateAvailable === false && r.latestVersion) {
     return `akm v${r.currentVersion} is already the latest version`;

@@ -166,7 +166,7 @@ test("a row written before 0.9.17-alpha.7 keeps firing: the CLI applies its desc
     expect(JSON.parse(missingResult.stderr)).toMatchObject({
       ok: false,
       code: "INVALID_CONFIG_FILE",
-      error: expect.stringContaining("akm task sync"),
+      error: expect.stringContaining("akm doctor scheduler sync"),
     });
   } finally {
     sandbox.cleanup();

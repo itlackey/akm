@@ -737,7 +737,7 @@ function readOnlyStateDbUnavailable(stateDbPath: string): HealthCheckResult | un
       status: "fail",
       confidence: "high",
       // Name both the CLI action and its Desktop equivalent.
-      message: `state.db does not exist at ${stateDbPath}: nothing has recorded state yet, and a read-only health run does not create it. Index the library (Settings → Bundles & index → Update / reindex, or \`akm index\`) or run any akm command that records state, such as \`akm health\`.`,
+      message: `state.db does not exist at ${stateDbPath}: nothing has recorded state yet, and a read-only health run does not create it. Index the library (Settings → Bundles & index → Update / reindex, or \`akm index\`) or run any akm command that records state, such as \`akm doctor\`.`,
       evidence: { path: stateDbPath },
     };
   }

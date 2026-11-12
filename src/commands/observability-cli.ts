@@ -74,7 +74,7 @@ export const logCommand = defineJsonCommand({
     ref: { type: "string", description: "Filter by asset ref ([bundle//]conceptId)" },
     run: {
       type: "string",
-      description: "Filter to a workflow run's events (metadata.runId), e.g. the id from `akm workflow run`",
+      description: "Filter to a workflow run's events (metadata.runId), e.g. the id from `akm run`",
     },
     "exclude-tags": {
       type: "string",
@@ -118,7 +118,7 @@ export const doctorLogCommand = defineJsonCommand({
   },
   args: {
     ...(logCommand.args as unknown as Record<string, unknown>),
-    task: { type: "string", description: "Task id: list its run history instead of events (the `task history` rows)" },
+    task: { type: "string", description: "Task id: list its run history instead of events" },
     bundle: { type: "string", description: "Bundle the --task id belongs to" },
   },
   async run(context) {

@@ -193,7 +193,7 @@ export const GLOBAL_OUTPUT_ARGS = {
   },
   verbose: {
     type: "boolean",
-    description: "Print diagnostics to stderr (also AKM_VERBOSE)",
+    description: "Print diagnostics to stderr",
     default: false,
   },
 } as const satisfies ArgsDef;

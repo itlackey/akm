@@ -92,13 +92,13 @@ export function appendShowDirectives(lines: string[], r: Record<string, unknown>
     const insertIdx = separatorIdx >= 0 ? separatorIdx + 1 : r.type || r.name ? 1 : 0;
     const actionDirective = [
       `ACTION REQUIRED: Do not execute steps manually from this output.`,
-      `Run \`akm workflow run '${workflowRef}'\` to execute the workflow through its declared gates.`,
+      `Run \`akm run '${workflowRef}'\` to execute the workflow through its declared gates.`,
       "---",
     ];
     lines.splice(insertIdx, 0, "", ...actionDirective);
     lines.push("");
     lines.push("---");
-    lines.push(`NEXT STEP: Run \`akm workflow run '${workflowRef}'\` to execute the workflow.`);
+    lines.push(`NEXT STEP: Run \`akm run '${workflowRef}'\` to execute the workflow.`);
     lines.push("Inspect the workflow first; the runner dispatches and completes each step automatically.");
   }
 }

@@ -766,7 +766,7 @@ const EXIT_CODE_DESCRIPTIONS: ReadonlyArray<readonly [number, string]> = [
   [EXIT_CODES.SUCCESS, "success"],
   [EXIT_CODES.GENERAL, "not found / command-reported failure"],
   [EXIT_CODES.USAGE, "usage error"],
-  [EXIT_CODES.HEALTH_WARN, "health warn (akm doctor or akm health)"],
+  [EXIT_CODES.HEALTH_WARN, "health warn (akm doctor)"],
   [EXIT_CODES.INTERNAL, "internal / unclassified error"],
   [
     EXIT_CODES.TEMPFAIL,

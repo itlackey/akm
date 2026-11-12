@@ -185,7 +185,7 @@ export const improveCommand = defineCommand({
     limit: { type: "string", description: "Maximum number of assets to process (highest salience first)" },
     timeout: {
       type: "string",
-      description: "Timeout as a duration (30s, 2m) or milliseconds; same scope as --timeout-ms",
+      description: "Wall-clock budget for the entire run, as a duration (30s, 2m) or milliseconds (default: 2 hours)",
     },
     "timeout-ms": {
       type: "string",
@@ -235,7 +235,7 @@ export const improveCommand = defineCommand({
       if (args["require-engines"]) {
         warnOnce(
           "retired-flag:--require-engines",
-          "--require-engines is retired and has no effect: akm improve already stops at planning (exit 78) when no process has a connection or harness to run on, and `akm health` checks the connections and harnesses.",
+          "--require-engines is retired and has no effect: akm improve already stops at planning (exit 78) when no process has a connection or harness to run on, and `akm doctor` checks the connections and harnesses.",
         );
       }
       const jsonToStdout = args["json-to-stdout"];

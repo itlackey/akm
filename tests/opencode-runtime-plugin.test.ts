@@ -135,7 +135,7 @@ describe.skipIf(process.platform === "win32")("akm's read tools", () => {
     );
 
     expect(JSON.parse(result?.content as string)).toEqual({
-      argv: ["show", "knowledge/deploy", "--detail", "brief", "--format", "json"],
+      argv: ["show", "knowledge/deploy", "--outline", "--format", "json"],
       source: null,
     });
   });

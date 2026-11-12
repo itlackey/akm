@@ -107,7 +107,7 @@ akm remember "<fact or lesson>"
 akm improve
 
 # Check stash health and pipeline metrics
-akm health
+akm doctor
 
 # Review pending improvement proposals
 akm proposal list

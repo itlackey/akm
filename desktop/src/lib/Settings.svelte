@@ -269,7 +269,7 @@
             ? [`${result.activeWorkflowRuns.length} active workflow runs retain frozen references.`]
             : []),
           ...(result.taskSync?.ok === false
-            ? ["The rename succeeded, but scheduler synchronization needs attention. Run akm task sync."]
+            ? ["The rename succeeded, but scheduler synchronization needs attention. Run akm doctor scheduler sync."]
             : []),
         ];
         bundleRenamed(result.oldId, result.newId);

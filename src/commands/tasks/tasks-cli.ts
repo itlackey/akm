@@ -210,7 +210,7 @@ const tasksAddCommand = defineJsonCommand({
     ...RETIRED_ENGINE_ARG,
     timeout: {
       type: "string",
-      description: "Timeout as a duration (30s, 2m) or milliseconds; same scope as --timeout-ms",
+      description: "Timeout as a duration (30s, 2m) or milliseconds, for prompt or command targets",
     },
     "timeout-ms": { type: "string", description: "Positive timeout in milliseconds for prompt or command targets" },
     params: { type: "string", description: "Workflow params as a JSON object" },

@@ -271,7 +271,7 @@ describe("workflow CLI", () => {
     expect(activeWithParams.code).toBe(0);
     expect(activeWithParams.stderr).toContain("already has 1 active run(s)");
     // `run <id>` continues a run; `resume` only re-activates a blocked or failed one (#1239).
-    expect(activeWithParams.stderr).toMatch(/Continue one with "akm workflow run \S+"/);
+    expect(activeWithParams.stderr).toMatch(/Continue one with "akm run \S+"/);
     expect(activeWithParams.stderr).not.toContain("workflow resume");
   });
 

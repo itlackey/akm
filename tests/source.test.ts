@@ -385,7 +385,7 @@ Creates a user.
       const hit = (await akmSearch({ query: "workflowfragmentneedle", type: "workflow" })).hits.find(isLocalHit);
       if (!hit) throw new Error("expected a local workflow hit");
       expect(hit.ref).toBe("workflows/release");
-      expect(hit.action).toContain("akm workflow run 'workflows/release'");
+      expect(hit.action).toContain("akm run 'workflows/release'");
       expect(hit.action).not.toContain("#akm-fragment-");
     });
   });

@@ -392,11 +392,11 @@ export async function stepScheduledTasks(
     p.log.warn(
       `${activeCount === 0 ? "No task schedules were activated." : "Task schedule activation was incomplete."} ` +
         "If you are running AKM from source, run the installed `akm setup`. " +
-        "To migrate or repair existing scheduler bindings explicitly, run `akm task sync --rebind`.",
+        "To migrate or repair existing scheduler bindings explicitly, run `akm doctor scheduler sync --rebind`.",
     );
     return;
   }
-  p.log.success("Task schedules activated. Verify them with `akm task doctor`.");
+  p.log.success("Task schedules activated. Verify them with `akm doctor`.");
 }
 
 function displayTaskSchedules(task: SetupTaskDefinition): string {

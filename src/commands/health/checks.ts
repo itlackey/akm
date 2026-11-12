@@ -379,7 +379,7 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
         confidence: "high",
         message:
           failedRunIds.length > 0 || interruptedRunIds.length > 0
-            ? `${failedRunIds.length} improve run(s) recorded failures since ${ctx.since}.${interruption ? ` ${interruption}` : ""} Inspect \`akm health --since ${ctx.since} --group-by run\`.`
+            ? `${failedRunIds.length} improve run(s) recorded failures since ${ctx.since}.${interruption ? ` ${interruption}` : ""} Inspect \`akm doctor --since ${ctx.since} --group-by run\`.`
             : "No improve runs recorded failures or signal interruptions in this window.",
         evidence: {
           failedRuns: failedRunIds.length,

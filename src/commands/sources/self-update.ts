@@ -392,7 +392,7 @@ export async function performUpgrade(
       } else {
         throw new Error(
           `Checksum verification failed: could not fetch ${checksumsUrl} (HTTP ${checksumsResponse.status}). ` +
-            `Pass --skip-checksum (or set AKM_UPGRADE_SKIP_CHECKSUM=1) to bypass (not recommended).`,
+            `Pass --skip-checksum to bypass (not recommended).`,
         );
       }
     } else {
@@ -414,7 +414,7 @@ export async function performUpgrade(
         } else {
           throw new Error(
             `Checksum verification failed: ${binaryName} not listed in checksums.txt. ` +
-              `Pass --skip-checksum (or set AKM_UPGRADE_SKIP_CHECKSUM=1) to bypass (not recommended).`,
+              `Pass --skip-checksum to bypass (not recommended).`,
           );
         }
       }
@@ -436,7 +436,7 @@ export async function performUpgrade(
       removeFileBestEffort(stagedPath);
       throw new Error(
         `Checksum verification failed: ${err instanceof Error ? err.message : String(err)}. ` +
-          `Pass --skip-checksum (or set AKM_UPGRADE_SKIP_CHECKSUM=1) to bypass (not recommended).`,
+          `Pass --skip-checksum to bypass (not recommended).`,
       );
     }
   }

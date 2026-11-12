@@ -445,7 +445,7 @@ const secretFileRenderer: AssetRenderer = {
 // ── 7. task-md ───────────────────────────────────────────────────────────────
 
 const TASK_PAGE_ACTION =
-  "Scheduled task — `akm show tasks/<id>` for parsed details, `akm task run <id>` to invoke now.";
+  "Scheduled task — `akm show tasks/<id>` for parsed details, `akm run tasks/<id>` to invoke now.";
 
 const taskMdRenderer: AssetRenderer = {
   name: "task-yaml",

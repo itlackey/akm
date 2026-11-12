@@ -573,7 +573,7 @@ esac`,
       stubOpenCodeNext("0.9.28-rc.1");
       const run = await withEnv(world.env, () => runUpgrade(UPGRADE, "0.9.27", fakeDeps("0.9.27", "0.9.27")));
       expect(entry(run, "opencode").outcome).toBe("skipped");
-      expect(entry(run, "opencode").message).toContain("akm upgrade --next");
+      expect(entry(run, "opencode").message).toContain("akm upgrade --channel next");
       expect(mutations()).toEqual([]);
       expect(fs.existsSync(cacheDir("latest"))).toBe(true);
       expect(fs.existsSync(cacheDir("next"))).toBe(true);
@@ -768,7 +768,7 @@ esac`,
         updateAvailable: true,
         channel: "next",
       });
-      expect(text).toContain("run 'akm upgrade --next' to install");
+      expect(text).toContain("run 'akm upgrade --channel next' to install");
     });
   });
 

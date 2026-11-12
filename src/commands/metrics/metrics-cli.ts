@@ -238,7 +238,7 @@ export async function akmMetrics(options: AkmMetricsOptions = {}): Promise<AkmMe
   }
   if (pending.length > 0) {
     notes.push(
-      `state.db has ${pending.length} pending migration${pending.length === 1 ? "" : "s"}; 'akm metrics' never migrates, so every section except utility is empty. Run 'akm migrate apply'.`,
+      `state.db has ${pending.length} pending migration${pending.length === 1 ? "" : "s"}; 'akm doctor metrics' never migrates, so every section except utility is empty. Run 'akm migrate apply'.`,
     );
     return buildMetricsResult(input);
   }

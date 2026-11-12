@@ -66,7 +66,7 @@ export const agentCommand = defineCommand({
     },
     timeout: {
       type: "string",
-      description: "Timeout as a duration (30s, 2m) or milliseconds; same scope as --timeout-ms",
+      description: "Timeout as a duration (30s, 2m) or milliseconds",
     },
     "timeout-ms": { type: "string", description: "Override the agent CLI timeout in milliseconds" },
     cwd: {

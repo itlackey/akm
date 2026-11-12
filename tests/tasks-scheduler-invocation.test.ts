@@ -187,16 +187,16 @@ describe("rows written before 0.9.17-alpha.7 (`--scheduler-context <descriptor>`
     }
   });
 
-  test("a descriptor that cannot be read fails naming `akm task sync`", () => {
+  test("a descriptor that cannot be read fails naming `akm doctor scheduler sync`", () => {
     const sandbox = makeSandboxDir("akm-scheduler-context-missing-");
     try {
       const missing = path.join(sandbox.dir, "gone.json");
       expect(() => consumeSchedulerContextArg(["bun", "cli.js", "--scheduler-context", missing, "task"], {})).toThrow(
-        /akm task sync/,
+        /akm doctor scheduler sync/,
       );
       const garbled = path.join(sandbox.dir, "garbled.json");
       fs.writeFileSync(garbled, "{ not json");
-      expect(() => readLegacySchedulerContext(garbled)).toThrow(/akm task sync/);
+      expect(() => readLegacySchedulerContext(garbled)).toThrow(/akm doctor scheduler sync/);
       expect(() => consumeSchedulerContextArg(["bun", "cli.js", "--scheduler-context"], {})).toThrow(
         /--scheduler-context/,
       );

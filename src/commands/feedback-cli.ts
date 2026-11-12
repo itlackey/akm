@@ -530,7 +530,7 @@ export const feedbackCommand = defineJsonCommand({
       "moves a hit one place, and with embeddings it breaks only near-ties. Only\n" +
       "feedback recorded as the user counts, not feedback from improve, task or\n" +
       "audit runs. Feedback also moves the utility score that improve and\n" +
-      "`akm metrics` read.",
+      "`akm doctor metrics` read.",
   },
   args: {
     // Optional in citty so run() is invoked even when omitted; we re-validate

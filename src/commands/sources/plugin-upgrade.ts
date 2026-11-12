@@ -445,7 +445,7 @@ function openCodeRunning(): boolean | undefined {
 }
 
 const notFollowingNext = (flavor: OpenCodeFlavor) =>
-  `--next: OpenCode resolves a bare "${flavor.pkg}" to @latest, so it is not updated to a prerelease; ` +
+  `next channel: OpenCode resolves a bare "${flavor.pkg}" to @latest, so it is not updated to a prerelease; ` +
   `set "${flavor.configKeys[0]}": ["${nextSpec(flavor)}"] in your OpenCode config to follow prereleases`;
 
 /** Why a run leaves alone an OpenCode whose config names a spec this run does not refresh (#1115, #1117). */
@@ -453,7 +453,7 @@ function otherSpecNote(flavor: OpenCodeFlavor, spec: string): string {
   const loads = `OpenCode loads "${spec}" (your OpenCode config), so this upgrade leaves it alone`;
   const key = flavor.configKeys[0];
   return spec === nextSpec(flavor)
-    ? `${loads}; run \`akm upgrade --next\` to update it, or set "${key}": ["${flavor.pkg}"] to follow stable releases`
+    ? `${loads}; run \`akm upgrade --channel next\` to update it, or set "${key}": ["${flavor.pkg}"] to follow stable releases`
     : `${loads}; set "${key}": ["${flavor.pkg}"] to have \`akm upgrade\` keep it current`;
 }
 
@@ -582,8 +582,8 @@ function withChannelNote(entry: PluginUpgradeEntry, ref: string | undefined): Pl
   if (entry.outcome === "skipped") return entry;
   const note =
     ref === "next"
-      ? `--next: the ${MARKETPLACE} marketplace follows ref next, the prerelease channel`
-      : `--next: the ${MARKETPLACE} marketplace follows ${ref ? `ref ${ref}` : "the default branch (stable)"}; use akm upgrade --channel next to switch all installed plugins`;
+      ? `next channel: the ${MARKETPLACE} marketplace follows ref next, the prerelease channel`
+      : `next channel: the ${MARKETPLACE} marketplace follows ${ref ? `ref ${ref}` : "the default branch (stable)"}; use akm upgrade --channel next to switch all installed plugins`;
   return { ...entry, message: entry.message ? `${entry.message}; ${note}` : note };
 }
 

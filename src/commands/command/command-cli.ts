@@ -44,7 +44,7 @@ export const commandRunCommand = defineJsonCommand({
     ...RETIRED_ENGINE_ARG,
     timeout: {
       type: "string",
-      description: "Timeout as a duration (30s, 2m) or milliseconds; same scope as --timeout-ms",
+      description: "Timeout as a duration (30s, 2m) or milliseconds",
     },
     "timeout-ms": { type: "string", description: "Override the execution timeout in milliseconds" },
     cwd: { type: "string", description: "Override the execution workspace/current working directory" },

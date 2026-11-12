@@ -489,7 +489,7 @@ describe("isEditable", () => {
 
       expect(hit.ref).toBe("team//knowledge/guide");
       expect(hit.editable).toBe(false);
-      expect(hit.editHint).toContain("akm clone team//knowledge/guide");
+      expect(hit.editHint).toContain("akm import team//knowledge/guide --asset-ref");
       expect(hit.action).toContain("akm show team//knowledge/guide");
       expect(hit.action).not.toContain("clone");
     } finally {
