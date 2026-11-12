@@ -13,7 +13,7 @@ The design and rationale are in [Improvement Loop](../improvement.md). This page
 | `--connection <name>` / `--harness <name>` | Run every call of this run, judges included, on this connection or harness instead of the default. They are mutually exclusive. |
 | `--model <alias\|name>` | The model for every call of this run: an alias (`fast`, `balanced`, `reasoning`) or an exact name. |
 | `--task` | Extra guidance for this pass, passed to the reflect prompt. |
-| `--dry-run` | Compute the plan and analyze memory cleanup. Takes no improve lock, emits no learning events, calls no model, and writes no learning state. The CLI invocation still records diagnostic usage separately in `usage.sqlite`. |
+| `--dry-run` | Compute the plan and analyze memory cleanup. Takes no improve lock, emits no learning events, calls no model, and writes no learning state. The CLI invocation still records diagnostic usage separately in `metrics.db`. |
 | `--show-prompt` | Print the composed reflect prompt for one fully-qualified ref and exit. No lock, index write, or model call. |
 | `--bundle` | The bundle the run improves and writes to, overriding `defaultWriteTarget` and the working bundle. Only its assets are planned. |
 | `--limit` | Cap the number of assets processed, highest salience first. |

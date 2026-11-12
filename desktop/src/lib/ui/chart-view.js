@@ -73,7 +73,7 @@ export function chart(ctx, id, label, options, { height, rows, onSelect } = {}) 
           grid: { left: 12, right: 22, top: 24, bottom: 16, containLabel: true },
           ...option,
           // richText draws the tooltip as chart text, never as HTML, so a series name or a query cannot inject markup.
-          // A builder's own `tooltip` adds to these settings; it does not replace them.
+          // A builder's own `tooltip` adds to these settings; it cannot turn richText off.
           tooltip: {
             trigger: "axis",
             renderMode: "richText",
@@ -83,6 +83,7 @@ export function chart(ctx, id, label, options, { height, rows, onSelect } = {}) 
             textStyle: { color: token("--text"), fontFamily: font, fontSize: 12 },
             axisPointer: { type: "line", lineStyle: { color: token("--border-strong") } },
             ...option.tooltip,
+            renderMode: "richText",
           },
           series: option.series.map(({ colorIndex, ...series }, index) => ({
             ...series,

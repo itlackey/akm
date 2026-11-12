@@ -3207,7 +3207,7 @@ akm improve judge < revision.json      # reflect's quality judge on one revision
 | Flag | Description |
 | --- | --- |
 | `--task` | Optional extra guidance for this improvement pass |
-| `--dry-run` | Show the schema-v2 result on stdout without creating config, learning data, state, cache, bundle, log, or result artifacts. Dry-run results are never persisted, including on errors or signals. Diagnostic CLI usage is still recorded separately in `usage.sqlite`. |
+| `--dry-run` | Show the schema-v2 result on stdout without creating config, learning data, state, cache, bundle, log, or result artifacts. Dry-run results are never persisted, including on errors or signals. Diagnostic CLI usage is still recorded separately in `metrics.db`. |
 | `--bundle` | Select the bundle the run improves and writes to (default: `defaultWriteTarget`, else the working bundle); only that bundle's assets are planned. When the ref scope is bundle-qualified, it must name the same bundle |
 | `--limit <n>` | Cap the refs the run processes, highest salience first (refs routed to distill only come last). Overrides the strategy's `processes.reflect.limit` and `limit` |
 | `--timeout <duration>` | Duration alias for `--timeout-ms`; see [Timeout durations](#timeout-durations). |
