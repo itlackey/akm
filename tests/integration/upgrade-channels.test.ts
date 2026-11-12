@@ -155,6 +155,22 @@ afterEach(() => cleanup());
     expect(read("calls.jsonl")).not.toContain('"clone"');
   });
 
+  test("--check --channel next reports the same shape as --check --next, plus the target channel", async () => {
+    const viaNext = await withEnv(env, () =>
+      runUpgrade({ ...opts, check: true, next: true }, "0.10.1", deps("0.10.1")),
+    );
+    const viaChannel = await withEnv(env, () =>
+      runUpgrade({ ...opts, check: true, channel: "next" }, "0.10.1", deps("0.10.1")),
+    );
+    expect(viaNext.mode).toBe("check");
+    expect(viaChannel.mode).toBe("check");
+    const { targetChannel, ...rest } = viaChannel.result as typeof viaChannel.result & { targetChannel?: string };
+    expect(targetChannel).toBe("next");
+    expect(Object.keys(rest).sort()).toEqual(Object.keys(viaNext.result).sort());
+    expect(rest.channel).toBe(viaNext.result.channel);
+    expect(rest.plugins.map((p) => p.harness)).toEqual(viaNext.result.plugins.map((p) => p.harness));
+  });
+
   test("CLI downgrades are refused before edits, and --allow-downgrade permits them", async () => {
     await expect(
       withEnv(env, () => runUpgrade({ ...opts, channel: "latest" }, "0.10.4-beta", deps("0.10.4-beta", "0.10.2"))),

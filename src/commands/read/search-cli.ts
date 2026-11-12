@@ -142,6 +142,27 @@ export const searchCommand = defineJsonCommand({
   },
 });
 
+/**
+ * `akm doctor metrics assets`: `search --by-usage` under the doctor's reports.
+ * Same scope flags, handler and result as `search`, with the query and the
+ * `--by-usage` switch fixed.
+ */
+const { query: _query, "by-usage": _byUsage, ...assetsArgs } = searchCommand.args as unknown as Record<string, unknown>;
+export const doctorMetricsAssetsCommand = defineJsonCommand({
+  meta: {
+    name: "assets",
+    description:
+      "List the assets shown in the project (any project with --project none), most shown first; the same list as `search --by-usage`. No usage is recorded",
+  },
+  args: assetsArgs as never,
+  async run(context) {
+    await searchCommand.run?.({
+      ...context,
+      args: { ...(context.args as object), query: "", "by-usage": true },
+    } as never);
+  },
+});
+
 /** The value a project's writes carry as `project`: what its rules and usage are matched against. */
 function stampedProject(project: ResolvedProject | undefined): string | undefined {
   const value = project?.write.metadata.project;

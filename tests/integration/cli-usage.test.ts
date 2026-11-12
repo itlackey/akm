@@ -7,7 +7,7 @@ import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { main } from "../../src/cli";
-import { describeUsage, type UsageCommand } from "../../src/cli/usage";
+import { describeUsage, resolveCliUsageSource, type UsageCommand } from "../../src/cli/usage";
 import { getConfigDir, getDataDir } from "../../src/core/paths";
 import { openDatabase } from "../../src/storage/database";
 import { withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
@@ -23,8 +23,8 @@ function sandbox() {
 function cli(args: string[], env: NodeJS.ProcessEnv = process.env) {
   return spawnSync("bun", [CLI, ...args], { encoding: "utf8", env: { ...env }, timeout: 30000 });
 }
-function report(args: string[] = []) {
-  const result = cli(["doctor", "metrics", "usage", "--export", "--format", "json", ...args]);
+function report(args: string[] = [], env?: NodeJS.ProcessEnv) {
+  const result = cli(["doctor", "metrics", "usage", "--export", "--format", "json", ...args], env);
   expect(result.status).toBe(0);
   return JSON.parse(result.stdout);
 }
@@ -212,13 +212,20 @@ test("every declared command-tree help route records exactly one redacted attemp
     for (const [name, child] of Object.entries(command.subCommands ?? {})) walk(child, [...commandPath, name]);
   }
   walk(main as UsageCommand, []);
+  // Capture is fail-open (250 ms busy budget), so processes sharing one metrics.db may drop rows under load, by
+  // design. Each worker gets its own data dir: the routes still run four at a time, with nothing to contend over.
   let next = 0;
+  const workers = Array.from({ length: 4 }, (_, index) => ({
+    env: { ...process.env, AKM_DATA_DIR: path.join(getDataDir(), `worker-${index}`) },
+    routes: 0,
+  }));
   await Promise.all(
-    Array.from({ length: 4 }, async () => {
+    workers.map(async (worker) => {
       while (next < paths.length) {
         const commandPath = paths[next++]!;
+        worker.routes++;
         await new Promise<void>((resolve, reject) => {
-          const child = spawn("bun", [CLI, ...commandPath, "--help"], { env: { ...process.env }, stdio: "ignore" });
+          const child = spawn("bun", [CLI, ...commandPath, "--help"], { env: worker.env, stdio: "ignore" });
           child.once("error", reject);
           child.once("exit", (code) =>
             code === 0 ? resolve() : reject(new Error(`${commandPath.join(" ")}: ${code}`)),
@@ -227,12 +234,18 @@ test("every declared command-tree help route records exactly one redacted attemp
       }
     }),
   );
-  const result = report();
-  expect(result.details).toHaveLength(paths.length + 1);
-  expect(result.details.filter((row: { category: string }) => row.category === "success")).toHaveLength(paths.length);
-  expect(result.aggregates.reduce((sum: number, row: { attempts: number }) => sum + row.attempts, 0)).toBe(
-    paths.length + 1,
-  );
+  expect(workers.reduce((sum, worker) => sum + worker.routes, 0)).toBe(paths.length);
+  for (const worker of workers) {
+    // One row per route, plus the report's own invocation.
+    const result = report([], worker.env);
+    expect(result.details).toHaveLength(worker.routes + 1);
+    expect(result.details.filter((row: { category: string }) => row.category === "success")).toHaveLength(
+      worker.routes,
+    );
+    expect(result.aggregates.reduce((sum: number, row: { attempts: number }) => sum + row.attempts, 0)).toBe(
+      worker.routes + 1,
+    );
+  }
 }, 120000);
 
 test("writer contention has a bounded fail-open budget", () => {
@@ -535,4 +548,44 @@ test("usage tables coexist with 0.11's metrics.db: own names, no user_version, n
   expect(db.prepare("SELECT id FROM schema_migrations").all()).toEqual([{ id: "001-metrics-baseline" }]);
   db.close();
   expect(report().details.length).toBeGreaterThan(0);
+});
+
+test("usage source: an explicit AKM_EVENT_SOURCE wins, a detected harness is agent, otherwise unknown", () => {
+  expect(resolveCliUsageSource({})).toBe("unknown");
+  expect(resolveCliUsageSource({ CLAUDE_CODE_SESSION_ID: "s1" })).toBe("agent");
+  expect(resolveCliUsageSource({ AKM_AGENT_HARNESS: "opencode" })).toBe("agent");
+  expect(resolveCliUsageSource({ CLAUDE_CODE_SESSION_ID: "s1", AKM_EVENT_SOURCE: "task" })).toBe("task");
+  expect(resolveCliUsageSource({ CLAUDE_CODE_SESSION_ID: "s1", AKM_EVENT_SOURCE: "bogus" })).toBe("agent");
+});
+
+test("a CLI run under a harness records source agent", () => {
+  sandbox();
+  const env = { ...process.env, AKM_EVENT_SOURCE: undefined, AKM_AGENT_HARNESS: "opencode" };
+  expect(cli(["--version"], env).status).toBe(0);
+  const rows = report().details.filter((row: { command: string[] }) => row.command.length === 0);
+  expect(rows).toHaveLength(1);
+  expect(rows[0].source).toBe("agent");
+});
+
+test("a corrupt usage store is reported by bare akm doctor and is not recreated", () => {
+  sandbox();
+  const store = path.join(getDataDir(), "metrics.db");
+  fs.mkdirSync(path.dirname(store), { recursive: true });
+  fs.writeFileSync(store, "this is not a sqlite database".repeat(200));
+  const before = fs.readFileSync(store);
+  const result = cli(["doctor", "--no-probe", "--format", "json"]);
+  const advisories = JSON.parse(result.stdout).advisories as Array<{ name: string; status: string }>;
+  expect(advisories.find((a) => a.name === "cli-usage-store")?.status).toBe("warn");
+  expect(fs.readFileSync(store).equals(before)).toBe(true);
+});
+
+test("a healthy or absent usage store adds no doctor advisory", () => {
+  sandbox();
+  const quiet = () =>
+    (JSON.parse(cli(["doctor", "--no-probe", "--format", "json"]).stdout).advisories as Array<{ name: string }>).some(
+      (a) => a.name === "cli-usage-store",
+    );
+  expect(quiet()).toBe(false);
+  expect(cli(["--version"]).status).toBe(0);
+  expect(quiet()).toBe(false);
 });

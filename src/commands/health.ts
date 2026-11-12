@@ -35,6 +35,7 @@ import {
   runPendingStateMigrationsCheck,
   SESSION_EXTRACTION_LEDGER_WINDOW_DAYS,
 } from "./health/checks";
+import { collectCliUsageStoreAdvisory } from "./health/cli-usage-store";
 import { collectConfigSkewAdvisory } from "./health/config-skew";
 import { runConnectionsAndHarnessesCheck } from "./health/connections-and-harnesses-check";
 import { collectDataDirUsageAdvisory } from "./health/data-dir-usage";
@@ -434,6 +435,14 @@ function gatherAncillaryAdvisories(
     if (configSkew) advisories.push(configSkew);
     const egress = collectEgressAdvisory(egressConfigView);
     if (egress) advisories.push(egress);
+  } catch {
+    // Non-fatal.
+  }
+
+  // A corrupt CLI usage store silently stops collection (capture is fail-open); report it.
+  try {
+    const usageStore = collectCliUsageStoreAdvisory();
+    if (usageStore) advisories.push(usageStore);
   } catch {
     // Non-fatal.
   }

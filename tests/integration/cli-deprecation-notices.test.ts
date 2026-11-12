@@ -49,7 +49,7 @@ test("--quiet silences it; --help and internal invocations do not print it", () 
   expect(notices(run(["log", "tail"]).stderr)).toHaveLength(0);
 });
 
-test("flags name their replacement; a replacement not built yet and the no-ref agent form print nothing", () => {
+test("flags name their replacement; the no-ref agent form print nothing", () => {
   const messages: string[] = [];
   const argsFor = (userArgs: string[]) => {
     _resetWarnOnceForTests();
@@ -65,7 +65,92 @@ test("flags name their replacement; a replacement not built yet and the no-ref a
     expect(argsFor(["show", "x", "--detail", "brief"])).toContain("--outline");
     expect(argsFor(["show", "x", "--detail", "full"])).toBe("");
     expect(argsFor(["search", "q", "--include-proposed"])).toContain("--include quality=proposed");
-    expect(argsFor(["task", "history"])).toBe("");
+    expect(argsFor(["search", "--by-usage"])).toContain("akm doctor metrics assets");
+  } finally {
+    _setWarnSinkForTests(undefined);
+    _resetParsedInvocationForTests();
+  }
+});
+
+test("deprecated environment variables print one notice naming the replacement, once per process", () => {
+  const messages: string[] = [];
+  const notice = (userArgs: string[], env: NodeJS.ProcessEnv) => {
+    _resetWarnOnceForTests();
+    messages.length = 0;
+    _setWarnSinkForTests((_level, args) => messages.push(args.join(" ")));
+    const invocation = setParsedInvocation(["bun", "akm", ...userArgs]);
+    warnDeprecatedUse(userArgs.slice(0, 1), invocation, {}, env);
+    warnDeprecatedUse(userArgs.slice(0, 1), invocation, {}, env);
+    return messages.filter((m) => m.includes("[deprecated]"));
+  };
+  try {
+    const skip = notice(["upgrade"], { AKM_UPGRADE_SKIP_CHECKSUM: "1" });
+    expect(skip).toHaveLength(1);
+    expect(skip[0]).toContain("AKM_UPGRADE_SKIP_CHECKSUM");
+    expect(skip[0]).toContain("akm upgrade --skip-checksum");
+    expect(notice(["search"], { AKM_UPGRADE_SKIP_CHECKSUM: "1" })).toHaveLength(0);
+    expect(notice(["upgrade"], { AKM_UPGRADE_SKIP_CHECKSUM: "0" })).toHaveLength(0);
+    expect(notice(["search"], { AKM_SQLITE_JOURNAL_MODE: "DELETE" })[0]).toContain("no replacement");
+    expect(notice(["search"], { AKM_VERBOSE: "1" })[0]).toContain("--verbose");
+    expect(notice(["search"], { AKM_DEBUG: "1" })[0]).toContain("--verbose");
+    expect(notice(["search"], {})).toHaveLength(0);
+    expect(notice(["search"], { AKM_VERBOSE: "1", AKM_EVENT_SOURCE: "task" })).toHaveLength(0);
+  } finally {
+    _setWarnSinkForTests(undefined);
+    _resetParsedInvocationForTests();
+  }
+});
+
+test("a deprecated variable's notice reaches stderr, and --quiet silences it", () => {
+  sandbox();
+  const lines = notices(run(["info"], { AKM_VERBOSE: "1" }).stderr);
+  expect(lines.filter((l) => l.includes("AKM_VERBOSE"))).toHaveLength(1);
+  expect(notices(run(["info", "--quiet"], { AKM_VERBOSE: "1" }).stderr)).toHaveLength(0);
+});
+
+test("extract: --sessions matches --type; --type prints a notice naming --sessions; both is a usage error", () => {
+  sandbox();
+  const empty = path.join(process.env.XDG_CACHE_HOME ?? process.env.HOME ?? ".", "no-sessions");
+  const base = ["proposal", "extract", "--location", empty, "--dry-run", "--format", "json"];
+  const withType = run([...base, "--type", "claude"]);
+  const withSessions = run([...base, "--sessions", "claude"]);
+  expect(withSessions.status).toBe(withType.status);
+  expect(withSessions.stdout).toBe(withType.stdout);
+  expect(notices(withSessions.stderr)).toHaveLength(0);
+  const lines = notices(withType.stderr);
+  expect(lines).toHaveLength(1);
+  expect(lines[0]).toContain("--type");
+  expect(lines[0]).toContain("--sessions");
+  expect(notices(run([...base, "--type", "claude", "--quiet"]).stderr)).toHaveLength(0);
+
+  const both = run([...base, "--type", "claude", "--sessions", "claude"]);
+  expect(both.status).not.toBe(0);
+  expect(both.stderr + both.stdout).toContain("--sessions and --type");
+});
+
+test("improve --require-feedback-signal names the strategy setting; remember --auto, --enrich and --show-similar say there is no replacement", () => {
+  const messages: string[] = [];
+  const argsFor = (userArgs: string[]) => {
+    _resetWarnOnceForTests();
+    messages.length = 0;
+    _setWarnSinkForTests((_level, args) => messages.push(args.join(" ")));
+    const invocation = setParsedInvocation(["bun", "akm", ...userArgs]);
+    const path = userArgs.filter((a) => !a.startsWith("-"));
+    warnDeprecatedUse(path.slice(0, 1), invocation, { ref: { type: "positional" } }, {});
+    return messages.join("\n");
+  };
+  try {
+    expect(argsFor(["improve", "--require-feedback-signal"])).toContain(
+      "processes.proactiveMaintenance.enabled: false",
+    );
+    expect(argsFor(["improve"])).toBe("");
+    for (const flag of ["--auto", "--enrich", "--show-similar"]) {
+      const text = argsFor(["remember", "note", flag]);
+      expect(text).toContain(flag);
+      expect(text).toContain("removed in 0.11");
+      expect(text).toContain("no replacement flag");
+    }
+    expect(argsFor(["remember", "note"])).toBe("");
   } finally {
     _setWarnSinkForTests(undefined);
     _resetParsedInvocationForTests();

@@ -30,6 +30,7 @@ import { parsePositiveIntFlag } from "../cli/parse-args";
 import { defineJsonCommand, output, parseAllFlagValues } from "../cli/shared";
 import { UsageError } from "../core/errors";
 import { akmEventsList } from "./log";
+import { akmTasksHistory } from "./tasks/tasks";
 
 /**
  * `log` flattened from a group (`log list`/`log tail`) to a leaf in 0.9 (S3).
@@ -103,5 +104,34 @@ export const logCommand = defineJsonCommand({
       ...(limit !== undefined ? { limit } : {}),
     });
     output("log-list", result);
+  },
+});
+
+/**
+ * `akm doctor log`: the events stream above, plus `--task <id>` for per-run task
+ * history (the same rows and fields as `akm task history <id>`, including `trigger`).
+ */
+export const doctorLogCommand = defineJsonCommand({
+  meta: {
+    name: "log",
+    description: "List events from the append-only state.db events stream, or one task's runs with --task <id>",
+  },
+  args: {
+    ...(logCommand.args as unknown as Record<string, unknown>),
+    task: { type: "string", description: "Task id: list its run history instead of events (the `task history` rows)" },
+    bundle: { type: "string", description: "Bundle the --task id belongs to" },
+  },
+  async run(context) {
+    const task = context.args.task as string | undefined;
+    if (task === undefined) {
+      await logCommand.run?.(context as never);
+      return;
+    }
+    rejectExtraLogPositionals(context.args._);
+    const limit = parsePositiveIntFlag(context.args.limit as string | undefined);
+    output(
+      "task-history",
+      await akmTasksHistory({ id: task, limit, target: context.args.bundle as string | undefined }),
+    );
   },
 });

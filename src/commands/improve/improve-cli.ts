@@ -83,7 +83,7 @@ async function runShowPromptCli(
 }
 
 /** `akm improve report` (#944): the per-run LLM usage/routing report ("report" is no asset type). */
-const improveReportCommand = defineJsonCommand({
+export const improveReportCommand = defineJsonCommand({
   meta: {
     name: "report",
     description: "Show the LLM usage/routing report for the most recent improve run, one run, or a window of runs.",
