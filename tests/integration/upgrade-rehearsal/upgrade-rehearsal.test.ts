@@ -607,7 +607,8 @@ for (const origin of ["previous", "0.9.32"] as const) {
       const taskRun = await runLauncher(candidateLauncher, ["task", "run", taskRef], home.env);
       expect(taskRun.status, taskRun.stderr).toBe(0);
       const search = await runLauncher(candidateLauncher, ["search", home.searchTerm], home.env);
-      const ref = (JSON.parse(search.stdout) as { hits?: { ref?: string }[] }).hits?.[0]?.ref as string;
+      const ref = (JSON.parse(search.stdout) as { results?: { ref?: string }[] }).results?.[0]?.ref as string;
+      expect(ref, search.stdout).toBeTruthy();
       const agentShow = await runLauncher(candidateLauncher, ["show", ref], {
         ...home.env,
         CLAUDE_CODE_SESSION_ID: "rehearsal-session",
