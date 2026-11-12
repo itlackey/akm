@@ -10,6 +10,7 @@ import { getDataDir } from "../core/paths";
 import { isKnownType } from "../core/recognition-util";
 import { hasSignalOwner, observeSignal } from "../core/signal-observers";
 import { type Database, openDatabase } from "../storage/database";
+import { resolveAgentIdentity } from "../workflows/runtime/agent-identity";
 import { cittyComparableName, findCittyTopLevelCommandIndex, toAliasArray } from "./invocation";
 
 interface ArgDefinition {
@@ -203,6 +204,13 @@ export function describeUsage(root: UsageCommand, raw: readonly string[]): Invoc
 
 export const CLI_USAGE_SOURCES: ReadonlySet<string> = new Set(["user", "agent", "task", "improve", "audit", "unknown"]);
 
+/** An explicit `AKM_EVENT_SOURCE` wins; otherwise a detected agent harness is "agent", else "unknown". */
+export function resolveCliUsageSource(env: NodeJS.ProcessEnv): string {
+  const explicit = env.AKM_EVENT_SOURCE ?? "";
+  if (CLI_USAGE_SOURCES.has(explicit)) return explicit;
+  return resolveAgentIdentity(env).harness ? "agent" : "unknown";
+}
+
 const RETENTION_MS = 30 * 86400_000;
 function usagePath(): string {
   return path.join(getDataDir(), "metrics.db");
@@ -257,7 +265,7 @@ export function startUsage(root: UsageCommand, raw: readonly string[], version: 
   let selectedExecutor: UsageCommand | undefined;
   let dimensions: Record<string, unknown> = {};
   let data: Record<string, unknown> = {};
-  const source = CLI_USAGE_SOURCES.has(process.env.AKM_EVENT_SOURCE ?? "") ? process.env.AKM_EVENT_SOURCE! : "unknown";
+  const source = resolveCliUsageSource(process.env);
   try {
     const usage = describeUsage(root, raw);
     // `--read-only` promises no writes, and the config key turns capture off.
@@ -403,6 +411,28 @@ export function startUsage(root: UsageCommand, raw: readonly string[], version: 
   const stopInt = observeSignal("SIGINT", onInt);
   const stopTerm = observeSignal("SIGTERM", onTerm);
   return finish;
+}
+
+/**
+ * Why the usage store cannot be read, or `undefined` when it is absent or readable. A store that cannot be opened
+ * stops collection silently (capture is fail-open), so `akm doctor` reports it.
+ */
+export function usageStoreProblem(): string | undefined {
+  if (!fs.existsSync(usagePath())) return undefined;
+  let db: Database | undefined;
+  try {
+    db = openDatabase(usagePath(), { readonly: true, create: false });
+    db.exec("PRAGMA busy_timeout=250; PRAGMA query_only=ON;");
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cli_usage_meta'").get()) return undefined;
+    for (const table of ["cli_usage_meta", "cli_usage_invocations", "cli_usage_aggregates"]) {
+      db.prepare(`SELECT 1 FROM ${table} LIMIT 1`).get();
+    }
+    return undefined;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  } finally {
+    db?.close();
+  }
 }
 
 export interface UsageFilter {

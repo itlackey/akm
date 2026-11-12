@@ -71,3 +71,39 @@ test("flags name their replacement; a replacement not built yet and the no-ref a
     _resetParsedInvocationForTests();
   }
 });
+
+test("deprecated environment variables print one notice naming the replacement, once per process", () => {
+  const messages: string[] = [];
+  const notice = (userArgs: string[], env: NodeJS.ProcessEnv) => {
+    _resetWarnOnceForTests();
+    messages.length = 0;
+    _setWarnSinkForTests((_level, args) => messages.push(args.join(" ")));
+    const invocation = setParsedInvocation(["bun", "akm", ...userArgs]);
+    warnDeprecatedUse(userArgs.slice(0, 1), invocation, {}, env);
+    warnDeprecatedUse(userArgs.slice(0, 1), invocation, {}, env);
+    return messages.filter((m) => m.includes("[deprecated]"));
+  };
+  try {
+    const skip = notice(["upgrade"], { AKM_UPGRADE_SKIP_CHECKSUM: "1" });
+    expect(skip).toHaveLength(1);
+    expect(skip[0]).toContain("AKM_UPGRADE_SKIP_CHECKSUM");
+    expect(skip[0]).toContain("akm upgrade --skip-checksum");
+    expect(notice(["search"], { AKM_UPGRADE_SKIP_CHECKSUM: "1" })).toHaveLength(0);
+    expect(notice(["upgrade"], { AKM_UPGRADE_SKIP_CHECKSUM: "0" })).toHaveLength(0);
+    expect(notice(["search"], { AKM_SQLITE_JOURNAL_MODE: "DELETE" })[0]).toContain("no replacement");
+    expect(notice(["search"], { AKM_VERBOSE: "1" })[0]).toContain("--verbose");
+    expect(notice(["search"], { AKM_DEBUG: "1" })[0]).toContain("--verbose");
+    expect(notice(["search"], {})).toHaveLength(0);
+    expect(notice(["search"], { AKM_VERBOSE: "1", AKM_EVENT_SOURCE: "task" })).toHaveLength(0);
+  } finally {
+    _setWarnSinkForTests(undefined);
+    _resetParsedInvocationForTests();
+  }
+});
+
+test("a deprecated variable's notice reaches stderr, and --quiet silences it", () => {
+  sandbox();
+  const lines = notices(run(["info"], { AKM_VERBOSE: "1" }).stderr);
+  expect(lines.filter((l) => l.includes("AKM_VERBOSE"))).toHaveLength(1);
+  expect(notices(run(["info", "--quiet"], { AKM_VERBOSE: "1" }).stderr)).toHaveLength(0);
+});

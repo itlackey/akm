@@ -3,14 +3,24 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { z } from "zod";
+import { peekConfigValue } from "./config/peek";
 import { UsageError } from "./errors";
 import { isKnownType, KNOWN_TYPES } from "./recognition-util";
+
+/** Custom types the config hides by default (`search.defaultExcludeTypes`), which `type=` may include again. */
+function configuredExcludedTypes(): string[] {
+  const configured = peekConfigValue(["search", "defaultExcludeTypes"]);
+  return Array.isArray(configured) ? configured.filter((t): t is string => typeof t === "string") : [];
+}
 
 const knownType = z
   .string()
   .trim()
   .min(1)
-  .refine((value): boolean => isKnownType(value), "unsupported asset type");
+  .refine(
+    (value): boolean => isKnownType(value) || configuredExcludedTypes().includes(value),
+    "unsupported asset type",
+  );
 
 /** Selectors relax only the named default exclusions; they never select matching assets on their own. */
 export const IncludeSchema = z
@@ -38,7 +48,7 @@ export function normalizeInclude(raw: IncludeSelectors | undefined): IncludeSele
     throw new UsageError(
       `Invalid --include value. ${detail}`,
       "INVALID_FLAG_VALUE",
-      `Valid selectors: quality=proposed, type=<${KNOWN_TYPES.join("|")}>. Repeat --include for more than one.`,
+      `Valid selectors: quality=proposed, type=<${[...KNOWN_TYPES, ...configuredExcludedTypes().filter((t) => !isKnownType(t))].join("|")}>. Repeat --include for more than one.`,
     );
   }
   return parsed.data;
