@@ -58,11 +58,15 @@ describe("CI workflow", () => {
     expect(workflow.jobs.gated?.uses).toBe("./.github/workflows/gated-ci.yml");
   });
 
-  test("one run per pull request; a dispatch or a call from Release cancels nothing", () => {
+  test("one run per pull request; a dispatch, a call from Release or a skipped draft run cancels nothing", () => {
     // A called workflow reports the caller's name in github.workflow, so a ref-based group shared with Release
-    // would cancel the Release run; the run id keeps every non-pull-request run in a group of its own.
+    // would cancel the Release run; the run id keeps every non-pull-request run in a group of its own. A draft run
+    // into main gets its own group too: release:stable pushes then marks the pull request ready, and the push's
+    // all-skipped run can start after the ready run and would cancel the full gate.
     expect(workflow.concurrency.group).toBe(
-      "$" + "{{ github.workflow }}-$" + "{{ github.event.pull_request.number || github.run_id }}",
+      "$" +
+        "{{ github.workflow }}-$" +
+        "{{ (github.base_ref == 'main' && github.event.pull_request.draft) && github.run_id || github.event.pull_request.number || github.run_id }}",
     );
     expect(workflow.concurrency["cancel-in-progress"]).toBe(true);
   });
