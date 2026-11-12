@@ -23,8 +23,8 @@ function sandbox() {
 function cli(args: string[], env: NodeJS.ProcessEnv = process.env) {
   return spawnSync("bun", [CLI, ...args], { encoding: "utf8", env: { ...env }, timeout: 30000 });
 }
-function report(args: string[] = []) {
-  const result = cli(["doctor", "metrics", "usage", "--export", "--format", "json", ...args]);
+function report(args: string[] = [], env?: NodeJS.ProcessEnv) {
+  const result = cli(["doctor", "metrics", "usage", "--export", "--format", "json", ...args], env);
   expect(result.status).toBe(0);
   return JSON.parse(result.stdout);
 }
@@ -212,21 +212,40 @@ test("every declared command-tree help route records exactly one redacted attemp
     for (const [name, child] of Object.entries(command.subCommands ?? {})) walk(child, [...commandPath, name]);
   }
   walk(main as UsageCommand, []);
-  // Capture is fail-open (250 ms busy budget), so concurrent spawns may drop rows under load by design.
-  // Run serially so the exact count only asserts one row per attempt.
-  for (const commandPath of paths) {
-    await new Promise<void>((resolve, reject) => {
-      const child = spawn("bun", [CLI, ...commandPath, "--help"], { env: { ...process.env }, stdio: "ignore" });
-      child.once("error", reject);
-      child.once("exit", (code) => (code === 0 ? resolve() : reject(new Error(`${commandPath.join(" ")}: ${code}`))));
-    });
-  }
-  const result = report();
-  expect(result.details).toHaveLength(paths.length + 1);
-  expect(result.details.filter((row: { category: string }) => row.category === "success")).toHaveLength(paths.length);
-  expect(result.aggregates.reduce((sum: number, row: { attempts: number }) => sum + row.attempts, 0)).toBe(
-    paths.length + 1,
+  // Capture is fail-open (250 ms busy budget), so processes sharing one metrics.db may drop rows under load, by
+  // design. Each worker gets its own data dir: the routes still run four at a time, with nothing to contend over.
+  let next = 0;
+  const workers = Array.from({ length: 4 }, (_, index) => ({
+    env: { ...process.env, AKM_DATA_DIR: path.join(getDataDir(), `worker-${index}`) },
+    routes: 0,
+  }));
+  await Promise.all(
+    workers.map(async (worker) => {
+      while (next < paths.length) {
+        const commandPath = paths[next++]!;
+        worker.routes++;
+        await new Promise<void>((resolve, reject) => {
+          const child = spawn("bun", [CLI, ...commandPath, "--help"], { env: worker.env, stdio: "ignore" });
+          child.once("error", reject);
+          child.once("exit", (code) =>
+            code === 0 ? resolve() : reject(new Error(`${commandPath.join(" ")}: ${code}`)),
+          );
+        });
+      }
+    }),
   );
+  expect(workers.reduce((sum, worker) => sum + worker.routes, 0)).toBe(paths.length);
+  for (const worker of workers) {
+    // One row per route, plus the report's own invocation.
+    const result = report([], worker.env);
+    expect(result.details).toHaveLength(worker.routes + 1);
+    expect(result.details.filter((row: { category: string }) => row.category === "success")).toHaveLength(
+      worker.routes,
+    );
+    expect(result.aggregates.reduce((sum: number, row: { attempts: number }) => sum + row.attempts, 0)).toBe(
+      worker.routes + 1,
+    );
+  }
 }, 120000);
 
 test("writer contention has a bounded fail-open budget", () => {

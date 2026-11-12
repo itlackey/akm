@@ -44,6 +44,7 @@ import { isOpaqueSchema, resolveSchemaAt } from "./config-walker";
 import { convertEngineConfig, type EngineTarget } from "./convert-engines";
 import { fileFlatCredentials, writeCredential } from "./credentials";
 import { deepMergeConfig, isPlainObject } from "./deep-merge";
+import { readLearningAliases } from "./learning-aliases";
 import { documentEndpoint, planKeyMoves } from "./migrate-keys";
 import { modelsFileExists, readModelsFile, retireModelsFile } from "./models-file";
 import { type EngineTargets, rememberEngineTargets, rememberedEngineTargets } from "./retired-engines";
@@ -386,10 +387,13 @@ function dropRetiredOutputFormat(raw: Record<string, unknown>, sourcePath?: stri
  * keeps around, instead of only getting the final merged `AkmConfig` back.
  */
 function buildEffectiveConfig(liftedLocalRaw: Record<string, unknown>, sourcePath?: string): AkmConfig {
-  const chained = dropRetiredOutputFormat(
-    dropUnusableProjects(
-      dropUnusableEntries(
-        resolveExtendsChain(dropUnusableProjects(liftedLocalRaw, sourcePath), sourcePath),
+  const chained = readLearningAliases(
+    dropRetiredOutputFormat(
+      dropUnusableProjects(
+        dropUnusableEntries(
+          resolveExtendsChain(dropUnusableProjects(liftedLocalRaw, sourcePath), sourcePath),
+          sourcePath,
+        ),
         sourcePath,
       ),
       sourcePath,

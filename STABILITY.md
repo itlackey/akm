@@ -278,7 +278,7 @@ remove a research capability or skip its replacement.
 | --- | --- |
 | General YAML output; general Markdown/JSONL support | JSON/text generally; Markdown for reports and JSONL for useful streaming cases |
 | Global `--output`, `--detail` | Shell redirection; add command-specific limits, budgets, and outlines in 0.10.x |
-| `remember --auto`, `--enrich` | Audit and add experimental replacements for demonstrated research uses in 0.10.x; remove old flags in 0.11, preserving enrichment internals |
+| `remember --auto`, `--enrich` | No replacement flag and no experimental key (the audit found one consumer, akm-eval's bakeoff). Remove the flags in 0.11. Enrichment belongs in improve, not in `remember` or `akm index`: an improve-based replacement that fills a new memory's tags and observed date must be implemented before 0.11.0 stable |
 | `remember --show-similar` | Separate retrieval operation |
 | Old public paths for custom-strategy definitions and research-only process knobs | Add experimental aliases in 0.10.x feeding the unchanged strategy engine; remove old paths in 0.11 |
 | `improve --require-feedback-signal` | Add an experimental setting in 0.10.x with equivalent scope, precedence, and eligibility |
