@@ -901,7 +901,7 @@ describe("GLOBAL_OUTPUT_ARGS coverage guard (R-051)", () => {
     const leaves = collectTerminalLeafCommands(main as unknown as AnyCittyCommandForTest);
     expect(leaves.length).toBeGreaterThan(20); // sanity: the walk actually found the tree
 
-    const dynamicConfigInputs = new Set(["run", "workflow run", "task run", "task explain"]);
+    const dynamicConfigInputs = new Set(["run", "workflow run", "task run", "task explain", "doctor explain"]);
     const missing: string[] = [];
     for (const { path, args } of leaves) {
       const topLevel = path.split(" ")[0] ?? path;

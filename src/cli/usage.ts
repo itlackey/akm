@@ -110,7 +110,7 @@ export function describeUsage(root: UsageCommand, raw: readonly string[]): Invoc
     ...command.args,
   };
   const leafFlags = flagNames(leafDefinitions);
-  const dynamicInputs = ["run", "workflow run", "task run", "task explain"].includes(result.command.join(" "));
+  const dynamicInputs = ["run", "workflow run", "task run", "task explain", "doctor explain"].includes(result.command.join(" "));
   const positional = Object.entries(command.args ?? {}).filter(([, def]) => def.type === "positional");
   const explicit = new Set<string>();
   let position = 0;
