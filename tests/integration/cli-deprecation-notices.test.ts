@@ -49,7 +49,7 @@ test("--quiet silences it; --help and internal invocations do not print it", () 
   expect(notices(run(["log", "tail"]).stderr)).toHaveLength(0);
 });
 
-test("flags name their replacement; a replacement not built yet and the no-ref agent form print nothing", () => {
+test("flags name their replacement; the no-ref agent form print nothing", () => {
   const messages: string[] = [];
   const argsFor = (userArgs: string[]) => {
     _resetWarnOnceForTests();
@@ -65,7 +65,7 @@ test("flags name their replacement; a replacement not built yet and the no-ref a
     expect(argsFor(["show", "x", "--detail", "brief"])).toContain("--outline");
     expect(argsFor(["show", "x", "--detail", "full"])).toBe("");
     expect(argsFor(["search", "q", "--include-proposed"])).toContain("--include quality=proposed");
-    expect(argsFor(["task", "history"])).toBe("");
+    expect(argsFor(["search", "--by-usage"])).toContain("akm doctor metrics assets");
   } finally {
     _setWarnSinkForTests(undefined);
     _resetParsedInvocationForTests();

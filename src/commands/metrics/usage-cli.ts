@@ -9,6 +9,8 @@ import { assertKnownFlags, type FlagScanCommand } from "../../cli/unknown-flags"
 import { CLI_USAGE_SOURCES, readUsage } from "../../cli/usage";
 import { UsageError } from "../../core/errors";
 import { parseHealthSince } from "../health";
+import { improveReportCommand } from "../improve/improve-cli";
+import { doctorMetricsAssetsCommand } from "../read/search-cli";
 import { metricsCommand } from "./metrics-cli";
 
 const usageCommand = defineJsonCommand({
@@ -93,14 +95,20 @@ const usageCommand = defineJsonCommand({
   },
 });
 
+const METRICS_SUBCOMMANDS = { usage: 1, improve: 1, assets: 1 };
+
 // Retain the old leaf handler and args verbatim; citty selects a child before
 // running this handler, so existing bare doctor metrics output stays intact.
 export const doctorMetricsCommand = defineCommand({
   ...metricsCommand,
-  subCommands: { usage: usageCommand },
+  subCommands: {
+    usage: usageCommand,
+    improve: improveReportCommand as never,
+    assets: doctorMetricsAssetsCommand as never,
+  },
   setup({ rawArgs }) {
     const index = findCittyTopLevelCommandIndex(rawArgs, metricsCommand.args as ArgsDef);
-    if (index < 0 || rawArgs[index] !== "usage") {
+    if (index < 0 || !(rawArgs[index]! in METRICS_SUBCOMMANDS)) {
       // The bare report remains a leaf for flag validation even though this
       // wrapper also routes usage; health-only flags must still be rejected.
       assertKnownFlags(metricsCommand as FlagScanCommand, rawArgs);
@@ -111,13 +119,13 @@ export const doctorMetricsCommand = defineCommand({
     } catch (error) {
       if (!(error instanceof UsageError)) throw error;
       throw new UsageError(
-        "Put usage report options after usage: akm doctor metrics usage --since 7d.",
+        `Put ${rawArgs[index]} report options after it: akm doctor metrics ${rawArgs[index]} --since 7d.`,
         "INVALID_FLAG_VALUE",
       );
     }
   },
   run(context) {
-    if (context.args._[0] === "usage") return;
+    if (String(context.args._[0]) in METRICS_SUBCOMMANDS) return;
     return metricsCommand.run?.(context);
   },
 });
