@@ -407,6 +407,13 @@ function buildEffectiveConfig(liftedLocalRaw: Record<string, unknown>, sourcePat
       : chained;
 
   const where = sourcePath ? ` at ${sourcePath}` : "";
+  // Deprecated in 0.10.261120, removed in 0.11. The base files' own `extends` are not reported separately.
+  if (liftedLocalRaw.extends !== undefined) {
+    warnOnce(
+      "config:extends-deprecated",
+      `\`extends\` is Deprecated and is removed in 0.11: copy the inherited settings into this config file${sourcePath ? ` (${sourcePath})` : ""}; \`akm config get <key> --show-source\` shows which come from the base.`,
+    );
+  }
   warnUnknownConfigKeys(liftedLocalRaw, sourcePath);
   const parsed = AkmConfigSchema.safeParse(withExtends);
   if (!parsed.success) {

@@ -2634,7 +2634,8 @@ scripts.
 
 See [configuration.md](configuration.md)'s "Sharing configuration across
 installs" for the `extends` config key that `diff` and `get --show-source`
-work with.
+work with. `extends` is Deprecated (0.10.261120) and removed in 0.11: copy the
+inherited settings into the local config file.
 
 > **Removed in 0.9.0:** `akm config enable`/`akm config disable`. Use
 > `akm registry add|remove` to toggle a registry, the general mechanism.

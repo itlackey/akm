@@ -4,6 +4,7 @@
 
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 import { warnDeprecatedUse } from "../../src/cli/deprecations";
 import { _resetParsedInvocationForTests, setParsedInvocation } from "../../src/cli/invocation";
@@ -155,4 +156,15 @@ test("improve --require-feedback-signal names the strategy setting; remember --a
     _setWarnSinkForTests(undefined);
     _resetParsedInvocationForTests();
   }
+});
+
+test("a config that sets extends prints one notice per process, and --quiet silences it", () => {
+  sandbox();
+  const configPath = process.env.AKM_CONFIG_FILE ?? path.join(process.env.XDG_CONFIG_HOME ?? "", "akm", "config.json");
+  const base = path.join(path.dirname(configPath), "base.json");
+  fs.writeFileSync(base, JSON.stringify({ configVersion: "0.9.0" }));
+  fs.writeFileSync(configPath, JSON.stringify({ configVersion: "0.9.0", semanticSearchMode: "off", extends: base }));
+  const extendsNotices = (stderr: string) => stderr.split("\n").filter((l) => l.includes("`extends` is Deprecated"));
+  expect(extendsNotices(run(["config", "list"]).stderr)).toHaveLength(1);
+  expect(extendsNotices(run(["config", "list", "--quiet"]).stderr)).toHaveLength(0);
 });

@@ -9,9 +9,9 @@ Relative file paths resolve from the invoking directory; an empty `AKM_CONFIG_FI
 Without either selector all existing directory overrides and defaults are
 unchanged. A missing file uses the existing defaults and can be created by setup
 or configuration writes. Project `.akm/config.json` files are not merged. A config file may
-optionally extend one other config via `extends` (see "Sharing configuration
-across installs" below) — this is a single, explicit, user-opted-in key, not
-automatic project-config discovery.
+optionally extend one other config via `extends` (Deprecated, removed in 0.11; see
+"Sharing configuration across installs" below) — this is a single, explicit,
+user-opted-in key, not automatic project-config discovery.
 
 ## Version 0.9
 
@@ -1160,6 +1160,12 @@ that sets it, or `"default"` when neither does. It is opt-in — plain
 `config get` keeps its Stable, script-safe bare-value shape.
 
 ### Sharing configuration across installs
+
+> **Deprecated (0.10.261120), removed in 0.11:** `extends` still works, and
+> akm prints one stderr line per process when a config sets it (`--quiet`
+> silences it). Copy the shared settings into each host's own config file;
+> `akm config get <key> --show-source` shows which keys come from the base
+> (`source` is `extends:<ref>`).
 
 Five hosts running the same fleet often carry an identical `connections` map and
 `improve.strategies` block, differing only in credential delivery, bundle paths,

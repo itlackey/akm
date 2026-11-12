@@ -131,7 +131,8 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | `akm config get` | Stable | Default bare-value shape unchanged; `--show-source` (opt-in) wraps it as `{ value, source }`. |
 | `akm config set` | Stable | |
 | `akm config unset` | Stable | |
-| `akm config diff` | Evolving | Compares effective (post-`extends`) configs. |
+| `akm config diff` | Evolving | Compares effective configs of two config files. |
+| config key `extends` | Deprecated | Removed in 0.11: copy the inherited settings into the local config file; `akm config get <key> --show-source` shows which keys come from the base. First notice in 0.10.261120 (one stderr line per process, silenced by `--quiet`). |
 | `akm models` | Evolving | The alias picks of a connection, then the models its endpoint lists, and `set` to change one. |
 | `akm models set` | Evolving | Changes a connection's model alias. |
 | `akm help` | Stable | |

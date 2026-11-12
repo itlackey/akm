@@ -105,6 +105,7 @@ export { WorkflowConfigSchema } from "./schema/workflow";
  */
 export const AkmConfigShape = {
   configVersion: z.literal(CURRENT_CONFIG_VERSION),
+  // Deprecated in 0.10.261120, removed in 0.11: copy the inherited settings into the config file.
   // #945 — fleet inheritance. A filesystem path (relative to the directory of
   // the config file that declares it; `~` expands) or a `bundle//<path>` ref
   // naming an already-synced local file to deep-merge underneath this config
