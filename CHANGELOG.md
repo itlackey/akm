@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261119] - 2026-11-12
+
 ### Added
 
 - `akm doctor` is the home of the diagnostics, as the replacement for `health`, `metrics`, `info`, `log` and `judge` (akm#1619). Bare `doctor` runs the health checks with the same flags, output and exit codes, including `--read-only` and `--no-probe`; `doctor metrics`, `doctor info`, `doctor log` and `doctor judge` reuse the commands they replace, and `doctor prompt` reuses `improve --show-prompt`. The old commands keep working through 0.10.
