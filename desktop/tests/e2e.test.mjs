@@ -207,7 +207,7 @@ test("built desktop UI: each section's happy path and one refusal", { timeout: 2
     const inspect = page.getByRole("button", { name: "Inspect run synthetic-improve", exact: true });
     await inspect.click();
     const run = page.getByRole("region", { name: "Improve run details", exact: true });
-    await expect(run.getByRole("table", { name: "Run calls by process" })).toContainText("reflect");
+    await expect(run.getByRole("table", { name: "Run usage by process, execution target and model" })).toContainText("reflect");
     await run.getByRole("button", { name: "Back to run records", exact: true }).click();
     await expect(inspect).toBeFocused();
   });

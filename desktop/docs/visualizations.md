@@ -9,9 +9,9 @@ in [prototypes](prototypes/README.md).
 
 Above the timeline, one bar per kind of run (Improve, Tasks, Workflows) shows how its recorded runs of the window
 ended: completed, failed or unknown, with the counts as text. A run with no recorded end (a task or workflow run still
-active, blocked, or never finished) is unknown, never completed. "Terminated" is kept as a fourth outcome but no record
-Desktop reads says a run was stopped from outside, so nothing is shown as terminated today; akm records an abandoned
-workflow run and a stopped improve run as failed.
+active, blocked, or never finished) is unknown, never completed. "Terminated" is shown for an improve run whose record
+says it was stopped (a signal or an exception, `activity.improveRun`'s `terminated`); a workflow run records no such thing
+and an abandoned one is failed.
 
 Each run opens in a view of its own, by its mark on the timeline, its row in a table, or an address:
 
@@ -19,13 +19,13 @@ Each run opens in a view of its own, by its mark on the timeline, its row in a t
 | --- | --- | --- | --- |
 | Workflow run | `?view=runs&run=<id>` | outcome, the failed attempts in the order they ended with their recorded reasons, tokens by execution target, then the trace | everything by run id |
 | Task run | `?view=runs&task=<id>&at=<start>` | outcome, how long, who started it, the recorded reason, error and exit code; a link to the workflow run it ran | the workflow run by run id (`detail.runId`); an improve run started within five minutes, by time |
-| Improve run | `?view=runs&improve=<id>` | outcome, times, calls and failures by process, sync and triage, and the recorded error detail of the scheduled task run around it | the task run by time only (an `akm-improve*` or `improve` task within five minutes, the rule `akm doctor` uses); nothing carries an improve run's id |
+| Improve run | `?view=runs&improve=<id>` | outcome, times, usage by process, execution target and model (calls, failures, reported tokens), processes that made no call, whether it was terminated and why, the failed actions' recorded errors, sync and triage, and the error detail of the scheduled task run around it | the task run by time only (an `akm-improve*` or `improve` task within five minutes, the rule `akm doctor` uses); nothing carries an improve run's id |
 
 | Limit | Why |
 | --- | --- |
-| An improve run is shown only when it is among the latest 10 | `activity.overview` returns `improveRuns`, the latest 10. |
-| An improve run's calls are by process, with no model, execution target or tokens | the overview's projection of the run keeps calls and failures per process. |
-| An improve run has no error detail of its own | its error text is read from the task run matched by time, and the view says so; a run started by hand has none. |
+| An improve run is read by id when it is not among the latest 10 | `activity.overview` returns the latest 10; `activity.improveRun({ id })` returns any one. The "Improve run ID" field opens it. |
+| An improve run's usage is its persisted report only | a run recorded before the report existed, or terminated before it, shows no usage: akm does not rebuild it from events, which carry no run id. A call that reported no tokens is "Not reported", not zero. |
+| The error detail of the scheduled task run is matched by time | no record carries an improve run's id; the view says so, and a run started by hand has none. The run's own errors (failed actions, termination message) are read from its record. |
 | A task run is identified by its task and start time | `activity.taskHistory` rows carry no id. |
 | A workflow run shows the target of each unit, not its model | `activity.workflowRun` returns each unit's engine. |
 | A workflow that failed with no failed attempt is not called terminated | akm records an abandoned run as failed; the view says it cannot tell which happened. |

@@ -10,7 +10,7 @@
 
 import type { ActivityRun, ActivityTaskRun, WorkflowTrace } from "./activity-types";
 
-/** `terminated` is a run stopped from outside. No record Desktop reads says so yet, so nothing returns it today. */
+/** `terminated` is a run stopped from outside, and only an improve run's record says so (a signal or an exception). */
 export type Outcome = "completed" | "failed" | "terminated" | "unknown";
 export const OUTCOMES: Outcome[] = ["completed", "failed", "terminated", "unknown"];
 export const OUTCOME_LABEL: Record<Outcome, string> = {
@@ -28,7 +28,8 @@ export function statusOutcome(status: string): Outcome {
   return status === "completed" ? "completed" : status === "failed" ? "failed" : "unknown";
 }
 /** An improve run's recorded `ok`: absent means no outcome was recorded. */
-export function improveOutcome(run: Pick<ActivityRun, "ok">): Outcome {
+export function improveOutcome(run: Pick<ActivityRun, "ok" | "terminated">): Outcome {
+  if (run.terminated) return "terminated";
   return run.ok === true ? "completed" : run.ok === false ? "failed" : "unknown";
 }
 

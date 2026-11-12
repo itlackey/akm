@@ -85,11 +85,31 @@
   // An improve run named by the address opens its view, when it is among the runs akm returns.
   $effect(() => {
     if (mode !== "runs" || !requestedImprove) return;
-    const found = data.improveRuns.find((run) => run.id === requestedImprove) ?? null;
-    selectedRun = found;
-    improveMissing = found ? "" : requestedImprove;
+    untrack(() => void openImproveRun(requestedImprove));
   });
-  let improveMissing = $state("");
+  let improveMissing = $state(""),
+    improveId = $state(""),
+    improveLookups = 0;
+  // A run among the latest ten is already in hand; any other is read by id.
+  async function openImproveRun(id: string) {
+    const mine = ++improveLookups;
+    const listed = data.improveRuns.find((run) => run.id === id);
+    if (listed) {
+      selectedRun = listed;
+      improveMissing = "";
+      return;
+    }
+    try {
+      const run = await api<ActivityRun>("/improve/run", { id });
+      if (mine !== improveLookups) return;
+      selectedRun = run;
+      improveMissing = "";
+    } catch {
+      if (mine !== improveLookups) return;
+      selectedRun = null;
+      improveMissing = id;
+    }
+  }
   let taskPanel = $state<HTMLElement>(),
     runPanel = $state<HTMLElement>(),
     runTrigger: HTMLElement | null = null,
@@ -116,7 +136,8 @@
   });
   async function revealRun(_run: ActivityRun) {
     await tick();
-    runPanel?.focus();
+    runPanel?.focus({ preventScroll: true });
+    runPanel?.scrollIntoView({ block: "start" });
   }
   let openRun = $state("");
   let taskId = $state(""),
@@ -803,8 +824,18 @@
     >
   </section>
 {/if}
+<form
+  class="task-lookup"
+  onsubmit={(event) => {
+    event.preventDefault();
+    if (improveId.trim()) void openImproveRun(improveId.trim());
+  }}
+>
+  <label>Improve run ID<input bind:value={improveId} required placeholder="Any recorded run, however old" /></label
+  ><button>Open run</button>
+</form>
 {#if improveMissing && !selectedRun}<p class="notice notice-warn" role="status">
-    Improve run {improveMissing} is not among the latest 10 improve runs akm returns here, so it cannot be shown.
+    No improve run with the id {improveMissing} is recorded.
   </p>{/if}
 {#if selectedRun}<div id="improve-run" tabindex="-1">
     <ImproveRunDetail run={selectedRun} onClose={closeRun} bind:panel={runPanel} />

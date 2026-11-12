@@ -33,8 +33,16 @@ test("run views show outcomes, failures and error detail, and mark what is match
     await open(page, server, `${runs}&improve=${runViewIds.failedImprove}&anchor=improve-run`);
     const view = page.getByRole("region", { name: "Improve run details", exact: true });
     await expect(view).toContainText("Failed");
-    const calls = view.getByRole("table", { name: "Run calls by process" });
-    await expect(calls.getByRole("row", { name: /reflect/ })).toContainText("▲ 3");
+    const calls = view.getByRole("table", { name: "Run usage by process, execution target and model" });
+    const reflect = calls.getByRole("row", { name: /reflect/ });
+    await expect(reflect).toContainText("▲ 3");
+    await expect(reflect).toContainText("lab");
+    await expect(reflect).toContainText("synthetic-model");
+    await expect(reflect).toContainText("5,000 (3 of 5 calls)");
+    await expect(calls.getByRole("row", { name: /consolidate/ })).toContainText("Not reported");
+    await expect(view).toContainText("distill (no_signal)");
+    await expect(view).toContainText("Synthetic: model timed out");
+    await expect(view).not.toContainText("cannot show the model");
     await expect(view).toContainText("no record of an improve run carries the id", { ignoreCase: true });
     await expect(view).toContainText("Matched by time");
     await expect(view).toContainText("Synthetic: the connection refused the request");
@@ -48,9 +56,24 @@ test("run views show outcomes, failures and error detail, and mark what is match
     await expect(view).toContainText("No scheduled task run started within 5 minutes");
   });
 
-  await t.test("an improve run akm does not return here is named, not guessed", async () => {
-    await open(page, server, `${runs}&improve=no-such-run`);
-    await expect(page.getByText("is not among the latest 10 improve runs")).toBeVisible();
+  await t.test("an improve run older than the latest ten opens by id and shows that it was terminated", async () => {
+    await open(page, server, `${runs}&improve=${runViewIds.terminatedImprove}&anchor=improve-run`);
+    const view = page.getByRole("region", { name: "Improve run details", exact: true });
+    await expect(view).toContainText("Terminated");
+    await expect(view).toContainText("SIGTERM");
+    await expect(view).toContainText("Synthetic: stopped by the scheduler timeout");
+    // It is brought into view, not left at the bottom of the page.
+    await expect(view).toBeInViewport();
+  });
+
+  await t.test("an improve run id can be typed in, and an unknown one is named, not guessed", async () => {
+    await open(page, server, runs);
+    await page.getByLabel("Improve run ID").fill(runViewIds.terminatedImprove);
+    await page.getByRole("button", { name: "Open run" }).click();
+    await expect(page.getByRole("region", { name: "Improve run details", exact: true })).toContainText("SIGTERM");
+    await page.getByLabel("Improve run ID").fill("no-such-run");
+    await page.getByRole("button", { name: "Open run" }).click();
+    await expect(page.getByText("No improve run with the id no-such-run is recorded")).toBeVisible();
   });
 
   await t.test("a task run that never recorded an end is unknown", async () => {

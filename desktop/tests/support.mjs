@@ -111,6 +111,7 @@ export const runViewIds = {
   activeWorkflow: "88888888-8888-4888-8888-888888888883",
   failedImprove: "synthetic-improve-failed",
   oldImprove: "synthetic-improve-older",
+  terminatedImprove: "synthetic-improve-terminated",
 };
 
 /**
@@ -142,7 +143,7 @@ function seedRunViews(fixture) {
           ...(detail ? { detail } : {}),
         }),
       );
-  const improve = (id, minutesAgo, ok, report) =>
+  const improve = (id, minutesAgo, ok, report, extra = {}) =>
     db
       .prepare(
         "INSERT INTO improve_runs (id, started_at, completed_at, stash_dir, scope_mode, ok, strategy, result_json) VALUES (?, ?, ?, ?, 'all', ?, 'default', ?)",
@@ -153,7 +154,7 @@ function seedRunViews(fixture) {
         at(minutesAgo - 4),
         fixture.env.AKM_BUNDLE_DIR,
         ok ? 1 : 0,
-        JSON.stringify(report ? { usageReport: report } : {}),
+        JSON.stringify({ ...(report ? { usageReport: report } : {}), ...extra }),
       );
   try {
     improve("synthetic-improve-a", 60 * 5, true, {
@@ -167,11 +168,29 @@ function seedRunViews(fixture) {
     });
     improve(runViewIds.failedImprove, 60 * 24 * 4, false, {
       byProcessEngineModel: [
-        { process: "reflect", calls: 5, failures: 3 },
-        { process: "consolidate", calls: 2, failures: 2 },
+        {
+          process: "reflect",
+          engine: "lab",
+          model: "synthetic-model",
+          calls: 5,
+          failures: 3,
+          promptTokens: 4000,
+          completionTokens: 1000,
+          totalTokens: 5000,
+          usageCalls: 3,
+        },
+        { process: "consolidate", engine: "lab", model: "synthetic-model", calls: 2, failures: 2, usageCalls: 0 },
       ],
+      noCalls: [{ process: "distill", reason: "no_signal" }],
+    }, {
+      actions: [{ ref: "memory:synthetic", mode: "reflect-failed", result: { ok: false, error: "Synthetic: model timed out" } }],
     });
     improve(runViewIds.oldImprove, 60 * 24 * 9, true, null);
+    // A run older than the latest ten, recorded as stopped by a signal.
+    for (let n = 0; n < 10; n++) improve(`synthetic-improve-filler-${n}`, 60 * 24 * (10 + n), true, null);
+    improve(runViewIds.terminatedImprove, 60 * 24 * 40, false, null, {
+      terminated: { reason: "SIGTERM", at: at(60 * 24 * 40 - 3), errorMessage: "Synthetic: stopped by the scheduler timeout" },
+    });
     taskRun("akm-improve-frequent", "completed", 60 * 5 + 1, 60 * 5 - 5, null);
     taskRun("akm-improve-frequent", "completed", 60 * 24 * 2 + 1, 60 * 24 * 2 - 5, null);
     taskRun("akm-improve-frequent", "failed", 60 * 24 * 4 + 1, 60 * 24 * 4 - 5, {

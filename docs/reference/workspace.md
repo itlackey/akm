@@ -90,6 +90,10 @@ Everything an overview needs in one call. Input:
           "failures": 1,
           "byProcess": { "reflect": { "calls": 3, "failures": 1 }, "triage.judgment": { "calls": 2, "failures": 0 } }
         },
+        "usage": [{ "process": "reflect", "engine": "local", "model": "qwen", "calls": 3, "failures": 1, "promptTokens": 900, "completionTokens": 300, "totalTokens": 1200, "usageCalls": 3 }],
+        "noCalls": [{ "process": "distill", "reason": "no_signal" }],
+        "terminated": null,
+        "errors": { "count": 1, "shown": [{ "ref": "memory:a", "mode": "reflect-failed", "error": "..." }] },
         "preRunSync": { "committed": false, "pushed": false, "skipped": true, "reason": "no remote" },
         "sync": { "committed": true, "pushed": false, "skipped": false },
         "triage": { "promoted": 2, "rejected": 1, "deferred": 0, "failed": 0, "skippedByCap": 0 }
@@ -106,6 +110,13 @@ Everything an overview needs in one call. Input:
 - `metrics` is what `akm doctor metrics` returns (without `rows`); see [CLI: metrics](cli.md#metrics).
 - `improveRuns` are the last 10 real (non-dry-run) improve runs, newest first. `preRunSync`, `sync` and `triage` are `null`
   when the run did not record them; `modelCalls` is empty for runs from before the usage report existed.
+  `usage` is the run's own persisted usage report: one entry per process, execution target (`engine`) and `model`, with
+  calls, failures and tokens (`usageCalls` is how many calls reported tokens; the token sums cover only those, the rest are
+  unknown, not zero), and `noCalls` the enabled processes that made no call, with the recorded reason. It is read as
+  recorded, never rebuilt from events (they carry no run id), so a run recorded before the report existed, or terminated
+  before it, has `usage: []`. `terminated` is `{ reason, at, errorMessage }` when the record says the run was stopped
+  by a signal or an exception, else `null`. `errors` are the failed actions' recorded error texts (`count` in all, at most 20 in `shown`).
+  Values akm redacted when it wrote the record stay redacted.
 - Activity uses `metrics.usage.daily`, counting search/curate summary events rather than individual hits.
 - `metrics.usage.searchMedianMs` uses recorded nonnegative durations (`totalMs >= 0`), like the daily latency median of
   [`activity.retrievalTrend`](#activityretrievaltrend). The daily feedback
@@ -118,6 +129,11 @@ Everything an overview needs in one call. Input:
   Improve runs remain the latest 10 across all dates, independently of the metrics window.
 - A section that fails is `null` (`[]` for `improveRuns`) and named in a top-level `errors` object
   (`{ "errors": { "metrics": "..." } }`); the others still load. `errors` is absent when nothing failed.
+
+## `activity.improveRun`
+
+Requires `id`. Returns the one improve run with that id, however old (the overview lists the latest 10), in the shape of
+an `improveRuns` entry above. An unknown id throws `NotFoundError` (`IMPROVE_RUN_NOT_FOUND`).
 
 ## `activity.health`
 
