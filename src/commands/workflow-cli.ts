@@ -364,6 +364,11 @@ function parseWorkflowTimeout(raw: string | undefined): number | undefined {
 // Read-only compile+freeze introspection — zero durable writes, zero
 // usage/event rows. `--json` is deliberately NOT a flag anywhere in this CLI;
 // the global `--format json` is spliced on by `defineJsonCommand`.
+/** Shared with `akm doctor explain <workflow-ref>`, which reuses this handler. */
+export async function runWorkflowPlan(ref: string): Promise<void> {
+  output("workflow-plan", await akmWorkflowPlan(ref));
+}
+
 const workflowPlanCommand = defineJsonCommand({
   meta: {
     name: "plan",
@@ -375,7 +380,6 @@ const workflowPlanCommand = defineJsonCommand({
     ref: { type: "positional", description: "Workflow ref (workflows/<name>)", required: true },
   },
   async run({ args }) {
-    const result = await akmWorkflowPlan(args.ref);
     // json-by-default, like every other verb (#903). This used to default to
     // the human summary, which cost ~60 lines of branch: `args.format` cannot
     // detect "no format named" (citty parses per level, so a global
@@ -387,7 +391,7 @@ const workflowPlanCommand = defineJsonCommand({
     // `--format json` silently did nothing for anyone whose config already
     // resolved to json. `--format text` still renders the summary through the
     // registered formatter; it is just no longer the unmarked default.
-    output("workflow-plan", result);
+    await runWorkflowPlan(args.ref);
   },
 });
 

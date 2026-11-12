@@ -24,8 +24,8 @@ interface Deprecation {
   value?: string;
   /** Needs at least one positional ref (a no-ref form has no replacement). */
   needsRef?: boolean;
-  /** What to use instead. */
-  use: string;
+  /** What to use instead; absent when the flag is removed in 0.11 with no replacement. */
+  use?: string;
 }
 
 // First match wins, so commands come before flags.
@@ -36,11 +36,18 @@ const DEPRECATIONS: readonly Deprecation[] = [
   { path: ["log"], use: "`akm doctor log`" },
   { path: ["judge"], use: "`akm doctor judge`" },
   { path: ["improve", "judge"], use: "`akm doctor judge`" },
+  { path: ["task", "history"], use: "`akm doctor log --task <id>`" },
+  { path: ["improve", "report"], use: "`akm doctor metrics improve`" },
+  { path: ["search"], flag: "--by-usage", use: "`akm doctor metrics assets`" },
   { path: ["workflow", "run"], use: "`akm run <ref>`" },
   { path: ["agent"], needsRef: true, use: "`akm run <ref>`" },
   { path: ["command", "run"], use: "`akm run <ref>`" },
   { path: ["command"], needsRef: true, use: "`akm run <ref>`" },
   { path: ["task", "run"], use: "`akm run <qualified-task-ref>`" },
+  { path: ["task", "sync"], use: "`akm doctor scheduler sync`" },
+  { path: ["task", "doctor"], use: "`akm doctor`" },
+  { path: ["task", "explain"], use: "`akm doctor explain <ref>`" },
+  { path: ["workflow", "plan"], use: "`akm doctor explain <ref>`" },
   { path: ["task", "add"], use: "`akm import <file> --type task`" },
   { path: ["clone"], use: "`akm import <ref> --asset-ref`" },
   { path: ["improve"], flag: "--show-prompt", use: "`akm doctor prompt`" },
@@ -49,7 +56,15 @@ const DEPRECATIONS: readonly Deprecation[] = [
   { path: ["search"], flag: "--include-sessions", use: "`--include type=session`" },
   { path: ["show"], flag: "--detail", value: "brief", use: "`--outline`" },
   { path: ["show"], flag: "--context", value: "lead", use: "`--lead`" },
-  { path: ["upgrade"], flag: "--next", use: "`--channel`" },
+  {
+    path: ["improve"],
+    flag: "--require-feedback-signal",
+    use: "a strategy with `processes.proactiveMaintenance.enabled: false`, selected with `--strategy`",
+  },
+  { path: ["proposal", "extract"], flag: "--type", use: "`--sessions`" },
+  { path: ["remember"], flag: "--auto" },
+  { path: ["remember"], flag: "--enrich" },
+  { path: ["remember"], flag: "--show-similar" },
 ];
 
 const INTERNAL_SOURCES = new Set(["task", "improve", "audit"]);
@@ -81,7 +96,9 @@ export function warnDeprecatedUse(
   const what = hit.flag ? `${hit.flag}${hit.value ? ` ${hit.value}` : ""}` : `akm ${joined}`;
   warnOnce(
     "deprecated-use",
-    `[deprecated] ${what} is deprecated and is removed in 0.11: use ${hit.use}. See STABILITY.md.`,
+    hit.use
+      ? `[deprecated] ${what} is deprecated and is removed in 0.11: use ${hit.use}. See STABILITY.md.`
+      : `[deprecated] ${what} is deprecated and is removed in 0.11, with no replacement flag. See STABILITY.md.`,
   );
 }
 

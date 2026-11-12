@@ -8,7 +8,7 @@
     "AKM-native; mirrors the frozen renderer/all-types.json task entry"
   ],
   "notes": [
-    "SPECIFICATION golden. `task` → renderer 'task-yaml'. action = src/core/type-presentation.ts task action: `akm show <ref> -> inspect; akm task run <id> -> run now; akm task enable|disable <ref> -> change host-local scheduling` (the full bundle-qualified ref is passed straight to `akm show`; scheduler activation is local config and is never controlled by task source)."
+    "SPECIFICATION golden. `task` → renderer 'task-yaml'. action = src/core/type-presentation.ts task action: `akm show <ref> -> inspect; akm run <ref> -> run now; akm task enable|disable <ref> -> change host-local scheduling` (the full bundle-qualified ref is passed straight to `akm show`; scheduler activation is local config and is never controlled by task source)."
   ],
   "byRelPath": {
     "nightly-index.yml": {

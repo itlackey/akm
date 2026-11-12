@@ -204,8 +204,7 @@ path, a commit id) that the agent can only fill by doing it.
 ### What the command can see
 
 The command inherits your environment, as it would typed in your shell: `PATH`,
-`HOME`, the toolchain variables and any credential of the process that ran `akm
-workflow run` reach it. Then come your `env:` bindings, then the `AKM_*` context
+`HOME`, the toolchain variables and any credential of the process that ran `akm run` reach it. Then come your `env:` bindings, then the `AKM_*` context
 variables. Ordinary commands (`bun`, `git`, `make`, `cargo`) work unchanged.
 
 ```yaml
@@ -458,7 +457,7 @@ can see what a run will do before starting it.
    params:
 
    ```sh
-   akm workflow run workflows/my-release --version 1.2.3
+   akm run workflows/my-release --version 1.2.3
    ```
 
 3. **Inspect the evidence.** Check that each step's promoted artifact is
@@ -515,7 +514,7 @@ workflow is frozen) or `{ from: <reference> }`, where the reference is
 `params.<name>` or `steps.<id>.output(.<segment>)*`, resolved just before the
 step runs. The child's **last step output** is the composing step's output, so
 `report` reads it through `inputs:`. Inspect what a step would pass, without
-running anything, with `akm workflow plan workflows/<name> --format json`; the
+running anything, with `akm doctor explain workflows/<name> --format json`; the
 per-step `inputBindings` show each literal and each unresolved reference.
 
 Child workflows are Experimental. See

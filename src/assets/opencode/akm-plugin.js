@@ -7,7 +7,7 @@
 // it imports no package: only Node's own child_process, to call back into akm.
 //
 //   - akm's three read tools, each a run of the akm that started OpenCode, with `--detail normal --format json`
-//     (`--detail brief` when akm_show asks for a document's outline). akm passes the argv that runs it as the plugin's
+//     (`--outline` when akm_show asks for a document's outline). akm passes the argv that runs it as the plugin's
 //     `akm` option, an array: the executable alone for a compiled akm, the runtime and the script for one run as a
 //     script (Node and `dist/akm`, say), so no shebang or shell is needed on any platform. The run's environment is the
 //     call's, so a stamped run's reads (`AKM_EVENT_SOURCE`) are recorded as that run's, with the `shellEnv` below laid
@@ -95,8 +95,7 @@ function cliArguments(tool, input) {
     ...(limit && tool.positional !== "ref" ? ["--limit", limit] : []),
     // Model work is not a place the user works: no project's defaults apply, whatever directory the run is in.
     ...(tool.positional !== "ref" ? ["--project", "none"] : []),
-    "--detail",
-    tool.positional === "ref" && input?.detail === "brief" ? "brief" : "normal",
+    ...(tool.positional === "ref" && input?.detail === "brief" ? ["--outline"] : ["--detail", "normal"]),
     "--format",
     "json",
   ];

@@ -79,7 +79,7 @@ export async function collectVersionDriftAdvisory(
   try {
     // Prerelease installs follow next; the remedy must request that same channel explicitly.
     const channel = isPrerelease(cliVersion) ? "next" : "latest";
-    const command = channel === "next" ? "akm upgrade --next" : "akm upgrade";
+    const command = channel === "next" ? "akm upgrade --channel next" : "akm upgrade";
     const result = await (deps.checkForUpdate ?? checkForUpdate)(
       cliVersion,
       { timeout: CLI_VERSION_CHECK_TIMEOUT_MS, retries: 0 },

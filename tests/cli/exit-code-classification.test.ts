@@ -117,7 +117,7 @@ describe("classifyExitCode via emitJsonError (H6)", () => {
 describe("embedded exit-code hints", () => {
   for (const [name, hints] of [["brief", EMBEDDED_HINTS]] as const) {
     test(`${name} pins health/internal codes and command failure semantics`, () => {
-      expect(hints).toContain("| 4 | Health warning (`akm doctor` or `akm health`) |");
+      expect(hints).toContain("| 4 | Health warning (`akm doctor`) |");
       expect(hints).toContain("| 70 | Internal / unclassified error |");
       expect(hints).toContain("Not found or command-reported failure");
       expect(hints).toContain("| 75 | Transient");
@@ -161,10 +161,10 @@ describe("not-found error classification", () => {
     }
   });
 
-  test("IMPROVE_RUN_NOT_FOUND hints at akm improve report, not raw sqlite3 (#944)", () => {
-    const err = new NotFoundError("akm improve report: no improve runs recorded yet.", "IMPROVE_RUN_NOT_FOUND");
+  test("IMPROVE_RUN_NOT_FOUND hints at akm doctor metrics improve, not raw sqlite3 (#944)", () => {
+    const err = new NotFoundError("akm doctor metrics improve: no improve runs recorded yet.", "IMPROVE_RUN_NOT_FOUND");
 
-    expect(err.hint()).toContain("akm improve report --since 30d");
+    expect(err.hint()).toContain("akm doctor metrics improve --since 30d");
     // #944 exists specifically to make querying state.db by hand unnecessary
     // for this — the hint must not send operators back to raw sqlite3.
     expect(err.hint()).not.toContain("sqlite3");

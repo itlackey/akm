@@ -499,7 +499,7 @@ function parseInputDeclarations(value: ExecutionJsonValue, ctx: BoundedDocumentC
       sourceError(
         ctx,
         ["inputs", name],
-        `collides with akm task run's own --${name} flag; declare the input under a different name.`,
+        `collides with akm run's own --${name} flag; declare the input under a different name.`,
       );
     }
     result[name] = parseInputDeclaration(name, input[name] as ExecutionJsonValue, ctx);

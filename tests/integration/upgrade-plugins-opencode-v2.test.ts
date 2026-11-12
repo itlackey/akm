@@ -200,7 +200,6 @@ posixOnly("akm upgrade: OpenCode 2 plugin (akm-opencode-v2)", () => {
     expect(run.result.plugins.map((p) => p.harness)).toEqual(["claude-code", "codex", "opencode"]);
     expect(entry(run, "opencode")).toMatchObject({ outcome: "updated", from: "0.9.26", to: "0.9.27" });
     expect(mutations()).toEqual([`trash-put ${v1CacheDir()}`, "opencode debug config"]);
-    expect(run.result.lockstep?.plugin).toBe(V1);
   });
 
   test("updates a stale cache with `opencode plugin update <spec>`: nothing is trashed", async () => {
@@ -217,7 +216,6 @@ posixOnly("akm upgrade: OpenCode 2 plugin (akm-opencode-v2)", () => {
     // The OpenCode config is never written by akm, and OpenCode 1's package is never named.
     expect(fs.readFileSync(configFile(), "utf8")).toBe(before);
     expect(commands().join("\n")).not.toContain("debug config");
-    expect(run.result.lockstep).toMatchObject({ plugin: V2, pinnedVersion: "0.9.27" });
   });
 
   test("the version comes from the newest build folder", async () => {
@@ -281,7 +279,7 @@ esac`,
     expect(mutations()).toContain(`opencode plugin update ${V2}@latest`);
   });
 
-  test("an exact-version pin is left alone on any run, with no lockstep (#1117 for V2)", async () => {
+  test("an exact-version pin is left alone on any run (#1117 for V2)", async () => {
     writeConfig({ plugins: [`${V2}@0.8.0`] });
     writeV2Cache("0.8.0", "0.8.0");
     writeV2Cache("0.9.26");
@@ -290,7 +288,6 @@ esac`,
       const run = await upgrade(args, fakeDeps("0.9.30", "0.9.28"));
       expect(entry(run, "opencode-v2")).toMatchObject({ outcome: "skipped" });
       expect(entry(run, "opencode-v2").message).toContain(`"${V2}@0.8.0"`);
-      expect(run.result.lockstep).toBeUndefined();
     }
     expect(mutations()).toEqual([]);
   });
@@ -308,13 +305,12 @@ esac`,
     });
     const plain = await upgrade();
     expect(entry(plain, "opencode-v2")).toMatchObject({ outcome: "skipped" });
-    expect(entry(plain, "opencode-v2").message).toContain("--next");
+    expect(entry(plain, "opencode-v2").message).toContain("--channel next");
     expect(mutations()).toEqual([]);
 
     const run = await upgrade(NEXT, fakeDeps("0.9.28", "0.9.27"));
     expect(entry(run, "opencode-v2")).toMatchObject({ outcome: "updated", to: "0.9.28-alpha.2.202610091000" });
     expect(mutations()).toEqual([`opencode plugin update ${V2}@next`]);
-    expect(run.result.lockstep).toMatchObject({ plugin: V2, pinnedVersion: "0.9.28" });
   });
 
   test("--next follows @next even when npm's @latest is a retired build pinning a higher akm-cli", async () => {
@@ -334,13 +330,11 @@ esac`,
     const run = await withEnv(world.env, () => runUpgrade(NEXT, "0.10.261001-beta", deps));
     expect(entry(run, "opencode-v2")).toMatchObject({ outcome: "updated", to: "0.10.261001-beta" });
     expect(mutations()).toEqual([`opencode plugin update ${V2}@next`]);
-    expect(run.result.lockstep).toMatchObject({ plugin: V2, pinnedVersion: "0.10.261001-beta", heldBack: false });
-    expect(run.result.lockstep).not.toHaveProperty("reason");
     // @latest is not consulted: nothing about it decides what --next follows.
     expect(commands().some((c) => c.startsWith(`npm view ${V2}@latest`))).toBe(false);
   });
 
-  test("--check --next reports the stale @next cache as pending with the @next pin as the lockstep", async () => {
+  test("--check --next reports the stale @next cache as pending", async () => {
     writeConfig({ plugins: [`${V2}@next`] });
     writeV2Cache("0.10.26101002-alpha", "next");
     stubWorld({
@@ -355,18 +349,16 @@ esac`,
       runUpgrade({ ...CHECK, next: true }, "0.10.261001-beta", fakeDeps("0.10.261001-beta", "0.10.261001-beta")),
     );
     expect(entry(run, "opencode-v2")).toMatchObject({ outcome: "pending", to: "0.10.261001-beta" });
-    expect(run.result.lockstep).toMatchObject({ pinnedVersion: "0.10.261001-beta" });
     expect(mutations()).toEqual([]);
   });
 
-  test("--next with a bare spec in the config: skipped with the line to add, lockstep stays on @latest", async () => {
+  test("--next with a bare spec in the config: skipped with the line to add", async () => {
     writeConfig({ plugins: [V2] });
     writeV2Cache("0.9.26");
     stubWorld({ major: 2, fresh: "0.9.27", pins: PINS });
     const run = await upgrade(NEXT, fakeDeps("0.9.28", "0.9.25"));
     expect(entry(run, "opencode-v2")).toMatchObject({ outcome: "skipped" });
     expect(entry(run, "opencode-v2").message).toContain(`"plugins": ["${V2}@next"]`);
-    expect(run.result.lockstep).toMatchObject({ plugin: V2, pinnedVersion: "0.9.27", heldBack: true });
     expect(mutations()).toEqual([]);
   });
 
@@ -432,13 +424,13 @@ esac`,
     expect(fs.existsSync(v2CacheDir())).toBe(true);
   });
 
-  test("an unreadable pin holds the CLI where it is and fails the entry, like OpenCode 1", async () => {
+  test("an unreadable npm answer fails the entry and leaves the CLI target alone", async () => {
     writeConfig({ plugins: [V2] });
     writeV2Cache("0.9.26");
     stubWorld({ major: 2, fresh: "0.9.27", pins: { "akm-opencode-v2@latest": null } });
     const deps = fakeDeps("0.9.28", "0.9.25");
     const run = await withEnv(world.env, () => runUpgrade(UPGRADE, "0.9.25", deps));
-    expect(run.result.lockstep).toMatchObject({ plugin: V2, pinnedVersion: null, heldBack: true });
+    expect(deps.upgradeCalls[0]).toMatchObject({ latestVersion: "0.9.28", updateAvailable: true });
     expect(entry(run, "opencode-v2").outcome).toBe("failed");
     expect(run.mode === "upgrade" && run.failed).toBe(true);
   });
@@ -500,25 +492,13 @@ esac`,
       expect(fs.existsSync(v2CacheDir())).toBe(true);
     });
 
-    test("the CLI is held to the older of the two pins, and the lockstep names that plugin", async () => {
+    test("the CLI target is the newest akm, whatever either plugin pins", async () => {
       bothInstalled();
       stubWorld({ major: 2, fresh: "0.9.28", pins: BOTH_PINS, running: true });
       const deps = fakeDeps("0.9.30", "0.9.25");
-      const run = await withEnv(world.env, () => runUpgrade(UPGRADE, "0.9.25", deps));
-      expect(run.result.lockstep).toMatchObject({ plugin: V1, pinnedVersion: "0.9.27", heldBack: true });
-      expect(deps.targets).toEqual(["0.9.27"]);
-    });
-
-    test("an unreadable pin on either plugin holds the CLI", async () => {
-      bothInstalled();
-      stubWorld({
-        major: 2,
-        fresh: "0.9.28",
-        pins: { "akm-opencode@latest": ["0.9.27", "0.9.27"], "akm-opencode-v2@latest": null },
-        running: true,
-      });
-      const run = await upgrade(UPGRADE, fakeDeps("0.9.30", "0.9.25"));
-      expect(run.result.lockstep).toMatchObject({ plugin: V2, pinnedVersion: null });
+      await withEnv(world.env, () => runUpgrade(UPGRADE, "0.9.25", deps));
+      expect(deps.upgradeCalls[0]).toMatchObject({ latestVersion: "0.9.30", updateAvailable: true });
+      expect(deps.targets).toEqual([undefined]);
     });
   });
 });

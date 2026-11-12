@@ -14,7 +14,7 @@ Three lines cover it:
 2. **At boot, run `akm migrate apply`** (or `akm upgrade`, which runs it).
    It is offline, idempotent, needs no root, takes its own safety copies,
    prints one JSON plan, and exits `0` unless an item is genuinely blocked.
-3. **Read `akm health --format json`.** Never grep error text — akm's
+3. **Read `akm doctor --format json`.** Never grep error text — akm's
    wording is not a stable interface; the JSON fields are.
 
 Everything below is detail in service of those three lines.
@@ -191,17 +191,16 @@ already-current install with nothing pending it is a fast no-op that exits 0.
 
 After the install step it also updates the akm plugin of each agent harness
 present in the image (Claude Code, Codex, OpenCode), reported under `plugins`;
-see [`akm upgrade`](../reference/cli.md#upgrade) for the rules, the OpenCode
-version lockstep and the Codex hook-trust entries a headless image needs.
+see [`akm upgrade`](../reference/cli.md#upgrade) for the rules and the Codex hook-trust entries a headless image needs.
 
 **`--check`** skips the migration step entirely — it only compares versions
 and reports `updateAvailable` (plus the pending per-harness plugin updates). Use it for a version-drift alert, not as your
 boot check.
 
-## `akm health`
+## `akm doctor`
 
 ```sh
-akm health --format json
+akm doctor --format json
 ```
 
 Read the JSON. Never parse the human-readable text or grep for a phrase —
@@ -245,7 +244,7 @@ set -e
 akm --version                 # optional: confirm the pinned version actually landed
 akm migrate apply             # offline, idempotent — exits 1 only if an item is genuinely blocked
 # to schedule akm tasks inside this image, run `akm task dispatch` every minute from its supervisor (see the scheduling guide)
-akm health --format json      # read this JSON; act on ok/status, never on message text
+akm doctor --format json      # read this JSON; act on ok/status, never on message text
 ```
 
 ### Environment variables

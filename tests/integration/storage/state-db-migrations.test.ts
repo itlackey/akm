@@ -95,7 +95,10 @@ describe("state.db automatic migration boundary", () => {
       )
       .all();
     db.close();
-    expect(actual).toEqual(expected.filter((row) => row.name !== "schema_migrations"));
+    // The one object past the baseline is migration 030's index (0.10.261120), appended after the 29 released ids.
+    expect(actual.filter((row) => (row as { name: string }).name !== "idx_usage_events_created_at")).toEqual(
+      expected.filter((row) => row.name !== "schema_migrations"),
+    );
     expect(STATE_BASELINE_IDS).toHaveLength(29);
   });
 

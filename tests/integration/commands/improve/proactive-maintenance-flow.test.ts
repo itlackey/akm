@@ -233,6 +233,50 @@ describe("proactive maintenance — enabled selects, scores and plans due assets
     ]);
   });
 
+  test("processes.proactiveMaintenance.enabled: false, selected with --strategy, plans the same refs as --require-feedback-signal", async () => {
+    const stash = isolatedStash();
+    writeSkill(stash, "complained", "Names a removed flag.");
+    writeSkill(stash, "quiet", "Never reflected, no feedback.");
+    writeSkill(stash, "also-quiet", "Never reflected either.");
+    await buildIndex(stash);
+    appendEvent({
+      eventType: "feedback",
+      ref: "stash//skills/complained",
+      metadata: { signal: "negative", reason: "names a removed flag" },
+    });
+
+    const run = (options: { requireFeedbackSignal?: boolean; strategy?: string }) =>
+      akmImprove({
+        scope: "skill",
+        stashDir: stash,
+        config: withTestImproveLlm({
+          semanticSearchMode: "off",
+          improve: {
+            strategies: { "no-lane": { processes: { proactiveMaintenance: { enabled: false } } } },
+          },
+        } as import("../../../../src/core/config/config").AkmConfig),
+        ...options,
+        dryRun: true,
+        ...noopIndexFns,
+        reflectFn: async ({ ref }) => okReflect(ref ?? ""),
+        distillFn: async ({ ref }) => okDistill(ref ?? ""),
+      });
+
+    const viaFlag = await run({ requireFeedbackSignal: true });
+    const viaStrategy = await run({ strategy: "no-lane" });
+    expect(viaFlag.ok).toBe(true);
+    expect(viaStrategy.ok).toBe(true);
+    const planned = (r: typeof viaFlag) =>
+      (r.plan?.effectiveRefs ?? []).map((e: { ref: string; lane: string }) => ({ ref: e.ref, lane: e.lane }));
+    expect(planned(viaFlag)).toEqual([{ ref: "skills/complained", lane: "signal-delta" }]);
+    expect(planned(viaStrategy)).toEqual(planned(viaFlag));
+    expect(viaStrategy.plannedRefs?.map((e) => [e.ref, e.eligibilitySource])).toEqual(
+      viaFlag.plannedRefs?.map((e) => [e.ref, e.eligibilitySource]),
+    );
+    expect(viaStrategy.proactiveMaintenance).toBeUndefined();
+    expect(viaFlag.proactiveMaintenance).toBeUndefined();
+  });
+
   test("a user strategy named proactive-maintenance (the retired built-in) still runs", async () => {
     const stash = isolatedStash();
     for (let i = 0; i < 3; i++) writeSkill(stash, `s${i}`, `Body ${i}.`);

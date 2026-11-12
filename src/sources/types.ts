@@ -576,21 +576,6 @@ export interface PluginUpgradeEntry {
   message?: string;
 }
 
-/**
- * Present when the OpenCode plugin is installed: the CLI target is the akm-cli
- * `akm-opencode@latest` pins. `heldBack` is true when that keeps this upgrade
- * below `newestVersion`.
- */
-export interface UpgradeLockstep {
-  plugin: "akm-opencode" | "akm-opencode-v2";
-  /** `null` when the pin could not be read; the CLI is then held where it is. */
-  pinnedVersion: string | null;
-  newestVersion: string;
-  heldBack: boolean;
-  /** Why the pin could not be read; set only when `pinnedVersion` is `null`. */
-  reason?: string;
-}
-
 /** Which release stream `akm upgrade` follows: `next` (`--next`) is the newest available, prereleases included. */
 export type UpgradeChannel = "latest" | "next";
 
@@ -603,7 +588,6 @@ export interface UpgradeCheckResponse {
   channel?: UpgradeChannel;
   currentChannel?: UpgradeChannel;
   targetChannel?: UpgradeChannel;
-  lockstep?: UpgradeLockstep;
   /** Per-harness plugin updates that `akm upgrade` would make. */
   plugins?: PluginUpgradeEntry[];
 }
@@ -636,7 +620,6 @@ export interface UpgradeResponse {
   channel?: UpgradeChannel;
   currentChannel?: UpgradeChannel;
   targetChannel?: UpgradeChannel;
-  lockstep?: UpgradeLockstep;
   /** The per-harness plugin step that follows the CLI step. */
   plugins?: PluginUpgradeEntry[];
 }

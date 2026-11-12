@@ -142,7 +142,7 @@ function mergeCrossTabRow(merged: Map<string, LlmUsageCrossTabRow>, row: LlmUsag
  */
 export function runImproveReportQuery(options: { runId?: string; since?: string }): ImproveReportResult {
   if (options.runId !== undefined && options.since !== undefined) {
-    throw new UsageError("akm improve report: --run and --since are mutually exclusive.", "INVALID_FLAG_VALUE");
+    throw new UsageError("akm doctor metrics improve: --run and --since are mutually exclusive.", "INVALID_FLAG_VALUE");
   }
   return withStateDb((db) => {
     // Thread this already-open connection into every reader below, so a
@@ -188,8 +188,8 @@ export function runImproveReportQuery(options: { runId?: string; since?: string 
     if (!row) {
       throw new NotFoundError(
         options.runId !== undefined
-          ? `akm improve report: no improve run found with id "${options.runId}".`
-          : "akm improve report: no improve runs recorded yet.",
+          ? `akm doctor metrics improve: no improve run found with id "${options.runId}".`
+          : "akm doctor metrics improve: no improve runs recorded yet.",
         "IMPROVE_RUN_NOT_FOUND",
       );
     }

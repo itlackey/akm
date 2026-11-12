@@ -55,7 +55,7 @@ Everything an overview needs in one call. Input:
 
 | Parameter | Default | Meaning |
 | --- | --- | --- |
-| `metricsSince` | `30d` | Metrics window start, as `akm metrics --since`. |
+| `metricsSince` | `30d` | Metrics window start, as `akm doctor metrics --since`. |
 | `probe` | off | `true` probes whether each connection's endpoint answers and what each harness's `--version` prints, and checks for a newer akm release (network). Off by default so loading an overview makes no outbound calls. |
 
 ```json
@@ -100,10 +100,10 @@ Everything an overview needs in one call. Input:
 }
 ```
 
-- `health` is what `akm health --report --group-by run` returns (`--no-probe` unless `probe` is set), minus the write: the
+- `health` is what `akm doctor --report --group-by run` returns (`--no-probe` unless `probe` is set), minus the write: the
   `state-db-round-trip` check reports itself skipped. See [CLI: health](cli.md#health) for the check list. The window is the last 24 hours, compared with the 24
   hours before it.
-- `metrics` is what `akm metrics` returns (without `rows`); see [CLI: metrics](cli.md#metrics).
+- `metrics` is what `akm doctor metrics` returns (without `rows`); see [CLI: metrics](cli.md#metrics).
 - `improveRuns` are the last 10 real (non-dry-run) improve runs, newest first. `preRunSync`, `sync` and `triage` are `null`
   when the run did not record them; `modelCalls` is empty for runs from before the usage report existed.
 - Activity uses `metrics.usage.daily`, counting search/curate summary events rather than individual hits.
@@ -162,7 +162,7 @@ migrated.
 ## `activity.events`
 
 Optional `since` (default `24h`) and `until` (default now). Every search, show, feedback and curate row of the window
-from every source, oldest first, as `akm metrics --detail full` lists them (`rows.usage`):
+from every source, oldest first, as `akm doctor metrics --detail full` lists them (`rows.usage`):
 `{ available, window, truncated, events }`. A search writes one summary row (no `ref`, with `resultCount`) and one row
 per hit. An event carries `agent: { harness, session? }` when the agent harness that made it was recorded (from this
 release; older rows have none). At most 20,000 events; `truncated` says the window held more.
@@ -248,8 +248,8 @@ fetched, so `ahead`/`behind` are measured against the remote-tracking branch as 
 - `git` is `null` unless the bundle's root is itself a git repository. `upstream`, `ahead` and `behind` are `null` without an
   upstream; `branch` is `null` on a detached HEAD; `lastCommit` is `null` for a repository with no commits. `dirtyPaths`
   counts paths with uncommitted changes.
-- `index` mirrors `akm info`'s `indexStats` and `semanticSearch`. `embeddingCoverage` is embeddings over entries
-  (`null` for an empty or missing index). `unavailable` and `unreadable` appear only when `akm info` reports them.
+- `index` mirrors `akm doctor info`'s `indexStats` and `semanticSearch`. `embeddingCoverage` is embeddings over entries
+  (`null` for an empty or missing index). `unavailable` and `unreadable` appear only when `akm doctor info` reports them.
 - Cards also include `enabled`, the raw `writableSetting`, `settingsSource` and existing source `components`
   (`name`, `root`, `adapter`, optional explicit `writable`, and `configured`). Disabled bundles remain visible.
   Component overrides take precedence over the bundle writable default. An implicit/detected component is shown

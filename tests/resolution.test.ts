@@ -184,7 +184,7 @@ describe("the nearest layer that names a target decides", () => {
       expect(error.code).toBe("SELECTION_NOT_CONFIGURED");
       expect(error.message).toContain('Connection "gone" is not configured.');
       expect(error.message).toContain("Configured connections: default, cloud.");
-      expect(error.hint()).toContain("akm health");
+      expect(error.hint()).toContain("akm doctor");
       expect(failure([{ harness: "absent" }], false).message).toContain('Harness "absent" is not configured.');
       expect(failure([{ harness: "absent" }], false).message).toContain("Configured harnesses: default, claude.");
       expect(warnings).toEqual([]);

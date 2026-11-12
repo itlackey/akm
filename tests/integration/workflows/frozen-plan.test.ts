@@ -207,7 +207,7 @@ describe("plan freezing at workflow start (migration 006)", () => {
     const message = result.warnings?.find((w) => w.includes("frozen as plan irVersion 5"));
     expect(message).toContain(started.run.id);
     expect(message).toContain("The run was abandoned");
-    expect(message).toContain("akm workflow run stash//workflows/older-plan");
+    expect(message).toContain("akm run stash//workflows/older-plan");
   });
 
   /** Rewrite the stored plan's one unit target as an irVersion 7 release froze it, and run on it. */
@@ -283,7 +283,7 @@ describe("plan freezing at workflow start (migration 006)", () => {
       const message = result.warnings?.find((w) => w.includes("frozen as plan irVersion 7"));
       expect(message).toContain(runId);
       expect(message).toContain("The run was abandoned");
-      expect(message).toContain(`akm workflow run stash//workflows/${name}`);
+      expect(message).toContain(`akm run stash//workflows/${name}`);
     }
   });
 
@@ -312,7 +312,7 @@ describe("plan freezing at workflow start (migration 006)", () => {
       const message = result.warnings?.find((w) => w.includes("cannot decode"));
       expect(message).toContain(started.run.id);
       expect(message).toContain("The run was abandoned");
-      expect(message).toContain(`akm workflow run ${started.run.workflowRef}`);
+      expect(message).toContain(`akm run ${started.run.workflowRef}`);
       // Read surfaces keep working, and the spine is untouched.
       expect((await getWorkflowStatus(started.run.id)).run.status).toBe("failed");
       expect(await withWorkflowRunsRepo((repo) => repo.getStepsForRun(started.run.id))).toEqual(stepsBefore);

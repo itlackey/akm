@@ -140,7 +140,7 @@ export const AkmConfigBaseSchema = z.object(AkmConfigShape).passthrough();
  * Per-key overrides for unsupported pre-cutover source shapes.
  */
 const RETIRED_SOURCE_SHAPE_KEY_MESSAGES: Record<string, string> = {
-  stashDir: "stashDir is not supported; configure `bundles`, or use `akm info` to inspect current paths.",
+  stashDir: "stashDir is not supported; configure `bundles`, or use `akm doctor info` to inspect current paths.",
 };
 
 /** The one message for a config older than the 0.9.32 floor: only akm 0.9.32 converts it. */

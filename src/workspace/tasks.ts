@@ -42,7 +42,7 @@ export async function viaHost(
     } catch (error) {
       const result = redactForUi(await here()) as Record<string, unknown>;
       const reason = (error as Error).message.replace(/\.$/, "");
-      const note = `The akm at ${host.path} could not run this (${reason}), so the OS scheduler was not updated. Run \`akm task sync\` there.`;
+      const note = `The akm at ${host.path} could not run this (${reason}), so the OS scheduler was not updated. Run \`akm doctor scheduler sync\` there.`;
       return { ...result, warnings: [...((result.warnings as string[] | undefined) ?? []), note] };
     }
   }

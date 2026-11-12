@@ -218,7 +218,7 @@ const CONFIG_HINTS: Partial<Record<ConfigErrorCode, string>> = {
     "Run `akm setup` to add a connection (an OpenAI-compatible endpoint) or enable a harness; model features need one.",
   AGENT_NOT_CONFIGURED: "Run `akm setup` to enable a harness or add a connection; agent work needs one.",
   SELECTION_NOT_CONFIGURED:
-    "Name one that is configured (`akm health` lists them), correct the name, or add it with `akm setup --name <name> --endpoint <url>` (a connection) or `akm setup --harness <name>`.",
+    "Name one that is configured (`akm doctor` lists them), correct the name, or add it with `akm setup --name <name> --endpoint <url>` (a connection) or `akm setup --harness <name>`.",
   UNSAFE_STASH_DIR:
     "Choose a path inside your home directory (e.g. ~/akm) or another empty workspace. The bundle directory cannot be the filesystem root, your home directory itself, or a sensitive system path like /etc, /var, ~/.config, or ~/.ssh.",
   UNKNOWN_IMPROVE_STRATEGY:
@@ -278,7 +278,7 @@ const USAGE_HINTS: Partial<Record<UsageErrorCode, string>> = {
     "Targets are canonical asset refs: `commands/review`, `scripts/build.sh`, `tasks/nightly`, `workflows/release`.",
   // Points at the two verbs that inspect a workflow source without executing it.
   WORKFLOW_SOURCE_INVALID:
-    "Run `akm lint` to see the failing source location, or `akm workflow plan <ref>` to compile it without writing.",
+    "Run `akm lint` to see the failing source location, or `akm doctor explain <ref>` to compile it without writing.",
   INPUT_BINDING_INVALID: "Check the step's with: keys against the target's declared inputs.",
   TASK_TARGET_UNSUPPORTED:
     "Task definitions support command, script, workflow, and shell (run:) targets; akm/command is layered by callers.",
@@ -311,7 +311,7 @@ const NOT_FOUND_HINTS: Partial<Record<NotFoundErrorCode, string>> = {
   PROPOSAL_NOT_FOUND: "Run `akm proposal list` to see pending proposals and their ids.",
   FILE_NOT_FOUND: "Check the path exists and is readable.",
   IMPROVE_RUN_NOT_FOUND:
-    "Run `akm improve` first, or `akm improve report --since 30d` to see recent run ids in `runIds`.",
+    "Run `akm improve` first, or `akm doctor metrics improve --since 30d` to see recent run ids in `runIds`.",
   REGISTRY_NOT_FOUND:
     "Check the ref's spelling and version; `akm search <query> --from registry` lists installable refs.",
 };

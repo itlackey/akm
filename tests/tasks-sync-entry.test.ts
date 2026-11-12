@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm task sync` and `task doctor` against the one scheduler
+ * `akm doctor scheduler sync` and `task doctor` against the one scheduler
  * entry: install, keep, rebind, remove; the akm 0.9 per-task rows removed in the
  * same operation; an installation that moves its locations left alone. The
  * backend is an in-memory fake, so no OS scheduler is reached.
@@ -121,7 +121,7 @@ describe("task sync: the one entry", () => {
 
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings?.[0]).toContain("source checkout");
-    expect(result.warnings?.[0]).toContain("akm task sync --rebind");
+    expect(result.warnings?.[0]).toContain("akm doctor scheduler sync --rebind");
   });
 
   test("removes the entry when no task is enabled, and does nothing when there is none", async () => {
@@ -326,7 +326,7 @@ describe("task doctor", () => {
 
     expect(report.backend).toBe("cron");
     expect(report.bindings).toEqual([{ argv: [missing], taskIds: ["a", "b"], status: ["missing-path"] }]);
-    expect(report.remediation).toBe("akm task sync --rebind");
+    expect(report.remediation).toBe("akm doctor scheduler sync --rebind");
   });
 
   test("an entry that is healthy has no remediation", async () => {
@@ -349,7 +349,7 @@ describe("task doctor", () => {
 
     expect(report.warnings.join("\n")).toContain("entry is not installed");
     expect(report.bindings).toEqual([{ argv: [], taskIds: ["old"], status: ["legacy"] }]);
-    expect(report.remediation).toBe("akm task sync");
+    expect(report.remediation).toBe("akm doctor scheduler sync");
   });
 
   test("an enabled task that cannot run is a warning naming the task and why, for a bad schedule and for a missing file", async () => {

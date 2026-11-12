@@ -28,7 +28,7 @@ akm bundle add /path/to/skills
 akm index
 
 # 6. Verify
-akm info
+akm doctor info
 akm search "test"
 
 # 7. Install agent guidance
@@ -82,7 +82,7 @@ For resource requirements and remote-embedding alternatives, see
 registers a directory or package as a source. Add every source before
 indexing.
 
-**Index and verify.** `akm index` builds the search index; `akm info` reports
+**Index and verify.** `akm index` builds the search index; `akm doctor info` reports
 `indexStats.entryCount` and `semanticSearch.status`; `akm search "<query>"`
 confirms retrieval actually returns results.
 

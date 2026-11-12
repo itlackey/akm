@@ -476,7 +476,7 @@ describe("isEditable", () => {
 
       expect(hit.ref).toBe("team//knowledge/guide");
       expect(hit.editable).toBe(false);
-      expect(hit.editHint).toContain("akm clone team//knowledge/guide");
+      expect(hit.editHint).toContain("akm import team//knowledge/guide --asset-ref");
     } finally {
       fs.rmSync(sourceDir, { recursive: true, force: true });
     }

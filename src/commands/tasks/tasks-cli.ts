@@ -328,6 +328,19 @@ const tasksHistoryCommand = defineJsonCommand({
   },
 });
 
+/** Shared with `akm doctor scheduler sync`, which reuses this handler. */
+export const taskSyncArgs = {
+  rebind: {
+    type: "boolean",
+    description: "Point the installed entry at this akm invocation and PATH instead of keeping them",
+    default: false,
+  },
+} as const;
+
+export async function runTaskSync(args: { rebind?: boolean }): Promise<void> {
+  output("task-sync", await akmTasksSync({}, { rebind: args.rebind === true }));
+}
+
 const tasksSyncCommand = defineJsonCommand({
   meta: {
     name: "sync",
@@ -335,15 +348,9 @@ const tasksSyncCommand = defineJsonCommand({
       "Install, update or remove the one OS scheduler entry that runs `akm task dispatch` every minute, " +
       "and remove akm 0.9's per-task scheduler rows",
   },
-  args: {
-    rebind: {
-      type: "boolean",
-      description: "Point the installed entry at this akm invocation and PATH instead of keeping them",
-      default: false,
-    },
-  },
+  args: taskSyncArgs,
   async run({ args }) {
-    output("task-sync", await akmTasksSync({}, { rebind: args.rebind === true }));
+    await runTaskSync(args);
   },
 });
 
@@ -356,7 +363,7 @@ const tasksDispatchCommand = defineJsonCommand({
     name: "dispatch",
     description:
       "Start the enabled tasks that are due this minute, each detached, and exit. " +
-      "The OS scheduler entry (`akm task sync`) or your own supervisor runs this every minute",
+      "The OS scheduler entry (`akm doctor scheduler sync`) or your own supervisor runs this every minute",
   },
   args: {},
   async run() {
@@ -366,6 +373,28 @@ const tasksDispatchCommand = defineJsonCommand({
 });
 
 // ── `akm task explain` — read-only introspection ────────────────────────────
+
+/** Shared with `akm doctor explain <task-ref>`, which reuses this handler. */
+export async function runTaskExplain(
+  args: { ref: string; bundle?: string },
+  rawArgs: readonly string[],
+): Promise<void> {
+  // `--scheduled` must be rejected BEFORE the shared scanner below ever
+  // sees it — the scanner treats it as `task run`'s own reserved flag
+  // (silently skipped, never surfaced as unknown) rather than explain's,
+  // since it has no way to know which command called it (F7 fix).
+  rejectExplainScheduledFlag();
+  // Stage 1 (capture): the SAME exact-name flag scanner `akm task run`
+  // uses (`parseTaskInputFlags` above) — `explain` never declares
+  // `--scheduled`, but reusing the identical scanner is deliberate: one
+  // implementation of "which argv tokens are task input flags", not two.
+  const inputFlags = parseTaskInputFlags(rawArgs, args.ref);
+  const result = await akmTaskExplain(args.ref, {
+    ...(args.bundle !== undefined ? { target: args.bundle } : {}),
+    inputFlags,
+  });
+  output("task-explain", result);
+}
 
 const tasksExplainCommand = defineJsonCommand({
   meta: {
@@ -379,21 +408,7 @@ const tasksExplainCommand = defineJsonCommand({
     ...bundleArg,
   },
   async run({ args, rawArgs }) {
-    // `--scheduled` must be rejected BEFORE the shared scanner below ever
-    // sees it — the scanner treats it as `task run`'s own reserved flag
-    // (silently skipped, never surfaced as unknown) rather than explain's,
-    // since it has no way to know which command called it (F7 fix).
-    rejectExplainScheduledFlag();
-    // Stage 1 (capture): the SAME exact-name flag scanner `akm task run`
-    // uses (`parseTaskInputFlags` above) — `explain` never declares
-    // `--scheduled`, but reusing the identical scanner is deliberate: one
-    // implementation of "which argv tokens are task input flags", not two.
-    const inputFlags = parseTaskInputFlags(rawArgs, args.ref);
-    const result = await akmTaskExplain(args.ref, {
-      ...(args.bundle !== undefined ? { target: args.bundle } : {}),
-      inputFlags,
-    });
-    output("task-explain", result);
+    await runTaskExplain(args, rawArgs);
   },
 });
 

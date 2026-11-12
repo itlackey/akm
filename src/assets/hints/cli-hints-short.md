@@ -44,7 +44,7 @@ On failure stderr carries `{"ok": false, "error": "...", "code": "...", "hint": 
 | 0 | Success |
 | 1 | Not found or command-reported failure |
 | 2 | Usage / bad input |
-| 4 | Health warning (`akm doctor` or `akm health`) |
+| 4 | Health warning (`akm doctor`) |
 | 70 | Internal / unclassified error |
 | 75 | Transient: retry shortly |
 | 78 | Configuration error |

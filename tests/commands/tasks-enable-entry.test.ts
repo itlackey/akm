@@ -147,7 +147,7 @@ describe("a host whose OS scheduler is unavailable still saves the change", () =
 
     expect(result.sync).toBeUndefined();
     expect(result.warnings).toEqual([
-      "Task saved, but the OS scheduler was not updated: the `crontab` binary was not found on PATH. Fix that, then run `akm task sync`.",
+      "Task saved, but the OS scheduler was not updated: the `crontab` binary was not found on PATH. Fix that, then run `akm doctor scheduler sync`.",
     ]);
     expect(fs.existsSync(path.join(storage.stashDir, "tasks", "nightly.yml"))).toBe(true);
     expect(isSchedulerRefEnabled(loadConfig(), "stash//tasks/nightly")).toBe(true);
@@ -160,7 +160,7 @@ describe("a host whose OS scheduler is unavailable still saves the change", () =
 
     expect(result).toMatchObject({ ref: "stash//tasks/a", enabled: true, changed: true });
     expect(result.sync).toBeUndefined();
-    expect(result.warnings?.[0]).toContain("`akm task sync`");
+    expect(result.warnings?.[0]).toContain("`akm doctor scheduler sync`");
     expect(isSchedulerRefEnabled(loadConfig(), "stash//tasks/a")).toBe(true);
   });
 

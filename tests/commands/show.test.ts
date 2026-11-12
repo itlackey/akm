@@ -500,7 +500,7 @@ describe("akmShow editability", () => {
     expect(result.type).toBe("script");
     expect(result.origin).toBe("installed-pkg");
     expect(result.editable).toBe(false);
-    expect(result.editHint).toContain("akm clone");
+    expect(result.editHint).toContain("akm import");
     expect(result.editHint).toContain("scripts/deploy.sh");
   });
 });

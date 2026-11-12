@@ -40,7 +40,7 @@ Local semantic search runs its embedding model on ONNX Runtime, and akm offers
 it on Linux x64 (glibc) and Apple-silicon macOS; on every other
 platform search is keyword-only or uses an embedding endpoint you configure. Choosing the built-in embedder in
 `akm setup` (or `akm setup --yes --embedding local`) downloads what it needs once
-into akm's cache directory (`akm info` prints it): ONNX Runtime for your platform,
+into akm's cache directory (`akm doctor info` prints it): ONNX Runtime for your platform,
 under `onnxruntime/<version>-<platform>-<arch>/` (about 86 MB downloaded,
 about 36 MB kept), and the model (about 127 MB). Nothing is installed with the npm
 package or carried in a standalone binary, and the first `akm index` downloads
@@ -55,7 +55,7 @@ what setup did not. Two notes:
 
 ### akm's own agent runtime
 
-With a connection and no harness, `akm agent` and the other agent work run on
+With a connection and no harness, `akm run` on an agent ref and the other agent work run on
 akm's own runtime, a pinned OpenCode 2 binary that akm runs as a process. This
 is the same for the npm package and the standalone binary: nothing of OpenCode
 is installed with akm, and the first time the runtime runs, akm downloads the
@@ -207,7 +207,7 @@ akm show <ref>            # e.g. akm show akm-stash//skills/install-akm-stash
 **Success check:** structured JSON with everything an agent needs to use the
 asset — a `run` command plus optional `cwd` and `setup` for scripts, a
 `prompt` payload for agents, or the document `content` for knowledge (with
-`--detail brief`, just its outline `toc`; append `#<slug>` to a ref for one
+`--outline`, just its outline `toc`; append `#<slug>` to a ref for one
 section).
 
 `show` hands your agent the payload; running it is a separate step. See

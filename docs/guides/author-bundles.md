@@ -140,21 +140,21 @@ pinned to the old layout.
 ## Design for Local Customization
 
 Users are expected to fork individual assets out of your bundle rather than
-edit your source tree directly. `akm clone` copies one asset (or, for a
+edit your source tree directly. `akm import --asset-ref` copies one asset (or, for a
 skill, its whole directory) into the user's writable bundle or a custom
 `--dest`. The copy is a separate asset with its own ref, and `akm show` with a
 short ref prefers the copy in the user's default bundle:
 
 ```sh
-akm clone scripts/deploy.sh
-akm clone scripts/deploy.sh --dest ./project/.claude
+akm import scripts/deploy.sh --asset-ref
+akm import scripts/deploy.sh --asset-ref --dest ./project/.claude
 ```
 
 Design assets so a clone-and-edit workflow actually works: keep parameters
 and setup steps explicit rather than hard-coded, avoid assumptions about
 paths outside the bundle, and prefer one asset per concern so a user can
 clone the one thing they need to change without dragging in unrelated
-behavior. See [`akm clone`](bundles.md#akm-clone) for the full command
+behavior. See [`akm import --asset-ref`](bundles.md#akm-clone) for the full command
 reference.
 
 ## Publish Your Bundle

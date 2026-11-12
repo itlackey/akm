@@ -33,19 +33,25 @@ export type JournalMode = "WAL" | "DELETE";
 // One-shot warning guard so a network-FS fallback emits AT MOST ONCE per process.
 let warnedNetworkFallback = false;
 
-// Known Linux f_type magic numbers for network filesystems. node's statfs
-// normalises `type` to this numeric f_type magic on all platforms.
+// Known Linux f_type magic numbers for network filesystems. These match only
+// on Linux: other platforms report different statfs `type` values, so detection
+// never fires there. virtiofs reports FUSE_SUPER_MAGIC, so the FUSE entry covers it.
+// Values are from the kernel's include/uapi/linux/magic.h.
 const FS_MAGIC_NFS = 0x6969; // 26985    — NFS
 const FS_MAGIC_SMB = 0x517b; // 20859    — older SMB_SUPER_MAGIC
 const FS_MAGIC_CIFS = 0xff534d42; // 4283649346 — SMB/CIFS
 const FS_MAGIC_SMB2 = 0xfe534d42; // 4267272514 — SMB2
-const FS_MAGIC_FUSE = 0x65735546; // 1702057286 — FUSE (sshfs + many network FUSE mounts)
+const FS_MAGIC_FUSE = 0x65735546; // 1702057286 — FUSE (sshfs, virtiofs + many network FUSE mounts)
+const FS_MAGIC_9P = 0x01021997; // 16914839   — V9FS_MAGIC (9p, WSL2 /mnt/c)
+const FS_MAGIC_CEPH = 0x00c36400; // 12805120   — CEPH_SUPER_MAGIC (CephFS)
 
 const NETWORK_FS_MAGICS: ReadonlySet<number> = new Set([
   FS_MAGIC_NFS,
   FS_MAGIC_SMB,
   FS_MAGIC_CIFS,
   FS_MAGIC_SMB2,
+  FS_MAGIC_9P,
+  FS_MAGIC_CEPH,
   // FUSE is a judgment call: it backs BOTH network mounts (sshfs) and local
   // mounts (some encrypted/overlay FS). Treating it as network falls back to
   // DELETE — conservative-but-safe (DELETE works everywhere; the only cost is
