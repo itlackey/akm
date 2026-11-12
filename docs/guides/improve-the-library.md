@@ -17,7 +17,7 @@ AKM creates a proposal -> human or policy reviews the diff -> accept / reject / 
 `akm feedback` records a positive or negative signal for any indexed asset.
 The signal changes the asset's search ranking immediately, so highly-rated
 assets rank higher and assets flagged wrong or stale surface less often right
-away, and it updates the asset's utility score, which improve and `akm metrics`
+away, and it updates the asset's utility score, which improve and `akm doctor metrics`
 read. See
 [Architecture: The Improvement Loop](../architecture/improvement.md#utility-scoring)
 for how the score is computed.
@@ -64,16 +64,16 @@ akm feedback skills/deploy --negative \
   --reason "Skips the dry-run step; caused prod incident 2026-05-10"
 ```
 
-## akm log
+## akm doctor log
 
-`akm log` is the append-only event stream akm writes to as it works: what
+`akm doctor log` is the append-only event stream akm writes to as it works: what
 agents selected, what feedback they gave, what improve and workflows did.
 
 ```sh
-akm log                                         # All events, oldest first
-akm log --type feedback                         # Filter by event type
-akm log --ref skills/deploy
-akm log --since '@offset:12345'                 # Resume from a durable cursor
+akm doctor log                                         # All events, oldest first
+akm doctor log --type feedback                         # Filter by event type
+akm doctor log --ref skills/deploy
+akm doctor log --since '@offset:12345'                 # Resume from a durable cursor
 ```
 
 See [CLI Reference — log](../reference/cli.md#log) for the full filter list
@@ -109,7 +109,7 @@ A rewrite (reflect) is planned for assets with negative feedback from the last
 ref (`akm improve skills/code-review` always reworks that ref). A positive or
 note-only signal never plans one, and neither does a negative whose exact fix
 (`--replace`, `--outdated`, `--superseded-by`) has since been accepted. Unless
-`--require-feedback-signal` is set, the proactive-maintenance lane (on in
+the strategy turns it off (`processes.proactiveMaintenance.enabled: false`, selected with `--strategy`; the Deprecated `--require-feedback-signal` does the same for one run), the proactive-maintenance lane (on in
 `default`) also plans assets with no such feedback that are due for a revisit:
 at most 15 per run (`processes.proactiveMaintenance.maxPerRun`), and only assets
 not reflected or distilled for 30 days (`dueDays`), so each comes up at most
@@ -157,7 +157,7 @@ akm config set experimental.improveAutonomy true
 
 With the key off (the default), memory inference is skipped, memory cleanup is
 analyzed but not applied, and a judged promote is downgraded to `queue`; each downgrade is reported on
-stderr and by `akm task doctor`. `akm proposal drain --promote` is a
+stderr and by `akm doctor`. `akm proposal drain --promote` is a
 separate, explicit way to accept judged proposals and does not need the key.
 
 Some writes happen either way: session summaries under `sessions/**`, the purge
@@ -169,13 +169,13 @@ git-backed bundle (`--no-sync` and `--no-push` turn it off for a run).
 ## Learning layers
 
 Several things can spend model calls on their own. Core learning is one switch per host, for all bundles: shown by
-`akm info` (`learning`) and set by `akm setup --learning on|off` (the config key `improve.enabled`). The layers below
+`akm doctor info` (`learning`) and set by `akm setup --learning on|off` (the config key `improve.enabled`). The layers below
 follow it or sit beside it.
 
 | Layer | Switch | Model calls |
 | --- | --- | --- |
 | Recall | `AKM_AUTO_CURATE` (plugin) | None |
-| Prompt-time proposal capture | Follows core learning (the plugins read `learning.on` from `akm info`) | Yes, agent work |
+| Prompt-time proposal capture | Follows core learning (the plugins read `learning.on` from `akm doctor info`) | Yes, agent work |
 | Session extraction | Follows core learning (the plugins read `learning.on`; `akm proposal extract` itself is a no-op while it is off) | Yes |
 | Scheduled improve | Core learning plus the `improve` task; the run exits doing nothing while learning is off | Yes |
 
@@ -262,7 +262,7 @@ akm feedback skills/deploy --negative \
   --reason "Skips the dry-run step; caused prod incident 2026-05-10"
 
 # 2. The event lands in the log immediately
-akm log --ref skills/deploy --type feedback
+akm doctor log --ref skills/deploy --type feedback
 
 # 3. A later improve pass reads the signal and drafts a fix
 akm improve skills/deploy

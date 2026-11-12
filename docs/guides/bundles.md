@@ -173,7 +173,7 @@ accepted through 0.10 so existing scripts keep working.
 
 With `--all`, a bundle that fails is reported and the rest continue; a failed
 bundle keeps its previous contents and index. If an update is interrupted, rerun
-`akm bundle update <name>`, then `akm health`, and `akm index --full` if health
+`akm bundle update <name>`, then `akm doctor`, and `akm index --full` if health
 reports an index or state mismatch.
 
 New bundles get a `.gitignore` that keeps `env/` and `secrets/` out of git. A
@@ -209,18 +209,20 @@ fails to re-sync). Refs inside the bundle's own content (cross-references, a
 task's `uses:`, `supersededBy`) are not rewritten; the result lists the files
 that still spell the old `<old>//` prefix so you can fix them by hand.
 
-## akm clone
+<a id="akm-clone"></a>
 
-`akm clone` copies a single asset from any bundle into the write target
+## akm import --asset-ref
+
+`akm import <ref> --asset-ref` (formerly `akm clone`, Deprecated, removed in 0.11) copies a single asset from any bundle into the write target
 (`--bundle`, else `defaultWriteTarget`, else your working bundle) for local
 editing. The copy is a separate asset with its own ref; `akm show` with a short ref prefers the copy in your default
 bundle, while the original stays where it was.
 
 ```sh
-akm clone scripts/deploy.sh
-akm clone skills/code-review --name my-code-review
-akm clone scripts/deploy.sh --dest ./project/.claude
-akm clone "npm:@scope/pkg//scripts/deploy.sh"   # From uninstalled package
+akm import scripts/deploy.sh --asset-ref
+akm import skills/code-review --asset-ref --name my-code-review
+akm import scripts/deploy.sh --asset-ref --dest ./project/.claude
+akm import "npm:@scope/pkg//scripts/deploy.sh" --asset-ref   # From uninstalled package
 ```
 
 Clone does not overwrite: use `--force` to replace an existing copy. Skills
@@ -231,7 +233,7 @@ indexes it only if you also add it as a bundle.
 **Example: clone and customize a workflow**
 
 ```sh
-akm clone workflows/ship-release
+akm import workflows/ship-release --asset-ref
 # Edit the copy in your working bundle; akm show workflows/ship-release now returns it
 ```
 

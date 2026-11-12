@@ -28,7 +28,7 @@ Build first, then invoke the package launcher from `dist/`:
 ```bash
 bun run build
 node dist/akm search "deploy"
-node dist/akm task doctor
+node dist/akm doctor
 ```
 
 This checks generated imports, copied assets, and launcher behavior while still
@@ -61,9 +61,9 @@ akm --version
 ```
 
 This replaces the globally resolved package and can affect agents, shells, and
-scheduled tasks that invoke `akm`. Re-run `akm task sync --rebind` only when you
+scheduled tasks that invoke `akm`. Re-run `akm doctor scheduler sync --rebind` only when you
 intend existing scheduler entries to capture the new installed runtime, then
-verify with `akm task doctor`.
+verify with `akm doctor`.
 
 ## Inspecting a Live Database
 

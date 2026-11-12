@@ -45,10 +45,10 @@ removes them (`scripts/akm-migrate/migrate/dead-residue.ts`).
 ## SQLite databases
 
 Managed openers set a 30,000 ms `busy_timeout`; the fire-and-forget usage-telemetry
-writes lower it to 250 ms, and `akm info` reads the index with 750 ms. `AKM_SQLITE_JOURNAL_MODE`
+writes lower it to 250 ms, and `akm doctor info` reads the index with 750 ms. `AKM_SQLITE_JOURNAL_MODE`
 (`WAL`, `DELETE`, `TRUNCATE`; Deprecated, removed in 0.11, no replacement) selects the journal mode; the default is WAL, and
 WAL falls back to DELETE when the data directory is on a detected network
-filesystem (Linux detection only). The rollback-journal modes also set `synchronous = FULL`
+filesystem (NFS, SMB/CIFS, 9p, CephFS, FUSE including virtiofs; Linux detection only). The rollback-journal modes also set `synchronous = FULL`
 (`src/storage/sqlite-pragmas.ts`). Foreign keys are on for `index.db` and
 `state.db` and off for `logs.db`.
 
@@ -74,7 +74,7 @@ Vector search is an exact scan of `embeddings` (`src/storage/repositories/index-
 `key` TEXT PRIMARY KEY, `value` TEXT NOT NULL. Keys: `version`, `builtAt`,
 `stashDir`, `stashDirs`, `sourceOwners`, `last_utility_computed_at`, `embeddingFingerprint` (the model the
 vectors were made under), `hasEmbeddings` (`"0"` or `"1"`), `semanticSearch` (what the
-last `akm index` found about semantic search; `akm health` reads it), `vacuumPending`,
+last `akm index` found about semantic search; `akm doctor` reads it), `vacuumPending`,
 and `ftsTotalsStale` (set when a delete removed a row from `entries_fts`;
 cleared when `akm index` rebuilds the FTS table).
 
@@ -172,7 +172,7 @@ corrupt value falls through to a recompute (`src/indexer/passes/memory-inference
 `utility`, `show_count`, `search_count`, `select_rate`, `last_used_at`,
 `updated_at`. Recomputed by `akm index` from `state.db` `usage_events` and
 adjusted by `akm feedback`. `akm improve` (eligibility and salience,
-`src/commands/improve/eligibility.ts`, `salience.ts`) and `akm metrics` read it;
+`src/commands/improve/eligibility.ts`, `salience.ts`) and `akm doctor metrics` read it;
 search ranking does not.
 
 #### `registry_index_cache`
@@ -269,7 +269,7 @@ rebuilding `index.db` does not discard it.
 | `entry_id` | INTEGER | `index.db` entry id; re-linked after a rebuild. Null at write time on search, curate and nested command/persona read events, which record only `entry_ref`; the next index fills it from `entry_ref`. Utility scores aggregate by `entry_ref`. Deleting an entry also deletes its events that carry no `entry_id` yet, matched by `entry_ref` |
 | `entry_ref` | TEXT | Stable ref string |
 | `signal` | TEXT | `positive` or `negative` for feedback |
-| `metadata` | TEXT | JSON. A `show` event carries `project` (the project in force when it ran; absent on events recorded before project attribution and when none applied), which `akm search --by-usage` counts by |
+| `metadata` | TEXT | JSON. A `show` event carries `project` (the project in force when it ran; absent on events recorded before project attribution and when none applied), which `akm doctor metrics assets` counts by |
 | `source` | TEXT NOT NULL DEFAULT 'user' | `user`, `improve`, `task`, `audit`, `unknown` (`AKM_EVENT_SOURCE` sets it for child processes) |
 | `created_at` | TEXT NOT NULL | |
 
@@ -342,7 +342,7 @@ for its session, removed when the run ends.
 keeps the sessions of akm's own agent runtime. It is separate from the user's own
 `opencode.db` under `$XDG_DATA_HOME/opencode` (on every platform;
 `~/.local/share/opencode` by default), which keeps the runs of the `opencode`
-harness and which akm never writes. `akm proposal extract --type opencode` and
+harness and which akm never writes. `akm proposal extract --sessions opencode` and
 the improve extract stage read both with SQLite alone, read-only, and skip
 sessions that are subagents or akm's own model work (on OpenCode 2, the sessions
 that ran as the `akm-model-work` agent). The binary itself is in
@@ -410,7 +410,7 @@ like a local filesystem bundle.
 
 ## Native scheduler entries
 
-`akm task sync` writes rows into the OS scheduler. Each row runs `akm task run
+`akm doctor scheduler sync` writes rows into the OS scheduler. Each row runs `akm task run
 <id> --bundle <bundle> --scheduled` and sets `AKM_BUNDLE_DIR` to the syncing
 process's working bundle, plus any `AKM_CONFIG_DIR`, `AKM_DATA_DIR`,
 `AKM_CACHE_DIR`, `AKM_STATE_DIR` that process set explicitly

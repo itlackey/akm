@@ -136,7 +136,7 @@ runs collapsed to `-`, trimmed) and match the fragment against those slugs;
 fall back to a case-insensitive match against raw heading text. The selected
 region runs from that heading to the next heading of the same or higher level.
 A fragment that matches no heading is an error that **lists the available
-fragment slugs**, which is how a caller discovers them; `akm show <ref> --detail brief`
+fragment slugs**, which is how a caller discovers them; `akm show <ref> --outline`
 returns the outline (`toc`, each heading with the slug that selects it) without the body. Opaque
 `#akm-fragment-...` selectors resolve against the indexed revision; see
 [Architecture: Show Resolution](../architecture.md#show-resolution).
@@ -197,7 +197,7 @@ structure on them. Item writes must follow the selected adapter's rules.
 
 ## Install Refs (distinct grammar)
 
-`akm bundle add` and one-shot `akm clone` accept a different ref grammar. Install
+`akm bundle add` and one-shot `akm import --asset-ref` accept a different ref grammar. Install
 refs locate an upstream kit to fetch; they are **not** item refs and are
 parsed by `parseRegistryRef` in `src/registry/resolve.ts`.
 

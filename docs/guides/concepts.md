@@ -29,7 +29,7 @@ indexer walks.
 
 Your **working bundle** (`~/akm` by default, created by `akm setup`) is where
 writes go unless you say otherwise. The destination for `akm remember`,
-`akm import`, `akm clone` and other writes is, in order: the destination flag
+`akm import` (including `--asset-ref`) and other writes is, in order: the destination flag
 on the command, then `defaultWriteTarget` in config, then the working bundle.
 
 Each bundle is read through one **adapter**, which decides what its files are
@@ -62,7 +62,7 @@ Search ranks by relevance (keyword match, fused with vector similarity when
 semantic search is on) adjusted by the feedback recorded for each asset, and has
 no preference for any bundle. A short ref given to `akm show` resolves against
 the default bundle first, then the remaining bundles in installation order.
-`akm clone` copies an asset into the write target (`--bundle`, else
+`akm import --asset-ref` copies an asset into the write target (`--bundle`, else
 `defaultWriteTarget`, else your working bundle). The copy is a separate asset with its own ref; when it lands in
 your default bundle under the same name, the short ref resolves to it.
 

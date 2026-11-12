@@ -8,21 +8,21 @@ The design and rationale are in [Improvement Loop](../improvement.md). This page
 
 | Option | Purpose |
 |---|---|
-| `[scope]` (positional) | A single ref (`[bundle//]conceptId`), an asset type, or omitted for all assets. `akm improve report` and `akm improve judge` are subcommands, not scopes. |
+| `[scope]` (positional) | A single ref (`[bundle//]conceptId`), an asset type, or omitted for all assets. `akm improve judge` (Deprecated; use `akm doctor judge`) is a subcommand, not a scope. |
 | `--strategy <name>` | A named strategy from `improve.strategies` or a built-in: `default` or `consolidate`. It chooses which processes run, never where. |
 | `--connection <name>` / `--harness <name>` | Run every call of this run, judges included, on this connection or harness instead of the default. They are mutually exclusive. |
 | `--model <alias\|name>` | The model for every call of this run: an alias (`fast`, `balanced`, `reasoning`) or an exact name. |
 | `--task` | Extra guidance for this pass, passed to the reflect prompt. |
 | `--dry-run` | Compute the plan and analyze memory cleanup. Takes no improve lock, emits no learning events, calls no model, and writes no learning state. The CLI invocation still records diagnostic usage separately in `metrics.db`. |
-| `--show-prompt` | Print the composed reflect prompt for one fully-qualified ref and exit. No lock, index write, or model call. |
+| `--show-prompt` | Deprecated; use `akm doctor prompt <ref>`. Print the composed reflect prompt for one fully-qualified ref and exit. No lock, index write, or model call. |
 | `--bundle` | The bundle the run improves and writes to, overriding `defaultWriteTarget` and the working bundle. Only its assets are planned. |
 | `--limit` | Cap the number of assets processed, highest salience first. |
-| `--timeout-ms` | Wall-clock budget for the whole run. Default 7 200 000 ms (2 hours). |
+| `--timeout` | Wall-clock budget for the whole run, as a duration (`2h`) or milliseconds. Default 2 hours. `--timeout-ms` is Deprecated; use `--timeout`. |
 | `--skip-if-locked` | If another improve run holds the lock, return an exit-0 no-op. Without it, contention is `IMPROVE_LOCK_HELD`, exit 75. |
-| `--require-feedback-signal` | Turn the proactive-maintenance lane off for the run, so only assets with recent feedback are planned. |
+| `--require-feedback-signal` | Deprecated; use a strategy with `processes.proactiveMaintenance.enabled: false`, selected with `--strategy`. Turn the proactive-maintenance lane off for the run, so only assets with recent feedback are planned. |
 | `--sync` / `--no-sync`, `--push` / `--no-push` | Override the strategy's `sync` block (the pre-run sync and the end-of-run commit and push for a git-backed bundle). |
 | `--json-to-stdout` | Also print the full persisted run result as JSON. |
-| `--run`, `--since` | Only for `akm improve report`. |
+| `--run`, `--since` | Only for `akm doctor metrics improve` (and the Deprecated `akm improve report`). |
 
 `--require-engines` is retired: it is parsed, warned about once, and ignored. A run already stops at planning (exit 78) when no model-calling process has a connection or harness to run on.
 

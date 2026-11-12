@@ -11,7 +11,7 @@ where.
 - **Your model connections and embedding endpoint** (`connections` and
   `embedding` in [Configuration](configuration.md)) receive the prompts and
   asset content that `improve`, `proposal new`, `index`, enrichment and the
-  other model-backed features send. `akm setup`, `akm models` and `akm health`
+  other model-backed features send. `akm setup`, `akm models` and `akm doctor`
   ask each endpoint which models it serves. Your API key is sent only to the
   endpoint of the connection it belongs to.
 - **A harness you enable** (Claude Code, Codex, OpenCode, ...) is a program akm
@@ -40,7 +40,7 @@ where.
   metadata and downloads) and `api.github.com`. It attaches `GITHUB_TOKEN`,
   `GH_TOKEN`, or the output of `gh auth token` to GitHub API requests. Its
   plugin step runs `npm view` and the `claude`, `codex` or `opencode` CLIs.
-- **`akm health`**, unless you pass `--no-probe`, sends a reachability probe to
+- **`akm doctor`**, unless you pass `--no-probe`, sends a reachability probe to
   each connection's endpoint, runs each harness's `--version`, calls
   `api.github.com` to compare your version with the latest release, and runs
   `git ls-remote --symref` against the remote of an installed Claude plugin
@@ -94,7 +94,7 @@ Windows uses per-user app-data directories (`%LOCALAPPDATA%\akm\data`,
 | `opencode-runtime/` | Everything akm's own agent runtime keeps: OpenCode's `config/` (with akm's plugin), `data/` (logs, repositories, shell output, and `data/opencode/opencode.db`, the runtime's sessions, which `akm proposal extract --type opencode` reads back, read-only), `cache/`, `state/` and `tmp/` (the binary's own native pieces). Recreated on next use; deleting it loses the runtime's session history. |
 
 If akm cannot read this directory, commands fail with `DATA_DIR_UNREADABLE`
-(exit 78) naming the path; `akm health` still runs and reports it.
+(exit 78) naming the path; `akm doctor` still runs and reports it.
 If the directory is read-only (an agent sandbox that only allows writes in the
 workspace, for example), `akm feedback` fails with `DATA_DIR_NOT_WRITABLE`
 instead of reporting success for feedback it could not store.
@@ -147,7 +147,7 @@ regenerable. akm also writes into it:
   refs returned. `akm env run`, a workflow unit's `env:` binding and
   `akm secret run` record the names of the keys injected, not their values.
 - **Usage records**: queries, search impressions, show/curate engagement and
-  feedback. They feed utility scores and `akm metrics`, and the feedback recorded
+  feedback. They feed utility scores and `akm doctor metrics`, and the feedback recorded
   as the user adjusts search ranking. Each record is stamped with its source
   (`user`, `improve`, `task`, `audit` or `unknown`); only `user` records count.
   When akm runs under an agent harness it can recognize (the same detection
@@ -167,12 +167,12 @@ regenerable. akm also writes into it:
 readers must treat it as optional.
 
 `search` metadata carries `source` (the usage source that ran it) and `searchId`
-(a UUID). A `select` copies both from the search it followed, and `akm metrics`
+(a UUID). A `select` copies both from the search it followed, and `akm doctor metrics`
 counts one select per (`searchId`, ref). Events written before these fields
 existed have neither: they are counted as recorded, for every source, and
-`akm metrics` notes the day deduplication starts.
+`akm doctor metrics` notes the day deduplication starts.
 
-Event types, for `akm log --type <type>`:
+Event types, for `akm doctor log --type <type>`:
 
 - Bundles and assets: `add`, `remove`, `update`, `remember`, `import`
 - Retrieval and sync: `search`, `curate`, `show`, `select`, `feedback`, `sync`,
@@ -195,8 +195,8 @@ Event types, for `akm log --type <type>`:
 
 Events and improve run rows older than 90 days are purged by `akm improve`
 (`improve.eventRetentionDays`; `0` disables). Usage records older than 90 days
-are purged on `akm index`. Read these with `akm log`, `akm metrics`,
-`akm proposal list` and `akm task history`.
+are purged on `akm index`. Read these with `akm doctor log`, `akm doctor metrics`,
+`akm proposal list` and `akm doctor log --task <id>`.
 
 ## CLI usage counts
 
@@ -226,10 +226,10 @@ sent anywhere, and it is outside learning, feedback and ranking.
 ## Inspect and clear
 
 ```sh
-akm metrics                                   # usage report for the last 30 days
-akm log --type search --limit 20              # recent events
+akm doctor metrics                                   # usage report for the last 30 days
+akm doctor log --type search --limit 20              # recent events
 akm proposal list                             # pending proposals
-akm info                                      # where config, bundle, cache and index live
+akm doctor info                                      # where config, bundle, cache and index live
 ```
 
 ```sh
@@ -248,6 +248,6 @@ the config, data, state and cache directories.
 | `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR`, `AKM_CACHE_DIR` | Override the config, data, state and cache directories |
 | `AKM_BUNDLE_DIR` | Default bundle directory (`~/akm/`) |
 | `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME` | XDG bases; akm appends `/akm` |
-| `AKM_SQLITE_JOURNAL_MODE` | Deprecated, no replacement; removed in 0.11. SQLite journal mode: `WAL` (default), `DELETE` or `TRUNCATE`. akm falls back from WAL to `DELETE` on its own when the data directory is on a detected network filesystem (NFS, SMB/CIFS, FUSE such as sshfs); detection works on Linux only, so a data directory on a network filesystem on macOS or Windows is unsupported. In containers that are thrown away, keep SQLite on local disk and use snapshots. |
+| `AKM_SQLITE_JOURNAL_MODE` | Deprecated, no replacement; removed in 0.11. SQLite journal mode: `WAL` (default), `DELETE` or `TRUNCATE`. akm falls back from WAL to `DELETE` on its own when the data directory is on a detected network filesystem (NFS, SMB/CIFS, 9p, CephFS, FUSE such as sshfs or virtiofs); detection works on Linux only, so a data directory on a network filesystem on macOS or Windows is unsupported. In containers that are thrown away, keep SQLite on local disk and use snapshots. |
 | `AKM_NPM_REGISTRY` | Base URL of an npm mirror. Replaces `registry.npmjs.org` for npm bundle resolution. |
-| `AKM_REGISTRY_URL` | Comma-separated registry URLs that replace the configured `registries` in every registry search akm performs; `akm registry list`, `akm info` and the `egress-endpoints` health advisory still show the configured list. Prefix an entry with `<provider>::` (for example `skills-sh::https://skills.sh`) to choose a provider; the default is `static-index`. |
+| `AKM_REGISTRY_URL` | Comma-separated registry URLs that replace the configured `registries` in every registry search akm performs; `akm registry list`, `akm doctor info` and the `egress-endpoints` health advisory still show the configured list. Prefix an entry with `<provider>::` (for example `skills-sh::https://skills.sh`) to choose a provider; the default is `static-index`. |
