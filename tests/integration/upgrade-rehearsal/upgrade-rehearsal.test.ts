@@ -45,6 +45,8 @@ const REQUESTED = process.env.AKM_UPGRADE_REHEARSAL === "1";
 // KNOWN_UPGRADE_ORIGINS entry in its own parallel job by setting this to one
 // origin; unset (local dev) runs every origin's describe block in this one
 // process, same as before this filter existed.
+// The first release that records CLI usage in metrics.db (`cli_usage_*`).
+const CLI_USAGE_CAPTURE_SINCE = "0.10.261119";
 const ORIGIN_FILTER = process.env.AKM_UPGRADE_REHEARSAL_ORIGIN?.trim();
 
 if (!REQUESTED) {
@@ -576,8 +578,9 @@ for (const origin of ["previous", "0.9.32"] as const) {
       const usageBefore = cliUsageRows();
       expect(usageBefore).toBeGreaterThan(0);
 
-      // The previous release reads the same home: it decodes those rows (no skip warning), sees the
-      // candidate's newest task run, and leaves the CLI usage tables alone (it records nothing).
+      // The previous release reads the same home: it decodes those rows (no skip warning) and sees the
+      // candidate's newest task run. A release before CLI usage capture leaves the usage tables alone;
+      // one with capture (0.10.261119+) adds exactly its own two invocations to the same schema.
       const history = await runLauncher(previousLauncher, ["task", "history", taskRef, "--limit", "1"], home.env);
       expect(history.status, history.stderr).toBe(0);
       expect(history.stderr).not.toMatch(/Skipping unparseable/);
@@ -586,7 +589,7 @@ for (const origin of ["previous", "0.9.32"] as const) {
       const previousShow = await runLauncher(previousLauncher, ["show", ref], home.env);
       expect(previousShow.status, previousShow.stderr).toBe(0);
       expect(previousShow.stderr).not.toMatch(/Skipping unparseable/);
-      expect(cliUsageRows()).toBe(usageBefore);
+      expect(cliUsageRows()).toBe(usageBefore + (semverGte(previousVersion, CLI_USAGE_CAPTURE_SINCE) ? 2 : 0));
     });
   });
 }
