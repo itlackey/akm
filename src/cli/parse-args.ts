@@ -69,6 +69,42 @@ export function parsePositiveIntFlag(raw: string | undefined, flagName = "--limi
   return parsed;
 }
 
+/**
+ * The one `--timeout` grammar: bare N is milliseconds, or N with `ms`, `s`, `m`,
+ * `h` or `d`. Private to `--timeout` flags; asset `timeout:` fields and
+ * `--since`/`--expires` keep the shared duration grammar in core/time.
+ */
+const TIMEOUT_UNITS: Readonly<Record<string, number>> = {
+  ms: 1,
+  s: 1000,
+  m: 60_000,
+  h: 3_600_000,
+  d: 86_400_000,
+};
+
+/** Parse one `--timeout` value to positive milliseconds, or throw a usage error. */
+export function parseTimeoutValue(raw: string, flagName = "--timeout"): number {
+  const match = /^(\d+)(ms|s|m|h|d)?$/.exec(raw.trim());
+  const parsed = match ? Number(match[1]) * (TIMEOUT_UNITS[match[2] ?? "ms"] as number) : Number.NaN;
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new UsageError(
+      `Invalid ${flagName} value: "${raw}". Expected a positive number: bare N is milliseconds, or N with ms, s, m, h or d (30s, 2m, 1h, 7d).`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  return parsed;
+}
+
+/** Resolve the duration alias against an already-parsed legacy millisecond flag. */
+export function parseTimeoutFlags(timeout: string | undefined, timeoutMs: number | undefined): number | undefined {
+  if (timeout === undefined) return timeoutMs;
+  const parsed = parseTimeoutValue(timeout);
+  if (timeoutMs !== undefined && timeoutMs !== parsed) {
+    throw new UsageError("--timeout and --timeout-ms specify conflicting budgets.", "INVALID_FLAG_VALUE");
+  }
+  return parsed;
+}
+
 // ── String flag parsing ──────────────────────────────────────────────────────
 
 /**

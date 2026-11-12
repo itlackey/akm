@@ -2,6 +2,10 @@
 
 Upgrade guides and per-release migration notes.
 
+## Upcoming
+
+- [0.10.x -> 0.11.0 migration guide (draft)](v0.10-to-v0.11.md) -- Additive replacements and usage metrics in 0.10.x, scheduled removals and breaking changes in 0.11, upgrade guidance, and named developer completion markers
+
 ## Current
 
 - [v0.9 -> v0.10 migration guide](v0.9-to-v0.10.md) -- Upgrade order for a 0.9.15+ install, every removed CLI spelling, strategy, config key and workflow feature with its replacement, changed `akm improve` defaults, the OpenCode plugins, and `0.10.YYMMNN` version numbers

@@ -1096,6 +1096,10 @@ describe("task source v4 — top-level execution controls", () => {
   test("timeout accepts a common duration string and rejects a value beyond EXECUTION_MAX_TIMEOUT_MS, at the TOP-LEVEL field path (not akm.timeout)", () => {
     const ok = parseTaskSourceV4Document(v4Doc({ uses: "commands/review", timeout: "20m" }), { filePath: "/x.yml" });
     expect(ok.execution.timeout).toBe("20m");
+    // Asset timeout: keeps the shared grammar; the wider --timeout CLI grammar does not apply.
+    expect(() =>
+      parseTaskSourceV4Document(v4Doc({ uses: "commands/review", timeout: "30s" }), { filePath: "/x.yml" }),
+    ).toThrow(/timeout/i);
     const error = expectTaskSourceInvalid(
       () =>
         parseTaskSourceV4Document(v4Doc({ uses: "commands/review", timeout: EXECUTION_MAX_TIMEOUT_MS + 1 }), {

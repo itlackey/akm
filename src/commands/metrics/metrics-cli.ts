@@ -158,9 +158,21 @@ function llmEventsIn(db: Database, window: { since: string; until: string }) {
   );
 }
 
-/** The window's usage rows as the report carries them (`rows.usage`), for a caller that needs no report. */
-export function readUsageRows(db: Database, window: { since: string; until: string }): MetricsUsageRow[] {
-  return listUsageEventRows(db, { sinceIso: window.since, untilIso: window.until, source: SOURCE }).map(toUsageRow);
+/**
+ * The window's usage rows as the report carries them (`rows.usage`), for a caller that needs no report: people's rows,
+ * or every source's with `allSources`.
+ */
+export function readUsageRows(
+  db: Database,
+  window: { since: string; until: string },
+  options: { allSources?: boolean; newest?: number } = {},
+): MetricsUsageRow[] {
+  return listUsageEventRows(db, {
+    sinceIso: window.since,
+    untilIso: window.until,
+    ...(options.allSources ? {} : { source: SOURCE }),
+    ...(options.newest === undefined ? {} : { newest: options.newest }),
+  }).map(toUsageRow);
 }
 
 /** The window's LLM usage rows as the report carries them (`rows.llm`). */

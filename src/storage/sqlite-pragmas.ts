@@ -75,8 +75,9 @@ function warnInvalidJournalModeOnce(raw: string): void {
   warn(`[akm] invalid AKM_SQLITE_JOURNAL_MODE=${JSON.stringify(raw)} — using WAL (valid: WAL, DELETE, TRUNCATE)`);
 }
 
-// Known Linux f_type magic numbers for network filesystems. node's statfs
-// normalises `type` to this numeric f_type magic on all platforms.
+// Known Linux f_type magic numbers for network filesystems. These match only
+// on Linux: other platforms report different statfs `type` values, so detection
+// never fires there. 9p, virtiofs and CephFS are not in the set.
 const FS_MAGIC_NFS = 0x6969; // 26985    — NFS
 const FS_MAGIC_SMB = 0x517b; // 20859    — older SMB_SUPER_MAGIC
 const FS_MAGIC_CIFS = 0xff534d42; // 4283649346 — SMB/CIFS
@@ -91,7 +92,8 @@ const NETWORK_FS_MAGICS: ReadonlySet<number> = new Set([
   // FUSE is a judgment call: it backs BOTH network mounts (sshfs) and local
   // mounts (some encrypted/overlay FS). Treating it as network falls back to
   // DELETE — conservative-but-safe (DELETE works everywhere; the only cost is
-  // losing WAL concurrency). An operator can always force WAL via the env var.
+  // losing WAL concurrency). An explicit WAL in the env var is treated like the
+  // default, so the network fallback still applies; it cannot be forced.
   FS_MAGIC_FUSE,
 ]);
 

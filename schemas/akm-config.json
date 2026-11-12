@@ -590,6 +590,44 @@
               ]
             }
           },
+          "include": {
+            "type": "object",
+            "properties": {
+              "quality": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "const": "proposed"
+                  },
+                  {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "const": "proposed"
+                    }
+                  }
+                ]
+              },
+              "type": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                ]
+              }
+            },
+            "additionalProperties": {}
+          },
           "prefer": {
             "type": "object",
             "propertyNames": {
@@ -675,6 +713,15 @@
       "type": "object",
       "properties": {
         "requireReason": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": {}
+    },
+    "usage": {
+      "type": "object",
+      "properties": {
+        "capture": {
           "type": "boolean"
         }
       },
@@ -2150,6 +2197,44 @@
                   ]
                 }
               },
+              "include": {
+                "type": "object",
+                "properties": {
+                  "quality": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "const": "proposed"
+                      },
+                      {
+                        "minItems": 1,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "const": "proposed"
+                        }
+                      }
+                    ]
+                  },
+                  "type": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      {
+                        "minItems": 1,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": {}
+              },
               "prefer": {
                 "type": "object",
                 "propertyNames": {
@@ -2235,6 +2320,15 @@
           "type": "object",
           "properties": {
             "requireReason": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": {}
+        },
+        "usage": {
+          "type": "object",
+          "properties": {
+            "capture": {
               "type": "boolean"
             }
           },

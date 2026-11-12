@@ -526,6 +526,7 @@
       href={lastFiles || filesHref({ bundle: defaultBundle || bundles.find((b) => b.enabled)?.name || "", path: "" })}
       aria-current={inFiles ? "page" : undefined}>Files</a
     >
+    <a href="/library/map">Map</a>
   </nav>
 {/if}
 {#if query.has("saved")}<p class="write-receipt" role="status">

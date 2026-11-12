@@ -10,7 +10,7 @@
  * with `akm lint --type workflows`.
  */
 
-import { getStringArg } from "../cli/parse-args";
+import { getStringArg, parseTimeoutValue } from "../cli/parse-args";
 import { defineGroupCommand, defineJsonCommand, EXIT_CODES, output, outputWithExitCode } from "../cli/shared";
 import { armAbortDeadline } from "../core/abort-deadline";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../core/asset/asset-create";
@@ -178,7 +178,8 @@ const WORKFLOW_RUN_SKIP_REASONS: Partial<Record<TransientErrorCode, "lock-held" 
   STATE_DB_CONTENDED: "state-db-contended",
 };
 
-const workflowRunCommand = defineJsonCommand({
+export const workflowRunCommand = defineJsonCommand({
+  configFile: false,
   meta: {
     name: "run",
     description:
@@ -192,7 +193,7 @@ const workflowRunCommand = defineJsonCommand({
     },
     "max-steps": { type: "string", description: "Stop after executing this many steps" },
     "max-retries": { type: "string", description: "Retry a failed workflow step this many additional times" },
-    timeout: { type: "string", description: "Whole-run timeout: N, Nms, Ns, or Nm (bare N is milliseconds)" },
+    timeout: { type: "string", description: "Whole-run timeout: N, Nms, Ns, Nm, Nh or Nd (bare N is milliseconds)" },
     // Deprecated no-op, accepted through 0.10 so scripts that pass it do not
     // fail with UNKNOWN_FLAG. A workflow ref always starts a new run now.
     new: {
@@ -388,14 +389,8 @@ function parseIntegerFlag(
 
 function parseWorkflowTimeout(raw: string | undefined): number | undefined {
   if (raw === undefined) return undefined;
-  const match = /^(\d+)(ms|s|m)?$/.exec(raw);
-  if (!match) {
-    throw new UsageError(`--timeout must be N, Nms, Ns, or Nm, got "${raw}".`, "INVALID_FLAG_VALUE");
-  }
-  const amount = Number(match[1]);
-  const multiplier = match[2] === "m" ? 60_000 : match[2] === "s" ? 1_000 : 1;
-  const timeoutMs = amount * multiplier;
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > WORKFLOW_MAX_TIMEOUT_MS) {
+  const timeoutMs = parseTimeoutValue(raw);
+  if (timeoutMs > WORKFLOW_MAX_TIMEOUT_MS) {
     throw new UsageError(
       `--timeout must resolve to 1 through ${WORKFLOW_MAX_TIMEOUT_MS} milliseconds, got "${raw}".`,
       "INVALID_FLAG_VALUE",

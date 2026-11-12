@@ -16,6 +16,7 @@ import { renderOutput } from "./cli/shared";
 import { runCurate } from "./commands/read/search-cli";
 import { loadConfig } from "./core/config/config";
 import { UsageError } from "./core/errors";
+import { normalizeInclude } from "./core/include";
 import { withQuiet } from "./core/warn";
 import { installLlmUsagePersistenceIfAbsent } from "./llm/usage-persist";
 import { resolveOutputMode } from "./output/context";
@@ -68,6 +69,7 @@ export async function curate(query: string, options: CurateOptions = {}): Promis
           belief: options.belief,
           filters: scopeFlagTokens(options.filters),
           prefer: scopeFlagTokens(options.prefer),
+          include: scopeFlagTokens(normalizeInclude(options.include)),
           cwd: options.cwd,
           project: options.project?.trim() || undefined,
         },

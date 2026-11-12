@@ -14,6 +14,7 @@
     description = "",
     option,
     height = undefined,
+    rows = undefined,
     onSelect = undefined,
     legend = [],
     initialView = "chart",
@@ -25,7 +26,9 @@
     description?: string;
     option: (token: (name: string) => string) => Record<string, unknown>;
     height?: "short" | "strip";
-    onSelect?: (event: { dataIndex: number; seriesIndex: number }) => void;
+    /** As tall as this many category rows, for a chart with one row per thing. */
+    rows?: number;
+    onSelect?: (event: { dataIndex: number; seriesIndex: number; data?: unknown }) => void;
     legend?: Array<{ name: string; index: number; marker?: boolean; band?: boolean }>;
     initialView?: "chart" | "table";
     /** Controls beside the Chart / Table switch. */
@@ -45,6 +48,7 @@
       element,
       chart(context, id, `${heading}. ${description} Use Table for exact values and record links.`, build, {
         height,
+        rows,
         onSelect,
       }),
     );
@@ -52,9 +56,10 @@
       .map((callback) => callback(element))
       .filter((value): value is () => void => typeof value === "function");
   }
-  // Draw once the element exists, and again whenever the builder changes.
+  // Draw once the element exists, and again whenever the builder or the number of rows changes.
   $effect(() => {
     const build = option;
+    void rows;
     untrack(() => draw(build));
   });
   async function changeView(next: "chart" | "table") {

@@ -209,6 +209,11 @@ export const routes: Route[] = [
     activity.taskHistory({ taskId: text(query, "taskId"), since: text(query, "since"), limit: count(query, "limit") }),
   ),
   get("/api/meta", () => activity.meta()),
+  get("/api/tasks/runs", (query) => activity.taskRuns({ since: text(query, "since") })),
+  get("/api/workflows/runs", (query) => activity.workflowRuns({ since: text(query, "since") })),
+  get("/api/workflows/run", (query) => activity.workflowRun({ id: text(query, "id") })),
+  get("/api/events", (query) => activity.events({ since: text(query, "since"), until: text(query, "until") })),
+  get("/api/graph", () => assets.graph()),
   get("/api/search", (query) =>
     assets.search({
       q: text(query, "q"),

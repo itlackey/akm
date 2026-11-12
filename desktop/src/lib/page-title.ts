@@ -33,15 +33,17 @@ export function viewTitle(url: Address): string {
     if (first === "new") return "New knowledge";
     if (first === "new-sensitive") return query.get("kind") === "secret" ? "New secret" : "New environment file";
     if (first === "files") return ref ? named(ref) : fileName(query.get("file") ?? "") || "Files";
+    if (first === "map") return "Map";
     if (ref) return named(ref);
     return query.get("tab") === "misses" ? "Search gaps" : "Search";
   }
   if (section === "review")
     return first ? "Proposal" : query.get("status") === "recent" ? "Recent decisions" : "Pending";
   if (section === "activity") {
-    // The names Activity gives its five views.
+    // The names Activity gives its views.
     if (first === "improve") return "Improve impact";
     if (first === "history") return "Source history";
+    if (first === "replay") return "Replay";
     const view = query.get("view") ?? "";
     return view === "runs" ? "Runs" : ["retrieval", "usage", "misses"].includes(view) ? "Usage & retrieval" : "Health";
   }

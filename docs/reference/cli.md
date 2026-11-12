@@ -17,17 +17,47 @@ These flags are accepted by all commands:
 
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |
+| `--config` | file path | `AKM_CONFIG_FILE`, then existing directory resolution | Select the configuration file before startup; prefer `akm --config <file> <command>` |
 | `--format` | `json`, `jsonl`, `yaml`, `text`, `md` | `json` | Output format |
 | `--output` | path | _(none)_ | Write rendered output to a file instead of stdout (all formats except `jsonl`) |
 | `--detail` | `brief`, `normal`, `full`, `agent` | `brief` | Output **verbosity** level, or the `agent` projection |
 | `--quiet` / `-q` | boolean | `false` | Suppress stderr warnings |
 | `--verbose` | boolean | `false` | Enable verbose diagnostics gated behind `isVerbose()`. Parsed globally before any subcommand runs. The `AKM_VERBOSE` env var honours the same setting and wins when both are present (see `src/core/warn.ts`). |
 
+Use `akm --config ./custom.json config path` to select a file for one invocation.
+The last explicit flag wins over `AKM_CONFIG_FILE`; relative paths resolve from
+the invoking directory. A missing or empty `--config` value fails; an empty `AKM_CONFIG_FILE` is warned about once and ignored. `credentials.json` and `models.json` stay in the default config directory (`AKM_CONFIG_DIR`, else the platform default), never beside the selected file. The retired `setup --config '{...}'` still exits 2 with a hint naming `--endpoint`. A file that does not yet
+exist can be created by setup or configuration writes. With neither selector,
+existing location variables and defaults keep their precedence.
+
+For `run`, `task run`, `task explain`, and `workflow run`, put the selector **before the
+top-level command**. Their existing named input/parameter `--config` after the
+command keeps its original meaning. Other commands also accept the selector at
+nested levels or after their arguments. A literal `--` ends AKM flag parsing.
+This file selector is distinct from the retired JSON-valued `setup --config`:
+use setup answer flags to supply answers.
+
 `--detail brief|normal|full` controls **how much** is returned. `--detail agent`
 selects the token-lean action view on `search`, `curate` and `show`; every other
 command ignores it. (`--shape`, which carried `agent` and `summary` before 0.10,
 is gone: it is an unknown flag, exit 2. `--shape summary` had a projection only
 on `show`; use `--detail brief` there.)
+
+### Deprecation notices
+
+When you use a command or flag that [STABILITY.md](../../STABILITY.md) marks
+Deprecated and its replacement exists in the same build, akm prints one line to
+stderr, once per process, naming the replacement:
+`[deprecated] akm health is deprecated and is removed in 0.11: use `akm doctor`.`
+Stdout, JSON and exit codes are unchanged, and `--quiet` silences the line. It
+is not printed for `--help`, for the scheduler's `task run --scheduled`, or for
+commands run by a task, `improve` or an audit (`AKM_EVENT_SOURCE` of `task`,
+`improve` or `audit`). The forms covered are `health`, `metrics`, `info`, `log`,
+`judge`, `improve judge`, `workflow run`, `agent <ref>`, `command`, `task run`,
+`task add`, `clone`, `improve --show-prompt`, `curate --pack`,
+`search --include-proposed` and `--include-sessions`, `show --detail brief` and
+`--context lead`, `upgrade --next` and `--timeout-ms`. A deprecated form whose
+replacement is not built yet prints nothing.
 
 ### `--format jsonl`
 
@@ -90,7 +120,7 @@ Every command exits with one of the following codes:
 | 0 | Success | — |
 | 1 | Not found or command-reported failure | `NotFoundError`, command result |
 | 2 | Usage / bad input | `UsageError` |
-| 4 | Health warning (`akm health` only) | — |
+| 4 | Health warning (`akm doctor` or `akm health`) | — |
 | 70 | Internal / unclassified error | unexpected throw |
 | 75 | Transient — retry shortly (sysexits `EX_TEMPFAIL`); another akm process holds a lock or is writing `state.db` or `index.db` right now, not a bad command line | `TransientError` |
 | 78 | Configuration error | `ConfigError` |
@@ -381,6 +411,65 @@ index, generated deterministically. In text mode, the default CLI UI shows a
 spinner with processed-versus-total source counts; structured output modes
 (`json`, `yaml`, `jsonl`) stay clean and machine-readable.
 
+### Timeout durations
+
+Every `--timeout` flag takes one grammar: a bare positive integer is
+milliseconds, or a number with `ms`, `s`, `m`, `h` or `d` (`250ms`, `30s`,
+`2m`, `1h`, `7d`). Units are case-sensitive and there is no month unit. This
+covers `command run`, `agent`, `proposal new`, `proposal extract`, `improve`,
+`task add`, `workflow run` and `run`. `timeout:` fields in task, agent and
+workflow files and `--since`, `--expires` and `--window-compare` keep their own
+grammar. Where `--timeout-ms` also exists, equal explicit `--timeout 30s
+--timeout-ms 30000` values are accepted; conflicting budgets are rejected.
+The existing millisecond flag and each command's timeout scope and defaults
+remain unchanged: improve's budget bounds the whole run, extract's is per
+session, and task add stores the target's timeout. This does not change model
+or learning defaults.
+
+### doctor
+
+Inspect runtime health and developer diagnostics. These additive 0.10 entry points
+reuse the existing handlers, flags, output shapes and exit codes:
+
+| Command | Existing 0.10 command | Purpose |
+| --- | --- | --- |
+| `akm doctor` | [`akm health`](#health) | Runtime health, durable state and improve telemetry |
+| `akm doctor metrics` | [`akm metrics`](#metrics) | Read-only usage and outcome reports |
+| `akm doctor info` | [`akm info`](#info) | Capabilities, configuration and index state; still reports when config is broken |
+| `akm doctor log` | [`akm log`](#log) | Filter the local event stream |
+| `akm doctor prompt <ref>` | [`akm improve <ref> --show-prompt`](#improve) | Inspect the composed reflect prompt without execution or writes |
+| `akm doctor judge` | [`akm judge`](#judge) | List, inspect and evaluate the existing model judges |
+
+```sh
+akm doctor --read-only --no-probe
+akm doctor metrics --since 7d
+akm doctor info
+akm doctor log --limit 20
+akm doctor prompt lessons/my-lesson --task "Focus on examples" --format text
+akm doctor judge --list
+akm doctor judge reflect.quality --schema
+```
+
+Bare `doctor` keeps health's defaults: probes run and state may be initialized or
+migrated. Use `--read-only --no-probe` for an offline inspection without writes
+to the inspected state. With `--read-only` the invocation records no CLI usage either; otherwise it
+records diagnostic usage in the `cli_usage_*` tables of `metrics.db`. Health statuses retain exit codes 0 (pass),
+4 (warning) and 1 (failure).
+
+All existing top-level commands remain available in 0.10. Health's reporting flags
+(`doctor --report`, `--group-by`, `--window-compare`, `--windows` and `--since`)
+are transitional aliases in 0.10; all reporting is moving under doctor commands in
+0.11. The full flag and result contracts remain documented in the linked sections.
+`doctor prompt` accepts the same `--task`, `--bundle`, `--strategy`,
+`--connection`, `--harness`, and `--model` settings as the legacy prompt preview.
+It preserves the JSON envelope and `--format text` rendering, requires a fully-qualified
+asset ref, and does not acquire a lock, write an index, or call a model.
+This regrouping does not change judge or learning behavior. Put a subcommand's
+options after its name, for example `akm doctor metrics --since 7d`; health-only
+options such as `--read-only` and `--report` belong to bare `akm doctor`. Global
+output flags work before or after the subcommand. Like `info`, `doctor info`
+warns and continues when a flag is unknown.
+
 ### info
 
 Show system capabilities, configuration, and index state.
@@ -511,7 +600,8 @@ check instead of creating or migrating the database. The write/read round-trip
 is skipped and reported as `unknown`; the other checks and exit codes are unchanged.
 This also applies with `--report`: proposal data is read through a read-only
 connection. If state is unavailable, the native failing diagnostic is returned
-without attempting the report's additional queries.
+without attempting the report's additional queries. `--read-only` writes nothing, so no CLI
+usage is recorded for it either.
 
 `connections-and-harnesses` is one table: a row for each configured connection (endpoint, whether
 its key is held, whether the endpoint answers) and harness (platform, whether
@@ -713,6 +803,7 @@ it.
 | `--filter` | `<key>=<value>` | _(none)_ | Frontmatter filter — repeatable; a repeated key matches any of its values, different keys must all match. A key is any frontmatter key (`team`, `project`, `category`, ...), `tag` (matched the way the index normalises tags), or a scope key (`user`, `agent`, `run`, `channel`). Example: `--filter team=platform --filter user=alice`. An empty value (`--filter channel=`) matches assets that do not carry the key (`tag` always carries path-derived tags, so `tag=` matches almost no assets), and combines with other values of the key by OR: `--filter channel=acme --filter channel=` keeps acme's assets plus every unscoped one. Narrows the candidates before ranking. |
 | `--prefer` | `<key>=<value>` | _(none)_ | Frontmatter preference — same keys, repetition and matching as `--filter`, but a boost, not a limit: a matching asset's score is multiplied by 1.02 (browse and ref-prefix listings put matches first). It never drops or admits an asset; `--from` and `--filter` still decide which are eligible. Example: `--prefer channel=ops`. |
 | `--project` | project name, `none` | _(by directory)_ | Use this [project](#projects)'s defaults instead of the one the working directory selects; `none` uses no project. An unknown name is a usage error. A flag you pass replaces the project's value of the same kind. When a project applies, the response carries `project` and text output opens with one line, e.g. `Project akm (~/code/akm): prefer project=akm`. |
+| `--include` | `quality=proposed`, `type=<asset-type>` | _(none, or project)_ | Repeatable: relax only the named default exclusions. Ordinary hits remain eligible; query matching, explicit type, source/project boundaries and filters still apply. Repeating `type` restores each named type in `search.defaultExcludeTypes`; other excluded types stay hidden. Explicit selectors replace the project's entire `include` value. An unsupported key, or a `type` that is not a known asset type, is a usage error (exit 2) whose hint lists the valid selectors. |
 | `--include-proposed` | flag | `false` | Include entries with `quality: "proposed"` in the result set. Default search excludes them; `generated` and `curated` quality entries are always included. Unknown quality values warn once and remain searchable. |
 | `--belief` | `all`, `current`, `historical` | `current` | Belief filter on any asset. `current` keeps unflagged/active/asserted assets; `historical` keeps deprecated/contradicted/superseded/archived assets. Labels do not establish truth. |
 | `--since` | `YYYY-MM-DD` | _(none)_ | Keep local assets dated on or after this day: the `observed` date, else `updated`. Assets with neither are dropped. Applies before the candidate budgets, like `--filter`. Search only; registry hits are unaffected. |
@@ -804,7 +895,9 @@ akm curate "deploy the service" --filter user=alice --pack 4000
 | `--filter` | `<key>=<value>` | _(none)_ | Repeatable exact frontmatter filter (any key, `tag`, or user, agent, run, channel); a repeated key matches any of its values, different keys are AND-joined; an empty value (`key=`) matches assets without the key |
 | `--prefer` | `<key>=<value>` | _(none)_ | Repeatable frontmatter preference with the keys and matching of `--filter`; matching hits rank slightly higher (×1.02 on the score). It never drops or admits a hit and does not change which evidence curate accepts |
 | `--project` | project name, `none` | _(by directory)_ | Use this [project](#projects)'s defaults instead of the one the working directory selects; `none` uses no project. An unknown name is a usage error. A flag you pass replaces the project's value of the same kind. When a project applies, the response carries `project` and text output opens with one line, e.g. `Project akm (~/code/akm): prefer project=akm`. |
+| `--include` | `quality=proposed`, `type=<asset-type>` | _(none, or project)_ | Repeatable: relax only the named default exclusions. Ordinary hits remain eligible; query matching, explicit type, source/project boundaries and filters still apply. Repeating `type` restores each named type in `search.defaultExcludeTypes`; other excluded types stay hidden. Explicit selectors replace the project's entire `include` value. An unsupported key, or a `type` that is not a known asset type, is a usage error (exit 2) whose hint lists the valid selectors. |
 | `--belief` | `all`, `current`, `historical` | `current` | Current keeps unflagged and active/asserted assets; historical keeps deprecated/contradicted/superseded/archived assets |
+| `--max-tokens` | positive token budget | _(none)_ | Alias for `--pack`, using the same shared packing budget and output. Conflicting explicit budgets are rejected; equal values are accepted. The unbudgeted default is unchanged. |
 | `--pack` | positive token budget | _(none)_ | Pack eligible local content in rank order; drop tail items before truncating the first oversized item. The budget is estimated at about 4 characters per token; a `ref#fragment` hit packs only that section; registry hits are never packed. It is a context-size target for this call, not a workflow asset's `budget` (a run-cost cap) |
 
 `akm curate` takes the top `--limit` hits of one search, in search order, and
@@ -853,9 +946,9 @@ contends with a full `akm index` rebuild in progress.
 Display an asset by ref. On a markdown document `#fragment` selects one
 section by heading slug (falling back to case-insensitive heading text); an
 unmatched fragment lists the available slugs. For a large document, read the
-outline first and then only the sections you need: `akm show <ref> --detail
-brief` returns the document's `toc` without the body, and `akm show
-<ref>#<slug>` returns one section.
+outline first and then only the sections you need: `akm show <ref> --outline`
+returns the document's `toc` without the body, and `akm show <ref>#<slug>`
+returns one section.
 
 ```sh
 akm show scripts/deploy.sh
@@ -864,9 +957,10 @@ akm show agents/architect
 akm show commands/release
 akm show workflows/ship-release
 akm show knowledge/guide                 # the whole document, plus its toc
-akm show knowledge/guide --detail brief  # the outline (toc), no body
+akm show knowledge/guide --outline       # the outline (toc), no body
 akm show knowledge/guide#authentication  # just that section
-akm show '<search-result-ref>' --context lead --max-tokens 800
+akm show knowledge/guide --max-tokens 800 # bounded body, without needing a fragment
+akm show knowledge/guide#authentication --lead --max-tokens 800
 akm show knowledge/guide#nope            # lists the available fragment slugs
 
 # Bundle .meta/ orientation docs — direct-read, not indexed:
@@ -878,10 +972,35 @@ akm show github:owner/repo//meta    # an installed bundle's .meta/index.md
 
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |
+| `--outline` | boolean | `false` | Outline and brief metadata without the body; alias for `--detail brief`. |
+| `--lead` | boolean | `false` | Add the indexed-safe document lead to a Markdown fragment; alias for `--context lead`. |
 | `--context` | `exact`, `lead` | `exact` | Fragment presentation. `exact` preserves the selected-section behavior. `lead` returns the indexed-safe first fragment followed by `[Selected matching fragment]` and the selected fragment. |
 | `--max-chars` | positive integer | `3200` for `lead` | Hard contextual content budget in characters; requires `--context lead` and is mutually exclusive with `--max-tokens`. |
-| `--max-tokens` | positive integer | _(none)_ | Approximate contextual budget using four characters per token; requires `--context lead` and is mutually exclusive with `--max-chars`. |
+| `--max-tokens` | positive integer | _(none)_ | Approximate body budget using four characters per token, for whole assets, exact fragments or lead context; mutually exclusive with `--max-chars`. |
 | `--project` | project name, `none` | _(by directory)_ | The [project](#projects) recorded on this read's usage event, for [`akm search --by-usage`](#usage-list-by-usage); changes nothing else. `none` records no project; an unknown name is a usage error. |
+
+`--max-tokens` bounds the returned `content`, `template` and `prompt` text,
+not metadata, outlines or structured fields such as workflow steps. A leading
+frontmatter block is metadata: it is kept whole and not counted, the budget
+applies to the body after it, the cut prefers a whitespace boundary within the
+last quarter (at most 32 characters) of the budget, and a UTF-16 surrogate pair
+is never split. The
+`contentBudget` object reports `maxTokens`, returned `estimatedTokens` and
+`truncated`; estimates use four characters per token, not a model tokenizer.
+Text output states the same limit and truncation. A read without a budget
+still returns the complete body. Sensitive env and secret assets retain their
+metadata-only output; a budget never exposes their values.
+
+`--outline` cannot be combined with a content budget, lead context or an
+explicit `--detail` other than `brief`. `--detail brief` with `--lead`, or with `--max-tokens`
+without lead context, is a usage error (exit 2), as it asks for a body it does
+not show. `--detail brief --context lead [--max-chars N | --max-tokens N]`
+keeps working exactly as in 0.10.261118. `--lead` requires an indexed Markdown
+fragment and conflicts with `--context exact`; its errors name `--lead` when you
+typed `--lead`.
+Direct `.meta` reads support `--max-tokens` but not `--outline`.
+The older `--detail brief`, `--context lead` and `--max-chars` forms remain
+available with their existing behavior.
 
 `meta` is not an asset type — `[<origin>//]meta[:<name>]` direct-reads a
 human-authored orientation doc from a bundle's optional `.meta/` directory
@@ -1078,7 +1197,7 @@ The old `--params <json>` bag is removed.
 | --- | --- |
 | `--max-steps <n>` | Stop once this many steps have finished, leaving a partial run active. Must be at least 1. |
 | `--max-retries <n>` | When a step fails, reopen the same run and retry the failed step up to this many additional times. Range: 0 through 100; default 0. Gate rejection and interruption are not retried. |
-| `--timeout <duration>` | Abort the whole invocation after `N`, `Nms`, `Ns`, or `Nm`; bare `N` is milliseconds. The active step remains resumable. |
+| `--timeout <duration>` | Abort the whole invocation after `N`, `Nms`, `Ns`, `Nm`, `Nh` or `Nd`; bare `N` is milliseconds. The active step remains resumable. |
 | `--new` | Deprecated, no effect (accepted through 0.10): a workflow ref always starts a new run. |
 | `--skip-if-locked` | If another akm process is already driving this run (it holds the run's lock file: `RUN_LEASE_HELD`), when starting a ref an active run of that ref is held by a live process, or `state.db` is busy with another writer (`STATE_DB_CONTENDED`), skip gracefully (exit 0) instead of failing (exit 75, `TransientError`). The envelope reports `{ skipped: { reason: "lock-held" \| "state-db-contended", message } }`. Every other failure (a bad flag, an unresolvable target) still fails loudly regardless of this flag. Use for high-frequency scheduled runs so they don't pile up failures while a longer-running invocation is in progress — same family as `improve --skip-if-locked`. |
 
@@ -1544,6 +1663,7 @@ akm upgrade              # Install a newer release if there is one, run every pe
 akm upgrade --check      # Report pending updates, CLI and plugins, without changing anything (no migration step)
 akm upgrade --force      # Force the install even if already on latest
 akm upgrade --next       # Include prereleases when selecting the newest CLI release
+akm upgrade --skip-checksum # Recovery only: install although the release checksum cannot be verified
 akm upgrade --channel next   # Switch CLI and installed harness plugins to next
 akm upgrade --channel latest # Return CLI and installed harness plugins to stable
 ```
@@ -1553,6 +1673,7 @@ akm upgrade --channel latest # Return CLI and installed harness plugins to stabl
 | `--check` | Report pending updates (CLI and per-harness plugins) without changing anything |
 | `--force` | Force upgrade even if on latest version |
 | `--skip-post-upgrade` | Skip the post-upgrade index rebuild |
+| `--skip-checksum` | Recovery only: install even when the release checksum cannot be fetched or its file is not listed. A checksum that does not match always fails. Replaces `AKM_UPGRADE_SKIP_CHECKSUM=1`, which keeps working through 0.10 |
 | `--channel latest\|next` | Switch the CLI and installed Claude, Codex and OpenCode plugins together; works with `--check` |
 | `--allow-downgrade` | Permit an older target version during an explicit `--channel` switch |
 | `--next` | Include prereleases when selecting the newest CLI release; retain configured harness channels (see below). Works with `--check`, `--force` and `-q` |
@@ -1725,10 +1846,10 @@ hooks in `/hooks` (they are in that machine's `~/.codex/config.toml`). The
 hashes stay the same across plugin version bumps and change only when a hook's
 command changes, so an upgraded plugin keeps running without a prompt.
 
-Checksum verification is not optional and has no flag. If a release's
-`checksums.txt` is genuinely unreachable, the recovery hatch is the
-`AKM_UPGRADE_SKIP_CHECKSUM=1` environment variable (Internal — deliberately
-not a discoverable, tab-completable flag). See STABILITY.md.
+Checksum verification is the default. If a release's `checksums.txt` is
+genuinely unreachable, the recovery hatch is `akm upgrade --skip-checksum`
+(the `AKM_UPGRADE_SKIP_CHECKSUM=1` environment variable it replaces keeps
+working through 0.10). See STABILITY.md.
 
 Shipping akm inside your own product (a Docker image, a plugin's own
 `node_modules`)? See [Bundling akm](../integration/bundling-akm.md) for the
@@ -1900,7 +2021,7 @@ else the configured path that most specifically contains the working directory,
 else none, and then nothing changes. It supplies defaults only for `akm search`,
 `akm curate` (and `curate()`), `akm remember`, `akm proposal extract` and
 `akm proposal new`; never for `improve`, model work or the scheduler (`show` only records the project on its usage event). A flag you pass
-replaces the project's value of that kind (`--from`, `--filter`, `--prefer`,
+replaces the project's value of that kind (`--from`, `--filter`, `--prefer`, `--include`,
 `--bundle`, `--user`, `--agent`, `--channel`); nothing is merged. `--pack` with
 any format but `text` and `md` (json, jsonl, yaml) prints only the packed items, so it does not report the project
 (text and md output open with the project line). `proposal extract` takes a
@@ -2011,11 +2132,11 @@ akm remember "Deployment needs VPN access" --bundle team-bundle
 | `--name` | Optional memory name. Defaults to a slug derived from the content |
 | `--path <dir>` | Subdirectory under `memories/` to place the memory in (for example `personal/projects`). The filename still comes from `--name` or the content slug |
 | `--force` | Overwrite an existing memory with the same name |
-| `--description <text>` | Short description written to frontmatter (persisted as the memory's `description` field). Honoured by both the zero-flag form and the tagged form. |
+| `--description <text>` | Short description written to frontmatter (persisted as the memory's `description` field). No tags required. |
 | `--tag <v>` | Tag to attach to the memory. Repeatable: `--tag foo --tag bar` |
-| `--expires <dur>` | Expiry shorthand (`30d`, `12h`, `6m`). Resolved to an ISO date |
-| `--source <s>` | Free-form source reference — URL, asset ref, file path, or any string |
-| `--xref <ref>` | Cross-reference ref recorded in the memory's `xrefs:` frontmatter list. Repeatable: `--xref knowledge/auth-flow --xref memories/vpn-note`. Each ref must resolve in the write target or a configured source (read-only sources count); an unresolvable ref fails with exit 2 before anything is written. More than 5 refs warns (soft cap) but still writes. Does not trigger the tags-required check. |
+| `--expires <dur>` | Expiry shorthand (`30d`, `12h`, `6m` for minutes, `3M` for 90 days). Resolved to an ISO date. No tags required. |
+| `--source <s>` | Free-form source reference — URL, asset ref, file path, or any string. No tags required. |
+| `--xref <ref>` | Cross-reference ref recorded in the memory's `xrefs:` frontmatter list. Repeatable: `--xref knowledge/auth-flow --xref memories/vpn-note`. Each ref must resolve in the write target or a configured source (read-only sources count); an unresolvable ref fails with exit 2 before anything is written. More than 5 refs warns (soft cap) but still writes. |
 | `--supersedes <ref>` | Ref of an existing asset this memory corrects. Repeatable. Writes the correction with the old ref folded into its `xrefs:` (correction provenance) AND demotes the old asset — `beliefState: superseded` + `supersededBy: [<new ref>]`, a metadata-only frontmatter edit that preserves every other key and the body — then reindexes it so `--belief current` hides the stale version immediately. An unresolvable ref fails with exit 2 before anything is written or demoted; so does a ref naming the asset being written itself (a correction cannot supersede itself, e.g. `--force` overwriting the same name). A ref that resolves only outside the write target and the working bundle still writes the correction but skips the demotion: stderr warns and the JSON output reports `superseded: [{ref, applied: false, reason}]` — the reason names the `--bundle` remedy when the old asset lives in a configured writable source. An old asset whose existing frontmatter is not parseable YAML is skipped the same way (`applied: false`) instead of being rewritten lossily. Re-running the same correction is idempotent. On a git write target the correction and the demoted old asset land in the same single boundary commit. |
 | `--auto` | Apply heuristic tagging from the body (opt-in, zero-latency, pure TS) |
 | `--enrich` | Call the configured LLM for tag/description proposals (opt-in, 10s timeout, fails soft) |
@@ -2029,15 +2150,14 @@ akm remember "Deployment needs VPN access" --bundle team-bundle
 Pass the content as a quoted positional argument for short notes, or pipe
 markdown into stdin for longer memories.
 
-**Zero-flag form** (`akm remember "body"`) writes a bare memory with no
-frontmatter — existing agent scripts keep working unchanged. `--tag` /
-`--expires` / `--source` still trigger the required-field check: if `tags`
-cannot be derived, the command rejects *before* writing the file, so you
-never end up with an orphan. `--auto` and `--enrich` are fail-soft metadata
-helpers: if they derive nothing, the memory still writes successfully.
+**Metadata is optional and independent.** `--description`, `--expires`,
+`--source`, and scope or cross-reference flags work without `--tag`.
+The zero-flag form (`akm remember "body"`) writes capture metadata and a
+description derived from the body. Invalid expiry durations and unresolved
+cross-references fail before writing. `--auto` and `--enrich` remain opt-in,
+fail-soft metadata helpers: if they derive nothing, the memory still writes.
 
-**Scope flags** (`--user`, `--agent`, `--run`, `--channel`) are independent
-of the tag-required check. They write the four canonical top-level
+**Scope flags** (`--user`, `--agent`, `--run`, `--channel`) write the four canonical top-level
 frontmatter keys (`scope_user`, `scope_agent`, `scope_run`, `scope_channel`)
 and a memory with only scope flags is valid (no tags required). Scope is
 selection inside a set the caller is already authorised to read; the same shape
@@ -2071,6 +2191,29 @@ both assets untouched — no partial correction.
 
 ### import
 
+The additive asset and task modes below are implemented for the next 0.10.x
+release (version pending); existing document imports keep their semantics.
+
+- `akm import <ref> --asset-ref` delegates to `clone`, preserving asset type,
+  companion files, provenance, `--name`, `--force`, and managed `--bundle` versus
+  unmanaged `--dest`. Remote asset locators use clone's existing resolution.
+- `akm import ./nightly.yml --type task` validates the current task-source-v4
+  schema and writes the authored YAML into `tasks/`. Only local files are
+  accepted. `--name` overrides the filename-derived task id; `--force` permits
+  replacing an existing task. `--bundle` selects the managed destination.
+  New tasks stay disabled until `task enable`; updates preserve host activation,
+  including legacy activation without `scheduler.enabled`. For a new task,
+  legacy installed activations are captured before its file exists and a stale
+  activation for that ref is removed before publishing the file. If a later
+  file write fails, that disabled host choice remains recorded. Import never
+  installs, updates, or removes
+  native scheduler entries. Run `task sync` when an enabled task's definition
+  changes and its native schedule needs reconciliation.
+
+These modes are mutually exclusive and reject document-only `--path`, `--xref`,
+and `--supersedes` before reading or writing. `--dest` requires `--asset-ref`.
+Without either new mode, YAML and ref-shaped paths remain knowledge imports.
+
 Import a knowledge document. This writes a markdown file into `knowledge/` in
 the configured write target and returns the resulting ref. The source may be a
 file path, a single HTTP/HTTPS URL, or `-` for stdin.
@@ -2100,7 +2243,10 @@ akm import ./docs/auth-flow.md --bundle team-bundle
 
 | Flag | Description |
 | --- | --- |
-| `--name` | Optional knowledge name. Defaults to the source filename, URL path, or a slug from stdin content |
+| `--asset-ref` | Copy an asset ref using clone semantics; explicitly distinguishes it from a document path. |
+| `--type task` | Import a validated local task definition file, preserving authored source. |
+| `--dest <dir>` | Unmanaged copy destination; requires `--asset-ref` and cannot combine with `--bundle`. |
+| `--name` | Asset rename or task id in explicit modes; optional knowledge name. Defaults to the source filename, URL path, or a slug from stdin content |
 | `--force` | Overwrite an existing knowledge document with the same name |
 | `--bundle <name>` | Override the write destination. Accepts a source name from your config; falls back to `defaultWriteTarget` then the working bundle. |
 | `--xref <ref>` | Cross-reference ref merged into the document's `xrefs:` frontmatter list. Repeatable. A document without frontmatter gains a block; a document with valid frontmatter keeps every existing key and value and gets the refs dedupe-appended (never a nested second block). Each ref must resolve in the write target or a configured source; an unresolvable ref fails with exit 2 before anything is written. If the document's existing frontmatter is not a parseable YAML mapping, the import fails (exit 2) rather than rewriting the block lossily — fix the frontmatter or import without `--xref`, which preserves the file verbatim. |
@@ -2827,6 +2973,44 @@ source <(akm completions)
 
 These commands define the self-improvement and agent-dispatch surface.
 
+### run
+
+`akm run <ref>` selects the existing executor from the resolved asset's type.
+It is additive in 0.10.x: the original execution commands retain their inputs,
+defaults, result shapes, exit codes, and side effects.
+
+```sh
+akm run agents/reviewer --prompt "Review the patch" --harness reviewer
+printf '%s' 'Review the patch' | akm run agents/reviewer --prompt-stdin
+akm run commands/review --arguments "src/cli.ts" --dry-run
+akm run team//tasks/nightly --region=us-east-1
+akm run workflows/release --version=1.2.3 --max-steps 1
+akm run <workflow-run-id>                 # Continue the frozen run
+```
+
+| Resolved type | Inputs and controls | Result |
+| --- | --- | --- |
+| Agent | `--prompt` or `--prompt-stdin`, execution selection, `--timeout-ms`, `--cwd`; a persona requires a prompt | Existing `agent-result` and exit status |
+| Command | Exact `--arguments` substitution, `--agent`, execution selection, `--timeout-ms`, `--cwd`, `--dry-run` | Existing `agent-result` or `command-dry-run` |
+| Task | Exact-name declared input flags, including repeated array values; `--bundle` and `--scheduled` | Existing `task-run`, history/log writes, and task exit status |
+| Workflow | Exact-name declared parameter flags, `--max-steps`, `--max-retries`, `--timeout`, `--skip-if-locked` | Existing `workflow-run`, journal, gates and exit status |
+
+Execution selection uses the same `--connection`, `--harness`, and `--model`
+settings as the original agent/command entry points. Global output controls work
+unchanged. Refs resolve through the existing source-order and adapter ownership
+policy; task dispatch retains the resolved bundle identity. Tasks and workflows
+can resolve from authored sources without an index, as their original commands do.
+
+A workflow ref starts a fresh run. A run id (or its accepted unique prefix)
+continues that run's frozen plan; new parameters cannot be supplied to an existing
+run. `workflow resume`, `status`, `list`, and `abandon` retain their lifecycle
+roles. The deprecated no-op `--new` is not accepted by the new entry point.
+
+Flags must apply to the selected executor or its declared inputs. Unsupported
+asset types (including scripts), fragments, extra positional values and `--`
+tails fail before execution. Supply command text through `--arguments` and agent
+text through `--prompt` or `--prompt-stdin`.
+
 ### command run
 
 Resolve a stored command through its owning bundle adapter and execute one
@@ -2847,6 +3031,7 @@ akm command run <command-ref> [--arguments <exact-text>] [--agent <selector>] [-
 | `--agent <selector>` | Portable `agents/...` ref or a native harness selector |
 | `--connection <name>` / `--harness <name>` | Current-invocation connection or harness override (mutually exclusive) |
 | `--model <id-or-alias>` | Current-invocation model: an alias (`fast`, `balanced`, `reasoning`) or an exact name |
+| `--timeout <duration>` | Duration alias for `--timeout-ms`; see [Timeout durations](#timeout-durations). |
 | `--timeout-ms <ms>` | Current-invocation timeout override |
 | `--cwd <path>` | Current-invocation workspace override |
 | `--dry-run` | Resolve and lower the command without dispatching or materializing credentials |
@@ -2869,8 +3054,9 @@ lowering `notices`. It has no fake exit code, stdout, stderr, or duration.
 Each provenance entry contains only `field`, `layer`, `kind`, and `via`. Each
 lowering notice contains `code`, `severity`, `adapter`, optional `field`, and
 fixed `message`. Dry-run does not dispatch and does not materialize
-credentials. It uses a read-only source lookup and records no usage, events, or
-accounting.
+credentials. It uses a read-only source lookup and records no asset usage,
+execution events, or model accounting. The CLI invocation still records
+diagnostic usage in the `cli_usage_*` tables of `metrics.db`.
 
 Diagnostics exclude resolved values. They never include prompt content.
 They never include command content. They never include environment values.
@@ -2900,6 +3086,7 @@ akm agent [<agent-ref>] [--connection <name> | --harness <name>] [--prompt <text
 | `--connection <name>` / `--harness <name\|platform>` | Connection or harness to run on, by name, a harness also by platform (mutually exclusive); default: the default harness, else akm's own runtime over the default connection |
 | `--prompt <text>` / `--prompt-stdin` | The task. Without one the harness starts interactively. |
 | `--model <model>` | An alias (`fast`, `balanced`, `reasoning`) or an exact model name; overrides the model in the agent asset |
+| `--timeout <duration>` | Duration alias for `--timeout-ms`; see [Timeout durations](#timeout-durations). |
 | `--timeout-ms <ms>` | Override the run's timeout in milliseconds |
 | `--cwd <path>` | Working directory for the run (defaults to the current directory) |
 
@@ -3020,9 +3207,10 @@ akm improve judge < revision.json      # reflect's quality judge on one revision
 | Flag | Description |
 | --- | --- |
 | `--task` | Optional extra guidance for this improvement pass |
-| `--dry-run` | Show the schema-v2 result on stdout without creating config, data, state, cache, bundle, log, or result artifacts. Dry-run results are never persisted, including on errors or signals. |
+| `--dry-run` | Show the schema-v2 result on stdout without creating config, learning data, state, cache, bundle, log, or result artifacts. Dry-run results are never persisted, including on errors or signals. Diagnostic CLI usage is still recorded separately in `metrics.db`. |
 | `--bundle` | Select the bundle the run improves and writes to (default: `defaultWriteTarget`, else the working bundle); only that bundle's assets are planned. When the ref scope is bundle-qualified, it must name the same bundle |
 | `--limit <n>` | Cap the refs the run processes, highest salience first (refs routed to distill only come last). Overrides the strategy's `processes.reflect.limit` and `limit` |
+| `--timeout <duration>` | Duration alias for `--timeout-ms`; see [Timeout durations](#timeout-durations). |
 | `--timeout-ms <ms>` | Wall-clock budget for the run (default: `7200000` = 2 hours) |
 | `--require-feedback-signal` | Turn the proactive-maintenance lane off for the run, so only assets with recent feedback are planned |
 | `--strategy <name>` | Override the active improve strategy (a built-in or entry under `improve.strategies`); it chooses which processes run, never where |
@@ -3361,6 +3549,7 @@ akm proposal extract --type claude --location /custom/path --session-id <id>
 | `--auto` | Iterate every available harness with the default `--since`. Mutually exclusive with `--type`. |
 | `--dry-run` | Show candidates without queuing proposals. |
 | `--force` | Re-process sessions even if they were already extracted and have no new events. Default: skip already-seen sessions. |
+| `--timeout <duration>` | Duration alias for `--timeout-ms`; see [Timeout durations](#timeout-durations). |
 | `--timeout-ms <ms>` | Per-session LLM timeout in ms. Default: the selected connection's or harness's own timeout. |
 | `--connection <name>` / `--harness <name\|platform>` | Connection or harness for this invocation, by name, a harness also by platform (mutually exclusive). |
 | `--model <alias\|name>` | Model for this invocation: an alias or an exact name. |
@@ -3451,6 +3640,7 @@ akm proposal new skill code-review --bundle team --task "PR-style review skill" 
 | `--file` | Read task text from a UTF-8 file |
 | `--connection` / `--harness` | Override the default connection or harness, by name, a harness also by platform (mutually exclusive) |
 | `--model` | Override the model: an alias or an exact name |
+| `--timeout <duration>` | Duration alias for `--timeout-ms`; see [Timeout durations](#timeout-durations). |
 | `--timeout-ms` | Override the selected connection's or harness's timeout for this call |
 | `--user` / `--agent` / `--run` / `--channel` | Scope stamped on the proposal, as for `akm remember` (`scope_*` frontmatter). A scope the model writes is replaced by these flags (none given: removed), with one warning. |
 | `--project <name>` | Use this [project](#projects)'s write defaults (`write.user`, `agent`, `channel`, `metadata`, and `write.bundle` as the destination) instead of the one the working directory selects; `none` uses none. |
@@ -4022,3 +4212,50 @@ timeout: 3600000   # 1h whole-run bound (omit for the 6h default, null for none)
 maxSteps: 20       # optional
 maxRetries: 1      # optional
 ```
+
+### CLI invocation usage
+
+`akm doctor metrics usage` reports local command attempts, explicit argument counts,
+argument combinations, instance adoption, failures and duration summaries. Existing
+`akm metrics` and bare `akm doctor metrics` keep their existing report.
+
+```sh
+akm doctor metrics usage --since 30d --format json
+akm doctor metrics usage --cli-version 0.10.261118 --source audit --export --format json
+```
+
+`--until` selects an inclusive UTC end day. Aggregates select whole UTC days;
+`--since` accepts the existing diagnostic date/duration syntax. `--export` includes
+retained details. JSON schema version 1 includes stable aggregate keys and invocation
+IDs. For overlapping exports, keep the newest `generatedAt` snapshot per aggregate
+key; never sum snapshots or add detail counts to aggregate counts. Detailed rows
+are a subset of the aggregates. A report includes its own unfinished attempt.
+
+Collection is enabled at CLI entry, before the full configuration is read (only `usage.capture` is read, from the selected config file, and a missing or broken file leaves capture on), with no network
+transmission and no sampling. `AKM_EVENT_SOURCE=user|agent|task|improve|audit` supplies
+known provenance; absent/invalid values become `unknown`. No identity is inferred
+from a terminal. This store never feeds learning or ranking.
+
+Only declared argument identities and recognized command spellings are retained.
+Free text, paths, URLs, refs, prompts, credentials and unknown flag/command names
+are redacted. Booleans and declared enum choices are safe; string flags retain only
+finite allowlisted `format`, `detail` and asset `type` choices. Default values are
+marked separately from explicit input. Arguments after `--` retain only their count.
+No raw argv is stored. The resolved `run` asset type is recorded through a narrow
+hook when resolution reaches dispatch.
+
+The usage tables (`cli_usage_meta`, `cli_usage_invocations`,
+`cli_usage_aggregates`) live in `metrics.db` in the existing AKM data directory,
+independent of `state.db`, `index.db` and learning events; they share no table,
+`PRAGMA user_version` or migration ledger with other `metrics.db` content. Detailed records expire after 30 days
+on the next invocation. UTC daily aggregates survive detail expiry and must be
+preserved during upgrades. Collection errors preserve command output and exits;
+a failed final write leaves an unfinished attempt. Missing/unavailable storage,
+unrecorded attempts, periods before collection began, direct SDK calls, failures
+before the CLI module loads, and hard termination remain explicit coverage gaps.
+SIGKILL cannot run a completion handler. `--read-only` records nothing; `help`,
+`version` and `info` are still counted. `usage.capture: false` in the config file
+turns capture off (see [Configuration](configuration.md#usage)). Read-only
+workspace SDK operations never start CLI collection.
+
+First released version: pending.

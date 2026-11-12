@@ -51,6 +51,7 @@ import { resetConfigCache } from "../src/core/config/config";
 import { clearLogFile, resetVerbose, setQuiet } from "../src/core/warn";
 import { _setAssetMutationLeaseSyncTimingForTests } from "../src/indexer/index-writer-lock";
 import { agentRuntime } from "../src/integrations/agent/runtime";
+import { HARNESS_REGISTRY } from "../src/integrations/harnesses";
 import { _setOpencodeVersionProbeForTests } from "../src/integrations/harnesses/opencode/version";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
 import { resetAllSeams } from "./_helpers/seams";
@@ -66,6 +67,7 @@ const HARNESSED: readonly string[] = [
   // Storage layout overrides.
   "AKM_BUNDLE_DIR",
   "AKM_CONFIG_DIR",
+  "AKM_CONFIG_FILE",
   "AKM_CACHE_DIR",
   "AKM_DATA_DIR",
   "AKM_STATE_DIR",
@@ -129,6 +131,7 @@ function installSuiteWideSandbox(): void {
   // startup so the XDG sandbox always wins; tests that need a specific
   // AKM_*_DIR set it explicitly (and the afterEach tripwire restores it).
   delete process.env.AKM_CONFIG_DIR;
+  delete process.env.AKM_CONFIG_FILE;
   delete process.env.AKM_DATA_DIR;
   delete process.env.AKM_CACHE_DIR;
   delete process.env.AKM_STATE_DIR;
@@ -137,6 +140,14 @@ function installSuiteWideSandbox(): void {
   delete process.env.AKM_VERBOSE;
   delete process.env.AKM_LLM_API_KEY;
   delete process.env.AKM_EMBED_API_KEY;
+  // A suite run inside an agent harness (Claude Code, OpenCode, Codex) must not record that harness on the usage
+  // events and workflow runs it writes: start every run as a plain shell would. Tests that need one set it.
+  for (const key of [
+    "AKM_AGENT_HARNESS",
+    "AKM_SESSION_ID",
+    ...HARNESS_REGISTRY.flatMap((harness) => [...(harness.identityEnv ?? []), ...(harness.presenceEnv ?? [])]),
+  ])
+    delete process.env[key];
   // The Codex session reader's default root is `os.homedir()/.codex`, and bun's
   // os.homedir() keeps returning the real home after the HOME override above, so
   // `extract --auto` and `improve` would read the developer's real rollouts.

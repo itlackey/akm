@@ -22,6 +22,7 @@ import { parseBundleRef } from "../../core/asset/asset-ref";
 import { parseMetaRef } from "../../core/asset/stash-meta";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
+import { type IncludeSelectors, normalizeInclude } from "../../core/include";
 import { projectView, type ResolvedProject, resolveProject, withProjectLine } from "../../core/projects";
 import { isoDay } from "../../core/time";
 import type { ProjectContext } from "../../indexer/search/db-search";
@@ -66,6 +67,10 @@ export const searchCommand = defineJsonCommand({
       type: "string",
       description: "local|registry|all or a bundle name (repeatable). Default: local, or the project's from",
     },
+    include: {
+      type: "string",
+      description: "Relax a default exclusion: quality=proposed or type=<asset-type> (repeatable)",
+    },
     filter: scopeFilterArg,
     prefer: scopePreferArg,
     ...PROJECT_ARG,
@@ -103,8 +108,9 @@ export const searchCommand = defineJsonCommand({
     // occurrences directly from argv (same pattern as `--tag`).
     const filterTokens = parseAllFlagValues("--filter");
     const project = resolveProject(loadConfig(), { project: getStringArg(args, "project") });
-    const { source, filters, prefer, view } = withProjectDefaults(project, {
+    const { source, filters, prefer, include, view } = withProjectDefaults(project, {
       source: fromValues(args.from),
+      include: parseIncludeFlags(cliIncludeTokens()),
       filters: parseScopeFilterFlags(filterTokens, "--filter"),
       prefer: parseScopeFilterFlags(parseAllFlagValues("--prefer"), "--prefer"),
     });
@@ -124,6 +130,7 @@ export const searchCommand = defineJsonCommand({
       since,
       until,
       includeProposed,
+      include,
       belief,
       includeSessions,
       eventSource: resolveUsageEventSource(),
@@ -156,16 +163,18 @@ function projectContext(project: ResolvedProject | undefined, filters: ScopeFilt
  */
 function withProjectDefaults(
   project: ResolvedProject | undefined,
-  explicit: { source?: string | string[]; filters?: ScopeFilters; prefer?: ScopeFilters },
+  explicit: { source?: string | string[]; filters?: ScopeFilters; prefer?: ScopeFilters; include?: IncludeSelectors },
 ) {
+  const include = explicit.include ?? project?.include;
   const from = explicit.source ?? project?.from;
   const filters = explicit.filters ?? project?.filters;
   const prefer = explicit.prefer ?? project?.prefer;
   return {
     source: parseSearchSource(from),
+    include,
     filters,
     prefer,
-    view: project && projectView({ ...project, from, filters, prefer: prefer ?? project.prefer }),
+    view: project && projectView({ ...project, from, filters, include, prefer: prefer ?? project.prefer }),
   };
 }
 
@@ -205,10 +214,18 @@ export const curateCommand = defineJsonCommand({
       type: "string",
       description: "local|registry|all or a bundle name (repeatable). Default: local, or the project's from",
     },
+    include: {
+      type: "string",
+      description: "Relax a default exclusion: quality=proposed or type=<asset-type> (repeatable)",
+    },
     filter: scopeFilterArg,
     prefer: scopePreferArg,
     ...PROJECT_ARG,
     belief: { ...beliefArg, default: "current" },
+    "max-tokens": {
+      type: "string",
+      description: "Pack full content within this shared token budget (alias for --pack)",
+    },
     pack: {
       type: "string",
       description:
@@ -216,7 +233,12 @@ export const curateCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
-    const packBudget = parsePositiveIntFlag(args.pack ?? undefined, "--pack");
+    const legacyBudget = parsePositiveIntFlag(args.pack ?? undefined, "--pack");
+    const maxTokens = parsePositiveIntFlag(args["max-tokens"], "--max-tokens");
+    if (legacyBudget !== undefined && maxTokens !== undefined && legacyBudget !== maxTokens) {
+      throw new UsageError("--max-tokens and --pack specify conflicting budgets.", "INVALID_FLAG_VALUE");
+    }
+    const packBudget = maxTokens ?? legacyBudget;
     const outputMode = getOutputMode();
     const curated = await runCurate(
       {
@@ -225,6 +247,7 @@ export const curateCommand = defineJsonCommand({
         limit: args.limit,
         from: fromValues(args.from),
         filters: parseAllFlagValues("--filter"),
+        include: cliIncludeTokens(),
         prefer: parseAllFlagValues("--prefer"),
         belief: args.belief,
         project: getStringArg(args, "project"),
@@ -258,6 +281,7 @@ export async function runCurate(
     limit?: string;
     from?: string | string[];
     filters?: string[];
+    include?: string[];
     prefer?: string[];
     belief?: string;
     /** In-process callers (an agent's tool) name the run's source; the CLI reads `AKM_EVENT_SOURCE`. */
@@ -278,8 +302,9 @@ export async function runCurate(
   }
   const limitParsed = parsePositiveIntFlag(args.limit ?? undefined);
   const project = resolveProject(loadConfig(), { project: args.project, cwd: args.cwd });
-  const { source, filters, prefer, view } = withProjectDefaults(project, {
+  const { source, filters, prefer, include, view } = withProjectDefaults(project, {
     source: args.from,
+    include: parseIncludeFlags(args.include),
     filters: parseScopeFilterFlags(args.filters ?? [], "--filter"),
     prefer: parseScopeFilterFlags(args.prefer ?? [], "--prefer"),
   });
@@ -290,6 +315,7 @@ export async function runCurate(
     source,
     filters,
     prefer,
+    include,
     belief: parseBeliefFilterMode(args.belief ?? "current"),
     eventSource: args.eventSource ?? resolveUsageEventSource(),
     attributionProjection: outputMode.shape === "agent" ? "agent" : outputMode.detail,
@@ -333,8 +359,16 @@ export const showCommand = defineJsonCommand({
     ref: {
       type: "positional",
       description:
-        "Asset ref [bundle//]conceptId[#fragment]; `--detail brief` returns the outline (`toc`, each heading's slug)",
+        "Asset ref [bundle//]conceptId[#fragment]; `--outline` returns the outline (`toc`, each heading's slug)",
       required: true,
+    },
+    outline: {
+      type: "boolean",
+      description: "Show the outline and brief metadata without the body (alias for --detail brief)",
+    },
+    lead: {
+      type: "boolean",
+      description: "Add the document lead to a Markdown fragment (alias for --context lead)",
     },
     context: {
       type: "string",
@@ -342,7 +376,7 @@ export const showCommand = defineJsonCommand({
     },
     "max-tokens": {
       type: "string",
-      description: "Context budget in tokens (needs --context lead; not with --max-chars)",
+      description: "Body budget estimated at four characters per token (not with --max-chars)",
     },
     "max-chars": {
       type: "string",
@@ -358,6 +392,12 @@ export const showCommand = defineJsonCommand({
     // `[origin//]meta[:name]` targets the stash `.meta/` convention, which is
     // not a typed asset ref — skip ref validation and let akmShowUnified
     // direct-read it. (the ref parser would reject the non-type `meta`.)
+    if (args.outline && parseMetaRef(args.ref)) {
+      throw new UsageError(
+        "--outline is unavailable for direct .meta reads; omit --outline to read the document.",
+        "INVALID_FLAG_VALUE",
+      );
+    }
     if (!parseMetaRef(args.ref)) parseBundleRef(args.ref);
     rejectExtraShowPositionals(args._, args.ref);
     const invocation = getParsedInvocation();
@@ -376,22 +416,38 @@ export const showCommand = defineJsonCommand({
     const explicitDetail = invocation.getFlagValue("--detail");
     // `--detail brief` forces the brief response regardless of projection.
     const showDetail: ShowDetailLevel | undefined =
-      explicitDetail === "brief" ? "brief" : explicitDetail === "full" ? "full" : undefined;
-    const contextMode = parseFragmentContextMode(typeof args.context === "string" ? args.context : undefined);
+      args.outline || explicitDetail === "brief" ? "brief" : explicitDetail === "full" ? "full" : undefined;
+    const explicitContext = typeof args.context === "string" ? parseFragmentContextMode(args.context) : undefined;
+    if (args.lead && explicitContext === "exact") {
+      throw new UsageError("--lead conflicts with --context exact.", "INVALID_FLAG_VALUE");
+    }
+    const contextMode = args.lead ? "lead" : (explicitContext ?? "exact");
     const maxTokens = parsePositiveIntFlag(args["max-tokens"] ?? undefined, "--max-tokens");
     const maxChars = parsePositiveIntFlag(args["max-chars"] ?? undefined, "--max-chars");
     if (maxTokens !== undefined && maxChars !== undefined) {
       throw new UsageError("--max-tokens and --max-chars are mutually exclusive.", "INVALID_FLAG_VALUE");
     }
-    const maxContextChars = maxChars ?? (maxTokens !== undefined ? maxTokens * 4 : undefined);
-    if (maxContextChars !== undefined && !Number.isSafeInteger(maxContextChars)) {
-      throw new UsageError("Fragment context budget is too large.", "INVALID_FLAG_VALUE");
+    if (args.outline && explicitDetail !== undefined && explicitDetail !== "brief") {
+      throw new UsageError("--outline conflicts with --detail normal, full or agent.", "INVALID_FLAG_VALUE");
+    }
+    if (args.outline && (contextMode === "lead" || maxTokens !== undefined || maxChars !== undefined)) {
+      throw new UsageError("--outline cannot be combined with lead context or a content budget.", "INVALID_FLAG_VALUE");
+    }
+    // `--detail brief --context lead [--max-chars|--max-tokens]` worked in 0.10.261118 and still does; only the
+    // new forms are refused: `--lead`, or a `--max-tokens` body budget without lead context.
+    if (explicitDetail === "brief" && (args.lead || (maxTokens !== undefined && contextMode === "exact"))) {
+      throw new UsageError(
+        "A content budget or --lead requires body output; omit --detail brief.",
+        "INVALID_FLAG_VALUE",
+      );
     }
     const result = await akmShowUnified({
       ref: args.ref,
       detail: showDetail,
       contextMode,
-      maxContextChars,
+      ...(args.lead ? { contextFlag: "--lead" as const } : {}),
+      maxContextChars: maxChars,
+      maxTokens,
       eventSource: resolveUsageEventSource(),
       project: stampedProject(resolveProject(loadConfig(), { project: getStringArg(args, "project") })),
     });
@@ -403,4 +459,15 @@ export function parseFragmentContextMode(raw: string | undefined): FragmentConte
   const normalized = raw?.trim().toLowerCase() || "exact";
   if (normalized === "exact" || normalized === "lead") return normalized;
   throw new UsageError(`Invalid --context value: "${raw}". Expected exact or lead.`, "INVALID_FLAG_VALUE");
+}
+
+/** CLI absence inherits the project; an explicitly empty API list overrides it. */
+function cliIncludeTokens(): string[] | undefined {
+  const tokens = parseAllFlagValues("--include");
+  return tokens.length ? tokens : undefined;
+}
+
+function parseIncludeFlags(tokens: string[] | undefined): IncludeSelectors | undefined {
+  if (tokens === undefined) return undefined;
+  return normalizeInclude(parseScopeFilterFlags(tokens, "--include") ?? {});
 }

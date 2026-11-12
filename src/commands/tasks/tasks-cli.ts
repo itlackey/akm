@@ -26,7 +26,7 @@
 
 import { defineCommand } from "citty";
 import { getParsedInvocation } from "../../cli/invocation";
-import { parsePositiveIntFlag } from "../../cli/parse-args";
+import { parsePositiveIntFlag, parseTimeoutFlags } from "../../cli/parse-args";
 import { RETIRED_ENGINE_ARG, SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
 import {
   defineGroupCommand,
@@ -208,6 +208,10 @@ const tasksAddCommand = defineJsonCommand({
     },
     ...SELECTION_ARGS,
     ...RETIRED_ENGINE_ARG,
+    timeout: {
+      type: "string",
+      description: "Timeout as a duration (30s, 2m) or milliseconds; same scope as --timeout-ms",
+    },
     "timeout-ms": { type: "string", description: "Positive timeout in milliseconds for prompt or command targets" },
     params: { type: "string", description: "Workflow params as a JSON object" },
     name: { type: "string", description: "Human-readable name for the task" },
@@ -231,7 +235,10 @@ const tasksAddCommand = defineJsonCommand({
       prompt: args.prompt,
       command: args.command,
       ...selectionFromArgs(args),
-      timeoutMs: args["timeout-ms"] === undefined ? undefined : parsePositiveIntFlag(args["timeout-ms"]),
+      timeoutMs: parseTimeoutFlags(
+        args.timeout,
+        args["timeout-ms"] === undefined ? undefined : parsePositiveIntFlag(args["timeout-ms"]),
+      ),
       params: args.params,
       name: args.name,
       when_to_use: args["when-to-use"],
@@ -250,7 +257,9 @@ const tasksAddCommand = defineJsonCommand({
   },
 });
 
-const tasksRunCommand = defineCommand({
+const { config: _configFileArg, ...taskRunGlobalArgs } = GLOBAL_OUTPUT_ARGS;
+
+export const tasksRunCommand = defineCommand({
   meta: {
     name: "run",
     description: "Execute a task now (this is what cron / launchd / schtasks invoke at the scheduled time)",
@@ -258,7 +267,7 @@ const tasksRunCommand = defineCommand({
   // Raw defineCommand (it forwards the task's exit code), so the global output
   // flags are declared here or `--format md nightly` loses the task id.
   args: {
-    ...GLOBAL_OUTPUT_ARGS,
+    ...taskRunGlobalArgs,
     id: { type: "positional", description: "Task id", required: true },
     ...bundleArg,
     scheduled: { type: "boolean", description: "Internal marker for scheduler-generated runs", default: false },
@@ -391,6 +400,7 @@ const tasksSyncCommand = defineJsonCommand({
 // ── `akm task explain` — read-only introspection ────────────────────────────
 
 const tasksExplainCommand = defineJsonCommand({
+  configFile: false,
   meta: {
     name: "explain",
     description:

@@ -187,7 +187,7 @@ export async function runWorkflowTask(input: {
       ...(failure ? { error: scrubTaskOutput(task, failure.message) } : {}),
     },
   };
-  appendHistory(result, historyReserved);
+  appendHistory(result, historyReserved, provenance.scheduled);
   // Don't re-throw on workflow failure: the OS scheduler reads exit codes,
   // not exceptions, and the CLI maps `status: "failed"` to a non-zero exit
   // via exitCodeForStatus(). Throwing here would route through the generic

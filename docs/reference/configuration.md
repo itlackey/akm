@@ -3,7 +3,12 @@
 AKM reads one user configuration file: `$XDG_CONFIG_HOME/akm/config.json`
 (normally `~/.config/akm/config.json` on Linux and macOS, or
 `%APPDATA%\akm\config.json` on Windows). Set `AKM_CONFIG_DIR` to override the
-directory. Project `.akm/config.json` files are not merged. A config file may
+directory. `akm --config <file> <command>` selects a particular file, ahead of
+`AKM_CONFIG_FILE`, which in turn takes precedence over the directory rules.
+Relative file paths resolve from the invoking directory; an empty `AKM_CONFIG_FILE` is warned about once and ignored, and an empty `--config` fails. `credentials.json` and `models.json` always live in the config directory (`AKM_CONFIG_DIR`, else the platform default), never beside a selected file.
+Without either selector all existing directory overrides and defaults are
+unchanged. A missing file uses the existing defaults and can be created by setup
+or configuration writes. Project `.akm/config.json` files are not merged. A config file may
 optionally extend one other config via `extends` (see "Sharing configuration
 across installs" below) — this is a single, explicit, user-opted-in key, not
 automatic project-config discovery.
@@ -225,7 +230,7 @@ bindings.
 
 What asks for a harness decides how akm runs it.
 
-**Agent work** (`akm agent`, `akm command run`, `akm proposal new`, agent tasks and workflow agent steps) runs your program the way you would run it yourself. It gets your environment as it is, with nothing filtered out, and your configuration, plugins, settings and logins as they are. akm sets only its own variables for the run: the directories this akm resolved (`AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR`, `AKM_STATE_DIR`, and `AKM_BUNDLE_DIR` when you set one), so a program that runs `akm` uses the same installation, and, when a task runs it, `AKM_EVENT_SOURCE` (unless already set), so the akm commands the program runs count as machine use, not yours. A workflow unit's or task's own `env:` bindings are set over them. A run given a directory (`--cwd`, a harness's `workspace`) starts there, and `PWD` names it too, as your shell sets it when you `cd` there; OpenCode takes its directory from `PWD`. On the command line, after your `args` as you wrote them, akm adds the model or agent the asset or flag names, the agent asset's persona where the program takes one there, and what the program needs to run without a person at the terminal: its print or exec mode and its approve-all switch where it asks before acting. Codex runs with the sandbox your Codex configuration sets, or the one your `args` name; model work runs it with `--sandbox read-only` (below). The prompt goes on standard input where the program reads it there and on the command line where it does not; standard output is the reply. `akm agent` with no `--prompt` starts the program interactively instead. What akm scrubs from the output it captures is in [Architecture: Connections and Harnesses](../architecture/architecture.md#connections-and-harnesses) and, for a workflow, [Workflow Schema](workflow-schema.md#the-childs-environment).
+**Agent work** (`akm agent`, `akm command run`, `akm proposal new`, agent tasks and workflow agent steps) runs your program the way you would run it yourself. It gets your environment as it is, with nothing filtered out, and your configuration, plugins, settings and logins as they are. akm sets only its own variables for the run: the directories this akm resolved (`AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR`, `AKM_STATE_DIR`, and `AKM_BUNDLE_DIR` when you set one), plus the absolute `AKM_CONFIG_FILE` when a file was selected, so a program that runs `akm` uses the same installation, and, when a task runs it, `AKM_EVENT_SOURCE` (unless already set), so the akm commands the program runs count as machine use, not yours. A workflow unit's or task's own `env:` bindings are set over them. A run given a directory (`--cwd`, a harness's `workspace`) starts there, and `PWD` names it too, as your shell sets it when you `cd` there; OpenCode takes its directory from `PWD`. On the command line, after your `args` as you wrote them, akm adds the model or agent the asset or flag names, the agent asset's persona where the program takes one there, and what the program needs to run without a person at the terminal: its print or exec mode and its approve-all switch where it asks before acting. Codex runs with the sandbox your Codex configuration sets, or the one your `args` name; model work runs it with `--sandbox read-only` (below). The prompt goes on standard input where the program reads it there and on the command line where it does not; standard output is the reply. `akm agent` with no `--prompt` starts the program interactively instead. What akm scrubs from the output it captures is in [Architecture: Connections and Harnesses](../architecture/architecture.md#connections-and-harnesses) and, for a workflow, [Workflow Schema](workflow-schema.md#the-childs-environment).
 
 **Model work** (see [Where each process runs](#where-each-process-runs)) is akm's own process, so akm sets the call up as it needs it. The program has the same environment. akm runs it in a scratch directory that it creates for the call and removes after it, stamps the akm commands it runs `improve`, and runs no native agent of yours. Where the program can be restricted, akm also limits its tools. The "Restricted model work" column of the table says on which platforms:
 
@@ -347,7 +352,7 @@ akm reads an API key from one of two places, and nowhere else:
   names an environment variable, read when the call is made. An unset or empty
   variable is warned about once and the request goes without a key.
 - **`credentials.json`.** With no `apiKey`, the key is the entry stored for the
-  block in `credentials.json`, next to `config.json`, written with mode 0600:
+  block in `credentials.json`, in the default config directory (never beside a file selected with `--config`), written with mode 0600:
 
   ```json
   { "connections": { "<name>": { "key": "…", "endpoint": "…" } },
@@ -892,6 +897,15 @@ the key is ignored, and enables nothing; `akm migrate apply` drops it.
 | --- | --- |
 | `feedback.requireReason` | Whether `akm feedback --negative` without `--reason` is a hard error. **Defaults to `true`** when unset — set `false` to downgrade the check to a warning instead |
 
+## Usage
+
+`usage` configures the local-only CLI usage counts (see
+[Data and Telemetry](data-and-telemetry.md#cli-usage-counts)):
+
+| Key | Purpose |
+| --- | --- |
+| `usage.capture` | Whether akm records counts of its own commands in `metrics.db`. **Defaults to `true`**; `false` turns the recording off. Read from the config file itself (the one `--config` or `AKM_CONFIG_FILE` selects) before the rest of the config loads, so a missing or broken file leaves it on. `--read-only` records nothing either way. |
+
 ## Bundles and write target
 
 `bundles` (replacing the retired `stashDir`/`sources[]`/`installed[]` trio)
@@ -931,8 +945,8 @@ that `akm search --filter` and `akm curate --filter` read back, to select inside
 `--filter user=<id>` / `--filter agent=<id>` / `--filter run=<id>` /
 `--filter channel=<name>` (repeatable; a repeated key matches any of its values, different keys must all match) narrow results to assets
 whose frontmatter scope matches; search applies them before ranking. A memory
-with only scope flags and no tags is valid — the tag-required check is
-independent of scope. `--scope` was removed in 0.9.0 with no alias; use
+with only scope flags and no tags is valid; all memory metadata flags are
+independent of tags. `--scope` was removed in 0.9.0 with no alias; use
 `--filter`.
 
 `archiveRetentionDays` (default `90` when unset) controls how long a pending
@@ -966,6 +980,7 @@ what akm reads and writes there:
 - `from`, `filters`, `prefer`: the defaults for `akm search` and `akm curate`, in the shape of
   `--from`, `--filter` and `--prefer` (a value or a list; an empty string matches assets
   without the key).
+- `include`: retrieval exclusions to relax, e.g. `{ "quality": "proposed", "type": ["session"] }`. Only `quality=proposed` and named types are supported. Each explicit call's include value replaces this whole object; `{}` deliberately supplies no inclusions. Queries, filters, explicit type and source boundaries still apply.
 - `write`: `bundle` (a default for `remember` and `proposal new`, between `--bundle` and
   `defaultWriteTarget`; an explicit `--bundle` or a `--supersedes` ref decides first), `user`,
   `agent`, `channel` (each fills a flag you left out) and `metadata` (frontmatter keys a write
@@ -1191,20 +1206,25 @@ akm config diff fleet//config/shared.json
 
 | Variable | Purpose |
 | --- | --- |
-| `AKM_CONFIG_DIR` | Override the user config directory (or set `XDG_CONFIG_HOME`) |
+| `AKM_CONFIG_FILE` | Select a config file; `--config` wins. Children inherit its absolute path, including native rows written by `task sync`. Credentials and `models.json` stay in the default config directory. An empty value is warned about once and ignored. Does not change data, state, cache, or bundle locations. |
+| `AKM_CONFIG_DIR` | Override the user config directory (or set `XDG_CONFIG_HOME`); used when no file selector is set |
 | `AKM_BUNDLE_DIR` | Override the bundle directory |
 | `AKM_DATA_DIR` | Override the data directory — `index.db`, durable `state.db`, and `akm.lock` (or set `XDG_DATA_HOME`) |
 | `AKM_CACHE_DIR` | Override the cache directory — regenerable caches (or set `XDG_CACHE_HOME`) |
 | `AKM_STATE_DIR` | Override the state directory — the scheduler lock and, per bundle, `akm improve`'s whole-run lock (or set `XDG_STATE_HOME`) |
-| `AKM_SQLITE_JOURNAL_MODE` | SQLite journal mode: `WAL` (default), `DELETE`, or `TRUNCATE` |
+| `AKM_SQLITE_JOURNAL_MODE` | Deprecated, no replacement; removed in 0.11. SQLite journal mode: `WAL` (default), `DELETE`, or `TRUNCATE` |
 | `AKM_NPM_REGISTRY` | Base URL of an npm mirror; replaces `registry.npmjs.org` for npm bundle resolution |
 | `AKM_REGISTRY_URL` | Comma-separated registry URLs that replace the configured `registries` in every registry search akm performs; `akm registry list`, `akm info` and the `egress-endpoints` health advisory still show the configured list (prefix an entry with `<provider>::` to choose a provider) |
 | `AKM_VERBOSE` | Truthy value enables the same diagnostics as `--verbose` |
 | `AKM_DEBUG` | `1` prints a stack trace on unexpected internal errors |
 
-Use `AKM_SQLITE_JOURNAL_MODE=DELETE` or `TRUNCATE` when WAL is unavailable,
-such as on some NFS/SMB mounts. With the default `WAL` setting, AKM detects a
-network filesystem for the data directory and falls back to `DELETE`.
+`AKM_SQLITE_JOURNAL_MODE` is Deprecated, has no replacement and is removed in
+0.11. AKM uses WAL and, on its own, falls back to `DELETE` when the data
+directory is on a detected network filesystem (NFS, SMB/CIFS, FUSE such as
+sshfs). Detection works on Linux only, so a data directory on a network
+filesystem on macOS or Windows is unsupported. In containers that are thrown
+away, keep SQLite on local disk and use snapshots. An explicit `WAL` is treated
+like the default, so the network fallback still applies.
 
 ## Retired Configuration
 

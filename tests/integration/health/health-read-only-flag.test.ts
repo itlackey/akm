@@ -39,8 +39,8 @@ afterEach(() => {
   storage.cleanup();
 });
 
-async function cli(args: string[]) {
-  const child = Bun.spawn([process.execPath, path.resolve("src/cli.ts"), "health", ...args], {
+async function cli(command: string, args: string[]) {
+  const child = Bun.spawn([process.execPath, path.resolve("src/cli.ts"), command, ...args], {
     env: { ...process.env, PATH: emptyBin },
     stdin: "ignore",
     stdout: "pipe",
@@ -54,8 +54,12 @@ async function cli(args: string[]) {
   return { code, stdout, stderr };
 }
 
-async function health(args: string[]) {
-  const result = await cli([...args, "--no-probe", "--format", "json", "--quiet"]);
+async function health(command: string, args: string[]) {
+  const result = await cli(command, [...args, "--no-probe", "--format", "json", "--quiet"]);
+  // --read-only writes nothing, so usage capture is skipped too.
+  expect(fs.existsSync(path.join(storage.dataDir, "akm", "metrics.db"))).toBe(
+    args.includes("--read-only") ? false : true,
+  );
   return {
     ...result,
     data: JSON.parse(result.stdout) as AkmHealthResult & {
@@ -67,7 +71,7 @@ async function health(args: string[]) {
   };
 }
 
-/** Durable bytes and all filenames. SQLite readers may update SHM read-lock bookkeeping. */
+/** Durable bytes and all filenames, metrics.db included. SQLite readers may update SHM read-lock bookkeeping. */
 function dataSnapshot() {
   return fs
     .readdirSync(storage.dataDir, { recursive: true, encoding: "utf8" })
@@ -83,16 +87,16 @@ function dataSnapshot() {
     ]);
 }
 
-describe("akm health --read-only", () => {
+describe.each(["health", "doctor"])("akm %s --read-only", (command) => {
   test("the real command's help advertises the flag", async () => {
-    const result = await cli(["--help"]);
+    const result = await cli(command, ["--help"]);
     expect(result.code).toBe(0);
     expect(result.stdout).toContain("--read-only");
   });
 
   test.each([false, true])("a missing database stays missing (report=%s)", async (report) => {
     const before = dataSnapshot();
-    const result = await health(["--read-only", ...(report ? ["--report"] : [])]);
+    const result = await health(command, ["--read-only", ...(report ? ["--report"] : [])]);
     expect(result.code).toBe(1);
     expect(result.data.status).toBe("fail");
     expect(result.data.hardChecks).toMatchObject([{ name: "state-db-readable", status: "fail" }]);
@@ -113,7 +117,7 @@ describe("akm health --read-only", () => {
     expect(fs.statSync(`${getStateDbPath()}-wal`).size).toBeGreaterThan(0);
     const before = dataSnapshot();
     Bun.gc(true);
-    const result = await health(["--read-only", ...(report ? ["--report"] : [])]);
+    const result = await health(command, ["--read-only", ...(report ? ["--report"] : [])]);
     expect(result.code).toBe(0);
     expect(result.data.status).toBe("pass");
     expect(result.data.hardChecks.find((check) => check.name === "state-db-round-trip")).toMatchObject({
@@ -129,7 +133,7 @@ describe("akm health --read-only", () => {
     }
     expect(dataSnapshot()).toEqual(before);
     if (report) {
-      const ordinary = await health(["--report"]);
+      const ordinary = await health(command, ["--report"]);
       expect(ordinary.data.report).toEqual(result.data.report);
     }
   });
@@ -147,7 +151,7 @@ describe("akm health --read-only", () => {
     );
     db.close();
     const before = dataSnapshot();
-    const result = await health(["--read-only", ...(report ? ["--report"] : [])]);
+    const result = await health(command, ["--read-only", ...(report ? ["--report"] : [])]);
     expect(result.code).toBe(1);
     expect(result.data.status).toBe("fail");
     expect(result.data.hardChecks).toMatchObject([
@@ -167,7 +171,7 @@ describe("akm health --read-only", () => {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, "not a sqlite database\n");
     const before = dataSnapshot();
-    const result = await health(["--read-only", ...(report ? ["--report"] : [])]);
+    const result = await health(command, ["--read-only", ...(report ? ["--report"] : [])]);
     expect(result.code).toBe(1);
     expect(result.data.hardChecks).toMatchObject([{ name: "state-db-readable", status: "fail" }]);
     expect(dataSnapshot()).toEqual(before);
@@ -190,7 +194,7 @@ describe("akm health --read-only", () => {
     expect(fs.statSync(`${getStateDbPath()}-wal`).size).toBeGreaterThan(0);
     const before = dataSnapshot();
     Bun.gc(true);
-    const result = await health(["--read-only"]);
+    const result = await health(command, ["--read-only"]);
     expect(result.code).toBe(4);
     expect(result.data.status).toBe("warn");
     expect(result.data.advisories.find((check) => check.name === "task-fail-rate")?.status).toBe("warn");
@@ -208,7 +212,7 @@ describe("akm health --read-only", () => {
       const before = dataSnapshot();
       fs.chmodSync(file, 0);
       try {
-        const result = await health(["--read-only", "--report"]);
+        const result = await health(command, ["--read-only", "--report"]);
         expect(result.code).toBe(1);
         expect(result.data.hardChecks).toMatchObject([{ name: "state-db-readable", status: "fail" }]);
         expect(fs.statSync(file).mode & 0o777).toBe(0);
@@ -220,7 +224,7 @@ describe("akm health --read-only", () => {
   );
 
   test("the default still initializes state and performs its write/read probe", async () => {
-    const result = await health([]);
+    const result = await health(command, []);
     expect(result.code).toBe(0);
     expect(fs.existsSync(getStateDbPath())).toBe(true);
     expect(result.data.hardChecks.find((check) => check.name === "state-db-round-trip")?.status).toBe("pass");

@@ -102,7 +102,7 @@ Scheduling background tasks (like `akm improve`) involves reviewing and activati
 
 ## Local-first and privacy
 
-AKM is local-first: it stores its index and state on disk and has no telemetry. It makes network requests only to the endpoints you configure or the commands you run: Git, npm, website sources, registries, your own model endpoints, the Hugging Face Hub when it downloads a local embedding model, and GitHub when you run `akm upgrade` or `akm health`. See [Data & Telemetry](https://akm.fwdslsh.dev/docs/reference/data-and-telemetry/) for the complete list of destinations and the on-disk inventory.
+AKM is local-first: it stores its index and state on disk and sends no analytics or crash reports. It records local-only counts of its own commands (which command and flags ran, never their values, and the outcome) in `metrics.db` in its data directory; nothing is sent anywhere, detail is kept for 30 days and daily counts indefinitely, `--read-only` records nothing, and `usage.capture: false` in the config file turns it off. It makes network requests only to the endpoints you configure or the commands you run: Git, npm, website sources, registries, your own model endpoints, the Hugging Face Hub when it downloads a local embedding model, and GitHub when you run `akm upgrade` or `akm health`. See [Data & Telemetry](https://akm.fwdslsh.dev/docs/reference/data-and-telemetry/) for the complete list of destinations and the on-disk inventory.
 
 ## Documentation and project status
 

@@ -44,7 +44,7 @@ import {
  * resolved subcommand, so this gate stands down entirely). `info` is a leaf
  * command, so it needs an explicit opt-in here instead.
  */
-const UNKNOWN_FLAG_TOLERANT_COMMANDS: ReadonlySet<string> = new Set(["info"]);
+const UNKNOWN_FLAG_TOLERANT_COMMANDS: ReadonlySet<string> = new Set(["info", "doctor info"]);
 
 /** The structural subset of a citty command this module reads. */
 export interface FlagScanCommand {
@@ -91,10 +91,12 @@ function collectKnownArgs(root: FlagScanCommand, rawArgs: readonly string[]): Kn
   const booleanFlags = new Set<string>();
   const displayNames: string[] = [];
   const path: string[] = [];
+  const inheritedArgs: CittyArgsDefinitionForScan = {};
 
   let cmd: FlagScanCommand = root;
   let args: readonly string[] = rawArgs;
   for (;;) {
+    Object.assign(inheritedArgs, cmd.args);
     for (const [key, def] of Object.entries(cmd.args ?? {})) {
       // Positionals are not flags; including them would accept `--<positional>`.
       if (def.type === "positional") continue;
@@ -115,7 +117,7 @@ function collectKnownArgs(root: FlagScanCommand, rawArgs: readonly string[]): Kn
 
     const subCommands = cmd.subCommands;
     if (!subCommands || Object.keys(subCommands).length === 0) break;
-    const idx = findCittyTopLevelCommandIndex(args, (cmd.args ?? {}) as CittyArgsDefinitionForScan);
+    const idx = findCittyTopLevelCommandIndex(args, inheritedArgs);
     const token = idx >= 0 ? args[idx] : undefined;
     // A command that takes a positional AND has subcommands (`improve [scope]`
     // beside `improve report`) is itself the target when the token is absent
@@ -134,6 +136,57 @@ function collectKnownArgs(root: FlagScanCommand, rawArgs: readonly string[]): Kn
   }
 
   return { names, valueFlags, booleanFlags, displayNames, path, resolved: true };
+}
+
+/** Consume the startup selector without interpreting another flag's value as an option. */
+export function consumeConfigFileFlag(
+  root: FlagScanCommand,
+  rawArgs: readonly string[],
+): { file: string | undefined; args: string[] } {
+  const known = collectKnownArgs(root, rawArgs);
+  // These legacy commands accept arbitrary named inputs, including `config`.
+  // Only the prefix before the top-level command belongs to the global flag.
+  const dynamic = new Set(["task run", "task explain", "workflow run", "run"]);
+  const topLevel = findCittyTopLevelCommandIndex(rawArgs, (root.args ?? {}) as CittyArgsDefinitionForScan);
+  const end = dynamic.has(known.path.join(" ")) && topLevel >= 0 ? topLevel : rawArgs.length;
+  let selected: string | undefined;
+  const forwarded: string[] = [];
+  let index = 0;
+  for (; index < end; index += 1) {
+    const token = rawArgs[index] as string;
+    if (token === "--") break;
+    if (token === "--config" || token.startsWith("--config=")) {
+      const value = token === "--config" ? rawArgs[++index] : token.slice("--config=".length);
+      if (value === undefined || !value.trim() || (token === "--config" && value.startsWith("-"))) {
+        throw new UsageError("--config requires a non-empty file path.", "INVALID_FLAG_VALUE");
+      }
+      // `setup --config '{...}'` was the retired inline-JSON form: keep its exit 2 and hint.
+      if (known.path.join(" ") === "setup" && value.trimStart().startsWith("{")) {
+        throwUnknownFlag("--config", "--config", known);
+      }
+      selected = value;
+      continue;
+    }
+    forwarded.push(token);
+    if (token.startsWith("--")) {
+      const name = cittyComparableName(token.slice(2).split("=")[0] as string);
+      if (!token.includes("=") && known.valueFlags.has(name)) {
+        const value = rawArgs[++index];
+        if (value !== undefined) forwarded.push(value);
+      }
+    } else if (token.startsWith("-") && token !== "-") {
+      for (let offset = 1; offset < token.length; offset += 1) {
+        if (known.valueFlags.has(cittyComparableName(token[offset] as string))) {
+          if (offset === token.length - 1) {
+            const value = rawArgs[++index];
+            if (value !== undefined) forwarded.push(value);
+          }
+          break;
+        }
+      }
+    }
+  }
+  return { file: selected, args: [...forwarded, ...rawArgs.slice(index)] };
 }
 
 /**
@@ -209,6 +262,7 @@ export function assertKnownFlags(root: FlagScanCommand, rawArgs: readonly string
   const ownArgs = passthroughAt === -1 ? rawArgs : rawArgs.slice(0, passthroughAt);
   const known = collectKnownArgs(root, rawArgs);
   if (!known.resolved) return;
+  // `run` delegates flag validation to its selected executor.
   // `workflow run`, `task run`, and `task explain` each own one deliberately
   // dynamic namespace: long options become exact-name parameter/input flags
   // and are checked against the frozen plan / task source's own contract
@@ -217,7 +271,7 @@ export function assertKnownFlags(root: FlagScanCommand, rawArgs: readonly string
   // body, where runWithJsonErrors renders the JSON envelope, not from this
   // generic pre-dispatch gate; `task explain` reuses the identical
   // `parseTaskInputFlags` scanner, so it needs the identical exemption).
-  const dynamicNamedFlagCommands = new Set(["workflow run", "task run", "task explain"]);
+  const dynamicNamedFlagCommands = new Set(["workflow run", "task run", "task explain", "run"]);
   const dynamicWorkflowParams = dynamicNamedFlagCommands.has(known.path.join(" "));
   const tolerant = UNKNOWN_FLAG_TOLERANT_COMMANDS.has(known.path.join(" "));
 

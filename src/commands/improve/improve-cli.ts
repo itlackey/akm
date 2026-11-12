@@ -3,8 +3,14 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import path from "node:path";
-import { defineCommand } from "citty";
-import { findCittyTopLevelCommandIndex, getStringArg, hasSubcommand, parsePositiveIntFlag } from "../../cli/parse-args";
+import { defineCommand, runCommand } from "citty";
+import {
+  findCittyTopLevelCommandIndex,
+  getStringArg,
+  hasSubcommand,
+  parsePositiveIntFlag,
+  parseTimeoutFlags,
+} from "../../cli/parse-args";
 import { SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
 import { defineJsonCommand, GLOBAL_OUTPUT_ARGS, output, runWithJsonErrors } from "../../cli/shared";
 import { type AssetRef, isFullRefInput, parsePlacementRef } from "../../core/asset/resolve-ref";
@@ -177,6 +183,10 @@ export const improveCommand = defineCommand({
       description: "Bundle to improve (default: defaultWriteTarget, else the working bundle)",
     },
     limit: { type: "string", description: "Maximum number of assets to process (highest salience first)" },
+    timeout: {
+      type: "string",
+      description: "Timeout as a duration (30s, 2m) or milliseconds; same scope as --timeout-ms",
+    },
     "timeout-ms": {
       type: "string",
       description: "Wall-clock budget for the entire run in milliseconds (default: 7200000 = 2 hours)",
@@ -234,7 +244,7 @@ export const improveCommand = defineCommand({
       // `--show-prompt` is read-only too.
       const dryRun = args["dry-run"] || args["show-prompt"];
       const limitRaw = parsePositiveIntFlag(args.limit ?? undefined);
-      const timeoutMs = parsePositiveIntFlag(args["timeout-ms"], "--timeout-ms");
+      const timeoutMs = parseTimeoutFlags(args.timeout, parsePositiveIntFlag(args["timeout-ms"], "--timeout-ms"));
       const requireFeedbackSignal = args["require-feedback-signal"];
       const skipIfLocked = args["skip-if-locked"];
       const strategyArg = getStringArg(args, "strategy");
@@ -399,5 +409,30 @@ export const improveCommand = defineCommand({
 
       if (jsonToStdout) output("improve", improveResult);
     });
+  },
+});
+
+/** Diagnostic alias: the legacy preview handler remains the single implementation. */
+export const doctorPromptCommand = defineCommand({
+  meta: {
+    name: "prompt",
+    description: "Inspect the composed reflect prompt for one asset without executing or writing",
+  },
+  args: {
+    ...GLOBAL_OUTPUT_ARGS,
+    ref: { type: "positional", required: true, description: "Fully-qualified asset ref to inspect" },
+    task: { type: "string", description: "Add extra guidance for this improvement pass" },
+    bundle: { type: "string", description: "Bundle containing the asset" },
+    strategy: { type: "string", description: "Named improve strategy supplying prompt settings" },
+    ...SELECTION_ARGS,
+  },
+  async run(context) {
+    if (context.args._.length !== 1 || context.rawArgs.includes("--")) {
+      throw new UsageError("doctor prompt accepts exactly one ref and no -- tail.", "INVALID_FLAG_VALUE");
+    }
+    if (!isFullRefInput(context.args.ref)) {
+      throw new UsageError("doctor prompt requires a fully-qualified asset ref.", "INVALID_FLAG_VALUE");
+    }
+    await runCommand(improveCommand, { rawArgs: ["--show-prompt", ...context.rawArgs] });
   },
 });

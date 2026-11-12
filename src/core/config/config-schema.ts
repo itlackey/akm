@@ -48,6 +48,7 @@ import { FeedbackConfigSchema } from "./schema/feedback";
 import { HarnessesSchema } from "./schema/harnesses";
 import { ImproveConfigSchema } from "./schema/improve";
 import { IndexConfigSchema } from "./schema/index-config";
+import { UsageConfigSchema } from "./schema/local-state";
 import { OutputConfigSchema } from "./schema/output";
 import { CURRENT_CONFIG_VERSION, nonEmptyString, nonNegativeNumber } from "./schema/primitives";
 import { ProjectsSchema } from "./schema/projects";
@@ -140,6 +141,7 @@ export const AkmConfigShape = {
   plugins: z.record(z.string(), z.unknown()).optional(),
   search: SearchConfigSchema.optional(),
   feedback: FeedbackConfigSchema.optional(),
+  usage: UsageConfigSchema.optional(),
   archiveRetentionDays: nonNegativeNumber.optional(),
   improve: ImproveConfigSchema.optional(),
   workflow: WorkflowConfigSchema.optional(),

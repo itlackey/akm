@@ -19,7 +19,7 @@
  * `--auto` runs multiple harnesses).
  */
 
-import { getStringArg, PROJECT_ARG, SCOPE_ARGS, scopeFromArgs } from "../../cli/parse-args";
+import { getStringArg, PROJECT_ARG, parseTimeoutFlags, SCOPE_ARGS, scopeFromArgs } from "../../cli/parse-args";
 import { RETIRED_ENGINE_ARG, SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
 import { defineJsonCommand, EXIT_CODES, output } from "../../cli/shared";
 import { loadConfig } from "../../core/config/config";
@@ -66,6 +66,7 @@ export const extractCommand = defineJsonCommand({
       description: "Re-process sessions already extracted with no new events",
       default: false,
     },
+    timeout: { type: "string", description: "Per-session timeout as a duration (30s, 2m) or milliseconds" },
     "timeout-ms": {
       type: "string",
       description: "Per-session LLM timeout in ms. Default: the engine's own timeout.",
@@ -88,16 +89,17 @@ export const extractCommand = defineJsonCommand({
     const dryRun = args["dry-run"] === true;
     const force = args.force === true;
     const strategy = getStringArg(args, "strategy");
-    const timeoutMs =
+    const legacyTimeoutMs =
       typeof args["timeout-ms"] === "string" && args["timeout-ms"] !== ""
         ? Number.parseInt(args["timeout-ms"], 10)
         : undefined;
-    if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0)) {
+    if (legacyTimeoutMs !== undefined && (!Number.isFinite(legacyTimeoutMs) || legacyTimeoutMs <= 0)) {
       throw new UsageError(
         `--timeout-ms must be a positive integer (got "${args["timeout-ms"]}").`,
         "INVALID_FLAG_VALUE",
       );
     }
+    const timeoutMs = parseTimeoutFlags(args.timeout, legacyTimeoutMs);
     if (auto && type) {
       throw new UsageError("--auto and --type are mutually exclusive. Pick one.", "INVALID_FLAG_VALUE");
     }

@@ -63,6 +63,9 @@ function runCli(args: string[], stashDir: string): CliRun {
   const state = sandboxMakeStashDir();
   disposers.push(data, cache, config, state);
   writeTestConfig(config.dir);
+  // Precreate only the parent of the separate diagnostic CLI usage database;
+  // every directory and every other file remains part of the artifact snapshot.
+  fs.mkdirSync(path.join(data.dir, "akm"));
   const roots = [cache.dir, config.dir, data.dir, state.dir, stashDir];
   const artifactBefore = snapshotRoots(roots);
   const result = spawnSync("bun", [cliPath, ...args], {
@@ -78,6 +81,7 @@ function runCli(args: string[], stashDir: string): CliRun {
       XDG_STATE_HOME: state.dir,
     },
   });
+  expect(fs.statSync(path.join(data.dir, "akm", "metrics.db")).isFile()).toBe(true);
   return {
     status: result.status ?? 1,
     stdout: result.stdout ?? "",
@@ -94,6 +98,9 @@ function snapshotRoots(roots: string[]): string[] {
     if (!fs.existsSync(current)) return;
     for (const entry of fs.readdirSync(current, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
       const full = path.join(current, entry.name);
+      // roots[2] is XDG_DATA_HOME. Exempt only the CLI usage file itself,
+      // preserving checks for state.db, sidecars, logs, and every other artifact.
+      if (root === roots[2] && path.relative(root, full) === path.join("akm", "metrics.db") && entry.isFile()) continue;
       const relative = `${roots.indexOf(root)}:${path.relative(root, full)}`;
       if (entry.isDirectory()) {
         entries.push(`${relative}/`);
@@ -284,6 +291,7 @@ describe("akm improve CLI result storage", () => {
       const snapshotTemp = sandboxMakeStashDir();
       disposers.push(data, cache, config, state, snapshotTemp);
       writeTestConfig(config.dir);
+      fs.mkdirSync(path.join(data.dir, "akm"));
       const snapshotSourcePath = path.join(snapshotTemp.dir, "source.db");
       const snapshotSource = new Database(snapshotSourcePath);
       snapshotSource.exec("CREATE TABLE held(value TEXT); INSERT INTO held VALUES ('preserve')");
@@ -363,6 +371,7 @@ describe("akm improve CLI result storage", () => {
       const stderr = Buffer.concat(stderrChunks).toString("utf8");
       expect(stderr).toContain(SIGNAL_HANDLERS_READY);
       if (exit.code === code && signal !== "SIGHUP") expect(stderr).toContain("dry-run state was not persisted");
+      expect(fs.statSync(path.join(data.dir, "akm", "metrics.db")).isFile()).toBe(true);
       expect(readImproveRuns(data.dir)).toEqual([]);
       expect(snapshotRoots(roots)).toEqual(before);
       expect(fs.readdirSync(snapshotTemp.dir).filter((entry) => entry.startsWith("akm-sqlite-read-"))).toEqual([]);

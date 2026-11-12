@@ -10,6 +10,7 @@ import {
   healthGroup,
   percent,
   rollingSearch,
+  runTimelineRows,
   tokens,
 } from "../src/lib/activity-presenter.ts";
 import { pageTitle } from "../src/lib/page-title.ts";
@@ -141,4 +142,74 @@ test("every view has a document title of its own, most specific part first", () 
   assert.equal(title("/projects"), "Projects · AKM Desktop");
   assert.equal(title("/projects/docs"), "docs · Projects · AKM Desktop");
   assert.equal(title("/projects/docs/edit"), "Edit docs · Projects · AKM Desktop");
+});
+
+test("the run timeline draws only what akm recorded inside the window: a row per task, per workflow, then improve and index", () => {
+  const window = { since: "2026-11-01T00:00:00.000Z", until: "2026-11-11T00:00:00.000Z" };
+  const data = {
+    health: null,
+    taskFailures: null,
+    metrics: {
+      window,
+      tasks: { runs: 3, failed: 1, byTask: [] },
+      index: { runs: 40, recent: [{ at: "2026-11-10T08:00:00.000Z", mode: "incremental", totalMs: 900 }] },
+    },
+    improveRuns: [
+      { startedAt: "2026-11-09T02:00:00.000Z", ok: false, durationMs: 60000 },
+      { startedAt: "2026-11-08T02:00:00.000Z", ok: null, durationMs: null },
+      { startedAt: "2026-10-20T02:00:00.000Z", ok: true, durationMs: 1000 },
+    ],
+  };
+  const task = (taskId, status, startedAt, trigger) => ({
+    taskId,
+    status,
+    startedAt,
+    finishedAt: null,
+    durationMs: 5,
+    trigger,
+  });
+  const taskRuns = [
+    task("tasks/sync", "completed", "2026-11-10T00:00:00.000Z", "schedule"),
+    task("tasks/sync", "failed", "2026-11-09T00:00:00.000Z", "manual"),
+    task("tasks/a", "blocked", "2026-11-08T00:00:00.000Z", null),
+    task("tasks/old", "completed", "2026-10-01T00:00:00.000Z", null),
+  ];
+  const workflowRuns = [
+    {
+      id: "run-1",
+      workflowRef: "workflows/release",
+      title: "Release",
+      status: "completed",
+      createdAt: "2026-11-10T01:00:00.000Z",
+      updatedAt: "2026-11-10T01:05:00.000Z",
+      completedAt: "2026-11-10T01:05:00.000Z",
+      harness: "claude",
+      session: null,
+    },
+  ];
+  const rows = runTimelineRows(data, taskRuns, workflowRuns);
+  // A run before the window is not drawn, and a task with none inside it has no row.
+  assert.deepEqual(
+    rows.map((row) => [row.name, row.task, row.runs.map((run) => run.tone)]),
+    [
+      ["tasks/a", "tasks/a", ["other"]],
+      ["tasks/sync", "tasks/sync", ["ok", "fail"]],
+      ["Workflow Release", undefined, ["ok"]],
+      ["Improve", undefined, ["fail", "other"]],
+      ["Index builds", undefined, ["ok"]],
+    ],
+  );
+  assert.deepEqual(
+    rows[1].runs.map((run) => run.said),
+    ["completed, started by the schedule", "failed, started by hand"],
+  );
+  assert.deepEqual(rows[2].runs[0], {
+    at: "2026-11-10T01:00:00.000Z",
+    tone: "ok",
+    durationMs: 300000,
+    said: "completed, started by claude",
+    runId: "run-1",
+  });
+  assert.equal(rows[3].runs[1].said, "outcome not recorded");
+  assert.deepEqual(runTimelineRows({ ...data, metrics: null }, taskRuns, workflowRuns), []);
 });

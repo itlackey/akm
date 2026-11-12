@@ -12,6 +12,8 @@ export interface CurateOptions {
   type?: string;
   /** Named bundle or local|registry|all, same as --from; an array of bundle names is a repeated --from (searched as one set). */
   source?: string | string[];
+  /** Relax only named default exclusions. Empty object overrides the project. */
+  include?: { quality?: "proposed" | "proposed"[]; type?: string | string[] };
   /** Exact frontmatter values for any key, same as repeated --filter: a list matches any of its values; different keys must all match. An empty string matches assets without the key. */
   filters?: Partial<Record<string, string | string[]>>;
   /** Same keys and match rule as `filters`, as a ranking preference: matching hits rank first, nothing is dropped. */

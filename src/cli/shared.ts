@@ -33,7 +33,7 @@ export { parseAllFlagValues };
  *   0  success
  *   1  general / not-found
  *   2  usage error
- *   4  health warn (health command only)
+ *   4  health warn (doctor or health command)
  *  70  internal / unclassified (sysexits EX_SOFTWARE — akm threw unexpectedly)
  *  75  transient (sysexits EX_TEMPFAIL — retry shortly; another akm process
  *      holds a lock or is writing state.db right now, not a bad command line)
@@ -142,6 +142,8 @@ export async function runWithJsonErrors(fn: (() => void) | (() => Promise<void>)
  * at every site (123 such sites at WS6 baseline).
  */
 export type JsonCommandDef<T extends ArgsDef = ArgsDef> = Omit<CommandDef<T>, "run"> & {
+  /** Preserve an existing dynamic input named config instead of declaring the file selector. */
+  configFile?: false;
   /** Command body. Throw to emit the JSON error envelope + mapped exit code. */
   run?: (context: CommandContext<T>) => void | Promise<void>;
 };
@@ -170,6 +172,7 @@ export type JsonCommandDef<T extends ArgsDef = ArgsDef> = Omit<CommandDef<T>, "r
  * overrides at the root; the description text itself is never duplicated.
  */
 export const GLOBAL_OUTPUT_ARGS = {
+  config: { type: "string", description: "Use this config file (also AKM_CONFIG_FILE)" },
   format: { type: "string", description: "Output format: json|jsonl|yaml|text|md" },
   detail: {
     type: "string",
@@ -227,8 +230,11 @@ export function withoutHelpHiddenArgs<T extends object>(command: T): T {
  * `quiet`).
  */
 export function defineJsonCommand<const T extends ArgsDef = ArgsDef>(def: JsonCommandDef<T>): CommandDef<T> {
-  const { run, ...rest } = def;
-  const withGlobals = { ...rest, args: { ...GLOBAL_OUTPUT_ARGS, ...rest.args } };
+  const { run, configFile, ...rest } = def;
+  // Dynamic task/workflow inputs already own `--config` after the command.
+  const { config, ...dynamicGlobals } = GLOBAL_OUTPUT_ARGS;
+  const globals = configFile === false ? dynamicGlobals : { config, ...dynamicGlobals };
+  const withGlobals = { ...rest, args: { ...globals, ...rest.args } };
   if (!run) return defineCommand(withGlobals as CommandDef<T>);
   return defineCommand({
     ...withGlobals,
