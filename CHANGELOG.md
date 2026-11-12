@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- `akm index --export-vectors` streams the vectors from the index into the file instead of loading them all first, so peak memory stays flat (about 260 MB) instead of growing by roughly 32 KB per embedded entry (3.2 GB at 100,000). The file contents and the atomic replace are unchanged (akm#1608).
+
 ## [0.10.261120] - 2026-11-12
 
 ### Deprecated
