@@ -15,8 +15,9 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
 
 concurrency:
-  # One run per pull request, the newest wins. A dispatch or a call from Release never cancels another run.
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  # One run per pull request, the newest wins. A dispatch or a call from Release never cancels another run, and
+  # neither does a draft run into main: it skips every job, and a push racing `gh pr ready` must not cancel the gate.
+  group: ${{ github.workflow }}-${{ (github.base_ref == 'main' && github.event.pull_request.draft) && github.run_id || github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 permissions:
