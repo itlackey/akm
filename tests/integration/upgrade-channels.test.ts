@@ -265,6 +265,28 @@ afterEach(() => cleanup());
     expect(read("calls.jsonl")).not.toContain("marketplace upgrade");
   });
 
+  test("a Codex catalog in the local-path form still reads its build version", async () => {
+    state({ codexVersion: "0.10.9", codexCatalog: "local" });
+    const run = await withEnv(env, () => runUpgrade({ ...opts, channel: "next" }, "0.10.1", deps()));
+    expect(run.result.plugins.find((p) => p.harness === "codex")).toMatchObject({
+      outcome: "current",
+      message: "codex stays at 0.10.9; next has nothing newer",
+    });
+  });
+
+  test("a Codex build version that cannot be read leaves Codex alone and the CLI still upgrades", async () => {
+    state({ codexCatalog: "unreadable" });
+    const dependency = deps();
+    const run = await withEnv(env, () => runUpgrade({ ...opts, channel: "next" }, "0.10.1", dependency));
+    expect(run.mode === "upgrade" && run.failed).toBe(false);
+    expect(dependency.calls).toHaveLength(1);
+    const codex = run.result.plugins.find((p) => p.harness === "codex");
+    expect(codex).toMatchObject({ outcome: "current", channel: "latest" });
+    expect(codex?.message).toContain("codex stays at 0.10.1; could not read the next build's version");
+    expect(read("codex/config.toml")).toBe(originalCodex);
+    expect(run.result.plugins.find((p) => p.harness === "claude-code")).toMatchObject({ channel: "next" });
+  });
+
   test.each([
     "claude plugin marketplace update akm-plugins",
     "codex plugin marketplace upgrade akm-plugins",
