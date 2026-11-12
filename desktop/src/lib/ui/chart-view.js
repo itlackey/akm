@@ -76,7 +76,6 @@ export function chart(ctx, id, label, options, { height, rows, onSelect } = {}) 
           // A builder's own `tooltip` adds to these settings; it cannot turn richText off.
           tooltip: {
             trigger: "axis",
-            renderMode: "richText",
             confine: true,
             backgroundColor: token("--surface"),
             borderColor: token("--border-strong"),
