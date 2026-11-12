@@ -117,10 +117,10 @@ describe("task lifecycle", () => {
   });
 
   // Issue 11: a workflow task's `timeoutMs` is its whole-run bound (the task
-  // runner turns it into the abort signal `akm workflow run --timeout-ms` uses),
-  // so `--timeout-ms` is no longer refused alongside `--workflow`. Connection,
+  // runner turns it into the abort signal `akm workflow run --timeout` uses),
+  // so `--timeout` is no longer refused alongside `--workflow`. Connection,
   // harness and model stay prompt-only — a workflow's come from its frozen plan.
-  test("add accepts --timeout-ms on a workflow task and records it in the YAML", async () => {
+  test("add accepts --timeout on a workflow task and records it in the YAML", async () => {
     const workflowsDir = path.join(storage.stashDir, "workflows");
     fs.mkdirSync(workflowsDir, { recursive: true });
     fs.writeFileSync(

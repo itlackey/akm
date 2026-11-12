@@ -1,0 +1,192 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+/** The whole library as a graph: every indexed asset, every declared link between them, and how each is used. */
+
+import { loadConfig } from "../core/config/config";
+import { getDbPath } from "../core/paths";
+import { applyEntryFilters } from "../indexer/search/db-search";
+import { resolveSourceEntries } from "../indexer/search/search-source";
+import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
+import { getAllEntries } from "../storage/repositories/index-entries-repository";
+import { listResolvedLinks } from "../storage/repositories/index-links-repository";
+import { getMeta } from "../storage/repositories/index-meta-repository";
+import { getUtilityScoresByIds } from "../storage/repositories/index-utility-repository";
+import { listCurrentEmbeddings } from "../storage/repositories/index-vec-repository";
+
+/** Types never drawn: protected files and session logs, as `assets.related` leaves them out. */
+const HIDDEN_TYPES = ["secret", "env", "session"];
+
+/**
+ * Every asset of the enabled bundles and the declared links between them, in column form: node `i` is `nodes.ref[i]`,
+ * and its type and bundle are indexes into `types` and `bundles`. A link joins two nodes by index and names its kind
+ * by index into `kinds`. `meaning` places each node with a stored embedding in three dimensions (see
+ * {@link projectEmbeddings}); it is `null` when the index has no embeddings. Nothing is written. The projection yields
+ * to the event loop as it goes, so a host serving other requests keeps answering them.
+ */
+export async function graph() {
+  const empty = {
+    types: [] as string[],
+    bundles: [] as string[],
+    kinds: [] as string[],
+    nodes: {
+      ref: [] as string[],
+      title: [] as string[],
+      type: [] as number[],
+      bundle: [] as number[],
+      shows: [] as number[],
+      searches: [] as number[],
+      lastUsedAt: [] as Array<string | null>,
+    },
+    links: { from: [] as number[], to: [] as number[], kind: [] as number[] },
+    meaning: null as { embedded: number; xyz: Array<number | null> } | null,
+  };
+  const db = openReadonlyExistingDatabase();
+  if (!db) return { available: false, note: "No index is available. Build the AKM index first.", ...empty };
+  let closed = false;
+  try {
+    const sources = resolveSourceEntries(undefined, loadConfig()).filter((source) => !source.unresolved);
+    const rows = applyEntryFilters(getAllEntries(db, undefined, HIDDEN_TYPES), {
+      db,
+      sources,
+      restrictToSources: true,
+      includeProposed: false,
+      beliefFilter: "all",
+    }).filter((row) => row.itemRef);
+    const index = new Map(rows.map((row, i) => [row.id, i]));
+    const code = (list: string[]) => {
+      const seen = new Map<string, number>();
+      return (value: string) => {
+        let at = seen.get(value);
+        if (at === undefined) {
+          at = list.push(value) - 1;
+          seen.set(value, at);
+        }
+        return at;
+      };
+    };
+    const result = { ...empty, nodes: { ...empty.nodes }, links: { from: [], to: [], kind: [] } as typeof empty.links };
+    const typeCode = code(result.types);
+    const bundleCode = code(result.bundles);
+    const kindCode = code(result.kinds);
+    const use = getUtilityScoresByIds(
+      db,
+      rows.map((row) => row.id),
+    );
+    for (const row of rows) {
+      const score = use.get(row.id);
+      result.nodes.ref.push(row.itemRef);
+      result.nodes.title.push(row.entry.toc?.find((heading) => heading.level === 1)?.text || row.entry.name);
+      result.nodes.type.push(typeCode(row.entry.type));
+      result.nodes.bundle.push(bundleCode(row.bundleId));
+      result.nodes.shows.push(score?.showCount ?? 0);
+      result.nodes.searches.push(score?.searchCount ?? 0);
+      result.nodes.lastUsedAt.push(score?.lastUsedAt ?? null);
+    }
+    for (const link of listResolvedLinks(db)) {
+      const from = index.get(link.from);
+      const to = index.get(link.to);
+      if (from === undefined || to === undefined || from === to) continue;
+      result.links.from.push(from);
+      result.links.to.push(to);
+      result.links.kind.push(kindCode(link.kind));
+    }
+    const vectors = listCurrentEmbeddings(db);
+    const build = `${getDbPath()}|${getMeta(db, "embeddingFingerprint") ?? ""}|${getMeta(db, "builtAt") ?? ""}`;
+    closeDatabase(db);
+    closed = true;
+    const placed = await projectEmbeddings(
+      rows.map((row) => vectors.get(row.id)),
+      build,
+    );
+    result.meaning = placed.embedded ? placed : null;
+    return {
+      available: true,
+      note: `${rows.length} assets and ${result.links.from.length} links of the enabled bundles. Positions by meaning come from the stored embeddings${placed.embedded ? "" : ", and this index has none"}.`,
+      ...result,
+    };
+  } finally {
+    if (!closed) closeDatabase(db);
+  }
+}
+
+/** Most vectors the principal components are found from; the rest are only projected onto them. */
+const SAMPLE = 4000;
+/** Vectors projected between yields to the event loop. */
+const CHUNK = 2000;
+const yieldToLoop = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+/** The axes of the last projection, reused while the index's embedding model and full build stay the same. */
+let axesCache: { key: string; dims: number; mean: Float64Array; components: Float64Array[]; scale: number } | undefined;
+
+/**
+ * Three coordinates per vector: its projection on the three principal components of the vectors, so vectors that are
+ * alike land near each other. The components come from an evenly spaced sample of at most 4,000 vectors (power
+ * iteration with deflation from a fixed start, so the same vectors give the same layout), scaled so the first
+ * component's standard deviation is 400. With a `key` (the index's embedding model and build), the components are
+ * kept and reused until the key changes: an asset embedded since is projected onto them. A missing vector gives three
+ * nulls. Work is done in slices with a yield to the event loop between them.
+ */
+export async function projectEmbeddings(
+  vectors: Array<Float32Array | undefined>,
+  key?: string,
+): Promise<{ embedded: number; xyz: Array<number | null> }> {
+  const present = vectors.filter((vector): vector is Float32Array => vector !== undefined);
+  const dims = present[0]?.length ?? 0;
+  const usable = present.filter((vector) => vector.length === dims);
+  if (!dims || usable.length < 4) return { embedded: 0, xyz: vectors.flatMap(() => [null, null, null]) };
+  let axes = key !== undefined && axesCache?.key === key && axesCache.dims === dims ? axesCache : undefined;
+  if (!axes) {
+    const step = Math.max(1, usable.length / SAMPLE);
+    const sample: Float32Array[] = [];
+    for (let at = 0; at < usable.length && sample.length < SAMPLE; at += step) sample.push(usable[Math.floor(at)]!);
+    const mean = new Float64Array(dims);
+    for (const vector of sample) for (let d = 0; d < dims; d++) mean[d]! += vector[d]! / sample.length;
+    const components: Float64Array[] = [];
+    for (let c = 0; c < 3; c++) {
+      let axis: Float64Array = new Float64Array(dims).map((_, d) => 1 + ((d * 7 + c * 13) % 5));
+      for (let round = 0; round < 16; round++) {
+        const next = new Float64Array(dims);
+        for (const vector of sample) {
+          const weight = projectOn(vector, mean, axis);
+          for (let d = 0; d < dims; d++) next[d]! += weight * (vector[d]! - mean[d]!);
+        }
+        // Keep the axis orthogonal to the components already found.
+        for (const found of components) {
+          let dot = 0;
+          for (let d = 0; d < dims; d++) dot += next[d]! * found[d]!;
+          for (let d = 0; d < dims; d++) next[d]! -= dot * found[d]!;
+        }
+        let norm = 0;
+        for (let d = 0; d < dims; d++) norm += next[d]! * next[d]!;
+        norm = Math.sqrt(norm) || 1;
+        axis = next.map((value) => value / norm);
+        await yieldToLoop();
+      }
+      components.push(axis);
+    }
+    const spread = Math.sqrt(
+      sample.reduce((sum, vector) => sum + projectOn(vector, mean, components[0]!) ** 2, 0) / sample.length,
+    );
+    axes = { key: key ?? "", dims, mean, components, scale: spread > 0 ? 400 / spread : 1 };
+    if (key !== undefined) axesCache = axes;
+  }
+  const xyz: Array<number | null> = [];
+  for (let at = 0; at < vectors.length; at += CHUNK) {
+    for (const vector of vectors.slice(at, at + CHUNK)) {
+      if (vector && vector.length === dims)
+        for (const axis of axes.components)
+          xyz.push(Math.round(projectOn(vector, axes.mean, axis) * axes.scale * 10) / 10);
+      else xyz.push(null, null, null);
+    }
+    await yieldToLoop();
+  }
+  return { embedded: usable.length, xyz };
+}
+
+function projectOn(vector: Float32Array, mean: Float64Array, axis: Float64Array): number {
+  let sum = 0;
+  for (let d = 0; d < axis.length; d++) sum += (vector[d]! - mean[d]!) * axis[d]!;
+  return sum;
+}

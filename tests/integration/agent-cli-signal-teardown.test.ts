@@ -28,6 +28,10 @@ import {
 } from "../_helpers/sandbox";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "../..");
+// Reuse the same lifecycle matrix against the built Node entry when requested.
+const NODE_RUNTIME = process.env.AKM_NODE_COMPAT_TESTS === "1";
+const CLI_BIN = NODE_RUNTIME ? (process.env.AKM_SMOKE_NODE ?? "node") : process.execPath;
+const CLI_ENTRY = path.join(REPO_ROOT, NODE_RUNTIME ? "dist/cli-node.mjs" : "src/cli.ts");
 
 let storage: IsolatedAkmStorage;
 let fakeDir: SandboxedDir;
@@ -103,11 +107,10 @@ for (const { platform, signal, stubborn } of CASES) {
         harnesses: { fake: { platform, bin } },
       });
 
-      const cli = spawn(
-        process.execPath,
-        [path.join(REPO_ROOT, "src/cli.ts"), "agent", "--harness", "fake", "--prompt", "hi"],
-        { cwd: REPO_ROOT, stdio: ["ignore", "pipe", "pipe"] },
-      );
+      const cli = spawn(CLI_BIN, [CLI_ENTRY, "agent", "--harness", "fake", "--prompt", "hi"], {
+        cwd: REPO_ROOT,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
       let output = "";
       cli.stdout.on("data", (chunk: Buffer) => {
         output += chunk.toString("utf8");

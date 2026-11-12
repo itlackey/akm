@@ -252,12 +252,12 @@ akm health --format json      # read this JSON; act on ok/status, never on messa
 
 A bundler that controls the filesystem layout should set `AKM_CONFIG_FILE` (or
 pass `--config <file>`) and name the rest in that file, rather than rely on
-`$HOME`-derived defaults. The old `AKM_*_DIR` location variables are retired; see [Retired location variables](../reference/configuration.md#retired-location-variables).
+`$HOME`-derived defaults. `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR` and `AKM_CACHE_DIR` work too and beat the file's `paths` (`AKM_BUNDLE_DIR` is retired); see [Environment](../reference/configuration.md#environment).
 
 | Variable or key | What it points at |
 | --- | --- |
 | `defaultBundle` and `bundles.<id>.path` | The content bundle (`$STASH`) — assets akm indexes and serves. |
-| `AKM_CONFIG_FILE` | The config file; `credentials.json` and the config lock sit beside it. |
+| `AKM_CONFIG_FILE` | The config file; the config lock sits beside it. `credentials.json` and `models.json` stay in the default config directory (`AKM_CONFIG_DIR`). |
 | `paths.data` | Durable, non-regenerable data: **`index.db` and `state.db` live here.** This is the directory a migration snapshot's safety copy sits beside. |
 | `paths.cache` | Regenerable cache: installed git, npm and website bundles, config backups, task logs. If it is discarded, `akm bundle update --all` restores the bundles. |
 | `paths.state` | **Not** where `state.db` lives, despite the name — this is the XDG "state" directory. Holds, per bundle, `akm improve`'s whole-run lock (`locks/`) — see [Storage locations](../architecture/internals/storage-locations.md). Set it too, so those locks sit on the same persistent volume as the rest of akm's state rather than under `$HOME/.local/state/akm`. |

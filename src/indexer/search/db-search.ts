@@ -183,6 +183,8 @@ export interface SearchLocalInput {
    * `session`). No effect when an explicit `--type` is supplied.
    */
   includeExcludedTypes?: boolean;
+  /** Named default type exclusions to relax. */
+  includeTypes?: string[];
   /**
    * Serve the index as it is: skip the inline bootstrap build `ensureIndex`
    * would run for a stash the index cannot serve yet (the workspace never writes).
@@ -303,7 +305,9 @@ async function searchDatabase(
   // `includeExcludedTypes`. When the config key is ABSENT a built-in default of
   // ['session'] is applied; an explicit empty list disables exclusion.
   const defaultExcludes =
-    searchType === "any" && !input.includeExcludedTypes ? (config.search?.defaultExcludeTypes ?? ["session"]) : [];
+    searchType === "any" && !input.includeExcludedTypes
+      ? (config.search?.defaultExcludeTypes ?? ["session"]).filter((type) => !input.includeTypes?.includes(type))
+      : [];
 
   // D4 — conceptId-prefix queries (`memories/projecta/`, `bundle//`,
   // `bundle//skills/`) translate to a deterministic enumeration narrowed by
@@ -1003,6 +1007,7 @@ export function countBrowseEntries(
   sources: SearchSource[],
   filters: ScopeFilters | undefined,
   excludeTypes: readonly string[],
+  includeProposed = false,
 ): Array<{ total: BrowseCount; eligible: BrowseCount }> {
   const all = deduplicateByPath(getAllEntries(db, undefined, [...excludeTypes]).filter(hasIndexedProvenance));
   const tally = (items: Array<{ entry: IndexDocument }>): BrowseCount => {
@@ -1015,7 +1020,7 @@ export function countBrowseEntries(
       db,
       sources: [source],
       restrictToSources: true,
-      includeProposed: false,
+      includeProposed,
       beliefFilter: "current",
     });
     const eligible = filters ? total.filter((item) => scopeMatchesFilters(item.entry, filters)) : total;

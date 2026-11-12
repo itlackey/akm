@@ -167,12 +167,12 @@ describe("improve-judge-gone", () => {
   afterEach(() => storage.cleanup());
 
   describe("akm improve judge (removed)", () => {
-    test("exits 2 naming `akm judge reflect.quality` and does no improve work", async () => {
+    test("exits 2 naming `akm doctor judge reflect.quality` and does no improve work", async () => {
       const result = await runCliCapture(["improve", "judge", "--format=json"]);
       expect(result.code).toBe(2);
       const error = JSON.parse(result.stderr.trim()) as { code?: string; hint?: string };
       expect(error.code).toBe("UNKNOWN_COMMAND");
-      expect(error.hint).toContain("akm judge reflect.quality");
+      expect(error.hint).toContain("akm doctor judge reflect.quality");
       expect(result.stdout).toBe("");
     });
 

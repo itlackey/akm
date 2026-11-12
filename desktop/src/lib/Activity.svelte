@@ -10,6 +10,7 @@
   import { navigate } from "./navigation";
   import ActivityOverview from "./ActivityOverview.svelte";
   import ActivityImpact from "./ActivityImpact.svelte";
+  import ActivityReplay from "./ActivityReplay.svelte";
   import Icon from "./Icon.svelte";
   import type {
     ActivityOverview as Overview,
@@ -58,13 +59,15 @@
   const view = $derived(
     route === "improve"
       ? "Improve impact"
-      : route === "history"
-        ? "Source history"
-        : query.get("view") === "runs"
-          ? "Runs"
-          : ["retrieval", "usage", "misses"].includes(query.get("view") ?? "")
-            ? "Usage & retrieval"
-            : "Health",
+      : route === "replay"
+        ? "Replay"
+        : route === "history"
+          ? "Source history"
+          : query.get("view") === "runs"
+            ? "Runs"
+            : ["retrieval", "usage", "misses"].includes(query.get("view") ?? "")
+              ? "Usage & retrieval"
+              : "Health",
   );
   const window = $derived(query.get("window") === "7d" ? "7d" : query.get("window") === "90d" ? "90d" : "30d");
   const since = $derived(query.get("since") === "365d" ? "365d" : "90d");
@@ -103,6 +106,7 @@
     { name: "Runs", path: "/activity/overview?view=runs" },
     { name: "Usage & retrieval", path: "/activity/overview?view=retrieval" },
     { name: "Improve impact", path: "/activity/improve" },
+    { name: "Replay", path: "/activity/replay" },
     { name: "Source history", path: "/activity/history" },
   ];
   async function revealAnchor(anchor: string | null) {
@@ -150,6 +154,8 @@
           impact = next;
           retrieval = nextRetrieval;
         }
+      } else if (view === "Replay") {
+        // The replay reads its own data.
       } else if (view === "Source history") {
         const next = await api<NonNullable<typeof changes>>("/changes", { limit: "100" });
         if (request === generation) {
@@ -224,7 +230,7 @@
       </p>{/if}
   </div>
   <div class="activity-toolbar">
-    {#if view !== "Source history" && view !== "Health"}<label
+    {#if view !== "Source history" && view !== "Health" && view !== "Replay"}<label
         >{route === "improve" ? "Impact window" : "Trend window"}<select
           value={route === "improve" ? since : window}
           onchange={(event) => changeWindow(event.currentTarget.value)}
@@ -233,9 +239,12 @@
               >90 days</option
             >{/if}</select
         ></label
-      >{/if}<button class="btn-quiet" bind:this={refreshButton} onclick={refresh} disabled={loading}
-      ><Icon name="refresh" size={16} /> Refresh activity</button
-    >
+      >{/if}{#if view !== "Replay"}<button
+        class="btn-quiet"
+        bind:this={refreshButton}
+        onclick={refresh}
+        disabled={loading}><Icon name="refresh" size={16} /> Refresh activity</button
+      >{/if}
   </div>
 </div>
 {#if error}<div class="notice notice-warn" role="alert">
@@ -263,12 +272,14 @@
       {refreshedAt}
       {probedAt}
       requestedTask={query.get("task") ?? ""}
+      requestedRun={query.get("run") ?? ""}
     />{/if}
 {:else if shown && view === "Improve impact"}{#if impact}<ActivityImpact
       {impact}
       {retrieval}
       bind:selectedProcess={impactProcess}
     />{/if}
+{:else if view === "Replay"}<ActivityReplay />
 {:else if shown && view === "Source history" && changes}<h2>Write-target history</h2>
   <p class="muted">{changes.bundle} · <span class="mono wrap">{changes.path}</span></p>
   {#if !changes.git}<p class="empty">

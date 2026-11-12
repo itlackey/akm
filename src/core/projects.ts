@@ -15,6 +15,7 @@ import { isWithin, safeRealpath } from "./common";
 import type { AkmConfig } from "./config/config-types";
 import { expandProjectPath, NO_PROJECT, type ProjectConfig } from "./config/schema/projects";
 import { UsageError } from "./errors";
+import { IncludeSchema, type IncludeSelectors } from "./include";
 
 type FrontmatterScalar = string | number | boolean;
 
@@ -24,6 +25,7 @@ export interface ResolvedProject {
   path?: string;
   from?: string | string[];
   filters?: ScopeFilters;
+  include?: IncludeSelectors;
   /** The project's own, else `project=<name>`. */
   prefer: ScopeFilters;
   write: {
@@ -42,6 +44,7 @@ export interface ProjectView {
   path?: string;
   from?: string | string[];
   filters?: ScopeFilters;
+  include?: IncludeSelectors;
   prefer?: ScopeFilters;
 }
 
@@ -69,6 +72,7 @@ function toResolved(name: string, project: ProjectConfig, matchedPath?: string):
     ...(matchedPath !== undefined ? { path: matchedPath } : {}),
     ...(project.from !== undefined ? { from: project.from } : {}),
     ...(project.filters !== undefined ? { filters: project.filters } : {}),
+    ...(project.include !== undefined ? { include: IncludeSchema.strip().parse(project.include) } : {}),
     prefer: project.prefer ?? { project: name },
     write: {
       ...(write.bundle !== undefined ? { bundle: write.bundle } : {}),
@@ -116,6 +120,7 @@ export function projectView(project: ResolvedProject): ProjectView {
     ...(project.path !== undefined ? { path: project.path } : {}),
     ...(project.from !== undefined ? { from: project.from } : {}),
     ...(project.filters !== undefined ? { filters: project.filters } : {}),
+    ...(project.include !== undefined ? { include: project.include } : {}),
     prefer: project.prefer,
   };
 }
@@ -140,6 +145,7 @@ export function withProjectLine(text: string, view: ProjectView | undefined): st
 function formatProjectLine(view: ProjectView): string {
   const parts = [
     view.from !== undefined ? `from ${[view.from].flat().join(",")}` : "",
+    view.include ? `include ${scopeText(view.include)}` : "",
     view.filters ? `filter ${scopeText(view.filters)}` : "",
     view.prefer ? `prefer ${scopeText(view.prefer)}` : "",
   ].filter(Boolean);

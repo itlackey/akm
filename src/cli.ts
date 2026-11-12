@@ -72,16 +72,19 @@ process.on("uncaughtException", (err) => {
 
 import fs from "node:fs";
 import path from "node:path";
-import { type ArgsDef, type CommandDef, defineCommand, parseArgs, renderUsage, runCommand } from "citty";
+import { type ArgsDef, type CommandDef, defineCommand, parseArgs, renderUsage, runCommand, showUsage } from "citty";
+import { warnDeprecatedUse } from "./cli/deprecations";
 import { formatHelp } from "./cli/help-format";
 import {
   type CittyArgsDefinitionForScan,
+  cittyComparableName,
   findCittyTopLevelCommandIndex,
   getParsedInvocation,
   parseAllFlagValues,
   setParsedInvocation,
 } from "./cli/invocation";
 import {
+  defineGroupCommand,
   defineJsonCommand,
   EXIT_CODES,
   emitJsonError,
@@ -91,6 +94,7 @@ import {
   withoutHelpHiddenArgs,
 } from "./cli/shared";
 import { assertKnownFlags, type FlagScanCommand } from "./cli/unknown-flags";
+import { startUsage, type UsageCommand } from "./cli/usage";
 import { agentCommand, lintCommand } from "./commands/agent/contribute-cli";
 import { commandCommand } from "./commands/command/command-cli";
 import { generateBashCompletions, installBashCompletions } from "./commands/completions";
@@ -99,12 +103,13 @@ import { envCommand } from "./commands/env/env-cli";
 import { secretCommand } from "./commands/env/secret-cli";
 import { feedbackCommand } from "./commands/feedback-cli";
 import { akmHealth } from "./commands/health";
+import { doctorMetricsCommand } from "./commands/metrics/usage-cli";
 import { closestMatch } from "./core/closest-match";
 import "./commands/health/renderers";
 import "./commands/metrics/md-report";
 import type { WindowSpec } from "./commands/health/types";
 import { parseWindowSpec } from "./commands/health/windows";
-import { improveCommand } from "./commands/improve/improve-cli";
+import { doctorPromptCommand, improveCommand } from "./commands/improve/improve-cli";
 import { judgeCommand } from "./commands/judge-cli";
 import { metricsCommand } from "./commands/metrics/metrics-cli";
 import { migrateCommand } from "./commands/migrate-cli";
@@ -114,6 +119,7 @@ import { proposalCommand } from "./commands/proposal/proposal-cli";
 import { rememberCommand } from "./commands/read/remember-cli";
 import { curateCommand, searchCommand, showCommand } from "./commands/read/search-cli";
 import { registryCommand } from "./commands/registry-cli";
+import { runAssetCommand } from "./commands/run-cli";
 import { bundleCommand } from "./commands/sources/bundle-cli";
 import { cloneCommand, syncCommand, upgradeCommand } from "./commands/sources/sources-cli";
 import { importKnowledgeCommand, indexCommand, infoCommand } from "./commands/sources/stash-cli";
@@ -137,17 +143,20 @@ import { pkgVersion } from "./version";
  * `--config <file>` (or `--config=<file>`): the installation's config file, chosen before anything is read. Resolved
  * against the cwd and assigned to `AKM_CONFIG_FILE`, which is what every later read of a location, and every child
  * akm starts, goes by. Beats an `AKM_CONFIG_FILE` already in the environment; the last flag wins; scanning stops
- * at `--`. A file that does not exist is not an error here: it reads as the default file's absence does.
+ * at `--`. The flag and its value are removed from `argv`, so the selector works at any command level
+ * (`akm config --config f path`). A file that does not exist is not an error here: it reads as the default file's
+ * absence does.
  */
 export function applyEarlyConfigFlag(argv: string[]): void {
   const separator = argv.indexOf("--");
-  const ownArgv = separator === -1 ? argv : argv.slice(0, separator);
+  const end = separator === -1 ? argv.length : separator;
   let chosen: string | undefined;
-  for (let i = 2; i < ownArgv.length; i++) {
-    const token = ownArgv[i] as string;
+  const kept: string[] = argv.slice(0, 2);
+  for (let i = 2; i < end; i++) {
+    const token = argv[i] as string;
     if (token === "--config") {
-      const value = ownArgv[i + 1];
-      if (value === undefined || value.trim() === "" || value.startsWith("--")) {
+      const value = argv[i + 1];
+      if (i + 1 >= end || value === undefined || value.trim() === "" || value.startsWith("--")) {
         throw new UsageError("--config needs the path of a config file.", "MISSING_REQUIRED_ARGUMENT");
       }
       chosen = value;
@@ -156,9 +165,20 @@ export function applyEarlyConfigFlag(argv: string[]): void {
       chosen = token.slice("--config=".length);
       if (chosen.trim() === "")
         throw new UsageError("--config needs the path of a config file.", "MISSING_REQUIRED_ARGUMENT");
+    } else {
+      kept.push(token);
     }
   }
+  // `setup --config '{...}'` was the retired inline-JSON form: keep its exit 2 and hint.
+  if (chosen?.trimStart().startsWith("{") && kept.slice(2).includes("setup")) {
+    throw new UsageError(
+      'Unknown flag "--config".',
+      "UNKNOWN_FLAG",
+      "`--config` is gone from setup: use `--endpoint <url> --yes` and the other answer flags. Run the command with `--help` to see its accepted flags.",
+    );
+  }
   if (chosen !== undefined) process.env.AKM_CONFIG_FILE = path.resolve(chosen);
+  argv.splice(2, end - 2, ...kept.slice(2));
 }
 
 export function applyEarlyStderrFlags(argv: string[]): void {
@@ -370,58 +390,60 @@ const setupCommand = defineCommand({
   },
 });
 
+const healthArgs = {
+  // `health` is a raw `defineCommand` (not `defineJsonCommand`), so it does
+  // not get `GLOBAL_OUTPUT_ARGS` for free. `--format`/`--detail`/
+  // `--output` parse correctly here regardless (this command has
+  // no positional for a stray value to fall into), so this is purely a
+  // `--help` visibility / consistency measure.
+  ...GLOBAL_OUTPUT_ARGS,
+  since: {
+    type: "string",
+    description: "Rolling window start (ISO timestamp, date, epoch ms, or shorthand like 24h / 7d)",
+  },
+  "group-by": {
+    type: "string",
+    description: "Group rows by: run (one row per improve_runs entry). Omit for the default summary.",
+  },
+  "window-compare": {
+    type: "string",
+    description: "Compare current window vs prior window of the same duration (e.g. 24h, 7d, 30m)",
+  },
+  windows: {
+    type: "string",
+    description: "Comparison window 'name=...,since=ISO,until=ISO' (repeatable, up to 4; not with --window-compare)",
+  },
+  report: {
+    type: "boolean",
+    description: "Fetch the full report dataset (per-run rows, trend deltas, pending proposals)",
+    default: false,
+  },
+  "read-only": {
+    type: "boolean",
+    default: false,
+    description: "Read existing state without creating or migrating it; skip the database write/read probe",
+  },
+  // #914: citty strips any `--no-X` argument and treats it as negating `X`
+  // (see `parseArgs` in citty's dist), regardless of whether an arg literally
+  // named "no-X" is declared — declaring "no-probe" directly would silently
+  // never populate `args["no-probe"]` and the flag would do nothing. Declare
+  // the positive flag instead; `--no-probe` is citty's automatic negation of
+  // it (rendered in `--help` via `negativeDescription`).
+  probe: {
+    type: "boolean",
+    default: true,
+    description: "Probe connections, harnesses, newer releases and the scheduler binary (on by default)",
+    negativeDescription:
+      "Skip the reachability probes, the harness `--version` runs, the update check, the Claude plugin tag lookup, and the scheduler-binary version check (for an offline or air-gapped host).",
+  },
+} satisfies ArgsDef;
+
 const healthCommand = defineCommand({
   meta: {
     name: "health",
     description: "Check akm runtime health, artifacts, and improve metrics",
   },
-  args: {
-    // `health` is a raw `defineCommand` (not `defineJsonCommand`), so it does
-    // not get `GLOBAL_OUTPUT_ARGS` for free. `--format`/`--detail`/
-    // `--output` parse correctly here regardless (this command has
-    // no positional for a stray value to fall into), so this is purely a
-    // `--help` visibility / consistency measure.
-    ...GLOBAL_OUTPUT_ARGS,
-    since: {
-      type: "string",
-      description: "Rolling window start (ISO timestamp, date, epoch ms, or shorthand like 24h / 7d)",
-    },
-    "group-by": {
-      type: "string",
-      description: "Group rows by: run (one row per improve_runs entry). Omit for the default summary.",
-    },
-    "window-compare": {
-      type: "string",
-      description: "Compare current window vs prior window of the same duration (e.g. 24h, 7d, 30m)",
-    },
-    windows: {
-      type: "string",
-      description: "Comparison window 'name=...,since=ISO,until=ISO' (repeatable, up to 4; not with --window-compare)",
-    },
-    report: {
-      type: "boolean",
-      description: "Fetch the full report dataset (per-run rows, trend deltas, pending proposals)",
-      default: false,
-    },
-    "read-only": {
-      type: "boolean",
-      default: false,
-      description: "Read existing state without creating or migrating it; skip the database write/read probe",
-    },
-    // #914: citty strips any `--no-X` argument and treats it as negating `X`
-    // (see `parseArgs` in citty's dist), regardless of whether an arg literally
-    // named "no-X" is declared — declaring "no-probe" directly would silently
-    // never populate `args["no-probe"]` and the flag would do nothing. Declare
-    // the positive flag instead; `--no-probe` is citty's automatic negation of
-    // it (rendered in `--help` via `negativeDescription`).
-    probe: {
-      type: "boolean",
-      default: true,
-      description: "Probe connections, harnesses, newer releases and the scheduler binary (on by default)",
-      negativeDescription:
-        "Skip the reachability probes, the harness `--version` runs, the update check, the Claude plugin tag lookup, and the scheduler-binary version check (for an offline or air-gapped host).",
-    },
-  },
+  args: healthArgs,
   async run({ args }) {
     let resultStatus: "pass" | "warn" | "fail" | undefined;
     const exitCodeBeforeRun = process.exitCode;
@@ -522,6 +544,72 @@ const healthCommand = defineCommand({
   },
 });
 
+const doctorSubCommands = {
+  prompt: doctorPromptCommand,
+  metrics: doctorMetricsCommand,
+  info: infoCommand,
+  log: logCommand,
+  judge: judgeCommand,
+};
+const doctorScanArgs = Object.assign({}, healthArgs, ...Object.values(doctorSubCommands).map((cmd) => cmd.args));
+
+const doctorCommand = defineCommand({
+  ...defineGroupCommand({
+    meta: {
+      name: "doctor",
+      description: "Check runtime health, or inspect metrics, system information, events and model judges",
+    },
+    args: healthArgs,
+    subCommands: doctorSubCommands,
+    async defaultRun(context) {
+      await healthCommand.run?.(context);
+    },
+  }),
+  setup({ rawArgs }) {
+    const index = findCittyTopLevelCommandIndex(rawArgs, doctorScanArgs);
+    const subcommand = index >= 0 ? rawArgs[index] : undefined;
+    if (subcommand === undefined) {
+      assertKnownFlags({ subCommands: { doctor: healthCommand } } as FlagScanCommand, ["doctor", ...rawArgs]);
+      return;
+    }
+    if (!(subcommand in doctorSubCommands)) return;
+    // Citty discards parent options when dispatching a child. Only global
+    // options work before the child; they are already read from the invocation.
+    try {
+      assertKnownFlags({ args: GLOBAL_OUTPUT_ARGS }, rawArgs.slice(0, index));
+    } catch (error) {
+      if (!(error instanceof UsageError)) throw error;
+      throw new UsageError(
+        `Put options for doctor ${subcommand} after the subcommand.`,
+        "INVALID_FLAG_VALUE",
+        `Use \`akm doctor ${subcommand} <options>\`; health options belong to bare \`akm doctor\`.`,
+      );
+    }
+    let childArgs = rawArgs.slice(index + 1);
+    if (subcommand === "info") {
+      // The root already warned about unknown info flags, except health flags
+      // it treated as inherited. Warn about those once here, without refusing.
+      const separator = childArgs.indexOf("--");
+      childArgs = (separator < 0 ? childArgs : childArgs.slice(0, separator)).filter((token) => {
+        if (!token.startsWith("--")) return false;
+        const name = cittyComparableName(token.slice(2).split("=")[0]!);
+        return Object.entries(healthArgs).some(([key, def]) => {
+          if (key in GLOBAL_OUTPUT_ARGS) return false;
+          const flag = cittyComparableName(key);
+          return name === flag || (def.type === "boolean" && name === cittyComparableName(`no-${key}`));
+        });
+      });
+    }
+    // Validate the child without health's parent flags, so unsupported options
+    // cannot be silently accepted merely because bare doctor declares them.
+    assertKnownFlags({ subCommands: { doctor: { subCommands: doctorSubCommands } } } as FlagScanCommand, [
+      "doctor",
+      subcommand,
+      ...childArgs,
+    ]);
+  },
+});
+
 const hintsCommand = defineCommand({
   meta: {
     name: "hints",
@@ -577,6 +665,7 @@ const completionsCommand = defineCommand({
 const commands = {
   setup: setupCommand,
   index: indexCommand,
+  doctor: doctorCommand,
   health: healthCommand,
   metrics: metricsCommand,
   info: infoCommand,
@@ -585,6 +674,7 @@ const commands = {
   search: searchCommand,
   curate: curateCommand,
   show: showCommand,
+  run: runAssetCommand,
   workflow: workflowCommand,
   remember: rememberCommand,
   import: importKnowledgeCommand,
@@ -683,7 +773,7 @@ const EXIT_CODE_DESCRIPTIONS: ReadonlyArray<readonly [number, string]> = [
   [EXIT_CODES.SUCCESS, "success"],
   [EXIT_CODES.GENERAL, "not found / command-reported failure"],
   [EXIT_CODES.USAGE, "usage error"],
-  [EXIT_CODES.HEALTH_WARN, "health warn (akm health only)"],
+  [EXIT_CODES.HEALTH_WARN, "health warn (akm doctor or akm health)"],
   [EXIT_CODES.INTERNAL, "internal / unclassified error"],
   [
     EXIT_CODES.TEMPFAIL,
@@ -766,15 +856,15 @@ export function shouldBypassConfigStartup(argv: readonly string[]): boolean {
 
 /**
  * Whether `argv` resolves to a top-level command whose startup config read is
- * best-effort: `info` and `upgrade`. Used by `runCli` (and mirrored in
- * `tests/_helpers/cli.ts`) to scope the best-effort fallback to these two
+ * best-effort: `info`, `doctor info` and `upgrade`. Used by `runCli` (and mirrored in
+ * `tests/_helpers/cli.ts`) to scope the best-effort fallback to these
  * alone. They are NOT on {@link shouldBypassConfigStartup}'s allowlist:
  * unlike a bare bypass, they still read a valid config's
  * `output.format`/`output.detail` like any other command, they just must not be
  * aborted by a config or location they cannot read. `info` is the diagnostic
  * (see `assembleInfo`'s doc comment, src/commands/sources/info.ts, for why);
  * `upgrade` ends by running `akm-migrate apply`, the repair for exactly such a
- * config or a retired location variable (see `src/core/paths.ts`), so it must
+ * config (see `src/core/paths.ts`), so it must
  * reach it. Every other command reads config exactly as before — a broken
  * config throws here and the command never runs.
  */
@@ -784,7 +874,11 @@ export function readsConfigBestEffort(argv: readonly string[]): boolean {
   const args = separator === -1 ? userArgs : userArgs.slice(0, separator);
   const commandIndex = findCittyTopLevelCommandIndex(args, MAIN_TOP_LEVEL_ARGS);
   const command = commandIndex >= 0 ? args[commandIndex] : undefined;
-  return command === "info" || command === "upgrade";
+  if (command === "info" || command === "upgrade") return true;
+  if (command !== "doctor") return false;
+  const doctorArgs = args.slice(commandIndex + 1);
+  const subcommandIndex = findCittyTopLevelCommandIndex(doctorArgs, doctorCommand.args as ArgsDef);
+  return subcommandIndex >= 0 && doctorArgs[subcommandIndex] === "info";
 }
 
 // ── Exit codes ──────────────────────────────────────────────────────────────
@@ -934,6 +1028,7 @@ const HELP_SECTIONS: ReadonlyArray<{
       "setup",
       "index",
       "lint",
+      "doctor",
       "health",
       "metrics",
       "config",
@@ -1147,6 +1242,31 @@ export function insertBareListSubcommand(argv: string[]): string[] {
  * stop the rest of startup from running after a fatal early error.
  */
 export async function runCli(): Promise<void> {
+  const originalArgs = process.argv.slice(2);
+  // Select the config file first, so usage capture can read its `usage.capture` key.
+  // A selection error is reported below, after usage capture starts.
+  let selectionError: unknown;
+  try {
+    applyEarlyStderrFlags(process.argv); // so --quiet silences the empty-AKM_CONFIG_FILE warning
+    applyEarlyConfigFlag(process.argv);
+  } catch (error) {
+    selectionError = error;
+  }
+  const finishUsage = startUsage(main as UsageCommand, originalArgs, pkgVersion);
+  try {
+    if (selectionError !== undefined) {
+      emitJsonError(selectionError);
+      return;
+    }
+    await runCliInvocation();
+  } finally {
+    // Deliver catchable signals queued during synchronous child execution.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    finishUsage();
+  }
+}
+
+async function runCliInvocation(): Promise<void> {
   process.argv = insertBareListSubcommand(process.argv);
   // Mint the ParsedInvocation singleton from the (normalized) argv — the ONE
   // place argv is parsed for the whole process.
@@ -1159,8 +1279,6 @@ export async function runCli(): Promise<void> {
   // invalid; surface it through the same JSON-error path the rest of the CLI uses
   // rather than letting the raw exception escape with a stack trace.
   try {
-    applyEarlyConfigFlag(process.argv);
-    applyEarlyStderrFlags(process.argv);
     const bypassConfig = shouldBypassConfigStartup(process.argv);
     // Off the bypass allowlist, every command reads config here exactly as
     // it always has: an invalid config.json throws, `emitJsonError` reports
@@ -1206,6 +1324,12 @@ export async function runCli(): Promise<void> {
   ) {
     warn(`[output] '--format' has no effect on 'akm ${commandPath.join(" ")}' — its output is not a result envelope.`);
   }
+
+  warnDeprecatedUse(
+    commandPath,
+    invocation,
+    resolveDeepestCittyCommand(main as AnyCittyCommand, process.argv.slice(2)).args as ArgsDef | undefined,
+  );
 
   // First-time-user breadcrumb: when run with no subcommand AND no config
   // exists yet AND stderr is a TTY, print a friendly pointer to `akm setup`

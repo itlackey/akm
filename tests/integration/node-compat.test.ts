@@ -922,7 +922,7 @@ describe("workflow smoke parity", () => {
     assertNoBoundaryLeak(created, "workflow create");
     expect(created.status).toBe(0);
 
-    const run = nodeRun(["workflow", "run", "workflows/smoke-flow", "--timeout-ms=1"], nodeEnv);
+    const run = nodeRun(["workflow", "run", "workflows/smoke-flow", "--timeout=1"], nodeEnv);
     assertNoBoundaryLeak(run, "workflow run");
     expect(run.status).toBe(1);
     const runId = (parseJson(run.stdout) as { run?: { id?: string } } | undefined)?.run?.id;

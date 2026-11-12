@@ -27,6 +27,8 @@ export interface MetricsUsageRow {
   totalMs?: number;
   reason?: string;
   tags?: string[];
+  /** The agent harness, and its session when known, that made the event; absent on rows recorded without one. */
+  agent?: { harness: string; session?: string };
 }
 
 /** The `llm_usage` events of one UTC day x stage x process x engine x model x outcome, summed. */

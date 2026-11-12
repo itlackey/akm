@@ -671,12 +671,12 @@ describe("akmShow markdown fragments", () => {
   test("an unmatched fragment's hint points at the outline", async () => {
     const error = await akmShow({ ref: "knowledge/guide.md#nope" }).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(NotFoundError);
-    expect((error as NotFoundError).hint()).toContain("akm show <ref> --detail brief");
+    expect((error as NotFoundError).hint()).toContain("akm show <ref> --outline");
   });
 
   test("the knowledge action points large documents at the outline, then one section", async () => {
     const result = await akmShow({ ref: "knowledge/guide.md" });
-    expect(result.action).toContain("akm show <ref> --detail brief");
+    expect(result.action).toContain("akm show <ref> --outline");
     expect(result.action).toContain("`toc`");
     expect(result.action).toContain("akm show <ref>#<slug>");
   });

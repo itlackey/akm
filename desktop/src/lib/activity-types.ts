@@ -58,6 +58,7 @@ export interface ActivityOverview {
       byStage: Record<string, ModelCount>;
     };
     tasks: { runs: number; failed: number; byTask: ActivityTask[] };
+    index?: { runs: number; recent: Array<{ at: string; mode: string; totalMs: number }> };
     proposals: { byStatus: Record<string, number> };
     notes: string[];
     workflows?: { byModel: Record<string, number> };
@@ -148,5 +149,60 @@ export interface ActivityTaskHistory {
   available: boolean;
   totalCount: number;
   count: number;
-  runs: Array<{ status: string; startedAt: string; durationMs: number | null; detail: Record<string, unknown> | null }>;
+  runs: Array<{
+    status: string;
+    startedAt: string;
+    durationMs: number | null;
+    trigger?: "schedule" | "manual" | null;
+    detail: Record<string, unknown> | null;
+  }>;
+}
+export interface ActivityTaskRun {
+  taskId: string;
+  status: string;
+  startedAt: string;
+  finishedAt: string | null;
+  durationMs: number | null;
+  trigger: "schedule" | "manual" | null;
+}
+export interface ActivityWorkflowRun {
+  id: string;
+  workflowRef: string;
+  title: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+  harness: string | null;
+  session: string | null;
+}
+export interface WorkflowAttempt {
+  attempt: number;
+  phase: string;
+  status: string;
+  startedAt: string;
+  finishedAt: string | null;
+  tokens: number | null;
+  failureReason: string | null;
+}
+export interface WorkflowTrace {
+  run: ActivityWorkflowRun & { workflowTitle: string; agentHarness?: string | null; agentSessionId?: string | null };
+  steps: Array<{ id: string; title: string; status: string; sequenceIndex: number | null; completedAt: string | null }>;
+  units: Array<{
+    unitId: string;
+    nodeId: string;
+    stepId: string | null;
+    phase: string | null;
+    status: string;
+    runtimeKind: string | null;
+    engine: string | null;
+    tokens: number | null;
+    startedAt: string | null;
+    finishedAt: string | null;
+    failureReason: string | null;
+    diagnostic: string | null;
+    sessionId: string | null;
+    attempts: WorkflowAttempt[];
+  }>;
+  children: Array<{ runId: string; workflowRef: string; status: string }>;
 }

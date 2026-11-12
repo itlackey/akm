@@ -19,6 +19,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { applyEarlyConfigFlag } from "../../src/cli";
 import { getConfigPath } from "../../src/core/paths";
 import { runCliCapture } from "../_helpers/cli";
 import {
@@ -157,5 +158,15 @@ describe("akm setup against a config akm 0.9 cannot load", () => {
 
     expect(fs.existsSync(stash)).toBe(false);
     expect(fs.existsSync(path.join(process.env.XDG_CACHE_HOME as string, "akm", "config-backups"))).toBe(false);
+  });
+
+  test("the retired inline-JSON --config is rejected with the --endpoint hint, not read as a file path", () => {
+    for (const argv of [
+      ["setup", "--yes", "--config", "{}"],
+      ["setup", "--yes", "--config={}"],
+      ["--config", '{"a":1}', "setup"],
+    ]) {
+      expect(() => applyEarlyConfigFlag(["bun", "akm", ...argv])).toThrow(/Unknown flag "--config"/);
+    }
   });
 });

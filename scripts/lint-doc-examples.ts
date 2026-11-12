@@ -308,15 +308,15 @@ function checkInvocation(file: string, line: number, tokens: string[], violation
   }
 
   const allowed = collectArgMap(chain);
-  const dynamicWorkflowParams = chain[chain.length - 1]?.path === "akm workflow run";
+  const dynamicInputFlags = ["akm workflow run", "akm run"].includes(chain[chain.length - 1]?.path ?? "");
   for (const t of rest) {
     if (!t.startsWith("-") || t === "-" || t === "--" || isPlaceholder(t)) continue;
     const bare = (t.startsWith("--") ? t.slice(2) : t.slice(1)).split("=")[0];
     if (!bare || isAllowedFlag(bare, allowed)) continue;
     // Match the runtime's deliberately dynamic namespace: unknown long flags
-    // on `workflow run` are exact declared workflow parameters, validated
-    // against the frozen plan before a run is created. Short flags stay strict.
-    if (dynamicWorkflowParams && t.startsWith("--")) continue;
+    // on `workflow run` / `run` are validated by the selected execution
+    // handler against its declared parameters or inputs. Short flags stay strict.
+    if (dynamicInputFlags && t.startsWith("--")) continue;
     record(t, `unknown flag \`${t}\` for \`${chain[chain.length - 1]!.path}\``);
   }
 }

@@ -6,15 +6,17 @@
 
 ```sh
 akm curate "<task>"                  # Best matches for a task, with previews (start here)
-akm curate "<task>" --pack 4000      # Same hits' content as one bundle of at most 4000 tokens
+akm curate "<task>" --max-tokens 4000 # Same hits' content as one bundle of at most 4000 tokens
 akm search "<query>"                 # Local sources (or the project's `from`); --type <t> filters
 akm search "<query>" --from all      # Also search registries
 akm show <ref>                       # Read an asset
+akm run <ref>                        # Run an agent, command, task or workflow asset
+akm doctor                           # Health checks; `doctor metrics|info|log` report
 akm help <command>                   # A command's options
 akm env run <ref> -- <cmd>           # Inject an env asset's values (secrets: akm secret run <ref> <VAR> -- <cmd>)
 ```
 
-For a large document, `akm show <ref> --detail brief` returns its outline (`toc`, no body); `akm show <ref>#<slug>` reads one section.
+For a large document, `akm show <ref> --outline` returns its outline (`toc`, no body); `akm show <ref>#<slug>` reads one section.
 
 ## Feedback
 
@@ -42,7 +44,7 @@ On failure stderr carries `{"ok": false, "error": "...", "code": "...", "hint": 
 | 0 | Success |
 | 1 | Not found or command-reported failure |
 | 2 | Usage / bad input |
-| 4 | Health warning (`akm health` only) |
+| 4 | Health warning (`akm doctor` or `akm health`) |
 | 70 | Internal / unclassified error |
 | 75 | Transient: retry shortly |
 | 78 | Configuration error |

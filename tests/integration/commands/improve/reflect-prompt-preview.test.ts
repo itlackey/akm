@@ -20,9 +20,16 @@ import { archiveProposal, createProposal } from "../../../../src/commands/propos
 import { appendEvent } from "../../../../src/core/events";
 import { getStateDbPath, openStateDatabase } from "../../../../src/core/state-db";
 import { writeLesson } from "../../../_helpers/assets";
+import { runCliCapture } from "../../../_helpers/cli";
 import { makeConfig } from "../../../_helpers/factories";
 import { withTestImproveLlm } from "../../../_helpers/improve-config";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage, withMockedFetch } from "../../../_helpers/sandbox";
+import {
+  type IsolatedAkmStorage,
+  withIsolatedAkmStorage,
+  withMockedFetch,
+  writeSandboxConfig,
+} from "../../../_helpers/sandbox";
+import { snapshotTree } from "../../../_helpers/snapshot-tree";
 
 let storage: IsolatedAkmStorage;
 
@@ -35,6 +42,60 @@ afterEach(() => {
 });
 
 describe("renderReflectPromptPreview (#952)", () => {
+  test("doctor prompt preserves legacy selection and output without model calls or writes", async () => {
+    writeLesson(storage.stashDir, "test-lesson", "existing description", "existing usage");
+    writeSandboxConfig(withTestImproveLlm(makeConfig(storage.stashDir)));
+    const before = snapshotTree(storage.root);
+    await withMockedFetch(
+      async () => {
+        const options = [
+          "--task",
+          "Inspect this guidance",
+          "--connection",
+          "default",
+          "--model",
+          "fixture-model",
+          "--format",
+          "json",
+        ];
+        const legacy = await runCliCapture(["improve", "lessons/test-lesson", "--show-prompt", ...options]);
+        const alias = await runCliCapture(["doctor", "prompt", "lessons/test-lesson", ...options]);
+        expect(legacy.code).toBe(0);
+        expect(alias.code).toBe(0);
+        expect(alias.stdout).toBe(legacy.stdout);
+        expect(JSON.parse(alias.stdout).prompt).toContain("Inspect this guidance");
+        const text = await runCliCapture(["doctor", "prompt", "lessons/test-lesson", "--format", "text"]);
+        expect(text.code).toBe(0);
+        expect(text.stdout).toContain("Current asset content");
+        const invalid = await runCliCapture(["doctor", "prompt", "report"]);
+        expect(invalid.code).not.toBe(0);
+        expect(invalid.stdout + invalid.stderr).toContain("fully-qualified asset ref");
+      },
+      () => {
+        throw new Error("prompt preview must not call a model");
+      },
+    );
+    expect(snapshotTree(storage.root)).toEqual(before);
+  });
+  test("doctor prompt rejects extra positionals and -- tails without execution or writes", async () => {
+    writeLesson(storage.stashDir, "test-lesson", "existing description", "existing usage");
+    writeSandboxConfig(withTestImproveLlm(makeConfig(storage.stashDir)));
+    const before = snapshotTree(storage.root);
+    await withMockedFetch(
+      async () => {
+        for (const tail of [["extra"], ["--", "extra"], ["--"]]) {
+          const result = await runCliCapture(["doctor", "prompt", "lessons/test-lesson", ...tail]);
+          expect(result.code, result.stderr).toBe(2);
+          expect(result.stdout).toBe("");
+          expect(result.stderr).toContain("exactly one ref");
+        }
+      },
+      () => {
+        throw new Error("invalid prompt invocation must not call a model");
+      },
+    );
+    expect(snapshotTree(storage.root)).toEqual(before);
+  });
   test("renders the composed prompt for a fixture asset with the #952 framing and no engine call", async () => {
     const stashDir = storage.stashDir;
     writeLesson(stashDir, "test-lesson", "existing description", "existing usage");

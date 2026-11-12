@@ -10,10 +10,10 @@ ones.
 
 | Variable | Linux / macOS default | Windows default | Override |
 |---|---|---|---|
-| `$CONFIG` | `~/.config/akm` | `%APPDATA%\akm` | `--config` / `AKM_CONFIG_FILE` (its folder), then `XDG_CONFIG_HOME` |
-| `$CACHE` | `~/.cache/akm` | `%LOCALAPPDATA%\akm` | `paths.cache` in the config file, then `XDG_CACHE_HOME` |
-| `$DATA` | `~/.local/share/akm` | `%LOCALAPPDATA%\akm\data` | `paths.data` in the config file, then `XDG_DATA_HOME` |
-| `$STATE` | `~/.local/state/akm` | `%LOCALAPPDATA%\akm\state` | `paths.state` in the config file, then `XDG_STATE_HOME` |
+| `$CONFIG` | `~/.config/akm` | `%APPDATA%\akm` | `AKM_CONFIG_DIR`, then `XDG_CONFIG_HOME` (`credentials.json`, `models.json`, and `config.json` unless `--config` / `AKM_CONFIG_FILE` names another file) |
+| `$CACHE` | `~/.cache/akm` | `%LOCALAPPDATA%\akm` | `AKM_CACHE_DIR`, then `paths.cache` in the config file, then `XDG_CACHE_HOME` |
+| `$DATA` | `~/.local/share/akm` | `%LOCALAPPDATA%\akm\data` | `AKM_DATA_DIR`, then `paths.data` in the config file, then `XDG_DATA_HOME` |
+| `$STATE` | `~/.local/state/akm` | `%LOCALAPPDATA%\akm\state` | `AKM_STATE_DIR`, then `paths.state` in the config file, then `XDG_STATE_HOME` |
 | `$STASH` | `~/akm` (where `akm bundle create` puts a new bundle) | `%USERPROFILE%\Documents\akm` | `defaultBundle` and `bundles.<id>.path` in the config file, or `--bundle <name>` |
 
 `akm setup --dir <a directory under /tmp, /var/tmp, or a macOS temp directory>`
@@ -47,7 +47,7 @@ are not read by akm and nothing removes them; they are inert and safe to delete.
 Managed openers set a 30,000 ms `busy_timeout`; the fire-and-forget usage-telemetry
 writes lower it to 250 ms, and `akm info` reads the index with 750 ms. The journal mode is WAL, and
 it falls back to DELETE when the data directory is on a detected network
-filesystem. The rollback-journal mode also sets `synchronous = FULL`
+filesystem (Linux detection only; there is no override). The rollback-journal mode also sets `synchronous = FULL`
 (`src/storage/sqlite-pragmas.ts`). Foreign keys are on for `index.db` and
 `state.db` and off for `logs.db`.
 

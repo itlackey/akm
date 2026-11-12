@@ -179,15 +179,14 @@ describe("akm info when environment resolution itself fails (a10-info, infoComma
     }
   });
 
-  test("a retired location variable is reported in the output, not thrown: exit 0 with the fix named", async () => {
-    const result = await spawnAkm(["info", "--format", "json"], { AKM_DATA_DIR: "/somewhere/akm-data" });
+  test("a retired bundle variable is reported in the output, not thrown: exit 0 with the fix named", async () => {
+    const result = await spawnAkm(["info", "--format", "json"], { AKM_BUNDLE_DIR: "/somewhere/akm-bundle" });
     expect(result.code, result.stderr).toBe(0);
     expect(result.elapsedMs).toBeLessThan(MAX_MS);
     const parsed = JSON.parse(result.stdout);
     expect(parsed.ok).toBe(true);
-    expect(parsed.configError).toContain("AKM_DATA_DIR");
+    expect(parsed.configError).toContain("AKM_BUNDLE_DIR");
     expect(parsed.configError).toContain("akm migrate apply");
-    expect(parsed.configError).toContain("AKM_CONFIG_FILE");
   });
 
   test("a bad `paths` value is reported in the output, not thrown: exit 0 with the reason", async () => {

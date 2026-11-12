@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { getStringArg, parsePositiveIntFlag } from "../../cli/parse-args";
+import { getStringArg, parseTimeoutFlag } from "../../cli/parse-args";
 import { SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
 import { defineJsonCommand, EXIT_CODES, output } from "../../cli/shared";
 import { loadConfig } from "../../core/config/config";
@@ -16,14 +16,11 @@ import {
   prepareCommandInvocation,
 } from "./command-execution";
 
-/** `akm command run <ref>` was the 0.9 spelling; a lone `run` is still a command named `run`. */
+/** `akm command run <ref>` was the 0.9 and 0.10 spelling, now `akm run <ref>`; a lone `run` is still a command named `run`. */
 function rejectRetiredRunSpelling(positionals: unknown): void {
   const tokens = Array.isArray(positionals) ? positionals.map(String) : [];
   if (tokens[0] !== "run" || tokens.length < 2) return;
-  throw new UsageError(
-    `\`akm command run <ref>\` is now \`akm command <ref>\`: drop \`run\`, as in \`akm command ${tokens[1]}\`.`,
-    "INVALID_FLAG_VALUE",
-  );
+  throw new UsageError(`\`akm command run <ref>\` was removed: use \`akm run ${tokens[1]}\`.`, "INVALID_FLAG_VALUE");
 }
 
 function exactStringArg(args: unknown, key: string): string | undefined {
@@ -52,7 +49,7 @@ export const commandCommand = defineJsonCommand({
       description: "Override the command's agent selector with a portable agent ref or native harness selector",
     },
     ...SELECTION_ARGS,
-    "timeout-ms": { type: "string", description: "Override the execution timeout in milliseconds" },
+    timeout: { type: "string", description: "Override the execution timeout: a duration (30s, 2m) or milliseconds" },
     cwd: { type: "string", description: "Override the execution workspace/current working directory" },
     "dry-run": {
       type: "boolean",
@@ -63,7 +60,7 @@ export const commandCommand = defineJsonCommand({
   async run({ args }) {
     rejectRetiredRunSpelling(args._);
     if (args.verbose === true) setVerbose(true);
-    const timeoutMs = parsePositiveIntFlag(exactStringArg(args, "timeout-ms"), "--timeout-ms");
+    const timeoutMs = parseTimeoutFlag(exactStringArg(args, "timeout"));
     const current: Record<string, unknown> = {};
     const agent = getStringArg(args, "agent");
     const workspace = getStringArg(args, "cwd");

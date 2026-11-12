@@ -4,7 +4,7 @@
 
 /**
  * `akm improve` field re-test (#957): a real reflect dispatch against a dead
- * endpoint used to be silent and unstoppable — `--timeout-ms` never aborted
+ * endpoint used to be silent and unstoppable — `--timeout` never aborted
  * the in-flight request and SIGTERM was ignored, needing `kill -9`. This
  * spawns the REAL CLI process (`bun src/cli.ts`) with one real memory asset
  * and a `quick` (reflect-only) strategy against a mock chat-completions
@@ -12,7 +12,7 @@
  *
  *   1. a default-level heartbeat line appears once the run has waited a few
  *      seconds on its first model response, so the run is never silent;
- *   2. `--timeout-ms` aborts the in-flight request and ends the run promptly
+ *   2. `--timeout` aborts the in-flight request and ends the run promptly
  *      instead of waiting out the connection's own (much longer) timeout;
  *   3. SIGTERM sent while a request is in flight ends the process within a
  *      bounded grace period.
@@ -222,7 +222,7 @@ function stageRealCliLauncher(root: string): { launcherPath: string; pidFile: st
 }
 
 describe("akm improve — real reflect dispatch against a dead endpoint (#957)", () => {
-  test("--timeout-ms aborts the in-flight request and prints the first-response heartbeat", async () => {
+  test("--timeout aborts the in-flight request and prints the first-response heartbeat", async () => {
     writeMemory("note-a");
     const { server, requestCount } = hangingChatServer();
     let child: ReturnType<typeof Bun.spawn> | undefined;
@@ -238,7 +238,7 @@ describe("akm improve — real reflect dispatch against a dead endpoint (#957)",
           "memories/note-a",
           "--strategy",
           "reflect-only",
-          "--timeout-ms",
+          "--timeout",
           "7000",
           "--json-to-stdout",
         ],
@@ -350,7 +350,7 @@ describe("akm improve — real reflect dispatch against a dead endpoint (#957)",
     }
   }, 30_000);
 
-  test("launcher-mediated --timeout-ms 2000 ends the real CLI child promptly (#957)", async () => {
+  test("launcher-mediated --timeout 2000 ends the real CLI child promptly (#957)", async () => {
     writeMemory("note-d");
     const { server, requestCount } = hangingChatServer();
     const sandbox = makeSandboxDir("akm-launcher-improve-timeout-");
@@ -362,7 +362,7 @@ describe("akm improve — real reflect dispatch against a dead endpoint (#957)",
 
       const startedAt = Date.now();
       launcherProc = Bun.spawn(
-        ["bun", launcherPath, "improve", "memories/note-d", "--strategy", "reflect-only", "--timeout-ms", "2000"],
+        ["bun", launcherPath, "improve", "memories/note-d", "--strategy", "reflect-only", "--timeout", "2000"],
         { cwd: repoRoot, env: { ...process.env }, stdout: "pipe", stderr: "pipe" },
       );
 

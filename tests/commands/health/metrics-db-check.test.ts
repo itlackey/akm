@@ -12,7 +12,9 @@ import { getMetricsDbPath, openMetricsDatabase } from "../../../src/core/metrics
 import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import { foldClosedDays } from "../../../src/indexer/metrics/fold";
 import type { Database } from "../../../src/storage/database";
+import { openDatabase } from "../../../src/storage/database";
 import { insertEvent } from "../../../src/storage/repositories/events-repository";
+import { withMetricsHistory } from "../../../src/storage/repositories/metrics-rollup-repository";
 import { insertUsage } from "../../_helpers/metrics-fixtures";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
@@ -68,6 +70,27 @@ describe("metrics-db check", () => {
     expect(result.message).toContain("2 day(s) folded, 2026-10-01 to 2026-10-03");
     expect(result.evidence).toMatchObject({ foldedDays: 2, lastFoldedDay: "2026-10-03" });
     expect(result.evidence?.sizeBytes).toBeGreaterThan(0);
+  });
+
+  test("a metrics.db written by 0.10.261119 (CLI usage tables, no ledger, no folded_day) reads as no day folded yet", () => {
+    const file = getMetricsDbPath();
+    const legacy = openDatabase(file);
+    legacy.exec("CREATE TABLE cli_usage_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    legacy.close();
+    seedDay("2026-10-01");
+    const result = check();
+    expect(result.status).toBe("warn");
+    expect(result.message).not.toContain("could not be read");
+    expect(result.evidence).toMatchObject({ foldedDays: 0, unfoldedDays: 1, oldestUnfoldedDay: "2026-10-01" });
+    // The history reader has nothing to add either, and says nothing about it.
+    expect(withMetricsHistory(state, getStateDbPath(), () => "read")).toBeUndefined();
+    // The first fold migrates the file and keeps the usage table.
+    const metrics = openMetricsDatabase();
+    foldClosedDays(state, metrics, { nowMs: NOW });
+    expect(metrics.prepare("SELECT COUNT(*) AS n FROM folded_day").get()).toEqual({ n: 1 });
+    expect(metrics.prepare("SELECT COUNT(*) AS n FROM cli_usage_meta").get()).toEqual({ n: 0 });
+    metrics.close();
+    expect(check().status).toBe("pass");
   });
 
   test("a day that gained rows after its fold counts as not folded", () => {

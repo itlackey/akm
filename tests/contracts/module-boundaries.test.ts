@@ -17,7 +17,7 @@ const ALLOWED_UPWARD: Record<string, number> = {
   "indexer>llm": 17,
   "indexer>registry": 1,
   "indexer>sources": 5,
-  "indexer>workflows": 4,
+  "indexer>workflows": 5,
   "storage>indexer": 6,
   "storage>llm": 1,
   "storage>workflows": 1,

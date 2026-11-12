@@ -78,6 +78,12 @@ export function formatShowPlain(r: Record<string, unknown>, detail: DetailLevel)
       }
     }
   }
+  if (r.contentBudget) {
+    const budget = r.contentBudget as { maxTokens: number; estimatedTokens: number; truncated: boolean };
+    lines.push(
+      `body budget: ~${budget.estimatedTokens}/${budget.maxTokens} tokens (4 characters/token; frontmatter excluded); truncated: ${budget.truncated}`,
+    );
+  }
   const payloads = [r.content, r.template, r.prompt].filter((value) => value != null).map(String);
   if (Array.isArray(r.steps) && r.steps.length > 0) {
     if (lines.length > 0) lines.push("");

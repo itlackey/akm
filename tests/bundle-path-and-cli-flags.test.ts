@@ -138,10 +138,10 @@ describe("strict integer flags", () => {
     expect(result.stderr).toContain("--max-diff-lines");
   });
 
-  test("`proposal extract --timeout-ms 5x` is rejected", async () => {
-    const result = await runCliCapture(["proposal", "extract", "--type", "x", "--timeout-ms", "5x"]);
+  test("`proposal extract --timeout 5x` is rejected", async () => {
+    const result = await runCliCapture(["proposal", "extract", "--type", "x", "--timeout", "5x"]);
     expect(result.code).toBe(2);
-    expect(result.stderr).toContain("--timeout-ms");
+    expect(result.stderr).toContain("--timeout");
   });
 
   test("`workflow run --max-retries 1x` is rejected", async () => {

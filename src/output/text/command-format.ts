@@ -132,6 +132,7 @@ export function formatRememberPlain(r: Record<string, unknown>): string {
 }
 
 export function formatImportPlain(r: Record<string, unknown>): string {
+  if (r.destination !== undefined) return formatClonePlain(r).replace(/^Cloned/, "Imported");
   const ref = String(r.ref ?? "?");
   const source = String(r.source ?? "?");
   const pathValue = String(r.path ?? "?");

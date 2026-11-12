@@ -163,6 +163,12 @@ function killTree(pid: number | undefined) {
   }
 }
 
+/**
+ * `--next` is Deprecated in the CLI and prints one deprecation line on stderr. It is not the same as `--channel next`
+ * (that switches the installed plugins too) and the host CLI may be older, so keep `--next` and silence the notice.
+ */
+const quietNext = (flags: readonly string[]): string[] => (flags.includes("--next") ? ["--quiet"] : []);
+
 export const runHost: Run = (file, args, { env, home, timeout = 30_000 }) =>
   new Promise((resolve, reject) => {
     // Its own process group on POSIX, so the timeout can end installer children as well as the command itself.
@@ -467,7 +473,7 @@ export class HostTools {
               json(
                 await this.invoke(
                   this.state.cli.path,
-                  ["upgrade", "--check", ...check, "--format", "json"],
+                  ["upgrade", "--check", ...check, ...quietNext(check), "--format", "json"],
                   env,
                   120_000,
                 ),
@@ -510,7 +516,12 @@ export class HostTools {
     let result: Loose;
     try {
       result = json(
-        await this.invoke(this.state.cli?.path as string, ["upgrade", ...flags, "--format", "json"], env, 30 * 60_000),
+        await this.invoke(
+          this.state.cli?.path as string,
+          ["upgrade", ...flags, ...quietNext(flags), "--format", "json"],
+          env,
+          30 * 60_000,
+        ),
       );
     } catch (error) {
       let partial: UpgradeSummary | undefined;
@@ -545,7 +556,12 @@ export class HostTools {
     try {
       summary = summarizeUpgrade(
         json(
-          await this.invoke(this.state.cli.path, ["upgrade", "--check", ...flags, "--format", "json"], env, 120_000),
+          await this.invoke(
+            this.state.cli.path,
+            ["upgrade", "--check", ...flags, ...quietNext(flags), "--format", "json"],
+            env,
+            120_000,
+          ),
         ),
       );
     } catch {

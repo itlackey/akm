@@ -5,7 +5,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { _resetWarnOnceForTests } from "../src/core/warn";
 import { akmIndex } from "../src/indexer/indexer";
 import { runCliCapture } from "./_helpers/cli";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "./_helpers/sandbox";
@@ -80,13 +79,42 @@ async function installHostileInferenceKey(): Promise<void> {
 }
 
 describe("command CLI execution convergence", () => {
-  test("`command run <ref>` is a usage error naming `akm command <ref>`, with no bundle configured", async () => {
+  test("`command run <ref>` is a usage error naming `akm run <ref>`, with no bundle configured", async () => {
     // A bundle-less sandbox: the check runs before any config or bundle lookup.
     fs.rmSync(storage.stashDir, { recursive: true, force: true });
     const result = await runCliCapture(["command", "run", "commands/review", "--dry-run", "--format=json"]);
     expect(result.code).toBe(2);
     const error = JSON.parse(result.stderr.trim()) as { error?: string };
-    expect(error.error).toContain("akm command commands/review");
+    expect(error.error).toContain("akm run commands/review");
+  });
+
+  test("--timeout takes one duration grammar, and the retired --timeout-ms is a usage error naming it", async () => {
+    const base = ["command", "commands/review", "--dry-run", "--format=json"];
+    const millis = await runCliCapture([...base, "--timeout", "30000"]);
+    const duration = await runCliCapture([...base, "--timeout", "30s"]);
+    expect(millis.code).toBe(0);
+    expect(duration.code).toBe(0);
+    expect(JSON.parse(duration.stdout)).toEqual(JSON.parse(millis.stdout));
+    expect(JSON.parse(duration.stdout).provenance).toContainEqual({
+      field: "runtime.timeoutMs",
+      layer: "current-invocation",
+      kind: "current",
+      via: "explicit",
+    });
+    for (const command of [
+      ["command", "commands/review"],
+      ["agent"],
+      ["proposal", "new", "skill", "fixture", "--task", "fixture guidance"],
+      ["proposal", "extract", "--type", "claude"],
+      ["improve"],
+      ["task", "add", "fixture", "--schedule", "@daily", "--command", "echo fixture"],
+    ]) {
+      const before = snapshotTree(storage.root);
+      const retired = await runCliCapture([...command, "--timeout-ms", "1000"]);
+      expect(retired.code).toBe(2);
+      expect(retired.stdout + retired.stderr).toContain("--timeout");
+      expect(snapshotTree(storage.root)).toEqual(before);
+    }
   });
 
   test("command --dry-run authorizes and lowers without dispatch, credentials, usage, or persistent writes", async () => {

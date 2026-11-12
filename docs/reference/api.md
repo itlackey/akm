@@ -22,6 +22,7 @@ function curate(
   options?: {
     limit?: number; type?: string; source?: string | string[];
     filters?: Record<string, string | string[]>;
+    include?: { quality?: "proposed" | "proposed"[]; type?: string | string[] };
     prefer?: Record<string, string | string[]>;
     belief?: "all" | "current" | "historical";
     format?: "text" | "json";
@@ -52,9 +53,10 @@ function curate(
   await curate("deploy to prod", { source: "team", filters: { user: "alice" } });
   await curate("investigate the old deployment port", { belief: "historical" });
   ```
+- **Include.** `include` relaxes only named default exclusions, like repeatable CLI `--include`: `{ quality: "proposed", type: ["session"] }`. Explicit query, type, source and filters still apply. An explicit `include` replaces the entire project value; `{}` clears it. Invalid keys, quality values, empty values and empty value arrays reject.
 - **Project.** `cwd` is the caller's working directory; with no `project`, the
   [configured project](configuration.md#projects) whose path contains it (the
-  most specific one) supplies the defaults for `source`, `filters` and `prefer`
+  most specific one) supplies the defaults for `source`, `filters`, `prefer` and `include`
   you leave out. `project` names one instead (`"none"`: no project), and an
   unknown name rejects with `INVALID_FLAG_VALUE`. Without either, it uses the
   process's directory. When a project applies, the result carries a `project`

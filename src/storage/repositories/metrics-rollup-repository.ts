@@ -88,6 +88,9 @@ export function withMetricsHistory<T>(
   try {
     metrics = openDatabase(file, { readonly: true, create: false });
     applyReadonlyPragmas(metrics);
+    // A metrics.db that only 0.10.261119's CLI usage counts have created has no ledger and no fold tables: no day
+    // is folded yet, so the raw rows are all there is.
+    if (!hasFoldedDayTable(metrics)) return undefined;
     return fn(metrics);
   } catch (error) {
     warnOnce(
@@ -268,8 +271,19 @@ export function readSkipDaily(
   return { summed, latestSnapshot };
 }
 
+/**
+ * Whether this metrics.db has the fold tables. Its first writer may be 0.10.261119, which keeps CLI usage counts
+ * (`cli_usage_*`) here with no migration ledger: such a file has no `folded_day` until the first fold migrates it.
+ */
+export function hasFoldedDayTable(db: Database): boolean {
+  return Boolean(
+    db.prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'folded_day'").get(),
+  );
+}
+
 /** The first folded day, or undefined for an empty metrics.db. */
 export function firstFoldedDay(db: Database): string | undefined {
+  if (!hasFoldedDayTable(db)) return undefined;
   const row = db.prepare("SELECT MIN(day) AS day FROM folded_day").get() as { day: string | null } | undefined;
   return row?.day ?? undefined;
 }
@@ -287,6 +301,7 @@ export interface FoldedCounts {
 export type FoldedDays = ReadonlyMap<string, FoldedCounts>;
 
 export function readFoldedDays(metricsDb: Database): Map<string, FoldedCounts> {
+  if (!hasFoldedDayTable(metricsDb)) return new Map();
   const rows = metricsDb.prepare("SELECT day, src_events, src_usage, src_runs FROM folded_day").all() as Array<{
     day: string;
     src_events: number;

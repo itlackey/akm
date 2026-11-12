@@ -8,6 +8,8 @@ import type {
   ActivityOverview,
   ActivityPulse,
   ActivityRetrieval,
+  ActivityTaskRun,
+  ActivityWorkflowRun,
   ModelCount,
 } from "./activity-types";
 
@@ -134,4 +136,86 @@ export function rollingSearch(retrieval: ActivityRetrieval, changed: ActivityImp
   const known = rates.filter((rate): rate is number => rate !== null);
   const floor = known.length ? Math.max(0, Math.floor((Math.min(...known) - 10) / 10) * 10) : 0;
   return { labels, rates, marked, floor };
+}
+
+export type TimelineRun = {
+  at: string;
+  tone: "ok" | "fail" | "other";
+  durationMs: number | null;
+  said: string;
+  /** A workflow run's id, for its trace. */
+  runId?: string;
+};
+/** `recorded` is how many runs the window holds when akm says; a row can draw fewer (`runs`). */
+export type TimelineRow = { name: string; task?: string; runs: TimelineRun[]; recorded: number | null };
+const trigger = (value: ActivityTaskRun["trigger"]) =>
+  value === "schedule" ? ", started by the schedule" : value === "manual" ? ", started by hand" : "";
+/**
+ * The runs Desktop is given, as rows on one clock: a row per task, a row per workflow, then improve runs and index
+ * builds. Only runs that started inside the metrics window are drawn. Nothing is derived: a gap is a time with no
+ * recorded run.
+ */
+export function runTimelineRows(
+  data: ActivityOverview,
+  taskRuns: ActivityTaskRun[],
+  workflowRuns: ActivityWorkflowRun[],
+): TimelineRow[] {
+  const window = data.metrics?.window;
+  if (!window) return [];
+  const since = Date.parse(window.since);
+  const until = Date.parse(window.until);
+  const inside = (at: string) => Date.parse(at) >= since && Date.parse(at) <= until;
+  const rows: TimelineRow[] = [];
+  const byTask = new Map<string, TimelineRun[]>();
+  for (const run of taskRuns) {
+    if (!inside(run.startedAt)) continue;
+    const list = byTask.get(run.taskId) ?? [];
+    list.push({
+      at: run.startedAt,
+      tone: run.status === "completed" ? "ok" : run.status === "failed" ? "fail" : "other",
+      durationMs: run.durationMs,
+      said: `${run.status}${trigger(run.trigger)}`,
+    });
+    byTask.set(run.taskId, list);
+  }
+  for (const [task, runs] of [...byTask].sort((a, b) => a[0].localeCompare(b[0])))
+    rows.push({ name: task, task, recorded: null, runs });
+  const byWorkflow = new Map<string, TimelineRun[]>();
+  for (const run of workflowRuns) {
+    if (!inside(run.createdAt)) continue;
+    const name = `Workflow ${run.title || run.workflowRef}`;
+    const end = run.completedAt ? Date.parse(run.completedAt) : Number.NaN;
+    const list = byWorkflow.get(name) ?? [];
+    list.push({
+      at: run.createdAt,
+      tone: run.status === "completed" ? "ok" : run.status === "failed" ? "fail" : "other",
+      durationMs: Number.isFinite(end) ? Math.max(0, end - Date.parse(run.createdAt)) : null,
+      said: `${run.status}${run.harness ? `, started by ${run.harness}` : ""}`,
+      runId: run.id,
+    });
+    byWorkflow.set(name, list);
+  }
+  for (const [name, runs] of [...byWorkflow].sort((a, b) => a[0].localeCompare(b[0])))
+    rows.push({ name, recorded: null, runs });
+  const improve = data.improveRuns.filter((run) => inside(run.startedAt));
+  if (improve.length)
+    rows.push({
+      name: "Improve",
+      recorded: null,
+      runs: improve.map((run) => ({
+        at: run.startedAt,
+        tone: run.ok === true ? "ok" : run.ok === false ? "fail" : "other",
+        durationMs: run.durationMs,
+        said: run.ok === true ? "finished" : run.ok === false ? "failed" : "outcome not recorded",
+      })),
+    });
+  const index = data.metrics?.index;
+  const builds = (index?.recent ?? []).filter((run) => inside(run.at));
+  if (index && builds.length)
+    rows.push({
+      name: "Index builds",
+      recorded: index.runs,
+      runs: builds.map((run) => ({ at: run.at, tone: "ok", durationMs: run.totalMs, said: `${run.mode} build` })),
+    });
+  return rows;
 }

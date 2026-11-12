@@ -1,7 +1,8 @@
 # Data and Telemetry
 
-akm keeps your data on your machine. It has no analytics or crash reporting.
-It makes network requests only to the endpoints you configure or the commands
+akm keeps your data on your machine. It sends no analytics or crash reports.
+It records [local-only counts of its own commands](#cli-usage-counts), which
+never leave your machine. It makes network requests only to the endpoints you configure or the commands
 you run, listed below. This page covers what akm sends, and what it stores and
 where.
 
@@ -61,8 +62,10 @@ Windows uses per-user app-data directories (`%LOCALAPPDATA%\akm\data`,
 
 ### Config directory
 
-`$XDG_CONFIG_HOME/akm` (default `~/.config/akm/`). Choose another config file
-with `--config <file>` or `AKM_CONFIG_FILE`; the files below then sit beside it.
+`$XDG_CONFIG_HOME/akm` (default `~/.config/akm/`). Override with `AKM_CONFIG_DIR`.
+`credentials.json` and `models.json` always live here, even when `--config` or
+`AKM_CONFIG_FILE` selects a config file elsewhere (that file's own directory holds
+only the file and its lock).
 
 | Path | Contents |
 | --- | --- |
@@ -80,7 +83,7 @@ with `--config <file>` or `AKM_CONFIG_FILE`; the files below then sit beside it.
 | `index.db` | The search index. Rebuilt by `akm index --full`. |
 | `state.db` | Durable local state: events, usage records, proposals, task history, improve runs, workflow runs. Not regenerable. |
 | `logs.db` | Log lines from scheduled task runs. Old lines are purged by `akm improve`. |
-| `metrics.db` | The long-lived history: daily rollups of events, LLM calls, usage, queries, selects and latency, and one slim row per improve run, folded in from `state.db` before it purges them. Never purged. Not regenerable: back it up with `state.db`. |
+| `metrics.db` | The long-lived history: daily rollups of events, LLM calls, usage, queries, selects and latency, and one slim row per improve run, folded in from `state.db` before it purges them. Never purged. It also holds the local CLI usage counts, in tables named `cli_usage_*` (see [CLI usage counts](#cli-usage-counts)). Not regenerable: back it up with `state.db`. |
 | `akm.lock` | The lockfile: resolved version, revision and integrity of each installed bundle. `akm.lock.lck` is its write sentinel. |
 | `index.rebuild.lock`, `index.db.write.lock` | Lock files for `akm index` and asset writes. |
 | `secret-locks/` | Per-secret lock files taken while a secret is written. |
@@ -148,11 +151,17 @@ regenerable. akm also writes into it:
   feedback. They feed utility scores and `akm metrics`, and the feedback recorded
   as the user adjusts search ranking. Each record is stamped with its source
   (`user`, `improve`, `task`, `audit` or `unknown`); only `user` records count.
+  When akm runs under an agent harness it can recognize (the same detection
+  workflow runs use: a harness's session variable such as
+  `CLAUDE_CODE_SESSION_ID`, or a harness presence flag), the record's metadata
+  also carries `agent: { harness, session }`, the session only when the harness
+  names one.
 - **Proposals**: pending, accepted, rejected and reverted improvement proposals,
   with their full content, plus the improve ledger of what each stage last did
   with each asset.
 - **Task history and workflow runs**: scheduled task runs and workflow run
-  state.
+  state. A task run records whether the OS scheduler started it (`trigger`:
+  `schedule` or `manual`).
 
 `index_completed` metadata carries the phase timings plus `totalEntries`
 (library size after the run). Runs recorded before this field was added omit it;
@@ -206,6 +215,31 @@ per-call latency (the histogram stays, so a median over those days is an
 estimate), `searchId` links, `env_access` and `curate` event payloads, every
 event type except its daily count, and negative-feedback reasons.
 
+## CLI usage counts
+
+akm records how its own commands are used, on your machine only. Nothing is
+sent anywhere, and it is outside learning, feedback and ranking.
+
+- **Where:** the `cli_usage_*` tables of `metrics.db` in the data directory.
+- **What is recorded** for every command, including `--help`, `--version` and
+  failed attempts: the command path, the flags that were used (their names and,
+  for a few enumerated flags such as `--format` or `--detail`, a safe value),
+  whether each flag was typed or a default, the akm version, the event source
+  (`user`, `agent`, `task`, `improve`, `audit` or `unknown`), the outcome, exit
+  code and duration, a UTC day, and a random instance UUID created on first use.
+- **What is not recorded:** queries, notes, URLs, refs, paths, filter values,
+  secret values, and the arguments passed to a child program. Boolean flags are
+  stored as true or false; every other flag value is stored as `[redacted]`.
+- **How long:** per-invocation detail for 30 days; daily aggregate counters
+  are kept indefinitely.
+- **Reading it:** `akm doctor metrics usage` reports it; `--export` writes the
+  same data as JSON.
+- **Turning it off:** set `usage.capture` to `false` in the config file
+  (`akm config set usage.capture false`). `--read-only` also records nothing for
+  that invocation.
+- It never changes a command's output or exit code: an unwritable, locked or
+  corrupt `metrics.db` is skipped silently.
+
 ## Inspect and clear
 
 ```sh
@@ -228,7 +262,7 @@ the config, data, state and cache directories.
 
 | Variable | Effect |
 | --- | --- |
-| `AKM_CONFIG_FILE` (or `--config <file>`) | The config file to use; its `paths` key (`data`, `state`, `cache`) says where the rest lives. `credentials.json` and the config lock sit beside it |
-| `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR`, `AKM_CACHE_DIR` | Retired. Set without `AKM_CONFIG_FILE`, akm stops with an error that names `akm migrate apply`; see [Retired location variables](configuration.md#retired-location-variables) |
+| `AKM_CONFIG_FILE` (or `--config <file>`) | The config file to use; its `paths` key (`data`, `state`, `cache`) says where the rest lives. The config lock sits beside it; `credentials.json` and `models.json` stay in the config directory |
+| `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR`, `AKM_CACHE_DIR` | Override the config, data, state and cache directories. The variable beats the config file's `paths`, which beats the XDG base. `AKM_CONFIG_FILE` or `--config` beats `AKM_CONFIG_DIR` for the config file |
 | `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME` | XDG bases; akm appends `/akm` |
 | `AKM_NPM_REGISTRY` | Base URL of an npm mirror. Replaces `registry.npmjs.org` for npm bundle resolution. |

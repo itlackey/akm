@@ -26,7 +26,7 @@
 
 import { defineCommand } from "citty";
 import { getParsedInvocation } from "../../cli/invocation";
-import { parsePositiveIntFlag } from "../../cli/parse-args";
+import { parsePositiveIntFlag, parseTimeoutFlag } from "../../cli/parse-args";
 import { SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
 import {
   defineGroupCommand,
@@ -206,7 +206,10 @@ const tasksAddCommand = defineJsonCommand({
         'Exact shell string to run on the schedule (no AI agent), e.g. "akm improve --strategy consolidate".',
     },
     ...SELECTION_ARGS,
-    "timeout-ms": { type: "string", description: "Positive timeout in milliseconds for prompt or command targets" },
+    timeout: {
+      type: "string",
+      description: "Timeout for prompt or command targets: a duration (30s, 2m) or milliseconds",
+    },
     params: { type: "string", description: "Workflow params as a JSON object" },
     name: { type: "string", description: "Human-readable name for the task" },
     "when-to-use": { type: "string", description: "Guidance on when this task runs or should be used" },
@@ -224,7 +227,7 @@ const tasksAddCommand = defineJsonCommand({
       prompt: args.prompt,
       command: args.command,
       ...selectionFromArgs(args),
-      timeoutMs: args["timeout-ms"] === undefined ? undefined : parsePositiveIntFlag(args["timeout-ms"]),
+      timeoutMs: parseTimeoutFlag(args.timeout),
       params: args.params,
       name: args.name,
       when_to_use: args["when-to-use"],
@@ -242,7 +245,7 @@ const tasksAddCommand = defineJsonCommand({
   },
 });
 
-const tasksRunCommand = defineCommand({
+export const tasksRunCommand = defineCommand({
   meta: {
     name: "run",
     description: "Execute a task now (`akm task dispatch` starts a due task this way)",

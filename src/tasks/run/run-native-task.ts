@@ -289,6 +289,6 @@ export async function runNativeTask(input: {
     target: task.kind === "shell" ? { kind: "shell", cmd } : { kind: "script", cmd },
     detail: { exitCode },
   };
-  appendHistory(result, historyReserved);
+  appendHistory(result, historyReserved, provenance.scheduled);
   return result;
 }

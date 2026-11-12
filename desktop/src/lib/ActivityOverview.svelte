@@ -7,25 +7,39 @@
 <script lang="ts">
   import { onDestroy, tick, untrack } from "svelte";
   import { api, date } from "./client";
+  import { navigate } from "./navigation";
   import ActivityChart from "./ActivityChart.svelte";
   import Icon from "./Icon.svelte";
   import { checkLabel, healthCheckAnchor } from "./home-model";
-  import { verticalBars, lines, pChartLine, eventStrip } from "./ui/chart-view.js";
+  import { verticalBars, lines, pChartLine, eventStrip, runTimeline } from "./ui/chart-view.js";
   import { weekStart } from "./ui/lib.js";
-  import { number, percent, duration, tokens, healthGroup, attentionItems } from "./activity-presenter";
+  import {
+    number,
+    percent,
+    duration,
+    tokens,
+    healthGroup,
+    attentionItems,
+    runTimelineRows,
+    type TimelineRun,
+  } from "./activity-presenter";
   import type {
     ActivityOverview,
     ActivityRetrieval,
     ActivityPulse,
     ActivityTaskHistory,
     ActivityRun,
+    ActivityTaskRun,
+    ActivityWorkflowRun,
   } from "./activity-types";
+  import WorkflowTraceView from "./WorkflowTrace.svelte";
   let {
     data,
     retrieval,
     pulse,
     mode = "health",
     requestedTask = "",
+    requestedRun = "",
     refreshedAt = "",
     probedAt = "",
     probe,
@@ -35,6 +49,8 @@
     pulse: ActivityPulse | null;
     mode?: "health" | "runs" | "usage";
     requestedTask?: string;
+    /** A workflow run whose trace the Runs view shows. */
+    requestedRun?: string;
     refreshedAt?: string;
     probedAt?: string;
     probe: () => Promise<void>;
@@ -111,6 +127,33 @@
   const processes = $derived(Object.entries(metrics?.llm.byProcess ?? {}).sort((a, b) => b[1].calls - a[1].calls));
   const tasks = $derived(metrics?.tasks.byTask ?? data.taskFailures ?? []);
   const runs = $derived(data.improveRuns);
+  // The timeline reads every task run and workflow run of the window once, when Runs is shown.
+  let taskRuns = $state<ActivityTaskRun[]>([]);
+  let workflowRuns = $state<ActivityWorkflowRun[]>([]);
+  let runReadFailed = $state(false);
+  let runsFor = 0;
+  $effect(() => {
+    if (mode !== "runs") return;
+    const since = metrics?.window.since ?? "30d";
+    const mine = ++runsFor;
+    void Promise.all([
+      api<{ runs: ActivityTaskRun[]; truncated: boolean }>("/tasks/runs", { since }),
+      api<{ runs: ActivityWorkflowRun[] }>("/workflows/runs", { since }),
+    ]).then(
+      ([tasks, workflows]) => {
+        if (mine !== runsFor) return;
+        taskRuns = tasks.runs;
+        workflowRuns = workflows.runs;
+        runReadFailed = false;
+      },
+      () => {
+        if (mine === runsFor) runReadFailed = true;
+      },
+    );
+  });
+  const timeline = $derived(runTimelineRows(data, taskRuns, workflowRuns));
+  const timelineSaid = (run: TimelineRun) =>
+    run.durationMs === null ? run.said : `${run.said}, took ${duration(run.durationMs)}`;
   async function inspectTask(id = taskId) {
     taskTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const mine = ++selection;
@@ -499,6 +542,78 @@
           >{/each}
       </div>
     </section>{/if}
+  {#if timeline.length && metrics}<section id="run-timeline" class="activity-section">
+      <ActivityChart
+        id="activity-run-timeline"
+        heading="Run timeline"
+        rows={timeline.length}
+        description="When each recorded run started, on one clock. A circle finished, a triangle failed and a diamond ended another way. A gap is a time with no recorded run."
+        option={(token) =>
+          runTimeline(timeline, {
+            since: metrics.window.since,
+            until: metrics.window.until,
+            token,
+            say: timelineSaid,
+          })}
+        onSelect={(event) => {
+          const mark = event.data as { row?: string; run?: TimelineRun } | undefined;
+          if (mark?.run?.runId) {
+            void navigate(
+              `/activity/overview?view=runs&run=${encodeURIComponent(mark.run.runId)}&anchor=workflow-trace`,
+            );
+            return;
+          }
+          const task = timeline.find((row) => row.name === mark?.row)?.task;
+          if (task) void inspectTask(task);
+        }}
+        ><table>
+          <caption>Runs on the timeline</caption><thead
+            ><tr><th>Row</th><th>Runs drawn</th><th>Failed</th><th>Latest run</th></tr></thead
+          ><tbody
+            >{#each timeline as row}<tr
+                ><th>{row.name}</th><td
+                  >{row.runs.length}{row.recorded !== null && row.recorded > row.runs.length
+                    ? ` of ${row.recorded} recorded`
+                    : ""}</td
+                ><td>{row.runs.filter((run) => run.tone === "fail").length}</td><td
+                  >{date(
+                    row.runs
+                      .map((run) => run.at)
+                      .sort()
+                      .at(-1),
+                  )}</td
+                ></tr
+              >{/each}</tbody
+          >
+        </table>
+        <p class="muted small">
+          Improve shows its latest recorded runs and Index builds its latest builds. Select a workflow run's mark to
+          open its trace.
+        </p></ActivityChart
+      >
+    </section>{/if}
+  {#if runReadFailed}<p class="notice notice-warn">The run timeline could not read task and workflow runs.</p>{/if}
+  {#if requestedRun}<WorkflowTraceView id={requestedRun} />{/if}
+  <section id="workflow-runs" class="activity-section">
+    <h2>Workflow runs</h2>
+    {#if workflowRuns.length}<div class="table-wrap">
+        <table>
+          <caption>Workflow runs started in the selected window, newest first</caption><thead
+            ><tr><th>Workflow</th><th>Status</th><th>Started</th><th>Took</th><th>Started by</th></tr></thead
+          ><tbody
+            >{#each workflowRuns.slice(0, 50) as run}<tr
+                ><th
+                  ><a href={`/activity/overview?view=runs&run=${encodeURIComponent(run.id)}&anchor=workflow-trace`}
+                    >{run.title || run.workflowRef}</a
+                  ></th
+                ><td>{run.status}</td><td>{date(run.createdAt)}</td><td
+                  >{run.completedAt ? duration(Date.parse(run.completedAt) - Date.parse(run.createdAt)) : "Running"}</td
+                ><td>{run.harness ?? "Not recorded"}</td></tr
+              >{/each}</tbody
+          >
+        </table>
+      </div>{:else}<p>No workflow runs in this window.</p>{/if}
+  </section>
   <section id="automation" class="activity-section">
     <h2>Scheduled tasks</h2>
     <p class="muted small">Read-only recorded runs. Inspecting never triggers a rerun.</p>

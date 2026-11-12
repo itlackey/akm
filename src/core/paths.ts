@@ -65,46 +65,34 @@ export function resolveConfiguredBundlePath(configured: string, configFilePath?:
 
 /**
  * The config file the installation was pointed at: `--config <file>` (the CLI assigns it to
- * `AKM_CONFIG_FILE` before anything else runs) or `AKM_CONFIG_FILE`, absolute. Credentials
- * and the config lock live beside it. `undefined` when none was chosen: the default file.
+ * `AKM_CONFIG_FILE` before anything else runs) or `AKM_CONFIG_FILE`, absolute. `undefined` when none was
+ * chosen: the default file. An empty `AKM_CONFIG_FILE` warns once and is ignored.
  */
 function selectedConfigFile(env: NodeJS.ProcessEnv): string | undefined {
-  const file = env.AKM_CONFIG_FILE?.trim();
-  return file ? path.resolve(file) : undefined;
+  if (env.AKM_CONFIG_FILE === undefined) return undefined;
+  const file = env.AKM_CONFIG_FILE.trim();
+  if (!file) {
+    warnOnce("empty-akm-config-file", "AKM_CONFIG_FILE is empty; ignoring it.");
+    return undefined;
+  }
+  return path.resolve(file);
 }
-
-/** The variables that located an installation before `AKM_CONFIG_FILE` and the config file's `paths`. */
-export const RETIRED_LOCATION_VARIABLES = {
-  config: "AKM_CONFIG_DIR",
-  data: "AKM_DATA_DIR",
-  state: "AKM_STATE_DIR",
-  cache: "AKM_CACHE_DIR",
-} as const;
 
 /** The variable that named the working bundle before `defaultBundle` and `--bundle` were the only ways. */
 export const RETIRED_BUNDLE_VARIABLE = "AKM_BUNDLE_DIR";
 
 /**
- * A retired variable that still places something is fatal: `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR` or
- * `AKM_CACHE_DIR` set while `AKM_CONFIG_FILE` is not (ignoring it would open empty databases at the default locations),
- * or `AKM_BUNDLE_DIR` naming a directory other than the bundle akm resolves without it (ignoring it would work on a
- * different bundle than the host meant). `AKM_BUNDLE_DIR` naming that same bundle is ignored with no message: every
- * scheduler row akm 0.9.32 and 0.10 wrote inlines it, and hosts set it equal to `defaultBundle`. With
- * `AKM_CONFIG_FILE` set the installation is already named, so none of them is checked.
+ * `AKM_BUNDLE_DIR` naming a directory other than the bundle akm resolves without it is fatal (ignoring it would work
+ * on a different bundle than the host meant). Naming that same bundle is ignored with no message: every scheduler row
+ * akm 0.9.32 and 0.10 wrote inlines it, and hosts set it equal to `defaultBundle`. With `AKM_CONFIG_FILE` set the
+ * installation is already named, so it is not checked. (`AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR` and
+ * `AKM_CACHE_DIR` are ordinary overrides again.)
  *
  * Every location resolver below calls this first, so a library caller (`akm-cli/api`, `akm-cli/workspace`) gets the same
- * error as the CLI. `akm-migrate` (the executable `akm migrate` and `akm upgrade` run) is the one reader of these
- * variables: it carries them over first (`carryOverRetiredLocations`, `scripts/akm-migrate/`), so it never reaches this check.
+ * error as the CLI. `akm-migrate` carries `AKM_BUNDLE_DIR` over first (`carryOverRetiredLocations`), so it never reaches this check.
  */
-function assertNoRetiredLocationVariables(env: NodeJS.ProcessEnv): void {
+function assertNoRetiredBundleVariable(env: NodeJS.ProcessEnv): void {
   if (selectedConfigFile(env)) return;
-  const named = Object.values(RETIRED_LOCATION_VARIABLES).find((name) => env[name]?.trim());
-  if (named !== undefined) {
-    throw new ConfigError(
-      `${named} is no longer read. Run \`akm migrate apply\` (it moves the location into the config file's \`paths\`), then set AKM_CONFIG_FILE to the config file and unset ${named}.`,
-      "RETIRED_LOCATION_VARIABLE",
-    );
-  }
   const bundleDir = env[RETIRED_BUNDLE_VARIABLE]?.trim();
   if (bundleDir && !isConfiguredWorkingBundle(bundleDir, env)) {
     throw new ConfigError(
@@ -154,13 +142,17 @@ function isConfiguredWorkingBundle(dir: string, env: NodeJS.ProcessEnv): boolean
 }
 
 export function getConfigDir(env: NodeJS.ProcessEnv = process.env, platform = process.platform): string {
-  assertNoRetiredLocationVariables(env);
+  assertNoRetiredBundleVariable(env);
   return unguardedConfigDir(env, platform);
 }
 
+/**
+ * The directory of `credentials.json` and `models.json`: `AKM_CONFIG_DIR`, else the platform default. A selected
+ * config file (`--config`, `AKM_CONFIG_FILE`) never moves it.
+ */
 function unguardedConfigDir(env: NodeJS.ProcessEnv, platform: string): string {
-  const selected = selectedConfigFile(env);
-  if (selected) return path.dirname(selected);
+  const override = env.AKM_CONFIG_DIR?.trim();
+  if (override) return override;
 
   if (platform === "win32") {
     const appData = env.APPDATA?.trim();
@@ -190,7 +182,7 @@ function unguardedConfigDir(env: NodeJS.ProcessEnv, platform: string): string {
 }
 
 export function getConfigPath(env: NodeJS.ProcessEnv = process.env): string {
-  assertNoRetiredLocationVariables(env);
+  assertNoRetiredBundleVariable(env);
   return selectedConfigFile(env) ?? path.join(getConfigDir(env), "config.json");
 }
 
@@ -213,22 +205,7 @@ export function resetConfiguredPathsCache(): void {
  * A missing, unreadable or unparseable file names nothing here: the config load reports it.
  */
 function configuredLocation(kind: ConfiguredLocation, env: NodeJS.ProcessEnv): string | undefined {
-  return locationNamedByFile(kind, env) ?? carriedLocations[kind];
-}
-
-/**
- * Locations a host named with a retired variable that the config file does not name yet. Only `akm-migrate` sets
- * them, for its own run: they stand in for the `paths` entry it writes (or, in `status` or with a file it cannot
- * write, would write), so every step reads the data, state and cache the host really uses.
- */
-let carriedLocations: Partial<Record<ConfiguredLocation, string>> = {};
-
-export function carryLocations(locations: Partial<Record<ConfiguredLocation, string>>): void {
-  carriedLocations = { ...locations };
-}
-
-export function getCarriedLocations(): Readonly<Partial<Record<ConfiguredLocation, string>>> {
-  return carriedLocations;
+  return locationNamedByFile(kind, env);
 }
 
 function locationNamedByFile(kind: ConfiguredLocation, env: NodeJS.ProcessEnv): string | undefined {
@@ -284,7 +261,9 @@ function resolveConfiguredLocations(parsed: unknown, file: string): Partial<Reco
 // ── Cache directory ──────────────────────────────────────────────────────────
 
 export function getCacheDir(env: NodeJS.ProcessEnv = process.env): string {
-  assertNoRetiredLocationVariables(env);
+  assertNoRetiredBundleVariable(env);
+  const override = env.AKM_CACHE_DIR?.trim();
+  if (override) return override;
   const configured = configuredLocation("cache", env);
   if (configured) return configured;
 
@@ -344,11 +323,14 @@ function homelessFallbackDir(kind: string): string {
  * Losing this directory loses history and installed state.
  *
  * Where it lives (in priority order):
+ *   AKM_DATA_DIR
  *   `paths.data` in the config file
  *   XDG_DATA_HOME  — (Linux/macOS) override the XDG base; akm subdir is appended
  */
 export function getDataDir(env: NodeJS.ProcessEnv = process.env, platform = process.platform): string {
-  assertNoRetiredLocationVariables(env);
+  assertNoRetiredBundleVariable(env);
+  const override = env.AKM_DATA_DIR?.trim();
+  if (override) return override;
   const configured = configuredLocation("data", env);
   if (configured) return configured;
 
@@ -433,11 +415,14 @@ export function getRegistryIndexCacheDir(): string {
  * $STASH/.akm" in docs/architecture/internals/storage-locations.md).
  *
  * Where it lives (in priority order):
+ *   AKM_STATE_DIR
  *   `paths.state` in the config file
  *   XDG_STATE_HOME — (Linux/macOS) override the XDG base; akm subdir is appended
  */
 export function getStateDir(env: NodeJS.ProcessEnv = process.env, platform = process.platform): string {
-  assertNoRetiredLocationVariables(env);
+  assertNoRetiredBundleVariable(env);
+  const override = env.AKM_STATE_DIR?.trim();
+  if (override) return override;
   const configured = configuredLocation("state", env);
   if (configured) return configured;
 

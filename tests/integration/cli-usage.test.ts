@@ -1,0 +1,503 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+import { afterEach, expect, test } from "bun:test";
+import { spawn, spawnSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { main } from "../../src/cli";
+import { describeUsage, type UsageCommand } from "../../src/cli/usage";
+import { getConfigDir, getDataDir } from "../../src/core/paths";
+import { openDatabase } from "../../src/storage/database";
+import { withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
+
+const CLI = path.resolve(import.meta.dir, "../../src/cli.ts");
+let cleanup = () => {};
+afterEach(() => cleanup());
+function sandbox() {
+  const storage = withIsolatedAkmStorage();
+  cleanup = storage.cleanup;
+  return storage;
+}
+function cli(args: string[], env: NodeJS.ProcessEnv = process.env) {
+  return spawnSync("bun", [CLI, ...args], { encoding: "utf8", env: { ...env }, timeout: 30000 });
+}
+function report(args: string[] = []) {
+  const result = cli(["doctor", "metrics", "usage", "--export", "--format", "json", ...args]);
+  expect(result.status).toBe(0);
+  return JSON.parse(result.stdout);
+}
+
+test("run records one invocation with its resolved asset type and redacted asset inputs", () => {
+  const storage = sandbox();
+  writeSandboxConfig({
+    bundles: { fixture: { path: storage.stashDir, components: { main: { root: ".", adapter: "akm" } } } },
+  });
+  fs.mkdirSync(path.join(storage.stashDir, "tasks"), { recursive: true });
+  fs.writeFileSync(
+    path.join(storage.stashDir, "tasks/check.yml"),
+    "version: 4\nrun: printf task-ok\nshell: sh\ninputs:\n  label: { type: string, required: true }\n",
+  );
+  const executed = cli(["run", "fixture//tasks/check", "--label=PRIVATE_TASK_INPUT"]);
+  expect(executed.status, executed.stderr).toBe(0);
+  const result = report();
+  const runs = result.details.filter((row: { command: string[] }) => row.command[0] === "run");
+  expect(runs).toHaveLength(1);
+  expect(runs[0]).toMatchObject({ command: ["run"], assetType: "task", exitCode: 0, category: "success" });
+  expect(runs[0].arguments.some((arg: { kind: string }) => arg.kind === "asset-input")).toBe(true);
+  expect(runs[0].arguments.every((arg: { explicit: boolean }) => arg.explicit)).toBe(true);
+  expect(result.details.some((row: { command: string[] }) => row.command.join(" ") === "task run")).toBe(false);
+  expect(JSON.stringify(result)).not.toContain("PRIVATE_TASK_INPUT");
+  expect(JSON.stringify(result)).not.toContain("fixture//tasks/check");
+  const aggregate = result.aggregates.find(
+    (row: { dimensions: { command: string[] } }) => row.dimensions.command[0] === "run",
+  );
+  expect(aggregate.outcomes["success:0:task"]).toBe(1);
+});
+
+test("real entry captures help/version/invalid/config failures once and redacts secrets", () => {
+  sandbox();
+  expect(cli(["--version"]).status).toBe(0);
+  expect(
+    cli([
+      "show",
+      "private/path?secret=VALUE",
+      "--help",
+      "--format=json",
+      "--format=json",
+      "--no-quiet",
+      "--no-quiet=true",
+      "--quiet=SENSITIVE_BOOLEAN_VALUE",
+      "-qq",
+      "--type=PRIVATE_ENUM_VALUE",
+      "--",
+      "--secret=VALUE",
+    ]).status,
+  ).toBe(0);
+  expect(cli(["show", "private/path?secret=VALUE", "--private-token=VALUE"]).status).toBe(2);
+  const configDir = getConfigDir();
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.writeFileSync(path.join(configDir, "config.json"), "{broken");
+  expect(cli(["show", "private/path?secret=VALUE"]).status).toBe(78);
+  fs.unlinkSync(path.join(configDir, "config.json"));
+  const result = report();
+  expect(result.details).toHaveLength(5); // report itself is pending
+  const attempts = result.aggregates.reduce((sum: number, row: { attempts: number }) => sum + row.attempts, 0);
+  expect(attempts).toBe(5);
+  expect(JSON.stringify(result)).not.toContain("VALUE");
+  expect(JSON.stringify(result)).not.toContain("private");
+  const help = result.details.find((row: { childArgumentCount: number }) => row.childArgumentCount === 1);
+  expect(
+    help.arguments.filter((arg: { name: string; explicit: boolean }) => arg.name === "format" && arg.explicit),
+  ).toHaveLength(2);
+  expect(
+    help.arguments.filter((arg: { name: string; spelling: string }) => arg.name === "quiet" && arg.spelling === "-q"),
+  ).toHaveLength(2);
+  expect(help.arguments.find((arg: { name: string }) => arg.name === "quiet")).toMatchObject({
+    negated: true,
+    value: false,
+    explicit: true,
+  });
+  expect(
+    help.arguments.find(
+      (arg: { name: string; value: unknown }) => arg.name === "quiet" && arg.value === "[not-applied]",
+    ),
+  ).toBeDefined();
+  expect(result.details.map((row: { category: string }) => row.category)).toContain("config");
+});
+
+test("concurrent CLI writes and overlapping export snapshots keep stable aggregate identities", async () => {
+  sandbox();
+  await Promise.all(
+    Array.from(
+      { length: 8 },
+      () =>
+        new Promise<void>((resolve, reject) => {
+          const child = spawn("bun", [CLI, "--version"], { env: { ...process.env }, stdio: "ignore" });
+          child.on("error", reject);
+          child.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`exit ${code}`))));
+        }),
+    ),
+  );
+  const first = report(["--source", "unknown"]);
+  const second = report(["--source", "unknown"]);
+  const version = (
+    rows: Array<{
+      dimensions: { command: string[]; arguments: Array<{ name: string }> };
+      attempts: number;
+      key: string;
+    }>,
+  ) => rows.filter((row) => row.dimensions.command.length === 0);
+  expect(version(first.aggregates).reduce((sum, row) => sum + row.attempts, 0)).toBe(8);
+  const merged = new Map([...first.aggregates, ...second.aggregates].map((row) => [row.key, row]));
+  expect(version([...merged.values()]).reduce((sum, row) => sum + row.attempts, 0)).toBe(8);
+  expect(new Set(second.details.map((row: { id: string }) => row.id)).size).toBe(second.details.length);
+});
+
+test("retention expires detail without losing durable counts and unavailable capture preserves exits", () => {
+  sandbox();
+  expect(cli(["--version"]).status).toBe(0);
+  const db = openDatabase(path.join(getDataDir(), "metrics.db"));
+  db.prepare("UPDATE cli_usage_invocations SET ts='2000-01-01T00:00:00.000Z'").run();
+  db.close();
+  expect(cli(["--version"]).status).toBe(0);
+  const result = report();
+  expect(result.details).toHaveLength(2);
+  expect(
+    result.aggregates
+      .filter((row: { dimensions: { command: string[] } }) => row.dimensions.command.length === 0)
+      .reduce((sum: number, row: { attempts: number }) => sum + row.attempts, 0),
+  ).toBe(2);
+  const blocker = path.join(getDataDir(), "blocker");
+  fs.writeFileSync(blocker, "file");
+  const outcome = cli(["--version"], { ...process.env, AKM_DATA_DIR: blocker });
+  expect(outcome.status).toBe(0);
+  expect(outcome.stderr).toBe("");
+});
+
+test("existing doctor metrics output remains a single report", () => {
+  sandbox();
+  const result = cli(["doctor", "metrics", "--since", "7d", "--format", "json"]);
+  expect(result.status).toBe(0);
+  expect(JSON.parse(result.stdout).shape).toBe("metrics");
+  expect(cli(["doctor", "metrics", "--since", "7d", "usage"]).status).toBe(2);
+  expect(cli(["doctor", "metrics", "--format", "json", "usage"]).status).toBe(0);
+  expect(cli(["doctor", "metrics", "usage", "--source", "typo"]).status).toBe(2);
+  expect(cli(["doctor", "metrics", "usage", "--since", "7d", "--until", "30d"]).status).toBe(2);
+});
+
+test("catchable cancellation finalizes once and abrupt kill remains unfinished", async () => {
+  const storage = sandbox();
+  const envDir = path.join(storage.stashDir, "env");
+  fs.mkdirSync(envDir, { recursive: true });
+  fs.writeFileSync(path.join(envDir, "cancel.env"), "EXAMPLE=value\n");
+  for (const signal of ["SIGTERM", "SIGKILL"] as const) {
+    const child = spawn(
+      "bun",
+      [CLI, "env", "run", "env/cancel", "--", "bun", "-e", "console.log('READY');setTimeout(()=>{},2000)"],
+      { env: { ...process.env }, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("child did not start")), 10000);
+        child.stdout.on("data", (data) => {
+          if (String(data).includes("READY")) {
+            clearTimeout(timer);
+            resolve();
+          }
+        });
+        child.once("error", reject);
+      });
+      const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+      child.kill(signal);
+      await exited;
+    } finally {
+      // env run may have been hard-killed before forwarding the signal.
+      child.kill("SIGKILL");
+    }
+  }
+  const result = report();
+  const envRuns = result.details.filter((row: { command: string[] }) => row.command.join(" ") === "env run");
+  expect(envRuns).toHaveLength(2);
+  expect(envRuns.map((row: { category: string }) => row.category).sort()).toEqual(["cancelled", "unfinished"]);
+  expect(envRuns.find((row: { category: string }) => row.category === "cancelled").exitCode).toBe(143);
+});
+
+test("every declared command-tree help route records exactly one redacted attempt", async () => {
+  sandbox();
+  const paths: string[][] = [];
+  function walk(command: UsageCommand, commandPath: string[]) {
+    paths.push(commandPath);
+    for (const [name, child] of Object.entries(command.subCommands ?? {})) walk(child, [...commandPath, name]);
+  }
+  walk(main as UsageCommand, []);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: 4 }, async () => {
+      while (next < paths.length) {
+        const commandPath = paths[next++]!;
+        await new Promise<void>((resolve, reject) => {
+          const child = spawn("bun", [CLI, ...commandPath, "--help"], { env: { ...process.env }, stdio: "ignore" });
+          child.once("error", reject);
+          child.once("exit", (code) =>
+            code === 0 ? resolve() : reject(new Error(`${commandPath.join(" ")}: ${code}`)),
+          );
+        });
+      }
+    }),
+  );
+  const result = report();
+  expect(result.details).toHaveLength(paths.length + 1);
+  expect(result.details.filter((row: { category: string }) => row.category === "success")).toHaveLength(paths.length);
+  expect(result.aggregates.reduce((sum: number, row: { attempts: number }) => sum + row.attempts, 0)).toBe(
+    paths.length + 1,
+  );
+}, 120000);
+
+test("writer contention has a bounded fail-open budget", () => {
+  sandbox();
+  const baselineStart = Date.now();
+  expect(cli(["--version"]).status).toBe(0);
+  const baselineMs = Date.now() - baselineStart;
+  const db = openDatabase(path.join(getDataDir(), "metrics.db"));
+  try {
+    db.exec("BEGIN IMMEDIATE");
+    const lockedStart = Date.now();
+    const result = cli(["--version"]);
+    const lockedMs = Date.now() - lockedStart;
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    // The SQLite busy budget is 250 ms; allow process-start and scheduler
+    // variation while still rejecting an unbounded lock retry loop.
+    expect(lockedMs - baselineMs).toBeLessThan(2000);
+  } finally {
+    db.exec("ROLLBACK");
+    db.close();
+  }
+});
+
+test("run resolves colliding asset inputs against its selected executor in details and aggregates", () => {
+  const storage = sandbox();
+  writeSandboxConfig({
+    bundles: { fixture: { path: storage.stashDir, components: { main: { root: ".", adapter: "akm" } } } },
+  });
+  fs.mkdirSync(path.join(storage.stashDir, "tasks"), { recursive: true });
+  fs.mkdirSync(path.join(storage.stashDir, "workflows"), { recursive: true });
+  fs.writeFileSync(
+    path.join(storage.stashDir, "tasks/check.yml"),
+    `version: 4
+run: printf task-ok
+shell: sh
+inputs:
+  prompt: { type: string }
+  agent: { type: string }
+  cwd: { type: string }
+`,
+  );
+  fs.writeFileSync(
+    path.join(storage.stashDir, "workflows/check.md"),
+    `---
+type: workflow
+params:
+  prompt: { type: string }
+  agent: { type: string }
+  cwd: { type: string }
+steps:
+  - id: execute
+    unit:
+      exec:
+        command: ["sh", "-c", "printf workflow-ok"]
+---
+## execute
+Execute without a model.
+`,
+  );
+  for (const ref of ["fixture//tasks/check", "fixture//tasks/check", "fixture//workflows/check"]) {
+    const result = cli(["run", ref, "--prompt=PRIVATE_PROMPT", "--agent=PRIVATE_INPUT", "--cwd=PRIVATE_WORKSPACE"]);
+    expect(result.status, result.stderr).toBe(0);
+  }
+  const result = report();
+  const runs = result.details.filter((row: { command: string[] }) => row.command[0] === "run");
+  expect(runs).toHaveLength(3);
+  for (const run of runs) {
+    expect(run.arguments.filter((arg: { kind: string }) => arg.kind === "asset-input")).toHaveLength(3);
+    expect(run.arguments.filter((arg: { kind: string }) => arg.kind === "positional")).toHaveLength(1);
+    expect(run.arguments.every((arg: { value: unknown }) => arg.value === "[redacted]")).toBe(true);
+  }
+  const aggregates = result.aggregates.filter(
+    (row: { dimensions: { command: string[] } }) => row.dimensions.command[0] === "run",
+  );
+  expect(aggregates).toHaveLength(2); // task id and workflow target are distinct positional roles
+  expect(aggregates.reduce((sum: number, row: { attempts: number }) => sum + row.attempts, 0)).toBe(3);
+  for (const aggregate of aggregates) {
+    expect(aggregate.completed).toBe(aggregate.attempts);
+    expect(aggregate.unfinished).toBe(0);
+    expect(aggregate.dimensions.arguments.filter((arg: { kind: string }) => arg.kind === "asset-input")).toHaveLength(
+      3,
+    );
+  }
+  expect(
+    aggregates.find((row: { outcomes: Record<string, number> }) => row.outcomes["success:0:task"])?.outcomes,
+  ).toEqual({ "success:0:task": 2 });
+  expect(
+    aggregates.find((row: { outcomes: Record<string, number> }) => row.outcomes["success:0:workflow"])?.outcomes,
+  ).toEqual({ "success:0:workflow": 1 });
+  expect(
+    result.details.filter((row: { command: string[] }) => ["task run", "workflow run"].includes(row.command.join(" "))),
+  ).toHaveLength(0);
+  expect(JSON.stringify(result)).not.toContain("PRIVATE_");
+});
+
+test("unsupported memory and session run attempts retain their resolved type", () => {
+  const storage = sandbox();
+  writeSandboxConfig({
+    bundles: { fixture: { path: storage.stashDir, components: { main: { root: ".", adapter: "akm" } } } },
+  });
+  for (const [directory, type] of [
+    ["memories", "memory"],
+    ["sessions/codex", "session"],
+  ]) {
+    fs.mkdirSync(path.join(storage.stashDir, directory!), { recursive: true });
+    fs.writeFileSync(
+      path.join(storage.stashDir, directory!, "private.md"),
+      `---\ntype: ${type}\n---\nPRIVATE_CONTENT\n`,
+    );
+    const result = cli(["run", `fixture//${directory}/private`]);
+    expect(result.status, result.stderr).toBe(2);
+    expect(result.stdout).toBe("");
+  }
+  const result = report();
+  const runs = result.details.filter((row: { command: string[] }) => row.command[0] === "run");
+  expect(runs.map((row: { assetType: string }) => row.assetType).sort()).toEqual(["memory", "session"]);
+  expect(runs.every((row: { category: string }) => row.category === "usage")).toBe(true);
+  expect(JSON.stringify(result)).not.toContain("PRIVATE_CONTENT");
+});
+
+test("usage keeps root config selection separate from dynamic leaf config input", () => {
+  const root = {
+    args: { config: { type: "string" } },
+    subCommands: {
+      run: { args: { ref: { type: "positional" }, format: { type: "string" } } },
+    },
+  };
+  const usage = describeUsage(root, ["--config", "PRIVATE_FILE", "run", "tasks/check", "--config", "PRIVATE_INPUT"]);
+  expect(usage.command).toEqual(["run"]);
+  expect(usage.arguments).toEqual([
+    { name: "config", spelling: "--config", kind: "string", explicit: true, negated: false, value: "[redacted]" },
+    { name: "ref", spelling: "positional", kind: "positional", explicit: true, value: "[redacted]" },
+    {
+      name: "[unknown]",
+      spelling: "[redacted]",
+      kind: "asset-input",
+      explicit: true,
+      negated: false,
+      value: "[redacted]",
+    },
+  ]);
+  expect(JSON.stringify(usage)).not.toContain("PRIVATE_");
+});
+
+test("usage command discovery honors inherited config value arity between groups", () => {
+  const root = {
+    args: { config: { type: "string" } },
+    subCommands: { config: { subCommands: { path: { args: {} } } } },
+  };
+  const usage = describeUsage(root, ["config", "--config", "PRIVATE_FILE", "path"]);
+  expect(usage.command).toEqual(["config", "path"]);
+  expect(usage.arguments).toEqual([
+    { name: "config", spelling: "--config", kind: "string", explicit: true, negated: false, value: "[redacted]" },
+  ]);
+  expect(JSON.stringify(usage)).not.toContain("PRIVATE_FILE");
+});
+
+test("usage observers preserve a host-owned once signal handler and its asynchronous cleanup", async () => {
+  const storage = sandbox();
+  const marker = path.join(storage.root, "host-cleanup");
+  const entry = path.join(storage.root, "host-entry.ts");
+  fs.mkdirSync(path.join(storage.stashDir, "env"), { recursive: true });
+  fs.writeFileSync(path.join(storage.stashDir, "env/cancel.env"), "EXAMPLE=value\n");
+  fs.writeFileSync(
+    entry,
+    [
+      `import { runCli } from ${JSON.stringify(CLI)};`,
+      'import fs from "node:fs";',
+      'process.once("SIGTERM", () => {',
+      `  setTimeout(() => { fs.writeFileSync(${JSON.stringify(marker)}, "cleaned"); process.exitCode = 23; }, 50);`,
+      "});",
+      "await runCli();",
+    ].join("\n"),
+  );
+  const child = spawn(
+    "bun",
+    [entry, "env", "run", "env/cancel", "--", "bun", "-e", "console.log('READY');setTimeout(()=>{},1000)"],
+    {
+      env: { ...process.env },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("child did not start")), 10000);
+      child.stdout.on("data", (data) => {
+        if (String(data).includes("READY")) {
+          clearTimeout(timer);
+          resolve();
+        }
+      });
+      child.once("error", reject);
+    });
+    const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) =>
+      child.once("exit", (code, signal) => resolve({ code, signal })),
+    );
+    child.kill("SIGTERM");
+    expect(await exited).toEqual({ code: 23, signal: null });
+    expect(fs.readFileSync(marker, "utf8")).toBe("cleaned");
+  } finally {
+    child.kill("SIGKILL");
+  }
+});
+
+const usageFile = () => path.join(getDataDir(), "metrics.db");
+
+test("--read-only records nothing; help, version and info are still counted", () => {
+  sandbox();
+  const result = cli(["doctor", "--read-only", "--no-probe", "--format", "json", "--quiet"]);
+  expect(result.status).toBeLessThanOrEqual(1);
+  expect(fs.existsSync(usageFile())).toBe(false);
+  for (const args of [["--version"], ["--help"], ["info"]]) {
+    cli(args);
+    expect(fs.existsSync(usageFile()), args.join(" ")).toBe(true);
+    fs.rmSync(usageFile(), { force: true });
+  }
+});
+
+test("usage.capture: false turns capture off; a broken or odd config keeps it on", () => {
+  sandbox();
+  const configFile = path.join(getConfigDir(), "config.json");
+  fs.mkdirSync(getConfigDir(), { recursive: true });
+  fs.writeFileSync(configFile, JSON.stringify({ usage: { capture: false } }));
+  expect(cli(["--version"]).status).toBe(0);
+  expect(fs.existsSync(usageFile())).toBe(false);
+  // Selected with --config too.
+  expect(cli(["--config", configFile, "--version"]).status).toBe(0);
+  expect(fs.existsSync(usageFile())).toBe(false);
+  for (const text of [
+    "{broken",
+    JSON.stringify({ usage: { capture: "no" } }),
+    JSON.stringify({ usage: { capture: true } }),
+  ]) {
+    fs.writeFileSync(configFile, text);
+    cli(["--version"]);
+    expect(fs.existsSync(usageFile()), text).toBe(true);
+    fs.rmSync(usageFile(), { force: true });
+  }
+});
+
+test("usage tables coexist with 0.11's metrics.db: own names, no user_version, no schema_migrations ledger", () => {
+  sandbox();
+  const file = path.join(getDataDir(), "metrics.db");
+  // A metrics.db as 0.11 creates it: a schema_migrations ledger and rollup tables.
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const seed = openDatabase(file);
+  seed.exec(
+    "CREATE TABLE schema_migrations (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now'))); INSERT INTO schema_migrations(id) VALUES ('001-metrics-baseline'); CREATE TABLE usage_daily (day TEXT);",
+  );
+  seed.close();
+  expect(cli(["--version"]).status).toBe(0);
+  const db = openDatabase(file);
+  const tables = (
+    db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as { name: string }[]
+  ).map((row) => row.name);
+  expect(tables).toEqual([
+    "cli_usage_aggregates",
+    "cli_usage_invocations",
+    "cli_usage_meta",
+    "schema_migrations",
+    "usage_daily",
+  ]);
+  expect((db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(0);
+  expect(db.prepare("SELECT id FROM schema_migrations").all()).toEqual([{ id: "001-metrics-baseline" }]);
+  db.close();
+  expect(report().details.length).toBeGreaterThan(0);
+});

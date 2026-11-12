@@ -16,6 +16,7 @@
 import { type AkmConfig, getSources, loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
+import { type IncludeSelectors, includedTypes, includesProposed, normalizeInclude } from "../../core/include";
 import { redactCredentialPatterns } from "../../core/redaction";
 import { withStateDbTelemetry } from "../../core/state-db";
 import type { ScopeFilters } from "../../indexer/passes/metadata";
@@ -98,6 +99,7 @@ export async function akmSearch(input: {
    * effect on registry hits.
    */
   includeProposed?: boolean;
+  include?: IncludeSelectors;
   /**
    * Belief-state filter. Applies to ANY entry carrying a `beliefState`
    * (memory OR knowledge — 03), so flagged knowledge is filtered too:
@@ -211,7 +213,8 @@ export async function akmSearch(input: {
   const sources = allSources;
 
   const filters = normalizeScopeFilters(input.filters);
-  const includeProposed = input.includeProposed === true;
+  const include = normalizeInclude(input.include);
+  const includeProposed = input.includeProposed === true || includesProposed(include);
   const belief = parseBeliefFilterMode(input.belief ?? "current");
   const localResult =
     source === "registry"
@@ -236,6 +239,7 @@ export async function akmSearch(input: {
           // would leak hits from sources the caller did not request.
           restrictToSources: namedSourceNames !== undefined,
           includeExcludedTypes: input.includeSessions === true,
+          includeTypes: includedTypes(include),
           readOnly: input.readOnly,
           project: input.project,
           byUsage,
