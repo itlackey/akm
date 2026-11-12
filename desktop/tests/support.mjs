@@ -105,6 +105,186 @@ function seedRuns(fixture) {
   }
 }
 
+export const runViewIds = {
+  failedWorkflow: "88888888-8888-4888-8888-888888888881",
+  retriedWorkflow: "88888888-8888-4888-8888-888888888882",
+  activeWorkflow: "88888888-8888-4888-8888-888888888883",
+  failedImprove: "synthetic-improve-failed",
+  oldImprove: "synthetic-improve-older",
+};
+
+/**
+ * Runs for the single-run views, written as akm's engines journal them: a failed improve run and the scheduled task
+ * row that started within its minute, an improve run recorded without a usage report, task rows that failed, never
+ * finished or started a workflow run, and three workflow runs (failed, retried to completion, still active). No
+ * command creates these without a scheduler or a model.
+ */
+function seedRunViews(fixture) {
+  const db = new DatabaseSync(path.join(fixture.env.AKM_DATA_DIR, "state.db"));
+  const at = (minutesAgo) => new Date(Date.now() - minutesAgo * 60000).toISOString();
+  const taskRun = (id, status, started, ended, detail, target = ["agent", "personal//agents/improver"]) =>
+    db
+      .prepare(
+        "INSERT INTO task_history (task_id, status, started_at, completed_at, failed_at, target_kind, target_ref, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        id,
+        status,
+        at(started),
+        status === "completed" ? at(ended) : null,
+        status === "failed" ? at(ended) : null,
+        target[0],
+        target[1],
+        JSON.stringify({
+          metadataVersion: 2,
+          trigger: id === "nightly-digest" ? "manual" : "schedule",
+          ...(ended === null ? {} : { durationMs: (started - ended) * 60000 }),
+          ...(detail ? { detail } : {}),
+        }),
+      );
+  const improve = (id, minutesAgo, ok, report) =>
+    db
+      .prepare(
+        "INSERT INTO improve_runs (id, started_at, completed_at, stash_dir, scope_mode, ok, strategy, result_json) VALUES (?, ?, ?, ?, 'all', ?, 'default', ?)",
+      )
+      .run(
+        id,
+        at(minutesAgo),
+        at(minutesAgo - 4),
+        fixture.env.AKM_BUNDLE_DIR,
+        ok ? 1 : 0,
+        JSON.stringify(report ? { usageReport: report } : {}),
+      );
+  try {
+    improve("synthetic-improve-a", 60 * 5, true, {
+      byProcessEngineModel: [
+        { process: "reflect", calls: 6, failures: 0 },
+        { process: "triage.judgment", calls: 3, failures: 0 },
+      ],
+    });
+    improve("synthetic-improve-b", 60 * 24 * 2, true, {
+      byProcessEngineModel: [{ process: "reflect", calls: 4, failures: 1 }],
+    });
+    improve(runViewIds.failedImprove, 60 * 24 * 4, false, {
+      byProcessEngineModel: [
+        { process: "reflect", calls: 5, failures: 3 },
+        { process: "consolidate", calls: 2, failures: 2 },
+      ],
+    });
+    improve(runViewIds.oldImprove, 60 * 24 * 9, true, null);
+    taskRun("akm-improve-frequent", "completed", 60 * 5 + 1, 60 * 5 - 5, null);
+    taskRun("akm-improve-frequent", "completed", 60 * 24 * 2 + 1, 60 * 24 * 2 - 5, null);
+    taskRun("akm-improve-frequent", "failed", 60 * 24 * 4 + 1, 60 * 24 * 4 - 5, {
+      reason: "agent_failed",
+      error: "Synthetic: the connection refused the request (no network call was made).",
+      exitCode: 1,
+    });
+    taskRun("nightly-digest", "active", 60 * 24 * 3, null, null, ["workflow", "personal//workflows/digest"]);
+    taskRun("weekly-review", "completed", 60 * 20, 60 * 20 - 3, { runId: runViewIds.retriedWorkflow }, [
+      "workflow",
+      "personal//workflows/release",
+    ]);
+    taskRun("weekly-review", "failed", 60 * 24 * 6, 60 * 24 * 6 - 1, { runId: runViewIds.failedWorkflow }, [
+      "workflow",
+      "personal//workflows/index",
+    ]);
+    const run = db.prepare(
+      `INSERT INTO workflow_runs (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status, params_json,
+         current_step_id, created_at, updated_at, completed_at, agent_harness)
+       VALUES (?, ?, 'dir:v1:x', NULL, ?, ?, '{}', NULL, ?, ?, ?, 'claude')`,
+    );
+    const step = db.prepare(
+      `INSERT INTO workflow_run_steps (run_id, step_id, step_title, instructions, completion_json, sequence_index, status)
+       VALUES (?, ?, ?, '', '[]', ?, ?)`,
+    );
+    const unit = db.prepare(
+      `INSERT INTO workflow_run_units (run_id, unit_id, step_id, node_id, phase, runner, status, tokens, failure_reason,
+         started_at, finished_at, attempts, engine, model)
+       VALUES (?, ?, ?, ?, 'unit', 'agent', ?, ?, ?, ?, ?, ?, ?, 'synthetic-model')`,
+    );
+    const attempt = db.prepare(
+      `INSERT INTO workflow_run_unit_attempts (run_id, unit_id, attempt, dispatch_id, step_id, node_id, phase, runner,
+         engine, model, input_hash, status, tokens, failure_reason, started_at, finished_at, claim_holder, claim_expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'unit', 'agent', ?, 'synthetic-model', 'h', ?, ?, ?, ?, ?, 'x', ?)`,
+    );
+    const addUnit = (runId, unitId, stepId, status, tokens, reason, from, to, engine, tries) => {
+      unit.run(
+        runId,
+        unitId,
+        stepId,
+        unitId,
+        status,
+        tokens,
+        reason,
+        at(from),
+        to === null ? null : at(to),
+        tries.length,
+        engine,
+      );
+      for (const [index, [state, used, why, start, end]] of tries.entries()) {
+        attempt.run(
+          runId,
+          unitId,
+          index + 1,
+          `${runId}:${unitId}:${index + 1}`,
+          stepId,
+          unitId,
+          engine,
+          state,
+          used,
+          why,
+          at(start),
+          end === null ? null : at(end),
+          at(0),
+        );
+      }
+    };
+    const day6 = 60 * 24 * 6;
+    // A run that failed: the second step's only unit failed twice.
+    run.run(
+      runViewIds.failedWorkflow,
+      "personal//workflows/index",
+      "Nightly index",
+      "failed",
+      at(day6 + 8),
+      at(day6),
+      at(day6),
+    );
+    step.run(runViewIds.failedWorkflow, "scan", "Scan sources", 0, "completed");
+    step.run(runViewIds.failedWorkflow, "build", "Build the index", 1, "failed");
+    addUnit(runViewIds.failedWorkflow, "scan-1", "scan", "completed", 1200, null, day6 + 8, day6 + 5, "lab", [
+      ["completed", 1200, null, day6 + 8, day6 + 5],
+    ]);
+    addUnit(runViewIds.failedWorkflow, "build-1", "build", "failed", 800, "provider_error", day6 + 5, day6, "cloud", [
+      ["failed", 300, "provider_error", day6 + 5, day6 + 3],
+      ["failed", 500, "provider_error", day6 + 3, day6],
+    ]);
+    // A run whose one unit failed once and then finished.
+    run.run(
+      runViewIds.retriedWorkflow,
+      "personal//workflows/release",
+      "Release check",
+      "completed",
+      at(60 * 20),
+      at(60 * 20 - 3),
+      at(60 * 20 - 3),
+    );
+    step.run(runViewIds.retriedWorkflow, "collect", "Collect changes", 0, "completed");
+    addUnit(runViewIds.retriedWorkflow, "collect-1", "collect", "completed", 900, null, 60 * 20, 60 * 20 - 3, "lab", [
+      ["failed", 200, "timeout", 60 * 20, 60 * 20 - 1],
+      ["completed", 700, null, 60 * 20 - 1, 60 * 20 - 3],
+    ]);
+    // A run still going.
+    run.run(runViewIds.activeWorkflow, "personal//workflows/digest", "Digest", "active", at(12), at(2), null);
+    step.run(runViewIds.activeWorkflow, "gather", "Gather notes", 0, "pending");
+    addUnit(runViewIds.activeWorkflow, "gather-1", "gather", "running", null, null, 12, null, "lab", [
+      ["running", null, null, 12, null],
+    ]);
+  } finally {
+    db.close();
+  }
+}
+
 /** Stored embeddings for two documents, so Similar content has a match to score (no embedding model runs). */
 function seedSimilarity(fixture) {
   const db = new DatabaseSync(path.join(fixture.env.AKM_DATA_DIR, "index.db"));
@@ -233,6 +413,7 @@ export async function tabStops(page, within, limit = 80) {
 export async function launchFixture({
   proposals = false,
   metrics = false,
+  runViews = false,
   similarity = false,
   assetCount = 0,
   git = false,
@@ -247,6 +428,7 @@ export async function launchFixture({
     seedUsage(fixture);
     seedRuns(fixture);
   }
+  if (runViews) seedRunViews(fixture);
   if (similarity) seedSimilarity(fixture);
   const child = fork(path.join(appRoot, "server/server.mjs"), [], {
     env: fixture.env,

@@ -5,11 +5,36 @@ recorded event, a recorded link or an indexed asset. Each reads `akm-cli/workspa
 and each has the same information as text beside it (a table or a list). The design behind them is
 in [prototypes](prototypes/README.md).
 
+## Outcomes and the run views (Activity, Runs)
+
+Above the timeline, one bar per kind of run (Improve, Tasks, Workflows) shows how its recorded runs of the window
+ended: completed, failed or unknown, with the counts as text. A run with no recorded end (a task or workflow run still
+active, blocked, or never finished) is unknown, never completed. "Terminated" is kept as a fourth outcome but no record
+Desktop reads says a run was stopped from outside, so nothing is shown as terminated today; akm records an abandoned
+workflow run and a stopped improve run as failed.
+
+Each run opens in a view of its own, by its mark on the timeline, its row in a table, or an address:
+
+| Run | Address | What it shows | Matched how |
+| --- | --- | --- | --- |
+| Workflow run | `?view=runs&run=<id>` | outcome, the failed attempts in the order they ended with their recorded reasons, tokens by execution target, then the trace | everything by run id |
+| Task run | `?view=runs&task=<id>&at=<start>` | outcome, how long, who started it, the recorded reason, error and exit code; a link to the workflow run it ran | the workflow run by run id (`detail.runId`); an improve run started within five minutes, by time |
+| Improve run | `?view=runs&improve=<id>` | outcome, times, calls and failures by process, sync and triage, and the recorded error detail of the scheduled task run around it | the task run by time only (an `akm-improve*` or `improve` task within five minutes, the rule `akm doctor` uses); nothing carries an improve run's id |
+
+| Limit | Why |
+| --- | --- |
+| An improve run is shown only when it is among the latest 10 | `activity.overview` returns `improveRuns`, the latest 10. |
+| An improve run's calls are by process, with no model, execution target or tokens | the overview's projection of the run keeps calls and failures per process. |
+| An improve run has no error detail of its own | its error text is read from the task run matched by time, and the view says so; a run started by hand has none. |
+| A task run is identified by its task and start time | `activity.taskHistory` rows carry no id. |
+| A workflow run shows the target of each unit, not its model | `activity.workflowRun` returns each unit's engine. |
+| A workflow that failed with no failed attempt is not called terminated | akm records an abandoned run as failed; the view says it cannot tell which happened. |
+
 ## Run timeline (Activity, Runs)
 
 A row per scheduled task, a row per workflow, then Improve and Index builds, on one clock: the
-metrics window chosen on the page. A mark is where a run started. A circle finished, a triangle
-failed, a diamond ended another way (blocked, still active, or no outcome recorded). A gap is a time
+metrics window chosen on the page. A mark is where a run started. A green circle completed, a red triangle
+failed, a grey diamond is unknown (blocked, still active, or no outcome recorded); a key sits above the chart. A gap is a time
 with no recorded run; nothing says whether a run was expected then. A task run's tooltip says
 whether the schedule or a person started it. Selecting a task's mark opens its recorded runs;
 selecting a workflow run's mark opens its trace. Table gives each row's counts and latest run.

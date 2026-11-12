@@ -22,6 +22,7 @@
     attentionItems,
     runTimelineRows,
     type TimelineRun,
+    type TimelineRow,
   } from "./activity-presenter";
   import type {
     ActivityOverview,
@@ -33,6 +34,17 @@
     ActivityWorkflowRun,
   } from "./activity-types";
   import WorkflowTraceView from "./WorkflowTrace.svelte";
+  import ImproveRunDetail from "./ImproveRunDetail.svelte";
+  import TaskRunDetail from "./TaskRunDetail.svelte";
+  import Outcome from "./Outcome.svelte";
+  import RunOutcomes from "./RunOutcomes.svelte";
+  import {
+    outcomeCounts,
+    improveOutcome,
+    statusOutcome,
+    type Outcome as OutcomeKind,
+    type OutcomeRow,
+  } from "./run-model";
   let {
     data,
     retrieval,
@@ -40,6 +52,8 @@
     mode = "health",
     requestedTask = "",
     requestedRun = "",
+    requestedImprove = "",
+    requestedAt = "",
     refreshedAt = "",
     probedAt = "",
     probe,
@@ -51,6 +65,10 @@
     requestedTask?: string;
     /** A workflow run whose trace the Runs view shows. */
     requestedRun?: string;
+    /** An improve run whose view the Runs view shows. */
+    requestedImprove?: string;
+    /** The start of a task run, which with the requested task names the run to open. */
+    requestedAt?: string;
     refreshedAt?: string;
     probedAt?: string;
     probe: () => Promise<void>;
@@ -62,8 +80,16 @@
   $effect(() => {
     if (mode !== "runs" || !requestedTask || requestedTask === inspectedTask) return;
     inspectedTask = requestedTask;
-    untrack(() => void inspectTask(requestedTask));
+    untrack(() => void inspectTask(requestedTask, requestedAt));
   });
+  // An improve run named by the address opens its view, when it is among the runs akm returns.
+  $effect(() => {
+    if (mode !== "runs" || !requestedImprove) return;
+    const found = data.improveRuns.find((run) => run.id === requestedImprove) ?? null;
+    selectedRun = found;
+    improveMissing = found ? "" : requestedImprove;
+  });
+  let improveMissing = $state("");
   let taskPanel = $state<HTMLElement>(),
     runPanel = $state<HTMLElement>(),
     runTrigger: HTMLElement | null = null,
@@ -92,6 +118,7 @@
     await tick();
     runPanel?.focus();
   }
+  let openRun = $state("");
   let taskId = $state(""),
     history = $state<ActivityTaskHistory | null>(null),
     taskError = $state(""),
@@ -152,15 +179,43 @@
     );
   });
   const timeline = $derived(runTimelineRows(data, taskRuns, workflowRuns));
+  const kindOutcomes = (kind: TimelineRow["kind"]) =>
+    timeline
+      .filter((row) => row.kind === kind)
+      .flatMap((row) =>
+        row.runs.map(
+          (run) => (run.tone === "ok" ? "completed" : run.tone === "fail" ? "failed" : "unknown") as OutcomeKind,
+        ),
+      );
+  const outcomeRows = $derived<OutcomeRow[]>([
+    {
+      label: "Improve",
+      counts: outcomeCounts(kindOutcomes("improve")),
+      note: "Latest 10 improve runs across all time, those inside the window.",
+    },
+    {
+      label: "Tasks",
+      counts: outcomeCounts(kindOutcomes("task")),
+      failed: [
+        ...new Set(
+          timeline
+            .filter((row) => row.kind === "task" && row.runs.some((run) => run.tone === "fail"))
+            .map((row) => row.name),
+        ),
+      ],
+    },
+    { label: "Workflows", counts: outcomeCounts(kindOutcomes("workflow")) },
+  ]);
   const timelineSaid = (run: TimelineRun) =>
     run.durationMs === null ? run.said : `${run.said}, took ${duration(run.durationMs)}`;
-  async function inspectTask(id = taskId) {
+  async function inspectTask(id = taskId, at = "") {
     taskTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const mine = ++selection;
     taskId = id;
     taskBusy = true;
     taskError = "";
     history = null;
+    openRun = at;
     try {
       const result = await api<ActivityTaskHistory>("/tasks/history", {
         taskId: id,
@@ -466,12 +521,13 @@
         >
         <ActivityChart
           id="activity-models"
+          empty={processes.length ? "" : "No model calls recorded in this window."}
           legend={[
             { name: "Model calls", index: 0 },
             { name: "Failures", index: 3 },
           ]}
           heading="Model calls"
-          description={`By process. Tokens cover ${number(metrics.llm.usageCalls)} of ${number(metrics.llm.calls)} calls; tokens are not money. Time is summed call duration.`}
+          description={`By process. Tokens cover ${number(metrics.llm.usageCalls ?? 0)} of ${number(metrics.llm.calls)} calls; tokens are not money. Time is summed call duration.`}
           option={() =>
             verticalBars(
               processes.map(([name]) => name),
@@ -528,26 +584,18 @@
       <a href="/activity/improve">Improve impact <Icon name="arrow-right" size={16} /></a>
     </p>{/if}
 {:else if mode === "runs"}
-  {#if pulse}<section class="run-summary" aria-label="Last seven days">
-      <div class="tile">
-        <span class="tile-label">Runs finishing</span><strong class="tile-value num"
-          >{pulse.tiles.runs.improve.ok + pulse.tiles.runs.tasks.ok} of {pulse.tiles.runs.improve.total +
-            pulse.tiles.runs.tasks.total}</strong
-        ><span class="tile-sub"
-          >Improve {pulse.tiles.runs.improve.ok}/{pulse.tiles.runs.improve.total} · Tasks {pulse.tiles.runs.tasks
-            .ok}/{pulse.tiles.runs.tasks.total}</span
-        >{#each pulse.tiles.runs.failedTasks as task}<button
-            class="btn-secondary"
-            onclick={() => inspectTask(task.taskId)}>Inspect failed task {task.taskId}</button
-          >{/each}
-      </div>
-    </section>{/if}
+  {#if metrics}<RunOutcomes rows={outcomeRows} oninspect={inspectTask} />{/if}
   {#if timeline.length && metrics}<section id="run-timeline" class="activity-section">
       <ActivityChart
         id="activity-run-timeline"
         heading="Run timeline"
         rows={timeline.length}
-        description="When each recorded run started, on one clock. A circle finished, a triangle failed and a diamond ended another way. A gap is a time with no recorded run."
+        description="When each recorded run started, on one clock. A gap is a time with no recorded run. Select a mark to open its run."
+        legend={[
+          { name: "Completed", index: 0, color: "--ok", shape: "circle" },
+          { name: "Failed", index: 0, color: "--fail", shape: "triangle" },
+          { name: "Unknown, active or blocked", index: 0, color: "--muted", shape: "diamond" },
+        ]}
         option={(token) =>
           runTimeline(timeline, {
             since: metrics.window.since,
@@ -563,8 +611,14 @@
             );
             return;
           }
+          if (mark?.run?.improveId) {
+            void navigate(
+              `/activity/overview?view=runs&improve=${encodeURIComponent(mark.run.improveId)}&anchor=improve-run`,
+            );
+            return;
+          }
           const task = timeline.find((row) => row.name === mark?.row)?.task;
-          if (task) void inspectTask(task);
+          if (task) void inspectTask(task, mark?.run?.taskAt);
         }}
         ><table>
           <caption>Runs on the timeline</caption><thead
@@ -588,7 +642,7 @@
         </table>
         <p class="muted small">
           Improve shows its latest recorded runs and Index builds its latest builds. Select a workflow run's mark to
-          open its trace.
+          open its trace, an improve run's mark to open its run, and a task's mark to open that run of the task.
         </p></ActivityChart
       >
     </section>{/if}
@@ -662,10 +716,21 @@
           <div class="table-wrap">
             <table>
               <caption>Recorded task runs</caption><thead
-                ><tr><th>Started</th><th>Status</th><th>Duration</th><th>Result / failure</th></tr></thead
+                ><tr><th>Started</th><th>Status</th><th>Outcome</th><th>Duration</th><th>Result / failure</th></tr
+                ></thead
               ><tbody
-                >{#each history.runs as run}<tr
-                    ><td>{date(run.startedAt)}</td><td>{run.status}</td><td>{duration(run.durationMs)}</td><td
+                >{#each history.runs as run}<tr class:open-run={run.startedAt === openRun}
+                    ><td
+                      ><button
+                        class="btn-quiet"
+                        aria-label={`Open run started ${run.startedAt}`}
+                        aria-pressed={run.startedAt === openRun}
+                        onclick={() => (openRun = run.startedAt === openRun ? "" : run.startedAt)}
+                        >{date(run.startedAt)}<Icon name="arrow-right" size={16} /></button
+                      ></td
+                    ><td>{run.status}</td><td><Outcome outcome={statusOutcome(run.status)} /></td><td
+                      >{duration(run.durationMs)}</td
+                    ><td
                       >{#if run.detail}<details>
                           <summary>{String(run.detail.reason ?? run.detail.error ?? "Recorded result")}</summary>
                           <pre class="code">{JSON.stringify(run.detail, null, 2)}</pre>
@@ -674,35 +739,50 @@
                   >{/each}</tbody
               >
             </table>
-          </div>{/if}
+          </div>
+          {#each history.runs.filter((run) => run.startedAt === openRun) as run}<TaskRunDetail
+              {taskId}
+              {run}
+              improveRuns={data.improveRuns}
+            />{/each}{/if}
       </section>{/if}
   </section>
   <section id="run-history" class="activity-section" aria-label="Improve run history">
     <ActivityChart
       id="activity-run-duration"
       heading="Latest improve runs"
-      initialView="table"
-      description="Latest recorded runs, across all time. The chart shows duration; circle means success, triangle failure and diamond unknown."
-      option={() => ({
-        xAxis: {
-          type: "category",
-          data: runs.map((run) => run.startedAt.slice(5, 16).replace("T", " ")),
-          axisLabel: { hideOverlap: true },
-        },
-        yAxis: { type: "value", name: "Minutes", min: 0 },
-        series: [
-          {
-            type: "scatter",
-            name: "Run duration",
-            data: runs.map((run, i) => ({
-              value: [i, run.durationMs === null ? null : Math.round(run.durationMs / 6000) / 10],
-              symbol: run.ok === true ? "circle" : run.ok === false ? "triangle" : "diamond",
-              symbolSize: 11,
-            })),
+      description="How long each of the latest recorded improve runs took, across all time, oldest first. A run with no recorded duration has no bar. Select a bar to open the run."
+      legend={[
+        { name: "Completed", index: 0, color: "--ok" },
+        { name: "Failed", index: 0, color: "--fail" },
+        { name: "Unknown", index: 0, color: "--muted" },
+      ]}
+      option={(token) => {
+        const ordered = [...runs].reverse();
+        return {
+          xAxis: {
+            type: "category",
+            data: ordered.map((run) => run.startedAt.slice(5, 16).replace("T", " ")),
+            axisLabel: { hideOverlap: true },
           },
-        ],
-      })}
-      onSelect={(event) => inspectRun(runs[event.dataIndex] ?? null)}
+          yAxis: { type: "value", name: "Minutes", min: 0 },
+          series: [
+            {
+              type: "bar",
+              name: "Run duration",
+              barMaxWidth: 28,
+              data: ordered.map((run) => ({
+                value: run.durationMs === null ? null : Math.round(run.durationMs / 6000) / 10,
+                itemStyle: {
+                  color: token(run.ok === true ? "--ok" : run.ok === false ? "--fail" : "--muted"),
+                  borderRadius: [4, 4, 0, 0],
+                },
+              })),
+            },
+          ],
+        };
+      }}
+      onSelect={(event) => inspectRun([...runs].reverse()[event.dataIndex] ?? null)}
       ><table>
         <caption>Improve run records</caption><thead
           ><tr><th>Run</th><th>Outcome</th><th>Strategy</th><th>Duration</th><th>Calls / failures</th></tr></thead
@@ -713,8 +793,9 @@
                   >{run.id}<Icon name="arrow-right" size={16} /></button
                 >
                 <div class="muted small">{date(run.startedAt)}</div></th
-              ><td>{run.ok === true ? "Finished" : run.ok === false ? "Failed" : "Unknown"}</td><td>{run.strategy}</td
-              ><td>{duration(run.durationMs)}</td><td>{run.modelCalls.total} / {run.modelCalls.failures}</td></tr
+              ><td><Outcome outcome={improveOutcome(run)} /></td><td>{run.strategy}</td><td
+                >{duration(run.durationMs)}</td
+              ><td>{run.modelCalls.total} / {run.modelCalls.failures}</td></tr
             >{/each}</tbody
         >
       </table>
@@ -722,36 +803,12 @@
     >
   </section>
 {/if}
-{#if selectedRun}<section
-    class="drill-panel"
-    tabindex="-1"
-    bind:this={runPanel}
-    aria-label="Improve run details"
-    aria-live="polite"
-  >
-    <button class="btn-quiet return-action" onclick={closeRun}
-      ><Icon name="arrow-left" size={16} /> Back to run records</button
-    >
-    <h2>Run {selectedRun.id}</h2>
-    <p>
-      {selectedRun.strategy} · {date(selectedRun.startedAt)} · {duration(selectedRun.durationMs)} · {selectedRun.scope
-        ?.mode ?? "Scope not recorded"}
-      {selectedRun.scope?.value ?? ""}
-    </p>
-    <table>
-      <caption>Run calls by process</caption><thead><tr><th>Process</th><th>Calls</th><th>Failures</th></tr></thead
-      ><tbody
-        >{#each Object.entries(selectedRun.modelCalls.byProcess) as [name, row]}<tr
-            ><th>{name}</th><td>{row.calls}</td><td>{row.failures}</td></tr
-          >{/each}</tbody
-      >
-    </table>
-    {#each [{ name: "Before-run sync", value: selectedRun.preRunSync }, { name: "Sync result", value: selectedRun.sync }, { name: "Triage result", value: selectedRun.triage }] as detail}<details
-      >
-        <summary>{detail.name}</summary>
-        <pre class="code">{detail.value == null ? "Not recorded" : JSON.stringify(detail.value, null, 2)}</pre>
-      </details>{/each}
-  </section>{/if}
+{#if improveMissing && !selectedRun}<p class="notice notice-warn" role="status">
+    Improve run {improveMissing} is not among the latest 10 improve runs akm returns here, so it cannot be shown.
+  </p>{/if}
+{#if selectedRun}<div id="improve-run" tabindex="-1">
+    <ImproveRunDetail run={selectedRun} onClose={closeRun} bind:panel={runPanel} />
+  </div>{/if}
 
 <style>
   .health-overview {
@@ -936,19 +993,6 @@
     padding: 0;
     background: none;
     box-shadow: none;
-  }
-  .run-summary {
-    margin-block: 1rem 2rem;
-    padding-bottom: 1rem;
-    border-bottom: 1px solid var(--border);
-  }
-  .run-summary :global(.tile) {
-    padding: 0;
-    border: 0;
-    background: none;
-  }
-  .run-summary :global(.tile-value) {
-    font-size: 1.25rem;
   }
   .task-lookup {
     display: flex;

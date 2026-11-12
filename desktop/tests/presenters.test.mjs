@@ -19,6 +19,10 @@ import { configurationChanges } from "../src/lib/settings-presenter.ts";
 test("activity/settings presentation keeps measured zero separate from missing observations", () => {
   assert.equal(duration(0), "0 ms");
   assert.equal(duration(null), "Not recorded");
+  assert.equal(duration(1500), "1.5 s");
+  assert.equal(duration(360_000), "6 min");
+  assert.equal(duration(125_000), "2 min 5 s");
+  assert.equal(duration(3_660_000), "1 h 1 min");
   assert.equal(percent(0), "0%");
   assert.equal(percent(null), "Not measured");
   assert.equal(tokens({ calls: 2, usageCalls: 0, totalTokens: 0 }), "Not reported");

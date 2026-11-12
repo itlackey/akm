@@ -87,8 +87,17 @@ export function attentionItems(data: ActivityOverview, pulse: ActivityPulse | nu
 export const number = (value: number | null | undefined) => (value == null ? "Unknown" : value.toLocaleString());
 export const percent = (value: number | null | undefined) =>
   value == null ? "Not measured" : `${Math.round(value * 1000) / 10}%`;
-export const duration = (value: number | null | undefined) =>
-  value == null ? "Not recorded" : value < 1000 ? `${Math.round(value)} ms` : `${(value / 1000).toFixed(1)} s`;
+export const duration = (value: number | null | undefined) => {
+  if (value == null) return "Not recorded";
+  if (value < 1000) return `${Math.round(value)} ms`;
+  if (value < 60_000) return `${(value / 1000).toFixed(1)} s`;
+  const total = Math.round(value / 1000);
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  if (minutes < 60) return seconds ? `${minutes} min ${seconds} s` : `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  return minutes % 60 ? `${hours} h ${minutes % 60} min` : `${hours} h`;
+};
 export const tokens = (row: ModelCount) =>
   row.calls > 0 && !row.usageCalls ? "Not reported" : number(row.totalTokens);
 /**
@@ -145,9 +154,19 @@ export type TimelineRun = {
   said: string;
   /** A workflow run's id, for its trace. */
   runId?: string;
+  /** An improve run's id, for its view. */
+  improveId?: string;
+  /** A task run's start, which with its task identifies the run. */
+  taskAt?: string;
 };
 /** `recorded` is how many runs the window holds when akm says; a row can draw fewer (`runs`). */
-export type TimelineRow = { name: string; task?: string; runs: TimelineRun[]; recorded: number | null };
+export type TimelineRow = {
+  name: string;
+  kind: "task" | "workflow" | "improve" | "index";
+  task?: string;
+  runs: TimelineRun[];
+  recorded: number | null;
+};
 const trigger = (value: ActivityTaskRun["trigger"]) =>
   value === "schedule" ? ", started by the schedule" : value === "manual" ? ", started by hand" : "";
 /**
@@ -175,11 +194,12 @@ export function runTimelineRows(
       tone: run.status === "completed" ? "ok" : run.status === "failed" ? "fail" : "other",
       durationMs: run.durationMs,
       said: `${run.status}${trigger(run.trigger)}`,
+      taskAt: run.startedAt,
     });
     byTask.set(run.taskId, list);
   }
   for (const [task, runs] of [...byTask].sort((a, b) => a[0].localeCompare(b[0])))
-    rows.push({ name: task, task, recorded: null, runs });
+    rows.push({ name: task, kind: "task", task, recorded: null, runs });
   const byWorkflow = new Map<string, TimelineRun[]>();
   for (const run of workflowRuns) {
     if (!inside(run.createdAt)) continue;
@@ -196,17 +216,19 @@ export function runTimelineRows(
     byWorkflow.set(name, list);
   }
   for (const [name, runs] of [...byWorkflow].sort((a, b) => a[0].localeCompare(b[0])))
-    rows.push({ name, recorded: null, runs });
+    rows.push({ name, kind: "workflow", recorded: null, runs });
   const improve = data.improveRuns.filter((run) => inside(run.startedAt));
   if (improve.length)
     rows.push({
       name: "Improve",
+      kind: "improve",
       recorded: null,
       runs: improve.map((run) => ({
         at: run.startedAt,
         tone: run.ok === true ? "ok" : run.ok === false ? "fail" : "other",
         durationMs: run.durationMs,
         said: run.ok === true ? "finished" : run.ok === false ? "failed" : "outcome not recorded",
+        improveId: run.id,
       })),
     });
   const index = data.metrics?.index;
@@ -214,6 +236,7 @@ export function runTimelineRows(
   if (index && builds.length)
     rows.push({
       name: "Index builds",
+      kind: "index",
       recorded: index.runs,
       runs: builds.map((run) => ({ at: run.at, tone: "ok", durationMs: run.totalMs, said: `${run.mode} build` })),
     });

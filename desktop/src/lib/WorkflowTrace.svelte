@@ -9,6 +9,9 @@
   import { duration } from "./activity-presenter";
   import type { WorkflowTrace } from "./activity-types";
   import { traceRows, type TraceRow } from "./workflow-trace-model";
+  import { statusOutcome } from "./run-model";
+  import Outcome from "./Outcome.svelte";
+  import RunFacts from "./RunFacts.svelte";
 
   let { id }: { id: string } = $props();
   let trace = $state<WorkflowTrace | null>(null);
@@ -69,11 +72,12 @@
   {:else}
     <header class="trace-head">
       <h2>{trace.run.workflowTitle || trace.run.workflowRef}</h2>
-      <span
-        class="badge"
-        data-tone={trace.run.status === "failed" ? "fail" : trace.run.status === "completed" ? "ok" : "accent"}
-        >{WORD[trace.run.status] ?? trace.run.status}</span
-      >
+      <Outcome
+        outcome={statusOutcome(trace.run.status)}
+        detail={trace.run.status === "completed" || trace.run.status === "failed"
+          ? ""
+          : (WORD[trace.run.status] ?? trace.run.status).toLowerCase()}
+      />
       <span class="mono muted small">{trace.run.workflowRef} · {trace.run.id}</span>
     </header>
     <p class="muted small">
@@ -81,6 +85,7 @@
       of {layout.units} units finished, {layout.tokens} tokens. A step has no start time of its own in akm: its span is its
       units'.
     </p>
+    <RunFacts {trace} />
     <ol class="steps">
       {#each layout.steps as step, i}<li data-status={step.status}>
           <span class="muted small">Step {i + 1}</span>

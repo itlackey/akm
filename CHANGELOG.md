@@ -6,8 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- AKM Desktop, Activity, Runs: every run has a view of its own (akm#1601). A workflow run lists its failed attempts in the order they ended with their recorded reasons, and its tokens by execution target, above its trace. A task run shows its outcome, duration, who started it and the recorded reason, error and exit code, and links the workflow run it ran by run id. An improve run shows its outcome, its calls and failures by process, and the error detail of the scheduled task run that started within five minutes of it, marked "Matched by time" because no record carries an improve run's id. A run with no recorded end is Unknown, never Completed. Address: `?view=runs&improve=<id>`, `&task=<id>&at=<start>`, `&run=<id>`. No change to `akm-cli/workspace`.
+
 ### Changed
 
+- AKM Desktop charts: Runs opens with a bar per kind of run showing how its runs ended, the run timeline has a key and a green mark for completed runs, and the latest improve runs are a bar chart coloured by outcome that opens a run. Durations read "6 min" instead of "360.0 s". A chart with nothing to draw says so instead of showing empty axes, and a short line series draws its points.
 - `akm index --export-vectors` streams the vectors from the index into the file instead of loading them all first, so peak memory stays flat (about 260 MB) instead of growing by roughly 32 KB per embedded entry (3.2 GB at 100,000). The file contents and the atomic replace are unchanged (akm#1608).
 
 ## [0.10.261120] - 2026-11-12
