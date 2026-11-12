@@ -175,10 +175,34 @@ function detectClaudeCode(strict = false): Detected {
   };
 }
 
-function upgradeClaudeCode(dryRun: boolean, next: boolean, channel?: UpgradeChannel): PluginUpgradeEntry {
+/** A component a channel switch leaves untouched because the channel has nothing newer than what is installed. */
+function stays(
+  harness: PluginUpgradeEntry["harness"],
+  installed: string,
+  channel: UpgradeChannel,
+  before: NonNullable<PluginUpgradeEntry["channel"]>,
+): PluginUpgradeEntry {
+  return {
+    harness,
+    outcome: "current",
+    from: installed,
+    to: installed,
+    channel: before,
+    targetChannel: channel,
+    message: `${harness} stays at ${installed}; ${channel} has nothing newer`,
+  };
+}
+
+function upgradeClaudeCode(
+  dryRun: boolean,
+  next: boolean,
+  channel?: UpgradeChannel,
+  keep?: string,
+): PluginUpgradeEntry {
   const detected = detectClaudeCode(channel !== undefined);
   if ("entry" in detected) return detected.entry;
   const before = refChannel(detected.ref);
+  if (channel && keep !== undefined) return stays("claude-code", keep, channel, before);
   let backups: string[] = [];
   if (channel && !dryRun) {
     try {
@@ -248,7 +272,7 @@ export function codexMarketplaceRef(): string | undefined {
   }
 }
 
-function upgradeCodex(dryRun: boolean, next: boolean, channel?: UpgradeChannel): PluginUpgradeEntry {
+function upgradeCodex(dryRun: boolean, next: boolean, channel?: UpgradeChannel, keep?: string): PluginUpgradeEntry {
   const before = codexPluginVersion();
   if ("error" in before)
     return channel && (!before.error.missing || fs.existsSync(codexConfigFile()))
@@ -258,6 +282,7 @@ function upgradeCodex(dryRun: boolean, next: boolean, channel?: UpgradeChannel):
     return skipped("codex", `the akm plugin is not installed from the ${MARKETPLACE} marketplace`);
   }
   const previous = refChannel(codexMarketplaceRef());
+  if (channel && keep !== undefined) return stays("codex", keep, channel, previous);
   const backups: string[] = [];
   if (channel && previous !== channel && !dryRun) {
     try {
@@ -457,26 +482,14 @@ function upgradeOpenCode(dryRun: boolean, target: OpenCodeTarget): PluginUpgrade
   if (!target.switchChannel && cache.version === latest.version)
     return { harness, outcome: "current", from: cache.version, to: latest.version };
   const base = { harness, from: cache.version, to: latest.version };
-  if (target.keepInstalled) {
-    const kept = {
+  if (target.keepInstalled)
+    return {
       harness,
-      outcome: "current" as const,
+      outcome: "current",
       from: cache.version,
       to: cache.version,
       message: `${flavor.pkg} stays at ${cache.version}; ${tag} has nothing newer`,
     };
-    if (dryRun) return kept;
-    const configured = openCodeConfigSpec(flavor);
-    if (!configured) return failed(harness, "the configured plugin entry disappeared before switching its channel");
-    try {
-      return {
-        ...kept,
-        backups: writeChannelEdits([editChannelJson(configured.file, configured.jsonPath, target.spec)]),
-      };
-    } catch (error) {
-      return channelWriteFailure(harness, error, target.currentChannel ?? "unknown");
-    }
-  }
   // OpenCode 1's refresh replaces the cache the running OpenCode is using, so it waits for the exit.
   // OpenCode 2's `plugin update` installs beside the old build, which a running service keeps using until it restarts.
   if (flavor.replacesCache) {
@@ -621,12 +634,16 @@ export function upgradePlugins(opts: {
   openCode: OpenCodeTarget[];
   channel?: UpgradeChannel;
   currentChannel?: UpgradeChannel;
+  /** Marketplace harnesses a channel switch leaves alone, with the installed version each stays at. */
+  keep?: { claude?: string; codex?: string };
 }): PluginUpgradeEntry[] {
   return [
-    upgradeClaudeCode(opts.dryRun, opts.next, opts.channel),
-    upgradeCodex(opts.dryRun, opts.next, opts.channel),
+    upgradeClaudeCode(opts.dryRun, opts.next, opts.channel, opts.keep?.claude),
+    upgradeCodex(opts.dryRun, opts.next, opts.channel, opts.keep?.codex),
     ...opts.openCode.map((target) => {
       const entry = upgradeOpenCode(opts.dryRun, target);
+      if (target.keepInstalled)
+        return { ...entry, channel: target.currentChannel ?? "unknown", targetChannel: target.switchChannel };
       if (target.currentChannel === undefined) return entry;
       const changed =
         entry.channel === undefined &&
@@ -806,7 +823,15 @@ function marketplaceTargetVersion(source: string, channel: UpgradeChannel, harne
   }
 }
 
-function preflightMarketplaceChannels(channel: UpgradeChannel, allowDowngrade: boolean): void {
+/**
+ * Checks the marketplace channel switch can be made and returns the harnesses to leave alone: those whose
+ * installed build is as new as, or newer than, the channel's.
+ */
+function preflightMarketplaceChannels(
+  channel: UpgradeChannel,
+  allowDowngrade: boolean,
+): { claude?: string; codex?: string } {
+  const keep: { claude?: string; codex?: string } = {};
   const versions = new Map<string, string>();
   const verify = (harness: "claude" | "codex", source: string, installed: string | undefined) => {
     if (allowDowngrade) return;
@@ -816,10 +841,12 @@ function preflightMarketplaceChannels(channel: UpgradeChannel, allowDowngrade: b
       target = marketplaceTargetVersion(source, channel, harness);
       versions.set(key, target);
     }
-    if (installed && semverOrder(target, installed) < 0)
-      throw new UsageError(
-        `Switching to ${channel} would downgrade ${harness} from ${installed} to ${target}; repeat with --allow-downgrade`,
-      );
+    if (
+      installed &&
+      semverOrder(target, installed) <= 0 &&
+      (!keep[harness] || semverOrder(keep[harness], installed) < 0)
+    )
+      keep[harness] = installed;
   };
   const claude = detectClaudeCode(true);
   if ("entry" in claude && claude.entry.outcome === "failed")
@@ -853,6 +880,7 @@ function preflightMarketplaceChannels(channel: UpgradeChannel, allowDowngrade: b
       throw new UsageError("Could not determine the Codex marketplace Git source; no channel was changed");
     verify("codex", source, codex.version);
   }
+  return keep;
 }
 
 /** `akm upgrade`: the CLI step, then the plugins. */
@@ -906,12 +934,12 @@ export async function runUpgrade(
         target.cache?.version &&
         target.latest &&
         !("error" in target.latest) &&
-        semverOrder(target.latest.version, target.cache.version) < 0
+        semverOrder(target.latest.version, target.cache.version) <= 0
       )
         target.keepInstalled = true;
     }
   }
-  if (switchChannel) preflightMarketplaceChannels(switchChannel, args.allowDowngrade === true);
+  const keep = switchChannel ? preflightMarketplaceChannels(switchChannel, args.allowDowngrade === true) : {};
   if (switchChannel && args.allowDowngrade && check.latestVersion !== currentVersion) check.updateAvailable = true;
   const upgraded = await deps.performUpgrade(check, {
     force: args.force,
@@ -937,6 +965,7 @@ export async function runUpgrade(
     next,
     openCode,
     channel: switchChannel,
+    keep,
     currentChannel: upgraded.upgraded ? (isPrerelease(upgraded.newVersion) ? "next" : "latest") : currentChannel,
   });
   const result = {
@@ -955,7 +984,11 @@ export async function runUpgrade(
     switchChannel !== undefined &&
     plugins.some(
       (p) =>
-        p.channel !== undefined && (p.channel !== switchChannel || p.outcome === "deferred" || p.outcome === "skipped"),
+        p.channel !== undefined &&
+        // A "current" entry still on the other channel is one the switch left alone on purpose.
+        ((p.channel !== switchChannel && p.outcome !== "current") ||
+          p.outcome === "deferred" ||
+          p.outcome === "skipped"),
     );
   return {
     mode: "upgrade",

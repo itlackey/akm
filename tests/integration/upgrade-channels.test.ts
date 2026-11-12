@@ -209,36 +209,60 @@ afterEach(() => cleanup());
     expect(run.result).not.toHaveProperty("lockstep");
   });
 
-  test("a channel whose newest plugin build is older keeps the installed plugin build and still switches its channel", async () => {
+  test("a channel whose newest plugin build is older leaves the installed plugin completely untouched", async () => {
     write("cache/opencode/packages/akm-opencode@latest/node_modules/akm-opencode/package.json", '{"version":"0.10.9"}');
+    const config = read("config/opencode/opencode.jsonc");
     const run = await withEnv(env, () => runUpgrade({ ...opts, channel: "next" }, "0.10.1", deps()));
     expect(run.mode === "upgrade" && run.failed).toBe(false);
     expect(run.result.plugins.find((p) => p.harness === "opencode")).toMatchObject({
       outcome: "current",
-      channel: "next",
+      channel: "latest",
       from: "0.10.9",
       to: "0.10.9",
+      message: "akm-opencode stays at 0.10.9; next has nothing newer",
     });
-    expect((parseJsonc(read("config/opencode/opencode.jsonc")) as { plugin: unknown[] }).plugin).toEqual([
-      "other",
-      ["akm-opencode@next", { keep: true }],
-    ]);
+    expect(read("config/opencode/opencode.jsonc")).toBe(config);
     expect(read("calls.jsonl")).not.toContain("debug config");
     expect(fs.existsSync(file("cache/opencode/packages/akm-opencode@latest/node_modules"))).toBe(true);
   });
 
-  test.each([
-    "claudeVersion",
-    "codexVersion",
-  ])("a newer %s blocks a downgrade before CLI or files change", async (versionKey) => {
-    state({ [versionKey]: "0.10.9" });
-    const dependency = deps();
-    await expect(withEnv(env, () => runUpgrade({ ...opts, channel: "next" }, "0.10.1", dependency))).rejects.toThrow(
-      "--allow-downgrade",
+  test("Claude installed newer than the marketplace next ref stays, while akm and the other plugins switch", async () => {
+    state({
+      versions: { latest: "0.10.261121", next: "0.10.261116-beta" },
+      claudeVersion: "0.10.261121",
+      codexVersion: "0.10.261100",
+    });
+    write(
+      "cache/opencode/packages/akm-opencode@latest/node_modules/akm-opencode/package.json",
+      '{"version":"0.10.261100"}',
     );
-    expect(dependency.calls).toHaveLength(0);
+    const known = read("claude/plugins/known_marketplaces.json");
+    const dependency = deps("0.10.261121", "0.10.261122-beta.1");
+    const run = await withEnv(env, () => runUpgrade({ ...opts, channel: "next" }, "0.10.261121", dependency));
+    expect(run.mode === "upgrade" && run.failed).toBe(false);
+    expect(dependency.calls).toEqual([{ force: false, skipPostUpgrade: true, targetVersion: "0.10.261122-beta.1" }]);
+    expect(run.result.plugins.find((p) => p.harness === "claude-code")).toMatchObject({
+      outcome: "current",
+      channel: "latest",
+      message: "claude-code stays at 0.10.261121; next has nothing newer",
+    });
     expect(read("claude/settings.json")).toBe(originalClaude);
+    expect(read("claude/plugins/known_marketplaces.json")).toBe(known);
+    expect(read("calls.jsonl")).not.toContain('"update"');
+    expect(run.result.plugins.find((p) => p.harness === "codex")).toMatchObject({ channel: "next" });
+  });
+
+  test("a Codex marketplace newer than its next ref stays untouched", async () => {
+    state({ codexVersion: "0.10.9" });
+    const run = await withEnv(env, () => runUpgrade({ ...opts, channel: "next" }, "0.10.1", deps()));
+    expect(run.mode === "upgrade" && run.failed).toBe(false);
+    expect(run.result.plugins.find((p) => p.harness === "codex")).toMatchObject({
+      outcome: "current",
+      channel: "latest",
+      message: "codex stays at 0.10.9; next has nothing newer",
+    });
     expect(read("codex/config.toml")).toBe(originalCodex);
+    expect(read("calls.jsonl")).not.toContain("marketplace upgrade");
   });
 
   test.each([
@@ -313,16 +337,7 @@ afterEach(() => cleanup());
     });
   });
 
-  test("Codex downgrade checks its own manifest, which can differ from Claude's", async () => {
-    state({ codexTargetVersion: "0.9.0" });
-    const dependency = deps();
-    await expect(withEnv(env, () => runUpgrade({ ...opts, channel: "next" }, "0.10.1", dependency))).rejects.toThrow(
-      "downgrade codex",
-    );
-    expect(dependency.calls).toHaveLength(0);
-  });
-
-  test("checks every Claude scope for downgrade, then refreshes those exact scopes", async () => {
+  test("--allow-downgrade moves every Claude scope to the channel's version", async () => {
     const rows = ["user", "project", "local"].map((scope) => ({
       id: "akm@akm-plugins",
       version: scope === "local" ? "0.10.9" : "0.10.1",
@@ -331,10 +346,6 @@ afterEach(() => cleanup());
     }));
     state({ claudeInstallations: rows });
     const dependency = deps();
-    await expect(withEnv(env, () => runUpgrade({ ...opts, channel: "next" }, "0.10.1", dependency))).rejects.toThrow(
-      "downgrade claude",
-    );
-    expect(dependency.calls).toHaveLength(0);
     const run = await withEnv(env, () =>
       runUpgrade({ ...opts, channel: "next", allowDowngrade: true }, "0.10.1", dependency),
     );

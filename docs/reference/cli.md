@@ -1851,11 +1851,14 @@ carries `channel: "next"` (`"latest"` otherwise), plus the CLI's inferred `curre
 `akm upgrade --channel next` selects the actual npm `next` CLI tag and changes
 installed harness plugins to their `next` branch or package tag.
 `--channel latest` selects stable and removes those prerelease refs. An explicit
-switch may replace a pinned plugin spec. If the channel's newest akm, or a
-plugin build, is older than the installed one, akm keeps the installed version
-(`updateAvailable: false`, with a message saying so) and still switches the
-channel; `--allow-downgrade` moves back to the channel's version. A Claude Code
-or Codex marketplace build that would go backwards still needs `--allow-downgrade`.
+switch may replace a pinned plugin spec. The same rule applies to each component
+(the akm CLI, each OpenCode plugin, the Claude Code marketplace and the Codex
+marketplace): if the channel's newest build is newer than the installed one, the
+component switches and updates; if it is equal or older, the component is left
+completely untouched (no spec or ref change, no refresh) and reported as
+`current` with a message such as "akm stays at 0.10.261121; next has nothing
+newer". Nothing errors for this. `--allow-downgrade` switches every component
+and moves it to the channel's version.
 A failed CLI install or migration stops the plugin switch.
 
 Claude and Codex retain their marketplace registrations, plugin enablement,
