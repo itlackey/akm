@@ -1,0 +1,1091 @@
+<!doctype html>
+<!--
+  This Source Code Form is subject to the terms of the Mozilla Public
+  License, v. 2.0. If a copy of the MPL was not distributed with this
+  file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+  A design prototype with synthetic data. It is not part of the app and reads nothing from akm.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>akm · Activity replay (prototype)</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    accent-color: var(--accent);
+    --bg: light-dark(#f6f6f9, #0a0a0c);
+    --surface: light-dark(#ffffff, #111115);
+    --surface-2: light-dark(#efeff4, #17171c);
+    --surface-sunk: light-dark(#e8e8ef, #0d0d10);
+    --border: light-dark(#dcdce4, #26262d);
+    --border-strong: light-dark(#767684, #6b6b78);
+    --rule: light-dark(#0f0f14, #52525e);
+    --text: light-dark(#0f0f14, #ededf0);
+    --muted: light-dark(#4a4a57, #b4b4be);
+    --faint: light-dark(#5d5d6a, #9a9aa6);
+    --accent: light-dark(#6d28d9, #9b72fa);
+    --accent-hover: light-dark(#5b21b6, #b79bfc);
+    --accent-bg: light-dark(#f0eafe, #1b1530);
+    --on-accent: light-dark(#ffffff, #0a0a0c);
+    --ok: light-dark(#17753a, #34d399);
+    --ok-bg: light-dark(#e3f4e9, #0f2a20);
+    --warn: light-dark(#8a5a00, #fbbf24);
+    --warn-bg: light-dark(#fcf0d3, #2b2210);
+    --fail: light-dark(#c4202c, #f87171);
+    --fail-bg: light-dark(#fde6e8, #2d1416);
+    --add-strong: light-dark(#a8e0bb, #1d6b49);
+    --del-strong: light-dark(#f5b3b9, #7f2a2f);
+    --hunk-bg: light-dark(#f3efff, #16162b);
+    --link: light-dark(#5b21b6, #c4b5fd);
+    --age-1: light-dark(#8f7bd1, #6a58b0);
+    --age-2: light-dark(#6d4fc0, #8f7bdc);
+    --age-3: light-dark(#4a2a9c, #c4b5fd);
+    --age-unknown: light-dark(#767684, #8a8a96);
+    --s1: light-dark(#2f64d0, #c4b5fd);
+    --s2: light-dark(#b45309, #fbbf24);
+    --s3: light-dark(#0f766e, #34d399);
+    --s4: light-dark(#be185d, #f472b6);
+    --s5: light-dark(#7c3aed, #60a5fa);
+    --s6: light-dark(#6b7280, #9a9aa6);
+    --marker: light-dark(#a16207, #fbbf24);
+    --target-min: 24px;
+    --topbar-h: 4rem; /* the sticky bar; offsets below it derive from this */
+    /* The bar sits at the top on wide screens and at the bottom on narrow ones. */
+    --top-inset: var(--topbar-h);
+    --bottom-inset: 0px;
+    --control-height: 2.75rem;
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 24px;
+    --space-6: 32px;
+    --space-7: 48px;
+    --radius: 2px;
+    --radius-pill: 999px;
+    --text-xs: 0.75rem;
+    --text-s: 0.8125rem;
+    --text-m: 0.9375rem;
+    --text-l: 1.125rem;
+    --text-xl: 1.375rem;
+    --text-2xl: clamp(2rem, 1.3rem + 2.6vw, 3.25rem);
+    --text-stat: clamp(2rem, 1.5rem + 1.6vw, 2.75rem);
+    --content-max: 82rem;
+    --leading: 1.55;
+    --leading-tight: 1.05;
+    --leading-snug: 1.5;
+    --tracking-tight: -0.045em;
+    --tracking-snug: -0.02em;
+    --tracking-caps: 0.06em;
+    --weight-strong: 600;
+    --shadow-float: 0 4px 16px rgb(0 0 0 / 0.2);
+    --edge-accent: inset 3px 0 0 var(--accent);
+    --edge-underline: inset 0 -3px 0 var(--accent);
+    --edge-ok: inset 3px 0 0 var(--ok);
+    --edge-warn: inset 3px 0 0 var(--warn);
+    --edge-fail: inset 3px 0 0 var(--fail);
+    --focus-halo: 0 0 0 3px color-mix(in srgb, var(--link) 30%, transparent);
+    --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+  }
+
+/* Prototype shell. Tokens above are copied from desktop/src/lib/ui/tokens.css; the rest imitates Desktop's chrome. */
+:root {
+  /* Categorical slots for the maps: eight hues in a fixed order, validated against --bg in both themes. */
+  --c1: light-dark(#2a78d6, #3987e5); --c2: light-dark(#eb6834, #d95926);
+  --c3: light-dark(#1baf7a, #199e70); --c4: light-dark(#eda100, #c98500);
+  --c5: light-dark(#e87ba4, #d55181); --c6: light-dark(#008300, #008300);
+  --c7: light-dark(#6250d6, #9085e9); --c8: light-dark(#e34948, #e66767);
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text); font: var(--text-m) / var(--leading) var(--font);
+  -webkit-font-smoothing: antialiased; display: flex; flex-direction: column; overflow: hidden; }
+:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; border-radius: var(--radius); }
+h1, h2, h3, p { margin: 0; }
+h1 { font-size: var(--text-l); letter-spacing: var(--tracking-snug); }
+h2 { font-size: var(--text-m); font-weight: var(--weight-strong); }
+h3 { font-size: var(--text-xs); font-weight: var(--weight-strong); color: var(--muted); }
+.muted { color: var(--muted); } .small { font-size: var(--text-s); } .xs { font-size: var(--text-xs); }
+.mono { font-family: var(--mono); font-size: var(--text-xs); }
+.num { font-variant-numeric: tabular-nums; }
+
+.topbar { flex: none; min-block-size: 3.25rem; padding: 0 var(--space-5); display: flex; gap: var(--space-5);
+  align-items: center; border-block-end: 1px solid var(--border); background: var(--surface); }
+.topbar .brand { font-weight: 700; letter-spacing: var(--tracking-snug); }
+.topbar nav { display: flex; gap: var(--space-1); flex: 1; min-inline-size: 0; overflow-x: auto; }
+.topbar nav span { color: var(--muted); font-weight: 550; padding: 6px 12px; border-radius: var(--radius); white-space: nowrap; }
+.topbar nav span[aria-current] { color: var(--text); background: var(--surface-2); font-weight: 650; }
+.proto { font-size: var(--text-xs); color: var(--warn); background: var(--warn-bg); padding: 1px 8px; border-radius: var(--radius-pill); white-space: nowrap; }
+
+.subbar { flex: none; display: flex; flex-wrap: wrap; gap: var(--space-3) var(--space-4); align-items: center;
+  padding: var(--space-3) var(--space-5); border-block-end: 1px solid var(--border); }
+.subbar .grow { flex: 1; min-inline-size: 0; }
+.seg { display: inline-flex; border: 1px solid var(--border-strong); border-radius: var(--radius); overflow: hidden; }
+.seg button { border: 0; border-radius: 0; background: none; color: var(--muted); }
+.seg button + button { border-inline-start: 1px solid var(--border); }
+.seg button[aria-pressed="true"] { background: var(--accent-bg); color: var(--text); box-shadow: var(--edge-underline); }
+button, select, input[type="search"] { font: inherit; font-size: var(--text-s); color: var(--text); background: var(--surface);
+  border: 1px solid var(--border-strong); border-radius: var(--radius); min-block-size: 2rem; padding: 2px 10px; }
+button { cursor: pointer; }
+button:hover { background: var(--surface-2); }
+label.field { display: inline-flex; gap: var(--space-2); align-items: center; font-size: var(--text-s); color: var(--muted); }
+input[type="search"] { inline-size: 15rem; max-inline-size: 100%; }
+input[type="range"] { accent-color: var(--accent); }
+
+main { flex: 1; min-block-size: 0; display: flex; }
+.stage { position: relative; flex: 1; min-inline-size: 0; }
+.stage canvas { position: absolute; inset: 0; inline-size: 100%; block-size: 100%; display: block; }
+.stage canvas.labels { pointer-events: none; }
+.side { flex: none; inline-size: 20rem; border-inline-start: 1px solid var(--border); background: var(--surface);
+  overflow-y: auto; padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-4); }
+.side section { display: flex; flex-direction: column; gap: var(--space-2); }
+.overlay { position: absolute; background: color-mix(in srgb, var(--surface) 88%, transparent); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: var(--space-3); backdrop-filter: blur(6px); }
+.legend { display: flex; flex-direction: column; gap: 2px; }
+.legend button { display: flex; align-items: center; gap: var(--space-2); border: 0; background: none; padding: 2px 6px;
+  min-block-size: 1.6rem; text-align: start; inline-size: 100%; }
+.legend button[aria-pressed="false"] { opacity: 0.4; }
+.legend i, .dot { flex: none; inline-size: 10px; block-size: 10px; border-radius: 50%; display: inline-block; }
+.legend .n { margin-inline-start: auto; color: var(--muted); font-variant-numeric: tabular-nums; font-size: var(--text-xs); }
+.tip { position: absolute; z-index: 5; pointer-events: none; background: var(--surface); border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-float); border-radius: var(--radius); padding: var(--space-2) var(--space-3); font-size: var(--text-s);
+  max-inline-size: 22rem; }
+.tip[hidden] { display: none; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 2px var(--space-3); font-size: var(--text-s); }
+.kv dt { color: var(--muted); } .kv dd { margin: 0; overflow-wrap: anywhere; }
+.badge { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: var(--radius-pill);
+  font-size: var(--text-xs); font-weight: var(--weight-strong); white-space: nowrap; background: var(--surface-2); }
+.badge[data-tone="ok"] { color: var(--ok); background: var(--ok-bg); }
+.badge[data-tone="warn"] { color: var(--warn); background: var(--warn-bg); }
+.badge[data-tone="fail"] { color: var(--fail); background: var(--fail-bg); }
+.badge[data-tone="accent"] { color: var(--link); background: var(--accent-bg); }
+.stats { display: flex; gap: var(--space-5); }
+.stats div { display: flex; flex-direction: column; line-height: 1.2; }
+.stats b { font-size: var(--text-l); font-variant-numeric: tabular-nums; font-weight: 600; }
+.stats span { font-size: var(--text-xs); color: var(--muted); }
+.list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.list li { display: flex; gap: var(--space-2); align-items: baseline; padding: 3px 0; border-block-end: 1px solid var(--border); font-size: var(--text-s); }
+.list li button { border: 0; background: none; padding: 0; min-block-size: 0; color: var(--link); text-align: start; overflow-wrap: anywhere; }
+table { border-collapse: collapse; inline-size: 100%; font-size: var(--text-s); }
+th, td { text-align: start; padding: 4px 8px; border-block-end: 1px solid var(--border); }
+th { color: var(--muted); font-weight: 500; font-size: var(--text-xs); }
+@media (width < 60rem) { main { flex-direction: column; } .side { inline-size: auto; max-block-size: 40%; border-inline-start: 0; border-block-start: 1px solid var(--border); } }
+
+.col { flex: 1; min-inline-size: 0; display: flex; flex-direction: column; }
+.timeline { flex: none; block-size: 11.5rem; border-block-start: 1px solid var(--border); position: relative; background: var(--surface); }
+.timeline canvas { position: absolute; inset: 0; inline-size: 100%; block-size: 100%; cursor: ew-resize; touch-action: none; }
+#legendBox { inset-block-start: var(--space-3); inset-inline-start: var(--space-3); }
+#legendBox div { display: flex; gap: var(--space-2); align-items: center; font-size: var(--text-s); }
+.ticker { list-style: none; margin: 0; padding: 0; font-size: var(--text-s); }
+.ticker li { display: grid; grid-template-columns: 3rem 10px 1fr; gap: var(--space-2); align-items: baseline; padding: 2px 0; border-block-end: 1px solid var(--border); }
+.ticker .t { color: var(--muted); font-variant-numeric: tabular-nums; font-size: var(--text-xs); }
+.ticker .what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#clock { font-variant-numeric: tabular-nums; font-weight: 600; min-inline-size: 3.2rem; }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <span class="brand">akm</span>
+  <nav aria-label="Sections"><span>Home</span><span>Library</span><span>Projects</span><span>Review</span><span aria-current="page">Activity</span><span>Settings</span></nav>
+  <span class="proto">Prototype · synthetic data</span>
+  <button id="theme"></button>
+</header>
+<div class="subbar">
+  <h1>Activity replay</h1>
+  <span class="muted small">The last 24 hours of searches, shows, feedback and writes, played over the library map</span>
+  <span class="grow"></span>
+  <button id="play" aria-pressed="true">Pause</button>
+  <span id="clock">00:00</span>
+  <label class="field">Speed
+    <span class="seg" id="speed"><button data-v="6" aria-pressed="false">Slow</button><button data-v="20" aria-pressed="true">Normal</button><button data-v="90" aria-pressed="false">Fast</button></span>
+  </label>
+</div>
+<main>
+  <div class="col">
+    <div class="stage" id="stage">
+      <canvas id="gl" aria-label="The library map. Assets light up as agents search for them and read them. The panel on the right lists the same events as text."></canvas>
+      <canvas id="labels" class="labels"></canvas>
+      <div class="overlay" id="legendBox">
+        <h3>What a pulse means</h3>
+        <div><i class="dot" style="background:var(--c1)"></i>Asset shown to an agent</div>
+        <div><i class="dot" style="background:var(--ok)"></i>Positive feedback</div>
+        <div><i class="dot" style="background:var(--fail)"></i>Negative feedback</div>
+        <div><i class="dot" style="background:var(--c4)"></i>Asset written or changed</div>
+        <p class="xs muted" style="margin-top:6px">Assets stay lit once used today.</p>
+      </div>
+    </div>
+    <div class="timeline"><canvas id="tl" role="slider" tabindex="0" aria-label="Time of day. Drag, or use the arrow keys, to move through the last 24 hours." aria-valuemin="0" aria-valuemax="1440"></canvas></div>
+  </div>
+  <aside class="side">
+    <div class="stats">
+      <div><b id="sSearch">0</b><span>searches</span></div>
+      <div><b id="sMiss">0</b><span>found nothing</span></div>
+      <div><b id="sShow">0</b><span>shown</span></div>
+    </div>
+    <div class="stats">
+      <div><b id="sUsed">0</b><span>assets used</span></div>
+      <div><b id="sPos">0</b><span>positive</span></div>
+      <div><b id="sNeg">0</b><span>negative</span></div>
+    </div>
+    <section><h3>Now</h3><ul class="ticker" id="ticker"></ul></section>
+    <section><h3>Searches that found nothing</h3><ul class="list" id="misses"></ul></section>
+    <p class="xs muted">Rows on the timeline are akm's <span class="mono">source</span> field, which is what search, show and feedback events carry today. A row per agent or session needs the harness and session id recorded on those events.</p>
+  </aside>
+</main>
+<script>
+// Prototype helpers shared by the examples.
+const $ = (sel, root = document) => root.querySelector(sel);
+const el = (tag, props = {}, ...children) => {
+  const node = Object.assign(document.createElement(tag), props);
+  node.append(...children);
+  return node;
+};
+/** A seeded random source, so every load shows the same data. */
+function rng(seed) {
+  let a = seed >>> 0;
+  const next = () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  next.int = (n) => Math.floor(next() * n);
+  next.pick = (list) => list[Math.floor(next() * list.length)];
+  next.gauss = () => (next() + next() + next() + next() - 2) * 0.87;
+  return next;
+}
+/** The colour a design token resolves to in the scheme on screen, as [r, g, b] (the same probe chart-view.js uses). */
+function tokenRGB(name) {
+  const probe = el("span", { style: `position:absolute;visibility:hidden;color:var(${name})` });
+  document.body.append(probe);
+  const c = document.createElement("canvas").getContext("2d");
+  c.fillStyle = getComputedStyle(probe).color;
+  c.fillRect(0, 0, 1, 1);
+  probe.remove();
+  return [...c.getImageData(0, 0, 1, 1).data.slice(0, 3)];
+}
+const isDark = () => {
+  const forced = document.documentElement.dataset.theme;
+  return forced ? forced === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+};
+/** The Appearance switch: Desktop stores this choice; here it only stamps data-theme. */
+function themeToggle(button, onChange) {
+  const apply = () => { button.textContent = isDark() ? "Light theme" : "Dark theme"; onChange?.(isDark()); };
+  button.addEventListener("click", () => {
+    document.documentElement.dataset.theme = isDark() ? "light" : "dark";
+    apply();
+  });
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", apply);
+  apply();
+}
+const fmt = (n) => n.toLocaleString("en-US");
+const ago = (days) => (days < 1 ? "today" : days < 2 ? "yesterday" : days < 60 ? `${Math.round(days)} days ago` : `${Math.round(days / 30)} months ago`);
+
+// graph-gl.js: a WebGL2 point-and-line renderer for large graphs. No dependencies.
+// In Desktop this file would be src/lib/ui/graph-gl.js, wrapped by a GraphView.svelte the way
+// chart-view.js is wrapped by ActivityChart.svelte.
+//
+// createGraphView({ canvas, labels, data, dark }) -> view
+//   data.count            number of nodes
+//   data.pos              Float32Array(count * 3)
+//   data.color            Uint8Array(count * 4)   rgba
+//   data.size             Float32Array(count)     world-space radius
+//   data.edges            Uint32Array(pairs)      node indices
+//   data.anchors          [{ text, x, y, z }]     group labels (optional)
+//   data.label(i)         string for a node label
+// view.setColors(u8) / setState(u8: 0 dimmed, 1 normal, 2 emphasised) / setEdges(u32) / setHighlightEdges(u32)
+// view.setPositions(f32) / setFlat(bool) / setDark(bool) / focus(i) / project(i) / destroy()
+// view.onHover(i | -1) / view.onPick(i | -1) / view.onFrame(ms)
+// view.particles: [{ from, to, t (0..1), color: [r,g,b] }] drawn each frame by the caller's own clock.
+
+const POINT_VS = `#version 300 es
+in vec3 aPos; in vec4 aColor; in float aSize; in float aState;
+uniform mat4 uMVP; uniform float uPx, uFlat, uDim, uMinPx;
+out vec4 vColor;
+void main() {
+  gl_Position = uMVP * vec4(aPos.x, aPos.y * uFlat, aPos.z, 1.0);
+  float s = aSize * uPx / gl_Position.w;
+  if (aState > 1.5) s = s * 1.5 + 3.0;
+  gl_PointSize = clamp(s, uMinPx, 44.0);
+  vColor = vec4(aColor.rgb, aColor.a * (aState < 0.5 ? uDim : 1.0));
+}`;
+const POINT_FS = `#version 300 es
+precision mediump float;
+in vec4 vColor; out vec4 o;
+void main() {
+  vec2 c = gl_PointCoord * 2.0 - 1.0;
+  float d = dot(c, c);
+  if (d > 1.0) discard;
+  o = vec4(vColor.rgb, vColor.a * smoothstep(1.0, 0.6, d));
+}`;
+const LINE_VS = `#version 300 es
+in vec3 aPos; in vec4 aColor; in float aState;
+uniform mat4 uMVP; uniform float uFlat, uAlpha, uDim;
+out vec4 vColor;
+void main() {
+  gl_Position = uMVP * vec4(aPos.x, aPos.y * uFlat, aPos.z, 1.0);
+  vColor = vec4(aColor.rgb, uAlpha * (aState < 0.5 ? uDim : 1.0));
+}`;
+const LINE_FS = `#version 300 es
+precision mediump float;
+in vec4 vColor; out vec4 o;
+void main() { o = vColor; }`;
+
+function program(gl, vs, fs) {
+  const p = gl.createProgram();
+  for (const [type, src] of [[gl.VERTEX_SHADER, vs], [gl.FRAGMENT_SHADER, fs]]) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    gl.attachShader(p, s);
+  }
+  // One attribute layout for every program, so they share a vertex array.
+  ["aPos", "aColor", "aSize", "aState"].forEach((name, i) => gl.bindAttribLocation(p, i, name));
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+  const uniforms = {};
+  for (let i = 0; i < gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS); i++) {
+    const name = gl.getActiveUniform(p, i).name;
+    uniforms[name] = gl.getUniformLocation(p, name);
+  }
+  return { p, u: uniforms };
+}
+
+function createGraphView({ canvas, labels, data, dark = true }) {
+  const gl = canvas.getContext("webgl2", { antialias: true, alpha: false, powerPreference: "high-performance" });
+  if (!gl) throw new Error("WebGL2 is not available");
+  const ctx = labels.getContext("2d");
+  const N = data.count;
+  const points = program(gl, POINT_VS, POINT_FS);
+  const lines = program(gl, LINE_VS, LINE_FS);
+
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  const buffer = (index, array, size, type, normalized, usage = gl.STATIC_DRAW) => {
+    const b = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, b);
+    gl.bufferData(gl.ARRAY_BUFFER, array, usage);
+    gl.enableVertexAttribArray(index);
+    gl.vertexAttribPointer(index, size, type, normalized, 0, 0);
+    return b;
+  };
+  const state = new Uint8Array(N).fill(1);
+  const posBuf = buffer(0, data.pos, 3, gl.FLOAT, false, gl.DYNAMIC_DRAW);
+  const colorBuf = buffer(1, data.color, 4, gl.UNSIGNED_BYTE, true, gl.DYNAMIC_DRAW);
+  buffer(2, data.size, 1, gl.FLOAT, false);
+  const stateBuf = buffer(3, state, 1, gl.UNSIGNED_BYTE, false, gl.DYNAMIC_DRAW);
+  const edgeBuf = gl.createBuffer();
+  const hiBuf = gl.createBuffer();
+  let edgeCount = 0;
+  let hiCount = 0;
+
+  // Particles (activity pulses) and the emphasised nodes are drawn from small dynamic buffers of their own.
+  const pvao = gl.createVertexArray();
+  gl.bindVertexArray(pvao);
+  const MAXP = 4096;
+  const pPos = new Float32Array(MAXP * 3);
+  const pCol = new Uint8Array(MAXP * 4);
+  const pSize = new Float32Array(MAXP);
+  const pState = new Uint8Array(MAXP).fill(1);
+  const pPosBuf = buffer(0, pPos, 3, gl.FLOAT, false, gl.DYNAMIC_DRAW);
+  const pColBuf = buffer(1, pCol, 4, gl.UNSIGNED_BYTE, true, gl.DYNAMIC_DRAW);
+  const pSizeBuf = buffer(2, pSize, 1, gl.FLOAT, false, gl.DYNAMIC_DRAW);
+  buffer(3, pState, 1, gl.UNSIGNED_BYTE, false);
+  gl.bindVertexArray(null);
+
+  const cam = { yaw: 0.6, pitch: 0.42, dist: 2150, tx: 0, ty: 0, tz: 0, flat: 1 };
+  const goal = { ...cam };
+  const mvp = new Float32Array(16);
+  let W = 1, H = 1, dpr = 1, fov = 0.8, px = 1;
+  let hover = -1, selected = -1, idleAt = 0, raf = 0, destroyed = false;
+  let pointer = null;
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  const view = {
+    particles: [],
+    emphasis: [],
+    autoRotate: !reduced,
+    edgeScale: 1,
+    onHover: () => {}, onPick: () => {}, onFrame: () => {},
+    cam, goal,
+    setColors(u8) { gl.bindBuffer(gl.ARRAY_BUFFER, colorBuf); gl.bufferSubData(gl.ARRAY_BUFFER, 0, u8); data.color = u8; },
+    setPositions(f32) { data.pos = f32; gl.bindBuffer(gl.ARRAY_BUFFER, posBuf); gl.bufferSubData(gl.ARRAY_BUFFER, 0, f32); },
+    setState(u8) { state.set(u8); gl.bindBuffer(gl.ARRAY_BUFFER, stateBuf); gl.bufferSubData(gl.ARRAY_BUFFER, 0, state); },
+    state,
+    setEdges(u32) {
+      gl.bindVertexArray(null);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, edgeBuf);
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, u32, gl.STATIC_DRAW);
+      edgeCount = u32.length;
+    },
+    setHighlightEdges(u32) {
+      gl.bindVertexArray(null);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, hiBuf);
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, u32, gl.DYNAMIC_DRAW);
+      hiCount = u32.length;
+    },
+    setFlat(flat) { goal.flat = flat ? 0 : 1; goal.pitch = flat ? Math.PI / 2 - 0.001 : 0.42; },
+    setDark(value) { dark = value; },
+    select(i) { selected = i; },
+    focus(i, dist) {
+      goal.tx = data.pos[i * 3]; goal.ty = data.pos[i * 3 + 1] * goal.flat; goal.tz = data.pos[i * 3 + 2];
+      if (dist) goal.dist = Math.min(goal.dist, dist);
+      idleAt = performance.now() + 6000;
+    },
+    home() { Object.assign(goal, { tx: 0, ty: 0, tz: 0, dist: 2150 }); },
+    project,
+    destroy() {
+      destroyed = true;
+      cancelAnimationFrame(raf);
+      observer.disconnect();
+      gl.getExtension("WEBGL_lose_context")?.loseContext();
+    },
+  };
+  view.setEdges(data.edges);
+
+  function resize() {
+    dpr = Math.min(devicePixelRatio || 1, 2);
+    W = canvas.clientWidth; H = canvas.clientHeight;
+    for (const c of [canvas, labels]) { c.width = Math.max(1, W * dpr); c.height = Math.max(1, H * dpr); }
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  const observer = new ResizeObserver(resize);
+  observer.observe(canvas);
+  resize();
+
+  function updateMatrix() {
+    const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch), cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw);
+    // The camera's basis: f looks from the eye to the target, r is right, u is up.
+    const fx = -cp * sy, fy = -sp, fz = -cp * cy;
+    const rx = cy, ry = 0, rz = -sy;
+    const ux = ry * fz - rz * fy, uy = rz * fx - rx * fz, uz = rx * fy - ry * fx;
+    const ex = cam.tx - fx * cam.dist, ey = cam.ty - fy * cam.dist, ez = cam.tz - fz * cam.dist;
+    const f = 1 / Math.tan(fov / 2), aspect = W / H, near = 5, far = 20000;
+    const a = (far + near) / (near - far), b = (2 * far * near) / (near - far);
+    // mvp = projection * view, column-major.
+    const v = [rx, ux, -fx, ry, uy, -fy, rz, uz, -fz, -(rx * ex + ry * ey + rz * ez), -(ux * ex + uy * ey + uz * ez), fx * ex + fy * ey + fz * ez];
+    for (let c = 0; c < 4; c++) {
+      const x = v[c * 3], y = v[c * 3 + 1], z = v[c * 3 + 2], w = c === 3 ? 1 : 0;
+      mvp[c * 4] = (f / aspect) * x;
+      mvp[c * 4 + 1] = f * y;
+      mvp[c * 4 + 2] = a * z + b * w;
+      mvp[c * 4 + 3] = -z;
+    }
+    px = (H * dpr * f) / 2;
+  }
+
+  /** Screen position of a node, or of a world point: [x, y, w, pointRadiusPx]. w <= 0 is behind the camera. */
+  function project(i, out = [0, 0, 0, 0], x, y, z) {
+    if (x === undefined) { x = data.pos[i * 3]; y = data.pos[i * 3 + 1]; z = data.pos[i * 3 + 2]; }
+    y *= cam.flat;
+    const w = mvp[3] * x + mvp[7] * y + mvp[11] * z + mvp[15];
+    out[0] = ((mvp[0] * x + mvp[4] * y + mvp[8] * z + mvp[12]) / w * 0.5 + 0.5) * W;
+    out[1] = (1 - ((mvp[1] * x + mvp[5] * y + mvp[9] * z + mvp[13]) / w * 0.5 + 0.5)) * H;
+    out[2] = w;
+    out[3] = i >= 0 ? Math.min(44, Math.max((data.size[i] * px) / w, 2 * dpr)) / dpr / 2 : 0;
+    return out;
+  }
+
+  /** The node under the pointer: every node is projected on the CPU, which costs well under a millisecond at 30k. */
+  function pick(mx, my) {
+    const p = [0, 0, 0, 0];
+    let best = -1, bestScore = Infinity;
+    for (let i = 0; i < N; i++) {
+      if (state[i] === 0) continue;
+      project(i, p);
+      if (p[2] <= 0) continue;
+      const dx = p[0] - mx, dy = p[1] - my, r = p[3] + 4;
+      const d = dx * dx + dy * dy;
+      if (d < r * r) {
+        const score = d / (r * r) + p[2] * 1e-5;
+        if (score < bestScore) { bestScore = score; best = i; }
+      }
+    }
+    return best;
+  }
+
+  // Pointer: drag orbits (or pans in flat mode / with shift or the right button), wheel and pinch zoom.
+  const touches = new Map();
+  let dragged = false, pinch = 0;
+  canvas.addEventListener("pointerdown", (e) => {
+    canvas.setPointerCapture(e.pointerId);
+    touches.set(e.pointerId, [e.clientX, e.clientY]);
+    dragged = false;
+    pinch = 0;
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    const rect = canvas.getBoundingClientRect();
+    pointer = [e.clientX - rect.left, e.clientY - rect.top];
+    const last = touches.get(e.pointerId);
+    if (!last) return;
+    const dx = e.clientX - last[0], dy = e.clientY - last[1];
+    touches.set(e.pointerId, [e.clientX, e.clientY]);
+    idleAt = performance.now() + 6000;
+    if (touches.size === 2) {
+      const [a, b] = [...touches.values()];
+      const d = Math.hypot(a[0] - b[0], a[1] - b[1]);
+      if (pinch) goal.dist = Math.max(40, Math.min(8000, goal.dist * (pinch / d)));
+      pinch = d;
+      dragged = true;
+      return;
+    }
+    if (Math.abs(dx) + Math.abs(dy) > 2) dragged = true;
+    if (goal.flat === 0 || e.shiftKey || e.buttons === 2) {
+      const k = (cam.dist * Math.tan(fov / 2) * 2) / H;
+      const cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw), sp = Math.sin(cam.pitch);
+      goal.tx -= (dx * cy + dy * sy * sp) * k;
+      goal.tz -= (-dx * sy + dy * cy * sp) * k;
+      Object.assign(cam, { tx: goal.tx, tz: goal.tz });
+    } else {
+      goal.yaw -= dx * 0.005;
+      goal.pitch = Math.max(-1.4, Math.min(1.5, goal.pitch + dy * 0.005));
+      Object.assign(cam, { yaw: goal.yaw, pitch: goal.pitch });
+    }
+  });
+  const release = (e) => {
+    if (touches.delete(e.pointerId) && !dragged && e.type === "pointerup") {
+      const rect = canvas.getBoundingClientRect();
+      updateMatrix();
+      view.onPick(pick(e.clientX - rect.left, e.clientY - rect.top));
+    }
+  };
+  canvas.addEventListener("pointerup", release);
+  canvas.addEventListener("pointercancel", release);
+  canvas.addEventListener("pointerleave", () => { pointer = null; });
+  canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+  canvas.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    goal.dist = Math.max(40, Math.min(8000, goal.dist * Math.exp(e.deltaY * 0.0012)));
+    idleAt = performance.now() + 6000;
+  }, { passive: false });
+  // Keyboard: arrows orbit or pan, + and - zoom, so the map is usable without a pointer.
+  canvas.tabIndex = 0;
+  canvas.addEventListener("keydown", (e) => {
+    const step = e.shiftKey ? 0.3 : 0.1;
+    const pan = goal.flat === 0 ? goal.dist * 0.1 : 0;
+    if (e.key === "ArrowLeft") pan ? (goal.tx -= pan) : (goal.yaw -= step);
+    else if (e.key === "ArrowRight") pan ? (goal.tx += pan) : (goal.yaw += step);
+    else if (e.key === "ArrowUp") pan ? (goal.tz -= pan) : (goal.pitch = Math.min(1.5, goal.pitch + step));
+    else if (e.key === "ArrowDown") pan ? (goal.tz += pan) : (goal.pitch = Math.max(-1.4, goal.pitch - step));
+    else if (e.key === "+" || e.key === "=") goal.dist = Math.max(40, goal.dist * 0.8);
+    else if (e.key === "-") goal.dist = Math.min(6000, goal.dist * 1.25);
+    else return;
+    e.preventDefault();
+    idleAt = performance.now() + 6000;
+  });
+
+  // The largest nodes first: labels are given to whichever of these are big enough on screen.
+  const bySize = Array.from({ length: N }, (_, i) => i).sort((a, b) => data.size[b] - data.size[a]).slice(0, 3000);
+  const ink = () => (dark ? "#ededf0" : "#0f0f14");
+  const paper = () => (dark ? "rgba(10,10,12,.78)" : "rgba(246,246,249,.85)");
+
+  function drawLabels() {
+    ctx.clearRect(0, 0, W, H);
+    ctx.textBaseline = "middle";
+    const p = [0, 0, 0, 0];
+    const taken = [];
+    const place = (text, x, y, { bold = false, pill = false, color = ink() } = {}) => {
+      ctx.font = `${bold ? "600 " : ""}${pill ? 11 : 12}px ui-sans-serif, system-ui, sans-serif`;
+      const w = ctx.measureText(text).width + (pill ? 16 : 8);
+      const box = [x, y - 10, x + w, y + 10];
+      if (!bold && taken.some((t) => box[0] < t[2] && box[2] > t[0] && box[1] < t[3] && box[3] > t[1])) return;
+      taken.push(box);
+      ctx.fillStyle = paper();
+      ctx.beginPath(); ctx.roundRect(x, y - 9, w, 18, pill ? 9 : 2); ctx.fill();
+      if (pill) { ctx.strokeStyle = color; ctx.globalAlpha = 0.6; ctx.stroke(); ctx.globalAlpha = 1; }
+      ctx.fillStyle = color;
+      ctx.fillText(text, x + (pill ? 8 : 4), y + 0.5);
+    };
+    const ring = (i, color, grow = 3) => {
+      project(i, p);
+      if (p[2] <= 0) return false;
+      ctx.strokeStyle = color; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(p[0], p[1], p[3] + grow, 0, 7); ctx.stroke();
+      return true;
+    };
+    if (selected >= 0 && ring(selected, ink(), 5)) place(data.label(selected), p[0] + p[3] + 9, p[1], { bold: true });
+    if (hover >= 0 && hover !== selected && ring(hover, ink())) place(data.label(hover), p[0] + p[3] + 7, p[1], { bold: true });
+    for (const i of view.emphasis) {
+      if (i === selected || i === hover) continue;
+      project(i, p);
+      if (p[2] > 0 && p[0] > 0 && p[0] < W && p[1] > 0 && p[1] < H) place(data.label(i), p[0] + p[3] + 5, p[1]);
+      if (taken.length > 40) break;
+    }
+    // Group names while zoomed out; node names once nodes are large enough to read.
+    const far = cam.dist > 1100;
+    if (far) for (const a of data.anchors ?? []) {
+      project(-1, p, a.x, a.y, a.z);
+      if (p[2] > 0) place(a.text, p[0], p[1], { pill: true, color: a.color ?? ink() });
+    }
+    let shown = 0;
+    if (!far && selected < 0) for (const i of bySize) {
+      if (shown > 28) break;
+      if (state[i] === 0 || i === selected || i === hover) continue;
+      project(i, p);
+      if (p[2] <= 0 || p[3] < 5.5 || p[0] < 0 || p[0] > W || p[1] < 0 || p[1] > H) continue;
+      const before = taken.length;
+      place(data.label(i), p[0] + p[3] + 4, p[1]);
+      if (taken.length > before) shown++;
+    }
+  }
+
+  let lastT = performance.now(), frameN = 0;
+  function frame(t) {
+    if (destroyed) return;
+    const dt = Math.min(64, t - lastT); lastT = t;
+    if (view.autoRotate && t > idleAt && !touches.size && goal.flat === 1) goal.yaw += dt * 0.00004;
+    const k = 1 - Math.exp(-dt / 140);
+    for (const key of ["yaw", "pitch", "dist", "tx", "ty", "tz", "flat"]) cam[key] += (goal[key] - cam[key]) * k;
+    updateMatrix();
+    if (pointer && !touches.size && frameN % 2 === 0) {
+      const next = pick(pointer[0], pointer[1]);
+      if (next !== hover) { hover = next; canvas.style.cursor = next >= 0 ? "pointer" : "grab"; view.onHover(next, pointer); }
+    } else if (!pointer && hover !== -1) { hover = -1; view.onHover(-1); }
+
+    const bg = dark ? [0.039, 0.039, 0.047] : [0.965, 0.965, 0.976];
+    gl.clearColor(bg[0], bg[1], bg[2], 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.enable(gl.BLEND);
+    // Lines are additive on a dark ground (overlaps glow) and plain alpha on a light one.
+    gl.blendFunc(gl.SRC_ALPHA, dark ? gl.ONE : gl.ONE_MINUS_SRC_ALPHA);
+    gl.bindVertexArray(vao);
+
+    gl.useProgram(lines.p);
+    gl.uniformMatrix4fv(lines.u.uMVP, false, mvp);
+    gl.uniform1f(lines.u.uFlat, cam.flat);
+    gl.uniform1f(lines.u.uDim, 0.12);
+    // Fewer, fainter lines read better far away; the density rises as you zoom in.
+    const zoom = Math.min(1, 500 / cam.dist);
+    gl.uniform1f(lines.u.uAlpha, ((dark ? 0.075 : 0.09) + zoom * 0.12) * view.edgeScale);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, edgeBuf);
+    gl.drawElements(gl.LINES, edgeCount, gl.UNSIGNED_INT, 0);
+    if (hiCount) {
+      gl.uniform1f(lines.u.uAlpha, 0.9);
+      gl.uniform1f(lines.u.uDim, 1);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, hiBuf);
+      gl.drawElements(gl.LINES, hiCount, gl.UNSIGNED_INT, 0);
+    }
+
+    // Nodes use plain alpha in both themes, so a dense cluster keeps its colours and does not burn out to white.
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.useProgram(points.p);
+    gl.uniformMatrix4fv(points.u.uMVP, false, mvp);
+    gl.uniform1f(points.u.uPx, px);
+    gl.uniform1f(points.u.uFlat, cam.flat);
+    gl.uniform1f(points.u.uDim, dark ? 0.16 : 0.18);
+    gl.uniform1f(points.u.uMinPx, 2.0 * dpr);
+    gl.drawArrays(gl.POINTS, 0, N);
+
+    // Pulses travelling along a link, drawn as a bright head on a straight path between two nodes.
+    const count = Math.min(view.particles.length, MAXP);
+    if (count) {
+      for (let i = 0; i < count; i++) {
+        const q = view.particles[i], a = q.from * 3, b = q.to * 3, s = q.t;
+        const from = q.fromPos ?? data.pos.subarray(a, a + 3), to = data.pos.subarray(b, b + 3);
+        pPos[i * 3] = from[0] + (to[0] - from[0]) * s;
+        pPos[i * 3 + 1] = from[1] + (to[1] - from[1]) * s + Math.sin(s * Math.PI) * (q.arc ?? 0);
+        pPos[i * 3 + 2] = from[2] + (to[2] - from[2]) * s;
+        pCol.set(q.color, i * 4); pCol[i * 4 + 3] = 255;
+        pSize[i] = q.size ?? 9;
+      }
+      gl.bindVertexArray(pvao);
+      gl.bindBuffer(gl.ARRAY_BUFFER, pPosBuf); gl.bufferSubData(gl.ARRAY_BUFFER, 0, pPos, 0, count * 3);
+      gl.bindBuffer(gl.ARRAY_BUFFER, pColBuf); gl.bufferSubData(gl.ARRAY_BUFFER, 0, pCol, 0, count * 4);
+      gl.bindBuffer(gl.ARRAY_BUFFER, pSizeBuf); gl.bufferSubData(gl.ARRAY_BUFFER, 0, pSize, 0, count);
+      gl.uniform1f(points.u.uMinPx, 5 * dpr);
+      gl.drawArrays(gl.POINTS, 0, count);
+    }
+    gl.bindVertexArray(null);
+    drawLabels();
+    view.onFrame(dt, t);
+    frameN++;
+    raf = requestAnimationFrame(frame);
+  }
+  raf = requestAnimationFrame(frame);
+  return view;
+}
+
+// Synthetic data in the shape akm stores. Nothing here is read from a real stash.
+//   nodes  = rows of index.db `entries` (item_ref "<bundle>//<conceptId>", type, bundle_id)
+//   edges  = rows of index.db `asset_links` (kind is one of the eight declared-link kinds)
+//   use    = index.db `utility_scores` (show_count, search_count, last_used_at)
+//   belief = IndexDocument.beliefState / supersededBy / contradictedBy
+
+// Fifteen built-in asset types fold into eight colour families (env and secret are left off the map, as
+// `assets.related` already leaves them out).
+const FAMILIES = [
+  { label: "Knowledge", types: ["knowledge"], share: 0.34 },
+  { label: "Memories and facts", types: ["memory", "fact"], share: 0.3 },
+  { label: "Skills", types: ["skill"], share: 0.06 },
+  { label: "Lessons", types: ["lesson"], share: 0.07 },
+  { label: "Commands and scripts", types: ["command", "script"], share: 0.08 },
+  { label: "Workflows and tasks", types: ["workflow", "task"], share: 0.035 },
+  { label: "Sessions", types: ["session"], share: 0.06 },
+  { label: "Agents, instructions, rules", types: ["agent", "instruction", "rule"], share: 0.055 },
+];
+const TYPES = FAMILIES.flatMap((f, fi) => f.types.map((name) => ({ name, family: fi })));
+const FOLDER = { knowledge: "knowledge", memory: "memories", fact: "facts", skill: "skills", lesson: "lessons", command: "commands",
+  script: "scripts", workflow: "workflows", task: "tasks", session: "sessions", agent: "agents", instruction: "instructions", rule: "rules" };
+const LINK_KINDS = [
+  { kind: "links_to", label: "Link" }, { kind: "xref", label: "Cross-reference" }, { kind: "cites", label: "Citation" },
+  { kind: "derived_from", label: "Derived from" }, { kind: "uses", label: "Uses" }, { kind: "belief_peer", label: "Related belief" },
+  { kind: "superseded_by", label: "Superseded by" }, { kind: "contradicted_by", label: "Contradicted by" },
+];
+const BUNDLES = ["team-wiki", "memories", "eng-skills", "ops-runbooks", "product-docs", "agent-kit", "research", "personal"];
+const DOMAINS = {
+  platform: ["auth", "sessions", "rate-limits", "api-gateway", "webhooks", "feature-flags", "caching", "queues", "search-infra"],
+  data: ["postgres", "migrations", "backups", "analytics", "etl", "warehouse", "schemas", "redis", "vector-store"],
+  delivery: ["ci", "deploys", "releases", "rollbacks", "canaries", "docker", "kubernetes", "terraform", "secrets-mgmt"],
+  quality: ["testing", "flaky-tests", "code-review", "linting", "type-safety", "perf", "profiling", "a11y", "security-review"],
+  product: ["onboarding", "billing", "pricing", "invoices", "notifications", "email", "mobile", "design-system", "i18n"],
+  ops: ["incidents", "on-call", "runbooks", "alerts", "dashboards", "logging", "tracing", "slo", "capacity"],
+  people: ["team-norms", "hiring", "planning", "roadmap", "stakeholders", "customers", "vendors", "meetings", "decisions"],
+  agents: ["prompts", "evals", "tool-use", "memory-hygiene", "harness-setup", "model-choice", "context-budget", "handoffs", "guardrails"],
+};
+const ASPECTS = ["overview", "setup", "troubleshooting", "checklist", "decision", "postmortem", "howto", "faq", "policy", "tuning", "rollout",
+  "audit", "baseline", "gotchas", "playbook", "reference", "glossary", "review", "retry-policy", "timeouts", "ownership", "escalation",
+  "limits", "naming", "template"];
+
+function makeGraph(count = 30000, seed = 7) {
+  const r = rng(seed);
+  const domainNames = Object.keys(DOMAINS);
+  const topics = [];
+  domainNames.forEach((domain, di) => {
+    const base = (di / domainNames.length) * Math.PI * 2;
+    DOMAINS[domain].forEach((name, ti) => {
+      const angle = base + (ti / 9 - 0.5) * 0.75 + r.gauss() * 0.05;
+      const radius = 330 + ((ti * 5) % 9) * 105 + r.gauss() * 40;
+      topics.push({ name, domain: di, x: Math.cos(angle) * radius, y: r.gauss() * 110, z: Math.sin(angle) * radius,
+        spread: 55 + r() * 45, weight: 0.4 + r() * r() * 3, members: [] });
+    });
+  });
+  const totalWeight = topics.reduce((sum, t) => sum + t.weight, 0);
+  const familyOf = new Uint8Array(count), typeOf = new Uint8Array(count), bundleOf = new Uint8Array(count);
+  const topicOf = new Uint16Array(count), shows = new Uint16Array(count), searches = new Uint16Array(count);
+  const lastUsed = new Float32Array(count), belief = new Uint8Array(count), serial = new Uint16Array(count);
+  const meaning = new Float32Array(count * 3), size = new Float32Array(count);
+
+  const pickTopic = () => {
+    let x = r() * totalWeight;
+    for (let i = 0; i < topics.length; i++) if ((x -= topics[i].weight) <= 0) return i;
+    return topics.length - 1;
+  };
+  const pickType = () => {
+    let x = r(), fi = 0;
+    while (fi < FAMILIES.length - 1 && (x -= FAMILIES[fi].share) > 0) fi++;
+    const name = r.pick(FAMILIES[fi].types);
+    return TYPES.findIndex((t) => t.name === name);
+  };
+  const bundleFor = (type, domain) => {
+    const name = TYPES[type].name;
+    if (["memory", "fact", "lesson", "session"].includes(name)) return r() < 0.82 ? 1 : 7;
+    if (name !== "knowledge") return domain === 5 && r() < 0.4 ? 3 : r() < 0.7 ? 2 : 5;
+    return domain === 5 ? 3 : domain === 4 || domain === 6 ? 4 : domain === 7 ? 6 : r() < 0.9 ? 0 : 6;
+  };
+  for (let i = 0; i < count; i++) {
+    const ti = pickTopic(), topic = topics[ti], type = pickType();
+    topicOf[i] = ti; typeOf[i] = type; familyOf[i] = TYPES[type].family; bundleOf[i] = bundleFor(type, topic.domain);
+    serial[i] = topic.members.length;
+    topic.members.push(i);
+    meaning[i * 3] = topic.x + r.gauss() * topic.spread;
+    meaning[i * 3 + 1] = topic.y + r.gauss() * topic.spread * 0.55;
+    meaning[i * 3 + 2] = topic.z + r.gauss() * topic.spread;
+    // Use is heavy-tailed: about four in ten assets were never shown, a few are shown constantly.
+    const used = r() > 0.4;
+    shows[i] = used ? Math.min(60000, Math.floor(Math.exp(r.gauss() * 1.5 + 1.1))) : 0;
+    searches[i] = used ? Math.floor(shows[i] * (1.5 + r() * 3)) : r() < 0.3 ? r.int(4) : 0;
+    lastUsed[i] = shows[i] ? Math.abs(r.gauss()) * 240 / (1 + Math.log2(1 + shows[i])) : Infinity;
+    if (TYPES[type].family === 1) belief[i] = 1;
+  }
+
+  // Declared links. Each kind follows the rule declared-links.ts reads it from.
+  const from = [], to = [], kind = [];
+  const K = Object.fromEntries(LINK_KINDS.map((k, i) => [k.kind, i]));
+  const link = (a, b, k) => { if (a !== b && b !== undefined) { from.push(a); to.push(b); kind.push(k); } };
+  const near = (i, wantFamily) => {
+    // A target in the same topic, or occasionally in a neighbouring topic of the same domain.
+    let topic = topics[topicOf[i]];
+    if (r() < 0.06) topic = topics[Math.min(topics.length - 1, Math.floor(topic.domain * 9 + r() * 9))];
+    if (r() < 0.012) topic = r.pick(topics);
+    for (let tries = 0; tries < 6; tries++) {
+      const j = topic.members[r.int(topic.members.length)];
+      if (j !== undefined && (wantFamily === undefined || wantFamily.includes(familyOf[j]))) return j;
+    }
+    return undefined;
+  };
+  for (const topic of topics) {
+    // One or two index pages per topic: knowledge pages that link out to much of the topic.
+    const pages = topic.members.filter((i) => familyOf[i] === 0).slice(0, 1 + (topic.members.length > 400 ? 1 : 0));
+    for (const hub of pages) {
+      shows[hub] = 400 + r.int(1800); searches[hub] = shows[hub] * 3; lastUsed[hub] = r() * 2;
+      const n = Math.min(60, Math.floor(topic.members.length * 0.12));
+      for (let k = 0; k < n; k++) link(hub, topic.members[r.int(topic.members.length)], K.links_to);
+    }
+  }
+  for (let i = 0; i < count; i++) {
+    const f = familyOf[i];
+    if (f === 0) {
+      for (let n = r.int(3); n > 0; n--) link(i, near(i, [0]), K.links_to);
+      if (r() < 0.3) link(i, near(i, [0]), K.cites);
+      if (r() < 0.15) link(i, near(i, [2, 4]), K.xref);
+    } else if (f === 1) {
+      if (r() < 0.3) link(i, near(i, [1]), K.derived_from);
+      if (r() < 0.14) link(i, near(i, [1]), K.belief_peer);
+      if (r() < 0.25) link(i, near(i, [0]), K.xref);
+      if (r() < 0.06) { const j = near(i, [1]); if (j !== undefined) { link(i, j, K.superseded_by); belief[i] = 2; } }
+      else if (r() < 0.025) { const j = near(i, [1]); if (j !== undefined) { link(i, j, K.contradicted_by); belief[i] = 3; } }
+    } else if (f === 5) {
+      for (let n = 1 + r.int(3); n > 0; n--) link(i, near(i, [4, 5, 2]), K.uses);
+    } else if (f === 3) {
+      if (r() < 0.6) link(i, near(i, [2, 0]), K.xref);
+    } else if (f !== 6) {
+      if (r() < 0.5) link(i, near(i, [0, 4]), K.xref);
+    }
+  }
+  for (let i = 0; i < count; i++) size[i] = 2.6 + 1.5 * Math.log2(1 + shows[i] + searches[i] * 0.3);
+
+  // The second layout, "by location": one disc per bundle, assets sorted by family then topic, so families form rings.
+  const location = new Float32Array(count * 3);
+  const byBundle = BUNDLES.map(() => []);
+  for (let i = 0; i < count; i++) byBundle[bundleOf[i]].push(i);
+  const spacing = 5.5 * Math.sqrt(30000 / count);
+  const radii = byBundle.map((list) => spacing * Math.sqrt(list.length) + 30);
+  // The largest bundle sits in the middle and the others share a ring around it, each given arc in proportion to its size.
+  const order = BUNDLES.map((_, b) => b).sort((p, q) => radii[q] - radii[p]);
+  const outer = order.slice(1), arc = outer.reduce((sum, b) => sum + radii[b], 0);
+  const ring = Math.max(radii[order[0]] + radii[outer[0]] + 40, arc / Math.PI);
+  let angle = -Math.PI / 2;
+  const bundleAnchors = [];
+  order.forEach((b, rank) => {
+    const list = byBundle[b], half = rank ? (Math.PI * radii[b]) / arc : 0;
+    angle += half;
+    const cx = rank ? Math.cos(angle) * ring : 0, cz = rank ? Math.sin(angle) * ring : 0;
+    angle += half;
+    list.sort((p, q) => familyOf[p] - familyOf[q] || topicOf[p] - topicOf[q]);
+    list.forEach((i, k) => {
+      const rad = spacing * Math.sqrt(k + 0.5), th = k * 2.399963;
+      location[i * 3] = cx + Math.cos(th) * rad; location[i * 3 + 1] = 0; location[i * 3 + 2] = cz + Math.sin(th) * rad;
+    });
+    bundleAnchors.push({ text: `${BUNDLES[b]} · ${fmt(list.length)}`, x: cx, y: 0, z: cz - radii[b] - 20 });
+  });
+
+  // Adjacency in compressed rows, both directions, for "what is this connected to".
+  const E = from.length, degree = new Uint32Array(count + 1);
+  for (let e = 0; e < E; e++) { degree[from[e] + 1]++; degree[to[e] + 1]++; }
+  for (let i = 0; i < count; i++) degree[i + 1] += degree[i];
+  const fill = degree.slice(0, count), adj = new Uint32Array(E * 2), adjEdge = new Uint32Array(E * 2);
+  for (let e = 0; e < E; e++) {
+    adj[fill[from[e]]] = to[e]; adjEdge[fill[from[e]]++] = e;
+    adj[fill[to[e]]] = from[e]; adjEdge[fill[to[e]]++] = e;
+  }
+  const name = (i) => `${FOLDER[TYPES[typeOf[i]].name]}/${topics[topicOf[i]].name}/${ASPECTS[(i * 7 + serial[i]) % ASPECTS.length]}${serial[i] > 24 ? `-${serial[i]}` : ""}`;
+  return {
+    count, topics, familyOf, typeOf, bundleOf, topicOf, shows, searches, lastUsed, belief, size, meaning, location,
+    from: Uint32Array.from(from), to: Uint32Array.from(to), kind: Uint8Array.from(kind),
+    offsets: degree, adj, adjEdge,
+    name, ref: (i) => `${BUNDLES[bundleOf[i]]}//${name(i)}`,
+    topicAnchors: topics.map((t) => ({ text: t.name, x: t.x, y: t.y + t.spread * 1.2, z: t.z, weight: t.members.length })),
+    bundleAnchors,
+  };
+}
+
+/** Edge index pairs for the kinds that are switched on. */
+function edgePairs(g, enabled) {
+  const out = new Uint32Array(g.from.length * 2);
+  let n = 0;
+  for (let e = 0; e < g.from.length; e++) if (enabled[g.kind[e]]) { out[n++] = g.from[e]; out[n++] = g.to[e]; }
+  return out.subarray(0, n);
+}
+
+
+const N = 16000;
+const g = makeGraph(N, 11);
+const colors = new Uint8Array(N * 4), state = new Uint8Array(N).fill(1);
+const SOURCES = [
+  { id: "user", label: "Agent sessions", pos: [-1150, 300, -500] },
+  { id: "improve", label: "Improve", pos: [900, 300, -900] },
+  { id: "task", label: "Scheduled tasks", pos: [1150, 300, 600] },
+  { id: "audit", label: "Audit", pos: [-800, 300, 1000] },
+];
+const anchors = [...SOURCES.map((s) => ({ text: s.label, x: s.pos[0], y: s.pos[1] + 30, z: s.pos[2] })),
+  ...[...g.topicAnchors].sort((a, b) => b.weight - a.weight).slice(0, 12)];
+const data = { count: N, pos: Float32Array.from(g.meaning), color: colors, size: g.size, edges: edgePairs(g, LINK_KINDS.map(() => true)), anchors, label: g.name };
+const view = createGraphView({ canvas: $("#gl"), labels: $("#labels"), data, dark: isDark() });
+view.edgeScale = 0.45; view.cam.dist = view.goal.dist = 2500; view.cam.pitch = view.goal.pitch = 0.5;
+
+// A day of events in the shape of state.db `events`: { ts, eventType, ref, metadata }, plus the usage row's `source`.
+const r = rng(23), events = [], runs = [];
+const MISSES = ["rotate the staging deploy key", "sso for contractors", "how do we version prompts", "grpc deadline defaults", "who owns the billing cron",
+  "pagerduty escalation for data team", "python 3.14 upgrade notes", "feature flag cleanup policy", "reset a stuck workflow run"];
+const hhmm = (t) => `${String(Math.floor(t / 60) % 24).padStart(2, "0")}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
+function session(source, start, minutes, pace) {
+  const topic = g.topics[r.int(g.topics.length)];
+  for (let t = start + r() * 2; t < start + minutes; t += pace * (0.4 + r() * 1.4)) {
+    if (r() < 0.085 && source === "user") { events.push({ t, type: "search", source, query: r.pick(MISSES), hits: [] }); continue; }
+    const pool = r() < 0.8 ? topic.members : g.topics[r.int(g.topics.length)].members;
+    const hits = Array.from({ length: 4 + r.int(6) }, () => pool[r.int(pool.length)]).sort((a, b) => g.shows[b] - g.shows[a]);
+    events.push({ t, type: "search", source, query: `${topic.name} ${ASPECTS[r.int(ASPECTS.length)].replace("-", " ")}`, hits });
+    if (r() < 0.75) {
+      const node = hits[Math.min(hits.length - 1, r.int(3))];
+      events.push({ t: t + 0.2 + r() * 0.6, type: "show", source, node });
+      if (r() < 0.07) events.push({ t: t + 1.5 + r() * 3, type: "feedback", source, node, signal: r() < 0.78 ? "positive" : "negative" });
+    }
+    if (r() < 0.035 && source === "user") events.push({ t: t + 2, type: "remember", source, node: pool[r.int(pool.length)] });
+  }
+}
+// Agent sessions cluster in working hours; improve runs twice; a task runs every hour; one audit pass.
+for (let k = 0; k < 46; k++) {
+  const start = Math.max(0, Math.min(1380, 780 + r.gauss() * 260)), minutes = 12 + r() * 55;
+  session("user", start, minutes, 1.6 + r() * 2.5);
+}
+for (const start of [125, 845]) {
+  const minutes = 24 + r() * 12;
+  runs.push({ source: "improve", start, end: start + minutes, label: "improve" });
+  session("improve", start, minutes, 0.35);
+  for (let k = 0; k < 14; k++) events.push({ t: start + minutes * (0.5 + r() * 0.5), type: "promoted", source: "improve", node: r.int(N) });
+}
+for (let h = 0; h < 24; h++) { runs.push({ source: "task", start: h * 60 + 5, end: h * 60 + 8 + r() * 5, label: "task" }); session("task", h * 60 + 5, 4 + r() * 4, 0.9); }
+runs.push({ source: "audit", start: 1010, end: 1022, label: "audit" }); session("audit", 1010, 12, 0.5);
+events.sort((a, b) => a.t - b.t);
+
+// The timeline: ten-minute bins per source, and one row for searches that found nothing.
+const BIN = 10, bins = SOURCES.map(() => new Uint16Array(1440 / BIN)), missBins = new Uint16Array(1440 / BIN);
+for (const e of events) {
+  const b = Math.min(143, Math.floor(e.t / BIN));
+  bins[SOURCES.findIndex((s) => s.id === e.source)][b]++;
+  if (e.type === "search" && !e.hits.length) missBins[b]++;
+}
+
+let ink = {};
+function paint() {
+  const dark = isDark(), slots = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => tokenRGB(`--c${n}`));
+  ink = { shown: slots[0], pos: tokenRGB("--ok"), neg: tokenRGB("--fail"), write: slots[3], text: tokenRGB("--text"), muted: tokenRGB("--muted"),
+    border: tokenRGB("--border"), accent: tokenRGB("--accent"), surface2: tokenRGB("--surface-2") };
+  for (let i = 0; i < N; i++) { colors.set(slots[g.familyOf[i]], i * 4); colors[i * 4 + 3] = used[i] ? 245 : dark ? 48 : 70; }
+  view.setColors(colors); view.setDark(dark); drawTimeline();
+}
+
+const used = new Uint8Array(N), lit = new Float32Array(N);
+const totals = { search: 0, miss: 0, show: 0, used: 0, pos: 0, neg: 0 };
+const missCount = new Map();
+let clock = 0, cursor = 0, playing = true, speed = 20, dirty = false, recent = [];
+const emitter = (source) => SOURCES.find((s) => s.id === source).pos;
+const touch = (i) => { if (!used[i]) { used[i] = 1; totals.used++; colors[i * 4 + 3] = 245; dirty = true; } };
+function pulse(e, node, color, size = 14) {
+  touch(node); lit[node] = 1; state[node] = 2;
+  if (view.particles.length < 900) view.particles.push({ fromPos: emitter(e.source), to: node, t: 0, color, size, arc: 120 });
+}
+/** Apply one event. `quiet` is a scrub: totals and lit assets change, nothing animates. */
+function apply(e, quiet) {
+  if (e.type === "search") {
+    totals.search++;
+    if (!e.hits.length) { totals.miss++; missCount.set(e.query, (missCount.get(e.query) ?? 0) + 1); }
+    else if (!quiet) for (const h of e.hits.slice(0, 4)) { lit[h] = 0.6; state[h] = 2; }
+  } else if (e.type === "show") { totals.show++; quiet ? touch(e.node) : pulse(e, e.node, ink.shown); }
+  else if (e.type === "feedback") { e.signal === "positive" ? totals.pos++ : totals.neg++; quiet ? touch(e.node) : pulse(e, e.node, e.signal === "positive" ? ink.pos : ink.neg, 20); }
+  else quiet ? touch(e.node) : pulse(e, e.node, ink.write, 18);
+  if (!quiet && (e.type !== "search" || !e.hits.length || r() < 0.25)) recent.unshift(e);
+}
+function seek(t) {
+  clock = Math.max(0, Math.min(1439.9, t));
+  used.fill(0); lit.fill(0); state.fill(1); missCount.clear(); recent = []; view.particles = [];
+  for (const k in totals) totals[k] = 0;
+  for (cursor = 0; cursor < events.length && events[cursor].t <= clock; cursor++) apply(events[cursor], true);
+  recent = events.slice(Math.max(0, cursor - 9), cursor).reverse();
+  paint(); view.setState(state); report();
+}
+const describe = (e) => e.type === "search" ? (e.hits.length ? `searched “${e.query}” · ${e.hits.length} results` : `searched “${e.query}” · found nothing`)
+  : e.type === "show" ? `read ${g.name(e.node)}` : e.type === "feedback" ? `${e.signal} feedback on ${g.name(e.node)}`
+  : e.type === "remember" ? `remembered ${g.name(e.node)}` : `accepted a change to ${g.name(e.node)}`;
+const dotOf = (e) => e.type === "search" ? (e.hits.length ? "var(--border-strong)" : "var(--fail)") : e.type === "show" ? "var(--c1)"
+  : e.type === "feedback" ? (e.signal === "positive" ? "var(--ok)" : "var(--fail)") : "var(--c4)";
+function report() {
+  $("#sSearch").textContent = fmt(totals.search); $("#sMiss").textContent = fmt(totals.miss); $("#sShow").textContent = fmt(totals.show);
+  $("#sUsed").textContent = fmt(totals.used); $("#sPos").textContent = fmt(totals.pos); $("#sNeg").textContent = fmt(totals.neg);
+  recent.length = Math.min(recent.length, 9);
+  $("#ticker").replaceChildren(...recent.map((e) => el("li", {}, el("span", { className: "t" }, hhmm(e.t)),
+    el("i", { className: "dot", style: `background:${dotOf(e)}` }), el("span", { className: "what", title: describe(e) }, describe(e)))));
+  const top = [...missCount].sort((a, b) => b[1] - a[1]).slice(0, 6);
+  $("#misses").replaceChildren(...(top.length ? top.map(([q, n]) => el("li", {}, el("span", {}, q), el("span", { className: "muted xs num", style: "margin-left:auto" }, `×${n}`)))
+    : [el("li", { className: "muted" }, "None so far")]));
+  $("#clock").textContent = hhmm(clock);
+  $("#tl").setAttribute("aria-valuenow", String(Math.round(clock)));
+  $("#tl").setAttribute("aria-valuetext", hhmm(clock));
+}
+
+// Timeline drawing: one row of bars per source, the runs behind them, and the playhead.
+const tl = $("#tl"), tc = tl.getContext("2d");
+const LEFT = 132, RIGHT = 16, TOP = 22, ROW = 30;
+function drawTimeline() {
+  const dpr = Math.min(devicePixelRatio || 1, 2), W = tl.clientWidth, H = tl.clientHeight;
+  if (tl.width !== W * dpr) { tl.width = W * dpr; tl.height = H * dpr; }
+  tc.setTransform(dpr, 0, 0, dpr, 0, 0); tc.clearRect(0, 0, W, H);
+  const x = (t) => LEFT + (t / 1440) * (W - LEFT - RIGHT), css = (c, a = 1) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+  tc.font = "12px ui-sans-serif, system-ui, sans-serif"; tc.textBaseline = "middle";
+  for (let h = 0; h <= 24; h += 3) {
+    tc.fillStyle = css(ink.border); tc.fillRect(Math.round(x(h * 60)), TOP - 4, 1, H - TOP);
+    tc.fillStyle = css(ink.muted); tc.textAlign = "center"; tc.fillText(`${String(h % 24).padStart(2, "0")}:00`, x(h * 60), 10);
+  }
+  const rows = [...SOURCES.map((s, i) => ({ label: s.label, bins: bins[i], id: s.id })), { label: "Found nothing", bins: missBins, miss: true }];
+  const bw = (W - LEFT - RIGHT) / (1440 / BIN);
+  rows.forEach((row, k) => {
+    const y = TOP + k * ROW, max = Math.max(1, ...row.bins);
+    tc.textAlign = "left"; tc.fillStyle = css(row.miss ? ink.neg : ink.text); tc.fillText(row.label, 14, y + ROW / 2);
+    for (const run of runs) if (run.source === row.id) { tc.fillStyle = css(ink.accent, 0.22); tc.fillRect(x(run.start), y + 3, Math.max(2, x(run.end) - x(run.start)), ROW - 6); }
+    for (let b = 0; b < row.bins.length; b++) {
+      if (!row.bins[b]) continue;
+      const h = Math.max(2, (row.bins[b] / max) * (ROW - 8)), played = (b + 1) * BIN <= clock;
+      tc.fillStyle = css(row.miss ? ink.neg : ink.text, played ? 0.9 : 0.32);
+      tc.fillRect(x(b * BIN) + 0.5, y + ROW - 4 - h, Math.max(1, bw - 1), h);
+    }
+  });
+  tc.fillStyle = css(ink.accent); tc.fillRect(Math.round(x(clock)) - 1, TOP - 8, 2, H - TOP + 8);
+  tc.beginPath(); tc.arc(x(clock), TOP - 8, 5, 0, 7); tc.fill();
+}
+const scrub = (e) => { const rect = tl.getBoundingClientRect(); seek(((e.clientX - rect.left - LEFT) / (rect.width - LEFT - RIGHT)) * 1440); };
+tl.addEventListener("pointerdown", (e) => { tl.setPointerCapture(e.pointerId); scrub(e); });
+tl.addEventListener("pointermove", (e) => { if (e.buttons) scrub(e); });
+tl.addEventListener("keydown", (e) => { if (e.key === "ArrowLeft") seek(clock - 15); else if (e.key === "ArrowRight") seek(clock + 15); });
+new ResizeObserver(drawTimeline).observe(tl);
+
+$("#play").onclick = () => { playing = !playing; $("#play").textContent = playing ? "Pause" : "Play"; $("#play").setAttribute("aria-pressed", String(playing)); };
+$("#speed").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  for (const o of $("#speed").children) o.setAttribute("aria-pressed", String(o === b));
+  speed = Number(b.dataset.v);
+});
+
+let sinceReport = 0;
+view.onFrame = (dt) => {
+  const s = dt / 1000;
+  for (const p of view.particles) p.t += s / 0.9;
+  view.particles = view.particles.filter((p) => p.t < 1);
+  let stateDirty = false;
+  for (let i = 0; i < N; i++) if (lit[i] > 0) { lit[i] -= s / 1.6; if (lit[i] <= 0) { state[i] = 1; } stateDirty = true; }
+  if (playing) {
+    clock += s * speed;
+    if (clock >= 1440) { seek(0); return; }
+    while (cursor < events.length && events[cursor].t <= clock) { apply(events[cursor++]); stateDirty = true; }
+  }
+  if (stateDirty) view.setState(state);
+  if (dirty) { view.setColors(colors); dirty = false; }
+  if ((sinceReport += dt) > 120) { sinceReport = 0; report(); drawTimeline(); }
+};
+themeToggle($("#theme"), paint);
+// With reduced motion the replay starts paused at the end of the day: the lit map and the totals, no animation.
+if (matchMedia("(prefers-reduced-motion: reduce)").matches) { $("#play").click(); seek(1439); } else seek(540);
+window.__seek = seek;
+</script>
+</body>
+</html>

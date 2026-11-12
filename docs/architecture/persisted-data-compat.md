@@ -62,7 +62,7 @@ apply`.
 | `index_completed` event metadata | `src/indexer/indexer.ts` (`akmIndexReal`) | Existing event envelope; no format bump, no migration | #1371 adds `totalEntries` (library size at index completion) to event metadata. Rows written before #1371 carry only `{mode, totalMs, walkMs, llmMs, embedMs, ftsMs, finalizeMs}`. A missing `totalEntries` means unknown, not 0, and is never back-filled (history is not back-calculated) | Older readers pass the extra keys through; `src/commands/metrics/collect.ts` reads only `totalMs` | `tests/integration/timing-persistence.test.ts` (new field); `tests/integration/metrics-command.test.ts` and `tests/metrics-collect.test.ts` (legacy rows without the field) |
 | `search` and `select` event metadata | `src/commands/read/search.ts` (`logSearchEvent`), `src/indexer/usage/show-usage.ts` (`appendShowTrace`) | Existing event envelope; no format bump, no migration | #1374 adds `source` and `searchId` to `search` metadata, and copies both onto the `select` that follows it. Rows written before carry neither: a missing `searchId` means the select cannot be deduped and is counted as recorded, and a missing `source` means all sources. Old rows are never back-filled | Older readers pass the extra keys through; `listSelectEvents` reads `searchId` and `source` and ignores an absent, empty, non-string or malformed value (invalid `metadata_json` decodes as legacy) | `tests/integration/usage/select-attribution.test.ts` (new fields, search without them); `tests/metrics-collect.test.ts` and `tests/integration/metrics-command.test.ts` (dedupe, stored `source`/`searchId` decoding, legacy and malformed rows) |
 | `improve_ledger` rows | `src/storage/repositories/improve-ledger-repository.ts` | No version field of its own; the `content_hash` column (migration `029-improve-ledger-content-hash`) | A consolidate promotion row with no `content_hash` is held by its clock alone (`next_eligible_at`). 0.9.19 records `content_hash`, and no `next_eligible_at`, on a consolidate promotion once it is accepted or rejected, and holds the memory until its body hash differs (`isContentDrivenRow`); a promotion decided by an older release has no hash and keeps its old window (an accepted one none, a rejected one 7 days) | An older release reads a row by `next_eligible_at` alone and ignores the hash, so after a downgrade a memory whose promotion 0.9.19 decided is offered to the promote pass again at once, a rejected one sooner than the 7 days the older release would have held it; the hash stays on the row until the older release records its next attempt on that memory, which clears it. **Gap** (no code-level guard; operator guidance only) | `tests/integration/storage/improve-ledger-repository.test.ts` |
-| `task_history` metadata | `src/storage/repositories/task-history-repository.ts` | `metadataVersion` (currently `2`) | An absent `metadataVersion` is treated as a legacy row and decoded best-effort; unknown fields are dropped rather than round-tripped (`task-history-repository.ts`) | A `metadataVersion` newer than this binary's `2` is decoded best-effort as version 2 with a warning, rather than rejected (`task-history-repository.ts`) | Upgrade rehearsal gate (`tests/integration/upgrade-rehearsal/`) |
+| `task_history` metadata | `src/storage/repositories/task-history-repository.ts` | `metadataVersion` (currently `2`) | An absent `metadataVersion` is treated as a legacy row and decoded best-effort; unknown fields are dropped rather than round-tripped (`task-history-repository.ts`). `trigger` (`schedule` or `manual`) is optional within version 2: a row without it, or with another value, reads as not recorded, and an older reader drops it | A `metadataVersion` newer than this binary's `2` is decoded best-effort as version 2 with a warning, rather than rejected (`task-history-repository.ts`) | Upgrade rehearsal gate (`tests/integration/upgrade-rehearsal/`) |
 | Lock payloads | `src/core/file-lock.ts` | No version field; payload is a bare numeric pid string, or a JSON object carrying `pid` and optionally `launcherPid` (`extractLockIdentity`, `file-lock.ts`) | Any payload shape parses permissively: extra fields are ignored, a missing or unparseable `launcherPid` is simply absent, and a payload with no parseable `pid` probes as `stale` (`invalid_pid`, `probeLock`) and is reclaimed rather than rejected | Same permissive parse; a payload from a newer akm that adds fields is read the same way | `tests/integration/file-lock.test.ts` (describe "probeLock: launcherPid") — not the rehearsal, which does not contend locks |
 | `.akm` residue | Documented in `docs/architecture/internals/storage-locations.md` | No version marker | Stale `.akm` directories or files from a previous layout are inert; nothing in current code reads or interprets them | N/A | none — gap (`nothing removes the residue any more (the sweep left the migrator at the 0.9.32 floor), and no test pins that ordinary commands tolerate it) |
 
@@ -85,3 +85,66 @@ apply`.
    `akm migrate apply` drops them.
 5. Add or extend the row in the table above, including a `Gap:` note if the
    code does not yet meet the contract — do not leave a mismatch undocumented.
+
+### CLI usage store (since 0.10.261119)
+
+The CLI usage tables live in `metrics.db` in `getDataDir()`, the file 0.11 also
+uses for its rollup history (`src/core/metrics-db.ts` on `release/0.11.0`). They
+are additive local diagnostic state, independent of learning state, and share
+nothing else with 0.11's tables:
+
+- **Names:** `cli_usage_meta`, `cli_usage_invocations` (index
+  `cli_usage_invocations_ts`) and `cli_usage_aggregates`. 0.11's baseline
+  migration creates `folded_day`, `improve_runs`, `event_daily`, `llm_daily`,
+  `usage_daily`, `query_daily`, `feedback_tag_daily`, `select_daily`,
+  `latency_daily` and `improve_skip_daily`; none collides.
+- **Version:** the usage schema version (1) is the `schema` row of
+  `cli_usage_meta`. 0.10 never sets `PRAGMA user_version` and never creates a
+  `schema_migrations` table, because 0.11 versions `metrics.db` by that ledger
+  (an exact ordered prefix of its migration ids; a foreign id would be
+  "inconsistent"). 0.11 opening a file 0.10 wrote finds no ledger, runs its
+  baseline migration beside the usage tables, and the usage rows are kept.
+  **Known gap, to be fixed in 0.11:** until 0.11's first fold migrates the
+  file, a `release/0.11.0` build's `akm health` fails its `metrics-db` check
+  ("no such table: folded_day", exit 1) and `withMetricsHistory` warns on
+  stderr, because the file has no `schema_migrations` ledger and no
+  `folded_day`. 0.10 cannot pre-create `folded_day`: that would break 0.11's
+  baseline `CREATE TABLE`. 0.11 must treat a `metrics.db` with no
+  `schema_migrations` ledger or no `folded_day` table as "no day folded yet"
+  (not an error) in its `metrics-db` health check
+  (`src/commands/health/metrics-db-check.ts`) and in `withMetricsHistory`
+  (`src/storage/repositories/metrics-rollup-repository.ts`).
+- **Content:** `cli_usage_meta` holds an opaque local instance UUID and the
+  collection start; `cli_usage_invocations` holds redacted schema-version-1
+  attempt documents and completion fields; `cli_usage_aggregates` holds UTC
+  daily dimensional counters. Start and completion update detail and aggregate
+  in separate atomic transactions; completion's conditional update prevents
+  duplicates. Detail expires after 30 days and never deletes aggregates.
+- **Skew:** readers and collectors refuse a newer `schema` without altering CLI
+  outcomes, and reports explain the gap. A 0.10.261119 build opening a
+  `metrics.db` 0.11 created adds only its own tables, which 0.11 ignores. An
+  unwritable, locked or corrupt file never changes a command's output or exit code.
+- **Off and read-only:** `usage.capture: false` and `--read-only` open and write
+  nothing.
+
+**What 0.11 must do to adopt it:** nothing to the file itself, but its readers must tolerate a `metrics.db` that holds only usage tables (see the known gap above). Its usage capture opens
+`metrics.db` in the data directory it resolves (after the location is known),
+runs the same `CREATE TABLE IF NOT EXISTS` statements for the three tables,
+keeps `cli_usage_meta.schema` as the only usage version (bump it for a new usage
+schema, not `user_version` or `schema_migrations`), and reads the instance UUID,
+aggregate keys and counts as they are. Its upgrade rehearsal must carry
+`metrics.db` across a relocation of the data directory with the instance UUID
+and counts intact. The fold and purges of 0.11 must leave `cli_usage_*` alone.
+
+**Tested:** `tests/integration/cli-usage.test.ts` pins the table names, the
+absence of `user_version` and `schema_migrations` changes beside a 0.11-shaped
+`metrics.db`, retention, redaction and fail-open behaviour.
+`tests/integration/upgrade-rehearsal/upgrade-rehearsal.test.ts` (step 11b, gated
+behind `AKM_UPGRADE_REHEARSAL=1` and run in CI against the previous release)
+asserts that the candidate wrote a `manual` task `trigger`, usage-event `agent`
+metadata and CLI usage rows, then that the previous release decodes the
+candidate's newest task run (same `startedAt`) and `show` with no "Skipping
+unparseable" warning, and leaves the `cli_usage_*` row count unchanged. Not
+tested: that the previous release reads the `agent` metadata or the usage
+tables (it has no command that shows them), and a real
+0.11 build opening this file: by hand, `release/0.11.0` fails its health check on it until the 0.11 fix above lands, and that check belongs to 0.11's rehearsal.

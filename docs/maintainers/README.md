@@ -10,6 +10,8 @@ whether changes actually improve it.
   before pushing.
 - [Release Checklist](release-checklist.md) — the branch model and the steps to
   cut, release and install akm and its plugins.
+- [Implementation details](implementation-details.md) — repository tooling and
+  runtime/test signals kept outside the public stability statuses.
 - [akm-eval](https://github.com/itlackey/akm-eval) — the evals and benchmarks
   that measure whether `akm improve` and retrieval changes are actually
   working.

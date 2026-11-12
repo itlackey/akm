@@ -186,10 +186,10 @@ describe("workflow CLI", () => {
     ]);
   });
 
-  test("--timeout-ms tags an unfinished run, and never a run that reached completed", async () => {
+  test("--timeout tags an unfinished run, and never a run that reached completed", async () => {
     // An exec unit needs no engine, so both runs below execute for real.
     await createWorkflow("wedged", execWorkflow(["bun", "-e", "await Bun.sleep(30000)"]));
-    const wedged = await runCliCapture(["workflow", "run", "workflows/wedged", "--timeout-ms=150"]);
+    const wedged = await runCliCapture(["workflow", "run", "workflows/wedged", "--timeout=150"]);
     expect(wedged.code).toBe(1);
     // #918: `ok` must mirror the same failed/blocked/gateRejection/aborted
     // predicate that already drives the nonzero exit code — an aborted run
@@ -211,12 +211,18 @@ describe("workflow CLI", () => {
 
     // Re-running a completed run is a no-op that returns `done`; a deadline
     // that fires around it describes nothing an operator could resume.
-    const rerun = await runCliCapture(["workflow", "run", finished.id, "--timeout-ms=1"]);
+    const rerun = await runCliCapture(["workflow", "run", finished.id, "--timeout=1"]);
     expect(rerun.code).toBe(0);
     const rendered = JSON.parse(rerun.stdout) as { run: { status: string }; done?: true; timedOut?: true };
     expect(rendered.run.status).toBe("completed");
     expect(rendered.done).toBe(true);
     expect(rendered.timedOut).toBeUndefined();
+
+    // One --timeout grammar: hours and days work for workflows too.
+    const hours = await runCliCapture(["workflow", "run", "workflows/quick", "--timeout", "1h"]);
+    expect(hours.code).toBe(0);
+    const bad = await runCliCapture(["workflow", "run", "workflows/quick", "--timeout", "3M"]);
+    expect(bad.code).toBe(2);
   });
 
   test("run rejects aliases and retired JSON params, and accepts params on every ref start", async () => {
@@ -294,7 +300,7 @@ describe("workflow CLI", () => {
     const args = Object.keys(workflow?.subCommands?.run?.args ?? {});
     expect(args).toContain("max-steps");
     expect(args).toContain("max-retries");
-    expect(args).toContain("timeout-ms");
+    expect(args).toContain("timeout");
     expect(args).not.toContain("params");
   });
 });

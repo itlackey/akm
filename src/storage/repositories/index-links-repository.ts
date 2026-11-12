@@ -84,6 +84,21 @@ const TARGET_ID_SQL = `COALESCE(
       WHERE item_ref = COALESCE(l.dst_bundle, o.bundle_id) || '//' || substr(l.dst_concept, instr(l.dst_concept, '/') + 1)
         AND substr(l.dst_concept, 1, instr(l.dst_concept, '/') - 1) IN (${LEGACY_HEADS})))`;
 
+/**
+ * Every declared link whose target resolves to an indexed entry, as entry ids: the whole link graph in one read. A
+ * link whose target is not indexed is left out.
+ */
+export function listResolvedLinks(db: Database): Array<{ from: number; to: number; kind: string }> {
+  if (!tableExists(db, "asset_links")) return [];
+  const rows = db
+    .prepare(
+      `SELECT l.entry_id AS source, ${TARGET_ID_SQL} AS target, l.kind AS kind
+       FROM asset_links l JOIN entries o ON o.id = l.entry_id ORDER BY l.entry_id, l.ord`,
+    )
+    .all() as Array<{ source: number; target: number | null; kind: string }>;
+  return rows.flatMap((row) => (row.target === null ? [] : [{ from: row.source, to: row.target, kind: row.kind }]));
+}
+
 /** The spelling releases before path refs gave a ref: the type folder prefixed to it. Links authored then still name it. */
 function legacyConceptId(type: string, conceptId: string): string {
   return `${stashDirFor(type) ?? ""}/${conceptId}`;

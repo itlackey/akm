@@ -293,7 +293,7 @@ describe("runTask — workflow target", () => {
   // The runner used to call `runWorkflowSteps({ target, params })` with no
   // signal, no maxSteps and no maxRetries: a scheduled run had no abort path
   // at all, so one wedged agent unit hung the task indefinitely. It now wires
-  // an AbortController + timer exactly like `akm workflow run --timeout-ms`
+  // an AbortController + timer exactly like `akm workflow run --timeout`
   // (src/commands/workflow-cli.ts) and threads the run bounds the task file
   // declares.
 

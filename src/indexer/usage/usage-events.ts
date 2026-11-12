@@ -11,6 +11,7 @@
 
 import type { Database } from "../../storage/database";
 import { SQLITE_CHUNK_SIZE } from "../../storage/repositories/index-sql";
+import { resolveAgentIdentity } from "../../workflows/runtime/agent-identity";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -82,6 +83,27 @@ export function insertUsageEvent(db: Database, event: UsageEvent): void {
   }
 }
 
+/**
+ * The metadata a usage event is stored with: the caller's, plus `agent: { harness, session? }` when the environment
+ * names the agent harness akm runs under (the same resolution workflow runs record). A caller's own `agent` key wins,
+ * and metadata that is not a JSON object is stored as given.
+ */
+export function withAgentIdentity(metadata: string | undefined, env: NodeJS.ProcessEnv = process.env): string | null {
+  const { harness, sessionId } = resolveAgentIdentity(env);
+  if (!harness) return metadata ?? null;
+  let parsed: Record<string, unknown> = {};
+  if (metadata) {
+    try {
+      const value: unknown = JSON.parse(metadata);
+      if (!value || typeof value !== "object" || Array.isArray(value)) return metadata;
+      parsed = value as Record<string, unknown>;
+    } catch {
+      return metadata;
+    }
+  }
+  return JSON.stringify({ agent: { harness, ...(sessionId ? { session: sessionId } : {}) }, ...parsed });
+}
+
 /** Insert a usage event and let a failed write throw, for callers whose record is the event itself. */
 export function insertUsageEventStrict(db: Database, event: UsageEvent): void {
   db.prepare(
@@ -93,7 +115,7 @@ export function insertUsageEventStrict(db: Database, event: UsageEvent): void {
     event.entry_id ?? null,
     event.entry_ref ?? null,
     event.signal ?? null,
-    event.metadata ?? null,
+    withAgentIdentity(event.metadata),
     event.source ?? "unknown",
   );
 }

@@ -52,6 +52,7 @@
     "docs/maintainers",
     "docs/migration",
     "docs/reference",
+    "docs/reviews/cli-surface-recommendations-2026-11-11.md",
     "schemas"
   ],
   "exports": {

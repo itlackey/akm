@@ -264,7 +264,7 @@ const agentMdRenderer: AssetRenderer = {
 // ── 4. knowledge-md ──────────────────────────────────────────────────────────
 
 const KNOWLEDGE_ACTION =
-  "Reference material - read the content below. For a large document, run `akm show <ref> --detail brief` for its " +
+  "Reference material - read the content below. For a large document, run `akm show <ref> --outline` for its " +
   "outline (`toc`, no body), then `akm show <ref>#<slug>` for only the sections you need.";
 
 const knowledgeMdRenderer: AssetRenderer = {

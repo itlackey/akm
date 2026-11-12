@@ -393,41 +393,28 @@ describe("childProcessEnv", () => {
   });
 });
 
-// ── The retired location variables (a hard error, not a bridge) ──────────────
+// ── The location variables ──────────────────────────────────────────────────
 
-describe("the retired location variables", () => {
-  const retired = ["AKM_CONFIG_DIR", "AKM_DATA_DIR", "AKM_STATE_DIR", "AKM_CACHE_DIR"] as const;
-  const resolvers = {
-    getConfigDir: (env: NodeJS.ProcessEnv) => getConfigDir(env, "linux"),
-    getConfigPath: (env: NodeJS.ProcessEnv) => getConfigPath(env),
-    getDataDir: (env: NodeJS.ProcessEnv) => getDataDir(env, "linux"),
-    getStateDir: (env: NodeJS.ProcessEnv) => getStateDir(env, "linux"),
-    getCacheDir: (env: NodeJS.ProcessEnv) => getCacheDir(env),
-  };
+describe("the location variables", () => {
+  const places = {
+    AKM_CONFIG_DIR: (env: NodeJS.ProcessEnv) => getConfigDir(env, "linux"),
+    AKM_DATA_DIR: (env: NodeJS.ProcessEnv) => getDataDir(env, "linux"),
+    AKM_STATE_DIR: (env: NodeJS.ProcessEnv) => getStateDir(env, "linux"),
+    AKM_CACHE_DIR: (env: NodeJS.ProcessEnv) => getCacheDir(env),
+  } as const;
 
-  for (const name of retired) {
-    test(`${name} set without AKM_CONFIG_FILE is fatal in every resolver, naming the variable and the fix`, () => {
-      for (const [resolver, resolve] of Object.entries(resolvers)) {
-        let thrown: unknown;
-        try {
-          resolve({ [name]: "/old/place", HOME: "/home/user" });
-        } catch (error) {
-          thrown = error;
-        }
-        expect(thrown, resolver).toBeInstanceOf(ConfigError);
-        const error = thrown as ConfigError;
-        expect(error.code).toBe("RETIRED_LOCATION_VARIABLE");
-        expect(error.message).toContain(name);
-        expect(error.message).toContain("akm migrate apply");
-        expect(error.message).toContain("AKM_CONFIG_FILE");
-      }
-    });
-
-    test(`${name} is ignored when AKM_CONFIG_FILE is set (a host that keeps it for an older akm)`, () => {
-      const env = { [name]: "/old/place", AKM_CONFIG_FILE: "/etc/akm/config.json", HOME: "/home/user" };
-      expect(getConfigPath(env)).toBe("/etc/akm/config.json");
-      expect(getDataDir(env, "linux")).toBe(path.join("/home/user", ".local", "share", "akm"));
-      expect(getStateDir(env, "linux")).toBe(path.join("/home/user", ".local", "state", "akm"));
+  for (const [name, resolve] of Object.entries(places)) {
+    test(`${name} beats the XDG base`, () => {
+      expect(
+        resolve({
+          [name]: "/chosen/place",
+          HOME: "/home/user",
+          XDG_CONFIG_HOME: "/xdg",
+          XDG_DATA_HOME: "/xdg",
+          XDG_STATE_HOME: "/xdg",
+          XDG_CACHE_HOME: "/xdg",
+        }),
+      ).toBe("/chosen/place");
     });
   }
 
@@ -435,5 +422,11 @@ describe("the retired location variables", () => {
     expect(getDataDir({ AKM_DATA_DIR: "  ", HOME: "/home/user" }, "linux")).toBe(
       path.join("/home/user", ".local", "share", "akm"),
     );
+  });
+
+  test("AKM_CONFIG_DIR does not move a selected config file", () => {
+    const env = { AKM_CONFIG_DIR: "/dir", AKM_CONFIG_FILE: "/etc/akm/config.json" };
+    expect(getConfigPath(env)).toBe("/etc/akm/config.json");
+    expect(getConfigDir(env, "linux")).toBe("/dir");
   });
 });

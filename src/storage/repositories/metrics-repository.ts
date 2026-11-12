@@ -26,6 +26,8 @@ export interface MetricsQueryFilter {
   untilIso: string;
   /** `usage_events.source`; omit for every source. */
   source?: string;
+  /** Return only the newest `newest` rows (still oldest first). */
+  newest?: number;
 }
 
 /** Usage rows (search / show / curate / feedback) in the window, oldest first. */
@@ -37,14 +39,16 @@ export function listUsageEventRows(db: Database, filter: MetricsQueryFilter): Us
   // half-open window: round a fractional bound up to the next second.
   const untilMs = Date.parse(filter.untilIso);
   const untilBound = new Date(Math.ceil(untilMs / 1000) * 1000).toISOString();
-  return db
+  const newest = filter.newest !== undefined;
+  const rows = db
     .prepare(
       `SELECT id, event_type, query, entry_id, entry_ref, signal, metadata, source, created_at
        FROM usage_events
        WHERE datetime(created_at) >= datetime(?) AND datetime(created_at) < datetime(?)${sourceSql}
-       ORDER BY datetime(created_at), id`,
+       ORDER BY datetime(created_at)${newest ? " DESC" : ""}, id${newest ? " DESC LIMIT ?" : ""}`,
     )
-    .all(filter.sinceIso, untilBound, ...sourceParams) as UsageEventRow[];
+    .all(filter.sinceIso, untilBound, ...sourceParams, ...(newest ? [filter.newest as number] : [])) as UsageEventRow[];
+  return newest ? rows.reverse() : rows;
 }
 
 /** One asset's feedback rows (`entry_ref` is the durable `bundle//conceptId`), newest first (the workspace's asset view). */

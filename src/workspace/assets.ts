@@ -13,6 +13,7 @@ import { parseMarkdownToc, uniqueHeadingSlugs } from "../core/asset/markdown";
 import { markdownLinkTargets } from "../core/asset/markdown-link-targets";
 import { loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
+import { type IncludeSelectors, includedTypes, includesProposed } from "../core/include";
 import { getDbPath } from "../core/paths";
 import { projectView, resolveProject } from "../core/projects";
 import type { ScopeFilters } from "../indexer/passes/metadata";
@@ -28,6 +29,7 @@ import { bundleFileLocation, listBundleFiles } from "./bundle-files";
 import { readFileRevision, readRecentCommits } from "./git-read";
 import { automaticWriteTarget, capSide, clampLimit, DIFF_SIDE_MAX_CHARS, withReadonlyStateDb } from "./readers";
 
+export { graph } from "./graph";
 export { searchMisses } from "./misses";
 
 export interface SearchInput {
@@ -37,8 +39,9 @@ export interface SearchInput {
   bundle?: string;
   belief?: string;
   scope?: ScopeFilters;
+  include?: IncludeSelectors;
   /**
-   * A configured project (`akm search --project`): its `from` bundles, `filters` and `prefer` apply where this input does
+   * A configured project (`akm search --project`): its `from` bundles, `filters`, `prefer` and `include` apply where this input does
    * not name that kind itself (a `bundle` replaces `from`, a non-blank `scope` replaces `filters`). Absent: no project,
    * and ordinary Library behavior. The response then carries `project`.
    */
@@ -73,15 +76,18 @@ export async function search(input: SearchInput) {
     belief: parseBeliefFilterMode(input.belief || "current"),
     filters,
     prefer: project?.prefer,
+    include: input.include ?? project?.include,
     readOnly: true,
   });
-  return project ? { ...result, project: projectView({ ...project, from, filters }) } : result;
+  return project
+    ? { ...result, project: projectView({ ...project, from, filters, include: input.include ?? project.include }) }
+    : result;
 }
 
 /**
  * What a project resolves to, and what its bundles hold: the read bundles it selects (its `from`, else every local
  * bundle), the write bundle, and per bundle how many assets a browse lists (`total`) and how many of those satisfy the
- * project's `filters` (`eligible`), counted over the whole index. `prefer` only orders results; it never changes a count.
+ * project's `filters` (`eligible`), with its `include` exclusions relaxed, counted over the whole index. `prefer` only orders results; it never changes a count.
  * Counts are `null` where the bundle cannot be read or nothing is indexed.
  */
 export function projectOverview(input: { project: string }) {
@@ -100,7 +106,15 @@ export function projectOverview(input: { project: string }) {
   const db = readable.length > 0 ? openReadonlyExistingDatabase(getDbPath()) : undefined;
   if (db) {
     try {
-      counts = countBrowseEntries(db, readable, project.filters, config.search?.defaultExcludeTypes ?? ["session"]);
+      counts = countBrowseEntries(
+        db,
+        readable,
+        project.filters,
+        (config.search?.defaultExcludeTypes ?? ["session"]).filter(
+          (type) => !includedTypes(project.include).includes(type),
+        ),
+        includesProposed(project.include),
+      );
     } finally {
       closeDatabase(db);
     }

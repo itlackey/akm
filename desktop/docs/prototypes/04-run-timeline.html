@@ -1,0 +1,474 @@
+<!doctype html>
+<!--
+  This Source Code Form is subject to the terms of the Mozilla Public
+  License, v. 2.0. If a copy of the MPL was not distributed with this
+  file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+  A design prototype with synthetic data. It is not part of the app and reads nothing from akm.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>akm · Run timeline (prototype)</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    accent-color: var(--accent);
+    --bg: light-dark(#f6f6f9, #0a0a0c);
+    --surface: light-dark(#ffffff, #111115);
+    --surface-2: light-dark(#efeff4, #17171c);
+    --surface-sunk: light-dark(#e8e8ef, #0d0d10);
+    --border: light-dark(#dcdce4, #26262d);
+    --border-strong: light-dark(#767684, #6b6b78);
+    --rule: light-dark(#0f0f14, #52525e);
+    --text: light-dark(#0f0f14, #ededf0);
+    --muted: light-dark(#4a4a57, #b4b4be);
+    --faint: light-dark(#5d5d6a, #9a9aa6);
+    --accent: light-dark(#6d28d9, #9b72fa);
+    --accent-hover: light-dark(#5b21b6, #b79bfc);
+    --accent-bg: light-dark(#f0eafe, #1b1530);
+    --on-accent: light-dark(#ffffff, #0a0a0c);
+    --ok: light-dark(#17753a, #34d399);
+    --ok-bg: light-dark(#e3f4e9, #0f2a20);
+    --warn: light-dark(#8a5a00, #fbbf24);
+    --warn-bg: light-dark(#fcf0d3, #2b2210);
+    --fail: light-dark(#c4202c, #f87171);
+    --fail-bg: light-dark(#fde6e8, #2d1416);
+    --add-strong: light-dark(#a8e0bb, #1d6b49);
+    --del-strong: light-dark(#f5b3b9, #7f2a2f);
+    --hunk-bg: light-dark(#f3efff, #16162b);
+    --link: light-dark(#5b21b6, #c4b5fd);
+    --age-1: light-dark(#8f7bd1, #6a58b0);
+    --age-2: light-dark(#6d4fc0, #8f7bdc);
+    --age-3: light-dark(#4a2a9c, #c4b5fd);
+    --age-unknown: light-dark(#767684, #8a8a96);
+    --s1: light-dark(#2f64d0, #c4b5fd);
+    --s2: light-dark(#b45309, #fbbf24);
+    --s3: light-dark(#0f766e, #34d399);
+    --s4: light-dark(#be185d, #f472b6);
+    --s5: light-dark(#7c3aed, #60a5fa);
+    --s6: light-dark(#6b7280, #9a9aa6);
+    --marker: light-dark(#a16207, #fbbf24);
+    --target-min: 24px;
+    --topbar-h: 4rem; /* the sticky bar; offsets below it derive from this */
+    /* The bar sits at the top on wide screens and at the bottom on narrow ones. */
+    --top-inset: var(--topbar-h);
+    --bottom-inset: 0px;
+    --control-height: 2.75rem;
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 24px;
+    --space-6: 32px;
+    --space-7: 48px;
+    --radius: 2px;
+    --radius-pill: 999px;
+    --text-xs: 0.75rem;
+    --text-s: 0.8125rem;
+    --text-m: 0.9375rem;
+    --text-l: 1.125rem;
+    --text-xl: 1.375rem;
+    --text-2xl: clamp(2rem, 1.3rem + 2.6vw, 3.25rem);
+    --text-stat: clamp(2rem, 1.5rem + 1.6vw, 2.75rem);
+    --content-max: 82rem;
+    --leading: 1.55;
+    --leading-tight: 1.05;
+    --leading-snug: 1.5;
+    --tracking-tight: -0.045em;
+    --tracking-snug: -0.02em;
+    --tracking-caps: 0.06em;
+    --weight-strong: 600;
+    --shadow-float: 0 4px 16px rgb(0 0 0 / 0.2);
+    --edge-accent: inset 3px 0 0 var(--accent);
+    --edge-underline: inset 0 -3px 0 var(--accent);
+    --edge-ok: inset 3px 0 0 var(--ok);
+    --edge-warn: inset 3px 0 0 var(--warn);
+    --edge-fail: inset 3px 0 0 var(--fail);
+    --focus-halo: 0 0 0 3px color-mix(in srgb, var(--link) 30%, transparent);
+    --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+  }
+
+/* Prototype shell. Tokens above are copied from desktop/src/lib/ui/tokens.css; the rest imitates Desktop's chrome. */
+:root {
+  /* Categorical slots for the maps: eight hues in a fixed order, validated against --bg in both themes. */
+  --c1: light-dark(#2a78d6, #3987e5); --c2: light-dark(#eb6834, #d95926);
+  --c3: light-dark(#1baf7a, #199e70); --c4: light-dark(#eda100, #c98500);
+  --c5: light-dark(#e87ba4, #d55181); --c6: light-dark(#008300, #008300);
+  --c7: light-dark(#6250d6, #9085e9); --c8: light-dark(#e34948, #e66767);
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text); font: var(--text-m) / var(--leading) var(--font);
+  -webkit-font-smoothing: antialiased; display: flex; flex-direction: column; overflow: hidden; }
+:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; border-radius: var(--radius); }
+h1, h2, h3, p { margin: 0; }
+h1 { font-size: var(--text-l); letter-spacing: var(--tracking-snug); }
+h2 { font-size: var(--text-m); font-weight: var(--weight-strong); }
+h3 { font-size: var(--text-xs); font-weight: var(--weight-strong); color: var(--muted); }
+.muted { color: var(--muted); } .small { font-size: var(--text-s); } .xs { font-size: var(--text-xs); }
+.mono { font-family: var(--mono); font-size: var(--text-xs); }
+.num { font-variant-numeric: tabular-nums; }
+
+.topbar { flex: none; min-block-size: 3.25rem; padding: 0 var(--space-5); display: flex; gap: var(--space-5);
+  align-items: center; border-block-end: 1px solid var(--border); background: var(--surface); }
+.topbar .brand { font-weight: 700; letter-spacing: var(--tracking-snug); }
+.topbar nav { display: flex; gap: var(--space-1); flex: 1; min-inline-size: 0; overflow-x: auto; }
+.topbar nav span { color: var(--muted); font-weight: 550; padding: 6px 12px; border-radius: var(--radius); white-space: nowrap; }
+.topbar nav span[aria-current] { color: var(--text); background: var(--surface-2); font-weight: 650; }
+.proto { font-size: var(--text-xs); color: var(--warn); background: var(--warn-bg); padding: 1px 8px; border-radius: var(--radius-pill); white-space: nowrap; }
+
+.subbar { flex: none; display: flex; flex-wrap: wrap; gap: var(--space-3) var(--space-4); align-items: center;
+  padding: var(--space-3) var(--space-5); border-block-end: 1px solid var(--border); }
+.subbar .grow { flex: 1; min-inline-size: 0; }
+.seg { display: inline-flex; border: 1px solid var(--border-strong); border-radius: var(--radius); overflow: hidden; }
+.seg button { border: 0; border-radius: 0; background: none; color: var(--muted); }
+.seg button + button { border-inline-start: 1px solid var(--border); }
+.seg button[aria-pressed="true"] { background: var(--accent-bg); color: var(--text); box-shadow: var(--edge-underline); }
+button, select, input[type="search"] { font: inherit; font-size: var(--text-s); color: var(--text); background: var(--surface);
+  border: 1px solid var(--border-strong); border-radius: var(--radius); min-block-size: 2rem; padding: 2px 10px; }
+button { cursor: pointer; }
+button:hover { background: var(--surface-2); }
+label.field { display: inline-flex; gap: var(--space-2); align-items: center; font-size: var(--text-s); color: var(--muted); }
+input[type="search"] { inline-size: 15rem; max-inline-size: 100%; }
+input[type="range"] { accent-color: var(--accent); }
+
+main { flex: 1; min-block-size: 0; display: flex; }
+.stage { position: relative; flex: 1; min-inline-size: 0; }
+.stage canvas { position: absolute; inset: 0; inline-size: 100%; block-size: 100%; display: block; }
+.stage canvas.labels { pointer-events: none; }
+.side { flex: none; inline-size: 20rem; border-inline-start: 1px solid var(--border); background: var(--surface);
+  overflow-y: auto; padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-4); }
+.side section { display: flex; flex-direction: column; gap: var(--space-2); }
+.overlay { position: absolute; background: color-mix(in srgb, var(--surface) 88%, transparent); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: var(--space-3); backdrop-filter: blur(6px); }
+.legend { display: flex; flex-direction: column; gap: 2px; }
+.legend button { display: flex; align-items: center; gap: var(--space-2); border: 0; background: none; padding: 2px 6px;
+  min-block-size: 1.6rem; text-align: start; inline-size: 100%; }
+.legend button[aria-pressed="false"] { opacity: 0.4; }
+.legend i, .dot { flex: none; inline-size: 10px; block-size: 10px; border-radius: 50%; display: inline-block; }
+.legend .n { margin-inline-start: auto; color: var(--muted); font-variant-numeric: tabular-nums; font-size: var(--text-xs); }
+.tip { position: absolute; z-index: 5; pointer-events: none; background: var(--surface); border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-float); border-radius: var(--radius); padding: var(--space-2) var(--space-3); font-size: var(--text-s);
+  max-inline-size: 22rem; }
+.tip[hidden] { display: none; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 2px var(--space-3); font-size: var(--text-s); }
+.kv dt { color: var(--muted); } .kv dd { margin: 0; overflow-wrap: anywhere; }
+.badge { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: var(--radius-pill);
+  font-size: var(--text-xs); font-weight: var(--weight-strong); white-space: nowrap; background: var(--surface-2); }
+.badge[data-tone="ok"] { color: var(--ok); background: var(--ok-bg); }
+.badge[data-tone="warn"] { color: var(--warn); background: var(--warn-bg); }
+.badge[data-tone="fail"] { color: var(--fail); background: var(--fail-bg); }
+.badge[data-tone="accent"] { color: var(--link); background: var(--accent-bg); }
+.stats { display: flex; gap: var(--space-5); }
+.stats div { display: flex; flex-direction: column; line-height: 1.2; }
+.stats b { font-size: var(--text-l); font-variant-numeric: tabular-nums; font-weight: 600; }
+.stats span { font-size: var(--text-xs); color: var(--muted); }
+.list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.list li { display: flex; gap: var(--space-2); align-items: baseline; padding: 3px 0; border-block-end: 1px solid var(--border); font-size: var(--text-s); }
+.list li button { border: 0; background: none; padding: 0; min-block-size: 0; color: var(--link); text-align: start; overflow-wrap: anywhere; }
+table { border-collapse: collapse; inline-size: 100%; font-size: var(--text-s); }
+th, td { text-align: start; padding: 4px 8px; border-block-end: 1px solid var(--border); }
+th { color: var(--muted); font-weight: 500; font-size: var(--text-xs); }
+@media (width < 60rem) { main { flex-direction: column; } .side { inline-size: auto; max-block-size: 40%; border-inline-start: 0; border-block-start: 1px solid var(--border); } }
+
+.stage canvas { cursor: grab; touch-action: none; }
+.key { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); font-size: var(--text-s); color: var(--muted); align-items: center; }
+.key span { display: inline-flex; gap: 6px; align-items: center; }
+.key i { inline-size: 12px; block-size: 12px; display: inline-block; border-radius: 2px; }
+.attention li { flex-direction: column; gap: 0; align-items: stretch; }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <span class="brand">akm</span>
+  <nav aria-label="Sections"><span>Home</span><span>Library</span><span>Projects</span><span>Review</span><span aria-current="page">Activity</span><span>Settings</span></nav>
+  <span class="proto">Prototype · synthetic data</span>
+  <button id="theme"></button>
+</header>
+<div class="subbar">
+  <h1>Run timeline</h1>
+  <span class="muted small">Every scheduled task, workflow run, improve run and index build on one clock</span>
+  <span class="grow"></span>
+  <span class="key">
+    <span><i style="background:var(--muted)"></i>Completed</span>
+    <span><i style="background:var(--fail)"></i>✕ Failed</span>
+    <span><i style="background:var(--warn);transform:rotate(45deg) scale(.8)"></i>Blocked</span>
+    <span><i style="background:var(--accent)"></i>Running now</span>
+  </span>
+  <span class="seg" id="range"><button data-v="1" aria-pressed="false">24 hours</button><button data-v="3" aria-pressed="false">3 days</button><button data-v="14" aria-pressed="true">14 days</button></span>
+</div>
+<main>
+  <div class="stage" id="stage">
+    <canvas id="c" tabindex="0" aria-label="Timeline of runs over the last 14 days. Scroll to zoom, drag to move through time. The panel on the right lists failures as text."></canvas>
+    <div class="tip" id="tip" hidden></div>
+  </div>
+  <aside class="side" id="side"></aside>
+</main>
+<script>
+// Prototype helpers shared by the examples.
+const $ = (sel, root = document) => root.querySelector(sel);
+const el = (tag, props = {}, ...children) => {
+  const node = Object.assign(document.createElement(tag), props);
+  node.append(...children);
+  return node;
+};
+/** A seeded random source, so every load shows the same data. */
+function rng(seed) {
+  let a = seed >>> 0;
+  const next = () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  next.int = (n) => Math.floor(next() * n);
+  next.pick = (list) => list[Math.floor(next() * list.length)];
+  next.gauss = () => (next() + next() + next() + next() - 2) * 0.87;
+  return next;
+}
+/** The colour a design token resolves to in the scheme on screen, as [r, g, b] (the same probe chart-view.js uses). */
+function tokenRGB(name) {
+  const probe = el("span", { style: `position:absolute;visibility:hidden;color:var(${name})` });
+  document.body.append(probe);
+  const c = document.createElement("canvas").getContext("2d");
+  c.fillStyle = getComputedStyle(probe).color;
+  c.fillRect(0, 0, 1, 1);
+  probe.remove();
+  return [...c.getImageData(0, 0, 1, 1).data.slice(0, 3)];
+}
+const isDark = () => {
+  const forced = document.documentElement.dataset.theme;
+  return forced ? forced === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+};
+/** The Appearance switch: Desktop stores this choice; here it only stamps data-theme. */
+function themeToggle(button, onChange) {
+  const apply = () => { button.textContent = isDark() ? "Light theme" : "Dark theme"; onChange?.(isDark()); };
+  button.addEventListener("click", () => {
+    document.documentElement.dataset.theme = isDark() ? "light" : "dark";
+    apply();
+  });
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", apply);
+  apply();
+}
+const fmt = (n) => n.toLocaleString("en-US");
+const ago = (days) => (days < 1 ? "today" : days < 2 ? "yesterday" : days < 60 ? `${Math.round(days)} days ago` : `${Math.round(days / 30)} months ago`);
+
+
+// Runs in the shape of state.db: task_history (task_id, status, started_at, completed_at, target_kind), workflow_runs
+// (workflow_ref, status, created_at, completed_at), improve_runs (started_at, completed_at, ok) and index_completed events.
+const DAY = 1440, SPAN = 14 * DAY, r = rng(5);
+const START = new Date(2026, 9, 28).getTime(); // the left edge of the window; the right edge is "now"
+const groups = [
+  { label: "Scheduled tasks", rows: [
+    { id: "sync-bundles", note: "every 30 minutes", every: 30, minutes: [0.3, 1.2], fail: 0.004 },
+    { id: "extract-sessions", note: "every hour", every: 60, minutes: [1, 6], fail: 0.01 },
+    { id: "improve-nightly", note: "daily at 02:00", every: DAY, offset: 120, minutes: [18, 40], fail: 0.05 },
+    { id: "backup-stash", note: "daily at 03:15", every: DAY, offset: 195, minutes: [2, 4], fail: 0, failFrom: 9 * DAY },
+    { id: "lint-library", note: "daily at 06:00", every: DAY, offset: 360, minutes: [3, 8], fail: 0.03 },
+    { id: "weekly-digest", note: "Mondays at 09:00", every: 7 * DAY, offset: 5 * DAY + 540, minutes: [12, 20], fail: 0 },
+  ] },
+  { label: "Workflow runs", rows: [
+    { id: "release-readiness", note: "started by an agent", manual: 5, minutes: [9, 16], fail: 0.2, activeNow: true },
+    { id: "triage-incident", note: "started by an agent", manual: 8, minutes: [20, 90], fail: 0.05, blocked: 0.15 },
+    { id: "weekly-digest", note: "started by a task", every: 7 * DAY, offset: 5 * DAY + 541, minutes: [11, 19], fail: 0 },
+  ] },
+  { label: "Improve", rows: [
+    { id: "improve", note: "nightly and on demand", every: DAY, offset: 121, minutes: [17, 39], fail: 0.06, extra: 4 },
+  ] },
+  { label: "Index", rows: [
+    { id: "index", note: "after writes and syncs", manual: 70, minutes: [0.2, 3], fail: 0 },
+  ] },
+];
+// The machine was asleep over one weekend: nothing ran, which shows as a gap in every regular row.
+const ASLEEP = [3 * DAY + 1100, 5 * DAY + 420];
+const asleep = (t) => t > ASLEEP[0] && t < ASLEEP[1];
+for (const group of groups) for (const row of group.rows) {
+  row.runs = [];
+  const add = (t, status) => {
+    if (t < 0 || t > SPAN || asleep(t)) return;
+    const minutes = row.minutes[0] + r() * r() * (row.minutes[1] - row.minutes[0]);
+    const s = status ?? (row.failFrom && t >= row.failFrom ? "failed" : r() < row.fail ? "failed" : r() < (row.blocked ?? 0) ? "blocked" : "completed");
+    row.runs.push({ start: t, end: t + (s === "failed" ? minutes * 0.4 : minutes), status: s, row });
+  };
+  if (row.every) for (let t = row.offset ?? 0; t < SPAN; t += row.every) add(t + r() * 0.5);
+  for (let k = 0; k < (row.manual ?? row.extra ?? 0); k++) add(Math.floor(r() * 14) * DAY + 540 + r() * 540);
+  if (row.activeNow) row.runs.push({ start: SPAN - 9.4, end: SPAN, status: "active", row });
+  row.runs.sort((a, b) => a.start - b.start);
+}
+const allRuns = groups.flatMap((g) => g.rows.flatMap((row) => row.runs));
+const when = (t) => new Date(START + t * 60000).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
+const took = (run) => { const m = run.end - run.start; return m < 1 ? `${Math.round(m * 60)} s` : m < 90 ? `${m.toFixed(m < 10 ? 1 : 0)} min` : `${(m / 60).toFixed(1)} h`; };
+const WORD = { completed: "Completed", failed: "Failed", blocked: "Blocked", active: "Running now" };
+
+const canvas = $("#c"), ctx = canvas.getContext("2d");
+const LEFT = 236, RIGHT = 150, TOP = 34, ROW = 30, HEAD = 26;
+let t0 = 0, t1 = SPAN, W = 0, H = 0, ink = {}, hover = null, selected = null, layout = [];
+const x = (t) => LEFT + ((t - t0) / (t1 - t0)) * (W - LEFT - RIGHT);
+const css = (c, a = 1) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+
+function draw() {
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  W = canvas.clientWidth; H = canvas.clientHeight;
+  if (canvas.width !== W * dpr || canvas.height !== H * dpr) { canvas.width = W * dpr; canvas.height = H * dpr; }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, W, H);
+  ctx.font = "12px ui-sans-serif, system-ui, sans-serif"; ctx.textBaseline = "middle";
+  const right = W - RIGHT, span = t1 - t0;
+  // Axis: days, and hours once a day is wide enough to hold them.
+  const hours = span <= 2 * DAY ? 3 : span <= 4 * DAY ? 6 : 0;
+  ctx.save(); ctx.beginPath(); ctx.rect(LEFT, 0, right - LEFT, H); ctx.clip();
+  for (let d = Math.floor(t0 / DAY); d * DAY <= t1; d++) {
+    const date = new Date(START + d * DAY * 60000);
+    if (date.getDay() === 0 || date.getDay() === 6) { ctx.fillStyle = css(ink.surface2, 0.6); ctx.fillRect(x(d * DAY), TOP - 6, x((d + 1) * DAY) - x(d * DAY), H); }
+    ctx.fillStyle = css(ink.border); ctx.fillRect(Math.round(x(d * DAY)), TOP - 6, 1, H);
+    ctx.fillStyle = css(ink.muted); ctx.textAlign = "left";
+    ctx.fillText(date.toLocaleDateString("en-US", span > 8 * DAY ? { weekday: "narrow", day: "numeric" } : { weekday: "short", month: "short", day: "numeric" }), x(d * DAY) + 4, 12);
+    if (hours) for (let h = hours; h < 24; h += hours) {
+      ctx.fillStyle = css(ink.border, 0.5); ctx.fillRect(Math.round(x(d * DAY + h * 60)), TOP - 6, 1, H);
+      ctx.fillStyle = css(ink.muted, 0.8); ctx.fillText(`${String(h).padStart(2, "0")}:00`, x(d * DAY + h * 60) + 4, 24);
+    }
+  }
+  ctx.restore();
+  layout = [];
+  let y = TOP;
+  for (const group of groups) {
+    ctx.fillStyle = css(ink.muted); ctx.textAlign = "left"; ctx.font = "600 12px ui-sans-serif, system-ui, sans-serif";
+    ctx.fillText(group.label, 14, y + HEAD / 2 + 2);
+    ctx.font = "12px ui-sans-serif, system-ui, sans-serif";
+    y += HEAD;
+    for (const row of group.rows) {
+      const mid = y + ROW / 2;
+      ctx.fillStyle = css(ink.border); ctx.fillRect(0, y + ROW - 0.5, W, 1);
+      ctx.fillStyle = css(ink.text); ctx.textAlign = "left"; ctx.fillText(row.id, 14, mid - 6);
+      ctx.fillStyle = css(ink.muted); ctx.font = "11px ui-sans-serif, system-ui, sans-serif"; ctx.fillText(row.note, 14, mid + 8);
+      // The row's figures for the visible range: runs and failures, as plain counts.
+      const inView = row.runs.filter((run) => run.end >= t0 && run.start <= t1), failed = inView.filter((run) => run.status === "failed").length;
+      ctx.textAlign = "right"; ctx.fillStyle = css(ink.muted); ctx.fillText(`${inView.length} runs`, W - 14, mid - 6);
+      ctx.fillStyle = css(failed ? ink.fail : ink.muted); ctx.fillText(failed ? `${failed} failed` : "none failed", W - 14, mid + 8);
+      ctx.font = "12px ui-sans-serif, system-ui, sans-serif";
+      ctx.save(); ctx.beginPath(); ctx.rect(LEFT, y, right - LEFT, ROW); ctx.clip();
+      for (const run of inView) {
+        const a = x(run.start), w = Math.max(2, x(run.end) - a), on = run === hover || run === selected;
+        if (run.status === "completed") { ctx.fillStyle = css(ink.muted, on ? 1 : 0.62); ctx.fillRect(a, mid - 5, w, 10); }
+        else if (run.status === "active") { ctx.fillStyle = css(ink.accent); ctx.fillRect(a, mid - 7, Math.max(4, w), 14); }
+        else if (run.status === "blocked") {
+          ctx.fillStyle = css(ink.warn); ctx.fillRect(a, mid - 5, w, 10);
+          ctx.beginPath(); ctx.moveTo(a + w / 2, mid - 12); ctx.lineTo(a + w / 2 + 4, mid - 8); ctx.lineTo(a + w / 2, mid - 4); ctx.lineTo(a + w / 2 - 4, mid - 8); ctx.fill();
+        } else {
+          // A failure is taller than a success and carries a cross, so it is not told apart by colour alone.
+          ctx.fillStyle = css(ink.fail); ctx.fillRect(a, mid - 9, Math.max(3, w), 18);
+          ctx.strokeStyle = css(ink.fail); ctx.lineWidth = 1.5; const cx = a + Math.max(3, w) / 2;
+          ctx.beginPath(); ctx.moveTo(cx - 3, mid - 15); ctx.lineTo(cx + 3, mid - 11); ctx.moveTo(cx + 3, mid - 15); ctx.lineTo(cx - 3, mid - 11); ctx.stroke();
+        }
+        if (on) { ctx.strokeStyle = css(ink.text); ctx.lineWidth = 1.5; ctx.strokeRect(a - 2, mid - 11, Math.max(3, w) + 4, 22); }
+      }
+      ctx.restore();
+      layout.push({ row, y });
+      y += ROW;
+    }
+  }
+  if (SPAN >= t0 && SPAN <= t1) { ctx.fillStyle = css(ink.accent); ctx.fillRect(Math.round(x(SPAN)), TOP - 6, 1.5, y - TOP + 6); ctx.textAlign = "right"; ctx.fillText("now", x(SPAN) - 4, 24); }
+}
+
+/** The run under the pointer: the nearest mark in that row, within a few pixels. */
+function runAt(mx, my) {
+  const hit = layout.find(({ y }) => my >= y && my < y + ROW);
+  if (!hit || mx < LEFT || mx > W - RIGHT) return null;
+  let best = null, distance = 7;
+  for (const run of hit.row.runs) {
+    const a = x(run.start), b = Math.max(a + 2, x(run.end)), d = mx < a ? a - mx : mx > b ? mx - b : 0;
+    if (d < distance) { distance = d; best = run; }
+  }
+  return best;
+}
+function view(from, to) {
+  const span = Math.max(60, Math.min(SPAN, to - from));
+  t0 = Math.max(0, Math.min(SPAN + span * 0.04 - span, from)); t1 = t0 + span;
+  for (const b of $("#range").children) b.setAttribute("aria-pressed", String(Math.abs(span - Number(b.dataset.v) * DAY) < 1));
+  draw();
+}
+const tip = $("#tip");
+let drag = null;
+canvas.addEventListener("pointerdown", (e) => { canvas.setPointerCapture(e.pointerId); drag = { x: e.clientX, t0, moved: false }; });
+canvas.addEventListener("pointermove", (e) => {
+  const rect = canvas.getBoundingClientRect(), mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  if (drag) {
+    const dt = ((drag.x - e.clientX) / (W - LEFT - RIGHT)) * (t1 - t0);
+    if (Math.abs(drag.x - e.clientX) > 3) drag.moved = true;
+    if (drag.moved) { const span = t1 - t0; view(drag.t0 + dt, drag.t0 + dt + span); drag.t0 = t0; drag.x = e.clientX; }
+    return;
+  }
+  const next = runAt(mx, my);
+  if (next !== hover) { hover = next; canvas.style.cursor = next ? "pointer" : "grab"; draw(); }
+  tip.hidden = !next;
+  if (next) {
+    tip.replaceChildren(el("strong", {}, `${next.row.id} · ${WORD[next.status]}`), el("div", { className: "muted xs" }, `${when(next.start)} · took ${took(next)}`));
+    tip.style.left = `${Math.min(mx + 14, W - 240)}px`; tip.style.top = `${my + 16}px`;
+  }
+});
+canvas.addEventListener("pointerup", (e) => {
+  if (drag && !drag.moved) { const rect = canvas.getBoundingClientRect(); select(runAt(e.clientX - rect.left, e.clientY - rect.top)); }
+  drag = null;
+});
+canvas.addEventListener("pointerleave", () => { hover = null; tip.hidden = true; draw(); });
+canvas.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect(), at = t0 + ((e.clientX - rect.left - LEFT) / (W - LEFT - RIGHT)) * (t1 - t0), k = Math.exp(e.deltaY * 0.0015);
+  view(at - (at - t0) * k, at + (t1 - at) * k);
+}, { passive: false });
+canvas.addEventListener("keydown", (e) => {
+  const span = t1 - t0;
+  if (e.key === "ArrowLeft") view(t0 - span * 0.2, t1 - span * 0.2);
+  else if (e.key === "ArrowRight") view(t0 + span * 0.2, t1 + span * 0.2);
+  else if (e.key === "+" || e.key === "=") view(t0 + span * 0.15, t1 - span * 0.15);
+  else if (e.key === "-") view(t0 - span * 0.2, t1 + span * 0.2);
+});
+$("#range").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) view(SPAN - Number(b.dataset.v) * DAY, SPAN); });
+
+function select(run) {
+  selected = run;
+  const side = $("#side");
+  if (run) {
+    const badge = el("span", { className: "badge" }, WORD[run.status]);
+    badge.dataset.tone = { completed: "ok", failed: "fail", blocked: "warn", active: "accent" }[run.status];
+    const group = groups.find((g) => g.rows.includes(run.row)).label;
+    side.replaceChildren(el("section", {}, el("h2", {}, run.row.id), el("div", {}, badge),
+      el("dl", { className: "kv" }, el("dt", {}, "Kind"), el("dd", {}, group), el("dt", {}, "Started"), el("dd", {}, when(run.start)),
+        el("dt", {}, "Took"), el("dd", {}, took(run)), el("dt", {}, "Schedule"), el("dd", {}, run.row.note)),
+      el("div", { style: "display:flex;gap:8px;flex-wrap:wrap" },
+        el("button", {}, group === "Workflow runs" ? "Open run trace" : group === "Scheduled tasks" ? "Open log" : "Open run"), el("button", { onclick: () => select(null) }, "Back to summary"))));
+  } else {
+    // The same failures as text: the rows whose most recent runs failed, and everything that failed in the last day.
+    const streaks = groups.flatMap((g) => g.rows).map((row) => { let n = 0; for (let i = row.runs.length - 1; i >= 0 && row.runs[i].status === "failed"; i--) n++; return { row, n }; }).filter((s) => s.n >= 2);
+    const failed = allRuns.filter((run) => run.status !== "completed" && run.status !== "active").sort((a, b) => b.start - a.start).slice(0, 12);
+    const jump = (run) => { view(run.start - 12 * 60, run.start + 12 * 60); select(run); };
+    side.replaceChildren(
+      el("div", { className: "stats" }, el("div", {}, el("b", {}, fmt(allRuns.length)), el("span", {}, "runs in 14 days")),
+        el("div", {}, el("b", {}, fmt(allRuns.filter((run) => run.status === "failed").length)), el("span", {}, "failed"))),
+      el("section", {}, el("h3", {}, "Failing every time"), el("ul", { className: "list attention" }, ...(streaks.length ? streaks.map(({ row, n }) =>
+        el("li", {}, el("button", { onclick: () => jump(row.runs.at(-1)) }, row.id), el("span", { className: "muted xs" }, `last ${n} runs failed, since ${when(row.runs.at(-n).start)}`))) : [el("li", { className: "muted" }, "Nothing")]))),
+      el("section", {}, el("h3", {}, "Latest failed or blocked runs"), el("ul", { className: "list attention" }, ...failed.map((run) =>
+        el("li", {}, el("button", { onclick: () => jump(run) }, `${run.row.id} · ${WORD[run.status].toLowerCase()}`), el("span", { className: "muted xs" }, when(run.start)))))),
+      el("p", { className: "xs muted" }, "Completed runs are drawn quietly so failures stand out. A gap in a regular row means no run was recorded then; here the machine was asleep over a weekend."),
+    );
+  }
+  draw();
+}
+new ResizeObserver(draw).observe(canvas);
+themeToggle($("#theme"), () => {
+  ink = Object.fromEntries(["text", "muted", "border", "accent", "fail", "warn", "surface-2"].map((n) => [n === "surface-2" ? "surface2" : n, tokenRGB(`--${n}`)]));
+  draw();
+});
+select(null);
+window.__view = view;
+</script>
+</body>
+</html>

@@ -19,7 +19,7 @@ import { sleepSync } from "../../runtime";
 import { isChmodUnsupported, readTextFile, stripJsonComments, writeFileAtomic } from "../common";
 import { ConfigError } from "../errors";
 import { createLockPayload, probeLock, reclaimStaleLock, releaseLock, tryAcquireLockSync } from "../file-lock";
-import { getCacheDir, getConfigDir } from "../paths";
+import { getCacheDir, getConfigPath } from "../paths";
 
 /**
  * Read the raw text of a config file. Returns `undefined` when the file does
@@ -208,14 +208,14 @@ export function pruneToNewest(dir: string, keep: number, select: (entry: fs.Dire
 // ── Config write lock ────────────────────────────────────────────────────────
 
 /**
- * Path to the config write sentinel (`config.json.lck` in $CONFIG).
+ * Path to the selected config file's write sentinel (`<file>.lck`).
  *
  * Placed next to config.json so the lock scope is obvious and the path is
  * predictable for debugging. Uses $CONFIG (not $DATA) because config.json
  * itself lives in $CONFIG — they should fail together if the dir is read-only.
  */
 export function getConfigLockPath(): string {
-  return path.join(getConfigDir(), "config.json.lck");
+  return `${getConfigPath()}.lck`;
 }
 
 // Total wait budget for a CONTENDED lock: retries × delay. An abandoned lock

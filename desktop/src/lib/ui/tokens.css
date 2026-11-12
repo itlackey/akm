@@ -41,6 +41,16 @@
     --s4: light-dark(#be185d, #f472b6);
     --s5: light-dark(#7c3aed, #60a5fa);
     --s6: light-dark(#6b7280, #9a9aa6);
+    /* The library map's eight categorical slots, in a fixed order checked for colour-blind separation on --bg in both
+       schemes. Four light steps are below 3:1 against --bg, so the map always has a legend and a table. */
+    --map-1: light-dark(#2a78d6, #3987e5);
+    --map-2: light-dark(#eb6834, #d95926);
+    --map-3: light-dark(#1baf7a, #199e70);
+    --map-4: light-dark(#eda100, #c98500);
+    --map-5: light-dark(#e87ba4, #d55181);
+    --map-6: light-dark(#008300, #008300);
+    --map-7: light-dark(#6250d6, #9085e9);
+    --map-8: light-dark(#e34948, #e66767);
     --marker: light-dark(#a16207, #fbbf24);
     --target-min: 24px;
     --topbar-h: 4rem; /* the sticky bar; offsets below it derive from this */

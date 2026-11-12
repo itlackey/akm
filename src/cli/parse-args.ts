@@ -70,6 +70,7 @@ export function parsePositiveIntFlag(raw: string | undefined, flagName = "--limi
 }
 
 /**
+/**
  * Parse an integer flag value: digits only (so `3x`, `3.5` and `-1` are
  * rejected, not truncated), within `minimum` and the optional `maximum`.
  * Returns `undefined` when the flag was not supplied.
@@ -87,6 +88,37 @@ export function parseIntegerFlag(
     throw new UsageError(`${name} must be an integer ${range}, got "${raw}".`, "INVALID_FLAG_VALUE");
   }
   return value;
+}
+
+/**
+ * The one `--timeout` grammar: bare N is milliseconds, or N with `ms`, `s`, `m`,
+ * `h` or `d`. Private to `--timeout` flags; asset `timeout:` fields and
+ * `--since`/`--expires` keep the shared duration grammar in core/time.
+ */
+const TIMEOUT_UNITS: Readonly<Record<string, number>> = {
+  ms: 1,
+  s: 1000,
+  m: 60_000,
+  h: 3_600_000,
+  d: 86_400_000,
+};
+
+/** Parse one `--timeout` value to positive milliseconds, or throw a usage error. */
+export function parseTimeoutValue(raw: string, flagName = "--timeout"): number {
+  const match = /^(\d+)(ms|s|m|h|d)?$/.exec(raw.trim());
+  const parsed = match ? Number(match[1]) * (TIMEOUT_UNITS[match[2] ?? "ms"] as number) : Number.NaN;
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new UsageError(
+      `Invalid ${flagName} value: "${raw}". Expected a positive number: bare N is milliseconds, or N with ms, s, m, h or d (30s, 2m, 1h, 7d).`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  return parsed;
+}
+
+/** The `--timeout` flag as milliseconds, or `undefined` when it was not supplied. */
+export function parseTimeoutFlag(timeout: string | undefined): number | undefined {
+  return timeout === undefined ? undefined : parseTimeoutValue(timeout);
 }
 
 // ── String flag parsing ──────────────────────────────────────────────────────

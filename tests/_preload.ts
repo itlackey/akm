@@ -51,6 +51,7 @@ import { resetConfigCache } from "../src/core/config/config";
 import { clearLogFile, resetVerbose, setQuiet } from "../src/core/warn";
 import { _setAssetMutationLeaseSyncTimingForTests } from "../src/indexer/index-writer-lock";
 import { agentRuntime } from "../src/integrations/agent/runtime";
+import { HARNESS_REGISTRY } from "../src/integrations/harnesses";
 import { _setOpencodeVersionProbeForTests } from "../src/integrations/harnesses/opencode/version";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
 import {
@@ -69,10 +70,10 @@ import { resetAllSeams } from "./_helpers/seams";
  * Keep this list in sync with the design doc and with paths.ts + config.ts.
  */
 const HARNESSED: readonly string[] = [
-  // Storage layout overrides.
+  // Storage layout overrides. `AKM_BUNDLE_DIR` is retired: akm refuses to start when it names a bundle the config
+  // does not (src/core/paths.ts); it is listed so a test of that refusal, or a developer's exported one, is restored
+  // or removed like any other and never reaches the leak tripwire.
   "AKM_CONFIG_FILE",
-  // Retired: akm refuses to start with one set (src/core/paths.ts). Listed so a test of that refusal, or a
-  // developer's exported one, is restored or removed like any other and never reaches the leak tripwire.
   "AKM_CONFIG_DIR",
   "AKM_CACHE_DIR",
   "AKM_DATA_DIR",
@@ -147,13 +148,13 @@ function installSuiteWideSandbox(): void {
   if (process.platform === "win32") {
     for (const [name, value] of Object.entries(windowsProfileEnv(suiteSandboxRoot))) process.env[name] = value;
   }
-  // AKM_CONFIG_FILE takes precedence over XDG in src/core/paths.ts, and the retired AKM_*_DIR variables (and an
-  // AKM_BUNDLE_DIR naming a bundle the config does not) make akm
+  // AKM_CONFIG_FILE and the AKM_*_DIR variables take precedence over XDG in src/core/paths.ts, and an
+  // AKM_BUNDLE_DIR naming a bundle the config does not makes akm
   // refuse to start. If a developer's shell exports any of them, they would defeat the XDG sandbox above or fail
   // every test. Delete them at startup so the XDG sandbox always wins; tests that need one set it explicitly (and
   // the afterEach tripwire restores it).
-  delete process.env.AKM_CONFIG_FILE;
   delete process.env.AKM_CONFIG_DIR;
+  delete process.env.AKM_CONFIG_FILE;
   delete process.env.AKM_DATA_DIR;
   delete process.env.AKM_CACHE_DIR;
   delete process.env.AKM_STATE_DIR;
@@ -162,6 +163,12 @@ function installSuiteWideSandbox(): void {
   // see a clean default. Tests that need them set should do so explicitly.
   delete process.env.AKM_LLM_API_KEY;
   delete process.env.AKM_EMBED_API_KEY;
+  // A suite run inside an agent harness (Claude Code, OpenCode, Codex) must not record that harness on the usage
+  // events and workflow runs it writes: start every run as a plain shell would. Tests that need one set it.
+  for (const key of [
+    ...HARNESS_REGISTRY.flatMap((harness) => [...(harness.identityEnv ?? []), ...(harness.presenceEnv ?? [])]),
+  ])
+    delete process.env[key];
   // The Codex session reader's default root is `os.homedir()/.codex`, and bun's
   // os.homedir() keeps returning the real home after the HOME override above, so
   // `extract --auto` and `improve` would read the developer's real rollouts.

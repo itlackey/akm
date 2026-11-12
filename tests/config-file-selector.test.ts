@@ -47,10 +47,11 @@ const write = (file: string, text: string): string => {
 };
 
 describe("the selected config file", () => {
-  test("AKM_CONFIG_FILE is the config path, and its folder is the config directory", () => {
+  test("AKM_CONFIG_FILE is the config path, and does not move the config directory", () => {
     const file = path.join(dir, "etc", "akm.json");
-    expect(getConfigPath({ AKM_CONFIG_FILE: file })).toBe(file);
-    expect(getConfigDir({ AKM_CONFIG_FILE: file })).toBe(path.join(dir, "etc"));
+    const env = { AKM_CONFIG_FILE: file, XDG_CONFIG_HOME: "/xdg", HOME: "/home/me" };
+    expect(getConfigPath(env)).toBe(file);
+    expect(getConfigDir(env)).toBe(path.join("/xdg", "akm"));
   });
 
   test("a relative AKM_CONFIG_FILE is resolved against the cwd", () => {
@@ -66,7 +67,7 @@ describe("the selected config file", () => {
       HOME: "/home/me",
     };
     expect(getConfigPath(env)).toBe(file);
-    expect(getConfigDir(env)).toBe(dir);
+    expect(getConfigDir(env)).toBe(path.join("/xdg", "akm"));
   });
 
   test("an empty AKM_CONFIG_FILE selects nothing: the default file", () => {
@@ -75,11 +76,11 @@ describe("the selected config file", () => {
     );
   });
 
-  test("the config lock and credentials.json live beside the selected file", () => {
+  test("the config lock lives beside the selected file; credentials.json stays in the config directory", () => {
     const file = path.join(dir, "install", "akm.json");
     fs.mkdirSync(path.dirname(file), { recursive: true });
     return withEnv({ AKM_CONFIG_FILE: file }, () => {
-      expect(getConfigLockPath()).toBe(path.join(dir, "install", "config.json.lck"));
+      expect(getConfigLockPath()).toBe(`${file}.lck`);
       // The store the credential writer files a key in.
       saveConfig({ semanticSearchMode: "off" });
       expect(fs.existsSync(file)).toBe(true);
@@ -270,7 +271,6 @@ describe("--config on the CLI", () => {
     const info = JSON.parse(result.stdout) as Record<string, string>;
     expect(info).toMatchObject({
       configFile: file,
-      configDir: dir,
       dataDir: path.join(dir, "pd"),
       stateDir: path.join(dir, "ps"),
       cacheDir: path.join(dir, "pc"),

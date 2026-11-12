@@ -31,7 +31,7 @@ publishing the run. A workflow ref is a Markdown `.md` source.
 ```sh
 akm workflow run workflows/ship-release --version 1.2.3
 akm workflow run workflows/review --changed_files a.ts --changed_files b.ts
-akm workflow run <run-id> --max-retries 2 --timeout-ms 600000
+akm workflow run <run-id> --max-retries 2 --timeout 600000
 ```
 
 Parameters are accepted on every ref start. They cannot be combined with a run
@@ -46,7 +46,7 @@ active run rejects parameter flags.
 
 `--max-steps <n>` leaves a partial run active after at most `n` steps.
 `--max-retries <n>` retries a failed step on the same run up to `n` additional
-times. `--timeout-ms <ms>` bounds the whole invocation. A timeout or
+times. `--timeout <duration>` bounds the whole invocation. A timeout or
 signal abort releases the run's lock without advancing the active step, so the
 run remains resumable. Failed, gate-rejected, timed-out, and interrupted runs
 exit nonzero.

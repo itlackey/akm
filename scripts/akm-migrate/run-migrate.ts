@@ -212,7 +212,7 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
   // something to write; an installation that moves its locations leaves the OS scheduler alone.
   // A file that could not take `paths` or the working bundle leaves the host's locations out of it: an entry written now would run
   // `akm task dispatch` against the default locations, so none is written until the file names them.
-  const hostLocations = configFile && { ...(configFile.paths ? { paths: configFile.paths } : {}), ...configFile.bundle };
+  const hostLocations = configFile && { ...configFile.bundle };
   const pathsUnwritten = apply && hostLocations !== undefined && Object.keys(hostLocations).length > 0 && !configFile?.applied;
   const scheduler = pathsUnwritten
     ? undefined
@@ -254,7 +254,7 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
       ...failedStepBlockers(failedSteps),
       ...(pathsUnwritten
         ? [
-            `${configPath} cannot be written, so the locations and bundle this host names with environment variables could not be added, and the scheduler entry was not written. Add ${JSON.stringify(hostLocations)} where the file is made, then run again.`,
+            `${configPath} cannot be written, so the bundle this host names with AKM_BUNDLE_DIR could not be added, and the scheduler entry was not written. Add ${JSON.stringify(hostLocations)} where the file is made, then run again.`,
           ]
         : []),
     ],

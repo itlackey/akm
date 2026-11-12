@@ -2294,7 +2294,7 @@ describe("akmExtract — connection, harness + strategy config resolution", () =
     expect(receivedTimeout).toBe(45_000);
   });
 
-  test("an explicit --timeout-ms overrides the process config", async () => {
+  test("an explicit --timeout overrides the process config", async () => {
     const stash = makeStashDir();
     const session = fakeSession("ses_to2", Date.now() - 60_000);
     const config = configWithStrategy(stash, { connection: "extract-special", timeoutMs: 45_000 });

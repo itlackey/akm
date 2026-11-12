@@ -16,12 +16,12 @@ import { list as listBundles } from "../src/workspace/bundles";
 import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage } from "./_helpers/sandbox";
 
 /**
- * The retired location variables (`AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR`, `AKM_CACHE_DIR`) are a fatal error
- * when `AKM_CONFIG_FILE` is not set, never ignored (ignoring one opens empty databases at the default locations), and
- * the recovery surfaces stay reachable: `--version`, `--help`, `akm migrate`, `akm upgrade` and `akm info`. A library
- * caller gets the same error from the resolvers.
+ * `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR` and `AKM_CACHE_DIR` are ordinary overrides (the environment beats
+ * the config file's `paths`, which beats the default). `AKM_BUNDLE_DIR` is retired, and the recovery surfaces stay
+ * reachable: `--version`, `--help`, `akm migrate`, `akm upgrade` and `akm info`. A library caller gets the same error
+ * from the resolvers.
  *
- * `AKM_BUNDLE_DIR` is retired the same way, with one difference: naming the bundle akm resolves without it (every
+ * `AKM_BUNDLE_DIR` is a fatal error with one exception: naming the bundle akm resolves without it (every
  * scheduler row 0.9.32 and 0.10 wrote inlines it) is ignored without a message, because nothing is lost. Naming any
  * other directory is fatal, since ignoring it would work in a different bundle than the host meant.
  */
@@ -50,70 +50,30 @@ function akm(args: string[], extra: Record<string, string>) {
   });
 }
 
-describe("a retired location variable, with AKM_CONFIG_FILE unset", () => {
-  for (const name of ["AKM_CONFIG_DIR", "AKM_DATA_DIR", "AKM_STATE_DIR", "AKM_CACHE_DIR"]) {
-    test(`${name}: a command that needs a location exits 78 naming the variable, \`akm migrate apply\` and AKM_CONFIG_FILE`, () => {
-      const result = akm(["list"], { [name]: path.join(storage.root, "old") });
-
-      expect(result.status).toBe(78);
-      const error = JSON.parse(result.stderr || result.stdout) as { ok: boolean; error: string; code: string };
-      expect(error.code).toBe("RETIRED_LOCATION_VARIABLE");
-      expect(error.error).toContain(name);
-      expect(error.error).toContain("akm migrate apply");
-      expect(error.error).toContain("AKM_CONFIG_FILE");
+describe("AKM_CONFIG_DIR, AKM_DATA_DIR, AKM_STATE_DIR and AKM_CACHE_DIR are ordinary overrides", () => {
+  test("each one places its location, with AKM_CONFIG_FILE unset", () => {
+    const place = (name: string) => path.join(storage.root, name.toLowerCase());
+    const result = akm(["info", "--format", "json"], {
+      AKM_CONFIG_DIR: place("AKM_CONFIG_DIR"),
+      AKM_DATA_DIR: place("AKM_DATA_DIR"),
+      AKM_STATE_DIR: place("AKM_STATE_DIR"),
+      AKM_CACHE_DIR: place("AKM_CACHE_DIR"),
     });
-  }
+    expect(result.status, result.stderr).toBe(0);
+    const info = JSON.parse(result.stdout) as Record<string, string>;
+    expect(info.configFile).toBe(path.join(place("AKM_CONFIG_DIR"), "config.json"));
+    expect(info.dataDir).toBe(place("AKM_DATA_DIR"));
+    expect(info.stateDir).toBe(place("AKM_STATE_DIR"));
+    expect(info.cacheDir).toBe(place("AKM_CACHE_DIR"));
+  });
 
-  test("AKM_CONFIG_FILE set: the variable is ignored and the command runs", () => {
+  test("AKM_CONFIG_FILE beats AKM_CONFIG_DIR for the config file", () => {
     const result = akm(["config", "path"], {
-      AKM_DATA_DIR: path.join(storage.root, "old"),
+      AKM_CONFIG_DIR: path.join(storage.root, "dir"),
       AKM_CONFIG_FILE: path.join(storage.root, "chosen.json"),
     });
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout.trim()).toBe(path.join(storage.root, "chosen.json"));
-  });
-});
-
-describe("what stays reachable so the host can recover", () => {
-  const old = () => ({
-    AKM_DATA_DIR: path.join(storage.root, "old"),
-    AKM_CONFIG_DIR: path.join(storage.root, "old-config"),
-  });
-
-  test("--version and --help", () => {
-    expect(akm(["--version"], old()).status).toBe(0);
-    const help = akm(["--help"], old());
-    expect(help.status).toBe(0);
-    expect(help.stdout).toContain("USAGE");
-  });
-
-  test("`akm migrate status` runs (the migrator carries the variables over), and says what to change", () => {
-    const result = akm(["migrate", "status"], old());
-
-    expect(result.status, result.stderr).toBe(0);
-    const plan = JSON.parse(result.stdout) as { environment?: { unset: string[]; set?: Record<string, string> } };
-    expect(plan.environment?.unset).toEqual(["AKM_CONFIG_DIR", "AKM_DATA_DIR"]);
-    expect(plan.environment?.set).toEqual({
-      AKM_CONFIG_FILE: path.join(storage.root, "old-config", "config.json"),
-    });
-  });
-
-  test("`akm info` reports the problem at exit 0 instead of failing", () => {
-    const result = akm(["info", "--format", "json"], old());
-
-    expect(result.status, result.stderr).toBe(0);
-    const info = JSON.parse(result.stdout) as { ok: boolean; configError?: string };
-    expect(info.ok).toBe(true);
-    expect(info.configError).toContain("akm migrate apply");
-  });
-
-  test("`akm upgrade` starts: it is past the startup config read and reaches its own argument checks", () => {
-    // `--channel` is validated before any network call: a usage error (2), not the retired-variable error (78).
-    const result = akm(["upgrade", "--channel", "bogus"], old());
-
-    expect(result.status).toBe(2);
-    expect(result.stderr + result.stdout).toContain("--channel must be latest or next");
-    expect(result.stderr + result.stdout).not.toContain("RETIRED_LOCATION_VARIABLE");
   });
 
   test("the startup rules: upgrade and info read config best-effort, migrate/help/version bypass it", () => {
@@ -124,14 +84,6 @@ describe("what stays reachable so the host can recover", () => {
     expect(shouldBypassConfigStartup(argv("migrate", "apply"))).toBe(true);
     expect(shouldBypassConfigStartup(argv("--version"))).toBe(true);
     expect(shouldBypassConfigStartup(argv("--help"))).toBe(true);
-  });
-});
-
-describe("a library caller", () => {
-  test("`akm-cli/api` gets the same error, from the resolver, not a silent empty database", async () => {
-    await withEnv({ AKM_DATA_DIR: path.join(storage.root, "old"), AKM_CONFIG_FILE: undefined }, async () => {
-      await expect(curate("anything")).rejects.toMatchObject({ code: "RETIRED_LOCATION_VARIABLE" });
-    });
   });
 });
 

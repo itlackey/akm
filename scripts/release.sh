@@ -79,7 +79,8 @@ stable() {
   existing="$(gh pr list --base main --head "$branch" --state open --json number,url --jq '.[0] | "\(.number) \(.url)"')"
   if [ -n "$existing" ]; then
     gh pr ready "${existing%% *}"
-    gh pr edit "${existing%% *}" --title "release: $version"
+    # gh pr edit fails on the deprecated Projects (classic) GraphQL field; the REST call sets only the title.
+    gh api -X PATCH "repos/{owner}/{repo}/pulls/${existing%% *}" -f title="release: $version" --silent
     url="${existing#* }"
   else
     url="$(gh pr create --base main --head "$branch" --title "release: $version" \

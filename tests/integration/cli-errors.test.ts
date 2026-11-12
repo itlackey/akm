@@ -728,6 +728,7 @@ describe("S11: sectioned root help", () => {
         "setup",
         "index",
         "lint",
+        "doctor",
         "health",
         "metrics",
         "config",
@@ -862,7 +863,9 @@ describe("S11: sectioned root help", () => {
 // `formatExemptSurfaces()` below), and `log tail` was the last one, fixed by
 // the W3-A backlog package. All six leaves now declare the flags, so the
 // allowlist this comment used to describe is gone: the guard below simply
-// fails loudly on any leaf that doesn't declare them.
+// fails loudly on any leaf that doesn't declare them. The config file selector
+// is intentionally omitted on dynamic input commands: their --config remains
+// an asset input, while a root-prefix --config still selects the AKM file.
 //
 // Scope note: this walk only considers TERMINAL leaves — commands with a
 // `run` and no `subCommands` of their own. `defineGroupCommand`-based
@@ -923,13 +926,15 @@ describe("GLOBAL_OUTPUT_ARGS coverage guard (R-051)", () => {
     const leaves = collectTerminalLeafCommands(main as unknown as AnyCittyCommandForTest);
     expect(leaves.length).toBeGreaterThan(20); // sanity: the walk actually found the tree
 
+    const dynamicConfigInputs = new Set(["run", "workflow run", "task run", "task explain"]);
     const missing: string[] = [];
     for (const { path, args } of leaves) {
       const topLevel = path.split(" ")[0] ?? path;
       if (exemptCommands.includes(topLevel)) continue;
       if (exemptSubcommands.includes(path)) continue;
       const argKeys = new Set(Object.keys(args));
-      const hasAll = requiredKeys.every((key) => argKeys.has(key));
+      const ownsConfigInput = dynamicConfigInputs.has(path);
+      const hasAll = requiredKeys.every((key) => (key === "config" && ownsConfigInput) || argKeys.has(key));
       if (!hasAll) missing.push(`akm ${path}`);
     }
     expect(missing).toEqual([]);

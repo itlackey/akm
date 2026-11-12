@@ -347,29 +347,44 @@ function decodeStatusPlan(planJson: string | null | undefined): WorkflowPlan | u
 }
 
 export async function getWorkflowStatus(runId: string, opts?: { includeUnits?: boolean }): Promise<WorkflowRunDetail> {
-  return withWorkflowRunsRepo((repo) => {
-    const run = readWorkflowRun(repo, runId);
-    const steps = readWorkflowRunSteps(repo, run.id);
-    const detail = buildWorkflowRunDetail(repo, run, steps);
-    if (opts?.includeUnits) {
-      // The honest diagnostic surface (#22): read the unit journal straight and
-      // project each row, INCLUDING failures whose diagnostic text the
-      // deterministic evidence graph drops. Read-only; never mutates the run.
-      const rows = repo.getUnitsForRun(run.id);
-      // The plan is decoded only to describe a failed unit, read-only: no run
-      // warning (`readRunPlan` says it is "running" an older plan) and no
-      // orchestration when the plan cannot be decoded.
-      const plan = rows.some((row) => row.status === "failed") ? decodeStatusPlan(run.plan_json) : undefined;
-      detail.units = rows.map((row) => {
-        const unit = toUnitDiagnostic(row);
-        const step =
-          row.status === "failed" ? plan?.steps.find((candidate) => candidate.stepId === row.step_id) : undefined;
-        const summary = step ? summarizeStepOrchestration(step, undefined) : undefined;
-        return summary ? { ...unit, orchestration: resolveOrchestrationRefs(summary) } : unit;
-      });
-    }
-    return detail;
-  });
+  return withWorkflowRunsRepo((repo) => readWorkflowStatus(repo, runId, opts));
+}
+
+/**
+ * `getWorkflowStatus` on a repository the caller opened: it only reads, so a read-only connection serves it (the
+ * workspace's `activity.workflowRun`).
+ */
+export function readWorkflowStatus(
+  repo: WorkflowRunsRepository,
+  runId: string,
+  opts?: { includeUnits?: boolean },
+): WorkflowRunDetail {
+  const run = readWorkflowRun(repo, runId);
+  const steps = readWorkflowRunSteps(repo, run.id);
+  const detail = buildWorkflowRunDetail(repo, run, steps);
+  if (opts?.includeUnits) {
+    // The honest diagnostic surface (#22): read the unit journal straight and
+    // project each row, INCLUDING failures whose diagnostic text the
+    // deterministic evidence graph drops. Read-only; never mutates the run.
+    const rows = repo.getUnitsForRun(run.id);
+    // The plan is decoded only to describe a failed unit, read-only: no run
+    // warning (`readRunPlan` says it is "running" an older plan) and no
+    // orchestration when the plan cannot be decoded.
+    const plan = rows.some((row) => row.status === "failed") ? decodeStatusPlan(run.plan_json) : undefined;
+    detail.units = rows.map((row) => {
+      const unit = toUnitDiagnostic(row);
+      const step =
+        row.status === "failed" ? plan?.steps.find((candidate) => candidate.stepId === row.step_id) : undefined;
+      const summary = step ? summarizeStepOrchestration(step, undefined) : undefined;
+      return summary ? { ...unit, orchestration: resolveOrchestrationRefs(summary) } : unit;
+    });
+  }
+  return detail;
+}
+
+/** Every top-level workflow run, as `listWorkflowRuns` lists them, on a repository the caller opened. */
+export function listWorkflowRunSummaries(repo: WorkflowRunsRepository): WorkflowRunSummary[] {
+  return repo.listRuns().map(toWorkflowRunSummary);
 }
 
 export async function listWorkflowRuns(input?: {

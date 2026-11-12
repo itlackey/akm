@@ -12,6 +12,7 @@ import { parsePositiveIntFlag } from "../../cli/parse-args";
 import type { ScopeFilters } from "../../core/adapter/types";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
+import { type IncludeSelectors, normalizeInclude } from "../../core/include";
 import { projectView, type ResolvedProject, resolveProject } from "../../core/projects";
 import type { ProjectContext } from "../../indexer/search/db-search";
 import { resolveUsageEventSource, type UsageEventSource } from "../../indexer/usage/usage-events";
@@ -43,16 +44,18 @@ export function projectContext(
  */
 export function withProjectDefaults(
   project: ResolvedProject | undefined,
-  explicit: { source?: string | string[]; filters?: ScopeFilters; prefer?: ScopeFilters },
+  explicit: { source?: string | string[]; filters?: ScopeFilters; prefer?: ScopeFilters; include?: IncludeSelectors },
 ) {
+  const include = explicit.include ?? project?.include;
   const from = explicit.source ?? project?.from;
   const filters = explicit.filters ?? project?.filters;
   const prefer = explicit.prefer ?? project?.prefer;
   return {
     source: parseSearchSource(from),
+    include,
     filters,
     prefer,
-    view: project && projectView({ ...project, from, filters, prefer: prefer ?? project.prefer }),
+    view: project && projectView({ ...project, from, filters, include, prefer: prefer ?? project.prefer }),
   };
 }
 
@@ -70,6 +73,7 @@ export async function runCurate(
     limit?: string;
     from?: string | string[];
     filters?: string[];
+    include?: string[];
     prefer?: string[];
     belief?: string;
     /** In-process callers (an agent's tool) name the run's source; the CLI reads `AKM_EVENT_SOURCE`. */
@@ -90,8 +94,9 @@ export async function runCurate(
   }
   const limitParsed = parsePositiveIntFlag(args.limit ?? undefined);
   const project = resolveProject(loadConfig(), { project: args.project, cwd: args.cwd });
-  const { source, filters, prefer, view } = withProjectDefaults(project, {
+  const { source, filters, prefer, include, view } = withProjectDefaults(project, {
     source: args.from,
+    include: parseIncludeFlags(args.include),
     filters: parseScopeFilterFlags(args.filters ?? [], "--filter"),
     prefer: parseScopeFilterFlags(args.prefer ?? [], "--prefer"),
   });
@@ -102,10 +107,16 @@ export async function runCurate(
     source,
     filters,
     prefer,
+    include,
     belief: parseBeliefFilterMode(args.belief ?? "current"),
     eventSource: args.eventSource ?? resolveUsageEventSource(),
     attributionProjection: outputMode.detail,
     project: projectContext(project, filters),
   });
   return view ? { ...curated, project: view } : curated;
+}
+
+export function parseIncludeFlags(tokens: string[] | undefined): IncludeSelectors | undefined {
+  if (tokens === undefined) return undefined;
+  return normalizeInclude(parseScopeFilterFlags(tokens, "--include") ?? {});
 }

@@ -10,7 +10,7 @@
  * with `akm lint --type workflows`.
  */
 
-import { getStringArg, parseIntegerFlag, parsePositiveIntFlag } from "../cli/parse-args";
+import { getStringArg, parseIntegerFlag, parseTimeoutValue } from "../cli/parse-args";
 import { defineGroupCommand, defineJsonCommand, EXIT_CODES, output, outputWithExitCode } from "../cli/shared";
 import { armAbortDeadline } from "../core/abort-deadline";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../core/asset/asset-create";
@@ -164,7 +164,7 @@ const WORKFLOW_RUN_SKIP_REASONS: Partial<Record<TransientErrorCode, "lock-held" 
   STATE_DB_CONTENDED: "state-db-contended",
 };
 
-const workflowRunCommand = defineJsonCommand({
+export const workflowRunCommand = defineJsonCommand({
   meta: {
     name: "run",
     description:
@@ -178,7 +178,7 @@ const workflowRunCommand = defineJsonCommand({
     },
     "max-steps": { type: "string", description: "Stop after executing this many steps" },
     "max-retries": { type: "string", description: "Retry a failed workflow step this many additional times" },
-    "timeout-ms": { type: "string", description: "Whole-run timeout in milliseconds" },
+    timeout: { type: "string", description: "Whole-run timeout: N, Nms, Ns, Nm, Nh or Nd (bare N is milliseconds)" },
     "skip-if-locked": {
       type: "boolean",
       description: "Skip (exit 0, not 75) if another akm process holds this run or state.db is busy",
@@ -190,7 +190,7 @@ const workflowRunCommand = defineJsonCommand({
     const parameterFlags = parseWorkflowParameterFlags(rawArgs, args.target);
     const maxSteps = parseIntegerFlag(getStringArg(args, "max-steps"), "--max-steps", 1);
     const maxRetries = parseIntegerFlag(getStringArg(args, "max-retries"), "--max-retries", 0);
-    const timeoutMs = parseWorkflowTimeout(getStringArg(args, "timeout-ms"));
+    const timeoutMs = parseWorkflowTimeout(getStringArg(args, "timeout"));
     const skipIfLocked = args["skip-if-locked"];
     const controller = new AbortController();
     let signalExitCode: number | undefined;
@@ -272,7 +272,7 @@ const WORKFLOW_RUN_VALUE_FLAGS = new Set([
   "maxSteps",
   "max-retries",
   "maxRetries",
-  "timeout-ms",
+  "timeout",
   "timeoutMs",
   "format",
   "detail",
@@ -350,10 +350,11 @@ export function parseWorkflowParameterFlags(rawArgs: readonly string[], target: 
 }
 
 function parseWorkflowTimeout(raw: string | undefined): number | undefined {
-  const timeoutMs = parsePositiveIntFlag(raw, "--timeout-ms");
-  if (timeoutMs !== undefined && timeoutMs > WORKFLOW_MAX_TIMEOUT_MS) {
+  if (raw === undefined) return undefined;
+  const timeoutMs = parseTimeoutValue(raw);
+  if (timeoutMs > WORKFLOW_MAX_TIMEOUT_MS) {
     throw new UsageError(
-      `--timeout-ms must be 1 through ${WORKFLOW_MAX_TIMEOUT_MS} milliseconds, got "${raw}".`,
+      `--timeout must resolve to 1 through ${WORKFLOW_MAX_TIMEOUT_MS} milliseconds, got "${raw}".`,
       "INVALID_FLAG_VALUE",
     );
   }

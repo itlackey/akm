@@ -60,6 +60,7 @@ const PASSTHROUGH_COMMANDS = [
   "lint",
   "list",
   "metrics",
+  "doctor metrics usage",
   "models",
   "models-set",
   "proposal-accept-batch",

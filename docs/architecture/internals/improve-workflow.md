@@ -13,11 +13,11 @@ The design and rationale are in [Improvement Loop](../improvement.md). This page
 | `--connection <name>` / `--harness <name>` | Run every call of this run, judges included, on this connection or harness instead of the default. They are mutually exclusive. |
 | `--model <alias\|name>` | The model for every call of this run: an alias (`fast`, `balanced`, `reasoning`) or an exact name. |
 | `--task` | Extra guidance for this pass, passed to the reflect prompt. |
-| `--dry-run` | Compute the plan and analyze memory cleanup. Takes no lock, emits no events, calls no model, writes nothing. |
+| `--dry-run` | Compute the plan and analyze memory cleanup. Takes no improve lock, emits no learning events, calls no model, and writes no learning state. The CLI invocation still records diagnostic usage separately in `metrics.db`. |
 | `--show-prompt` | Print the composed reflect prompt for one fully-qualified ref and exit. No lock, index write, or model call. |
 | `--bundle` | The bundle the run improves and writes to, overriding the working bundle. Only its assets are planned. |
 | `--limit` | Cap the number of assets processed, highest salience first. |
-| `--timeout-ms` | Wall-clock budget for the whole run. Default 7 200 000 ms (2 hours). |
+| `--timeout` | Wall-clock budget for the whole run. Default 7 200 000 ms (2 hours). |
 | `--skip-if-locked` | If another improve run holds the lock, return an exit-0 no-op. Without it, contention is `IMPROVE_LOCK_HELD`, exit 75. |
 | `--require-feedback-signal` | Turn the proactive-maintenance lane off for the run, so only assets with recent feedback are planned. |
 | `--sync` / `--no-sync`, `--push` / `--no-push` | Override the strategy's `sync` block (the pre-run sync and the end-of-run commit and push for a git-backed bundle). |

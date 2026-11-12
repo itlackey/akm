@@ -54,7 +54,7 @@ describe("workflow parameter flags", () => {
         "--max-steps",
         "1",
         "--max-retries=2",
-        "--timeout-ms",
+        "--timeout",
         "300000",
         "--format=json",
       ],

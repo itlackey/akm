@@ -44,7 +44,7 @@ import {
  * resolved subcommand, so this gate stands down entirely). `info` is a leaf
  * command, so it needs an explicit opt-in here instead.
  */
-const UNKNOWN_FLAG_TOLERANT_COMMANDS: ReadonlySet<string> = new Set(["info"]);
+const UNKNOWN_FLAG_TOLERANT_COMMANDS: ReadonlySet<string> = new Set(["info", "doctor info"]);
 
 /** The structural subset of a citty command this module reads. */
 export interface FlagScanCommand {
@@ -91,10 +91,12 @@ function collectKnownArgs(root: FlagScanCommand, rawArgs: readonly string[]): Kn
   const booleanFlags = new Set<string>();
   const displayNames: string[] = [];
   const path: string[] = [];
+  const inheritedArgs: CittyArgsDefinitionForScan = {};
 
   let cmd: FlagScanCommand = root;
   let args: readonly string[] = rawArgs;
   for (;;) {
+    Object.assign(inheritedArgs, cmd.args);
     for (const [key, def] of Object.entries(cmd.args ?? {})) {
       // Positionals are not flags; including them would accept `--<positional>`.
       if (def.type === "positional") continue;
@@ -115,7 +117,7 @@ function collectKnownArgs(root: FlagScanCommand, rawArgs: readonly string[]): Kn
 
     const subCommands = cmd.subCommands;
     if (!subCommands || Object.keys(subCommands).length === 0) break;
-    const idx = findCittyTopLevelCommandIndex(args, (cmd.args ?? {}) as CittyArgsDefinitionForScan);
+    const idx = findCittyTopLevelCommandIndex(args, inheritedArgs);
     const token = idx >= 0 ? args[idx] : undefined;
     // A command that takes a positional AND has subcommands (`improve [scope]`
     // beside `improve report`) is itself the target when the token is absent
@@ -145,6 +147,7 @@ function collectKnownArgs(root: FlagScanCommand, rawArgs: readonly string[]): Kn
  * `commands` limits an entry to those command paths; absent means every command.
  */
 const GONE_FLAGS: ReadonlyArray<{ flag: string; use: string; commands?: readonly string[] }> = [
+  { flag: "--timeout-ms", use: "`--timeout` (a number is milliseconds; or 30s, 2m, 1h)" },
   { flag: "--engine", use: "`--connection <name>` or `--harness <name>`" },
   { flag: "--shape", use: "`--detail normal` (was `--shape agent`) or `--detail brief` (was `--shape summary`)" },
   {
@@ -241,6 +244,7 @@ export function assertKnownFlags(root: FlagScanCommand, rawArgs: readonly string
   const ownArgs = passthroughAt === -1 ? rawArgs : rawArgs.slice(0, passthroughAt);
   const known = collectKnownArgs(root, rawArgs);
   if (!known.resolved) return;
+  // `run` delegates flag validation to its selected executor.
   // `workflow run`, `task run`, and `task explain` each own one deliberately
   // dynamic namespace: long options become exact-name parameter/input flags
   // and are checked against the frozen plan / task source's own contract
@@ -249,7 +253,7 @@ export function assertKnownFlags(root: FlagScanCommand, rawArgs: readonly string
   // body, where runWithJsonErrors renders the JSON envelope, not from this
   // generic pre-dispatch gate; `task explain` reuses the identical
   // `parseTaskInputFlags` scanner, so it needs the identical exemption).
-  const dynamicNamedFlagCommands = new Set(["workflow run", "task run", "task explain"]);
+  const dynamicNamedFlagCommands = new Set(["workflow run", "task run", "task explain", "run"]);
   const dynamicWorkflowParams = dynamicNamedFlagCommands.has(known.path.join(" "));
   const tolerant = UNKNOWN_FLAG_TOLERANT_COMMANDS.has(known.path.join(" "));
 

@@ -388,6 +388,7 @@ export function shapeShowOutput(result: Record<string, unknown>, detail: DetailL
     "provenance",
     ...FRAGMENT_PROVENANCE_FIELDS,
     ...FRAGMENT_CONTEXT_FIELDS,
+    "contentBudget",
     // ref, path, and editable are always projected — at every --detail level,
     // not just --detail full — so JSON consumers can locate and edit the
     // asset without needing --detail full (QA #7 / D-14).

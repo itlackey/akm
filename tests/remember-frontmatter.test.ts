@@ -5,9 +5,9 @@
  * - CLI arg round-trip (--tag, --expires, --source)
  * - --auto heuristics (code, subjective, source, observed_at)
  * - --enrich with mocked chatCompletion (success + failure)
- * - Required-field rejection before any file write
+ * - Independent metadata flags and invalid expiry rejection before any file write
  * - --expires duration → ISO date computation
- * - Zero-flag remember still works (no frontmatter written)
+ * - Zero-flag remember keeps its capture metadata and derived description
  * - memory metadata contributors populate IndexDocument fields
  */
 
@@ -227,30 +227,56 @@ describe("remember --expires", () => {
   });
 });
 
-// ── Required-field rejection (before file write) ─────────────────────────────
+// ── Independent metadata (no tags required) ──────────────────────────────────
 
-describe("required-field rejection", () => {
-  test("--source without --tag rejects with missing-fields error before writing", async () => {
-    const { stashDir, result } = await runCli(["remember", "Some note", "--source", "https://example.com"]);
-    expect(result.status).toBe(2);
+describe("remember metadata without tags", () => {
+  test.each([
+    ["source", "https://example.com/deploy"],
+    ["description", "Deployment needs the VPN."],
+  ])("--%s persists without --tag", async (field, value) => {
+    const body = "Some note";
+    const { result } = await runCli(["remember", body, `--${field}`, value]);
+    expect(result.status).toBe(0);
 
-    const json = JSON.parse(result.stderr) as { error: string };
-    expect(json.error).toContain("tags");
-    expect(json.error).toContain("--tag");
-
-    // Confirm no file was written
-    const memoriesDir = path.join(stashDir, "memories");
-    const written = fs.existsSync(memoriesDir) && fs.readdirSync(memoriesDir).length > 0;
-    expect(written).toBe(false);
+    const json = JSON.parse(result.stdout) as { path: string };
+    const parsed = parseFrontmatter(fs.readFileSync(json.path, "utf8"));
+    expect(parsed.data[field]).toBe(value);
+    expect(parsed.data.tags).toBeUndefined();
+    expect(parsed.data.captureMode).toBe("hot");
+    expect(parsed.data.beliefState).toBe("asserted");
+    expect(parsed.content.trim()).toBe(body);
   });
 
-  test("--expires without --tag rejects with missing-fields error before writing", async () => {
-    const { stashDir, result } = await runCli(["remember", "Some note", "--expires", "30d"]);
+  test("--expires persists its resolved date without --tag", async () => {
+    const before = Date.now();
+    const { result } = await runCli(["remember", "Some note", "--expires", "3M"]);
+    const after = Date.now();
+    expect(result.status).toBe(0);
+
+    const json = JSON.parse(result.stdout) as { path: string };
+    const parsed = parseFrontmatter(fs.readFileSync(json.path, "utf8"));
+    const durationMs = 90 * 24 * 60 * 60 * 1000;
+    const expectedDates = [before, after].map((time) => new Date(time + durationMs).toISOString().slice(0, 10));
+    expect(expectedDates).toContain(parsed.data.expires as string);
+    expect(parsed.data.tags).toBeUndefined();
+    expect(parsed.data.description).toBe("Some note");
+  });
+
+  test("invalid --expires still fails before writing, even with other metadata", async () => {
+    const { stashDir, result } = await runCli([
+      "remember",
+      "Some note",
+      "--source",
+      "https://example.com",
+      "--description",
+      "A note",
+      "--expires",
+      "invalid",
+    ]);
     expect(result.status).toBe(2);
-
-    const json = JSON.parse(result.stderr) as { error: string };
-    expect(json.error).toContain("tags");
-
+    const json = JSON.parse(result.stderr) as { error: string; code: string };
+    expect(json.code).toBe("INVALID_FLAG_VALUE");
+    expect(json.error).toContain("Invalid --expires format");
     const memoriesDir = path.join(stashDir, "memories");
     const written = fs.existsSync(memoriesDir) && fs.readdirSync(memoriesDir).length > 0;
     expect(written).toBe(false);
@@ -284,7 +310,6 @@ describe("remember --auto", () => {
   });
 
   test("body with first-person pronoun gets subjective: true", async () => {
-    // Must supply --tag because heuristics add subjective but not tags for plain text.
     const body = "I noticed that staging requires VPN every time";
     const { result } = await runCli(["remember", body, "--auto", "--tag", "ops"]);
     expect(result.status).toBe(0);
@@ -299,17 +324,13 @@ describe("remember --auto", () => {
   test("body with ISO date gets observed set", async () => {
     const body = "The outage happened on 2026-01-15 and we fixed it quickly";
     const { result } = await runCli(["remember", body, "--auto"]);
-    // Will fail required-field check if no tags derived from the body
-    // Force a tag to ensure we get through
-    const { result: r2 } = await runCli(["remember", body, "--auto", "--tag", "ops"]);
-    expect(r2.status).toBe(0);
+    expect(result.status).toBe(0);
 
-    const json = JSON.parse(r2.stdout) as { path: string };
+    const json = JSON.parse(result.stdout) as { path: string };
     const content = fs.readFileSync(json.path, "utf8");
     const parsed = parseFrontmatter(content);
     expect(parsed.data.observed).toBe("2026-01-15");
     expect(parsed.data.observed_at).toBeUndefined();
-    void result; // suppress unused variable warning
   });
 
   test("--auto without any tags from heuristics or CLI still writes the memory", async () => {
@@ -320,7 +341,7 @@ describe("remember --auto", () => {
     expect(fs.existsSync(json.path)).toBe(true);
   });
 
-  test("--auto + explicit --tag satisfies required-field check", async () => {
+  test("--auto preserves an explicit --tag", async () => {
     const body = "No special content here";
     const { result } = await runCli(["remember", body, "--auto", "--tag", "misc"]);
     expect(result.status).toBe(0);
@@ -483,8 +504,7 @@ describe("remember --enrich graceful degradation", () => {
     expect(content).toContain("Some note about ops");
   });
 
-  test("--enrich with --tag satisfies required-field check even if LLM fails", async () => {
-    // Providing --tag means we don't depend on LLM for the required field
+  test("--enrich preserves an explicit --tag even if LLM fails", async () => {
     const { result } = await runCli(["remember", "Some note", "--enrich", "--tag", "misc"]);
     expect(result.status).toBe(0);
 

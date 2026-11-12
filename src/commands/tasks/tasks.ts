@@ -189,18 +189,18 @@ function assertTaskAddTargetShape(input: TasksAddInput): void {
       "INVALID_FLAG_VALUE",
     );
   }
-  // `--timeout-ms` is the workflow's whole-run bound. Connection, harness and
+  // `--timeout` is the workflow's whole-run bound. Connection, harness and
   // model stay prompt-only because a workflow's connections and harnesses come from the frozen plan.
   const selects = input.connection !== undefined || input.harness !== undefined || input.model !== undefined;
   if (input.workflow && selects) {
     throw new UsageError(
-      "Workflow tasks accept --params and --timeout-ms; connection, harness and model are prompt-task fields.",
+      "Workflow tasks accept --params and --timeout; connection, harness and model are prompt-task fields.",
       "INVALID_FLAG_VALUE",
     );
   }
   if (hasCommand && selects) {
     throw new UsageError(
-      "Command tasks accept --timeout-ms but not --connection, --harness or --model.",
+      "Command tasks accept --timeout but not --connection, --harness or --model.",
       "INVALID_FLAG_VALUE",
     );
   }

@@ -5,9 +5,10 @@
 import assert from "node:assert/strict";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { chromium, expect } from "@playwright/test";
-import { go, launchFixture, open } from "./support.mjs";
+import { akm, go, launchFixture, open } from "./support.mjs";
 
 // Wiring only: each section shows what its operations return, reaches them, and shows a refusal. What the operations
 // decide (revisions, leases, staleness, write targets) is akm's and is tested there.
@@ -206,6 +207,84 @@ test("built desktop UI: each section's happy path and one refusal", { timeout: 2
     await expect(inspect).toBeFocused();
   });
 
+  await t.test("Activity: the run timeline draws the recorded runs and lists them as a table", async () => {
+    await go(page, "/activity/overview?view=runs");
+    const timeline = page.getByRole("region", { name: "Run timeline", exact: true });
+    // One mark per recorded run: the failed task run, the improve run and the fixture's index build.
+    await expect(timeline.locator("#activity-run-timeline svg")).toBeVisible();
+    await timeline.getByRole("button", { name: "Table", exact: true }).click();
+    const cells = (name) => timeline.getByRole("row", { name: new RegExp(`^${name}`) }).getByRole("cell");
+    await expect(cells("synthetic-failure").nth(0)).toHaveText("1");
+    await expect(cells("synthetic-failure").nth(1)).toHaveText("1");
+    await expect(cells("Improve").nth(1)).toHaveText("0");
+  });
+
+  await t.test("Activity: a workflow run is listed and opens its trace", async () => {
+    // A finished run with one step, written as akm's workflow engine journals it.
+    const db = new DatabaseSync(path.join(server.root, "data", "state.db"));
+    const at = new Date(Date.now() - 5 * 60000).toISOString();
+    try {
+      db.prepare(
+        `INSERT INTO workflow_runs (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status, params_json,
+           current_step_id, created_at, updated_at, completed_at, agent_harness)
+         VALUES ('77777777-7777-4777-8777-777777777777', 'personal//workflows/release', 'dir:v1:x', NULL, 'Release check',
+           'completed', '{}', NULL, ?, ?, ?, 'claude')`,
+      ).run(at, at, at);
+      db.prepare(
+        `INSERT INTO workflow_run_steps (run_id, step_id, step_title, instructions, completion_json, sequence_index, status)
+         VALUES ('77777777-7777-4777-8777-777777777777', 'collect', 'Collect changes', '', '[]', 0, 'completed')`,
+      ).run();
+    } finally {
+      db.close();
+    }
+    // The page was already on Runs: Refresh reads the new run.
+    await go(page, "/activity/overview?view=runs");
+    await page.getByRole("button", { name: "Refresh activity", exact: true }).click();
+    const runs = page.getByRole("table", { name: /Workflow runs started/ });
+    await expect(runs).toContainText("claude");
+    await runs.getByRole("link", { name: "Release check", exact: true }).click();
+    const trace = page.getByRole("region", { name: "Workflow run trace", exact: true });
+    await expect(trace).toBeFocused();
+    await expect(trace.getByRole("heading", { name: "Release check" })).toBeVisible();
+    await expect(trace).toContainText("Collect changes");
+    await expect(trace).toContainText("No units recorded for this run yet.");
+  });
+
+  await t.test("Library: the map draws every asset, and its table lists them with a link to each", async () => {
+    await go(page, "/library/map");
+    await expect(page.getByRole("heading", { name: "Library map", exact: true })).toBeVisible();
+    // The map keeps Library's tabs.
+    await expect(page.getByRole("navigation", { name: "Library views" }).getByRole("link")).toHaveText([
+      "Search",
+      "Files",
+      "Map",
+    ]);
+    await expect(page.getByLabel(/^Map of \d+ assets/)).toBeVisible();
+    await page.getByRole("button", { name: "Table", exact: true }).click();
+    const table = page.getByRole("table", { name: /assets, most shown first/ });
+    await expect(table.getByRole("link", { name: "knowledge/restore-laptop", exact: true })).toBeVisible();
+    // Env and secret files are never on the map.
+    await expect(table).not.toContainText("env/");
+    await page.getByRole("searchbox", { name: "Find an asset" }).fill("shared-backup");
+    await expect(table.getByRole("row")).toHaveCount(2);
+    await table.getByRole("link", { name: "knowledge/shared-backup", exact: true }).click();
+    await expect(page.locator(".markdown")).toContainText("Keep the original disk");
+  });
+
+  await t.test("Activity: the replay plays the period's searches, reads and feedback", async () => {
+    await go(page, "/activity/replay");
+    const replay = page.getByRole("region", { name: "Activity replay", exact: true });
+    await expect(replay.getByRole("slider", { name: "Time" })).toBeVisible();
+    // At the end of the period the figures are the fixture's: three searches for "backup" and one that found nothing.
+    await replay.getByRole("slider", { name: "Time" }).evaluate((input) => {
+      input.value = input.max;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await expect(replay).toContainText("missing restore steps");
+    await expect(replay.getByRole("rowheader", { name: "No agent recorded" })).toBeVisible();
+    await expect(replay.getByRole("button", { name: "Play", exact: true })).toBeEnabled();
+  });
+
   await t.test("Activity: charts follow the chosen appearance", async () => {
     await go(page, "/activity/overview?view=retrieval");
     const label = page.locator("#activity-operations svg text").first();
@@ -257,4 +336,44 @@ test("built desktop UI: each section's happy path and one refusal", { timeout: 2
     },
   );
   console.log(`Screenshots: ${screenshots}`);
+});
+
+test("Library: the link map draws an asset's recorded links, both ways, and follows them", {
+  timeout: 120000,
+}, async (t) => {
+  // A page that cross-references the restore checklist and a page nobody wrote.
+  const server = await launchFixture({
+    configureFixture: async (fixture) => {
+      await writeFile(
+        path.join(fixture.root, "personal/knowledge/recovery-index.md"),
+        "---\ntitle: Recovery index\ndescription: Synthetic page of links\nxrefs:\n  - knowledge/restore-laptop\n  - knowledge/not-written-yet\n---\n# Recovery index\n\nSee the checklist.\n",
+      );
+      akm(fixture, ["index"]);
+    },
+  });
+  t.after(() => server.stop());
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  const map = page.getByRole("group", { name: /^Links of / });
+  const openMap = async () => {
+    await page.getByRole("button", { name: "Related assets", exact: true }).click();
+    await page.getByRole("button", { name: "Link map", exact: true }).click();
+  };
+  await open(page, server, `/library/asset?ref=${encodeURIComponent("personal//knowledge/recovery-index")}`);
+  await openMap();
+  await expect(map).toContainText("Links to");
+  // The target nobody wrote is named, and is not a link.
+  await expect(map).toContainText("Cross-reference (missing)");
+  await expect(map).toContainText("knowledge/not-written-yet");
+  await expect(map.getByRole("link")).toHaveCount(1);
+  await map.getByRole("link", { name: "Cross-reference: knowledge/restore-laptop", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Restore a laptop", exact: true })).toBeVisible();
+  // From the other end the same link is on the left.
+  await openMap();
+  await expect(map).toContainText("Linked from");
+  await expect(map.getByRole("link", { name: "Cross-reference: knowledge/recovery-index", exact: true })).toBeVisible();
+  assert.deepEqual(errors, []);
 });
