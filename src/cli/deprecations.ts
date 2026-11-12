@@ -58,6 +58,22 @@ const DEPRECATIONS: readonly Deprecation[] = [
   { path: [], flag: "--timeout-ms", use: "`--timeout`" },
 ];
 
+/** Deprecated variables: one notice each when set and in effect for this command. */
+const DEPRECATED_ENV: readonly {
+  name: string;
+  active: (value: string, commandPath: readonly string[]) => boolean;
+  use: string;
+}[] = [
+  {
+    name: "AKM_UPGRADE_SKIP_CHECKSUM",
+    active: (v, p) => v === "1" && p[0] === "upgrade",
+    use: "use `akm upgrade --skip-checksum`",
+  },
+  { name: "AKM_SQLITE_JOURNAL_MODE", active: (v) => v.trim() !== "", use: "it has no replacement" },
+  { name: "AKM_VERBOSE", active: (v) => v.trim() !== "", use: "use `--verbose`" },
+  { name: "AKM_DEBUG", active: (v) => v === "1", use: "use `--verbose`" },
+];
+
 const INTERNAL_SOURCES = new Set(["task", "improve", "audit"]);
 
 export function warnDeprecatedUse(
@@ -68,6 +84,15 @@ export function warnDeprecatedUse(
 ): void {
   if (INTERNAL_SOURCES.has(env.AKM_EVENT_SOURCE ?? "")) return;
   if (invocation.hasFlag("--help") || invocation.hasFlag("-h") || invocation.hasFlag("--scheduled")) return;
+  for (const row of DEPRECATED_ENV) {
+    const value = env[row.name];
+    if (value !== undefined && row.active(value, commandPath)) {
+      warnOnce(
+        `deprecated-env:${row.name}`,
+        `[deprecated] ${row.name} is deprecated and is removed in 0.11: ${row.use}. See STABILITY.md.`,
+      );
+    }
+  }
   const positionals = positionalsOf(invocation, leafArgs);
   // An unknown subcommand (`akm log tail`) is a usage error, not a use of the command.
   if (positionals.length > commandPath.length && !Object.values(leafArgs ?? {}).some((a) => a.type === "positional")) {
