@@ -98,13 +98,6 @@ bundled skill.
 
 ## Common problems
 
-**`akm remember` rejects the write with a tags-required error.** Passing
-`--expires`, `--source`, or `--description` without any `--tag` triggers a
-required-field check before anything is written. Either add at least one
-`--tag`, or drop those flags;
-plain `akm remember "body"` writes a memory with generated frontmatter and no
-tags.
-
 **A URL import didn't pick up the rest of the site.** That's expected — an
 import fetches exactly the page you pass. To keep a whole site or repo in
 sync on an ongoing basis, use `akm bundle add` instead.
