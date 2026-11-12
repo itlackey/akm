@@ -281,7 +281,7 @@ describe("plan freezing at workflow start (migration 006)", () => {
       const message = result.warnings?.find((w) => w.includes("cannot decode"));
       expect(message).toContain(runId);
       expect(message).toContain("The run was abandoned");
-      expect(message).toContain(`akm workflow run stash//workflows/${name}`);
+      expect(message).toContain(`akm run stash//workflows/${name}`);
     }
   });
 
@@ -310,7 +310,7 @@ describe("plan freezing at workflow start (migration 006)", () => {
       const message = result.warnings?.find((w) => w.includes("cannot decode"));
       expect(message).toContain(started.run.id);
       expect(message).toContain("The run was abandoned");
-      expect(message).toContain(`akm workflow run ${started.run.workflowRef}`);
+      expect(message).toContain(`akm run ${started.run.workflowRef}`);
       // Read surfaces keep working, and the spine is untouched.
       expect((await getWorkflowStatus(started.run.id)).run.status).toBe("failed");
       expect(await withWorkflowRunsRepo((repo) => repo.getStepsForRun(started.run.id))).toEqual(stepsBefore);

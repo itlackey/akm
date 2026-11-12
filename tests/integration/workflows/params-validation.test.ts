@@ -126,7 +126,7 @@ describe("#12 — param schema validation at start", () => {
     const warning = result.warnings?.find((entry) => entry.includes('Run param "apiKey"'));
     expect(warning).toBeDefined();
     expect(warning).toContain("native unit execution context");
-    expect(warning).toContain("akm workflow run");
+    expect(warning).toContain("akm run");
     expect(warning).toContain("akm workflow status");
     expect(warning).not.toContain(secretValue);
     expect(warning).not.toMatch(/\bdrivers?\b|workflow brief|`brief`/i);

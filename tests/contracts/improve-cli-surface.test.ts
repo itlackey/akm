@@ -58,7 +58,7 @@ describe("current improvement CLI documentation contract", () => {
     // "json"), so --show-prompt without --format prints an escaped JSON
     // envelope, not the unwrapped prompt. The docs must say so, and the
     // copyable example must show the flag that actually prints it unwrapped.
-    expect(section).toContain("akm improve lessons/my-lesson --show-prompt --format text");
+    expect(section).toContain("akm doctor prompt lessons/my-lesson --format text");
     expect(section).not.toMatch(/text output \(the default\)/);
     const showPromptRow = section.split("\n").find((line) => line.includes("| `--show-prompt` |"));
     expect(showPromptRow).toBeDefined();
