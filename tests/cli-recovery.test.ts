@@ -41,6 +41,14 @@ describe("recovery hints", () => {
     expect(search.code).toBe(0);
   });
 
+  test("`task prune` (gone in 0.11) names `doctor scheduler sync` and `migrate status`", async () => {
+    const r = await runCliCapture(["task", "prune"]);
+    expect(r.code).toBe(2);
+    const hint = hintOf(r.stderr);
+    expect(hint).toContain("`akm doctor scheduler sync`");
+    expect(hint).toContain("`akm migrate status`");
+  });
+
   test("`config get` without a key gives a valid example key", async () => {
     const r = await runCliCapture(["config", "get"]);
     expect(r.code).toBe(2);

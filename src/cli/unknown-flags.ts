@@ -185,8 +185,17 @@ const GONE_FLAGS: ReadonlyArray<{ flag: string; use: string; commands?: readonly
   },
   { flag: "--yes", use: "no flag: it did nothing, so drop it", commands: ["bundle update"] },
   { flag: "--options", use: "no flag: it did nothing, so drop it", commands: ["registry add"] },
-  { flag: "--dry-run", use: "`akm migrate status`, which reports what `task sync` would do", commands: ["task sync"] },
-  { flag: "--bundle", use: "no flag: it was ignored, so drop it", commands: ["task sync"] },
+  {
+    flag: "--dry-run",
+    use: "`akm migrate status`, which reports what `doctor scheduler sync` would do",
+    commands: ["task sync", "doctor scheduler sync"],
+  },
+  { flag: "--bundle", use: "no flag: it was ignored, so drop it", commands: ["task sync", "doctor scheduler sync"] },
+  ...["--prune", "--yes", "--id"].map((flag) => ({
+    flag,
+    use: "no flag: `akm doctor scheduler sync` removes the old per-task scheduler rows itself, and `akm migrate status` previews it",
+    commands: ["doctor scheduler sync"],
+  })),
   {
     flag: "--rebind",
     use: "no flag: it was ignored, so drop it (`akm task sync --rebind` stays)",

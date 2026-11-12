@@ -131,6 +131,17 @@ describe("accepts every legitimate spelling", () => {
     expect(errorFor(["migrate", "apply", "--dry-run"]).code).toBe("UNKNOWN_FLAG");
   });
 
+  test("0.10.261120's `doctor scheduler sync` flags that 0.11 drops name what replaces them", () => {
+    expect(errorFor(["doctor", "scheduler", "sync", "--dry-run"]).hint()).toContain("`akm migrate status`");
+    expect(errorFor(["doctor", "scheduler", "sync", "--bundle", "b"]).hint()).toContain("drop it");
+    for (const flag of ["--prune", "--yes", "--id"]) {
+      expect(errorFor(["doctor", "scheduler", "sync", flag]).hint()).toContain(
+        "removes the old per-task scheduler rows",
+      );
+    }
+    expect(() => check(["doctor", "scheduler", "sync", "--rebind"])).not.toThrow();
+  });
+
   test("one-dash long names are parsed as short bundles, not accepted as long flags", () => {
     expect(errorFor(["lint", "-auto-fix"]).code).toBe("UNKNOWN_FLAG");
   });
