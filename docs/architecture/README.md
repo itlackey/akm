@@ -22,7 +22,7 @@ How akm is built.
 - [Indexing](internals/indexing.md) -- How the search index is built
 - [Classification](internals/classification.md) -- How adapters recognize files and pick renderers
 - [Improve Workflow](internals/improve-workflow.md) -- `akm improve` command surface and per-step pipeline reference
-- [Health Advisories](internals/health-advisories.md) -- The `akm health` checks and what to do about each
+- [Health Advisories](internals/health-advisories.md) -- The `akm doctor` checks and what to do about each
 - [Fresh-Host Rebuild Runbook](internals/fresh-host-rebuild-runbook.md) -- Rebuild an akm install on a new machine
 
 ## Testing

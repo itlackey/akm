@@ -55,7 +55,7 @@ describe("akm show view-mode grammar is removed", () => {
       const error = JSON.parse(result.stderr) as Record<string, unknown>;
       expect(error.ok).toBe(false);
       expect(String(error.error)).toContain("akm show knowledge/guide#");
-      expect(String(error.hint)).toContain("akm show knowledge/guide --detail brief");
+      expect(String(error.hint)).toContain("akm show knowledge/guide --outline");
     });
   }
 

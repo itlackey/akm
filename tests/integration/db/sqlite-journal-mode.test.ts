@@ -144,7 +144,9 @@ describe("#628 AC-e: isNetworkFilesystem() pure classifier", () => {
     expect(isNetworkFilesystem(0xff534d42)).toBe(true); // CIFS/SMB
     expect(isNetworkFilesystem(0xfe534d42)).toBe(true); // SMB2
     expect(isNetworkFilesystem(0x517b)).toBe(true); // old SMB_SUPER_MAGIC
-    expect(isNetworkFilesystem(0x65735546)).toBe(true); // FUSE (sshfs etc.)
+    expect(isNetworkFilesystem(0x65735546)).toBe(true); // FUSE (sshfs, virtiofs etc.)
+    expect(isNetworkFilesystem(0x01021997)).toBe(true); // 9p (WSL2 /mnt/c)
+    expect(isNetworkFilesystem(0x00c36400)).toBe(true); // CephFS
   });
 
   test("local magics and undefined classify as NOT network", () => {

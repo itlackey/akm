@@ -209,9 +209,9 @@ const GONE_FLAGS: ReadonlyArray<{ flag: string; use: string; commands?: readonly
       "proposal revert",
     ],
   },
-  { flag: "--all", use: "`akm info`", commands: ["config path"] },
-  { flag: "--run", use: "`akm improve report --run`", commands: ["improve"] },
-  { flag: "--since", use: "`akm improve report --since`", commands: ["improve"] },
+  { flag: "--all", use: "`akm doctor info`", commands: ["config path"] },
+  { flag: "--run", use: "`akm doctor metrics improve --run`", commands: ["improve"] },
+  { flag: "--since", use: "`akm doctor metrics improve --since`", commands: ["improve"] },
   { flag: "--config", use: "`--endpoint <url> --yes` and the other answer flags", commands: ["setup"] },
   { flag: "--probe", use: "no flag: probing is the default, and `--no-probe` runs offline", commands: ["setup"] },
 ];
@@ -271,7 +271,7 @@ export function assertKnownFlags(root: FlagScanCommand, rawArgs: readonly string
   // body, where runWithJsonErrors renders the JSON envelope, not from this
   // generic pre-dispatch gate; `task explain` reuses the identical
   // `parseTaskInputFlags` scanner, so it needs the identical exemption).
-  const dynamicNamedFlagCommands = new Set(["workflow run", "task run", "task explain", "run"]);
+  const dynamicNamedFlagCommands = new Set(["workflow run", "task run", "task explain", "doctor explain", "run"]);
   const dynamicWorkflowParams = dynamicNamedFlagCommands.has(known.path.join(" "));
   const tolerant = UNKNOWN_FLAG_TOLERANT_COMMANDS.has(known.path.join(" "));
 

@@ -97,7 +97,7 @@ reader converts in memory, warns once and names `akm migrate apply`; below it,
 and for an older task source (the one named exception), the command stops and
 names the migrator. What happens to data from a newer release differs by
 format (a newer index layout or frozen plan is refused with "upgrade akm";
-`state.db` and `config.json` warn and continue, and `akm health` reports the
+`state.db` and `config.json` warn and continue, and `akm doctor` reports the
 config skew), so [Persisted-Data Compatibility](persisted-data-compat.md)
 states the rule per format. Readers that still carry their own conversion, such
 as the frozen-plan decoder, are listed there and move to the converter as they

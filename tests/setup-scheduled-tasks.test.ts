@@ -227,7 +227,7 @@ describe("stepScheduledTasks", () => {
     });
     expect(state.logs.some((entry) => entry.level === "success" && entry.message.includes("activated"))).toBe(false);
     expect(state.logs.at(-1)?.message).toContain("installed `akm setup`");
-    expect(state.logs.at(-1)?.message).toContain("akm task sync --rebind");
+    expect(state.logs.at(-1)?.message).toContain("akm doctor scheduler sync --rebind");
     expect(state.logs.at(-1)?.message).toContain("activation was incomplete");
   });
 
@@ -246,7 +246,7 @@ describe("stepScheduledTasks", () => {
     expect(state.logs.filter((entry) => entry.message.includes("was not activated"))).toHaveLength(2);
     expect(state.logs.some((entry) => entry.level === "success" && entry.message.includes("activated"))).toBe(false);
     expect(state.logs.at(-1)?.message).toContain("No task schedules were activated");
-    expect(state.logs.at(-1)?.message).toContain("akm task sync --rebind");
+    expect(state.logs.at(-1)?.message).toContain("akm doctor scheduler sync --rebind");
   });
 
   test("list failures stop review before prompts or mutations", async () => {

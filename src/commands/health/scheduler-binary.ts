@@ -5,7 +5,7 @@
 /**
  * `scheduler-binary` advisory for `akm health` (#953).
  *
- * `akm task sync` records an absolute akm invocation path in the OS
+ * `akm doctor scheduler sync` records an absolute akm invocation path in the OS
  * scheduler (`src/tasks/resolve-akm-bin.ts`) because cron/launchd/schtasks
  * all run jobs with a minimal PATH. A field report showed that path going
  * stale after upgrading akm through a different installer than the one
@@ -139,7 +139,7 @@ export async function collectSchedulerBinaryAdvisory(
     kind: "deterministic",
     status: "warn",
     confidence: "high",
-    message: `Scheduled tasks are bound to akm v${scheduledVersion}, but the running CLI is v${cliVersion} — run \`akm task sync\` to rebind the schedule.`,
+    message: `Scheduled tasks are bound to akm v${scheduledVersion}, but the running CLI is v${cliVersion} — run \`akm doctor scheduler sync --rebind\` to rebind the schedule.`,
     evidence: { binding, scheduledVersion, cliVersion },
   };
 }

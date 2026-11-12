@@ -227,7 +227,7 @@ describe("--detail agent field projection", () => {
       path: assetPath,
       editable: false,
     });
-    expect(searchHit?.editHint).toContain("akm clone team//knowledge/readonly-guide");
+    expect(searchHit?.editHint).toContain("akm import team//knowledge/readonly-guide --asset-ref");
     expect(searchHit?.action).toContain("akm show team//knowledge/readonly-guide");
     expect(searchHit?.action).not.toContain("clone");
 
@@ -235,7 +235,7 @@ describe("--detail agent field projection", () => {
       await runCli(stashDir, ["show", "team//knowledge/readonly-guide", "--format=json", "--detail=agent"], config),
     ) as Record<string, unknown>;
     expect(show).toMatchObject({ ref: "team//knowledge/readonly-guide", path: assetPath, editable: false });
-    expect(show.editHint).toContain("akm clone team//knowledge/readonly-guide");
+    expect(show.editHint).toContain("akm import team//knowledge/readonly-guide --asset-ref");
     expect(show.action).not.toContain("clone");
 
     const curate = JSON.parse(
@@ -243,7 +243,7 @@ describe("--detail agent field projection", () => {
     ) as { items: Array<Record<string, unknown>> };
     const curated = curate.items.find((item) => item.ref === "team//knowledge/readonly-guide");
     expect(curated).toMatchObject({ ref: "team//knowledge/readonly-guide", path: assetPath, editable: false });
-    expect(curated?.editHint).toContain("akm clone team//knowledge/readonly-guide");
+    expect(curated?.editHint).toContain("akm import team//knowledge/readonly-guide --asset-ref");
     expect(curated?.followUp).toBe("akm show team//knowledge/readonly-guide");
   }, 30_000);
 });

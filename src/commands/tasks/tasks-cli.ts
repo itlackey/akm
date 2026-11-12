@@ -210,7 +210,7 @@ const tasksAddCommand = defineJsonCommand({
     ...RETIRED_ENGINE_ARG,
     timeout: {
       type: "string",
-      description: "Timeout as a duration (30s, 2m) or milliseconds; same scope as --timeout-ms",
+      description: "Timeout as a duration (30s, 2m) or milliseconds, for prompt or command targets",
     },
     "timeout-ms": { type: "string", description: "Positive timeout in milliseconds for prompt or command targets" },
     params: { type: "string", description: "Workflow params as a JSON object" },
@@ -362,25 +362,23 @@ export function taskSyncDryRunExitCode(preview: {
   return preview.hasRemovals || (preview.failures?.length ?? 0) > 0 ? EXIT_CODES.GENERAL : undefined;
 }
 
-const tasksSyncCommand = defineJsonCommand({
-  meta: {
-    name: "sync",
-    description: "Reconcile enabled task/workflow schedules with the OS scheduler, one row at a time",
+/** Shared with `akm doctor scheduler sync`, which reuses this handler. */
+export const taskSyncArgs = {
+  ...bundleArg,
+  rebind: {
+    type: "boolean",
+    description: "Point installed rows at this akm invocation instead of keeping their launcher",
+    default: false,
   },
-  args: {
-    ...bundleArg,
-    rebind: {
-      type: "boolean",
-      description: "Point installed rows at this akm invocation instead of keeping their launcher",
-      default: false,
-    },
-    "dry-run": {
-      type: "boolean",
-      description: "Print the reconcile plan without touching the OS scheduler; exits non-zero if it has removals",
-      default: false,
-    },
+  "dry-run": {
+    type: "boolean",
+    description: "Print the reconcile plan without touching the OS scheduler; exits non-zero if it has removals",
+    default: false,
   },
-  async run({ args }) {
+} as const;
+
+export async function runTaskSync(args: { bundle?: string; rebind?: boolean; "dry-run"?: boolean }): Promise<void> {
+  {
     const rebind = args.rebind === true;
     if (args["dry-run"] === true) {
       const preview = await akmTasksSyncPlan({}, args.bundle, { rebind });
@@ -394,10 +392,43 @@ const tasksSyncCommand = defineJsonCommand({
     // the command's exit code so the breakage stays visible. (#906: this key
     // matches the `--dry-run` preview's `failures` field — no separate name.)
     outputWithExitCode("task-sync", result, result.failures.length > 0 ? EXIT_CODES.GENERAL : undefined);
+  }
+}
+
+const tasksSyncCommand = defineJsonCommand({
+  meta: {
+    name: "sync",
+    description: "Reconcile enabled task/workflow schedules with the OS scheduler, one row at a time",
+  },
+  args: taskSyncArgs,
+  async run({ args }) {
+    await runTaskSync(args);
   },
 });
 
 // ── `akm task explain` — read-only introspection ────────────────────────────
+
+/** Shared with `akm doctor explain <task-ref>`, which reuses this handler. */
+export async function runTaskExplain(
+  args: { ref: string; bundle?: string },
+  rawArgs: readonly string[],
+): Promise<void> {
+  // `--scheduled` must be rejected BEFORE the shared scanner below ever
+  // sees it — the scanner treats it as `task run`'s own reserved flag
+  // (silently skipped, never surfaced as unknown) rather than explain's,
+  // since it has no way to know which command called it (F7 fix).
+  rejectExplainScheduledFlag();
+  // Stage 1 (capture): the SAME exact-name flag scanner `akm task run`
+  // uses (`parseTaskInputFlags` above) — `explain` never declares
+  // `--scheduled`, but reusing the identical scanner is deliberate: one
+  // implementation of "which argv tokens are task input flags", not two.
+  const inputFlags = parseTaskInputFlags(rawArgs, args.ref);
+  const result = await akmTaskExplain(args.ref, {
+    ...(args.bundle !== undefined ? { target: args.bundle } : {}),
+    inputFlags,
+  });
+  output("task-explain", result);
+}
 
 const tasksExplainCommand = defineJsonCommand({
   configFile: false,
@@ -412,21 +443,7 @@ const tasksExplainCommand = defineJsonCommand({
     ...bundleArg,
   },
   async run({ args, rawArgs }) {
-    // `--scheduled` must be rejected BEFORE the shared scanner below ever
-    // sees it — the scanner treats it as `task run`'s own reserved flag
-    // (silently skipped, never surfaced as unknown) rather than explain's,
-    // since it has no way to know which command called it (F7 fix).
-    rejectExplainScheduledFlag();
-    // Stage 1 (capture): the SAME exact-name flag scanner `akm task run`
-    // uses (`parseTaskInputFlags` above) — `explain` never declares
-    // `--scheduled`, but reusing the identical scanner is deliberate: one
-    // implementation of "which argv tokens are task input flags", not two.
-    const inputFlags = parseTaskInputFlags(rawArgs, args.ref);
-    const result = await akmTaskExplain(args.ref, {
-      ...(args.bundle !== undefined ? { target: args.bundle } : {}),
-      inputFlags,
-    });
-    output("task-explain", result);
+    await runTaskExplain(args, rawArgs);
   },
 });
 
@@ -453,6 +470,32 @@ export function taskPruneExitCode(result: { dryRun: boolean; preview: { hasRemov
   return result.dryRun && result.preview.hasRemovals ? EXIT_CODES.GENERAL : undefined;
 }
 
+/** Shared with `akm doctor scheduler sync --prune`, which reuses this handler. */
+export const taskPruneArgs = {
+  yes: {
+    type: "boolean",
+    description: "Execute removal of every currently-computed orphan (the plan is still printed first)",
+    default: false,
+  },
+  id: {
+    type: "string",
+    description: "Comma-separated scheduler binding id(s) to limit pruning to (must already be orphan candidates)",
+  },
+} as const;
+
+export async function runTaskPrune(args: { yes?: boolean; id?: string }): Promise<void> {
+  {
+    const id = args.id
+      ? args.id
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean)
+      : undefined;
+    const result = await akmTasksPrune({}, { yes: args.yes === true, id });
+    outputWithExitCode("task-prune", result, taskPruneExitCode(result));
+  }
+}
+
 const tasksPruneCommand = defineJsonCommand({
   meta: {
     name: "prune",
@@ -462,26 +505,9 @@ const tasksPruneCommand = defineJsonCommand({
       "cannot be read). Defaults to a dry-run preview — zero scheduler writes. Requires --yes to remove anything; " +
       "--id narrows removal to specific binding ids (comma-separated).",
   },
-  args: {
-    yes: {
-      type: "boolean",
-      description: "Execute removal of every currently-computed orphan (the plan is still printed first)",
-      default: false,
-    },
-    id: {
-      type: "string",
-      description: "Comma-separated scheduler binding id(s) to limit pruning to (must already be orphan candidates)",
-    },
-  },
+  args: taskPruneArgs,
   async run({ args }) {
-    const id = args.id
-      ? args.id
-          .split(",")
-          .map((value) => value.trim())
-          .filter(Boolean)
-      : undefined;
-    const result = await akmTasksPrune({}, { yes: args.yes === true, id });
-    outputWithExitCode("task-prune", result, taskPruneExitCode(result));
+    await runTaskPrune(args);
   },
 });
 

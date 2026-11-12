@@ -181,7 +181,7 @@ export function readLegacySchedulerContext(file: string): Record<string, string>
   } catch (error) {
     throw new ConfigError(
       `Cannot read scheduler context "${file}": ${error instanceof Error ? error.message : String(error)}. ` +
-        "Run `akm task sync` to rewrite this scheduled row.",
+        "Run `akm doctor scheduler sync` to rewrite this scheduled row.",
       "INVALID_CONFIG_FILE",
     );
   }

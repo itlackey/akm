@@ -82,11 +82,11 @@ in several.
 ## 4. Load a document section
 
 Knowledge docs and other markdown assets can be large. Read the outline first,
-then only the sections you need. `--detail brief` returns the document's `toc`
+then only the sections you need. `--outline` returns the document's `toc`
 without the body, and appending `#<slug>` to a ref returns one section:
 
 ```sh
-akm show knowledge/api-guide --detail brief
+akm show knowledge/api-guide --outline
 # → {"toc": [{"level": 2, "text": "Authentication", "slug": "authentication", "startLine": 12}, ...], ...}
 akm show knowledge/api-guide#authentication
 # → just the "Authentication" section, not the full document
@@ -97,10 +97,10 @@ get `-1`, `-2`, ... suffixes. A whole-document show carries the same `toc`
 next to the body.
 
 To get the document's opening context along with the section, add
-`--context lead` and a budget:
+`--lead` and a budget:
 
 ```sh
-akm show knowledge/api-guide#authentication --context lead --max-tokens 800
+akm show knowledge/api-guide#authentication --lead --max-tokens 800
 # → the document lead, then [Selected matching fragment] and the section
 ```
 
@@ -111,7 +111,7 @@ opaque `#akm-fragment-...` handle for that section), `parentRef`,
 estimates.
 
 An unmatched fragment is an error that lists the available slugs, so a guess
-that misses still tells you what to try next; `--detail brief` is the way to
+that misses still tells you what to try next; `--outline` is the way to
 see them without guessing.
 
 ## 5. Record the outcome
@@ -151,7 +151,7 @@ its ranking) and does not trigger a rewrite.
   `registry` or `all` to include the public registry).
 - **A known-good asset doesn't show up** — session assets and
   `proposed`-quality entries are excluded from default results
-  (`--include-sessions` / `--include-proposed` bring them back), and
+  (`--include type=session` / `--include quality=proposed` bring them back), and
   `--filter user=...`/`--filter agent=...` scoping can silently exclude
   entries that don't carry a matching scope.
 - **Curate's shortlist feels off-topic** — narrow with `--type` to steer it

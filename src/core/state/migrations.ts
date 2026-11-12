@@ -53,6 +53,7 @@ export const STATE_MIGRATION_SAFETY_BY_ID: Readonly<Record<string, StateMigratio
   "027-extract-sessions-seen-harness-rename": "data-preserving-rebuild",
   "028-improve-ledger": "historical-destructive",
   "029-improve-ledger-content-hash": "additive",
+  "030-usage-events-created-at-index": "additive",
 });
 
 export const STATE_MIGRATIONS: readonly Migration[] = [
@@ -1318,6 +1319,21 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
     id: "029-improve-ledger-content-hash",
     up: `
       ALTER TABLE improve_ledger ADD COLUMN content_hash TEXT DEFAULT NULL;
+    `,
+  },
+
+  // ── Migration 030 — usage_events time-window index ────────────────────────
+  //
+  // Every time-window read of usage_events (activity.events, akm metrics, the
+  // retention DELETE) filters and orders by `datetime(created_at)`, because
+  // created_at is `YYYY-MM-DD HH:MM:SS`, not ISO. A plain index on the column
+  // cannot serve that expression, so each call scanned the table. An index on
+  // the same expression serves the queries unchanged: no data is rewritten and
+  // results are identical.
+  {
+    id: "030-usage-events-created-at-index",
+    up: `
+      CREATE INDEX IF NOT EXISTS idx_usage_events_created_at ON usage_events(datetime(created_at));
     `,
   },
 ];

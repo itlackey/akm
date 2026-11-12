@@ -60,7 +60,7 @@ function shellQuote(value: string): string {
 
 /** Reproduced from `output/renderers.ts#buildWorkflowAction` — the one function-valued `ACTION_BUILDERS.workflow` entry. */
 function buildWorkflowAction(ref: string): string {
-  return `Start or resume execution with \`akm workflow run ${shellQuote(ref)}\`.`;
+  return `Start or resume execution with \`akm run ${shellQuote(ref)}\`.`;
 }
 
 /**
@@ -131,7 +131,7 @@ export const TYPE_PRESENTATION: Record<KnownType, Presentation> = {
     label: "Task",
     renderer: "task-yaml",
     action: (ref) =>
-      `akm show ${ref} -> inspect; akm task run <id> -> run now; akm task enable|disable ${ref} -> change local scheduling`,
+      `akm show ${ref} -> inspect; akm run ${ref} -> run now; akm task enable|disable ${ref} -> change local scheduling`,
     fragmentRef: false,
   },
   session: {

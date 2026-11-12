@@ -65,7 +65,7 @@ describe("embedded task registry", () => {
     const nightlyMinute = 2 * 60;
     const consolidate = listEmbeddedTasks().find((t) => t.id === "akm-improve-consolidate");
     expect(consolidate?.schedule).toBe("20 */4 * * *");
-    const timeoutMs = Number(/--timeout-ms[ =](\d+)/.exec(consolidate?.command ?? "")?.[1] ?? 2 * 60 * 60 * 1000);
+    const timeoutMs = Number(/--timeout[ =](\d+)/.exec(consolidate?.command ?? "")?.[1] ?? 2 * 60 * 60 * 1000);
     for (let hour = 0; hour < 24; hour += 4) {
       const start = hour * 60 + 20;
       const end = start + timeoutMs / 60_000;

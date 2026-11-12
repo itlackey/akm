@@ -105,6 +105,7 @@ export { WorkflowConfigSchema } from "./schema/workflow";
  */
 export const AkmConfigShape = {
   configVersion: z.literal(CURRENT_CONFIG_VERSION),
+  // Deprecated in 0.10.261120, removed in 0.11: copy the inherited settings into the config file.
   // #945 — fleet inheritance. A filesystem path (relative to the directory of
   // the config file that declares it; `~` expands) or a `bundle//<path>` ref
   // naming an already-synced local file to deep-merge underneath this config
@@ -160,7 +161,7 @@ export const AkmConfigBaseSchema = z.object(AkmConfigShape).passthrough();
  * Per-key overrides for unsupported pre-cutover source shapes.
  */
 const RETIRED_SOURCE_SHAPE_KEY_MESSAGES: Record<string, string> = {
-  stashDir: "stashDir is not supported; configure `bundles`, or use `akm info` to inspect current paths.",
+  stashDir: "stashDir is not supported; configure `bundles`, or use `akm doctor info` to inspect current paths.",
 };
 
 /** The one message for a config older than 0.9.15: only akm 0.9.x converts it. */

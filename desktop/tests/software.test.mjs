@@ -444,7 +444,7 @@ test("a nonzero upgrade keeps akm's redacted result and shows the version actual
   assert.ok(!shown.includes("TOKEN-SENTINEL") && !shown.includes("/home/secret"), "no raw payloads");
 });
 
-test("deferred plugins and a compatibility hold keep their reasons, apart from the check that follows (#1609-7)", async () => {
+test("deferred plugins keep their reasons, apart from the check that follows (#1609-7)", async () => {
   const f = await hostFixture({
     upgradeResult: {
       body: {
@@ -452,12 +452,6 @@ test("deferred plugins and a compatibility hold keep their reasons, apart from t
         latestVersion: "0.10.261104",
         updateAvailable: false,
         plugins: [{ harness: "opencode", outcome: "deferred", message: "OpenCode is running", backups: ["/secret"] }],
-        lockstep: {
-          plugin: "akm-opencode",
-          pinnedVersion: "0.10.261104",
-          newestVersion: "0.10.261105",
-          heldBack: true,
-        },
       },
     },
   });
@@ -467,7 +461,6 @@ test("deferred plugins and a compatibility hold keep their reasons, apart from t
   assert.deepEqual(snapshot.action.upgrade.plugins, [
     { harness: "opencode", outcome: "deferred", reason: "OpenCode is running" },
   ]);
-  assert.equal(snapshot.action.upgrade.lockstep.heldBack, true);
   assert.equal(snapshot.command, "akm upgrade --format json", "the check does not replace the action's command");
   assert.match(snapshot.receipt, /upgrade completed/);
   // The follow-up check fails after the action went through: a partial outcome, the receipt stays.

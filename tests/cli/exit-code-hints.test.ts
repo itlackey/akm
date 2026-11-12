@@ -7,7 +7,7 @@ describe("embedded exit-code hints", () => {
     ["full", EMBEDDED_HINTS_FULL],
   ] as const) {
     test(`${name} pins health/internal codes and command failure semantics`, () => {
-      expect(hints).toContain("| 4 | Health warning (`akm doctor` or `akm health`) |");
+      expect(hints).toContain("| 4 | Health warning (`akm doctor`) |");
       expect(hints).toContain("| 70 | Internal / unclassified error |");
       expect(hints).toContain("Not found or command-reported failure");
       expect(hints).toContain("| 75 | Transient");
@@ -16,7 +16,7 @@ describe("embedded exit-code hints", () => {
 
   test("full hints name the passthrough and task/agent exit semantics", () => {
     expect(EMBEDDED_HINTS_FULL).toContain("`env run`, `secret run`, and `migrate`");
-    expect(EMBEDDED_HINTS_FULL).toContain("`task run`");
+    expect(EMBEDDED_HINTS_FULL).toContain("`akm run` on a task");
     expect(EMBEDDED_HINTS_FULL).toContain("`agent`");
   });
 

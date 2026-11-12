@@ -142,6 +142,27 @@ export const searchCommand = defineJsonCommand({
   },
 });
 
+/**
+ * `akm doctor metrics assets`: `search --by-usage` under the doctor's reports.
+ * Same scope flags, handler and result as `search`, with the query and the
+ * `--by-usage` switch fixed.
+ */
+const { query: _query, "by-usage": _byUsage, ...assetsArgs } = searchCommand.args as unknown as Record<string, unknown>;
+export const doctorMetricsAssetsCommand = defineJsonCommand({
+  meta: {
+    name: "assets",
+    description:
+      "List the assets shown in the project (any project with --project none), most shown first. No usage is recorded",
+  },
+  args: assetsArgs as never,
+  async run(context) {
+    await searchCommand.run?.({
+      ...context,
+      args: { ...(context.args as object), query: "", "by-usage": true },
+    } as never);
+  },
+});
+
 /** The value a project's writes carry as `project`: what its rules and usage are matched against. */
 function stampedProject(project: ResolvedProject | undefined): string | undefined {
   const value = project?.write.metadata.project;
@@ -224,7 +245,7 @@ export const curateCommand = defineJsonCommand({
     belief: { ...beliefArg, default: "current" },
     "max-tokens": {
       type: "string",
-      description: "Pack full content within this shared token budget (alias for --pack)",
+      description: "Pack full content within this shared token budget (replaces --pack)",
     },
     pack: {
       type: "string",
@@ -346,7 +367,7 @@ function rejectExtraShowPositionals(positionals: unknown, ref: string): void {
     `akm show takes a single ref, but got ${extra.map((token) => `"${token}"`).join(" ")} after "${ref}". ` +
       `Use \`akm show ${ref}#<heading-slug>\` to read one section, or \`akm show ${ref}\` for the whole item.`,
     "INVALID_FLAG_VALUE",
-    `Run \`akm show ${ref} --detail brief\` for the document's outline (\`toc\`, no body).`,
+    `Run \`akm show ${ref} --outline\` for the document's outline (\`toc\`, no body).`,
   );
 }
 
@@ -364,11 +385,12 @@ export const showCommand = defineJsonCommand({
     },
     outline: {
       type: "boolean",
-      description: "Show the outline and brief metadata without the body (alias for --detail brief)",
+      description: "Show the outline and brief metadata without the body (replaces --detail brief)",
     },
     lead: {
       type: "boolean",
-      description: "Add the document lead to a Markdown fragment (alias for --context lead)",
+      description:
+        "Add the document lead to a Markdown fragment. Replaces --context lead; with --detail brief it is a usage error (--detail brief --context lead still works)",
     },
     context: {
       type: "string",

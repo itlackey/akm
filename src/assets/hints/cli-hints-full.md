@@ -16,7 +16,7 @@ akm search "<query>" --detail full            # Include scores, paths, timing
 akm search "memories/projectA/"               # Enumerate a subtree (conceptId prefix; trailing slash required)
 akm search "knowledge/"                       # List every knowledge item
 akm search "" --type rule --limit 200 --detail normal   # List the project's rules (read each with akm show)
-akm search --by-usage --detail normal         # Assets shown most in the project (no query)
+akm doctor metrics assets --detail normal      # Assets shown most in the project
 akm search "team-catalog//"                   # List every item in one bundle
 ```
 
@@ -203,11 +203,11 @@ akm workflow list                            # List workflow runs on this host
 Copy an asset to the working bundle or a custom destination for editing.
 
 ```sh
-akm clone <ref>                               # Clone to working bundle
-akm clone <ref> --name new-name               # Rename on clone
-akm clone <ref> --dest ./project/.claude       # Clone to custom location
-akm clone <ref> --force                       # Overwrite existing
-akm clone "npm:@scope/pkg//scripts/deploy.sh" # Clone from remote package
+akm import <ref> --asset-ref                               # Clone to working bundle
+akm import <ref> --asset-ref --name new-name               # Rename on clone
+akm import <ref> --asset-ref --dest ./project/.claude       # Clone to custom location
+akm import <ref> --asset-ref --force                       # Overwrite existing
+akm import "npm:@scope/pkg//scripts/deploy.sh" --asset-ref # Clone from remote package
 ```
 
 When `--dest` is provided, `akm bundle create` is not required first.
@@ -227,7 +227,7 @@ akm lint                                             # confirms nothing dangles
 ```
 
 A memory's `.derived.md` twin must move with its base. Moving an item between
-bundles is `akm clone` (or a copy) followed by deleting the source — both the
+bundles is `akm import <ref> --asset-ref` (or a copy) followed by deleting the source — both the
 bundle and the concept identity change.
 
 There is no `akm mv` — the procedure above is the whole story. A rename changes
@@ -330,7 +330,7 @@ akm lint --fix                                # Auto-fix Tier 1 issues
 akm lint --fail-on-flagged                    # Exit non-zero when summary.flagged > 0 (CI-friendly)
 akm upgrade                                   # Upgrade akm using its install method, then update installed harness plugins
 akm upgrade --check                           # Report pending CLI and plugin updates, changing nothing
-akm upgrade --next                            # Follow prereleases (@next); OpenCode needs "akm-opencode@next" (or "akm-opencode-v2@next" on OpenCode 2) in its plugin list
+akm upgrade --channel next                   # Follow prereleases (@next); OpenCode needs "akm-opencode@next" (or "akm-opencode-v2@next" on OpenCode 2) in its plugin list
 akm help migrate 0.6.0                        # Print migration notes for a release (or: latest)
 akm help bundle                               # Print options and subcommands for one command
 akm hints --detail full                       # Print this complete agent guide (plain akm hints prints the short one)
@@ -359,27 +359,27 @@ akm proposal reopen <id> --reason "..."                 # Undo a rejection: back
 akm proposal revert <id>                                # Restore the pre-promotion content
 akm proposal new <type> <name> --task "..."             # Agent-author a NEW asset as a proposal
 akm proposal extract --auto                             # Mine native session files into proposals
-akm proposal extract --type claude                 # Restrict extraction to one harness
+akm proposal extract --sessions claude             # Restrict extraction to one harness
 ```
 
 ## Scheduled Tasks
 
 Tasks are pure-YAML assets at `<bundle>/tasks/<id>.yml`, bound to the OS
 scheduler (cron / launchd / schtasks). The file is the source of truth:
-`task sync` reconciles files to scheduler entries, so editing or deleting a
+`akm doctor scheduler sync` reconciles files to scheduler entries, so editing or deleting a
 file plus one `sync` is a complete workflow.
 
 ```sh
-akm task add nightly-improve --schedule "@daily" --command "akm improve --strategy default"
-akm task add briefing --schedule "0 9 * * *" --prompt "Draft the morning briefing"  # Inline command task
+akm import <file> --type task                  # Add a task YAML file to the working bundle
 akm task enable <bundle>//tasks/<id>           # Enable locally and sync that bundle
 akm task disable <bundle>//tasks/<id>          # Disable locally and unschedule it
-akm task sync                                  # Reconcile activated refs from every enabled configured bundle
-akm task sync --rebind                         # Also re-pin the scheduler's akm binary/spelling
-akm task doctor                                # Scheduler binding + runtime eligibility diagnosis
-akm task history                               # Recent run rows (status, timing)
+akm doctor scheduler sync                      # Reconcile activated refs from every enabled configured bundle
+akm doctor scheduler sync --rebind             # Also re-pin the scheduler's akm binary/spelling
+akm doctor scheduler sync --prune              # Preview removing owned orphan entries (--yes applies)
+akm doctor                                     # Scheduler binding + runtime eligibility diagnosis, with the other checks
+akm doctor log --task <id>                     # Recent run rows (status, timing)
 akm run <bundle>//tasks/<id>                   # Run one task immediately (works when disabled)
-akm task explain <ref>                         # Read-only: declared inputs, target, schedule — spawns nothing
+akm doctor explain <ref>                       # Read-only: declared inputs, target, schedule — spawns nothing
 akm search --type task                         # Enumerate task assets
 ```
 
@@ -390,7 +390,7 @@ or `on:` block — every control (`schedule`, `timeout`, `connection`, `harness`
 workflow's (`output:` replaces v3's `akm.outputSchema`). Task source never
 controls activation: use `akm task enable` / `disable`, which update the
 host-local config allow-list and sync. To remove one, delete the YAML and run
-`akm task sync` — the scheduler entry is unbound. Top-level
+`akm doctor scheduler sync` — the scheduler entry is unbound. Top-level
 `timeout:` may be `null` (disable the invocation timer) or a duration/number
 overriding the selected connection's or harness's timeout. Preview old task-v2/v3
 conversion with `akm migrate apply --dry-run`.
@@ -468,7 +468,7 @@ Exit codes:
 | 0 | Success | — |
 | 1 | Not found or command-reported failure | `NotFoundError`, command result |
 | 2 | Usage / bad input | `UsageError` |
-| 4 | Health warning (`akm doctor` or `akm health`) | — |
+| 4 | Health warning (`akm doctor`) | — |
 | 70 | Internal / unclassified error | unexpected throw |
 | 75 | Transient: retry shortly | `TransientError` (another akm process holds a lock) |
 | 78 | Configuration error | `ConfigError` |
@@ -484,7 +484,7 @@ the exit code is the preferred signal for shell scripts. Passthrough surfaces
 below preserve the child's own streams and status instead.
 
 `env run`, `secret run`, and `migrate` are process passthroughs and preserve
-the spawned process's exact status. `task run` preserves configuration failures
+the spawned process's exact status. `akm run` on a task preserves configuration failures
 as exit 78; successful task results exit 0 and other failures exit 1, while a
 command child's exact status remains in `result.detail.exitCode`. `agent` maps
 a failed dispatch to 1 and retains the child status in its final result envelope.

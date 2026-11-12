@@ -157,7 +157,6 @@ test("default verbosity emits one summary line, not per-spec workflow warnings",
   expect(summary).toHaveLength(1);
   expect(summary[0]).toMatch(/^2 workflow specs skipped/);
   expect(summary[0]).toContain("--verbose");
-  expect(summary[0]).toContain("AKM_VERBOSE");
 });
 
 test("default verbosity uses singular 'workflow spec' when only one was skipped", async () => {

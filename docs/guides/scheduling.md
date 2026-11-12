@@ -24,10 +24,10 @@ unchanged.
 ## Verify
 
 ```sh
-akm task doctor
+akm doctor
 ```
 
-`akm task doctor` reports the scheduler backend, paths, task state, and
+`akm doctor` reports health and, in its `scheduler` field, the scheduler backend, paths, task state, and
 warnings — run it after any setup pass, and again after a `--rebind` (below),
 to confirm the scheduler state matches what you expect.
 
@@ -44,19 +44,17 @@ the [task source reference](../reference/tasks.md) defines their executable and
 scheduling grammar. A definition cannot enable itself: the refs this host schedules live
 separately in `config.json` under `scheduler.enabled`, a list of
 fully-qualified refs. Use `akm task enable <bundle>//tasks/<id>` or `akm task
-disable <ref>` to change it without editing bundle content. An unscoped `akm
-task sync` installs exactly the listed refs from every enabled configured
+disable <ref>` to change it without editing bundle content. An unscoped `akm doctor scheduler sync` installs exactly the listed refs from every enabled configured
 bundle and removes akm-written bindings for refs that are gone or no longer
 listed. Removing a bundle drops its refs from the list; disabling a bundle
 leaves them inert.
 
 Native scheduler entries are separate OS state. Activation captures the
 installed akm runtime so scheduled execution does not silently switch to a
-different checkout or package. Editing definitions and running ordinary `akm
-task sync` preserves that captured runtime.
+different checkout or package. Editing definitions and running ordinary `akm doctor scheduler sync` preserves that captured runtime.
 
 A scheduled fire reads the task's current source and freezes a fresh plan for
-that run; the result of `task sync` or validation is not reused as the run
+that run; the result of `akm doctor scheduler sync` or validation is not reused as the run
 plan.
 
 ## A scheduled `akm improve` covers one bundle
@@ -69,17 +67,24 @@ and leaves your other bundles alone, even the writable ones. To improve
 another bundle on a schedule, give it a task of its own; the `--bundle` inside
 the command is `akm improve`'s own:
 
+```yaml
+# improve-team.yml
+version: 4
+run: akm improve --bundle team
+schedule: "15 3 * * *"
+```
+
 ```sh
-akm task add improve-team --schedule "15 3 * * *" \
-  --command "akm improve --bundle team"
+akm import ./improve-team.yml --type task
+akm task enable <bundle>//tasks/improve-team
 ```
 
 Leave `--skip-if-locked` off a once-a-night run: if a short-cadence improve task
 holds the lock when it fires, the run fails with `IMPROVE_LOCK_HELD` (exit 75) and
 is recorded, rather than being silently skipped. Put `--skip-if-locked` on the
-frequent tasks, and give them a `--timeout-ms` that ends before the nightly starts.
+frequent tasks, and give them a `--timeout` that ends before the nightly starts.
 The shipped `improve/akm-improve-consolidate` task does both: it runs at `:20`
-every four hours with `--timeout-ms 3600000`, so the 00:20 run is over by 01:20,
+every four hours with a one-hour `--timeout`, so the 00:20 run is over by 01:20,
 well before the 02:00 nightly.
 
 ## Rerunning setup preserves scheduler bindings
@@ -90,7 +95,7 @@ will not silently rebind entries that are already activated.
 ## Upgrades
 
 A config written before 0.9.17 has no `scheduler.enabled` list. The first
-`akm task sync` (or `setup`, `task enable`, `task disable`, `task add`) after
+`akm doctor scheduler sync` (or `setup`, `task enable`, `task disable`) after
 the upgrade takes the akm-written rows already installed in the native
 scheduler as this host's choice, writes the list, and says so — a scheduled
 task survives an upgrade by any install method with no manual step. An
@@ -103,8 +108,8 @@ If akm was moved, reinstalled under a different package prefix, or repaired
 after an installation problem, migrate scheduler entries deliberately:
 
 ```sh
-akm task sync --rebind
-akm task doctor
+akm doctor scheduler sync --rebind
+akm doctor
 ```
 
 Use `--rebind` only for that explicit runtime migration or repair — it
@@ -112,7 +117,7 @@ captures the current installed runtime, replacing whatever runtime a prior
 activation had captured.
 
 If you change the AKM storage path during reconfiguration, or move or install
-akm at a new runtime path, follow setup with `akm task sync --rebind`; setup
+akm at a new runtime path, follow setup with `akm doctor scheduler sync --rebind`; setup
 never silently rebinds existing entries on your behalf.
 
 ## See also

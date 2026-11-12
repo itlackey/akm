@@ -8,7 +8,7 @@
     "AKM-native; mirrors the frozen renderer/all-types.json task entry"
   ],
   "notes": [
-    "SPECIFICATION golden. `task` → renderer 'task-yaml'. action = src/core/type-presentation.ts task action: `akm show <ref> -> inspect; akm task run <id> -> run now; akm task enable|disable <ref> -> change host-local scheduling` (the full bundle-qualified ref is passed straight to `akm show`; scheduler activation is local config and is never controlled by task source)."
+    "SPECIFICATION golden. `task` → renderer 'task-yaml'. action = src/core/type-presentation.ts task action: `akm show <ref> -> inspect; akm run <ref> -> run now; akm task enable|disable <ref> -> change host-local scheduling` (the full bundle-qualified ref is passed straight to `akm show`; scheduler activation is local config and is never controlled by task source)."
   ],
   "byRelPath": {
     "nightly-index.yml": {
@@ -16,14 +16,14 @@
       "ref": "sample-akm-task//nightly-index",
       "label": "Task",
       "renderer": "task-yaml",
-      "action": "akm show sample-akm-task//nightly-index -> inspect; akm task run <id> -> run now; akm task enable|disable sample-akm-task//nightly-index -> change local scheduling"
+      "action": "akm show sample-akm-task//nightly-index -> inspect; akm run sample-akm-task//nightly-index -> run now; akm task enable|disable sample-akm-task//nightly-index -> change local scheduling"
     },
     "two-targets.yml": {
       "type": "task",
       "ref": "sample-akm-task//two-targets",
       "label": "Task",
       "renderer": "task-yaml",
-      "action": "akm show sample-akm-task//two-targets -> inspect; akm task run <id> -> run now; akm task enable|disable sample-akm-task//two-targets -> change local scheduling",
+      "action": "akm show sample-akm-task//two-targets -> inspect; akm run sample-akm-task//two-targets -> run now; akm task enable|disable sample-akm-task//two-targets -> change local scheduling",
       "note": "renders normally despite being invalid; presentation keys on type=task, not on validity."
     }
   }

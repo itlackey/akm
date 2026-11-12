@@ -224,7 +224,7 @@ const CONFIG_HINTS: Partial<Record<ConfigErrorCode, string>> = {
     "Run `akm setup` to add a connection (an OpenAI-compatible endpoint) or enable a harness; model features need one.",
   AGENT_NOT_CONFIGURED: "Run `akm setup` to enable a harness or add a connection; agent work needs one.",
   SELECTION_NOT_CONFIGURED:
-    "Name one that is configured (`akm health` lists them), correct the name, or add it with `akm setup --name <name> --endpoint <url>` (a connection) or `akm setup --harness <name>`.",
+    "Name one that is configured (`akm doctor` lists them), correct the name, or add it with `akm setup --name <name> --endpoint <url>` (a connection) or `akm setup --harness <name>`.",
   TEST_ISOLATION_MISSING:
     "Under bun test, when AKM_BUNDLE_DIR is set you MUST also set XDG_DATA_HOME (or AKM_DATA_DIR) and XDG_STATE_HOME (or AKM_STATE_DIR) to temp directories so the test does not touch the developer's real ~/.local/share/akm or ~/.local/state/akm.",
   UNSAFE_STASH_DIR:
@@ -287,7 +287,7 @@ const USAGE_HINTS: Partial<Record<UsageErrorCode, string>> = {
     "Targets are canonical asset refs: `commands/review`, `scripts/build.sh`, `tasks/nightly`, `workflows/release`.",
   // Points at the two verbs that inspect a workflow source without executing it.
   WORKFLOW_SOURCE_INVALID:
-    "Run `akm lint` to see the failing source location, or `akm workflow plan <ref>` to compile it without writing.",
+    "Run `akm lint` to see the failing source location, or `akm doctor explain <ref>` to compile it without writing.",
   INPUT_BINDING_INVALID: "Check the step's with: keys against the target's declared inputs.",
   TASK_TARGET_UNSUPPORTED:
     "Task definitions support command, script, workflow, and shell (run:) targets; akm/command is layered by callers.",
@@ -306,7 +306,7 @@ const TRANSIENT_HINTS: Partial<Record<TransientErrorCode, string>> = {
   ASSET_MUTATION_LEASE_HELD:
     "Another akm process is writing bundle content right now. Wait for it to finish and retry.",
   SCHEDULER_LOCK_HELD:
-    "Another `akm task sync`, `add`, `enable`, `disable` or `prune` is writing the scheduler right now. Wait for it to finish and retry.",
+    "Another `akm doctor scheduler sync`, `akm import --type task`, `akm task enable` or `akm task disable` is writing the scheduler right now. Wait for it to finish and retry.",
   REGISTRY_UNREACHABLE:
     "The registry did not answer in time. Check the network and the registry URL (`akm registry list`), then retry.",
 };
@@ -322,7 +322,7 @@ const NOT_FOUND_HINTS: Partial<Record<NotFoundErrorCode, string>> = {
   PROPOSAL_NOT_FOUND: "Run `akm proposal list` to see pending proposals and their ids.",
   FILE_NOT_FOUND: "Check the path exists and is readable.",
   IMPROVE_RUN_NOT_FOUND:
-    "Run `akm improve` first, or `akm improve report --since 30d` to see recent run ids in `runIds`.",
+    "Run `akm improve` first, or `akm doctor metrics improve --since 30d` to see recent run ids in `runIds`.",
   REGISTRY_NOT_FOUND:
     "Check the ref's spelling and version; `akm search <query> --from registry` lists installable refs.",
 };

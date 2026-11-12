@@ -752,8 +752,7 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
       if (skippedWorkflowCount > 0) {
         const noun = skippedWorkflowCount === 1 ? "workflow spec" : "workflow specs";
         warn(
-          `${skippedWorkflowCount} ${noun} skipped due to validation errors; ` +
-            "rerun with --verbose (or AKM_VERBOSE=1) to see details.",
+          `${skippedWorkflowCount} ${noun} skipped due to validation errors; ` + "rerun with --verbose to see details.",
         );
       }
     }

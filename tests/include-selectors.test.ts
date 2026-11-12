@@ -204,3 +204,15 @@ test("project includes preserve unknown config keys across writes without passin
   expect(result.items.map((hit: { name: string }) => hit.name).sort()).toEqual(["draft", "live"]);
   expect(result.project.include).toEqual({ quality: "proposed" });
 });
+
+test("type= accepts a custom type the config excludes by default, and still rejects an unconfigured one", () => {
+  writeSandboxConfig({ semanticSearchMode: "off", search: { defaultExcludeTypes: ["session", "runbook"] } });
+  expect(normalizeInclude({ type: "runbook" })).toEqual({ type: "runbook" });
+  expect(normalizeInclude({ type: ["session", "runbook"] })).toEqual({ type: ["session", "runbook"] });
+  expect(() => normalizeInclude({ type: "bogus" } as never)).toThrow("Unsupported --include type value");
+  try {
+    normalizeInclude({ type: "bogus" } as never);
+  } catch (error) {
+    expect((error as { hint(): string }).hint()).toContain("runbook");
+  }
+});

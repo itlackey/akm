@@ -163,5 +163,6 @@ function taskHistoryRowToResult(row: TaskHistoryRow): TaskRunResult {
     log: row.log_path ?? "",
     target,
     ...(meta.detail ? { detail: meta.detail } : {}),
+    ...(meta.trigger ? { trigger: meta.trigger } : {}),
   };
 }

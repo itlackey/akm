@@ -42,7 +42,7 @@ describe("formatBundleRenamePlain — taskSync", () => {
     expect(text).toContain("1 installed, 0 updated, 0 removed");
   });
 
-  it("lists each failure and points to `akm task sync`, without claiming a re-sync, when a binding failed", () => {
+  it("lists each failure and points to `akm doctor scheduler sync`, without claiming a re-sync, when a binding failed", () => {
     const text = formatBundleRenamePlain(
       baseResult({
         taskSync: {
@@ -60,7 +60,7 @@ describe("formatBundleRenamePlain — taskSync", () => {
     );
     expect(text).not.toContain("re-synced under the new name");
     expect(text).toContain("new//tasks/foo: version is required and must be 4");
-    expect(text).toContain("akm task sync");
+    expect(text).toContain("akm doctor scheduler sync");
   });
 
   it("still reports a thrown sync error distinctly from a per-binding failure", () => {
@@ -68,7 +68,7 @@ describe("formatBundleRenamePlain — taskSync", () => {
       baseResult({ taskSync: { ok: false, error: "scheduler backend unavailable" } }),
     );
     expect(text).toContain("Re-syncing native scheduler bindings failed: scheduler backend unavailable");
-    expect(text).toContain("akm task sync");
+    expect(text).toContain("akm doctor scheduler sync");
     expect(text).not.toContain("re-synced under the new name");
   });
 });
@@ -83,7 +83,7 @@ describe("formatBundleRenamePlain — unfinished workflow runs (#1239)", () => {
         ],
       }),
     );
-    expect(text).toContain("`akm workflow run <id>`");
+    expect(text).toContain("`akm run <id>`");
     expect(text).toContain("`akm workflow resume <id>`");
     expect(text).toContain("run-a (old//workflows/foo, active)");
     expect(text).toContain("run-b (old//workflows/foo, blocked)");

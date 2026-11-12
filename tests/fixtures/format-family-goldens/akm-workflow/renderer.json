@@ -9,7 +9,7 @@
   ],
   "notes": [
     "TYPE_PRESENTATION keys `workflow` to renderer 'workflow-md' with buildWorkflowAction.",
-    "action = buildWorkflowAction(ref) = \"Start or resume execution with `akm workflow run '<ref>'`.\" (src/core/type-presentation.ts)."
+    "action = buildWorkflowAction(ref) = \"Start or resume execution with `akm run '<ref>'`.\" (src/core/type-presentation.ts)."
   ],
   "byRelPath": {
     "release.md": {
@@ -17,7 +17,7 @@
       "ref": "sample-akm-workflow//release",
       "label": "Workflow",
       "renderer": "workflow-md",
-      "action": "Start or resume execution with `akm workflow run 'sample-akm-workflow//release'`."
+      "action": "Start or resume execution with `akm run 'sample-akm-workflow//release'`."
     }
   }
 }

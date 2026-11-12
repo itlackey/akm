@@ -42,7 +42,7 @@ command, are in [STABILITY.md](../STABILITY.md).
 
 - [Tasks and scheduling](guides/scheduling.md). *Evolving*
 - [Workflows](guides/run-workflows.md). *Experimental*
-- Agent dispatch (`akm agent`, `akm command run`) and harnesses (Claude Code, Codex, OpenCode and others). *Evolving*
+- Agent dispatch (`akm run` on agent and command refs) and harnesses (Claude Code, Codex, OpenCode and others). *Evolving*
 - Model aliases (`akm models`). *Evolving*
 
 ## Environment and secrets

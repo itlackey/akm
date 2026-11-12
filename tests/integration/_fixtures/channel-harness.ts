@@ -32,7 +32,25 @@ if (command === "git") {
   );
   fs.writeFileSync(
     path.join(checkout, ".agents", "plugins", "marketplace.json"),
-    JSON.stringify({ plugins: [{ name: "akm", source: { source: "local", path: "./claude" } }] }),
+    JSON.stringify({
+      plugins: [
+        {
+          name: "akm",
+          // The shipped catalog names the Codex build as a tagged git-subdir of the same repo.
+          source:
+            state.codexCatalog === "local"
+              ? { source: "local", path: "./claude" }
+              : state.codexCatalog === "unreadable"
+                ? { source: "git-subdir", url: "https://example.test/elsewhere.git", path: "./claude", ref: "main" }
+                : {
+                    source: "git-subdir",
+                    url: args.at(-2),
+                    path: "./claude",
+                    ref: `v${state.codexTargetVersion ?? native(channel)}`,
+                  },
+        },
+      ],
+    }),
   );
   fs.writeFileSync(
     path.join(checkout, "claude", ".codex-plugin", "plugin.json"),
@@ -66,7 +84,7 @@ if (command === "git") {
   } else process.exit(2);
 } else if (command === "npm") {
   const channel = args[1]!.endsWith("@next") ? "next" : "latest";
-  output({ version: native(channel), "dependencies.akm-cli": native(channel) });
+  output({ version: native(channel) });
 } else if (command === "pgrep") {
   process.exit(1);
 } else if (command === "opencode") {

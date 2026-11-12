@@ -50,7 +50,7 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 function buildWorkflowAction(ref: string): string {
-  return `Start or resume execution with \`akm workflow run ${shellQuote(ref)}\`.`;
+  return `Start or resume execution with \`akm run ${shellQuote(ref)}\`.`;
 }
 
 // Frozen snapshot of the action builders the retired `asset-registry.ts`
@@ -70,7 +70,7 @@ const ACTION_BUILDERS: Record<string, (ref: string) => string> = {
   secret: (ref) =>
     `akm show ${ref} -> name only (value never shown); akm secret run ${ref} <VAR> -- <command> -> run with value injected into $VAR`,
   task: (ref) =>
-    `akm show ${ref} -> inspect; akm task run <id> -> run now; akm task enable|disable ${ref} -> change local scheduling`,
+    `akm show ${ref} -> inspect; akm run ${ref} -> run now; akm task enable|disable ${ref} -> change local scheduling`,
   session: (ref) =>
     `akm show ${ref} -> read the session summary; follow the \`access\` frontmatter to open the raw log at \`log_path\``,
   fact: (ref) => `akm show ${ref} -> read the stash fact and apply it as durable context`,
@@ -133,7 +133,7 @@ describe("TYPE_PRESENTATION — action builders reproduce ACTION_BUILDERS verbat
 
   test("the workflow action reproduces buildWorkflowAction (single-quoted ref, canonical run form)", () => {
     const out = presentationFor("workflow").action?.("team//workflows/release");
-    expect(out).toBe("Start or resume execution with `akm workflow run 'team//workflows/release'`.");
+    expect(out).toBe("Start or resume execution with `akm run 'team//workflows/release'`.");
     expect(out).toBe(ACTION_BUILDERS.workflow!("team//workflows/release"));
   });
 

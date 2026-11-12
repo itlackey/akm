@@ -1164,6 +1164,22 @@ describe("extends inheritance (#945)", () => {
     expect(config.output).toEqual({ format: "text", detail: "brief" });
   });
 
+  test("prints the deprecation notice once for a config that sets extends, and nothing without it", () => {
+    const dir = path.dirname(getConfigPath());
+    writeRawConfig(path.join(dir, "base.json"), JSON.stringify({ configVersion: "0.9.0", output: { format: "text" } }));
+    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "./base.json" }));
+    const warnings = captureWarnings(() => {
+      loadConfig();
+      loadConfig();
+    });
+    const notices = warnings.filter((w) => w.includes("`extends` is Deprecated and is removed in 0.11"));
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain("--show-source");
+
+    writeCurrentConfig({ output: { format: "text" } });
+    expect(captureWarnings(() => loadConfig()).filter((w) => w.includes("extends"))).toEqual([]);
+  });
+
   test("expands ~ in a filesystem extends path", () => {
     const home = mockHomedir();
     try {
