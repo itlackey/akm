@@ -260,7 +260,10 @@ describe.skipIf(unavailable !== undefined)("a run on akm's runtime that repeats 
       ...runtimeEnv(config, { binary, directory, pluginDirectory, akm: resolveAkmInvocation().argv }),
     };
     const session = `ses_akm${randomUUID().replaceAll("-", "")}`;
-    const prompt = "MODE:repeat please";
+    // The model server is shared by every run of this file, so the assertions look only at this run's own requests,
+    // which carry this prompt first; a late request of an earlier run's process is not this run's to be counted.
+    const prompt = `MODE:repeat please (${session})`;
+    const ownRequests = () => model.requests.filter((request) => request.users[0] === prompt);
 
     const result = await untilEnoughRequests((signal) =>
       runBuiltCommand(
@@ -274,8 +277,8 @@ describe.skipIf(unavailable !== undefined)("a run on akm's runtime that repeats 
     // Not stopped by akm: it went on until the test ended it.
     expect(result.reason).toBe("aborted");
     expect(result.stderr).not.toContain("akm stopped this run");
-    expect(model.requests.length).toBeGreaterThan(10);
-    expect(model.requests.every((request) => toldIn(request).length === 0)).toBe(true);
+    expect(ownRequests().length).toBeGreaterThan(10);
+    expect(ownRequests().every((request) => toldIn(request).length === 0)).toBe(true);
     expect(executedCalls(session)).toBeGreaterThan(10);
   }, 90_000);
 
