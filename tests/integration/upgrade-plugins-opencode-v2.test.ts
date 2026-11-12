@@ -308,7 +308,7 @@ esac`,
     });
     const plain = await upgrade();
     expect(entry(plain, "opencode-v2")).toMatchObject({ outcome: "skipped" });
-    expect(entry(plain, "opencode-v2").message).toContain("--next");
+    expect(entry(plain, "opencode-v2").message).toContain("--channel next");
     expect(mutations()).toEqual([]);
 
     const run = await upgrade(NEXT, fakeDeps("0.9.28", "0.9.27"));
