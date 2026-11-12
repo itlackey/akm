@@ -64,13 +64,12 @@ files and scheduler state unchanged.
 ## Verify
 
 ```sh
-akm task doctor
+akm doctor
 ```
 
-`akm task doctor` reports the scheduler backend, the installed entry (its
+`akm doctor` reports health and, in its `scheduler` field, the scheduler backend, the installed entry (its
 launcher and the tasks it fires), and warnings (including any enabled task that
-cannot run: a deleted file, an inactive bundle, a schedule that does not parse;
-`akm health` reports the same) — run it after any setup pass,
+cannot run: a deleted file, an inactive bundle, a schedule that does not parse) — run it after any setup pass,
 and again after a `--rebind`, to confirm the scheduler state matches what you
 expect. `akm task history` shows what ran.
 
@@ -102,7 +101,7 @@ installation only: the one whose config, data, cache and state directories are
 where `HOME` puts them, read from the default config file. A config file other than
 the default (`--config`, `AKM_CONFIG_FILE`), or an `XDG_*_HOME` that moves one of
 those directories, makes an installation non-default. A `paths` key in the default file does not: dispatch
-reads that file. `akm task sync` then writes nothing and says so; run
+reads that file. `akm doctor scheduler sync` then writes nothing and says so; run
 `akm task dispatch` every minute from your own supervisor, with that
 installation's environment:
 
@@ -113,7 +112,7 @@ installation's environment:
 in a container's supercronic file (the image's environment reaches the job), or
 a systemd timer, or any scheduler you run. Dispatch is an ordinary akm
 command: it finds config, bundles and directories the way every other command
-does. `akm task doctor` and `akm health` leave the OS entry to the default
+does. `akm doctor` leaves the OS entry to the default
 installation.
 
 ## A scheduled `akm improve` covers one bundle
@@ -125,9 +124,16 @@ and leaves your other bundles alone, even the writable ones. To improve
 another bundle on a schedule, give it a task of its own; the `--bundle` inside
 the command is `akm improve`'s own:
 
+```yaml
+# improve-team.yml
+version: 4
+run: akm improve --bundle team
+schedule: "15 3 * * *"
+```
+
 ```sh
-akm task add improve-team --schedule "15 3 * * *" \
-  --command "akm improve --bundle team"
+akm import ./improve-team.yml --type task
+akm task enable <bundle>//tasks/improve-team
 ```
 
 Leave `--skip-if-locked` off a once-a-night run: if a short-cadence improve task
@@ -144,7 +150,7 @@ Rerunning `akm setup` does not rebind an entry that is already installed.
 
 ## Upgrading from an older akm
 
-An older akm wrote one scheduler row per task. `akm migrate apply` (which `akm upgrade` runs) and `akm task sync` replace them with the one entry. See [The scheduler and tasks](../migration/v0.10-to-v0.11.md#the-scheduler-and-tasks).
+An older akm wrote one scheduler row per task. `akm migrate apply` (which `akm upgrade` runs) and `akm doctor scheduler sync` replace them with the one entry. See [The scheduler and tasks](../migration/v0.10-to-v0.11.md#the-scheduler-and-tasks).
 
 ## Migrating or repairing the entry (`--rebind`)
 
@@ -152,13 +158,13 @@ If akm was moved, reinstalled under a different package prefix, or repaired
 after an installation problem, rewrite the entry deliberately:
 
 ```sh
-akm task sync --rebind
-akm task doctor
+akm doctor scheduler sync --rebind
+akm doctor
 ```
 
 Use `--rebind` only for that explicit runtime migration or repair — it
 captures the current installed runtime and `PATH`, replacing whatever the entry
-had. `akm health`'s `scheduler-binary` advisory warns when the entry's akm
+had. `akm doctor`'s `scheduler-binary` advisory warns when the entry's akm
 reports a different version than the running one.
 
 ## See also

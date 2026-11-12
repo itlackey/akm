@@ -9,13 +9,13 @@ the plan, see [Workflow Schema](../reference/workflow-schema.md). For the
 day-to-day commands that drive a run, see
 [Running Workflows](../guides/run-workflows.md).
 
-> **`akm workflow run` is Experimental (see `STABILITY.md`), ungated, and the only
-> execution surface.** It is the canonical start/resume/execute command; there is
+> **`akm run` (formerly `akm workflow run`, Deprecated; see `STABILITY.md`) is
+> ungated and the only execution surface.** It is the canonical start/resume/execute command; there is
 > no separate external-driver protocol.
 
 ## Frozen plans
 
-The first `akm workflow run <ref>` compiles the Markdown source straight to
+The first `akm run <ref>` compiles the Markdown source straight to
 the one plan type and stores it as durable plan **`irVersion` 8** on the run row
 (`plan_json` + `plan_hash`); a new start never emits an older version.
 `plan_hash` is recorded provenance and gates nothing. Only a plan of the
@@ -24,7 +24,7 @@ message naming `akm workflow run <ref>` to start afresh. One frozen
 by a newer akm (`plan_ir_version` above 8) is refused unread with a message
 naming "Upgrade akm". A plan frozen before 8 with a model step recorded an
 engine where 8 records a connection or harness; it does not decode, and
-`akm workflow run` abandons it and starts afresh.
+`akm run` abandons it and starts afresh.
 
 The durable plan records `sourceHash`, the sha256 of the workflow source file
 at freeze. It is used only for the resume warning below, never to refuse a
@@ -108,7 +108,7 @@ from there onto the parent step and run, exactly as described in [Workflow
 Schema: Child execution](../reference/workflow-schema.md#child-execution).
 
 **Why `runWorkflowSteps` is reused, not a second executor.** The child drive
-calls the exact same exported entry point `akm workflow run` calls —
+calls the exact same exported entry point `akm run` calls —
 `runWorkflowSteps(options)`, pointed at the child's run id as `target` —
 with no special-casing for "this target is a child": resolving a run id,
 decoding the stored plan, taking that run's own lock, and walking its spine
@@ -140,9 +140,9 @@ violation, not a fix.
 Resume never re-reads config or the asset index, and reads the workflow
 source only for the drift warning above. It consumes the frozen plan plus
 the journaled attempts and results. A stored plan that this akm cannot
-decode is not an error to fix in place: `akm workflow run` marks such a run
+decode is not an error to fix in place: `akm run` marks such a run
 abandoned (status `failed`) and says to start a new run with
-`akm workflow run <ref>`; `akm workflow status`, `list`, and `abandon` never
+`akm run <ref>`; `akm workflow status`, `list`, and `abandon` never
 read the plan at all. A plan frozen by a newer akm that this one cannot
 decode is left untouched, and the message names upgrading akm.
 
@@ -175,7 +175,7 @@ deduplication key.
 
 ## One engine drives a run (the run lock)
 
-`akm workflow run` takes the run's **lock file** before reading the plan or
+`akm run` takes the run's **lock file** before reading the plan or
 dispatching anything: one `O_EXCL` file per run id under the data directory
 (`workflow-run-locks/<run id>.lock`, next to `state.db`), recording the
 holder's pid, released when the invocation exits. A second `workflow run`
@@ -187,7 +187,7 @@ the lock.
 
 ## Concurrency limits
 
-Native fan-out (`akm workflow run`) uses the minimum of four limits: the
+Native fan-out (`akm run`) uses the minimum of four limits: the
 map's `concurrency` (4 when the map declares none, or `workflow.defaultMapConcurrency`
 when set), the run's frozen `workflow.maxConcurrency`, the selected frozen
 connection's `concurrency` (a harness has none), and the current host's
@@ -220,12 +220,12 @@ A fan-out runs up to N agents at once, not one; see
 Run state (`plan_json`, `plan_hash`, step statuses, and the unit journal)
 persists in the host's `state.db`; the per-run lock file sits beside it. A run
 is identified by its run id and a workflow by its bundle-qualified ref. Run
-state is not scoped to a directory: `akm workflow run <ref>` always starts a
-new run, `akm workflow run <run-id>` drives an existing one,
+state is not scoped to a directory: `akm run <ref>` always starts a
+new run, `akm run <run-id>` drives an existing one,
 `akm workflow resume <run-id>` re-activates a blocked or failed one, and
 `akm workflow list`/`status` show every run on the host from any working
 directory. Starting a ref that already has active runs warns
-and names them; it is never refused. `akm workflow run <ref> --skip-if-locked`
+and names them; it is never refused. `akm run <ref> --skip-if-locked`
 skips (exit 0) instead of starting when an active run of that ref is held by a
 live process.
 

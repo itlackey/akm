@@ -322,7 +322,7 @@ export async function startWorkflowRun(
       const ids = otherActive.map((run) => run.id);
       warn(
         `Workflow ${asset.ref} already has ${ids.length} active run(s) (${ids.join(", ")}); started another. ` +
-          `Continue one with "akm workflow run ${ids[0]}" or give up on it with "akm workflow abandon ${ids[0]}".`,
+          `Continue one with "akm run ${ids[0]}" or give up on it with "akm workflow abandon ${ids[0]}".`,
       );
     }
 
@@ -604,7 +604,7 @@ export async function completeWorkflowStep(
     if (criteria.length > 0 && !judge) {
       throw new ConfigError(
         `Workflow run ${input.runId} has completion criteria for step "${input.stepId}" but its frozen plan has no judge. ` +
-          "Run `akm setup` to add a connection or harness, abandon this run, and create a new one with `akm workflow run <ref>`.",
+          "Run `akm setup` to add a connection or harness, abandon this run, and create a new one with `akm run <ref>`.",
         "INVALID_CONFIG_FILE",
       );
     }
@@ -811,7 +811,7 @@ function requireRunPlan(run: WorkflowRunRow): WorkflowPlan {
   throw new UsageError(
     read.newer
       ? read.problem
-      : `${read.problem} Run 'akm workflow abandon ${run.id}' and start a new run with 'akm workflow run ${run.workflow_ref}'.`,
+      : `${read.problem} Run 'akm workflow abandon ${run.id}' and start a new run with 'akm run ${run.workflow_ref}'.`,
   );
 }
 
@@ -876,7 +876,7 @@ function toChildRunNode(repo: WorkflowRunsRepository, rootRunId: string, row: Wo
           resume: {
             command: `akm workflow resume ${row.id}`,
             // biome-ignore lint/suspicious/noThenProperty: mirrors the real WorkflowChildRunNode.resume.then field name
-            then: `akm workflow resume ${rootRunId} && akm workflow run ${rootRunId}`,
+            then: `akm workflow resume ${rootRunId} && akm run ${rootRunId}`,
           },
         }
       : {}),

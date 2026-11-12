@@ -3,9 +3,12 @@
 Task assets are strict, local automation sources. They live at
 `<bundle>/tasks/<id>.yml` and can be run directly or on a schedule: one OS
 scheduler entry (cron, launchd, or Windows Task Scheduler; written by
-`akm task sync`) runs `akm task dispatch` every minute, and dispatch starts the
+`akm doctor scheduler sync`) runs `akm task dispatch` every minute, and dispatch starts the
 tasks that are due. The task file is the only source; nothing about a schedule
-is copied into the OS.
+is copied into the OS. Import a task file with `akm import <file> --type task`, run a task with
+`akm run <bundle>//tasks/<id>`, and diagnose with `akm doctor`, `akm doctor explain <ref>` and
+`akm doctor log --task <id>`. The older `akm task add | run | sync | doctor | explain | history` commands are
+Deprecated, removed in 0.11; see the [migration guide](../migration/v0.10-to-v0.11.md#task-and-import-consolidation).
 
 **Task source v4 (`version: 4`) is the only task source grammar akm reads.**
 A document with `version: 3` or `version: 2` fails to load with `UsageError`
@@ -16,7 +19,7 @@ host-local, below). Each such file fails on its own:
 `akm task dispatch` reports it and keeps starting every other task. Task
 source v4 adds typed `inputs:` and a single bounded `output:` schema
 (command targets only), and makes scheduling OPTIONAL rather than
-mandatory. `akm task add` authors task source v4 directly.
+mandatory. `akm import <file> --type task` imports a task source v4 file.
 
 A `version: 2` or `version: 3` file is refused, and this release converts none: run `npm i -g akm-cli@0.9.32 && akm migrate apply && akm task sync` first, then upgrade. `akm migrate status` reports an enabled one as a blocker with that recipe, and any other as a `legacyTaskWarnings` line.
 
@@ -139,14 +142,14 @@ execution cascade (config/persona/command/task layers) into the dispatch's
 own deadline, and the runner (a harness's process, or akm's own runtime) enforces it.
 Either way, a dispatch that times out is recorded as `status: failed` with
 `detail.reason: "timeout"` in `task_history` — not a silent `completed` — and
-`akm task run` exits non-zero for it; see [health-advisories.md's
+`akm run` exits non-zero for it; see [health-advisories.md's
 `task-fail-rate` row](../architecture/internals/health-advisories.md)
-for how `akm health` surfaces a timeout-dominant failure pattern.
+for how `akm doctor` surfaces a timeout-dominant failure pattern.
 
 ## Scheduling
 
 Scheduling is **optional**. Omit `schedule:` entirely for a manual-only
-task: the source still parses, still runs with `akm task run`, and
+task: the source still parses, still runs with `akm run`, and
 `akm task dispatch` never starts it (no failure) rather than rejecting the
 source for missing a trigger.
 
@@ -180,10 +183,11 @@ fully-qualified refs in `config.json` under `scheduler.enabled`. A ref that
 is not listed is disabled, and a config with no list has never chosen. Use
 `akm task enable <bundle>//tasks/<id>` and
 `akm task disable <bundle>//tasks/<id>` to change the list; dispatch reads it
-on the next minute. `akm task add` enables its new task by
-default; `--disabled` writes the same task source but does not list it.
+on the next minute. The Deprecated `akm task add` enables its new task by
+default (`--disabled` writes the same task source but does not list it); `akm import <file> --type task`
+imports it disabled and never installs the OS entry, and `akm task enable` turns it on.
 
-`akm task run <id>` executes a task immediately, including a disabled task.
+`akm run <bundle>//tasks/<id>` executes a task immediately, including a disabled task.
 `akm task dispatch` reads only the refs in `scheduler.enabled`. If a bundle is
 disabled its refs are inert. Workflow targets
 create a fresh durable workflow freeze at fire time.
@@ -228,7 +232,7 @@ redact: [TOKEN]
   task run` already declares for itself — `bundle`, `format`, `detail`,
   `output`, `scheduled`, `quiet`, `verbose`, `help`, `no-quiet`, or
   `no-verbose`. Parsing rejects a colliding name with `TASK_SOURCE_INVALID`
-  at declaration time, since `akm task run --<name>`, `akm task explain
+  at declaration time, since `akm task run --<name>`, `akm doctor explain
   --<name>`, and a `schedule[].inputs` entry would otherwise route the value
   into `akm task run`'s own flag instead of the declared input.
 - **A `required: true` input with no default must be satisfied by every
@@ -258,15 +262,15 @@ redact: [TOKEN]
 
 ### Input flags
 
-`akm task run <id>` accepts one exact-name flag per declared `inputs:` entry,
-mirroring `akm workflow run`'s parameter flags:
+`akm run <bundle>//tasks/<id>` accepts one exact-name flag per declared `inputs:` entry,
+mirroring a workflow's parameter flags:
 
 ```sh
-akm task run review --scope all --strict  # doclint:ignore
+akm run tasks/review --scope all --strict  # doclint:ignore
 ```
 
 Flag names are task-specific — they come from that task's own `inputs:`
-declarations — so they are not listed on `akm task run --help` and the
+declarations — so they are not listed on `akm run --help` and the
 example above uses one task's actual declared names, not a fixed syntax.
 An undeclared flag fails with `UNKNOWN_FLAG`; a value that does not satisfy
 its declaration, or a missing `required: true` input supplied by neither a
@@ -278,20 +282,25 @@ is narrower than it may look: when the target is `uses: workflows/<ref>`,
 the values become the child run's params (the same `with:` → params path a
 workflow step's own composition uses); for every other target — `run:`
 shell, `scripts/<ref>`, `commands/<ref>` — the values are validated and then
-**discarded**. `akm task run`'s own flags never populate an
+**discarded**. `akm run`'s own flags never populate an
 `AKM_TASK_INPUTS` environment variable or a `## Task inputs` prompt block.
 A scheduled run (`schedule[].inputs`, above) reaches the target through this
-same `akm task run` path, so it inherits the identical rule: delivered as
+same task-run path, so it inherits the identical rule: delivered as
 params for a `workflows/<ref>` target, otherwise validated and discarded.
-`akm task explain` (below) shows the materialized values regardless of where
-they end up, which is the fastest way to check what a given `akm task run`
-invocation would actually deliver. `akm task add --params` renders
+`akm doctor explain` (below) shows the materialized values regardless of where
+they end up, which is the fastest way to check what a given `akm run`
+invocation would actually deliver. The Deprecated `akm task add --params` renders
 `--params` values as typed `inputs:` declarations with `default:` values
 (typed from each JSON value's runtime type), not a `with:` bag.
 
-### `akm task explain`
+<a id="akm-task-explain"></a>
 
-`akm task explain <ref> [input flags]` prints a task's source path and
+### `akm doctor explain`
+
+`akm task explain` and `akm workflow plan` are Deprecated, removed in 0.11; this
+command replaces both.
+
+`akm doctor explain <ref> [input flags]` prints a task's source path and
 version, its declared `inputs:` (name, type, `enum`, `required`, `default`),
 the values that would actually be supplied — with provenance
 (`default` | `flag` | `schedule-binding`) — the resolved target kind/ref,
@@ -303,10 +312,10 @@ marked `redacted: true` instead of the real value; an `env:` binding is shown
 as a name/ref only, never its resolved value.
 
 ```sh
-akm task explain review --scope all  # doclint:ignore
+akm doctor explain review --scope all  # doclint:ignore
 ```
 
-`akm task explain`'s default output (no `--format` flag) is the **same raw
+`akm doctor explain`'s default output (no `--format` flag) is the **same raw
 JSON** as `--format json`, byte for byte — there is nothing to lose by
 piping the default form into `jq` or a script. `--format text` is a
 separate renderer: it flattens the same envelope into `dotted.path=value`
@@ -314,7 +323,7 @@ lines (the same convention `akm config list --format text` uses), not a
 copy of the JSON.
 
 A secret-shaped **input default** is redacted the same way as a supplied
-value. `akm task run --<name> <secret-looking-value>` does not echo the offered
+value. `akm run <ref> --<name> <secret-looking-value>` does not echo the offered
 value in its error envelope, whether it fails typed-flag coercion or the
 declared schema (an `enum`/`minimum`/`maximum` mismatch included); both paths
 report only the violated constraint.
@@ -323,30 +332,32 @@ report only the violated constraint.
 
 - `akm search --type task` and
   `akm show tasks/<id>` inspect task assets.
-- `akm task explain <ref>` prints a task's declared inputs, resolved target,
+- `akm doctor explain <ref>` prints a task's declared inputs, resolved target,
   effective execution settings, and schedule bindings without running
-  anything — see [`akm task explain`](#akm-task-explain) above.
+  anything — see [`akm doctor explain`](#akm-task-explain) above.
 - `akm lint --type tasks` reports what `akm task dispatch` would refuse to start
   for a task file: a document that does not parse as task source v4, a version 2/3 file or
   a `version: 4` file still carrying a retired `schedule[].enabled` (the finding
   names `akm migrate apply`, which converts them), a cron that does not parse,
   and a schedule entry whose `inputs` leave a required
   input unsatisfied. It is read-only and needs no configured connection or harness.
-- `akm task add` validates a task source v4 document, writes it, and adds its ref
-  to `scheduler.enabled`, then syncs the OS scheduler entry (as `akm task sync`
+- `akm import <file> --type task` validates a task source v4 file and writes it into the bundle, disabled; it never installs the OS
+  entry. `akm task enable <ref>` activates it.
+- The Deprecated `akm task add` validates a task source v4 document, writes it, and adds its ref
+  to `scheduler.enabled`, then syncs the OS scheduler entry (as `akm doctor scheduler sync`
   does). On a host where that sync fails (no `crontab` on `PATH`, say) the task
   stays saved and the result carries a warning instead of an error. `--params` renders
   typed `inputs:` declarations instead of a `with:` bag; `--schedule` is
   required on every invocation. `--disabled` writes the same source but
   leaves the ref out of the list. `--force` overwrites an existing task of
   the same id; without it add refuses.
-- `akm task history` reads durable run history from `state.db`.
+- `akm doctor log --task <id>` reads durable run history from `state.db`; the Deprecated `akm task history` reads the same.
 - `akm task enable <ref>` / `akm task disable <ref>` change `scheduler.enabled`,
   then sync the OS entry; if the sync fails the change stays and the result warns
-  (`akm task sync` then reports the error).
+  (`akm doctor scheduler sync` then reports the error).
 - Delete the `.yml` source and `akm task disable` its ref; until then dispatch
   reports the missing file.
-- `akm task sync` keeps the one OS entry in step with the list: installed when any
+- `akm doctor scheduler sync` keeps the one OS entry in step with the list: installed when any
   task is enabled, removed when none is, and an installed entry keeps its
   launcher and PATH unless `--rebind`. In the same write it removes akm 0.9's
   per-task rows, except those that name another installation. An

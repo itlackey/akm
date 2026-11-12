@@ -107,7 +107,7 @@ describe("tasks", () => {
       };
       expect(tasks.list().tasks[0]?.enabled).toBe(true);
       expect(result.sync.entry).toBe("unmanaged");
-      expect(result.warnings.join(" ")).toContain("akm task sync");
+      expect(result.warnings.join(" ")).toContain("akm doctor scheduler sync");
     } finally {
       cron.restore();
     }

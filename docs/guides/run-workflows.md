@@ -12,26 +12,26 @@ see [Scheduling](scheduling.md).
 
 ## Start or continue a run
 
-`akm workflow run <workflows/ref>` always starts a new persisted run, and
-`akm workflow run <run-id>` continues that exact run. Either way it executes
+`akm run <workflows/ref>` always starts a new persisted run, and
+`akm run <run-id>` continues that exact run. Either way it executes
 until completion, failure, verification rejection, interruption, or an
 explicit invocation limit. A run is identified by its run id and a workflow by
 its ref; the directory you run from never matters, so `akm workflow list` and
 `akm workflow status` show the same runs from anywhere.
 
 If other runs of the same ref are still active, a start says so in one
-warning that names their ids and the `akm workflow run <id>` /
+warning that names their ids and the `akm run <id>` /
 `akm workflow abandon <id>` commands. Starting is never refused.
 `akm workflow resume <id>` is only for a blocked or failed run: it re-activates
-the run so `akm workflow run <id>` can continue it.
+the run so `akm run <id>` can continue it.
 
 Every new run compiles its source and freezes the plan (`irVersion: 8`) before
 publishing the run. A workflow ref is a Markdown `.md` source.
 
 ```sh
-akm workflow run workflows/ship-release --version 1.2.3
-akm workflow run workflows/review --changed_files a.ts --changed_files b.ts
-akm workflow run <run-id> --max-retries 2 --timeout 600000
+akm run workflows/ship-release --version 1.2.3
+akm run workflows/review --changed_files a.ts --changed_files b.ts
+akm run <run-id> --max-retries 2 --timeout 10m
 ```
 
 Parameters are accepted on every ref start. They cannot be combined with a run
@@ -120,7 +120,7 @@ drives the now-resumed child:
 ```sh
 akm workflow resume <childRunId>
 akm workflow resume <parentRunId>
-akm workflow run <parentRunId>
+akm run <parentRunId>
 ```
 
 **Nested blocks (composition depth 2+).** The three-command sequence above
@@ -137,7 +137,7 @@ deepest first, then re-run only the root:
 akm workflow resume <grandchildRunId>
 akm workflow resume <childRunId>
 akm workflow resume <rootRunId>
-akm workflow run <rootRunId>
+akm run <rootRunId>
 ```
 
 The status tree prints `resume`/`then` commands on each blocked node, but
@@ -191,14 +191,14 @@ akm workflow resume <run-id>
 
 Flips a `blocked` or `failed` run back to `active`. Completed runs cannot be
 resumed. Use `akm workflow list` to find runs by status. Once resumed,
-`akm workflow run <run-id>` continues it — units already journaled as
+`akm run <run-id>` continues it — units already journaled as
 completed are skipped, not re-run (see
 [Architecture: Resume skips completed units](../architecture/workflow-engine.md#resume-skips-completed-units)).
 
 A resume consumes the frozen plan and journaled attempts; it does not re-read
 configuration or the index, and reads the authored workflow only to warn once
 when it changed since the run was frozen (the run continues on the frozen
-plan; `akm workflow run <ref>` starts a new run that picks up the edit). A plan
+plan; `akm run <ref>` starts a new run that picks up the edit). A plan
 frozen by an earlier release that this akm can decode runs with a warning. A
 stored plan this akm cannot decode is abandoned with a message naming how to
 start a new run.
@@ -214,15 +214,15 @@ run's status — `resume` can still reopen it later if you change your mind.
 
 ## Follow a run's events
 
-There is no `akm workflow watch`. `akm log --run <run-id>` reads the
+There is no `akm workflow watch`. `akm doctor log --run <run-id>` reads the
 `workflow_*` / `workflow_unit_*` events from the general append-only events
 stream: `--since '@offset:<id>'` gives a durable row-id cursor a cooperating
 process can poll from.
 
 ```sh
-akm workflow run <run-id> &                                  # engine in one shell
-akm log --run <run-id> --since '@offset:0'                   # backlog so far
-akm log --run <run-id> --since '@offset:<nextOffset>'        # poll for more, from the prior call's nextOffset
+akm run <run-id> &                                  # engine in one shell
+akm doctor log --run <run-id> --since '@offset:0'                   # backlog so far
+akm doctor log --run <run-id> --since '@offset:<nextOffset>'        # poll for more, from the prior call's nextOffset
 ```
 
 Event metadata carries ids, statuses and counts, not step text.
@@ -230,12 +230,12 @@ Event metadata carries ids, statuses and counts, not step text.
 ## Security: workflow sources are executed code
 
 Workflow steps that include shell commands run with **the full filesystem and
-network access of the user invoking `akm workflow run`** — same as if the user
+network access of the user invoking `akm run`** — same as if the user
 had typed those commands in their shell. There is no sandbox and no separation
 between trusted and untrusted workflows. An `exec` unit's *environment* is
 yours
 ([Workflow Schema](../reference/workflow-schema.md#the-childs-environment)):
-every variable of the process that ran `akm workflow run` reaches the command,
+every variable of the process that ran `akm run` reaches the command,
 credentials included. AKM
 directly orchestrates workflows as a defined execution surface — it does not
 blindly execute arbitrary indexed content — but that orchestration still runs
@@ -250,7 +250,7 @@ The consequence is that **you should treat workflow sources the same way you
 treat package dependencies**:
 
 - **Only add workflow sources you trust.** `akm bundle add github:<some-user>/<bundle-repo>`
-  followed by `akm workflow run workflows/<their-thing>` is functionally
+  followed by `akm run workflows/<their-thing>` is functionally
   equivalent to piping a stranger's bash script into your shell. Read the
   workflow file first (`akm show workflows/<name>`) before running it.
 - **Audit before run** for any workflow that touches secrets, deploys to
@@ -262,7 +262,7 @@ treat package dependencies**:
   source can become hostile if its upstream is compromised.
 - **Workflow steps cannot escape this trust model** by being labeled
   `dryRun` or `interactive` — those flags affect bookkeeping, not execution.
-  `akm workflow status` is read-only; `akm workflow run` executes configured
+  `akm workflow status` is read-only; `akm run` executes configured
   units with your process's access.
 
 If you operate a CI runner or shared host where untrusted workflows might be

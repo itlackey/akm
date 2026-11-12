@@ -35,6 +35,7 @@ import {
   runPendingStateMigrationsCheck,
   SESSION_EXTRACTION_LEDGER_WINDOW_DAYS,
 } from "./health/checks";
+import { collectCliUsageStoreAdvisory } from "./health/cli-usage-store";
 import { runConnectionsAndHarnessesCheck } from "./health/connections-and-harnesses-check";
 import { collectDataDirUsageAdvisory } from "./health/data-dir-usage";
 import { collectEgressAdvisory, type EgressConfigView } from "./health/egress";
@@ -435,6 +436,14 @@ function gatherAncillaryAdvisories(
     // Non-fatal.
   }
 
+  // A corrupt CLI usage store silently stops collection (capture is fail-open); report it.
+  try {
+    const usageStore = collectCliUsageStoreAdvisory();
+    if (usageStore) advisories.push(usageStore);
+  } catch {
+    // Non-fatal.
+  }
+
   // #831: flag indexed assets whose resolved type disagrees with the type
   // their containing directory declares (see health/type-directory-check.ts).
   // Best-effort — an unreadable index must not abort the health report.
@@ -725,7 +734,7 @@ function readOnlyStateDbUnavailable(stateDbPath: string): HealthCheckResult | un
       status: "fail",
       confidence: "high",
       // Name both the CLI action and its Desktop equivalent.
-      message: `state.db does not exist at ${stateDbPath}: nothing has recorded state yet, and a read-only health run does not create it. Index the library (Settings → Bundles & index → Update / reindex, or \`akm index\`) or run any akm command that records state, such as \`akm health\`.`,
+      message: `state.db does not exist at ${stateDbPath}: nothing has recorded state yet, and a read-only health run does not create it. Index the library (Settings → Bundles & index → Update / reindex, or \`akm index\`) or run any akm command that records state, such as \`akm doctor\`.`,
       evidence: { path: stateDbPath },
     };
   }

@@ -11,6 +11,9 @@
  * autonomy is never inferred from a partially-written config.
  */
 import { z } from "zod";
+import { ImproveWhereSchema } from "./improve";
+import { ImproveProfileConfigSchema } from "./improve-processes";
+import { engineName } from "./primitives";
 
 export const ExperimentalConfigSchema = z
   .object({
@@ -28,5 +31,19 @@ export const ExperimentalConfigSchema = z
      * purpose, and it has its own `sync.push: false` / `--no-push` controls.
      */
     improveAutonomy: z.boolean().optional(),
+    /**
+     * The research learning controls, under the paths `improve.*` has for them. `strategies` is
+     * `improve.strategies` (custom strategies, process `enabled`, `allowedTypes`, quality-gate toggles, reflect
+     * `defectFilter`, extract triage and session indexing, triage `applyMode` and `judgment`, the CLS knobs and the
+     * rest of a strategy); `qualityGate` is `improve.qualityGate` (where the judge runs). Each reads as the same key
+     * under `improve`; when both are set to different values this one wins, with a warning.
+     */
+    learning: z
+      .object({
+        strategies: z.record(engineName, ImproveProfileConfigSchema).optional(),
+        qualityGate: ImproveWhereSchema.optional(),
+      })
+      .passthrough()
+      .optional(),
   })
   .passthrough();

@@ -30,6 +30,7 @@ import type {
 } from "./config-types";
 import { isOpaqueSchema, resolveSchemaAt } from "./config-walker";
 import { deepMergeConfig, isPlainObject } from "./deep-merge";
+import { readLearningAliases } from "./learning-aliases";
 import { ImproveConfigSchema } from "./schema/improve";
 import { dropUnusableProjects } from "./schema/projects";
 import { RegistryConfigEntrySchema } from "./schema/sources-bundles";
@@ -259,11 +260,14 @@ export function buildEffectiveConfig(localRaw: Record<string, unknown>, sourcePa
       "INVALID_CONFIG_FILE",
     );
   }
-  const chained = dropInvalidImproveBase(
-    dropRetiredOutputFormat(
-      dropUnusableProjects(
-        dropDanglingDefaultBundle(
-          dropUnusableEntries(resolveBundlePaths(dropUnusableProjects(localRaw, sourcePath), sourcePath), sourcePath),
+  const chained = readLearningAliases(
+    dropInvalidImproveBase(
+      dropRetiredOutputFormat(
+        dropUnusableProjects(
+          dropDanglingDefaultBundle(
+            dropUnusableEntries(resolveBundlePaths(dropUnusableProjects(localRaw, sourcePath), sourcePath), sourcePath),
+            sourcePath,
+          ),
           sourcePath,
         ),
         sourcePath,

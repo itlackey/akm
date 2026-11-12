@@ -336,7 +336,7 @@ async function setTaskActivation(
 
 /**
  * Sync the OS entry after a task change is saved. A host with no usable scheduler (no `crontab`, a refusal) warns:
- * the change stays saved, and an explicit `akm task sync` still fails loudly.
+ * the change stays saved, and an explicit `akm doctor scheduler sync` still fails loudly.
  */
 async function syncAfterSave(
   deps: TaskSyncDeps | undefined,
@@ -347,7 +347,9 @@ async function syncAfterSave(
     if (!(err instanceof ConfigError)) throw err;
     const reason = err.message.replace(/\.$/, "");
     return {
-      warnings: [`Task saved, but the OS scheduler was not updated: ${reason}. Fix that, then run \`akm task sync\`.`],
+      warnings: [
+        `Task saved, but the OS scheduler was not updated: ${reason}. Fix that, then run \`akm doctor scheduler sync\`.`,
+      ],
     };
   }
 }
@@ -370,7 +372,7 @@ export async function akmTasksHistory(input: {
   return { rows: readTaskHistory({ id, limit }) };
 }
 
-/** What `akm task sync` did to the one dispatch entry. `unmanaged`: this installation does not own the OS scheduler. */
+/** What `akm doctor scheduler sync` did to the one dispatch entry. `unmanaged`: this installation does not own the OS scheduler. */
 export type TaskSyncEntryOutcome = "installed" | "updated" | "unchanged" | "removed" | "absent" | "unmanaged";
 
 export interface TasksSyncResult {
@@ -511,7 +513,7 @@ async function planSync(
           keptLegacy: [],
           warnings: [
             `This akm is carried inside another package or app (${launcher.argv.join(" ")}), which moves or changes when it updates, so akm did not write the scheduler entry from it. ` +
-              "If you run a separate akm, run `akm task sync` from it; otherwise run `akm task dispatch` every minute from your own supervisor (cron, supercronic, a systemd timer).",
+              "If you run a separate akm, run `akm doctor scheduler sync` from it; otherwise run `akm task dispatch` every minute from your own supervisor (cron, supercronic, a systemd timer).",
           ],
         },
       };
@@ -527,7 +529,7 @@ async function planSync(
     }
     if (entry && launcher.via === "checkout") {
       warnings.push(
-        `The scheduler entry now runs akm from a source checkout (${launcher.argv.join(" ")}); it runs whatever the checkout holds when it fires. Install akm with \`npm install --global akm-cli\` or a standalone release, then run \`akm task sync --rebind\`.`,
+        `The scheduler entry now runs akm from a source checkout (${launcher.argv.join(" ")}); it runs whatever the checkout holds when it fires. Install akm with \`npm install --global akm-cli\` or a standalone release, then run \`akm doctor scheduler sync --rebind\`.`,
       );
     }
   }
@@ -568,7 +570,7 @@ export interface TasksDoctorResult {
     taskIds: string[];
     status: string[];
   }>;
-  remediation?: "akm task sync" | "akm task sync --rebind";
+  remediation?: "akm doctor scheduler sync" | "akm doctor scheduler sync --rebind";
   logDir: string;
   scheduleSubset: string;
   warnings: string[];
@@ -608,7 +610,7 @@ export async function akmTasksDoctor(
           status: inspectLauncher(inspection.entry.launcher),
         });
       } else if (enabledIds.length > 0) {
-        warnings.push("Tasks are enabled but the scheduler entry is not installed: run `akm task sync`.");
+        warnings.push("Tasks are enabled but the scheduler entry is not installed: run `akm doctor scheduler sync`.");
       }
       if (inspection.legacy.length > 0) {
         bindings.push({ argv: [], taskIds: inspection.legacy.map((row) => row.id).sort(), status: ["legacy"] });
@@ -630,9 +632,9 @@ export async function akmTasksDoctor(
     caller: invocation,
     bindings,
     ...(unhealthy
-      ? { remediation: "akm task sync --rebind" as const }
+      ? { remediation: "akm doctor scheduler sync --rebind" as const }
       : legacyOnly
-        ? { remediation: "akm task sync" as const }
+        ? { remediation: "akm doctor scheduler sync" as const }
         : {}),
     logDir: getTaskLogDir(),
     scheduleSubset: SCHEDULE_SUPPORTED_SUBSET_HINT,

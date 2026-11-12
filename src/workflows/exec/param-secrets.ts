@@ -61,7 +61,7 @@ function valueLooksSecret(value: string): boolean {
 }
 
 const MOVE_TO_ENV =
-  "Workflow params are copied verbatim into every native unit execution context and returned in `akm workflow run` and " +
+  "Workflow params are copied verbatim into every native unit execution context and returned in `akm run` and " +
   "`akm workflow status` output — move secrets to an env binding (`env:` ref), whose value native execution resolves " +
   "only at dispatch instead of storing it as a run param.";
 

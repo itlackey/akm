@@ -74,7 +74,7 @@ describe("collectSchedulerBinaryAdvisory (#953)", () => {
     expect(result.status).toBe("warn");
     expect(result.message).toContain("0.9.32");
     expect(result.message).toContain("0.10.0");
-    expect(result.message).toContain("akm task sync --rebind");
+    expect(result.message).toContain("akm doctor scheduler sync --rebind");
     expect(result.evidence).toMatchObject({ scheduledVersion: "0.9.32", cliVersion: "0.10.0" });
   });
 

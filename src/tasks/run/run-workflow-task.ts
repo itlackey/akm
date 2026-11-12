@@ -33,7 +33,7 @@ import type { TaskRunResult, TaskRunStatus } from "./task-result";
  * Whole-run timeout applied to a workflow-bound task that does not declare its
  * own `timeoutMs` — six hours.
  *
- * `akm workflow run` deliberately has NO default `--timeout`: a human is
+ * `akm run` deliberately has NO default `--timeout`: a human is
  * watching, and Ctrl-C aborts the very same signal the flag's timer would.
  * A scheduled task has nobody watching. Without a default, its only bound is
  * the per-unit timeout — and a frozen plan may set `timeout: null` (unbounded),
@@ -81,12 +81,12 @@ export async function runWorkflowTask(input: {
 
   // Unset → the unattended default; `null` → the explicit no-timeout opt-out.
   const timeoutMs = task.timeoutMs === undefined ? DEFAULT_WORKFLOW_TASK_TIMEOUT_MS : task.timeoutMs;
-  // The shared deadline `akm workflow run --timeout` also arms
+  // The shared deadline `akm run --timeout` also arms
   // ({@link armAbortDeadline}): one AbortController for the run's lifetime,
   // aborted by a timer. The engine reads `options.signal` at every step
   // boundary and breaks GRACEFULLY — in-flight units are cancelled, the journal
   // and the run lease are retained, and the run is left `active`, i.e.
-  // continuable with `akm workflow run <run-id>`.
+  // continuable with `akm run <run-id>`.
   const controller = new AbortController();
   const deadline = armAbortDeadline(controller, {
     timeoutMs,
@@ -145,7 +145,7 @@ export async function runWorkflowTask(input: {
       ? undefined
       : new Error(
           `Workflow run timed out after ${timedOutAfterMs}ms and was aborted at a step boundary` +
-            (detail?.id ? ` — continue it with \`akm workflow run ${detail.id}\`.` : "."),
+            (detail?.id ? ` — continue it with \`akm run ${detail.id}\`.` : "."),
         );
 
   // One failure value for the three sinks below (status, log line, history

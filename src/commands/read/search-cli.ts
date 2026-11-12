@@ -140,6 +140,27 @@ export const searchCommand = defineJsonCommand({
   },
 });
 
+/**
+ * `akm doctor metrics assets`: `search --by-usage` under the doctor's reports.
+ * Same scope flags, handler and result as `search`, with the query and the
+ * `--by-usage` switch fixed.
+ */
+const { query: _query, "by-usage": _byUsage, ...assetsArgs } = searchCommand.args as unknown as Record<string, unknown>;
+export const doctorMetricsAssetsCommand = defineJsonCommand({
+  meta: {
+    name: "assets",
+    description:
+      "List the assets shown in the project (any project with --project none), most shown first. No usage is recorded",
+  },
+  args: assetsArgs as never,
+  async run(context) {
+    await searchCommand.run?.({
+      ...context,
+      args: { ...(context.args as object), query: "", "by-usage": true },
+    } as never);
+  },
+});
+
 /** `--from` is repeatable; citty keeps only the last value, so read every occurrence from argv. */
 function fromValues(parsed: unknown): string | string[] | undefined {
   const all = parseAllFlagValues("--from");
@@ -186,7 +207,7 @@ export const curateCommand = defineJsonCommand({
     belief: { ...beliefArg, default: "current" },
     "max-tokens": {
       type: "string",
-      description: "Pack full content within this shared token budget (alias for --pack)",
+      description: "Pack full content within this shared token budget (replaces --pack)",
     },
     pack: {
       type: "string",
@@ -269,11 +290,12 @@ export const showCommand = defineJsonCommand({
     },
     outline: {
       type: "boolean",
-      description: "Show the outline and brief metadata without the body (alias for --detail brief)",
+      description: "Show the outline and brief metadata without the body (replaces --detail brief)",
     },
     lead: {
       type: "boolean",
-      description: "Add the document lead to a Markdown fragment (alias for --context lead)",
+      description:
+        "Add the document lead to a Markdown fragment. Replaces --context lead; with --detail brief it is a usage error (--detail brief --context lead still works)",
     },
     context: {
       type: "string",

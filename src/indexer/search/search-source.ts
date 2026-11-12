@@ -298,7 +298,7 @@ export function isEditable(filePath: string, config?: AkmConfig, sources?: Searc
  * unconditionally returns the hint string.
  */
 export function buildEditHint(ref: string): string {
-  return `This asset is read-only under current AKM source policy. To make an editable copy, run: akm clone ${ref}`;
+  return `This asset is read-only under current AKM source policy. To make an editable copy, run: akm import ${ref} --asset-ref`;
 }
 
 // ── Validation ──────────────────────────────────────────────────────────────

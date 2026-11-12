@@ -54,6 +54,8 @@ export interface TaskRunResult {
     | { kind: "unknown" };
   /** Workflow run id (for workflow targets) or agent reason/error (for command targets). */
   detail?: { runId?: string; reason?: string; error?: string; exitCode?: number | null };
+  /** Whether the OS scheduler or a person/script started the run; read back from task history, absent when not recorded. */
+  trigger?: "schedule" | "manual";
   /** Secret-free optimistic-lowering diagnostics for command (agent/LLM) targets. */
   notices?: readonly Readonly<LoweringNotice>[];
 }

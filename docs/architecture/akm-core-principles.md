@@ -97,7 +97,7 @@ form is named once, with `akm migrate apply` (which `akm upgrade` runs), and is
 not converted; a task source or config older than the 0.9.32 floor stops the
 command and names the recipe. What happens to data from a newer release differs by
 format (a newer index layout or frozen plan is refused with "upgrade akm";
-`state.db` and `config.json` warn and continue, and `akm health` reports the
+`state.db` and `config.json` warn and continue, and `akm doctor` reports the
 config skew), so [Persisted-Data Compatibility](persisted-data-compat.md)
 states the rule per format. Readers that still carry their own conversion, such
 as the frozen-plan decoder, are listed there and move to the converter as they

@@ -219,7 +219,7 @@ Examples:
 URI schemes are **not** asset refs. Install locators like `github:owner/repo`,
 `git+https://...`, `npm:@scope/pkg`, and `./local/path` are a
 separate grammar parsed by `parseRegistryRef` in `src/registry/resolve.ts` and
-consumed by `akm bundle add` and `akm clone`.
+consumed by `akm bundle add` and `akm import --asset-ref`.
 
 ---
 
@@ -304,7 +304,7 @@ Local show flow (`src/commands/read/show.ts`):
 A friendly heading fragment (`#authentication`) selects a section of the live
 file. An opaque `#akm-fragment-...` selector resolves against the safe Markdown
 revision persisted in `entry_fragments`, so it stays consistent if the
-materialized file changes before it is reindexed. The opt-in `--context lead`
+materialized file changes before it is reindexed. The opt-in `--lead`
 projection assembles the first and selected fragments from that same indexed
 revision under a character budget (`--max-chars` or `--max-tokens`), labels the
 selected match, and keeps it last. Opaque and contextual show JSON exposes the
@@ -386,7 +386,7 @@ a different one is a usage error. This applies, for example, to env/secret
 mutations, ref-scoped improve, and qualified `--supersedes` refs on
 remember/import.
 
-`akm clone` uses the same managed write-target fallback and accepts
+`akm import --asset-ref` uses the same managed write-target fallback and accepts
 `--bundle` for an explicit managed destination. `--dest` is the unmanaged
 path escape hatch: it bypasses managed target resolution and cannot be
 combined with `--bundle`.
@@ -495,7 +495,7 @@ ordinary `NotFoundError` (exit 1).
 | `TransientError` (`kind: "transient"`) — another akm process holds a lock; retry shortly | 75 |
 | unclassified / non-`AkmError` (INTERNAL) | 70 |
 
-`akm health` exits 4 when it reports a warning (`EXIT_CODES.HEALTH_WARN`).
+`akm doctor` exits 4 when it reports a warning (`EXIT_CODES.HEALTH_WARN`).
 
 ---
 
@@ -516,7 +516,7 @@ What runs where follows from the kind of work:
   `remember --enrich`) runs on the default connection as a direct request to its
   endpoint; with no connection, on the default harness, with its tools restricted
   where the harness can be.
-- **Agent work** (`akm agent`, `command`, `proposal new`, agent tasks,
+- **Agent work** (`akm run` on an agent or command ref, `proposal new`, agent tasks,
   workflow agent steps) runs on the default harness; with no harness, on **akm's
   own runtime** over the default connection. The runtime is a pinned OpenCode 2
   binary that akm runs as a process, has no name in config, and is not a harness.
@@ -535,8 +535,7 @@ adapter-rendered or anonymous work
   -> runExecution(built, options)     -> harness program, akm's OpenCode runtime, or direct chat
 ```
 
-`resolveExecution` asks `resolveTarget` (the one resolver; `akm health`, `akm
-info` and `akm task explain` use it too, so what they print is what a call does)
+`resolveExecution` asks `resolveTarget` (the one resolver; `akm doctor`, `akm doctor info` and `akm doctor explain` use it too, so what they print is what a call does)
 for the connection or harness and the model, then merges one set of defaults,
 nearest wins. The layers run farthest to nearest: the shipped alias for the kind
 of work, the configuration for the process, the persona, the command, the
@@ -549,7 +548,7 @@ and the model entry's are sent as written, under the portable settings
 (`temperature`, `maxTokens`, ...) the layers ask for, which the one translation
 in `src/core/llm-inference.ts` writes in the endpoint's own spelling. Omitted,
 explicit `null`, zero, and empty values stay distinct. The result's
-`provenance` names the layer behind each field (`akm task explain`,
+`provenance` names the layer behind each field (`akm doctor explain`,
 `command --dry-run`).
 
 An agent asset is a persona (a system prompt), not executable work. An
@@ -596,7 +595,7 @@ boundary. Markdown workflows compile through source IR v1; new starts freeze
 recorded an engine. A stored plan that decodes runs whatever release froze it
 (plans with only exec steps from `irVersion` 5 on decode); one that does not,
 which includes every earlier plan with a command step, is marked abandoned and
-`akm workflow run <ref>` starts afresh. Only a plan a newer akm froze is
+`akm run <ref>` starts afresh. Only a plan a newer akm froze is
 refused, naming the upgrade. AKM does not support full GitHub Actions semantics
 or arbitrary remote action execution.
 
@@ -705,7 +704,7 @@ Agent programs are reachable by two execution paths, both behind
   runs here: on a connection it is a direct request to its endpoint.
 - Every session is stored in akm's own OpenCode database
   (`<akm data dir>/opencode-runtime/data/opencode/opencode.db`), which `akm
-  proposal extract --type opencode` reads back with SQLite alone, beside your own
+  proposal extract --sessions opencode` reads back with SQLite alone, beside your own
   OpenCode's database.
 - Nobody can answer an akm run: OpenCode's headless `run` cancels questions and
   rejects permission requests, and the model carries on.
@@ -750,7 +749,7 @@ expires by age. There is no shared barrier or activity registry around them;
 | `src/integrations/agent/runner-dispatch.ts` | `runExecution`: reads credentials at dispatch, runs harness / runtime / chat, redacts the result |
 | `src/integrations/agent/request-lowering.ts` | lowers a resolved request for a harness or the runtime, reporting what the target cannot carry |
 | `src/integrations/harnesses/` | `HARNESS_REGISTRY` and one folder per harness (thin shells that turn a request into argv, env and stdin) |
-| `src/commands/targets.ts` | the table of connections, harnesses and the work on them that `akm health`, `akm info` and `akm setup` print |
+| `src/commands/targets.ts` | the table of connections, harnesses and the work on them that `akm doctor`, `akm doctor info` and `akm setup` print |
 | `src/sources/provider.ts` | minimal `SourceProvider` interface |
 | `src/sources/providers/` | filesystem / git / website / npm implementations |
 | `src/sources/resolve.ts` | filesystem path resolution for refs |

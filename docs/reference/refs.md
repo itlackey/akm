@@ -27,7 +27,7 @@ Examples: `scripts/deploy.sh`, `agents/reviewer`, `knowledge/api-guide`,
 `personal//knowledge/guide`, `knowledge/api-guide#authentication`.
 
 Source locators like `github:owner/repo` and `npm:@scope/pkg` are **install
-refs**, a distinct grammar for `akm bundle add` and `akm clone`. They are not
+refs**, a distinct grammar for `akm bundle add` and `akm import --asset-ref`. They are not
 asset refs and `akm show` does not accept them.
 
 The full grammar, fragment resolution rules and reserved names are in

@@ -11,7 +11,7 @@ where.
 - **Your model connections and embedding endpoint** (`connections` and
   `embedding` in [Configuration](configuration.md)) receive the prompts and
   asset content that `improve`, `proposal new`, `index`, enrichment and the
-  other model-backed features send. `akm setup`, `akm models` and `akm health`
+  other model-backed features send. `akm setup`, `akm models` and `akm doctor`
   ask each endpoint which models it serves. Your API key is sent only to the
   endpoint of the connection it belongs to.
 - **A harness you enable** (Claude Code, Codex, OpenCode, ...) is a program akm
@@ -40,7 +40,7 @@ where.
   metadata and downloads) and `api.github.com`. It attaches `GITHUB_TOKEN`,
   `GH_TOKEN`, or the output of `gh auth token` to GitHub API requests. Its
   plugin step runs `npm view` and the `claude`, `codex` or `opencode` CLIs.
-- **`akm health`**, unless you pass `--no-probe`, sends a reachability probe to
+- **`akm doctor`**, unless you pass `--no-probe`, sends a reachability probe to
   each connection's endpoint, runs each harness's `--version`, calls
   `api.github.com` to compare your version with the latest release, and runs
   `git ls-remote --symref` against the remote of an installed Claude plugin
@@ -95,7 +95,7 @@ only the file and its lock).
 | `opencode-runtime/` | Everything akm's own agent runtime keeps: OpenCode's `config/` (with akm's plugin), `data/` (logs, repositories, shell output, and `data/opencode/opencode.db`, the runtime's sessions, which `akm proposal extract --type opencode` reads back, read-only), `cache/`, `state/` and `tmp/` (the binary's own native pieces). Recreated on next use; deleting it loses the runtime's session history. |
 
 If akm cannot read this directory, commands fail with `DATA_DIR_UNREADABLE`
-(exit 78) naming the path; `akm health` still runs and reports it.
+(exit 78) naming the path; `akm doctor` still runs and reports it.
 If the directory is read-only (an agent sandbox that only allows writes in the
 workspace, for example), `akm feedback` fails with `DATA_DIR_NOT_WRITABLE`
 instead of reporting success for feedback it could not store.
@@ -148,7 +148,7 @@ regenerable. akm also writes into it:
   refs returned. `akm env run`, a workflow unit's `env:` binding and
   `akm secret run` record the names of the keys injected, not their values.
 - **Usage records**: queries, search impressions, show/curate engagement and
-  feedback. They feed utility scores and `akm metrics`, and the feedback recorded
+  feedback. They feed utility scores and `akm doctor metrics`, and the feedback recorded
   as the user adjusts search ranking. Each record is stamped with its source
   (`user`, `improve`, `task`, `audit` or `unknown`); only `user` records count.
   When akm runs under an agent harness it can recognize (the same detection
@@ -168,12 +168,12 @@ regenerable. akm also writes into it:
 readers must treat it as optional.
 
 `search` metadata carries `source` (the usage source that ran it) and `searchId`
-(a UUID). A `select` copies both from the search it followed, and `akm metrics`
+(a UUID). A `select` copies both from the search it followed, and `akm doctor metrics`
 counts one select per (`searchId`, ref). Events written before these fields
 existed have neither: they are counted as recorded, for every source, and
-`akm metrics` notes the day deduplication starts.
+`akm doctor metrics` notes the day deduplication starts.
 
-Event types, for `akm log --type <type>`:
+Event types, for `akm doctor log --type <type>`:
 
 - Bundles and assets: `add`, `remove`, `update`, `remember`, `import`
 - Retrieval and sync: `search`, `curate`, `show`, `select`, `feedback`, `sync`,
@@ -199,15 +199,15 @@ Events and improve run rows older than 90 days are purged by `akm improve`
 are purged on `akm index`. A purge removes whole UTC days, and only days
 already folded into `metrics.db`: before it deletes anything, each closed UTC
 day is folded there, and if `metrics.db` cannot be opened or written nothing is
-purged and akm warns once. `akm metrics` and `akm health` read the days older
-than `state.db`'s raw rows from `metrics.db`. Read these with `akm log`,
-`akm metrics`, `akm proposal list` and `akm task history`.
+purged and akm warns once. `akm doctor metrics` and `akm doctor` read the days older
+than `state.db`'s raw rows from `metrics.db`. Read these with `akm doctor log`,
+`akm doctor metrics`, `akm proposal list` and `akm doctor log --task <id>`.
 
 What `metrics.db` keeps, per UTC day: event counts by type; LLM calls by stage,
 process, engine, model and outcome (calls, tokens, time, and a duration
 histogram); usage by event type, source and ref; queries with their result
 counts; feedback tag counts; selects per ref (deduped per search); search and
-index duration histograms; the `improve_skipped` tallies `akm health` counts;
+index duration histograms; the `improve_skipped` tallies `akm doctor` counts;
 and every improve run, whole except that its list of strategy-filtered refs is
 kept as a count. What is gone once a day is folded and its raw rows pass the
 retention: individual LLM calls, individual query and ref rows and their order,
@@ -243,10 +243,10 @@ sent anywhere, and it is outside learning, feedback and ranking.
 ## Inspect and clear
 
 ```sh
-akm metrics                                   # usage report for the last 30 days
-akm log --type search --limit 20              # recent events
+akm doctor metrics                                   # usage report for the last 30 days
+akm doctor log --type search --limit 20              # recent events
 akm proposal list                             # pending proposals
-akm info                                      # where config, bundle, cache and index live
+akm doctor info                                      # where config, bundle, cache and index live
 ```
 
 ```sh

@@ -100,6 +100,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `akm help <command...>` prints the same help as `akm <command...> --help`, also for one quoted argument (`akm help "bundle add"`); `akm help help` prints help's own help; an unknown command is an error whose hint names `akm <command> --help`.
 - Root help: a short concept list (bundle, registry, connection, harness, project) replaces the closing bundle paragraph, and the version sits on the first line instead of the last exit-code line. `akm improve --help` no longer lists `report` as a trailing argument in its USAGE line.
 
+## [0.10.261120] - 2026-11-12
+
+### Deprecated
+
+- The `extends` config key is Deprecated and removed in 0.11: a config that sets it now prints one line to stderr per process (`--quiet` silences it), and `extends` works as before. Copy the inherited settings into the config file; `config get <key> --show-source` shows which keys come from the base.
+
+### Fixed
+
+- `akm upgrade` no longer holds the CLI to the akm version an OpenCode plugin pins, and a `--channel` switch leaves any component (akm, each plugin, the Claude Code and Codex marketplaces) untouched when the channel's newest build is not newer than the installed one, instead of failing. The result no longer carries `lockstep`; releasing akm does not need a plugin release.
+- Time-window reads of `usage_events` (`activity.events`, `akm metrics`, the retention delete) no longer scan the whole table: state.db migration `030-usage-events-created-at-index` adds an index on `datetime(created_at)`. Results are unchanged and no row is rewritten; an older akm opening the file warns once about the newer ledger and keeps working.
+
 ## [0.10.261119] - 2026-11-12
 
 ### Added

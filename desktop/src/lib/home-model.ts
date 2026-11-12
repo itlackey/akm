@@ -5,7 +5,7 @@
 import type { ActivityOverview, ActivityPulse } from "./activity-types";
 
 export const healthCheckAnchor = (name: string) => `health-check-${encodeURIComponent(name)}`;
-/** What each `akm health` check looks at, in words; a check this Desktop does not know keeps its id, spaced out. */
+/** What each `akm doctor` check looks at, in words; a check this Desktop does not know keeps its id, spaced out. */
 export const checkLabels: Record<string, string> = {
   "state-db-readable": "State database readable",
   "state-db-schema": "State database schema",

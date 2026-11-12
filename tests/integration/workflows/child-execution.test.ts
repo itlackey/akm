@@ -816,7 +816,7 @@ describe("A-21 — a blocked child blocks the parent RUN, with the exact resume 
       `which is blocked at its own step "${childStepId}". Nothing in this run advances ` +
       `until the child does — a gate is a gate for a child workflow too, so \`akm\` will ` +
       `not resume it for you. Clear it with \`akm workflow resume ${childRunId}\`, then ` +
-      `\`akm workflow resume ${parentRunId}\` and \`akm workflow run ${parentRunId}\` to ` +
+      `\`akm workflow resume ${parentRunId}\` and \`akm run ${parentRunId}\` to ` +
       `continue: re-driving the parent drives the resumed child.`;
     expect(parentStep?.notes).toBe(expectedNotes);
   });

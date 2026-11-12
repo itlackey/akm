@@ -33,8 +33,8 @@ describe("agent guidance on reading a large document (#1259)", () => {
     });
   }
 
-  test("the exit-code table says exit 4 is a health warning from `akm doctor` or `akm health`", () => {
-    expect(EMBEDDED_HINTS).toContain("| 4 | Health warning (`akm doctor` or `akm health`) |");
+  test("the exit-code table says exit 4 is a health warning from `akm doctor`", () => {
+    expect(EMBEDDED_HINTS).toContain("| 4 | Health warning (`akm doctor`) |");
   });
 
   test("`akm show` help names the outline", () => {

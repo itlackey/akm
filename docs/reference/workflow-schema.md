@@ -88,7 +88,7 @@ Running a step whose own target is `kind: "child-workflow"` publishes (or
 finds, if one already exists — see "Identity and retries" below) a child
 run and drives it to completion, or as far as it gets, before the parent
 step is finalized. The drive happens **inline, in the parent's own
-process**: it is the same engine `akm workflow run` uses on the child's
+process**: it is the same engine `akm run` uses on the child's
 frozen plan, not a separately scheduled job. Consequently, whatever aborts
 the parent's own dispatch — `Ctrl-C`, a `--timeout`, or a budget ceiling —
 also aborts the child drive; both runs are left resumable, never partially
@@ -115,7 +115,7 @@ what re-enters the composing step and drives the now-resumed child:
 ```sh
 akm workflow resume <childRunId>
 akm workflow resume <parentRunId>
-akm workflow run <parentRunId>
+akm run <parentRunId>
 ```
 
 **Nested blocks.** The three-command sequence above clears a block exactly
@@ -127,13 +127,13 @@ grandchild, grandchild blocks), resume every blocked run in the chain,
 akm workflow resume <grandchildRunId>
 akm workflow resume <childRunId>
 akm workflow resume <rootRunId>
-akm workflow run <rootRunId>
+akm run <rootRunId>
 ```
 
 **Identity and retries.** A child run's identity is keyed by the parent run,
 the parent unit, and that unit's input hash — publishing is idempotent, so
 re-driving the composing step (an explicit `akm workflow resume` +
-`akm workflow run`) finds and continues the **same** child run rather than
+`akm run`) finds and continues the **same** child run rather than
 starting a new one. Only a change to the composing step's own inputs (params,
 upstream step outputs it reads, or gate feedback from a rejected verification
 loop) produces a different child.
@@ -375,7 +375,7 @@ are stored on the run row and shown by `akm workflow status`, so params are
 by name only through the plan and are resolved from akm's env/secret store
 at dispatch (see [Reference: Env & Secrets](env-and-secrets.md)).
 
-As a best-effort guardrail, `akm workflow run` scans a new run's params for
+As a best-effort guardrail, `akm run` scans a new run's params for
 values that *look* like credentials — secret-suggesting key names (`token`,
 `password`, `apikey`, `credential`, …) or long, high-entropy strings matching
 known token prefixes — and surfaces a warning naming the param path and
@@ -481,7 +481,7 @@ truncated evaluation never reports a value as valid.
 These are enforced identically by the parser, the published JSON Schema, and
 the frozen-plan decoder (they share one set of constants in
 `src/workflows/resource-limits.ts`), so a document that lints clean cannot
-fail later at `akm workflow run`:
+fail later at `akm run`:
 
 | Field | Bound |
 | --- | --- |
@@ -817,7 +817,7 @@ an explicit error is the smaller, more predictable surface.
 An exec unit's command inherits the environment akm runs in, as a command typed in
 your shell would, and nothing is filtered out of it: `PATH`, `HOME`, locale and
 toolchain variables, and any credential or proxy setting of the process that ran
-`akm workflow run` reach the command. It is built in three layers, in this order:
+`akm run` reach the command. It is built in three layers, in this order:
 
 1. akm's own environment, with the config file this akm resolved set over it;
 2. the unit's resolved **`env:` bindings**;
@@ -831,7 +831,7 @@ bundle in `defaultBundle`. A step that runs `akm` therefore uses the same bundle
 config, data, cache and state. Binding one of them in `env:` overrides it. When a scheduled
 task runs the workflow, `AKM_EVENT_SOURCE` is set (when the environment has
 none), so a command that calls `akm` records machine traffic, not user demand; a
-direct `akm workflow run` leaves it as it found it.
+direct `akm run` leaves it as it found it.
 
 Reach a fixed value or a secret with an exact named `env:` binding; what is
 redacted from what the command prints is in the Redaction row of [the exec
@@ -1086,7 +1086,7 @@ doing the work.
 Fail-fast is the default. Per unit (or via `defaults.on_error`):
 
 - `on_error: fail` — the first failed unit fails the step, which fails the
-  run (`akm workflow resume` re-opens it; `akm workflow run` re-dispatches
+  run (`akm workflow resume` re-opens it; `akm run` re-dispatches
   only incomplete units).
 - `on_error: continue` — failures are recorded in the step's results and the
   completion gate decides whether the step passes.
@@ -1106,7 +1106,7 @@ command (see [The output rule](#the-output-rule)).
 ## Gates and verification
 
 **Gates judge the artifact; `max_loops` bounds the retry.** Under
-`akm workflow run`, a step with a body `### gate` rubric is gated on its
+`akm run`, a step with a body `### gate` rubric is gated on its
 **artifact**, not on engine prose: the judge receives the step's artifact as
 canonical JSON (clipped at 4000 characters) alongside the `### gate` section
 byte-exact, so the gate evaluates real results rather than a machine summary

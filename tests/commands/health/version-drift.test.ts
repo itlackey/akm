@@ -85,7 +85,7 @@ describe("collectVersionDriftAdvisory (#950)", () => {
     const beta = await collectVersionDriftAdvisory(true, { cliVersion: "0.10.261117-beta.1", checkForUpdate: check });
     expect(beta.status).toBe("warn");
     expect(beta.message).toContain("0.10.261117-beta.2");
-    expect(beta.message).toContain("run 'akm upgrade --next'");
+    expect(beta.message).toContain("run 'akm upgrade --channel next'");
     const stable = await collectVersionDriftAdvisory(true, { cliVersion: "0.10.261116", checkForUpdate: check });
     expect(stable.message).toContain("run 'akm upgrade'");
     expect(channels).toEqual(["next", "latest"]);

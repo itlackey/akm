@@ -15,7 +15,7 @@ agent selects capability -> agent records outcome -> AKM updates utility and ana
 AKM creates a proposal -> human or policy reviews the diff -> accept / reject / revert
 ```
 
-The user-facing command surface for this loop (`akm feedback`, `akm log`,
+The user-facing command surface for this loop (`akm feedback`, `akm doctor log`,
 `akm improve`, `akm proposal ...`) is documented in
 [Improve the Library](../guides/improve-the-library.md) and
 [CLI Reference](../reference/cli.md). This page covers the implementation
@@ -97,7 +97,7 @@ are Evolving, and the
    a positive or note-only signal never plans one, and neither does a negative whose exact fix has since been accepted as a `feedback` proposal. Distill also runs on the memories the proactive lane plans, with or without feedback, but skips a memory flagged wrong and not edited
    since: a negative feedback in the window judged the body it still has (or,
    recorded without that body's hash, is newer than its file's last write). Unless
-   `--require-feedback-signal` is set, the
+   the strategy turns it off (`processes.proactiveMaintenance.enabled: false`, selected with `--strategy`; the Deprecated `--require-feedback-signal` does the same for one run), the
    proactive-maintenance lane (where the strategy enables it, as `default`
    does) adds the stable assets due for a revisit that the retrieval scope below
    admits, and plans them with the feedback-bearing ones. At most `maxPerRun`
@@ -240,7 +240,7 @@ refuses never reach the judge, and with the gate off nothing does (steps 5-6 of
 
 Content passes only when **every** criterion scores 4 or more. A reflect verdict
 that does not pass is `reviewNeeded` when its mean is 3.5 or more and a rejection
-below that. The floor lives in the reflect judge, so `akm judge reflect.quality`
+below that. The floor lives in the reflect judge, so `akm doctor judge reflect.quality`
 prints the route reflect takes: a revision with `reviewNeeded` is queued for a
 person (reason `judge-uncertain`, with the `scores` and `judgeReason`) and
 records no rejection window, a lower mean is refused (`quality_rejected`), and a
@@ -381,7 +381,7 @@ exactly this path (`proposal drain --promote` without judgment): 0.91 (terra) an
 
 Every downgrade is reported, not silent: it warns on stderr, appends an
 `improve_skipped` event with `reason: "autonomy_gated"`, and is counted in
-`akm health`'s improve skip-reason summary. The `default` strategy enables
+`akm doctor`'s improve skip-reason summary. The `default` strategy enables
 `memoryInference`, so every live `akm improve` run on an install without the
 opt-in warns `[improve] memoryInference skipped` and names
 `experimental.improveAutonomy`. That is by design, because a gated lane is never
@@ -467,7 +467,7 @@ the archive's state, the sweep removes nothing and warns. Every deleted path is
 journaled individually,
 so the end-of-run auto-sync commits the removal the same way it commits the
 archive move itself. A bundle with no `.git` of its own has no history to
-fall back on, so its archive is left untouched — `akm health` reports its
+fall back on, so its archive is left untouched — `akm doctor` reports its
 size and file count instead (`memory-cleanup-archive` advisory,
 `src/commands/health/archive-usage.ts`).
 
@@ -479,7 +479,7 @@ coding-agent session transcripts (`--type claude`, `--type codex`,
 session-log location) into proposals. It runs independently of whether a
 strategy's own `processes.extract` stage is enabled — no shipped strategy turns
 that improve-stage extraction on, and a direct
-`akm proposal extract --type <harness>` or `--auto` invocation does not depend
+`akm proposal extract --sessions <harness>` or `--auto` invocation does not depend
 on that toggle. Session indexing writes `sessions/**` assets
 (`processes.extract.indexSessions`, default on); these writes are additive and
 are not behind the autonomy gate.

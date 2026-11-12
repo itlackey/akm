@@ -194,7 +194,7 @@ check the key is still there.
 
 ## 5. Upgrade
 
-`akm upgrade` (stable) or `akm upgrade --next` (prerelease) updates akm and the
+`akm upgrade` (stable) or `akm upgrade --channel next` (prerelease) updates akm and the
 installed plugins.
 
 ## Gated CI on its own

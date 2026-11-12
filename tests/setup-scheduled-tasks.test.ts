@@ -223,7 +223,7 @@ describe("stepScheduledTasks", () => {
 
     expect(state.logs.at(-1)).toEqual({
       level: "success",
-      message: "Task schedules activated. Verify them with `akm task doctor`.",
+      message: "Task schedules activated. Verify them with `akm doctor`.",
     });
   });
 

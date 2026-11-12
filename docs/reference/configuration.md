@@ -65,7 +65,7 @@ list.
 This key is deliberately local: only the config file itself can activate
 schedules. Prefer `akm task enable <ref>` and `akm task disable
 <ref>` over editing the JSON by hand; both update the allow-list, which dispatch reads on
-the next minute. `akm task sync` installs the one OS entry while the list is non-empty and removes it when it is empty.
+the next minute. `akm doctor scheduler sync` installs the one OS entry while the list is non-empty and removes it when it is empty.
 
 ## Connections
 
@@ -208,7 +208,7 @@ An entry sets any of:
 | `agent` | The harness's native agent to run when a request names none (`claude` and `opencode` only). A request's own agent wins, an agent asset's persona is kept, and model work runs no native agent. |
 | `timeoutMs` | How long a run may take, in milliseconds; `null` runs unbounded. Unset, agent work runs until it finishes and model work stops after 600 000. |
 | `models` | Alias to model name for this harness, over the map akm ships for its platform. See [Aliases](#aliases). |
-| `modelWork` | `false` keeps akm's own model calls (improve, judging, extraction) off this harness when it is the default for them: with no connection to run them on, they are off. A call that names the harness (`--harness`, `improve.harness`) still runs there. Absent or `true`, the default harness takes model calls when no connection does. `akm info` and `akm health` list a harness set this way. |
+| `modelWork` | `false` keeps akm's own model calls (improve, judging, extraction) off this harness when it is the default for them: with no connection to run them on, they are off. A call that names the harness (`--harness`, `improve.harness`) still runs there. Absent or `true`, the default harness takes model calls when no connection does. `akm doctor info` and `akm doctor` list a harness set this way. |
 
 Asset frontmatter cannot set `workspace`, `environment` or opaque `runtime`
 values; those belong to this configuration or to a workflow's environment
@@ -218,7 +218,7 @@ bindings.
 
 What asks for a harness decides how akm runs it.
 
-**Agent work** (`akm agent`, `akm command`, `akm proposal new`, agent tasks and workflow agent steps) runs your program the way you would run it yourself. It gets your environment as it is, with nothing filtered out, and your configuration, plugins, settings and logins as they are. akm sets only its own variables for the run: the config file this akm resolved (`AKM_CONFIG_FILE`, which names the default bundle and, with the `AKM_*_DIR` variables a program inherits, the other locations), so a program that runs `akm` uses the same installation, and, when a task runs it, `AKM_EVENT_SOURCE` (unless already set), so the akm commands the program runs count as machine use, not yours. A workflow unit's or task's own `env:` bindings are set over them. A run given a directory (`--cwd`, a harness's `workspace`) starts there, and `PWD` names it too, as your shell sets it when you `cd` there; OpenCode takes its directory from `PWD`. On the command line, after your `args` as you wrote them, akm adds the model or agent the asset or flag names, the agent asset's persona where the program takes one there, and what the program needs to run without a person at the terminal: its print or exec mode and its approve-all switch where it asks before acting. Codex runs with the sandbox your Codex configuration sets, or the one your `args` name; model work runs it with `--sandbox read-only` (below). The prompt goes on standard input where the program reads it there and on the command line where it does not; standard output is the reply. `akm agent` with no `--prompt` starts the program interactively instead. What akm scrubs from the output it captures is in [Architecture: Connections and Harnesses](../architecture/architecture.md#connections-and-harnesses) and, for a workflow, [Workflow Schema](workflow-schema.md#the-childs-environment).
+**Agent work** (`akm run` on an agent or command ref, `akm proposal new`, agent tasks and workflow agent steps) runs your program the way you would run it yourself. It gets your environment as it is, with nothing filtered out, and your configuration, plugins, settings and logins as they are. akm sets only its own variables for the run: the config file this akm resolved (`AKM_CONFIG_FILE`, which names the default bundle and, with the `AKM_*_DIR` variables a program inherits, the other locations), so a program that runs `akm` uses the same installation, and, when a task runs it, `AKM_EVENT_SOURCE` (unless already set), so the akm commands the program runs count as machine use, not yours. A workflow unit's or task's own `env:` bindings are set over them. A run given a directory (`--cwd`, a harness's `workspace`) starts there, and `PWD` names it too, as your shell sets it when you `cd` there; OpenCode takes its directory from `PWD`. On the command line, after your `args` as you wrote them, akm adds the model or agent the asset or flag names, the agent asset's persona where the program takes one there, and what the program needs to run without a person at the terminal: its print or exec mode and its approve-all switch where it asks before acting. Codex runs with the sandbox your Codex configuration sets, or the one your `args` name; model work runs it with `--sandbox read-only` (below). The prompt goes on standard input where the program reads it there and on the command line where it does not; standard output is the reply. `akm agent` with no `--prompt` starts the program interactively instead. What akm scrubs from the output it captures is in [Architecture: Connections and Harnesses](../architecture/architecture.md#connections-and-harnesses) and, for a workflow, [Workflow Schema](workflow-schema.md#the-childs-environment).
 
 **Model work** (see [Where each process runs](#where-each-process-runs)) is akm's own process, so akm sets the call up as it needs it. The program has the same environment. akm runs it in a scratch directory that it creates for the call and removes after it, stamps the akm commands it runs `improve`, and runs no native agent of yours. Where the program can be restricted, akm also limits its tools. The "Restricted model work" column of the table says on which platforms:
 
@@ -324,10 +324,9 @@ default connection. The npm package and the standalone binary do the same.
   session does not show it; the stop is recorded as any failure is. Only akm's
   own runtime does this; a harness is your program, with whatever limits it has.
 - A run that keeps making different calls is not stopped by that. Its timeout
-  bounds it: the connection's `timeoutMs`, one the run is given (`akm agent
-  --timeout`, `akm workflow run --timeout`, a workflow unit's `timeout`) or,
+  bounds it: the connection's `timeoutMs`, one the run is given (`akm run --timeout`, a workflow unit's `timeout`) or,
   in a scheduled task, the task's `timeout:` (six hours when unset). With none,
-  as for `akm agent` and `akm workflow run` by default, it runs until it
+  as for `akm run` by default, it runs until it
   finishes.
 - Runs that start together, in one akm process or several, wait while the first
   run of this OpenCode version prepares its database alone.
@@ -414,7 +413,7 @@ name:
   that its other fields are ignored.
 
 A kind of work that names no model asks for a default alias: improve's
-processes, extraction and `akm remember --enrich` ask for
+processes, extraction and the Deprecated `akm remember --enrich` ask for
 `fast`; the quality and triage judges and a workflow gate ask for `balanced`;
 agent work asks for `balanced`.
 
@@ -429,12 +428,12 @@ akm's work is of two kinds, and each has a default place to run.
 - **Model work** asks a model for an answer with nobody watching: the improve
   processes (reflect, distill, consolidate, memory inference, extract, and
   validation's repair), the quality and triage judges, the judge of a workflow
-  `### gate`, and `akm remember --enrich`. It runs on the
+  `### gate`, and the Deprecated `akm remember --enrich`. It runs on the
   default connection, as a direct request to the endpoint. With no connection it
   runs on the default harness, unless that harness has `modelWork: false`. On a
   harness it is akm's own process, not your use of the program ([How akm runs a
   harness](#how-akm-runs-a-harness)).
-- **Agent work** runs an agent: `akm agent`, `akm command`, `akm proposal
+- **Agent work** runs an agent: `akm run` on an agent or command ref, `akm proposal
   new`, agent tasks and workflow agent steps. It runs on the default harness.
   With no harness it runs on akm's own runtime, over the default connection.
 
@@ -449,7 +448,7 @@ message names the selector, says it is not configured, lists the configured
 connections (or harnesses) and the nearest name when one is close. Defaults apply only when nothing
 was named, so a call for a private connection is never sent to a remote service,
 nor a call that must not touch files to a harness that can, by a typo, a removed
-entry, or an entry akm ignored when it loaded the config (`akm health` lists
+entry, or an entry akm ignored when it loaded the config (`akm doctor` lists
 what is configured).
 
 A harness is named by its name or by its platform, so a shared asset that says
@@ -499,7 +498,7 @@ exception: a process's own entry is the writer's, so `improve.qualityGate`
 replaces it, and a `reasoning` model chosen for reflect is not the one that
 judges it. A strategy adds no layer: it says which processes run, never where.
 
-`akm health` and `akm info` print this as a table, resolved by the same code the
+`akm doctor` and `akm doctor info` print this as a table, resolved by the same code the
 calls use: for each kind of work, the connection or harness and the model.
 
 ## Workflows
@@ -686,7 +685,7 @@ are applied last, so an explicit `enabled: true` still opts the selected
 strategy in.
 
 These improve-stage defaults do not gate explicit standalone extraction through
-`akm proposal extract --type <harness>` or `akm proposal extract --auto`. The interactive
+`akm proposal extract --sessions <harness>` or `akm proposal extract --auto`. The interactive
 scheduled-task step also continues to offer the bundled `core/extract` template
 as an unselected opt-in; it is not installed merely because the template is
 bundled.
@@ -744,9 +743,9 @@ load (the cache directory is mounted `noexec`), the index reports semantic searc
 local embeddings, `akm setup` offers an endpoint or keyword search,
 `--embedding local` warns and saves keyword search, and a config that turns
 semantic search on anyway gets it reported unavailable for the platform by the
-index and a warning from `akm health`.
+index and a warning from `akm doctor`.
 
-**Without network access**, fill akm's cache directory (`akm info` prints
+**Without network access**, fill akm's cache directory (`akm doctor info` prints
 `cacheDir`; `paths.cache` or `XDG_CACHE_HOME` moves it) before the first `akm index`:
 
 - `onnxruntime/<version>-<platform>-<arch>/` (for example
@@ -1044,6 +1043,52 @@ section, an absent key, and an explicit `false` all read identically as off.
   the commits `akm proposal accept` makes, and the end-of-run `sync.push`
   (which has its own `--no-push` and `sync.push` controls).
 
+### Experimental learning aliases
+
+`experimental.learning.strategies` and `experimental.learning.qualityGate` mirror
+`improve.strategies` and `improve.qualityGate` key for key. They are the
+experimental home of the research learning controls and first ship in
+0.10.261120. The config reader folds them into `improve.*` in memory when it loads
+the file, so the strategy engine sees the one shape it always read. The old
+`improve.*` keys keep working, with the same effective settings, through 0.10.
+
+```jsonc
+{
+  "experimental": {
+    "learning": {
+      "strategies": {
+        "nightly": { "processes": { "reflect": { "limit": 10 } } }
+      }
+    }
+  }
+}
+```
+
+- Objects merge key by key. Any other value under `experimental.learning`
+  replaces the same key under `improve`, so `false`, `0` and `[]` carry through.
+- When both paths set a key to different values, the `experimental.learning`
+  value wins and one warning per key names both paths. Equal values warn nothing.
+- The key adds no behavior by itself. An absent `experimental.learning` leaves
+  every default as it was, and it does not gate `experimental.improveAutonomy`.
+
+Owner decisions on the classification of each learning control (2026-11-12):
+
+| Control | Decision |
+| --- | --- |
+| `improve --require-feedback-signal` | Deprecated, no new key. Use a strategy with `processes.proactiveMaintenance.enabled: false`, selected with `--strategy`. |
+| `remember --auto`, `--enrich` | No replacement and no key. Removed in 0.11. |
+| Bulk proposal controls (`accept`/`reject` `--generator`, `--older-than`, `--max-diff-lines`; `proposal drain` `--max-accepts`, `--older-than`, `--judgment`; `triage.maxAcceptsPerRun`) | Unchanged. Both the filtered accept/reject and drain stay. |
+| `distill.requirePlannedRefs`, `consolidate.maxChunkSize`, `proactiveMaintenance.dueDays` | Research: kept under `experimental`. |
+| `improve.qualityGate` | Research: under `experimental`. Per-process runner overrides and `--connection`, `--harness`, `--model` stay supported. |
+| `--limit` and `reflect.limit` | Supported. Strategy-level `limit` and `consolidate.limit` are removed in 0.11. |
+| Strategy `sync` | Stays in the strategy for 0.10. In 0.11 a per-bundle sync-mode setting replaces it. |
+| `distill.cls.enabled`, `distill.cls.adjacentCount` | Research: kept under `experimental`. |
+| `extract.triage` (`enabled`, `minScore`) | Research: the whole object moves under `experimental`. |
+| `improve.stateGc.collect` | Removed in 0.11. |
+| `extract.maxSessionsPerRun` / `extract.minNewSessions` | `maxSessionsPerRun` is supported; `minNewSessions` is removed in 0.11. |
+| `improve --require-engines` | Removed in 0.11. |
+| Ordinary scope flags and keys with no evaluation or plugin caller | Supported. |
+
 ## Plugins
 
 `plugins` holds the settings of the akm plugins for Claude Code, Codex and
@@ -1191,7 +1236,7 @@ Where a location comes from, first match wins: the environment variable (`AKM_DA
 `AKM_EMBED_DETERMINISTIC` is an Internal seam that akm-eval and the tests use (a hash embedder instead of a model). It is not for product use and carries no compatibility guarantee ([STABILITY](../../STABILITY.md)).
 
 SQLite uses WAL; when the data directory is on a detected network filesystem
-(NFS, SMB/CIFS, FUSE such as sshfs), akm falls back to the `DELETE` journal mode
+(NFS, SMB/CIFS, 9p such as WSL2's `/mnt/c`, CephFS, FUSE such as sshfs or virtiofs), akm falls back to the `DELETE` journal mode
 and says so. There is no override. Detection works on Linux only, so a data
 directory on a network filesystem on macOS or Windows is unsupported. In
 containers that are thrown away, keep SQLite on local disk and use snapshots.

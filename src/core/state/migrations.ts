@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 // The state.db schema registry. Released databases carry a `schema_migrations`
-// ledger of the 29 ids below; the schema those 29 steps produced is the
+// ledger of the 29 baseline ids below; the schema those 29 steps produced is the
 // baseline, created in one step on a fresh database. A ledger shorter than the
 // baseline predates akm 0.9.32 and is refused (`src/core/state-db.ts`). New
 // migrations are APPENDED after the baseline ids and an id is NEVER renumbered
@@ -358,6 +358,24 @@ CREATE UNIQUE INDEX idx_workflow_runs_invocation_key
 export const STATE_MIGRATIONS: readonly Migration[] = [
   // The first baseline id carries the whole baseline schema; the rest only complete the ledger.
   ...STATE_BASELINE_IDS.map((id, index): Migration => ({ id, up: index === 0 ? STATE_BASELINE_SCHEMA : "" })),
+
+  // ── Migration 030 — usage_events time-window index ────────────────────────
+  //
+  // Released in 0.10.261120, so a database written by it already records this id. The baseline above does not
+  // carry the index, so a fresh database gets it here, and one that has it skips this step.
+  //
+  // Every time-window read of usage_events (activity.events, akm metrics, the
+  // retention DELETE) filters and orders by `datetime(created_at)`, because
+  // created_at is `YYYY-MM-DD HH:MM:SS`, not ISO. A plain index on the column
+  // cannot serve that expression, so each call scanned the table. An index on
+  // the same expression serves the queries unchanged: no data is rewritten and
+  // results are identical.
+  {
+    id: "030-usage-events-created-at-index",
+    up: `
+      CREATE INDEX IF NOT EXISTS idx_usage_events_created_at ON usage_events(datetime(created_at));
+    `,
+  },
 ];
 
 assertMigrationRegistry(STATE_MIGRATIONS);

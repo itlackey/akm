@@ -75,6 +75,14 @@ function makeEnv(stashDir: string): TestEnv {
   };
 }
 
+/** `improve report` prints a one-line deprecation notice before its JSON error. */
+function withoutNotice(stderr: string): string {
+  return stderr
+    .split("\n")
+    .filter((line) => !line.startsWith("[deprecated]"))
+    .join("\n");
+}
+
 function runCli(args: string[], testEnv: TestEnv): { status: number; stdout: string; stderr: string } {
   const result = spawnSync("bun", [cliPath, ...args], { encoding: "utf8", timeout: 60_000, env: testEnv.env });
   return { status: result.status ?? 1, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
@@ -134,12 +142,12 @@ describe("akm improve report (#944)", () => {
     // An unknown run id is a clean "not found" (exit 1), not a crash.
     const missing = runCli(["improve", "report", "--run", "does-not-exist"], testEnv);
     expect(missing.status).toBe(1);
-    expect(JSON.parse(missing.stderr)).toMatchObject({ ok: false, code: "IMPROVE_RUN_NOT_FOUND" });
+    expect(JSON.parse(withoutNotice(missing.stderr))).toMatchObject({ ok: false, code: "IMPROVE_RUN_NOT_FOUND" });
 
     // --run and --since are mutually exclusive (usage error, exit 2).
     const both = runCli(["improve", "report", "--run", "x", "--since", "24h"], testEnv);
     expect(both.status).toBe(2);
-    expect(JSON.parse(both.stderr)).toMatchObject({ ok: false, code: "INVALID_FLAG_VALUE" });
+    expect(JSON.parse(withoutNotice(both.stderr))).toMatchObject({ ok: false, code: "INVALID_FLAG_VALUE" });
   });
 
   test("a foreign process's llm_usage row in state.db never lands in the run's usageReport", () => {

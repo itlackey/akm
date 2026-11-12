@@ -163,9 +163,9 @@ const GONE_FLAGS: ReadonlyArray<{ flag: string; use: string; commands?: readonly
       "proposal revert",
     ],
   },
-  { flag: "--all", use: "`akm info`", commands: ["config path"] },
-  { flag: "--run", use: "`akm improve report --run`", commands: ["improve"] },
-  { flag: "--since", use: "`akm improve report --since`", commands: ["improve"] },
+  { flag: "--all", use: "`akm doctor info`", commands: ["config path"] },
+  { flag: "--run", use: "`akm doctor metrics improve --run`", commands: ["improve"] },
+  { flag: "--since", use: "`akm doctor metrics improve --since`", commands: ["improve"] },
   {
     flag: "--auto-accept",
     use: '`akm improve && akm proposal drain --promote --yes`, or a `triage` block with `applyMode: "promote"` in your strategy',
@@ -185,8 +185,17 @@ const GONE_FLAGS: ReadonlyArray<{ flag: string; use: string; commands?: readonly
   },
   { flag: "--yes", use: "no flag: it did nothing, so drop it", commands: ["bundle update"] },
   { flag: "--options", use: "no flag: it did nothing, so drop it", commands: ["registry add"] },
-  { flag: "--dry-run", use: "`akm migrate status`, which reports what `task sync` would do", commands: ["task sync"] },
-  { flag: "--bundle", use: "no flag: it was ignored, so drop it", commands: ["task sync"] },
+  {
+    flag: "--dry-run",
+    use: "`akm migrate status`, which reports what `doctor scheduler sync` would do",
+    commands: ["task sync", "doctor scheduler sync"],
+  },
+  { flag: "--bundle", use: "no flag: it was ignored, so drop it", commands: ["task sync", "doctor scheduler sync"] },
+  ...["--prune", "--yes", "--id"].map((flag) => ({
+    flag,
+    use: "no flag: `akm doctor scheduler sync` removes the old per-task scheduler rows itself, and `akm migrate status` previews it",
+    commands: ["doctor scheduler sync"],
+  })),
   {
     flag: "--rebind",
     use: "no flag: it was ignored, so drop it (`akm task sync --rebind` stays)",
@@ -253,7 +262,7 @@ export function assertKnownFlags(root: FlagScanCommand, rawArgs: readonly string
   // body, where runWithJsonErrors renders the JSON envelope, not from this
   // generic pre-dispatch gate; `task explain` reuses the identical
   // `parseTaskInputFlags` scanner, so it needs the identical exemption).
-  const dynamicNamedFlagCommands = new Set(["workflow run", "task run", "task explain", "run"]);
+  const dynamicNamedFlagCommands = new Set(["workflow run", "task run", "task explain", "doctor explain", "run"]);
   const dynamicWorkflowParams = dynamicNamedFlagCommands.has(known.path.join(" "));
   const tolerant = UNKNOWN_FLAG_TOLERANT_COMMANDS.has(known.path.join(" "));
 

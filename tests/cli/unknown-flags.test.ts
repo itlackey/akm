@@ -51,7 +51,7 @@ describe("rejects undeclared flags", () => {
     expect(shape.hint()).toContain("--detail normal");
     expect(shape.hint()).not.toContain("--type");
     expect(errorFor(["env", "create", "x", "--target", "b"]).hint()).toContain("`--bundle`");
-    expect(errorFor(["config", "path", "--all"]).hint()).toContain("`akm info`");
+    expect(errorFor(["config", "path", "--all"]).hint()).toContain("`akm doctor info`");
     // `--target` is only gone where STABILITY says so.
     expect(errorFor(["search", "foo", "--target", "b"]).hint() ?? "").not.toContain("is gone");
   });
@@ -129,6 +129,17 @@ describe("accepts every legitimate spelling", () => {
   test("the removed duplicate flags are unknown: lint --auto-fix, migrate apply --dry-run", () => {
     expect(errorFor(["lint", "--auto-fix"]).code).toBe("UNKNOWN_FLAG");
     expect(errorFor(["migrate", "apply", "--dry-run"]).code).toBe("UNKNOWN_FLAG");
+  });
+
+  test("0.10.261120's `doctor scheduler sync` flags that 0.11 drops name what replaces them", () => {
+    expect(errorFor(["doctor", "scheduler", "sync", "--dry-run"]).hint()).toContain("`akm migrate status`");
+    expect(errorFor(["doctor", "scheduler", "sync", "--bundle", "b"]).hint()).toContain("drop it");
+    for (const flag of ["--prune", "--yes", "--id"]) {
+      expect(errorFor(["doctor", "scheduler", "sync", flag]).hint()).toContain(
+        "removes the old per-task scheduler rows",
+      );
+    }
+    expect(() => check(["doctor", "scheduler", "sync", "--rebind"])).not.toThrow();
   });
 
   test("one-dash long names are parsed as short bundles, not accepted as long flags", () => {

@@ -357,7 +357,7 @@ export async function stepScheduledTasks(
   const syncResult = await deps.sync();
   for (const warning of syncResult.warnings ?? []) p.log.warn(warning);
   if (syncResult.entry === "unmanaged") return;
-  p.log.success("Task schedules activated. Verify them with `akm task doctor`.");
+  p.log.success("Task schedules activated. Verify them with `akm doctor`.");
 }
 
 function displayTaskSchedules(task: SetupTaskDefinition): string {
