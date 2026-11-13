@@ -92,7 +92,6 @@ async function countGateOpens(config: AkmConfig, strategy?: string): Promise<num
     ...(strategy !== undefined ? { strategy } : {}),
     config,
     stashDir,
-    ensureIndexFn: async () => false,
     reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
     extractHarnesses: [fakeHarness()],
     extractCandidateCountFn: () => {

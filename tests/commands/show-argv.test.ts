@@ -239,17 +239,19 @@ describe("akm show toc at each --detail level", () => {
 });
 
 describe("akm show fragment context flags", () => {
-  function seedFragmentGuide(): void {
+  async function seedFragmentGuide(): Promise<void> {
     const storage = useStorage();
     writeSandboxConfig({ semanticSearchMode: "off" });
     writeFixture(
       path.join(storage.stashDir, "knowledge", "context.md"),
       ["# Profile", "Yoga is at Serenity Yoga.", "", "# Details", "fragmentflagneedle proof"].join("\n"),
     );
+    // Reads never build the index; indexed-safe fragment context comes from it.
+    await runEntrypoint(["index", "--format=json"]);
   }
 
   test("--context lead with --max-chars emits bounded indexed-safe metadata", async () => {
-    seedFragmentGuide();
+    await seedFragmentGuide();
 
     const result = await runEntrypoint([
       "show",
@@ -278,7 +280,7 @@ describe("akm show fragment context flags", () => {
   });
 
   test("--max-tokens converts to the documented four-character budget", async () => {
-    seedFragmentGuide();
+    await seedFragmentGuide();
 
     const result = await runEntrypoint([
       "show",
@@ -300,7 +302,7 @@ describe("akm show fragment context flags", () => {
     ["--context=lead", "--max-chars=100", "--max-tokens=25"],
   ]) {
     test(`rejects invalid context invocation ${args.join(" ")}`, async () => {
-      seedFragmentGuide();
+      await seedFragmentGuide();
 
       const result = await runEntrypoint(["show", "knowledge/context#details", ...args, "--format=json"]);
 
@@ -313,7 +315,7 @@ describe("akm show fragment context flags", () => {
 describe("akm show additive body controls", () => {
   const GUIDE = ["# Intro", "background ".repeat(80), "", "## Details", "selected proof ".repeat(20)].join("\n");
 
-  function seed(): ReturnType<typeof useStorage> {
+  async function seed(): Promise<ReturnType<typeof useStorage>> {
     const storage = useStorage();
     writeSandboxConfig({ semanticSearchMode: "off", output: { detail: "brief" } });
     writeFixture(path.join(storage.stashDir, "knowledge", "guide.md"), GUIDE);
@@ -322,6 +324,8 @@ describe("akm show additive body controls", () => {
     writeFixture(path.join(storage.stashDir, "env", "demo.env"), "TOKEN=private-env-value\n");
     writeFixture(path.join(storage.stashDir, "secrets", "demo"), "private-secret-value\n");
     writeFixture(path.join(storage.stashDir, "scripts", "demo.sh"), "#!/bin/sh\necho hello\n");
+    // Reads never build the index; indexed-safe fragment context comes from it.
+    await runEntrypoint(["index", "--format=json"]);
     return storage;
   }
 
@@ -332,7 +336,7 @@ describe("akm show additive body controls", () => {
   }
 
   test("--outline matches brief metadata while an unqualified read stays complete", async () => {
-    seed();
+    await seed();
     const full = await json("knowledge/guide");
     expect(full.content).toBe(GUIDE);
     expect(full).not.toHaveProperty("contentBudget");
@@ -351,7 +355,7 @@ describe("akm show additive body controls", () => {
     ["agents/review", "prompt"],
   ]) {
     test(`--max-tokens bounds ${payload} on ${ref} and retains agent metadata`, async () => {
-      seed();
+      await seed();
       const full = await json(ref!);
       const bounded = await json(ref!, "--max-tokens=25", "--detail=agent");
       // At most 100 characters, a prefix of the full body, cut at whitespace.
@@ -372,7 +376,7 @@ describe("akm show additive body controls", () => {
   }
 
   test("exact headings are budgeted without adding a lead or indexed provenance", async () => {
-    seed();
+    await seed();
     const exact = await json("knowledge/guide#details");
     const bounded = await json("knowledge/guide#details", "--max-tokens=25");
     expect(String(exact.content).startsWith(String(bounded.content))).toBe(true);
@@ -390,7 +394,7 @@ describe("akm show additive body controls", () => {
   });
 
   test("--lead preserves the old lead result and exact opaque fragments remain bounded", async () => {
-    seed();
+    await seed();
     const lead = await json("knowledge/guide#details", "--lead", "--max-tokens=90");
     expect(lead).toEqual(await json("knowledge/guide#details", "--context=lead", "--max-tokens=90"));
     expect(String(lead.content).length).toBeLessThanOrEqual(360);
@@ -406,7 +410,7 @@ describe("akm show additive body controls", () => {
   });
 
   test("the budget skips frontmatter, never splits a surrogate pair, and the text line is true", async () => {
-    const storage = seed();
+    const storage = await seed();
     const emoji = "\u{1F600}".repeat(60);
     writeFixture(
       path.join(storage.stashDir, "knowledge", "emoji.md"),
@@ -430,7 +434,7 @@ describe("akm show additive body controls", () => {
   });
 
   test("a cut that already falls on a word end keeps the whole word", async () => {
-    const storage = seed();
+    const storage = await seed();
     writeFixture(path.join(storage.stashDir, "knowledge", "wordend.md"), "12345678901234567890 tail of the note\n");
     const bounded = await json("knowledge/wordend", "--max-tokens=5");
     expect(bounded.content).toBe("12345678901234567890");
@@ -438,7 +442,7 @@ describe("akm show additive body controls", () => {
   });
 
   test("--detail brief with a budget is a usage error; --lead errors name --lead", async () => {
-    seed();
+    await seed();
     for (const args of [
       ["--detail=brief", "--max-tokens=25"],
       ["--detail=brief", "--lead"],
@@ -465,7 +469,7 @@ describe("akm show additive body controls", () => {
   });
 
   test("direct .meta bodies are bounded without changing the old brief read", async () => {
-    const storage = seed();
+    const storage = await seed();
     writeFixture(path.join(storage.stashDir, ".meta", "index.md"), GUIDE);
     expect((await json("meta", "--detail=brief")).content).toBe(GUIDE);
     const bounded = await json("meta", "--max-tokens=25");
@@ -479,7 +483,7 @@ describe("akm show additive body controls", () => {
   });
 
   test("text output discloses the approximate body-only budget and truncation", async () => {
-    seed();
+    await seed();
     const result = await runEntrypoint(["show", "knowledge/guide", "--max-tokens=25", "--format=text"]);
     expect(result.status).toBe(0);
     expect(result.stdout).toMatch(
@@ -503,7 +507,7 @@ describe("akm show additive body controls", () => {
     ["knowledge/guide", ["--max-tokens=9007199254740991"]],
   ] as const) {
     test(`rejects ${ref} ${flags.join(" ")}`, async () => {
-      seed();
+      await seed();
       const result = await runEntrypoint(["show", ref, ...flags, "--format=json"]);
       expect(result.status).toBeGreaterThan(0);
       expect(result.stdout).toBe("");
@@ -512,7 +516,7 @@ describe("akm show additive body controls", () => {
 
   for (const ref of ["env/demo", "secrets/demo"]) {
     test(`body controls cannot expose sensitive values from ${ref}`, async () => {
-      seed();
+      await seed();
       for (const flags of [["--outline"], ["--max-tokens=1000"], ["--max-tokens=1000", "--detail=full"]]) {
         const safe = await json(ref, ...flags);
         expect(safe).not.toHaveProperty("content");

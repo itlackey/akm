@@ -75,7 +75,6 @@ describe("O-2: --scope <ref> bypasses reflect/distill cooldowns (#365)", () => {
     await akmImprove({
       scope: "memories/auth-tips",
       stashDir,
-      ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {
         if (ref) reflectedRefs.push(ref);
@@ -129,7 +128,6 @@ describe("O-2: --scope <ref> bypasses reflect/distill cooldowns (#365)", () => {
     await akmImprove({
       scope: "memory",
       stashDir,
-      ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {
         if (ref) reflectedRefs.push(ref);
@@ -170,7 +168,6 @@ describe("O-1: wall-clock budget AbortSignal propagated to sub-calls (#364)", ()
       scope: "memories/budget-test",
       stashDir,
       timeoutMs: 60_000,
-      ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async (opts) => {
         capturedTimeouts.push(opts.timeoutMs);
@@ -209,7 +206,6 @@ describe("O-1: wall-clock budget AbortSignal propagated to sub-calls (#364)", ()
       scope: "memories/timer-test",
       stashDir,
       timeoutMs: 60_000,
-      ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async (opts) => ({
         schemaVersion: 2,
@@ -259,7 +255,6 @@ describe("D-2: reject-aware cooldown for distill (#370)", () => {
     const result = await akmImprove({
       scope: "memory",
       stashDir,
-      ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => ({
         schemaVersion: 2,
@@ -305,7 +300,6 @@ describe("D-2: reject-aware cooldown for distill (#370)", () => {
     await akmImprove({
       scope: "memories/auth-tips",
       stashDir,
-      ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => ({
         schemaVersion: 2,
@@ -535,7 +529,6 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
     // per-item schema-repair "error" outcome, not as a thrown exception).
     const result = await akmImprove({
       scope: "lesson",
-      ensureIndexFn: async () => false,
       reindexFn,
       reflectFn,
       distillFn,
@@ -574,7 +567,7 @@ describe("zero-signal stash: 0 eligible refs when stash has no feedback or retri
           },
         },
       },
-      ensureIndexFn: async () => false,
+      reindexFn: async () => false,
       reflectFn: async ({ ref }) => {
         reflected.push(ref ?? "");
         return {
@@ -611,7 +604,7 @@ describe("new 0.8.0 improve metrics", () => {
     const result = await akmImprove({
       scope: "memory",
       stashDir,
-      ensureIndexFn: async () => false,
+      reindexFn: async () => false,
       reflectFn: async ({ ref }) => ({
         schemaVersion: 2,
         ok: true,
@@ -654,7 +647,7 @@ describe("new 0.8.0 improve metrics", () => {
     const result = await akmImprove({
       scope: "memory",
       stashDir,
-      ensureIndexFn: async () => false,
+      reindexFn: async () => false,
       reflectFn: async ({ ref }) => ({
         schemaVersion: 2,
         ok: true,
@@ -693,7 +686,6 @@ describe("new 0.8.0 improve metrics", () => {
     const result = await akmImprove({
       scope: "memories/target-asset",
       stashDir,
-      ensureIndexFn: async () => false,
       reindexFn: async () => ({
         schemaVersion: 1,
         ok: true,
@@ -777,7 +769,7 @@ describe("new 0.8.0 improve metrics", () => {
     const result = await akmImprove({
       scope: "memories/live-asset",
       stashDir,
-      ensureIndexFn: async () => false,
+      reindexFn: async () => false,
       // Default config.archiveRetentionDays is 90; 200 days old > 90 → expire.
       reflectFn: async ({ ref }) => ({
         schemaVersion: 2,

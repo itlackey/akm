@@ -42,7 +42,7 @@ import { deepMergeConfig, isPlainObject } from "../core/config/deep-merge";
 import { ConfigError, UsageError } from "../core/errors";
 import { getConfigPath, getDefaultStashDir, isTransientStashPath } from "../core/paths";
 import { warn, warnOnce } from "../core/warn";
-import { akmIndex } from "../indexer/indexer";
+import { buildIndex } from "../indexer/index-build";
 import { readLockfile } from "../integrations/lockfile";
 import { checkEmbeddingAvailability } from "../llm/embedder";
 import { effectiveEmbedding } from "../llm/embedders/connection";
@@ -719,7 +719,7 @@ export async function runSetupWizard(opts?: {
   const spin = p.spinner();
   spin.start("Building search index...");
   try {
-    const indexResult = await akmIndex({ stashDir });
+    const indexResult = await buildIndex({ stashDir }, "wait");
     spin.stop(`Indexed ${indexResult.totalEntries} assets.`);
     if (savedConfig.semanticSearchMode === "auto") {
       if (indexResult.verification.ok) {

@@ -20,6 +20,8 @@ import { buildFileContext, type FileContext } from "./file-context";
 
 const ALWAYS_SKIP_DIRS = new Set([".git", "node_modules"]);
 const AKM_SKIP_DIRS = new Set(["bin", ".cache"]);
+/** Sidecar and git dot-files the walk never lists. */
+const SKIP_FILES = new Set([".stash.json", ".gitignore", ".gitattributes"]);
 
 export interface WalkStashFlatOptions {
   /**
@@ -28,6 +30,50 @@ export interface WalkStashFlatOptions {
    * `env/` and `secrets/` listing below does not apply.
    */
   includeAllDirectories?: boolean;
+}
+
+/** Whether the walk does not descend into a directory called `name`. */
+function isSkippedDir(name: string, options: WalkStashFlatOptions): boolean {
+  return (
+    ALWAYS_SKIP_DIRS.has(name) || (!options.includeAllDirectories && (AKM_SKIP_DIRS.has(name) || name.startsWith(".")))
+  );
+}
+
+/**
+ * The walk's own exclusions for a path relative to the source root: skipped directories at any depth,
+ * the sidecar and git dot-files, and the root `.scratch/`. Symlinked directories (never descended) and
+ * `.gitignore` rules are applied by the walks themselves and, for a single file, by {@link isWalkedFile}.
+ */
+function isExcludedPath(relPath: string, options: WalkStashFlatOptions): boolean {
+  if (isScratchPath(relPath)) return true;
+  const parts = relPath.split(/[\\/]+/).filter(Boolean);
+  const name = parts.pop() ?? "";
+  return SKIP_FILES.has(name) || parts.some((part) => isSkippedDir(part, options));
+}
+
+/**
+ * Whether a full walk of `root` would list `file`: the one predicate write-through and show-from-files use so
+ * they never return what the index would not hold. Adds to {@link isExcludedPath} the two rules a walk applies
+ * structurally: a directory symlink on the way is never descended, and files `.gitignore` ignores are not listed
+ * (the akm bundle's `env/` and `secrets/` excepted, as in the walk).
+ */
+export function isWalkedFile(root: string, file: string, options: WalkStashFlatOptions = {}): boolean {
+  const resolvedRoot = path.resolve(root);
+  const relPath = path.relative(resolvedRoot, path.resolve(file));
+  if (relPath === "" || relPath.split(/[\\/]+/)[0] === ".." || path.isAbsolute(relPath)) return false;
+  if (isExcludedPath(relPath, options)) return false;
+  for (let dir = path.dirname(path.resolve(file)); dir !== resolvedRoot; dir = path.dirname(dir)) {
+    try {
+      if (fs.lstatSync(dir).isSymbolicLink()) return false;
+    } catch {
+      break; // A directory that is gone is not a symlink; a deleted file is still reported so its row can go.
+    }
+  }
+  const top = relPath.split(/[\\/]+/)[0];
+  const keptDespiteIgnore = !options.includeAllDirectories && (top === "env" || top === "secrets");
+  if (keptDespiteIgnore || !isInsideGitRepo(resolvedRoot)) return true;
+  // Exit 0: ignored. Exit 1: not ignored. Anything else (git missing or failing): the walk would not have used git either.
+  return spawnSync(["git", "check-ignore", "-q", "--", relPath], { cwd: resolvedRoot }).exitCode !== 0;
 }
 
 export interface WalkStashFlatResult {
@@ -148,28 +194,12 @@ function walkStashGit(stashRoot: string, options: WalkStashFlatOptions): WalkSta
       : String(ignoredResult.stdout ?? "");
   }
 
-  // Data-hygiene filename skips: the legacy metadata sidecar (never indexed as
-  // content) plus git dot-files.
-  const SKIP_FILES = new Set([".stash.json", ".gitignore", ".gitattributes"]);
-
   const stdout = Buffer.isBuffer(result.stdout) ? result.stdout.toString("utf8") : String(result.stdout ?? "");
   const files = [...stdout.split("\0"), ...ignoredStdout.split("\0")]
     .filter((f) => f.length > 0)
     .filter((f) => !deletedFiles.has(f))
     .filter((f) => !f.startsWith("..") && !path.isAbsolute(f))
-    .filter((f) => !isScratchPath(f))
-    .filter((f) => {
-      const dirParts = path
-        .dirname(f)
-        .split(/[\\/]+/)
-        .filter(Boolean);
-      return !dirParts.some(
-        (part) =>
-          ALWAYS_SKIP_DIRS.has(part) ||
-          (!options.includeAllDirectories && (AKM_SKIP_DIRS.has(part) || part.startsWith("."))),
-      );
-    })
-    .filter((f) => !SKIP_FILES.has(path.basename(f)));
+    .filter((f) => !isExcludedPath(f, options));
 
   const results: FileContext[] = [];
   let complete = true;
@@ -277,9 +307,8 @@ function walkStashManual(stashRoot: string, options: WalkStashFlatOptions): Walk
       continue;
     }
     for (const entry of entries) {
-      if (entry.name === ".stash.json") continue;
       const fullPath = path.join(current, entry.name);
-      if (isScratchPath(path.relative(stashRoot, fullPath))) continue;
+      if (isExcludedPath(path.relative(stashRoot, fullPath), options)) continue;
       if (entry.isSymbolicLink()) {
         // A file symlink is indexed like any other file; a directory symlink
         // is never descended (no cycles).
@@ -287,11 +316,7 @@ function walkStashManual(stashRoot: string, options: WalkStashFlatOptions): Walk
         continue;
       }
       if (entry.isDirectory()) {
-        if (
-          ALWAYS_SKIP_DIRS.has(entry.name) ||
-          (!options.includeAllDirectories && (AKM_SKIP_DIRS.has(entry.name) || entry.name.startsWith(".")))
-        )
-          continue;
+        if (isSkippedDir(entry.name, options)) continue;
         stack.push(fullPath);
       } else if (entry.isFile()) {
         results.push(buildFileContext(stashRoot, fullPath));

@@ -18,6 +18,7 @@ import {
   type IsolatedAkmStorage,
   makeStashDir,
   type SandboxedDir,
+  withEnv,
   withIsolatedAkmStorage,
   writeSandboxConfig,
 } from "../../_helpers/sandbox";
@@ -361,7 +362,10 @@ describe("full-index bundle identity", () => {
     fs.mkdirSync(unresolvedPath, { recursive: true });
     await akmIndex({ stashDir: unresolvedPath, full: true });
 
-    const retained = await akmSearch({ query: "unresolvedplaceholderretainedmarker", skipLogging: true });
+    // Search serves the library the index was built for (reads never build one for another primary stash).
+    const retained = await withEnv({ AKM_BUNDLE_DIR: unresolvedPath }, () =>
+      akmSearch({ query: "unresolvedplaceholderretainedmarker", skipLogging: true }),
+    );
     expect(retained.hits.flatMap((hit) => ("ref" in hit ? [hit.ref] : []))).toContain("retained");
   });
 });

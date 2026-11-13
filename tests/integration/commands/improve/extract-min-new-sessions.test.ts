@@ -86,7 +86,6 @@ async function runImprove(config: AkmConfig, newCount: number): Promise<void> {
     scope: "memory",
     config,
     stashDir,
-    ensureIndexFn: async () => false,
     reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
     // #554 seams: a fake harness (so availableHarnesses.length > 0) and a fake
     // candidate counter returning the desired new-session count.
@@ -187,7 +186,6 @@ describe("#554 extract minNewSessions gate", () => {
         config,
         stashDir,
         strategy: "racy",
-        ensureIndexFn: async () => false,
         reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
         extractHarnesses: [fakeHarness(1)],
         extractCandidateCountFn: () => 1,

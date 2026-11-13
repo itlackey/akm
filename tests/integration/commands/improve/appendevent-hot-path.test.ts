@@ -198,7 +198,6 @@ describe("appendEvent hot path — improve loop wiring", () => {
 
     const result = await akmImprove({
       stashDir: storage.stashDir,
-      ensureIndexFn: async () => undefined,
       reindexFn: async () => undefined,
       reflectFn: async (o) => {
         reflectInvoked = true;

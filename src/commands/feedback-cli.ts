@@ -16,11 +16,10 @@ import { loadConfig } from "../core/config/config";
 import { ConfigError, NotFoundError, UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
 import { resolveMutationTarget } from "../core/mutation-target";
-import { isPathAbsent } from "../core/path-access";
-import { getDbPath } from "../core/paths";
 import { getStateDbPath, withStateDb } from "../core/state-db";
 import { warn } from "../core/warn";
 import { withWriteTargetMutation } from "../core/write-source";
+import { noIndexWarning, openUsableIndex } from "../indexer/index-readiness";
 import { recomputeUtilityScores } from "../indexer/indexer";
 import { currentConceptId, resolveWriteAddress } from "../indexer/lookup/adapter-concept-owner";
 import { resolveSourceEntries, type SearchSource } from "../indexer/search/search-source";
@@ -674,31 +673,9 @@ export const feedbackCommand = defineJsonCommand({
       ...(validatedTags.length > 0 ? { tags: validatedTags } : {}),
     };
 
-    // Feedback only needs the index to exist, not to be current. A stale index
-    // is fine — the ref lookup works against any populated DB. We do NOT call
-    // ensureIndex here: it either blocks (3+ min inline reindex) or spawns a
-    // background process that holds the writer lock, causing the feedback write
-    // to spin-wait for the full reindex duration. If the DB is absent we give a
-    // clear error below rather than silently triggering a rebuild.
-    // "Run 'akm index' first" is only true advice for an index that was never
-    // built. Told to someone whose index exists but is unreadable it is a lie
-    // that sends them to rebuild a file they may not have permission to touch
-    // (#791), so that case falls through to `openExistingDatabase` below, which
-    // names the path, errno, mode/owner and uid instead.
-    if (isPathAbsent(getDbPath())) {
-      throw new UsageError(
-        "Index not found. Run 'akm index' first to build the index before recording feedback.",
-        "MISSING_REQUIRED_ARGUMENT",
-        "akm index",
-      );
-    }
-
-    // Feedback writes exactly 2 rows (usage_events + utility_score). SQLite
-    // WAL mode + busy_timeout=30s handles concurrent access with an ongoing
-    // `akm improve` run without needing the application-level writer lock.
-    // The lock was originally needed to prevent feedback from racing a
-    // background reindex it spawned — now that ensureIndex is removed, holding
-    // the lock only causes feedback to block for the full improve run duration.
+    // Feedback needs only a usable index, not a current one, and builds none: with no index it says so, as every
+    // reader does. It writes two rows (usage_events and a utility score); SQLite's busy timeout covers a concurrent
+    // improve run, so no application-level lock is taken.
     let utilityResult: RecordFeedbackUsageResult["utilityResult"];
     let countsTowardRanking = false;
     let rankingSkippedReason: string | undefined;
@@ -710,10 +687,16 @@ export const feedbackCommand = defineJsonCommand({
           marked?: { beliefState: string; supersededBy?: string };
         }
       | undefined;
-    const db = openExistingDatabase();
+    const config = loadConfig();
+    const sources = resolveSourceEntries(undefined, config);
+    // The library is the primary source, as in search.
+    const library = sources[0];
+    const usable = library ? openUsableIndex(library.path) : undefined;
+    if (!usable) {
+      throw new UsageError(noIndexWarning(), "MISSING_REQUIRED_ARGUMENT", "akm index");
+    }
+    const { db } = usable;
     try {
-      const config = loadConfig();
-      const sources = resolveSourceEntries(undefined, config);
       const requestedSource = parsedRef.bundle ? resolveSourcesForOrigin(parsedRef.bundle, sources)[0] : undefined;
       if (parsedRef.bundle && !requestedSource) {
         throw new UsageError(`Source "${parsedRef.bundle}" is not configured.`, "INVALID_FLAG_VALUE");

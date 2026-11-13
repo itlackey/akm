@@ -42,7 +42,7 @@ test("improve failure events redact materialized engine credentials", async () =
               },
             },
           },
-          ensureIndexFn: async () => undefined,
+          reindexFn: async () => undefined,
           collectEligibleRefsFn: (async () => ({
             plannedRefs: [],
             memorySummary: { eligible: 0, derived: 0 },

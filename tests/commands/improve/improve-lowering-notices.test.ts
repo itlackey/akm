@@ -57,7 +57,7 @@ test("improve dedupes safe lowering notices through JSON and text output", async
       akmImprove({
         config,
         stashDir: stash.dir,
-        ensureIndexFn: async () => undefined,
+        reindexFn: async () => undefined,
         collectEligibleRefsFn: (async () => ({
           plannedRefs: [],
           memorySummary: { eligible: 0, derived: 0 },
@@ -175,7 +175,7 @@ test("dry-run preserves the same plan-owned lowering notices as live output with
     const common = {
       config,
       stashDir: stash.dir,
-      ensureIndexFn: async () => undefined,
+      reindexFn: async () => undefined,
       collectEligibleRefsFn: (async () => ({
         plannedRefs: [],
         memorySummary: { eligible: 0, derived: 0 },

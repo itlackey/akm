@@ -140,7 +140,6 @@ describe("#584: index.db handle is closed before reindexFn runs", () => {
 
     const result = await akmImprove({
       stashDir: stash,
-      ensureIndexFn: async () => undefined,
       reflectFn: async (o) => ({
         schemaVersion: 2,
         ok: true,
@@ -183,8 +182,8 @@ describe("#584: index.db handle is closed before reindexFn runs", () => {
     });
 
     expect(result.ok).toBe(true);
-    // The incremental index path never calls the full-reindex seam.
-    expect(reindexCalls).toBe(0);
+    // The pre-run index is the only call: the incremental index path never calls the reindex seam.
+    expect(reindexCalls).toBe(1);
     // The maintenance pass's index.db handle (captured above) must be CLOSED
     // by the time indexWrittenAssets ran — it opens its own write handle on
     // the same WAL file and a still-open sibling caused SQLITE_BUSY (#584).

@@ -56,11 +56,13 @@ const disposers: SandboxedDir[] = [];
 let stashCleanup: Cleanup = () => {};
 let stashDir = "";
 
-beforeEach(() => {
+beforeEach(async () => {
   const stash = sandboxStashDir();
   stashDir = stash.dir;
   stashCleanup = stash.cleanup;
   writeSandboxConfig({ semanticSearchMode: "off" });
+  // Writers index what they write only into an index that exists: build the (empty) one first.
+  await runCliCapture(["index"]);
 });
 
 afterEach(() => {

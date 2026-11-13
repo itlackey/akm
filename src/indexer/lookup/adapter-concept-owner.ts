@@ -16,10 +16,12 @@ import { ConfigError, UsageError } from "../../core/errors";
 import { sensitiveMarkerPath } from "../../core/sensitive-marker-path";
 import { warnOnce } from "../../core/warn";
 import { resolveUniqueWorkflowSource, type WorkflowSourceFile } from "../../workflows/source-files";
-import { deriveInstallations } from "../installations";
+import type { IndexEntry } from "../indexer";
+import { deriveEntryProvenance, deriveInstallations } from "../installations";
 import type { SearchSource } from "../search/search-source";
 import { buildFileContext, type FileContext } from "../walk/file-context";
 import { declaredTypeForPath } from "../walk/matchers";
+import { isWalkedFile } from "../walk/walker";
 
 const CONTENT_READ_REQUIRED = Symbol("adapter ownership probe requires content");
 
@@ -262,6 +264,48 @@ export interface ConceptOwnerMatch {
   /** The owning bundle's id, derived over the whole ordered source list. */
   bundleId: string;
   adapterId: string;
+}
+
+/**
+ * The index entry the owning file and its adapter give without the index: the adapter's own recognition of
+ * the file, so `show` serves it though no row exists. Undefined when the walk would not list the file (a
+ * skipped or ignored directory, a symlinked one, ...: it is not in the bundle as far as the index goes) or the
+ * adapter does not recognise it. It has no links, usage or indexed fragments.
+ */
+export function entryFromFiles(match: ConceptOwnerMatch): IndexEntry | undefined {
+  const { owner, source, bundleId, adapterId } = match;
+  try {
+    const adapter = adapterForId(adapterId);
+    if (
+      !adapter ||
+      !isWalkedFile(source.path, owner.path, { includeAllDirectories: adapter.walkMode === "all-directories" })
+    ) {
+      return undefined;
+    }
+    const component: BundleComponent = { id: adapterId, adapter: adapterId, root: source.path, writable: false };
+    const document = adapter.recognize(component, buildFileContext(source.path, owner.path));
+    if (!document) return undefined;
+    const { itemRef, conceptId } = deriveEntryProvenance(
+      { bundleId, componentId: adapterId, adapterId },
+      document.type,
+      document.name,
+      owner.conceptId,
+    );
+    return {
+      filePath: owner.path,
+      stashDir: source.path,
+      type: document.type,
+      name: document.name,
+      adapterId,
+      document,
+      itemRef,
+      bundleId,
+      conceptId,
+    };
+  } catch {
+    // An unreadable file is not found from files.
+    return undefined;
+  }
 }
 
 /**

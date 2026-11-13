@@ -253,9 +253,9 @@ describe("akmImprove whole-run deadline", () => {
         stashDir: storage.stashDir,
         config,
         timeoutMs: 10_000,
-        ensureIndexFn: async (_stashDir, options) => {
-          receivedSignal = options?.signal;
-          remainingAtIndex = (options?.signal as AbortSignal & { remainingBudgetMs?: number }).remainingBudgetMs;
+        reindexFn: async (options: { signal?: AbortSignal }) => {
+          receivedSignal = options.signal;
+          remainingAtIndex = (options.signal as AbortSignal & { remainingBudgetMs?: number }).remainingBudgetMs;
           expect(fs.existsSync(path.join(getStashLocksDir(storage.stashDir), "improve.lock"))).toBe(true);
           return false;
         },
