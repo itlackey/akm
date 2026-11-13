@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - `akm lint <file>` checks one file with the same rules the bundle lint applies to it, and returns the same result. A file inside a bundle takes its type from where it sits; a file outside every bundle needs `--type`, for example `akm lint ./nightly.yml --type tasks`, which checks a draft task file without installing it. Checks that need other files, such as broken refs, run only for a file inside a bundle. `--fix` changes only that file; `--prune-dangling-edges` with a file is a usage error.
 
+### Fixed
+
+- Reads that start on a cold index while another process is building it (several `akm search`/`show`/`curate` at once, or one beside `akm index`) now wait for that build and then read, instead of failing with `INDEX_DB_CONTENDED` (exit 75). The wait is at most 30 seconds; after that the read fails with the same error as before.
+
 ## [0.10.261121] - 2026-11-13
 
 ### Added

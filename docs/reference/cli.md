@@ -413,8 +413,11 @@ the lock is already held by a live process, it skips gracefully (exit 0,
 `{ ok: true, skipped: { reason: "lock-held", pid, launcherPid, startedAt } }`
 — `launcherPid` is the holder's launcher pid when known, `null` otherwise,
 #956) instead of contending. `akm index` and `akm curate` are both safe to call frequently —
-`curate` never blocks on a rebuild in progress ([read-path indexing stays
-non-blocking](#curate)) — but a hook, cron job, or scheduled task that
+`curate` never blocks on a rebuild in progress when an index already exists
+([read-path indexing stays non-blocking](#curate)); with no usable index yet,
+a read waits (up to 30 seconds) for the build another process is running and
+then reads, failing with `INDEX_DB_CONTENDED` only if that build outlasts the
+wait — but a hook, cron job, or scheduled task that
 invokes `akm index` directly should pass `--skip-if-locked` so it steps
 aside instead of piling up behind a longer rebuild (the shipped
 `index-refresh` task does this).
