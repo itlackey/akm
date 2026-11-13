@@ -41,7 +41,7 @@ const SIMULATIONS = {
     [0.004733, 0.691367, 0.3039],
   ],
 };
-const linear = (v) => ((v /= 255) <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+const linear = (v) => (v / 255 <= 0.04045 ? v / 255 / 12.92 : ((v / 255 + 0.055) / 1.055) ** 2.4);
 const clamp = (v) => Math.min(1, Math.max(0, v));
 const simulate = (rgb, matrix) => {
   const l = rgb.map(linear);
@@ -89,7 +89,10 @@ const bg = token("--bg");
 for (const scheme of ["light", "dark"]) {
   test(`${scheme}: the eight map colours (28 pairs) stay at least ${MIN_DELTA_E} apart, for all four kinds of vision`, () => {
     const worst = closestPair(slots.map((s) => s[scheme]));
-    assert.ok(worst.de >= MIN_DELTA_E, `slots ${worst.pair.map((n) => n + 1)} are ${worst.de.toFixed(1)} apart (${worst.vision})`);
+    assert.ok(
+      worst.de >= MIN_DELTA_E,
+      `slots ${worst.pair.map((n) => n + 1)} are ${worst.de.toFixed(1)} apart (${worst.vision})`,
+    );
   });
   test(`${scheme}: the highlight is not one of the categories, for all four kinds of vision`, () => {
     const worst = closestPair([...slots.map((s) => s[scheme]), highlight[scheme]]);
@@ -97,12 +100,16 @@ for (const scheme of ["light", "dark"]) {
   });
   test(`${scheme}: each map colour and the highlight is at least 3:1 against the map background`, () => {
     for (const [n, colour] of [...slots, highlight].entries())
-      assert.ok(contrast(colour[scheme], bg[scheme]) >= 3, `colour ${n + 1}: ${contrast(colour[scheme], bg[scheme]).toFixed(2)}`);
+      assert.ok(
+        contrast(colour[scheme], bg[scheme]) >= 3,
+        `colour ${n + 1}: ${contrast(colour[scheme], bg[scheme]).toFixed(2)}`,
+      );
   });
   test(`${scheme}: "use" steps rise in contrast with the background; never shown is visible but below the first step`, () => {
     const ratios = use.map((colour) => contrast(colour[scheme], bg[scheme]));
     assert.ok(ratios[0] > 1.3, `never shown must stay visible: ${ratios[0].toFixed(2)}`);
-    for (let n = 1; n < ratios.length; n++) assert.ok(ratios[n] > ratios[n - 1], `step ${n} does not beat step ${n - 1}`);
+    for (let n = 1; n < ratios.length; n++)
+      assert.ok(ratios[n] > ratios[n - 1], `step ${n} does not beat step ${n - 1}`);
     for (const ratio of ratios.slice(1)) assert.ok(ratio >= 3, `a used step is ${ratio.toFixed(2)}:1`);
     assert.ok(ratios[0] < 3, "never shown is quieter than 3:1");
   });

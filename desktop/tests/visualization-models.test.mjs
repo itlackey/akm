@@ -15,8 +15,8 @@ import {
   highlightCount,
   isPlaced,
   legendRows,
-  linksOf,
   linkSummary,
+  linksOf,
   listed,
   MARK_HIGHLIGHT,
   MARK_USE,
@@ -29,6 +29,7 @@ import {
   placeTip,
   sideList,
   sizeKey,
+  sortLabel,
   sortRows,
   useLine,
   useSteps,
@@ -247,7 +248,14 @@ const big = {
     xyz: [...Array.from({ length: 18 }, (_, n) => n + 1), ...Array(12).fill(null)],
   },
 };
-const base = (graph, over = {}) => ({ arrange: "meaning", colourBy: "family", lens: "", query: "", hidden: [], ...over });
+const base = (_graph, over = {}) => ({
+  arrange: "meaning",
+  colourBy: "family",
+  lens: "",
+  query: "",
+  hidden: [],
+  ...over,
+});
 
 test("placement is decided in one place: by meaning, assets without an embedding are not drawn, not even by their links", () => {
   const graph = buildGraph(big);
@@ -278,7 +286,10 @@ test("the table, the count and the side list use the whole library; only the dra
   // A search names itself in the count, and counts only its own unplaced matches.
   const found = listed(graph, base(graph, { query: "knowledge/d" }));
   assert.deepEqual(found, [7]);
-  assert.equal(countSummary(graph, base(graph, { query: "knowledge/d" }), found).text, "1 of 10 assets · matching “knowledge/d” · 1 not placed");
+  assert.equal(
+    countSummary(graph, base(graph, { query: "knowledge/d" }), found).text,
+    "1 of 10 assets · matching “knowledge/d” · 1 not placed",
+  );
   assert.equal(offMapReason(graph, f, 7), "Not placed: it has no position by meaning. Arrange by bundle to see it.");
   assert.equal(offMapReason(graph, f, 0), null);
 });
@@ -311,8 +322,14 @@ test("a selection lights its neighbours through link kinds that are on, not thro
     [...drawState(graph, f, 3, [1])].flatMap((s, i) => (s >= 1 ? [i] : [])),
     [0, 3],
   );
-  assert.deepEqual(linksOf(graph, 3, [1]).map((g) => g.kind), ["xref"]);
-  assert.deepEqual(linksOf(graph, 3).map((g) => g.kind), ["xref", "superseded_by"]);
+  assert.deepEqual(
+    linksOf(graph, 3, [1]).map((g) => g.kind),
+    ["xref"],
+  );
+  assert.deepEqual(
+    linksOf(graph, 3).map((g) => g.kind),
+    ["xref", "superseded_by"],
+  );
 });
 
 test("a selected asset with no position by meaning lights nothing on the drawing", () => {
@@ -342,7 +359,10 @@ test("the highlight is from the belief column and the links that say so, and cou
   assert.equal(highlightCount(graph, "never"), 6);
   assert.equal(highlightCount(graph, ""), 0);
   const marked = drawState(graph, base(graph, { arrange: "bundle", lens: "outdated" }), -1, []);
-  assert.deepEqual([...marked].flatMap((s, i) => (s === 2 ? [i] : [])), [1, 2, 4, 7]);
+  assert.deepEqual(
+    [...marked].flatMap((s, i) => (s === 2 ? [i] : [])),
+    [1, 2, 4, 7],
+  );
   // Marked assets take the highlight colour, which is not one of the eight; others keep their own.
   const { stepOf } = useSteps(graph.shows);
   const by = { colourBy: "family", lens: "outdated" };
@@ -364,7 +384,10 @@ test("Use colouring: never shown is its own mark, used assets fall in steps from
   );
   assert.deepEqual([0, 1, 2, 3, 4, 5, 7, 8, 40].map(stepOf), [0, 1, 2, 2, 2, 3, 3, 3, 4]);
   // Few distinct counts: fewer steps, never an empty one.
-  assert.deepEqual(useSteps([0, 1, 1, 1]).steps.map((s) => s.label), ["1+"]);
+  assert.deepEqual(
+    useSteps([0, 1, 1, 1]).steps.map((s) => s.label),
+    ["1+"],
+  );
   assert.deepEqual(useSteps([0, 0]).steps, []);
   assert.equal(useSteps([0, 0]).stepOf(0), 0);
   // The mark an asset is painted with: use steps follow the eight slots and the highlight.
@@ -394,7 +417,10 @@ test("the side list names what it lists, and says so when nothing was shown", ()
   const list = sideList(graph, never, listed(graph, never), since);
   assert.equal(list.title, "Never shown");
   assert.ok(list.items.every((i) => graph.shows[i] === 0));
-  assert.equal(sideList(graph, base(graph, { lens: "outdated" }), listed(graph, base(graph, { lens: "outdated" })), since).title, "Superseded, contradicted or deprecated");
+  assert.equal(
+    sideList(graph, base(graph, { lens: "outdated" }), listed(graph, base(graph, { lens: "outdated" })), since).title,
+    "Superseded, contradicted or deprecated",
+  );
   const unused = buildGraph({ ...big, nodes: { ...big.nodes, shows: big.nodes.shows.map(() => 0) } });
   const none = sideList(unused, base(unused), listed(unused, base(unused)), since);
   assert.deepEqual(none.items, []);
@@ -409,8 +435,14 @@ test("bundle colour slots follow the payload's order (largest first), and the ni
     nodes: { ...big.nodes, bundle: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] },
   };
   const graph = buildGraph(many);
-  assert.deepEqual([0, 1, 7, 8, 9].map((i) => colourSlot(graph, i, "bundle")), [0, 1, 7, 7, 7]);
-  assert.deepEqual(legendRows(graph, "bundle").map((row) => row.label), [...names.slice(0, 7), "Other bundles"]);
+  assert.deepEqual(
+    [0, 1, 7, 8, 9].map((i) => colourSlot(graph, i, "bundle")),
+    [0, 1, 7, 7, 7],
+  );
+  assert.deepEqual(
+    legendRows(graph, "bundle").map((row) => row.label),
+    [...names.slice(0, 7), "Other bundles"],
+  );
   assert.equal(legendRows(graph, "bundle").at(-1).count, 3);
 });
 
@@ -420,7 +452,15 @@ test("inside a bundle disc assets sit by type family and then ref, so one folder
     ...big,
     bundles: ["w"],
     types: ["knowledge"],
-    nodes: { ref: refs, title: refs, type: [0, 0, 0, 0], bundle: [0, 0, 0, 0], belief: [-1, -1, -1, -1], shows: [0, 0, 0, 0], searches: [0, 0, 0, 0] },
+    nodes: {
+      ref: refs,
+      title: refs,
+      type: [0, 0, 0, 0],
+      bundle: [0, 0, 0, 0],
+      belief: [-1, -1, -1, -1],
+      shows: [0, 0, 0, 0],
+      searches: [0, 0, 0, 0],
+    },
     links: { from: [], to: [], kind: [] },
     meaning: null,
   });
@@ -436,7 +476,11 @@ test("on the bundle arrangement links are faint until an asset is selected", () 
 });
 
 test("labels name the bundle when there is more than one, and not otherwise", () => {
-  const single = buildGraph({ ...big, bundles: ["only"], nodes: { ...big.nodes, bundle: big.nodes.bundle.map(() => 0) } });
+  const single = buildGraph({
+    ...big,
+    bundles: ["only"],
+    nodes: { ...big.nodes, bundle: big.nodes.bundle.map(() => 0) },
+  });
   assert.equal(single.name(0), "knowledge/a");
   const graph = buildGraph(big);
   // "knowledge/a" exists in both wiki and notes.
@@ -460,6 +504,8 @@ test("table rows sort by any column with the ref as the tie-break, and page in h
   assert.equal(sortRows(graph, rows, "ref", "ascending")[0], 3);
   assert.deepEqual(sortRows(graph, rows, "bundle", "ascending").slice(0, 2), [3, 8]);
   assert.equal(graph.types[graph.type[sortRows(graph, rows, "type", "descending")[0]]], "skill");
+  assert.equal(sortLabel("shows", "descending"), "most shown first");
+  assert.equal(sortLabel("bundle", "ascending"), "by bundle, ascending");
   assert.equal(PAGE_SIZE, 100);
   assert.deepEqual(pageOf(250, 1), { page: 1, pages: 3, start: 100, end: 200, label: "Rows 101–200 of 250" });
   assert.equal(pageOf(250, 9).label, "Rows 201–250 of 250");

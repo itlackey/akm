@@ -494,7 +494,12 @@ export const PALETTE_TOKENS = [
 export const MARK_HIGHLIGHT = 8;
 export const MARK_USE = 9;
 /** Which of `PALETTE_TOKENS` an asset is painted with: the highlight if it is marked, else its group or use step. */
-export function markOf(graph: LibraryGraph, i: number, f: Pick<Filters, "colourBy" | "lens">, stepOf: (v: number) => number) {
+export function markOf(
+  graph: LibraryGraph,
+  i: number,
+  f: Pick<Filters, "colourBy" | "lens">,
+  stepOf: (v: number) => number,
+) {
   if (f.lens && lensMatches(graph, f.lens, i)) return MARK_HIGHLIGHT;
   const slot = colourSlot(graph, i, f.colourBy);
   return slot >= 0 ? slot : MARK_USE + stepOf(graph.shows[i]!);
@@ -559,9 +564,14 @@ export type SortDirection = "ascending" | "descending";
 export function sortRows(graph: LibraryGraph, rows: readonly number[], key: TableKey, direction: SortDirection) {
   const sign = direction === "ascending" ? 1 : -1;
   const text = (i: number) =>
-    key === "type" ? (graph.types[graph.type[i]!] ?? "") : key === "bundle" ? (graph.bundles[graph.bundle[i]!] ?? "") : "";
+    key === "type"
+      ? (graph.types[graph.type[i]!] ?? "")
+      : key === "bundle"
+        ? (graph.bundles[graph.bundle[i]!] ?? "")
+        : "";
   const number = (i: number) => (key === "shows" ? graph.shows[i]! : graph.linked[i]!);
-  const refOrder = (a: number, b: number) => (graph.ref[a]! < graph.ref[b]! ? -1 : graph.ref[a]! > graph.ref[b]! ? 1 : 0);
+  const refOrder = (a: number, b: number) =>
+    graph.ref[a]! < graph.ref[b]! ? -1 : graph.ref[a]! > graph.ref[b]! ? 1 : 0;
   return [...rows].sort((a, b) => {
     let by = 0;
     if (key === "shows" || key === "links") by = number(a) - number(b);
@@ -570,9 +580,20 @@ export function sortRows(graph: LibraryGraph, rows: readonly number[], key: Tabl
     return sign * by || refOrder(a, b);
   });
 }
+/** How the table says it is ordered: "most shown first" for the default, else "by bundle, ascending". */
+export function sortLabel(key: TableKey, direction: SortDirection) {
+  if (key === "shows") return direction === "descending" ? "most shown first" : "least shown first";
+  return `by ${key === "ref" ? "asset" : key}, ${direction}`;
+}
 /** The page `page` (from 0, clamped) of `total` rows: its first and last row numbers (from 1) and how many pages there are. */
 export function pageOf(total: number, page: number, size = PAGE_SIZE) {
   const pages = Math.max(1, Math.ceil(total / size));
   const at = Math.min(Math.max(0, page), pages - 1);
-  return { page: at, pages, start: at * size, end: Math.min(total, (at + 1) * size), label: total ? `Rows ${at * size + 1}–${Math.min(total, (at + 1) * size)} of ${total}` : "No rows" };
+  return {
+    page: at,
+    pages,
+    start: at * size,
+    end: Math.min(total, (at + 1) * size),
+    label: total ? `Rows ${at * size + 1}–${Math.min(total, (at + 1) * size)} of ${total}` : "No rows",
+  };
 }
