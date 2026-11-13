@@ -102,7 +102,7 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | `akm metrics` | Deprecated | Removed in 0.11: use `akm doctor metrics`. Current report content and JSON shape are Experimental. |
 | `akm info` | Deprecated | Removed in 0.11: use `akm doctor info`. The current `learning` field is Experimental for its first release. |
 | `akm log` | Deprecated | Removed in 0.11: use `akm doctor log`. |
-| `akm lint` | Evolving | |
+| `akm lint` | Evolving | `akm lint <file>` checks one file, first in 0.10.261122; a file outside every bundle needs `--type`. |
 | `akm improve` | Evolving | `--require-feedback-signal`, `--json-to-stdout`, `--show-prompt` and `--timeout-ms` are Deprecated, removed in 0.11 (replacements: a strategy with `processes.proactiveMaintenance.enabled: false` selected with `--strategy`, ordinary JSON output, `doctor prompt`, `--timeout`). Gate-passed proposals are accepted and committed by default. The [three named autonomous lanes](#akm-improve-autonomy) require `experimental.improveAutonomy`; other documented writes do not. |
 | `akm improve report` | Deprecated | Removed in 0.11: use `akm doctor metrics improve` (`--run`, `--since`), first in 0.10.261120, retaining run/window selection and usage, routing, and cost data. |
 | `akm improve judge` | Deprecated | Removed in 0.11: use `akm doctor judge`. Subcommand since 0.10 (was a magic `scope` value); reads one revision as JSON on stdin and writes nothing. The same as `akm judge reflect.quality`, in its older input and output shape; its `--strategy` flag was removed. |
@@ -820,7 +820,7 @@ spelling is in the CHANGELOG entry and the CLI reference.
 | `--shape agent` | `--detail agent` |
 | `--shape summary` | `--detail brief` (it only had a projection on `akm show`) |
 | `--target` on `import`, `env create`, `env remove`, `secret set`, `proposal accept`, `proposal diff`, `proposal revert` | `--bundle` |
-| `akm task validate <path>` | `akm lint --type tasks` |
+| `akm task validate <path>` | `akm lint <file> --type tasks` for one file (first in 0.10.261122), `akm lint --type tasks` for a bundle |
 | `akm config path --all` | `akm info` |
 | `--run` / `--since` on `akm improve` | `akm improve report --run` / `--since` |
 

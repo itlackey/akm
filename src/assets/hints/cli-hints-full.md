@@ -322,6 +322,7 @@ akm index --full                              # Full reindex
 akm bundle list                                      # List all sources
 akm lint                                      # Structural lint over the bundle; exits 0 regardless of findings
 akm lint --fix                                # Auto-fix Tier 1 issues
+akm lint <file> [--type <type>]               # Lint one file; --type is needed outside a bundle (e.g. ./nightly.yml --type tasks)
 akm lint --fail-on-flagged                    # Exit non-zero when summary.flagged > 0 (CI-friendly)
 akm upgrade                                   # Upgrade akm using its install method, then update installed harness plugins
 akm upgrade --check                           # Report pending CLI and plugin updates, changing nothing
@@ -365,6 +366,7 @@ scheduler (cron / launchd / schtasks). The file is the source of truth:
 file plus one `sync` is a complete workflow.
 
 ```sh
+akm lint <file> --type tasks                   # Check a draft task file without installing it (`akm lint --type tasks` checks a bundle)
 akm import <file> --type task                  # Add a task YAML file to the working bundle
 akm task enable <bundle>//tasks/<id>           # Enable locally and sync that bundle
 akm task disable <bundle>//tasks/<id>          # Disable locally and unschedule it

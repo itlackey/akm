@@ -62,6 +62,8 @@ export interface AkmLintOptions {
   dir?: string;
   config?: AkmConfig;
   typeFilter?: string;
+  /** Lint this one file instead of a whole bundle (`akm lint <file>`). */
+  file?: string;
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -484,7 +486,7 @@ export function lintSkillDirectory(subdirPath: string, stashRoot: string): LintI
 
 /** MemoryLinter's `orphaned-stub` check WITH its `--fix` delete (memory-linter.ts:19-65). */
 function appendMemoryStubIssue(ctx: LintContext, issues: LintIssue[]): void {
-  if (!memoryOrphanStubApplies(ctx.data, ctx.body)) return;
+  if (ctx.lintSkip?.includes("orphaned-stub") || !memoryOrphanStubApplies(ctx.data, ctx.body)) return;
   const derivedPath = `${ctx.filePath.replace(/\.md$/i, "")}.derived.md`;
   if (fs.existsSync(derivedPath)) return;
   if (ctx.fix) {
@@ -578,6 +580,140 @@ export function lintAssetFile(ctx: LintContext, subdir: string): LintIssue[] {
   return issues;
 }
 
+interface SweepScope {
+  stashRoot: string;
+  extraStashRoots: string[];
+  fix: boolean;
+  pruneDanglingEdges: boolean;
+  /** Rules to skip for this run, on top of the file's own `lint_skip:`. */
+  lintSkip?: string[];
+}
+
+interface SweepSinks {
+  fixed: LintIssue[];
+  flagged: LintIssue[];
+  warnings: LintIssue[];
+}
+
+/** Lint one asset file of `subdir` and file its findings into `sinks` (the sweep loop body, shared with {@link lintFile}). */
+function lintSweepFile(
+  filePath: string,
+  relPath: string,
+  subdir: string,
+  scope: SweepScope,
+  { fixed, flagged, warnings }: SweepSinks,
+): void {
+  const { stashRoot, extraStashRoots, fix, pruneDanglingEdges, lintSkip } = scope;
+  let raw: string;
+  try {
+    raw = fs.readFileSync(filePath, "utf8");
+  } catch {
+    return;
+  }
+
+  let data: Record<string, unknown>;
+  let body: string;
+  let frontmatter: string | null;
+  // File-identity findings the per-type rules cannot produce: they describe
+  // the FILE (its extension, whether it parsed at all), not its fields.
+  const fileIssues: LintIssue[] = [];
+
+  if (subdir === "tasks") {
+    // Task files are pure YAML. The canonical task-v3 parser runs once in
+    // taskDiagnostics below; base checks need no parsed frontmatter data.
+    data = {};
+    if (isNearMissTaskFileName(relPath)) {
+      fileIssues.push({
+        file: relPath,
+        issue: "invalid-task-yaml",
+        detail: taskExtensionDetail(relPath),
+        fixed: false,
+      });
+    }
+    body = raw;
+    frontmatter = null;
+  } else {
+    ({ data, content: body, frontmatter } = parseFrontmatter(raw));
+  }
+
+  // One file's checks — including its `--fix` mutations — must never abort
+  // the sweep: an uncaught throw here left the caller with an exception and
+  // no record of which earlier files had ALREADY been rewritten on disk
+  // (issue #761). A failure is reported per-file, in-band, and the sweep
+  // continues so the rest of the bundle is still linted.
+  let issues: LintIssue[];
+  try {
+    issues = [
+      ...fileIssues,
+      ...lintAssetFile(
+        {
+          filePath,
+          relPath,
+          raw,
+          data,
+          body,
+          frontmatter,
+          fix,
+          pruneDanglingEdges,
+          stashRoot,
+          extraStashRoots,
+          lintSkip,
+        },
+        subdir,
+      ),
+    ];
+  } catch (e) {
+    flagged.push(...fileIssues, {
+      file: relPath,
+      issue: "lint-failed",
+      detail: `lint ${fix ? "--fix " : ""}failed for this file: ${e instanceof Error ? e.message : String(e)}`,
+      fixed: fix ? "failed" : false,
+    });
+    return;
+  }
+
+  let fileDeleted = false;
+  for (const issue of issues) {
+    if (isFileDeletion(issue)) {
+      fileDeleted = true;
+      fixed.push(issue);
+    } else if (isAdvisoryLintIssue(issue)) {
+      // `lintAssetFile` returns errors only today, so this branch is
+      // reached by no current producer — it is here so that an advisory
+      // added to a per-type check later cannot silently become a
+      // `--fail-on-flagged` failure, the way the unclassified default does.
+      warnings.push(issue);
+    } else if (issue.fixed === true) {
+      fixed.push(issue);
+    } else {
+      // fixed === false (not fixable / no fix requested) or "failed" (fix attempted but threw)
+      flagged.push(issue);
+    }
+  }
+
+  if (fileDeleted) return; // file is gone — skip any remaining checks
+
+  // The workflow frontend is ONE parse+compile whose output feeds BOTH
+  // channels, so it runs here — once per file — rather than inside
+  // `lintAssetFile`, which is an errors-only surface (pinned by the lint
+  // golden). Which channel a finding lands in is decided by
+  // `ADVISORY_LINT_ISSUES`, never by which half of the pass produced it, so
+  // a future compile-warning kind carrying a fatal code cannot slip past
+  // `--fail-on-flagged`.
+  // The CLI passes the absolute filePath to the shared source-IR frontend,
+  // whereas the adapter passes the change relPath.
+  if (subdir === "workflows") {
+    const frontend = workflowFrontendDiagnostics(relPath, raw, filePath);
+    for (const finding of [...frontend.errors, ...frontend.warnings]) {
+      if (isAdvisoryLintIssue(finding)) {
+        warnings.push(finding);
+      } else {
+        flagged.push(finding);
+      }
+    }
+  }
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 /**
@@ -649,114 +785,13 @@ function lintAkmSweep(
       // backslashes, so the forward-slash substring never matched and --fix
       // rewrote files inside the registry cache.
       if (isAkmRegistryCachePath(filePath)) continue;
-      const relPath = path.relative(stashRoot, filePath);
-      let raw: string;
-      try {
-        raw = fs.readFileSync(filePath, "utf8");
-      } catch {
-        continue;
-      }
-
-      let data: Record<string, unknown>;
-      let body: string;
-      let frontmatter: string | null;
-      // File-identity findings the per-type rules cannot produce: they describe
-      // the FILE (its extension, whether it parsed at all), not its fields.
-      const fileIssues: LintIssue[] = [];
-
-      if (subdir === "tasks") {
-        // Task files are pure YAML. The canonical task-v3 parser runs once in
-        // taskDiagnostics below; base checks need no parsed frontmatter data.
-        data = {};
-        if (isNearMissTaskFileName(relPath)) {
-          fileIssues.push({
-            file: relPath,
-            issue: "invalid-task-yaml",
-            detail: taskExtensionDetail(relPath),
-            fixed: false,
-          });
-        }
-        body = raw;
-        frontmatter = null;
-      } else {
-        ({ data, content: body, frontmatter } = parseFrontmatter(raw));
-      }
-
-      // One file's checks — including its `--fix` mutations — must never abort
-      // the sweep: an uncaught throw here left the caller with an exception and
-      // no record of which earlier files had ALREADY been rewritten on disk
-      // (issue #761). A failure is reported per-file, in-band, and the sweep
-      // continues so the rest of the bundle is still linted.
-      let issues: LintIssue[];
-      try {
-        issues = [
-          ...fileIssues,
-          ...lintAssetFile(
-            {
-              filePath,
-              relPath,
-              raw,
-              data,
-              body,
-              frontmatter,
-              fix,
-              pruneDanglingEdges: options.pruneDanglingEdges === true,
-              stashRoot,
-              extraStashRoots,
-            },
-            subdir,
-          ),
-        ];
-      } catch (e) {
-        flagged.push(...fileIssues, {
-          file: relPath,
-          issue: "lint-failed",
-          detail: `lint ${fix ? "--fix " : ""}failed for this file: ${e instanceof Error ? e.message : String(e)}`,
-          fixed: fix ? "failed" : false,
-        });
-        continue;
-      }
-
-      let fileDeleted = false;
-      for (const issue of issues) {
-        if (isFileDeletion(issue)) {
-          fileDeleted = true;
-          fixed.push(issue);
-        } else if (isAdvisoryLintIssue(issue)) {
-          // `lintAssetFile` returns errors only today, so this branch is
-          // reached by no current producer — it is here so that an advisory
-          // added to a per-type check later cannot silently become a
-          // `--fail-on-flagged` failure, the way the unclassified default does.
-          warnings.push(issue);
-        } else if (issue.fixed === true) {
-          fixed.push(issue);
-        } else {
-          // fixed === false (not fixable / no fix requested) or "failed" (fix attempted but threw)
-          flagged.push(issue);
-        }
-      }
-
-      if (fileDeleted) continue; // file is gone — skip any remaining checks
-
-      // The workflow frontend is ONE parse+compile whose output feeds BOTH
-      // channels, so it runs here — once per file — rather than inside
-      // `lintAssetFile`, which is an errors-only surface (pinned by the lint
-      // golden). Which channel a finding lands in is decided by
-      // `ADVISORY_LINT_ISSUES`, never by which half of the pass produced it, so
-      // a future compile-warning kind carrying a fatal code cannot slip past
-      // `--fail-on-flagged`.
-      // The CLI passes the absolute filePath to the shared source-IR frontend,
-      // whereas the adapter passes the change relPath.
-      if (subdir === "workflows") {
-        const frontend = workflowFrontendDiagnostics(relPath, raw, filePath);
-        for (const finding of [...frontend.errors, ...frontend.warnings]) {
-          if (isAdvisoryLintIssue(finding)) {
-            warnings.push(finding);
-          } else {
-            flagged.push(finding);
-          }
-        }
-      }
+      lintSweepFile(
+        filePath,
+        path.relative(stashRoot, filePath),
+        subdir,
+        { stashRoot, extraStashRoots, fix, pruneDanglingEdges: options.pruneDanglingEdges === true },
+        { fixed, flagged, warnings },
+      );
     }
   }
 
@@ -775,6 +810,152 @@ function lintAkmSweep(
   //   2. `ok` is the shared `{ok, error, code}` failure indicator across the
   //      whole CLI; reusing it for "found stuff" forced callers to disambiguate
   //      a successful-but-flagged run from a hard error by inspecting fields.
+  return {
+    ok: true,
+    fixed,
+    flagged,
+    warnings,
+    summary: { fixed: fixed.length, flagged: flagged.length, warnings: warnings.length },
+  };
+}
+
+/** The configured bundle root (or `--dir`) that contains `file`, deepest first; undefined when `file` is outside every bundle. */
+function containingBundleRoot(file: string, roots: readonly string[]): string | undefined {
+  const real = (p: string): string => fs.realpathSync(p);
+  const target = real(file);
+  return roots
+    .filter((root) => fs.existsSync(root))
+    .filter((root) => {
+      const rel = path.relative(real(root), target);
+      return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+    })
+    .sort((a, b) => b.length - a.length)[0];
+}
+
+/**
+ * `akm lint <file>`: the sweep's own per-file rules (`lintSweepFile`) on one
+ * file, rather than a filter threaded through the whole sweep — the sweep's
+ * directory-level and cross-bundle passes (skill dirs, env keys, workflow
+ * ownership) are bundle concerns that a single file should not trigger. A file
+ * in a non-akm bundle runs that adapter and keeps only this file's findings.
+ */
+async function lintFile(file: string, options: AkmLintOptions, cfg: AkmConfig): Promise<AkmLintResult> {
+  if (options.pruneDanglingEdges) {
+    throw new UsageError("lint: --prune-dangling-edges applies to a bundle, not a single file.", "INVALID_FLAG_VALUE");
+  }
+  const stat = fs.statSync(file, { throwIfNoEntry: false });
+  if (!stat) throw new UsageError(`lint: "${file}" does not exist.`, "INVALID_FLAG_VALUE");
+  if (stat.isDirectory()) {
+    throw new UsageError(`lint: "${file}" is a directory; use --dir to lint a bundle.`, "INVALID_FLAG_VALUE");
+  }
+  const absFile = fs.realpathSync(file);
+  // A machine with no bundle at all can still lint a loose file, so a missing primary bundle is not an error here.
+  let primary: string | undefined = options.dir ?? primaryBundlePath(cfg);
+  if (!primary) {
+    try {
+      primary = resolveStashDir();
+    } catch {
+      primary = undefined;
+    }
+  }
+  const root = containingBundleRoot(absFile, [
+    ...(options.dir ? [options.dir] : []),
+    ...(primary ? resolveSourceEntries(primary, cfg).map((source) => source.path) : []),
+  ]);
+
+  // Symlink-resolved, so a file's bundle-relative path is right however either was spelled.
+  const realRoot = root ? fs.realpathSync(root) : undefined;
+  const typeValues = STASH_SUBDIRS.join(", ");
+  let subdir: string | undefined;
+  if (root) {
+    const sources = resolveSourceEntries(root, cfg);
+    const adapterId =
+      sources.find((s) => path.resolve(s.path) === path.resolve(root))?.adapterId ?? detectAdapterId(root);
+    const relPath = path.relative(realRoot as string, absFile);
+    if (adapterId !== "akm") {
+      const result = await lintViaAdapter(
+        adapterId,
+        root,
+        sources.map((s) => s.path).filter((p) => p !== root && fs.existsSync(p)),
+        sources,
+        cfg,
+        { ...options, typeFilter: undefined },
+      );
+      const only = (issues: LintIssue[]): LintIssue[] =>
+        issues.filter((i) => path.resolve(realRoot as string, i.file) === absFile);
+      const flagged = only(result.flagged);
+      const warnings = only(result.warnings);
+      return {
+        ok: true,
+        fixed: [],
+        flagged,
+        warnings,
+        summary: { fixed: 0, flagged: flagged.length, warnings: warnings.length },
+      };
+    }
+    // The type comes from where the file sits, as the bundle sweep decides it.
+    const located = STASH_SUBDIRS.find((d) => relPath.split(path.sep)[0] === d);
+    if (located && options.typeFilter && options.typeFilter !== located) {
+      throw new UsageError(
+        `lint: --type "${options.typeFilter}" does not match "${relPath}", which is a ${located} file in this bundle.`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
+    subdir = located ?? options.typeFilter;
+    if (!subdir) {
+      throw new UsageError(
+        `lint: "${relPath}" is not under a known asset directory; pass --type (${typeValues}).`,
+        "MISSING_REQUIRED_ARGUMENT",
+        "Example: akm lint ./nightly.yml --type tasks",
+      );
+    }
+    if (options.fix) assertFixTargetWritable(root, sources);
+  } else {
+    subdir = options.typeFilter;
+    if (!subdir) {
+      throw new UsageError(
+        `lint: "${file}" is outside every bundle; pass --type (${typeValues}).`,
+        "MISSING_REQUIRED_ARGUMENT",
+        "Example: akm lint ./nightly.yml --type tasks",
+      );
+    }
+  }
+  if (!(STASH_SUBDIRS as readonly string[]).includes(subdir)) {
+    throw new UsageError(
+      `lint: --type "${subdir}" is not recognized; valid types: ${typeValues}.`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  const name = path.basename(absFile);
+  const fits =
+    subdir === "tasks" ? isTaskFileName(name) || isNearMissTaskFileName(name) : name.toLowerCase().endsWith(".md");
+  if (!fits) {
+    throw new UsageError(
+      `lint: "${file}" is not a ${subdir} file (expects ${subdir === "tasks" ? `${TASK_EXTENSION}` : ".md"}).`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+
+  const sinks: SweepSinks = { fixed: [], flagged: [], warnings: [] };
+  lintSweepFile(
+    absFile,
+    realRoot ? path.relative(realRoot, absFile) : file,
+    subdir,
+    {
+      stashRoot: root ?? path.dirname(absFile),
+      extraStashRoots: root
+        ? resolveSourceEntries(root, cfg)
+            .map((s) => s.path)
+            .filter((p) => p !== root && fs.existsSync(p))
+        : [],
+      fix: options.fix === true,
+      pruneDanglingEdges: false,
+      // Outside a bundle there are no other assets to resolve refs or a derived stub against.
+      lintSkip: root ? undefined : ["missing-ref", "orphaned-stub"],
+    },
+    sinks,
+  );
+  const { fixed, flagged, warnings } = sinks;
   return {
     ok: true,
     fixed,
@@ -806,6 +987,7 @@ export async function akmLint(options: AkmLintOptions = {}): Promise<AkmLintResu
   // cross-stash refs (e.g. referencing assets in dimm-city/agent-stash) are
   // not falsely flagged as missing-ref.
   const cfg = options.config ?? loadConfig();
+  if (options.file !== undefined) return lintFile(options.file, options, cfg);
   // The primary stash is the defaultBundle's path.
   const stashRoot = options.dir ?? primaryBundlePath(cfg) ?? resolveStashDir();
   const sources = resolveSourceEntries(stashRoot, cfg);

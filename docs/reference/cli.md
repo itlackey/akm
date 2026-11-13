@@ -3228,6 +3228,8 @@ structural-validation surface now that `akm workflow validate` is gone).
 
 ```sh
 akm lint                        # Report findings; exits 0 regardless
+akm lint memories/note.md       # Lint one file (a file in a bundle takes its type from its location)
+akm lint ./nightly.yml --type tasks  # One file outside every bundle: --type is required
 akm lint --fix                  # Auto-fix Tier-1 issues in place
 akm lint --type workflows       # Only lint one asset type
 akm lint --dir ~/other-bundle    # Override the bundle root (default: from config)
@@ -3235,8 +3237,9 @@ akm lint --fail-on-flagged      # CI-friendly: exit non-zero when summary.flagge
 akm lint --prune-dangling-edges # Opt-in: drop belief edges whose target is gone
 ```
 
-| Flag | Description |
+| Argument or flag | Description |
 | --- | --- |
+| `<file>` | Optional. Lint just this file with the rules the bundle lint applies to it, and return the same result with the counts for that file only (first in 0.10.261122). A file inside a bundle (a configured one, or the root given with `--dir`) gets its type from where it sits, as the bundle lint decides it. A file outside every bundle needs `--type` (`agents`, `commands`, `memories`, `skills`, `workflows`, `lessons`, `tasks`, `knowledge`, `facts`). Checks that need other files, such as broken refs and orphaned stubs, run only for a file inside a bundle; outside one only the file's own rules run. A `--type` that disagrees with the file's location, a missing path, a directory (use `--dir`) and `--prune-dangling-edges` are usage errors (exit 2). `--fix` changes only this file. |
 | `--fix` (alias `--auto-fix`) | Apply auto-fixes in place. Refused with a usage error when the target bundle is configured `writable: false`. |
 | `--dir` | Override the bundle root directory (default: from config) |
 | `--type` | Only lint assets of this type (e.g. `workflows`, `tasks`, `memories`). **akm bundles only** — every other adapter validates the whole bundle and warns on stderr that the flag had no effect. |
@@ -4100,7 +4103,7 @@ executable source contract this release accepts; `akm import <file> --type task`
 imports a v4 file — see the canonical [Tasks reference](tasks.md). The
 group is `add | enable | disable | run | explain | sync | doctor | history | prune`
 — there is no `show` or `remove`; use `akm show tasks/<id>` to inspect one
-task. Only `enable` and `disable` are current (validate a task source with `akm lint --type tasks`). The rest are
+task. Only `enable` and `disable` are current (validate one task file with `akm lint <file> --type tasks`, a bundle's tasks with `akm lint --type tasks`). The rest are
 Deprecated, removed in 0.11:
 
 | Deprecated | Use |
