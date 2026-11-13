@@ -6,7 +6,9 @@
  * One stderr line per process when a command or flag that STABILITY.md marks
  * Deprecated is used and its replacement exists in this build. Stdout, JSON and
  * exit codes are unchanged, and `--quiet` silences it (it goes through `warnOnce`).
- * A deprecation whose replacement is not built yet has no row here.
+ * A row names its replacement when one exists in this build; a removal with no
+ * replacement prints a `note` saying so. A deprecation whose replacement is planned
+ * but not yet built has no row here.
  *
  * Not printed for akm's own invocations: the scheduler's `task run --scheduled`
  * and commands run by a task, improve or audit (their `AKM_EVENT_SOURCE`).
