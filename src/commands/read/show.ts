@@ -40,6 +40,7 @@ import { warn, warnOnce } from "../../core/warn";
 import { BUILD_IN_PROGRESS_WARNING } from "../../indexer/ensure-index";
 import {
   lookupBundleRef,
+  lookupBundleRefFromFiles,
   lookupBundleRefWithResolution,
   lookupBundleRefWithResolutionReadonly,
 } from "../../indexer/indexer";
@@ -342,7 +343,9 @@ export async function showLocal(input: {
     resolution = { entry: null };
   }
   if (resolution.indexError !== undefined && !input.indexBuilding) throw resolution.indexError;
-  const indexedEntry = resolution.entry;
+  // The build has not persisted this ref yet: resolve it from the bundle's files.
+  const fromFiles = !resolution.entry && input.indexBuilding === true;
+  const indexedEntry = fromFiles ? await lookupBundleRefFromFiles(parsed) : resolution.entry;
   const assetPath = indexedEntry?.filePath;
 
   if (!indexedEntry && parsed.bundle && searchSources.length === 0) {
@@ -376,7 +379,7 @@ export async function showLocal(input: {
     throw new NotFoundError(
       `Stash asset not found for ref: ${makeBundleRef(parsed.bundle, parsed.conceptId)}. ` +
         (input.indexBuilding
-          ? "The search index is still being built by another akm process, so it may not be indexed yet; retry shortly."
+          ? "The search index is still being built by another akm process and this bundle's files do not resolve it; retry shortly."
           : "Check the name with `akm search` or verify the asset exists in your stash."),
     );
   }
@@ -405,7 +408,7 @@ export async function showLocal(input: {
   // Only resolve the indexed-safe revision when the selector itself is opaque,
   // or when the caller explicitly opts into indexed-safe contextual output.
   const indexedFragment =
-    parsed.fragment && (opaqueFragmentSelector || input.contextMode === "lead")
+    !fromFiles && parsed.fragment && (opaqueFragmentSelector || input.contextMode === "lead")
       ? withIndexDb((db) => getIndexedMarkdownFragment(db, indexedEntry.itemRef, parsed.fragment!), {
           readOnly: input.readOnly === true,
         })
@@ -500,7 +503,7 @@ export async function showLocal(input: {
       response.contextMaxChars = contextMaxChars;
       response.contextTruncated = contextual.truncated;
     }
-  } else if (input.contextMode === "lead") {
+  } else if (input.contextMode === "lead" && !fromFiles) {
     throw new NotFoundError(`Indexed-safe fragment context is unavailable for ${input.ref}.`);
   }
   if (response.type === "workflow") response.action = buildWorkflowAction(canonicalRef);
@@ -528,7 +531,7 @@ export async function showLocal(input: {
     origin: source?.registryId ?? null,
     editable,
     ...(!editable ? { editHint: buildEditHint(canonicalRef) } : {}),
-    ...showLinks(indexedEntry.itemRef, displayDefaultBundle, input.readOnly === true),
+    ...(fromFiles ? {} : showLinks(indexedEntry.itemRef, displayDefaultBundle, input.readOnly === true)),
   };
 
   if (input.detail === "brief") {

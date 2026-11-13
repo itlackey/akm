@@ -102,7 +102,7 @@ import {
 import { drainDirDocuments } from "./scan/drain-dir";
 import type { SearchSource } from "./search/search-source";
 import { purgeOldUsageEvents, USAGE_EVENT_RETENTION_DAYS } from "./usage/usage-events";
-import type { FileContext } from "./walk/file-context";
+import { buildFileContext, type FileContext } from "./walk/file-context";
 import {
   type IndexVerification,
   type RemovedIndexSource,
@@ -1756,6 +1756,38 @@ export async function lookupBundleRefWithResolutionReadonly(ref: BundleRef): Pro
     if (!db) throw new Error(`Index database not found at ${dbPath}. Run 'akm index' to build it.`);
     return db;
   });
+}
+
+/**
+ * Resolve a ref from the bundle's files alone (no index): the same physical
+ * owner walk the lookup above uses, then the owning adapter's own recognition
+ * of the file. For a read while the first index build is still running. An
+ * entry has only what the file and adapter give: no links, usage or scores.
+ */
+export async function lookupBundleRefFromFiles(ref: BundleRef): Promise<IndexEntry | null> {
+  const match = resolveConceptOwner(ref, await resolveLookupSources(), { mode: "read" });
+  if (!match) return null;
+  const { owner, source, bundleId, adapterId } = match;
+  const component: BundleComponent = { id: adapterId, adapter: adapterId, root: source.path, writable: false };
+  const document = adapterForId(adapterId)?.recognize(component, buildFileContext(source.path, owner.path));
+  if (!document) return null;
+  const { itemRef, conceptId } = deriveEntryProvenance(
+    { bundleId, componentId: adapterId, adapterId },
+    document.type,
+    document.name,
+    owner.conceptId,
+  );
+  return {
+    filePath: owner.path,
+    stashDir: source.path,
+    type: document.type,
+    name: document.name,
+    adapterId,
+    document,
+    itemRef,
+    bundleId,
+    conceptId,
+  };
 }
 
 /** Resolve an adapter-owned `[bundle//]conceptId` without interpreting its path as an AKM type. */

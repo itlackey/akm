@@ -12,7 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- Reads that start on a cold index while another process is building it (several `akm search`/`show`/`curate` at once, or one beside `akm index`) no longer fail with `INDEX_DB_CONTENDED` (exit 75). They wait up to 5 seconds for that build and read normally if it finishes; otherwise they answer from the keyword index the build has written so far (exit 0, `searchMode` `keyword`, with a warning that the build is still running and semantic results return when it finishes). Nothing written yet gives an empty result with the same warning. A read never starts a second build.
+- Reads that start on a cold index while another process is building it (several `akm search`/`show`/`curate` at once, or one beside `akm index`) no longer fail with `INDEX_DB_CONTENDED` (exit 75). They wait up to 5 seconds for that build and read normally if it finishes; otherwise they answer from the keyword index the build has written so far (exit 0, `searchMode` `keyword`, with a warning that the build is still running and semantic results return when it finishes). Nothing written yet gives an empty result with the same warning. `akm show` does not need the index in that state: it reads the asset from the bundle's files (without links or indexed fragment context) and prints the same warning, and says the build is still running only when the file is not found. A read never starts a second build.
 
 ## [0.10.261121] - 2026-11-13
 

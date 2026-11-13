@@ -14,7 +14,6 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { saveConfig } from "../../../src/core/config/config";
-import { TransientError } from "../../../src/core/errors";
 import { getDbPath, getIndexRebuildLockPath } from "../../../src/core/paths";
 import { _resetBuildWaitForTests, ensureIndex } from "../../../src/indexer/ensure-index";
 import { _setAkmIndexForTests, akmIndex } from "../../../src/indexer/indexer";
@@ -200,12 +199,20 @@ describe("cold index: reads wait for the build in progress", () => {
       closeDatabase(db);
     }
     const lockPath = plantLock(process.pid);
+    // A file the build has not reached yet.
+    fs.writeFileSync(
+      path.join(storage.stashDir, "memories", "late.md"),
+      "---\ndescription: late\n---\n\n# Late\n\nintro\n\n## Part\n\npart text\n",
+      "utf8",
+    );
 
     const started = Date.now();
-    const [search, curate, shown, missing] = await Promise.all([
+    const [search, curate, shown, late, lateFragment, missing] = await Promise.all([
       spawnCli(["search", "widgets"]).done,
       spawnCli(["curate", "widgets"]).done,
       spawnCli(["show", "memories/note-5"]).done,
+      spawnCli(["show", "memories/late"]).done,
+      spawnCli(["show", "memories/late#part"]).done,
       spawnCli(["show", "memories/note-9999"]).done,
     ]);
     expect(Date.now() - started).toBeGreaterThanOrEqual(5000);
@@ -224,7 +231,16 @@ describe("cold index: reads wait for the build in progress", () => {
     expect(JSON.parse(shown.stdout).name).toBe("note-5");
     expect(shown.stderr).toContain("still being built");
 
-    // A ref the build has not persisted is not found, and says why.
+    // A ref the build has not persisted is read from the file, with the same warning.
+    for (const r of [late, lateFragment]) {
+      expect(r.code).toBe(0);
+      expect(r.stderr).toContain("still being built");
+    }
+    expect(JSON.parse(late.stdout).content).toContain("intro");
+    expect(JSON.parse(lateFragment.stdout).content).toContain("part text");
+    expect(JSON.parse(lateFragment.stdout).content).not.toContain("intro");
+
+    // Only a file that is not there is not found, and the message says the build is still running.
     expect(missing.code).toBe(1);
     expect(missing.stderr).toContain("still being built");
 
@@ -251,7 +267,8 @@ describe("cold index: reads wait for the build in progress", () => {
     expect(searched.hits).toEqual([]);
     expect(searched.searchMode).toBe("keyword");
     expect(searched.warnings.join("\n")).toContain("still being built by another akm process");
-    expect(shown.code).toBe(1);
+    expect(shown.code).toBe(0); // no index at all: show reads the file
+    expect(JSON.parse(shown.stdout).name).toBe("note-5");
     expect(shown.stderr).toContain("still being built");
     expect(fs.existsSync(getDbPath())).toBe(false); // nothing was built
     expect(fs.existsSync(lockPath)).toBe(true);
