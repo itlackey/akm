@@ -384,7 +384,7 @@ A bundle recognized by the `llm-wiki` adapter (a root with `schema.md` and
 |---|---|
 | `$DATA/akm.lock.lck` | Sentinel that serializes writes to `akm.lock`. |
 | `$DATA/index.db.write.lock` | Asset-mutation lease: serializes writes to authored content (`remember`, `import`, source updates, proposal apply). Reclaimed only when the holder PID is dead (`src/indexer/index-writer-lock.ts`). |
-| `$DATA/index.rebuild.lock` | Taken by every `akm index` run. A plain `akm index` that finds it held warns and proceeds; `akm index --skip-if-locked` exits 0 instead (`src/indexer/index-rebuild-lock.ts`). |
+| `$DATA/index.rebuild.lock` | Taken by every index build (`akm index`, `setup`, `bundle add`/`update`/`remove`, `improve`'s pre-run index). A plain `akm index` that finds it held waits for the build (10 minutes at most); `akm index --skip-if-locked` and `improve` skip instead. Reads never take it. Reclaimed only when the holder PID is dead (`src/indexer/index-rebuild-lock.ts`, `src/indexer/index-build.ts`). |
 | `$STATE/locks/<stash>/improve.lock` | One `akm improve` run per bundle. JSON `{ pid, startedAt, lockId }`. A lock is reclaimed only when its holder PID is dead; it does not expire by age (`src/commands/improve/locks.ts`, `src/core/run-lock.ts`). |
 | `$STATE/locks/scheduler.lock` | Serializes scheduler mutations (`withSchedulerLock`, `src/tasks/scheduler-lock.ts`). |
 | `$DATA/workflow-run-locks/<run-id>.lock` | One engine per workflow run; same PID-liveness reclaim (`workflowRunLockPath`, `src/workflows/exec/run-workflow.ts`). |

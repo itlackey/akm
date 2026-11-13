@@ -14,10 +14,10 @@ ignored. Per-call tuning lives on a named connection under
 
 1. **Preflight.** Open `state.db` (this applies pending migrations), materialize sources not yet on this host (`ensureSourceCaches`: a `git` or `website` source is fetched into `$CACHE` only if it has never been materialized here; an `npm` bundle with no lock entry is skipped with a warning naming `akm bundle update`; nothing refreshes on a timer), resolve the source list, and detect each bundle's adapter. Detected adapter ids are persisted to the config (reported as `configUpdated.detectedAdapters`).
 2. **Walk.** `scanSourceDirs` walks each source (`walkStashFlat`, `src/indexer/walk/walker.ts`), groups files by directory, and decides per directory whether it can be skipped. A directory that is drained has each file recognized by its bundle's adapter (`adapter.recognize`, see [Classification](classification.md)).
-3. **Persist.** `persistDirRecords` writes every drained directory in one transaction: the `entries` row, its `entries_fts` row, its `entry_fragments` row, and its `asset_links` rows. A changed embedding input deletes the entry's vector. Rows for files that left a directory are deleted in the same transaction.
+3. **Persist.** `persistDirRecords` writes every drained directory in one transaction: the `entries` row, its `entries_fts` row, its `entry_fragments` row, and its `asset_links` rows. A changed embedding input deletes the entry's vector. Rows for files that left a directory are deleted in the same transaction. The same transaction records which library the rows are for (`index_meta.stashDir` and `stashDirs`): that is what makes the index usable (see [Usable index](#usable-index)). It takes the write lock up front (`BEGIN IMMEDIATE`), so a writer that overlaps it waits out the busy timeout instead of failing at once.
 4. **Reconcile.** When every source was scanned completely, rows belonging to removed sources are dropped. With `--clean`, rows whose file is gone are deleted (`--dry-run` previews them; unreadable files keep their rows).
 5. **Embed.** `runEmbeddingPass` generates vectors for entries without one under the configured model, then verifies semantic search state.
-6. **Finalize.** Rebuild `entries_fts` if its totals are stale, re-link `state.db` usage events to the new entry ids, recompute `utility_scores` in one `index.db` transaction (improve and `akm doctor metrics` read utility; search ranking does not), clear orphaned `llm_enrichment_cache` rows, and (after a complete scan) record `builtAt`, `stashDir`, `stashDirs`, and `sourceOwners` in `index_meta`. Then `VACUUM` if due, and append an `index_completed` event with the phase timings.
+6. **Finalize.** Rebuild `entries_fts` if its totals are stale, re-link `state.db` usage events to the new entry ids, recompute `utility_scores` in one `index.db` transaction (improve and `akm doctor metrics` read utility; search ranking does not), clear orphaned `llm_enrichment_cache` rows, and (after a complete scan) record `builtAt` and `sourceOwners` in `index_meta`. Then `VACUUM` if due, and append an `index_completed` event with the phase timings.
 
 The command returns the entry count, per-phase timings, warnings, the `--clean` result, and a `verification` block with `semanticStatus` (`disabled`, `pending`, `ready-js`, or `blocked`). The run computes it (`verifyIndexState`) and records it in `index_meta` under `semanticSearch` (`unavailable` when the local runtime could not be downloaded or loaded), which `akm doctor`'s `semantic-search` check reads.
 
@@ -26,7 +26,7 @@ The command returns the entry count, per-phase timings, warnings, the `--clean` 
 - **Incremental** (default). A run is incremental when the index was built before for the same bundle directory. A directory is skipped when its file-set fingerprint, mtimes, and adapter variant (`<adapter id>@<version>`) match the stored `index_dir_state` row. In a drained directory a file whose content hash, path, and adapter are unchanged keeps its stored row, vector, and enrichment.
 - **Full** (`--full`, or the first run for a bundle directory). Drains every directory and upserts every entry. Upserts preserve `entries.id`, so vectors, utility scores, and usage links stay attached to unchanged entries.
 - `--reembed` discards every stored vector and re-embeds all entries.
-- `--skip-if-locked` exits 0 without indexing when another `akm index` holds the rebuild lock.
+- `--skip-if-locked` exits 0 without indexing when another build holds the rebuild lock; without it `akm index` waits for that build, then builds.
 
 ## Walking
 
@@ -62,12 +62,40 @@ The index holds one row: the file with the smaller path (code-point order) wins,
 `akm index` lists each pair in `warnings`. `akm show` refuses the ref with `RESOURCE_ALREADY_EXISTS`;
 search returns the indexed file.
 
+## Who builds the index
+
+One function builds the live index: `buildIndex` (`src/indexer/index-build.ts`). It takes the rebuild lock, `$DATA/index.rebuild.lock` (`src/indexer/index-rebuild-lock.ts`, PID liveness only, a dead holder is reclaimed at once), runs `akmIndex`, and releases the lock. At most one build runs at a time on a host. It has two modes:
+
+| Mode | Callers | When a live process holds the lock |
+| --- | --- | --- |
+| `wait` | `akm index`, `akm setup`, `bundle add`, `bundle update`, `bundle remove`, `source add` | Prints a notice, polls every 100 ms, repeats the notice every 15 seconds, and builds when the lock frees. After 10 minutes (the asset mutation lease's bound) it fails with `INDEX_DB_CONTENDED` (exit 75). |
+| `try` | `akm index --skip-if-locked` (the shipped `index-refresh` task), `improve`'s pre-run index and its reindex after memory cleanup | Does not build. `akm index` exits 0 with `skipped`; `improve` plans on the entries the index has and adds a warning. |
+
+`akm upgrade` spawns a plain `akm index`, which waits. Reads never build: see below.
+
+## Usable index
+
+An index is usable for a library when the keyword data for it is persisted: the `entries` table exists and `index_meta.stashDir` or `stashDirs` names the library. The persist transaction writes both with the entries and their FTS rows, so a build that is still embedding, was interrupted after the scan, or had one source fail is usable, and so is an empty library that was indexed (akm#1469). An index an older akm finished has the same two keys, so it is usable with no migration. `openUsableIndex` and `readIndexReadiness` (`src/indexer/index-readiness.ts`) are the one check; `search`, `curate`, `feedback` and write-through all use it.
+
+`builtAt` is not part of usable. It is the incremental watermark, written when a build completes with a complete scan. A persist for a different library clears it.
+
+## How reads degrade
+
+Reads (`search`, `curate`, `show`, the in-process API, Desktop) never build and never wait. They exit 0 in every case below:
+
+- **Usable, `builtAt` set.** Served as it is.
+- **Usable, no `builtAt`** (the first build is still embedding, was interrupted, or a source failed). Keyword results are served with one warning: results may be incomplete, and semantic results arrive when a build completes.
+- **No usable index** (no file, no schema, nothing persisted for the library, built for another library, a corrupt file). An empty result with one warning: there is no search index for this library yet, run `akm index`. When a live process holds the rebuild lock the warning says a build is running instead.
+- **`show`.** The asset is resolved from the bundle's files first: the index-free owner lookup (`resolveConceptOwner`) and the owning adapter's `recognize`. The index adds only what it alone has (links, indexed fragment context, usage ids) when a row exists. `--context lead` without a row shows the exact section and warns. Not found means no file resolves.
+
+Two refusals are not "no index" and still raise: an index file akm may not read (`DATA_DIR_UNREADABLE`) and an index laid out by a newer akm (`INDEX_SCHEMA_INCOMPATIBLE`, exit 78).
+
 ## Locks
 
-- `akm index` takes `$DATA/index.rebuild.lock` (`src/indexer/index-rebuild-lock.ts`). It is advisory: a plain `akm index` that finds it held warns and proceeds; `akm index --skip-if-locked` (the shipped `index-refresh` task uses it) exits 0. The holder is reclaimed only when its PID is dead.
+- `$DATA/index.rebuild.lock`: see [Who builds the index](#who-builds-the-index).
 - `$DATA/index.db.write.lock` (`src/indexer/index-writer-lock.ts`) serializes writes to authored content (`remember`, `import`, source updates, proposal apply). Indexing does not take it.
-- `indexWrittenAssets` (the immediate upsert after `remember`, `import`, `proposal accept`, and similar) returns without indexing when the rebuild lock is held; the running rebuild picks the change up.
-- `ensureIndex` (`src/indexer/ensure-index.ts`) builds the index inline on first use when it is missing, has never completed a build (`builtAt` unset), or was built for a different bundle. An indexed empty stash counts as built. Otherwise reads serve the existing index without a freshness walk; `improve` runs an incremental `akmIndex` inline and lets its per-file fingerprints decide what changed, in every bundle.
+- `indexWrittenAssets` (the immediate upsert after `remember`, `import`, `proposal accept`, and similar) upserts whenever a usable index exists. It does not look for a build: it waits up to 5 seconds for the write lock and, if a build holds it longer, skips and fails open. A write that overlaps a build can be missed by it, and the next build indexes it from the directory fingerprints it takes.
+- Only a build, which holds the rebuild lock, deletes and rebuilds a corrupt `index.db`. Any other opener raises the corruption error; readers treat it as "no usable index".
 
 ## Embedding phase
 
@@ -95,4 +123,4 @@ Text mode shows a spinner. `--verbose` prints every phase message to stderr. In 
 - The writable opener (`ensureSchema`, `src/storage/repositories/index-schema.ts`) upgrades an older layout in place: it adds and drops columns, rebuilds `entries_fts` once if it is not contentless, drops the retired `entries_vec`, `entry_fragments_fts`, and `graph_*` tables, and derives `asset_links` from stored documents. It does not drop `embeddings`, `utility_scores`, or `llm_enrichment_cache`.
 - An `entries` table older than layout 21 (no `item_ref`) has its entry-keyed tables recreated and re-walked; the LLM enrichment cache is kept.
 - Read-only openers (`openExistingDatabase`, `openReadonlyExistingDatabase`) do not change the schema. They read an older layout as it is and refuse a newer one with `INDEX_SCHEMA_INCOMPATIBLE`.
-- On `SQLITE_CORRUPT` the file is deleted and rebuilt. `state.db` is not touched.
+- On `SQLITE_CORRUPT` a build deletes the file and rebuilds it. `state.db` is not touched.
