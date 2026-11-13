@@ -248,6 +248,25 @@ steps:
   });
 });
 
+describe("steps tasks: prepare errors name the step", () => {
+  test("a prompt step naming an unknown connection or harness fails at prepare with the step name", async () => {
+    for (const selector of ["connection: nope", "harness: nope"]) {
+      write(
+        "bad-step",
+        `version: 4\nsteps:\n  - { name: first, run: "true" }\n  - { name: draft, prompt: Hi, ${selector} }\n`,
+      );
+      const error = await run("bad-step").then(
+        () => undefined,
+        (e: unknown) => e as Error & { code?: string },
+      );
+      expect(error?.message).toContain('Step "draft": ');
+      expect(error?.message).toContain("nope");
+      expect(error?.code).toBeDefined();
+      expect(readTaskHistory({ id: "bad-step", limit: 1 })).toHaveLength(0);
+    }
+  });
+});
+
 describe("steps tasks: task steps, overlap, history", () => {
   test("a task step checks and runs through the injected runner", async () => {
     write("caller", "version: 4\nsteps:\n  - { name: notify, task: tasks/notify }\n");

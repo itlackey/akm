@@ -96,6 +96,23 @@ describe("task source v4 steps (Experimental)", () => {
     rejects(`version: 4\nsteps:\n${many}\n`, "must be a list of 1 to 32 steps");
   });
 
+  test("step selector and env errors name the step path, top-level ones are unchanged", () => {
+    for (const key of ["harness", "connection", "model"]) {
+      rejects(`version: 4\nsteps:\n  - { name: a, prompt: x, ${key}: "" }\n`, `steps[0].${key}`);
+      rejects(`version: 4\nsteps:\n  - { name: a, prompt: x, ${key}: 3 }\n`, `steps[0].${key}`);
+      rejects(`version: 4\n${key}: ""\nrun: echo\n`, `${key} must be null or a non-empty string`);
+    }
+    rejects(
+      "version: 4\nsteps:\n  - { name: a, run: x }\n  - { name: b, run: x, env: { 'BAD-KEY': 1 } }\n",
+      "steps[1].env.BAD-KEY",
+    );
+    rejects("version: 4\nsteps:\n  - { name: a, run: x, env: { K: [1] } }\n", "steps[0].env.K");
+    expect(() => parse("version: 4\nsteps:\n  - { name: a, run: x, env: { 'BAD-KEY': 1 } }\n")).not.toThrow(
+      /steps\[0\]\.env.*steps\[0\]\.env|\benv\.BAD-KEY.*\benv\.BAD-KEY/,
+    );
+    rejects("version: 4\nenv: { 'BAD-KEY': 1 }\nrun: echo\n", "env.BAD-KEY");
+  });
+
   test("an input named resume is rejected only next to steps", () => {
     rejects(
       "version: 4\ninputs:\n  resume: { type: boolean, default: false }\nsteps:\n  - { name: a, run: x }\n",

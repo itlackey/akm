@@ -60,6 +60,12 @@ function promptDocument(
   } as TaskV3SourceDocument;
 }
 
+/** Name the step in a step failure, keeping the error's class and code. */
+export function nameStepError(stepName: string, error: unknown): unknown {
+  if (error instanceof Error) error.message = `Step "${stepName}": ${error.message}`;
+  return error;
+}
+
 export async function prepareSteps(
   document: StepsDocument,
   context: PrepareTaskV3ExecutionContext,
@@ -86,7 +92,12 @@ export async function prepareSteps(
         Object.freeze({ ...common, kind: "task" as const, ref: qualifyOwnedRef(step.ref, context).qualified }),
       );
     } else {
-      const command = (await prepareOne(promptDocument(document, step), context)) as { invocation: never };
+      let command: { invocation: never };
+      try {
+        command = (await prepareOne(promptDocument(document, step), context)) as { invocation: never };
+      } catch (error) {
+        throw nameStepError(step.name, error);
+      }
       prepared.push(
         Object.freeze({
           ...common,

@@ -314,9 +314,14 @@ export function classifyTaskSourceV4Uses(value: string): TaskSourceV4UsesTarget 
 
 // ── Top-level scalar/target field parsing ───────────────────────────────────
 
-function nullableSelectorTopLevel(value: unknown, ctx: BoundedDocumentContext, key: string): string | null {
-  const selector = stringField(value, ctx, [key], { nullable: true });
-  if (selector !== null && selector.trim().length === 0) sourceError(ctx, [key], "must be null or a non-empty string.");
+function nullableSelectorTopLevel(
+  value: unknown,
+  ctx: BoundedDocumentContext,
+  key: string,
+  path: readonly (string | number)[] = [key],
+): string | null {
+  const selector = stringField(value, ctx, path, { nullable: true });
+  if (selector !== null && selector.trim().length === 0) sourceError(ctx, path, "must be null or a non-empty string.");
   return selector;
 }
 
@@ -423,11 +428,7 @@ function parseStep(raw: ExecutionJsonValue, index: number, ctx: BoundedDocumentC
   }
   let env: TaskV3Environment | undefined;
   if (own(step, "env")) {
-    try {
-      env = parseEnvironment(presentJsonValue(step.env, ctx, [...path, "env"]), ctx);
-    } catch (cause) {
-      sourceError(ctx, [...path, "env"], cause instanceof Error ? cause.message : String(cause));
-    }
+    env = parseEnvironment(presentJsonValue(step.env, ctx, [...path, "env"]), ctx, [...path, "env"]);
   }
   const timeout = own(step, "timeout") ? parseTimeoutTopLevel(step.timeout, ctx, [...path, "timeout"]) : undefined;
   let retries = 0;
@@ -462,7 +463,7 @@ function parseStep(raw: ExecutionJsonValue, index: number, ctx: BoundedDocumentC
   const prompt = parseStepPrompt(step.prompt, ctx, [...path, "prompt"]);
   const selectors2: Record<string, string | null> = {};
   for (const key of ["harness", "connection", "model"] as const) {
-    if (own(step, key)) selectors2[key] = nullableSelectorTopLevel(step[key], ctx, key);
+    if (own(step, key)) selectors2[key] = nullableSelectorTopLevel(step[key], ctx, key, [...path, key]);
   }
   let expect: readonly string[] | undefined;
   if (own(step, "expect")) {

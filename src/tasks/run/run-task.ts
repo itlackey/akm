@@ -31,6 +31,7 @@ import { getStateDir } from "../../core/paths";
 import { formatLockHolderPid, tryAcquireRunLock } from "../../core/run-lock";
 import { warn } from "../../core/warn";
 import { runWorkflowSteps } from "../../workflows/exec/run-workflow";
+import { nameStepError } from "../prepare/prepare-steps";
 import { recordTaskAttemptFailure, reserveTaskAttempt } from "./attempt-lifecycle";
 import { loadPreparedTask } from "./load-task";
 import { resolveProvenanceContext } from "./provenance";
@@ -63,7 +64,14 @@ export async function runTask(id: string, options: RunTaskOptions): Promise<Task
     }
     lock = acquired;
     try {
-      for (const step of task.steps) if (step.kind === "task") await options.taskStepRunner?.check(step.ref);
+      for (const step of task.steps) {
+        if (step.kind !== "task") continue;
+        try {
+          await options.taskStepRunner?.check(step.ref);
+        } catch (error) {
+          throw nameStepError(step.name, error);
+        }
+      }
       if (task.resume) resume = resolveResume(task);
     } catch (error) {
       releaseLock(lock.ownership);
