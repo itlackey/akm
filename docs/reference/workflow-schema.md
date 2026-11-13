@@ -1,5 +1,8 @@
 # Workflow Schema
 
+> **Deprecated.** Workflows are removed in 0.11, when tasks take over ordered
+> steps. See [STABILITY.md](../../STABILITY.md#workflow-formats-and-capabilities-deprecated).
+
 This is the authoritative reference for a workflow asset's exact frontmatter
 and body syntax — every key, its shape, and the validation rules enforced by
 the published JSON Schema (`schemas/akm-workflow.json`) and

@@ -203,8 +203,8 @@ export function runTimeline(rows, { since, until, token, say }) {
       axisLabel: { interval: 0, width: 180, overflow: "truncate" },
     },
     series: [
-      series("Finished", "ok", "circle", 7, "--muted"),
-      series("Other outcome", "other", "diamond", 11, "--warn"),
+      series("Completed", "ok", "circle", 9, "--ok"),
+      series("Unknown or other", "other", "diamond", 11, "--muted"),
       series("Failed", "fail", "triangle", 13, "--fail"),
     ],
   };
@@ -289,7 +289,10 @@ export function lines(labels, series, unit) {
     yAxis: { type: "value", name: unit, min: 0, splitNumber: 2 },
     series: series.map((item) => ({
       type: "line",
-      symbol: "none",
+      // A point between gaps, or the only one, has no line to show it: a short series draws its points.
+      symbol: "circle",
+      symbolSize: 6,
+      showSymbol: item.data.filter((value) => value !== null && value !== undefined).length <= 31,
       connectNulls: false,
       lineStyle: { width: 2 },
       ...item,

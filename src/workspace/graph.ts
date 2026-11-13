@@ -8,19 +8,21 @@ import { loadConfig } from "../core/config/config";
 import { getDbPath } from "../core/paths";
 import { applyEntryFilters } from "../indexer/search/db-search";
 import { resolveSourceEntries } from "../indexer/search/search-source";
+import { countUseByRef, usageRetentionSince } from "../indexer/usage/usage-events";
 import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
 import { getAllEntries } from "../storage/repositories/index-entries-repository";
-import { listResolvedLinks } from "../storage/repositories/index-links-repository";
+import { listDeclaredLinks } from "../storage/repositories/index-links-repository";
 import { getMeta } from "../storage/repositories/index-meta-repository";
-import { getUtilityScoresByIds } from "../storage/repositories/index-utility-repository";
 import { listCurrentEmbeddings } from "../storage/repositories/index-vec-repository";
+import { withReadonlyStateDb } from "./readers";
 
 /** Types never drawn: protected files and session logs, as `assets.related` leaves them out. */
 const HIDDEN_TYPES = ["secret", "env", "session"];
 
 /**
  * Every asset of the enabled bundles and the declared links between them, in column form: node `i` is `nodes.ref[i]`,
- * and its type and bundle are indexes into `types` and `bundles`. A link joins two nodes by index and names its kind
+ * and its type, bundle and belief state are indexes into `types`, `bundles` (largest first) and `beliefs` (-1: no state
+ * recorded). `shows` and `searches` are read live from the user-attributed usage events within retention (`use`). A link joins two nodes by index and names its kind
  * by index into `kinds`. `meaning` places each node with a stored embedding in three dimensions (see
  * {@link projectEmbeddings}); it is `null` when the index has no embeddings. Nothing is written. The projection yields
  * to the event loop as it goes, so a host serving other requests keeps answering them.
@@ -29,15 +31,21 @@ export async function graph() {
   const empty = {
     types: [] as string[],
     bundles: [] as string[],
+    beliefs: [] as string[],
+    emptyBundles: [] as string[],
+    /** Use figures count events from `source` at or after `since`. */
+    use: null as { since: string; source: "user" } | null,
+    /** Declared links that are not drawn: target missing, hidden, or in a bundle that is not enabled. */
+    unresolvedLinks: 0,
     kinds: [] as string[],
     nodes: {
       ref: [] as string[],
       title: [] as string[],
       type: [] as number[],
       bundle: [] as number[],
+      belief: [] as number[],
       shows: [] as number[],
       searches: [] as number[],
-      lastUsedAt: [] as Array<string | null>,
     },
     links: { from: [] as number[], to: [] as number[], kind: [] as number[] },
     meaning: null as { embedded: number; xyz: Array<number | null> } | null,
@@ -68,26 +76,35 @@ export async function graph() {
     };
     const result = { ...empty, nodes: { ...empty.nodes }, links: { from: [], to: [], kind: [] } as typeof empty.links };
     const typeCode = code(result.types);
-    const bundleCode = code(result.bundles);
+    const beliefCode = code(result.beliefs);
     const kindCode = code(result.kinds);
-    const use = getUtilityScoresByIds(
-      db,
-      rows.map((row) => row.id),
+    // Largest bundle first, so colour slots follow size; ties keep first-appearance order.
+    const perBundle = new Map<string, number>();
+    for (const row of rows) perBundle.set(row.bundleId, (perBundle.get(row.bundleId) ?? 0) + 1);
+    result.bundles.push(...[...perBundle.keys()].sort((x, y) => perBundle.get(y)! - perBundle.get(x)!));
+    const bundleAt = new Map(result.bundles.map((bundle, i) => [bundle, i]));
+    result.emptyBundles = sources.flatMap((source) =>
+      source.registryId && !perBundle.has(source.registryId) ? [source.registryId] : [],
     );
+    const since = usageRetentionSince();
+    const use = withReadonlyStateDb((state) => countUseByRef(state, since), null);
+    result.use = { since, source: "user" };
     for (const row of rows) {
-      const score = use.get(row.id);
+      const counts = use?.get(row.itemRef);
       result.nodes.ref.push(row.itemRef);
       result.nodes.title.push(row.entry.toc?.find((heading) => heading.level === 1)?.text || row.entry.name);
       result.nodes.type.push(typeCode(row.entry.type));
-      result.nodes.bundle.push(bundleCode(row.bundleId));
-      result.nodes.shows.push(score?.showCount ?? 0);
-      result.nodes.searches.push(score?.searchCount ?? 0);
-      result.nodes.lastUsedAt.push(score?.lastUsedAt ?? null);
+      result.nodes.bundle.push(bundleAt.get(row.bundleId)!);
+      result.nodes.belief.push(row.entry.beliefState ? beliefCode(row.entry.beliefState) : -1);
+      result.nodes.shows.push(counts?.shows ?? 0);
+      result.nodes.searches.push(counts?.searches ?? 0);
     }
-    for (const link of listResolvedLinks(db)) {
+    for (const link of listDeclaredLinks(db)) {
       const from = index.get(link.from);
-      const to = index.get(link.to);
-      if (from === undefined || to === undefined || from === to) continue;
+      if (from === undefined) continue;
+      const to = link.to === null ? undefined : index.get(link.to);
+      if (to === undefined) result.unresolvedLinks++;
+      if (to === undefined || from === to) continue;
       result.links.from.push(from);
       result.links.to.push(to);
       result.links.kind.push(kindCode(link.kind));
@@ -101,14 +118,35 @@ export async function graph() {
       build,
     );
     result.meaning = placed.embedded ? placed : null;
+    const noted = [`${rows.length} assets and ${result.links.from.length} links of the enabled bundles.`];
+    if (result.unresolvedLinks)
+      noted.push(
+        `${result.unresolvedLinks} declared links are not drawn (target missing, hidden or in a bundle that is not enabled).`,
+      );
+    if (result.emptyBundles.length) noted.push(`No assets in: ${result.emptyBundles.join(", ")}.`);
+    const embedded = rows.filter((row) => vectors.has(row.id)).length;
+    noted.push(embeddingNote(embedded, rows.length));
+    if (!use) noted.push("Use counts are zero: no usage history is available.");
     return {
       available: true,
-      note: `${rows.length} assets and ${result.links.from.length} links of the enabled bundles. Positions by meaning come from the stored embeddings${placed.embedded ? "" : ", and this index has none"}.`,
+      note: noted.join(" "),
       ...result,
     };
   } finally {
     if (!closed) closeDatabase(db);
   }
+}
+
+/** Fewest vectors the principal components can be found from. */
+const MIN_VECTORS = 4;
+
+/** The note's sentence on how many assets have a position by meaning. */
+export function embeddingNote(embedded: number, total: number): string {
+  if (embedded === 0) return "No assets are embedded, so there is no arrangement by meaning.";
+  if (embedded < MIN_VECTORS)
+    return `Only ${embedded} of ${total} assets are embedded; at least ${MIN_VECTORS} are needed to arrange by meaning.`;
+  if (embedded === total) return `All ${total} assets are embedded.`;
+  return `${embedded} of ${total} assets are embedded; the rest have no position by meaning.`;
 }
 
 /** Most vectors the principal components are found from; the rest are only projected onto them. */
@@ -135,7 +173,7 @@ export async function projectEmbeddings(
   const present = vectors.filter((vector): vector is Float32Array => vector !== undefined);
   const dims = present[0]?.length ?? 0;
   const usable = present.filter((vector) => vector.length === dims);
-  if (!dims || usable.length < 4) return { embedded: 0, xyz: vectors.flatMap(() => [null, null, null]) };
+  if (!dims || usable.length < MIN_VECTORS) return { embedded: 0, xyz: vectors.flatMap(() => [null, null, null]) };
   let axes = key !== undefined && axesCache?.key === key && axesCache.dims === dims ? axesCache : undefined;
   if (!axes) {
     const step = Math.max(1, usable.length / SAMPLE);

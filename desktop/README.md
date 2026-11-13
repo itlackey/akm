@@ -47,7 +47,7 @@ AKM version appear in the header. Nothing is copied from another machine.
   or revert when AKM supports it. Batch decisions retain individual outcomes.
 - **Activity:** separate Health, Runs, Usage & retrieval, Improve impact and
   Source history views. Charts retain their data tables, periods and drilldowns;
-  observations are not quality or causality scores. Runs has a timeline of recorded
+  observations are not quality or causality scores. Runs has an outcome bar per kind of run, a view of each improve, task and workflow run, and a timeline of recorded
   runs and each workflow run's trace, Replay plays a period's activity over the
   library map, Library has a map of every asset and link, and an asset's Related
   tab a map of its own links: see [visualizations](docs/visualizations.md).

@@ -54,28 +54,29 @@ export function exportVectors(config: AkmConfig, file: string): { file: string; 
   assertNotAkmDatabase(file);
   const model = deriveSemanticProviderFingerprint(effectiveEmbedding(config));
   const buildInput = embeddingInputBuilder(config);
-  const rows: Array<{ textHash: string; embedding: Uint8Array }> = [];
+  let vectors = 0;
   const db = openReadonlyExistingDatabase();
-  if (db) {
-    try {
-      for (const { searchText, embedding } of listEmbeddedSearchTexts(db, model)) {
-        const input = buildInput(searchText);
-        if (input) rows.push({ textHash: vectorTextHash(input.text), embedding });
-      }
-    } finally {
-      closeDatabase(db);
+  function* rows(): Generator<{ textHash: string; embedding: Uint8Array }> {
+    if (!db) return;
+    for (const { searchText, embedding } of listEmbeddedSearchTexts(db, model)) {
+      const input = buildInput(searchText);
+      if (!input) continue;
+      vectors++;
+      yield { textHash: vectorTextHash(input.text), embedding };
     }
   }
   const temp = `${file}.${process.pid}.tmp`;
   try {
     fs.rmSync(temp, { force: true });
-    writeVectorFile(temp, model, rows);
+    writeVectorFile(temp, model, rows());
     fs.renameSync(temp, file);
   } catch (error) {
     fs.rmSync(temp, { force: true });
     throw error;
+  } finally {
+    if (db) closeDatabase(db);
   }
-  if (rows.length === 0)
+  if (vectors === 0)
     warn(`--export-vectors: no vectors for the current embedding model (${model}); wrote an empty file.`);
-  return { file, vectors: rows.length, model };
+  return { file, vectors, model };
 }

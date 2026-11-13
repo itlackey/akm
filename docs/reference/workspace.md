@@ -90,6 +90,10 @@ Everything an overview needs in one call. Input:
           "failures": 1,
           "byProcess": { "reflect": { "calls": 3, "failures": 1 }, "triage.judgment": { "calls": 2, "failures": 0 } }
         },
+        "usage": [{ "process": "reflect", "engine": "local", "model": "qwen", "calls": 3, "failures": 1, "promptTokens": 900, "completionTokens": 300, "totalTokens": 1200, "usageCalls": 3 }],
+        "noCalls": [{ "process": "distill", "reason": "no_signal" }],
+        "terminated": null,
+        "errors": { "count": 1, "shown": [{ "ref": "memory:a", "mode": "reflect-failed", "error": "..." }] },
         "preRunSync": { "committed": false, "pushed": false, "skipped": true, "reason": "no remote" },
         "sync": { "committed": true, "pushed": false, "skipped": false },
         "triage": { "promoted": 2, "rejected": 1, "deferred": 0, "failed": 0, "skippedByCap": 0 }
@@ -106,6 +110,13 @@ Everything an overview needs in one call. Input:
 - `metrics` is what `akm doctor metrics` returns (without `rows`); see [CLI: metrics](cli.md#metrics).
 - `improveRuns` are the last 10 real (non-dry-run) improve runs, newest first. `preRunSync`, `sync` and `triage` are `null`
   when the run did not record them; `modelCalls` is empty for runs from before the usage report existed.
+  `usage` is the run's own persisted usage report: one entry per process, execution target (`engine`) and `model`, with
+  calls, failures and tokens (`usageCalls` is how many calls reported tokens; the token sums cover only those, the rest are
+  unknown, not zero), and `noCalls` the enabled processes that made no call, with the recorded reason. It is read as
+  recorded, never rebuilt from events (they carry no run id), so a run recorded before the report existed, or terminated
+  before it, has `usage: []`. `terminated` is `{ reason, at, errorMessage }` when the record says the run was stopped
+  by a signal or an exception, else `null`. `errors` are the failed actions' recorded error texts (`count` in all, at most 20 in `shown`).
+  Values akm redacted when it wrote the record stay redacted.
 - Activity uses `metrics.usage.daily`, counting search/curate summary events rather than individual hits.
 - `metrics.usage.searchMedianMs` uses recorded nonnegative durations (`totalMs >= 0`), like the daily latency median of
   [`activity.retrievalTrend`](#activityretrievaltrend). The daily feedback
@@ -118,6 +129,11 @@ Everything an overview needs in one call. Input:
   Improve runs remain the latest 10 across all dates, independently of the metrics window.
 - A section that fails is `null` (`[]` for `improveRuns`) and named in a top-level `errors` object
   (`{ "errors": { "metrics": "..." } }`); the others still load. `errors` is absent when nothing failed.
+
+## `activity.improveRun`
+
+Requires `id`. Returns the one improve run with that id, however old (the overview lists the latest 10), in the shape of
+an `improveRuns` entry above. An unknown id throws `NotFoundError` (`IMPROVE_RUN_NOT_FOUND`).
 
 ## `activity.health`
 
@@ -178,17 +194,26 @@ them, in column form, so 30,000 assets stay a few megabytes:
   "note": "…",
   "types": ["knowledge", "memory"],
   "bundles": ["team-wiki"],
+  "beliefs": ["superseded"],
+  "emptyBundles": [],
+  "use": { "since": "2026-08-15T08:00:00.000Z", "source": "user" },
+  "unresolvedLinks": 2,
   "kinds": ["xref", "links_to"],
-  "nodes": { "ref": ["team-wiki//knowledge/a"], "title": ["A"], "type": [0], "bundle": [0],
-             "shows": [12], "searches": [40], "lastUsedAt": ["2026-11-10T08:00:00.000Z"] },
+  "nodes": { "ref": ["team-wiki//knowledge/a"], "title": ["A"], "type": [0], "bundle": [0], "belief": [-1],
+             "shows": [12], "searches": [40] },
   "links": { "from": [0], "to": [3], "kind": [1] },
   "meaning": { "embedded": 29840, "xyz": [12.5, -40.1, 3.2] }
 }
 ```
 
-Node `i` is index `i` of every `nodes` array; `type`, `bundle` and `kind` index `types`, `bundles` and `kinds`. A link
-runs from the asset that declares it to its target; a link whose target is not indexed is left out. `shows`,
-`searches` and `lastUsedAt` come from the index's utility scores. `meaning` places each asset with a stored embedding
+Node `i` is index `i` of every `nodes` array; `type`, `bundle`, `belief` and `kind` index `types`, `bundles`, `beliefs`
+and `kinds`. `bundles` runs from the bundle with the most assets to the one with the fewest, and `emptyBundles` names
+the enabled bundles with none. `belief` is the asset's recorded belief state, `-1` when it has none. A link runs from
+the asset that declares it to its target; `unresolvedLinks` counts the declared links that are left out because the
+target is missing, of a type that is not returned, or in a bundle that is not enabled. `shows` and `searches` are
+counted from the usage events when the operation is called: events of source `user` (people and their agent
+sessions, not scheduled tasks or Improve) at or after `use.since`, the start of the usage retention window. They are
+zero, and the note says so, when no usage history is available. `meaning` places each asset with a stored embedding
 of the index's current model in three dimensions (three coordinates per node, `null` for one with no embedding): its
 projection on the three principal components of the vectors, so assets with similar content land near each other. The
 components are found from an evenly spaced sample of at most 4,000 vectors and kept for the life of the process until

@@ -1,5 +1,8 @@
 # Architecture: The Workflow Engine
 
+> **Deprecated.** Workflows are removed in 0.11, when tasks take over ordered
+> steps. See [STABILITY.md](../../STABILITY.md#workflow-formats-and-capabilities-deprecated).
+
 A workflow compiles to a frozen plan, persists run and unit state, dispatches
 its work, verifies declared gates, and resumes without replaying completed
 units. This page is the architecture-level reference for that engine — how a

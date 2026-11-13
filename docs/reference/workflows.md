@@ -6,7 +6,8 @@ dispatches work, verifies declared gates, and can resume after an interruption
 without replaying completed units.
 
 The `akm workflow` surface, the workflow asset format and the workflow engine
-are Experimental; see [STABILITY.md](../../STABILITY.md). Workflow steps run as
+are Deprecated and removed in 0.11, when tasks take over ordered steps; see
+[STABILITY.md](../../STABILITY.md#workflow-formats-and-capabilities-deprecated). Workflow steps run as
 the invoking user. See [Architecture: Invariants](../architecture/architecture.md#invariants)
 for where workflows sit among AKM's execution surfaces.
 

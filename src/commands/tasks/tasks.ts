@@ -19,6 +19,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { stringify as yamlStringify } from "yaml";
+import { warnWorkflowUse } from "../../cli/deprecations";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { assetPathForName } from "../../core/asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
@@ -58,7 +59,7 @@ import type { InstalledSchedulerBinding, SchedulerBackend, SchedulerInstallOptio
 import { prepareTaskV3Execution } from "../../tasks/prepare/prepare";
 import type { PrepareTaskV3ExecutionContext } from "../../tasks/prepare/prepared-execution";
 import { isCheckoutInvocation, type ResolvedAkmInvocation, resolveAkmInvocation } from "../../tasks/resolve-akm-bin";
-import { activeTaskSources, resolveBundleAsset } from "../../tasks/run/load-task";
+import { activeTaskSources, loadPreparedTask, resolveBundleAsset } from "../../tasks/run/load-task";
 import { createExecutionProvenanceContext } from "../../tasks/run/provenance";
 import { runTask } from "../../tasks/run/run-task";
 import { readTaskHistory } from "../../tasks/run/task-history";
@@ -338,10 +339,14 @@ export async function akmTasksRun(
     scheduled,
     provenance,
     inputFlags: options.inputFlags,
+    taskStepRunner: stepTaskRunner(scheduled),
   };
   // The runner owns the prepare-before-reserve boundary. Invalid source,
   // projectability, and resolver failures therefore create no history row.
   const result = await runTask(resolvedId, runOptions);
+  if (!scheduled && result.target.kind === "workflow") {
+    warnWorkflowUse(`task ${parsed.id}, which runs workflow ${result.target.ref},`);
+  }
   // "command" means the agent/LLM arm — the native shell/script arm reports
   // "shell" / "script". A shell/script task's process exit 78 passes through
   // as CLI exit 78 (documented behavior, src/assets/hints/cli-hints-short.md).
@@ -352,9 +357,30 @@ export async function akmTasksRun(
       ? 78
       : exitCodeForStatus(result.status);
   return {
-    ok: result.status === "completed",
+    // "active" is a scheduled steps run that found its previous run alive and did not start.
+    ok: result.status === "completed" || result.status === "active",
     result,
     exitCode,
+  };
+}
+
+/** How a `task:` step (Experimental) resolves and runs another task; the callee must not declare steps:. */
+function stepTaskRunner(scheduled: boolean): NonNullable<RunTaskOptions["taskStepRunner"]> {
+  return {
+    check: async (ref) => {
+      const parsed = parseTaskRef(ref);
+      const bundle = resolveTaskReadBundle(parsed.bundle, undefined);
+      const adapterId = bundle.source.adapterId ?? detectAdapterId(bundle.source.path);
+      const prepared = await loadPreparedTask(taskIdForAdapter(parsed.id, adapterId), {
+        bundleDir: bundle.source.path,
+        bundleName: bundle.source.name,
+        adapterId,
+      });
+      if (prepared.kind === "steps") {
+        throw new UsageError(`Step task ${ref} declares steps:; a task step must not.`, "INVALID_FLAG_VALUE");
+      }
+    },
+    run: async (ref) => (await akmTasksRun(ref, { scheduled })).result,
   };
 }
 

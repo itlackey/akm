@@ -204,6 +204,31 @@ export function countShownByRef(db: Database, project?: string): Map<string, num
   return new Map(rows.map((row) => [row.entry_ref, row.shown]));
 }
 
+/** When {@link USAGE_EVENT_RETENTION_DAYS} reaches back to now, as an ISO timestamp. */
+export function usageRetentionSince(): string {
+  return new Date(Date.now() - USAGE_EVENT_RETENTION_DAYS * 86_400_000).toISOString();
+}
+
+/**
+ * How many times each asset was shown and how many searches returned it, by durable `entry_ref`: user-attributed
+ * events at or after `sinceIso`, in one pass. The same definition of use as the utility aggregation in the indexer,
+ * read live instead of as of the last index.
+ */
+export function countUseByRef(db: Database, sinceIso: string): Map<string, { shows: number; searches: number }> {
+  const rows = db
+    .prepare(
+      `SELECT entry_ref,
+              SUM(CASE WHEN event_type = 'show' THEN 1 ELSE 0 END) AS shows,
+              SUM(CASE WHEN event_type = 'search' THEN 1 ELSE 0 END) AS searches
+       FROM usage_events
+       WHERE event_type IN ('show', 'search') AND source = 'user' AND entry_ref IS NOT NULL
+         AND datetime(created_at) >= datetime(?)
+       GROUP BY entry_ref`,
+    )
+    .all(sinceIso) as Array<{ entry_ref: string; shows: number; searches: number }>;
+  return new Map(rows.map((row) => [row.entry_ref, { shows: row.shows, searches: row.searches }]));
+}
+
 /**
  * Count usage events of a given `event_type`.
  *

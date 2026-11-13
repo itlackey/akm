@@ -84,7 +84,35 @@ export interface PreparedTaskV3Script extends TaskV3PreparedBase {
   readonly cwd: string;
 }
 
+/** Experimental: one prepared step of a `steps:` task. */
+export type PreparedTaskStep = Readonly<{
+  name: string;
+  retries: number;
+  /** Step-merged environment (task env under step env). */
+  environment: Readonly<Record<string, string>>;
+}> &
+  (
+    | Readonly<{ kind: "shell"; command: string; shell: TaskV3HostShell; cwd: string; timeoutMs?: number | null }>
+    | Readonly<{
+        kind: "command";
+        invocation: PreparedCommandInvocation;
+        /** The reply must be a JSON object holding these keys. */
+        expect?: readonly string[];
+      }>
+    | Readonly<{ kind: "task"; ref: string }>
+  );
+
+export interface PreparedTaskV3Steps extends TaskV3PreparedBase {
+  readonly kind: "steps";
+  readonly steps: readonly PreparedTaskStep[];
+  /** The run's defaulted inputs, delivered to every step as `AKM_PARAMS`. */
+  readonly params: Readonly<Record<string, unknown>>;
+  /** `--resume` was passed: restart at the first step the latest failed run did not complete. */
+  readonly resume?: boolean;
+}
+
 export type PreparedTaskV3Execution =
+  | PreparedTaskV3Steps
   | PreparedTaskV3Command
   | PreparedTaskV3Workflow
   | PreparedTaskV3Shell
