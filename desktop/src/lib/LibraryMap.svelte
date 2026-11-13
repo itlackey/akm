@@ -5,69 +5,126 @@
 -->
 
 <script lang="ts">
-  import { onDestroy } from "svelte";
-  import { api, date } from "./client";
+  import { onDestroy, tick } from "svelte";
+  import { api } from "./client";
   import GraphView from "./GraphView.svelte";
   import {
+    type Arrangement,
     buildGraph,
+    type Colouring,
     colourSlot,
+    countSummary,
+    drawState,
     edgePairs,
-    FAMILIES,
+    edgeStrength,
+    type Filters,
     type GraphPayload,
+    highlightCount,
     type LibraryGraph,
-    linkLabel,
+    LENS_LABELS,
+    type Lens,
+    legendRows,
     linksOf,
+    linkSummary,
+    listed,
+    mapHint,
+    markOf,
+    offMapReason,
+    openingArrangement,
+    PALETTE_TOKENS,
+    pageOf,
+    placeTip,
+    type SortDirection,
+    sideList,
+    sizeKey,
+    sortLabel,
+    sortRows,
+    type TableKey,
+    useLine,
+    useSteps,
+    useWindowText,
+    isPlaced,
   } from "./graph-model";
   import { filesHref } from "./library-files-model";
   import { searchHref } from "./library-model";
+  import { linkLabel } from "./link-kinds";
   import { workspace } from "./state/workspace.svelte";
+  import { pointDiameter } from "./ui/graph-gl.js";
+
+  /** `?select=<ref>`: the asset to open the map with. */
+  let { select: wanted = "" }: { select?: string } = $props();
 
   // biome-ignore lint/suspicious/noExplicitAny: the renderer is untyped presentation code.
   type View = any;
   let graph = $state.raw<LibraryGraph | null>(null);
-  let note = $state("");
   let error = $state("");
-  let colourBy = $state<"family" | "bundle" | "use">("family");
-  let arrange = $state<"meaning" | "bundle">("bundle");
+  /** A plain message about the page's own state: an unknown `?select=` asset. */
+  let notice = $state("");
+  let colourBy = $state<Colouring>("family");
+  let arrange = $state<Arrangement>("bundle");
   let flat = $state(false);
-  let lens = $state<"" | "never" | "outdated">("");
+  let lens = $state<Lens>("");
   let query = $state("");
   let hidden = $state<number[]>([]);
   let kindsOff = $state<number[]>([]);
   let selected = $state(-1);
   let shown = $state<"map" | "table">("map");
   let hover = $state<{ i: number; x: number; y: number } | null>(null);
-  let frameMs = $state(0);
+  let linkStats = $state({ pairs: 0, declared: 0, notPlaced: 0, hidden: 0, unresolved: 0 });
+  let sort = $state<{ key: TableKey; direction: SortDirection }>({ key: "shows", direction: "descending" });
+  let tablePage = $state(0);
+  let stageWidth = $state(0);
+  let stageHeight = $state(0);
+  let tipWidth = $state(0);
+  let tipHeight = $state(0);
+  // At phone width the legend folds behind a button instead of covering the map.
+  const small = matchMedia("(max-width: 640px)");
+  let narrow = $state(small.matches);
+  let legendOpen = $state(!small.matches);
+  const touch = matchMedia("(pointer: coarse)").matches;
+  const onSmall = () => {
+    narrow = small.matches;
+    legendOpen = !narrow;
+  };
+  small.addEventListener("change", onSmall);
   let view: View;
+  let board: GraphView | undefined = $state();
   /** The frame of the arrangement transition in progress, cancelled on teardown. */
   let arranging = 0;
   let data: Record<string, unknown> | null = $state.raw(null);
   let colours: Uint8Array;
   let positions: Float32Array;
-  let slots: number[][] = [];
-  let ramp: number[][] = [];
-  let neutral: number[] = [];
+  /** The camera distance that frames the drawn assets, from the renderer's own fit. */
+  let fitted = 0;
+  let palette: number[][] = [];
+  /** The `?select=` value already acted on. */
+  let applied = "";
 
   const open = (ref: string) => searchHref(new URLSearchParams(), ref);
   const name = (i: number) => graph?.name(i) ?? "";
+  const filters = $derived<Filters>({ arrange, colourBy, lens, query, hidden });
+  const sinceText = $derived(graph?.use ? new Date(graph.use.since).toLocaleDateString() : "the start");
 
   async function load() {
     error = "";
     try {
       const payload = await api<GraphPayload>("/graph");
-      note = payload.note;
-      if (!payload.available) return;
+      if (!payload.available) {
+        notice = payload.note;
+        return;
+      }
       const built = buildGraph(payload);
-      arrange = built.meaning ? "meaning" : "bundle";
+      const target = wanted ? (built.index.get(wanted) ?? -1) : -1;
+      arrange = openingArrangement(built, target);
       colours = new Uint8Array(built.count * 4);
-      positions = Float32Array.from(built.meaning ?? built.byBundle);
+      positions = Float32Array.from(arrange === "meaning" ? built.meaning! : built.byBundle);
       data = {
         count: built.count,
         pos: positions,
         color: colours,
         size: built.size,
         edges: edgePairs(built, () => true),
-        anchors: built.meaning ? [] : built.bundleAnchors,
+        anchors: arrange === "bundle" ? built.bundleAnchors : [],
         label: (i: number) => built.name(i),
       };
       graph = built;
@@ -77,79 +134,38 @@
   }
   void load();
 
-  /** Colours from the tokens: eight slots, a one-hue ramp for use, and a neutral for "never shown". */
+  /** Colours from the tokens, in the order `PALETTE_TOKENS` lists them. */
   function readTokens(read: (token: string) => number[]) {
-    slots = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => read(`--map-${n}`));
-    const low = read("--surface-2");
-    const high = read("--map-1");
-    const dark = read("--bg").reduce((a, b) => a + b, 0) < 384;
-    ramp = [0.25, 0.5, 0.75, 1].map((t) => low.map((c, k) => Math.round(c + (high[k]! - c) * t)));
-    if (!dark) ramp = ramp.map((c) => c.map((v) => Math.round(v * 0.8)));
-    neutral = read("--border-strong");
+    palette = PALETTE_TOKENS.map((token) => read(token));
     if (view) paint();
   }
 
+  const useStats = $derived(graph ? useSteps(graph.shows) : null);
   function paint() {
-    if (!graph || !view) return;
-    const outdated = lens === "outdated";
+    if (!graph || !view || !useStats) return;
+    const by = { colourBy, lens };
     for (let i = 0; i < graph.count; i++) {
-      const slot = colourSlot(graph, i, colourBy);
-      let c: number[];
-      if (outdated && graph.outdated[i]) c = slots[7]!;
-      else if (slot >= 0) c = slots[slot]!;
-      else if (!graph.shows[i]) c = neutral;
-      else c = ramp[Math.min(3, Math.floor(Math.log2(1 + graph.shows[i]!) / 3))]!;
-      colours.set(c, i * 4);
+      colours.set(palette[markOf(graph, i, by, useStats.stepOf)]!, i * 4);
       colours[i * 4 + 3] = 225;
     }
     view.setColors(colours);
   }
 
-  /** What is lit: a hidden group, the search, the highlight and the selection each narrow it. */
+  /** What the renderer draws: placement, hidden groups, the search, the highlight and the selection. */
   function filter() {
     if (!graph || !view) return;
-    const state = new Uint8Array(graph.count);
-    const q = query.trim().toLowerCase();
-    const narrowing = !!q || !!lens;
-    const neighbours = new Set<number>();
-    if (selected >= 0 && !narrowing)
-      for (const group of linksOf(graph, selected)) for (const n of group.nodes) neighbours.add(n);
-    for (let i = 0; i < graph.count; i++) {
-      if (arrange === "meaning" && !graph.placed[i]) continue;
-      if (colourBy !== "use" && hidden.includes(colourSlot(graph, i, colourBy))) continue;
-      if (lens === "never" && graph.shows[i]) continue;
-      if (lens === "outdated" && !graph.outdated[i]) continue;
-      if (q && !graph.ref[i]!.toLowerCase().includes(q) && !graph.title[i]!.toLowerCase().includes(q)) continue;
-      if (selected >= 0 && !narrowing && i !== selected && !neighbours.has(i)) continue;
-      state[i] = narrowing ? 2 : 1;
-    }
-    if (selected >= 0) state[selected] = 2;
+    const state = drawState(graph, filters, selected, kindsOff);
     view.setState(state);
+    linkStats = linkSummary(graph, arrange, state, kindsOff);
   }
-  const matches = $derived.by(() => {
-    void [query, lens, hidden, colourBy, arrange];
-    if (!graph) return [] as number[];
-    const q = query.trim().toLowerCase();
-    const out: number[] = [];
-    for (let i = 0; i < graph.count; i++) {
-      if (arrange === "meaning" && !graph.placed[i]) continue;
-      if (colourBy !== "use" && hidden.includes(colourSlot(graph, i, colourBy))) continue;
-      if (lens === "never" && graph.shows[i]) continue;
-      if (lens === "outdated" && !graph.outdated[i]) continue;
-      if (q && !graph.ref[i]!.toLowerCase().includes(q) && !graph.title[i]!.toLowerCase().includes(q)) continue;
-      out.push(i);
-    }
-    const shows = graph.shows;
-    return out.sort((a, b) => shows[b]! - shows[a]!);
-  });
-
-  /** The camera distance that shows every placed asset. */
-  function fit(pos: Float32Array) {
-    let reach = 0;
-    for (let n = 0; n < pos.length; n += 3)
-      reach = Math.max(reach, Math.hypot(pos[n]!, pos[n + 2]!), Math.abs(pos[n + 1]!));
-    return Math.max(260, reach * 2.6);
-  }
+  const matches = $derived(graph ? listed(graph, filters) : []);
+  const summary = $derived(graph ? countSummary(graph, filters, matches) : null);
+  const side = $derived(graph ? sideList(graph, filters, matches, sinceText) : null);
+  const unplaced = $derived(
+    graph && arrange === "meaning" && graph.meaning ? graph.count - graph.placed.reduce((a, b) => a + b, 0) : 0,
+  );
+  const rows = $derived(graph ? sortRows(graph, matches, sort.key, sort.direction) : []);
+  const pager = $derived(pageOf(rows.length, tablePage));
 
   function ready(next: View) {
     view = next;
@@ -157,29 +173,43 @@
     view.onHover = (i: number, at?: number[]) => {
       hover = i >= 0 && at ? { i, x: at[0]!, y: at[1]! } : null;
     };
-    let total = 0;
-    let frames = 0;
-    view.onFrame = (dt: number) => {
-      total += dt;
-      if (++frames === 30) {
-        frameMs = Math.round((total / 30) * 10) / 10;
-        total = frames = 0;
-      }
-    };
-    if (arrange === "bundle") {
-      view.setFlat(true);
-      flat = true;
-    }
-    view.goal.dist = view.cam.dist = fit(positions);
+    flat = arrange === "bundle";
+    if (flat) view.setFlat(true);
     paint();
     filter();
+    view.edgeScale = edgeStrength(arrange, -1);
+    fitted = view.fit();
+    // Open already framed, not flying in from the default camera.
+    view.cam.dist = view.goal.dist;
+    Object.assign(view.cam, { tx: view.goal.tx, ty: view.goal.ty, tz: view.goal.tz });
+    if (wanted) applyWanted(wanted);
   }
+
+  /** Select the asset `?select=` names, on an arrangement where it is drawn; say so when there is no such asset. */
+  function applyWanted(ref: string) {
+    applied = ref;
+    notice = "";
+    if (!graph || !ref) return;
+    const i = graph.index.get(ref) ?? -1;
+    if (i < 0) {
+      notice = `No asset “${ref}” is on the map.`;
+      return;
+    }
+    if (!isPlaced(graph, arrange, i)) setArrange("bundle");
+    select(i);
+  }
+  $effect(() => {
+    const ref = wanted;
+    if (graph && view && ref !== applied) applyWanted(ref);
+  });
 
   function select(i: number, fly = true) {
     selected = i;
     if (!view || !graph) return;
-    view.select(i);
-    if (i < 0) {
+    const drawn = i >= 0 && isPlaced(graph, arrange, i);
+    view.select(drawn ? i : -1);
+    view.edgeScale = edgeStrength(arrange, drawn ? i : -1);
+    if (!drawn) {
       view.setHighlightEdges(new Uint32Array(0));
       view.emphasis = [];
     } else {
@@ -191,12 +221,11 @@
       }
       view.setHighlightEdges(Uint32Array.from(pairs));
       view.emphasis = [...new Set(pairs)].filter((n) => n !== i).slice(0, 14);
-      if (fly) view.focus(i, Math.min(620, fit(positions) / 2));
+      if (fly) view.focus(i, Math.min(620, fitted / 2));
     }
-    filter();
   }
 
-  function setArrange(next: "meaning" | "bundle") {
+  function setArrange(next: Arrangement) {
     if (!graph || !view || next === arrange) return;
     arrange = next;
     const start = Float32Array.from(positions);
@@ -204,8 +233,13 @@
     (data as { anchors: unknown }).anchors = next === "bundle" ? graph.bundleAnchors : [];
     flat = next === "bundle";
     view.setFlat(flat);
-    view.home();
-    view.goal.dist = fit(target);
+    // Frame what is drawn on the new arrangement: put it in place, let the renderer fit it, then play the move from the old one.
+    positions.set(target);
+    view.setPositions(positions);
+    filter();
+    fitted = view.fit();
+    positions.set(start);
+    view.setPositions(positions);
     const began = performance.now();
     const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
     const step = (now: number) => {
@@ -219,7 +253,7 @@
     // A second switch replaces the transition in progress; it starts from wherever the first had got to.
     cancelAnimationFrame(arranging);
     arranging = requestAnimationFrame(step);
-    filter();
+    select(selected, false);
   }
 
   function toggleKind(k: number) {
@@ -235,36 +269,50 @@
         ? hidden.filter((s) => s !== slot)
         : [...hidden, slot];
   }
+  function sortBy(key: TableKey) {
+    sort =
+      sort.key === key
+        ? { key, direction: sort.direction === "ascending" ? "descending" : "ascending" }
+        : { key, direction: key === "shows" || key === "links" ? "descending" : "ascending" };
+    tablePage = 0;
+  }
+  /** A table row's "Show on map": the map view, with the asset selected and the camera on it. */
+  async function showOnMap(i: number) {
+    shown = "map";
+    await tick();
+    board?.select(i);
+  }
 
   $effect(() => {
     void [colourBy, lens];
     paint();
   });
   $effect(() => {
-    void [query, lens, hidden, colourBy];
+    void [query, lens, hidden, colourBy, kindsOff, selected, arrange];
     filter();
   });
-
-  const legend = $derived.by(() => {
-    if (!graph || colourBy === "use") return [];
-    const counts = new Array(8).fill(0);
-    for (let i = 0; i < graph.count; i++) counts[colourSlot(graph, i, colourBy)]++;
-    const labels =
-      colourBy === "family"
-        ? FAMILIES.map((family) => family.label)
-        : [...graph.bundles.slice(0, 7), graph.bundles.length > 8 ? "Other bundles" : (graph.bundles[7] ?? "")];
-    return labels.map((label, slot) => ({ label, slot, count: counts[slot] })).filter((row) => row.count);
+  $effect(() => {
+    void [query, lens, hidden, colourBy];
+    tablePage = 0;
   });
+
+  const legend = $derived(graph && colourBy !== "use" ? legendRows(graph, colourBy) : []);
   const kindCounts = $derived.by(() => {
     if (!graph) return [];
     const counts = new Array(graph.kinds.length).fill(0);
     for (const k of graph.kind) counts[k]++;
     return graph.kinds.map((kind, k) => ({ k, label: linkLabel(kind), count: counts[k] }));
   });
-  const unplaced = $derived(graph?.meaning ? graph.count - graph.placed.reduce((a, b) => a + b, 0) : 0);
-  const detail = $derived(graph && selected >= 0 ? linksOf(graph, selected) : []);
+  const maxShows = $derived(graph ? graph.shows.reduce((a, b) => Math.max(a, b), 0) : 0);
+  const marked = $derived(graph ? highlightCount(graph, lens) : 0);
+  const detail = $derived(graph && selected >= 0 ? linksOf(graph, selected, kindsOff) : []);
+  const offMap = $derived(graph && selected >= 0 ? offMapReason(graph, filters, selected) : null);
+  const tip = $derived(
+    hover ? placeTip(hover, { w: tipWidth, h: tipHeight }, { w: stageWidth, h: stageHeight }) : { x: 0, y: 0 },
+  );
   onDestroy(() => {
     cancelAnimationFrame(arranging);
+    small.removeEventListener("change", onSmall);
     view = null;
   });
 </script>
@@ -286,7 +334,6 @@
   <div class="map-toolbar">
     <h1>Library map</h1>
     <input type="search" bind:value={query} placeholder="Find an asset" aria-label="Find an asset" />
-    {#if query || lens}<span class="muted small" role="status">{matches.length} of {graph?.count ?? 0}</span>{/if}
     <span class="grow"></span>
     <label
       >Colour<select bind:value={colourBy} onchange={() => (hidden = [])}
@@ -295,17 +342,15 @@
       ></label
     >
     <label
-      >Arrange<select
-        value={arrange}
-        onchange={(event) => setArrange(event.currentTarget.value as "meaning" | "bundle")}
+      >Arrange<select value={arrange} onchange={(event) => setArrange(event.currentTarget.value as Arrangement)}
         ><option value="meaning" disabled={!graph?.meaning}>By meaning</option><option value="bundle">By bundle</option
         ></select
       ></label
     >
     <label
       >Highlight<select bind:value={lens}
-        ><option value="">Nothing</option><option value="never">Never shown</option><option value="outdated"
-          >Superseded or contradicted</option
+        ><option value="">Nothing</option><option value="never">{LENS_LABELS.never}</option><option value="outdated"
+          >{LENS_LABELS.outdated}</option
         ></select
       ></label
     >
@@ -317,86 +362,175 @@
       >
     </div>
   </div>
+  <p class="map-count muted small" role="status">{summary?.text ?? ""}</p>
   {#if error}<div class="notice notice-warn" role="alert">
       {error}<button class="btn-secondary" onclick={load}>Retry</button>
     </div>{/if}
-  {#if graph === null && !error}<p class="muted" role="status">{note || "Loading the library…"}</p>{/if}
+  {#if notice}<p class="notice" role="status">{notice}</p>{/if}
+  {#if graph === null && !error && !notice}<p class="muted" role="status">Loading the library…</p>{/if}
   {#if graph}
     <div class="map-body">
-      <div class="map-stage" hidden={shown !== "map"}>
+      <div class="map-stage" hidden={shown !== "map"} bind:clientWidth={stageWidth} bind:clientHeight={stageHeight}>
         {#if data}<GraphView
+            bind:this={board}
             {data}
             label={`Map of ${graph.count} assets and their links. Arrow keys turn or pan it, plus and minus zoom; Table lists the same assets.`}
             onReady={ready}
             onTheme={readTokens}
           />{/if}
         <div class="map-legend">
-          {#if colourBy === "use"}<h3>Times shown to an agent</h3>
-            <div class="ramp" aria-hidden="true"></div>
-            <p class="muted small">Grey: never shown.</p>
-          {:else}<h3>{colourBy === "family" ? "Asset type" : "Bundle"}</h3>
-            <ul>
-              {#each legend as row}<li>
-                  <button
-                    aria-pressed={!hidden.includes(row.slot)}
-                    title="Show or hide. Alt-click shows only this group."
-                    onclick={(event) => toggleGroup(row.slot, event.altKey)}
-                    ><span class="swatch" style={`background:var(--map-${row.slot + 1})`}></span>{row.label}<span
-                      class="count">{row.count}</span
-                    ></button
-                  >
-                </li>{/each}
-            </ul>{/if}
-          <p class="muted small">Size is how often an asset is shown.</p>
-          {#if arrange === "meaning" && unplaced}<p class="muted small">
-              {unplaced} assets have no stored embedding and are not on this arrangement.
-            </p>{/if}
+          {#if narrow}<button
+              class="legend-toggle btn-quiet"
+              aria-expanded={legendOpen}
+              onclick={() => (legendOpen = !legendOpen)}>Legend</button
+            >{/if}
+          {#if legendOpen}<div class="legend-body">
+              {#if colourBy === "use" && useStats}<h3>Colour: times shown</h3>
+                <ul class="use-steps">
+                  <li>
+                    <span class="swatch" style="background:var(--use-0)"></span>Never shown<span class="count"
+                      >{graph.count - useStats.steps.reduce((n, step) => n + step.count, 0)}</span
+                    >
+                  </li>
+                  {#each useStats.steps as step, k}<li>
+                      <span class="swatch" style={`background:var(--use-${k + 1})`}></span>{step.label}<span
+                        class="count">{step.count}</span
+                      >
+                    </li>{/each}
+                </ul>
+              {:else if colourBy !== "use"}<h3>Colour: {colourBy === "family" ? "asset type" : "bundle"}</h3>
+                <ul>
+                  {#each legend as row}<li>
+                      <button
+                        aria-pressed={!hidden.includes(row.slot)}
+                        title="Hide or show this group. Alt-click shows only this group."
+                        onclick={(event) => toggleGroup(row.slot, event.altKey)}
+                        ><span class="swatch" style={`background:var(--map-${row.slot + 1})`}></span>{row.label}<span
+                          class="count">{row.count}</span
+                        ></button
+                      >
+                    </li>{/each}
+                </ul>{/if}
+              {#if lens}<h3>Highlight</h3>
+                <p class="legend-row">
+                  <span class="swatch mark"></span>{LENS_LABELS[lens]}, ringed<span class="count">{marked}</span>
+                </p>{/if}
+              <h3>Size: times shown</h3>
+              <ul class="size-key">
+                {#each sizeKey(maxShows) as value}<li>
+                    <span
+                      class="dot"
+                      style={`inline-size:${pointDiameter(value, maxShows)}px;block-size:${pointDiameter(value, maxShows)}px`}
+                    ></span>{value}
+                  </li>{/each}
+              </ul>
+              {#if unplaced}<p class="muted small">
+                  {unplaced} assets have no position by meaning and are not drawn. The Table lists them, marked not placed.
+                </p>{/if}
+            </div>{/if}
         </div>
-        <p class="map-hint muted small">Drag to turn · Shift-drag to pan · Scroll to zoom · Click an asset</p>
-        {#if hover}<div class="map-tip" style={`left:${hover.x + 14}px;top:${hover.y + 14}px`}>
+        <p class="map-hint muted small">{mapHint(flat, touch)}</p>
+        {#if hover}<div
+            class="map-tip"
+            style={`left:${tip.x}px;top:${tip.y}px`}
+            bind:clientWidth={tipWidth}
+            bind:clientHeight={tipHeight}
+          >
             <strong>{name(hover.i)}</strong>
+            {#if graph.title[hover.i] && graph.title[hover.i] !== graph.path(hover.i)}<span>{graph.title[hover.i]}</span
+              >{/if}
             <span class="muted small"
-              >{graph.types[graph.type[hover.i]!]} · {graph.bundles[graph.bundle[hover.i]!]} · shown {graph.shows[
-                hover.i
-              ]} times</span
+              >{graph.types[graph.type[hover.i]!]} · {graph.bundles[graph.bundle[hover.i]!]}</span
             >
+            <span class="muted small">{useLine(graph.shows[hover.i]!, graph.searches[hover.i]!)}</span>
           </div>{/if}
       </div>
-      {#if shown === "table"}<div class="table-wrap map-table">
-          <table>
-            <caption
-              >{matches.length > 200 ? `The 200 most shown of ${matches.length} assets` : `${matches.length} assets`},
-              most shown first</caption
+      {#if shown === "table"}<div class="map-table">
+          <div class="pager">
+            <button class="btn-secondary" disabled={pager.page === 0} onclick={() => (tablePage = pager.page - 1)}
+              >Previous</button
+            ><span role="status">{pager.label}</span><button
+              class="btn-secondary"
+              disabled={pager.page >= pager.pages - 1}
+              onclick={() => (tablePage = pager.page + 1)}>Next</button
             >
-            <thead><tr><th>Asset</th><th>Type</th><th>Bundle</th><th>Shown</th><th>Links</th></tr></thead>
-            <tbody
-              >{#each matches.slice(0, 200) as i}<tr
-                  ><th><a href={open(graph.ref[i]!)}>{name(i)}</a></th><td>{graph.types[graph.type[i]!]}</td><td
-                    >{graph.bundles[graph.bundle[i]!]}</td
-                  ><td>{graph.shows[i]}</td><td>{graph.offsets[i + 1]! - graph.offsets[i]!}</td></tr
-                >{/each}</tbody
-            >
-          </table>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <caption>{rows.length} assets, {sortLabel(sort.key, sort.direction)}</caption>
+              <thead
+                ><tr
+                  >{#each [["ref", "Asset"], ["type", "Type"], ["bundle", "Bundle"], ["shows", "Shown"], ["links", "Links"]] as [key, label]}<th
+                      scope="col"
+                      aria-sort={sort.key === key ? sort.direction : "none"}
+                      ><button class="sort btn-quiet" onclick={() => sortBy(key as TableKey)}>{label}</button></th
+                    >{/each}<th scope="col"><span class="sr-only">Show on map</span></th></tr
+                ></thead
+              >
+              <tbody
+                >{#each rows.slice(pager.start, pager.end) as i}{@const reason = offMapReason(graph, filters, i)}<tr
+                    ><th scope="row"
+                      ><a href={open(graph.ref[i]!)}>{graph.path(i)}</a>{#if !isPlaced(graph, arrange, i)}
+                        <span class="badge" data-tone="neutral">not placed</span>{/if}</th
+                    ><td>{graph.types[graph.type[i]!]}</td><td>{graph.bundles[graph.bundle[i]!]}</td><td
+                      >{graph.shows[i]}</td
+                    ><td>{graph.linked[i]}</td><td
+                      ><button
+                        class="btn-secondary"
+                        disabled={!!reason}
+                        title={reason ?? "Show on the map"}
+                        aria-label={`Show ${graph.name(i)} on map`}
+                        aria-describedby={reason ? `why-${i}` : undefined}
+                        onclick={() => showOnMap(i)}>Show on map</button
+                      >{#if reason}<span id={`why-${i}`} class="sr-only">{reason}</span>{/if}</td
+                    ></tr
+                  >{/each}</tbody
+              >
+            </table>
+          </div>
         </div>{/if}
       <aside class="map-side">
         <div class="map-stats">
           <div><strong>{graph.count}</strong><span>assets</span></div>
-          <div><strong>{graph.from.length}</strong><span>links</span></div>
-          {#if frameMs && shown === "map"}<div><strong>{frameMs}</strong><span>ms per frame</span></div>{/if}
+          <div><strong>{linkStats.pairs}</strong><span>links drawn</span></div>
         </div>
+        <p class="muted small map-undrawn">
+          {[
+            linkStats.notPlaced ? `${linkStats.notPlaced} need an asset that is not placed` : "",
+            linkStats.hidden ? `${linkStats.hidden} hidden by a link kind or group` : "",
+            `${linkStats.unresolved} cannot be resolved`,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
+        </p>
+        <section class="map-figures">
+          {#if graph.use}<p class="muted small">{useWindowText(sinceText)}</p>{/if}
+          <p class="muted small">{graph.note}</p>
+        </section>
+        <details class="map-about">
+          <summary>About these counts</summary>
+          <p class="muted small">
+            {linkStats.declared} declared links are drawn, as {linkStats.pairs} pairs of assets: A to B and B to A make one
+            line. {linkStats.notPlaced} links need an asset that has no position in this arrangement.
+            {linkStats.hidden} are switched off by their kind or a hidden group. {linkStats.unresolved} cannot be resolved
+            (their target is missing, hidden or in a bundle that is not enabled). The four add up to the links the note counts.
+          </p>
+        </details>
         {#if selected >= 0}<section aria-live="polite">
             <h2>{name(selected)}</h2>
+            {#if graph.title[selected] && graph.title[selected] !== graph.path(selected)}<p>
+                {graph.title[selected]}
+              </p>{/if}
             <p class="mono small wrap">{graph.ref[selected]}</p>
             <dl class="map-facts">
               <dt>Type</dt>
               <dd>{graph.types[graph.type[selected]!]}</dd>
               <dt>Bundle</dt>
               <dd>{graph.bundles[graph.bundle[selected]!]}</dd>
-              <dt>Shown</dt>
-              <dd>{graph.shows[selected]} times</dd>
-              <dt>In results</dt>
-              <dd>{graph.searches[selected]} searches</dd>
+              <dt>Use</dt>
+              <dd>{useLine(graph.shows[selected]!, graph.searches[selected]!)}</dd>
             </dl>
+            {#if offMap}<p class="muted small">{offMap}</p>{/if}
             <p class="actions">
               <a class="btn-secondary" href={open(graph.ref[selected]!)}>Open in Library</a><button
                 class="btn-quiet"
@@ -411,16 +545,15 @@
               </ul>
               {#if group.nodes.length > 12}<p class="muted small">and {group.nodes.length - 12} more</p>{/if}
             {:else}<p class="muted small">No recorded links.</p>{/each}
-          </section>{:else}<section>
-            <h2>Most shown</h2>
+          </section>{:else if side}<section>
+            <h2>{side.title}</h2>
             <ul class="map-links">
-              {#each matches.slice(0, 8) as i}<li>
+              {#each side.items as i}<li>
                   <button class="btn-quiet" onclick={() => select(i)}>{name(i)}</button><span class="muted small"
                     >{graph.shows[i]}</span
                   >
-                </li>{/each}
+                </li>{:else}<li class="muted small">{side.empty}</li>{/each}
             </ul>
-            <p class="muted small">{note}</p>
           </section>{/if}
         <section>
           <h3>Link kinds</h3>
@@ -477,6 +610,10 @@
     font-size: 12px;
     color: var(--muted);
   }
+  /* The longest highlight name must not widen its control and push the map down. */
+  .map-toolbar select {
+    max-inline-size: 11rem;
+  }
   .grow {
     flex: 1;
   }
@@ -505,8 +642,46 @@
     display: none;
   }
   .map-table {
-    overflow: auto;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 8px;
     min-inline-size: 0;
+    min-block-size: 0;
+  }
+  .map-table .table-wrap {
+    overflow: auto;
+  }
+  .map-table caption {
+    text-align: start;
+  }
+  .map-table td button {
+    white-space: nowrap;
+  }
+  .map-table .badge {
+    margin-inline-start: var(--space-2);
+  }
+  .map-count {
+    margin: 0 0 var(--space-2);
+    min-block-size: 1.5em;
+  }
+  .pager {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    font-size: 13px;
+  }
+  .sort {
+    font: inherit;
+    font-weight: 600;
+    padding: 0;
+  }
+  th[aria-sort="ascending"] .sort::after {
+    content: " ▲";
+    font-size: 10px;
+  }
+  th[aria-sort="descending"] .sort::after {
+    content: " ▼";
+    font-size: 10px;
   }
   .map-legend {
     position: absolute;
@@ -559,9 +734,56 @@
     font-size: 12px;
     font-variant-numeric: tabular-nums;
   }
-  .ramp {
-    block-size: 10px;
-    background: linear-gradient(90deg, var(--surface-2), var(--map-1));
+  .legend-toggle {
+    inline-size: 100%;
+    text-align: start;
+    font-weight: 600;
+  }
+  .map-legend li:not(:has(button)),
+  .legend-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 2px 4px;
+    font-size: 13px;
+    min-block-size: 24px;
+    margin: 0;
+  }
+  .swatch {
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 30%, transparent);
+  }
+  /* The highlight's mark: a ring around the swatch, as the highlighted points are ringed. */
+  .swatch.mark {
+    background: var(--map-highlight);
+    box-shadow:
+      0 0 0 2px var(--bg),
+      0 0 0 4px var(--map-highlight);
+    margin-inline: 2px;
+  }
+  .size-key {
+    display: flex;
+    gap: 16px;
+    align-items: end;
+  }
+  .size-key li {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .dot {
+    border-radius: 50%;
+    background: var(--muted);
+    flex: none;
+  }
+  .map-figures p {
+    margin: 0 0 4px;
+  }
+  .map-about summary {
+    font-size: 12px;
+    color: var(--muted);
+    cursor: pointer;
   }
   .map-hint {
     position: absolute;
@@ -652,6 +874,16 @@
     }
     .map-stage {
       block-size: 60vh;
+    }
+  }
+  @media (max-width: 640px) {
+    .map-legend {
+      inline-size: auto;
+      max-inline-size: calc(100% - 24px);
+      max-block-size: 55%;
+    }
+    .map-hint {
+      inset-inline-end: 12px;
     }
   }
 </style>

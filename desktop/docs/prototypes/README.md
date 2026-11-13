@@ -52,7 +52,7 @@ Render the map with a small hand-written WebGL2 renderer checked into Desktop, n
 - Size is how often it is shown. Colour is type, bundle or use. Lines are declared links, switchable by kind.
 - Two arrangements: by meaning (from embeddings) and by bundle (always available, needs no embeddings).
 - Search, hide a group, highlight never-shown or superseded/contradicted assets, click an asset to see its links and open it in Library.
-- The 15 types fold into 8 colour families, because 8 is the most a categorical palette can separate. The palette passes the colour-blindness checks against akm's light and dark backgrounds; four of the light-theme colours fall below 3:1 contrast, so the legend and a table view are required, not optional.
+- The 15 types fold into 8 colour families, because 8 is the most a categorical palette can separate. The shipped palette (`--map-1` to `--map-8`) is held apart for normal, protan, deutan and tritan vision in both themes by `tests/map-palette.test.mjs`, and every colour is at least 3:1 against the background; the prototypes' own colours were not, in the dark theme. The legend and a table view are still required, not optional.
 
 **2. Run timeline** (Activity, Runs: `/activity/overview?view=runs`). One row per task, workflow, improve and index.
 - Completed runs are quiet grey; failures are taller, red and carry a cross, so they are the first thing seen.
@@ -93,7 +93,7 @@ Render the map with a small hand-written WebGL2 renderer checked into Desktop, n
 
 **Routes**: add `map` to `libraryView` and `replay` to `activityView` in `src/params.ts`. Runs is already a view of `/activity/overview`.
 
-**Desktop's rules the examples already follow**: colours come from the design tokens and follow the theme; each view has a text panel beside it; reduced motion stops rotation and animation; the map can be turned, panned and zoomed from the keyboard; no invented scores. Still to add for the map: a full Table view, as `ActivityChart.svelte` has.
+**Desktop's rules the examples already follow**: colours come from the design tokens and follow the theme; each view has a text panel beside it; reduced motion stops rotation and animation; the map can be turned, panned and zoomed from the keyboard; no invented scores. The map's Table view lists every asset, paged and sortable.
 
 **Tests**: put filtering, colouring and selection in plain `*-model.ts` files tested with `node:test`, like the existing models. The Playwright suites can drive WebGL in headless Chromium (that is how these examples were checked).
 
