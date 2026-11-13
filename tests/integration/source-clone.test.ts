@@ -23,6 +23,7 @@ import {
   withEnv,
 } from "../_helpers/sandbox";
 import { withSeam } from "../_helpers/seams";
+import { makeUnresolvablePath } from "../_helpers/unreadable-path";
 
 const fixtureDirs: string[] = [];
 
@@ -253,7 +254,8 @@ describe("akmClone", () => {
 
   test("surfaces a targeted index failure as a warning after the clone succeeds", async () => {
     writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "echo deploy\n");
-    fs.mkdirSync(getDbPath(), { recursive: true });
+    // An index akm cannot read: the one state write-through reports as a failure (an unusable index is just skipped).
+    makeUnresolvablePath(path.dirname(getDbPath()), path.basename(getDbPath()));
     const warnings: string[] = [];
 
     const result = await withSeam(

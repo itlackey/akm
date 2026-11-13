@@ -71,11 +71,9 @@ export async function indexWrittenAssets(
 ): Promise<boolean> {
   try {
     const dbPath = getDbPath();
-    // `true` here means "the index is in the state the caller expects" — and
-    // `acceptProposal` advances its journal to `index-finalized` on the
-    // strength of it. Only a genuinely ABSENT index earns that answer: an
-    // index we cannot read has NOT been updated, so it falls through to
-    // `openUsableIndex` and surfaces as the honest `false` (#791).
+    // `true` means "nothing more to do here": the files are indexed, or there is no usable index to update
+    // (absent, unusable, built for another library) and the next build indexes them. An index akm may not
+    // read is the exception: `openUsableIndex` raises and the catch below reports `false` (#791).
     if (isPathAbsent(dbPath)) return true;
 
     // Index exactly what a full walk would list: skipped and ignored directories, sidecar files and the like stay out.
