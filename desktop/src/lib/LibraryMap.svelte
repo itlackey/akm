@@ -495,9 +495,13 @@
           <div><strong>{linkStats.pairs}</strong><span>links drawn</span></div>
         </div>
         <p class="muted small map-undrawn">
-          {#if linkStats.notPlaced}{linkStats.notPlaced} need an asset that is not placed ·
-          {/if}{#if linkStats.hidden}{linkStats.hidden} hidden by a link kind or group ·
-          {/if}{linkStats.unresolved} cannot be resolved
+          {[
+            linkStats.notPlaced ? `${linkStats.notPlaced} need an asset that is not placed` : "",
+            linkStats.hidden ? `${linkStats.hidden} hidden by a link kind or group` : "",
+            `${linkStats.unresolved} cannot be resolved`,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
         </p>
         <section class="map-figures">
           {#if graph.use}<p class="muted small">{useWindowText(sinceText)}</p>{/if}
