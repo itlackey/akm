@@ -18,7 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Deprecated
 
-- Workflows are Deprecated and removed in 0.11 (the promote-or-remove decision of akm#1096): tasks take over ordered steps, and tasks stay Evolving through 0.11. This covers the workflow asset format, the engine, and `akm workflow status`, `list`, `create`, `resume` and `abandon`; `workflow run` and `workflow plan` were already Deprecated. Everything works unchanged in 0.10.x and no notice is printed yet. `STABILITY.md` and the 0.10 to 0.11 guide carry the mapping; the 0.11 task format is still being finalized.
+- Workflows are Deprecated and removed in 0.11 (the promote-or-remove decision of akm#1096): tasks take over ordered steps, and tasks stay Evolving through 0.11. This covers the workflow asset format, the engine, and `akm workflow status`, `list`, `create`, `resume` and `abandon`; `workflow run` and `workflow plan` were already Deprecated. Everything works unchanged in 0.10.x. Each `akm workflow` command, `akm run` of a workflow ref or run id, and a task that runs a workflow print one stderr deprecation notice (`--quiet` silences it; scheduled runs and akm's own runs do not print it); `workflow run` and `workflow plan` now say workflows go in 0.11 instead of naming `akm run` and `akm doctor explain`. `STABILITY.md` and the 0.10 to 0.11 guide carry the mapping; the 0.11 task format is still being finalized.
 
 ### Fixed
 

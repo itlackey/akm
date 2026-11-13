@@ -19,6 +19,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { stringify as yamlStringify } from "yaml";
+import { warnWorkflowUse } from "../../cli/deprecations";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { assetPathForName } from "../../core/asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
@@ -342,6 +343,9 @@ export async function akmTasksRun(
   // The runner owns the prepare-before-reserve boundary. Invalid source,
   // projectability, and resolver failures therefore create no history row.
   const result = await runTask(resolvedId, runOptions);
+  if (!scheduled && result.target.kind === "workflow") {
+    warnWorkflowUse(`task ${parsed.id}, which runs workflow ${result.target.ref},`);
+  }
   // "command" means the agent/LLM arm — the native shell/script arm reports
   // "shell" / "script". A shell/script task's process exit 78 passes through
   // as CLI exit 78 (documented behavior, src/assets/hints/cli-hints-short.md).

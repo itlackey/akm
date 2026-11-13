@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { type ArgsDef, type CommandDef, parseArgs, runCommand } from "citty";
+import { warnWorkflowUse } from "../cli/deprecations";
 import { findCittyTopLevelCommandIndex } from "../cli/invocation";
 import { defineJsonCommand } from "../cli/shared";
 import { assertKnownFlags, type FlagScanCommand } from "../cli/unknown-flags";
@@ -100,6 +101,7 @@ export const runAssetCommand = defineJsonCommand({
         "Use akm show <ref> to read this asset.",
       );
     }
+    if (type === "workflow") warnWorkflowUse(`running workflow ${ref}`);
     const executor = EXECUTORS[type as ExecutableType];
     // Preserve raw input spellings and values; replace only the positional ref
     // with its qualified owner so another bundle cannot retarget a task.

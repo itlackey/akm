@@ -14,7 +14,7 @@
 
 import { type ArgsDef, parseArgs } from "citty";
 import { warnOnce } from "../core/warn";
-import type { ParsedInvocation } from "./invocation";
+import { getParsedInvocation, type ParsedInvocation } from "./invocation";
 
 interface Deprecation {
   /** The resolved command path; empty matches every command. */
@@ -29,6 +29,9 @@ interface Deprecation {
   /** Replaces the default "no replacement flag" tail when there is no `use`. */
   note?: string;
 }
+
+/** Workflows are removed in 0.11 with nothing to switch to in 0.10 (akm#1096). */
+const WORKFLOWS_NOTE = "workflows go in 0.11, and tasks take over their ordered steps";
 
 // First match wins, so commands come before flags.
 const DEPRECATIONS: readonly Deprecation[] = [
@@ -46,7 +49,10 @@ const DEPRECATIONS: readonly Deprecation[] = [
   },
   { path: ["improve", "report"], use: "`akm doctor metrics improve`" },
   { path: ["search"], flag: "--by-usage", use: "`akm doctor metrics assets`" },
-  { path: ["workflow", "run"], use: "`akm run <ref>`" },
+  ...["run", "plan", "status", "list", "create", "resume", "abandon"].map((sub) => ({
+    path: ["workflow", sub],
+    note: WORKFLOWS_NOTE,
+  })),
   { path: ["agent"], needsRef: true, use: "`akm run <ref>`" },
   { path: ["command", "run"], use: "`akm run <ref>`" },
   { path: ["command"], needsRef: true, use: "`akm run <ref>`" },
@@ -55,7 +61,6 @@ const DEPRECATIONS: readonly Deprecation[] = [
   { path: ["task", "prune"], use: "`akm doctor scheduler sync --prune`" },
   { path: ["task", "doctor"], use: "`akm doctor`" },
   { path: ["task", "explain"], use: "`akm doctor explain <ref>`" },
-  { path: ["workflow", "plan"], use: "`akm doctor explain <ref>`" },
   { path: ["task", "add"], use: "`akm import <file> --type task`" },
   { path: ["clone"], use: "`akm import <ref> --asset-ref`" },
   { path: ["improve"], flag: "--show-prompt", use: "`akm doctor prompt`" },
@@ -136,6 +141,21 @@ export function warnDeprecatedUse(
     hit.use
       ? `[deprecated] ${what} is deprecated and is removed in 0.11: use ${hit.use}. See STABILITY.md.`
       : `[deprecated] ${what} is deprecated and is removed in 0.11${hit.note ? `: ${hit.note}` : ", with no replacement flag"}. See STABILITY.md.`,
+  );
+}
+
+/**
+ * The workflow notice for a workflow that only resolution reveals: `akm run` of a workflow ref or run id,
+ * and a task with `uses: workflows/…`. Same rules as `warnDeprecatedUse`: one line per process, silenced
+ * by `--quiet`, and not printed for scheduled or internal runs.
+ */
+export function warnWorkflowUse(what: string, env: NodeJS.ProcessEnv = process.env): void {
+  if (INTERNAL_SOURCES.has(env.AKM_EVENT_SOURCE ?? "")) return;
+  const invocation = getParsedInvocation();
+  if (invocation.hasFlag("--help") || invocation.hasFlag("-h") || invocation.hasFlag("--scheduled")) return;
+  warnOnce(
+    "deprecated-use",
+    `[deprecated] ${what} is deprecated and is removed in 0.11: ${WORKFLOWS_NOTE}. See STABILITY.md.`,
   );
 }
 
