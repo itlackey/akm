@@ -96,7 +96,7 @@ akm import ./new.md --supersedes knowledge/old # Import a correction AND demote 
 akm import - --name scratch-notes < notes.md   # Import stdin as a knowledge doc
 akm import https://example.com/docs/auth       # Fetch one URL and import it as knowledge
 akm import ./doc.md --bundle my-other-bundle    # Route import to a named writable bundle source
-akm import ./nightly.yml --type task           # Add a task (ordered steps, schedule) to the bundle
+akm import ./nightly.yml --type task           # Add a task (scheduled or on-demand) to the bundle
 akm run <bundle>//tasks/nightly                # Run a task immediately
 akm feedback skills/code-review --positive     # Record that an asset helped (ranks it higher; no rewrite)
 akm feedback agents/reviewer --negative --reason "says to run jest; the suite runs on vitest" # Content wrong or stale: lowers its ranking; improve may repair its frontmatter
