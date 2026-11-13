@@ -26,6 +26,7 @@ import { prepareCommandInvocation } from "../../commands/command/command-executi
 import { UsageError } from "../../core/errors";
 import { warn } from "../../core/warn";
 import type { TaskV3SourceDocument } from "../source-v3";
+import { prepareSteps } from "./prepare-steps";
 import {
   base,
   commandEnvironmentSnapshot,
@@ -48,6 +49,18 @@ export async function prepareTaskV3Execution(
   const environment = environmentSnapshot(document.env);
   const commandEnvironment = commandEnvironmentSnapshot(environment, context.schedulerContext);
   const common = base(document, context, environment);
+  if (document.target.kind === "steps") {
+    return Object.freeze({
+      ...common,
+      kind: "steps" as const,
+      steps: await prepareSteps(
+        document as Parameters<typeof prepareSteps>[0],
+        context,
+        prepareTaskV3Execution as Parameters<typeof prepareSteps>[2],
+      ),
+      params: Object.freeze({}),
+    });
+  }
   if (document.target.kind === "run") {
     return Object.freeze({
       ...common,

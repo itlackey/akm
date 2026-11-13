@@ -82,7 +82,7 @@ test("published task schema pins the exact task source v4 top-level key set (D2-
   expect(schema.required).toEqual(["version"]);
   expect(schema.additionalProperties).toBe(false);
   expect(Object.keys(schema.properties).sort()).toEqual([...TASK_SOURCE_V4_TOP_LEVEL_KEYS].sort());
-  expect(schema.oneOf).toHaveLength(3);
+  expect(schema.oneOf).toHaveLength(4);
   expect(pkg.files).toContain("schemas");
   // D2-N7: the akm: bag and the on: trigger block are gone in v4 — the
   // published schema is single-arm now (P4 deleted the v3 arm), so this is

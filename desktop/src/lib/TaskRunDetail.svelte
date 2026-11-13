@@ -42,6 +42,14 @@
         {String(detail[key])}
       </dd>{/each}
   </dl>
+  {#if run.steps?.length}<h5>Steps</h5>
+    <ol>
+      {#each run.steps as step}<li>
+          {step.name} ({step.kind}): {step.status}{step.attempts > 1 ? `, ${step.attempts} attempts` : ""}, {duration(
+            step.durationMs,
+          )}{step.reason ? `. ${step.reason}` : step.summary ? `. ${step.summary}` : ""}
+        </li>{/each}
+    </ol>{/if}
   {#if run.status === "active"}<p>
       This run has no recorded end. It may still be running or it may have been stopped without recording one: akm does
       not say which, so it is unknown, not succeeded.

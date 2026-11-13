@@ -145,6 +145,13 @@ interface ExecutionSettingsSection {
   readonly problem?: string;
 }
 
+/** The composed target; a steps task (Experimental) lists its steps and, per step, the ref it names. */
+type TaskExplainTarget = Readonly<{
+  kind: string;
+  ref?: string;
+  steps?: readonly Readonly<{ name: string; kind: string; ref?: string }>[];
+}>;
+
 export interface TaskExplainEnvelope {
   readonly ref: string;
   readonly taskId: string;
@@ -153,7 +160,7 @@ export interface TaskExplainEnvelope {
   readonly sourceVersion: 3 | 4;
   readonly name?: string;
   readonly description?: string;
-  readonly target: Readonly<{ kind: string; ref?: string }>;
+  readonly target: TaskExplainTarget;
   readonly inputDeclarations: Readonly<Record<string, InputDeclarationRow>>;
   readonly suppliedInputs: Readonly<Record<string, SuppliedInputRow>>;
   readonly execution: ExecutionSettingsSection;
@@ -245,8 +252,19 @@ function buildSuppliedInputs(
 }
 
 /** The composed target's kind + ref, read STRUCTURALLY off the already-parsed document — never from a rendered command/persona source. */
-function targetSection(document: PreparableTaskDocument): Readonly<{ kind: string; ref?: string }> {
+function targetSection(document: PreparableTaskDocument): TaskExplainTarget {
   if (document.target.kind === "run") return { kind: "shell" };
+  if (document.target.kind === "steps") {
+    return {
+      kind: "steps",
+      steps: document.target.steps.map((step) => ({
+        name: step.name,
+        kind: step.kind,
+        ...(step.kind === "task" ? { ref: step.ref } : {}),
+        ...(step.kind === "prompt" && step.prompt.kind === "ref" ? { ref: step.prompt.ref } : {}),
+      })),
+    };
+  }
   const uses = document.target.uses;
   return { kind: uses.kind, ref: uses.ref };
 }

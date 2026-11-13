@@ -378,7 +378,7 @@ akm doctor explain <ref>                       # Read-only: declared inputs, tar
 akm search --type task                         # Enumerate task assets
 ```
 
-Task files use task source v4 (`version: 4`). There is no `akm:` options bag
+Task files use task source v4 (`version: 4`). Experimental: `steps:` runs ordered steps (`run:`, `prompt:` or `task:`; `AKM_PARAMS`/`AKM_STEPS`; `akm run <task> --resume`), see docs/reference/tasks.md. There is no `akm:` options bag
 or `on:` block — every control (`schedule`, `timeout`, `connection`, `harness`, `model`,
 `redact`, `maxSteps`, `maxRetries`, …) is a top-level key now. Typed
 `inputs:` declarations and a bounded `output:` schema work like a
