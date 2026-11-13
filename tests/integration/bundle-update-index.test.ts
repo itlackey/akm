@@ -2,7 +2,8 @@
 // git bundles (the https URLs are mapped to them by a process-scoped Git insteadOf rule; no network).
 
 /**
- * `akm bundle update` reindexes incrementally.
+ * `akm bundle update` reindexes incrementally, and a writable install whose checkout is already at the fetched
+ * commit builds nothing.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -183,5 +184,55 @@ describe("akm bundle update reindexes incrementally", () => {
     expect(result.index.directoriesSkipped).toBeGreaterThanOrEqual(1);
     expect(result.index.directoriesScanned).toBeLessThanOrEqual(result.index.directoriesSkipped);
     expect(entries("big")).toHaveLength(20);
+  });
+});
+
+describe("akm bundle update on a writable install that brought nothing", () => {
+  test("builds nothing and leaves the index and the lock alone", async () => {
+    const runsBefore = indexRuns();
+    const lockBefore = lock("wr");
+
+    const result = await akm("bundle", "update", "wr");
+
+    expect(result.processed[0]?.changed.any).toBe(false);
+    expect(result.index.directoriesScanned).toBe(0);
+    expect(indexRuns()).toEqual(runsBefore);
+    expect(lock("wr")).toEqual(lockBefore);
+  });
+
+  test("an upstream change still builds and is indexed", async () => {
+    const runsBefore = indexRuns().length;
+    write("wr", "second.md", "second");
+    commit("wr", "wr v2");
+
+    const result = await akm("bundle", "update", "wr");
+
+    expect(result.processed[0]?.changed.any).toBe(true);
+    expect(indexRuns().length).toBe(runsBefore + 1);
+    expect(entries("wr").map((e) => e.file)).toContain("second.md");
+  });
+
+  test("--force still builds", async () => {
+    const runsBefore = indexRuns().length;
+
+    await akm("bundle", "update", "wr", "--force");
+
+    expect(indexRuns().length).toBe(runsBefore + 1);
+  });
+
+  test("a local unpublished edit is not indexed by the update; the next index run picks it up", async () => {
+    const checkout = lock("wr")?.localRoot as string;
+    fs.writeFileSync(path.join(checkout, "knowledge", "local.md"), "---\ndescription: local edit\n---\n\n# local\n");
+    const runsBefore = indexRuns().length;
+
+    const result = await akm("bundle", "update", "wr");
+
+    expect(result.processed[0]?.changed.any).toBe(false);
+    expect(indexRuns().length).toBe(runsBefore);
+    expect(entries("wr").map((e) => e.file)).not.toContain("local.md");
+    expect(fs.existsSync(path.join(checkout, "knowledge", "local.md"))).toBe(true);
+
+    await akm("index");
+    expect(entries("wr").map((e) => e.file)).toContain("local.md");
   });
 });
