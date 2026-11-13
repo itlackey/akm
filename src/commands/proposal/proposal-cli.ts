@@ -336,7 +336,7 @@ const proposalReopenCommand = defineJsonCommand({
 });
 
 const proposalDiffCommand = defineJsonCommand({
-  meta: { name: "diff", description: "Show the diff for a proposal (accepts full UUID, UUID prefix, or asset ref)" },
+  meta: { name: "diff", description: "Show the diff for a proposal (accepts full UUID, UUID prefix of a pending proposal, or asset ref)" },
   args: {
     id: {
       type: "positional",
