@@ -5,7 +5,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
-import { warnDeprecatedUse } from "../../src/cli/deprecations";
+import { warnDeprecatedUse, warnWorkflowUse } from "../../src/cli/deprecations";
 import { _resetParsedInvocationForTests, setParsedInvocation } from "../../src/cli/invocation";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 import { withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
@@ -72,6 +72,34 @@ test("flags name their replacement; the no-ref agent form print nothing", () => 
   }
 });
 
+test("task history points at doctor log --task only when it names a task; the cross-task form says there is no replacement", () => {
+  const messages: string[] = [];
+  const noticeFor = (userArgs: string[]) => {
+    _resetWarnOnceForTests();
+    messages.length = 0;
+    _setWarnSinkForTests((_level, args) => messages.push(args.join(" ")));
+    const invocation = setParsedInvocation(["bun", "akm", ...userArgs]);
+    warnDeprecatedUse(
+      ["task", "history"],
+      invocation,
+      { task: { type: "positional" }, id: { type: "string" }, limit: { type: "string" } },
+      {},
+    );
+    return messages.join("\n");
+  };
+  try {
+    expect(noticeFor(["task", "history", "nightly"])).toContain("`akm doctor log --task <id>`");
+    const bare = noticeFor(["task", "history", "--limit", "5"]);
+    expect(bare).not.toContain("doctor log");
+    expect(bare).toContain("no replacement");
+    expect(bare).toContain("akm doctor metrics");
+    expect(bare.split("\n")).toHaveLength(1);
+  } finally {
+    _setWarnSinkForTests(undefined);
+    _resetParsedInvocationForTests();
+  }
+});
+
 test("extract: --sessions matches --type; --type prints a notice naming --sessions; both is a usage error", () => {
   sandbox();
   const empty = path.join(process.env.XDG_CACHE_HOME ?? process.env.HOME ?? ".", "no-sessions");
@@ -115,6 +143,38 @@ test("improve --require-feedback-signal names the strategy setting; remember --a
       expect(text).toContain("no replacement flag");
     }
     expect(argsFor(["remember", "note"])).toBe("");
+  } finally {
+    _setWarnSinkForTests(undefined);
+    _resetParsedInvocationForTests();
+  }
+});
+
+test("every akm workflow command, a workflow ref run through akm run, and a task that runs a workflow say workflows go in 0.11", () => {
+  const messages: string[] = [];
+  const capture = (fn: () => void) => {
+    _resetWarnOnceForTests();
+    messages.length = 0;
+    _setWarnSinkForTests((_level, args) => messages.push(args.join(" ")));
+    fn();
+    return messages.join("\n");
+  };
+  try {
+    for (const sub of ["run", "plan", "status", "list", "create", "resume", "abandon"]) {
+      const text = capture(() => {
+        const invocation = setParsedInvocation(["bun", "akm", "workflow", sub, "x"]);
+        warnDeprecatedUse(["workflow", sub], invocation, { target: { type: "positional" } }, {});
+      });
+      expect(text).toContain(`[deprecated] akm workflow ${sub} is deprecated and is removed in 0.11`);
+      expect(text).toContain("tasks take over their ordered steps");
+    }
+    setParsedInvocation(["bun", "akm", "run", "workflows/release"]);
+    expect(capture(() => warnWorkflowUse("running workflow workflows/release", {}))).toContain(
+      "[deprecated] running workflow workflows/release is deprecated and is removed in 0.11: workflows go in 0.11",
+    );
+    // Not for akm's own runs or a scheduled one.
+    expect(capture(() => warnWorkflowUse("running workflow workflows/release", { AKM_EVENT_SOURCE: "task" }))).toBe("");
+    setParsedInvocation(["bun", "akm", "task", "run", "nightly", "--scheduled"]);
+    expect(capture(() => warnWorkflowUse("task nightly, which runs workflow workflows/release,", {}))).toBe("");
   } finally {
     _setWarnSinkForTests(undefined);
     _resetParsedInvocationForTests();

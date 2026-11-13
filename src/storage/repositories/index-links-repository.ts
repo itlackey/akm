@@ -85,10 +85,9 @@ const TARGET_ID_SQL = `COALESCE(
         AND substr(l.dst_concept, 1, instr(l.dst_concept, '/') - 1) IN (${LEGACY_HEADS})))`;
 
 /**
- * Every declared link whose target resolves to an indexed entry, as entry ids: the whole link graph in one read. A
- * link whose target is not indexed is left out.
+ * Every declared link as entry ids, in one read: `to` is null when the target is not indexed.
  */
-export function listResolvedLinks(db: Database): Array<{ from: number; to: number; kind: string }> {
+export function listDeclaredLinks(db: Database): Array<{ from: number; to: number | null; kind: string }> {
   if (!tableExists(db, "asset_links")) return [];
   const rows = db
     .prepare(
@@ -96,7 +95,17 @@ export function listResolvedLinks(db: Database): Array<{ from: number; to: numbe
        FROM asset_links l JOIN entries o ON o.id = l.entry_id ORDER BY l.entry_id, l.ord`,
     )
     .all() as Array<{ source: number; target: number | null; kind: string }>;
-  return rows.flatMap((row) => (row.target === null ? [] : [{ from: row.source, to: row.target, kind: row.kind }]));
+  return rows.map((row) => ({ from: row.source, to: row.target, kind: row.kind }));
+}
+
+/**
+ * Every declared link whose target resolves to an indexed entry, as entry ids: the whole link graph in one read. A
+ * link whose target is not indexed is left out.
+ */
+export function listResolvedLinks(db: Database): Array<{ from: number; to: number; kind: string }> {
+  return listDeclaredLinks(db).flatMap((link) =>
+    link.to === null ? [] : [{ from: link.from, to: link.to, kind: link.kind }],
+  );
 }
 
 /** The spelling releases before path refs gave a ref: the type folder prefixed to it. Links authored then still name it. */

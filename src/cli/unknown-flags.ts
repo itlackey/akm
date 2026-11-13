@@ -203,6 +203,11 @@ const GONE_FLAGS: ReadonlyArray<{ flag: string; use: string; commands?: readonly
   },
   { flag: "--id", use: "the id as the argument: `akm task history <id>`", commands: ["task history"] },
   { flag: "--auto-fix", use: "`--fix`", commands: ["lint"] },
+  ...["--yes", "-y"].map((flag) => ({
+    flag,
+    use: "no flag: reject never asks, so drop it (`akm proposal reopen` undoes a rejection)",
+    commands: ["proposal reject"],
+  })),
   { flag: "--dry-run", use: "`akm migrate status`", commands: ["migrate apply"] },
 ];
 

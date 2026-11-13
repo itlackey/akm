@@ -18,6 +18,7 @@
 
 import type { ParsedBuiltinCommandAction } from "../commands/command/builtin-action";
 import type { ExecutionJsonObject } from "../execution/json";
+import type { TaskSourceV4Step } from "./source/task-source-v4";
 
 export const TASK_EXTENSION = ".yml";
 export const TASK_NEAR_MISS_EXTENSION = ".yaml";
@@ -61,6 +62,13 @@ export interface TaskAkmOptions {
 }
 
 export type TaskTarget =
+  | Readonly<{
+      /** Experimental: ordered steps (task source v4 only). */
+      kind: "steps";
+      steps: readonly TaskSourceV4Step[];
+      shell?: TaskHostShell;
+      workingDirectory?: string;
+    }>
   | Readonly<{
       kind: "uses";
       uses: TaskUsesTarget;

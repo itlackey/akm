@@ -230,11 +230,22 @@ export async function seed(): Promise<void> {
         preRunSync: { committed: false, pushed: false, skipped: true, reason: "no remote" },
         usageReport: {
           byProcessEngineModel: [
-            { process: "reflect", engine: "default", model: "chat-model", calls: 3, failures: 1 },
+            {
+              process: "reflect",
+              engine: "default",
+              model: "chat-model",
+              calls: 3,
+              failures: 1,
+              promptTokens: 900,
+              completionTokens: 300,
+              totalTokens: 1200,
+              usageCalls: 3,
+            },
             { process: "triage.judgment", engine: "default", model: "chat-model", calls: 2, failures: 0 },
           ],
-          noCalls: [],
+          noCalls: [{ process: "distill", reason: "no_signal" }],
         },
+        actions: [{ ref: "memory:a", mode: "reflect-failed", result: { ok: false, error: "model timed out" } }],
       } as never,
     });
   } finally {

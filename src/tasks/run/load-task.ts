@@ -111,8 +111,9 @@ export async function loadPreparedTask(id: string, options: RunTaskOptions): Pro
   const parsed = parseTaskSource({ yaml, filePath });
   const source = projectTaskSourceV4(parsed.v4);
   const requiresCommandConfig =
-    source.target.kind === "uses" &&
-    (source.target.uses.kind === "builtin-command" || source.target.uses.kind === "command");
+    (source.target.kind === "uses" &&
+      (source.target.uses.kind === "builtin-command" || source.target.uses.kind === "command")) ||
+    (source.target.kind === "steps" && source.target.steps.some((step) => step.kind === "prompt"));
   const config = requiresCommandConfig ? loadConfig() : CONFIG_FREE_TASK_RUNTIME;
   const bundleName = options.bundleName ?? config.defaultBundle ?? DEFAULT_BUNDLE_NAME;
   // Stage 2: materialize akm task run's raw input flags (Stage 1,
@@ -127,7 +128,16 @@ export async function loadPreparedTask(id: string, options: RunTaskOptions): Pro
   // flags, before ever checking `required` (input-contract.ts's own
   // header).
   const inputContract: InputContract = parsed.v4.inputs ?? {};
-  const materializedInputs = materializeInputFlags(inputContract, options.inputFlags ?? [], TASK_INPUT_DIAGNOSTICS);
+  // `--resume` is a flag of a steps task only (such a task cannot declare an input named `resume`);
+  // for every other task it stays an ordinary input flag.
+  const isStepsTask = source.target.kind === "steps";
+  const resumeRequested =
+    isStepsTask &&
+    (options.inputFlags ?? []).some((flag) => flag.name === "resume" && flag.value !== false && flag.value !== "false");
+  const inputFlags = isStepsTask
+    ? (options.inputFlags ?? []).filter((flag) => flag.name !== "resume")
+    : options.inputFlags;
+  const materializedInputs = materializeInputFlags(inputContract, inputFlags ?? [], TASK_INPUT_DIAGNOSTICS);
   const defaultedInputs = applyInputDefaults(inputContract, materializedInputs);
   const requiredErrors = validateInputs(inputContract, defaultedInputs);
   if (requiredErrors.length > 0) throw TASK_INPUT_DIAGNOSTICS.contractViolation(requiredErrors);
@@ -153,7 +163,7 @@ export async function loadPreparedTask(id: string, options: RunTaskOptions): Pro
     source.target.kind === "uses" && source.target.uses.kind === "workflow"
       ? { ...source, target: { ...source.target, with: defaultedInputs as ExecutionJsonObject } }
       : source;
-  return prepareTaskExecution(deliverySource, {
+  const prepared = await prepareTaskExecution(deliverySource, {
     taskId: id,
     taskRef: makeBundleRef(bundleName, taskConceptId),
     bundleName,
@@ -166,4 +176,12 @@ export async function loadPreparedTask(id: string, options: RunTaskOptions): Pro
       return resolveBundleAsset(requiresCommandConfig ? config : loadConfig(), { bundle, type, name });
     },
   });
+  // Experimental steps task: every step receives the run's defaulted inputs as AKM_PARAMS.
+  return prepared.kind === "steps"
+    ? Object.freeze({
+        ...prepared,
+        params: Object.freeze({ ...defaultedInputs }),
+        ...(resumeRequested ? { resume: true } : {}),
+      })
+    : prepared;
 }

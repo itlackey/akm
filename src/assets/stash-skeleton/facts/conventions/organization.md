@@ -50,7 +50,7 @@ differently and bake the wrong guess into an immutable ref. Decide by type:
   - `skills/testing/flaky-test-triage`
   - `facts/policies/pii-handling`
 - **Global-by-nature types → type root or a tool slug.**
-  `command`, `agent`, `workflow`, and stash-wide `env`. Scoping these to a
+  `command`, `agent`, `workflow` (Deprecated; removed in 0.11, write a task), and stash-wide `env`. Scoping these to a
   project rarely improves precision and only adds rename risk. `env` defaults
   to the project/client slug; only an env consumed by every project sits at
   the type root — if any single project would break when it changes, it is

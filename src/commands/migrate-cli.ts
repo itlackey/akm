@@ -45,6 +45,13 @@ export const migrateCommand = defineGroupCommand({
   subCommands: {
     status: defineJsonCommand({
       meta: { name: "status", description: "Read-only check of every pending migration" },
+      args: {
+        "read-only": {
+          type: "boolean",
+          default: false,
+          description: "Records no CLI usage, so the invocation writes nothing at all",
+        },
+      },
       run() {
         return runMigrateSubcommand("migrate-status", ["status"]);
       },

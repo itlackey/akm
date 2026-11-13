@@ -48,13 +48,18 @@ Stdout, JSON and exit codes are unchanged, and `--quiet` silences the line. It
 is not printed for `--help`, for the scheduler's `task run --scheduled`, or for
 commands run by a task, `improve` or an audit (`AKM_EVENT_SOURCE` of `task`,
 `improve` or `audit`). The forms covered are `health`, `metrics`, `info`, `log`,
-`judge`, `improve judge`, `improve report`, `workflow run`, `workflow plan`, `agent <ref>`,
-`command`, `task run`, `task add`, `task sync`, `task doctor`, `task explain`, `task history`, `clone`,
-`improve --show-prompt`, `improve --require-feedback-signal`, `curate --pack`, `search --by-usage`,
-`search --include-proposed` and `--include-sessions`, `show --detail brief` and
-`--context lead`, `proposal extract --type`, and `remember --auto`, `--enrich` and `--show-similar`
-(no replacement flag). A deprecated form whose
-replacement is not built yet prints nothing.
+`judge`, `improve judge`, every `workflow` command (`run`, `plan`, `status`,
+`list`, `create`, `resume`, `abandon`), `akm run` of a workflow ref or run id
+and a task that runs a workflow (workflows go in 0.11), `agent <ref>`,
+`command`, `task run`, `task add`, `task sync`, `task doctor`,
+`task explain`, `task history`, `clone`, `improve report`,
+`improve --show-prompt`, `improve --require-feedback-signal`, `curate --pack`,
+`search --by-usage`, `search --include-proposed` and `--include-sessions`,
+`show --detail brief` and `--context lead`, `proposal extract --type`, and
+`remember --auto`, `--enrich` and `--show-similar` (no replacement flag). A
+deprecated form whose replacement is not built yet prints nothing, unless it is
+removed in 0.11 with no replacement (the `remember` flags and workflows): then
+the line says so.
 
 **TODO(0.11:branch-reconciliation):** on the 0.11 branch these forms still run (and print the notice); per STABILITY.md they become usage errors (exit 2) naming their replacement before 0.11.0 ships.
 
@@ -466,7 +471,8 @@ Bare `akm doctor` prints health's result with one more field, `scheduler`: the
 scheduler backend, paths and task state `akm task doctor` reports. Diagnosis
 alone never repairs or removes an entry.
 
-`akm doctor log --task <id>` lists that task's run history instead of events
+`akm doctor log --task <id>` lists that task's run history instead of events; an empty or
+blank id is a usage error (exit 2), not every task's runs
 (add `--bundle <name>` for a task in another bundle and `--limit <n>` for the most
 recent runs). Each row carries `trigger`: `schedule` when the OS scheduler started
 the run, `manual` otherwise; it is absent when the run did not record one. The
@@ -1209,7 +1215,7 @@ event polling.
 
 #### workflow run
 
-Deprecated; use `akm run <workflow-ref>` to start a run and `akm run <run-id>` to continue one; removed in 0.11. The other `workflow` subcommands stay.
+Deprecated; use `akm run <workflow-ref>` to start a run and `akm run <run-id>` to continue one; removed in 0.11. The other `workflow` subcommands are Deprecated too and are removed in 0.11 with workflows.
 
 ```sh
 akm workflow run workflows/ship-release --version 1.2.3
@@ -2539,10 +2545,14 @@ converts none (one that is not enabled is a `legacyTaskWarnings` line). The step
 
 ```sh
 akm migrate status
+akm migrate status --read-only   # the same, and records no CLI usage, so nothing is written
 akm migrate apply
 ```
 
-`status` is read-only. `apply` backs up each changed file immediately before
+`status` is read-only with respect to the migrated files. Without `--read-only`, it
+records diagnostic usage in the `cli_usage_*` tables of `metrics.db` like other
+commands; with `--read-only` the invocation records no CLI usage and writes nothing
+at all. `apply` backs up each changed file immediately before
 replacement and is idempotent, so a current installation is a no-op.
 `akm upgrade` runs `apply` after its install step. See
 [Bundling akm](../integration/bundling-akm.md) for the plan JSON shape and
@@ -3774,8 +3784,8 @@ akm proposal reject <id> --reason "duplicates existing workflow"
 akm proposal reject <id> --queue team-bundle --reason "duplicates existing workflow"
 akm proposal reject 7c115132 --reason "not ready"      # 8-char UUID prefix
 akm proposal reject skills/my-skill --reason "not ready" # Asset ref
-akm proposal reject --generator reflect --reason "noisy" -y  # Bulk-reject by generator
-akm proposal reject --generator reflect --reason "noisy" --max-diff-lines 50 -y
+akm proposal reject --generator reflect --reason "noisy"  # Bulk-reject by generator
+akm proposal reject --generator reflect --reason "noisy" --max-diff-lines 50
 ```
 
 | Flag | Description |
@@ -3786,10 +3796,9 @@ akm proposal reject --generator reflect --reason "noisy" --max-diff-lines 50 -y
 | `--max-diff-lines` | When bulk-rejecting, only reject proposals whose content is `<=` this many lines. Larger proposals are skipped. |
 | `--older-than` | When bulk-rejecting, only reject proposals created (or last reopened) more than this many days ago |
 | `--dry-run` | List proposals that would be bulk-rejected without rejecting them |
-| `-y`, `--yes` | Skip confirmation (required in non-interactive mode for bulk reject) |
 
 Bulk-reject all pending proposals from one generator with `--generator <name>`
-and no positional id. Bulk reject requires `-y`/`--yes` in non-interactive shells.
+and no positional id. Reject does not ask for confirmation (`-y`/`--yes` is gone, as an unknown flag); `akm proposal reopen` undoes a rejection.
 
 #### proposal reopen
 
@@ -4003,9 +4012,9 @@ schtasks) that runs `akm task dispatch` every minute; dispatch decides which
 tasks are due. Task source v4 YAML (`version: 4`) is the only
 executable source contract this release accepts; `akm import <file> --type task` imports a v4 file (the Deprecated `akm task add` writes one) —
 see the canonical [Tasks reference](tasks.md). The
-group is `add | enable | disable | dispatch | run | explain | validate | sync | doctor | history`
+group is `add | enable | disable | dispatch | run | explain | sync | doctor | history`
 — there is no `show` or `remove`; use `akm show tasks/<id>` to inspect one
-task. Only `enable`, `disable` and `validate` are current. The rest are
+task. Only `enable` and `disable` are current (validate a task source with `akm lint --type tasks`). The rest are
 Deprecated, removed in 0.11:
 
 | Deprecated | Use |
@@ -4015,7 +4024,7 @@ Deprecated, removed in 0.11:
 | `task sync` | `akm doctor scheduler sync` |
 | `task doctor` | `akm doctor` (its `scheduler` field) |
 | `task explain` | `akm doctor explain <ref>` |
-| `task history` | `akm doctor log --task <id>` |
+| `task history` | `akm doctor log --task <id>` (the no-id cross-task form has no replacement; `akm doctor metrics` gives per-task totals) |
 
 `task sync`, `doctor`, `explain` and `history` are Deprecated in
 0.10.261120; `task add` and `task run` since 0.10.261119. The sections below

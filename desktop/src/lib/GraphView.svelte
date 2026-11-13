@@ -4,6 +4,10 @@
   file, You can obtain one at https://mozilla.org/MPL/2.0/.
 -->
 
+<script lang="ts" module>
+  let instances = 0;
+</script>
+
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import { createGraphView } from "./ui/graph-gl.js";
@@ -30,8 +34,40 @@
   let canvas = $state<HTMLCanvasElement>();
   let labels = $state<HTMLCanvasElement>();
   let failed = $state("");
+  /** What a screen reader is told as the keyboard cursor moves and the selection changes. */
+  let live = $state("");
   let view: View;
   let probe: HTMLSpanElement;
+  let stage: HTMLDivElement;
+  const hintId = `graph-keys-${++instances}`;
+
+  /** Select an asset as a click on it would, and put the camera on it: for a table row's "show on map". */
+  export function select(index: number) {
+    view?.onPick(index);
+    if (index >= 0) view?.focus(index);
+  }
+  /** Fly to an asset and put the keyboard cursor on it without selecting it. */
+  export function focus(index: number) {
+    view?.focus(index);
+  }
+  /** Frame the drawn assets (or just these) in the view. */
+  export function fit(indices?: number[]) {
+    return view?.fit(indices);
+  }
+
+  /** Overlays the page lays over the canvas (legend, hint): labels keep clear of them. */
+  function overlays(): number[][] {
+    const at = canvas!.getBoundingClientRect();
+    const out: number[][] = [];
+    for (const el of stage.parentElement?.children ?? []) {
+      if (el === stage || el.hasAttribute("hidden")) continue;
+      const style = getComputedStyle(el);
+      if (style.position !== "absolute" || style.pointerEvents === "none") continue;
+      const r = el.getBoundingClientRect();
+      out.push([r.left - at.left - 4, r.top - at.top - 4, r.right - at.left + 4, r.bottom - at.top + 4]);
+    }
+    return out;
+  }
 
   /** A design token's colour as [r, g, b], read the way chart-view.js reads one: through a probe element. */
   function read(token: string): number[] {
@@ -61,6 +97,8 @@
     try {
       onTheme?.(read);
       view = createGraphView({ canvas, labels, data, theme: theme() });
+      view.avoid = overlays;
+      view.onAnnounce = (text: string) => (live = text);
       onReady(view);
     } catch {
       failed = fallback;
@@ -75,10 +113,14 @@
   });
 </script>
 
-<div class="graph-stage">
+<div class="graph-stage" bind:this={stage}>
   <span class="probe" bind:this={probe} aria-hidden="true"></span>
+  <span id={hintId} class="sr-only"
+    >Press [ and ] to move between assets, Enter to select the one in focus, Escape to clear the selection.</span
+  >
+  <span class="sr-only" role="status" aria-live="polite">{live}</span>
   {#if failed}<p class="notice notice-warn">{failed}</p>{/if}
-  <canvas bind:this={canvas} aria-label={label} hidden={!!failed}></canvas>
+  <canvas bind:this={canvas} aria-label={label} aria-describedby={hintId} hidden={!!failed}></canvas>
   <canvas class="labels" bind:this={labels} aria-hidden="true" hidden={!!failed}></canvas>
 </div>
 

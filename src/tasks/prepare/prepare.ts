@@ -26,6 +26,7 @@ import { prepareCommandInvocation } from "../../commands/command/command-executi
 import { UsageError } from "../../core/errors";
 import { warn } from "../../core/warn";
 import type { PreparableTaskDocument } from "../task-source";
+import { prepareSteps } from "./prepare-steps";
 import {
   base,
   currentExecutionValues,
@@ -46,6 +47,18 @@ export async function prepareTaskExecution(
 ): Promise<PreparedTaskExecution> {
   const environment = environmentSnapshot(document.env);
   const common = base(document, context, environment);
+  if (document.target.kind === "steps") {
+    return Object.freeze({
+      ...common,
+      kind: "steps" as const,
+      steps: await prepareSteps(
+        document as Parameters<typeof prepareSteps>[0],
+        context,
+        prepareTaskExecution as Parameters<typeof prepareSteps>[2],
+      ),
+      params: Object.freeze({}),
+    });
+  }
   if (document.target.kind === "run") {
     return Object.freeze({
       ...common,

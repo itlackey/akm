@@ -10,6 +10,11 @@ is copied into the OS. Import a task file with `akm import <file> --type task`, 
 `akm doctor log --task <id>`. The older `akm task add | run | sync | doctor | explain | history` commands are
 Deprecated, removed in 0.11; see the [migration guide](../migration/v0.10-to-v0.11.md#task-and-import-consolidation).
 
+> **Changing in 0.11.** 0.11.0 replaces task source v4 with a simpler format
+> that also takes over ordered steps from the Deprecated workflows, and
+> `akm migrate apply` converts v4 files. Task source v4 works unchanged through
+> 0.10.x. See [Workflows fold into tasks](../migration/v0.10-to-v0.11.md#workflows-fold-into-tasks).
+
 **Task source v4 (`version: 4`) is the only task source grammar akm reads.**
 A document with `version: 3` or `version: 2` fails to load with `UsageError`
 code `TASK_SCHEMA_VERSION_UNSUPPORTED`, naming `akm migrate apply`, which
@@ -56,7 +61,7 @@ are rejected rather than normalized.
 ## Executable targets: `uses` or `run`
 
 A task selects exactly one of `uses` or `run`; the two fields are mutually
-exclusive.
+exclusive. (Experimental: `steps:` is a third selector, see [Steps](#steps-experimental).)
 
 `uses` accepts these target shapes:
 
@@ -191,6 +196,83 @@ imports it disabled and never installs the OS entry, and `akm task enable` turns
 `akm task dispatch` reads only the refs in `scheduler.enabled`. If a bundle is
 disabled its refs are inert. Workflow targets
 create a fresh durable workflow freeze at fire time.
+
+## Steps (Experimental)
+
+First in 0.10.261121 ([#1096](https://github.com/itlackey/akm/issues/1096)):
+a v4 task may declare `steps:` instead of `uses` or `run` (exactly one of the
+three). Nothing changes for a task without `steps:`. The shape may change in
+0.11, where `akm migrate apply` converts it.
+
+```yaml
+version: 4
+name: Lab status plan
+inputs:
+  date: { type: string, required: true }
+schedule: "30 6 * * *"
+timeout: 10m          # the default timeout of each step
+harness: scheduled    # the default runner of each prompt step
+shell: bash           # the default shell of each run step
+env: { LOG_LEVEL: info }
+steps:
+  - name: fetch-status
+    run: bun scripts/lab-status/fetch-status.ts
+    env: { REGION: eu }
+    retries: 1
+  - name: write-plan
+    prompt: commands/lab-status/write-plan   # or inline text
+    expect: [title, actions]
+  - name: save-plan
+    run: bun scripts/lab-status/save-plan.ts
+  - name: notify
+    task: tasks/notify-discord
+```
+
+- **Step keys.** `name` (letters, digits, `_`, `-`; unique; at most 32 steps)
+  and exactly one of `run`, `prompt`, `task`. `env` (literal values, merged
+  over the task's `env`), `timeout` (the v4 grammar; unset uses the task's, then
+  the unattended default) and `retries` (0 to 5, a plain count) apply to every
+  step. `harness`, `connection`, `model` and `expect` apply to prompt steps.
+  `uses`, `run`, `with`, `output`, `maxSteps` and `maxRetries` are not legal
+  next to `steps:`; `inputs`, `schedule`, `env`, `shell`, `working-directory`,
+  `timeout`, `redact` and the execution keys are, and act as defaults.
+- **Values.** The task's `inputs:` reach every step as `AKM_PARAMS`, as
+  canonical JSON. Earlier steps' results reach it as `AKM_STEPS`, JSON keyed by
+  step name (`{}` for the first step). `AKM_INPUTS` is never set. A prompt step
+  has no child environment on a direct-model connection, so it gets the same
+  two values appended to its prompt as text. To load an env asset in a run
+  step, use `akm env run env/<name> -- <command>`.
+- **Results.** A `run` step's result is its stdout; a prompt step's is the
+  agent's reply; a `task` step has no result, and its callee gets no values.
+  A text result is kept to 32 KiB, and the serialized `AKM_STEPS` may not
+  exceed 96 KiB. With `expect`, the result is the parsed JSON object, so
+  `AKM_STEPS` holds an object for that step and strings for the others.
+- **Reply check.** `expect: [field, ...]` on a prompt step: the reply must be a
+  JSON object (code fences and surrounding prose are tolerated) holding those
+  keys. The agent is told so through the usual output-schema instruction. If the
+  reply lacks a key, akm asks once more with what was missing, then fails the
+  step with `reply_check_failed`. The re-ask does not count against `retries`.
+- **Failure and resume.** The first step that still fails after its retries
+  stops the run; later steps are recorded as `skipped`. `akm run <task-ref>
+  --resume` restarts at the first step the latest failed run did not complete,
+  reusing the earlier steps' stored results. Pass the inputs again as for any
+  run. It refuses when there is no failed steps run or the step names changed.
+  `resume` is a flag of a steps task only, so such a task may not declare an
+  input of that name.
+- **Overlap.** A steps task takes a lock for the run (a file under the state
+  directory, released when the process ends). While another run of it is alive,
+  a manual `akm run` fails with `RUN_LEASE_HELD` and a scheduled run exits 0
+  without a history row. There is no flag.
+- **History.** One `task_history` row per run, as for any task, with
+  `target_kind` `steps` and the steps in its metadata (name, kind, status
+  `completed|failed|skipped|reused`, duration, attempts, a scrubbed one-line
+  summary and, for a failed step, the reason). A failed run also keeps each
+  completed step's bounded result for `--resume`; a successful run drops them.
+- **Scheduling.** Unchanged: `schedule:` and `akm task enable` / `disable`
+  work as for any task, and `akm doctor explain <ref>` lists the steps.
+- **A `task:` step** must name a task that does not itself declare `steps:`
+  (checked before any step runs); it runs as its own task, with its own history
+  row.
 
 ## Typed inputs and output
 

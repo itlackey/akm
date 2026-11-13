@@ -72,7 +72,39 @@ export interface PreparedTaskScript extends PreparedTaskBase {
   readonly cwd: string;
 }
 
-export type PreparedTaskExecution = PreparedTaskCommand | PreparedTaskWorkflow | PreparedTaskShell | PreparedTaskScript;
+/** Experimental: one prepared step of a `steps:` task. */
+export type PreparedTaskStep = Readonly<{
+  name: string;
+  retries: number;
+  /** Step-merged environment (task env under step env). */
+  environment: Readonly<Record<string, string>>;
+}> &
+  (
+    | Readonly<{ kind: "shell"; command: string; shell: TaskHostShell; cwd: string; timeoutMs?: number | null }>
+    | Readonly<{
+        kind: "command";
+        invocation: PreparedCommandInvocation;
+        /** The reply must be a JSON object holding these keys. */
+        expect?: readonly string[];
+      }>
+    | Readonly<{ kind: "task"; ref: string }>
+  );
+
+export interface PreparedTaskSteps extends PreparedTaskBase {
+  readonly kind: "steps";
+  readonly steps: readonly PreparedTaskStep[];
+  /** The run's defaulted inputs, delivered to every step as `AKM_PARAMS`. */
+  readonly params: Readonly<Record<string, unknown>>;
+  /** `--resume` was passed: restart at the first step the latest failed run did not complete. */
+  readonly resume?: boolean;
+}
+
+export type PreparedTaskExecution =
+  | PreparedTaskSteps
+  | PreparedTaskCommand
+  | PreparedTaskWorkflow
+  | PreparedTaskShell
+  | PreparedTaskScript;
 
 export interface PrepareTaskExecutionContext {
   readonly taskId: string;

@@ -56,6 +56,14 @@ describe("rejects undeclared flags", () => {
     expect(errorFor(["search", "foo", "--target", "b"]).hint() ?? "").not.toContain("is gone");
   });
 
+  test("proposal reject --yes and -y are gone: reject never asks", () => {
+    for (const flag of ["--yes", "-y"]) {
+      const err = errorFor(["proposal", "reject", "abc", "--reason", "r", flag]);
+      expect(err.code).toBe("UNKNOWN_FLAG");
+      expect(err.hint()).toContain("reject never asks");
+    }
+  });
+
   test("rejects the retired --require-engines and --engine, and never suggests them", () => {
     expect(errorFor(["improve", "--require-engines"]).code).toBe("UNKNOWN_FLAG");
     expect(errorFor(["agent", "--engine", "lab"]).code).toBe("UNKNOWN_FLAG");

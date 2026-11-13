@@ -56,6 +56,7 @@ export function appendHistory(result: TaskRunResult, historyReserved = false, sc
       durationMs: result.durationMs,
       detail: result.detail ?? null,
       ...(result.target.kind === "command" ? { engine: result.target.engine } : {}),
+      ...(result.steps ? { steps: result.steps } : {}),
       ...(scheduled === undefined ? {} : { trigger: scheduled ? "schedule" : "manual" }),
     }),
   };
@@ -147,6 +148,8 @@ function taskHistoryRowToResult(row: TaskHistoryRow): TaskRunResult {
         return { kind: "shell" };
       case "script":
         return { kind: "script" };
+      case "steps":
+        return { kind: "steps" };
       default:
         return { kind: "unknown" };
     }
@@ -161,6 +164,7 @@ function taskHistoryRowToResult(row: TaskHistoryRow): TaskRunResult {
     log: row.log_path ?? "",
     target,
     ...(meta.detail ? { detail: meta.detail } : {}),
+    ...(meta.steps ? { steps: meta.steps } : {}),
     ...(meta.trigger ? { trigger: meta.trigger } : {}),
   };
 }

@@ -102,6 +102,16 @@ test("doctor log without --task is the events stream", () => {
   expect(JSON.parse(events.stdout)).toHaveProperty("events");
 });
 
+test("doctor log --task with an empty or blank id is a usage error, not every task's runs", () => {
+  seedTaskHistory();
+  for (const id of ["", "  "]) {
+    const result = akm(["doctor", "log", "--task", id]);
+    expect(result.status, id).toBe(2);
+    expect(result.stderr).toContain("--task <id>");
+    expect(result.stdout).not.toContain("runs");
+  }
+});
+
 test("doctor metrics improve matches improve report for the latest run, --run and --since", () => {
   const live = akm(["improve", "--json-to-stdout"]);
   expect(live.status).toBe(0);
