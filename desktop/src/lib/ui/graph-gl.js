@@ -676,6 +676,8 @@ export function createGraphView({ canvas, labels, data, theme }) {
       for (const [sx, sy] of spots) {
         const cx = Math.max(2, Math.min(W - w - 2, sx)),
           cy = Math.max(11, Math.min(H - 11, sy));
+        // A plain label pushed away from its point by the edge would point at nothing: leave it out.
+        if (!bold && !pill && (cx !== sx || cy !== sy)) continue;
         const candidate = [cx, cy - 10, cx + w, cy + 10];
         if (keepClear.some((r) => overlap(candidate, r))) continue;
         if (!bold && taken.some((t) => overlap(candidate, t))) continue;
