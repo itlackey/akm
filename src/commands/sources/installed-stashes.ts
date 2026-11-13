@@ -505,7 +505,7 @@ function fastForwardCheckout(liveRepo: string, stagedRepo: string): void {
  * leaves config alone; the next `akm index` records them.
  */
 function reindexAfterUpdate(stashDir: string): Promise<IndexResult> {
-  return akmIndex({ stashDir, full: true, hydrateSources: false, persistDetectedAdapters: false });
+  return akmIndex({ stashDir, hydrateSources: false, persistDetectedAdapters: false });
 }
 
 /** Publish, then reindex, holding the asset-mutation lease so no other writer interleaves. */
