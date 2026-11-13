@@ -10,6 +10,7 @@
   import type { Json } from "./types";
   import Icon from "./Icon.svelte";
   import AssetMap from "./AssetMap.svelte";
+  import { linkLabel } from "./link-kinds";
   let {
     ref,
     links,
@@ -34,18 +35,7 @@
   } | null>(null);
   let controller: AbortController;
   const connections = $derived(typedLinks(links));
-  const kinds: Record<string, string> = {
-    xref: "Cross-reference",
-    superseded_by: "Superseded by",
-    contradicted_by: "Contradicted by",
-    belief_peer: "Related belief",
-    derived_from: "Derived from",
-    cites: "Citation",
-    links_to: "Link",
-    uses: "Uses",
-  };
   const label = (value: string) => value.split("//").at(-1) ?? value;
-  const kindLabel = (kind: string) => kinds[kind] ?? kind.replaceAll("_", " ");
   async function similar() {
     controller?.abort();
     controller = new AbortController();
@@ -89,15 +79,21 @@
     <section class="connection-group">
       <h4>
         {group.direction === "incoming" ? "Linked from" : "Links to"}
-        <span>{kindLabel(group.kind)}</span>
+        <span>{linkLabel(group.kind)}{group.direction === "unresolved" ? " (missing)" : ""}</span>
       </h4>
       <ul class="related-list">
         {#each group.refs as target}
           <li>
-            <a href={href(target)}><strong>{label(target)}</strong><span>{target.split("//")[0]}</span></a><button
-              class="btn-secondary"
-              onclick={() => onCompare?.([ref, target])}>Compare</button
-            >
+            {#if group.direction === "unresolved"}
+              <div class="missing" title={target}>
+                <strong>{label(target)}</strong><span>Not found: this asset does not exist or is not indexed</span>
+              </div>
+            {:else}
+              <a href={href(target)}><strong>{label(target)}</strong><span>{target.split("//")[0]}</span></a><button
+                class="btn-secondary"
+                onclick={() => onCompare?.([ref, target])}>Compare</button
+              >
+            {/if}
           </li>
         {/each}
       </ul>
@@ -127,13 +123,7 @@
   {#if withSimilar && result?.note}<p class="muted small">{result.note}</p>{/if}
   {#if !connections.length && !(withSimilar && result?.matches.length)}<p class="state">
       No recorded connections for this asset.
-    </p>{:else}<AssetMap
-      {ref}
-      {connections}
-      similar={withSimilar ? (result?.matches ?? []) : []}
-      {kindLabel}
-      {href}
-    />{/if}
+    </p>{:else}<AssetMap {ref} {connections} similar={withSimilar ? (result?.matches ?? []) : []} {href} />{/if}
 {:else}
   <div class="similar-toolbar">
     <p class="muted small">Compare existing embeddings. A high score suggests overlap—not proof of duplication.</p>
@@ -223,6 +213,21 @@
   .related-list a strong {
     font-size: 15px;
     font-weight: 550;
+  }
+  .related-list .missing {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    color: var(--muted);
+  }
+  .related-list .missing strong {
+    font-size: 15px;
+    font-weight: 550;
+  }
+  .related-list .missing span {
+    display: block;
+    font-size: 12px;
+    margin-top: 5px;
   }
   .related-list a span {
     display: block;
