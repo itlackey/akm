@@ -85,6 +85,7 @@ import { type LegacyRefMove, legacyRefMove, rekeyLegacyEntry, rewriteLegacyState
 import {
   type AdapterConceptOwner,
   type ConceptOwnerMatch,
+  entryFromFiles,
   indexedPathMatchesOwner,
   resolveConceptOwner,
 } from "./lookup/adapter-concept-owner";
@@ -108,7 +109,7 @@ import {
 import { drainDirDocuments } from "./scan/drain-dir";
 import type { SearchSource } from "./search/search-source";
 import { purgeOldUsageEvents, USAGE_EVENT_RETENTION_DAYS } from "./usage/usage-events";
-import { buildFileContext, type FileContext } from "./walk/file-context";
+import type { FileContext } from "./walk/file-context";
 import {
   type IndexVerification,
   type RemovedIndexSource,
@@ -1700,50 +1701,6 @@ async function resolveLookupSources(): Promise<SearchSource[]> {
   const { loadConfig } = await import("../core/config/config.js");
   const { resolveSourceEntries } = await import("./search/search-source.js");
   return resolveSourceEntries(undefined, loadConfig());
-}
-
-/** Whether a directory between `root` and `file` is a symlink. */
-function underSymlinkedDirectory(root: string, file: string): boolean {
-  const resolvedRoot = path.resolve(root);
-  for (let dir = path.dirname(path.resolve(file)); dir.startsWith(resolvedRoot + path.sep); dir = path.dirname(dir)) {
-    if (fs.lstatSync(dir).isSymbolicLink()) return true;
-  }
-  return false;
-}
-
-/**
- * The entry the owning file and its adapter give without the index: the adapter's own
- * recognition of the file. Undefined when the adapter does not recognise it.
- */
-function entryFromFiles(match: ConceptOwnerMatch): IndexEntry | undefined {
-  const { owner, source, bundleId, adapterId } = match;
-  try {
-    // The walk never descends into a symlinked directory, so nothing under one is in the bundle.
-    if (underSymlinkedDirectory(source.path, owner.path)) return undefined;
-    const component: BundleComponent = { id: adapterId, adapter: adapterId, root: source.path, writable: false };
-    const document = adapterForId(adapterId)?.recognize(component, buildFileContext(source.path, owner.path));
-    if (!document) return undefined;
-    const { itemRef, conceptId } = deriveEntryProvenance(
-      { bundleId, componentId: adapterId, adapterId },
-      document.type,
-      document.name,
-      owner.conceptId,
-    );
-    return {
-      filePath: owner.path,
-      stashDir: source.path,
-      type: document.type,
-      name: document.name,
-      adapterId,
-      document,
-      itemRef,
-      bundleId,
-      conceptId,
-    };
-  } catch {
-    // An unreadable or unrecognisable file is not found from files.
-    return undefined;
-  }
 }
 
 /**

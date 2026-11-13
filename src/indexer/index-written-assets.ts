@@ -37,6 +37,7 @@ import { embeddingInputCap, generateEmbeddingsForDb, publishTargetedEmbeddingMet
 import { type IndexDocument, withFileSize } from "./passes/metadata";
 import { drainDirDocuments } from "./scan/drain-dir";
 import { buildFileContext } from "./walk/file-context";
+import { isWalkedFile } from "./walk/walker";
 
 /**
  * Busy-timeout (ms) for write-path index upserts. A real write — unlike the
@@ -84,15 +85,8 @@ export async function indexWrittenAssets(
     // `openUsableIndex` and surfaces as the honest `false` (#791).
     if (isPathAbsent(dbPath)) return true;
 
-    // The full walk never descends into dot-directories (for example `.meta/`)
-    // — mirror that dot-segment skip here so this fast path indexes exactly
-    // what a full run would. Sensitive/
-    // infra abstention is the adapter's job now (see the `akmAdapter` note
-    // below), not a path pre-filter.
-    const files = filePaths.filter((f) => {
-      const rel = path.relative(stashDir, f);
-      return !rel.split(/[\\/]+/).some((segment) => segment.startsWith("."));
-    });
+    // Index exactly what a full walk would list: skipped and ignored directories, sidecar files and the like stay out.
+    const files = filePaths.filter((f) => isWalkedFile(stashDir, f));
     if (files.length === 0) return true;
 
     // Generate metadata BEFORE opening the DB so the write window stays
