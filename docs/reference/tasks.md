@@ -10,6 +10,11 @@ with `akm import <file> --type task`, run a task with `akm run
 prune | doctor | explain | history` commands are Deprecated, removed in 0.11;
 see the [migration guide](../migration/v0.10-to-v0.11.md#task-and-import-consolidation).
 
+> **Changing in 0.11.** 0.11.0 replaces task source v4 with a simpler format
+> that also takes over ordered steps from the Deprecated workflows, and
+> `akm migrate apply` converts v4 files. Task source v4 works unchanged through
+> 0.10.x. See [Workflows fold into tasks](../migration/v0.10-to-v0.11.md#workflows-fold-into-tasks).
+
 **Task source v4 (`version: 4`) is the only task source grammar akm reads.**
 A document with `version: 3` or `version: 2` fails to load with `UsageError`
 code `TASK_SCHEMA_VERSION_UNSUPPORTED`, naming `akm migrate apply`, which

@@ -68,18 +68,18 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | Command | Status | Contract or migration action |
 | --- | --- | --- |
 | `akm run` | Evolving | First in 0.10.261119. Dispatches agent, command, task and workflow refs through their existing executors; workflow run ids continue frozen runs. |
-| `akm workflow status` | Experimental | `--all-scopes` added in 0.9.15 (#942); a deprecated no-op since 0.10 (#1239), accepted through 0.10. |
+| `akm workflow status` | Deprecated | Removed in 0.11 with workflows ([#1096](https://github.com/itlackey/akm/issues/1096)): task run history replaces it. `--all-scopes` added in 0.9.15 (#942); a deprecated no-op since 0.10 (#1239), accepted through 0.10. |
 | `akm workflow plan` | Deprecated | Removed in 0.11: use `akm doctor explain <ref>`, first in 0.10.261120. Preserve secret-free provenance output and no execution. |
-| `akm workflow list` | Experimental | `--all-scopes` and a top-level `scopeKey` envelope field added in 0.9.15 (#942); since 0.10 (#1239) `--all-scopes` is a deprecated no-op, accepted through 0.10, and the `scopeKey` field is removed from the list result. |
-| `akm workflow create` | Experimental | |
-| `akm workflow resume` | Experimental | |
-| `akm workflow abandon` | Experimental | |
-| `akm workflow run` | Deprecated | Removed in 0.11: use `akm run <ref>`; retain workflow lifecycle commands for existing runs. |
+| `akm workflow list` | Deprecated | Removed in 0.11 with workflows ([#1096](https://github.com/itlackey/akm/issues/1096)): task run history replaces it. `--all-scopes` and a top-level `scopeKey` envelope field added in 0.9.15 (#942); since 0.10 (#1239) `--all-scopes` is a deprecated no-op, accepted through 0.10, and the `scopeKey` field is removed from the list result. |
+| `akm workflow create` | Deprecated | Removed in 0.11 with workflows ([#1096](https://github.com/itlackey/akm/issues/1096)); no replacement. |
+| `akm workflow resume` | Deprecated | Removed in 0.11 with workflows ([#1096](https://github.com/itlackey/akm/issues/1096)): a failed task run resumes at the step that failed. |
+| `akm workflow abandon` | Deprecated | Removed in 0.11 with workflows ([#1096](https://github.com/itlackey/akm/issues/1096)); no replacement. |
+| `akm workflow run` | Deprecated | Removed in 0.11: use `akm run <ref>`; the workflow lifecycle commands serve existing runs through 0.10. |
 | `akm agent` | Deprecated | Removed in 0.11: use `akm run <ref>` for assets; invoke the agent's own CLI for the no-ref interactive launch. |
 | `akm command run` / `akm command <ref>` | Deprecated | Removed in 0.11: use `akm run <ref>` with the same template arguments and dispatch. |
 | `akm task add` | Deprecated | Removed in 0.11: use `akm import <file> --type task`, then `task enable` when activation is wanted. |
-| `akm task enable` | Evolving | |
-| `akm task disable` | Evolving | |
+| `akm task enable` | Evolving | In 0.11 the schedule that runs lives in host config, and a task file's `schedule:` may stay as the default that enabling applies ([#1096](https://github.com/itlackey/akm/issues/1096)); this command's 0.11 form is not final. |
+| `akm task disable` | Evolving | As `task enable`. |
 | `akm task run` | Deprecated | Removed in 0.11: use `akm run <qualified-task-ref>` with the same inputs. |
 | `akm task history` | Deprecated | Removed in 0.11: `akm task history <id>` becomes `akm doctor log --task <id>` (`--bundle`, `--limit`), first in 0.10.261120. The no-id cross-task form has no replacement; `akm doctor metrics` gives per-task totals. Both print each run's `trigger`. |
 | `akm task sync` | Deprecated | Removed in 0.11: use `akm doctor scheduler sync`, first in 0.10.261120, retaining reconciliation and rebind behavior. |
@@ -215,7 +215,8 @@ owned consumers after replacements ship; document deprecations without changing
 old machine output. Branch-specific scheduler/storage migrations remain in 0.11.
 
 `task run`, `task doctor`, and `task explain` follow the run/doctor mappings in
-the command tables. Keep `task enable` and `task disable`.
+the command tables. Keep `task enable` and `task disable` through 0.10; their 0.11
+form depends on the task format being finalized under [#1096](https://github.com/itlackey/akm/issues/1096).
 **Keep duration shortcuts:** `3M` means 90 days, `3m` means three minutes, for
 `--since`, `--expires`, `--window-compare` and the `timeout:` fields of task,
 agent and workflow files, which stay exactly as in 0.10.261118 through 0.10 (the
@@ -295,6 +296,8 @@ remove a research capability or skip its replacement.
 | Session extraction's source-harness `--type` | `proposal extract --sessions <claude\|codex\|opencode>` (0.10.261120); retire the overloaded `--type` spelling in 0.11 |
 | `help migrate <version>` | Read the published changelog and migration guide |
 | Standalone `akm-migrate` executable | Use `akm migrate status` and `akm migrate apply` |
+| Workflows: the workflow asset format, the engine and every `akm workflow` command ([#1096](https://github.com/itlackey/akm/issues/1096)) | Tasks with ordered steps, in 0.11.0. `akm migrate apply` converts workflow files, exports run history to a file and drops the workflow tables. Nothing changes in 0.10.x; see [Workflow formats and capabilities](#workflow-formats-and-capabilities-deprecated) |
+| Task source v4 (`version`, `uses`, `with`, typed `inputs:` and `output:`) | A simpler task format in 0.11.0. The schedule that runs moves to host config; `schedule:` in the file may stay as the default applied when a task is enabled. The format is being finalized; `akm migrate apply` converts v4 files |
 
 In 0.11, the scheduler-facing `task dispatch` (introduced on the 0.11 branch, not in 0.10) is the one minute dispatcher: it spawns `akm run <bundle//tasks/id> --scheduled`, and `akm migrate apply` removes the 0.10 per-task rows.
 
@@ -519,6 +522,16 @@ explain` instead **redacts** secret-shaped input values on a best-effort
 heuristic basis — a value that doesn't match the heuristic can still
 print unredacted.
 
+Tasks stay Evolving through 0.11: the new format ships for the first time in
+0.11.0, so it has had no field use before the stable release. 0.11.0 replaces
+task source v4 with a simpler format that also takes over ordered steps from
+workflows ([#1096](https://github.com/itlackey/akm/issues/1096)). The schedule
+that runs moves into each host's config; a task file's `schedule:` may stay as
+the default that enabling the task applies. That format is
+being finalized; the [migration guide](docs/migration/v0.10-to-v0.11.md#workflows-fold-into-tasks)
+tracks it. Task source v4 works unchanged through 0.10.x, and `akm migrate apply`
+converts it.
+
 ### Execution-plan inspection
 
 `akm workflow plan <ref>` (added in 0.9.2) inspects the compiled plan: its
@@ -527,28 +540,39 @@ It writes nothing and does not start or publish a run. Its data contract has
 been Experimental since 0.9.28. The entry point is Deprecated in favor of
 `doctor explain`; that move preserves these no-execution semantics.
 
-### Workflow formats and capabilities (Experimental)
+### Workflow formats and capabilities (Deprecated)
 
-The workflow asset format and engine remain Experimental from 0.9.28 and
-throughout 0.10. The command table assigns each entry point its status:
-`run` and `plan` are Deprecated; `status`, `list`, `create`, `resume`, and
-`abandon` remain Experimental. The 0.10
-series stabilizes the feature and trims what is not useful, then either
-promotes it out of Experimental or removes it if stabilization does not
-produce a quality feature. **Child workflows** (`unit: { workflow: … }`, a
-step that runs another workflow and returns its last step's output) are the
-least settled part and are kept only in that simple form; `akm workflow list
---children` goes with them.
+Workflows are Deprecated and are removed in 0.11.0. This is the promote-or-remove
+decision of [#1096](https://github.com/itlackey/akm/issues/1096). The workflow asset
+format, the engine and every `akm workflow` command work unchanged through
+0.10.x.
 
-Every key below remains Experimental until the promote-or-remove
-decision in [#1096](https://github.com/itlackey/akm/issues/1096). The table records
-what the 0.10 trim retained, not a promotion to Stable.
+In 0.11 tasks take over: a task runs one shell line, one agent prompt, or an
+ordered list of steps, and a failed run resumes at the step that failed. The
+field data reviewed for the decision showed that ordered steps were the part of
+workflows people relied on. Fan-out (`map`), gate loops and child workflows did
+not appear in it at all, so they have no replacement, and neither do gates or
+`budget`. One part of typed step outputs stays: a prompt step can state what
+its reply must contain, and akm asks the agent once more when the reply lacks
+it.
+
+At the 0.11 upgrade, `akm migrate apply` converts workflow files: a workflow
+whose steps run commands or agents becomes a task, and a prose playbook becomes
+a command. Workflow run history is exported to a file and the workflow tables
+are dropped; it does not move into task history. A run that is still
+active or blocked at the upgrade cannot continue afterwards, so finish or
+abandon it first. The
+[migration guide](docs/migration/v0.10-to-v0.11.md#workflows-fold-into-tasks)
+has the mapping.
+
+The keys below are what the 0.10 trim retained. They work through 0.10.x and
+none is promoted.
 
 | Key | Retained scope |
 | --- | --- |
 | `params`, `steps`, `inputs`, `output` / `unit.output`, `defaults.connection` / `defaults.harness`, `### gate` | Core: the feature set pinned by `core-feature-set.test.ts` |
 | exec units (`unit.exec`), `budget`, `unit.retry`, `map`, `gate.max_loops` | Kept in the 0.10 trim |
-| child workflows (`unit.workflow`, `unit.with`) | Experimental: least settled |
+| child workflows (`unit.workflow`, `unit.with`) | Kept in the 0.10 trim; `akm workflow list --children` goes with them |
 
 ## Learning and proposals
 

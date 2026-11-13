@@ -27,7 +27,7 @@ Install and share bundles containing skills, scripts, workflows, agents, instruc
 Feedback re-ranks assets right away. A negative report can carry an exact text fix, and `akm improve` repairs metadata. Edits land as diffable proposals: the default improve strategy accepts the ones its quality judge passed, the rest wait for you to accept or reject, and any accept can be reverted. Only writable bundles are changed.
 
 ### Turn knowledge into repeatable work
-Run persisted workflows with dispatch, gates, retries, budgets, and resume instead of reconstructing a process from prose every session. Workflows are Experimental.
+Run tasks on a schedule or on demand instead of reconstructing a process from prose every session. Workflows are Deprecated: 0.11 removes them, and tasks take over their ordered steps.
 
 Search and show only return content; running a workflow, task, script, or agent is a separate command. See the invariants in [Architecture](docs/architecture/architecture.md#invariants).
 

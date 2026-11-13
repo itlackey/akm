@@ -1,5 +1,8 @@
 # Running Workflows
 
+> **Deprecated.** Workflows are removed in 0.11, when tasks take over ordered
+> steps. See [STABILITY.md](../../STABILITY.md#workflow-formats-and-capabilities-deprecated).
+
 This guide walks through operating a workflow run day to day: starting or
 continuing one, checking on it, resuming it after it blocks, and abandoning
 one you no longer want. It assumes you already know what a workflow is; see

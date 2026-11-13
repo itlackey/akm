@@ -53,7 +53,9 @@ Stdout, JSON and exit codes are unchanged, and `--quiet` silences the line. It
 is not printed for `--help`, for the scheduler's `task run --scheduled`, or for
 commands run by a task, `improve` or an audit (`AKM_EVENT_SOURCE` of `task`,
 `improve` or `audit`). The forms covered are `health`, `metrics`, `info`, `log`,
-`judge`, `improve judge`, `workflow run`, `workflow plan`, `agent <ref>`,
+`judge`, `improve judge`, every `workflow` command (`run`, `plan`, `status`,
+`list`, `create`, `resume`, `abandon`), `akm run` of a workflow ref or run id
+and a task that runs a workflow (workflows go in 0.11), `agent <ref>`,
 `command`, `task run`, `task add`, `task sync`, `task prune`, `task doctor`,
 `task explain`, `task history`, `clone`, `improve report`,
 `improve --show-prompt`, `improve --require-feedback-signal`, `curate --pack`,
@@ -61,7 +63,8 @@ commands run by a task, `improve` or an audit (`AKM_EVENT_SOURCE` of `task`,
 `show --detail brief` and `--context lead`, `proposal extract --type`,
 `remember --auto`, `--enrich` and `--show-similar` (no replacement flag),
 `proposal reject --yes` (no longer needed), `upgrade --next` and `--timeout-ms`. A deprecated form whose replacement is not
-built yet prints nothing.
+built yet prints nothing, unless it is removed in 0.11 with no replacement (the
+`remember` flags and workflows): then the line says so.
 
 The deprecated environment variables `AKM_UPGRADE_SKIP_CHECKSUM` (during
 `upgrade`), `AKM_SQLITE_JOURNAL_MODE`, `AKM_VERBOSE` and `AKM_DEBUG=1` print the
@@ -1233,7 +1236,7 @@ event polling.
 
 #### workflow run
 
-Deprecated; use `akm run <workflow-ref>` to start a run and `akm run <run-id>` to continue one; removed in 0.11. The other `workflow` subcommands stay.
+Deprecated; use `akm run <workflow-ref>` to start a run and `akm run <run-id>` to continue one; removed in 0.11. The other `workflow` subcommands are Deprecated too and are removed in 0.11 with workflows.
 
 ```sh
 akm workflow run workflows/ship-release --version 1.2.3
