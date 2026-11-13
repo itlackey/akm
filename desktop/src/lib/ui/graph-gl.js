@@ -12,7 +12,7 @@
 //   data.color            Uint8Array(count * 4)   rgba
 //   data.size             Float32Array(count)     a non-negative value per node (the page's measure, e.g. times shown).
 //                         The point's diameter on screen is POINT_MIN_PX..POINT_MAX_PX CSS px, growing with sqrt(value / max value),
-//                         so area follows the value; depth does not change it. Emphasised points are drawn larger (emphasisDiameter).
+//                         so area follows the value; depth does not change it. Emphasised points keep that diameter and get a ring (RING_GAP_PX, RING_WIDTH_PX) in the ink colour.
 //   data.edges            Uint32Array(pairs)      node indices
 //   data.anchors          [{ text, x, y, z, color? }]  group labels, drawn while zoomed out
 //   data.label(i)         a node's label
@@ -54,12 +54,13 @@ export function pointDiameter(value, max) {
   if (!(max > 0) || !(value > 0)) return POINT_MIN_PX;
   return POINT_MIN_PX + (POINT_MAX_PX - POINT_MIN_PX) * Math.sqrt(Math.min(1, value / max));
 }
-export function emphasisDiameter(d) {
-  return Math.min(POINT_CAP_PX, d * 1.5 + 3);
-}
-/** What is drawn for a point of base diameter `d` in `state`: the one definition the drawing and the hit test share. */
+/** An emphasised point's ring: a gap, then a line, outside the point, in CSS px. The point's own diameter does not change. */
+export const RING_GAP_PX = 1;
+export const RING_WIDTH_PX = 1.5;
+const RING_OUTSET_PX = RING_GAP_PX + RING_WIDTH_PX;
+/** What is drawn for a point of base diameter `d` in `state`: the sprite includes the ring, so the drawing and the hit test share it. */
 export function drawnDiameter(d, state) {
-  return state === HIDDEN ? 0 : state === 2 ? emphasisDiameter(d) : d;
+  return state === HIDDEN ? 0 : state === 2 ? d + 2 * RING_OUTSET_PX : d;
 }
 /** The pointer's reach around a drawn point, in CSS px. */
 export function hitRadius(drawn) {
@@ -87,20 +88,31 @@ export function fitDistance(box, { flat, fov, aspect, margin = 1.15, floor = 60 
 const POINT_VS = `#version 300 es
 in vec3 aPos; in vec4 aColor; in float aSize; in float aState;
 uniform mat4 uMVP; uniform float uDpr, uFlat, uDim;
-out vec4 vColor;
+out vec4 vColor; out vec3 vRing;
 void main() {
   // A hidden point is sent outside the clip volume; aSize is its diameter in CSS px, so depth does not change it.
   gl_Position = aState > 2.5 ? vec4(2.0, 2.0, 2.0, 1.0) : uMVP * vec4(aPos.x, aPos.y * uFlat, aPos.z, 1.0);
   gl_PointSize = aSize * uDpr;
   vColor = vec4(aColor.rgb, aColor.a * (aState < 0.5 ? uDim : 1.0));
+  // For an emphasised point (the sprite includes its ring): the core radius and the ring's inner radius as fractions of the sprite's.
+  float radiusPx = aSize * 0.5;
+  vRing = aState > 1.5 && aState < 2.5 ? vec3(1.0, (radiusPx - ${RING_OUTSET_PX.toFixed(2)}) / radiusPx, (radiusPx - ${RING_WIDTH_PX.toFixed(2)}) / radiusPx) : vec3(0.0);
 }`;
 const POINT_FS = `#version 300 es
 precision mediump float;
-in vec4 vColor; out vec4 o;
+in vec4 vColor; in vec3 vRing; out vec4 o;
+uniform vec3 uInk;
 void main() {
   vec2 c = gl_PointCoord * 2.0 - 1.0;
   float d = dot(c, c);
   if (d > 1.0) discard;
+  if (vRing.x > 0.5) {
+    float r = sqrt(d);
+    float aa = 0.08;
+    if (r <= vRing.y) { o = vec4(vColor.rgb, vColor.a * (1.0 - smoothstep(vRing.y - aa, vRing.y, r))); return; }
+    if (r >= vRing.z) { o = vec4(uInk, 1.0 - smoothstep(1.0 - aa, 1.0, r)); return; }
+    discard;
+  }
   o = vec4(vColor.rgb, vColor.a * smoothstep(1.0, 0.6, d));
 }`;
 const LINE_VS = `#version 300 es
@@ -653,6 +665,8 @@ export function createGraphView({ canvas, labels, data, theme }) {
   });
 
   const ink = () => theme.ink;
+  /** The ink colour as 0..1 components, for the point shader's rings. */
+  const inkRgb = () => (theme.ink.match(/[\d.]+/g) ?? [0, 0, 0]).slice(0, 3).map((v) => Number(v) / 255);
   const paper = () => theme.paper;
   const overlap = (a, b) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1];
 
@@ -774,6 +788,7 @@ export function createGraphView({ canvas, labels, data, theme }) {
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.useProgram(points.p);
     gl.uniformMatrix4fv(points.u.uMVP, false, mvp);
+    gl.uniform3f(points.u.uInk, ...inkRgb());
     gl.uniform1f(points.u.uDpr, dpr);
     gl.uniform1f(points.u.uFlat, cam.flat);
     gl.uniform1f(points.u.uDim, dark ? 0.16 : 0.18);

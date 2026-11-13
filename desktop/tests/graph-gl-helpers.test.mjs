@@ -6,15 +6,16 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   drawnDiameter,
-  emphasisDiameter,
   fitDistance,
   HIT_PAD_PX,
   hitRadius,
-  panVector,
   POINT_CAP_PX,
   POINT_MAX_PX,
   POINT_MIN_PX,
+  panVector,
   pointDiameter,
+  RING_GAP_PX,
+  RING_WIDTH_PX,
 } from "../src/lib/ui/graph-gl.js";
 
 const near = (a, b, eps = 1e-9) => assert.ok(Math.abs(a - b) < eps, `${a} is not ${b}`);
@@ -29,13 +30,18 @@ test("point diameter spans the stated CSS-pixel range and its area follows the v
   assert.ok(pointDiameter(1, 500) > pointDiameter(0, 500));
 });
 
-test("emphasis enlarges, never past the cap, and the hit radius uses the drawn size", () => {
+test("emphasis keeps the point's own diameter and adds a ring; the hit radius follows the ringed size", () => {
+  const ring = 2 * (RING_GAP_PX + RING_WIDTH_PX);
+  assert.equal(RING_GAP_PX, 1);
+  assert.equal(RING_WIDTH_PX, 1.5);
   assert.equal(drawnDiameter(8, 1), 8);
   assert.equal(drawnDiameter(8, 0), 8);
-  assert.equal(drawnDiameter(8, 2), emphasisDiameter(8));
+  // The point inside the ring is its own size: sprite minus the ring's outset is the diameter.
+  assert.equal(drawnDiameter(8, 2) - ring, 8);
+  assert.equal(drawnDiameter(POINT_MIN_PX, 2), POINT_MIN_PX + ring);
   assert.equal(drawnDiameter(8, 3), 0);
-  assert.equal(emphasisDiameter(POINT_MAX_PX * 10), POINT_CAP_PX);
-  assert.equal(hitRadius(drawnDiameter(8, 2)), emphasisDiameter(8) / 2 + HIT_PAD_PX);
+  assert.ok(drawnDiameter(POINT_MAX_PX, 2) <= POINT_CAP_PX);
+  assert.equal(hitRadius(drawnDiameter(8, 2)), (8 + ring) / 2 + HIT_PAD_PX);
   assert.ok(hitRadius(drawnDiameter(8, 2)) > hitRadius(drawnDiameter(8, 1)));
 });
 
