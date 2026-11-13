@@ -20,6 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `akm migrate status --read-only` is accepted and writes nothing at all: it records no CLI usage (like `doctor --read-only`) and no longer creates an empty config directory just to take the config lock; `migrate apply` still takes it.
 - The `task history` deprecation notice names `akm doctor log --task <id>` only when a task id is given; the no-id cross-task form says it has no replacement and points at `akm doctor metrics` for per-task totals (STABILITY.md and the 0.10 to 0.11 guide say the same).
 - `akm doctor log --task ""` (empty or blank id) is a usage error (exit 2) instead of silently listing every task's runs.
+- The CLI reference no longer lists `task validate` as a current `akm task` subcommand (it was removed in 0.10; use `akm lint --type tasks`), and says `proposal reject` needs `--yes` when not interactive for a single proposal as well as a bulk one. `akm doctor --help` states its exit codes (0 healthy, 4 warning, 1 failure).
 
 ## [0.10.261120] - 2026-11-12
 

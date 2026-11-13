@@ -3864,10 +3864,10 @@ akm proposal reject --generator reflect --reason "noisy" --max-diff-lines 50 -y
 | `--max-diff-lines` | When bulk-rejecting, only reject proposals whose content is `<=` this many lines. Larger proposals are skipped. |
 | `--older-than` | When bulk-rejecting, only reject proposals created (or last reopened) more than this many days ago |
 | `--dry-run` | List proposals that would be bulk-rejected without rejecting them |
-| `-y`, `--yes` | Skip confirmation (required in non-interactive mode for bulk reject) |
+| `-y`, `--yes` | Skip confirmation (required in non-interactive mode) |
 
 Bulk-reject all pending proposals from one generator with `--generator <name>`
-and no positional id. Bulk reject requires `-y`/`--yes` in non-interactive shells.
+and no positional id. Reject (single or bulk) requires `-y`/`--yes` in non-interactive shells.
 
 #### proposal reopen
 
@@ -4095,9 +4095,9 @@ shell commands. It manages on-disk task definitions under
 (cron / launchd / schtasks). Task source v4 YAML (`version: 4`) is the only
 executable source contract this release accepts; `akm import <file> --type task`
 imports a v4 file — see the canonical [Tasks reference](tasks.md). The
-group is `add | enable | disable | run | explain | validate | sync | doctor | history | prune`
+group is `add | enable | disable | run | explain | sync | doctor | history | prune`
 — there is no `show` or `remove`; use `akm show tasks/<id>` to inspect one
-task. Only `enable`, `disable` and `validate` are current. The rest are
+task. Only `enable` and `disable` are current (validate a task source with `akm lint --type tasks`). The rest are
 Deprecated, removed in 0.11:
 
 | Deprecated | Use |
