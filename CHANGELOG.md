@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261121] - 2026-11-13
+
 ### Added
 
 - Experimental: ordered steps in tasks (akm#1096). A task source v4 file may declare `steps:` instead of `uses`/`run`; each step runs one shell line (`run:`), one agent prompt (`prompt:`, a `commands/` ref or inline text, with an optional `expect: [field, ...]` reply check that re-asks the agent once) or another task (`task:`), with `env`, `timeout` and `retries`. Every step gets the task's inputs as `AKM_PARAMS` and earlier results as `AKM_STEPS`; a failed step stops the run, `akm run <task> --resume` restarts at it, a run does not start while the previous one is alive, and each step is recorded in task history and shown in AKM Desktop's task run view. Tasks without `steps:` are unchanged. The shape may change in 0.11, where workflows are removed.
