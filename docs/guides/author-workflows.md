@@ -1,5 +1,8 @@
 # Author's Guide: Writing Workflows
 
+> **Deprecated.** Workflows are removed in 0.11, when tasks take over ordered
+> steps. See [STABILITY.md](../../STABILITY.md#workflow-formats-and-capabilities-deprecated).
+
 This guide walks through writing and testing a workflow definition: the
 Markdown structure, a minimal complete example, common authoring mistakes,
 and how to verify gates and outputs before you publish. It assumes you

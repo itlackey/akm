@@ -15,6 +15,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - AKM Desktop charts: Runs opens with a bar per kind of run showing how its runs ended, the run timeline has a key and a green mark for completed runs, and the latest improve runs are a bar chart coloured by outcome that opens a run. Durations read "6 min" instead of "360.0 s". A chart with nothing to draw says so instead of showing empty axes, and a short line series draws its points.
 - `akm index --export-vectors` streams the vectors from the index into the file instead of loading them all first, so peak memory stays flat (about 260 MB) instead of growing by roughly 32 KB per embedded entry (3.2 GB at 100,000). The file contents and the atomic replace are unchanged (akm#1608).
 
+### Deprecated
+
+- Workflows are Deprecated and removed in 0.11 (the promote-or-remove decision of akm#1096): tasks take over ordered steps, and tasks stay Evolving through 0.11. This covers the workflow asset format, the engine, and `akm workflow status`, `list`, `create`, `resume` and `abandon`; `workflow run` and `workflow plan` were already Deprecated. Everything works unchanged in 0.10.x and no notice is printed yet. `STABILITY.md` and the 0.10 to 0.11 guide carry the mapping; the 0.11 task format is still being finalized.
+
 ### Fixed
 
 - `akm migrate status --read-only` is accepted and writes nothing at all: it records no CLI usage (like `doctor --read-only`) and no longer creates an empty config directory just to take the config lock; `migrate apply` still takes it.

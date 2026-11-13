@@ -1233,7 +1233,7 @@ event polling.
 
 #### workflow run
 
-Deprecated; use `akm run <workflow-ref>` to start a run and `akm run <run-id>` to continue one; removed in 0.11. The other `workflow` subcommands stay.
+Deprecated; use `akm run <workflow-ref>` to start a run and `akm run <run-id>` to continue one; removed in 0.11. The other `workflow` subcommands are Deprecated too and are removed in 0.11 with workflows.
 
 ```sh
 akm workflow run workflows/ship-release --version 1.2.3
