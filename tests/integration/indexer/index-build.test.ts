@@ -21,7 +21,7 @@ import { TransientError } from "../../../src/core/errors";
 import { getDbPath, getIndexRebuildLockPath } from "../../../src/core/paths";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
 import { _setIndexBuildWaitTimingForTests, buildIndex, isSkippedIndexBuild } from "../../../src/indexer/index-build";
-import { indexBuildRunning } from "../../../src/indexer/index-rebuild-lock";
+import { heldRebuildLock } from "../../../src/indexer/index-rebuild-lock";
 import * as indexerModule from "../../../src/indexer/indexer";
 import { closeDatabase, openExistingDatabase } from "../../../src/storage/repositories/index-connection";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
@@ -51,7 +51,7 @@ describe("buildIndex", () => {
     let heldDuringBuild = false;
     const spy = spyOn(indexerModule, "akmIndex");
     spy.mockImplementationOnce(async (options) => {
-      heldDuringBuild = indexBuildRunning();
+      heldDuringBuild = heldRebuildLock() !== undefined;
       return indexerModule.akmIndex(options);
     });
     try {

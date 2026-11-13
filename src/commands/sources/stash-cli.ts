@@ -126,8 +126,7 @@ export const indexCommand = defineCommand({
       process.once("SIGTERM", abort);
       const verbose = isVerbose();
       const spin = !verbose && outputMode.format === "text" ? p.spinner() : null;
-      // The log file and spinner start with the build, not while waiting for the
-      // rebuild lock, so a run that skips (--skip-if-locked) leaves neither.
+      // The log file and spinner start with the build, not while waiting for the lock: a skipped run leaves neither.
       let started = false;
       const begin = (): void => {
         if (started) return;
@@ -136,13 +135,9 @@ export const indexCommand = defineCommand({
         spin?.start(`Building search index${args.full ? " (full rebuild)" : ""}...`);
       };
       let latestMessage = "";
-      // Resolve the stash dir once at the `akm index` command boundary and
-      // thread it into the indexer (WI-9.10 CLI-wide sweep) — the indexer leaf
-      // no longer reads the ambient `resolveStashDir()`.
       const stashDir = resolveStashDir();
       try {
-        // One build at a time (#956): wait for a running build, or with
-        // --skip-if-locked (scheduled/opportunistic callers) step aside.
+        // One build at a time: wait for a running build, or with --skip-if-locked step aside.
         const result = await buildIndex(
           {
             stashDir,
@@ -161,14 +156,8 @@ export const indexCommand = defineCommand({
                 spin.stop(`${progressPrefix}${message}`);
                 spin.start(`${progressPrefix}${message}`);
               } else if (!EMBEDDED_BATCH_PROGRESS_PATTERN.test(message)) {
-                // Non-verbose, non-text (JSON/yaml/etc) mode: silence used to be
-                // total until the run finished (#954) — a stalled
-                // run looked identical to "nothing written". Phase-start
-                // messages and the embedding heartbeat now reach stderr here
-                // too; the high-frequency per-batch `Embedded N/M entries.`
-                // line (emitted after every committed batch)
-                // is deliberately excluded — that would be spam, not a
-                // heartbeat.
+                // Structured output modes still show phase starts and the embedding heartbeat on stderr (#954);
+                // the per-batch "Embedded N/M" line is excluded as spam.
                 info(`[index:${phase}] ${progressPrefix}${message}`);
               }
             },
@@ -182,9 +171,7 @@ export const indexCommand = defineCommand({
             skipped: {
               reason: "lock-held",
               pid: result.skipped.pid,
-              // #956: the launcher pid (when known) alongside the pid that
-              // actually holds the lock — every process listing and task log
-              // shows the launcher pid, not the bun/node child's.
+              // The launcher pid is what process listings and task logs show, not the bun/node child's.
               launcherPid: result.skipped.launcherPid,
               startedAt: result.skipped.startedAt,
             },

@@ -5,14 +5,9 @@
 /**
  * Write-path indexing: targeted single-file index updates for asset writers.
  *
- * The index is maintained eagerly by every first-class mutation command
- * (`source add`, `wiki`, `workflow`, `setup` all build it after writing). The
- * memory write paths — `akm remember` / `writeMarkdownAsset` and extract's
- * session assets — historically did not, which is why reads used to compensate
- * with stale-triggered background reindexes (the lock-contention footgun
- * removed alongside this module's introduction, per the 2026-07 read-path
- * reindex-contention findings §7). Reads still never walk: writers index what
- * they write.
+ * Writers index what they write; reads never walk. Mutation commands (`source add`, `bundle update`, ...)
+ * build the index after writing, and the memory write paths (`akm remember`, extract's session assets)
+ * call this instead.
  *
  * This is NOT a general reindex. It upserts exactly the files the caller just
  * wrote: frontmatter/metadata via the shared matcher pipeline, the canonical
@@ -50,11 +45,9 @@ export const WRITE_PATH_INDEX_BUSY_TIMEOUT_MS = 5_000;
 /**
  * Index the given just-written asset files into the existing local index.
  *
- * FAIL-OPEN at every step: any error (index.db absent, empty, locked past the
- * busy timeout, unparseable file) is reduced to a verbose-only warning and the
- * write command succeeds untouched. The degraded outcome is exactly the
- * pre-write-path-indexing behavior: the asset appears after the next full
- * `akm index` / improve-cron run.
+ * FAIL-OPEN at every step: any error (index.db absent, locked past the busy timeout, unparseable file) is
+ * reduced to a verbose-only warning and the write command succeeds untouched. A write the index misses is
+ * picked up by the next build.
  *
  * Upserts whenever a usable index exists for the library (`index-readiness.ts`):
  * persisted keyword data, whether or not a build has completed. An absent or

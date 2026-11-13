@@ -20,10 +20,10 @@
  */
 
 import { TransientError } from "../core/errors";
-import { formatLockHolderPid, type RunLockHolder } from "../core/run-lock";
+import type { RunLockHolder } from "../core/run-lock";
 import { warn } from "../core/warn";
 import { warnOnBundleRenameDrift } from "./bundle-identity-guard";
-import { releaseIndexRebuildLock, tryAcquireIndexRebuildLock } from "./index-rebuild-lock";
+import { describeLockHolder, releaseIndexRebuildLock, tryAcquireIndexRebuildLock } from "./index-rebuild-lock";
 import { akmIndex, type IndexOptions, type IndexResponse } from "./indexer";
 
 // Same shape as the asset mutation lease (`index-writer-lock.ts`): a 100 ms poll, a
@@ -48,10 +48,6 @@ export function isSkippedIndexBuild(result: unknown): result is SkippedIndexBuil
   return typeof result === "object" && result !== null && "skipped" in result;
 }
 
-function holderLabel(holder: RunLockHolder): string {
-  return `pid ${formatLockHolderPid(holder)}, started ${holder.startedAt ?? "unknown"}`;
-}
-
 export async function buildIndex(options: IndexOptions, mode: "wait"): Promise<IndexResponse>;
 export async function buildIndex(options: IndexOptions, mode: "try"): Promise<IndexResponse | SkippedIndexBuild>;
 export async function buildIndex(
@@ -70,7 +66,7 @@ export async function buildIndex(
   let lock = tryAcquireIndexRebuildLock();
   while (lock.state === "held") {
     if (mode === "try") {
-      warn(`[index] another index run holds the lock (${holderLabel(lock.holder)}); not building.`);
+      warn(`[index] another index run holds the lock (${describeLockHolder(lock.holder)}); not building.`);
       return { skipped: lock.holder };
     }
     if (options.signal?.aborted) throw options.signal.reason ?? new Error("index interrupted");
@@ -78,13 +74,15 @@ export async function buildIndex(
     // Time out only after a real attempt at a free lock, so a bound of 0 still gets one try.
     if (waitedMs >= maxWaitMs) {
       throw new TransientError(
-        `Another akm process is still building the index (${holderLabel(lock.holder)}); gave up waiting after ` +
+        `Another akm process is still building the index (${describeLockHolder(lock.holder)}); gave up waiting after ` +
           `${Math.round(waitedMs / 1000)}s. Retry shortly.`,
         "INDEX_DB_CONTENDED",
       );
     }
     if (lastNoticeMs === undefined || waitedMs - lastNoticeMs >= noticeIntervalMs) {
-      warn(`[index] waiting for another index run (${holderLabel(lock.holder)}) — ${Math.round(waitedMs / 1000)}s`);
+      warn(
+        `[index] waiting for another index run (${describeLockHolder(lock.holder)}) — ${Math.round(waitedMs / 1000)}s`,
+      );
       lastNoticeMs = waitedMs;
     }
     await new Promise((resolve) => setTimeout(resolve, WAIT_POLL_MS));

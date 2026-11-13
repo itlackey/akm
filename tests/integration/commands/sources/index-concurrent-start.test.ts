@@ -16,9 +16,7 @@
  * small pairs reproduce a real `exit 78` in a handful of trials, where a
  * single pair usually does not collide at all). Across every trial this pins
  * the property the field bug broke: no process ever exits 78 (config error —
- * the reported regression) or 70 (internal/unclassified) — only 0 (no
- * collision, or a "contended" warn-and-proceed that still completed) or 75
- * (`TransientError`, code `INDEX_DB_CONTENDED`).
+ * the reported regression) or 70 (internal/unclassified), and none exits 75 either.
  *
  * Integration-scoped (ORG-03/06): spawns real child processes, each opening a
  * real index.db.

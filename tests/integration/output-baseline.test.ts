@@ -73,7 +73,7 @@ async function runCliAsync(stashDir: string, args: string[], config?: Record<str
   const xdgConfig = makeTempDir("akm-output-config-");
   const xdgData = makeTempDir("akm-output-data-");
   const xdgState = makeTempDir("akm-output-state-");
-  // Semantic off keeps auto-index stderr deterministic: with the default
+  // Semantic off keeps the index run's stderr deterministic: with the default
   // ("auto") the local embedder fetches its model from huggingface.co and a
   // blocked/offline fetch emits "Embedding generation failed" on stderr,
   // tripping the stderr-cleanliness check below. This test suite pins output
@@ -109,7 +109,7 @@ async function runCliAsync(stashDir: string, args: string[], config?: Record<str
   });
 
   expect(exitCode).toBe(0);
-  // Auto-index may produce progress output on stderr; only fail on actual errors
+  // The index run may produce progress output on stderr; only fail on actual errors
   const isAutoIndexOutput =
     stderr.includes("Starting") ||
     stderr.includes("Scanned") ||

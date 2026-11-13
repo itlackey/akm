@@ -419,7 +419,7 @@ describe("akm improve — triage pre-pass", () => {
     "lock-leak guard: improve.lock is released and a second run is not blocked",
     async () => {
       // Regression guard for the Phase 4 lock hoist (§7): the lock is now
-      // acquired ABOVE the pre-index region (ensureIndex / collectEligibleRefs /
+      // acquired ABOVE the pre-index region (pre-run index / collectEligibleRefs /
       // contradiction-detection / memory-cleanup analysis) so the triage pre-pass
       // runs under it. A throw anywhere in that region must release the lock
       // (lock-leak guard try/catch) rather than leak `improve.lock`. We assert the

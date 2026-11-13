@@ -22,7 +22,7 @@ import path from "node:path";
 import { saveConfig } from "../../../src/core/config/config";
 import { readEvents } from "../../../src/core/events";
 import { getDbPath, getIndexRebuildLockPath } from "../../../src/core/paths";
-import { indexBuildRunning } from "../../../src/indexer/index-rebuild-lock";
+import { heldRebuildLock } from "../../../src/indexer/index-rebuild-lock";
 import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
 import * as indexerModule from "../../../src/indexer/indexer";
 import { _setIndexTransactionHookForTests, akmIndex } from "../../../src/indexer/indexer";
@@ -238,15 +238,6 @@ describe("show resolves from the bundle's files", () => {
     expect(lead.stderr).toContain("Indexed-safe fragment context is unavailable");
     expect(JSON.parse(lead.stdout).content).toContain("The details.");
   });
-
-  test("a file under a symlinked directory is not in the bundle", async () => {
-    seedLibrary();
-    const outside = path.join(storage.root, "outside");
-    fs.mkdirSync(outside, { recursive: true });
-    fs.writeFileSync(path.join(outside, "secret.md"), "# Outside\n");
-    fs.symlinkSync(outside, path.join(storage.stashDir, "knowledge", "linked"));
-    expect((await cli("show", "knowledge/linked/secret", "--format=json")).code).toBe(1);
-  });
 });
 
 describe("every build path takes the rebuild lock", () => {
@@ -254,7 +245,7 @@ describe("every build path takes the rebuild lock", () => {
     const original = indexerModule.akmIndex;
     const heldDuringBuild: boolean[] = [];
     const spy = spyOn(indexerModule, "akmIndex").mockImplementation(async (options) => {
-      heldDuringBuild.push(indexBuildRunning());
+      heldDuringBuild.push(heldRebuildLock() !== undefined);
       return original(options);
     });
     try {

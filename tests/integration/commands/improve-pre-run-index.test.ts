@@ -183,8 +183,8 @@ describe("akmImprove pre-run index (#339)", () => {
     expect(rebuiltResult.ok).toBe(true);
     expect(rebuiltResult.ensureIndexDurationMs).toBeGreaterThanOrEqual(0);
 
-    // Second run: the index is current, but blocking mode still runs the
-    // incremental index and lets its fingerprints decide, so the field is set.
+    // Second run: the index is current, but the pre-run index still runs the
+    // incremental build and lets its fingerprints decide, so the field is set.
     const freshResult = await akmImprove({
       stashDir,
       strategy: "duration-order",

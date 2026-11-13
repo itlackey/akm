@@ -75,7 +75,7 @@ One function builds the live index: `buildIndex` (`src/indexer/index-build.ts`).
 
 ## Usable index
 
-An index is usable for a library when the keyword data for it is persisted: the `entries` table exists and `index_meta.stashDir` or `stashDirs` names the library. The persist transaction writes both with the entries and their FTS rows, so a build that is still embedding, was interrupted after the scan, or had one source fail is usable, and so is an empty library that was indexed (akm#1469). An index an older akm finished has the same two keys, so it is usable with no migration. `openUsableIndex` and `readIndexReadiness` (`src/indexer/index-readiness.ts`) are the one check; `search`, `curate`, `feedback` and write-through all use it.
+An index is usable for a library when the keyword data for it is persisted: the `entries` table exists and `index_meta.stashDir` or `stashDirs` names the library. The persist transaction writes both with the entries and their FTS rows, so a build that is still embedding, was interrupted after the scan, or had one source fail is usable, and so is an empty library that was indexed (akm#1469). An index an older akm finished has the same two keys, so it is usable with no migration. `openUsableIndex` (`src/indexer/index-readiness.ts`) is the one check; `search`, `curate`, `feedback` and write-through all use it.
 
 `builtAt` is not part of usable. It is the incremental watermark, written when a build completes with a complete scan. A persist for a different library clears it.
 

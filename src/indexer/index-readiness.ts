@@ -32,7 +32,7 @@ import {
 } from "../storage/repositories/index-connection";
 import { hasCurrentEntriesTable } from "../storage/repositories/index-entry-schema";
 import { getMeta } from "../storage/repositories/index-meta-repository";
-import { indexBuildRunning } from "./index-rebuild-lock";
+import { heldRebuildLock } from "./index-rebuild-lock";
 
 export const INDEX_INCOMPLETE_WARNING =
   "Search results may be incomplete: the index for this library has not finished building. " +
@@ -40,23 +40,9 @@ export const INDEX_INCOMPLETE_WARNING =
 
 /** The single "no usable index" warning; it names the build when a live process holds the rebuild lock. */
 export function noIndexWarning(): string {
-  return indexBuildRunning()
+  return heldRebuildLock()
     ? "The search index for this library is being built; results will appear when the build has persisted them."
     : "There is no search index for this library yet; run `akm index` to build one.";
-}
-
-/** Whether an open index serves `stashDir`, and whether a build has ever completed on it. */
-export function readIndexReadiness(db: Database, stashDir: string): { usable: boolean; complete: boolean } {
-  try {
-    if (!hasCurrentEntriesTable(db)) return { usable: false, complete: false };
-    const forLibrary =
-      getMeta(db, "stashDir") === stashDir ||
-      (JSON.parse(getMeta(db, "stashDirs") ?? "[]") as string[]).includes(stashDir);
-    return { usable: forLibrary, complete: Boolean(getMeta(db, "builtAt")) };
-  } catch {
-    // Unreadable meta: corrupt, or mid-write. Not an index that can serve.
-    return { usable: false, complete: false };
-  }
 }
 
 export interface UsableIndex {
@@ -88,9 +74,13 @@ export function openUsableIndex(
     if (!db) return undefined;
     if (options.busyTimeoutMs !== undefined)
       db.exec(`PRAGMA busy_timeout = ${Math.max(0, Math.floor(options.busyTimeoutMs))}`);
-    const { usable, complete } = readIndexReadiness(db, stashDir);
-    if (usable) return { db, complete };
+    const servesLibrary =
+      hasCurrentEntriesTable(db) &&
+      (getMeta(db, "stashDir") === stashDir ||
+        (JSON.parse(getMeta(db, "stashDirs") ?? "[]") as string[]).includes(stashDir));
+    if (servesLibrary) return { db, complete: Boolean(getMeta(db, "builtAt")) };
   } catch (error) {
+    // Anything else (corrupt, unreadable meta, mid-write) is an index that cannot serve.
     if (error instanceof ConfigError) {
       if (db) closeDatabase(db);
       throw error;

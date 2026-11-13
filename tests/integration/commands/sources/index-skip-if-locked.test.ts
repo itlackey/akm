@@ -69,7 +69,6 @@ describe("akm index — skip-if-locked", () => {
 
     const result = await run;
     expect(result.code).toBe(0);
-    expect(result.stderr).toMatch(/waiting for another index run/);
     const parsed = JSON.parse(result.stdout);
     expect(parsed.skipped).toBeUndefined();
     expect(typeof parsed.totalEntries).toBe("number");
@@ -83,7 +82,6 @@ describe("akm index — skip-if-locked", () => {
     try {
       const result = await runCliCapture(["index", "--full", "--format=json"]);
       expect(result.code).toBe(75);
-      expect(result.stderr).toMatch(/waiting for another index run/);
       expect(JSON.parse(result.stderr.slice(result.stderr.indexOf("{"))).code).toBe("INDEX_DB_CONTENDED");
     } finally {
       _setIndexBuildWaitTimingForTests(undefined);

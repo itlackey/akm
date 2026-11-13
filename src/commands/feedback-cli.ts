@@ -673,18 +673,9 @@ export const feedbackCommand = defineJsonCommand({
       ...(validatedTags.length > 0 ? { tags: validatedTags } : {}),
     };
 
-    // Feedback only needs a usable index (persisted keyword data for this
-    // library), not a current or complete one: the ref lookup works against any
-    // populated DB. It never builds one — a build can take minutes, and feedback
-    // would spin-wait behind it — so with none it says so, as every reader does.
-    // An index that exists but is unreadable raises instead of claiming there is
-    // none (#791).
-    // Feedback writes exactly 2 rows (usage_events + utility_score). SQLite
-    // WAL mode + busy_timeout=30s handles concurrent access with an ongoing
-    // `akm improve` run without needing the application-level writer lock.
-    // The lock was originally needed to prevent feedback from racing a
-    // background reindex it spawned — now that ensureIndex is removed, holding
-    // the lock only causes feedback to block for the full improve run duration.
+    // Feedback needs only a usable index, not a current one, and builds none: with no index it says so, as every
+    // reader does. It writes two rows (usage_events and a utility score); SQLite's busy timeout covers a concurrent
+    // improve run, so no application-level lock is taken.
     let utilityResult: RecordFeedbackUsageResult["utilityResult"];
     let countsTowardRanking = false;
     let rankingSkippedReason: string | undefined;
@@ -698,7 +689,9 @@ export const feedbackCommand = defineJsonCommand({
       | undefined;
     const config = loadConfig();
     const sources = resolveSourceEntries(undefined, config);
-    const usable = openUsableIndex(sources[0]?.path ?? "");
+    // The library is the primary source, as in search.
+    const library = sources[0];
+    const usable = library ? openUsableIndex(library.path) : undefined;
     if (!usable) {
       throw new UsageError(noIndexWarning(), "MISSING_REQUIRED_ARGUMENT", "akm index");
     }

@@ -3,14 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The rebuild lock: one index build at a time on a host (#956).
- *
- * A PID-liveness-only sentinel (`$DATA/index.rebuild.lock`) that every build
- * takes through `buildIndex` (`index-build.ts`). The index is a regenerable
- * cache, so the lock is not a correctness guard (#872 removed the lease that
- * was, after a live-but-wedged holder stranded an install for hours): it only
- * stops two builds duplicating the same long walk, and it tells readers a
- * build is running. A dead holder is reclaimed at once; nothing ages out.
+ * The rebuild lock: one index build at a time on a host. A PID-liveness sentinel
+ * (`$DATA/index.rebuild.lock`) that every build takes through `buildIndex` (`index-build.ts`); it stops two
+ * builds repeating the same walk and tells readers a build is running. A dead holder is reclaimed at once;
+ * nothing ages out.
  *
  * Built on the shared PID-liveness mechanics in `core/run-lock.ts` (the same
  * ones `akm improve`'s whole-run lock uses) — see that module's doc for the
@@ -19,12 +15,13 @@
 
 import { type LockOwnership, probeLock, releaseLock } from "../core/file-lock";
 import { getIndexRebuildLockPath } from "../core/paths";
-import { type RunLockAcquireResult, tryAcquireRunLock } from "../core/run-lock";
+import {
+  formatLockHolderPid,
+  type RunLockAcquireResult,
+  type RunLockHolder,
+  tryAcquireRunLock,
+} from "../core/run-lock";
 import { warnVerbose } from "../core/warn";
-
-export function indexRebuildLockPath(): string {
-  return getIndexRebuildLockPath();
-}
 
 /**
  * One attempt at the rebuild lock: acquired, or held by a live process. A dead
@@ -32,7 +29,7 @@ export function indexRebuildLockPath(): string {
  * did nothing wrong and nothing here requires their attention.
  */
 export function tryAcquireIndexRebuildLock(): RunLockAcquireResult {
-  return tryAcquireRunLock(indexRebuildLockPath(), {
+  return tryAcquireRunLock(getIndexRebuildLockPath(), {
     label: "index rebuild",
     onReclaimed: (info) => {
       warnVerbose(
@@ -47,7 +44,20 @@ export function releaseIndexRebuildLock(ownership: LockOwnership): void {
   releaseLock(ownership);
 }
 
-/** Whether a live process holds the rebuild lock right now. Read-only: it never acquires or reclaims. */
-export function indexBuildRunning(): boolean {
-  return probeLock(indexRebuildLockPath()).state === "held";
+/** The live process holding the rebuild lock right now, if any. Read-only: it never acquires or reclaims. */
+export function heldRebuildLock(): RunLockHolder | undefined {
+  const probe = probeLock(getIndexRebuildLockPath());
+  if (probe.state !== "held") return undefined;
+  let startedAt: string | null = null;
+  try {
+    startedAt = (JSON.parse(probe.rawContent) as { startedAt?: string }).startedAt ?? null;
+  } catch {
+    // A payload that is not JSON still names a live holder by pid.
+  }
+  return { pid: probe.holderPid, launcherPid: probe.launcherPid ?? null, startedAt };
+}
+
+/** How a lock holder is named in a message: `pid 4242 (launcher 4240), started <time>`. */
+export function describeLockHolder(holder: RunLockHolder): string {
+  return `pid ${formatLockHolderPid(holder)}, started ${holder.startedAt ?? "unknown"}`;
 }

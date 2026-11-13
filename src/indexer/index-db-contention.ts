@@ -14,32 +14,14 @@
  */
 
 import { AkmError, TransientError } from "../core/errors";
-import { probeLock } from "../core/file-lock";
-import { formatLockHolderPid } from "../core/run-lock";
 import { isSqliteContentionError } from "../core/state-db";
-import { indexRebuildLockPath } from "./index-rebuild-lock";
-
-/**
- * Read-only description of the rebuild lock's current holder, appended to a
- * reclassified index.db contention message when known (field follow-up to
- * #956). `probeLock` only inspects the sentinel — it never acquires or
- * mutates it — so this is safe to call from inside an error path.
- */
-function describeIndexRebuildLockHolder(): string {
-  const probe = probeLock(indexRebuildLockPath());
-  if (probe.state !== "held") return "";
-  return ` The rebuild lock is currently held by pid ${formatLockHolderPid({
-    pid: probe.holderPid,
-    launcherPid: probe.launcherPid ?? null,
-  })}.`;
-}
+import { describeLockHolder, heldRebuildLock } from "./index-rebuild-lock";
 
 /**
  * Reclassify a contention-shaped error escaping the walk, index, or
  * embedding phase into a retryable-shortly `TransientError` (field
  * follow-up to #956, dev-team field review 2026-09-10): a concurrent writer
- * (another `akm index`, a source-update embedding pass, the per-command
- * background reindex) can make index.db busy, and the raw SQLite driver
+ * (another `akm index`, or a source-update embedding pass) can make index.db busy, and the raw SQLite driver
  * error ("database is locked") used to escape as exit 70
  * (internal/unclassified) instead of the "retry shortly" contract exit 75
  * gives a scheduler to branch on — mirroring `STATE_DB_CONTENDED`'s
@@ -50,10 +32,16 @@ function describeIndexRebuildLockHolder(): string {
  * raw, unclassified error matching the shared contention shape is
  * reclassified. Every other error is rethrown unchanged.
  */
+/** Names the live rebuild-lock holder, when there is one (read-only: safe in an error path). */
+function holderSentence(): string {
+  const holder = heldRebuildLock();
+  return holder ? ` The rebuild lock is currently held by ${describeLockHolder(holder)}.` : "";
+}
+
 export function reclassifyIndexDbContention(error: unknown): unknown {
   if (error instanceof AkmError || !isSqliteContentionError(error)) return error;
   const contended = new TransientError(
-    `akm's index database is busy (another akm process is writing it); retry shortly.${describeIndexRebuildLockHolder()}`,
+    `akm's index database is busy (another akm process is writing it); retry shortly.${holderSentence()}`,
     "INDEX_DB_CONTENDED",
   );
   contended.cause = error;
