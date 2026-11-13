@@ -26,6 +26,8 @@ interface Deprecation {
   needsRef?: boolean;
   /** What to use instead; absent when the flag is removed in 0.11 with no replacement. */
   use?: string;
+  /** Replaces the default "no replacement flag" tail when there is no `use`. */
+  note?: string;
 }
 
 // First match wins, so commands come before flags.
@@ -36,7 +38,12 @@ const DEPRECATIONS: readonly Deprecation[] = [
   { path: ["log"], use: "`akm doctor log`" },
   { path: ["judge"], use: "`akm doctor judge`" },
   { path: ["improve", "judge"], use: "`akm doctor judge`" },
-  { path: ["task", "history"], use: "`akm doctor log --task <id>`" },
+  { path: ["task", "history"], needsRef: true, use: "`akm doctor log --task <id>`" },
+  { path: ["task", "history"], flag: "--id", use: "`akm doctor log --task <id>`" },
+  {
+    path: ["task", "history"],
+    note: "the cross-task form has no replacement; `akm doctor metrics` gives per-task totals",
+  },
   { path: ["improve", "report"], use: "`akm doctor metrics improve`" },
   { path: ["search"], flag: "--by-usage", use: "`akm doctor metrics assets`" },
   { path: ["workflow", "run"], use: "`akm run <ref>`" },
@@ -126,7 +133,7 @@ export function warnDeprecatedUse(
     "deprecated-use",
     hit.use
       ? `[deprecated] ${what} is deprecated and is removed in 0.11: use ${hit.use}. See STABILITY.md.`
-      : `[deprecated] ${what} is deprecated and is removed in 0.11, with no replacement flag. See STABILITY.md.`,
+      : `[deprecated] ${what} is deprecated and is removed in 0.11${hit.note ? `: ${hit.note}` : ", with no replacement flag"}. See STABILITY.md.`,
   );
 }
 

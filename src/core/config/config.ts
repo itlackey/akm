@@ -1280,7 +1280,7 @@ function keepUnusableEntries(
  * written. Reports without writing unless `apply` is set.
  */
 export function normalizeConfigFile(configPath: string, options: NormalizeConfigOptions): ConfigFileNormalization {
-  return withConfigLock(() => {
+  const normalize = (): ConfigFileNormalization => {
     const text = readConfigText(configPath);
     if (text === undefined) return { keys: [], changed: false, applied: false };
     const raw = parseConfigText(text, configPath);
@@ -1360,7 +1360,9 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
       ...(credentialsBackupPath ? { credentialsBackupPath } : {}),
       ...(modelsFileBackupPath ? { modelsFileBackupPath } : {}),
     };
-  });
+  };
+  // A read-only plan must not create the config directory just to take the write lock.
+  return options.apply ? withConfigLock(normalize) : normalize();
 }
 
 /**

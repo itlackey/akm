@@ -81,7 +81,7 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | `akm task enable` | Evolving | |
 | `akm task disable` | Evolving | |
 | `akm task run` | Deprecated | Removed in 0.11: use `akm run <qualified-task-ref>` with the same inputs. |
-| `akm task history` | Deprecated | Removed in 0.11: use `akm doctor log --task <id>` (`--bundle`, `--limit`) for run history, first in 0.10.261120, and `doctor metrics` for aggregates. Both print each run's `trigger`. |
+| `akm task history` | Deprecated | Removed in 0.11: `akm task history <id>` becomes `akm doctor log --task <id>` (`--bundle`, `--limit`), first in 0.10.261120. The no-id cross-task form has no replacement; `akm doctor metrics` gives per-task totals. Both print each run's `trigger`. |
 | `akm task sync` | Deprecated | Removed in 0.11: use `akm doctor scheduler sync`, first in 0.10.261120, retaining reconciliation and rebind behavior. |
 | `akm task prune` | Deprecated | Removed in 0.11: use `akm doctor scheduler sync --prune`, first in 0.10.261120 (a preview unless `--yes`; `--id` narrows it). |
 | `akm task doctor` | Deprecated | Removed in 0.11: use `akm doctor` for scheduler checks (its `scheduler` field), first in 0.10.261120. |
@@ -201,7 +201,7 @@ guide; all old surfaces in the left column are scheduled for 0.11 removal.
 | --- | --- |
 | `task add` | Explicit typed-task import; retain `task enable`/`disable` for host activation and unchanged legacy `task add` behavior |
 | `task sync`, `task prune` | Explicit `doctor scheduler sync` maintenance and migration cleanup of owned orphan entries; no separate prune command |
-| `task history` | Per-run history through `doctor log`; aggregate usage through `doctor metrics` |
+| `task history` | Per-task run history through `doctor log --task <id>`; the no-id cross-task form has no replacement, and `doctor metrics` gives per-task totals |
 | `clone` | Extend `import` for asset refs/typed assets and clone destinations without reinterpreting existing document inputs |
 | Search `--include-proposed`, `--include-sessions` | Search/curate `--include quality=proposed` and `--include type=<excluded-type>` are implemented in current 0.10 source, including project/API defaults; existing flags retain their behavior until 0.11. Check installed help for availability. |
 | Show `--context`, `--max-chars`, and `--detail` | Add `--lead`, independent `--max-tokens`, and `--outline` in 0.10; retain existing defaults until the 0.11 cutover to exact reads. See the [complete argument review](docs/reviews/cli-surface-recommendations-2026-11-11.md#show-argument-review). |

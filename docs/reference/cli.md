@@ -488,7 +488,8 @@ Bare `akm doctor` prints health's result with one more field, `scheduler`: the
 scheduler backend, paths and task state `akm task doctor` reports. Diagnosis
 alone never repairs or removes an entry.
 
-`akm doctor log --task <id>` lists that task's run history instead of events
+`akm doctor log --task <id>` lists that task's run history instead of events; an empty or
+blank id is a usage error (exit 2), not every task's runs
 (add `--bundle <name>` for a task in another bundle and `--limit <n>` for the most
 recent runs). Each row carries `trigger`: `schedule` when the OS scheduler started
 the run, `manual` otherwise; it is absent when the run did not record one. The
@@ -2558,12 +2559,16 @@ in order:
 
 ```sh
 akm migrate status
+akm migrate status --read-only   # the same, and records no CLI usage, so nothing is written
 akm migrate apply --dry-run
 akm migrate apply
 akm-migrate apply          # the same, without the akm wrapper
 ```
 
-`status` and `apply --dry-run` are read-only. Apply skips blocked task
+`status` and `apply --dry-run` are read-only with respect to the migrated files. Without
+`--read-only`, `status` records diagnostic usage in the `cli_usage_*` tables of `metrics.db` like
+other commands; with `--read-only` the invocation records no CLI usage and writes nothing at all.
+Apply skips blocked task
 sources rather than failing (and exits 1 while any remain), backs up each
 changed file immediately before replacement, and atomically publishes strict
 task source v4 YAML; it is idempotent, so a current installation is a no-op.
@@ -4103,7 +4108,7 @@ Deprecated, removed in 0.11:
 | `task prune` | `akm doctor scheduler sync --prune` (preview; `--yes` to remove) |
 | `task doctor` | `akm doctor` (its `scheduler` field) |
 | `task explain` | `akm doctor explain <ref>` |
-| `task history` | `akm doctor log --task <id>` |
+| `task history` | `akm doctor log --task <id>` (the no-id cross-task form has no replacement; `akm doctor metrics` gives per-task totals) |
 
 `task sync`, `prune`, `doctor`, `explain` and `history` are Deprecated in
 0.10.261120; `task add` and `task run` since 0.10.261119. The sections below
