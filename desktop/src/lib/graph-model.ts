@@ -383,7 +383,9 @@ export function countSummary(graph: LibraryGraph, f: Filters, matches: readonly 
   for (let i = 0; i < graph.count; i++) if (inHiddenGroup(graph, f, i)) hidden++;
   const notPlaced = matches.filter((i) => !isPlaced(graph, f.arrange, i)).length;
   const narrowed = narrows(f) || hidden > 0;
-  const parts = [`${matches.length} of ${graph.count} assets`];
+  const parts = [
+    matches.length === graph.count ? `${graph.count} assets` : `${matches.length} of ${graph.count} assets`,
+  ];
   if (narrows(f) && f.query.trim()) parts.push(`matching “${f.query.trim()}”`);
   if (f.lens) parts.push(LENS_LABELS[f.lens].toLowerCase());
   if (hidden) parts.push(`${hidden} hidden`);
@@ -435,24 +437,20 @@ export interface UseStep {
   label: string;
 }
 /**
- * Steps for the "Use" colouring. Step 1 starts at one show; steps 2 to 4 start at the 25th, 50th and 75th percentile of the
- * non-zero show counts (nearest rank), each at least one above the step before. A step that would start above the largest
- * count is left out. The legend prints these bounds.
+ * Steps for the "Use" colouring, with geometric bounds so a heavy tail does not collapse them. With `max` the largest show
+ * count, step i (0 to 3) starts at round(max^(i/4)), each start at least one above the one before; a step that would
+ * start above `max` is left out. Max 200 gives 1, 4, 14 and 53. The legend prints these bounds.
  */
 export function useSteps(shows: ArrayLike<number>) {
-  const used: number[] = [];
-  for (let i = 0; i < shows.length; i++) if (shows[i]! > 0) used.push(shows[i]!);
-  used.sort((a, b) => a - b);
-  const max = used.at(-1) ?? 0;
+  let max = 0;
+  for (let i = 0; i < shows.length; i++) max = Math.max(max, shows[i]!);
   const lows: number[] = [];
-  if (max > 0) {
-    lows.push(1);
-    for (let k = 1; k < USE_STEPS; k++) {
-      const low = Math.max(lows[k - 1]! + 1, used[Math.floor((k * used.length) / USE_STEPS)]!);
+  if (max > 0)
+    for (let k = 0; k < USE_STEPS; k++) {
+      const low = k === 0 ? 1 : Math.max(lows[k - 1]! + 1, Math.round(max ** (k / USE_STEPS)));
       if (low > max) break;
       lows.push(low);
     }
-  }
   /** 0 for never shown, else 1 to `steps.length`. */
   const stepOf = (value: number) => {
     if (!(value > 0)) return 0;
@@ -464,7 +462,7 @@ export function useSteps(shows: ArrayLike<number>) {
     const to = k + 1 < lows.length ? lows[k + 1]! - 1 : null;
     return { from, to, count: 0, label: to === null ? `${from}+` : to === from ? `${from}` : `${from}–${to}` };
   });
-  for (const value of used) steps[stepOf(value) - 1]!.count++;
+  for (let i = 0; i < shows.length; i++) if (shows[i]! > 0) steps[stepOf(shows[i]!) - 1]!.count++;
   return { steps, stepOf };
 }
 
@@ -541,18 +539,28 @@ export function placeTip(
 
 // ---- Link counts ----
 
-/** Distinct linked pairs drawn, and the declared links behind them, for the links whose kind is on and whose ends are drawn. */
-export function linkSummary(graph: LibraryGraph, state: Uint8Array, kindsOff: readonly number[]) {
+/**
+ * Every declared link accounted for in the current arrangement. `declared` links are drawn, as `pairs` distinct pairs of
+ * assets (A to B and B to A make one line). `notPlaced` need an asset with no position here, `hidden` are switched off by
+ * their kind or a hidden group, and `unresolved` have no target to draw. The four add up to the links the note reports.
+ */
+export function linkSummary(graph: LibraryGraph, arrange: Arrangement, state: Uint8Array, kindsOff: readonly number[]) {
   const seen = new Set<number>();
   let declared = 0;
+  let notPlaced = 0;
+  let hidden = 0;
   for (let e = 0; e < graph.from.length; e++) {
     const a = graph.from[e]!;
     const b = graph.to[e]!;
-    if (kindsOff.includes(graph.kind[e]!) || state[a] === 3 || state[b] === 3) continue;
-    declared++;
-    seen.add(Math.min(a, b) * graph.count + Math.max(a, b));
+    if (kindsOff.includes(graph.kind[e]!)) hidden++;
+    else if (!isPlaced(graph, arrange, a) || !isPlaced(graph, arrange, b)) notPlaced++;
+    else if (state[a] === 3 || state[b] === 3) hidden++;
+    else {
+      declared++;
+      seen.add(Math.min(a, b) * graph.count + Math.max(a, b));
+    }
   }
-  return { pairs: seen.size, declared };
+  return { pairs: seen.size, declared, notPlaced, hidden, unresolved: graph.unresolvedLinks };
 }
 
 // ---- The table ----

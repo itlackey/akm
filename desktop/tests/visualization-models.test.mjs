@@ -282,7 +282,7 @@ test("the table, the count and the side list use the whole library; only the dra
   const summary = countSummary(graph, f, all);
   assert.equal(summary.total, 10);
   assert.equal(summary.notPlaced, 4);
-  assert.equal(summary.text, "10 of 10 assets · 4 not placed");
+  assert.equal(summary.text, "10 assets · 4 not placed");
   // A search names itself in the count, and counts only its own unplaced matches.
   const found = listed(graph, base(graph, { query: "knowledge/d" }));
   assert.deepEqual(found, [7]);
@@ -307,7 +307,13 @@ test("hiding a group hides it (state 3) and the count says how many are hidden",
   // Under Use colouring the legend has no groups, so nothing is hidden.
   assert.ok(!drawState(graph, { ...f, colourBy: "use" }, -1, []).includes(3));
   // Edges touching a hidden asset are not drawn, so the link count follows the state.
-  assert.deepEqual(linkSummary(graph, state, []), { pairs: 4, declared: 5 });
+  assert.deepEqual(linkSummary(graph, "bundle", state, []), {
+    pairs: 4,
+    declared: 5,
+    notPlaced: 0,
+    hidden: 1,
+    unresolved: 3,
+  });
 });
 
 test("a selection lights its neighbours through link kinds that are on, not through ones switched off", () => {
@@ -344,10 +350,24 @@ test("links count pairs, not declarations: A to B and B to A are one line and co
   assert.equal(graph.from.length, 6);
   assert.equal(edgePairs(graph, () => true).length / 2, 5);
   const state = drawState(graph, base(graph, { arrange: "bundle" }), -1, []);
-  assert.deepEqual(linkSummary(graph, state, []), { pairs: 5, declared: 6 });
-  assert.deepEqual(linkSummary(graph, state, [1]), { pairs: 4, declared: 5 });
-  // By meaning, links to unplaced assets are not drawn.
-  assert.deepEqual(linkSummary(graph, drawState(graph, base(graph), -1, []), []), { pairs: 3, declared: 4 });
+  assert.deepEqual(linkSummary(graph, "bundle", state, []), {
+    pairs: 5,
+    declared: 6,
+    notPlaced: 0,
+    hidden: 0,
+    unresolved: 3,
+  });
+  assert.deepEqual(linkSummary(graph, "bundle", state, [1]), {
+    pairs: 4,
+    declared: 5,
+    notPlaced: 0,
+    hidden: 1,
+    unresolved: 3,
+  });
+  // By meaning, links that need an unplaced asset are counted as such, so every declared link is accounted for.
+  const meaning = linkSummary(graph, "meaning", drawState(graph, base(graph), -1, []), []);
+  assert.deepEqual(meaning, { pairs: 3, declared: 4, notPlaced: 2, hidden: 0, unresolved: 3 });
+  assert.equal(meaning.declared + meaning.notPlaced + meaning.hidden, graph.from.length);
   assert.equal(graph.unresolvedLinks, 3);
 });
 
@@ -370,19 +390,26 @@ test("the highlight is from the belief column and the links that say so, and cou
   assert.equal(markOf(graph, 0, by, stepOf), 0);
 });
 
-test("Use colouring: never shown is its own mark, used assets fall in steps from the quantiles of the non-zero shows", () => {
+test("Use colouring: never shown is its own mark, used assets fall in geometric steps up to the largest count", () => {
   const shows = [0, 0, 1, 1, 2, 3, 5, 8, 13, 40];
   const { steps, stepOf } = useSteps(shows);
   assert.deepEqual(
     steps.map((s) => [s.from, s.to, s.count, s.label]),
     [
-      [1, 1, 2, "1"],
-      [2, 4, 2, "2–4"],
-      [5, 12, 2, "5–12"],
-      [13, null, 2, "13+"],
+      [1, 2, 3, "1–2"],
+      [3, 5, 2, "3–5"],
+      [6, 15, 2, "6–15"],
+      [16, null, 1, "16+"],
     ],
   );
-  assert.deepEqual([0, 1, 2, 3, 4, 5, 7, 8, 40].map(stepOf), [0, 1, 2, 2, 2, 3, 3, 3, 4]);
+  assert.deepEqual([0, 1, 2, 3, 4, 5, 7, 8, 40].map(stepOf), [0, 1, 1, 2, 2, 2, 3, 3, 4]);
+  // A heavy tail keeps its steps apart (quantiles would collapse them): max 200 starts at 1, 4, 14 and 53.
+  const tail = useSteps([0, 1, 1, 1, 1, 2, 2, 3, 200]);
+  assert.deepEqual(
+    tail.steps.map((s) => s.from),
+    [1, 4, 14, 53],
+  );
+  assert.deepEqual([3, 4, 13, 14, 52, 53].map(tail.stepOf), [1, 2, 2, 3, 3, 4]);
   // Few distinct counts: fewer steps, never an empty one.
   assert.deepEqual(
     useSteps([0, 1, 1, 1]).steps.map((s) => s.label),

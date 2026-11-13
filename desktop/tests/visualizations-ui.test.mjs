@@ -220,8 +220,10 @@ test("visualizations survive late responses, no WebGL, a changed library and an 
     await open(page, server, "/library/map");
     await expect(page.getByLabel(/^Map of 8 assets/)).toBeVisible();
     // The count names the narrowing next to the total, and the legend says what is missing.
-    await expect(page.getByRole("status").filter({ hasText: "8 of 8 assets" })).toContainText("3 not placed");
+    await expect(page.locator(".map-count")).toHaveText("8 assets · 3 not placed");
     await expect(page.locator(".map-legend")).toContainText("3 assets have no position by meaning and are not drawn");
+    // "Most shown" lists only assets that were shown at all (five of the eight).
+    await expect(page.locator(".map-side .map-links").first().locator("li")).toHaveCount(5);
     // The keyboard cursor visits only what is drawn: step through every point it can reach.
     const live = page.locator(".graph-stage [role=status]");
     await page.getByLabel(/^Map of 8 assets/).focus();
@@ -240,7 +242,7 @@ test("visualizations survive late responses, no WebGL, a changed library and an 
     await expect(page.getByText("Rows 1–8 of 8")).toBeVisible();
     const table = page.getByRole("table");
     await expect(table.getByRole("row")).toHaveCount(9);
-    await expect(table.getByText("not placed")).toHaveCount(3);
+    await expect(table.locator(".badge")).toHaveCount(3);
     const unplaced = table.getByRole("row", { name: /knowledge\/e/ }).getByRole("button");
     await expect(unplaced).toBeDisabled();
     await expect(unplaced).toHaveAttribute("title", /no position by meaning/);
@@ -316,7 +318,7 @@ test("visualizations survive late responses, no WebGL, a changed library and an 
     await open(page, server, "/library/map");
     await page.getByRole("combobox", { name: "Colour" }).selectOption("use");
     const steps = page.locator(".use-steps li");
-    await expect(steps).toHaveText(["Never shown2", "12", "2–42", "5–122", "13+2"]);
+    await expect(steps).toHaveText(["Never shown2", "1–23", "3–52", "6–152", "16+1"]);
     // The use window and the server's note are printed, and the size key matches the drawing's largest value.
     await expect(page.locator(".map-side")).toContainText("Reads by you and your agents since");
     await expect(page.locator(".map-side")).toContainText("scheduled tasks and Improve are not counted");
@@ -341,4 +343,31 @@ test("visualizations survive late responses, no WebGL, a changed library and an 
     assert.deepEqual(errors, []);
     await page.close();
   });
+
+  await t.test(
+    "Library map: the controls keep their place in every state, and every link is accounted for",
+    async () => {
+      const { page, errors } = await fresh((page) => withGraph(page, mapPayload(library)));
+      await open(page, server, "/library/map");
+      await expect(page.getByLabel(/^Map of 8 assets/)).toBeVisible();
+      const place = async () => ({
+        table: await page.getByRole("button", { name: "Table", exact: true }).boundingBox(),
+        highlight: await page.getByRole("combobox", { name: "Highlight" }).boundingBox(),
+      });
+      const before = await place();
+      await page.getByRole("searchbox", { name: "Find an asset" }).fill("knowledge/g");
+      await page.getByRole("combobox", { name: "Highlight" }).selectOption("never");
+      await expect(page.locator(".map-count")).toContainText("1 of 8 assets");
+      assert.deepEqual(await place(), before);
+      // By meaning, the one declared link has both ends placed; one resolved link is drawn and two cannot be resolved.
+      await expect(page.locator(".map-undrawn")).toContainText("2 cannot be resolved");
+      await expect(page.locator(".map-stats")).toContainText("1links drawn");
+      await page.getByRole("combobox", { name: "Highlight" }).selectOption("");
+      await page.getByRole("searchbox", { name: "Find an asset" }).fill("");
+      await expect(page.locator(".map-count")).toHaveText("8 assets · 3 not placed");
+      assert.deepEqual(await place(), before);
+      assert.deepEqual(errors, []);
+      await page.close();
+    },
+  );
 });

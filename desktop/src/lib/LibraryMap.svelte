@@ -70,7 +70,7 @@
   let selected = $state(-1);
   let shown = $state<"map" | "table">("map");
   let hover = $state<{ i: number; x: number; y: number } | null>(null);
-  let linkStats = $state({ pairs: 0, declared: 0 });
+  let linkStats = $state({ pairs: 0, declared: 0, notPlaced: 0, hidden: 0, unresolved: 0 });
   let sort = $state<{ key: TableKey; direction: SortDirection }>({ key: "shows", direction: "descending" });
   let tablePage = $state(0);
   let stageWidth = $state(0);
@@ -156,7 +156,7 @@
     if (!graph || !view) return;
     const state = drawState(graph, filters, selected, kindsOff);
     view.setState(state);
-    linkStats = linkSummary(graph, state, kindsOff);
+    linkStats = linkSummary(graph, arrange, state, kindsOff);
   }
   const matches = $derived(graph ? listed(graph, filters) : []);
   const summary = $derived(graph ? countSummary(graph, filters, matches) : null);
@@ -334,8 +334,6 @@
   <div class="map-toolbar">
     <h1>Library map</h1>
     <input type="search" bind:value={query} placeholder="Find an asset" aria-label="Find an asset" />
-    {#if summary && (summary.narrowed || summary.notPlaced)}<span class="muted small" role="status">{summary.text}</span
-      >{/if}
     <span class="grow"></span>
     <label
       >Colour<select bind:value={colourBy} onchange={() => (hidden = [])}
@@ -364,6 +362,7 @@
       >
     </div>
   </div>
+  <p class="map-count muted small" role="status">{summary?.text ?? ""}</p>
   {#if error}<div class="notice notice-warn" role="alert">
       {error}<button class="btn-secondary" onclick={load}>Retry</button>
     </div>{/if}
@@ -414,7 +413,7 @@
                 </ul>{/if}
               {#if lens}<h3>Highlight</h3>
                 <p class="legend-row">
-                  <span class="swatch mark"></span>{LENS_LABELS[lens]}, drawn larger<span class="count">{marked}</span>
+                  <span class="swatch mark"></span>{LENS_LABELS[lens]}, ringed<span class="count">{marked}</span>
                 </p>{/if}
               <h3>Size: times shown</h3>
               <ul class="size-key">
@@ -472,19 +471,18 @@
                 >{#each rows.slice(pager.start, pager.end) as i}{@const reason = offMapReason(graph, filters, i)}<tr
                     ><th scope="row"
                       ><a href={open(graph.ref[i]!)}>{graph.path(i)}</a>{#if !isPlaced(graph, arrange, i)}
-                        <span class="muted small">not placed</span>{/if}</th
+                        <span class="badge" data-tone="neutral">not placed</span>{/if}</th
                     ><td>{graph.types[graph.type[i]!]}</td><td>{graph.bundles[graph.bundle[i]!]}</td><td
                       >{graph.shows[i]}</td
                     ><td>{graph.linked[i]}</td><td
                       ><button
-                        class="btn-quiet"
+                        class="btn-secondary"
                         disabled={!!reason}
                         title={reason ?? "Show on the map"}
-                        aria-label={reason
-                          ? `Show ${graph.name(i)} on map: unavailable. ${reason}`
-                          : `Show ${graph.name(i)} on map`}
+                        aria-label={`Show ${graph.name(i)} on map`}
+                        aria-describedby={reason ? `why-${i}` : undefined}
                         onclick={() => showOnMap(i)}>Show on map</button
-                      ></td
+                      >{#if reason}<span id={`why-${i}`} class="sr-only">{reason}</span>{/if}</td
                     ></tr
                   >{/each}</tbody
               >
@@ -494,10 +492,13 @@
       <aside class="map-side">
         <div class="map-stats">
           <div><strong>{graph.count}</strong><span>assets</span></div>
-          <div>
-            <strong>{linkStats.pairs}</strong><span>links · {graph.unresolvedLinks} not drawn</span>
-          </div>
+          <div><strong>{linkStats.pairs}</strong><span>links drawn</span></div>
         </div>
+        <p class="muted small map-undrawn">
+          {#if linkStats.notPlaced}{linkStats.notPlaced} need an asset that is not placed ·
+          {/if}{#if linkStats.hidden}{linkStats.hidden} hidden by a link kind or group ·
+          {/if}{linkStats.unresolved} cannot be resolved
+        </p>
         <section class="map-figures">
           {#if graph.use}<p class="muted small">{useWindowText(sinceText)}</p>{/if}
           <p class="muted small">{graph.note}</p>
@@ -505,10 +506,10 @@
         <details class="map-about">
           <summary>About these counts</summary>
           <p class="muted small">
-            {linkStats.pairs} pairs of assets are linked and drawn; A to B and B to A make one line. {linkStats.declared}
-            links are declared between them. {graph.unresolvedLinks} more declared links are not drawn because their target
-            is missing, hidden or in a bundle that is not enabled. Links to assets that are in a hidden group or have no position
-            here are not drawn either.
+            {linkStats.declared} declared links are drawn, as {linkStats.pairs} pairs of assets: A to B and B to A make one
+            line. {linkStats.notPlaced} links need an asset that has no position in this arrangement.
+            {linkStats.hidden} are switched off by their kind or a hidden group. {linkStats.unresolved} cannot be resolved
+            (their target is missing, hidden or in a bundle that is not enabled). The four add up to the links the note counts.
           </p>
         </details>
         {#if selected >= 0}<section aria-live="polite">
@@ -652,6 +653,13 @@
   .map-table td button {
     white-space: nowrap;
   }
+  .map-table .badge {
+    margin-inline-start: var(--space-2);
+  }
+  .map-count {
+    margin: 0 0 var(--space-2);
+    min-block-size: 1.5em;
+  }
   .pager {
     display: flex;
     gap: 12px;
@@ -740,7 +748,7 @@
   .swatch {
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 30%, transparent);
   }
-  /* The highlight's mark: a ring around the swatch, as the highlighted points are drawn larger. */
+  /* The highlight's mark: a ring around the swatch, as the highlighted points are ringed. */
   .swatch.mark {
     background: var(--map-highlight);
     box-shadow:
