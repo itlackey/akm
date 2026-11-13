@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { withoutBundleDirNotice } from "../_helpers/bundle-dir-notice";
 
 const dirs: string[] = [];
 const cliPath = path.join(import.meta.dir, "..", "..", "src", "cli.ts");
@@ -12,7 +13,7 @@ function spawnCli(
   env: Record<string, string>,
 ): { status: number | null; stdout: string; stderr: string } {
   const result = spawnSync("bun", [cliPath, ...args], { encoding: "utf8", env: { ...process.env, ...env } });
-  return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+  return { status: result.status, stdout: result.stdout ?? "", stderr: withoutBundleDirNotice(result.stderr ?? "") };
 }
 
 function tempDir(prefix: string): string {

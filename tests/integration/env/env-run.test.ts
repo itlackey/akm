@@ -17,6 +17,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { withoutBundleDirNotice } from "../../_helpers/bundle-dir-notice";
 import { makeStashDir, type SandboxedDir, writeSandboxConfig } from "../../_helpers/sandbox";
 
 const disposers: SandboxedDir[] = [];
@@ -51,7 +52,7 @@ function spawnCli(
   });
   return {
     stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
+    stderr: withoutBundleDirNotice(result.stderr ?? ""),
     status: result.status ?? 1,
   };
 }

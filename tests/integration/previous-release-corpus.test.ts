@@ -1424,7 +1424,10 @@ describe("previous-release corpus — a 0.9 `engines` config converts end to end
       if (level === "warn") warnings.push(args.map(String).join(" "));
     });
     expect(loadConfig().connections?.default?.endpoint).toBe("http://lab:8080/v1/chat/completions");
-    expect(warnings).toEqual([]);
+    // The fixture's `improve.strategies` stays where it is (it works through 0.10), so its one 0.11 notice is expected.
+    expect(
+      warnings.filter((w) => !w.startsWith("`improve.strategies` and `improve.qualityGate` are Deprecated")),
+    ).toEqual([]);
     _setWarnSinkForTests(undefined);
     expect((await runMigration({ apply: false })).status).toBe("current");
   });
