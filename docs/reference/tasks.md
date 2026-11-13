@@ -505,7 +505,7 @@ for full before/after examples and recovery guidance.
 - `akm doctor explain <ref>` prints a task's declared inputs, resolved target,
   effective execution settings, and schedule bindings without running
   anything — see [`akm doctor explain`](#akm-task-explain) above.
-- `akm lint --type tasks` reports what `akm doctor scheduler sync` would refuse for a task
+- `akm lint <file> --type tasks` checks one draft task file, inside a bundle or not, without installing it; `akm lint --type tasks` checks every task in a bundle. Both report what `akm doctor scheduler sync` would refuse for a task
   file: a document that does not parse as task source v4, a version 2/3 file or
   a `version: 4` file still carrying a retired `schedule[].enabled` (the finding
   names `akm migrate apply`, which converts them), a cron the local scheduler
