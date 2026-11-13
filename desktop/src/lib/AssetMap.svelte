@@ -10,17 +10,17 @@
     ref,
     connections,
     similar = [],
-    kindLabel,
     href,
   }: {
     ref: string;
     connections: Array<{ direction: string; kind: string; refs: string[]; total: number }>;
     similar?: Array<{ ref: string; title: string; cosine: number }>;
-    kindLabel: (kind: string) => string;
     href: (ref: string) => string;
   } = $props();
   let available = $state(720);
-  const map = $derived(assetMap(connections, similar, kindLabel));
+  // The library map opens with this asset selected, and lists every link of it.
+  const mapHref = $derived(`/library/map?select=${encodeURIComponent(ref)}`);
+  const map = $derived(assetMap(connections, similar, ref));
   // The drawing never gets narrower than it can be read at; a narrow panel scrolls it sideways.
   const width = $derived(Math.max(available, 640));
   // Room above the rows for the two column headings.
@@ -65,9 +65,8 @@
     {#each [["left", map.left], ["right", map.right]] as const as [side, groups]}
       {@const x = side === "left" ? leftEdge - reach - 6 : rightEdge + reach + 6}
       {@const anchor = side === "left" ? "end" : "start"}
-      {#if groups.length}<text class="column" {x} y="14" text-anchor={anchor}
-          >{side === "left" ? "Linked from" : "Links to"}</text
-        >{/if}
+      {@const heading = side === "left" ? map.leftHeading : map.rightHeading}
+      {#if heading}<text class="column" {x} y="14" text-anchor={anchor}>{heading}</text>{/if}
       {#each groups as group}
         <text class="group" {x} y={group.y + PAD} text-anchor={anchor}>{group.title}</text>
         {#each group.links as link}
@@ -90,8 +89,10 @@
               ></a
             >{/if}
         {/each}
-        {#if group.more}<text class="more" {x} y={group.moreY + PAD} text-anchor={anchor}
-            >and {group.more} more not returned by AKM</text
+        {#if group.more}<a href={mapHref} aria-label={`${group.more} more links of ${ref}: see them on the library map`}
+            ><text class="more" {x} y={group.moreY + PAD} text-anchor={anchor}
+              >and {group.more} more not returned by AKM: all links on the library map</text
+            ></a
           >{/if}
       {/each}
     {/each}
@@ -100,6 +101,12 @@
       ><title>{ref}</title>{fit(ref.split("//").at(-1) ?? ref, Math.floor((box - 16) / 6.8))}</text
     >
   </svg>
+  {#if map.similarLeftOut}<p class="muted small left-out">
+      {map.similarLeftOut} similar {map.similarLeftOut === 1 ? "asset" : "assets"} left out: already shown as {map.similarLeftOut ===
+      1
+        ? "a link"
+        : "links"}.
+    </p>{/if}
 </div>
 
 <style>
@@ -118,6 +125,13 @@
   .group,
   .more {
     fill: var(--muted);
+  }
+  a .more {
+    fill: var(--link);
+  }
+  a:hover .more,
+  a:focus-visible .more {
+    text-decoration: underline;
   }
   .column,
   .group {
