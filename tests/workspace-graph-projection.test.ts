@@ -4,7 +4,7 @@
 
 import { expect, test } from "bun:test";
 import { withAgentIdentity } from "../src/indexer/usage/usage-events";
-import { projectEmbeddings } from "../src/workspace/graph";
+import { embeddingNote, projectEmbeddings } from "../src/workspace/graph";
 
 test("positions by meaning keep similar vectors together, are the same on every read, and skip missing vectors", async () => {
   // Two groups of vectors in 8 dimensions, far apart, with a little spread inside each.
@@ -72,4 +72,11 @@ test("a usage event records the agent harness and session akm runs under, and no
   expect(withAgentIdentity("[1]", { AKM_AGENT_HARNESS: "claude" })).toBe("[1]");
   expect(withAgentIdentity('{"a":1}', {})).toBe('{"a":1}');
   expect(withAgentIdentity(undefined, {})).toBeNull();
+});
+
+test("the note says how many assets are embedded, and names a remainder only when there is one", () => {
+  expect(embeddingNote(0, 10)).toBe("No assets are embedded, so there is no arrangement by meaning.");
+  expect(embeddingNote(3, 10)).toBe("Only 3 of 10 assets are embedded; at least 4 are needed to arrange by meaning.");
+  expect(embeddingNote(7, 10)).toBe("7 of 10 assets are embedded; the rest have no position by meaning.");
+  expect(embeddingNote(10, 10)).toBe("All 10 assets are embedded.");
 });

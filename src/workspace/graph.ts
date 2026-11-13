@@ -125,13 +125,7 @@ export async function graph() {
       );
     if (result.emptyBundles.length) noted.push(`No assets in: ${result.emptyBundles.join(", ")}.`);
     const embedded = rows.filter((row) => vectors.has(row.id)).length;
-    noted.push(
-      embedded === 0
-        ? "No assets are embedded, so there is no arrangement by meaning."
-        : embedded < MIN_VECTORS
-          ? `Only ${embedded} of ${rows.length} assets are embedded; at least ${MIN_VECTORS} are needed to arrange by meaning.`
-          : `${embedded} of ${rows.length} assets are embedded; the rest have no position by meaning.`,
-    );
+    noted.push(embeddingNote(embedded, rows.length));
     if (!use) noted.push("Use counts are zero: no usage history is available.");
     return {
       available: true,
@@ -145,6 +139,15 @@ export async function graph() {
 
 /** Fewest vectors the principal components can be found from. */
 const MIN_VECTORS = 4;
+
+/** The note's sentence on how many assets have a position by meaning. */
+export function embeddingNote(embedded: number, total: number): string {
+  if (embedded === 0) return "No assets are embedded, so there is no arrangement by meaning.";
+  if (embedded < MIN_VECTORS)
+    return `Only ${embedded} of ${total} assets are embedded; at least ${MIN_VECTORS} are needed to arrange by meaning.`;
+  if (embedded === total) return `All ${total} assets are embedded.`;
+  return `${embedded} of ${total} assets are embedded; the rest have no position by meaning.`;
+}
 
 /** Most vectors the principal components are found from; the rest are only projected onto them. */
 const SAMPLE = 4000;
