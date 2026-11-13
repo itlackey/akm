@@ -91,7 +91,7 @@
         {/each}
         {#if group.more}<a href={mapHref} aria-label={`${group.more} more links of ${ref}: see them on the library map`}
             ><text class="more" {x} y={group.moreY + PAD} text-anchor={anchor}
-              >and {group.more} more not returned by AKM: all links on the library map</text
+              >and {group.more} more: see every link on the library map</text
             ></a
           >{/if}
       {/each}

@@ -58,7 +58,7 @@ function stack(groups: MapGroup[]): number {
 /** A column holding only inferred similarity is not "Linked from" or "Links to": nothing was recorded. */
 export function columnHeading(groups: MapGroup[], side: "left" | "right"): string | null {
   if (!groups.length) return null;
-  if (groups.every((group) => group.inferred)) return "Not recorded links";
+  if (groups.every((group) => group.inferred)) return "Similar, not linked";
   return side === "left" ? "Linked from" : "Links to";
 }
 

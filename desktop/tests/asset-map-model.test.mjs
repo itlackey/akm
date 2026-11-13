@@ -73,7 +73,7 @@ test("a long label keeps its end, which names the asset", () => {
 test("a column holding only similar content is not headed as links", () => {
   const similar = [{ ref: "shared//knowledge/a", title: "Shared A", cosine: 0.9 }];
   const only = assetMap([{ direction: "outgoing", kind: "xref", refs: ["knowledge/b"], total: 1 }], similar, "personal//knowledge/self");
-  assert.deepEqual([only.leftHeading, only.rightHeading], ["Not recorded links", "Links to"]);
+  assert.deepEqual([only.leftHeading, only.rightHeading], ["Similar, not linked", "Links to"]);
   // With recorded links in the same column, the heading stays.
   const mixed = assetMap(
     [
@@ -84,7 +84,7 @@ test("a column holding only similar content is not headed as links", () => {
     "personal//knowledge/self",
   );
   assert.deepEqual([mixed.leftHeading, mixed.rightHeading], ["Linked from", "Links to"]);
-  assert.deepEqual(assetMap([], similar, "personal//x").leftHeading, "Not recorded links");
+  assert.deepEqual(assetMap([], similar, "personal//x").leftHeading, "Similar, not linked");
 });
 
 test("similar content leaves out assets already shown as links, matched by ref", () => {
