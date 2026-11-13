@@ -47,7 +47,11 @@ test("the link map puts what links here on the left and what this links to on th
 
 test("similar content is marked as inferred and goes under the shorter column", () => {
   const similar = [{ ref: "shared//knowledge/a", title: "Shared A", cosine: 0.99412 }];
-  const map = assetMap([{ direction: "outgoing", kind: "xref", refs: ["knowledge/b"], total: 1 }], similar, "personal//knowledge/self");
+  const map = assetMap(
+    [{ direction: "outgoing", kind: "xref", refs: ["knowledge/b"], total: 1 }],
+    similar,
+    "personal//knowledge/self",
+  );
   assert.deepEqual(
     map.left.map((group) => [group.title, group.inferred, group.links[0].label, group.links[0].note]),
     [["Similar content", true, "Shared A", "cosine 0.994"]],
@@ -72,7 +76,11 @@ test("a long label keeps its end, which names the asset", () => {
 
 test("a column holding only similar content is not headed as links", () => {
   const similar = [{ ref: "shared//knowledge/a", title: "Shared A", cosine: 0.9 }];
-  const only = assetMap([{ direction: "outgoing", kind: "xref", refs: ["knowledge/b"], total: 1 }], similar, "personal//knowledge/self");
+  const only = assetMap(
+    [{ direction: "outgoing", kind: "xref", refs: ["knowledge/b"], total: 1 }],
+    similar,
+    "personal//knowledge/self",
+  );
   assert.deepEqual([only.leftHeading, only.rightHeading], ["Similar, not linked", "Links to"]);
   // With recorded links in the same column, the heading stays.
   const mixed = assetMap(
@@ -108,13 +116,23 @@ test("similar content leaves out assets already shown as links, matched by ref",
   );
   assert.equal(map.similarLeftOut, 2);
   // All similar assets already linked: no similar group at all, and the count says why.
-  const none = assetMap([{ direction: "outgoing", kind: "xref", refs: ["knowledge/b"], total: 1 }], [similar[1]], "personal//knowledge/self");
-  assert.equal([...none.left, ...none.right].some((group) => group.inferred), false);
+  const none = assetMap(
+    [{ direction: "outgoing", kind: "xref", refs: ["knowledge/b"], total: 1 }],
+    [similar[1]],
+    "personal//knowledge/self",
+  );
+  assert.equal(
+    [...none.left, ...none.right].some((group) => group.inferred),
+    false,
+  );
   assert.equal(none.similarLeftOut, 1);
   // A recorded link that names no bundle is in this asset's bundle: the same asset, under another name.
   const bare = assetMap(
     [{ direction: "outgoing", kind: "xref", refs: ["knowledge/a"], total: 1 }],
-    [{ ref: "personal//knowledge/a", title: "A", cosine: 0.9 }, { ref: "other//knowledge/a", title: "Elsewhere", cosine: 0.8 }],
+    [
+      { ref: "personal//knowledge/a", title: "A", cosine: 0.9 },
+      { ref: "other//knowledge/a", title: "Elsewhere", cosine: 0.8 },
+    ],
     "personal//knowledge/self",
   );
   assert.deepEqual(

@@ -648,10 +648,15 @@ export function createGraphView({ canvas, labels, data, theme }) {
       goal.tx += dx;
       goal.tz += dz;
     };
-    if (e.key === "ArrowLeft") flat ? pan(-1, 0) : (goal.yaw -= step);
-    else if (e.key === "ArrowRight") flat ? pan(1, 0) : (goal.yaw += step);
-    else if (e.key === "ArrowUp") flat ? pan(0, 1) : (goal.pitch = Math.min(1.5, goal.pitch + step));
-    else if (e.key === "ArrowDown") flat ? pan(0, -1) : (goal.pitch = Math.max(-1.4, goal.pitch - step));
+    const turn = (right, up) => {
+      goal.yaw += right * step;
+      goal.pitch = Math.min(1.5, Math.max(-1.4, goal.pitch + up * step));
+    };
+    const move = flat ? pan : turn;
+    if (e.key === "ArrowLeft") move(-1, 0);
+    else if (e.key === "ArrowRight") move(1, 0);
+    else if (e.key === "ArrowUp") move(0, 1);
+    else if (e.key === "ArrowDown") move(0, -1);
     else if (e.key === "+" || e.key === "=") goal.dist = Math.max(40, goal.dist * 0.8);
     else if (e.key === "-") goal.dist = Math.min(6000, goal.dist * 1.25);
     else if (e.key === "]") moveCursor(1);
