@@ -60,7 +60,7 @@ commands run by a task, `improve` or an audit (`AKM_EVENT_SOURCE` of `task`,
 `search --by-usage`, `search --include-proposed` and `--include-sessions`,
 `show --detail brief` and `--context lead`, `proposal extract --type`,
 `remember --auto`, `--enrich` and `--show-similar` (no replacement flag),
-`upgrade --next` and `--timeout-ms`. A deprecated form whose replacement is not
+`proposal reject --yes` (no longer needed), `upgrade --next` and `--timeout-ms`. A deprecated form whose replacement is not
 built yet prints nothing.
 
 The deprecated environment variables `AKM_UPGRADE_SKIP_CHECKSUM` (during
@@ -3852,8 +3852,8 @@ akm proposal reject <id> --reason "duplicates existing workflow"
 akm proposal reject <id> --queue team-bundle --reason "duplicates existing workflow"
 akm proposal reject 7c115132 --reason "not ready"      # 8-char UUID prefix
 akm proposal reject skills/my-skill --reason "not ready" # Asset ref
-akm proposal reject --generator reflect --reason "noisy" -y  # Bulk-reject by generator
-akm proposal reject --generator reflect --reason "noisy" --max-diff-lines 50 -y
+akm proposal reject --generator reflect --reason "noisy"  # Bulk-reject by generator
+akm proposal reject --generator reflect --reason "noisy" --max-diff-lines 50
 ```
 
 | Flag | Description |
@@ -3864,10 +3864,10 @@ akm proposal reject --generator reflect --reason "noisy" --max-diff-lines 50 -y
 | `--max-diff-lines` | When bulk-rejecting, only reject proposals whose content is `<=` this many lines. Larger proposals are skipped. |
 | `--older-than` | When bulk-rejecting, only reject proposals created (or last reopened) more than this many days ago |
 | `--dry-run` | List proposals that would be bulk-rejected without rejecting them |
-| `-y`, `--yes` | Skip confirmation (required in non-interactive mode for bulk reject) |
+| `-y`, `--yes` | Deprecated, removed in 0.11: reject no longer asks for confirmation, so the flag does nothing |
 
 Bulk-reject all pending proposals from one generator with `--generator <name>`
-and no positional id. Bulk reject requires `-y`/`--yes` in non-interactive shells.
+and no positional id. Reject does not ask for confirmation; `akm proposal reopen` undoes a rejection.
 
 #### proposal reopen
 
@@ -4095,9 +4095,9 @@ shell commands. It manages on-disk task definitions under
 (cron / launchd / schtasks). Task source v4 YAML (`version: 4`) is the only
 executable source contract this release accepts; `akm import <file> --type task`
 imports a v4 file — see the canonical [Tasks reference](tasks.md). The
-group is `add | enable | disable | run | explain | validate | sync | doctor | history | prune`
+group is `add | enable | disable | run | explain | sync | doctor | history | prune`
 — there is no `show` or `remove`; use `akm show tasks/<id>` to inspect one
-task. Only `enable`, `disable` and `validate` are current. The rest are
+task. Only `enable` and `disable` are current (validate a task source with `akm lint --type tasks`). The rest are
 Deprecated, removed in 0.11:
 
 | Deprecated | Use |
