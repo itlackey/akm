@@ -16,6 +16,8 @@ updated: 2026-07-28
 
 # Workflow authoring conventions
 
+> **Deprecated:** workflows are removed in 0.11. Write a task (`akm import <file> --type task`) for new ordered steps.
+
 A workflow describes an ordered process an agent or human can follow. Treat it as the operation layer of a maintained stash: clear steps, clear state, clear completion criteria, and enough bookkeeping to resume safely.
 
 ## Purpose

@@ -14,7 +14,7 @@ consistency and reducing repeated context-setting.
 | `memories/` | Memories | Persistent facts and preferences learned over time |
 | `commands/` | Commands | Parameterised prompt templates for common workflows |
 | `agents/` | Agents | Agent definitions with system prompts |
-| `workflows/` | Workflows | Multi-step orchestration sequences |
+| `workflows/` | Workflows | Multi-step orchestration sequences (Deprecated; removed in 0.11, use tasks) |
 | `tasks/` | Tasks | Scheduled or on-demand automation tasks |
 | `lessons/` | Lessons | Durable lessons extracted from past sessions |
 | `rules/` | Rules | Short bullet lists of agent rules; list them with `akm search "" --type rule --limit 200 --detail normal` |

@@ -62,7 +62,7 @@ akm show scripts/deploy.sh                    # Show script (returns run command
 akm show skills/code-review                   # Show skill (returns full content)
 akm show commands/release                     # Show command (returns template)
 akm show agents/architect                     # Show agent (returns system prompt)
-akm show workflows/ship-release               # Show parsed workflow steps
+akm show workflows/ship-release               # Show a workflow (Deprecated; removed in 0.11)
 akm show knowledge/guide                      # Whole document, plus its `toc`
 akm show knowledge/guide --outline             # Outline only: `toc` (level, text, slug, startLine), no body
 akm show knowledge/guide#auth                 # Just the "Auth" section
@@ -96,9 +96,8 @@ akm import ./new.md --supersedes knowledge/old # Import a correction AND demote 
 akm import - --name scratch-notes < notes.md   # Import stdin as a knowledge doc
 akm import https://example.com/docs/auth       # Fetch one URL and import it as knowledge
 akm import ./doc.md --bundle my-other-bundle    # Route import to a named writable bundle source
-akm workflow create ship-release               # Create a workflow asset in the bundle
-akm lint --type workflows                      # Parse and compile every workflow source; list every error
-akm run workflows/ship-release                 # Start a new run and execute it
+akm import ./nightly.yml --type task           # Add a task (scheduled or on-demand) to the bundle
+akm run <bundle>//tasks/nightly                # Run a task immediately
 akm feedback skills/code-review --positive     # Record that an asset helped (ranks it higher; no rewrite)
 akm feedback agents/reviewer --negative --reason "says to run jest; the suite runs on vitest" # Content wrong or stale: lowers its ranking; improve may repair its frontmatter
 akm feedback knowledge/opencode-server --negative --reason "the default port is 4096, not 8000" --replace "port 8000" --with "port 4096" --source "https://opencode.ai/docs/server/" # Apply an exact fix
@@ -179,23 +178,19 @@ akm secret list                                             # List secrets (name
 akm secret run secrets/deploy-token GITHUB_TOKEN -- gh release create v1.0.0  # Inject into one env var
 ```
 
-## Workflows
+## Workflows (Deprecated)
 
-Workflows live under `<bundle>/workflows/` as `.md` sources; see
-`docs/reference/workflow-schema.md` for the frontmatter and body syntax.
-
-Ref-based workflow commands are scoped to the current project/worktree/directory,
-so one active run does not block unrelated directories from starting the same
-workflow. Direct run-id commands still target the exact run.
+Workflows are Deprecated and removed in 0.11; tasks take over ordered steps.
+Do not create workflows: write a task (`akm import <file> --type task`, run it
+with `akm run <bundle>//tasks/<id>`; see Tasks). Existing workflow assets and
+runs still work in 0.10 and print a stderr notice. To operate an existing run:
 
 ```sh
-akm workflow create ship-release --print     # Print a starter workflow template, without writing
-akm workflow create ship-release             # Scaffold a new workflow asset
-akm run workflows/ship-release --version=1.2.3  # Start and execute with exact-name parameter flags
-akm run <run-id> --max-retries 2 --timeout 10m  # Continue a run with invocation-wide controls
+akm workflow list                            # List workflow runs on this host
 akm workflow status <run-id>                 # Show the exact run by id
 akm workflow resume <run-id>                 # Re-activate a blocked or failed run, then `run <run-id>`
-akm workflow list                            # List workflow runs on this host
+akm run <run-id> --max-retries 2 --timeout 10m  # Continue a run with invocation-wide controls
+akm workflow abandon <run-id>                # Give up on a run
 ```
 
 ## Clone
