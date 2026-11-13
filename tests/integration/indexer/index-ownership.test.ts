@@ -5,11 +5,7 @@
 /**
  * One owner for index builds, and reads that never build
  * (`docs/architecture/internals/indexing.md`, "Who builds the index" and "How
- * reads degrade"). Every test here covers behaviour that did not exist before:
- * on the previous release a read on a cold library built the index inline (and
- * a second concurrent read failed with exit 75), `show` needed an index row, a
- * missing `builtAt` meant "rebuild", the write-through skipped while a build ran,
- * and only `akm index` took the rebuild lock.
+ * reads degrade").
  *
  * In-process cases drive the CLI through `runCliCapture`; cases that cross
  * processes spawn real `bun src/cli.ts` children against the same sandbox.

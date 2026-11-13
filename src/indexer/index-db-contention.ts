@@ -17,6 +17,12 @@ import { AkmError, TransientError } from "../core/errors";
 import { isSqliteContentionError } from "../core/state-db";
 import { describeLockHolder, heldRebuildLock } from "./index-rebuild-lock";
 
+/** Names the live rebuild-lock holder, when there is one (read-only: safe in an error path). */
+function holderSentence(): string {
+  const holder = heldRebuildLock();
+  return holder ? ` The rebuild lock is currently held by ${describeLockHolder(holder)}.` : "";
+}
+
 /**
  * Reclassify a contention-shaped error escaping the walk, index, or
  * embedding phase into a retryable-shortly `TransientError` (field
@@ -32,12 +38,6 @@ import { describeLockHolder, heldRebuildLock } from "./index-rebuild-lock";
  * raw, unclassified error matching the shared contention shape is
  * reclassified. Every other error is rethrown unchanged.
  */
-/** Names the live rebuild-lock holder, when there is one (read-only: safe in an error path). */
-function holderSentence(): string {
-  const holder = heldRebuildLock();
-  return holder ? ` The rebuild lock is currently held by ${describeLockHolder(holder)}.` : "";
-}
-
 export function reclassifyIndexDbContention(error: unknown): unknown {
   if (error instanceof AkmError || !isSqliteContentionError(error)) return error;
   const contended = new TransientError(
