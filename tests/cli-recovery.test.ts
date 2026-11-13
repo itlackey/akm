@@ -50,6 +50,12 @@ describe("recovery hints", () => {
     expect(hint).toContain("`akm migrate status`");
   });
 
+  test("`task validate` (gone since 0.10) names `akm lint --type tasks`", async () => {
+    const r = await runCliCapture(["task", "validate", "nightly.yml"]);
+    expect(r.code).toBe(2);
+    expect(hintOf(r.stderr)).toContain("`akm lint --type tasks`");
+  });
+
   test("`config get` without a key gives a valid example key", async () => {
     const r = await runCliCapture(["config", "get"]);
     expect(r.code).toBe(2);
@@ -127,6 +133,9 @@ describe("help formatting", () => {
     expect(wf).toMatch(/plan[\s\S]*run[\s\S]*status[\s\S]*resume[\s\S]*abandon/);
     expect(wf).toContain("run id");
     const task = (await runCliCapture(["task", "--help"])).stdout;
-    for (const s of ["search --type task", "task doctor", "task explain", "task history"]) expect(task).toContain(s);
+    for (const s of ["search --type task", "akm doctor", "akm doctor explain", "akm doctor log --task"])
+      expect(task).toContain(s);
+    // The group help does not send a reader to commands 0.11 removes.
+    for (const s of ["`task doctor`", "`task explain`", "`task history`"]) expect(task).not.toContain(s);
   });
 });

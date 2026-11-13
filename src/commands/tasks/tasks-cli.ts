@@ -430,8 +430,8 @@ export const taskCommand = defineGroupCommand({
     description:
       "Schedule recurring commands, prompts, and workflows: one OS scheduler entry (cron / launchd / schtasks) runs `akm task dispatch` every minute\n" +
       "Definitions are assets: `akm search --type task`, then `akm show <ref>`. " +
-      "`task doctor` reports the scheduler entry; `task explain` the resolved inputs and target; " +
-      "`task history` the executions.",
+      "`akm doctor` reports the scheduler entry; `akm doctor explain <ref>` the resolved inputs and target; " +
+      "`akm doctor log --task <id>` the executions.",
   },
   subCommands: {
     add: tasksAddCommand,
@@ -448,6 +448,6 @@ export const taskCommand = defineGroupCommand({
   // individual tasks is the generic `akm show <bundle//tasks/id>`; listing is
   // `akm search --type task`.
   // No `defaultRun`: bare `akm task` is a usage error (exit 2), the canonical
-  // bare-group behavior — owner ruling 12. Run `akm task doctor` for what the
+  // bare-group behavior — owner ruling 12. Run `akm doctor` for what the
   // bare form used to run.
 });
