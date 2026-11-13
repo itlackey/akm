@@ -102,6 +102,8 @@ describe("issue #191 — memory search misses freshly-added memory", () => {
   test("exact-phrase search returns the memory as the top hit", async () => {
     const env = makeEnv();
     expect((await runCli(["bundle", "create"], env)).status).toBe(0);
+    // Reads never build the index, and write-through needs a usable one: index the (empty) bundle first.
+    expect((await runCli(["index"], env)).status).toBe(0);
 
     const phrase = "Sandbox memory for rc1 test";
     const remembered = await runCli(["remember", phrase], env);

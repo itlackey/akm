@@ -21,7 +21,7 @@
  * no-stale-age-window rationale.
  */
 
-import { type LockOwnership, releaseLock } from "../core/file-lock";
+import { type LockOwnership, probeLock, releaseLock } from "../core/file-lock";
 import { getIndexRebuildLockPath } from "../core/paths";
 import { formatLockHolderPid, type RunLockHolder, tryAcquireRunLock } from "../core/run-lock";
 import { warn, warnVerbose } from "../core/warn";
@@ -81,4 +81,9 @@ export function tryAcquireIndexRebuildLock(skipIfLocked: boolean | undefined): I
 
 export function releaseIndexRebuildLock(ownership: LockOwnership): void {
   releaseLock(ownership);
+}
+
+/** Whether a live process holds the rebuild lock right now. Read-only: it never acquires or reclaims. */
+export function indexBuildRunning(): boolean {
+  return probeLock(indexRebuildLockPath()).state === "held";
 }

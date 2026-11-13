@@ -10,8 +10,10 @@
  * The richer presentation logic (matchers, renderers, edit-hints,
  * summary-detail truncation) lives below in this file. The flow:
  *
- *   1. Auto-index when stale so the index is current.
- *   2. Ask `indexer.lookup(ref)` for the row in the FTS index.
+ *   1. Ask `indexer.lookup(ref)` for the bundle's physical owner (index-free)
+ *      and the index row, when there is one. `show` never builds the index.
+ *   2. With no row, the owning adapter's recognition of the file stands in for it;
+ *      the index only adds links, indexed fragments and usage ids.
  *   3. Render the file via the matcher/renderer pipeline.
  */
 
@@ -32,7 +34,13 @@ import { displayRef, displayRefForConceptId } from "../../core/asset/resolve-ref
 import { META_DIR, type MetaRef, parseMetaRef, readMetaFile } from "../../core/asset/stash-meta";
 import { asNonEmptyString, isContainedResolvedPath } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
-import { NotFoundError, rethrowIfDataDirUnreadable, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
+import {
+  ConfigError,
+  NotFoundError,
+  rethrowIfDataDirUnreadable,
+  rethrowIfTestIsolationError,
+  UsageError,
+} from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { SCRIPT_EXTENSIONS } from "../../core/recognition-util";
 import { presentationFor } from "../../core/type-presentation";
@@ -48,7 +56,6 @@ import {
   type IndexDocument,
   projectMarkdownFragmentContent,
 } from "../../indexer/passes/metadata";
-import { ensurePrimaryIndexForRead, resolveReadSources } from "../../indexer/read-preflight";
 import {
   buildEditHint,
   findSourceForPath,
@@ -103,7 +110,7 @@ export async function akmShowUnified(input: {
   /** The project the read runs under; recorded on the usage event so `akm search --by-usage` can rank by project. */
   project?: string;
   /**
-   * Read without side effects (the workspace): no usage events, no index refresh and
+   * Read without side effects (the workspace): no usage events and
    * no workflow-run lookup, so the show never counts as demand and never writes
    * `index.db` or `state.db`. Implies `skipLogging`.
    */
@@ -137,17 +144,7 @@ export async function akmShowUnified(input: {
     if (metaRef) return applyContentBudget(await showStashMeta(metaRef, input.readOnly === true), input.maxTokens);
   }
 
-  // An opaque fragment selector is an indexed revision handle. Do not refresh
-  // it away between search and show if disk changed concurrently; the stored
-  // safe substrate below is its source of truth. Friendly heading selectors
-  // intentionally retain the normal source-live read behavior.
-  const parsedRef = parseBundleRef(ref);
-  if (!input.readOnly && !parsedRef.fragment?.startsWith("akm-fragment-")) {
-    const { primarySource } = resolveReadSources();
-    await ensurePrimaryIndexForRead(primarySource);
-  }
-
-  // Try local filesystem (FTS5 index lookup)
+  // The bundle's files resolve the asset; the index only adds what it alone has.
   const result = applyContentBudget(await showLocal(presentation), input.maxTokens);
   // Count prior shows of this ref before logging the current one.
   if (!input.skipLogging && !input.readOnly) {
@@ -326,8 +323,13 @@ export async function showLocal(input: {
   const resolution = input.readOnly
     ? await lookupBundleRefWithResolutionReadonly(parsed)
     : await lookupBundleRefWithResolution(parsed);
-  if (resolution.indexError !== undefined) throw resolution.indexError;
-  const indexedEntry = resolution.entry;
+  // The index is not needed to find the asset: an absent, locked, corrupt or
+  // still-building index just means no row. Only a refusal that names a remedy
+  // (a newer layout, a file akm may not read) surfaces.
+  rethrowIfTestIsolationError(resolution.indexError);
+  if (resolution.indexError instanceof ConfigError) throw resolution.indexError;
+  const fromFiles = !resolution.entry;
+  const indexedEntry = resolution.entry ?? resolution.fileEntry;
   const assetPath = indexedEntry?.filePath;
 
   if (!indexedEntry && parsed.bundle && searchSources.length === 0) {
@@ -388,7 +390,7 @@ export async function showLocal(input: {
   // Only resolve the indexed-safe revision when the selector itself is opaque,
   // or when the caller explicitly opts into indexed-safe contextual output.
   const indexedFragment =
-    parsed.fragment && (opaqueFragmentSelector || input.contextMode === "lead")
+    !fromFiles && parsed.fragment && (opaqueFragmentSelector || input.contextMode === "lead")
       ? withIndexDb((db) => getIndexedMarkdownFragment(db, indexedEntry.itemRef, parsed.fragment!), {
           readOnly: input.readOnly === true,
         })
@@ -484,7 +486,10 @@ export async function showLocal(input: {
       response.contextTruncated = contextual.truncated;
     }
   } else if (input.contextMode === "lead") {
-    throw new NotFoundError(`Indexed-safe fragment context is unavailable for ${input.ref}.`);
+    if (!fromFiles) throw new NotFoundError(`Indexed-safe fragment context is unavailable for ${input.ref}.`);
+    warn(
+      `Indexed-safe fragment context is unavailable for ${input.ref}: the search index has no row for it yet. Showing the exact section.`,
+    );
   }
   if (response.type === "workflow") response.action = buildWorkflowAction(canonicalRef);
   const editable = isEditable(assetPath, config, allSources);
@@ -511,7 +516,7 @@ export async function showLocal(input: {
     origin: source?.registryId ?? null,
     editable,
     ...(!editable ? { editHint: buildEditHint(canonicalRef) } : {}),
-    ...showLinks(indexedEntry.itemRef, displayDefaultBundle, input.readOnly === true),
+    ...(fromFiles ? {} : showLinks(indexedEntry.itemRef, displayDefaultBundle, input.readOnly === true)),
   };
 
   if (input.detail === "brief") {

@@ -331,11 +331,11 @@ function isSuspiciousStashRoot(dir: string): boolean {
  * source is fetched only when it has never been materialized on this host.
  * `akm bundle update` is what refreshes one.
  *
- * `materialize` (default `true`) is the query-time safety valve: the sanctioned
+ * `materialize` (default `true`) says whether a build may fetch: the sanctioned
  * materialization callers (`akm index`, source
- * add/update/sync, improve's blocking preflight) pass it truthy and clone/pull/
- * fetch as needed. A READ command's inline auto-index passes `materialize:
- * false` — network is FORBIDDEN at query time, so instead of `sync()` we only
+ * add/sync, improve's pre-run index) pass it truthy and clone/pull/
+ * fetch as needed. `bundle update` passes `materialize: false` (it has just
+ * fetched) — no network, so instead of `sync()` we only
  * check whether each cache-backed source is already materialized: a present
  * cache is served as-is (last-known-good), while an absent
  * or partially-staged cache makes that source UNAVAILABLE for the read and is
@@ -468,7 +468,7 @@ function isMaterializedDir(dir: string): boolean {
 }
 
 /**
- * On a read-path auto-index, warn (once per source) that a cache-backed source
+ * When a build does not materialize sources, warn (once per source) that a cache-backed source
  * is not materialized locally and is being skipped — naming the remedy. Uses
  * the SAME lock-first content-root resolution the walker uses, so an installed
  * source whose content lives at its lock `localRoot` counts as materialized.

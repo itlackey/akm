@@ -2,8 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { resetConfigCache } from "../src/core/config/config";
-import { getDbPath } from "../src/core/paths";
-import { ensurePrimaryIndexForRead, resolveReadSources } from "../src/indexer/read-preflight";
+import { resolveReadSources } from "../src/indexer/read-preflight";
 import {
   type IsolatedAkmStorage,
   makeSandboxDir,
@@ -47,19 +46,5 @@ describe("read preflight helpers", () => {
     expect(primarySource?.path).toBe(storage.stashDir);
     expect(sources[0]!.path).toBe(storage.stashDir);
     expect(sources.some((source) => source.path === additional.dir)).toBe(true);
-  });
-
-  test("ensures primary index bootstrap for current config", async () => {
-    const knowledgeFile = path.join(storage.stashDir, "knowledge", "bootstrap.md");
-    fs.writeFileSync(knowledgeFile, "# bootstrap\n", "utf8");
-
-    const ensured = await ensurePrimaryIndexForRead(resolveReadSources().primarySource);
-    expect(ensured).toBe(true);
-    expect(fs.existsSync(getDbPath())).toBe(true);
-  });
-
-  test("returns false when primary source is not provided", async () => {
-    const ensured = await ensurePrimaryIndexForRead();
-    expect(ensured).toBe(false);
   });
 });
