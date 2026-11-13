@@ -235,10 +235,12 @@ const proposalRejectCommand = defineJsonCommand({
       description: "List proposals that would be bulk-rejected without rejecting them.",
       default: false,
     },
+    // Deprecated no-op: reject no longer asks (a rejection is undone with `proposal reopen`). Removed in 0.11.
     yes: {
       type: "boolean",
       alias: "y",
-      description: "Skip confirmation prompt (required in non-interactive mode)",
+      hidden: true,
+      description: "Deprecated: reject no longer asks",
       default: false,
     },
   },
@@ -252,15 +254,6 @@ const proposalRejectCommand = defineJsonCommand({
     }
     // F-6 / #393: Bulk-reject when --generator is provided without a positional id.
     if (generator && !args.id) {
-      const { confirmDestructive } = await import("../../cli/confirm.js");
-      const confirmed = await confirmDestructive(
-        `Bulk-reject all matching proposals from generator "${generator}"? A rejection can be undone with akm proposal reopen.`,
-        { yes: args.yes === true || args["dry-run"] === true },
-      );
-      if (!confirmed) {
-        process.stderr.write("Aborted.\n");
-        return;
-      }
       const { maxDiffLines, olderThanMs } = parseBulkFilterFlags(args);
       const { count, results } = await bulkAdjudicateProposals({
         action: "reject",
@@ -279,17 +272,6 @@ const proposalRejectCommand = defineJsonCommand({
         "Usage: akm proposal reject <id> --reason '<reason>'  OR  akm proposal reject --generator <generator> --reason '<reason>'",
         "MISSING_REQUIRED_ARGUMENT",
       );
-    }
-    const { confirmDestructive } = await import("../../cli/confirm.js");
-    const confirmed = await confirmDestructive(
-      `Reject proposal "${args.id}"? A rejection can be undone with akm proposal reopen.`,
-      {
-        yes: args.yes === true,
-      },
-    );
-    if (!confirmed) {
-      process.stderr.write("Aborted.\n");
-      return;
     }
     const result = await akmProposalReject({
       id: args.id as string,
@@ -336,7 +318,10 @@ const proposalReopenCommand = defineJsonCommand({
 });
 
 const proposalDiffCommand = defineJsonCommand({
-  meta: { name: "diff", description: "Show the diff for a proposal (accepts full UUID, UUID prefix of a pending proposal, or asset ref)" },
+  meta: {
+    name: "diff",
+    description: "Show the diff for a proposal (accepts full UUID, UUID prefix of a pending proposal, or asset ref)",
+  },
   args: {
     id: {
       type: "positional",

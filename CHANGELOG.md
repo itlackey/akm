@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- `akm proposal reject` no longer asks for confirmation, for one proposal or a bulk `--generator` reject: `akm proposal reopen` undoes a rejection. Scripts no longer need `--yes`; `--yes`/`-y` on reject is Deprecated, ignored with a notice, and removed in 0.11.
 - AKM Desktop charts: Runs opens with a bar per kind of run showing how its runs ended, the run timeline has a key and a green mark for completed runs, and the latest improve runs are a bar chart coloured by outcome that opens a run. Durations read "6 min" instead of "360.0 s". A chart with nothing to draw says so instead of showing empty axes, and a short line series draws its points.
 - `akm index --export-vectors` streams the vectors from the index into the file instead of loading them all first, so peak memory stays flat (about 260 MB) instead of growing by roughly 32 KB per embedded entry (3.2 GB at 100,000). The file contents and the atomic replace are unchanged (akm#1608).
 

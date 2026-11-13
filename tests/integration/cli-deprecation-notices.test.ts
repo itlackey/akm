@@ -197,3 +197,26 @@ test("a config that sets extends prints one notice per process, and --quiet sile
   expect(extendsNotices(run(["config", "list"]).stderr)).toHaveLength(1);
   expect(extendsNotices(run(["config", "list", "--quiet"]).stderr)).toHaveLength(0);
 });
+
+test("proposal reject --yes and -y say reject no longer asks; a plain reject prints nothing", () => {
+  const messages: string[] = [];
+  const noticeFor = (userArgs: string[]) => {
+    _resetWarnOnceForTests();
+    messages.length = 0;
+    _setWarnSinkForTests((_level, args) => messages.push(args.join(" ")));
+    const invocation = setParsedInvocation(["bun", "akm", "proposal", "reject", ...userArgs]);
+    warnDeprecatedUse(["proposal", "reject"], invocation, { id: { type: "positional" } }, {});
+    return messages.join("\n");
+  };
+  try {
+    for (const flag of ["--yes", "-y"]) {
+      const text = noticeFor(["abc", "--reason", "r", flag]);
+      expect(text).toContain(`[deprecated] ${flag} is deprecated`);
+      expect(text).toContain("reject no longer asks for confirmation");
+    }
+    expect(noticeFor(["abc", "--reason", "r"])).toBe("");
+  } finally {
+    _setWarnSinkForTests(undefined);
+    _resetParsedInvocationForTests();
+  }
+});

@@ -74,6 +74,8 @@ const DEPRECATIONS: readonly Deprecation[] = [
   { path: ["remember"], flag: "--enrich" },
   { path: ["remember"], flag: "--show-similar" },
   { path: ["upgrade"], flag: "--next", use: "`--channel`" },
+  { path: ["proposal", "reject"], flag: "--yes", note: "reject no longer asks for confirmation" },
+  { path: ["proposal", "reject"], flag: "-y", note: "reject no longer asks for confirmation" },
   { path: [], flag: "--timeout-ms", use: "`--timeout`" },
 ];
 
