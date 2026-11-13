@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { withoutBundleDirNotice } from "../../_helpers/bundle-dir-notice";
 
 const CLI = path.join(__dirname, "..", "..", "..", "src", "cli.ts");
 const tempDirs: string[] = [];
@@ -135,7 +136,7 @@ describe("akm bundle add website", () => {
       });
 
       expect(exitCode).toBe(0);
-      expect(stderr.trim()).toBe("");
+      expect(withoutBundleDirNotice(stderr).trim()).toBe("");
       const parsed = JSON.parse(stdout.trim()) as {
         sourceAdded?: { type?: string; url?: string; name?: string; stashRoot?: string };
         index?: { totalEntries?: number };

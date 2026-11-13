@@ -10,6 +10,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { withoutBundleDirNotice } from "../../../_helpers/bundle-dir-notice";
 import { type SandboxedDir, makeStashDir as sandboxMakeStashDir } from "../../../_helpers/sandbox";
 
 const disposers: Array<{ cleanup: () => void }> = [];
@@ -85,7 +86,7 @@ function runCli(args: string[], stashDir: string): CliRun {
   return {
     status: result.status ?? 1,
     stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
+    stderr: withoutBundleDirNotice(result.stderr ?? ""),
     xdgData: data.dir,
     roots,
     artifactBefore,

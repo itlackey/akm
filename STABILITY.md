@@ -53,14 +53,14 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | Command | Status | Contract or migration action |
 | --- | --- | --- |
 | `akm bundle create` | Stable | |
-| `akm bundle add` | Stable | |
+| `akm bundle add` | Stable | `--allow-dangerous-env-keys` is Deprecated, no effect: accepted through 0.10 and a usage error in 0.11, so drop it; prints a notice since 0.10.261122. |
 | `akm bundle list` | Stable | |
 | `akm bundle show` | Evolving | |
 | `akm bundle rename` | Stable | |
 | `akm bundle remove` | Stable | |
-| `akm bundle update` | Stable | |
+| `akm bundle update` | Stable | `--yes` and `--allow-dangerous-env-keys` are Deprecated, no effect: accepted through 0.10 and usage errors in 0.11, so drop them; they print a notice since 0.10.261122. |
 | `akm registry list` | Evolving | |
-| `akm registry add` | Evolving | |
+| `akm registry add` | Evolving | `--options` is Deprecated: its value is stored in config but nothing reads it. Accepted through 0.10, a usage error in 0.11, so drop it; prints a notice since 0.10.261122. |
 | `akm registry remove` | Evolving | |
 
 ### Execution, tasks, and workflows
@@ -78,7 +78,7 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | `akm workflow run` | Deprecated | Removed in 0.11: use `akm run <ref>`; the workflow lifecycle commands serve existing runs through 0.10. |
 | `akm agent` | Deprecated | Removed in 0.11: use `akm run <ref>` for assets; invoke the agent's own CLI for the no-ref interactive launch. |
 | `akm command run` / `akm command <ref>` | Deprecated | Removed in 0.11: use `akm run <ref>` with the same template arguments and dispatch. |
-| `akm task add` | Deprecated | Removed in 0.11: use `akm import <file> --type task`, then `task enable` when activation is wanted. |
+| `akm task add` | Deprecated | Removed in 0.11: use `akm import <file> --type task`, then `task enable` when activation is wanted. `--rebind` is Deprecated too: use `akm doctor scheduler sync --rebind`. |
 | `akm task enable` | Evolving | In 0.11 the schedule that runs lives in host config, and a task file's `schedule:` may stay as the default that enabling applies ([#1096](https://github.com/itlackey/akm/issues/1096)); this command's 0.11 form is not final. |
 | `akm task disable` | Evolving | As `task enable`. |
 | `akm task run` | Deprecated | Removed in 0.11: use `akm run <qualified-task-ref>` with the same inputs. |
@@ -93,7 +93,7 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | Command | Status | Contract or migration action |
 | --- | --- | --- |
 | `akm doctor` | Evolving | Reuses health checks, flags, output, and exits in 0.10, including transitional report flags. Bare `doctor` adds a `scheduler` field (the former `task doctor` report) since 0.10.261120, and `doctor scheduler sync` and `doctor explain <ref>` are new in that release. Use `--read-only --no-probe` for offline inspection without health writes; `--read-only` also records no CLI usage. |
-| `akm doctor metrics` | Evolving | Reuses `metrics`; its report content, layout, and JSON payload remain Experimental, except `doctor metrics usage --export`, whose JSON (schema version 1) is the stable part. Improve-run report selection is not yet consolidated here. |
+| `akm doctor metrics` | Evolving | Reuses `metrics`; its report content, layout, and JSON payload remain Experimental, except `doctor metrics usage --export`, whose JSON (schema version 1) is the stable part. `doctor metrics improve` (`--run`, `--since`) selects improve runs and reports their usage, routing and cost, since 0.10.261120. |
 | `akm doctor info` | Evolving | Reuses `info`, preserving its existing fields and broken-config recovery behavior; `learning` remains Experimental. |
 | `akm doctor log` | Evolving | Reuses the existing event-stream command and output. |
 | `akm doctor prompt` | Evolving | Reuses `improve --show-prompt`, preserving task, bundle, strategy and runner selection, output, and read-only behavior. The old form remains. |
@@ -102,8 +102,8 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | `akm metrics` | Deprecated | Removed in 0.11: use `akm doctor metrics`. Current report content and JSON shape are Experimental. |
 | `akm info` | Deprecated | Removed in 0.11: use `akm doctor info`. The current `learning` field is Experimental for its first release. |
 | `akm log` | Deprecated | Removed in 0.11: use `akm doctor log`. |
-| `akm lint` | Evolving | `akm lint <file>` checks one file, first in 0.10.261122; a file outside every bundle needs `--type`. |
-| `akm improve` | Evolving | `--require-feedback-signal`, `--json-to-stdout`, `--show-prompt` and `--timeout-ms` are Deprecated, removed in 0.11 (replacements: a strategy with `processes.proactiveMaintenance.enabled: false` selected with `--strategy`, ordinary JSON output, `doctor prompt`, `--timeout`). Gate-passed proposals are accepted and committed by default. The [three named autonomous lanes](#akm-improve-autonomy) require `experimental.improveAutonomy`; other documented writes do not. |
+| `akm lint` | Evolving | `akm lint <file>` checks one file, first in 0.10.261122; a file outside every bundle needs `--type`. `--auto-fix` is Deprecated, removed in 0.11: use `--fix`; prints a notice since 0.10.261122. |
+| `akm improve` | Evolving | `--require-feedback-signal`, `--show-prompt` and `--timeout-ms` are Deprecated, removed in 0.11 (replacements: a strategy with `processes.proactiveMaintenance.enabled: false` selected with `--strategy`, `doctor prompt`, `--timeout`). `--json-to-stdout` stays in 0.11: stdout is empty for a live run without it. Gate-passed proposals are accepted and committed by default. The [three named autonomous lanes](#akm-improve-autonomy) require `experimental.improveAutonomy`; other documented writes do not. |
 | `akm improve report` | Deprecated | Removed in 0.11: use `akm doctor metrics improve` (`--run`, `--since`), first in 0.10.261120, retaining run/window selection and usage, routing, and cost data. |
 | `akm improve judge` | Deprecated | Removed in 0.11: use `akm doctor judge`. Subcommand since 0.10 (was a magic `scope` value); reads one revision as JSON on stdin and writes nothing. The same as `akm judge reflect.quality`, in its older input and output shape; its `--strategy` flag was removed. |
 | `akm judge` | Deprecated | Removed in 0.11: use `akm doctor judge`. Runs a registered judge (`reflect.quality`, `distill.lesson`, `consolidate.pair`, `proposal.judgment`) on one JSON input from stdin, on the runner `--connection`, `--harness` and `--model` select. Output is one envelope (`judge`, `schemaVersion`, `runner`, `outcome`, `verdict?`, `reason?`); each judge carries its own `schemaVersion`. |
@@ -125,7 +125,7 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | `akm setup` | Stable | Answer flags (`--endpoint`, `--api-key-env`, `--name`, `--harness`, `--embedding`, ...) are new in 0.10. The old JSON-valued `setup --config` and `--probe` were removed; see [upgrade history](#connections-and-harnesses-in-010-1244). `--learning on\|off` and the `improve.enabled` key it writes are Experimental for their first release. |
 | `akm upgrade` | Stable | Includes the plugin step. `--next` is Deprecated in favor of coordinated `--channel` selection. Checksums are verified by default; `--skip-checksum` is the explicit recovery bypass, and the `AKM_UPGRADE_SKIP_CHECKSUM` variable it replaces is Deprecated for removal in 0.11. |
 | `akm migrate status` | Evolving | Forwards to the standalone `akm-migrate` tool and renders its result through the normal `--format` pipeline. |
-| `akm migrate apply` | Evolving | Forwards to the standalone `akm-migrate` tool and renders its result through the normal `--format` pipeline. |
+| `akm migrate apply` | Evolving | Forwards to the standalone `akm-migrate` tool and renders its result through the normal `--format` pipeline. `--dry-run` is Deprecated, removed in 0.11: use `akm migrate status`; prints a notice since 0.10.261122. |
 | `akm-migrate status` / `akm-migrate apply` | Deprecated | Standalone executable removed in 0.11: use `akm migrate status` / `akm migrate apply`. |
 | `akm config path` | Stable | |
 | `akm config list` | Stable | |
@@ -148,7 +148,7 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | `akm env list` | Stable | Read-and-inject surface. |
 | `akm env path` | Stable | Read-and-inject surface. |
 | `akm env export` | Stable | Read-and-inject surface. |
-| `akm env run` | Stable | Read-and-inject surface. |
+| `akm env run` | Stable | Read-and-inject surface. `--allow-dangerous-env-keys` is Deprecated, no effect: accepted through 0.10 and a usage error in 0.11, so drop it; prints a notice since 0.10.261122. |
 | `akm env create` | Experimental | Write verb. |
 | `akm env remove` | Experimental | Write verb. |
 | `akm secret list` | Stable | Read-and-inject surface. |
@@ -280,18 +280,18 @@ remove a research capability or skip its replacement.
 | Remove/change in 0.11 | Replacement and 0.10.x preparation |
 | --- | --- |
 | General YAML output; general Markdown/JSONL support | JSON/text generally; Markdown for reports and JSONL for useful streaming cases |
+| Config key `improve.stateGc.collect` | Nothing: it still deletes the state rows of refs that no longer resolve in 0.10, and 0.11 reads it as an unknown key (ignored with one warning). Deprecated, no replacement; a config that sets it prints one notice per process |
+| Config key `improve.strategies.<name>.limit` (strategy-level) | `--limit` and `processes.reflect.limit`; read through 0.10, ignored in 0.11. Prints a notice since 0.10.261122 |
 | Global `--output`, `--detail` | Shell redirection; add command-specific limits, budgets, and outlines in 0.10.x |
 | `remember --auto`, `--enrich` | No replacement flag and no experimental key (the audit found one consumer, akm-eval's bakeoff). Remove the flags in 0.11. Enrichment belongs in improve, not in `remember` or `akm index`: an improve-based replacement that fills a new memory's tags and observed date must be implemented before 0.11.0 stable |
 | `remember --show-similar` | Separate retrieval operation |
 | Old public paths for custom-strategy definitions and research-only process knobs | Add experimental aliases in 0.10.x feeding the unchanged strategy engine; remove old paths in 0.11 |
 | `improve --require-feedback-signal` | Use a strategy with `processes.proactiveMaintenance.enabled: false`, selected with `--strategy` (0.10.261120); no new key. The planned refs are the same; the skip label differs (`not_retrieved` instead of `no_new_signal` for refs search, curate and show did not return) |
-| `improve --json-to-stdout` | Keep the flag and stdout contract in 0.10.x; expose equivalent run data through ordinary JSON output at the 0.11 cutover |
 | Overlapping bulk proposal controls | Nothing is retired: `accept`/`reject` with `--generator`, `--older-than` and `--max-diff-lines`, and `proposal drain`, both stay; they apply different approval rules |
 | `upgrade --next` | Use `--channel`, consistent across CLI and plugins |
 | `proposal reject --yes` / `-y` | Nothing: reject no longer asks for confirmation (0.10.261121), since `proposal reopen` undoes a rejection. The flag is ignored with a notice through 0.10 |
 | No-ref interactive `agent` launch | Invoke the agent's own CLI |
 | `curate --pack` and the unpacked default | Add opt-in `--max-tokens` in 0.10.x; switch the default to bounded packed context and remove `--pack` in 0.11 |
-| `lint --fail-on-flagged` | Nonzero exit for validation errors by default |
 | `--timeout-ms` | Duration-based `--timeout`, introduced alongside it in 0.10.x |
 | Invalid-value fallback and ignored incompatible legacy flags, including simultaneous `--quiet`/`--verbose` | Validate new interfaces in 0.10.x; tighten legacy behavior in 0.11 |
 | Session extraction's source-harness `--type` | `proposal extract --sessions <claude\|codex\|opencode>` (0.10.261120); retire the overloaded `--type` spelling in 0.11 |
@@ -790,8 +790,9 @@ structured output; the safe injection path is `akm env run <name> --
 ### Validation (Evolving)
 
 The `akm lint` rule set and finding shapes are Evolving. Its current
-`--fail-on-flagged` behavior and exit codes remain stable through 0.10. The
-flag is Deprecated for 0.11, when validation errors become nonzero by default.
+`--fail-on-flagged` behavior and exit codes stay in 0.11: lint exits 0 with
+its findings in the result, and the flag makes it exit nonzero when anything is
+flagged.
 
 ## Versioning and upgrade history
 

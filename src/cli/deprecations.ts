@@ -35,6 +35,9 @@ interface Deprecation {
 /** Workflows are removed in 0.11 with nothing to switch to in 0.10 (akm#1096). */
 const WORKFLOWS_NOTE = "workflows go in 0.11, and tasks take over their ordered steps";
 
+/** A flag that is accepted so old scripts keep running, and does nothing. */
+const NO_EFFECT = "the flag has no effect and can be dropped";
+
 // First match wins, so commands come before flags.
 const DEPRECATIONS: readonly Deprecation[] = [
   { path: ["health"], use: "`akm doctor`" },
@@ -63,6 +66,7 @@ const DEPRECATIONS: readonly Deprecation[] = [
   { path: ["task", "prune"], use: "`akm doctor scheduler sync --prune`" },
   { path: ["task", "doctor"], use: "`akm doctor`" },
   { path: ["task", "explain"], use: "`akm doctor explain <ref>`" },
+  { path: ["task", "add"], flag: "--rebind", use: "`akm doctor scheduler sync --rebind`" },
   { path: ["task", "add"], use: "`akm import <file> --type task`" },
   { path: ["clone"], use: "`akm import <ref> --asset-ref`" },
   { path: ["improve"], flag: "--show-prompt", use: "`akm doctor prompt`" },
@@ -71,6 +75,37 @@ const DEPRECATIONS: readonly Deprecation[] = [
   { path: ["search"], flag: "--include-sessions", use: "`--include type=session`" },
   { path: ["show"], flag: "--detail", value: "brief", use: "`--outline`" },
   { path: ["show"], flag: "--context", value: "lead", use: "`--lead`" },
+  { path: ["show"], flag: "--max-chars", use: "`--max-tokens`" },
+  { path: ["lint"], flag: "--auto-fix", use: "`--fix`" },
+  { path: ["migrate", "apply"], flag: "--dry-run", use: "`akm migrate status`" },
+  {
+    path: ["hints"],
+    flag: "--detail",
+    value: "full",
+    use: "`akm hints` (the short guide), `akm help <command>` and the CLI reference",
+  },
+  ...["search", "show", "curate"].map((command) => ({
+    path: [command],
+    flag: "--detail",
+    value: "agent",
+    use: "`--detail normal`",
+  })),
+  { path: ["bundle", "update"], flag: "--yes", note: NO_EFFECT },
+  { path: ["bundle", "update"], flag: "-y", note: NO_EFFECT },
+  {
+    path: ["registry", "add"],
+    flag: "--options",
+    note: "its value is stored in config but nothing reads it, so it can be dropped",
+  },
+  ...[
+    ["bundle", "add"],
+    ["bundle", "update"],
+    ["env", "run"],
+  ].map((path) => ({
+    path,
+    flag: "--allow-dangerous-env-keys",
+    note: NO_EFFECT,
+  })),
   {
     path: ["improve"],
     flag: "--require-feedback-signal",
@@ -84,12 +119,14 @@ const DEPRECATIONS: readonly Deprecation[] = [
   { path: ["proposal", "reject"], flag: "--yes", note: "reject no longer asks for confirmation" },
   { path: ["proposal", "reject"], flag: "-y", note: "reject no longer asks for confirmation" },
   { path: [], flag: "--timeout-ms", use: "`--timeout`" },
+  { path: [], flag: "--output", note: "redirect stdout instead (`akm <command> > file`)" },
+  { path: [], flag: "--format", value: "yaml", use: "`--format json` (or `--format text`)" },
 ];
 
 /** Deprecated variables: one notice each when set and in effect for this command. */
 const DEPRECATED_ENV: readonly {
   name: string;
-  active: (value: string, commandPath: readonly string[]) => boolean;
+  active: (value: string, commandPath: readonly string[], invocation: ParsedInvocation) => boolean;
   use: string;
 }[] = [
   {
@@ -100,9 +137,35 @@ const DEPRECATED_ENV: readonly {
   { name: "AKM_SQLITE_JOURNAL_MODE", active: (v) => v.trim() !== "", use: "it has no replacement" },
   { name: "AKM_VERBOSE", active: (v) => v.trim() !== "", use: "use `--verbose`" },
   { name: "AKM_DEBUG", active: (v) => v === "1", use: "use `--verbose`" },
+  {
+    // Read only when a search includes the registries.
+    name: "AKM_REGISTRY_URL",
+    active: (v, p, i) =>
+      v.trim() !== "" && p[0] === "search" && ["registry", "all"].includes(i.getFlagValue("--from") ?? ""),
+    use: "use config `registries` (`akm registry add`)",
+  },
+  {
+    name: "AKM_BUNDLE_DIR",
+    // Every command that reads the config or a bundle resolves it; the text-only surfaces do not.
+    active: (v, p) => v.trim() !== "" && p.length > 0 && !["help", "hints", "completions"].includes(p[0] as string),
+    use: "register the bundle (`akm bundle add`) and set `defaultBundle`",
+  },
 ];
 
 const INTERNAL_SOURCES = new Set(["task", "improve", "audit"]);
+
+/** True for akm's own invocations (the scheduler, a task, improve or audit), `--help` and `--scheduled`: no notice. */
+export function deprecationNoticesSuppressed(
+  invocation: ParsedInvocation = getParsedInvocation(),
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return (
+    INTERNAL_SOURCES.has(env.AKM_EVENT_SOURCE ?? "") ||
+    invocation.hasFlag("--help") ||
+    invocation.hasFlag("-h") ||
+    invocation.hasFlag("--scheduled")
+  );
+}
 
 export function warnDeprecatedUse(
   commandPath: readonly string[],
@@ -110,11 +173,10 @@ export function warnDeprecatedUse(
   leafArgs: ArgsDef | undefined,
   env: NodeJS.ProcessEnv = process.env,
 ): void {
-  if (INTERNAL_SOURCES.has(env.AKM_EVENT_SOURCE ?? "")) return;
-  if (invocation.hasFlag("--help") || invocation.hasFlag("-h") || invocation.hasFlag("--scheduled")) return;
+  if (deprecationNoticesSuppressed(invocation, env)) return;
   for (const row of DEPRECATED_ENV) {
     const value = env[row.name];
-    if (value !== undefined && row.active(value, commandPath)) {
+    if (value !== undefined && row.active(value, commandPath, invocation)) {
       warnOnce(
         `deprecated-env:${row.name}`,
         `[deprecated] ${row.name} is deprecated and is removed in 0.11: ${row.use}. See STABILITY.md.`,
@@ -130,7 +192,8 @@ export function warnDeprecatedUse(
   const hit = DEPRECATIONS.find((row) => {
     if (row.path.length > 0 && row.path.join(" ") !== joined) return false;
     if (row.flag !== undefined) {
-      if (row.value === undefined ? !invocation.hasFlag(row.flag) : invocation.getFlagValue(row.flag) !== row.value) {
+      const present = invocation.hasFlag(row.flag) || invocation.getFlagValue(row.flag) !== undefined;
+      if (row.value === undefined ? !present : invocation.getFlagValue(row.flag) !== row.value) {
         return false;
       }
     }
@@ -152,9 +215,7 @@ export function warnDeprecatedUse(
  * by `--quiet`, and not printed for scheduled or internal runs.
  */
 export function warnWorkflowUse(what: string, env: NodeJS.ProcessEnv = process.env): void {
-  if (INTERNAL_SOURCES.has(env.AKM_EVENT_SOURCE ?? "")) return;
-  const invocation = getParsedInvocation();
-  if (invocation.hasFlag("--help") || invocation.hasFlag("-h") || invocation.hasFlag("--scheduled")) return;
+  if (deprecationNoticesSuppressed(getParsedInvocation(), env)) return;
   warnOnce(
     "deprecated-use",
     `[deprecated] ${what} is deprecated and is removed in 0.11: ${WORKFLOWS_NOTE}. See STABILITY.md.`,

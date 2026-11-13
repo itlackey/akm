@@ -62,7 +62,16 @@ and a task that runs a workflow (workflows go in 0.11), `agent <ref>`,
 `search --by-usage`, `search --include-proposed` and `--include-sessions`,
 `show --detail brief` and `--context lead`, `proposal extract --type`,
 `remember --auto`, `--enrich` and `--show-similar` (no replacement flag),
-`proposal reject --yes` (no longer needed), `upgrade --next` and `--timeout-ms`. A deprecated form whose replacement is not
+`proposal reject --yes` (no longer needed), `upgrade --next` and `--timeout-ms`.
+Since 0.10.261122 these also print the line: `show --max-chars` (use `--max-tokens`),
+`lint --auto-fix` (use `--fix`), `migrate apply --dry-run` (use `akm migrate
+status`), `task add --rebind` (use `akm doctor scheduler sync --rebind`), global
+`--output` (redirect stdout), `--format yaml` (use `--format json` or `text`),
+`hints --detail full` (use `akm hints`, `akm help <command>` and this reference),
+`--detail agent` on `search`, `curate` and `show` (use `--detail normal`), and,
+with no replacement because they do nothing, `bundle update --yes`,
+`--allow-dangerous-env-keys` (`bundle add`, `bundle update`, `env run`) and
+`registry add --options`. A deprecated form whose replacement is not
 built yet prints nothing, unless it is removed in 0.11 with no replacement (the
 `remember` flags and workflows): then the line says so.
 
@@ -70,7 +79,18 @@ The deprecated environment variables `AKM_UPGRADE_SKIP_CHECKSUM` (during
 `upgrade`), `AKM_SQLITE_JOURNAL_MODE`, `AKM_VERBOSE` and `AKM_DEBUG=1` print the
 same one-line notice, once per process, and `--quiet` silences it.
 `AKM_SQLITE_JOURNAL_MODE` has no replacement; the others name `akm upgrade
---skip-checksum` and `--verbose`.
+--skip-checksum` and `--verbose`. Since 0.10.261122 `AKM_BUNDLE_DIR` (when set and
+not empty; use `akm bundle add` and `defaultBundle`) and `AKM_REGISTRY_URL` (when
+set and `akm search --from registry` or `--from all` reads it; use config
+`registries`) do the same.
+
+A config that sets `improve.strategies` or `improve.qualityGate` prints one line
+per process naming `experimental.learning.strategies` and
+`experimental.learning.qualityGate`, and a strategy-level `limit` prints one naming
+`--limit` and `processes.reflect.limit`; `improve.stateGc.collect` and a strategy's
+`processes.consolidate.limit` each print one saying the key goes in 0.11; a config that uses only
+`experimental.learning.*` prints nothing. The keys keep working exactly as before,
+and the lines follow the same rules as the command notices above.
 
 ### `--format jsonl`
 

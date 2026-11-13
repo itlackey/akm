@@ -18,6 +18,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { setSecret } from "../../../src/commands/env/secret";
+import { withoutBundleDirNotice } from "../../_helpers/bundle-dir-notice";
 import { makeStashDir, type SandboxedDir } from "../../_helpers/sandbox";
 
 const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
@@ -45,7 +46,11 @@ function spawnCli(
     cwd: repoRoot,
     env: { ...process.env, AKM_BUNDLE_DIR: undefined, ...extraEnv },
   });
-  return { stdout: result.stdout ?? "", stderr: result.stderr ?? "", status: result.status ?? 1 };
+  return {
+    stdout: result.stdout ?? "",
+    stderr: withoutBundleDirNotice(result.stderr ?? ""),
+    status: result.status ?? 1,
+  };
 }
 
 describe("secret run", () => {

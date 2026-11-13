@@ -8,6 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { getConfigPath } from "../../../src/core/paths";
 import { openStateDatabase } from "../../../src/core/state-db";
+import { withoutBundleDirNotice } from "../../_helpers/bundle-dir-notice";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
@@ -35,7 +36,7 @@ async function cli(args: readonly string[], stdin = "") {
     new Response(child.stderr).text(),
     child.exited,
   ]);
-  return { stdout, stderr, code };
+  return { stdout, stderr: withoutBundleDirNotice(stderr), code };
 }
 
 describe("akm doctor entrypoints", () => {

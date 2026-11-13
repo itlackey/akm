@@ -10,6 +10,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - `akm lint <file>` checks one file with the same rules the bundle lint applies to it, and returns the same result. A file inside a bundle takes its type from where it sits; a file outside every bundle needs `--type`, for example `akm lint ./nightly.yml --type tasks`, which checks a draft task file without installing it. Checks that need other files, such as broken refs, run only for a file inside a bundle. `--fix` changes only that file; `--prune-dangling-edges` with a file is a usage error.
 
+### Deprecated
+
+- These forms, removed in 0.11, now print one stderr line per process naming their replacement (stdout, JSON and exit codes are unchanged, and `--quiet` silences it): `show --max-chars` (use `--max-tokens`), `lint --auto-fix` (`--fix`), `migrate apply --dry-run` (`akm migrate status`), global `--output <file>` (redirect stdout), `--format yaml` (`--format json` or `text`), `hints --detail full` (`akm hints`, `akm help <command>`, the CLI reference), `--detail agent` on `search`, `curate` and `show` (`--detail normal`), the variables `AKM_REGISTRY_URL` (config `registries`) and `AKM_BUNDLE_DIR` (register the bundle, set `defaultBundle`), the config keys `improve.strategies` and `improve.qualityGate` (`experimental.learning.strategies` and `experimental.learning.qualityGate`), and a strategy-level `limit` (`--limit`, `processes.reflect.limit`). These also print a line saying the flag does nothing and can be dropped: `bundle update --yes`, `--allow-dangerous-env-keys` (`bundle add`, `bundle update`, `env run`) and `registry add --options`. STABILITY.md now lists `lint --auto-fix`, `migrate apply --dry-run`, `bundle update --yes`, `registry add --options`, `--allow-dangerous-env-keys` and `improve.stateGc.collect`. A config that sets `improve.stateGc.collect`, or a strategy's `processes.consolidate.limit`, prints one line saying the key goes in 0.11. `akm --help` and the short agent guide no longer send agents to `akm hints --detail full`.
+
+### Fixed
+
+- `akm task add --rebind` named `akm import <file> --type task` as its replacement; it now names `akm doctor scheduler sync --rebind`.
+
 ## [0.10.261121] - 2026-11-13
 
 ### Added

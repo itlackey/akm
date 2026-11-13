@@ -4,6 +4,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { withoutBundleDirNotice } from "../_helpers/bundle-dir-notice";
 
 const CLI = path.join(__dirname, "..", "..", "src", "cli.ts");
 const tempDirs: string[] = [];
@@ -108,8 +109,8 @@ async function runCliAsync(stashDir: string, args: string[], config?: Record<str
     stderr.includes("Scanned") ||
     stderr.includes("Rebuilt") ||
     stderr.includes("[embed]");
-  if (stderr.trim() && !isAutoIndexOutput) {
-    expect(stderr.trim()).toBe("");
+  if (withoutBundleDirNotice(stderr).trim() && !isAutoIndexOutput) {
+    expect(withoutBundleDirNotice(stderr).trim()).toBe("");
   }
   return stdout.trim();
 }
