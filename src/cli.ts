@@ -537,7 +537,8 @@ const doctorCommand = defineCommand({
   ...defineGroupCommand({
     meta: {
       name: "doctor",
-      description: "Check runtime health, or inspect metrics, system information, events and model judges",
+      description:
+        "Check runtime health, or inspect metrics, system information, events and model judges. Exits 0 when healthy, 4 on a warning, 1 on a failure",
     },
     args: healthArgs,
     subCommands: doctorSubCommands,

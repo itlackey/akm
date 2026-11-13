@@ -110,7 +110,7 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | `akm proposal show` | Evolving | The `legacy-ref` validation finding on a proposal recorded before concept IDs (#1513) is Experimental for its first release. |
 | `akm proposal diff` | Evolving | |
 | `akm proposal accept` | Evolving | |
-| `akm proposal reject` | Evolving | |
+| `akm proposal reject` | Evolving | Does not ask for confirmation; `--yes`/`-y` is Deprecated (ignored with a notice), removed in 0.11. |
 | `akm proposal reopen` | Evolving | Undoes a rejection. |
 | `akm proposal revert` | Evolving | |
 | `akm proposal drain` | Evolving | |
@@ -287,6 +287,7 @@ remove a research capability or skip its replacement.
 | `improve --json-to-stdout` | Keep the flag and stdout contract in 0.10.x; expose equivalent run data through ordinary JSON output at the 0.11 cutover |
 | Overlapping bulk proposal controls | Nothing is retired: `accept`/`reject` with `--generator`, `--older-than` and `--max-diff-lines`, and `proposal drain`, both stay; they apply different approval rules |
 | `upgrade --next` | Use `--channel`, consistent across CLI and plugins |
+| `proposal reject --yes` / `-y` | Nothing: reject no longer asks for confirmation (0.10.261121), since `proposal reopen` undoes a rejection. The flag is ignored with a notice through 0.10 |
 | No-ref interactive `agent` launch | Invoke the agent's own CLI |
 | `curate --pack` and the unpacked default | Add opt-in `--max-tokens` in 0.10.x; switch the default to bounded packed context and remove `--pack` in 0.11 |
 | `lint --fail-on-flagged` | Nonzero exit for validation errors by default |

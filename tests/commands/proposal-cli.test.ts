@@ -565,7 +565,7 @@ function seedSecondRetireProposal(stash: string) {
 }
 
 async function rejectViaCli(stash: string, id: string, reason = "would destroy content (generator bug)") {
-  const result = await runCli(["proposal", "reject", id, "--reason", reason, "--yes", "--format=json"], {
+  const result = await runCli(["proposal", "reject", id, "--reason", reason, "--format=json"], {
     stashDir: stash,
   });
   expect(result.status).toBe(0);
@@ -766,16 +766,25 @@ describe("accept/reject --generator flag (WS3)", () => {
     expect(result.stderr).not.toContain("deprecated");
   });
 
-  test("bulk reject --generator proceeds with --yes", async () => {
+  test("bulk reject --generator needs no confirmation", async () => {
     const stash = makeStashDir();
     seedProposal(stash);
-    const result = await runCli(
-      ["proposal", "reject", "--generator", "reflect", "--reason", "dup", "--yes", "--format=json"],
-      { stashDir: stash },
-    );
+    const result = await runCli(["proposal", "reject", "--generator", "reflect", "--reason", "dup", "--format=json"], {
+      stashDir: stash,
+    });
     expect(result.status).toBe(0);
     expect(JSON.parse(result.stdout).rejected).toBe(1);
     expect(result.stderr).not.toContain("deprecated");
+  });
+
+  test("reject -y is still accepted", async () => {
+    const stash = makeStashDir();
+    const created = seedProposal(stash);
+    const result = await runCli(["proposal", "reject", created.id, "--reason", "dup", "-y", "--format=json"], {
+      stashDir: stash,
+    });
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).reason).toBe("dup");
   });
 
   test("proposal accept rejects the retired --source flag as unknown", async () => {
@@ -894,7 +903,7 @@ describe("akm proposal noun group (canonical)", () => {
   test("proposal reject: archives proposal with reason", async () => {
     const stash = makeStashDir();
     const created = seedProposal(stash);
-    const result = await runCli(["proposal", "reject", created.id, "--reason", "dup", "--yes", "--format=json"], {
+    const result = await runCli(["proposal", "reject", created.id, "--reason", "dup", "--format=json"], {
       stashDir: stash,
     });
     expect(result.status).toBe(0);
@@ -1001,7 +1010,7 @@ describe("akm proposal multi-bundle queues", () => {
     writeSandboxConfig(multiBundleConfig(primary, secondary));
     const proposal = seedProposal(secondary, "secondary//lessons/reopen-me");
     const rejected = await runCli(
-      ["proposal", "reject", proposal.id, "--queue", "secondary", "--reason", "no", "--yes", "--format=json"],
+      ["proposal", "reject", proposal.id, "--queue", "secondary", "--reason", "no", "--format=json"],
       { stashDir: primary },
     );
     expect(rejected.status).toBe(0);

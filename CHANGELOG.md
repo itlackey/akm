@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- `akm proposal reject` no longer asks for confirmation, for one proposal or a bulk `--generator` reject: `akm proposal reopen` undoes a rejection. Scripts no longer need `--yes`; `--yes`/`-y` on reject is Deprecated, ignored with a notice, and removed in 0.11.
 - AKM Desktop charts: Runs opens with a bar per kind of run showing how its runs ended, the run timeline has a key and a green mark for completed runs, and the latest improve runs are a bar chart coloured by outcome that opens a run. Durations read "6 min" instead of "360.0 s". A chart with nothing to draw says so instead of showing empty axes, and a short line series draws its points.
 - `akm index --export-vectors` streams the vectors from the index into the file instead of loading them all first, so peak memory stays flat (about 260 MB) instead of growing by roughly 32 KB per embedded entry (3.2 GB at 100,000). The file contents and the atomic replace are unchanged (akm#1608).
 
@@ -24,6 +25,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `akm migrate status --read-only` is accepted and writes nothing at all: it records no CLI usage (like `doctor --read-only`) and no longer creates an empty config directory just to take the config lock; `migrate apply` still takes it.
 - The `task history` deprecation notice names `akm doctor log --task <id>` only when a task id is given; the no-id cross-task form says it has no replacement and points at `akm doctor metrics` for per-task totals (STABILITY.md and the 0.10 to 0.11 guide say the same).
 - `akm doctor log --task ""` (empty or blank id) is a usage error (exit 2) instead of silently listing every task's runs.
+- The CLI reference no longer lists `task validate` as a current `akm task` subcommand (it was removed in 0.10; use `akm lint --type tasks`), and says `proposal reject` needs `--yes` when not interactive for a single proposal as well as a bulk one. `akm doctor --help` states its exit codes (0 healthy, 4 warning, 1 failure), and `proposal diff --help` says a UUID prefix matches pending proposals only.
 
 ## [0.10.261120] - 2026-11-12
 
