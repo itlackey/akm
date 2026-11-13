@@ -415,6 +415,24 @@ test("config keys improve.strategies, improve.qualityGate and a strategy limit p
   expect(configNotices(run(["config", "list", "--help"]).stderr)).toHaveLength(0);
 });
 
+test("config keys improve.stateGc.collect and a consolidate limit, removed in 0.11 with nothing to switch to, print a notice", () => {
+  sandbox();
+  writeConfig({
+    improve: { stateGc: { collect: true } },
+    experimental: { learning: { strategies: { mine: { processes: { consolidate: { limit: 5 } } } } } },
+  });
+  const loud = run(["config", "list"]);
+  const lines = configNotices(loud.stderr);
+  expect(lines).toHaveLength(2);
+  expect(lines.find((l) => l.includes("`improve.stateGc.collect`"))).toContain("with no replacement");
+  expect(lines.find((l) => l.includes("consolidate.limit`"))).toContain(
+    "`experimental.learning.strategies.mine.processes.consolidate.limit`",
+  );
+  const quiet = run(["config", "list", "--quiet"]);
+  expect(configNotices(quiet.stderr)).toHaveLength(0);
+  expect(quiet.stdout).toBe(loud.stdout);
+});
+
 test("a config that uses only experimental.learning.* prints no config notice", () => {
   sandbox();
   writeConfig({ experimental: { learning: { strategies: { mine: { description: "d" } }, qualityGate: {} } } });

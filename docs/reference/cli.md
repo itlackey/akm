@@ -87,7 +87,8 @@ set and `akm search --from registry` or `--from all` reads it; use config
 A config that sets `improve.strategies` or `improve.qualityGate` prints one line
 per process naming `experimental.learning.strategies` and
 `experimental.learning.qualityGate`, and a strategy-level `limit` prints one naming
-`--limit` and `processes.reflect.limit`; a config that uses only
+`--limit` and `processes.reflect.limit`; `improve.stateGc.collect` and a strategy's
+`processes.consolidate.limit` each print one saying the key goes in 0.11; a config that uses only
 `experimental.learning.*` prints nothing. The keys keep working exactly as before,
 and the lines follow the same rules as the command notices above.
 

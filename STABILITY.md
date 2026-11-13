@@ -103,7 +103,7 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | `akm info` | Deprecated | Removed in 0.11: use `akm doctor info`. The current `learning` field is Experimental for its first release. |
 | `akm log` | Deprecated | Removed in 0.11: use `akm doctor log`. |
 | `akm lint` | Evolving | `akm lint <file>` checks one file, first in 0.10.261122; a file outside every bundle needs `--type`. `--auto-fix` is Deprecated, removed in 0.11: use `--fix`; prints a notice since 0.10.261122. |
-| `akm improve` | Evolving | `--require-feedback-signal`, `--json-to-stdout`, `--show-prompt` and `--timeout-ms` are Deprecated, removed in 0.11 (replacements: a strategy with `processes.proactiveMaintenance.enabled: false` selected with `--strategy`, ordinary JSON output, `doctor prompt`, `--timeout`). Gate-passed proposals are accepted and committed by default. The [three named autonomous lanes](#akm-improve-autonomy) require `experimental.improveAutonomy`; other documented writes do not. |
+| `akm improve` | Evolving | `--require-feedback-signal`, `--show-prompt` and `--timeout-ms` are Deprecated, removed in 0.11 (replacements: a strategy with `processes.proactiveMaintenance.enabled: false` selected with `--strategy`, `doctor prompt`, `--timeout`). `--json-to-stdout` stays in 0.11: stdout is empty for a live run without it. Gate-passed proposals are accepted and committed by default. The [three named autonomous lanes](#akm-improve-autonomy) require `experimental.improveAutonomy`; other documented writes do not. |
 | `akm improve report` | Deprecated | Removed in 0.11: use `akm doctor metrics improve` (`--run`, `--since`), first in 0.10.261120, retaining run/window selection and usage, routing, and cost data. |
 | `akm improve judge` | Deprecated | Removed in 0.11: use `akm doctor judge`. Subcommand since 0.10 (was a magic `scope` value); reads one revision as JSON on stdin and writes nothing. The same as `akm judge reflect.quality`, in its older input and output shape; its `--strategy` flag was removed. |
 | `akm judge` | Deprecated | Removed in 0.11: use `akm doctor judge`. Runs a registered judge (`reflect.quality`, `distill.lesson`, `consolidate.pair`, `proposal.judgment`) on one JSON input from stdin, on the runner `--connection`, `--harness` and `--model` select. Output is one envelope (`judge`, `schemaVersion`, `runner`, `outcome`, `verdict?`, `reason?`); each judge carries its own `schemaVersion`. |
@@ -280,20 +280,18 @@ remove a research capability or skip its replacement.
 | Remove/change in 0.11 | Replacement and 0.10.x preparation |
 | --- | --- |
 | General YAML output; general Markdown/JSONL support | JSON/text generally; Markdown for reports and JSONL for useful streaming cases |
-| Config key `improve.stateGc.collect` | Nothing: it still deletes the state rows of refs that no longer resolve in 0.10, and 0.11 reads it as an unknown key (ignored with one warning). Deprecated, no replacement; it prints no notice in 0.10 because the key still has an effect there |
+| Config key `improve.stateGc.collect` | Nothing: it still deletes the state rows of refs that no longer resolve in 0.10, and 0.11 reads it as an unknown key (ignored with one warning). Deprecated, no replacement; a config that sets it prints one notice per process |
 | Config key `improve.strategies.<name>.limit` (strategy-level) | `--limit` and `processes.reflect.limit`; read through 0.10, ignored in 0.11. Prints a notice since 0.10.261122 |
 | Global `--output`, `--detail` | Shell redirection; add command-specific limits, budgets, and outlines in 0.10.x |
 | `remember --auto`, `--enrich` | No replacement flag and no experimental key (the audit found one consumer, akm-eval's bakeoff). Remove the flags in 0.11. Enrichment belongs in improve, not in `remember` or `akm index`: an improve-based replacement that fills a new memory's tags and observed date must be implemented before 0.11.0 stable |
 | `remember --show-similar` | Separate retrieval operation |
 | Old public paths for custom-strategy definitions and research-only process knobs | Add experimental aliases in 0.10.x feeding the unchanged strategy engine; remove old paths in 0.11 |
 | `improve --require-feedback-signal` | Use a strategy with `processes.proactiveMaintenance.enabled: false`, selected with `--strategy` (0.10.261120); no new key. The planned refs are the same; the skip label differs (`not_retrieved` instead of `no_new_signal` for refs search, curate and show did not return) |
-| `improve --json-to-stdout` | Keep the flag and stdout contract in 0.10.x; expose equivalent run data through ordinary JSON output at the 0.11 cutover |
 | Overlapping bulk proposal controls | Nothing is retired: `accept`/`reject` with `--generator`, `--older-than` and `--max-diff-lines`, and `proposal drain`, both stay; they apply different approval rules |
 | `upgrade --next` | Use `--channel`, consistent across CLI and plugins |
 | `proposal reject --yes` / `-y` | Nothing: reject no longer asks for confirmation (0.10.261121), since `proposal reopen` undoes a rejection. The flag is ignored with a notice through 0.10 |
 | No-ref interactive `agent` launch | Invoke the agent's own CLI |
 | `curate --pack` and the unpacked default | Add opt-in `--max-tokens` in 0.10.x; switch the default to bounded packed context and remove `--pack` in 0.11 |
-| `lint --fail-on-flagged` | Nonzero exit for validation errors by default |
 | `--timeout-ms` | Duration-based `--timeout`, introduced alongside it in 0.10.x |
 | Invalid-value fallback and ignored incompatible legacy flags, including simultaneous `--quiet`/`--verbose` | Validate new interfaces in 0.10.x; tighten legacy behavior in 0.11 |
 | Session extraction's source-harness `--type` | `proposal extract --sessions <claude\|codex\|opencode>` (0.10.261120); retire the overloaded `--type` spelling in 0.11 |
@@ -792,8 +790,9 @@ structured output; the safe injection path is `akm env run <name> --
 ### Validation (Evolving)
 
 The `akm lint` rule set and finding shapes are Evolving. Its current
-`--fail-on-flagged` behavior and exit codes remain stable through 0.10. The
-flag is Deprecated for 0.11, when validation errors become nonzero by default.
+`--fail-on-flagged` behavior and exit codes stay in 0.11: lint exits 0 with
+its findings in the result, and the flag makes it exit nonzero when anything is
+flagged.
 
 ## Versioning and upgrade history
 
