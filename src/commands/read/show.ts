@@ -37,6 +37,7 @@ import { appendEvent } from "../../core/events";
 import { SCRIPT_EXTENSIONS } from "../../core/recognition-util";
 import { presentationFor } from "../../core/type-presentation";
 import { warn, warnOnce } from "../../core/warn";
+import { BUILD_IN_PROGRESS_WARNING } from "../../indexer/ensure-index";
 import {
   lookupBundleRef,
   lookupBundleRefWithResolution,
@@ -70,6 +71,7 @@ import type { FragmentContextMode, ShowDetailLevel, ShowLinkGroup, ShowResponse 
 import { withIndexDb } from "../../storage/repositories/index-db";
 import { getIndexedMarkdownFragment } from "../../storage/repositories/index-fts-repository";
 import { readEntryLinks } from "../../storage/repositories/index-links-repository";
+import { isSqliteContentionError } from "../../storage/sqlite-transaction";
 import { buildWorkflowAction } from "../../workflows/renderer";
 
 /**
@@ -142,13 +144,17 @@ export async function akmShowUnified(input: {
   // safe substrate below is its source of truth. Friendly heading selectors
   // intentionally retain the normal source-live read behavior.
   const parsedRef = parseBundleRef(ref);
+  let indexBuilding = false;
   if (!input.readOnly && !parsedRef.fragment?.startsWith("akm-fragment-")) {
     const { primarySource } = resolveReadSources();
-    await ensurePrimaryIndexForRead(primarySource);
+    await ensurePrimaryIndexForRead(primarySource, () => {
+      indexBuilding = true;
+    });
   }
 
   // Try local filesystem (FTS5 index lookup)
-  const result = applyContentBudget(await showLocal(presentation), input.maxTokens);
+  const result = applyContentBudget(await showLocal({ ...presentation, indexBuilding }), input.maxTokens);
+  if (indexBuilding) warnOnce("index-building", BUILD_IN_PROGRESS_WARNING);
   // Count prior shows of this ref before logging the current one.
   if (!input.skipLogging && !input.readOnly) {
     const consumedRef = result.ref ?? makeBundleRef(undefined, parseBundleRef(ref).conceptId);
@@ -314,6 +320,8 @@ export async function showLocal(input: {
   maxContextChars?: number;
   contextFlag?: string;
   readOnly?: boolean;
+  /** Another process is still building the index: a ref it has not persisted yet may simply not be there yet. */
+  indexBuilding?: boolean;
 }): Promise<ShowResponse> {
   validateFragmentContextRequest(input);
   const parsed = parseBundleRef(input.ref);
@@ -323,10 +331,17 @@ export async function showLocal(input: {
 
   const allSourceDirs = searchSources.map((s) => s.path);
 
-  const resolution = input.readOnly
-    ? await lookupBundleRefWithResolutionReadonly(parsed)
-    : await lookupBundleRefWithResolution(parsed);
-  if (resolution.indexError !== undefined) throw resolution.indexError;
+  let resolution: Awaited<ReturnType<typeof lookupBundleRefWithResolution>>;
+  try {
+    resolution = input.readOnly
+      ? await lookupBundleRefWithResolutionReadonly(parsed)
+      : await lookupBundleRefWithResolution(parsed);
+  } catch (error) {
+    // A build in progress may not have created its tables yet, or hold the file busy: not found yet.
+    if (!input.indexBuilding || !(isSqliteContentionError(error) || /no such table/i.test(String(error)))) throw error;
+    resolution = { entry: null };
+  }
+  if (resolution.indexError !== undefined && !input.indexBuilding) throw resolution.indexError;
   const indexedEntry = resolution.entry;
   const assetPath = indexedEntry?.filePath;
 
@@ -360,7 +375,9 @@ export async function showLocal(input: {
   if (!indexedEntry || !assetPath) {
     throw new NotFoundError(
       `Stash asset not found for ref: ${makeBundleRef(parsed.bundle, parsed.conceptId)}. ` +
-        "Check the name with `akm search` or verify the asset exists in your stash.",
+        (input.indexBuilding
+          ? "The search index is still being built by another akm process, so it may not be indexed yet; retry shortly."
+          : "Check the name with `akm search` or verify the asset exists in your stash."),
     );
   }
   enforceSensitiveFragmentPolicy(indexedEntry.type, parsed, input.contextMode, input.contextFlag);

@@ -415,9 +415,10 @@ the lock is already held by a live process, it skips gracefully (exit 0,
 #956) instead of contending. `akm index` and `akm curate` are both safe to call frequently —
 `curate` never blocks on a rebuild in progress when an index already exists
 ([read-path indexing stays non-blocking](#curate)); with no usable index yet,
-a read waits (up to 30 seconds) for the build another process is running and
-then reads, failing with `INDEX_DB_CONTENDED` only if that build outlasts the
-wait — but a hook, cron job, or scheduled task that
+a read waits up to 5 seconds for the build another process is running, then
+answers from the keyword index that build has written so far (exit 0,
+`searchMode: "keyword"`, plus a warning that the build is still running)
+instead of failing — but a hook, cron job, or scheduled task that
 invokes `akm index` directly should pass `--skip-if-locked` so it steps
 aside instead of piling up behind a longer rebuild (the shipped
 `index-refresh` task does this).
@@ -837,6 +838,8 @@ query. The last case also adds one sanitized, endpoint-naming entry to
 `warnings`; it never repeats the provider/runtime error text. Both fields are
 preserved by `--detail agent` so machine consumers can lower their confidence
 instead of treating keyword fallback as healthy semantic ranking.
+A search that finds the index still being built by another akm process also
+reports `keyword`, with a warning that results may be incomplete.
 
 Ranking fuses two candidate lists by reciprocal rank (k = 60, equal weights):
 BM25 over whole documents matching any non-stopword query word, and the

@@ -21,7 +21,7 @@
  * planning logic needs a current `entries` table in-process.
  */
 
-import { ConfigError, TransientError } from "../core/errors";
+import { ConfigError } from "../core/errors";
 import { classifyPathAccess } from "../core/path-access";
 import { getDbPath } from "../core/paths";
 import { tryAcquireRunLock } from "../core/run-lock";
@@ -29,7 +29,6 @@ import { warnVerbose } from "../core/warn";
 import { assertIndexPathReadable, closeDatabase, openExistingDatabase } from "../storage/repositories/index-connection";
 import { hasCurrentEntriesTable } from "../storage/repositories/index-entry-schema";
 import { getMeta } from "../storage/repositories/index-meta-repository";
-import { SQLITE_BUSY_TIMEOUT_MS } from "../storage/sqlite-pragmas";
 import { warnOnBundleRenameDrift } from "./bundle-identity-guard";
 import { indexRebuildLockPath, releaseIndexRebuildLock } from "./index-rebuild-lock";
 import type { IndexResponse } from "./indexer";
@@ -37,14 +36,19 @@ import type { IndexResponse } from "./indexer";
 export interface EnsureIndexOptions {
   mode?: "background" | "blocking";
   signal?: AbortSignal;
+  /** Test seam: how long (ms) a cold read waits for another process's build, and how often (ms) it re-checks. */
+  buildWait?: { timeoutMs?: number; pollMs?: number };
+  /**
+   * Called when another process's build outlasted the wait. The read neither
+   * fails nor builds: the caller serves what that build has persisted so far.
+   */
+  onBuildInProgress?: () => void;
   /**
    * R6: called with the inline reindex's timing when `ensureIndex` actually
    * runs one, so a blocking caller (improve) can surface the implicit
    * reindex's cost instead of it being silently discarded. Never called when
    * no rebuild was needed.
    */
-  /** Test seam: how long (ms) a cold read waits for another process's build, and how often (ms) it re-checks. */
-  buildWait?: { timeoutMs?: number; pollMs?: number };
   onReindexTiming?: (info: { durationMs: number; timing: IndexResponse["timing"] }) => void;
 }
 
@@ -89,39 +93,52 @@ function indexCanServeStash(stashDir: string): boolean {
 }
 
 /**
- * How long a cold read waits for another process's index build. Reuses the
- * SQLite busy timeout (30 s): the same bound a write waits on index.db, so a
- * read is never kept longer than a writer would be.
+ * How long a cold read waits for another process's index build before it
+ * serves the keyword index instead. A build that finishes within it is read
+ * normally; a long one (embeddings can take minutes) never holds a read.
  */
-const BUILD_WAIT_TIMEOUT_MS = SQLITE_BUSY_TIMEOUT_MS;
+const BUILD_WAIT_TIMEOUT_MS = 5_000;
 const BUILD_WAIT_POLL_MS = 100;
+
+/** Said once per read that fell back to the partially built index. */
+export const BUILD_IN_PROGRESS_WARNING =
+  "The search index is still being built by another akm process; results come from the keyword index and may be " +
+  "incomplete. Semantic results return when the build finishes.";
+
+// Once a read in this process has waited out a build, its later reads (curate
+// shows each hit) fall back at once instead of waiting again.
+let buildWaitedOut = false;
+
+/** TEST-ONLY. Forget that this process already waited out a build. */
+export function _resetBuildWaitForTests(): void {
+  buildWaitedOut = false;
+}
 
 /**
  * Single flight for the cold-index build. Two inline builds of the same fresh
  * index race on their first write (a deferred transaction that read first gets
  * an immediate SQLITE_BUSY, the busy timeout never applies), so only the lock
- * holder builds. Returns the held lock, or `undefined` when another process's
- * build left a usable index. A dead holder's lock is reclaimed by
- * `tryAcquireRunLock`; a live one is waited for, never raced.
+ * holder builds. Returns the held lock; `"usable"` when another process's
+ * build left a usable index; `"building"` when its build outlasted the wait.
+ * A dead holder's lock is reclaimed by `tryAcquireRunLock`; a live one is
+ * waited for, never raced.
  */
 async function acquireBuildLock(stashDir: string, wait: EnsureIndexOptions["buildWait"]) {
-  const timeoutMs = wait?.timeoutMs ?? BUILD_WAIT_TIMEOUT_MS;
+  const timeoutMs = buildWaitedOut ? 0 : (wait?.timeoutMs ?? BUILD_WAIT_TIMEOUT_MS);
   const pollMs = wait?.pollMs ?? BUILD_WAIT_POLL_MS;
   const startedMs = Date.now();
   for (;;) {
     const result = tryAcquireRunLock(indexRebuildLockPath(), { label: "index rebuild" });
     if (result.state === "acquired") {
+      buildWaitedOut = false;
       // The previous holder may have finished while we waited: re-check, never assume.
       if (!indexCanServeStash(stashDir)) return result.ownership;
       releaseIndexRebuildLock(result.ownership);
-      return undefined;
+      return "usable";
     }
     if (Date.now() - startedMs >= timeoutMs) {
-      throw new TransientError(
-        `akm's index database is busy (another akm process is writing it); retry shortly. ` +
-          `Waited ${Math.round(timeoutMs / 1000)}s for its index build to finish.`,
-        "INDEX_DB_CONTENDED",
-      );
+      buildWaitedOut = true;
+      return "building";
     }
     warnVerbose("[ensure-index] another process is building the index; waiting for it");
     await new Promise((resolve) => setTimeout(resolve, pollMs));
@@ -153,12 +170,16 @@ export async function ensureIndex(stashDir: string, options: EnsureIndexOptions 
   if (!blocking && indexCanServeStash(stashDir)) return false;
 
   // Blocking callers (improve) keep today's unlocked incremental run.
-  const lock = blocking ? undefined : await acquireBuildLock(stashDir, options.buildWait);
-  if (!blocking && !lock) return false;
+  const acquired = blocking ? undefined : await acquireBuildLock(stashDir, options.buildWait);
+  if (acquired === "usable") return false;
+  if (acquired === "building") {
+    options.onBuildInProgress?.();
+    return false;
+  }
   try {
     return await buildIndex(stashDir, options, blocking);
   } finally {
-    if (lock) releaseIndexRebuildLock(lock);
+    if (acquired) releaseIndexRebuildLock(acquired);
   }
 }
 

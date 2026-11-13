@@ -21,7 +21,10 @@ export function resolveReadSources(overrideStashDir?: string, existingConfig?: A
 }
 
 /** Ensure the primary source index is readable for reads, when a primary exists. */
-export async function ensurePrimaryIndexForRead(primarySource?: SearchSource): Promise<boolean> {
+export async function ensurePrimaryIndexForRead(
+  primarySource?: SearchSource,
+  onBuildInProgress?: () => void,
+): Promise<boolean> {
   if (!primarySource?.path) return false;
-  return ensureIndex(primarySource.path);
+  return ensureIndex(primarySource.path, { onBuildInProgress });
 }

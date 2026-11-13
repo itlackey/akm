@@ -52,7 +52,8 @@ import type { CandidateFilter, DbVecResult } from "../../storage/repositories/in
 import { searchFts } from "../../storage/repositories/index-fts-repository";
 import { getMeta } from "../../storage/repositories/index-meta-repository";
 import { getEmbeddingCount, searchVec } from "../../storage/repositories/index-vec-repository";
-import { ensureIndex } from "../ensure-index";
+import { isSqliteContentionError } from "../../storage/sqlite-transaction";
+import { BUILD_IN_PROGRESS_WARNING, ensureIndex } from "../ensure-index";
 import {
   appliesToProject,
   type IndexDocument,
@@ -224,7 +225,16 @@ export async function searchLocal(input: SearchLocalInput): Promise<{
   // Bootstrap-only: builds the index inline when it cannot serve this stash.
   // Content freshness is the writers' job (indexWrittenAssets + full runs);
   // reads serve the existing index as-is.
-  if (!input.readOnly) await ensureIndex(stashDir);
+  // Another process is still building it: serve what it has persisted, keyword only.
+  let building = false;
+  if (!input.readOnly) {
+    await ensureIndex(stashDir, {
+      onBuildInProgress: () => {
+        building = true;
+        warnings.push(BUILD_IN_PROGRESS_WARNING);
+      },
+    });
+  }
 
   const dbPath = getDbPath();
   // An index we cannot READ is not an index that does not exist (#791). Saying
@@ -235,7 +245,7 @@ export async function searchLocal(input: SearchLocalInput): Promise<{
   if (classifyPathAccess(dbPath).access === "absent") {
     return {
       hits: [],
-      tip: "No search index available. Run 'akm index' to build one.",
+      tip: building ? undefined : "No search index available. Run 'akm index' to build one.",
       warnings: warnings.length > 0 ? warnings : undefined,
       mode: "keyword",
     };
@@ -244,13 +254,19 @@ export async function searchLocal(input: SearchLocalInput): Promise<{
   // A read-only search (the workspace) must not open the index for write: closing a
   // read-write connection can checkpoint the WAL into the main file, which
   // changes it even though nothing was written.
-  const db = input.readOnly ? (openReadonlyExistingDatabase(dbPath) as Database) : openExistingDatabase(dbPath);
+  // Mid-build, the other process's writes can make this open or read fail on
+  // contention (rollback-journal mode) or find no schema yet: that is the
+  // empty result, not an error.
+  const notReadableYet = (error: unknown): boolean =>
+    building && (isSqliteContentionError(error) || /no such table/i.test(String((error as Error)?.message)));
+  let db: Database | undefined;
   try {
+    db = input.readOnly ? (openReadonlyExistingDatabase(dbPath) as Database) : openExistingDatabase(dbPath);
     const entryCount = getEntryCount(db);
     if (entryCount === 0) {
       return {
         hits: [],
-        tip: "Index is empty. Run 'akm index' to populate it.",
+        tip: building ? undefined : "Index is empty. Run 'akm index' to populate it.",
         warnings: warnings.length > 0 ? warnings : undefined,
         mode: "keyword",
       };
@@ -259,7 +275,11 @@ export async function searchLocal(input: SearchLocalInput): Promise<{
     const staleHint = buildStaleIndexHint(db);
     if (staleHint) warnings.push(staleHint);
 
-    const { hits, embedMs, rankMs, mode, semanticWarning, feedbackWarning } = await searchDatabase(db, input);
+    const { hits, embedMs, rankMs, mode, semanticWarning, feedbackWarning } = await searchDatabase(
+      db,
+      // Vectors of a build in progress may be partial: rank by keyword alone.
+      building ? { ...input, config: { ...config, semanticSearchMode: "off" } } : input,
+    );
     if (semanticWarning) warnings.push(semanticWarning);
     if (feedbackWarning) warnings.push(feedbackWarning);
     return {
@@ -272,8 +292,11 @@ export async function searchLocal(input: SearchLocalInput): Promise<{
       // vector channel — not inferred from elapsed embedding milliseconds.
       mode,
     };
+  } catch (error) {
+    if (!notReadableYet(error)) throw error;
+    return { hits: [], warnings, mode: "keyword" };
   } finally {
-    closeDatabase(db);
+    if (db) closeDatabase(db);
   }
 }
 

@@ -4,9 +4,10 @@
 
 /**
  * A read that finds no usable index while another process is building it waits
- * for that build instead of failing with INDEX_DB_CONTENDED (akm-plugins#175).
- * Real CLI children for the race itself; the rebuild lock (held by this test)
- * forces the ordering deterministically for the wait, bound and failed-build cases.
+ * up to 5 seconds for that build, then serves the keyword index from whatever
+ * the build has persisted, instead of failing with INDEX_DB_CONTENDED
+ * (akm-plugins#175). Real CLI children for the race itself; the rebuild lock
+ * (held by this test) forces the ordering deterministically for the other cases.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -15,7 +16,7 @@ import path from "node:path";
 import { saveConfig } from "../../../src/core/config/config";
 import { TransientError } from "../../../src/core/errors";
 import { getDbPath, getIndexRebuildLockPath } from "../../../src/core/paths";
-import { ensureIndex } from "../../../src/indexer/ensure-index";
+import { _resetBuildWaitForTests, ensureIndex } from "../../../src/indexer/ensure-index";
 import { _setAkmIndexForTests, akmIndex } from "../../../src/indexer/indexer";
 import { closeDatabase, openExistingDatabase } from "../../../src/storage/repositories/index-connection";
 import { getMeta } from "../../../src/storage/repositories/index-meta-repository";
@@ -35,6 +36,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  _resetBuildWaitForTests();
   _setAkmIndexForTests();
   storage.cleanup();
 });
@@ -123,7 +125,7 @@ describe("cold index: reads wait for the build in progress", () => {
     }
   }, 120_000);
 
-  test("the wait is bounded: a live lock that never clears fails with INDEX_DB_CONTENDED and never builds", async () => {
+  test("the wait is bounded: a live lock that never clears is reported as a build in progress, never an error or a build", async () => {
     removeIndex();
     const lockPath = plantLock(process.pid);
     let builds = 0;
@@ -131,13 +133,26 @@ describe("cold index: reads wait for the build in progress", () => {
       builds++;
       throw new Error("must not build");
     });
+    let reported = 0;
 
     const started = Date.now();
-    const err = await ensureIndex(storage.stashDir, { buildWait: { timeoutMs: 300, pollMs: 20 } }).catch((e) => e);
-
-    expect(err).toBeInstanceOf(TransientError);
-    expect((err as TransientError).code).toBe("INDEX_DB_CONTENDED");
+    const built = await ensureIndex(storage.stashDir, {
+      buildWait: { timeoutMs: 300, pollMs: 20 },
+      onBuildInProgress: () => reported++,
+    });
+    expect(built).toBe(false);
+    expect(reported).toBe(1);
     expect(Date.now() - started).toBeGreaterThanOrEqual(300);
+
+    // Later reads in the same process (curate shows each hit) do not wait again.
+    const again = Date.now();
+    await ensureIndex(storage.stashDir, {
+      buildWait: { timeoutMs: 5000, pollMs: 20 },
+      onBuildInProgress: () => reported++,
+    });
+    expect(reported).toBe(2);
+    expect(Date.now() - again).toBeLessThan(1000);
+
     expect(builds).toBe(0);
     expect(fs.existsSync(lockPath)).toBe(true); // someone else's lock is left alone
   });
@@ -174,4 +189,71 @@ describe("cold index: reads wait for the build in progress", () => {
     expect(builds).toBe(1);
     expect(Date.now() - started).toBeLessThan(2000);
   });
+
+  test("after 5 s a read serves the persisted keyword index with a warning, exit 0, and never builds", async () => {
+    // A build that has persisted its entries but not yet finished: no builtAt.
+    await akmIndex({ stashDir: storage.stashDir, implicit: true, hydrateSources: false });
+    const db = openExistingDatabase(getDbPath());
+    try {
+      db.exec("DELETE FROM index_meta WHERE key = 'builtAt'");
+    } finally {
+      closeDatabase(db);
+    }
+    const lockPath = plantLock(process.pid);
+
+    const started = Date.now();
+    const [search, curate, shown, missing] = await Promise.all([
+      spawnCli(["search", "widgets"]).done,
+      spawnCli(["curate", "widgets"]).done,
+      spawnCli(["show", "memories/note-5"]).done,
+      spawnCli(["show", "memories/note-9999"]).done,
+    ]);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(5000);
+
+    for (const r of [search, curate, shown]) {
+      expect(r.code).toBe(0);
+      expect(r.stderr).not.toContain("INDEX_DB_CONTENDED");
+    }
+    const searched = JSON.parse(search.stdout);
+    expect(searched.searchMode).toBe("keyword");
+    expect(searched.hits.length).toBeGreaterThan(0);
+    expect(searched.warnings.join("\n")).toContain("still being built by another akm process");
+    const curated = JSON.parse(curate.stdout);
+    expect(curated.searchMode).toBe("keyword");
+    expect(curated.warnings.join("\n")).toContain("still being built");
+    expect(JSON.parse(shown.stdout).name).toBe("note-5");
+    expect(shown.stderr).toContain("still being built");
+
+    // A ref the build has not persisted is not found, and says why.
+    expect(missing.code).toBe(1);
+    expect(missing.stderr).toContain("still being built");
+
+    expect(fs.existsSync(lockPath)).toBe(true);
+    const check = openExistingDatabase(getDbPath());
+    try {
+      expect(getMeta(check, "builtAt")).toBeUndefined(); // no second build finished the index
+    } finally {
+      closeDatabase(check);
+    }
+  }, 60_000);
+
+  test("after 5 s with nothing persisted yet, reads return an empty result with the warning and exit 0", async () => {
+    removeIndex();
+    const lockPath = plantLock(process.pid);
+
+    const [search, shown] = await Promise.all([
+      spawnCli(["search", "widgets"]).done,
+      spawnCli(["show", "memories/note-5"]).done,
+    ]);
+
+    expect(search.code).toBe(0);
+    const searched = JSON.parse(search.stdout);
+    expect(searched.hits).toEqual([]);
+    expect(searched.searchMode).toBe("keyword");
+    expect(searched.warnings.join("\n")).toContain("still being built by another akm process");
+    expect(shown.code).toBe(1);
+    expect(shown.stderr).toContain("still being built");
+    expect(fs.existsSync(getDbPath())).toBe(false); // nothing was built
+    expect(fs.existsSync(lockPath)).toBe(true);
+  }, 60_000);
 });
