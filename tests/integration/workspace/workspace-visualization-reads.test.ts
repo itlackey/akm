@@ -18,6 +18,8 @@ import { akmIndex } from "../../../src/indexer/indexer";
 import { upsertTaskHistory } from "../../../src/storage/repositories/task-history-repository";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
 import { activity, assets } from "../../../src/workspace";
+import { makeConfig } from "../../_helpers/factories";
+import { writeSandboxConfig } from "../../_helpers/sandbox";
 import { ctx, dbSnapshot, expectAkmError, expectUsage, out, seed, useSandbox } from "./workspace-behaviour-helpers";
 
 useSandbox();
@@ -39,7 +41,7 @@ describe("visualization reads", () => {
     const at = (suffix: string) => refs.findIndex((ref) => ref.endsWith(suffix));
     expect(at("knowledge/guide")).toBeGreaterThanOrEqual(0);
     expect(refs.some((ref) => ref.includes("env/") || ref.includes("secrets/"))).toBe(false);
-    for (const column of ["title", "type", "bundle", "shows", "searches", "lastUsedAt"])
+    for (const column of ["title", "type", "bundle", "belief", "shows", "searches"])
       expect(graph.nodes[column]).toHaveLength(refs.length);
     expect(graph.types[graph.nodes.type[at("knowledge/guide")]]).toBe("knowledge");
     expect(graph.nodes.title[at("knowledge/index-page")]).toBe("Index page");
@@ -53,7 +55,119 @@ describe("visualization reads", () => {
     ).toEqual([[refs[at("knowledge/index-page")], refs[at("knowledge/guide")], "xref"]]);
     // No embeddings in this sandbox: no positions by meaning.
     expect(graph.meaning).toBeNull();
+    expect(graph.nodes.lastUsedAt).toBeUndefined();
+    // The page the dropped link was declared on: one unresolved link, none of its own.
+    expect(graph.unresolvedLinks).toBe(1);
+    expect(graph.note).toContain("No assets are embedded");
     expect(dbSnapshot(getDbPath())).toBe(before);
+  });
+
+  test("graph: bundles by size, empty and disabled bundles, dropped links, proposed entries, belief states, live use", async () => {
+    await seed();
+    const stash = ctx.storage.stashDir;
+    const dir = (name: string, files: Record<string, string>) => {
+      const root = path.join(ctx.storage.stashDir, "..", `bundle-${name}`);
+      for (const [file, text] of Object.entries(files)) {
+        fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+        fs.writeFileSync(path.join(root, file), text);
+      }
+      fs.mkdirSync(root, { recursive: true });
+      return root;
+    };
+    const small = dir("small", { "knowledge/solo.md": "# Solo\n" });
+    const off = dir("off", { "knowledge/hidden.md": "# Hidden\n" });
+    const blank = dir("blank", {});
+    fs.writeFileSync(
+      path.join(stash, "knowledge", "linker.md"),
+      "---\ndescription: Links out\nxrefs:\n  - knowledge/guide\n  - knowledge/missing\n  - knowledge/linker\n  - off//knowledge/hidden\n  - env/prod\n---\n# Linker\n",
+    );
+    fs.writeFileSync(
+      path.join(stash, "knowledge", "old.md"),
+      "---\ndescription: Old\nbeliefState: superseded\n---\n# Old\n",
+    );
+    fs.writeFileSync(
+      path.join(stash, "knowledge", "doubt.md"),
+      "---\ndescription: Doubt\nbeliefState: contradicted\n---\n# Doubt\n",
+    );
+    fs.writeFileSync(
+      path.join(stash, "knowledge", "draft.md"),
+      "---\ndescription: Draft\nquality: proposed\n---\n# Draft\n",
+    );
+    writeSandboxConfig({
+      ...makeConfig(stash),
+      bundles: {
+        small: { path: small },
+        stash: { path: stash, writable: true },
+        off: { path: off },
+        blank: { path: blank },
+      },
+      semanticSearchMode: "off",
+    } as never);
+    resetConfigCache();
+    await akmIndex({ stashDir: stash, full: true });
+    // Disable `off` after indexing: its assets stay in the index but must not be drawn or linked.
+    writeSandboxConfig({
+      ...makeConfig(stash),
+      bundles: {
+        small: { path: small },
+        stash: { path: stash, writable: true },
+        off: { path: off, enabled: false },
+        blank: { path: blank },
+      },
+      semanticSearchMode: "off",
+    } as never);
+    resetConfigCache();
+
+    const graph = await out(assets.graph());
+    const refs: string[] = graph.nodes.ref;
+    const at = (ref: string) => refs.indexOf(ref);
+    // Largest bundle first, and the node column follows it.
+    expect(graph.bundles).toEqual(["stash", "small"]);
+    expect(graph.nodes.bundle[at("small//knowledge/solo")]).toBe(1);
+    expect(graph.nodes.bundle[at("stash//knowledge/guide")]).toBe(0);
+    expect(graph.emptyBundles).toEqual(["blank"]);
+    expect(graph.note).toContain("No assets in: blank");
+    expect(refs.some((ref) => ref.startsWith("off//"))).toBe(false);
+    expect(refs.some((ref) => ref.includes("draft"))).toBe(false);
+    // Three declared links leave the map: a missing page, a disabled bundle and a hidden type; the self-link is not counted.
+    expect(graph.unresolvedLinks).toBe(3);
+    expect(graph.note).toContain("3 declared links are not drawn");
+    const kinds = (ref: string) => graph.beliefs[graph.nodes.belief[at(ref)]];
+    expect(kinds("stash//knowledge/old")).toBe("superseded");
+    expect(kinds("stash//knowledge/doubt")).toBe("contradicted");
+    expect(graph.nodes.belief[at("stash//knowledge/guide")]).toBe(-1);
+
+    // Use is read live: an event recorded after indexing counts without re-indexing; a non-user source does not.
+    const guide = at("stash//knowledge/guide");
+    const before = graph.nodes.shows[guide];
+    expect(graph.use.source).toBe("user");
+    expect(Date.parse(graph.use.since)).toBeLessThan(Date.now());
+    const state = openStateDatabase();
+    try {
+      const insert = state.prepare(
+        "INSERT INTO usage_events (event_type, query, entry_ref, signal, metadata, source, created_at) VALUES (?, ?, ?, NULL, NULL, ?, ?)",
+      );
+      const now = new Date().toISOString().slice(0, 19).replace("T", " ");
+      insert.run("show", null, "stash//knowledge/guide", "user", now);
+      insert.run("show", null, "stash//knowledge/guide", "improve", now);
+      insert.run("search", "deploy", "stash//knowledge/guide", "user", now);
+      insert.run("show", null, "stash//knowledge/guide", "user", "2000-01-01 00:00:00");
+    } finally {
+      state.close();
+    }
+    const live = await out(assets.graph());
+    expect(live.nodes.shows[at("stash//knowledge/guide")]).toBe(before + 1);
+    expect(live.nodes.searches[at("stash//knowledge/guide")]).toBe(graph.nodes.searches[guide] + 1);
+  });
+
+  test("graph: without state.db the use counts are zero and the note says so", async () => {
+    await seed();
+    fs.rmSync(getStateDbPath(), { force: true });
+    fs.rmSync(`${getStateDbPath()}-wal`, { force: true });
+    fs.rmSync(`${getStateDbPath()}-shm`, { force: true });
+    const graph = await out(assets.graph());
+    expect(graph.nodes.shows.every((n: number) => n === 0)).toBe(true);
+    expect(graph.note).toContain("Use counts are zero");
   });
 
   test("taskRuns: every task's runs of the window, newest first, with what started each", async () => {
