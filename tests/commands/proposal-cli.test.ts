@@ -975,16 +975,7 @@ describe("akm proposal multi-bundle queues", () => {
 
     const rejectedProposal = seedProposal(secondary, "secondary//lessons/reject-me");
     const rejected = await runCli(
-      [
-        "proposal",
-        "reject",
-        rejectedProposal.id,
-        "--queue",
-        "secondary",
-        "--reason",
-        "not needed",
-        "--format=json",
-      ],
+      ["proposal", "reject", rejectedProposal.id, "--queue", "secondary", "--reason", "not needed", "--format=json"],
       { stashDir: primary },
     );
     expect(rejected.status).toBe(0);
