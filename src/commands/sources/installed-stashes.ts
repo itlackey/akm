@@ -25,8 +25,9 @@ import { AkmError, ConfigError, NotFoundError, UsageError } from "../../core/err
 import { isPathAbsent } from "../../core/path-access";
 import { getDbPath, getRegistryCacheDir } from "../../core/paths";
 import { warn } from "../../core/warn";
+import { buildIndex } from "../../indexer/index-build";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
-import { akmIndex } from "../../indexer/indexer";
+import type { IndexResponse } from "../../indexer/indexer";
 import type { LockfileEntry } from "../../integrations/lockfile";
 import { readLockfile, upsertLockEntry } from "../../integrations/lockfile";
 import { parseRegistryRef, resolveRegistryArtifact } from "../../registry/resolve";
@@ -297,7 +298,7 @@ export async function akmRemove(input: { target: string; stashDir?: string }): P
     if (managed.source !== "local" && managed.localRoot) {
       cleanupDirectoryBestEffort(managed.localRoot, "remove");
     }
-    const index = await akmIndex({ stashDir });
+    const index = await buildIndex({ stashDir }, "wait");
 
     return {
       schemaVersion: 1,
@@ -329,7 +330,7 @@ export async function akmRemove(input: { target: string; stashDir?: string }): P
   }
 
   const removedEntry = stashResult.entry;
-  const index = await akmIndex({ stashDir });
+  const index = await buildIndex({ stashDir }, "wait");
   const updatedConfig = loadConfig();
 
   return {
@@ -357,7 +358,7 @@ export async function akmRemove(input: { target: string; stashDir?: string }): P
 
 // ── akmUpdate helpers ────────────────────────────────────────────────────────
 
-type IndexResult = Awaited<ReturnType<typeof akmIndex>>;
+type IndexResult = IndexResponse;
 type ConfiguredSource = ReturnType<typeof getSources>[number];
 
 type UpdateIndexSummary = Pick<IndexResult, "mode" | "totalEntries" | "directoriesScanned" | "directoriesSkipped"> & {
@@ -507,7 +508,7 @@ function fastForwardCheckout(liveRepo: string, stagedRepo: string): void {
  * leaves config alone; the next `akm index` records them.
  */
 function reindexAfterUpdate(stashDir: string): Promise<IndexResult> {
-  return akmIndex({ stashDir, hydrateSources: false, persistDetectedAdapters: false });
+  return buildIndex({ stashDir, hydrateSources: false, persistDetectedAdapters: false }, "wait");
 }
 
 /** Publish, then reindex, holding the asset-mutation lease so no other writer interleaves. */
@@ -740,7 +741,7 @@ async function updateFilesystemSource(
 ): Promise<UpdateResponse> {
   const id = filesystemSource.name ?? filesystemSource.path ?? target;
   const ref = filesystemSource.path ?? target;
-  const index = await akmIndex({ stashDir, hydrateSources: false });
+  const index = await buildIndex({ stashDir, hydrateSources: false }, "wait");
   if (!index.scanComplete) {
     return buildUpdateResponse(stashDir, target, all, [], {
       skipped: [incompleteFilesystemOutcome(id)],
@@ -1063,7 +1064,7 @@ export async function akmUpdate(input?: {
         // for the final `--all` outcome. Retry once after every source update;
         // a genuinely missing filesystem root remains incomplete and is
         // reported below without claiming reconciliation.
-        if (!latestIndex?.scanComplete) latestIndex = await akmIndex({ stashDir, hydrateSources: false });
+        if (!latestIndex?.scanComplete) latestIndex = await buildIndex({ stashDir, hydrateSources: false }, "wait");
         if (latestIndex.scanComplete) {
           for (const source of filesystemSources) {
             plainSynced.push({
