@@ -1,8 +1,10 @@
 # Stability and compatibility
 
 Use this document to decide which AKM interfaces to depend on and what to migrate
-before 0.11. It describes the **current 0.10 line**; replacements planned for 0.11
-are identified separately. Exact command syntax lives in the [CLI reference](docs/reference/cli.md).
+before 0.11. This copy, on the 0.11 branch, describes the 0.10 line and the
+removals 0.11 makes. Some of those removals have already landed on this branch; their
+rows say "removed in 0.11", and the [removed flags and commands](docs/migration/v0.10-to-v0.11.md#removed-flags-and-commands)
+table says which still run. Exact command syntax lives in the [CLI reference](docs/reference/cli.md).
 
 ## How to read this
 
@@ -13,7 +15,7 @@ only to the named flag, field, format, or behavior.
 | --- | --- | --- |
 | **Stable** | Supported for scripts and integrations. Changes within a minor line are additive; breaking changes require a CHANGELOG entry and migration guidance. | Use the documented interface and parse its documented fields. |
 | **Evolving** | Supported, but flags, prompts, and payloads are still being refined. Breaking changes are documented; the 0.10 overlap policy below protects existing callers. | Follow release notes and keep integrations covered by tests. |
-| **Experimental** | A named feature or contract is still under evaluation and may change between releases. Some capabilities require an explicit opt-in. | Use deliberately; do not assume a stable automation contract beyond the guarantees explicitly listed here. |
+| **Experimental** | A named feature or contract is still under evaluation and may change between releases. Some capabilities require an explicit opt-in. Experimental features are part of the project: they are typically promoted or removed at a major or minor release, but may also remain Experimental. A row's level is its decision; no row carries an exit date. | Use deliberately; do not assume a stable automation contract beyond the guarantees explicitly listed here. |
 | **Deprecated** | Still supported through 0.10.x, with removal scheduled for **0.11.0**. Existing behavior and output remain available during that overlap. | Adopt the replacement in the command notes when it ships; if there is none, follow the stated removal guidance. |
 
 Deprecation takes precedence over a command's former status. It does not loosen
@@ -38,9 +40,9 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 
 | Command | Status | Contract or migration action |
 | --- | --- | --- |
-| `akm index` | Stable | `--export-vectors` and `--import-vectors` are Experimental for their first release; the vector file (`model`, `text_hash`, `embedding`) is their contract, the index file format stays internal. |
+| `akm index` | Stable | `--export-vectors` and `--import-vectors` are Experimental; the vector file (`model`, `text_hash`, `embedding`) is their contract, the index file format stays internal. |
 | `akm search` | Stable | `--include-proposed` and `--include-sessions` are Deprecated, removed in 0.11: use `--include quality=proposed` and `--include type=<excluded-type>`; `type=` also takes a custom type listed in `search.defaultExcludeTypes` (read from the config file only, not from `extends` layers). `--by-usage` is Deprecated, removed in 0.11: use `akm doctor metrics assets` (first in 0.10.261120; same filters and result fields). |
-| `akm curate` | Stable | `--max-tokens` aliases the existing `--pack` budget and output. Both are opt-in; the unbudgeted default stays unchanged. Conflicting explicit budgets are rejected. `--pack` and the unpacked default are Deprecated, removed in 0.11 when curate returns bounded packed context by default. |
+| `akm curate` | Stable | `--max-tokens` aliases the existing `--pack` budget and output. Both are opt-in; the unbudgeted default stays unchanged. Conflicting explicit budgets are rejected. `--pack` and the unpacked default are Deprecated, removed in 0.11 when curate returns bounded packed context by default (the 0.11 contract is in the [removal table](#remaining-scheduled-011-removals-and-breaking-changes)). |
 | `akm show` | Stable | `--outline` and `--lead` are additive aliases. `--max-tokens` bounds body fields (after any frontmatter) on whole/exact/lead reads and reports estimation/truncation; legacy unbudgeted output is unchanged. `--outline` with `--lead` or a budget, `--detail brief` with `--lead`, and `--detail brief` with `--max-tokens` and no lead context are usage errors; `--detail brief --context lead [--max-chars|--max-tokens]` keeps working as in 0.10.261118. `--context`, `--max-chars` and `--detail` are Deprecated, removed in 0.11 (exact reads become the default). |
 | `akm remember` | Stable | `--source`, `--description`, and `--expires` work independently of tags. Capture and enrichment processes are unchanged. `--auto`, `--enrich` and `--show-similar` are Deprecated, removed in 0.11 with no replacement flag; they print a notice since 0.10.261120. |
 | `akm import` | Stable | Additive `--asset-ref` and `--type task` modes, first in 0.10.261119; existing document inputs unchanged. `--type task` writes `scheduler.enabled` deliberately, to keep a stale scheduler row from activating the new task. |
@@ -69,9 +71,9 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | --- | --- | --- |
 | `akm run` | Evolving | First in 0.10.261119. Dispatches agent, command, task and workflow refs through their existing executors; workflow run ids continue frozen runs. |
 | Task `steps:` (task source v4) | Experimental | First in 0.10.261121 ([#1096](https://github.com/itlackey/akm/issues/1096)). A v4 task may declare `steps:` instead of `uses`/`run`; nothing changes for other tasks. Each step has a `name` and one of `run:` (one shell line), `prompt:` (a `commands/` ref or inline text; `harness`, `connection`, `model`, `expect` select the runner and the reply check) or `task:` (another task without `steps:`), plus `env`, `timeout`, `retries`. Steps get `AKM_PARAMS` and `AKM_STEPS` (never `AKM_INPUTS`); a failed step stops the run; `akm run <task> --resume` restarts at it; a run does not start while the previous one is alive. Each step is recorded in the run's history. The shape may change in 0.11, where `akm migrate apply` converts it. The rest of the task contract is unchanged. |
-| `akm workflow status` | Deprecated | Removed in 0.11 with workflows ([#1096](https://github.com/itlackey/akm/issues/1096)): task run history replaces it. `--all-scopes` added in 0.9.15 (#942); a deprecated no-op since 0.10 (#1239), accepted through 0.10. |
+| `akm workflow status` | Deprecated | Removed in 0.11 with workflows ([#1096](https://github.com/itlackey/akm/issues/1096)): task run history replaces it. `--all-scopes` (added in 0.9.15, #942; a no-op since 0.10, #1239) is removed in 0.11: it is an unknown flag, and the error says to drop it. |
 | `akm workflow plan` | Deprecated | Removed in 0.11: use `akm doctor explain <ref>`, first in 0.10.261120. Preserve secret-free provenance output and no execution. |
-| `akm workflow list` | Deprecated | Removed in 0.11 with workflows ([#1096](https://github.com/itlackey/akm/issues/1096)): task run history replaces it. `--all-scopes` and a top-level `scopeKey` envelope field added in 0.9.15 (#942); since 0.10 (#1239) `--all-scopes` is a deprecated no-op, accepted through 0.10, and the `scopeKey` field is removed from the list result. |
+| `akm workflow list` | Deprecated | Removed in 0.11 with workflows ([#1096](https://github.com/itlackey/akm/issues/1096)): task run history replaces it. `--all-scopes` and a top-level `scopeKey` envelope field were added in 0.9.15 (#942); since 0.10 (#1239) the `scopeKey` field is gone from the list result, and `--all-scopes` is removed in 0.11: it is an unknown flag, and the error says to drop it. |
 | `akm workflow create` | Deprecated | Removed in 0.11 with workflows ([#1096](https://github.com/itlackey/akm/issues/1096)); no replacement. |
 | `akm workflow resume` | Deprecated | Removed in 0.11 with workflows ([#1096](https://github.com/itlackey/akm/issues/1096)): a failed task run resumes at the step that failed. |
 | `akm workflow abandon` | Deprecated | Removed in 0.11 with workflows ([#1096](https://github.com/itlackey/akm/issues/1096)); no replacement. |
@@ -81,10 +83,11 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | `akm task add` | Deprecated | Removed in 0.11: use `akm import <file> --type task`, then `task enable` when activation is wanted. |
 | `akm task enable` | Evolving | In 0.11 the schedule that runs lives in host config, and a task file's `schedule:` may stay as the default that enabling applies ([#1096](https://github.com/itlackey/akm/issues/1096)); this command's 0.11 form is not final. |
 | `akm task disable` | Evolving | As `task enable`. |
+| `akm task dispatch` | Evolving | New in 0.11 (not in 0.10). The scheduler's entry point: starts every enabled task that is due this minute, each detached, and exits. The one OS scheduler entry (`akm doctor scheduler sync`) or your own supervisor runs it every minute. |
 | `akm task run` | Deprecated | Removed in 0.11: use `akm run <qualified-task-ref>` with the same inputs. |
-| `akm task history` | Deprecated | Removed in 0.11: `akm task history <id>` becomes `akm doctor log --task <id>` (`--bundle`, `--limit`), first in 0.10.261120. The no-id cross-task form has no replacement; `akm doctor metrics` gives per-task totals. Both print each run's `trigger`. |
+| `akm task history` | Deprecated | Removed in 0.11: `akm task history <id>` becomes `akm doctor log --task <id>` (`--bundle`, `--limit`), first in 0.10.261120. The no-id cross-task form has no replacement; `akm doctor metrics` gives per-task totals. Both print each run's `trigger`. `--id <id>` is already removed on the 0.11 branch: it is an unknown flag, and the error names `akm doctor log --task <id>`. |
 | `akm task sync` | Deprecated | Removed in 0.11: use `akm doctor scheduler sync`, first in 0.10.261120, retaining reconciliation and rebind behavior. |
-| `akm task prune` | Deprecated | Removed in 0.11: use `akm doctor scheduler sync --prune`, first in 0.10.261120 (a preview unless `--yes`; `--id` narrows it). |
+| `akm task prune` | Deprecated | Removed in 0.11: use `akm doctor scheduler sync --prune`, first in 0.10.261120 (a preview unless `--yes`; `--id` narrows it). Already an unknown command on the 0.11 branch: there `doctor scheduler sync` removes the old per-task rows itself, so `--prune`, `--yes` and `--id` are gone too, and `akm migrate status` previews it. |
 | `akm task doctor` | Deprecated | Removed in 0.11: use `akm doctor` for scheduler checks (its `scheduler` field), first in 0.10.261120. |
 | `akm task explain` | Deprecated | Removed in 0.11: use `akm doctor explain <ref>` without execution, first in 0.10.261120. Current provenance output redacts secret-shaped values heuristically, not as a guarantee. |
 
@@ -96,22 +99,24 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | `akm doctor metrics` | Evolving | Reuses `metrics`; its report content, layout, and JSON payload remain Experimental, except `doctor metrics usage --export`, whose JSON (schema version 1) is the stable part. Improve-run report selection is not yet consolidated here. |
 | `akm doctor info` | Evolving | Reuses `info`, preserving its existing fields and broken-config recovery behavior; `learning` remains Experimental. |
 | `akm doctor log` | Evolving | Reuses the existing event-stream command and output. |
+| `akm doctor scheduler sync` | Evolving | First in 0.10.261120. Installs, updates or removes the OS scheduler entry; reuses `task sync`, with its reconciliation and `--rebind`. In 0.11 it keeps only `--rebind` and removes the old per-task rows itself. |
+| `akm doctor explain` | Evolving | First in 0.10.261120. Takes a task ref or id (`--bundle`) or `workflows/<name>`, and prints what it would run, secret-free and read-only; it never runs anything. |
 | `akm doctor prompt` | Evolving | Reuses `improve --show-prompt`, preserving task, bundle, strategy and runner selection, output, and read-only behavior. The old form remains. |
 | `akm doctor judge` | Evolving | Reuses registered judges, runner selection, JSON stdin, and versioned verdicts; invoking a judge can make model calls. |
 | `akm health` | Deprecated | Removed in 0.11: use `akm doctor` for checks and `doctor metrics` for reporting. Current exit codes are Evolving; report content and rendered `md` layout are Experimental. |
 | `akm metrics` | Deprecated | Removed in 0.11: use `akm doctor metrics`. Current report content and JSON shape are Experimental. |
-| `akm info` | Deprecated | Removed in 0.11: use `akm doctor info`. The current `learning` field is Experimental for its first release. |
+| `akm info` | Deprecated | Removed in 0.11: use `akm doctor info`. The current `learning` field is Experimental. |
 | `akm log` | Deprecated | Removed in 0.11: use `akm doctor log`. |
 | `akm lint` | Evolving | |
-| `akm improve` | Evolving | `--require-feedback-signal`, `--json-to-stdout`, `--show-prompt` and `--timeout-ms` are Deprecated, removed in 0.11 (replacements: a strategy with `processes.proactiveMaintenance.enabled: false` selected with `--strategy`, ordinary JSON output, `doctor prompt`, `--timeout`). Gate-passed proposals are accepted and committed by default. The [three named autonomous lanes](#akm-improve-autonomy) require `experimental.improveAutonomy`; other documented writes do not. |
+| `akm improve` | Evolving | `--require-feedback-signal`, `--json-to-stdout` and `--show-prompt` are Deprecated, removed in 0.11 (replacements: a strategy with `processes.proactiveMaintenance.enabled: false` selected with `--strategy`, ordinary JSON output, `doctor prompt`). `--timeout-ms` is already removed on the 0.11 branch: it is an unknown flag, and the error names `--timeout`. Gate-passed proposals are accepted and committed by default. The [three named autonomous lanes](#akm-improve-autonomy) require `experimental.improveAutonomy`; other documented writes do not. |
 | `akm improve report` | Deprecated | Removed in 0.11: use `akm doctor metrics improve` (`--run`, `--since`), first in 0.10.261120, retaining run/window selection and usage, routing, and cost data. |
-| `akm improve judge` | Deprecated | Removed in 0.11: use `akm doctor judge`. Subcommand since 0.10 (was a magic `scope` value); reads one revision as JSON on stdin and writes nothing. The same as `akm judge reflect.quality`, in its older input and output shape; its `--strategy` flag was removed. |
+| `akm improve judge` | Deprecated | Removed in 0.11: use `akm doctor judge`. Subcommand since 0.10 (was a magic `scope` value); reads one revision as JSON on stdin and writes nothing. The same as `akm judge reflect.quality`, in its older input and output shape; its `--strategy` flag was removed. Already an unknown command on the 0.11 branch, whose error names `akm doctor judge reflect.quality`. |
 | `akm judge` | Deprecated | Removed in 0.11: use `akm doctor judge`. Runs a registered judge (`reflect.quality`, `distill.lesson`, `consolidate.pair`, `proposal.judgment`) on one JSON input from stdin, on the runner `--connection`, `--harness` and `--model` select. Output is one envelope (`judge`, `schemaVersion`, `runner`, `outcome`, `verdict?`, `reason?`); each judge carries its own `schemaVersion`. |
 | `akm proposal list` | Stable | |
-| `akm proposal show` | Evolving | The `legacy-ref` validation finding on a proposal recorded before concept IDs (#1513) is Experimental for its first release. |
+| `akm proposal show` | Evolving | The `legacy-ref` validation finding on a proposal recorded before concept IDs (#1513) is Experimental. |
 | `akm proposal diff` | Evolving | |
 | `akm proposal accept` | Evolving | |
-| `akm proposal reject` | Evolving | Does not ask for confirmation; `--yes`/`-y` is Deprecated (ignored with a notice), removed in 0.11. |
+| `akm proposal reject` | Evolving | Does not ask for confirmation. `--yes`/`-y` was ignored with a notice through 0.10 and is removed in 0.11: it is an unknown flag, and the error says reject never asks. |
 | `akm proposal reopen` | Evolving | Undoes a rejection. |
 | `akm proposal revert` | Evolving | |
 | `akm proposal drain` | Evolving | |
@@ -122,7 +127,7 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 
 | Command | Status | Contract or migration action |
 | --- | --- | --- |
-| `akm setup` | Stable | Answer flags (`--endpoint`, `--api-key-env`, `--name`, `--harness`, `--embedding`, ...) are new in 0.10. The old JSON-valued `setup --config` and `--probe` were removed; see [upgrade history](#connections-and-harnesses-in-010-1244). `--learning on\|off` and the `improve.enabled` key it writes are Experimental for their first release. |
+| `akm setup` | Stable | Answer flags (`--endpoint`, `--api-key-env`, `--name`, `--harness`, `--embedding`, ...) are new in 0.10. The old JSON-valued `setup --config` and `--probe` were removed; see [upgrade history](#connections-and-harnesses-in-010-1244). `--learning on\|off` and the `improve.enabled` key it writes are Experimental. |
 | `akm upgrade` | Stable | Includes the plugin step. `--next` is Deprecated in favor of coordinated `--channel` selection. Checksums are verified by default; `--skip-checksum` is the explicit recovery bypass, and the `AKM_UPGRADE_SKIP_CHECKSUM` variable it replaces is Deprecated for removal in 0.11. |
 | `akm migrate status` | Evolving | Forwards to the standalone `akm-migrate` tool and renders its result through the normal `--format` pipeline. |
 | `akm migrate apply` | Evolving | Forwards to the standalone `akm-migrate` tool and renders its result through the normal `--format` pipeline. |
@@ -137,8 +142,11 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | `akm models` | Evolving | The alias picks of a connection, then the models its endpoint lists, and `set` to change one. |
 | `akm models set` | Evolving | Changes a connection's model alias. |
 | `akm help` | Stable | |
+| `--project <name>` and config key `projects` | Evolving | First in 0.10.261111 (`show --project` in 0.10.261114). A project names the directories you work in and what akm reads and writes there. The call's `--project` (`none` for no project), else the project whose path contains the working directory, supplies defaults only for `search`, `curate`, `remember`, `proposal extract` and `proposal new`. See [Projects](docs/reference/cli.md#projects). |
+| config section `plugins` | Evolving | First in 0.10.261118. The home of the akm plugins' settings: the plugins read the file themselves and own the keys and their validation. akm keeps the section, never reads it, and never warns about what is inside it. See [Plugins](docs/reference/configuration.md#plugins). |
+| `usage.capture` and `akm doctor metrics usage` | Evolving | First in 0.10.261119. Local-only counts of akm's own commands in `metrics.db`; `usage.capture: false` in the config file turns them off, and `--read-only` records nothing. See [Command and argument usage metrics](#command-and-argument-usage-metrics). |
 | `akm help migrate` | Deprecated | Removed in 0.11 with no CLI replacement: read the published changelog and migration guide. |
-| `akm hints` | Stable | Format-exempt agent guide; the brief guide is the default. `--detail full` (the complete guide) is Deprecated and dropped in 0.11 with global `--detail`; use the brief guide, `akm help <command>` and the CLI reference. |
+| `akm hints` | Stable | Format-exempt agent guide; the brief guide is the default. `--detail full` (the complete guide) is Deprecated and removed in 0.11: it is accepted and ignored, and the short guide prints; use the brief guide, `akm help <command>` and the CLI reference. |
 | `akm completions` | Stable | Format-exempt (emits shell script source). |
 
 ### Environment and secrets
@@ -201,7 +209,7 @@ guide; all old surfaces in the left column are scheduled for 0.11 removal.
 | Deprecated — remove in 0.11 | Add or prepare in 0.10.x |
 | --- | --- |
 | `task add` | Explicit typed-task import; retain `task enable`/`disable` for host activation and unchanged legacy `task add` behavior |
-| `task sync`, `task prune` | Explicit `doctor scheduler sync` maintenance and migration cleanup of owned orphan entries; no separate prune command |
+| `task sync`, `task prune` | Explicit `doctor scheduler sync` maintenance and migration cleanup of owned orphan entries; no separate prune command (`task prune` is already removed on the 0.11 branch) |
 | `task history` | Per-task run history through `doctor log --task <id>`; the no-id cross-task form has no replacement, and `doctor metrics` gives per-task totals |
 | `clone` | Extend `import` for asset refs/typed assets and clone destinations without reinterpreting existing document inputs |
 | Search `--include-proposed`, `--include-sessions` | Search/curate `--include quality=proposed` and `--include type=<excluded-type>` are implemented in current 0.10 source, including project/API defaults; existing flags retain their behavior until 0.11. Check installed help for availability. |
@@ -280,7 +288,8 @@ remove a research capability or skip its replacement.
 | Remove/change in 0.11 | Replacement and 0.10.x preparation |
 | --- | --- |
 | General YAML output; general Markdown/JSONL support | JSON/text generally; Markdown for reports and JSONL for useful streaming cases |
-| Global `--output`, `--detail` | Shell redirection; add command-specific limits, budgets, and outlines in 0.10.x |
+| Global `--output` | Shell redirection |
+| `--detail` on `show`, and the `agent` value of `--detail` | `--detail brief\|normal\|full` stays in 0.11 with one meaning everywhere: how many fields each returned item carries. `show` uses `--outline`, `--lead` and `--max-tokens` instead, and the packed curate default replaces the `agent` projection. Both plugins and seven akm-eval evals pass `--detail` on reads, and the default `brief` keeps direct agent output small, so a control for more fields is needed; a replacement would be the same control renamed. The original problem was `show`, which this fixes |
 | `remember --auto`, `--enrich` | No replacement flag and no experimental key (the audit found one consumer, akm-eval's bakeoff). Remove the flags in 0.11. Enrichment belongs in improve, not in `remember` or `akm index`: an improve-based replacement that fills a new memory's tags and observed date must be implemented before 0.11.0 stable |
 | `remember --show-similar` | Separate retrieval operation |
 | Old public paths for custom-strategy definitions and research-only process knobs | Add experimental aliases in 0.10.x feeding the unchanged strategy engine; remove old paths in 0.11 |
@@ -288,11 +297,11 @@ remove a research capability or skip its replacement.
 | `improve --json-to-stdout` | Keep the flag and stdout contract in 0.10.x; expose equivalent run data through ordinary JSON output at the 0.11 cutover |
 | Overlapping bulk proposal controls | Nothing is retired: `accept`/`reject` with `--generator`, `--older-than` and `--max-diff-lines`, and `proposal drain`, both stay; they apply different approval rules |
 | `upgrade --next` | Use `--channel`, consistent across CLI and plugins |
-| `proposal reject --yes` / `-y` | Nothing: reject no longer asks for confirmation (0.10.261121), since `proposal reopen` undoes a rejection. The flag is ignored with a notice through 0.10 |
+| `proposal reject --yes` / `-y` | Nothing: reject no longer asks for confirmation (0.10.261121), since `proposal reopen` undoes a rejection. The flag was ignored with a notice through 0.10 and is an unknown flag in 0.11 |
 | No-ref interactive `agent` launch | Invoke the agent's own CLI |
-| `curate --pack` and the unpacked default | Add opt-in `--max-tokens` in 0.10.x; switch the default to bounded packed context and remove `--pack` in 0.11 |
+| `curate --pack` and the unpacked default | Add opt-in `--max-tokens` in 0.10.x; switch the default to bounded packed context and remove `--pack` in 0.11. The 0.11 contract: without `--max-tokens` the budget is **4000 tokens**; the result keeps the `results` envelope that `search` uses (with `searchMode`, warnings and the project line); each item carries `ref`, `content`, `tokens`, `reason` and `supportRefs`, and a `truncated` flag when it was cut. Not implemented yet (`TODO(0.11:curate-default)` in the migration guide) |
 | `lint --fail-on-flagged` | Nonzero exit for validation errors by default |
-| `--timeout-ms` | Duration-based `--timeout`, introduced alongside it in 0.10.x |
+| `--timeout-ms` | Duration-based `--timeout`, introduced alongside it in 0.10.261119. Removed on the 0.11 branch: a usage error naming `--timeout` |
 | Invalid-value fallback and ignored incompatible legacy flags, including simultaneous `--quiet`/`--verbose` | Validate new interfaces in 0.10.x; tighten legacy behavior in 0.11 |
 | Session extraction's source-harness `--type` | `proposal extract --sessions <claude\|codex\|opencode>` (0.10.261120); retire the overloaded `--type` spelling in 0.11 |
 | `help migrate <version>` | Read the published changelog and migration guide |
@@ -304,7 +313,7 @@ In 0.11, the scheduler-facing `task dispatch` (introduced on the 0.11 branch, no
 
 Before release, complete the exact mappings and synchronize this notice, the
 [recommendations](docs/reviews/cli-surface-recommendations-2026-11-11.md), and the
-migration guide. The command tables above, including the flag notes in the `search`, `curate`, `show`, `remember` and `improve` rows, are the current deprecation index. Besides the flags named there, the output-contract removals (general YAML output, global `--output` and `--detail`, general Markdown and JSONL) are scheduled for 0.11 and listed in the table above. A deprecated form whose replacement exists in the same build prints one stderr line naming it ([CLI reference](docs/reference/cli.md#deprecation-notices)).
+migration guide. The command tables above, including the flag notes in the `search`, `curate`, `show`, `remember` and `improve` rows, are the current deprecation index. Besides the flags named there, the output-contract removals (general YAML output, global `--output`, the `agent` value of `--detail`, general Markdown and JSONL) are scheduled for 0.11 and listed in the table above. A deprecated form whose replacement exists in the same build prints one stderr line naming it ([CLI reference](docs/reference/cli.md#deprecation-notices)).
 
 ## Interface contracts
 
@@ -391,8 +400,9 @@ fetch**: a registered renderer fires on the shape of the result (`akm health
 --report` carries the report dataset in the envelope, so the same data is
 available as JSON), never on the format alone.
 
-`--detail` is `brief|normal|full` (verbosity) or `agent` (the projection of
-`search`, `curate` and `show`; see Agent-oriented output below). A small set of commands is **format-exempt** because their
+`--detail` is `brief|normal|full`: how many fields each returned item carries,
+`brief` by default. An unknown value warns once and uses `normal`. The `agent`
+value of 0.10 is removed in 0.11 (see Agent-oriented output below). A small set of commands is **format-exempt** because their
 output is not a result envelope at all: `completions` (shell script source),
 child-process passthrough in `env run` / `secret run`, a bare-path payload
 from `env path` and `config path`, and document payloads from `hints` and `help`
@@ -425,10 +435,15 @@ the result envelope.
 
 ### Agent-oriented output (Experimental)
 
-`--detail agent` selects the agent projection on `search`, `show`,
+In 0.10, `--detail agent` selects the agent projection on `search`, `show`,
 and `curate`; other commands ignore it. It replaces
 `--shape agent`; `--shape` (and `--shape summary`, which only `show` had) is
 gone in 0.10 and is an unknown flag.
+
+The `agent` value is removed in 0.11: `--detail agent` warns once and uses
+`normal`, and curate's packed default replaces the projection. `--detail
+brief|normal|full` itself stays, as described under output above. Callers should
+stop passing `--detail agent`.
 
 ### Diagnostic reports (Deprecated entry points)
 
@@ -506,8 +521,10 @@ and change an alias with `akm models set`.
 ### Task formats and execution (Evolving)
 
 The 0.10 task commands are `add`, `enable`, `disable`, `run`, `explain`,
-`history`, `sync`, `prune`, and `doctor`; there is no group alias and no
-`list`, `remove`, `init`, or `validate`. Their individual deprecation statuses
+`history`, `sync`, `prune`, and `doctor`. The 0.11 branch drops `prune` and adds
+`dispatch`: `add`, `enable`, `disable`, `dispatch`, `run`, `explain`, `history`,
+`sync` and `doctor`. There is no group alias and no `list`, `remove`, `init`, or
+`validate`. Their individual deprecation statuses
 are in the command table. Task source v4 YAML, with typed `inputs:` and an
 optional `schedule:`, is the only accepted version. Task v3 and
 task v2 sources are converted by `akm migrate apply`. Command tasks use
@@ -630,7 +647,7 @@ migration preserves the remaining processes.
 
 The tuning controls include `improve.strategies.*.processes.*` (limits,
 gates, and the CLS knobs), `improve.processes.*` and `improve.qualityGate`
-(where each process runs) and the `index.*` per-pass config. Earlier policy allowed these keys to be
+(where each process runs). Earlier policy allowed these keys to be
 added, renamed, or dropped in 0.9.x and 0.10.x. The current rollout supersedes
 that permission: add equivalent experimental aliases in 0.10.x, retain old keys
 through the series, and remove their old paths in 0.11 only after effective-value
@@ -816,8 +833,8 @@ spelling is in the CHANGELOG entry and the CLI reference.
 
 | Gone | Use |
 | --- | --- |
-| `akm help agents` | `akm hints` (`--detail full` for the complete guide) |
-| `--shape agent` | `--detail agent` |
+| `akm help agents` | `akm hints` (`--detail full` for the complete guide in 0.10; the complete guide is removed in 0.11) |
+| `--shape agent` | `--detail agent` (itself removed in 0.11: use `--detail normal`) |
 | `--shape summary` | `--detail brief` (it only had a projection on `akm show`) |
 | `--target` on `import`, `env create`, `env remove`, `secret set`, `proposal accept`, `proposal diff`, `proposal revert` | `--bundle` |
 | `akm task validate <path>` | `akm lint --type tasks` |
@@ -832,9 +849,10 @@ replaced by `connections` and `harnesses`. A config in the old form still loads
 migrate apply` converts it.
 
 `--engine <name>` (on `agent`, `command run`, `task add`, `proposal new` and
-`proposal extract`) and `--require-engines` (on `improve`) are hidden from
-`--help` and still run, with one warning, through 0.10. `--require-engines`
-does nothing. Change a script to `--connection <name>` or `--harness <name>`,
+`proposal extract`) and `--require-engines` (on `improve`) were hidden from
+`--help` and ran, with one warning, through 0.10. `--require-engines`
+did nothing. Both are removed in 0.11: each is an unknown flag, and the error
+names the replacement. Change a script to `--connection <name>` or `--harness <name>`,
 and `--model <alias|name>`; how an old engine name resolves is under
 [The `engines` form](docs/reference/configuration.md#the-engines-form).
 

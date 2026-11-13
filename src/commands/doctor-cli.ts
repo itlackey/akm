@@ -15,8 +15,7 @@ import { runWorkflowPlan } from "./workflow-cli";
 const schedulerSyncCommand = defineJsonCommand({
   meta: {
     name: "sync",
-    description:
-      "Install, update or remove the one OS scheduler entry that runs `akm task dispatch` every minute (as `task sync`)",
+    description: "Install, update or remove the one OS scheduler entry that runs `akm task dispatch` every minute",
   },
   args: taskSyncArgs,
   async run({ args }) {
@@ -39,7 +38,7 @@ export const doctorExplainCommand = defineJsonCommand({
   meta: {
     name: "explain",
     description:
-      "Print what a task (as `task explain`) or workflow (as `workflow plan`, ref `workflows/<name>`) would " +
+      "Print what a task or a workflow (ref `workflows/<name>`) would " +
       "run, with provenance — read-only and secret-free; never executes anything",
   },
   args: {

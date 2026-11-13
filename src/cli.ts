@@ -1199,8 +1199,9 @@ function cittyCliErrorUsageCode(error: Error & { code?: string }): UsageErrorCod
 
 /** Recovery hints for the mistakes agents actually make, keyed by the command path as typed. */
 const RECOVERY_HINTS: Readonly<Record<string, string>> = {
-  "task list": "Task definitions are assets: `akm search --type task`. What is installed: `akm task doctor`.",
+  "task list": "Task definitions are assets: `akm search --type task`. What is installed: `akm doctor`.",
   "config get": "Pass a key, for example `akm config get defaultBundle`; `akm config list` shows them all.",
+  "task validate": "`task validate` is gone: `akm lint --type tasks` checks a bundle's task files.",
   "task prune":
     "`task prune` is gone: `akm doctor scheduler sync` removes the old per-task scheduler rows itself, and `akm migrate status` previews it.",
 };
