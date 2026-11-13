@@ -22,11 +22,30 @@ export type TaskHistoryDetail = {
   exitCode?: number | null;
 };
 
+/** Experimental: one step of a `steps:` task run, as recorded in `metadata_json`. */
+export interface TaskHistoryStep {
+  name: string;
+  kind: "run" | "prompt" | "task";
+  status: "completed" | "failed" | "skipped" | "reused";
+  durationMs: number;
+  attempts: number;
+  /** First line(s) of the result, scrubbed and clipped. */
+  summary?: string;
+  /** Why the step failed. */
+  reason?: string;
+  /** The bounded result; kept only on a failed run, so `--resume` can reuse it. */
+  result?: string;
+  /** When a `task:` step's own run started (its own history row). */
+  startedAt?: string;
+}
+
 export interface TaskHistoryMetadata {
   metadataVersion: 2;
   durationMs: number;
   detail: TaskHistoryDetail | null;
   engine?: string | null;
+  /** Steps of a `steps:` task run (Experimental); absent for every other task. */
+  steps?: TaskHistoryStep[];
   /** Whether the OS scheduler (`schedule`) or a person or script (`manual`) started the run; absent when not recorded. */
   trigger?: "schedule" | "manual";
 }
@@ -89,6 +108,7 @@ export function decodeTaskHistoryMetadata(input: string | unknown): TaskHistoryM
   const engine = parsed.engine === null || typeof parsed.engine === "string" ? parsed.engine : undefined;
   const trigger = parsed.trigger === "schedule" || parsed.trigger === "manual" ? parsed.trigger : undefined;
   validateDetail(detail);
+  const steps = decodeSteps(parsed.steps);
   const cleanDetail: TaskHistoryDetail | null = detail
     ? {
         ...(detail.runId !== undefined ? { runId: detail.runId } : {}),
@@ -102,8 +122,34 @@ export function decodeTaskHistoryMetadata(input: string | unknown): TaskHistoryM
     durationMs: parsed.durationMs,
     detail: cleanDetail,
     ...(engine !== undefined ? { engine } : {}),
+    ...(steps !== undefined ? { steps } : {}),
     ...(trigger !== undefined ? { trigger } : {}),
   };
+}
+
+const STEP_STATUSES = new Set(["completed", "failed", "skipped", "reused"]);
+const STEP_KINDS = new Set(["run", "prompt", "task"]);
+
+/** Tolerant: a malformed `steps` value is dropped, never a reason to reject the row. */
+function decodeSteps(value: unknown): TaskHistoryStep[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const steps: TaskHistoryStep[] = [];
+  for (const entry of value) {
+    if (!isRecord(entry) || typeof entry.name !== "string") continue;
+    if (!STEP_STATUSES.has(entry.status as string) || !STEP_KINDS.has(entry.kind as string)) continue;
+    steps.push({
+      name: entry.name,
+      kind: entry.kind as TaskHistoryStep["kind"],
+      status: entry.status as TaskHistoryStep["status"],
+      durationMs: typeof entry.durationMs === "number" ? entry.durationMs : 0,
+      attempts: typeof entry.attempts === "number" ? entry.attempts : 1,
+      ...(typeof entry.summary === "string" ? { summary: entry.summary } : {}),
+      ...(typeof entry.reason === "string" ? { reason: entry.reason } : {}),
+      ...(typeof entry.result === "string" ? { result: entry.result } : {}),
+      ...(typeof entry.startedAt === "string" ? { startedAt: entry.startedAt } : {}),
+    });
+  }
+  return steps;
 }
 
 /**

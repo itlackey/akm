@@ -27,6 +27,7 @@ import type { SpawnFn } from "../../core/subprocess";
 import type { InputFlag } from "../../execution/input-contract";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import type { RunExecutionOptions } from "../../integrations/agent/runner-dispatch";
+import type { TaskHistoryStep } from "../../storage/repositories/task-history-repository";
 import type { runWorkflowSteps } from "../../workflows/exec/run-workflow";
 import type { ExecutionProvenanceContext, TaskInvocation } from "../model/invocation";
 import type { PreparedTaskV3Script, PreparedTaskV3Shell } from "../prepare/prepared-execution";
@@ -51,7 +52,10 @@ export interface TaskRunResult {
     | { kind: "command"; engine: string | null }
     | { kind: "shell"; cmd?: string[] }
     | { kind: "script"; cmd?: string[] }
+    | { kind: "steps" }
     | { kind: "unknown" };
+  /** Per-step record of a `steps:` task run (Experimental). */
+  steps?: TaskHistoryStep[];
   /** Workflow run id (for workflow targets) or agent reason/error (for command targets). */
   detail?: { runId?: string; reason?: string; error?: string; exitCode?: number | null };
   /** Whether the OS scheduler or a person/script started the run; read back from task history, absent when not recorded. */
@@ -126,6 +130,15 @@ export interface RunTaskOptions {
    * against the real constructed value rather than a bespoke side channel.
    */
   captureTaskInvocation?: (invocation: TaskInvocation) => void;
+  /**
+   * Experimental, steps tasks: how a `task:` step resolves and runs another
+   * task. `check` fails before any step runs; the CLI layer supplies both, since
+   * only it knows bundle resolution.
+   */
+  taskStepRunner?: {
+    check: (ref: string) => Promise<void>;
+    run: (ref: string) => Promise<TaskRunResult>;
+  };
 }
 
 /**

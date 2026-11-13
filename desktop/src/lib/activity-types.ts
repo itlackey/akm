@@ -173,6 +173,16 @@ export interface ActivityTaskHistory {
     durationMs: number | null;
     trigger?: "schedule" | "manual" | null;
     detail: Record<string, unknown> | null;
+    /** The steps of a steps task run (Experimental); null for every other run. */
+    steps?: Array<{
+      name: string;
+      kind: "run" | "prompt" | "task";
+      status: "completed" | "failed" | "skipped" | "reused";
+      durationMs: number;
+      attempts: number;
+      summary?: string;
+      reason?: string;
+    }> | null;
   }>;
 }
 export interface ActivityTaskRun {

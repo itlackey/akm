@@ -29,6 +29,7 @@
 import type { ParsedBuiltinCommandAction } from "../commands/command/builtin-action";
 import type { ExecutionJsonObject } from "../execution/json";
 import { TASK_V3_MAX_SCHEDULES } from "./source/bounded-document";
+import type { TaskSourceV4Step } from "./source/task-source-v4";
 
 // Re-exported at its existing name so no importer changes: the one name a
 // surviving `src` consumer still imports (task-source-v4.ts).
@@ -76,6 +77,13 @@ export interface TaskV3AkmOptions {
 }
 
 export type TaskV3Target =
+  | Readonly<{
+      /** Experimental: ordered steps (task source v4 only). */
+      kind: "steps";
+      steps: readonly TaskSourceV4Step[];
+      shell?: TaskV3HostShell;
+      workingDirectory?: string;
+    }>
   | Readonly<{
       kind: "uses";
       uses: TaskV3UsesTarget;

@@ -79,6 +79,7 @@ export const TASK_SOURCE_V4_TOP_LEVEL_KEYS = [
   "output",
   "uses",
   "run",
+  "steps",
   "with",
   "env",
   "shell",
@@ -122,7 +123,33 @@ export type TaskSourceV4UsesTarget =
   | Readonly<{ kind: "builtin-command"; ref: "akm/command" }>
   | Readonly<{ kind: "command" | "script" | "workflow"; ref: string }>;
 
+/** Experimental: one entry of a `steps:` task. Exactly one of run / prompt / task. */
+export type TaskSourceV4Step = Readonly<{
+  name: string;
+  env?: TaskV3Environment;
+  timeout?: string | number | null;
+  retries: number;
+}> &
+  (
+    | Readonly<{ kind: "run"; run: string }>
+    | Readonly<{
+        kind: "prompt";
+        prompt: Readonly<{ kind: "ref"; ref: string }> | Readonly<{ kind: "inline"; content: string }>;
+        harness?: string | null;
+        connection?: string | null;
+        model?: string | null;
+        expect?: readonly string[];
+      }>
+    | Readonly<{ kind: "task"; ref: string }>
+  );
+
 export type TaskSourceV4Target =
+  | Readonly<{
+      kind: "steps";
+      steps: readonly TaskSourceV4Step[];
+      shell?: TaskV3HostShell;
+      workingDirectory?: string;
+    }>
   | Readonly<{
       kind: "uses";
       uses: TaskSourceV4UsesTarget;
@@ -293,10 +320,14 @@ function nullableSelectorTopLevel(value: unknown, ctx: BoundedDocumentContext, k
   return selector;
 }
 
-function parseTimeoutTopLevel(value: unknown, ctx: BoundedDocumentContext): string | number | null {
+function parseTimeoutTopLevel(
+  value: unknown,
+  ctx: BoundedDocumentContext,
+  path: readonly (string | number)[] = ["timeout"],
+): string | number | null {
   if (value === null) return null;
   if (typeof value === "string" && value.trim() !== value) {
-    sourceError(ctx, ["timeout"], "must not contain surrounding whitespace.");
+    sourceError(ctx, path, "must not contain surrounding whitespace.");
   }
   const milliseconds = typeof value === "string" ? parseDuration(value, DURATION_UNITS) : value;
   if (
@@ -308,14 +339,160 @@ function parseTimeoutTopLevel(value: unknown, ctx: BoundedDocumentContext): stri
   ) {
     sourceError(
       ctx,
-      ["timeout"],
+      path,
       `must be null, 0 through ${EXECUTION_MAX_TIMEOUT_MS} milliseconds, or a common duration such as 20m.`,
     );
   }
   return value as string | number;
 }
 
+function parseShellAndDirectory(
+  input: ExecutionJsonObject,
+  ctx: BoundedDocumentContext,
+): { shell?: TaskV3HostShell; workingDirectory?: string } {
+  let shell: TaskV3HostShell | undefined;
+  if (own(input, "shell")) {
+    const rawShell = stringField(input.shell, ctx, ["shell"], { nonempty: true }) as string;
+    if (!SHELL_SET.has(rawShell)) {
+      sourceError(ctx, ["shell"], `must be one of the closed host-shell table: ${TASK_V3_HOST_SHELLS.join(", ")}.`);
+    }
+    shell = rawShell as TaskV3HostShell;
+  }
+  let workingDirectory: string | undefined;
+  if (own(input, "working-directory")) {
+    workingDirectory = stringField(input["working-directory"], ctx, ["working-directory"], {
+      nonempty: true,
+    }) as string;
+  }
+  return { ...(shell ? { shell } : {}), ...(workingDirectory ? { workingDirectory } : {}) };
+}
+
+// ── Experimental: steps: ────────────────────────────────────────────────────
+
+/** Closed key set of one step; `harness`/`connection`/`model`/`expect` are legal on prompt steps only. */
+const TASK_SOURCE_V4_STEP_KEYS = [
+  "name",
+  "run",
+  "prompt",
+  "task",
+  "env",
+  "timeout",
+  "retries",
+  "harness",
+  "connection",
+  "model",
+  "expect",
+] as const;
+const PROMPT_ONLY_STEP_KEYS = ["harness", "connection", "model", "expect"] as const;
+export const TASK_SOURCE_V4_MAX_STEPS = 32;
+export const TASK_SOURCE_V4_MAX_STEP_RETRIES = 5;
+const STEP_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+/** Task-level keys that have no meaning next to `steps:`. */
+const KEYS_ILLEGAL_WITH_STEPS = ["uses", "run", "with", "output", "maxSteps", "maxRetries"] as const;
+
+function parseStepPrompt(value: unknown, ctx: BoundedDocumentContext, path: readonly (string | number)[]) {
+  const text = stringField(value, ctx, path, { nonempty: true }) as string;
+  if (!/\s/.test(text)) {
+    let classified: ReturnType<typeof classifyTargetRef> | undefined;
+    try {
+      classified = classifyTargetRef(text);
+    } catch {
+      classified = undefined;
+    }
+    if (classified?.kind === "command") return Object.freeze({ kind: "ref" as const, ref: classified.ref });
+    if (classified) sourceError(ctx, path, "names a non-command asset; use a commands/ ref or inline prompt text.");
+  }
+  return Object.freeze({ kind: "inline" as const, content: text });
+}
+
+function parseStep(raw: ExecutionJsonValue, index: number, ctx: BoundedDocumentContext): TaskSourceV4Step {
+  const path = ["steps", index];
+  const step = asRecord(raw, ctx, path);
+  checkKeys(step, TASK_SOURCE_V4_STEP_KEYS, ctx, path);
+  if (!own(step, "name")) sourceError(ctx, [...path, "name"], "is required.");
+  const name = stringField(step.name, ctx, [...path, "name"]) as string;
+  if (!STEP_NAME_PATTERN.test(name)) {
+    sourceError(ctx, [...path, "name"], "must be 1-64 letters, digits, '_' or '-', starting with a letter or digit.");
+  }
+  const selectors = (["run", "prompt", "task"] as const).filter((key) => own(step, key));
+  if (selectors.length !== 1) sourceError(ctx, path, "requires exactly one of run, prompt or task.");
+  const kind = selectors[0] as "run" | "prompt" | "task";
+  if (kind !== "prompt") {
+    const stray = PROMPT_ONLY_STEP_KEYS.find((key) => own(step, key));
+    if (stray) sourceError(ctx, [...path, stray], "is legal only on a prompt step.");
+  }
+  let env: TaskV3Environment | undefined;
+  if (own(step, "env")) {
+    try {
+      env = parseEnvironment(presentJsonValue(step.env, ctx, [...path, "env"]), ctx);
+    } catch (cause) {
+      sourceError(ctx, [...path, "env"], cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+  const timeout = own(step, "timeout") ? parseTimeoutTopLevel(step.timeout, ctx, [...path, "timeout"]) : undefined;
+  let retries = 0;
+  if (own(step, "retries")) {
+    if (
+      !Number.isSafeInteger(step.retries) ||
+      (step.retries as number) < 0 ||
+      (step.retries as number) > TASK_SOURCE_V4_MAX_STEP_RETRIES
+    ) {
+      sourceError(ctx, [...path, "retries"], `must be an integer from 0 to ${TASK_SOURCE_V4_MAX_STEP_RETRIES}.`);
+    }
+    retries = step.retries as number;
+  }
+  const common = { name, ...(env ? { env } : {}), ...(timeout !== undefined ? { timeout } : {}), retries };
+
+  if (kind === "run") {
+    const run = stringField(step.run, ctx, [...path, "run"], { nonempty: true }) as string;
+    return Object.freeze({ ...common, kind, run });
+  }
+  if (kind === "task") {
+    const text = stringField(step.task, ctx, [...path, "task"], { nonempty: true }) as string;
+    let ref: string;
+    try {
+      const classified = classifyTargetRef(text);
+      if (classified.kind !== "task") throw new UsageError("not a task ref");
+      ref = classified.ref;
+    } catch {
+      sourceError(ctx, [...path, "task"], "must be a canonical tasks/ ref (optionally <bundle>//tasks/<name>).");
+    }
+    return Object.freeze({ ...common, kind, ref });
+  }
+  const prompt = parseStepPrompt(step.prompt, ctx, [...path, "prompt"]);
+  const selectors2: Record<string, string | null> = {};
+  for (const key of ["harness", "connection", "model"] as const) {
+    if (own(step, key)) selectors2[key] = nullableSelectorTopLevel(step[key], ctx, key);
+  }
+  let expect: readonly string[] | undefined;
+  if (own(step, "expect")) {
+    expect = parseStringArray(step.expect, ctx, [...path, "expect"], { max: 32 });
+    if (expect.length === 0 || new Set(expect).size !== expect.length) {
+      sourceError(ctx, [...path, "expect"], "must be a non-empty list of distinct field names.");
+    }
+  }
+  return Object.freeze({ ...common, kind, prompt, ...selectors2, ...(expect ? { expect } : {}) });
+}
+
+function parseStepsTarget(input: ExecutionJsonObject, ctx: BoundedDocumentContext): TaskSourceV4Target {
+  for (const key of KEYS_ILLEGAL_WITH_STEPS) {
+    if (own(input, key)) sourceError(ctx, [key], "is not legal next to steps:.");
+  }
+  const raw = presentJsonValue(input.steps, ctx, ["steps"]);
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > TASK_SOURCE_V4_MAX_STEPS) {
+    sourceError(ctx, ["steps"], `must be a list of 1 to ${TASK_SOURCE_V4_MAX_STEPS} steps.`);
+  }
+  const steps = raw.map((entry, index) => parseStep(entry, index, ctx));
+  const seen = new Set<string>();
+  steps.forEach((step, index) => {
+    if (seen.has(step.name)) sourceError(ctx, ["steps", index, "name"], "duplicates an earlier step name.");
+    seen.add(step.name);
+  });
+  return Object.freeze({ kind: "steps" as const, steps: Object.freeze(steps), ...parseShellAndDirectory(input, ctx) });
+}
+
 function parseTarget(input: ExecutionJsonObject, ctx: BoundedDocumentContext): TaskSourceV4Target {
+  if (own(input, "steps")) return parseStepsTarget(input, ctx);
   const hasUses = own(input, "uses");
   if (hasUses) {
     if (own(input, "shell")) sourceError(ctx, ["shell"], "is legal only with run.");
@@ -349,20 +526,7 @@ function parseTarget(input: ExecutionJsonObject, ctx: BoundedDocumentContext): T
   if (own(input, "with"))
     sourceError(ctx, ["with"], "is legal only with uses: akm/command; declare typed inputs: instead.");
   const run = stringField(input.run, ctx, ["run"], { nonempty: true }) as string;
-  let shell: TaskV3HostShell | undefined;
-  if (own(input, "shell")) {
-    const rawShell = stringField(input.shell, ctx, ["shell"], { nonempty: true }) as string;
-    if (!SHELL_SET.has(rawShell)) {
-      sourceError(ctx, ["shell"], `must be one of the closed host-shell table: ${TASK_V3_HOST_SHELLS.join(", ")}.`);
-    }
-    shell = rawShell as TaskV3HostShell;
-  }
-  let workingDirectory: string | undefined;
-  if (own(input, "working-directory")) {
-    workingDirectory = stringField(input["working-directory"], ctx, ["working-directory"], {
-      nonempty: true,
-    }) as string;
-  }
+  const { shell, workingDirectory } = parseShellAndDirectory(input, ctx);
   return Object.freeze({
     kind: "run",
     run,
@@ -697,9 +861,14 @@ export function parseTaskSourceV4Document(
 
   checkTopLevelKeys(input, ctx);
 
-  const hasUses = own(input, "uses");
-  const hasRun = own(input, "run");
-  if (hasUses === hasRun) sourceError(ctx, [], "requires exactly one executable selector: uses or run.");
+  const selectorCount = (["uses", "run", "steps"] as const).filter((key) => own(input, key)).length;
+  if (selectorCount !== 1) {
+    sourceError(
+      ctx,
+      [],
+      `requires exactly one executable selector: ${own(input, "steps") ? "uses, run or steps" : "uses or run"}.`,
+    );
+  }
 
   const name = own(input, "name") ? (stringField(input.name, ctx, ["name"]) as string) : undefined;
   const description = own(input, "description")
@@ -726,6 +895,10 @@ export function parseTaskSourceV4Document(
       );
     }
     output = parseOutputSchema(presentJsonValue(input.output, ctx, ["output"]), ctx);
+  }
+  // `resume` is `akm run --resume`'s flag for a steps task, so it cannot also name an input there.
+  if (target.kind === "steps" && inputs && own(inputs, "resume")) {
+    sourceError(ctx, ["inputs", "resume"], "collides with akm run's own --resume flag on a steps: task.");
   }
   const schedule = parseSchedule(input, inputs ?? Object.freeze({}), ctx);
   const execution = parseExecutionControls(input, ctx);

@@ -205,6 +205,7 @@ describe("task source v4 — closed key-set constants (D2-N3, D2-N7)", () => {
         "output",
         "uses",
         "run",
+        "steps",
         "with",
         "env",
         "shell",

@@ -212,6 +212,8 @@ export function taskHistory(input: { taskId?: string; since?: string; limit?: nu
           durationMs: metadata?.durationMs ?? null,
           trigger: metadata?.trigger ?? null,
           detail: metadata?.detail ?? null,
+          // A steps task (Experimental): each step without its stored result, which can be large.
+          steps: metadata?.steps?.map(({ result: _result, ...step }) => step) ?? null,
         };
       });
       return { available: true, totalCount: rows.length, count: runs.length, runs };
