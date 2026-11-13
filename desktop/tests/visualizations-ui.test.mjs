@@ -117,32 +117,59 @@ test("visualizations survive late responses, no WebGL, a changed library and an 
     );
     await open(page, server, "/activity/replay");
     await expect(page.getByText("The figures, the latest events and the timeline below still play.")).toBeVisible();
+    // The replay opens at the end; Play starts again from the beginning, so the clock drops, then moves forward.
     const before = Number(await slider(page).inputValue());
-    await page.getByRole("combobox", { name: "Speed" }).selectOption({ label: "Fastest" });
+    await page.getByRole("combobox", { name: "Speed" }).selectOption({ label: "Fast (4×)" });
     await page.getByRole("button", { name: "Play", exact: true }).click();
-    await expect.poll(async () => Number(await slider(page).inputValue())).toBeGreaterThan(before);
+    await expect.poll(async () => Number(await slider(page).inputValue())).toBeLessThan(before);
+    const first = Number(await slider(page).inputValue());
+    await expect.poll(async () => Number(await slider(page).inputValue())).toBeGreaterThan(first);
     await page.getByRole("button", { name: "Pause", exact: true }).click();
     assert.deepEqual(errors, []);
     await page.close();
   });
 
-  await t.test("Replay: a library that grew is drawn by a new map, not the old one", async () => {
+  await t.test("Replay: it opens at the end with full figures, and a new period reads only the events", async () => {
     const { page, errors } = await fresh();
+    const requests = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (url.pathname === "/api/graph" || url.pathname === "/api/events") requests.push(url.pathname + url.search);
+    });
     await open(page, server, "/activity/replay");
     await expect(slider(page)).toBeVisible();
-    // A new asset is written and indexed while the replay is open.
-    const created = await server.call("/api/knowledge/create", {
-      bundle: "personal",
-      name: "replay-new-page",
-      content: "---\ntitle: Replay new page\ndescription: Synthetic page added while the replay is open\n---\n# New\n",
-    });
-    assert.equal(created.status, 200, JSON.stringify(created.body));
+    // Opens at the end of the period: the slider is at its maximum and the totals are full.
+    await expect
+      .poll(async () => (await slider(page).inputValue()) === (await slider(page).getAttribute("max")))
+      .toBe(true);
+    const replay = page.getByRole("region", { name: "Activity replay", exact: true });
+    await expect(replay.getByText("searches", { exact: true })).toBeVisible();
+    await expect(replay).toContainText("Plays the whole period in about 1 minute");
+    await expect(replay).toContainText("Tallest bar =");
     await page.getByRole("combobox", { name: "Period" }).selectOption("7d");
     await expect(slider(page)).toBeVisible();
     await toEnd(page);
     await page.getByRole("button", { name: "Play", exact: true }).click();
     await page.waitForTimeout(500);
     await page.getByRole("button", { name: "Pause", exact: true }).click();
+    assert.equal(requests.filter((r) => r.startsWith("/api/graph")).length, 1, requests.join(" "));
+    assert.deepEqual(
+      requests.filter((r) => r.startsWith("/api/events")),
+      ["/api/events?since=24h", "/api/events?since=7d"],
+    );
+    assert.deepEqual(errors, []);
+    await page.close();
+  });
+
+  await t.test("Replay: a graph that is not available shows its note, not an empty map", async () => {
+    const { page, errors } = await fresh((page) =>
+      page.route("**/api/graph", (route) =>
+        route.fulfill({ json: { ok: true, data: { available: false, note: "Synthetic: no index here." } } }),
+      ),
+    );
+    await open(page, server, "/activity/replay");
+    await expect(page.getByText("Synthetic: no index here.")).toBeVisible();
+    await expect(page.getByText("assets used")).toHaveCount(0);
     assert.deepEqual(errors, []);
     await page.close();
   });

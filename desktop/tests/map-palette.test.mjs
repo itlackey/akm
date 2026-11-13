@@ -122,3 +122,31 @@ test("the simulation and ΔE are right: a colour is zero from itself, and red an
   const apart = (matrix) => deltaE76(simulate(red, matrix), simulate(green, matrix));
   assert.ok(apart(SIMULATIONS.protan) < apart(SIMULATIONS.normal) / 2);
 });
+
+// Replay's four pulse colours (read, search hit, positive and negative feedback): apart from each other and from the
+// map's eight colours, and visible against the background. They also differ in size and are named in Replay's key.
+const pulses = ["read", "hit", "up", "down"].map((name) => token(`--pulse-${name}`));
+/** The floors the pulses meet (CIE76; the measured minimums are 19.0 and 21.8 among themselves, 13.6 and 14.1 from the types). */
+const MIN_PULSE_APART = 18;
+const MIN_PULSE_FROM_TYPES = 13;
+for (const scheme of ["light", "dark"]) {
+  test(`${scheme}: the four pulse colours stay at least ${MIN_PULSE_APART} apart, for all four kinds of vision`, () => {
+    const worst = closestPair(pulses.map((p) => p[scheme]));
+    assert.ok(worst.de >= MIN_PULSE_APART, `pulses ${worst.pair} are ${worst.de.toFixed(1)} apart (${worst.vision})`);
+  });
+  test(`${scheme}: each pulse colour is at least ${MIN_PULSE_FROM_TYPES} from every map colour, and 3:1 against the background`, () => {
+    for (const [n, pulse] of pulses.entries()) {
+      for (const [m, slot] of slots.entries()) {
+        const worst = closestPair([pulse[scheme], slot[scheme]]);
+        assert.ok(
+          worst.de >= MIN_PULSE_FROM_TYPES,
+          `pulse ${n} and map ${m + 1}: ${worst.de.toFixed(1)} (${worst.vision})`,
+        );
+      }
+      assert.ok(
+        contrast(pulse[scheme], bg[scheme]) >= 3,
+        `pulse ${n}: ${contrast(pulse[scheme], bg[scheme]).toFixed(2)}`,
+      );
+    }
+  });
+}
