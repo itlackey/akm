@@ -226,13 +226,14 @@ export function noGithubExpression(
 export function parseEnvironment(
   value: ExecutionJsonValue,
   ctx: BoundedDocumentContext,
+  path: readonly (string | number)[] = ["env"],
 ): Readonly<Record<string, string | number | boolean>> {
-  const environment = asRecord(value, ctx, ["env"]);
+  const environment = asRecord(value, ctx, path);
   for (const [key, child] of Object.entries(environment)) {
     if (!WORKFLOW_ENV_VAR_NAME_PATTERN.test(key))
-      sourceError(ctx, ["env", key], "has an invalid environment variable name.");
+      sourceError(ctx, [...path, key], "has an invalid environment variable name.");
     if (typeof child !== "string" && typeof child !== "number" && typeof child !== "boolean") {
-      sourceError(ctx, ["env", key], "must be a string, finite number, or boolean.");
+      sourceError(ctx, [...path, key], "must be a string, finite number, or boolean.");
     }
   }
   return environment as Readonly<Record<string, string | number | boolean>>;

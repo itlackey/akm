@@ -24,12 +24,20 @@
  * ONCE per call, and threads the result into every dispatch arm.
  */
 
+import path from "node:path";
+import { TransientError } from "../../core/errors";
+import { releaseLock } from "../../core/file-lock";
+import { getStateDir } from "../../core/paths";
+import { formatLockHolderPid, tryAcquireRunLock } from "../../core/run-lock";
+import { warn } from "../../core/warn";
 import { runWorkflowSteps } from "../../workflows/exec/run-workflow";
+import { nameStepError } from "../prepare/prepare-steps";
 import { recordTaskAttemptFailure, reserveTaskAttempt } from "./attempt-lifecycle";
 import { loadPreparedTask } from "./load-task";
 import { resolveProvenanceContext } from "./provenance";
 import { runPreparedCommandTask } from "./run-command-task";
 import { runNativeTask } from "./run-native-task";
+import { resolveResume, runStepsTask } from "./run-steps-task";
 import { runWorkflowTask } from "./run-workflow-task";
 import { resolveTaskLogPath } from "./task-log";
 import type { RunTaskOptions, TaskRunResult } from "./task-result";
@@ -42,14 +50,61 @@ export async function runTask(id: string, options: RunTaskOptions): Promise<Task
 
   const task = await loadPreparedTask(id, options);
 
+  // Experimental steps task: a run does not start while the previous one is alive, and `task:`
+  // steps and `--resume` are settled before any attempt is reserved.
+  let resume: ReturnType<typeof resolveResume> | undefined;
+  let lock: (ReturnType<typeof tryAcquireRunLock> & { state: "acquired" }) | undefined;
+  if (task.kind === "steps") {
+    const acquired = tryAcquireRunLock(taskRunLockPath(id), { label: "task" });
+    if (acquired.state === "held") {
+      const message = `Task ${id} is still running (PID ${formatLockHolderPid(acquired.holder)}, started ${acquired.holder.startedAt}); not starting another run.`;
+      if (!options.scheduled) throw new TransientError(message, "RUN_LEASE_HELD");
+      warn(message);
+      return skippedActiveRun(id, requestedStartedAt);
+    }
+    lock = acquired;
+    try {
+      for (const step of task.steps) {
+        if (step.kind !== "task") continue;
+        try {
+          await options.taskStepRunner?.check(step.ref);
+        } catch (error) {
+          throw nameStepError(step.name, error);
+        }
+      }
+      if (task.resume) resume = resolveResume(task);
+    } catch (error) {
+      releaseLock(lock.ownership);
+      throw error;
+    }
+  }
+
   // All validation, parsing, source resolution, command cascade preparation,
   // and frozen-byte capture above is non-mutating. Only a fully projectable
   // task may reserve durable history or create a log.
-  const attempt = reserveTaskAttempt(id, requestedStartedAt);
+  let attempt: ReturnType<typeof reserveTaskAttempt>;
+  try {
+    attempt = reserveTaskAttempt(id, requestedStartedAt);
+  } catch (error) {
+    if (lock) releaseLock(lock.ownership);
+    throw error;
+  }
   const startedAt = attempt.startedAt;
   const startedIso = startedAt.toISOString();
   const logPath = resolveTaskLogPath(options.logDir, id, startedIso);
   try {
+    if (task.kind === "steps") {
+      return await runStepsTask({
+        task,
+        logPath,
+        startedAt,
+        now,
+        historyReserved: attempt.historyReserved,
+        provenance,
+        options,
+        ...(resume ? { resume } : {}),
+      });
+    }
     if (task.kind === "workflow") {
       return await runWorkflowTask({
         task,
@@ -98,5 +153,25 @@ export async function runTask(id: string, options: RunTaskOptions): Promise<Task
       scheduled: provenance.scheduled,
     });
     throw failure;
+  } finally {
+    if (lock) releaseLock(lock.ownership);
   }
+}
+
+function taskRunLockPath(id: string): string {
+  return path.join(getStateDir(), "locks", `task-${encodeURIComponent(id)}.lock`);
+}
+
+/** A scheduled run that found the previous one alive: "active" maps to exit 0 and writes no history row. */
+function skippedActiveRun(id: string, at: Date): TaskRunResult {
+  return {
+    id,
+    status: "active",
+    startedAt: at.toISOString(),
+    finishedAt: at.toISOString(),
+    durationMs: 0,
+    log: "",
+    target: { kind: "steps" },
+    detail: { reason: "previous_run_active" },
+  };
 }

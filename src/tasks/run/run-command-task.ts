@@ -28,6 +28,20 @@ import { appendHistory } from "./task-history";
 import { persistRunLog, scrubTaskOutput, streamLines } from "./task-log";
 import type { TaskRunResult, TaskRunStatus } from "./task-result";
 
+/**
+ * Unset anywhere (task `timeout:`, command asset, connection or harness) → the
+ * unattended default; an explicit value or `null` (opt-out) was set by one of them.
+ */
+export function withUnattendedTimeout(invocation: PreparedTaskCommand["invocation"]) {
+  const { runner, request, provenance: provenances } = invocation;
+  if (provenances["runtime.timeoutMs"]?.via !== "default") return invocation;
+  return {
+    ...invocation,
+    request: { ...request, runtime: { ...request.runtime, timeoutMs: DEFAULT_SCHEDULED_TASK_TIMEOUT_MS } },
+    runner: { ...runner, timeoutMs: DEFAULT_SCHEDULED_TASK_TIMEOUT_MS },
+  };
+}
+
 export async function runPreparedCommandTask(input: {
   task: PreparedTaskCommand;
   logPath: string;
@@ -44,20 +58,7 @@ export async function runPreparedCommandTask(input: {
     // and the recorded usage events.
     eventSource: provenance.eventSource,
   };
-  // Unset anywhere (task `timeout:`, command asset, connection or harness) → the
-  // unattended default; an explicit value or `null` (opt-out) was set by one of them.
-  const { runner, request, provenance: provenances } = task.invocation;
-  const unset = provenances["runtime.timeoutMs"]?.via === "default";
-  const invocation = unset
-    ? {
-        ...task.invocation,
-        request: {
-          ...request,
-          runtime: { ...request.runtime, timeoutMs: DEFAULT_SCHEDULED_TASK_TIMEOUT_MS },
-        },
-        runner: { ...runner, timeoutMs: DEFAULT_SCHEDULED_TASK_TIMEOUT_MS },
-      }
-    : task.invocation;
+  const invocation = withUnattendedTimeout(task.invocation);
   const result = await dispatchPreparedCommandInvocation(invocation, dispatchOptions);
   const engineName = result.engine;
 

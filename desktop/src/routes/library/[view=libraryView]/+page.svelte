@@ -12,7 +12,7 @@
 </script>
 
 <div class="library-page">
-  {#if page.params.view === "map"}<LibraryMap />{:else}<Library
+  {#if page.params.view === "map"}<LibraryMap select={page.url.searchParams.get("select") ?? ""} />{:else}<Library
       route={page.params.view}
       query={new URLSearchParams(page.url.search)}
       bundles={workspace.bundles}

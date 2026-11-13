@@ -9,7 +9,11 @@ import { akmHealth, parseHealthSince } from "../commands/health";
 import { buildTasks } from "../commands/metrics/collect";
 import { akmMetrics, metricsWindow, readUsageRows } from "../commands/metrics/metrics";
 import { NotFoundError, UsageError } from "../core/errors";
-import { listRecentImproveRuns } from "../storage/repositories/improve-runs-repository";
+import {
+  getImproveRunById,
+  type ImproveRunRow,
+  listRecentImproveRuns,
+} from "../storage/repositories/improve-runs-repository";
 import {
   decodeTaskHistoryMetadata,
   queryTaskHistory,
@@ -40,8 +44,10 @@ export function meta() {
   };
 }
 
+const IMPROVE_ERRORS_SHOWN = 20;
+
 /** One persisted improve run, projected to what the overview shows. Tolerant: a row from an older release just has fewer fields. */
-function summarizeImproveRun(row: ReturnType<typeof listRecentImproveRuns>[number]) {
+function summarizeImproveRun(row: ReturnType<typeof listRecentImproveRuns>[number] | ImproveRunRow) {
   let result: Record<string, unknown> = {};
   try {
     const parsed: unknown = JSON.parse(row.result_json);
@@ -59,8 +65,36 @@ function summarizeImproveRun(row: ReturnType<typeof listRecentImproveRuns>[numbe
     bucket.failures += failures ?? 0;
     byProcess[process] = bucket;
   }
+  // The run's own persisted usage report, as recorded (never recomputed from events, which carry no run id).
+  const usageRows = Array.isArray(usage?.byProcessEngineModel) ? usage.byProcessEngineModel : [];
+  const usageByTarget = usageRows.flatMap((entry) => {
+    const e = entry as Record<string, unknown>;
+    if (typeof e.process !== "string") return [];
+    const n = (key: string) => (typeof e[key] === "number" ? (e[key] as number) : 0);
+    return [
+      {
+        process: e.process,
+        engine: typeof e.engine === "string" ? e.engine : null,
+        model: typeof e.model === "string" ? e.model : null,
+        calls: n("calls"),
+        failures: n("failures"),
+        promptTokens: n("promptTokens"),
+        completionTokens: n("completionTokens"),
+        totalTokens: n("totalTokens"),
+        usageCalls: typeof e.usageCalls === "number" ? e.usageCalls : null,
+      },
+    ];
+  });
+  const noCalls = (usage as { noCalls?: unknown } | undefined)?.noCalls;
+  const failedActions = (Array.isArray(result.actions) ? result.actions : []).flatMap((action) => {
+    const a = action as { ref?: unknown; mode?: unknown; result?: { ok?: unknown; error?: unknown } };
+    return a.result?.ok === false && typeof a.result.error === "string" && typeof a.ref === "string"
+      ? [{ ref: a.ref, mode: String(a.mode ?? ""), error: a.result.error }]
+      : [];
+  });
+  const terminated = result.terminated as { reason?: unknown; at?: unknown; errorMessage?: unknown } | undefined;
   const started = Date.parse(row.started_at);
-  const completed = Date.parse(row.completed_at);
+  const completed = Date.parse(row.completed_at ?? "");
   return {
     id: row.id,
     startedAt: row.started_at,
@@ -75,6 +109,17 @@ function summarizeImproveRun(row: ReturnType<typeof listRecentImproveRuns>[numbe
       failures: Object.values(byProcess).reduce((sum, bucket) => sum + bucket.failures, 0),
       byProcess,
     },
+    usage: usageByTarget,
+    noCalls: Array.isArray(noCalls) ? noCalls : [],
+    terminated:
+      terminated && typeof terminated.reason === "string"
+        ? {
+            reason: terminated.reason,
+            at: typeof terminated.at === "string" ? terminated.at : null,
+            errorMessage: typeof terminated.errorMessage === "string" ? terminated.errorMessage : null,
+          }
+        : null,
+    errors: { count: failedActions.length, shown: failedActions.slice(0, IMPROVE_ERRORS_SHOWN) },
     preRunSync: result.preRunSync ?? null,
     sync: result.sync ?? null,
     triage: result.triage ?? null,
@@ -132,6 +177,18 @@ export async function overview(input: { probe?: boolean; metricsSince?: string }
   };
 }
 
+/** One improve run by id, however old (the overview lists only the latest 10). Same shape as an `improveRuns` entry. */
+export function improveRun(input: { id: string }) {
+  const id = typeof input?.id === "string" ? input.id.trim() : "";
+  if (!id) throw new UsageError("An improve run id is required.", "MISSING_REQUIRED_ARGUMENT");
+  const read = withReadonlyStateDb((db) => {
+    const row = getImproveRunById(db, id);
+    return row ? summarizeImproveRun(row) : undefined;
+  }, null);
+  if (!read) throw new NotFoundError(`No improve run found with id "${id}".`, "IMPROVE_RUN_NOT_FOUND");
+  return read;
+}
+
 export function taskHistory(input: { taskId?: string; since?: string; limit?: number }) {
   const taskId = (input.taskId ?? "").trim();
   if (!taskId) throw new UsageError("A taskId is required.", "MISSING_REQUIRED_ARGUMENT");
@@ -155,6 +212,8 @@ export function taskHistory(input: { taskId?: string; since?: string; limit?: nu
           durationMs: metadata?.durationMs ?? null,
           trigger: metadata?.trigger ?? null,
           detail: metadata?.detail ?? null,
+          // A steps task (Experimental): each step without its stored result, which can be large.
+          steps: metadata?.steps?.map(({ result: _result, ...step }) => step) ?? null,
         };
       });
       return { available: true, totalCount: rows.length, count: runs.length, runs };

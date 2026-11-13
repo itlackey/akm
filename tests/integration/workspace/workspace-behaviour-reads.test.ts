@@ -21,6 +21,7 @@ import { akmSearch } from "../../../src/commands/read/search";
 import { loadConfig, resetConfigCache } from "../../../src/core/config/config";
 import { getDbPath } from "../../../src/core/paths";
 import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
+import { recordImproveRun } from "../../../src/storage/repositories/improve-runs-repository";
 import { listStateProposals, upsertProposal } from "../../../src/storage/repositories/proposals-repository";
 import { upsertTaskHistory } from "../../../src/storage/repositories/task-history-repository";
 import { activity, assets, bundles, config, proposals } from "../../../src/workspace";
@@ -95,6 +96,57 @@ describe("reads", () => {
     });
     expect(overview.taskFailures).toEqual([]);
     expect(overview.metrics.rows).toBeUndefined();
+  });
+
+  test("improveRun reads one run by id with its recorded usage, errors and termination", async () => {
+    await seed();
+    const run = await out(activity.improveRun({ id: "run-1" }));
+    expect(run).toMatchObject({
+      id: "run-1",
+      usage: [
+        { process: "reflect", engine: "default", model: "chat-model", calls: 3, failures: 1, totalTokens: 1200 },
+        { process: "triage.judgment", model: "chat-model", calls: 2 },
+      ],
+      noCalls: [{ process: "distill", reason: "no_signal" }],
+      terminated: null,
+      errors: { count: 1, shown: [{ ref: "memory:a", mode: "reflect-failed", error: "model timed out" }] },
+    });
+    const db = openStateDatabase();
+    try {
+      recordImproveRun(db, {
+        id: "run-old",
+        startedAt: "2020-01-01T00:00:00.000Z",
+        completedAt: "2020-01-01T00:01:00.000Z",
+        stashDir: ctx.storage.stashDir,
+        dryRun: false,
+        strategy: "default",
+        scopeMode: "all",
+        scopeValue: null,
+        guidance: null,
+        ok: false,
+        result: {
+          schemaVersion: 2,
+          ok: false,
+          dryRun: false,
+          plannedRefs: [],
+          scope: { mode: "all" },
+          memorySummary: { eligible: 0, derived: 0 },
+          strategy: "default",
+          terminated: { reason: "SIGTERM", at: "2020-01-01T00:01:00.000Z", errorMessage: "stopped" },
+        } as never,
+      });
+    } finally {
+      db.close();
+    }
+    expect(await out(activity.improveRun({ id: "run-old" }))).toMatchObject({
+      ok: false,
+      usage: [],
+      terminated: { reason: "SIGTERM", errorMessage: "stopped" },
+    });
+    await expectAkmError(() => activity.improveRun({ id: "nope" }), {
+      kind: "not-found",
+      code: "IMPROVE_RUN_NOT_FOUND",
+    });
   });
 
   test("overview counts search summaries, not hits, and retains missing latency as unknown", async () => {

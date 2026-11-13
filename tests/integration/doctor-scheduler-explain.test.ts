@@ -143,6 +143,6 @@ describe.skipIf(process.platform !== "linux")("doctor scheduler and explain", ()
     expect(replacement.stdout).toBe(old.stdout);
     expect(notices(replacement.stderr)).toHaveLength(0);
     expect(notices(old.stderr)).toHaveLength(1);
-    expect(notices(old.stderr)[0]).toContain("akm doctor explain");
+    expect(notices(old.stderr)[0]).toContain("workflows go in 0.11");
   });
 });

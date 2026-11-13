@@ -127,6 +127,9 @@ export const doctorLogCommand = defineJsonCommand({
       await logCommand.run?.(context as never);
       return;
     }
+    if (task.trim() === "") {
+      throw new UsageError("akm doctor log --task needs a task id: --task <id>.", "INVALID_FLAG_VALUE");
+    }
     rejectExtraLogPositionals(context.args._);
     const limit = parsePositiveIntFlag(context.args.limit as string | undefined);
     output(

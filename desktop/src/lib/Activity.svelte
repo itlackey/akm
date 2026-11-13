@@ -273,6 +273,8 @@
       {probedAt}
       requestedTask={query.get("task") ?? ""}
       requestedRun={query.get("run") ?? ""}
+      requestedImprove={query.get("improve") ?? ""}
+      requestedAt={query.get("at") ?? ""}
     />{/if}
 {:else if shown && view === "Improve impact"}{#if impact}<ActivityImpact
       {impact}

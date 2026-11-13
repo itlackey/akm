@@ -283,28 +283,27 @@ function searchTextOf(documentJson: string): string | undefined {
 
 /**
  * The embedding input and stored vector bytes of every entry whose vector is
- * served as `model`'s (what `akm index --export-vectors` writes). Unlabelled
+ * served as `model`'s (what `akm index --export-vectors` writes), streamed one row at a time; the
+ * caller must not write to `db` while iterating. Unlabelled
  * rows count only when `model` is the model the index currently serves, so
  * they are never stamped with a model they were not generated under.
  */
-export function listEmbeddedSearchTexts(
+export function* listEmbeddedSearchTexts(
   db: Database,
   model: string,
-): Array<{ searchText: string; embedding: Uint8Array }> {
+): Generator<{ searchText: string; embedding: Uint8Array }> {
   const serving = currentEmbeddingModel(db) === model;
-  if (!serving && !hasModelColumn(db)) return [];
+  if (!serving && !hasModelColumn(db)) return;
   const current = serving ? modelPredicate(db, model, "b") : { sql: "b.model = ?", params: [model] };
   const rows = db
     .prepare(
       `SELECT e.document_json AS documentJson, b.embedding AS embedding FROM entries e JOIN embeddings b ON b.id = e.id WHERE ${current.sql} ORDER BY e.id`,
     )
-    .all(...current.params) as Array<{ documentJson: string; embedding: Uint8Array }>;
-  const out: Array<{ searchText: string; embedding: Uint8Array }> = [];
+    .iterate(...current.params) as IterableIterator<{ documentJson: string; embedding: Uint8Array }>;
   for (const { documentJson, embedding } of rows) {
     const searchText = searchTextOf(documentJson);
-    if (searchText !== undefined) out.push({ searchText, embedding });
+    if (searchText !== undefined) yield { searchText, embedding };
   }
-  return out;
 }
 
 /** Stored embedding rows — for `model` when given, otherwise every row. */

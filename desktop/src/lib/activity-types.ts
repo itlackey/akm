@@ -30,6 +30,17 @@ export interface ActivityTask {
   failed: number;
   medianMs: number | null;
 }
+export interface ActivityRunUsage {
+  process: string;
+  engine: string | null;
+  model: string | null;
+  calls: number;
+  failures: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  usageCalls: number | null;
+}
 export interface ActivityRun {
   id: string;
   startedAt: string;
@@ -39,6 +50,13 @@ export interface ActivityRun {
   strategy: string;
   scope?: { mode: string; value?: string };
   modelCalls: { total: number; failures: number; byProcess: Record<string, { calls: number; failures: number }> };
+  /** The run's persisted usage report, one row per process, execution target and model. */
+  usage?: ActivityRunUsage[];
+  noCalls?: Array<{ process: string; engine?: string; reason: string }>;
+  /** Set when the record says the run was stopped (a signal or an exception). */
+  terminated?: { reason: string; at: string | null; errorMessage: string | null } | null;
+  /** Failed actions' recorded error texts; `shown` is capped, `count` is all. */
+  errors?: { count: number; shown: Array<{ ref: string; mode: string; error: string }> };
   preRunSync?: unknown;
   sync?: unknown;
   triage?: unknown;
@@ -155,6 +173,16 @@ export interface ActivityTaskHistory {
     durationMs: number | null;
     trigger?: "schedule" | "manual" | null;
     detail: Record<string, unknown> | null;
+    /** The steps of a steps task run (Experimental); null for every other run. */
+    steps?: Array<{
+      name: string;
+      kind: "run" | "prompt" | "task";
+      status: "completed" | "failed" | "skipped" | "reused";
+      durationMs: number;
+      attempts: number;
+      summary?: string;
+      reason?: string;
+    }> | null;
   }>;
 }
 export interface ActivityTaskRun {

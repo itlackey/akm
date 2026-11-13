@@ -37,6 +37,7 @@
       ]
     },
     "run": { "$ref": "#/definitions/nonemptyLiteral" },
+    "steps": { "$ref": "#/definitions/steps" },
     "with": { "$ref": "#/definitions/builtinCommandWith" },
     "env": {
       "type": "object",
@@ -117,6 +118,7 @@
       "not": {
         "anyOf": [
           { "required": ["run"] },
+          { "required": ["steps"] },
           { "required": ["shell"] },
           { "required": ["working-directory"] }
         ]
@@ -131,6 +133,7 @@
       "not": {
         "anyOf": [
           { "required": ["run"] },
+          { "required": ["steps"] },
           { "required": ["with"] },
           { "required": ["shell"] },
           { "required": ["working-directory"] }
@@ -148,13 +151,63 @@
       "not": {
         "anyOf": [
           { "required": ["uses"] },
+          { "required": ["steps"] },
           { "required": ["with"] },
           { "required": ["output"] }
+        ]
+      }
+    },
+    {
+      "description": "Experimental: ordered steps. Each step runs one shell line, one agent prompt or another task; a failed step stops the run. Not legal next to uses, run, with, output, maxSteps or maxRetries.",
+      "required": ["steps"],
+      "not": {
+        "anyOf": [
+          { "required": ["uses"] },
+          { "required": ["run"] },
+          { "required": ["with"] },
+          { "required": ["output"] },
+          { "required": ["maxSteps"] },
+          { "required": ["maxRetries"] }
         ]
       }
     }
   ],
   "definitions": {
+    "steps": {
+      "description": "Experimental. 1 to 32 steps; step names are unique.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$" },
+          "run": { "$ref": "#/definitions/nonemptyLiteral" },
+          "prompt": { "$ref": "#/definitions/nonemptyLiteral" },
+          "task": { "type": "string", "pattern": "^(?:[^\\s:.#/]+//)?tasks/[^\\s#\\\\]+$" },
+          "env": { "type": "object", "maxProperties": 256, "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" } },
+          "timeout": {
+            "oneOf": [
+              { "type": "integer", "minimum": 0 },
+              { "type": "string", "pattern": "^\\d+[mMhd]$" },
+              { "type": "null" }
+            ]
+          },
+          "retries": { "type": "integer", "minimum": 0, "maximum": 5 },
+          "harness": { "$ref": "#/definitions/nullableSelector" },
+          "connection": { "$ref": "#/definitions/nullableSelector" },
+          "model": { "$ref": "#/definitions/nullableSelector" },
+          "expect": { "type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+        },
+        "oneOf": [
+          { "required": ["run"], "not": { "anyOf": [{ "required": ["prompt"] }, { "required": ["task"] }, { "required": ["harness"] }, { "required": ["connection"] }, { "required": ["model"] }, { "required": ["expect"] }] } },
+          { "required": ["prompt"], "not": { "anyOf": [{ "required": ["run"] }, { "required": ["task"] }] } },
+          { "required": ["task"], "not": { "anyOf": [{ "required": ["run"] }, { "required": ["prompt"] }, { "required": ["harness"] }, { "required": ["connection"] }, { "required": ["model"] }, { "required": ["expect"] }] } }
+        ]
+      }
+    },
     "nonemptyLiteral": {
       "type": "string",
       "minLength": 1,

@@ -311,7 +311,8 @@ function nearestFolder(file: string): string {
  */
 export function normalizeConfigFile(configPath: string, options: NormalizeConfigOptions): ConfigFileNormalization {
   // The lock is a file beside the config: a folder that cannot be written cannot hold it, and nothing is written there.
-  const locked = configWritable(configPath) ? withConfigLock : <T>(action: () => T): T => action();
+  // A read-only plan takes no lock, so it does not create the config directory just to hold one.
+  const locked = options.apply && configWritable(configPath) ? withConfigLock : <T>(action: () => T): T => action();
   return locked(() => {
     const text = readConfigText(configPath);
     if (text === undefined) {

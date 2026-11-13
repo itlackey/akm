@@ -250,6 +250,12 @@ export function foldRecognizedMetadata(rendererName: string, file: FileContext):
           else hints.add(`uses:${target.uses.ref}`);
           const used = target.uses.kind !== "builtin-command" ? target.uses.ref : storedCommandRef(target.command);
           if (used) out.uses = [used];
+        } else if (target.kind === "steps") {
+          for (const step of target.steps) {
+            if (step.kind === "run") hints.add(`run:${step.run}`);
+            else if (step.kind === "task") hints.add(`task:${step.ref}`);
+            else hints.add(`prompt:${step.prompt.kind === "ref" ? step.prompt.ref : step.prompt.content}`);
+          }
         } else {
           hints.add(`run:${target.run}`);
         }
