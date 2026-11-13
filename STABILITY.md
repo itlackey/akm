@@ -78,7 +78,7 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | `akm agent` | Deprecated | Removed in 0.11: use `akm run <ref>` for assets; invoke the agent's own CLI for the no-ref interactive launch. |
 | `akm command run` / `akm command <ref>` | Deprecated | Removed in 0.11: use `akm run <ref>` with the same template arguments and dispatch. |
 | `akm task add` | Deprecated | Removed in 0.11: use `akm import <file> --type task`, then `task enable` when activation is wanted. |
-| `akm task enable` | Evolving | 0.11 moves schedules from task files into host config ([#1096](https://github.com/itlackey/akm/issues/1096)); this command's 0.11 form is not final. |
+| `akm task enable` | Evolving | In 0.11 the schedule that runs lives in host config, and a task file's `schedule:` may stay as the default that enabling applies ([#1096](https://github.com/itlackey/akm/issues/1096)); this command's 0.11 form is not final. |
 | `akm task disable` | Evolving | As `task enable`. |
 | `akm task run` | Deprecated | Removed in 0.11: use `akm run <qualified-task-ref>` with the same inputs. |
 | `akm task history` | Deprecated | Removed in 0.11: `akm task history <id>` becomes `akm doctor log --task <id>` (`--bundle`, `--limit`), first in 0.10.261120. The no-id cross-task form has no replacement; `akm doctor metrics` gives per-task totals. Both print each run's `trigger`. |
@@ -295,8 +295,8 @@ remove a research capability or skip its replacement.
 | Session extraction's source-harness `--type` | `proposal extract --sessions <claude\|codex\|opencode>` (0.10.261120); retire the overloaded `--type` spelling in 0.11 |
 | `help migrate <version>` | Read the published changelog and migration guide |
 | Standalone `akm-migrate` executable | Use `akm migrate status` and `akm migrate apply` |
-| Workflows: the workflow asset format, the engine and every `akm workflow` command ([#1096](https://github.com/itlackey/akm/issues/1096)) | Tasks with ordered steps, in 0.11.0. `akm migrate apply` converts workflow files and moves run history into task history. Nothing changes in 0.10.x; see [Workflow formats and capabilities](#workflow-formats-and-capabilities-deprecated) |
-| Task source v4 (`version`, `uses`, `with`, typed `inputs:` and `output:`, `schedule:` in the file) | A simpler task format in 0.11.0, with schedules in host config. The format is being finalized; `akm migrate apply` converts v4 files |
+| Workflows: the workflow asset format, the engine and every `akm workflow` command ([#1096](https://github.com/itlackey/akm/issues/1096)) | Tasks with ordered steps, in 0.11.0. `akm migrate apply` converts workflow files, exports run history to a file and drops the workflow tables. Nothing changes in 0.10.x; see [Workflow formats and capabilities](#workflow-formats-and-capabilities-deprecated) |
+| Task source v4 (`version`, `uses`, `with`, typed `inputs:` and `output:`) | A simpler task format in 0.11.0. The schedule that runs moves to host config; `schedule:` in the file may stay as the default applied when a task is enabled. The format is being finalized; `akm migrate apply` converts v4 files |
 
 In 0.11, the scheduler-facing `task dispatch` (introduced on the 0.11 branch, not in 0.10) is the one minute dispatcher: it spawns `akm run <bundle//tasks/id> --scheduled`, and `akm migrate apply` removes the 0.10 per-task rows.
 
@@ -521,9 +521,12 @@ explain` instead **redacts** secret-shaped input values on a best-effort
 heuristic basis — a value that doesn't match the heuristic can still
 print unredacted.
 
-Tasks stay Evolving through 0.11. 0.11.0 replaces task source v4 with a simpler
-format that also takes over ordered steps from workflows ([#1096](https://github.com/itlackey/akm/issues/1096))
-and moves schedules from task files into each host's config. That format is
+Tasks stay Evolving through 0.11: the new format ships for the first time in
+0.11.0, so it has had no field use before the stable release. 0.11.0 replaces
+task source v4 with a simpler format that also takes over ordered steps from
+workflows ([#1096](https://github.com/itlackey/akm/issues/1096)). The schedule
+that runs moves into each host's config; a task file's `schedule:` may stay as
+the default that enabling the task applies. That format is
 being finalized; the [migration guide](docs/migration/v0.10-to-v0.11.md#workflows-fold-into-tasks)
 tracks it. Task source v4 works unchanged through 0.10.x, and `akm migrate apply`
 converts it.
@@ -547,12 +550,15 @@ In 0.11 tasks take over: a task runs one shell line, one agent prompt, or an
 ordered list of steps, and a failed run resumes at the step that failed. The
 field data reviewed for the decision showed that ordered steps were the part of
 workflows people relied on. Fan-out (`map`), gate loops and child workflows did
-not appear in it at all, so they have no replacement, and neither do gates,
-typed step outputs or `budget`.
+not appear in it at all, so they have no replacement, and neither do gates or
+`budget`. One part of typed step outputs stays: a prompt step can state what
+its reply must contain, and akm asks the agent once more when the reply lacks
+it.
 
 At the 0.11 upgrade, `akm migrate apply` converts workflow files: a workflow
 whose steps run commands or agents becomes a task, and a prose playbook becomes
-a command. Workflow run history moves into task history. A run that is still
+a command. Workflow run history is exported to a file and the workflow tables
+are dropped; it does not move into task history. A run that is still
 active or blocked at the upgrade cannot continue afterwards, so finish or
 abandon it first. The
 [migration guide](docs/migration/v0.10-to-v0.11.md#workflows-fold-into-tasks)
@@ -565,7 +571,7 @@ none is promoted.
 | --- | --- |
 | `params`, `steps`, `inputs`, `output` / `unit.output`, `defaults.connection` / `defaults.harness`, `### gate` | Core: the feature set pinned by `core-feature-set.test.ts` |
 | exec units (`unit.exec`), `budget`, `unit.retry`, `map`, `gate.max_loops` | Kept in the 0.10 trim |
-| child workflows (`unit.workflow`, `unit.with`) | Least settled; `akm workflow list --children` goes with them |
+| child workflows (`unit.workflow`, `unit.with`) | Kept in the 0.10 trim; `akm workflow list --children` goes with them |
 
 ## Learning and proposals
 
