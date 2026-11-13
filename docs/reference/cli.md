@@ -1648,6 +1648,14 @@ beside the old one, keeps the immediately previous revision directory (a task
 or workflow may still be running from it) and removes older ones. A revision
 directory another bundle still references is kept.
 
+An update reindexes incrementally: only directories whose files changed are
+re-read, and `akm index --full` is the explicit full pass. A writable Git
+install whose live checkout is already at the fetched commit, and whose lock
+already records that revision, publishes nothing and builds no index (the
+result reports `changed.any: false`); `--force` skips that shortcut. Local edits
+in a writable checkout are not part of an update: they reach the index with the
+next `akm index` or scheduled build.
+
 A publication or index failure preserves the prior active bytes, lock/config
 generation, and searchable index for that bundle.
 
@@ -1663,7 +1671,7 @@ is running.
 
 The index and its update-owned state maintenance share one deferred SQLite
 transaction. WAL readers continue to see the last committed generation while a
-full update index pass runs, and competing writers wait for that pass to commit
+update index pass runs, and competing writers wait for that pass to commit
 or roll back.
 
 This boundary guarantees rollback for handled process faults (throws and

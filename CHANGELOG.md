@@ -14,8 +14,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - These forms, removed in 0.11, now print one stderr line per process naming their replacement (stdout, JSON and exit codes are unchanged, and `--quiet` silences it): `show --max-chars` (use `--max-tokens`), `lint --auto-fix` (`--fix`), `migrate apply --dry-run` (`akm migrate status`), global `--output <file>` (redirect stdout), `--format yaml` (`--format json` or `text`), `hints --detail full` (`akm hints`, `akm help <command>`, the CLI reference), `--detail agent` on `search`, `curate` and `show` (`--detail normal`), the variables `AKM_REGISTRY_URL` (config `registries`) and `AKM_BUNDLE_DIR` (register the bundle, set `defaultBundle`), the config keys `improve.strategies` and `improve.qualityGate` (`experimental.learning.strategies` and `experimental.learning.qualityGate`), and a strategy-level `limit` (`--limit`, `processes.reflect.limit`). These also print a line saying the flag does nothing and can be dropped: `bundle update --yes`, `--allow-dangerous-env-keys` (`bundle add`, `bundle update`, `env run`) and `registry add --options`. STABILITY.md now lists `lint --auto-fix`, `migrate apply --dry-run`, `bundle update --yes`, `registry add --options`, `--allow-dangerous-env-keys` and `improve.stateGc.collect`. A config that sets `improve.stateGc.collect`, or a strategy's `processes.consolidate.limit`, prints one line saying the key goes in 0.11. `akm --help` and the short agent guide no longer send agents to `akm hints --detail full`.
 
+### Changed
+
+- `akm bundle update` reindexes incrementally, so updating one bundle no longer re-reads and rewrites every entry of every bundle (a 20,911-entry library took 2 to 5 minutes to refresh one 574-entry bundle). `akm index --full` still runs the full pass. A writable git install whose checkout is already at the fetched commit, and whose lock already records that revision, now skips the publish, the lock write and the index build, and reports `changed.any: false`; `--force` still builds. Local edits in a writable checkout are not part of an update: they are indexed by the next `akm index` or scheduled build.
+
 ### Fixed
 
+- An index build no longer spends most of its time rewriting utility scores one commit at a time. The recompute wrote each `utility_scores` row in its own transaction, one disk sync per row; it now writes them all in one, with identical values. On a 20,900-entry library this was about 43 of the 45 seconds of finalize (8,327 syncs, now 1); generating 3,000 rows and counting `fsync` calls gave 3,010 before and 1 after.
 - `akm task add --rebind` named `akm import <file> --type task` as its replacement; it now names `akm doctor scheduler sync --rebind`.
 
 ## [0.10.261121] - 2026-11-13

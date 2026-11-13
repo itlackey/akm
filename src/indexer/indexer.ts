@@ -1957,43 +1957,47 @@ export function recomputeUtilityScores(db: Database, stateDb: Database, onlyEntr
   }
 
   const entryIds = new Set([...existingScores.keys(), ...usageByEntry.keys()]);
-  for (const entryId of entryIds) {
-    const row = usageByEntry.get(entryId) ?? {
-      entry_id: entryId,
-      search_count: 0,
-      show_count: 0,
-      positive_feedback_count: 0,
-      negative_feedback_count: 0,
-      last_used_at: null,
-    };
-    const selectRate = row.search_count > 0 ? Math.min(1, row.show_count / row.search_count) : 0;
-    const feedbackTotal = row.positive_feedback_count + row.negative_feedback_count;
-    const feedbackRate =
-      feedbackTotal > 0 ? Math.max(0, row.positive_feedback_count - row.negative_feedback_count) / feedbackTotal : 0;
-    const effectiveRate = Math.max(selectRate, feedbackRate);
-    const existing = existingScores.get(row.entry_id);
-    const prevUtility = existing?.utility ?? 0;
-    const utility = prevUtility * emaDecay + effectiveRate * emaNew;
-    // `utility_scores.last_used_at` is consumed by salience as the timestamp of
-    // the most-recent retrieval. Preserve that meaning by carrying the event's
-    // timestamp through verbatim. The former `effectiveRate > 0.5 ? now : ...`
-    // branch stamped every high-select-rate entry with the index run time,
-    // making unrelated assets look simultaneously fresh and flattening the
-    // recency component of retrieval salience.
-    //
-    // `usage_events` is the source of truth within its retention window. A
-    // missing row therefore clears legacy/index-time stamps on the next index
-    // pass; salience already treats an absent timestamp as long ago.
-    const lastUsedAt = row.last_used_at ?? undefined;
+  // One transaction for every row: per-row autocommits cost one WAL sync each (~43 s of a 45 s finalize on a
+  // 20,900-entry library). The reads above stay outside, so state.db is held no longer than before.
+  db.transaction(() => {
+    for (const entryId of entryIds) {
+      const row = usageByEntry.get(entryId) ?? {
+        entry_id: entryId,
+        search_count: 0,
+        show_count: 0,
+        positive_feedback_count: 0,
+        negative_feedback_count: 0,
+        last_used_at: null,
+      };
+      const selectRate = row.search_count > 0 ? Math.min(1, row.show_count / row.search_count) : 0;
+      const feedbackTotal = row.positive_feedback_count + row.negative_feedback_count;
+      const feedbackRate =
+        feedbackTotal > 0 ? Math.max(0, row.positive_feedback_count - row.negative_feedback_count) / feedbackTotal : 0;
+      const effectiveRate = Math.max(selectRate, feedbackRate);
+      const existing = existingScores.get(row.entry_id);
+      const prevUtility = existing?.utility ?? 0;
+      const utility = prevUtility * emaDecay + effectiveRate * emaNew;
+      // `utility_scores.last_used_at` is consumed by salience as the timestamp of
+      // the most-recent retrieval. Preserve that meaning by carrying the event's
+      // timestamp through verbatim. The former `effectiveRate > 0.5 ? now : ...`
+      // branch stamped every high-select-rate entry with the index run time,
+      // making unrelated assets look simultaneously fresh and flattening the
+      // recency component of retrieval salience.
+      //
+      // `usage_events` is the source of truth within its retention window. A
+      // missing row therefore clears legacy/index-time stamps on the next index
+      // pass; salience already treats an absent timestamp as long ago.
+      const lastUsedAt = row.last_used_at ?? undefined;
 
-    upsertUtilityScore(db, row.entry_id, {
-      utility,
-      showCount: row.show_count,
-      searchCount: row.search_count,
-      selectRate,
-      lastUsedAt,
-    });
-  }
+      upsertUtilityScore(db, row.entry_id, {
+        utility,
+        showCount: row.show_count,
+        searchCount: row.search_count,
+        selectRate,
+        lastUsedAt,
+      });
+    }
 
-  if (!scoped) setMeta(db, "last_utility_computed_at", new Date().toISOString());
+    if (!scoped) setMeta(db, "last_utility_computed_at", new Date().toISOString());
+  })();
 }

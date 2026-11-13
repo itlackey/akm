@@ -449,6 +449,8 @@ function incompleteFilesystemOutcome(id: string): UpdateSkippedItem {
  * update never touches the live content, the lock, or the index.
  */
 interface StagedUpdate {
+  /** True when publishing would move nothing: the live checkout is already at the fetched commit. */
+  unchanged?: boolean;
   publish(): void;
   cleanup(): void;
 }
@@ -505,7 +507,7 @@ function fastForwardCheckout(liveRepo: string, stagedRepo: string): void {
  * leaves config alone; the next `akm index` records them.
  */
 function reindexAfterUpdate(stashDir: string): Promise<IndexResult> {
-  return akmIndex({ stashDir, full: true, hydrateSources: false, persistDetectedAdapters: false });
+  return akmIndex({ stashDir, hydrateSources: false, persistDetectedAdapters: false });
 }
 
 /** Publish, then reindex, holding the asset-mutation lease so no other writer interleaves. */
@@ -596,6 +598,7 @@ async function stageManagedUpdate(
       return {
         synced: { ...fetched, contentDir: managed.localRoot, cacheDir: liveRepo, extractedDir: liveRepo },
         staged: {
+          unchanged: gitOrThrow(liveRepo, ["rev-parse", "HEAD"]) === gitOrThrow(stagedRepo, ["rev-parse", "HEAD"]),
           publish: () => fastForwardCheckout(liveRepo, stagedRepo),
           cleanup: () => cleanupDirectoryBestEffort(stagingParent, "bundle update"),
         },
@@ -820,21 +823,30 @@ async function updateManagedInstall(
       managed.source !== "local" &&
       !managed.writable;
 
-    const index = await publishAndIndex(stashDir, async () => {
-      staged.publish();
-      await upsertLockEntry({
-        id: managed.bundleKey,
-        // Preserve the STORED install kind: a `github:`-ref entry recorded as
-        // source "git" must not be reclassified by the sync flow's re-derivation.
-        source: managed.source,
-        ref: synced.ref,
-        resolvedVersion: synced.resolvedVersion,
-        resolvedRevision: synced.resolvedRevision,
-        integrity: synced.integrity ?? (synced.source === "local" ? "local" : undefined),
-        localRoot: synced.contentDir,
-        installedAt: synced.syncedAt,
-      });
-    });
+    // Same commit as the live checkout and the same lock revision/version: the publish and the lock write would
+    // change nothing, so there is nothing to index. Local edits are not part of an update; the next build sees them.
+    const nothingNew =
+      !force &&
+      staged.unchanged === true &&
+      managed.resolvedRevision === synced.resolvedRevision &&
+      (managed.resolvedVersion ?? "") === (synced.resolvedVersion ?? "");
+    const index = nothingNew
+      ? undefined
+      : await publishAndIndex(stashDir, async () => {
+          staged.publish();
+          await upsertLockEntry({
+            id: managed.bundleKey,
+            // Preserve the STORED install kind: a `github:`-ref entry recorded as
+            // source "git" must not be reclassified by the sync flow's re-derivation.
+            source: managed.source,
+            ref: synced.ref,
+            resolvedVersion: synced.resolvedVersion,
+            resolvedRevision: synced.resolvedRevision,
+            integrity: synced.integrity ?? (synced.source === "local" ? "local" : undefined),
+            localRoot: synced.contentDir,
+            installedAt: synced.syncedAt,
+          });
+        });
 
     if (movedRoot) pruneOlderRevisions(managed.localRoot, synced.cacheDir);
 
