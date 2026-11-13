@@ -13,6 +13,8 @@ steps:
 
 # {{TITLE}}
 
+> Deprecated: workflows are removed in 0.11. Write a task for new ordered steps.
+
 Free preamble prose describing what this workflow does. It is indexed for
 search and shown in `akm show`, but it is never dispatched to a step.
 
