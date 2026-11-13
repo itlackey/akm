@@ -288,7 +288,7 @@ test("built desktop UI: each section's happy path and one refusal", { timeout: 2
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
     await expect(replay).toContainText("missing restore steps");
-    await expect(replay.getByRole("rowheader", { name: "No agent recorded" })).toBeVisible();
+    await expect(replay.getByRole("rowheader", { name: /^No agent recorded \d+ events?$/ })).toBeVisible();
     await expect(replay.getByRole("button", { name: "Play", exact: true })).toBeEnabled();
   });
 
