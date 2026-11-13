@@ -43,7 +43,7 @@ export interface SkippedIndexBuild {
   skipped: RunLockHolder;
 }
 
-/** Whether `result` (a build outcome, or anything a test double returns) says the build was skipped. */
+/** Whether a build outcome says it was skipped. Takes `unknown` so improve's loosely typed `reindexFn` test stubs can be passed straight in. */
 export function isSkippedIndexBuild(result: unknown): result is SkippedIndexBuild {
   return typeof result === "object" && result !== null && "skipped" in result;
 }

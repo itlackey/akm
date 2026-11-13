@@ -55,7 +55,7 @@ test("a zero-result search in state.db is reported as a coverage gap", async () 
     scope: "skill",
     stashDir: stash,
     config,
-    ensureIndexFn: async () => false,
+    reindexFn: async () => false,
   });
 
   expect(result.coverageGaps).toEqual(["kubernetes ingress"]);

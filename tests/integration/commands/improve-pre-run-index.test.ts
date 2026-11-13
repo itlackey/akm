@@ -1,15 +1,8 @@
 /**
- * Regression test for #339: `akmImprove` must run `ensureIndex` BEFORE
- * `collectEligibleRefs`, otherwise an empty/stale `entries` table (e.g. right
- * after a full reindex clears the table before repopulating) makes the improve
- * loop silently no-op with `plannedRefs = []`.
- *
- * Before this fix: ensureIndex ran AFTER collectEligibleRefs, so the very
- * first run after a DB rebuild saw an empty entries table, captured
- * `plannedRefs = []`, and the rebuild only helped the NEXT run.
- *
- * Real runs use this ordering. Dry-runs intentionally consume the existing
- * index without invoking an index writer.
+ * Improve's pre-run index (#339): `akmImprove` builds the index (incrementally, under the rebuild lock in
+ * `"try"` mode) BEFORE `collectEligibleRefs`, otherwise an empty/stale `entries` table makes the loop
+ * silently no-op with `plannedRefs = []`. With another process holding the lock it builds nothing, plans on
+ * the entries it has and says so. Dry-runs consume the existing index without invoking an index writer.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -20,6 +13,7 @@ import type { AkmConfig } from "../../../src/core/config/config";
 import { saveConfig } from "../../../src/core/config/config";
 import { getDbPath, getIndexRebuildLockPath } from "../../../src/core/paths";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
+import { buildIndex } from "../../../src/indexer/index-build";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { closeDatabase, openExistingDatabase } from "../../../src/storage/repositories/index-connection";
 import { getEntryCount } from "../../../src/storage/repositories/index-entries-repository";
@@ -56,7 +50,7 @@ afterEach(() => {
   for (const cleanup of dirCleanups.splice(0)) cleanup();
 });
 
-describe("akmImprove ordering: ensureIndex must run before collectEligibleRefs (#339)", () => {
+describe("akmImprove pre-run index (#339)", () => {
   test("empty entries table on entry still produces non-empty plannedRefs after the call", async () => {
     const stashDir = makeTempDir("akm-improve-ensure-stash-");
     mutateScopedEnv("AKM_BUNDLE_DIR", stashDir);
@@ -129,7 +123,7 @@ describe("akmImprove ordering: ensureIndex must run before collectEligibleRefs (
     expect(entryCountAtCollect).toBe(2);
   });
 
-  test("R6: ensureIndexDurationMs is surfaced on the result when the inline index ran", async () => {
+  test("R6: ensureIndexDurationMs is surfaced on the result when the pre-run index built", async () => {
     const stashDir = makeTempDir("akm-improve-ensure-duration-");
     mutateScopedEnv("AKM_BUNDLE_DIR", stashDir);
     saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
@@ -138,7 +132,7 @@ describe("akmImprove ordering: ensureIndex must run before collectEligibleRefs (
     await akmIndex({ stashDir, full: true });
 
     // Same staleness-forcing setup as the ordering test above: wipe entries
-    // and builtAt so the run's ensureIndex call must rebuild inline.
+    // and builtAt so the run's pre-run index must rebuild.
     {
       const db = openExistingDatabase();
       try {
@@ -250,7 +244,7 @@ describe("akmImprove ordering: ensureIndex must run before collectEligibleRefs (
     }
   });
 
-  test("dry-run never invokes ensureIndex and uses only the existing index", async () => {
+  test("dry-run never builds the index and uses only the existing one", async () => {
     const stashDir = makeTempDir("akm-improve-ensure-dryrun-");
     mutateScopedEnv("AKM_BUNDLE_DIR", stashDir);
     saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
@@ -259,18 +253,17 @@ describe("akmImprove ordering: ensureIndex must run before collectEligibleRefs (
 
     // Drive a no-DB starting state. Dry-run must not create one merely to make
     // planning more complete.
-    let ensureCalls = 0;
+    let indexCalls = 0;
     const result = await akmImprove({
       dryRun: true,
       stashDir,
-      ensureIndexFn: async (dir: string, options) => {
-        ensureCalls += 1;
-        const { ensureIndex } = await import("../../../src/indexer/ensure-index");
-        return ensureIndex(dir, options);
+      reindexFn: async (options) => {
+        indexCalls += 1;
+        return buildIndex(options, "try");
       },
     });
 
-    expect(ensureCalls).toBe(0);
+    expect(indexCalls).toBe(0);
     expect(result.ok).toBe(true);
     expect(result.plannedRefs).toEqual([]);
   });

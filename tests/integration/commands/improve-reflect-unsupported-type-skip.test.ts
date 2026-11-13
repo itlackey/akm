@@ -169,7 +169,6 @@ describe("improve loop: unsupported-type reflect pre-check", () => {
 
     const result = await akmImprove({
       stashDir: stash,
-      ensureIndexFn: async () => undefined,
       reindexFn: async () => ({
         schemaVersion: 1,
         ok: true,
@@ -240,7 +239,6 @@ describe("improve loop: inner reflect type-guard fallback maps to reflect-skippe
 
     const result = await akmImprove({
       stashDir: stash,
-      ensureIndexFn: async () => undefined,
       reindexFn: async () => ({
         schemaVersion: 1,
         ok: true,
@@ -297,7 +295,6 @@ describe("improve envelope: per-phase wall-clock durations are emitted at the to
 
     const result = await akmImprove({
       stashDir: stash,
-      ensureIndexFn: async () => undefined,
       reindexFn: async () => ({
         schemaVersion: 1,
         ok: true,

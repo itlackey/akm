@@ -232,7 +232,6 @@ describe("an improve run never files another bundle's asset into its write targe
   }
 
   const stubs = {
-    ensureIndexFn: async () => false,
     reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
     distillFn: async ({ ref }: { ref: string }) => ({
       schemaVersion: 1 as const,

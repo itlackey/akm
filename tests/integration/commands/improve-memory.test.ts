@@ -197,7 +197,6 @@ describe("akm improve memory cleanup", () => {
     const result = await akmImprove({
       scope: "memory",
       stashDir,
-      ensureIndexFn: async () => false,
       reindexFn: async () => ({
         schemaVersion: 1,
         ok: true,
@@ -369,7 +368,6 @@ describe("akm improve memory cleanup", () => {
           improve: { strategies: { default: { processes: { extract: { enabled: false } } } } },
         }),
       ),
-      ensureIndexFn: async () => false,
       reindexFn: async ({ stashDir: reindexStashDir }) => {
         await akmIndex({ stashDir: reindexStashDir, full: true });
         return {
@@ -498,7 +496,6 @@ describe("akm improve memory cleanup", () => {
     const result = await akmImprove({
       scope: "memory",
       stashDir,
-      ensureIndexFn: async () => false,
       reindexFn: async ({ stashDir: reindexStashDir }) => {
         await akmIndex({ stashDir: reindexStashDir, full: true });
         return {
@@ -685,7 +682,6 @@ describe("akm improve memory cleanup", () => {
     const result = await akmImprove({
       scope: "memories/deploy-copy.derived",
       stashDir,
-      ensureIndexFn: async () => false,
       reindexFn: async () => ({
         schemaVersion: 1,
         ok: true,
@@ -759,14 +755,13 @@ describe("akm improve memory cleanup", () => {
       dryRun: true,
       stashDir,
       // Dry-run uses the existing index and never invokes this writer seam.
-      ensureIndexFn: async () => false,
+      reindexFn: async () => false,
     });
     expect(dryRun.plannedRefs).toEqual([]);
 
     const result = await akmImprove({
       scope: "knowledge/skills/remote-deploy/references/gates",
       stashDir,
-      ensureIndexFn: async () => false,
       reindexFn: async () => ({
         schemaVersion: 1,
         ok: true,
@@ -822,7 +817,6 @@ describe("akm improve memory cleanup", () => {
       scope: "memory",
       stashDir,
       requireFeedbackSignal: true,
-      ensureIndexFn: async () => false,
       reindexFn: async () => ({
         schemaVersion: 1,
         ok: true,
@@ -866,7 +860,6 @@ describe("akm improve memory cleanup", () => {
       scope: "memory",
       stashDir,
       requireFeedbackSignal: true,
-      ensureIndexFn: async () => false,
       reindexFn: async () => ({
         schemaVersion: 1,
         ok: true,
@@ -925,7 +918,6 @@ describe("akm improve memory cleanup", () => {
     const result = await akmImprove({
       scope: "memory",
       stashDir,
-      ensureIndexFn: async () => false,
       reindexFn: async () => ({
         schemaVersion: 1,
         ok: true,
@@ -998,7 +990,6 @@ describe("akm improve memory cleanup", () => {
     await akmImprove({
       scope: "memory",
       stashDir,
-      ensureIndexFn: async () => false,
       reindexFn: async () => ({
         schemaVersion: 1,
         ok: true,
@@ -1053,7 +1044,6 @@ describe("akm improve memory cleanup", () => {
     const result = await akmImprove({
       scope: "memory",
       stashDir,
-      ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => ({
         schemaVersion: 2,
@@ -1168,7 +1158,6 @@ describe("akm improve memory cleanup", () => {
     const result = await akmImprove({
       scope: "memory",
       stashDir,
-      ensureIndexFn: async () => false,
       reindexFn: async () => {
         callOrder.push("reindex");
         return { schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 };
@@ -1209,7 +1198,8 @@ describe("akm improve memory cleanup", () => {
       },
     });
 
-    expect(callOrder).toEqual(["memoryInference"]);
+    // The pre-run index is the only reindex: the pass's written paths go in incrementally.
+    expect(callOrder).toEqual(["reindex", "memoryInference"]);
     expect(result.memoryInference?.writtenFacts).toBe(1);
 
     const checkDb = openIndexDatabase(getDbPath());
@@ -1238,7 +1228,6 @@ describe("akm improve memory cleanup", () => {
     const result = await akmImprove({
       scope: "memory",
       stashDir,
-      ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => ({
         schemaVersion: 2,

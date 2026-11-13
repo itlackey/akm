@@ -149,7 +149,7 @@ describe("#800 effective dry-run planner", () => {
     writeSkill(storage.stashDir, "unindexed", "This asset intentionally has no index row.");
     saveConfig(config);
     const before = snapshotTree(storage.root);
-    const ensureIndexFn = mock(async () => {
+    const reindexFn = mock(async () => {
       throw new Error("dry-run invoked index creation");
     });
 
@@ -158,7 +158,7 @@ describe("#800 effective dry-run planner", () => {
       stashDir: storage.stashDir,
       config,
       dryRun: true,
-      ensureIndexFn,
+      reindexFn,
     });
 
     expect(result.plan?.snapshot).toEqual({
@@ -167,7 +167,7 @@ describe("#800 effective dry-run planner", () => {
     });
     expect(result.plan?.candidates).toEqual({ rawInScope: 0, selected: 0, effective: 0 });
     expect(result.plannedRefs).toEqual([]);
-    expect(ensureIndexFn).not.toHaveBeenCalled();
+    expect(reindexFn).not.toHaveBeenCalled();
     expect(fs.existsSync(getDbPath())).toBe(false);
     expect(snapshotTree(storage.root)).toEqual(before);
   });
@@ -473,7 +473,6 @@ describe("#800 effective dry-run planner", () => {
       stashDir,
       config,
       limit: 3,
-      ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => okReflect(ref ?? ""),
       distillFn: async ({ ref }) => okDistill(ref ?? ""),
@@ -510,7 +509,7 @@ describe("#800 effective dry-run planner", () => {
       stashDir,
       config,
       requireFeedbackSignal: true,
-      ensureIndexFn: async () => false,
+      reindexFn: async () => false,
       reflectFn,
     };
 
@@ -886,7 +885,7 @@ describe("#800 effective dry-run planner", () => {
           dryRun: true,
           reflectFn,
           drainProposalsFn,
-          ensureIndexFn: mock(async () => {
+          reindexFn: mock(async () => {
             throw new Error("dry-run invoked index writer");
           }),
         }),

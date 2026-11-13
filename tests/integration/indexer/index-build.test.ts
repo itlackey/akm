@@ -18,11 +18,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { saveConfig } from "../../../src/core/config/config";
 import { TransientError } from "../../../src/core/errors";
-import { getIndexRebuildLockPath } from "../../../src/core/paths";
+import { getDbPath, getIndexRebuildLockPath } from "../../../src/core/paths";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
 import { _setIndexBuildWaitTimingForTests, buildIndex, isSkippedIndexBuild } from "../../../src/indexer/index-build";
 import { indexBuildRunning } from "../../../src/indexer/index-rebuild-lock";
 import * as indexerModule from "../../../src/indexer/indexer";
+import { closeDatabase, openExistingDatabase } from "../../../src/storage/repositories/index-connection";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
@@ -145,6 +146,34 @@ describe("buildIndex", () => {
       spy.mockRestore();
     }
     expect(fs.existsSync(lockPath())).toBe(false);
+  });
+
+  test("an incremental build picks up an edit in a non-primary bundle", async () => {
+    const other = path.join(storage.root, "other-bundle");
+    fs.mkdirSync(path.join(other, "memories"), { recursive: true });
+    const file = path.join(other, "memories", "elsewhere.md");
+    fs.writeFileSync(file, "---\ndescription: elsewhere\n---\n\n# elsewhere\n\nBody.\n");
+    saveConfig({
+      semanticSearchMode: "off",
+      bundles: { stash: { path: storage.stashDir }, other: { path: other } },
+      defaultBundle: "stash",
+      registries: [],
+    });
+    await buildIndex({ stashDir: storage.stashDir }, "wait");
+    const hash = () => {
+      const db = openExistingDatabase(getDbPath());
+      try {
+        return (
+          db.prepare("SELECT content_hash FROM entries WHERE file_path = ?").get(file) as { content_hash: string }
+        ).content_hash;
+      } finally {
+        closeDatabase(db);
+      }
+    };
+    const before = hash();
+    fs.writeFileSync(file, "---\ndescription: elsewhere edited\n---\n\n# elsewhere\n\nEdited body.\n");
+    await buildIndex({ stashDir: storage.stashDir }, "wait");
+    expect(hash()).not.toBe(before);
   });
 
   test("consecutive builds in one process each take and release the lock (no build calls another)", async () => {

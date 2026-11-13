@@ -36,9 +36,9 @@ import { info, warn, warnVerbose } from "../../core/warn";
 import { beginWriteProvenance, relativeWrittenPath, type WriteProvenanceJournal } from "../../core/write-provenance";
 import { resolveWorkingStashTarget, resolveWritable, resolveWriteTarget } from "../../core/write-source";
 import { type Notice, noticeSet } from "../../execution/notices";
-import { ensureIndex } from "../../indexer/ensure-index";
 import { buildIndex, isSkippedIndexBuild } from "../../indexer/index-build";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
+import type { IndexResponse } from "../../indexer/indexer";
 import { countPendingMemoriesNeedingDecision } from "../../indexer/passes/memory-inference";
 import { resolveEntryContentDir, resolveSourceEntries } from "../../indexer/search/search-source";
 import { installLlmUsagePersistence } from "../../llm/usage-persist";
@@ -535,7 +535,6 @@ function resolveImproveRunSetup(options: AkmImproveOptions) {
     scope,
     reflectFn: options.reflectFn ?? akmReflect,
     distillFn: options.distillFn ?? akmDistill,
-    ensureIndexFn: options.ensureIndexFn ?? ensureIndex,
     reindexFn: options.reindexFn ?? ((indexOptions) => buildIndex(indexOptions, "try")),
     drainProposalsFn: options.drainProposalsFn ?? drainProposals,
     collectEligibleRefsImpl:
@@ -609,11 +608,10 @@ function probeEntryCount(): number | undefined {
 }
 
 /**
- * ensureIndex before selection (#339): the eligible-ref query reads `entries`,
- * which a DB version upgrade may just have dropped. An index that was empty
- * and is now populated means an upgrade rebuild happened; say so. When another
- * process holds the rebuild lock the run does not build; it plans on the
- * entries the index has and says so, as it does when the build fails.
+ * Index before selection (#339): the eligible-ref query reads `entries`, which a DB version upgrade may
+ * just have dropped. An index that was empty and is now populated means an upgrade rebuild happened; say so.
+ * When another process holds the rebuild lock the run builds nothing: it plans on the entries the index has
+ * and says so, as it does when the build fails.
  */
 async function runIndexBootstrapPass(
   run: ImproveRunSetup,
@@ -622,25 +620,24 @@ async function runIndexBootstrapPass(
   const { primaryStashDir, options } = run;
   const warnings: string[] = [];
   if (!primaryStashDir || options.dryRun) return { warnings };
-  const preEnsureEntryCount = probeEntryCount();
+  const preIndexEntryCount = probeEntryCount();
   let ensureIndexDurationMs: number | undefined;
+  const startedMs = Date.now();
   try {
-    const built = await run.ensureIndexFn(primaryStashDir, {
-      signal,
-      onReindexTiming: ({ durationMs }) => {
-        ensureIndexDurationMs = durationMs;
-      },
-    });
+    const built = await run.reindexFn({ stashDir: primaryStashDir, implicit: true, signal });
     if (isSkippedIndexBuild(built)) {
       const skipped = "index run skipped: another index run holds the rebuild lock; planning on the existing entries";
       warn(`[improve] ${skipped}`);
       warnings.push(skipped);
+    } else {
+      // A response without timing (a stubbed reindex) falls back to the wall clock.
+      ensureIndexDurationMs = (built as IndexResponse | undefined)?.timing?.totalMs ?? Date.now() - startedMs;
     }
   } catch (err) {
     if (signal.aborted) throw err;
-    warnings.push(`ensureIndex failed: ${errMessage(err)}`);
+    warnings.push(`index failed: ${errMessage(err)}`);
   }
-  if (preEnsureEntryCount === 0 && (probeEntryCount() ?? 0) > 0) {
+  if (preIndexEntryCount === 0 && (probeEntryCount() ?? 0) > 0) {
     warn("[improve] index was empty after DB version upgrade — repopulating before continuing");
   }
   return { warnings, ensureIndexDurationMs };

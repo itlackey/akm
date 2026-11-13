@@ -84,7 +84,7 @@ describe("review-first improve autonomy reporting", () => {
       scope: "memory",
       stashDir: storage.stashDir,
       config,
-      ensureIndexFn: async () => undefined,
+      reindexFn: async () => undefined,
       collectEligibleRefsFn: (async () => ({
         plannedRefs: [],
         memorySummary: { eligible: 2, derived: 2 },
