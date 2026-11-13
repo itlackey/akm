@@ -174,7 +174,7 @@ const GONE_FLAGS: ReadonlyArray<{ flag: string; use: string; commands?: readonly
   { flag: "--probe", use: "no flag: probing is the default, and `--no-probe` runs offline", commands: ["setup"] },
   {
     flag: "--require-engines",
-    use: "no flag: `akm health && akm improve` checks that each connection answers and each harness is installed",
+    use: "no flag: `akm doctor && akm improve` checks that each connection answers and each harness is installed",
     commands: ["improve"],
   },
   { flag: "--all-scopes", use: "no flag: it did nothing, so drop it", commands: ["workflow list", "workflow status"] },
@@ -198,10 +198,10 @@ const GONE_FLAGS: ReadonlyArray<{ flag: string; use: string; commands?: readonly
   })),
   {
     flag: "--rebind",
-    use: "no flag: it was ignored, so drop it (`akm task sync --rebind` stays)",
+    use: "no flag: it was ignored, so drop it (`akm doctor scheduler sync --rebind` stays)",
     commands: ["task add"],
   },
-  { flag: "--id", use: "the id as the argument: `akm task history <id>`", commands: ["task history"] },
+  { flag: "--id", use: "`akm doctor log --task <id>`", commands: ["task history"] },
   { flag: "--auto-fix", use: "`--fix`", commands: ["lint"] },
   ...["--yes", "-y"].map((flag) => ({
     flag,

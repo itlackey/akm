@@ -206,7 +206,7 @@ describe("gone flags", () => {
   };
 
   test.each([
-    [["improve", "--require-engines"], "`--require-engines` is gone", "akm health && akm improve"],
+    [["improve", "--require-engines"], "`--require-engines` is gone", "akm doctor && akm improve"],
     [["workflow", "list", "--all-scopes"], "`--all-scopes` is gone", "drop it"],
     [["workflow", "status", "r1", "--all-scopes"], "`--all-scopes` is gone", "drop it"],
     [["bundle", "add", "x", "--allow-dangerous-env-keys"], "`--allow-dangerous-env-keys` is gone", "drop it"],
@@ -216,8 +216,8 @@ describe("gone flags", () => {
     [["registry", "add", "http://x", "--options", "{}"], "`--options` is gone", "drop it"],
     [["task", "sync", "--dry-run"], "`--dry-run` is gone", "akm migrate status"],
     [["task", "sync", "--bundle", "b"], "`--bundle` is gone", "drop it"],
-    [["task", "add", "--rebind"], "`--rebind` is gone", "drop it"],
-    [["task", "history", "--id", "t1"], "`--id` is gone", "akm task history <id>"],
+    [["task", "add", "--rebind"], "`--rebind` is gone", "akm doctor scheduler sync --rebind"],
+    [["task", "history", "--id", "t1"], "`--id` is gone", "akm doctor log --task <id>"],
     [["lint", "--auto-fix"], "`--auto-fix` is gone", "use `--fix`"],
     [["migrate", "apply", "--dry-run"], "`--dry-run` is gone", "use `akm migrate status`"],
     [["bundle", "update", "--yes"], "`--yes` is gone: it did nothing, so drop it.", "drop it"],

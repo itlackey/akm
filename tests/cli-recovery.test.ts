@@ -36,7 +36,8 @@ describe("recovery hints", () => {
     expect(r.code).toBe(2);
     const hint = hintOf(r.stderr);
     expect(hint).toContain("`akm search --type task`");
-    expect(hint).toContain("`akm task doctor`");
+    expect(hint).toContain("`akm doctor`");
+    expect(hint).not.toContain("task doctor");
     const search = await runCliCapture(["search", "--type", "task"]);
     expect(search.code).toBe(0);
   });
