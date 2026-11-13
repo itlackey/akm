@@ -108,7 +108,7 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | `akm info` | Deprecated | Removed in 0.11: use `akm doctor info`. The current `learning` field is Experimental. |
 | `akm log` | Deprecated | Removed in 0.11: use `akm doctor log`. |
 | `akm lint` | Evolving | |
-| `akm improve` | Evolving | `--require-feedback-signal`, `--json-to-stdout` and `--show-prompt` are Deprecated, removed in 0.11 (replacements: a strategy with `processes.proactiveMaintenance.enabled: false` selected with `--strategy`, ordinary JSON output, `doctor prompt`). `--timeout-ms` is already removed on the 0.11 branch: it is an unknown flag, and the error names `--timeout`. Gate-passed proposals are accepted and committed by default. The [three named autonomous lanes](#akm-improve-autonomy) require `experimental.improveAutonomy`; other documented writes do not. |
+| `akm improve` | Evolving | `--require-feedback-signal` and `--show-prompt` are Deprecated, removed in 0.11 (replacements: a strategy with `processes.proactiveMaintenance.enabled: false` selected with `--strategy`, and `doctor prompt`). `--json-to-stdout` stays: stdout is empty for a live run without it, and the evaluators read the result through it. `--timeout-ms` is already removed on the 0.11 branch: it is an unknown flag, and the error names `--timeout`. Gate-passed proposals are accepted and committed by default. The [three named autonomous lanes](#akm-improve-autonomy) require `experimental.improveAutonomy`; other documented writes do not. |
 | `akm improve report` | Deprecated | Removed in 0.11: use `akm doctor metrics improve` (`--run`, `--since`), first in 0.10.261120, retaining run/window selection and usage, routing, and cost data. |
 | `akm improve judge` | Deprecated | Removed in 0.11: use `akm doctor judge`. Subcommand since 0.10 (was a magic `scope` value); reads one revision as JSON on stdin and writes nothing. The same as `akm judge reflect.quality`, in its older input and output shape; its `--strategy` flag was removed. Already an unknown command on the 0.11 branch, whose error names `akm doctor judge reflect.quality`. |
 | `akm judge` | Deprecated | Removed in 0.11: use `akm doctor judge`. Runs a registered judge (`reflect.quality`, `distill.lesson`, `consolidate.pair`, `proposal.judgment`) on one JSON input from stdin, on the runner `--connection`, `--harness` and `--model` select. Output is one envelope (`judge`, `schemaVersion`, `runner`, `outcome`, `verdict?`, `reason?`); each judge carries its own `schemaVersion`. |
@@ -294,13 +294,11 @@ remove a research capability or skip its replacement.
 | `remember --show-similar` | Separate retrieval operation |
 | Old public paths for custom-strategy definitions and research-only process knobs | Add experimental aliases in 0.10.x feeding the unchanged strategy engine; remove old paths in 0.11 |
 | `improve --require-feedback-signal` | Use a strategy with `processes.proactiveMaintenance.enabled: false`, selected with `--strategy` (0.10.261120); no new key. The planned refs are the same; the skip label differs (`not_retrieved` instead of `no_new_signal` for refs search, curate and show did not return) |
-| `improve --json-to-stdout` | Keep the flag and stdout contract in 0.10.x; expose equivalent run data through ordinary JSON output at the 0.11 cutover |
 | Overlapping bulk proposal controls | Nothing is retired: `accept`/`reject` with `--generator`, `--older-than` and `--max-diff-lines`, and `proposal drain`, both stay; they apply different approval rules |
 | `upgrade --next` | Use `--channel`, consistent across CLI and plugins |
 | `proposal reject --yes` / `-y` | Nothing: reject no longer asks for confirmation (0.10.261121), since `proposal reopen` undoes a rejection. The flag was ignored with a notice through 0.10 and is an unknown flag in 0.11 |
 | No-ref interactive `agent` launch | Invoke the agent's own CLI |
 | `curate --pack` and the unpacked default | Add opt-in `--max-tokens` in 0.10.x; switch the default to bounded packed context and remove `--pack` in 0.11. The 0.11 contract: without `--max-tokens` the budget is **4000 tokens**; the result keeps the `results` envelope that `search` uses (with `searchMode`, warnings and the project line); each item carries `ref`, `content`, `tokens`, `reason` and `supportRefs`, and a `truncated` flag when it was cut. Not implemented yet (`TODO(0.11:curate-default)` in the migration guide) |
-| `lint --fail-on-flagged` | Nonzero exit for validation errors by default |
 | `--timeout-ms` | Duration-based `--timeout`, introduced alongside it in 0.10.261119. Removed on the 0.11 branch: a usage error naming `--timeout` |
 | Invalid-value fallback and ignored incompatible legacy flags, including simultaneous `--quiet`/`--verbose` | Validate new interfaces in 0.10.x; tighten legacy behavior in 0.11 |
 | Session extraction's source-harness `--type` | `proposal extract --sessions <claude\|codex\|opencode>` (0.10.261120); retire the overloaded `--type` spelling in 0.11 |
@@ -807,8 +805,9 @@ structured output; the safe injection path is `akm env run <name> --
 ### Validation (Evolving)
 
 The `akm lint` rule set and finding shapes are Evolving. Its current
-`--fail-on-flagged` behavior and exit codes remain stable through 0.10. The
-flag is Deprecated for 0.11, when validation errors become nonzero by default.
+`--fail-on-flagged` behavior and exit codes stay in 0.11: lint exits 0 with
+its findings in the result, and the flag makes it exit nonzero when anything is
+flagged.
 
 ## Versioning and upgrade history
 
