@@ -171,6 +171,9 @@
         legend={outcomeClasses.map((item, index) => ({ name: item.label, index: [0, 2, 4, 1, 3][index] }))}
         description="Select a nonzero segment or table value to inspect its proposals. Decisions are not a quality score."
         option={weeklyOption}
+        empty={weeklyOutcomes.some((row) => outcomeClasses.some((item) => row[item.key] > 0))
+          ? ""
+          : "No decisions recorded for this process in this window."}
         onSelect={inspectMark}
       >
         {#snippet controls()}<label class="process-control"
@@ -202,6 +205,11 @@
           id="impact-outcomes"
           legend={outcomeClasses.map((item, index) => ({ name: item.label, index: [0, 2, 4, 1, 3][index] }))}
           heading="Who decided what"
+          empty={(impact.outcomes ?? []).some((process) =>
+            process.weeks.some((row) => outcomeClasses.some((item) => row[item.key] > 0)),
+          )
+            ? ""
+            : "No decisions recorded in this window."}
           description="Decisions by improvement process, preserving the judge, human and unrecorded decider distinctions. Reverted is not kept."
           option={() =>
             verticalBars(
@@ -418,6 +426,7 @@
         id="impact-cost"
         legend={processes.map((name, index) => ({ name, index: index % 5 }))}
         heading="What does improve cost?"
+        empty={costCalls ? "" : "No model calls recorded in this window."}
         description={`${costCalls} model calls; ${reportedCalls} calls reported tokens. Unreported tokens are unknown, not zero. Tokens are not money.`}
         option={() =>
           verticalBars(

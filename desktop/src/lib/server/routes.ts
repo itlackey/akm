@@ -210,6 +210,7 @@ export const routes: Route[] = [
   ),
   get("/api/meta", () => activity.meta()),
   get("/api/tasks/runs", (query) => activity.taskRuns({ since: text(query, "since") })),
+  get("/api/improve/run", (query) => activity.improveRun({ id: text(query, "id") })),
   get("/api/workflows/runs", (query) => activity.workflowRuns({ since: text(query, "since") })),
   get("/api/workflows/run", (query) => activity.workflowRun({ id: text(query, "id") })),
   get("/api/events", (query) => activity.events({ since: text(query, "since"), until: text(query, "until") })),

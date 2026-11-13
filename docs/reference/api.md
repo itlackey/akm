@@ -128,7 +128,7 @@ are ignored) and returns plain JSON-safe data without a CLI envelope; failures r
 | `feedback` | `record` |
 | `setup` | `detect`, `apply` (first-run setup: the library, and the agent programs akm may use; `akm bundle create`, `akm setup --yes --harness`) |
 | `sensitive` | `describe`, `readValue`, `save`, `remove` (env files and secrets; only `readValue` returns a value) |
-| `activity` | `overview`, `pulse`, `health`, `retrievalTrend`, `improveImpact`, `taskHistory`, `meta` |
+| `activity` | `overview`, `pulse`, `health`, `retrievalTrend`, `improveImpact`, `improveRun`, `taskHistory`, `meta` |
 
 Also exported: `AkmError`, `UsageError`, `NotFoundError`, `ConfigError`, `TransientError`, the
 `AkmErrorKind` type, `CONFLICT_CODES`, `scrubUrlCredentials` and `indexWrittenAssets(bundleRoot,

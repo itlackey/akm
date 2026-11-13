@@ -18,6 +18,7 @@
     onSelect = undefined,
     legend = [],
     initialView = "chart",
+    empty = "",
     controls,
     children,
   }: {
@@ -29,8 +30,18 @@
     /** As tall as this many category rows, for a chart with one row per thing. */
     rows?: number;
     onSelect?: (event: { dataIndex: number; seriesIndex: number; data?: unknown }) => void;
-    legend?: Array<{ name: string; index: number; marker?: boolean; band?: boolean }>;
+    legend?: Array<{
+      name: string;
+      index: number;
+      marker?: boolean;
+      band?: boolean;
+      /** A status colour token and the shape of its mark, for a chart whose marks differ by shape. */
+      color?: string;
+      shape?: "circle" | "triangle" | "diamond";
+    }>;
     initialView?: "chart" | "table";
+    /** Said in place of the chart when there is nothing to draw, so an empty plot is not mistaken for a zero. */
+    empty?: string;
     /** Controls beside the Chart / Table switch. */
     controls?: Snippet;
     /** The table of the same figures. */
@@ -60,6 +71,8 @@
   $effect(() => {
     const build = option;
     void rows;
+    void root;
+    void empty;
     untrack(() => draw(build));
   });
   async function changeView(next: "chart" | "table") {
@@ -83,17 +96,19 @@
   </header>
   {#if description}<p class="muted small">{description}</p>{/if}
   <div hidden={view !== "chart"}>
-    {#if legend.length}<ul class="chart-legend" aria-label={`${heading} legend`}>
+    {#if empty}<p class="empty-chart">{empty}</p>{/if}
+    {#if legend.length && !empty}<ul class="chart-legend" aria-label={`${heading} legend`}>
         {#each legend as item}<li>
             <span
               class="legend-swatch"
               class:band={item.band}
-              style={`background:var(${item.marker ? "--marker" : `--s${item.index + 1}`})`}
+              data-shape={item.shape}
+              style={`background:var(${item.color ?? (item.marker ? "--marker" : `--s${item.index + 1}`)})`}
               aria-hidden="true"
             ></span>{item.name}
           </li>{/each}
       </ul>{/if}
-    <div bind:this={root}></div>
+    {#if !empty}<div bind:this={root}></div>{/if}
   </div>
   <div class="table-wrap chart-data" hidden={view !== "table"}>{@render children?.()}</div>
 </section>
@@ -140,6 +155,12 @@
   .chart-data {
     margin-top: 1rem;
   }
+  .empty-chart {
+    margin-block: 1rem;
+    padding: 1rem;
+    border: 1px dashed var(--border-strong);
+    color: var(--muted);
+  }
   .chart-legend {
     display: flex;
     flex-wrap: wrap;
@@ -160,6 +181,19 @@
     inline-size: 0.75rem;
     block-size: 0.45rem;
     flex: none;
+  }
+  .legend-swatch[data-shape] {
+    inline-size: 0.75rem;
+    block-size: 0.75rem;
+  }
+  .legend-swatch[data-shape="circle"] {
+    border-radius: 50%;
+  }
+  .legend-swatch[data-shape="triangle"] {
+    clip-path: polygon(50% 0, 100% 100%, 0 100%);
+  }
+  .legend-swatch[data-shape="diamond"] {
+    clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
   }
   .legend-swatch.band {
     opacity: 0.25;
