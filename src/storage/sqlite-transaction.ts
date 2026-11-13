@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `BEGIN IMMEDIATE` transactions and the one SQLite contention classifier.
+ * `BEGIN IMMEDIATE` transactions (state.db and index.db) and the one SQLite contention classifier.
  *
  * `db.transaction()` is DEFERRED by default on both Bun and better-sqlite3,
  * which means two writers can both perform stale preflight reads and only race
@@ -25,7 +25,8 @@
  * (real corruption, a body-thrown failure) is never reclassified and rethrows
  * exactly as raised.
  *
- * This is the single place SQLITE_BUSY/LOCKED becomes exit 75 for state.db:
+ * This is the single place SQLITE_BUSY/LOCKED becomes exit 75 for state.db (a caller on another
+ * database passes `reportContention` to name its own, as the index build does):
  * `openStateDatabase`'s migration transaction, every repository write and the
  * shared migration runner (`engines/sqlite-migrations.ts`) all go through it.
  * `core/state-db.ts` re-exports these helpers for its callers.
@@ -82,16 +83,21 @@ const WITH_IMMEDIATE_TX_MAX_ATTEMPTS = 5;
  * `cause` for `--verbose`/debugging. A genuinely unrelated error (not
  * contention-shaped) is rethrown exactly as raised, never reclassified.
  */
-function throwBeginFailure(err: unknown): never {
-  if (isSqliteContentionError(err)) {
-    const contended = new TransientError(
-      "akm's state database is busy (another akm process is writing it); retry shortly.",
-      "STATE_DB_CONTENDED",
-    );
-    contended.cause = err;
-    throw contended;
-  }
+function throwBeginFailure(err: unknown, reportContention: ReportContention = stateDbContended): never {
+  if (isSqliteContentionError(err)) throw reportContention(err);
   throw err;
+}
+
+/** How a contention-shaped BEGIN failure is reported: given the driver error, the error to throw. */
+export type ReportContention = (cause: unknown) => unknown;
+
+function stateDbContended(cause: unknown): TransientError {
+  const contended = new TransientError(
+    "akm's state database is busy (another akm process is writing it); retry shortly.",
+    "STATE_DB_CONTENDED",
+  );
+  contended.cause = cause;
+  return contended;
 }
 
 /**
@@ -109,7 +115,7 @@ function throwBeginFailure(err: unknown): never {
  * by the entry guard in {@link withImmediateTransaction}), and "retrying" it
  * with a ROLLBACK would destroy the caller's transaction (issue #686).
  */
-export function beginImmediateTransaction(db: Database): void {
+export function beginImmediateTransaction(db: Database, reportContention?: ReportContention): void {
   if (db.inTransaction) {
     throw new Error("beginImmediateTransaction requires a connection with no active transaction");
   }
@@ -134,14 +140,14 @@ export function beginImmediateTransaction(db: Database): void {
         sleepSync(2 ** (attempt - 1));
         continue;
       }
-      throwBeginFailure(err);
+      throwBeginFailure(err, reportContention);
     }
   }
-  throwBeginFailure(lastBeginErr);
+  throwBeginFailure(lastBeginErr, reportContention);
 }
 
 /** Run `fn` inside a `BEGIN IMMEDIATE` transaction, joining one that is already open on `db`. */
-export function withImmediateTransaction<T>(db: Database, fn: () => T): T {
+export function withImmediateTransaction<T>(db: Database, fn: () => T, reportContention?: ReportContention): T {
   // Re-entrancy guard (issue #686): if a transaction is already open on this
   // connection (e.g. a nested withImmediateTransaction call inside an outer
   // frame's fn), join it — run fn directly with no BEGIN/COMMIT/ROLLBACK of
@@ -152,7 +158,7 @@ export function withImmediateTransaction<T>(db: Database, fn: () => T): T {
   if (db.inTransaction) {
     return fn();
   }
-  beginImmediateTransaction(db);
+  beginImmediateTransaction(db, reportContention);
   try {
     const result = fn();
     if (!db.inTransaction) {

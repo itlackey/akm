@@ -10,7 +10,6 @@ import { adapterForId } from "../core/adapter/registry";
 import type { BundleComponent } from "../core/adapter/types";
 import { compareCodePoints, isHttpUrl } from "../core/common";
 import type { AkmConfig } from "../core/config/config";
-import { TransientError } from "../core/errors";
 import { appendEvent } from "../core/events";
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
 import { getDbPath } from "../core/paths";
@@ -1566,14 +1565,7 @@ function persistDirRecords(
     indexTransactionHookForTests?.("records-persisted");
   };
 
-  try {
-    withImmediateTransaction(db, persist);
-  } catch (error) {
-    // `withImmediateTransaction` names state.db when its BEGIN gives up on a busy file; this one is index.db.
-    throw error instanceof TransientError && error.code === "STATE_DB_CONTENDED"
-      ? reclassifyIndexDbContention(error.cause)
-      : error;
-  }
+  withImmediateTransaction(db, persist, reclassifyIndexDbContention);
   // A ref deleted from one directory may have been re-inserted by another in
   // this same run: only refs that no longer exist lose their events.
   const refStillIndexed = db.prepare("SELECT 1 FROM entries WHERE item_ref = ?");
