@@ -194,17 +194,26 @@ them, in column form, so 30,000 assets stay a few megabytes:
   "note": "…",
   "types": ["knowledge", "memory"],
   "bundles": ["team-wiki"],
+  "beliefs": ["superseded"],
+  "emptyBundles": [],
+  "use": { "since": "2026-08-15T08:00:00.000Z", "source": "user" },
+  "unresolvedLinks": 2,
   "kinds": ["xref", "links_to"],
-  "nodes": { "ref": ["team-wiki//knowledge/a"], "title": ["A"], "type": [0], "bundle": [0],
-             "shows": [12], "searches": [40], "lastUsedAt": ["2026-11-10T08:00:00.000Z"] },
+  "nodes": { "ref": ["team-wiki//knowledge/a"], "title": ["A"], "type": [0], "bundle": [0], "belief": [-1],
+             "shows": [12], "searches": [40] },
   "links": { "from": [0], "to": [3], "kind": [1] },
   "meaning": { "embedded": 29840, "xyz": [12.5, -40.1, 3.2] }
 }
 ```
 
-Node `i` is index `i` of every `nodes` array; `type`, `bundle` and `kind` index `types`, `bundles` and `kinds`. A link
-runs from the asset that declares it to its target; a link whose target is not indexed is left out. `shows`,
-`searches` and `lastUsedAt` come from the index's utility scores. `meaning` places each asset with a stored embedding
+Node `i` is index `i` of every `nodes` array; `type`, `bundle`, `belief` and `kind` index `types`, `bundles`, `beliefs`
+and `kinds`. `bundles` runs from the bundle with the most assets to the one with the fewest, and `emptyBundles` names
+the enabled bundles with none. `belief` is the asset's recorded belief state, `-1` when it has none. A link runs from
+the asset that declares it to its target; `unresolvedLinks` counts the declared links that are left out because the
+target is missing, of a type that is not returned, or in a bundle that is not enabled. `shows` and `searches` are
+counted from the usage events when the operation is called: events of source `user` (people and their agent
+sessions, not scheduled tasks or Improve) at or after `use.since`, the start of the usage retention window. They are
+zero, and the note says so, when no usage history is available. `meaning` places each asset with a stored embedding
 of the index's current model in three dimensions (three coordinates per node, `null` for one with no embedding): its
 projection on the three principal components of the vectors, so assets with similar content land near each other. The
 components are found from an evenly spaced sample of at most 4,000 vectors and kept for the life of the process until

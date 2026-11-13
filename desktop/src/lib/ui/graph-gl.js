@@ -72,7 +72,11 @@ export function panVector(yaw, right, up) {
     s = Math.sin(yaw);
   return [right * c - up * s, -right * s - up * c];
 }
-/** The camera distance that frames a bounding box { min: [x, y, z], max: [x, y, z] } (null: nothing drawn). */
+/**
+ * The camera distance that frames a bounding box { min: [x, y, z], max: [x, y, z], radius? } (null: nothing drawn).
+ * The 3D view turns, so it frames a sphere about the box's centre: `radius` is the farthest point from that centre,
+ * and without it the box's half diagonal, which is never smaller.
+ */
 export function fitDistance(box, { flat, fov, aspect, margin = 1.15, floor = 60 }) {
   if (!box) return 2150;
   const dx = box.max[0] - box.min[0],
@@ -81,7 +85,7 @@ export function fitDistance(box, { flat, fov, aspect, margin = 1.15, floor = 60 
   const t = Math.tan(fov / 2);
   const d = flat
     ? Math.max(dz / 2 / t, dx / 2 / (t * aspect))
-    : Math.hypot(dx, dy, dz) / 2 / Math.sin(Math.atan(t * Math.min(1, aspect)));
+    : (box.radius ?? Math.hypot(dx, dy, dz) / 2) / Math.sin(Math.atan(t * Math.min(1, aspect)));
   return Math.max(floor, d * margin);
 }
 
@@ -264,9 +268,24 @@ export function createGraphView({ canvas, labels, data, theme }) {
         hi[a] = Math.max(hi[a], v);
       }
     };
-    if (indices) for (const i of indices) add(i);
-    else for (let i = 0; i < N; i++) add(i);
-    const out = lo[0] === Infinity ? null : { min: lo, max: hi };
+    const each = (visit) => {
+      if (indices) for (const i of indices) visit(i);
+      else for (let i = 0; i < N; i++) visit(i);
+    };
+    each(add);
+    const out = lo[0] === Infinity ? null : { min: lo, max: hi, radius: 0 };
+    if (out) {
+      // The farthest drawn point from the box's centre: the sphere the turning 3D view has to frame.
+      const mid = [0, 1, 2].map((a) => (lo[a] + hi[a]) / 2);
+      each((i) => {
+        if (state[i] === HIDDEN) return;
+        const y = data.pos[i * 3 + 1] * goal.flat;
+        out.radius = Math.max(
+          out.radius,
+          Math.hypot(data.pos[i * 3] - mid[0], y - mid[1], data.pos[i * 3 + 2] - mid[2]),
+        );
+      });
+    }
     if (!indices) {
       box = out;
       boxStale = false;

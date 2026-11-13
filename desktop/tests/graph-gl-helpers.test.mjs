@@ -70,5 +70,9 @@ test("fit distance frames the drawn bounding box, by size not by distance from t
   assert.equal(fitDistance(null, view), 2150);
   assert.equal(fitDistance({ min: [0, 0, 0], max: [0, 0, 0] }, view), 60);
   // 3D uses the bounding sphere, so it is never closer than the flat view of the same box.
-  assert.ok(fitDistance({ min: [0, 0, 0], max: [100, 100, 100] }, { ...view, flat: false }) > small);
+  const cube = { min: [0, 0, 0], max: [100, 100, 100] };
+  assert.ok(fitDistance(cube, { ...view, flat: false }) > small);
+  // With the farthest point's distance from the centre, the sphere is the points', not the box's corners'.
+  const ball = fitDistance({ ...cube, radius: 50 }, { ...view, flat: false });
+  near(ball * Math.sqrt(3), fitDistance(cube, { ...view, flat: false }));
 });
