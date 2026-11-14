@@ -137,7 +137,7 @@ let activity = false;
 let rate = 200;
 
 // ---- Camera ----
-const view = new OrbitView({ id: "orbit", orbitAxis: "Y", fovy: 45, near: 1, far: 1e6 });
+const view = new OrbitView({ id: "orbit", orbitAxis: "Y", fovy: 45, near: 0.05, far: 1e6 });
 const fly = new LinearInterpolator(["target", "zoom", "rotationOrbit", "rotationX"]);
 function fitZoom(r) {
   const { clientWidth: w, clientHeight: h } = $("deck");
