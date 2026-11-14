@@ -59,8 +59,15 @@ export interface UsableIndex {
   complete: boolean;
 }
 
+/** Whether the index's `stashDir` / `stashDirs` meta names `library` (a realpath), however the stored value is spelled. */
+function namesLibrary(db: Database, library: string): boolean {
+  const stored = [getMeta(db, "stashDir"), ...(JSON.parse(getMeta(db, "stashDirs") ?? "[]") as string[])];
+  return stored.some((dir) => dir !== undefined && safeRealpath(dir) === library);
+}
+
 /**
- * Open the index when it can serve `stashDir`, or return `undefined`: no file,
+ * Open the index when it can serve `stashDir` (any library when omitted: the
+ * workspace reads every bundle's entries), or return `undefined`: no file,
  * no schema, nothing persisted for this library, built for another library, or
  * a file that cannot be read as an index (corrupt, mid-write). Never creates,
  * migrates, deletes or waits. The caller closes `db`.
@@ -68,14 +75,8 @@ export interface UsableIndex {
  * Two failures are not "no index" and still raise: a file akm lacks permission
  * to read (#791, `DATA_DIR_UNREADABLE`), and an index laid out by a newer akm.
  */
-/** Whether the index's `stashDir` / `stashDirs` meta names `library` (a realpath), however the stored value is spelled. */
-function namesLibrary(db: Database, library: string): boolean {
-  const stored = [getMeta(db, "stashDir"), ...(JSON.parse(getMeta(db, "stashDirs") ?? "[]") as string[])];
-  return stored.some((dir) => dir !== undefined && safeRealpath(dir) === library);
-}
-
 export function openUsableIndex(
-  stashDir: string,
+  stashDir: string | undefined,
   options: { readOnly?: boolean; busyTimeoutMs?: number } = {},
 ): UsableIndex | undefined {
   const dbPath = getDbPath();
@@ -88,7 +89,8 @@ export function openUsableIndex(
     if (!db) return undefined;
     if (options.busyTimeoutMs !== undefined)
       db.exec(`PRAGMA busy_timeout = ${Math.max(0, Math.floor(options.busyTimeoutMs))}`);
-    const servesLibrary = hasCurrentEntriesTable(db) && namesLibrary(db, safeRealpath(stashDir));
+    const servesLibrary =
+      hasCurrentEntriesTable(db) && (stashDir === undefined || namesLibrary(db, safeRealpath(stashDir)));
     if (servesLibrary) return { db, complete: Boolean(getMeta(db, "builtAt")) };
   } catch (error) {
     // Anything else (corrupt, unreadable meta, mid-write) is an index that cannot serve.
@@ -99,4 +101,22 @@ export function openUsableIndex(
   }
   if (db) closeDatabase(db);
   return undefined;
+}
+
+/**
+ * Run `read` against the usable index, or return `fallback` when there is none
+ * or a query fails on a damaged one: an index that cannot answer is no index.
+ * Permission and newer-layout errors (`ConfigError`) still raise.
+ */
+export function readUsableIndex<T>(read: (db: Database) => T, fallback: T): T {
+  const usable = openUsableIndex(undefined, { readOnly: true });
+  if (!usable) return fallback;
+  try {
+    return read(usable.db);
+  } catch (error) {
+    if (error instanceof ConfigError) throw error;
+    return fallback;
+  } finally {
+    closeDatabase(usable.db);
+  }
 }

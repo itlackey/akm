@@ -113,15 +113,27 @@ test("a current, freshly-created state.db reports pass with no pending migration
   expect(check.evidence?.pending).toEqual([]);
 });
 
-test("a file that is not a SQLite database is a failing state-db-readable check with repair steps, not a config error (F11)", async () => {
+test.each([
+  ["garbage", (file: string) => fs.writeFileSync(file, "garbage garbage garbage\n")],
+  ["zero-filled", (file: string) => fs.writeFileSync(file, Buffer.alloc(8192))],
+  [
+    "truncated",
+    (file: string) => {
+      const db = openDatabase(file);
+      runMigrations(db, STATE_MIGRATIONS);
+      db.close();
+      fs.truncateSync(file, Math.floor(fs.statSync(file).size / 2));
+    },
+  ],
+])("a %s state.db is one failing state-db-readable finding naming the file, with the recovery hint, exit 1", async (_kind, damage) => {
   const file = getStateDbPath();
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, "garbage garbage garbage\n");
+  damage(file);
 
   const result = await akmHealth();
   expect(result.status).toBe("fail");
   expect(result.hardChecks.map((check) => check.name)).toEqual(["state-db-readable"]);
-  expect(result.hardChecks[0]?.message).toContain("is not a SQLite database");
+  expect(result.hardChecks[0]?.message).toContain(`state.db at ${file} is damaged`);
   expect(result.hardChecks[0]?.message).toContain(".recover");
 
   const { code } = await runCliCapture(["health", "--format", "json"]);

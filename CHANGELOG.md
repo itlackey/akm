@@ -18,6 +18,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `akm search … | head` and `akm index 2>&1 | head -1` exited 70 ("Unhandled rejection: EPIPE") once the reader closed the pipe. A closed stdout or stderr no longer fails the command: it runs to completion (an index build finishes) and exits with the code its work earned, normally 0.
 - A library reached through two path spellings (a symlink and its target, macOS `/tmp` and `/private/tmp`) was a different library to the index: reads said "no search index", and every build through the other spelling re-minted every entry id. A source's path is now its real path, and the library directory is compared by real path, so an index that stored the other spelling still serves.
 - `akm setup --embedding-endpoint https://host/v1/models` stored `https://host/v1/models/v1`, and `…/V1` became `…/V1/v1`. An endpoint typed with `/models`, `/completions`, `/embeddings` or `/chat/completions` (any case) now names its base, and `/V1` counts as the `/v1` root.
+- The Desktop workspace API (`assets.show`, `assets.related`, `documents.readSource`, the graph) threw `no such table: entries` or `file is not a database` on a first-build, zero-filled or garbage `index.db`; they now treat an index that cannot serve as no index, so `assets.show` answers from the file with `durableRef: null`.
+- A garbage, zero-filled or truncated `state.db` now raises one error, exit 78 naming the file, from every verb except `health`: `feedback` and `index` no longer exit 70, `akm health` reports it as one failing finding (exit 1) for every kind of damage, `akm log` / `akm doctor log` no longer return zero events at exit 0, and workspace readers no longer throw a raw SQLite error.
 
 ## [0.10.261124] - 2026-11-14
 

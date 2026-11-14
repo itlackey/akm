@@ -5,11 +5,13 @@
 /** The whole library as a graph: every indexed asset, every declared link between them, and how each is used. */
 
 import { loadConfig } from "../core/config/config";
+import { ConfigError } from "../core/errors";
 import { getDbPath } from "../core/paths";
+import { openUsableIndex } from "../indexer/index-readiness";
 import { applyEntryFilters } from "../indexer/search/db-search";
 import { resolveSourceEntries } from "../indexer/search/search-source";
 import { countUseByRef, usageRetentionSince } from "../indexer/usage/usage-events";
-import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
+import { closeDatabase } from "../storage/repositories/index-connection";
 import { getAllEntries } from "../storage/repositories/index-entries-repository";
 import { listDeclaredLinks } from "../storage/repositories/index-links-repository";
 import { getMeta } from "../storage/repositories/index-meta-repository";
@@ -50,7 +52,7 @@ export async function graph() {
     links: { from: [] as number[], to: [] as number[], kind: [] as number[] },
     meaning: null as { embedded: number; xyz: Array<number | null> } | null,
   };
-  const db = openReadonlyExistingDatabase();
+  const db = openUsableIndex(undefined, { readOnly: true })?.db;
   if (!db) return { available: false, note: "No index is available. Build the AKM index first.", ...empty };
   let closed = false;
   try {
@@ -132,6 +134,10 @@ export async function graph() {
       note: noted.join(" "),
       ...result,
     };
+  } catch (error) {
+    // A query that fails on a damaged index is no index; permission and newer-layout errors still raise.
+    if (closed || error instanceof ConfigError) throw error;
+    return { available: false, note: "The index could not be read. Rebuild it with `akm index`.", ...empty };
   } finally {
     if (!closed) closeDatabase(db);
   }
