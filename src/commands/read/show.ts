@@ -30,7 +30,7 @@ import {
   fragmentForSelector,
   MARKDOWN_FRAGMENT_CONTEXT_DEFAULT_MAX_CHARS,
 } from "../../core/asset/markdown-fragments";
-import { displayRef, displayRefForConceptId } from "../../core/asset/resolve-ref";
+import { displayDefaultBundle, displayRef, displayRefForConceptId } from "../../core/asset/resolve-ref";
 import { META_DIR, type MetaRef, parseMetaRef, readMetaFile } from "../../core/asset/stash-meta";
 import { asNonEmptyString, isContainedResolvedPath } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
@@ -421,7 +421,7 @@ export async function showLocal(input: {
       }
 
       const renderBundle = indexedEntry.bundleId;
-      const renderDefaultBundle = config.defaultBundle ?? (source?.isDefault === true ? renderBundle : undefined);
+      const renderDefaultBundle = displayDefaultBundle(config.defaultBundle, source, renderBundle);
       const renderCtx = buildRenderContext(fileCtx, match, allSourceDirs, renderBundle, renderDefaultBundle);
       response = renderer.buildShowResponse(renderCtx);
       markdown = match.renderer.endsWith("-md");
@@ -446,11 +446,10 @@ export async function showLocal(input: {
   }
   response.type = indexedEntry.type;
   response.name = indexedEntry.name;
-  const isPrimaryStash = source?.isDefault === true;
-  const displayDefaultBundle = config.defaultBundle ?? (isPrimaryStash ? indexedEntry.bundleId : undefined);
+  const defaultBundle = displayDefaultBundle(config.defaultBundle, source, indexedEntry.bundleId);
   const canonicalRef = displayRef(
     { conceptId: indexedEntry.conceptId, bundleId: indexedEntry.bundleId },
-    displayDefaultBundle,
+    defaultBundle,
   );
   if (parsed.fragment && indexedFragment) {
     const selectedFragmentId = indexedFragment.fragments[indexedFragment.ordinal]!.fragmentId;
@@ -516,7 +515,7 @@ export async function showLocal(input: {
     origin: source?.registryId ?? null,
     editable,
     ...(!editable ? { editHint: buildEditHint(canonicalRef) } : {}),
-    ...(fromFiles ? {} : showLinks(indexedEntry.itemRef, displayDefaultBundle, input.readOnly === true)),
+    ...(fromFiles ? {} : showLinks(indexedEntry.itemRef, defaultBundle, input.readOnly === true)),
   };
 
   if (input.detail === "brief") {

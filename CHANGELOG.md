@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `akm feedback` accepted spellings `akm show` refuses (`tasks/x.md`, `skills/x.md`, `scripts/x.sh.md`, `env/x.md`, `secrets/x.md`), and echoed the typed spelling as `ref` (`knowledge\x`, `akm//knowledge/x.md`). It now accepts the spellings `show` accepts, and `ref` is the ref `show` returns. The `.md` toggle in an index lookup applies only to markdown files.
+
 ## [0.10.261124] - 2026-11-14
 
 ### Fixed
