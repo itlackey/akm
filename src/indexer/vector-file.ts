@@ -14,7 +14,7 @@
 
 import { sha256Hex } from "../runtime";
 import type { Database } from "../storage/database";
-import { openDatabaseFinalizing } from "../storage/database";
+import { openDatabase } from "../storage/database";
 
 export function vectorTextHash(embeddingInput: string): string {
   return sha256Hex(embeddingInput);
@@ -26,7 +26,7 @@ export function writeVectorFile(
   model: string,
   rows: Iterable<{ textHash: string; embedding: Uint8Array }>,
 ): void {
-  const db = openDatabaseFinalizing(file, { create: true });
+  const db = openDatabase(file, { create: true });
   try {
     db.exec(
       "CREATE TABLE vectors (model TEXT NOT NULL, text_hash TEXT NOT NULL, embedding BLOB NOT NULL, PRIMARY KEY (model, text_hash))",
@@ -58,7 +58,7 @@ export function openVectorLookup(
 ): VectorLookup | undefined {
   let db: Database | undefined;
   try {
-    db = openDatabaseFinalizing(file, { readonly: true, create: false });
+    db = openDatabase(file, { readonly: true, create: false });
     const widths = db
       .prepare(
         "SELECT length(embedding) AS bytes, COUNT(*) AS n FROM vectors WHERE model = ? AND length(embedding) % 4 = 0 AND length(embedding) > 0 GROUP BY bytes ORDER BY n DESC LIMIT 1",

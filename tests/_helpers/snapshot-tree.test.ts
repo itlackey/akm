@@ -20,7 +20,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { requestGc } from "../../src/runtime";
-import { openDatabase } from "../../src/storage/database";
 import { snapshotTree } from "./snapshot-tree";
 
 const tempDirs: string[] = [];
@@ -42,7 +41,7 @@ describe("snapshotTree", () => {
     // issue #720): close() with an unfinalized prepared statement leaves the
     // connection a zombie — its WAL checkpoint is deferred until GC finalizes
     // the statement.
-    const seed = openDatabase(dbPath);
+    const seed = new Database(dbPath); // raw bun:sqlite: akm's openDatabase no longer leaves zombies
     seed.exec("PRAGMA journal_mode = WAL");
     seed.exec("CREATE TABLE t(x)");
     seed.exec("INSERT INTO t VALUES (1)");

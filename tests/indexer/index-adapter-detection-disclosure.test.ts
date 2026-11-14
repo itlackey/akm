@@ -24,7 +24,7 @@ import { getDbPath, getStateDbPathInDataDir } from "../../src/core/paths";
 import { STATE_MIGRATIONS } from "../../src/core/state/migrations";
 import { _setWarnSinkForTests } from "../../src/core/warn";
 import { akmIndex } from "../../src/indexer/indexer";
-import { openDatabaseFinalizing } from "../../src/storage/database";
+import { openDatabase } from "../../src/storage/database";
 import { runMigrations as runSqliteMigrations } from "../../src/storage/sqlite-migrations";
 import {
   type IsolatedAkmStorage,
@@ -97,13 +97,13 @@ test("akmIndex automatically advances a known additive state prefix before index
   resetConfigCache();
   const statePath = getStateDbPathInDataDir();
   fs.mkdirSync(path.dirname(statePath), { recursive: true });
-  const state = openDatabaseFinalizing(statePath);
+  const state = openDatabase(statePath);
   runSqliteMigrations(state, STATE_MIGRATIONS.slice(0, -1));
   state.close();
   await expect(akmIndex({ stashDir: storage.stashDir, full: true })).resolves.toMatchObject({ totalEntries: 0 });
 
   expect(fs.existsSync(getDbPath())).toBe(true);
-  const advanced = openDatabaseFinalizing(statePath, { readonly: true });
+  const advanced = openDatabase(statePath, { readonly: true });
   expect((advanced.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get() as { count: number }).count).toBe(
     STATE_MIGRATIONS.length,
   );
