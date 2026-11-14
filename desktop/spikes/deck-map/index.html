@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Library map spike</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <main id="stage">
+      <div id="deck"></div>
+      <section class="panel" aria-label="Map controls">
+        <h1>Library map <span class="muted">deck.gl spike</span></h1>
+        <p id="counts" class="muted">Loading…</p>
+        <fieldset>
+          <legend>Arrangement</legend>
+          <label><input type="radio" name="mode" value="meaning" checked /> By meaning</label>
+          <label><input type="radio" name="mode" value="links" /> By meaning and links</label>
+        </fieldset>
+        <label class="field">Find <input id="find" type="search" placeholder="path or title" /></label>
+        <label><input id="activity" type="checkbox" /> Simulate activity</label>
+        <label class="field">Events per second <input id="rate" type="range" min="10" max="2000" value="200" /> <output id="rate-out">200</output></label>
+        <label><input id="spin" type="checkbox" checked /> Rotate when idle</label>
+        <button id="fit" type="button">Fit</button>
+        <ul id="legend" class="legend"></ul>
+        <dl id="stats" class="stats"></dl>
+      </section>
+      <aside id="detail" class="panel detail" hidden></aside>
+    </main>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
