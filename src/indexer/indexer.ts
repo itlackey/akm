@@ -1725,26 +1725,31 @@ async function lookupBundleRefWithResolutionUsing(
     if (!match) return resolved(null);
     const { owner, source, bundleId, adapterId } = match;
     const inputRef = makeBundleRef(qualified ? ref.bundle : undefined, owner.conceptId);
-    const id = db ? findEntryIdByRef(db, inputRef, bundleId) : undefined;
-    if (id !== undefined && db) {
-      const entry = readLookupEntry(db, id, ref.conceptId, source.path);
-      if (entry) {
-        if (owner.workflowSource) {
-          try {
-            assertIndexedWorkflowSourceIdentity(inputRef, entry.filePath, owner.workflowSource);
-            if (entry.adapterId !== adapterId) {
-              throw new WorkflowSourceIdentityError(inputRef, entry.filePath, owner.path);
-            }
-          } catch (error) {
-            if (!(error instanceof WorkflowSourceIdentityError)) throw error;
-            warn(`${error.message} Falling back to the physical owner.`);
-            return resolved(null, match);
+    let entry: IndexEntry | null | undefined;
+    try {
+      const id = db ? findEntryIdByRef(db, inputRef, bundleId) : undefined;
+      entry = id !== undefined && db ? readLookupEntry(db, id, ref.conceptId, source.path) : undefined;
+    } catch (error) {
+      // An index a build is still creating or rewriting cannot answer; the owner's file can.
+      indexError = error;
+      return resolved(null, match);
+    }
+    if (entry) {
+      if (owner.workflowSource) {
+        try {
+          assertIndexedWorkflowSourceIdentity(inputRef, entry.filePath, owner.workflowSource);
+          if (entry.adapterId !== adapterId) {
+            throw new WorkflowSourceIdentityError(inputRef, entry.filePath, owner.path);
           }
-        } else if (entry.adapterId !== adapterId || !indexedPathMatchesOwner(entry.filePath, owner)) {
+        } catch (error) {
+          if (!(error instanceof WorkflowSourceIdentityError)) throw error;
+          warn(`${error.message} Falling back to the physical owner.`);
           return resolved(null, match);
         }
-        return resolved(entry, match);
+      } else if (entry.adapterId !== adapterId || !indexedPathMatchesOwner(entry.filePath, owner)) {
+        return resolved(null, match);
       }
+      return resolved(entry, match);
     }
     // A physical owner with a missing/incomplete index row still owns this
     // concept: no later source can retarget it.

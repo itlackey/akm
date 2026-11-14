@@ -52,8 +52,8 @@ describe("CI workflow", () => {
     expect(run).toContain("grep -q E404");
   });
 
-  test("the platform jobs and Gated CI follow the release-branch check, so they run on a release pull request only", () => {
-    for (const job of ["desktop-package", "upgrade-rehearsal", "gated"]) {
+  test("the platform jobs, the plugins contract and Gated CI follow the release-branch check, so they run on a release pull request only", () => {
+    for (const job of ["desktop-package", "upgrade-rehearsal", "plugins-contract", "gated"]) {
       expect(workflow.jobs[job]?.needs, job).toBe("release-branch-only");
       expect(workflow.jobs[job]?.if, job).toBeUndefined();
     }

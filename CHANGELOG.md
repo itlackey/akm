@@ -94,6 +94,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `akm show` beside a first `akm index` exited 70 (`no such table: entries`) when the build had created `index.db` but not its tables yet; the lookup now treats that like an index it cannot open and serves the asset from its file.
 - `akm remember --help` advertised `-showSimilar`, which was rejected; it now shows `--show-similar` only, and `--showSimilar` still works.
 - `akm improve --auto-accept` names its replacement (`akm proposal drain --promote --yes`, or a `triage` block with `applyMode: "promote"`).
 - The flags removed in 0.11 that still reach the unknown-flag check (`improve --require-engines`, `lint --auto-fix`, `migrate apply --dry-run`, `workflow list|status --all-scopes`, `--allow-dangerous-env-keys`, `bundle update --yes`, `registry add --options`, `task sync --dry-run|--bundle`, `task add --rebind`, `task history --id`) now name their replacement or say to drop them, like `--auto-accept`.
@@ -101,6 +102,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Wrong text: the feedback error named `akm.json` (the file is `config.json`); Desktop labelled `archiveRetentionDays` "archived assets" (it expires pending proposals) and `feedback.requireReason` as gating positive feedback (it gates negative feedback); `configuration.md` cited the gone `setup --config`; the comment at the top of `config-schema.ts` described behaviour the code does not have. Docs now state the working-bundle order, `improve.eventRetentionDays` and `improve.stateGc.collect`; `STABILITY.md` lists `AKM_STATE_DIR` as Supported and `AKM_UPGRADE_SKIP_CHECKSUM` as Internal (as `cli.md` already said) and names the other Internal variables; the eight flags `cli.md` missed are listed.
 - `akm help <command...>` prints the same help as `akm <command...> --help`, also for one quoted argument (`akm help "bundle add"`); `akm help help` prints help's own help; an unknown command is an error whose hint names `akm <command> --help`.
 - Root help: a short concept list (bundle, registry, connection, harness, project) replaces the closing bundle paragraph, and the version sits on the first line instead of the last exit-code line. `akm improve --help` no longer lists `report` as a trailing argument in its USAGE line.
+
+## [0.10.261123] - 2026-11-14
+
+### Fixed
+
+- 0.10.261122 `show` served a file by its file-name spelling when the index had no row, for example `akm show tasks/nightly.yml`. It resolves from files only a ref that is the asset's concept ID (`tasks/nightly`, `knowledge/guide`, `knowledge/guide.md`), so any other spelling is refused again with or without an index row.
+
 ## [0.10.261122] - 2026-11-14
 
 ### Added

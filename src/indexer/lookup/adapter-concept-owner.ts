@@ -15,6 +15,7 @@ import { compareCodePoints, hasErrnoCode } from "../../core/common";
 import { ConfigError, UsageError } from "../../core/errors";
 import { sensitiveMarkerPath } from "../../core/sensitive-marker-path";
 import { warnOnce } from "../../core/warn";
+import { withMdVariants } from "../../storage/repositories/index-entries-repository";
 import { resolveUniqueWorkflowSource, type WorkflowSourceFile } from "../../workflows/source-files";
 import type { IndexEntry } from "../indexer";
 import { deriveEntryProvenance, deriveInstallations } from "../installations";
@@ -270,7 +271,9 @@ export interface ConceptOwnerMatch {
  * The index entry the owning file and its adapter give without the index: the adapter's own recognition of
  * the file, so `show` serves it though no row exists. Undefined when the walk would not list the file (a
  * skipped or ignored directory, a symlinked one, ...: it is not in the bundle as far as the index goes) or the
- * adapter does not recognise it. It has no links, usage or indexed fragments.
+ * adapter does not recognise it, or when the ref is not the concept ID the index would key the file under, up to its
+ * `.md` (a file-name spelling such as `tasks/nightly.yml`): an index miss refuses that spelling, so does this. It has
+ * no links, usage or indexed fragments.
  */
 export function entryFromFiles(match: ConceptOwnerMatch): IndexEntry | undefined {
   const { owner, source, bundleId, adapterId } = match;
@@ -284,12 +287,12 @@ export function entryFromFiles(match: ConceptOwnerMatch): IndexEntry | undefined
     }
     const component: BundleComponent = { id: adapterId, adapter: adapterId, root: source.path, writable: false };
     const document = adapter.recognize(component, buildFileContext(source.path, owner.path));
-    if (!document) return undefined;
+    if (!document?.conceptId || !withMdVariants(owner.conceptId).includes(document.conceptId)) return undefined;
     const { itemRef, conceptId } = deriveEntryProvenance(
       { bundleId, componentId: adapterId, adapterId },
       document.type,
       document.name,
-      owner.conceptId,
+      document.conceptId,
     );
     return {
       filePath: owner.path,
