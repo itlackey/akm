@@ -41,7 +41,19 @@ describe("visualization reads", () => {
     const at = (suffix: string) => refs.findIndex((ref) => ref.endsWith(suffix));
     expect(at("knowledge/guide")).toBeGreaterThanOrEqual(0);
     expect(refs.some((ref) => ref.includes("env/") || ref.includes("secrets/"))).toBe(false);
-    for (const column of ["title", "type", "bundle", "belief", "shows", "searches"])
+    for (const column of [
+      "title",
+      "type",
+      "bundle",
+      "belief",
+      "shows",
+      "searches",
+      "lastShownAt",
+      "modifiedAt",
+      "positive",
+      "negative",
+      "topic",
+    ])
       expect(graph.nodes[column]).toHaveLength(refs.length);
     expect(graph.types[graph.nodes.type[at("knowledge/guide")]]).toBe("knowledge");
     expect(graph.nodes.title[at("knowledge/index-page")]).toBe("Index page");
@@ -53,9 +65,15 @@ describe("visualization reads", () => {
         graph.kinds[graph.links.kind[i]],
       ]),
     ).toEqual([[refs[at("knowledge/index-page")], refs[at("knowledge/guide")], "xref"]]);
-    // No embeddings in this sandbox: no positions by meaning.
+    // No embeddings in this sandbox: no positions by meaning, no topics, no duplicates.
     expect(graph.meaning).toBeNull();
-    expect(graph.nodes.lastUsedAt).toBeUndefined();
+    expect(graph.topics).toEqual([]);
+    expect(graph.nodes.topic.every((t: number) => t === -1)).toBe(true);
+    expect(graph.duplicates).toBeNull();
+    // The file's modification time.
+    expect(graph.nodes.modifiedAt[at("knowledge/index-page")]).toBe(
+      fs.statSync(path.join(stash, "knowledge", "index-page.md")).mtime.toISOString(),
+    );
     // The page the dropped link was declared on: one unresolved link, none of its own.
     expect(graph.unresolvedLinks).toBe(1);
     expect(graph.note).toContain("No assets are embedded");
@@ -143,21 +161,35 @@ describe("visualization reads", () => {
     expect(graph.use.source).toBe("user");
     expect(Date.parse(graph.use.since)).toBeLessThan(Date.now());
     const state = openStateDatabase();
+    const now = new Date().toISOString().slice(0, 19).replace("T", " ");
     try {
       const insert = state.prepare(
         "INSERT INTO usage_events (event_type, query, entry_ref, signal, metadata, source, created_at) VALUES (?, ?, ?, NULL, NULL, ?, ?)",
       );
-      const now = new Date().toISOString().slice(0, 19).replace("T", " ");
       insert.run("show", null, "stash//knowledge/guide", "user", now);
       insert.run("show", null, "stash//knowledge/guide", "improve", now);
       insert.run("search", "deploy", "stash//knowledge/guide", "user", now);
       insert.run("show", null, "stash//knowledge/guide", "user", "2000-01-01 00:00:00");
+      state
+        .prepare(
+          "INSERT INTO usage_events (event_type, entry_ref, signal, source, created_at) VALUES ('feedback', ?, ?, ?, ?)",
+        )
+        .run("stash//knowledge/guide", "negative", "user", now);
+      state
+        .prepare(
+          "INSERT INTO usage_events (event_type, entry_ref, signal, source, created_at) VALUES ('feedback', ?, ?, ?, ?)",
+        )
+        .run("stash//knowledge/guide", "positive", "improve", now);
     } finally {
       state.close();
     }
     const live = await out(assets.graph());
     expect(live.nodes.shows[at("stash//knowledge/guide")]).toBe(before + 1);
     expect(live.nodes.searches[at("stash//knowledge/guide")]).toBe(graph.nodes.searches[guide] + 1);
+    // The latest user show inside retention, in UTC; feedback from people only.
+    expect(live.nodes.lastShownAt[guide]).toBe(`${now.replace(" ", "T")}Z`);
+    expect(live.nodes.negative[guide]).toBe(graph.nodes.negative[guide] + 1);
+    expect(live.nodes.positive[guide]).toBe(graph.nodes.positive[guide]);
   });
 
   test("graph: without state.db the use counts are zero and the note says so", async () => {

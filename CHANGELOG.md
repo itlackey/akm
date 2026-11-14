@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- AKM Desktop's library map answers four questions about the whole library, one view each: Contents (what is in it, by topic, with the searches that found nothing), Use (what is read and what is dead weight), Problems (what is outdated, disliked or duplicated) and Relations (how its topics link to each other, in 3D or flat). It replaces the point cloud of every asset, which showed none of these. The figures of each view are also in words beside it.
+- `assets.graph` (`akm-cli/workspace`) answers what a library holds, what is used and what overlaps: `topics` (the embedded assets grouped by meaning, each named by its most particular words, with its nearest topics), `nodes.topic`, `duplicates` (pairs of one topic whose embeddings have a cosine of 0.96 or more), and per asset `lastShownAt`, `modifiedAt` and the feedback counts `positive` and `negative`.
+
 ## [0.10.261121] - 2026-11-13
 
 ### Added

@@ -200,9 +200,13 @@ them, in column form, so 30,000 assets stay a few megabytes:
   "unresolvedLinks": 2,
   "kinds": ["xref", "links_to"],
   "nodes": { "ref": ["team-wiki//knowledge/a"], "title": ["A"], "type": [0], "bundle": [0], "belief": [-1],
-             "shows": [12], "searches": [40] },
+             "shows": [12], "searches": [40], "lastShownAt": ["2026-11-02T09:14:03Z"],
+             "modifiedAt": ["2026-03-30T17:02:11.000Z"], "positive": [2], "negative": [0], "topic": [4] },
   "links": { "from": [0], "to": [3], "kind": [1] },
-  "meaning": { "embedded": 29840, "xyz": [12.5, -40.1, 3.2] }
+  "meaning": { "embedded": 29840, "xyz": [12.5, -40.1, 3.2] },
+  "topics": [{ "label": "deploy · canary", "terms": ["deploy", "canary", "rollout"], "size": 812,
+               "related": [{ "topic": 7, "cosine": 0.81 }] }],
+  "duplicates": { "threshold": 0.96, "a": [0], "b": [9], "cosine": [0.9871], "truncated": false }
 }
 ```
 
@@ -213,13 +217,26 @@ the asset that declares it to its target; `unresolvedLinks` counts the declared 
 target is missing, of a type that is not returned, or in a bundle that is not enabled. `shows` and `searches` are
 counted from the usage events when the operation is called: events of source `user` (people and their agent
 sessions, not scheduled tasks or Improve) at or after `use.since`, the start of the usage retention window. They are
-zero, and the note says so, when no usage history is available. `meaning` places each asset with a stored embedding
+zero, and the note says so, when no usage history is available. `lastShownAt` is the latest of those shows (UTC), `null`
+when there is none in the window. `positive` and `negative` count feedback from people inside the retention window, as
+search ranks by it (a negative answered by an accepted fix does not count). `modifiedAt` is the file's modification
+time, `null` when it cannot be read; in a Git checkout it is when the file was last written there, not its last commit. `meaning` places each asset with a stored embedding
 of the index's current model in three dimensions (three coordinates per node, `null` for one with no embedding): its
 projection on the three principal components of the vectors, so assets with similar content land near each other. The
 components are found from an evenly spaced sample of at most 4,000 vectors and kept for the life of the process until
 the index's embedding model or full build changes; an asset embedded since is projected onto them. The work yields to
 the event loop as it goes, so a host's other requests are served meanwhile. `meaning` is `null` when the index has no
-embeddings. `available` is `false`, with a `note`,
+embeddings.
+
+`topics` groups the embedded assets by meaning: spherical k-means on their stored vectors, about √(n/2) topics (2 to 36),
+largest first, the centres found from an evenly spaced sample of at most 4,000 vectors from a fixed start, so the same
+index gives the same topics. A topic's `terms` are the words of its assets' paths and titles most particular to it
+(frequent in the topic, rare in the library), and its `label` the first two; `related` names the three topics whose
+centres are nearest, with the cosine between them. `nodes.topic` indexes `topics`, `-1` for an asset with no embedding.
+`duplicates` lists pairs of assets of one topic whose vectors have a cosine of at least `threshold` (0.96), most alike
+first, at most 2,000 (`truncated` says there were more); pairs across topics are not compared. Both are `[]` and `null`
+without at least eight embedded assets. They are found once per index build and kept, like the projection: the first
+read of a 20,000-asset index takes several seconds. `available` is `false`, with a `note`,
 when there is no index.
 
 ## `bundles.list`
