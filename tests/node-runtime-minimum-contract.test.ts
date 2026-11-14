@@ -75,6 +75,8 @@ describe("Node 22 runtime minimum contract", () => {
       "ci.yml#desktop",
       "ci.yml#desktop-package",
       "ci.yml#node-smoke",
+      "ci.yml#plugins-contract",
+      "ci.yml#plugins-contract",
       "ci.yml#upgrade-rehearsal",
       "gated-ci.yml#docker-install",
       "gated-ci.yml#native-scheduler",
