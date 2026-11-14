@@ -15,7 +15,7 @@ import path from "node:path";
 import { saveConfig } from "../../../src/core/config/config";
 import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
 import { akmIndex } from "../../../src/indexer/indexer";
-import { isWalkedFile, walkStashFlat } from "../../../src/indexer/walk/walker";
+import { isWalkedFile, walkedFiles, walkStashFlat } from "../../../src/indexer/walk/walker";
 import { runCliCapture } from "../../_helpers/cli";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
@@ -77,6 +77,23 @@ describe("isWalkedFile", () => {
 
   test("a deleted file under a directory that is gone is still reported, so its row can be removed", () => {
     expect(isWalkedFile(storage.stashDir, path.join(storage.stashDir, "knowledge", "gone", "x.md"))).toBe(true);
+  });
+
+  test("walkedFiles applies the rule to a list in one call, keeping order: some ignored, some not", () => {
+    const kept = write("knowledge/kept.md");
+    const ignored = write("knowledge/ignored.md");
+    const alsoIgnored = write("knowledge/sub/also-ignored.md");
+    const env = write("env/keys.md");
+    const scratch = write(".scratch/knowledge/x.md");
+    const another = write("memories/another.md");
+    spawnSync("git", ["init", "-q"], { cwd: storage.stashDir });
+    fs.writeFileSync(path.join(storage.stashDir, ".gitignore"), "knowledge/ignored.md\nknowledge/sub/\nenv/\n");
+    const outside = path.join(storage.root, "elsewhere.md");
+
+    const input = [kept, ignored, alsoIgnored, env, scratch, outside, another];
+    expect(walkedFiles(storage.stashDir, input)).toEqual([kept, env, another]);
+    expect(walkedFiles(storage.stashDir, input)).toEqual(input.filter((file) => isWalkedFile(storage.stashDir, file)));
+    expect(walkedFiles(storage.stashDir, [])).toEqual([]);
   });
 
   test("a file outside the root is not walked", () => {

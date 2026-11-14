@@ -33,7 +33,7 @@ import { embeddingInputCap, generateEmbeddingsForDb, publishTargetedEmbeddingMet
 import { type IndexDocument, withFileSize } from "./passes/metadata";
 import { drainDirDocuments } from "./scan/drain-dir";
 import { buildFileContext } from "./walk/file-context";
-import { isWalkedFile } from "./walk/walker";
+import { walkedFiles } from "./walk/walker";
 
 /**
  * Busy-timeout (ms) for write-path index upserts. A real write — unlike the
@@ -80,7 +80,7 @@ export async function indexWrittenAssets(
     if (isPathAbsent(dbPath)) return true;
 
     // Index exactly what a full walk would list: skipped and ignored directories, sidecar files and the like stay out.
-    const files = filePaths.filter((f) => isWalkedFile(stashDir, f));
+    const files = walkedFiles(stashDir, filePaths);
     if (files.length === 0) return true;
 
     // Generate metadata BEFORE opening the DB so the write window stays
