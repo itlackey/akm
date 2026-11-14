@@ -29,7 +29,7 @@ import {
 } from "../../../src/storage/repositories/index-connection";
 import { deleteMeta, getMeta, setMeta } from "../../../src/storage/repositories/index-meta-repository";
 import { runCliCapture } from "../../_helpers/cli";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
+import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 const repoRoot = path.resolve(import.meta.dir, "../../..");
 const NO_INDEX = /no search index for this library yet/;
@@ -349,6 +349,26 @@ describe("write-through and the persist transaction", () => {
     const response = JSON.parse(search.stdout);
     expect(response.hits.length).toBeGreaterThan(0);
     expect(response.warnings.join("\n")).toContain("may be incomplete");
+  });
+});
+
+describe("a library switch", () => {
+  test("a build for another library whose scan is incomplete does not serve the old library's rows", async () => {
+    seedLibrary();
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+    // A library directory that does not exist is an incomplete scan: stale rows are normally purged only after a complete one.
+    const other = path.join(storage.root, "other-library");
+    await akmIndex({ stashDir: other, full: true });
+    editMeta((db) => {
+      expect(getMeta(db, "stashDir")).toBe(other);
+      expect(db.prepare("SELECT COUNT(*) AS c FROM entries").get()).toEqual({ c: 0 });
+    });
+
+    fs.mkdirSync(other);
+    await withEnv({ AKM_BUNDLE_DIR: other }, async () => {
+      const search = JSON.parse((await cli("search", "deployment", "--format=json")).stdout);
+      expect(search.hits).toEqual([]);
+    });
   });
 });
 

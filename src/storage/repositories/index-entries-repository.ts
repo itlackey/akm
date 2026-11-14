@@ -495,6 +495,23 @@ export function deleteEntriesByBundle(db: Database, bundleId: string): void {
 }
 
 /**
+ * Delete every entry whose file is not under one of `dirs`, with its child rows. Usage events live in state.db, so
+ * the caller deletes them after its transaction commits, from the returned entries.
+ */
+export function deleteEntriesOutsideDirs(db: Database, dirs: readonly string[]): DeletedEntry[] {
+  return db.transaction(() => {
+    const roots = dirs.map((dir) => `${path.resolve(dir)}${path.sep}`);
+    const rows = db.prepare("SELECT id, item_ref, file_path FROM entries").all() as Array<{
+      id: number;
+      item_ref: string;
+      file_path: string;
+    }>;
+    const doomed = rows.filter((row) => !roots.some((root) => path.resolve(row.file_path).startsWith(root)));
+    return deleteEntryRows(db, doomed, { cleanupUsageEvents: false });
+  })();
+}
+
+/**
  * The `file_path` of every entry indexed under one bundle — used by
  * `akm bundle rename` (D6) to find bundle CONTENT that still spells the old
  * `<bundle>//` prefix (xrefs, `supersededBy`, task `uses:`), which the rename
