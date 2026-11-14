@@ -18,6 +18,7 @@ import { saveConfig } from "../../src/core/config/config";
 import { getDbPath, getIndexRebuildLockPath } from "../../src/core/paths";
 import { openExistingDatabase } from "../../src/storage/repositories/index-connection";
 import { runCliCapture } from "../_helpers/cli";
+import { spawnLiveHolder } from "../_helpers/live-holder";
 import { type Cleanup, withDefaultBundle, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 let cleanup: Cleanup = () => {};
@@ -49,7 +50,8 @@ describe("akm remember while a rebuild holds the lock (#956)", () => {
 
     const lockPath = getIndexRebuildLockPath();
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-    fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }), "utf8");
+    const holder = spawnLiveHolder();
+    fs.writeFileSync(lockPath, holder.payload(), "utf8");
 
     const startedAt = Date.now();
     const remembered = await runCliCapture([
@@ -65,6 +67,7 @@ describe("akm remember while a rebuild holds the lock (#956)", () => {
     expect(parsed.ok).toBe(true);
     expect(fs.existsSync(parsed.path)).toBe(true);
     expect(entryCountForPath(parsed.path)).toBeGreaterThan(0);
+    await holder.stop();
     fs.rmSync(lockPath);
   });
 });

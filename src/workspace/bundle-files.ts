@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { isWithin, safeRealpath } from "../core/common";
+import { isWithin, relativeToRoot, safeRealpath } from "../core/common";
 import { NotFoundError, UsageError } from "../core/errors";
 import { findSourceForPath, resolveSourceEntries } from "../indexer/search/search-source";
 import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
@@ -22,7 +22,7 @@ const portable = (value: string) => value.split(path.sep).join("/");
 export function bundleFileLocation(filePath: string): BundleFileLocation | null {
   const source = findSourceForPath(filePath, resolveSourceEntries());
   if (!source?.registryId || source.unresolved || !isWithin(filePath, source.path)) return null;
-  const relative = path.relative(source.path, filePath);
+  const relative = relativeToRoot(filePath, source.path) ?? path.relative(source.path, filePath);
   return {
     bundle: source.registryId,
     path: portable(relative),

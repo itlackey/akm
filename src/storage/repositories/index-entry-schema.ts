@@ -115,14 +115,14 @@ export function tableExists(db: EntrySchemaInspectionDatabase, name: string): bo
 }
 
 /**
- * Whether an index database has an `entries` table this release can read: one
- * written at {@link MIN_INDEX_LAYOUT} or later. A fresh or empty file, or an
- * older layout, serves nothing until the next `akm index` rebuilds it.
+ * Whether an index database has an `entries` table this release can read, with its full-text table:
+ * one written at {@link MIN_INDEX_LAYOUT} or later. A fresh or empty file, an older layout, or a file whose
+ * schema was cut short (entries without `entries_fts`) serves nothing until the next `akm index`.
  */
 export function hasCurrentEntriesTable(db: EntrySchemaInspectionDatabase): boolean {
   try {
     const row = db.prepare("SELECT value FROM index_meta WHERE key = 'version'").get() as { value: string } | undefined;
-    return tableExists(db, "entries") && Number(row?.value) >= MIN_INDEX_LAYOUT;
+    return tableExists(db, "entries") && tableExists(db, "entries_fts") && Number(row?.value) >= MIN_INDEX_LAYOUT;
   } catch {
     return false;
   }

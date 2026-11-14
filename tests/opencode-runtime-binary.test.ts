@@ -26,6 +26,7 @@ import {
   opencodePackage,
   runtimeBinaryPath,
 } from "../src/integrations/harnesses/opencode/runtime/binary";
+import { spawnLiveHolder, stopLiveHolders } from "./_helpers/live-holder";
 import {
   type IsolatedAkmStorage,
   makeSandboxDir,
@@ -43,6 +44,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  stopLiveHolders();
   scratch.cleanup();
   storage.cleanup();
 });
@@ -408,7 +410,10 @@ describe("one fetch per cache directory at a time", () => {
 
   test("a fetch waits for a live holder, then downloads nothing if the holder finished the binary", async () => {
     fs.mkdirSync(directory, { recursive: true });
-    fs.writeFileSync(path.join(directory, "fetch.lock"), JSON.stringify({ pid: process.pid, lockId: "other" }));
+    fs.writeFileSync(
+      path.join(directory, "fetch.lock"),
+      JSON.stringify({ pid: spawnLiveHolder().pid, lockId: "other" }),
+    );
     const { requests, serve } = stubRegistry();
 
     const fetching = withMockedFetch(fetchBinary, serve);

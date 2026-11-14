@@ -149,6 +149,7 @@ const updateCommand = defineJsonCommand({
         target: args.target,
         all: args.all,
         force: args.force,
+        skipIfLocked: args["skip-if-locked"],
       });
     } catch (error) {
       const skippable = isSkippableBundleUpdateLock(error);

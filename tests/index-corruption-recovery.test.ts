@@ -24,8 +24,8 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { getDbPath } from "../src/core/paths";
-import { openDatabase } from "../src/storage/database";
 import { runCliCapture } from "./_helpers/cli";
+import { damageIndexHeader, damageIndexInterior } from "./_helpers/index-damage";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "./_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
@@ -37,26 +37,23 @@ beforeEach(() => {
     path.join(storage.stashDir, "knowledge", "deploy.md"),
     "---\ndescription: Deployment guide\n---\n\nDeploy safely to production.\n",
   );
+  // Enough entries that index.db has interior pages to damage.
+  for (let i = 0; i < 400; i++) {
+    fs.writeFileSync(
+      path.join(storage.stashDir, "knowledge", `note-${i}.md`),
+      `---\ndescription: Note ${i} about topic${i}\n---\n\nBody of note ${i} mentions widget${i} and gadget${i}.\n`,
+    );
+  }
 });
 
 afterEach(() => storage.cleanup());
 
-/**
- * Garble every page after the 100-byte file header so the driver reports
- * `SQLITE_CORRUPT` on the first query that touches any table's data, rather
- * than refusing to open at all (which would test a different, already-covered
- * code path — see index-unreadable-not-absent.test.ts for that one). Leaving
- * only the header intact keeps `openDatabase()` itself succeeding; the
- * corruption surfaces on the first real read, matching what a damaged disk
- * looks like in production.
- */
-function corruptDatabaseFile(dbPath: string): void {
-  const buf = fs.readFileSync(dbPath);
-  for (let i = 100; i < buf.length; i++) buf[i] = 0xff;
-  fs.writeFileSync(dbPath, buf);
-}
+const DAMAGE = [
+  ["header (SQLITE_NOTADB)", damageIndexHeader],
+  ["interior pages (SQLITE_CORRUPT)", damageIndexInterior],
+] as const;
 
-test("real SQLITE_CORRUPT on index.db is detected and the index rebuilds", async () => {
+test.each(DAMAGE)("damaged index.db, %s: reads say no usable index, a build rebuilds it", async (_name, damage) => {
   const built = await runCliCapture(["index", "--full"]);
   expect(built.code).toBe(0);
 
@@ -68,15 +65,7 @@ test("real SQLITE_CORRUPT on index.db is detected and the index rebuilds", async
   expect(before.code).toBe(0);
   expect(JSON.parse(before.stdout).results.length).toBeGreaterThan(0);
 
-  // `akm index` leaves data in the WAL file, not `index.db` itself — garbling
-  // only the main file would corrupt bytes SQLite never actually reads.
-  // Checkpoint first so the real data lands on disk in the file we damage,
-  // matching what a genuinely damaged index.db looks like in production.
-  const checkpointDb = openDatabase(dbPath);
-  checkpointDb.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-  checkpointDb.close();
-
-  corruptDatabaseFile(dbPath);
+  damage(dbPath);
 
   // This is the CRITICAL isolation check: prove the corrupted file lives
   // inside this test's own sandboxed data dir, never the developer's real
@@ -94,6 +83,13 @@ test("real SQLITE_CORRUPT on index.db is detected and the index rebuilds", async
   expect(response.results).toEqual([]);
   expect(response.warnings.join("\n")).toContain("no search index for this library yet");
   expect(fs.readFileSync(dbPath).equals(damaged)).toBe(true);
+
+  const curate = await runCliCapture(["curate", "deployment", "--format=json"]);
+  expect(curate.code).toBe(0);
+
+  // feedback never fails internally (exit 70) on a damaged index.
+  const feedback = await runCliCapture(["feedback", "knowledge/deploy", "--positive"]);
+  expect(feedback.code).not.toBe(70);
 
   // A build holds the rebuild lock, so it alone deletes and rebuilds the corrupt file.
   const rebuilt = await runCliCapture(["index", "--full"]);

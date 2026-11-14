@@ -22,7 +22,7 @@ import os from "node:os";
 import path from "node:path";
 import { sleepSync } from "../runtime";
 import type { Database } from "./database";
-import { openDatabaseFinalizing } from "./database";
+import { openDatabase } from "./database";
 
 const SNAPSHOT_MAX_ATTEMPTS = 8;
 const SNAPSHOT_BACKOFF_MS = 25;
@@ -166,7 +166,7 @@ export function openSqliteReadSnapshot(dbPath: string): Database | undefined {
   let db: Database | undefined;
   try {
     copySqliteSnapshot(dbPath, snapshotPath);
-    db = openDatabaseFinalizing(snapshotPath, { readonly: true, create: false });
+    db = openDatabase(snapshotPath, { readonly: true, create: false });
     const closeSnapshot = db.close.bind(db);
     let closed = false;
     const cleanup = (bestEffort: boolean): void => {

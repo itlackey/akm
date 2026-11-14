@@ -18,8 +18,6 @@
     href: (ref: string) => string;
   } = $props();
   let available = $state(720);
-  // The library map opens with this asset selected, and lists every link of it.
-  const mapHref = $derived(`/library/map?select=${encodeURIComponent(ref)}`);
   const map = $derived(assetMap(connections, similar, ref));
   // The drawing never gets narrower than it can be read at; a narrow panel scrolls it sideways.
   const width = $derived(Math.max(available, 640));
@@ -89,10 +87,7 @@
               ></a
             >{/if}
         {/each}
-        {#if group.more}<a href={mapHref} aria-label={`${group.more} more links of ${ref}: see them on the library map`}
-            ><text class="more" {x} y={group.moreY + PAD} text-anchor={anchor}
-              >and {group.more} more: see every link on the library map</text
-            ></a
+        {#if group.more}<text class="more" {x} y={group.moreY + PAD} text-anchor={anchor}>and {group.more} more</text
           >{/if}
       {/each}
     {/each}
@@ -125,13 +120,6 @@
   .group,
   .more {
     fill: var(--muted);
-  }
-  a .more {
-    fill: var(--link);
-  }
-  a:hover .more,
-  a:focus-visible .more {
-    text-decoration: underline;
   }
   .column,
   .group {

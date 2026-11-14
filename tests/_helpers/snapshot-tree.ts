@@ -7,7 +7,7 @@
  *
  * A naive snapshot hashes every file's raw bytes. That is wrong for a `.db`
  * file in WAL mode: SQLite (or a GC'd zombie bun:sqlite connection — see
- * `src/storage/database.ts`'s `openDatabaseFinalizing` doc comment for the
+ * `src/storage/database.ts`'s `openDatabase` doc comment for the
  * `close()`-with-unfinalized-`prepare()` mechanism) can checkpoint the WAL
  * into the main file and remove `-wal`/`-shm` at any moment a connection
  * finally closes for real, independent of anything the test itself did. That

@@ -210,6 +210,19 @@ export function displayRefForConceptId(
   return `${bundleId}//${conceptId}`;
 }
 
+/**
+ * The bundle whose items display with the SHORT conceptId: the configured default bundle, else the bundle
+ * of the item's own source when that source is the default one. `show` and `feedback` both name an asset
+ * by `displayRef` under this rule.
+ */
+export function displayDefaultBundle(
+  configDefault: string | undefined,
+  source: { isDefault?: boolean } | undefined,
+  bundleId: string | undefined,
+): string | undefined {
+  return configDefault ?? (source?.isDefault === true ? bundleId : undefined);
+}
+
 // ── Placement refs (write by placement) ──────────────────────────────────────
 
 /**

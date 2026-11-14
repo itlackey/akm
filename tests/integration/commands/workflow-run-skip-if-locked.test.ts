@@ -68,7 +68,7 @@ describe("akm workflow run <id> against a held run lock", () => {
     const envelope = JSON.parse(result.stderr.trim()) as { ok: boolean; code: string; error: string };
     expect(envelope.ok).toBe(false);
     expect(envelope.code).toBe("RUN_LEASE_HELD");
-    expect(envelope.error).toContain(`pid ${process.pid}`);
+    expect(envelope.error).toContain(`pid ${release.pid}`);
   });
 
   test("with --skip-if-locked: exit 0, one warn line, and a skipped envelope naming lock-held", async () => {
@@ -80,7 +80,7 @@ describe("akm workflow run <id> against a held run lock", () => {
     const result = await runCliCapture(["workflow", "run", runId, "--skip-if-locked"]);
     expect(result.code).toBe(0);
     expect(result.stderr).toContain("skipping (--skip-if-locked)");
-    expect(result.stderr).toContain(`pid ${process.pid}`);
+    expect(result.stderr).toContain(`pid ${release.pid}`);
 
     const envelope = JSON.parse(result.stdout.trim()) as {
       ok: boolean;
@@ -90,7 +90,7 @@ describe("akm workflow run <id> against a held run lock", () => {
     expect(envelope.ok).toBe(true);
     expect(envelope.target).toBe(runId);
     expect(envelope.skipped.reason).toBe("lock-held");
-    expect(envelope.skipped.message).toContain(`pid ${process.pid}`);
+    expect(envelope.skipped.message).toContain(`pid ${release.pid}`);
 
     // The lock is untouched — this invocation never attempted to drive the run.
     expect(fs.existsSync(workflowRunLockPath(runId))).toBe(true);

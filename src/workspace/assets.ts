@@ -14,14 +14,13 @@ import { markdownLinkTargets } from "../core/asset/markdown-link-targets";
 import { loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
 import { type IncludeSelectors, includedTypes, includesProposed } from "../core/include";
-import { getDbPath } from "../core/paths";
 import { projectView, resolveProject } from "../core/projects";
+import { readUsableIndex } from "../indexer/index-readiness";
 import type { ScopeFilters } from "../indexer/passes/metadata";
 import { resolveReadSources } from "../indexer/read-preflight";
 import { countBrowseEntries } from "../indexer/search/db-search";
 import { findSourceForPath, resolveSourceEntries } from "../indexer/search/search-source";
 import { resolveRefOwner } from "../sources/env-secret-ref";
-import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
 import { getEntryIdByFilePath, getItemRefById } from "../storage/repositories/index-entries-repository";
 import { countFeedbackBySignal, listFeedbackEventRows } from "../storage/repositories/metrics-repository";
 import { assetImprove } from "./asset-improve";
@@ -102,23 +101,22 @@ export function projectOverview(input: { project: string }) {
       ? local.map((source) => ({ name: source.registryId ?? source.path, source }))
       : [project.from].flat().map((from) => ({ name: from, source: narrowSourcesToName(local, [from])[0] }));
   const readable = selected.flatMap((bundle) => (bundle.source ? [bundle.source] : []));
-  let counts: ReturnType<typeof countBrowseEntries> | undefined;
-  const db = readable.length > 0 ? openReadonlyExistingDatabase(getDbPath()) : undefined;
-  if (db) {
-    try {
-      counts = countBrowseEntries(
-        db,
-        readable,
-        project.filters,
-        (config.search?.defaultExcludeTypes ?? ["session"]).filter(
-          (type) => !includedTypes(project.include).includes(type),
-        ),
-        includesProposed(project.include),
-      );
-    } finally {
-      closeDatabase(db);
-    }
-  }
+  const counts =
+    readable.length > 0
+      ? readUsableIndex(
+          (db) =>
+            countBrowseEntries(
+              db,
+              readable,
+              project.filters,
+              (config.search?.defaultExcludeTypes ?? ["session"]).filter(
+                (type) => !includedTypes(project.include).includes(type),
+              ),
+              includesProposed(project.include),
+            ),
+          undefined,
+        )
+      : undefined;
   const writeName = project.write.bundle ?? automaticWriteTarget(config)?.name ?? null;
   const writeSource = writeName === null ? undefined : local.find((source) => source.registryId === writeName);
   return {
@@ -150,14 +148,10 @@ export function projectOverview(input: { project: string }) {
 
 /** The durable `bundle//conceptId` of the indexed asset at `filePath`, the key feedback rows use. */
 function durableRefForPath(filePath: string): string | null {
-  const db = openReadonlyExistingDatabase(getDbPath());
-  if (!db) return null;
-  try {
+  return readUsableIndex((db) => {
     const id = getEntryIdByFilePath(db, filePath);
     return id === undefined ? null : getItemRefById(db, id);
-  } finally {
-    closeDatabase(db);
-  }
+  }, null);
 }
 
 function feedbackFor(durableRef: string | null) {
@@ -200,27 +194,22 @@ export async function show(input: { ref: string }) {
   const links: Record<string, string> = {};
   if (shown.path && durableRef) {
     const owner = parseBundleRef(durableRef).bundle;
-    const db = openReadonlyExistingDatabase(getDbPath());
-    if (db) {
-      try {
-        for (const raw of markdownLinkTargets(content, false)) {
-          if (/^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(raw)) continue;
-          const [file, fragment] = raw.split("#", 2);
-          if (!file?.toLowerCase().endsWith(".md") || file.startsWith("/")) continue;
-          let decoded: string;
-          try {
-            decoded = decodeURIComponent(file);
-          } catch {
-            continue;
-          }
-          const id = getEntryIdByFilePath(db, path.resolve(path.dirname(shown.path), decoded));
-          const target = id === undefined ? undefined : getItemRefById(db, id);
-          if (target && parseBundleRef(target).bundle === owner) links[raw] = target + (fragment ? `#${fragment}` : "");
+    readUsableIndex((db) => {
+      for (const raw of markdownLinkTargets(content, false)) {
+        if (/^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(raw)) continue;
+        const [file, fragment] = raw.split("#", 2);
+        if (!file?.toLowerCase().endsWith(".md") || file.startsWith("/")) continue;
+        let decoded: string;
+        try {
+          decoded = decodeURIComponent(file);
+        } catch {
+          continue;
         }
-      } finally {
-        closeDatabase(db);
+        const id = getEntryIdByFilePath(db, path.resolve(path.dirname(shown.path), decoded));
+        const target = id === undefined ? undefined : getItemRefById(db, id);
+        if (target && parseBundleRef(target).bundle === owner) links[raw] = target + (fragment ? `#${fragment}` : "");
       }
-    }
+    }, undefined);
   }
   return {
     redacted: false,

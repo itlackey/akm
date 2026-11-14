@@ -43,6 +43,7 @@ import {
 } from "../../src/workflows/plan";
 import { DEFAULT_EXEC_TIMEOUT_MS } from "../../src/workflows/resource-limits";
 import { decodeWorkflowPlan, frozenStepRows } from "../../src/workflows/runtime/run-plan";
+import { spawnLiveHolder } from "./live-holder";
 
 export const WORKFLOW_TEST_CONFIG = {
   semanticSearchMode: "off",
@@ -346,15 +347,25 @@ export function storeFrozenWorkflowPlan(
 
 /**
  * Plant the per-run lock another akm process would hold while driving
- * `runId`. The default holder is THIS test process — alive, so the lock reads
- * as held; pass a dead pid (e.g. `999_999_999`) for a crashed holder. Returns
- * a release function.
+ * `runId`. The default holder is a spawned live process (a lock naming this test
+ * process is stale), so the lock reads as held; pass a dead pid (e.g.
+ * `999_999_999`) for a crashed holder. Returns a release function carrying the
+ * holder's pid.
  */
-export function plantRunLock(runId: string, pid: number = process.pid): () => void {
+export function plantRunLock(runId: string, pid?: number): (() => void) & { pid: number } {
   const lockPath = workflowRunLockPath(runId);
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-  fs.writeFileSync(lockPath, JSON.stringify({ pid, startedAt: new Date().toISOString() }), { flag: "wx" });
-  return () => fs.rmSync(lockPath, { force: true });
+  const holder = pid === undefined ? spawnLiveHolder() : undefined;
+  const holderPid = holder?.pid ?? pid ?? 0;
+  const payload = holder ? holder.payload() : JSON.stringify({ pid: holderPid, startedAt: new Date().toISOString() });
+  fs.writeFileSync(lockPath, payload, { flag: "wx" });
+  return Object.assign(
+    () => {
+      fs.rmSync(lockPath, { force: true });
+      void holder?.stop();
+    },
+    { pid: holderPid },
+  );
 }
 
 /** One step of a markdown parent that runs a child workflow (`unit.workflow`, optional `with`). */

@@ -21,7 +21,7 @@ import { stashDirFor } from "../../core/asset/asset-placement";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { conceptIdForStashFile, displayRefForConceptId } from "../../core/asset/resolve-ref";
 import { deriveBundleIds } from "../../core/bundle-id";
-import { compareCodePoints, isAkmRegistryCachePath, resolveStashDir } from "../../core/common";
+import { compareCodePoints, isAkmRegistryCachePath, resolveStashDir, safeRealpath, samePath } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { loadConfig, primaryBundlePath } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
@@ -325,7 +325,7 @@ async function lintViaAdapter(
     op: "update",
   }));
   const ids = deriveBundleIds(sources);
-  const sourceIndex = sources.findIndex((s) => path.resolve(s.path) === path.resolve(stashRoot));
+  const sourceIndex = sources.findIndex((s) => samePath(s.path, stashRoot));
   const componentId = sourceIndex >= 0 ? (ids[sourceIndex] as string) : stashRoot;
 
   const ctx = createValidateContext({ root: stashRoot, extraRoots: extraStashRoots });
@@ -407,9 +407,9 @@ function runEnvDangerousKeyPass(
 ): LintIssue[] {
   const flagged: LintIssue[] = [];
   const envRoots = [stashRoot, ...extraStashRoots];
-  const bundleIdByRoot = new Map(sources.map((source) => [path.resolve(source.path), source.registryId]));
+  const bundleIdByRoot = new Map(sources.map((source) => [safeRealpath(source.path), source.registryId]));
   for (const root of envRoots) {
-    const bundleId = bundleIdByRoot.get(path.resolve(root));
+    const bundleId = bundleIdByRoot.get(safeRealpath(root));
     // `env` assets live under `env/`, whole-file `secret` assets under
     // `secrets/`. `displayRefForConceptId` owns the short-default /
     // qualified-secondary `Ref:` spelling `akm show` emits — the old
@@ -446,7 +446,7 @@ function runEnvDangerousKeyPass(
  * policy and stays fixable, exactly as today.
  */
 function assertFixTargetWritable(stashRoot: string, sources: SearchSource[]): void {
-  const target = sources.find((source) => path.resolve(source.path) === path.resolve(stashRoot));
+  const target = sources.find((source) => samePath(source.path, stashRoot));
   if (target?.writable !== false) return;
   // Same error kind and code `write-source.ts#ensureWritable` raises for the
   // identical refusal, so a scripted caller classifies both the same way.
@@ -991,7 +991,7 @@ export async function akmLint(options: AkmLintOptions = {}): Promise<AkmLintResu
   // The primary stash is the defaultBundle's path.
   const stashRoot = options.dir ?? primaryBundlePath(cfg) ?? resolveStashDir();
   const sources = resolveSourceEntries(stashRoot, cfg);
-  const configuredAdapter = sources.find((source) => path.resolve(source.path) === path.resolve(stashRoot))?.adapterId;
+  const configuredAdapter = sources.find((source) => samePath(source.path, stashRoot))?.adapterId;
   const adapterId = configuredAdapter ?? detectAdapterId(stashRoot);
   const extraStashRoots = sources.map((s) => s.path).filter((p) => p !== stashRoot && fs.existsSync(p));
 

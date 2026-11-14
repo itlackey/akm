@@ -956,7 +956,7 @@ describe("A-27 — a child whose run lock is already held busies the parent unit
 
     expect(outcome.ok).toBe(false);
     expect(outcome.failureReason).toBe("child_workflow_busy");
-    expect(outcome.error).toContain(`pid ${process.pid}`);
+    expect(outcome.error).toContain(`pid ${release.pid}`);
   });
 });
 

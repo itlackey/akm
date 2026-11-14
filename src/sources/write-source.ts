@@ -33,7 +33,7 @@ import { normalizeAkmMarkdown } from "../core/asset/akm-markdown";
 import { assetPathForName, stashDirFor } from "../core/asset/asset-placement";
 import type { AssetRef } from "../core/asset/resolve-ref";
 import { conceptIdFromTypeName, displayRef } from "../core/asset/resolve-ref";
-import { existingFileMode, isWithin, NO_DEFAULT_BUNDLE_MESSAGE, writeFileAtomic } from "../core/common";
+import { existingFileMode, isWithin, NO_DEFAULT_BUNDLE_MESSAGE, relativeToRoot, writeFileAtomic } from "../core/common";
 import type { AkmConfig, ConfiguredSource, SourceConfigEntry } from "../core/config/config";
 import { resolveActiveConfiguredSources, resolveConfiguredSources } from "../core/config/config";
 import { ConfigError, UsageError } from "../core/errors";
@@ -503,7 +503,7 @@ export function assertWritePathsInsideSource(source: WriteTargetSource, filePath
   const lexicalRoot = path.resolve(source.path);
   const canonicalRoot = fs.realpathSync(lexicalRoot);
   for (const filePath of filePaths) {
-    const relative = path.relative(lexicalRoot, path.resolve(filePath));
+    const relative = relativeToRoot(filePath, lexicalRoot) ?? "..";
     if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
       throw new UsageError(`Write path resolves outside source "${source.name}".`, "PATH_ESCAPE_VIOLATION");
     }

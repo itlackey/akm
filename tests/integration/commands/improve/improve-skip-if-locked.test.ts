@@ -14,6 +14,7 @@ import { readEvents } from "../../../../src/core/events";
 import { getStashLocksDir } from "../../../../src/core/paths";
 import { LLM_USAGE_SUMMARY_EVENT } from "../../../../src/llm/usage-persist";
 import { hasLlmUsageSink } from "../../../../src/llm/usage-telemetry";
+import { type LiveHolder, spawnLiveHolder, stopLiveHolders } from "../../../_helpers/live-holder";
 import { type Cleanup, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 
 const TIMEOUT_MS = 20_000;
@@ -46,10 +47,13 @@ function quietConfig(): AkmConfig {
   } as unknown as AkmConfig;
 }
 
+let holder: LiveHolder;
+
 function plantHeldImproveLock(): string {
+  holder = spawnLiveHolder();
   const lockPath = path.join(getStashLocksDir(stashDir), "improve.lock");
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-  fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }), "utf8");
+  fs.writeFileSync(lockPath, holder.payload(), "utf8");
   return lockPath;
 }
 
@@ -61,6 +65,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  stopLiveHolders();
   cleanup();
   cleanup = () => {};
   stashDir = "";
@@ -107,7 +112,7 @@ describe("akm improve — skip-if-locked", () => {
       expect(result.ok).toBe(true);
       expect(result.skipped).toEqual({ reason: "lock-held" });
       expect(fs.existsSync(lockPath)).toBe(true);
-      expect(JSON.parse(fs.readFileSync(lockPath, "utf8")).pid).toBe(process.pid);
+      expect(JSON.parse(fs.readFileSync(lockPath, "utf8")).pid).toBe(holder.pid);
     },
     TIMEOUT_MS,
   );

@@ -716,20 +716,27 @@ export function withMdVariants(name: string): string[] {
   return name.endsWith(".md") ? [name, name.slice(0, -3)] : [name, `${name}.md`];
 }
 
+/** True when `file` is a `.md` file named by the last segment of `conceptId`, up to its `.md`. */
+export function namesMarkdownFile(conceptId: string, file: string): boolean {
+  const last = (conceptId.split("/").pop() ?? "").replace(/\.md$/, "");
+  return path.extname(file) === ".md" && path.basename(file, ".md") === last;
+}
+
 /**
  * Current (`[bundle//]conceptId`) id lookup: match `item_ref` exactly when
  * bundle-qualified or by `//conceptId` suffix when short.
  */
 function findEntryIdByBundleRef(db: Database, ref: string, bundleId?: string): number | undefined {
   const parsed = parseBundleRef(ref);
-  const conceptVariants = withMdVariants(parsed.conceptId);
-
   // item_ref is the canonical stored spelling post-flip.
-  for (const conceptId of conceptVariants) {
-    const id = matchIdByItemRef(db, parsed.bundle, conceptId, bundleId);
-    if (id !== undefined) return id;
-  }
-  return undefined;
+  const exact = matchIdByItemRef(db, parsed.bundle, parsed.conceptId, bundleId);
+  if (exact !== undefined) return exact;
+  // The `.md` toggle names a markdown file by its own name: `tasks/x.md` is not a spelling of `tasks/x.yml`,
+  // nor `skills/x.md` of `skills/x/SKILL.md`.
+  const [, toggled] = withMdVariants(parsed.conceptId);
+  const id = matchIdByItemRef(db, parsed.bundle, toggled!, bundleId);
+  const file = id === undefined ? undefined : getEntryFilePathById(db, id);
+  return file !== undefined && namesMarkdownFile(parsed.conceptId, file) ? id : undefined;
 }
 
 /**

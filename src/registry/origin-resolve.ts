@@ -4,6 +4,7 @@
 
 import path from "node:path";
 import { isBundleSlug } from "../core/asset/asset-ref";
+import { samePath } from "../core/common";
 import { deriveInstallations } from "../indexer/installations";
 import type { SearchSource } from "../indexer/search/search-source";
 import { parseRegistryRef } from "./resolve";
@@ -35,8 +36,7 @@ export function resolveSourcesForLocator(locator: string, allSources: SearchSour
     // Not a registry locator; continue to path matching.
   }
 
-  const resolvedLocator = path.resolve(locator);
-  return allSources.filter((source) => path.resolve(source.path) === resolvedLocator);
+  return allSources.filter((source) => samePath(source.path, locator));
 }
 
 /**

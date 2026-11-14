@@ -12,8 +12,8 @@
  * one module.
  */
 
-/** The operation a complete endpoint URL may end with. */
-const OPERATION_SUFFIX = /\/(?:chat\/completions|embeddings)$/;
+/** The operation a complete endpoint URL may end with, in any case. */
+const OPERATION_SUFFIX = /\/(?:chat\/completions|completions|embeddings|models)$/i;
 
 function parse(endpoint: string): URL | undefined {
   try {
@@ -23,7 +23,7 @@ function parse(endpoint: string): URL | undefined {
   }
 }
 
-/** The pathname of the endpoint's base: no trailing slash, no `/chat/completions` or `/embeddings`. */
+/** The pathname of the endpoint's base: no trailing slash, no operation (`/chat/completions`, `/completions`, `/embeddings`, `/models`). */
 function basePathname(url: URL): string {
   return url.pathname.replace(/\/+$/, "").replace(OPERATION_SUFFIX, "");
 }
@@ -36,7 +36,7 @@ function withPathname(url: URL, pathname: string): string {
   return pathname === "" && url.search === "" ? text.replace(/\/$/, "") : text;
 }
 
-/** The base of an OpenAI-compatible endpoint: the URL without `/chat/completions`, `/embeddings` or a trailing slash. */
+/** The base of an OpenAI-compatible endpoint: the URL without an operation suffix or a trailing slash. */
 export function openAiBaseUrl(endpoint: string): string {
   const url = parse(endpoint);
   return url ? withPathname(url, basePathname(url)) : endpoint;

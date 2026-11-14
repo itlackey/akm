@@ -8,7 +8,11 @@ import os from "node:os";
 import path from "node:path";
 import { deriveEntryProvenance } from "../../../src/indexer/installations";
 import { openDatabase } from "../../../src/storage/database";
-import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
+import {
+  closeDatabase,
+  deleteIndexDatabase,
+  openIndexDatabase,
+} from "../../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
 import { DB_VERSION, ensureSchema, IndexLayoutBelowFloorError } from "../../../src/storage/repositories/index-schema";
 
@@ -69,7 +73,8 @@ describe("canonical derived-index entry schema", () => {
 
       const raw = openDatabase(dbPath, { readonly: true, create: false });
       try {
-        expect(raw.prepare("SELECT value FROM index_meta WHERE key = 'version'").get()).toBeNull();
+        // The failed migration rolled back whole: no version stamp, and no half-built schema.
+        expect(raw.prepare("SELECT name FROM sqlite_master WHERE name = 'index_meta'").get()).toBeNull();
       } finally {
         raw.close();
       }
@@ -101,7 +106,8 @@ describe("canonical derived-index entry schema", () => {
       legacy.close();
 
       expect(() => openIndexDatabase(dbPath)).toThrow(IndexLayoutBelowFloorError);
-      const current = openIndexDatabase(dbPath, { rebuildCorrupt: true });
+      deleteIndexDatabase(dbPath);
+      const current = openIndexDatabase(dbPath);
       try {
         const count = current.prepare("SELECT COUNT(*) AS count FROM entries").get() as { count: number };
         expect(count.count).toBe(0);
@@ -161,7 +167,9 @@ describe("canonical derived-index entry schema", () => {
       legacy.prepare("UPDATE index_meta SET value = '21' WHERE key = 'version'").run();
       closeDatabase(legacy);
 
-      const current = openIndexDatabase(dbPath, { rebuildCorrupt: true });
+      deleteIndexDatabase(dbPath);
+
+      const current = openIndexDatabase(dbPath);
       try {
         expect(current.prepare("SELECT COUNT(*) AS n FROM entries").get()).toEqual({ n: 0 });
         expect(current.prepare("SELECT value FROM index_meta WHERE key = 'version'").get()).toEqual({

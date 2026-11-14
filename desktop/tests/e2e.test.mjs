@@ -257,7 +257,7 @@ test("built desktop UI: each section's happy path and one refusal", { timeout: 2
     await expect(trace).toContainText("No units recorded for this run yet.");
   });
 
-  await t.test("Library: the map draws every asset, and its table lists them with a link to each", async () => {
+  await t.test("Library: the map shows every asset by folder, and a folder's assets link to their pages", async () => {
     await go(page, "/library/map");
     await expect(page.getByRole("heading", { name: "Library map", exact: true })).toBeVisible();
     // The map keeps Library's tabs.
@@ -266,16 +266,17 @@ test("built desktop UI: each section's happy path and one refusal", { timeout: 2
       "Files",
       "Map",
     ]);
-    await expect(page.getByLabel(/^Map of \d+ assets/)).toBeVisible();
-    await page.getByRole("button", { name: "Table", exact: true }).click();
-    const table = page.getByRole("table", { name: /assets, most shown first/ });
-    await expect(table.getByRole("link", { name: "knowledge/restore-laptop", exact: true })).toBeVisible();
+    const figures = page.getByRole("complementary", { name: "Figures" });
+    // The fixture has no embeddings: the library is grouped by folder.
+    await expect(figures.locator(".stats")).toContainText("folders");
     // Env and secret files are never on the map.
-    await expect(table).not.toContainText("env/");
-    await page.getByRole("searchbox", { name: "Find an asset" }).fill("shared-backup");
-    await expect(table.getByRole("row")).toHaveCount(2);
-    await table.getByRole("link", { name: "knowledge/shared-backup", exact: true }).click();
-    await expect(page.locator(".markdown")).toContainText("Keep the original disk");
+    await expect(figures.locator("table.groups")).not.toContainText("env");
+    await figures.getByRole("button", { name: "knowledge", exact: true }).click();
+    const detail = figures.locator(".detail");
+    await expect(detail.getByRole("heading", { name: "knowledge" })).toBeVisible();
+    await detail.locator(".assets a").first().click();
+    await expect(page).toHaveURL(/\/library\/search\?ref=/);
+    await expect(page.locator(".markdown")).toBeVisible();
   });
 
   await t.test("Activity: the replay plays the period's searches, reads and feedback", async () => {

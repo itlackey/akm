@@ -11,6 +11,7 @@ import {
   upsertLockEntry,
   writeLockfile,
 } from "../src/integrations/lockfile";
+import { spawnLiveHolder, stopLiveHolders } from "./_helpers/live-holder";
 import { type Cleanup, sandboxXdgDataHome } from "./_helpers/sandbox";
 import { overrideSeam } from "./_helpers/seams";
 
@@ -46,6 +47,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  stopLiveHolders();
   envCleanup();
   envCleanup = () => {};
   testDataDir = "";
@@ -205,7 +207,7 @@ describe("writeLockfile", () => {
   test("fails closed when another live writer owns the sentinel", async () => {
     overrideSeam(_setLockAcquireTimeoutMsForTests, 50);
     await writeLockfile([validEntry({ id: "original" })]);
-    fs.writeFileSync(getLockfileLockPath(), String(process.pid), { flag: "wx" });
+    fs.writeFileSync(getLockfileLockPath(), String(spawnLiveHolder().pid), { flag: "wx" });
 
     let caught: unknown;
     try {

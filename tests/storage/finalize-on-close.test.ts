@@ -8,21 +8,22 @@
  * and its WAL shared-memory survive until GC, and a later same-process
  * connection cannot leave WAL mode ("database is locked"). This silently
  * defeated migrate-apply's single-file conversion. The storage boundary now
- * finalizes tracked statements before the real close, so close means CLOSED.
+ * finalizes the statements it prepared before the real close, so close means
+ * CLOSED. Left as a zombie, GC's eventual close checkpointed the WAL into a file
+ * replaced at the same path: a damaged state.db came back healthy in CI.
  */
 
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { requestGc } from "../../src/runtime";
-import { openDatabaseFinalizing as openDatabase, openDatabase as openPlainDatabase } from "../../src/storage/database";
+import { openDatabase } from "../../src/storage/database";
 
 function journalMode(db: ReturnType<typeof openDatabase>): string {
   return String((db.prepare("PRAGMA journal_mode").get() as { journal_mode?: string } | undefined)?.journal_mode);
 }
 
-describe("openDatabaseFinalizing guard (#720)", () => {
+describe("openDatabase close (#720)", () => {
   test("a connection closed with unfinalized prepares does not zombie the WAL", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-finalize-close-"));
     const p = path.join(dir, "state.db");
@@ -49,35 +50,29 @@ describe("openDatabaseFinalizing guard (#720)", () => {
     }
   });
 
-  test("a zombie from a PLAIN openDatabase close is healed by requestGc before conversion", () => {
-    // Not every connection goes through openDatabaseFinalizing; the migrate
-    // conversion's GC-retry must heal zombies from plain closes too.
+  test("a closed connection never writes its WAL into a file replaced at the same path", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-finalize-close-"));
     const p = path.join(dir, "state.db");
     try {
-      const seed = openPlainDatabase(p);
-      seed.exec("PRAGMA journal_mode = WAL");
-      seed.exec("CREATE TABLE t(x)");
-      seed.exec("INSERT INTO t VALUES (1)");
-      seed.prepare("SELECT x FROM t").get();
-      seed.close(); // zombie: unfinalized prepare keeps the WAL shm mapped
-
       const db = openDatabase(p);
-      db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-      let mode: string;
-      try {
-        db.exec("PRAGMA journal_mode = DELETE");
-        mode = journalMode(db);
-      } catch {
-        mode = journalMode(db);
-      }
-      if (mode === "wal") {
-        requestGc();
-        db.exec("PRAGMA journal_mode = DELETE");
-        mode = journalMode(db);
-      }
-      expect(mode).toBe("delete");
+      db.exec("PRAGMA journal_mode = WAL");
+      db.exec("PRAGMA wal_autocheckpoint = 0");
+      db.exec("CREATE TABLE t(x)");
+      db.exec("INSERT INTO t VALUES (1)");
+      db.prepare("SELECT x FROM t").get();
       db.close();
+
+      // Replace the file in place, as a restore with `cp` or the damage tests do.
+      for (const side of ["-wal", "-shm"]) fs.rmSync(p + side, { force: true });
+      fs.writeFileSync(p, Buffer.alloc(4096));
+      Bun.gc(true);
+
+      expect(
+        fs
+          .readFileSync(p)
+          .subarray(0, 16)
+          .every((byte) => byte === 0),
+      ).toBe(true);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

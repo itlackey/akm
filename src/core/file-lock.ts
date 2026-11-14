@@ -8,7 +8,11 @@
  * makes atomic: exactly one creator wins, so no further mutex or barrier is
  * needed around acquisition. The payload records the holder's PID (and the
  * launcher PID under a scheduler) so a probe can tell a live holder from a
- * dead one; only a verifiably dead holder is ever reclaimed. Reclaim moves the
+ * dead one; only a verifiably dead holder is ever reclaimed. A live PID is not
+ * proof of a live holder (a container entrypoint is PID 1 on every start, PIDs
+ * are reused after a reboot), so where the OS exposes it the payload also
+ * records the holder's boot id and process start time; a live PID with a
+ * different identity is a reused PID and the lock is stale. Reclaim moves the
  * stale file aside, re-verifies it is the very file that was probed, and only
  * then unlinks it, so two reclaimers cannot both "win" the same stale lock.
  *
@@ -33,7 +37,7 @@ export type LockProbeResult =
     }
   | {
       state: "stale";
-      reason: "pid_dead" | "unreadable" | "invalid_pid";
+      reason: "pid_dead" | "pid_reused" | "unreadable" | "invalid_pid";
       holderPid?: number;
       launcherPid?: number;
       ageMs?: number;
@@ -59,6 +63,9 @@ export interface LockOwnership {
   rawContent: string;
   identity: LockFileIdentity;
 }
+
+/** Locks this process acquired and has not released, by path, so a lock naming our own PID that we do not hold is known to be left over. */
+const acquiredByThisProcess = new Map<string, string>();
 
 function readLockSnapshot(lockPath: string): { rawContent: string; identity: LockFileIdentity } | undefined {
   let fd: number;
@@ -160,7 +167,33 @@ export function tryAcquireLockSync(lockPath: string, payload: string): LockOwner
   }
   // Another process reclaimed our still-empty lock and took the path: we lost the race.
   if (snapshot.rawContent !== payload) return undefined;
+  acquiredByThisProcess.set(lockPath, payload);
   return { lockPath, ...snapshot };
+}
+
+/**
+ * What a reused PID cannot fake: the kernel boot id and the process start time
+ * (`/proc/<pid>/stat` field 22, in ticks since boot). Linux only; `undefined`
+ * elsewhere or when `/proc` is unreadable, which leaves the PID as the only evidence.
+ */
+export function processIdentity(pid: number): { bootId: string; startTime: string } | undefined {
+  try {
+    const bootId = fs.readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+    // The command name (field 2) may contain spaces and parens; fields resume after the last ")".
+    const startTime = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
+    return bootId && startTime ? { bootId, startTime } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** True when the lock records an identity and the live holder PID now has a different one. */
+function holderPidReused(holderPid: number, recorded: { bootId?: unknown; startTime?: unknown }): boolean {
+  if (typeof recorded.bootId !== "string" || typeof recorded.startTime !== "string") return false;
+  const current = processIdentity(holderPid);
+  if (!current) return false;
+  return current.bootId !== recorded.bootId || current.startTime !== recorded.startTime;
 }
 
 export function launcherPidFromEnv(): number | undefined {
@@ -175,6 +208,7 @@ export function createLockPayload(metadata: Record<string, unknown> = {}): strin
   return JSON.stringify({
     ...metadata,
     pid: process.pid,
+    ...processIdentity(process.pid),
     ...(launcherPid !== undefined ? { launcherPid } : {}),
     lockId: randomUUID(),
   });
@@ -198,6 +232,12 @@ export function probeLock(lockPath: string): LockProbeResult {
   }
   if (!isProcessAlive(holderPid)) {
     return { state: "stale", reason: "pid_dead", holderPid, launcherPid, ageMs, rawContent, identity };
+  }
+  // A lock naming this process that it did not acquire is left over from an earlier process with the same PID; so is
+  // one whose recorded identity no longer matches the live holder.
+  const ownLeftover = holderPid === process.pid && acquiredByThisProcess.get(lockPath) !== rawContent;
+  if (ownLeftover || holderPidReused(holderPid, parseLockJson(rawContent))) {
+    return { state: "stale", reason: "pid_reused", holderPid, launcherPid, ageMs, rawContent, identity };
   }
   return { state: "held", holderPid, launcherPid, ageMs, rawContent, identity };
 }
@@ -270,6 +310,7 @@ export function reclaimStaleLock(
 /** Unlink the lock only while it is still the exact file this owner created. */
 export function releaseLock(ownership: LockOwnership): void {
   const { lockPath } = ownership;
+  if (acquiredByThisProcess.get(lockPath) === ownership.rawContent) acquiredByThisProcess.delete(lockPath);
   let current: ReturnType<typeof readLockSnapshot>;
   try {
     current = readLockSnapshot(lockPath);
@@ -278,6 +319,15 @@ export function releaseLock(ownership: LockOwnership): void {
   }
   if (current && current.rawContent === ownership.rawContent && sameIdentity(current.identity, ownership.identity)) {
     releaseLockRaw(lockPath);
+  }
+}
+
+function parseLockJson(content: string): { bootId?: unknown; startTime?: unknown } {
+  try {
+    const parsed: unknown = JSON.parse(content);
+    return typeof parsed === "object" && parsed !== null ? parsed : {};
+  } catch {
+    return {};
   }
 }
 
