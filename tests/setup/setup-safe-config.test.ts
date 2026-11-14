@@ -25,6 +25,7 @@ import { getConfigPath } from "../../src/core/paths";
 import { _setWarnSinkForTests } from "../../src/core/warn";
 import { rebaseSetupChanges, runSetupFromConfig, runSetupWithDefaults } from "../../src/setup/setup";
 import { parseSetupFlags } from "../../src/setup/setup-flags";
+import { spawnLiveHolder } from "../_helpers/live-holder";
 import { fakeOpencodeMajor } from "../_helpers/opencode-version";
 import {
   type Cleanup,
@@ -395,7 +396,8 @@ describe("runSetupWithDefaults — idempotency", () => {
       },
       async () => {
         fs.mkdirSync(path.dirname(getConfigLockPath()), { recursive: true });
-        fs.writeFileSync(getConfigLockPath(), String(process.pid));
+        const holder = spawnLiveHolder();
+        fs.writeFileSync(getConfigLockPath(), holder.payload());
         try {
           await expect(
             runSetupFromConfig({
@@ -406,6 +408,7 @@ describe("runSetupWithDefaults — idempotency", () => {
           ).rejects.toThrow(/Timed out waiting for config lock/);
           expect(fs.existsSync(path.join(stashDir, "memories"))).toBe(false);
         } finally {
+          await holder.stop();
           fs.rmSync(getConfigLockPath(), { force: true });
         }
       },
