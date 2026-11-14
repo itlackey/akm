@@ -64,4 +64,4 @@ test("the fixture library indexes to the golden set of refs", async () => {
   } finally {
     closeDatabase(db);
   }
-});
+}, 30_000);

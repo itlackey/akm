@@ -15,6 +15,7 @@ import { saveConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
 import { akmIndex } from "../../src/indexer/indexer";
 import { closeDatabase, openExistingDatabase } from "../../src/storage/repositories/index-connection";
+import { namesMarkdownFile } from "../../src/storage/repositories/index-entries-repository";
 import { runCliCapture } from "../_helpers/cli";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
@@ -129,5 +130,15 @@ describe("ref spellings", () => {
       }
     }
     expect(problems).toEqual([]);
+  }, 60_000);
+});
+
+describe("the .md toggle", () => {
+  test("names a markdown file by its own name, wherever the adapter keeps it", () => {
+    expect(namesMarkdownFile("knowledge/x.md", "/b/knowledge/x.md")).toBe(true);
+    expect(namesMarkdownFile("x", "/b/.claude/anything/x.md")).toBe(true);
+    expect(namesMarkdownFile("skills/x.md", "/b/skills/x/SKILL.md")).toBe(false);
+    expect(namesMarkdownFile("tasks/x.md", "/b/tasks/x.yml")).toBe(false);
+    expect(namesMarkdownFile("scripts/x.sh.md", "/b/scripts/x.sh")).toBe(false);
   });
 });

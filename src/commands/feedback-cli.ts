@@ -10,7 +10,7 @@ import { defineJsonCommand, output, parseAllFlagValues } from "../cli/shared";
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
 import { assembleAsset, serializeFrontmatter } from "../core/asset/asset-serialize";
 import { parseFrontmatter, parseFrontmatterBlock, spliceFrontmatterLine } from "../core/asset/frontmatter";
-import { type AssetRef, displayRef } from "../core/asset/resolve-ref";
+import { type AssetRef, displayDefaultBundle, displayRef } from "../core/asset/resolve-ref";
 import { isWithin, resolveStashDir, safeRealpath, writeFileAtomic } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { ConfigError, NotFoundError, TransientError, UsageError } from "../core/errors";
@@ -22,9 +22,8 @@ import { withWriteTargetMutation } from "../core/write-source";
 import { NO_INDEX_MESSAGE, openUsableIndex } from "../indexer/index-readiness";
 import { heldRebuildLock } from "../indexer/index-rebuild-lock";
 import { recomputeUtilityScores } from "../indexer/indexer";
-import { deriveInstallations } from "../indexer/installations";
 import { currentConceptId, resolveWriteAddress } from "../indexer/lookup/adapter-concept-owner";
-import { resolveSourceEntries, type SearchSource } from "../indexer/search/search-source";
+import { findSourceForPath, resolveSourceEntries, type SearchSource } from "../indexer/search/search-source";
 import { insertUsageEventStrict, resolveUsageEventSource } from "../indexer/usage/usage-events";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 import type { Database } from "../storage/database";
@@ -734,12 +733,12 @@ export const feedbackCommand = defineJsonCommand({
       const itemRef = getItemRefById(db, entryId);
       if (!itemRef) throw new UsageError(`Indexed ref "${ref}" has no durable item ref.`, "INVALID_PROPOSAL");
       durableRef = itemRef;
+      const filePath = getEntryFilePathById(db, entryId);
       const { bundle, conceptId } = parseBundleRef(itemRef);
       shownRef = displayRef(
         { conceptId, bundleId: bundle },
-        config.defaultBundle ?? deriveInstallations(sources)[0]?.id,
+        displayDefaultBundle(config.defaultBundle, filePath ? findSourceForPath(filePath, sources) : undefined, bundle),
       );
-      const filePath = getEntryFilePathById(db, entryId);
       const entryType = getEntryById(db, entryId)?.entry.type;
       const textHash = judgedTextHash(entryType, filePath);
       if (textHash) metadataObj.contentHash = textHash;
