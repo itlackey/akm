@@ -11,10 +11,16 @@
  */
 
 import { getDbPath } from "../../core/paths";
+import { heldRebuildLock } from "../../indexer/index-rebuild-lock";
 import { SEMANTIC_SEARCH_META_KEY, type SemanticSearchRecord } from "../../indexer/walk/index-context";
 import { LOCAL_EMBEDDING_RUNTIME } from "../../llm/embedders/local";
-import { closeDatabase, openReadonlyExistingDatabase } from "../../storage/repositories/index-connection";
+import {
+  closeDatabase,
+  indexDbIsDamaged,
+  openReadonlyExistingDatabase,
+} from "../../storage/repositories/index-connection";
 import { getEmbeddableEntryCount } from "../../storage/repositories/index-entries-repository";
+import { hasCurrentEntriesTable } from "../../storage/repositories/index-entry-schema";
 import { getMeta } from "../../storage/repositories/index-meta-repository";
 import { getEmbeddingCount } from "../../storage/repositories/index-vec-repository";
 import type { HealthCheckResult } from "./types";
@@ -27,14 +33,18 @@ export interface SemanticSearchState {
   index?: { record?: SemanticSearchRecord; builtAt?: string; entryCount: number; embeddingCount: number };
   /** Why the index could not be read. */
   error?: string;
+  /** A first build holds the rebuild lock, so a partial index is expected. */
+  building?: boolean;
 }
 
 /** Read the last index run's record and the index's counts, read-only. */
 export function readSemanticSearchState(mode: string | undefined): SemanticSearchState {
   try {
+    if (indexDbIsDamaged()) throw new Error("index.db is damaged");
     const db = openReadonlyExistingDatabase(getDbPath());
     if (!db) return { mode };
     try {
+      if (!hasCurrentEntriesTable(db)) throw new Error("index.db has no searchable entries table");
       const raw = getMeta(db, SEMANTIC_SEARCH_META_KEY);
       return {
         mode,
@@ -49,6 +59,7 @@ export function readSemanticSearchState(mode: string | undefined): SemanticSearc
       closeDatabase(db);
     }
   } catch (error) {
+    if (heldRebuildLock()) return { mode, building: true };
     return { mode, error: error instanceof Error ? error.message : String(error) };
   }
 }
@@ -71,8 +82,9 @@ export function semanticSearchCheck(state: SemanticSearchState): HealthCheckResu
   if (state.error)
     return result(
       "fail",
-      `Could not read the index: ${state.error}. Repair or move aside index.db, then run \`akm index\`.`,
+      `Could not read the index: ${state.error}. Run \`akm index\`; it rebuilds a damaged index.db.`,
     );
+  if (state.building) return result("unknown", "The search index is being built; check again when the build finishes.");
   if (state.mode === "off") return result("pass", "Semantic search is off (semanticSearchMode: off).", { mode: "off" });
   const index = state.index;
   if (!index?.record) return result("unknown", "No semantic-search state recorded yet; run `akm index`.");

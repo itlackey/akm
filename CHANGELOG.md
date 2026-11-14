@@ -94,7 +94,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- `akm show` beside a first `akm index` exited 70 (`no such table: entries`) when the build had created `index.db` but not its tables yet; the lookup now treats that like an index it cannot open and serves the asset from its file.
 - `akm remember --help` advertised `-showSimilar`, which was rejected; it now shows `--show-similar` only, and `--showSimilar` still works.
 - `akm improve --auto-accept` names its replacement (`akm proposal drain --promote --yes`, or a `triage` block with `applyMode: "promote"`).
 - The flags removed in 0.11 that still reach the unknown-flag check (`improve --require-engines`, `lint --auto-fix`, `migrate apply --dry-run`, `workflow list|status --all-scopes`, `--allow-dangerous-env-keys`, `bundle update --yes`, `registry add --options`, `task sync --dry-run|--bundle`, `task add --rebind`, `task history --id`) now name their replacement or say to drop them, like `--auto-accept`.
@@ -102,6 +101,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Wrong text: the feedback error named `akm.json` (the file is `config.json`); Desktop labelled `archiveRetentionDays` "archived assets" (it expires pending proposals) and `feedback.requireReason` as gating positive feedback (it gates negative feedback); `configuration.md` cited the gone `setup --config`; the comment at the top of `config-schema.ts` described behaviour the code does not have. Docs now state the working-bundle order, `improve.eventRetentionDays` and `improve.stateGc.collect`; `STABILITY.md` lists `AKM_STATE_DIR` as Supported and `AKM_UPGRADE_SKIP_CHECKSUM` as Internal (as `cli.md` already said) and names the other Internal variables; the eight flags `cli.md` missed are listed.
 - `akm help <command...>` prints the same help as `akm <command...> --help`, also for one quoted argument (`akm help "bundle add"`); `akm help help` prints help's own help; an unknown command is an error whose hint names `akm <command> --help`.
 - Root help: a short concept list (bundle, registry, connection, harness, project) replaces the closing bundle paragraph, and the version sits on the first line instead of the last exit-code line. `akm improve --help` no longer lists `report` as a trailing argument in its USAGE line.
+
+## [0.10.261125] - 2026-11-14
+
+### Added
+
+- AKM Desktop's library map answers four questions about the whole library, one view each: Contents (what is in it, by topic, with the searches that found nothing), Use (what is read and what is dead weight), Problems (what is outdated, disliked or duplicated) and Relations (how its topics link to each other, in 3D or flat). It replaces the point cloud of every asset, which showed none of these. The figures of each view are also in words beside it.
+- `assets.graph` (`akm-cli/workspace`) answers what a library holds, what is used and what overlaps: `topics` (the embedded assets grouped by meaning, each named by its most particular words, with its nearest topics), `nodes.topic`, `duplicates` (pairs of one topic whose embeddings have a cosine of 0.96 or more), and per asset `lastShownAt`, `modifiedAt` and the feedback counts `positive` and `negative`.
+
+### Fixed
+
+- An `index.db` whose `entries` table exists without its full-text table made `akm search` and `akm curate` exit 70 while `akm health` passed. Such an index now counts as unusable: reads report it and `akm index` rebuilds it, and health fails it.
+- `akm feedback` accepted spellings `akm show` refuses (`tasks/x.md`, `skills/x.md`, `scripts/x.sh.md`, `env/x.md`, `secrets/x.md`), and echoed the typed spelling as `ref` (`knowledge\x`, `akm//knowledge/x.md`). It now accepts the spellings `show` accepts, and `ref` is the ref `show` returns. The `.md` toggle in an index lookup applies only to markdown files.
+- A lock left by a killed process was never reclaimed once its PID was alive again, for example PID 1 in a container: `akm index` waited ten minutes and exited 75, `--skip-if-locked` runs skipped forever, and reads said the index was being built. The index rebuild lock, `akm improve`'s run lock, the asset mutation lease and the other lock files now record the holder's boot id and process start time (Linux) and treat a live PID with a different identity as stale; a lock naming this process that it did not acquire is stale too. Lock files without those fields are read as before.
+- `akm bundle update --skip-if-locked` waited up to ten minutes for a running index build instead of skipping. It now returns at once with exit 0 and a skipped result.
+- A damaged `index.db` (a bad header, `file is not a database`, or a bad interior page) is rebuilt by `akm index`: the build deletes the file and builds again once, wherever it finds the damage. Search and curate report "no search index; run `akm index`" and `feedback` reports no usable index, instead of exiting 70.
+- `akm health` no longer passes an `index.db` that has a damaged page, and during a first build it reports the build instead of failing and advising to move `index.db` aside.
+- Opening or migrating `index.db` is one transaction, so a reader or a crash can no longer meet entries without their full-text table (search and curate exited 70).
+- `akm show <ref>#<fragment>` against an index laid out by 0.9.13 or earlier exited 70 (`no such table: entry_fragments`); it reports the fragment unavailable like any index that cannot supply it.
+- `akm search … | head` and `akm index 2>&1 | head -1` exited 70 ("Unhandled rejection: EPIPE") once the reader closed the pipe. A closed stdout or stderr no longer fails the command: it runs to completion (an index build finishes) and exits with the code its work earned, normally 0.
+- A library reached through two path spellings (a symlink and its target, macOS `/tmp` and `/private/tmp`) was a different library to the index: reads said "no search index", and every build through the other spelling re-minted every entry id. A source's path is now its real path, and the library directory is compared by real path, so an index that stored the other spelling still serves.
+- `akm setup --embedding-endpoint https://host/v1/models` stored `https://host/v1/models/v1`, and `…/V1` became `…/V1/v1`. An endpoint typed with `/models`, `/completions`, `/embeddings` or `/chat/completions` (any case) now names its base, and `/V1` counts as the `/v1` root.
+- The Desktop workspace API (`assets.show`, `assets.related`, `documents.readSource`, the graph) threw `no such table: entries` or `file is not a database` on a first-build, zero-filled or garbage `index.db`; they now treat an index that cannot serve as no index, so `assets.show` answers from the file with `durableRef: null`.
+- A garbage, zero-filled or truncated `state.db` now raises one error, exit 78 naming the file, from every verb except `health`: `feedback` and `index` no longer exit 70, `akm health` reports it as one failing finding (exit 1) for every kind of damage, `akm log` / `akm doctor log` no longer return zero events at exit 0, and workspace readers no longer throw a raw SQLite error.
+
+## [0.10.261124] - 2026-11-14
+
+### Fixed
+
+- `akm show` beside a first `akm index` exited 70 (`no such table: entries`) when the build had created `index.db` but not its tables yet; the lookup now treats that like an index it cannot open and serves the asset from its file.
 
 ## [0.10.261123] - 2026-11-14
 

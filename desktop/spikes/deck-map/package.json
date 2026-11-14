@@ -1,0 +1,21 @@
+{
+  "name": "akm-deck-map-spike",
+  "private": true,
+  "license": "MPL-2.0",
+  "description": "Spike: the library map on deck.gl, with a force layout in a worker. Not part of the app.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@deck.gl/core": "9.4.1",
+    "@deck.gl/extensions": "9.4.1",
+    "@deck.gl/layers": "9.4.1",
+    "d3-force-3d": "3.0.6"
+  },
+  "devDependencies": {
+    "vite": "8.3.5"
+  }
+}

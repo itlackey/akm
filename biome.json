@@ -37,7 +37,10 @@
       "!desktop/test-results",
       "!desktop/playwright-report",
       "!desktop/src/lib/ui/echarts.js",
-      "!desktop/docs/prototypes"
+      "!desktop/docs/prototypes",
+      "!desktop/spikes/*/node_modules",
+      "!desktop/spikes/*/dist",
+      "!desktop/spikes/*/public"
     ],
     "experimentalScannerIgnores": [
       ".claude"

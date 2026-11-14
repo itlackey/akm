@@ -1,0 +1,178 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+:root {
+  color-scheme: light dark;
+  --bg: #f7f7f5;
+  --panel: rgb(255 255 255 / 0.88);
+  --text: #1b1b1f;
+  --muted: #6b6b75;
+  --line: #d9d9de;
+  font:
+    13px / 1.4 ui-sans-serif,
+    system-ui,
+    sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111114;
+    --panel: rgb(24 24 28 / 0.88);
+    --text: #ececf1;
+    --muted: #9a9aa6;
+    --line: #34343c;
+  }
+}
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+}
+#stage {
+  position: relative;
+  height: 100vh;
+  overflow: hidden;
+}
+#deck {
+  position: absolute;
+  inset: 0;
+}
+.panel {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  width: 260px;
+  max-height: calc(100% - 24px);
+  overflow: auto;
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+}
+.detail {
+  left: auto;
+  right: 12px;
+  width: 300px;
+}
+h1 {
+  font-size: 14px;
+  margin: 0;
+}
+.muted {
+  color: var(--muted);
+  font-weight: 400;
+}
+fieldset {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  margin: 0;
+  display: grid;
+  gap: 4px;
+}
+.field {
+  display: grid;
+  gap: 4px;
+}
+input[type="search"] {
+  font: inherit;
+  padding: 4px 6px;
+}
+button {
+  font: inherit;
+  justify-self: start;
+  padding: 4px 10px;
+}
+.legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 8px;
+}
+.legend i {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-inline-end: 6px;
+}
+.stats {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 8px;
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+.stats dt {
+  color: var(--muted);
+}
+.stats dd {
+  margin: 0;
+  text-align: end;
+}
+.detail ul {
+  margin: 0;
+  padding-inline-start: 16px;
+}
+.detail a {
+  color: inherit;
+  cursor: pointer;
+}
+.results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+.results button,
+.examples button,
+.detail button {
+  justify-self: stretch;
+  max-width: 100%;
+  text-align: start;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* An asset in a list is a link to centre on it, not a heavy button. */
+.detail li button,
+.results button {
+  padding: 1px 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+.detail li button:hover,
+.results button:hover {
+  text-decoration: underline;
+}
+.detail li {
+  min-width: 0;
+}
+.examples {
+  display: grid;
+  gap: 4px;
+}
+.key {
+  grid-template-columns: 1fr;
+}
+.key svg {
+  vertical-align: middle;
+  margin-inline-end: 6px;
+}
+.detail h2 {
+  font-size: 12px;
+  margin: 6px 0 2px;
+  color: var(--muted);
+  font-weight: 500;
+}
+.detail .actions {
+  display: flex;
+  gap: 6px;
+}

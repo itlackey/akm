@@ -28,7 +28,14 @@ import fs from "node:fs";
 import { type Database, openDatabase } from "../storage/database";
 import { insertEvent, readStateEvents } from "../storage/repositories/events-repository";
 import type { EventEnvelope } from "./events-types";
-import { getStateDbPath, openStateDatabase, withStateDb } from "./state-db";
+import {
+  classifyStateDbError,
+  damagedStateDbError,
+  getStateDbPath,
+  isStateDbCorruption,
+  openStateDatabase,
+  withStateDb,
+} from "./state-db";
 import { borrowScopedStateDb } from "./state-db-scope";
 import { isReadOnlyFilesystemError } from "./system-error";
 import { error } from "./warn";
@@ -334,8 +341,9 @@ export function readEvents(options: ReadEventsOptions = {}, ctx?: EventsContext)
       db = openStateDatabase(dbPath);
       ownsDb = true;
     }
-  } catch {
-    // Never mask the bun-test isolation guard as "no events".
+  } catch (err) {
+    // A damaged state.db is not "no events".
+    if (isStateDbCorruption(err)) throw classifyStateDbError(err, dbPath);
     // DB does not exist yet or cannot be opened — return empty result.
     return { events: [], nextOffset: 0 };
   }
@@ -364,9 +372,12 @@ export function readEvents(options: ReadEventsOptions = {}, ctx?: EventsContext)
       }));
     } catch (error) {
       if (ctx?.readOnly && error instanceof Error && /no such table:/i.test(error.message)) {
+        // An empty or behind-on-migrations state.db has no events; a non-empty file with no schema at all is zero-filled.
+        if (fs.statSync(dbPath).size > 0 && !db.prepare("SELECT 1 FROM sqlite_master LIMIT 1").get())
+          throw damagedStateDbError(dbPath, "no schema in a non-empty file");
         return { events: [], nextOffset: options.sinceOffset ?? 0 };
       }
-      throw error;
+      throw classifyStateDbError(error, dbPath);
     }
 
     const filtered = rawEvents.filter((envelope) => {
