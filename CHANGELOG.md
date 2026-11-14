@@ -8,7 +8,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- 0.10.261122 indexed files at the bundle root (`top.md`, `topscript.sh`) and served them from `search`, `show` and `feedback`. A full walk, write-through and `show` again list nothing directly in the bundle root, as before; a directory an adapter walks in full still lists its root files.
 - 0.10.261122 `show` served a file by its file-name spelling when the index had no row, for example `akm show tasks/nightly.yml`. It resolves from files only a ref that is the asset's concept ID (`tasks/nightly`, `knowledge/guide`, `knowledge/guide.md`), so any other spelling is refused again with or without an index row.
 
 ## [0.10.261122] - 2026-11-14

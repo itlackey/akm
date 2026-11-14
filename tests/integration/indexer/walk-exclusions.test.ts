@@ -96,17 +96,6 @@ describe("isWalkedFile", () => {
     expect(walkedFiles(storage.stashDir, [])).toEqual([]);
   });
 
-  test("a file at the root of a git bundle is not walked, by any walk; outside git, or in a directory that walks in full, it is", () => {
-    const top = write("top.md");
-    const listed = () => walkStashFlat(storage.stashDir).map((file) => file.absPath);
-    expect(listed()).toContain(top);
-    expect(isWalkedFile(storage.stashDir, top)).toBe(true);
-    spawnSync("git", ["init", "-q"], { cwd: storage.stashDir });
-    expect(listed()).not.toContain(top);
-    expect(isWalkedFile(storage.stashDir, top)).toBe(false);
-    expect(isWalkedFile(storage.stashDir, top, { includeAllDirectories: true })).toBe(true);
-  });
-
   test("a file outside the root is not walked", () => {
     expect(isWalkedFile(storage.stashDir, path.join(storage.root, "elsewhere.md"))).toBe(false);
   });
@@ -140,33 +129,22 @@ describe("show from files and write-through use it", () => {
     expect(paths).not.toContain(hidden);
   });
 
-  test("a root file is neither indexed, searched nor shown; a file-name spelling is refused, the concept ID is not", async () => {
-    write("top.md");
-    spawnSync("git", ["init", "-q"], { cwd: storage.stashDir });
+  test("show refuses a file-name spelling of an asset, with or without an index row, and serves its concept ID", async () => {
     write("knowledge/guide.md");
     fs.mkdirSync(path.join(storage.stashDir, "tasks"));
     fs.writeFileSync(path.join(storage.stashDir, "tasks", "nightly.yml"), "name: nightly\n");
-    fs.writeFileSync(path.join(storage.stashDir, "topscript.sh"), "#!/bin/sh\n");
     const shown = async (ref: string) => {
       const result = await runCliCapture(["show", ref, "--format=json"]);
       return [ref, result.code, result.code === 0 ? JSON.parse(result.stdout).ref : result.stdout] as const;
     };
-    const refused = ["knowledge/top", "top", "tasks/nightly.yml", "scripts/topscript.sh"];
     const check = async () => {
-      for (const ref of refused) expect(await shown(ref)).toEqual([ref, 1, ""]);
+      expect(await shown("tasks/nightly.yml")).toEqual(["tasks/nightly.yml", 1, ""]);
       expect(await shown("tasks/nightly")).toEqual(["tasks/nightly", 0, "tasks/nightly"]);
       expect(await shown("knowledge/guide")).toEqual(["knowledge/guide", 0, "knowledge/guide"]);
       expect(await shown("knowledge/guide.md")).toEqual(["knowledge/guide.md", 0, "knowledge/guide"]);
     };
-    await check(); // no index
+    await check(); // no index row: served from files
     await akmIndex({ stashDir: storage.stashDir, full: true });
-    const search = await runCliCapture(["search", "top", "--from", "local", "--format=json"]);
-    expect(JSON.stringify(JSON.parse(search.stdout).hits.map((hit: { ref: string }) => hit.ref))).not.toContain(
-      '"top"',
-    );
-    await check(); // with an index row
-    for (const ref of ["knowledge/top", "scripts/topscript.sh"]) {
-      expect((await runCliCapture(["feedback", ref, "--positive"])).code).not.toBe(0);
-    }
+    await check();
   });
 });

@@ -41,14 +41,6 @@ function isSkippedDir(name: string, options: WalkStashFlatOptions): boolean {
 }
 
 /**
- * Whether a file at `relPath` sits directly in the source root, which the git walk (a root inside a repository)
- * does not list unless it walks every directory. A root outside git is walked by hand and lists them.
- */
-function isUnlistedRootFile(relPath: string, options: WalkStashFlatOptions): boolean {
-  return !options.includeAllDirectories && !/[\\/]/.test(relPath);
-}
-
-/**
  * The walk's own exclusions for a path relative to the source root: skipped directories at any depth,
  * the sidecar and git dot-files, and the root `.scratch/`. Symlinked directories (never descended) and
  * `.gitignore` rules are applied by the walks themselves and, for a list of files, by {@link walkedFiles}.
@@ -68,19 +60,18 @@ function isExcludedPath(relPath: string, options: WalkStashFlatOptions): boolean
  */
 export function walkedFiles(root: string, files: readonly string[], options: WalkStashFlatOptions = {}): string[] {
   const resolvedRoot = path.resolve(root);
-  const inGitRepo = isGitWorkTree(resolvedRoot);
   const candidates: Array<{ file: string; relPath: string; checkIgnore: boolean }> = [];
   for (const file of files) {
     const relPath = path.relative(resolvedRoot, path.resolve(file));
     if (relPath === "" || relPath.split(/[\\/]+/)[0] === ".." || path.isAbsolute(relPath)) continue;
-    if (isExcludedPath(relPath, options) || (inGitRepo && isUnlistedRootFile(relPath, options))) continue;
+    if (isExcludedPath(relPath, options)) continue;
     if (underSymlinkedDirectory(resolvedRoot, file)) continue;
     const top = relPath.split(/[\\/]+/)[0];
     const keptDespiteIgnore = !options.includeAllDirectories && (top === "env" || top === "secrets");
     candidates.push({ file, relPath, checkIgnore: !keptDespiteIgnore });
   }
   const toCheck = candidates.filter((candidate) => candidate.checkIgnore);
-  if (toCheck.length === 0 || !inGitRepo) return candidates.map((candidate) => candidate.file);
+  if (toCheck.length === 0 || !isInsideGitRepo(resolvedRoot)) return candidates.map((candidate) => candidate.file);
 
   // The paths go in on stdin, NUL-separated (`-z` needs `--stdin`), so a long list has no argument-size limit.
   // Exit 0: some ignored. Exit 1: none ignored. Anything else (git missing or failing): the walk would not have used git either.
@@ -91,13 +82,6 @@ export function walkedFiles(root: string, files: readonly string[], options: Wal
   });
   const ignored = new Set<string>(result.status === 0 ? result.stdout.split("\0").filter(Boolean) : []);
   return candidates.filter((candidate) => !ignored.has(candidate.relPath)).map((candidate) => candidate.file);
-}
-
-/** Whether git itself accepts `dir` as inside a work tree, the case in which the walk lists with `git ls-files`. */
-function isGitWorkTree(dir: string): boolean {
-  return (
-    isInsideGitRepo(dir) && spawnSyncNode("git", ["rev-parse", "--is-inside-work-tree"], { cwd: dir }).status === 0
-  );
 }
 
 /** Whether `file` has a directory symlink between it and `root`; a walk never descends one. */
@@ -240,7 +224,7 @@ function walkStashGit(stashRoot: string, options: WalkStashFlatOptions): WalkSta
     .filter((f) => f.length > 0)
     .filter((f) => !deletedFiles.has(f))
     .filter((f) => !f.startsWith("..") && !path.isAbsolute(f))
-    .filter((f) => !isExcludedPath(f, options) && !isUnlistedRootFile(f, options));
+    .filter((f) => !isExcludedPath(f, options));
 
   const results: FileContext[] = [];
   let complete = true;
