@@ -29,6 +29,7 @@ import {
 } from "../../../src/storage/repositories/index-connection";
 import { deleteMeta, getMeta, setMeta } from "../../../src/storage/repositories/index-meta-repository";
 import { runCliCapture } from "../../_helpers/cli";
+import { spawnLiveHolder, stopLiveHolders } from "../../_helpers/live-holder";
 import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 
 const repoRoot = path.resolve(import.meta.dir, "../../..");
@@ -64,7 +65,7 @@ function editMeta(edit: (db: ReturnType<typeof openExistingDatabase>) => void): 
 function holdLock(): string {
   const lockPath = getIndexRebuildLockPath();
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-  fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }), "utf8");
+  fs.writeFileSync(lockPath, spawnLiveHolder().payload(), "utf8");
   return lockPath;
 }
 
@@ -93,6 +94,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  stopLiveHolders();
   _setIndexTransactionHookForTests(undefined);
   storage.cleanup();
 });

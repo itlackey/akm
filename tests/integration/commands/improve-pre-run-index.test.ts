@@ -19,6 +19,7 @@ import { closeDatabase, openExistingDatabase } from "../../../src/storage/reposi
 import { getEntryCount } from "../../../src/storage/repositories/index-entries-repository";
 import { writeLesson } from "../../_helpers/assets";
 import { withTestImproveLlm } from "../../_helpers/improve-config";
+import { spawnLiveHolder } from "../../_helpers/live-holder";
 import {
   type IsolatedAkmStorage,
   makeSandboxDir,
@@ -207,7 +208,8 @@ describe("akmImprove pre-run index (#339)", () => {
 
     const lockPath = getIndexRebuildLockPath();
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-    fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }), "utf8");
+    const holder = spawnLiveHolder();
+    fs.writeFileSync(lockPath, holder.payload(), "utf8");
     let entryCountAtCollect = -1;
     const notices: string[] = [];
     _setWarnSinkForTests((level, args) => {
@@ -237,10 +239,11 @@ describe("akmImprove pre-run index (#339)", () => {
       expect(entryCountAtCollect).toBe(1);
       expect(notices.join("\n")).toContain("another index run holds the rebuild lock");
       // The holder's lock is untouched.
-      expect(JSON.parse(fs.readFileSync(lockPath, "utf8")).pid).toBe(process.pid);
+      expect(JSON.parse(fs.readFileSync(lockPath, "utf8")).pid).toBe(holder.pid);
     } finally {
       _setWarnSinkForTests(undefined);
       fs.rmSync(lockPath, { force: true });
+      await holder.stop();
     }
   });
 

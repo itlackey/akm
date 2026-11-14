@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A lock left by a killed process was never reclaimed once its PID was alive again, for example PID 1 in a container: `akm index` waited ten minutes and exited 75, `--skip-if-locked` runs skipped forever, and reads said the index was being built. The index rebuild lock, `akm improve`'s run lock, the asset mutation lease and the other lock files now record the holder's boot id and process start time (Linux) and treat a live PID with a different identity as stale; a lock naming this process that it did not acquire is stale too. Lock files without those fields are read as before.
+- `akm bundle update --skip-if-locked` waited up to ten minutes for a running index build instead of skipping. It now returns at once with exit 0 and a skipped result.
+
 ## [0.10.261124] - 2026-11-14
 
 ### Fixed

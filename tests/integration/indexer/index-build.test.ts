@@ -24,14 +24,18 @@ import { _setIndexBuildWaitTimingForTests, buildIndex, isSkippedIndexBuild } fro
 import { heldRebuildLock } from "../../../src/indexer/index-rebuild-lock";
 import * as indexerModule from "../../../src/indexer/indexer";
 import { closeDatabase, openExistingDatabase } from "../../../src/storage/repositories/index-connection";
+import { type LiveHolder, spawnLiveHolder, stopLiveHolders } from "../../_helpers/live-holder";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
 const lockPath = () => getIndexRebuildLockPath();
 
+let holder: LiveHolder;
+
 function holdLock(): void {
+  holder = spawnLiveHolder();
   fs.mkdirSync(path.dirname(lockPath()), { recursive: true });
-  fs.writeFileSync(lockPath(), JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }), "utf8");
+  fs.writeFileSync(lockPath(), holder.payload(), "utf8");
 }
 
 beforeEach(() => {
@@ -41,6 +45,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  stopLiveHolders();
   _setIndexBuildWaitTimingForTests(undefined);
   _setWarnSinkForTests(undefined);
   storage.cleanup();
@@ -69,12 +74,12 @@ describe("buildIndex", () => {
     try {
       const result = await buildIndex({ stashDir: storage.stashDir }, "try");
       expect(isSkippedIndexBuild(result)).toBe(true);
-      expect(result).toMatchObject({ skipped: { pid: process.pid } });
+      expect(result).toMatchObject({ skipped: { pid: holder.pid } });
       expect(spy).not.toHaveBeenCalled();
     } finally {
       spy.mockRestore();
     }
-    expect(JSON.parse(fs.readFileSync(lockPath(), "utf8")).pid).toBe(process.pid);
+    expect(JSON.parse(fs.readFileSync(lockPath(), "utf8")).pid).toBe(holder.pid);
   });
 
   test('"try" builds when the lock is free, and reclaims a dead holder\'s lock', async () => {
@@ -94,7 +99,7 @@ describe("buildIndex", () => {
     const build = buildIndex({ stashDir: storage.stashDir }, "wait");
     await new Promise((resolve) => setTimeout(resolve, 350));
     // Still waiting: nothing has built beside the holder.
-    expect(JSON.parse(fs.readFileSync(lockPath(), "utf8")).pid).toBe(process.pid);
+    expect(JSON.parse(fs.readFileSync(lockPath(), "utf8")).pid).toBe(holder.pid);
     fs.rmSync(lockPath());
     const result = await build;
     expect(isSkippedIndexBuild(result)).toBe(false);
