@@ -4,9 +4,9 @@
  * stash. The binary embeds no native file. Where akm offers local embeddings,
  * `akm setup --yes --embedding local` gets onnxruntime-node's binding and library
  * into akm's cache (from the shared copy in `.ci-cache/akm/onnxruntime/` when a
- * run has kept one, else from the npm registry) and the model, and
- * `akm index --full` reports a ready status, a vector for every entry and the
- * `onnxruntime-node` runtime. Everywhere else the same setup warns and saves
+ * run has kept one, else from the npm registry) and the model, and builds the
+ * index; `akm index --full --reembed` then reports a ready status, a vector for
+ * every entry and the `onnxruntime-node` runtime that embedded them. Everywhere else the same setup warns and saves
  * keyword search; with semantic search turned on anyway the index reports it
  * unavailable for the platform, `akm health` warns, and search is keyword.
  *
@@ -115,7 +115,8 @@ describe.skipIf(!SEMANTIC_TESTS)("the standalone binary's semantic search", () =
           ].sort(),
         );
 
-        const index = akm("index", "--full", "--format", "json");
+        // Setup has already built and embedded the index; `--reembed` makes this run embed, so it names its runtime.
+        const index = akm("index", "--full", "--reembed", "--format", "json");
         expect(index.status, shown(index)).toBe(0);
         const { verification } = JSON.parse(index.stdout as string) as { verification: Verification };
         expect(verification.semanticStatus).toBe("ready-js");
