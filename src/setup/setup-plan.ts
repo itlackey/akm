@@ -174,14 +174,13 @@ function embeddingBlock(
     case "connection":
       return withTarget(current, { model: answer.model });
     case "endpoint": {
-      // A key and a label belong to the endpoint they were given for: another endpoint starts without them.
-      const held =
-        current?.endpoint !== undefined && sameEndpoint(current.endpoint, answer.endpoint)
-          ? { apiKey: current.apiKey, provider: current.provider }
-          : {};
+      // A key and a label belong to the endpoint they were given for: another endpoint starts without them. The same
+      // endpoint keeps the spelling it has.
+      const same = current?.endpoint !== undefined && sameEndpoint(current.endpoint, answer.endpoint);
+      const held = same ? { apiKey: current?.apiKey, provider: current?.provider } : {};
       const apiKey = answer.key === undefined ? held.apiKey : "env" in answer.key ? `$${answer.key.env}` : undefined;
       return withTarget(current, {
-        endpoint: answer.endpoint,
+        endpoint: same && current?.endpoint !== undefined ? current.endpoint : answer.endpoint,
         model: answer.model,
         ...(apiKey === undefined ? {} : { apiKey }),
         ...(held.provider === undefined ? {} : { provider: held.provider }),
