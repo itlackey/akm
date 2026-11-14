@@ -14,6 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { readSemanticSearchState, semanticSearchCheck } from "../../../src/commands/health/semantic-search-check";
 import { getDbPath, getIndexRebuildLockPath } from "../../../src/core/paths";
+import { getStateDbPath } from "../../../src/core/state-db";
 import { openDatabase } from "../../../src/storage/database";
 import { missingEntryColumns } from "../../../src/storage/repositories/index-entry-schema";
 import { ensureSchema } from "../../../src/storage/repositories/index-schema";
@@ -78,6 +79,32 @@ describe("older layout served as-is", () => {
     // The index cannot supply the fragment: the ordinary "unavailable, run akm index" refusal, not an internal error.
     expect(lead.code).toBe(1);
     expect(lead.stderr).toContain("Indexed-safe fragment context is unavailable");
+  });
+});
+
+describe("a damaged state.db", () => {
+  test("is not an index.db fault: `akm index` keeps the healthy index.db and its row ids", async () => {
+    expect((await runCliCapture(["index"])).code).toBe(0);
+    const ids = () => {
+      const db = new Database(getDbPath(), { readonly: true });
+      try {
+        return db.prepare("SELECT id, item_ref FROM entries ORDER BY id").all();
+      } finally {
+        db.close();
+      }
+    };
+    const before = ids();
+    expect(before.length).toBe(400);
+    const statePath = getStateDbPath();
+    fs.rmSync(`${statePath}-wal`, { force: true });
+    fs.rmSync(`${statePath}-shm`, { force: true });
+    fs.writeFileSync(statePath, Buffer.alloc(8192, 0xab));
+
+    const rebuilt = await runCliCapture(["index"]);
+    expect(rebuilt.code).not.toBe(0);
+    expect(ids()).toEqual(before);
+    const feedback = await runCliCapture(["feedback", "knowledge/guide-1", "--positive"]);
+    expect(feedback.stderr + feedback.stdout).not.toContain("akm index");
   });
 });
 

@@ -528,7 +528,7 @@ export async function showLocal(input: {
   return fullResponse;
 }
 
-/** The indexed-safe fragment, or undefined when the index cannot supply it (an older layout without `entry_fragments`); the caller then serves from files. */
+/** The indexed-safe fragment, or undefined when the index cannot supply it (an older layout without `entry_fragments`). The caller then refuses with "fragment context unavailable; run `akm index`" (exit 1) for a `--lead` or opaque fragment selector. */
 function readIndexedFragment(
   itemRef: string,
   fragment: string,

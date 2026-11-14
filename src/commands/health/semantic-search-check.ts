@@ -14,7 +14,11 @@ import { getDbPath } from "../../core/paths";
 import { heldRebuildLock } from "../../indexer/index-rebuild-lock";
 import { SEMANTIC_SEARCH_META_KEY, type SemanticSearchRecord } from "../../indexer/walk/index-context";
 import { LOCAL_EMBEDDING_RUNTIME } from "../../llm/embedders/local";
-import { closeDatabase, openReadonlyExistingDatabase } from "../../storage/repositories/index-connection";
+import {
+  closeDatabase,
+  indexDbIsDamaged,
+  openReadonlyExistingDatabase,
+} from "../../storage/repositories/index-connection";
 import { getEmbeddableEntryCount } from "../../storage/repositories/index-entries-repository";
 import { getMeta } from "../../storage/repositories/index-meta-repository";
 import { getEmbeddingCount } from "../../storage/repositories/index-vec-repository";
@@ -35,12 +39,10 @@ export interface SemanticSearchState {
 /** Read the last index run's record and the index's counts, read-only. */
 export function readSemanticSearchState(mode: string | undefined): SemanticSearchState {
   try {
+    if (indexDbIsDamaged()) throw new Error("index.db is damaged");
     const db = openReadonlyExistingDatabase(getDbPath());
     if (!db) return { mode };
     try {
-      const integrity = db.prepare("PRAGMA quick_check(1)").get() as { quick_check: string } | undefined;
-      if (integrity && integrity.quick_check !== "ok")
-        throw new Error(`index.db is damaged (${integrity.quick_check})`);
       const raw = getMeta(db, SEMANTIC_SEARCH_META_KEY);
       return {
         mode,

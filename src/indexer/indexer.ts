@@ -42,6 +42,7 @@ import type { Database } from "../storage/database";
 import {
   closeDatabase,
   deleteIndexDatabase,
+  indexDbIsDamaged,
   isCorruptionError,
   openExistingDatabase,
   openIndexDatabase,
@@ -517,16 +518,16 @@ export async function akmIndex(options: IndexOptions): Promise<IndexResponse> {
 
 /**
  * index.db is a derived cache, fully regenerable from the library, and the
- * build holds the rebuild lock: corruption found anywhere in a build (the
- * header, the schema, an interior page hit mid-walk) deletes the file and
- * builds again once. An older layout is migrated in place, never dropped.
+ * build holds the rebuild lock: damage to index.db found anywhere in a build
+ * (the header, the schema, an interior page hit mid-walk) deletes the file and
+ * builds again once. A corruption error from another database leaves it alone. An older layout is migrated in place, never dropped.
  */
 async function akmIndexRecoveringCorruption(options: IndexOptions): Promise<IndexResponse> {
   try {
     return await akmIndexReal(options);
   } catch (error) {
-    if (!isCorruptionError(error)) throw error;
     const dbPath = getDbPath();
+    if (!isCorruptionError(error) || !indexDbIsDamaged(dbPath)) throw error;
     warn(`Index database is corrupt at ${dbPath} — rebuilding.`);
     deleteIndexDatabase(dbPath);
     return await akmIndexReal(options);

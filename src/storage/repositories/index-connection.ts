@@ -44,6 +44,24 @@ export function isCorruptionError(error: unknown): boolean {
   );
 }
 
+/**
+ * Whether `index.db` itself is damaged: it cannot be opened, or `PRAGMA quick_check` reports a problem.
+ * A corruption error from a build or a read may come from another database (state.db), so callers ask
+ * this before deleting or blaming the index. An absent or unreadable-by-permission file is not damaged.
+ */
+export function indexDbIsDamaged(dbPath: string = getDbPath()): boolean {
+  let db: Database | undefined;
+  try {
+    db = openDatabase(dbPath, { readonly: true, create: false });
+    const row = db?.prepare("PRAGMA quick_check(1)").get() as { quick_check: string } | undefined;
+    return row !== undefined && row.quick_check !== "ok";
+  } catch (error) {
+    return isCorruptionError(error);
+  } finally {
+    db?.close();
+  }
+}
+
 /** Delete `index.db` and its sidecars; the build rebuilds it from the library. Best-effort per file. */
 export function deleteIndexDatabase(dbPath: string): void {
   for (const suffix of ["", "-wal", "-shm"]) {

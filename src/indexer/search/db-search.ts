@@ -32,7 +32,7 @@ import type {
   SourceSearchHit,
 } from "../../sources/types";
 import type { Database } from "../../storage/database";
-import { closeDatabase, isCorruptionError } from "../../storage/repositories/index-connection";
+import { closeDatabase, indexDbIsDamaged, isCorruptionError } from "../../storage/repositories/index-connection";
 import {
   getAllEntries,
   getBaseBeliefStatesForDerivedTwins,
@@ -239,7 +239,7 @@ export async function searchLocal(input: SearchLocalInput): Promise<{
     };
   } catch (error) {
     // A damaged page is an index that cannot serve; `akm index` rebuilds it.
-    if (!isCorruptionError(error)) throw error;
+    if (!isCorruptionError(error) || !indexDbIsDamaged()) throw error;
     return { hits: [], warnings: [...warnings, noIndexWarning()], mode: "keyword" };
   } finally {
     closeDatabase(db);

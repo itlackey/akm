@@ -27,7 +27,12 @@ import { resolveSourceEntries, type SearchSource } from "../indexer/search/searc
 import { insertUsageEventStrict, resolveUsageEventSource } from "../indexer/usage/usage-events";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 import type { Database } from "../storage/database";
-import { closeDatabase, isCorruptionError, openExistingDatabase } from "../storage/repositories/index-connection";
+import {
+  closeDatabase,
+  indexDbIsDamaged,
+  isCorruptionError,
+  openExistingDatabase,
+} from "../storage/repositories/index-connection";
 import {
   findEntryIdByRef,
   getEntryById,
@@ -786,7 +791,8 @@ export const feedbackCommand = defineJsonCommand({
       countsTowardRanking = recordResult.countsTowardRanking;
       rankingSkippedReason = recordResult.rankingSkippedReason;
     } catch (error) {
-      if (isCorruptionError(error)) throw new UsageError(NO_INDEX_MESSAGE, "MISSING_REQUIRED_ARGUMENT", "akm index");
+      if (isCorruptionError(error) && indexDbIsDamaged())
+        throw new UsageError(NO_INDEX_MESSAGE, "MISSING_REQUIRED_ARGUMENT", "akm index");
       throw error;
     } finally {
       closeDatabase(db);
