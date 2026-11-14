@@ -133,6 +133,14 @@ test("concurrent CLI writes and overlapping export snapshots keep stable aggrega
   const merged = new Map([...first.aggregates, ...second.aggregates].map((row) => [row.key, row]));
   expect(version([...merged.values()]).reduce((sum, row) => sum + row.attempts, 0)).toBe(8);
   expect(new Set(second.details.map((row: { id: string }) => row.id)).size).toBe(second.details.length);
+  // WAL is what keeps concurrent invocations inside capture's short wait: under the rollback journal each
+  // commit waited on every reader, and on a disk-backed data dir a third of 8 concurrent captures were dropped.
+  const db = openDatabase(path.join(getDataDir(), "metrics.db"), { readonly: true });
+  try {
+    expect((db.prepare("PRAGMA journal_mode").get() as { journal_mode: string }).journal_mode).toBe("wal");
+  } finally {
+    db.close();
+  }
 });
 
 test("retention expires detail without losing durable counts and unavailable capture preserves exits", () => {

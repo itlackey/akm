@@ -461,6 +461,27 @@ export function safeRealpath(p: string): string {
   }
 }
 
+/** Whether two paths name the same location, however either is spelled (symlinks, macOS `/tmp`). */
+export function samePath(a: string, b: string): boolean {
+  return safeRealpath(a) === safeRealpath(b);
+}
+
+/**
+ * `filePath` relative to `root`, when it sits inside it under either spelling of the root
+ * (a symlink, macOS `/tmp` and `/private/tmp`). Only the root's spelling is resolved: a link
+ * below the root stays a link, so callers that police it still see it.
+ */
+export function relativeToRoot(filePath: string, root: string): string | undefined {
+  const resolved = path.resolve(filePath);
+  const base = path.resolve(root);
+  if (resolved.startsWith(base + path.sep)) return resolved.slice(base.length + 1);
+  const physicalRoot = safeRealpath(base);
+  for (let dir = path.dirname(resolved); dir !== path.dirname(dir); dir = path.dirname(dir)) {
+    if (safeRealpath(dir) === physicalRoot) return path.relative(dir, resolved);
+  }
+  return undefined;
+}
+
 function normalizeFsPathForComparison(value: string): string {
   return process.platform === "win32" ? value.toLowerCase() : value;
 }

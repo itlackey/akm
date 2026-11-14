@@ -8,7 +8,7 @@ import type { BundleAdapter } from "../core/adapter/bundle-adapter";
 import { detectAdapterId } from "../core/adapter/detect-adapter";
 import { adapterForId } from "../core/adapter/registry";
 import type { BundleComponent } from "../core/adapter/types";
-import { compareCodePoints, isHttpUrl } from "../core/common";
+import { compareCodePoints, isHttpUrl, safeRealpath } from "../core/common";
 import type { AkmConfig } from "../core/config/config";
 import { appendEvent } from "../core/events";
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
@@ -41,6 +41,9 @@ import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 import type { Database } from "../storage/database";
 import {
   closeDatabase,
+  deleteIndexDatabase,
+  indexDbIsDamaged,
+  isCorruptionError,
   openExistingDatabase,
   openIndexDatabase,
   openReadonlyExistingDatabase,
@@ -507,9 +510,27 @@ export function _setAkmIndexForTests(fake?: typeof akmIndexReal): void {
 export async function akmIndex(options: IndexOptions): Promise<IndexResponse> {
   try {
     const override = akmIndexOverride;
-    return override ? await override(options) : await akmIndexReal(options);
+    return override ? await override(options) : await akmIndexRecoveringCorruption(options);
   } catch (error) {
     throw reclassifyIndexDbContention(error);
+  }
+}
+
+/**
+ * index.db is a derived cache, fully regenerable from the library, and the
+ * build holds the rebuild lock: damage to index.db found anywhere in a build
+ * (the header, the schema, an interior page hit mid-walk) deletes the file and
+ * builds again once. A corruption error from another database leaves it alone. An older layout is migrated in place, never dropped.
+ */
+async function akmIndexRecoveringCorruption(options: IndexOptions): Promise<IndexResponse> {
+  try {
+    return await akmIndexReal(options);
+  } catch (error) {
+    const dbPath = getDbPath();
+    if (!isCorruptionError(error) || !indexDbIsDamaged(dbPath)) throw error;
+    warn(`Index database is corrupt at ${dbPath} — rebuilding.`);
+    deleteIndexDatabase(dbPath);
+    return await akmIndexReal(options);
   }
 }
 
@@ -702,15 +723,15 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
   const t0 = Date.now();
 
   const dbPath = getDbPath();
-  // The build holds the rebuild lock, so it alone may delete and rebuild a corrupt file.
-  const db = openIndexDatabase(dbPath, { rebuildCorrupt: true });
+  const db = openIndexDatabase(dbPath);
 
   try {
     // `--full` folds into `isIncremental`: a full run drains every directory
     // through the same diff-persist path as an incremental one.
+    canonicalizeStoredPaths(db);
     const prevStashDir = getMeta(db, "stashDir");
     const prevBuiltAt = getMeta(db, "builtAt");
-    const isIncremental = !full && prevStashDir === stashDir && !!prevBuiltAt;
+    const isIncremental = !full && servesLibrary(prevStashDir, stashDir) && !!prevBuiltAt;
     const builtAtMs = isIncremental && prevBuiltAt ? new Date(prevBuiltAt).getTime() : 0;
     const mode = isIncremental ? "incremental" : "full";
 
@@ -1369,6 +1390,40 @@ interface PersistedEntryRow {
 }
 
 /**
+ * An index built before sources were keyed by real path stores the library under another spelling of
+ * its directories. Rewriting those paths in place keeps its rows, and with them their embeddings,
+ * which a delete and re-insert under the real spelling would drop.
+ */
+function canonicalizeStoredPaths(db: Database): void {
+  const stored = [getMeta(db, "stashDir"), ...(JSON.parse(getMeta(db, "stashDirs") ?? "[]") as string[])];
+  const moves = [...new Set(stored.filter((dir): dir is string => dir !== undefined))]
+    .map((dir) => ({ from: dir, to: safeRealpath(dir) }))
+    .filter(({ from, to }) => from !== to);
+  if (moves.length === 0) return;
+  const rewrite = (table: string, column: string, exact: boolean) =>
+    db.prepare(
+      `UPDATE OR IGNORE ${table} SET ${column} = ?1 || substr(${column}, ?2) WHERE substr(${column}, 1, ?3) = ?4${
+        exact ? ` OR ${column} = ?5` : ""
+      }`,
+    );
+  db.transaction(() => {
+    for (const { from, to } of moves) {
+      const prefix = `${from}${path.sep}`;
+      rewrite("entries", "file_path", false).run(to, from.length + 1, prefix.length, prefix);
+      rewrite("index_dir_state", "dir_path", true).run(to, from.length + 1, prefix.length, prefix, from);
+    }
+    setMeta(db, "stashDirs", JSON.stringify(JSON.parse(getMeta(db, "stashDirs") ?? "[]").map(safeRealpath)));
+    const stashDir = getMeta(db, "stashDir");
+    if (stashDir !== undefined) setMeta(db, "stashDir", safeRealpath(stashDir));
+  })();
+}
+
+/** Whether the stored library marker names `stashDir`: the same directory, however either is spelled. */
+function servesLibrary(stored: string | undefined, stashDir: string): boolean {
+  return stored !== undefined && safeRealpath(stored) === safeRealpath(stashDir);
+}
+
+/**
  * Phase 2 (sync): write all pre-generated scan records inside a single transaction.
  *
  * The same transaction records which library the persisted keyword data is for
@@ -1394,14 +1449,14 @@ function persistDirRecords(
   const persist = (): void => {
     // Entries are about to describe another library: the old watermark is not theirs, and neither are rows outside
     // its directories. They go in this transaction, so the marker never names a library whose index serves another's.
-    if (getMeta(db, "stashDir") !== library.stashDir) {
+    if (!servesLibrary(getMeta(db, "stashDir"), library.stashDir)) {
       deleteMeta(db, "builtAt");
       addDeletedEntries(
         deletedEntries,
         deleteEntriesOutsideLibrary(db, library.sourceDirs, library.unresolvedBundleIds),
       );
     }
-    setMeta(db, "stashDir", library.stashDir);
+    setMeta(db, "stashDir", safeRealpath(library.stashDir));
     setMeta(db, "stashDirs", JSON.stringify(library.sourceDirs));
     for (const {
       dirPath,

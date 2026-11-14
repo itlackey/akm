@@ -10,6 +10,7 @@ import { getDataDir } from "../core/paths";
 import { isKnownType } from "../core/recognition-util";
 import { hasSignalOwner, observeSignal } from "../core/signal-observers";
 import { type Database, openDatabase } from "../storage/database";
+import { applyStandardPragmas } from "../storage/sqlite-pragmas";
 import { resolveAgentIdentity } from "../workflows/runtime/agent-identity";
 import { cittyComparableName, findCittyTopLevelCommandIndex, toAliasArray } from "./invocation";
 
@@ -225,6 +226,9 @@ function openUsage(filename: string): Database {
   fs.mkdirSync(path.dirname(filename), { recursive: true });
   const db = openDatabase(filename);
   try {
+    // akm's journal mode (WAL), so concurrent invocations' commits do not wait on each other's reads; then
+    // capture's own short wait, so a contended store never stalls a command.
+    applyStandardPragmas(db, { dataDir: path.dirname(filename) });
     db.exec("PRAGMA busy_timeout=250;");
     db.exec(`
     CREATE TABLE IF NOT EXISTS cli_usage_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);

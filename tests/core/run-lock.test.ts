@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createLockPayload, releaseLock } from "../../src/core/file-lock";
 import { formatLockHolderPid, tryAcquireRunLock } from "../../src/core/run-lock";
+import { spawnLiveHolder, stopLiveHolders } from "../_helpers/live-holder";
 import { type Cleanup, makeSandboxDir, withEnvSync } from "../_helpers/sandbox";
 
 let cleanup: Cleanup = () => {};
@@ -19,6 +20,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  stopLiveHolders();
   cleanup();
   cleanup = () => {};
   lockPath = "";
@@ -37,12 +39,13 @@ describe("tryAcquireRunLock — shared PID-liveness mechanics (#956)", () => {
   test("reports the live holder's pid/startedAt when already held", () => {
     const startedAt = new Date().toISOString();
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-    fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startedAt }), "utf8");
+    const holder = spawnLiveHolder();
+    fs.writeFileSync(lockPath, holder.payload({ startedAt }), "utf8");
 
     const result = tryAcquireRunLock(lockPath, { label: "test" });
     expect(result.state).toBe("held");
     if (result.state !== "held") throw new Error("expected held");
-    expect(result.holder.pid).toBe(process.pid);
+    expect(result.holder.pid).toBe(holder.pid);
     expect(result.holder.startedAt).toBe(startedAt);
   });
 
@@ -102,11 +105,7 @@ describe("lock identity: launcherPid (#956)", () => {
 
   test("tryAcquireRunLock reports the held launcherPid alongside pid", () => {
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-    fs.writeFileSync(
-      lockPath,
-      JSON.stringify({ pid: process.pid, launcherPid: 4240, startedAt: new Date().toISOString() }),
-      "utf8",
-    );
+    fs.writeFileSync(lockPath, spawnLiveHolder().payload({ launcherPid: 4240 }), "utf8");
 
     const result = tryAcquireRunLock(lockPath, { label: "test" });
     expect(result.state).toBe("held");
@@ -116,7 +115,7 @@ describe("lock identity: launcherPid (#956)", () => {
 
   test("tryAcquireRunLock reports launcherPid null when the holder's payload carries none", () => {
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-    fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }), "utf8");
+    fs.writeFileSync(lockPath, spawnLiveHolder().payload(), "utf8");
 
     const result = tryAcquireRunLock(lockPath, { label: "test" });
     expect(result.state).toBe("held");

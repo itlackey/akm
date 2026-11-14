@@ -10,7 +10,7 @@ import { defineJsonCommand, output, parseAllFlagValues } from "../cli/shared";
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
 import { assembleAsset, serializeFrontmatter } from "../core/asset/asset-serialize";
 import { parseFrontmatter, parseFrontmatterBlock, spliceFrontmatterLine } from "../core/asset/frontmatter";
-import type { AssetRef } from "../core/asset/resolve-ref";
+import { type AssetRef, displayDefaultBundle, displayRef } from "../core/asset/resolve-ref";
 import { isWithin, resolveStashDir, safeRealpath, writeFileAtomic } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { ConfigError, NotFoundError, TransientError, UsageError } from "../core/errors";
@@ -23,11 +23,16 @@ import { NO_INDEX_MESSAGE, openUsableIndex } from "../indexer/index-readiness";
 import { heldRebuildLock } from "../indexer/index-rebuild-lock";
 import { recomputeUtilityScores } from "../indexer/indexer";
 import { currentConceptId, resolveWriteAddress } from "../indexer/lookup/adapter-concept-owner";
-import { resolveSourceEntries, type SearchSource } from "../indexer/search/search-source";
+import { findSourceForPath, resolveSourceEntries, type SearchSource } from "../indexer/search/search-source";
 import { insertUsageEventStrict, resolveUsageEventSource } from "../indexer/usage/usage-events";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 import type { Database } from "../storage/database";
-import { closeDatabase, openExistingDatabase } from "../storage/repositories/index-connection";
+import {
+  closeDatabase,
+  indexDbIsDamaged,
+  isCorruptionError,
+  openExistingDatabase,
+} from "../storage/repositories/index-connection";
 import {
   findEntryIdByRef,
   getEntryById,
@@ -681,6 +686,7 @@ export const feedbackCommand = defineJsonCommand({
     let countsTowardRanking = false;
     let rankingSkippedReason: string | undefined;
     let durableRef = ref;
+    let shownRef = ref;
     let fix:
       | {
           content: string;
@@ -733,6 +739,11 @@ export const feedbackCommand = defineJsonCommand({
       if (!itemRef) throw new UsageError(`Indexed ref "${ref}" has no durable item ref.`, "INVALID_PROPOSAL");
       durableRef = itemRef;
       const filePath = getEntryFilePathById(db, entryId);
+      const { bundle, conceptId } = parseBundleRef(itemRef);
+      shownRef = displayRef(
+        { conceptId, bundleId: bundle },
+        displayDefaultBundle(config.defaultBundle, filePath ? findSourceForPath(filePath, sources) : undefined, bundle),
+      );
       const entryType = getEntryById(db, entryId)?.entry.type;
       const textHash = judgedTextHash(entryType, filePath);
       if (textHash) metadataObj.contentHash = textHash;
@@ -785,6 +796,10 @@ export const feedbackCommand = defineJsonCommand({
       utilityResult = recordResult.utilityResult;
       countsTowardRanking = recordResult.countsTowardRanking;
       rankingSkippedReason = recordResult.rankingSkippedReason;
+    } catch (error) {
+      if (isCorruptionError(error) && indexDbIsDamaged())
+        throw new UsageError(NO_INDEX_MESSAGE, "MISSING_REQUIRED_ARGUMENT", "akm index");
+      throw error;
     } finally {
       closeDatabase(db);
     }
@@ -888,7 +903,7 @@ export const feedbackCommand = defineJsonCommand({
 
     output("feedback", {
       ok: true,
-      ref,
+      ref: shownRef,
       signal,
       reason: reason?.trim() ?? null,
       tags: validatedTags,

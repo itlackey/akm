@@ -16,7 +16,7 @@ import fs from "node:fs";
 import { ConfigError } from "../../core/errors";
 import { classifyPathAccess, describeInaccessiblePath } from "../../core/path-access";
 import { getDbPath } from "../../core/paths";
-import { warn, warnOnce } from "../../core/warn";
+import { warnOnce } from "../../core/warn";
 import type { Database } from "../database";
 import { openDatabase } from "../database";
 import { openManagedDatabase } from "../managed-db";
@@ -26,31 +26,57 @@ import { CANONICAL_INDEX_DB_VERSION } from "./index-entry-schema";
 import { ensureSchema, newerIndexLayoutError } from "./index-schema";
 
 /**
- * Whether `error` is SQLite reporting on-disk corruption (`SQLITE_CORRUPT`,
- * "database disk image is malformed") rather than a permission, lock, or
- * schema problem. Matched on both `code` (bun:sqlite, better-sqlite3) and
- * message text, since driver error shapes are not perfectly uniform.
+ * Whether `error` is SQLite reporting that the file is not a usable database
+ * (`SQLITE_CORRUPT*` "database disk image is malformed", `SQLITE_NOTADB` "file
+ * is not a database") rather than a permission, lock, or schema problem.
+ * Matched on both `code` (bun:sqlite, better-sqlite3) and message text, since
+ * driver error shapes are not perfectly uniform.
  */
-function isCorruptionError(error: unknown): boolean {
+export function isCorruptionError(error: unknown): boolean {
   const code = (error as { code?: unknown } | undefined)?.code;
-  if (code === "SQLITE_CORRUPT") return true;
+  if (typeof code === "string" && (code.startsWith("SQLITE_CORRUPT") || code === "SQLITE_NOTADB")) return true;
   const message = error instanceof Error ? error.message : String(error);
-  return message.includes("database disk image is malformed") || message.includes("SQLITE_CORRUPT");
+  return (
+    message.includes("database disk image is malformed") ||
+    message.includes("file is not a database") ||
+    message.includes("SQLITE_CORRUPT") ||
+    message.includes("SQLITE_NOTADB")
+  );
 }
 
 /**
- * Open `index.db` for writing, creating and migrating it. A corrupt file is
- * deleted and rebuilt only when the caller says it may (`rebuildCorrupt`): the
- * build, which holds the rebuild lock. Any other writable opener raises the
- * corruption error instead of deleting a file a build or a reader may be using.
+ * Whether `index.db` itself is damaged: it cannot be opened, or `PRAGMA quick_check` reports a problem.
+ * A corruption error from a build or a read may come from another database (state.db), so callers ask
+ * this before deleting or blaming the index. An absent or unreadable-by-permission file is not damaged.
  */
-export function openIndexDatabase(
-  dbPath?: string,
-  options?: { beforeSchema?: (db: Database) => void; rebuildCorrupt?: boolean },
-): Database {
-  const resolvedPath = dbPath ?? getDbPath();
-  const spec = {
-    path: resolvedPath,
+export function indexDbIsDamaged(dbPath: string = getDbPath()): boolean {
+  let db: Database | undefined;
+  try {
+    db = openDatabase(dbPath, { readonly: true, create: false });
+    const row = db?.prepare("PRAGMA quick_check(1)").get() as { quick_check: string } | undefined;
+    return row !== undefined && row.quick_check !== "ok";
+  } catch (error) {
+    return isCorruptionError(error);
+  } finally {
+    db?.close();
+  }
+}
+
+/** Delete `index.db` and its sidecars; the build rebuilds it from the library. Best-effort per file. */
+export function deleteIndexDatabase(dbPath: string): void {
+  for (const suffix of ["", "-wal", "-shm"]) {
+    try {
+      fs.rmSync(`${dbPath}${suffix}`, { force: true });
+    } catch {
+      // Best-effort cleanup; the next open still fails loudly if the file could not actually be removed.
+    }
+  }
+}
+
+/** Open `index.db` for writing, creating and migrating it. Corruption raises; only the build, which holds the rebuild lock, deletes and rebuilds. */
+export function openIndexDatabase(dbPath?: string, options?: { beforeSchema?: (db: Database) => void }): Database {
+  return openManagedDatabase({
+    path: dbPath ?? getDbPath(),
     init: (db: Database) => {
       // Source update uses this narrow lifecycle seam to ATTACH state.db and
       // open its coordinator-owned outer transaction before ensureSchema or
@@ -58,29 +84,7 @@ export function openIndexDatabase(
       options?.beforeSchema?.(db);
       ensureSchema(db);
     },
-  };
-  try {
-    return openManagedDatabase(spec);
-  } catch (error) {
-    // index.db is a derived cache, fully regenerable from the stash on disk
-    // (see src/core/state-db.ts's "Why a separate database from index.db"
-    // note) — so real on-disk corruption is recovered by deleting the file
-    // and rebuilding, not by surfacing a raw SQLITE_CORRUPT to the caller or
-    // quietly falling through to an unreadable index (#865). This is the ONE
-    // from-scratch rebuild: an older layout is migrated in place by
-    // ensureSchema, never dropped.
-    if (!options?.rebuildCorrupt || !isCorruptionError(error)) throw error;
-    warn(`Index database is corrupt at ${resolvedPath} — rebuilding.`);
-    for (const suffix of ["", "-wal", "-shm"]) {
-      try {
-        fs.rmSync(`${resolvedPath}${suffix}`, { force: true });
-      } catch {
-        // Best-effort cleanup; the retried open below still fails loudly if
-        // the file could not actually be removed.
-      }
-    }
-    return openManagedDatabase(spec);
-  }
+  });
 }
 
 export function openExistingDatabase(dbPath?: string): Database {

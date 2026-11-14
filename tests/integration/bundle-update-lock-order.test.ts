@@ -19,6 +19,7 @@ import { _setWarnSinkForTests } from "../../src/core/warn";
 import * as indexerModule from "../../src/indexer/indexer";
 import { akmIndex } from "../../src/indexer/indexer";
 import * as syncFromRefModule from "../../src/sources/providers/sync-from-ref";
+import { spawnLiveHolder, stopLiveHolders } from "../_helpers/live-holder";
 import { seedLockEntries } from "../_helpers/lockfile";
 import { writeMarkdownFiles } from "../_helpers/markdown-fixtures";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
@@ -65,6 +66,7 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+  stopLiveHolders();
   _setWarnSinkForTests(undefined);
   storage.cleanup();
 });
@@ -73,7 +75,7 @@ describe("akm bundle update lock order", () => {
   test("waiting for another build does not hold the asset mutation lease", async () => {
     const rebuildLock = getIndexRebuildLockPath();
     fs.mkdirSync(path.dirname(rebuildLock), { recursive: true });
-    fs.writeFileSync(rebuildLock, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }), "utf8");
+    fs.writeFileSync(rebuildLock, spawnLiveHolder().payload(), "utf8");
 
     const updating = akmUpdate({ target: ID, stashDir: storage.stashDir });
     await new Promise((resolve) => setTimeout(resolve, 500));

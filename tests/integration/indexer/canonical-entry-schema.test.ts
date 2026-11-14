@@ -70,7 +70,8 @@ describe("canonical derived-index entry schema", () => {
 
       const raw = openDatabase(dbPath, { readonly: true, create: false });
       try {
-        expect(raw.prepare("SELECT value FROM index_meta WHERE key = 'version'").get()).toBeNull();
+        // The failed migration rolled back whole: no version stamp, and no half-built schema.
+        expect(raw.prepare("SELECT name FROM sqlite_master WHERE name = 'index_meta'").get()).toBeNull();
       } finally {
         raw.close();
       }

@@ -4,16 +4,20 @@
 
 /** The whole library as a graph: every indexed asset, every declared link between them, and how each is used. */
 
+import { createHash } from "node:crypto";
+import fs from "node:fs";
 import { loadConfig } from "../core/config/config";
+import { ConfigError } from "../core/errors";
 import { getDbPath } from "../core/paths";
 import { applyEntryFilters } from "../indexer/search/db-search";
 import { resolveSourceEntries } from "../indexer/search/search-source";
-import { countUseByRef, usageRetentionSince } from "../indexer/usage/usage-events";
+import { countFeedbackSignalsByRef, countUseByRef, usageRetentionSince } from "../indexer/usage/usage-events";
 import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
 import { getAllEntries } from "../storage/repositories/index-entries-repository";
 import { listDeclaredLinks } from "../storage/repositories/index-links-repository";
 import { getMeta } from "../storage/repositories/index-meta-repository";
 import { listCurrentEmbeddings } from "../storage/repositories/index-vec-repository";
+import { findTopics, type Topics } from "./graph-topics";
 import { withReadonlyStateDb } from "./readers";
 
 /** Types never drawn: protected files and session logs, as `assets.related` leaves them out. */
@@ -22,13 +26,30 @@ const HIDDEN_TYPES = ["secret", "env", "session"];
 /**
  * Every asset of the enabled bundles and the declared links between them, in column form: node `i` is `nodes.ref[i]`,
  * and its type, bundle and belief state are indexes into `types`, `bundles` (largest first) and `beliefs` (-1: no state
- * recorded). `shows` and `searches` are read live from the user-attributed usage events within retention (`use`). A link joins two nodes by index and names its kind
- * by index into `kinds`. `meaning` places each node with a stored embedding in three dimensions (see
+ * recorded). `shows`, `searches`, `lastShownAt` and the feedback counts `positive` and `negative` are read live from the
+ * user-attributed usage events within retention (`use`); `modifiedAt` is the file's modification time. A link joins two
+ * nodes by index and names its kind by index into `kinds`. `topic` indexes `topics` (see {@link findTopics}), -1 for
+ * an asset with no stored embedding, and `duplicates` pairs assets of one topic whose embeddings are nearly the same. `meaning` places each node with a stored embedding in three dimensions (see
  * {@link projectEmbeddings}); it is `null` when the index has no embeddings. Nothing is written. The projection yields
  * to the event loop as it goes, so a host serving other requests keeps answering them.
  */
 export async function graph() {
-  const empty = {
+  try {
+    return await readGraph();
+  } catch (error) {
+    // A damaged or unreadable index file is "no usable index" to the map, not a raw SQLite error.
+    if (error instanceof Error && error.name === "SQLiteError")
+      return {
+        available: false,
+        note: `The index could not be read (${error.message}). Rebuild it with 'akm index --full'.`,
+        ...emptyGraph(),
+      };
+    throw error;
+  }
+}
+
+function emptyGraph() {
+  return {
     types: [] as string[],
     bundles: [] as string[],
     beliefs: [] as string[],
@@ -46,14 +67,28 @@ export async function graph() {
       belief: [] as number[],
       shows: [] as number[],
       searches: [] as number[],
+      lastShownAt: [] as Array<string | null>,
+      modifiedAt: [] as Array<string | null>,
+      positive: [] as number[],
+      negative: [] as number[],
+      topic: [] as number[],
     },
     links: { from: [] as number[], to: [] as number[], kind: [] as number[] },
     meaning: null as { embedded: number; xyz: Array<number | null> } | null,
+    topics: [] as Topics["topics"],
+    duplicates: null as Topics["duplicates"] | null,
   };
+}
+
+async function readGraph() {
+  const empty = emptyGraph();
   const db = openReadonlyExistingDatabase();
   if (!db) return { available: false, note: "No index is available. Build the AKM index first.", ...empty };
   let closed = false;
   try {
+    // An index still being built for the first time has its meta table but not yet its entries.
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'entries'").get())
+      return { available: false, note: "The index is still being built. Try again when it finishes.", ...empty };
     const sources = resolveSourceEntries(undefined, loadConfig()).filter((source) => !source.unresolved);
     const rows = applyEntryFilters(getAllEntries(db, undefined, HIDDEN_TYPES), {
       db,
@@ -88,6 +123,14 @@ export async function graph() {
     );
     const since = usageRetentionSince();
     const use = withReadonlyStateDb((state) => countUseByRef(state, since), null);
+    const feedback = withReadonlyStateDb(
+      (state) =>
+        countFeedbackSignalsByRef(
+          state,
+          rows.map((row) => row.itemRef),
+        ),
+      null,
+    );
     result.use = { since, source: "user" };
     for (const row of rows) {
       const counts = use?.get(row.itemRef);
@@ -98,6 +141,11 @@ export async function graph() {
       result.nodes.belief.push(row.entry.beliefState ? beliefCode(row.entry.beliefState) : -1);
       result.nodes.shows.push(counts?.shows ?? 0);
       result.nodes.searches.push(counts?.searches ?? 0);
+      result.nodes.lastShownAt.push(counts?.lastShownAt ?? null);
+      result.nodes.modifiedAt.push(modifiedAt(row.filePath));
+      const signals = feedback?.get(row.itemRef);
+      result.nodes.positive.push(signals?.pos ?? 0);
+      result.nodes.negative.push(signals?.neg ?? 0);
     }
     for (const link of listDeclaredLinks(db)) {
       const from = index.get(link.from);
@@ -118,6 +166,18 @@ export async function graph() {
       build,
     );
     result.meaning = placed.embedded ? placed : null;
+    const libraryKey = createHash("sha1")
+      .update(rows.map((row) => row.id).join(","))
+      .digest("hex");
+    const found = await findTopics(
+      rows.map((row) => vectors.get(row.id)),
+      rows.map((row, i) => `${row.conceptId} ${result.nodes.title[i]}`),
+      // Topics are per asset: the same build read through a different set of enabled bundles is a different library.
+      `${build}|${libraryKey}`,
+    );
+    result.topics = found.topics;
+    result.nodes.topic = found.topic;
+    result.duplicates = found.topics.length ? found.duplicates : null;
     const noted = [`${rows.length} assets and ${result.links.from.length} links of the enabled bundles.`];
     if (result.unresolvedLinks)
       noted.push(
@@ -132,8 +192,21 @@ export async function graph() {
       note: noted.join(" "),
       ...result,
     };
+  } catch (error) {
+    // A query that fails on a damaged index is no index; permission and newer-layout errors still raise.
+    if (closed || error instanceof ConfigError) throw error;
+    return { available: false, note: "The index could not be read. Rebuild it with `akm index`.", ...empty };
   } finally {
     if (!closed) closeDatabase(db);
+  }
+}
+
+/** A file's modification time as an ISO timestamp, or null when it cannot be read. */
+function modifiedAt(file: string): string | null {
+  try {
+    return fs.statSync(file).mtime.toISOString();
+  } catch {
+    return null;
   }
 }
 
