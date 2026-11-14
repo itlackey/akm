@@ -495,6 +495,31 @@ export function deleteEntriesByBundle(db: Database, bundleId: string): void {
 }
 
 /**
+ * Delete every entry that is neither under one of `dirs` nor owned by one of `keepBundleIds` (bundles whose source
+ * did not resolve, which keep their last-known-good snapshot), with its child rows. Usage events live in state.db,
+ * so the caller deletes them after its transaction commits, from the returned entries.
+ */
+export function deleteEntriesOutsideLibrary(
+  db: Database,
+  dirs: readonly string[],
+  keepBundleIds: ReadonlySet<string | undefined>,
+): DeletedEntry[] {
+  return db.transaction(() => {
+    const roots = dirs.map((dir) => `${path.resolve(dir)}${path.sep}`);
+    const rows = db.prepare("SELECT id, item_ref, file_path, bundle_id FROM entries").all() as Array<{
+      id: number;
+      item_ref: string;
+      file_path: string;
+      bundle_id: string;
+    }>;
+    const doomed = rows.filter(
+      (row) => !keepBundleIds.has(row.bundle_id) && !roots.some((root) => path.resolve(row.file_path).startsWith(root)),
+    );
+    return deleteEntryRows(db, doomed, { cleanupUsageEvents: false });
+  })();
+}
+
+/**
  * The `file_path` of every entry indexed under one bundle — used by
  * `akm bundle rename` (D6) to find bundle CONTENT that still spells the old
  * `<bundle>//` prefix (xrefs, `supersededBy`, task `uses:`), which the rename

@@ -44,7 +44,7 @@ import type { CandidateFilter, DbVecResult } from "../../storage/repositories/in
 import { searchFts } from "../../storage/repositories/index-fts-repository";
 import { getMeta } from "../../storage/repositories/index-meta-repository";
 import { getEmbeddingCount, searchVec } from "../../storage/repositories/index-vec-repository";
-import { INDEX_INCOMPLETE_WARNING, noIndexWarning, openUsableIndex } from "../index-readiness";
+import { incompleteIndexWarning, noIndexWarning, openUsableIndex } from "../index-readiness";
 import {
   appliesToProject,
   type IndexDocument,
@@ -219,7 +219,7 @@ export async function searchLocal(input: SearchLocalInput): Promise<{
   }
   const { db, complete } = usable;
   try {
-    if (!complete) warnings.push(INDEX_INCOMPLETE_WARNING);
+    if (!complete) warnings.push(incompleteIndexWarning());
 
     const staleHint = buildStaleIndexHint(db);
     if (staleHint) warnings.push(staleHint);

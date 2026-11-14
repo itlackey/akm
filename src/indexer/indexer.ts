@@ -52,6 +52,7 @@ import {
   deleteEntriesByDirAndBundle,
   deleteEntriesByDirExceptRefs,
   deleteEntriesByIds,
+  deleteEntriesOutsideLibrary,
   deleteUsageEventsForEntries,
   findEntryIdByRef,
   getAllEntries,
@@ -742,7 +743,15 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
     // …then write it in one transaction: `item_ref = <bundle>//<conceptId>`
     // plus canonical component/adapter provenance per source root.
     const bundleByRoot = buildIndexedSourceOwners(sources);
-    persistDirRecords(db, dirRecords, warnings, bundleByRoot, embeddingInputCap(config), { stashDir, sourceDirs });
+    // A source that did not resolve this run keeps its last-known-good rows through a library switch.
+    const unresolvedBundleIds = new Set(
+      sources.flatMap((source) => (source.unresolved ? [bundleByRoot.get(path.resolve(source.path))?.bundleId] : [])),
+    );
+    persistDirRecords(db, dirRecords, warnings, bundleByRoot, embeddingInputCap(config), {
+      stashDir,
+      sourceDirs,
+      unresolvedBundleIds,
+    });
     onProgress({
       phase: "scan",
       message: `Scanned ${scannedDirs} ${scannedDirs === 1 ? "directory" : "directories"} and skipped ${skippedDirs}.`,
@@ -1377,15 +1386,22 @@ function persistDirRecords(
   warnings: string[],
   bundleByRoot: ReadonlyMap<string, { bundleId: string; componentId: string; adapterId: string }>,
   maxInputTokens: number,
-  library: { stashDir: string; sourceDirs: string[] },
+  library: { stashDir: string; sourceDirs: string[]; unresolvedBundleIds: ReadonlySet<string | undefined> },
 ): void {
   const deletedEntries = new Map<number, DeletedEntry>();
   const legacyMoves: LegacyRefMove[] = [];
   const findPersisted = db.prepare("SELECT id, content_hash, file_path, adapter_id FROM entries WHERE item_ref = ?");
 
   const persist = (): void => {
-    // Entries are about to describe another library: the old watermark is not theirs.
-    if (getMeta(db, "stashDir") !== library.stashDir) deleteMeta(db, "builtAt");
+    // Entries are about to describe another library: the old watermark is not theirs, and neither are rows outside
+    // its directories. They go in this transaction, so the marker never names a library whose index serves another's.
+    if (getMeta(db, "stashDir") !== library.stashDir) {
+      deleteMeta(db, "builtAt");
+      addDeletedEntries(
+        deletedEntries,
+        deleteEntriesOutsideLibrary(db, library.sourceDirs, library.unresolvedBundleIds),
+      );
+    }
     setMeta(db, "stashDir", library.stashDir);
     setMeta(db, "stashDirs", JSON.stringify(library.sourceDirs));
     for (const {

@@ -261,6 +261,32 @@ describe("akm improve memory cleanup", () => {
     expect(distilledRefs).not.toContain("memory:deploy-duplicate.derived");
   });
 
+  test("a reindex after cleanup that is skipped for a held rebuild lock is reported in the cleanup warnings", async () => {
+    const stashDir = makeTempDir("akm-improve-memory-skipped-reindex-");
+    writeMemory(stashDir, "deploy", { description: "parent memory" }, "Remember deploy caveats.");
+    const derived = {
+      inferred: true,
+      source: "memories/deploy",
+      title: "Check VPN before deploy",
+      description: "VPN is required before deploys.",
+    };
+    const body = "# Check VPN before deploy\n\nEnable VPN before starting the release.";
+    writeMemory(stashDir, "deploy.derived", derived, body);
+    writeMemory(stashDir, "deploy-duplicate.derived", derived, body);
+    await buildIndex(stashDir);
+
+    const result = await akmImprove({
+      scope: "memory",
+      stashDir,
+      reindexFn: async () => ({ skipped: { pid: 1, launcherPid: null, startedAt: null } }),
+    });
+
+    expect(result.memoryCleanup?.archived).toHaveLength(1);
+    expect(result.memoryCleanup?.warnings).toContain(
+      "reindex after cleanup skipped: another index run holds the rebuild lock; the next build picks the cleanup up",
+    );
+  });
+
   test("dry-run reports contradicted derived memories for cleanup review", async () => {
     const stashDir = makeTempDir("akm-improve-memory-contradiction-");
     writeMemory(stashDir, "deploy", { description: "parent memory" }, "Remember deploy tunnel guidance.");

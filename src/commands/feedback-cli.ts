@@ -13,13 +13,14 @@ import { parseFrontmatter, parseFrontmatterBlock, spliceFrontmatterLine } from "
 import type { AssetRef } from "../core/asset/resolve-ref";
 import { isWithin, resolveStashDir, safeRealpath, writeFileAtomic } from "../core/common";
 import { loadConfig } from "../core/config/config";
-import { ConfigError, NotFoundError, UsageError } from "../core/errors";
+import { ConfigError, NotFoundError, TransientError, UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
 import { resolveMutationTarget } from "../core/mutation-target";
 import { getStateDbPath, withStateDb } from "../core/state-db";
 import { warn } from "../core/warn";
 import { withWriteTargetMutation } from "../core/write-source";
-import { noIndexWarning, openUsableIndex } from "../indexer/index-readiness";
+import { NO_INDEX_MESSAGE, openUsableIndex } from "../indexer/index-readiness";
+import { heldRebuildLock } from "../indexer/index-rebuild-lock";
 import { recomputeUtilityScores } from "../indexer/indexer";
 import { currentConceptId, resolveWriteAddress } from "../indexer/lookup/adapter-concept-owner";
 import { resolveSourceEntries, type SearchSource } from "../indexer/search/search-source";
@@ -693,7 +694,14 @@ export const feedbackCommand = defineJsonCommand({
     const library = sources[0];
     const usable = library ? openUsableIndex(library.path) : undefined;
     if (!usable) {
-      throw new UsageError(noIndexWarning(), "MISSING_REQUIRED_ARGUMENT", "akm index");
+      // A build in progress is a retry, not a usage error.
+      if (heldRebuildLock()) {
+        throw new TransientError(
+          "The search index for this library is being built; retry when the build finishes.",
+          "INDEX_DB_CONTENDED",
+        );
+      }
+      throw new UsageError(NO_INDEX_MESSAGE, "MISSING_REQUIRED_ARGUMENT", "akm index");
     }
     const { db } = usable;
     try {

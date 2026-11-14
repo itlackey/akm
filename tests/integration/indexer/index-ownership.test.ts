@@ -15,7 +15,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { saveConfig } from "../../../src/core/config/config";
+import { resetConfigCache, saveConfig } from "../../../src/core/config/config";
 import { readEvents } from "../../../src/core/events";
 import { getDbPath, getIndexRebuildLockPath } from "../../../src/core/paths";
 import { heldRebuildLock } from "../../../src/indexer/index-rebuild-lock";
@@ -29,7 +29,7 @@ import {
 } from "../../../src/storage/repositories/index-connection";
 import { deleteMeta, getMeta, setMeta } from "../../../src/storage/repositories/index-meta-repository";
 import { runCliCapture } from "../../_helpers/cli";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
+import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 
 const repoRoot = path.resolve(import.meta.dir, "../../..");
 const NO_INDEX = /no search index for this library yet/;
@@ -172,14 +172,28 @@ describe("a read of an index that is only partly there", () => {
     expect(search.code).toBe(0);
     const response = JSON.parse(search.stdout);
     expect(response.hits.length).toBeGreaterThan(0);
-    expect(response.warnings.join("\n")).toContain("may be incomplete");
+    expect(response.warnings.join("\n")).toContain("The last index build for this library did not complete");
+    expect(response.warnings.join("\n")).toContain("Run `akm index`.");
 
     const curate = await cli("curate", "deploy the app safely", "--format=json");
     expect(curate.code).toBe(0);
-    expect(JSON.parse(curate.stdout).warnings.join("\n")).toContain("may be incomplete");
+    expect(JSON.parse(curate.stdout).warnings.join("\n")).toContain("did not complete");
 
     editMeta((db) => expect(getMeta(db, "builtAt")).toBeUndefined());
     expect(readEvents({ type: "index_completed" }).events).toHaveLength(1);
+  });
+
+  test("while a build holds the rebuild lock the incomplete-index warning says it is still being built", async () => {
+    seedLibrary();
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+    editMeta((db) => deleteMeta(db, "builtAt"));
+    holdLock();
+
+    const search = await cli("search", "deployment", "--format=json");
+    expect(search.code).toBe(0);
+    const warnings = JSON.parse(search.stdout).warnings.join("\n");
+    expect(warnings).toContain("is still being built; results may be incomplete.");
+    expect(warnings).not.toContain("did not complete");
   });
 
   test("an index built for a different library: empty result and the warning, and no rebuild from the read", async () => {
@@ -199,11 +213,21 @@ describe("a read of an index that is only partly there", () => {
     expect(readEvents({ type: "index_completed" }).events).toHaveLength(1);
   });
 
-  test("feedback with no usable index says the same thing and exits 2", async () => {
+  test("feedback with no usable index says so and exits 2", async () => {
     seedLibrary();
     const feedback = await cli("feedback", "knowledge/guide-0", "--positive");
     expect(feedback.code).toBe(2);
     expect(feedback.stderr).toMatch(NO_INDEX);
+    expect(feedback.stderr).toContain("akm index");
+    expect(fs.existsSync(getDbPath())).toBe(false);
+  });
+
+  test("feedback while a build holds the rebuild lock exits 75: retry when the build finishes", async () => {
+    seedLibrary();
+    holdLock();
+    const feedback = await cli("feedback", "knowledge/guide-0", "--positive");
+    expect(feedback.code).toBe(75);
+    expect(feedback.stderr).toContain("being built; retry when the build finishes");
     expect(fs.existsSync(getDbPath())).toBe(false);
   });
 });
@@ -348,7 +372,54 @@ describe("write-through and the persist transaction", () => {
     expect(search.code).toBe(0);
     const response = JSON.parse(search.stdout);
     expect(response.hits.length).toBeGreaterThan(0);
-    expect(response.warnings.join("\n")).toContain("may be incomplete");
+    expect(response.warnings.join("\n")).toContain("did not complete");
+  });
+});
+
+describe("a library switch", () => {
+  test("a build for another library whose scan is incomplete does not serve the old library's rows", async () => {
+    seedLibrary();
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+    // A library directory that does not exist is an incomplete scan: stale rows are normally purged only after a complete one.
+    const other = path.join(storage.root, "other-library");
+    await akmIndex({ stashDir: other, full: true });
+    editMeta((db) => {
+      expect(getMeta(db, "stashDir")).toBe(other);
+      expect(db.prepare("SELECT COUNT(*) AS c FROM entries").get()).toEqual({ c: 0 });
+    });
+
+    fs.mkdirSync(other);
+    await withEnv({ AKM_BUNDLE_DIR: other }, async () => {
+      const search = JSON.parse((await cli("search", "deployment", "--format=json")).stdout);
+      expect(search.hits).toEqual([]);
+    });
+  });
+
+  test("a bundle repointed at another directory loses its old rows even when another source fails to scan", async () => {
+    seedLibrary();
+    const bundles = (dir: string, extra = {}) => ({ main: { path: dir }, ...extra });
+    writeSandboxConfig({ semanticSearchMode: "off", defaultBundle: "main", bundles: bundles(storage.stashDir) });
+    resetConfigCache();
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+
+    const moved = path.join(storage.root, "moved-library");
+    fs.mkdirSync(path.join(moved, "knowledge"), { recursive: true });
+    fs.writeFileSync(path.join(moved, "knowledge", "fresh.md"), "---\ndescription: Fresh note\n---\n\n# Fresh\n");
+    writeSandboxConfig({
+      semanticSearchMode: "off",
+      defaultBundle: "main",
+      bundles: bundles(moved, { gone: { path: path.join(storage.root, "never-created") } }),
+    });
+    resetConfigCache();
+    const built = await akmIndex({ stashDir: moved, full: true });
+    expect(built.scanComplete).toBe(false);
+
+    editMeta((db) => {
+      const paths = (db.prepare("SELECT file_path FROM entries").all() as Array<{ file_path: string }>).map(
+        (row) => row.file_path,
+      );
+      expect(paths).toEqual([path.join(moved, "knowledge", "fresh.md")]);
+    });
   });
 });
 

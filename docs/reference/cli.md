@@ -202,6 +202,11 @@ akm setup --dir ~/custom-bundle   # Initialize at a custom location
 akm setup --yes                  # Non-interactive, accepts all defaults
 ```
 
+Every form of `akm setup` ends by building the search index for the bundle it
+configured (when its directory exists), so a search works straight away. In
+the non-interactive forms (`--yes`, `--from`) a failed build prints one warning
+naming `akm index` and setup still succeeds.
+
 Creates one subdirectory per asset type under the bundle path — currently
 `scripts/`, `skills/`, `commands/`, `agents/`, `knowledge/`, `workflows/`,
 `instructions/`, `rules/`, `memories/`, `env/`, `secrets/`, `lessons/`, `tasks/`,
@@ -915,8 +920,9 @@ they exit 0 with no hits and one warning: there is no search index for this
 library yet, run `akm index` (or, while another process holds the rebuild
 lock, that a build is running). An index whose build has not completed (still
 embedding, interrupted, or a source failed) serves its keyword results with
-one warning that results may be incomplete and semantic results arrive when a
-build completes. See [Indexing](https://github.com/itlackey/akm/blob/main/docs/architecture/internals/indexing.md#how-reads-degrade).
+one warning that results may be incomplete: that the index is still being built
+while a process holds the rebuild lock, otherwise that the last build did not
+complete and `akm index` fixes it. See [Indexing](https://github.com/itlackey/akm/blob/main/docs/architecture/internals/indexing.md#how-reads-degrade).
 
 Local refs come from the index's canonical fully qualified `item_ref`; output
 keeps the short form for the default bundle and qualifies non-default bundles.
@@ -1663,6 +1669,12 @@ reports it as unchanged. A real revision change installs the new revision
 beside the old one, keeps the immediately previous revision directory (a task
 or workflow may still be running from it) and removes older ones. A revision
 directory another bundle still references is kept.
+
+An update takes the index rebuild lock before it publishes and holds it across
+the publish and the reindex, so it waits for a running build before it touches
+anything. If the reindex fails after the bundle was published, the update warns
+that the bundle was updated but its index was not refreshed, then fails with the
+original error; `akm index` or the next scheduled build indexes it.
 
 An update reindexes incrementally: only directories whose files changed are
 re-read, and `akm index --full` is the explicit full pass. A writable Git
@@ -2416,6 +2428,9 @@ margin between them. When embeddings contribute too, the two channels' ranks spr
 and a vote breaks only near-ties. Only feedback recorded as the user in the last 90 days counts, not
 feedback from improve, task or audit runs; the output's `rankingUpdate.applied`
 says which it was (`true`, or `false` with a `reason`).
+Feedback needs a usable index for the ref. Without one it exits 2 and says to
+run `akm index`; while a build holds the rebuild lock it exits 75
+(`INDEX_DB_CONTENDED`): retry when the build finishes.
 Feedback also updates the utility score that improve and `akm doctor metrics` read.
 
 ```sh
