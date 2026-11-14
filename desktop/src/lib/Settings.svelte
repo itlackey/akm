@@ -10,6 +10,7 @@
   import SettingsBundleCard from "./SettingsBundle.svelte";
   import SettingsFieldControl from "./SettingsField.svelte";
   import Connections from "./Connections.svelte";
+  import EmbeddingSettings from "./EmbeddingSettings.svelte";
   import Software from "./Software.svelte";
   import Icon from "./Icon.svelte";
   import { configurationChanges, fieldText, provenance, valueAt } from "./settings-presenter";
@@ -131,6 +132,12 @@
             hint: "Comma-separated types excluded unless explicitly requested.",
           },
         ],
+      },
+      {
+        id: "embedding-settings",
+        title: "Embeddings",
+        description: "The model that turns assets into vectors for semantic search.",
+        fields: [],
       },
       {
         id: "library-settings",
@@ -510,39 +517,45 @@
               <h2 id={group.id}>{group.title}</h2>
               <p>{group.description}</p>
             </div>
-            <form
-              class="card settings-card"
-              onsubmit={(event) => {
-                event.preventDefault();
-                void action("/config/set", configurationChanges(group.fields, initial, drafts));
-              }}
-            >
-              <div class="settings-fields">
-                {#each group.fields as field (field.key)}<SettingsFieldControl
-                    {field}
-                    bind:value={drafts[field.key]}
-                    source={sourceMap.get(field.key)}
-                    disabled={busy || loading}
-                  />{/each}
-              </div>
-              <div class="settings-footer">
-                <span class="muted small"
-                  >{editCounts[group.id] ? `${editCounts[group.id]} unsaved changes` : "No unsaved changes"}</span
-                >
-                <div class="btn-row">
-                  <button
-                    class="btn-secondary"
-                    type="button"
-                    disabled={busy || !editCounts[group.id]}
-                    onclick={() =>
-                      (drafts = {
-                        ...drafts,
-                        ...Object.fromEntries(group.fields.map((field) => [field.key, initial[field.key]])),
-                      })}>Reset changes</button
-                  ><button disabled={busy || !editCounts[group.id]}>Save {group.title.toLowerCase()}</button>
+            {#if group.id === "embedding-settings"}<EmbeddingSettings
+                {config}
+                saved={async () => {
+                  receipt = "Embedding settings saved.";
+                  await load();
+                }}
+              />{:else}<form
+                class="card settings-card"
+                onsubmit={(event) => {
+                  event.preventDefault();
+                  void action("/config/set", configurationChanges(group.fields, initial, drafts));
+                }}
+              >
+                <div class="settings-fields">
+                  {#each group.fields as field (field.key)}<SettingsFieldControl
+                      {field}
+                      bind:value={drafts[field.key]}
+                      source={sourceMap.get(field.key)}
+                      disabled={busy || loading}
+                    />{/each}
                 </div>
-              </div>
-            </form>
+                <div class="settings-footer">
+                  <span class="muted small"
+                    >{editCounts[group.id] ? `${editCounts[group.id]} unsaved changes` : "No unsaved changes"}</span
+                  >
+                  <div class="btn-row">
+                    <button
+                      class="btn-secondary"
+                      type="button"
+                      disabled={busy || !editCounts[group.id]}
+                      onclick={() =>
+                        (drafts = {
+                          ...drafts,
+                          ...Object.fromEntries(group.fields.map((field) => [field.key, initial[field.key]])),
+                        })}>Reset changes</button
+                    ><button disabled={busy || !editCounts[group.id]}>Save {group.title.toLowerCase()}</button>
+                  </div>
+                </div>
+              </form>{/if}
           </section>{/each}
         <div hidden={selectedGroup !== "advanced-settings"}>
           <section class="settings-section configuration-group" aria-labelledby="advanced-settings">

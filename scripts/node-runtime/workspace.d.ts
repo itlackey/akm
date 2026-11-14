@@ -128,6 +128,8 @@ export namespace config {
   function get(): unknown;
   /** Replace one connection with `entry` as a whole (removed aliases and options leave the file); a literal API key is refused. */
   function saveConnection(input: { name: string; entry: Record<string, unknown> }): { saved: boolean };
+  /** Store the embedding key typed for `endpoint` in credentials.json (`services.embedding`); never in config.json. */
+  function saveEmbeddingKey(input: { key: string; endpoint: string }): { saved: boolean };
   /** Remove one connection; reports the `connection` references to it (each fails until changed: a named connection is never replaced by the default), whether it was the default and the default after. */
   function removeConnection(input: { name: string }): {
     saved: boolean;

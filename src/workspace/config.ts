@@ -17,9 +17,13 @@ import {
   resetConfigCache,
 } from "../core/config/config";
 import { parseConfigText, readConfigText } from "../core/config/config-io";
+import { storedCredential, writeCredential } from "../core/config/credentials";
 import { dropUnusableProjects, NO_PROJECT, type ProjectConfig } from "../core/config/schema/projects";
 import { UsageError } from "../core/errors";
 import { getConfigPath } from "../core/paths";
+import { redactUrlCredentials } from "../core/redaction";
+import { hasLocalEmbeddings } from "../llm/embedders/onnx-runtime";
+import { endpointProblem } from "../setup/endpoint";
 import { automaticWriteTarget, configSource, preserveUnrelatedConfig } from "./readers";
 import { isSecretEnvName, redactForUi } from "./redact";
 
@@ -64,6 +68,9 @@ function localProjects(configPath: string): { warnings: string[]; local: string[
   return { warnings, local, raw };
 }
 
+const redactEndpoint = (endpoint: string | undefined) =>
+  endpoint === undefined ? null : redactUrlCredentials(endpoint);
+
 export function get() {
   const live = loadConfig();
   const effective = redactForUi(listConfig(live)) as Record<string, unknown>;
@@ -93,6 +100,10 @@ export function get() {
     localProjects: projects.local,
     exists: fs.existsSync(configPath),
     config: effective,
+    // What the embedding settings need beyond the config: whether this platform has the built-in embedder, and the
+    // endpoint the stored embedding key belongs to (never the key).
+    localEmbeddings: hasLocalEmbeddings(),
+    embeddingKeyEndpoint: redactEndpoint(storedCredential({ service: "embedding" })?.endpoint),
     automaticWriteTarget: automaticWriteTarget(live),
     entries,
     connections: named(effective.connections).map((connection) => ({
@@ -248,4 +259,19 @@ export function saveConnection(input: { name: string; entry: Record<string, unkn
   });
   resetConfigCache();
   return { saved: result.written };
+}
+
+/**
+ * Store the embedding key typed for `endpoint` in `credentials.json` (`services.embedding`), as `akm setup` does for a
+ * key it was given at the prompt. The key belongs to that endpoint alone; every other stored entry is kept. A key
+ * is never written to config.json: the block's own `apiKey` is a `$VAR` reference, set with `change`.
+ */
+export function saveEmbeddingKey(input: { key: string; endpoint: string }) {
+  const key = typeof input.key === "string" ? input.key.trim() : "";
+  if (!key) throw new UsageError("An embedding key is required.", "MISSING_REQUIRED_ARGUMENT");
+  const endpoint = typeof input.endpoint === "string" ? input.endpoint.trim() : "";
+  const problem = endpointProblem(endpoint);
+  if (problem) throw new UsageError(problem);
+  writeCredential({ service: "embedding" }, key, endpoint);
+  return { saved: true };
 }

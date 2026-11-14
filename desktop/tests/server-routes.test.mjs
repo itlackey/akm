@@ -121,6 +121,20 @@ test("writes reach their operations and unknown fields are ignored", async (t) =
     ).status,
     400,
   );
+  assert.deepEqual(
+    ok(
+      await app.call("/api/config/embedding-key", {
+        key: "sk-synthetic-embedding",
+        endpoint: "http://127.0.0.1:9/v1",
+        surprise: 1,
+      }),
+    ),
+    { saved: true },
+  );
+  const configured = await app.call("/api/config");
+  assert.equal(ok(configured).embeddingKeyEndpoint, "http://127.0.0.1:9/v1");
+  assert.ok(!JSON.stringify(configured.body).includes("sk-synthetic-embedding"));
+  assert.equal((await app.call("/api/config/embedding-key", { key: " ", endpoint: "http://x/v1" })).status, 400);
   assert.equal(ok(await app.call("/api/config")).defaultConnection, "lab");
   assert.deepEqual(ok(await app.call("/api/config/connections/remove", { name: "lab", surprise: true })), {
     saved: true,

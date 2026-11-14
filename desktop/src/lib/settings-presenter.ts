@@ -61,6 +61,12 @@ export interface SettingsConfig {
   localProjects: string[];
   automaticWriteTarget: { name: string; path: string | null; workingStash: boolean } | null;
   connections: Array<{ name: string; default?: boolean; models?: Record<string, unknown> }>;
+  /** The connection an embedding model without an endpoint runs on. */
+  defaultConnection: string | null;
+  /** Whether this platform has the built-in embedder. */
+  localEmbeddings: boolean;
+  /** The endpoint the stored embedding key belongs to; never the key. */
+  embeddingKeyEndpoint: string | null;
   harnesses: Array<{ name: string; platform?: string }>;
   env: Array<{ name: string; value: string }>;
 }

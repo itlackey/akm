@@ -281,6 +281,7 @@ export const routes: Route[] = [
   post("/api/setup/apply", body(setup.apply, ["dir", "harness", "connection", "learning"], "setup apply")),
   post("/api/config/set", body(config.change, ["set", "unset"], "config")),
   post("/api/config/projects", body(config.changeProjects, ["set", "unset"], "projects")),
+  post("/api/config/embedding-key", body(config.saveEmbeddingKey, ["key", "endpoint"], "embedding key")),
   post("/api/config/connections/save", body(config.saveConnection, ["name", "entry"], "connection save")),
   post("/api/config/connections/remove", body(config.removeConnection, ["name"], "connection remove")),
   post(

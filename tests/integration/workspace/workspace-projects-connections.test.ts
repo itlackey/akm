@@ -12,6 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { akmSearch } from "../../../src/commands/read/search";
 import { loadConfig, resetConfigCache } from "../../../src/core/config/config";
+import { storedCredential } from "../../../src/core/config/credentials";
 import { getConfigPath } from "../../../src/core/paths";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { assets, config } from "../../../src/workspace";
@@ -240,5 +241,33 @@ describe("config.removeConnection", () => {
     await expectUsage(() => config.removeConnection({ name: " " }));
     await expectUsage(() => config.removeConnection({ name: "shared" }), "TARGET_NOT_UPDATABLE");
     expect(Object.keys(saved().connections)).toEqual(["default", "lab"]);
+  });
+});
+
+describe("config.saveEmbeddingKey", () => {
+  const KEY = "sk-synthetic-embedding-key-0001";
+
+  test("stores the key under services.embedding for its endpoint; config.get names the endpoint and never the key", async () => {
+    writeSandboxConfig({
+      bundles: { stash: { path: ctx.storage.stashDir, writable: true } },
+      defaultBundle: "stash",
+      embedding: { endpoint: "http://127.0.0.1:5/v1", model: "embed-a" },
+    });
+    resetConfigCache();
+    expect(config.get().embeddingKeyEndpoint).toBeNull();
+    expect(typeof config.get().localEmbeddings).toBe("boolean");
+
+    expect(config.saveEmbeddingKey({ key: ` ${KEY} `, endpoint: "http://127.0.0.1:5/v1" })).toEqual({ saved: true });
+    expect(storedCredential({ service: "embedding" })).toEqual({ key: KEY, endpoint: "http://127.0.0.1:5/v1" });
+    expect(config.get().embeddingKeyEndpoint).toBe("http://127.0.0.1:5/v1");
+    expect(JSON.stringify(config.get())).not.toContain(KEY);
+    expect(fs.readFileSync(getConfigPath(), "utf8")).not.toContain(KEY);
+  });
+
+  test("refuses an empty key and an endpoint that is not a plain http(s) URL, storing nothing", async () => {
+    await expectUsage(() => config.saveEmbeddingKey({ key: " ", endpoint: "http://127.0.0.1:5/v1" }));
+    await expectUsage(() => config.saveEmbeddingKey({ key: KEY, endpoint: "not a url" }));
+    await expectUsage(() => config.saveEmbeddingKey({ key: KEY, endpoint: "http://user:pw@127.0.0.1:5/v1" }));
+    expect(storedCredential({ service: "embedding" })).toBeUndefined();
   });
 });
