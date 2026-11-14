@@ -28,7 +28,6 @@ import { ConfigError } from "../../core/errors";
 import { warn } from "../../core/warn";
 import { sha256Hex } from "../../runtime";
 import type { Database } from "../database";
-import { withImmediateTransaction } from "../sqlite-transaction";
 import {
   CANONICAL_ENTRY_SCHEMA_SQL,
   CANONICAL_INDEX_DB_VERSION,
@@ -237,9 +236,23 @@ function ensureColumn(db: Database, table: string, column: string, type: string)
 /**
  * Bring `index.db` to the current layout in one transaction, so no reader or
  * crash can observe a half-migrated file (entries without their FTS table).
+ * One `BEGIN IMMEDIATE`, waiting out the connection's busy timeout once: a
+ * busy index surfaces to the caller (the build reports it as contention)
+ * rather than being retried here. Joins a transaction the caller already holds.
  */
 export function ensureSchema(db: Database): void {
-  withImmediateTransaction(db, () => applySchema(db));
+  if (db.inTransaction) {
+    applySchema(db);
+    return;
+  }
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    applySchema(db);
+    db.exec("COMMIT");
+  } catch (error) {
+    if (db.inTransaction) db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function applySchema(db: Database): void {
