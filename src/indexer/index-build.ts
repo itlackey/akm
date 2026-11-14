@@ -15,11 +15,16 @@
  *    index). When a live process holds the lock they do not build and carry on
  *    with the index as it is.
  *
- * Not re-entrant: no build path calls another from inside its own build, and a
- * caller that ever needs to must pass its lock down rather than take it twice.
+ * Not re-entrant: no build path calls another from inside its own build. A caller
+ * that must hold the lock around more than the build (`bundle update` publishes
+ * and indexes under the asset mutation lease) takes it with
+ * {@link withIndexBuildLock}, which hands it a `build` that runs under the lock
+ * it already holds. Lock order is always the rebuild lock first, then the asset
+ * mutation lease, so nothing waits for the rebuild lock while holding the lease.
  */
 
 import { TransientError } from "../core/errors";
+import type { LockOwnership } from "../core/file-lock";
 import type { RunLockHolder } from "../core/run-lock";
 import { warn } from "../core/warn";
 import { warnOnBundleRenameDrift } from "./bundle-identity-guard";
@@ -58,6 +63,48 @@ export async function buildIndex(
   options: IndexOptions,
   mode: "wait" | "try",
 ): Promise<IndexResponse | SkippedIndexBuild> {
+  const lock = await acquireBuildLock(mode, options.signal);
+  if ("skipped" in lock) return lock;
+  try {
+    return await buildUnderLock(options);
+  } finally {
+    releaseIndexRebuildLock(lock.ownership);
+  }
+}
+
+/**
+ * Take the rebuild lock (waiting for a running build, as `"wait"`), then run `run` with a `build` that builds under
+ * that lock; release it when `run` settles. A build cannot start without the lock, and `build` must not be called
+ * after `run` returns.
+ */
+export async function withIndexBuildLock<T>(
+  signal: AbortSignal | undefined,
+  run: (build: (options: IndexOptions) => Promise<IndexResponse>) => Promise<T>,
+): Promise<T> {
+  const lock = await acquireBuildLock("wait", signal);
+  try {
+    return await run(buildUnderLock);
+  } finally {
+    releaseIndexRebuildLock(lock.ownership);
+  }
+}
+
+function buildUnderLock(options: IndexOptions): Promise<IndexResponse> {
+  // §11.5: warn (once) if the configured bundle ids drifted from the persisted
+  // index prefixes (hand-renamed bundle key) BEFORE the build could re-mint.
+  warnOnBundleRenameDrift();
+  return akmIndex(options);
+}
+
+async function acquireBuildLock(mode: "wait", signal: AbortSignal | undefined): Promise<{ ownership: LockOwnership }>;
+async function acquireBuildLock(
+  mode: "wait" | "try",
+  signal: AbortSignal | undefined,
+): Promise<{ ownership: LockOwnership } | SkippedIndexBuild>;
+async function acquireBuildLock(
+  mode: "wait" | "try",
+  signal: AbortSignal | undefined,
+): Promise<{ ownership: LockOwnership } | SkippedIndexBuild> {
   const startedAt = Date.now();
   const maxWaitMs = waitTimingForTests?.maxWaitMs ?? DEFAULT_MAX_WAIT_MS;
   const noticeIntervalMs = waitTimingForTests?.noticeIntervalMs ?? WAIT_NOTICE_INTERVAL_MS;
@@ -69,7 +116,7 @@ export async function buildIndex(
       warn(`[index] another index run holds the lock (${describeLockHolder(lock.holder)}); not building.`);
       return { skipped: lock.holder };
     }
-    if (options.signal?.aborted) throw options.signal.reason ?? new Error("index interrupted");
+    if (signal?.aborted) throw signal.reason ?? new Error("index interrupted");
     const waitedMs = Date.now() - startedAt;
     // Time out only after a real attempt at a free lock, so a bound of 0 still gets one try.
     if (waitedMs >= maxWaitMs) {
@@ -88,13 +135,5 @@ export async function buildIndex(
     await new Promise((resolve) => setTimeout(resolve, WAIT_POLL_MS));
     lock = tryAcquireIndexRebuildLock();
   }
-
-  try {
-    // §11.5: warn (once) if the configured bundle ids drifted from the persisted
-    // index prefixes (hand-renamed bundle key) BEFORE the build could re-mint.
-    warnOnBundleRenameDrift();
-    return await akmIndex(options);
-  } finally {
-    releaseIndexRebuildLock(lock.ownership);
-  }
+  return { ownership: lock.ownership };
 }

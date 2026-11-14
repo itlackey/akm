@@ -25,9 +25,9 @@ import { AkmError, ConfigError, NotFoundError, UsageError } from "../../core/err
 import { isPathAbsent } from "../../core/path-access";
 import { getDbPath, getRegistryCacheDir } from "../../core/paths";
 import { warn } from "../../core/warn";
-import { buildIndex } from "../../indexer/index-build";
+import { buildIndex, withIndexBuildLock } from "../../indexer/index-build";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
-import type { IndexResponse } from "../../indexer/indexer";
+import type { IndexOptions, IndexResponse } from "../../indexer/indexer";
 import type { LockfileEntry } from "../../integrations/lockfile";
 import { readLockfile, upsertLockEntry } from "../../integrations/lockfile";
 import { parseRegistryRef, resolveRegistryArtifact } from "../../registry/resolve";
@@ -508,15 +508,33 @@ function fastForwardCheckout(liveRepo: string, stagedRepo: string): void {
  * leaves config alone; the next `akm index` records them.
  */
 function reindexAfterUpdate(stashDir: string): Promise<IndexResult> {
-  return buildIndex({ stashDir, hydrateSources: false, persistDetectedAdapters: false }, "wait");
+  return buildIndex(updateIndexOptions(stashDir), "wait");
 }
 
-/** Publish, then reindex, holding the asset-mutation lease so no other writer interleaves. */
+function updateIndexOptions(stashDir: string): IndexOptions {
+  return { stashDir, hydrateSources: false, persistDetectedAdapters: false };
+}
+
+/**
+ * Publish, then reindex, holding the rebuild lock across both and the asset-mutation lease around them so no other
+ * writer interleaves. The rebuild lock comes first, so waiting for another build never happens under the lease.
+ * When the index step fails after the publish, the bundle is updated and only its index is stale: say so, then
+ * rethrow the original error.
+ */
 function publishAndIndex(stashDir: string, publish: () => Promise<void> | void): Promise<IndexResult> {
-  return withAssetMutationLease("source-update", async () => {
-    await publish();
-    return reindexAfterUpdate(stashDir);
-  });
+  return withIndexBuildLock(undefined, (build) =>
+    withAssetMutationLease("source-update", async () => {
+      await publish();
+      try {
+        return await build(updateIndexOptions(stashDir));
+      } catch (error) {
+        warn(
+          "The bundle was updated but its search index was not refreshed; `akm index` (or the next scheduled build) will index it.",
+        );
+        throw error;
+      }
+    }),
+  );
 }
 
 function managedCredential(managed: ManagedInstall): string | undefined {
