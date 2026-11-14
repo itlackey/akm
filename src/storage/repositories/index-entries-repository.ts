@@ -722,14 +722,15 @@ export function withMdVariants(name: string): string[] {
  */
 function findEntryIdByBundleRef(db: Database, ref: string, bundleId?: string): number | undefined {
   const parsed = parseBundleRef(ref);
-  const conceptVariants = withMdVariants(parsed.conceptId);
-
   // item_ref is the canonical stored spelling post-flip.
-  for (const conceptId of conceptVariants) {
-    const id = matchIdByItemRef(db, parsed.bundle, conceptId, bundleId);
-    if (id !== undefined) return id;
-  }
-  return undefined;
+  const exact = matchIdByItemRef(db, parsed.bundle, parsed.conceptId, bundleId);
+  if (exact !== undefined) return exact;
+  // The `.md` toggle names a markdown file by its own path: `tasks/x.md` is not a spelling of `tasks/x.yml`,
+  // nor `skills/x.md` of `skills/x/SKILL.md`.
+  const [, toggled] = withMdVariants(parsed.conceptId);
+  const id = matchIdByItemRef(db, parsed.bundle, toggled!, bundleId);
+  const markdownName = parsed.conceptId.endsWith(".md") ? parsed.conceptId : toggled!;
+  return id !== undefined && getEntryFilePathById(db, id)?.endsWith(`/${markdownName}`) ? id : undefined;
 }
 
 /**
