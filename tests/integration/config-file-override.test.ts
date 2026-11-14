@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { withoutBundleDirNotice } from "../_helpers/bundle-dir-notice";
 
 const cliPath = path.resolve(import.meta.dir, "../../src/cli.ts");
 const dirs: string[] = [];
@@ -24,7 +25,8 @@ function fixture() {
   return { dir, env, selected };
 }
 function cli(args: string[], env: NodeJS.ProcessEnv, cwd: string) {
-  return spawnSync("bun", [cliPath, ...args], { env, cwd, encoding: "utf8" });
+  const result = spawnSync("bun", [cliPath, ...args], { env, cwd, encoding: "utf8" });
+  return { ...result, stderr: withoutBundleDirNotice(result.stderr) };
 }
 afterEach(() => {
   for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });

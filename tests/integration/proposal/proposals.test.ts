@@ -2145,9 +2145,8 @@ describe("akmProposalAccept succeeds while a live index rebuild holds the lock (
       payload: { content: VALID_LESSON },
     });
 
-    // A live pid holds the index rebuild lock — indexWrittenAssets must skip
-    // its inline upsert (the in-progress rebuild will pick up the change on
-    // its own) and report the skip as success, not failure, so the caller
+    // A live pid holds the index rebuild lock — indexWrittenAssets does not
+    // look for it, and (here, with no index yet) reports success, so the caller
     // that gates on that boolean never sees "index finalization failed"
     // while an unrelated `akm index` run is in progress.
     const lockPath = getIndexRebuildLockPath();

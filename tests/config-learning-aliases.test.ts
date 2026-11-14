@@ -31,12 +31,16 @@ afterEach(() => {
   resetConfigCache();
 });
 
-/** Parse `value` as a config document, returning the effective config and every warning printed. */
+/**
+ * Parse `value` as a config document, returning the effective config and every warning printed except the 0.11
+ * deprecation notice for the old paths (tested in `integration/cli-deprecation-notices.test.ts`).
+ */
 function read(value: Record<string, unknown>) {
   const warnings: string[] = [];
   _resetWarnOnceForTests();
   _setWarnSinkForTests((level, args) => {
-    if (level === "warn") warnings.push(args.map(String).join(" "));
+    const text = args.map(String).join(" ");
+    if (level === "warn" && !/ Deprecated and (are|is) removed in 0\.11/.test(text)) warnings.push(text);
   });
   try {
     const config = parseAndValidateConfigText(JSON.stringify({ configVersion: "0.9.0", ...value }));

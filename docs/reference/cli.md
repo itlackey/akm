@@ -62,7 +62,16 @@ and a task that runs a workflow (workflows go in 0.11), `agent <ref>`,
 `search --by-usage`, `search --include-proposed` and `--include-sessions`,
 `show --detail brief` and `--context lead`, `proposal extract --type`,
 `remember --auto`, `--enrich` and `--show-similar` (no replacement flag),
-`proposal reject --yes` (no longer needed), `upgrade --next` and `--timeout-ms`. A deprecated form whose replacement is not
+`proposal reject --yes` (no longer needed), `upgrade --next` and `--timeout-ms`.
+Since 0.10.261122 these also print the line: `show --max-chars` (use `--max-tokens`),
+`lint --auto-fix` (use `--fix`), `migrate apply --dry-run` (use `akm migrate
+status`), `task add --rebind` (use `akm doctor scheduler sync --rebind`), global
+`--output` (redirect stdout), `--format yaml` (use `--format json` or `text`),
+`hints --detail full` (use `akm hints`, `akm help <command>` and this reference),
+`--detail agent` on `search`, `curate` and `show` (use `--detail normal`), and,
+with no replacement because they do nothing, `bundle update --yes`,
+`--allow-dangerous-env-keys` (`bundle add`, `bundle update`, `env run`) and
+`registry add --options`. A deprecated form whose replacement is not
 built yet prints nothing, unless it is removed in 0.11 with no replacement (the
 `remember` flags and workflows): then the line says so.
 
@@ -70,7 +79,18 @@ The deprecated environment variables `AKM_UPGRADE_SKIP_CHECKSUM` (during
 `upgrade`), `AKM_SQLITE_JOURNAL_MODE`, `AKM_VERBOSE` and `AKM_DEBUG=1` print the
 same one-line notice, once per process, and `--quiet` silences it.
 `AKM_SQLITE_JOURNAL_MODE` has no replacement; the others name `akm upgrade
---skip-checksum` and `--verbose`.
+--skip-checksum` and `--verbose`. Since 0.10.261122 `AKM_BUNDLE_DIR` (when set and
+not empty; use `akm bundle add` and `defaultBundle`) and `AKM_REGISTRY_URL` (when
+set and `akm search --from registry` or `--from all` reads it; use config
+`registries`) do the same.
+
+A config that sets `improve.strategies` or `improve.qualityGate` prints one line
+per process naming `experimental.learning.strategies` and
+`experimental.learning.qualityGate`, and a strategy-level `limit` prints one naming
+`--limit` and `processes.reflect.limit`; `improve.stateGc.collect` and a strategy's
+`processes.consolidate.limit` each print one saying the key goes in 0.11; a config that uses only
+`experimental.learning.*` prints nothing. The keys keep working exactly as before,
+and the lines follow the same rules as the command notices above.
 
 ### `--format jsonl`
 
@@ -135,7 +155,7 @@ Every command exits with one of the following codes:
 | 2 | Usage / bad input | `UsageError` |
 | 4 | Health warning (`akm doctor`, or the Deprecated `akm health`) | — |
 | 70 | Internal / unclassified error | unexpected throw |
-| 75 | Transient — retry shortly (sysexits `EX_TEMPFAIL`); another akm process holds a lock or is writing `state.db` or `index.db` right now, not a bad command line | `TransientError` |
+| 75 | Transient — retry shortly (sysexits `EX_TEMPFAIL`); another akm process holds a lock or is writing `state.db` or `index.db` right now (`akm index` gives up after waiting 10 minutes for a running build), not a bad command line. `search`, `curate` and `show` do not exit 75 because the index is cold or being built: they never build and never wait | `TransientError` |
 | 78 | Configuration error | `ConfigError` |
 
 Failures classified by akm emit a JSON error envelope on **stderr** before
@@ -181,6 +201,11 @@ akm setup                        # Interactive setup wizard (creates bundle + co
 akm setup --dir ~/custom-bundle   # Initialize at a custom location
 akm setup --yes                  # Non-interactive, accepts all defaults
 ```
+
+Every form of `akm setup` ends by building the search index for the bundle it
+configured (when its directory exists), so a search works straight away. In
+the non-interactive forms (`--yes`, `--from`) a failed build prints one warning
+naming `akm index` and setup still succeeds.
 
 Creates one subdirectory per asset type under the bundle path — currently
 `scripts/`, `skills/`, `commands/`, `agents/`, `knowledge/`, `workflows/`,
@@ -321,7 +346,7 @@ akm index --clean --dry-run # Report stale entries without deleting
 akm index --reembed  # Discard stored vectors and re-embed every entry
 akm index --export-vectors vectors.db  # Experimental: write the current model's vectors to a file (reads the index only)
 akm index --import-vectors vectors.db  # Experimental: index, storing vectors from the file instead of embedding matching entries
-akm index --skip-if-locked  # for scheduled/opportunistic runs: skip (exit 0) if a run is already in progress
+akm index --skip-if-locked  # for scheduled/opportunistic runs: skip (exit 0) instead of waiting for a build already in progress
 ```
 
 Returns stats: `totalEntries`, `generatedMetadata`, `directoriesScanned`,
@@ -390,34 +415,32 @@ indexes normally; a single row of the wrong width is a silent miss. `--reembed` 
 does semantic search off; both warn. With both flags, the export runs and the
 import is ignored with a warning.
 
-**`--skip-if-locked` flag:** Every explicit `akm index` run acquires an
-opt-in, PID-liveness-only rebuild lock and releases it on exit — this is
-advisory, never the blocking lock #872 removed (see
-[Locks](https://github.com/itlackey/akm/blob/main/docs/architecture/internals/indexing.md#locks)). A human-typed
-`akm index` with no flag is never gated by it: if another run already holds
-the lock, it warns and proceeds anyway, contending with the existing run. If
-that contention makes index.db genuinely busy (SQLite `database is locked`)
-long enough to exhaust the driver's retry window, the run now fails with
-exit 75 (`TransientError`, code `INDEX_DB_CONTENDED`) instead of the raw
-driver error at exit 70 — the same retry-shortly contract as
+**One build at a time, and `--skip-if-locked`:** Every build takes a
+PID-liveness-only rebuild lock and releases it on exit (see
+[Indexing](https://github.com/itlackey/akm/blob/main/docs/architecture/internals/indexing.md#who-builds-the-index)).
+A plain `akm index` that finds a live build holding it prints a notice,
+waits (repeating the notice every 15 seconds), and builds when the lock
+frees; it never builds beside the running one. After 10 minutes it gives up
+with exit 75 (`TransientError`, code `INDEX_DB_CONTENDED`). If index.db is
+genuinely busy (SQLite `database is locked`) long enough to exhaust the
+driver's retry window, the run also fails with exit 75 and that code instead
+of the raw driver error at exit 70 — the same retry-shortly contract as
 `STATE_DB_CONTENDED`, so a scheduler can branch on it instead of alerting.
 The rebuild lock itself is registered through a brief internal barrier
 (`getMaintenanceBarrierPath()`) shared with every other akm lock/lease; two
 `akm index` runs launched close enough together to collide on that
 registration step retry briefly and then, if it is still busy, also exit 75
-(code `MAINTENANCE_BARRIER_BUSY`) rather than the config-error exit 78 a
-2026-09-10 field report found — a busy registration barrier is ordinary
+(code `MAINTENANCE_BARRIER_BUSY`) — a busy registration barrier is ordinary
 contention between two legitimate runs, never a broken config file.
-`--skip-if-locked` changes that only for the invocation that passes it: if
+`--skip-if-locked` changes the wait only for the invocation that passes it: if
 the lock is already held by a live process, it skips gracefully (exit 0,
 `{ ok: true, skipped: { reason: "lock-held", pid, launcherPid, startedAt } }`
 — `launcherPid` is the holder's launcher pid when known, `null` otherwise,
-#956) instead of contending. `akm index` and `akm curate` are both safe to call frequently —
-`curate` never blocks on a rebuild in progress ([read-path indexing stays
-non-blocking](#curate)) — but a hook, cron job, or scheduled task that
-invokes `akm index` directly should pass `--skip-if-locked` so it steps
-aside instead of piling up behind a longer rebuild (the shipped
-`index-refresh` task does this).
+#956) instead of waiting. A hook, cron job, or scheduled task that invokes
+`akm index` directly should pass `--skip-if-locked` so it steps aside instead
+of piling up behind a longer rebuild (the shipped `index-refresh` task does
+this). `akm search`, `akm curate` and `akm show` never build or wait for a
+build, so they are safe to call frequently.
 
 `akm index` always rebuilds the search index and keeps metadata in the
 index, generated deterministically. In text mode, the default CLI UI shows a
@@ -891,6 +914,16 @@ embedded or shown. With no `--filter` (the
 default), unfiltered queries continue to surface all entries — including
 legacy memories that pre-date the scope contract.
 
+`akm search` and `akm curate` never build the index. With no usable index for
+the library (none yet, one built for another library, or an unreadable file)
+they exit 0 with no hits and one warning: there is no search index for this
+library yet, run `akm index` (or, while another process holds the rebuild
+lock, that a build is running). An index whose build has not completed (still
+embedding, interrupted, or a source failed) serves its keyword results with
+one warning that results may be incomplete: that the index is still being built
+while a process holds the rebuild lock, otherwise that the last build did not
+complete and `akm index` fixes it. See [Indexing](https://github.com/itlackey/akm/blob/main/docs/architecture/internals/indexing.md#how-reads-degrade).
+
 Local refs come from the index's canonical fully qualified `item_ref`; output
 keeps the short form for the default bundle and qualifies non-default bundles.
 Local paths are absolute materialized `file_path` values. Key fields by
@@ -1005,8 +1038,8 @@ or asset name that collides with the list, such as `hello`, use
 `akm search "hello"`. Long input is curated like any other.
 `akm curate` is safe to call frequently, including from a hook that fires on
 every prompt: it only ever reads the index as it currently stands (the same
-non-blocking `ensureIndex()` path `search` uses) and never waits on or
-contends with a full `akm index` rebuild in progress.
+read-only path `search` uses) and never builds, waits on or contends with an
+`akm index` rebuild in progress.
 
 ### show
 
@@ -1036,6 +1069,15 @@ akm show meta:about                 # working bundle's .meta/about.md
 akm show akm//meta                  # the primary bundle explicitly
 akm show github:owner/repo//meta    # an installed bundle's .meta/index.md
 ```
+
+`akm show` resolves the asset from the bundle's files, so it needs no index:
+an asset added outside akm since the last build, or shown before any build,
+is found and rendered. The index adds only what it alone has: declared
+`links`, indexed fragment context (`--lead`, and an opaque `#akm-fragment-…`
+selector's stored revision) and usage ids. With no index row, `--lead` shows
+the exact section and warns instead of failing. A ref is not found only when no
+file in the bundle resolves it. `show` never builds the index or waits for a
+build.
 
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |
@@ -1628,6 +1670,20 @@ beside the old one, keeps the immediately previous revision directory (a task
 or workflow may still be running from it) and removes older ones. A revision
 directory another bundle still references is kept.
 
+An update takes the index rebuild lock before it publishes and holds it across
+the publish and the reindex, so it waits for a running build before it touches
+anything. If the reindex fails after the bundle was published, the update warns
+that the bundle was updated but its index was not refreshed, then fails with the
+original error; `akm index` or the next scheduled build indexes it.
+
+An update reindexes incrementally: only directories whose files changed are
+re-read, and `akm index --full` is the explicit full pass. A writable Git
+install whose live checkout is already at the fetched commit, and whose lock
+already records that revision, publishes nothing and builds no index (the
+result reports `changed.any: false`); `--force` skips that shortcut. Local edits
+in a writable checkout are not part of an update: they reach the index with the
+next `akm index` or scheduled build.
+
 A publication or index failure preserves the prior active bytes, lock/config
 generation, and searchable index for that bundle.
 
@@ -1643,7 +1699,7 @@ is running.
 
 The index and its update-owned state maintenance share one deferred SQLite
 transaction. WAL readers continue to see the last committed generation while a
-full update index pass runs, and competing writers wait for that pass to commit
+update index pass runs, and competing writers wait for that pass to commit
 or roll back.
 
 This boundary guarantees rollback for handled process faults (throws and
@@ -2372,6 +2428,9 @@ margin between them. When embeddings contribute too, the two channels' ranks spr
 and a vote breaks only near-ties. Only feedback recorded as the user in the last 90 days counts, not
 feedback from improve, task or audit runs; the output's `rankingUpdate.applied`
 says which it was (`true`, or `false` with a `reason`).
+Feedback needs a usable index for the ref. Without one it exits 2 and says to
+run `akm index`; while a build holds the rebuild lock it exits 75
+(`INDEX_DB_CONTENDED`): retry when the build finishes.
 Feedback also updates the utility score that improve and `akm doctor metrics` read.
 
 ```sh
@@ -3228,6 +3287,8 @@ structural-validation surface now that `akm workflow validate` is gone).
 
 ```sh
 akm lint                        # Report findings; exits 0 regardless
+akm lint memories/note.md       # Lint one file (a file in a bundle takes its type from its location)
+akm lint ./nightly.yml --type tasks  # One file outside every bundle: --type is required
 akm lint --fix                  # Auto-fix Tier-1 issues in place
 akm lint --type workflows       # Only lint one asset type
 akm lint --dir ~/other-bundle    # Override the bundle root (default: from config)
@@ -3235,8 +3296,9 @@ akm lint --fail-on-flagged      # CI-friendly: exit non-zero when summary.flagge
 akm lint --prune-dangling-edges # Opt-in: drop belief edges whose target is gone
 ```
 
-| Flag | Description |
+| Argument or flag | Description |
 | --- | --- |
+| `<file>` | Optional. Lint just this file with the rules the bundle lint applies to it, and return the same result with the counts for that file only (first in 0.10.261122). A file inside a bundle (a configured one, or the root given with `--dir`) gets its type from where it sits, as the bundle lint decides it. A file outside every bundle needs `--type` (`agents`, `commands`, `memories`, `skills`, `workflows`, `lessons`, `tasks`, `knowledge`, `facts`). Checks that need other files, such as broken refs and orphaned stubs, run only for a file inside a bundle; outside one only the file's own rules run. A `--type` that disagrees with the file's location, a missing path, a directory (use `--dir`) and `--prune-dangling-edges` are usage errors (exit 2). `--fix` changes only this file. |
 | `--fix` (alias `--auto-fix`) | Apply auto-fixes in place. Refused with a usage error when the target bundle is configured `writable: false`. |
 | `--dir` | Override the bundle root directory (default: from config) |
 | `--type` | Only lint assets of this type (e.g. `workflows`, `tasks`, `memories`). **akm bundles only** — every other adapter validates the whole bundle and warns on stderr that the flag had no effect. |
@@ -4100,7 +4162,7 @@ executable source contract this release accepts; `akm import <file> --type task`
 imports a v4 file — see the canonical [Tasks reference](tasks.md). The
 group is `add | enable | disable | run | explain | sync | doctor | history | prune`
 — there is no `show` or `remove`; use `akm show tasks/<id>` to inspect one
-task. Only `enable` and `disable` are current (validate a task source with `akm lint --type tasks`). The rest are
+task. Only `enable` and `disable` are current (validate one task file with `akm lint <file> --type tasks`, a bundle's tasks with `akm lint --type tasks`). The rest are
 Deprecated, removed in 0.11:
 
 | Deprecated | Use |

@@ -12,6 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { akmSearch } from "../../../src/commands/read/search";
 import { loadConfig, resetConfigCache } from "../../../src/core/config/config";
+import { storedCredential } from "../../../src/core/config/credentials";
 import { getConfigPath } from "../../../src/core/paths";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { assets, config } from "../../../src/workspace";
@@ -240,5 +241,100 @@ describe("config.removeConnection", () => {
     await expectUsage(() => config.removeConnection({ name: " " }));
     await expectUsage(() => config.removeConnection({ name: "shared" }), "TARGET_NOT_UPDATABLE");
     expect(Object.keys(saved().connections)).toEqual(["default", "lab"]);
+  });
+});
+
+describe("config.saveEmbedding", () => {
+  const KEY = "sk-synthetic-embedding-key-0001";
+  const saved = () => JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
+  function seed(embedding?: Record<string, unknown>) {
+    writeSandboxConfig({
+      bundles: { stash: { path: ctx.storage.stashDir, writable: true } },
+      defaultBundle: "stash",
+      connections: { default: { endpoint: "http://127.0.0.1:1/v1", models: { fast: "small" } } },
+      semanticSearchMode: "off",
+      ...(embedding ? { embedding } : {}),
+    });
+    resetConfigCache();
+  }
+
+  test("an endpoint is normalized as setup does, a pasted key goes to credentials.json and never config.json", () => {
+    seed();
+    expect(config.get().embeddingKeyEndpoint).toBeNull();
+    expect(typeof config.get().localEmbeddings).toBe("boolean");
+    const result = config.saveEmbedding({
+      kind: "endpoint",
+      endpoint: "http://127.0.0.1:11434",
+      model: "embed-a",
+      key: { pasted: ` ${KEY} ` },
+    });
+    expect(result).toEqual({ saved: true, embedding: { endpoint: "http://127.0.0.1:11434/v1", model: "embed-a" } });
+    expect(saved().embedding).toEqual({ endpoint: "http://127.0.0.1:11434/v1", model: "embed-a" });
+    expect(saved().semanticSearchMode).toBe("auto");
+    expect(storedCredential({ service: "embedding" })).toEqual({ key: KEY, endpoint: "http://127.0.0.1:11434/v1" });
+    expect(config.get().embeddingKeyEndpoint).toBe("http://127.0.0.1:11434/v1");
+    expect(JSON.stringify(config.get())).not.toContain(KEY);
+    expect(fs.readFileSync(getConfigPath(), "utf8")).not.toContain(KEY);
+  });
+
+  test("an env key is the block's $VAR; the same endpoint keeps it, a new endpoint drops it", () => {
+    seed();
+    config.saveEmbedding({
+      kind: "endpoint",
+      endpoint: "http://127.0.0.1:2/v1",
+      model: "m",
+      key: { env: "EMBED_KEY" },
+    });
+    expect(saved().embedding).toEqual({ endpoint: "http://127.0.0.1:2/v1", model: "m", apiKey: "$EMBED_KEY" });
+    config.saveEmbedding({ kind: "endpoint", endpoint: "http://127.0.0.1:2", model: "m2" });
+    expect(saved().embedding).toEqual({ endpoint: "http://127.0.0.1:2/v1", model: "m2", apiKey: "$EMBED_KEY" });
+    config.saveEmbedding({ kind: "endpoint", endpoint: "http://127.0.0.1:3/v1", model: "m2" });
+    expect(saved().embedding).toEqual({ endpoint: "http://127.0.0.1:3/v1", model: "m2" });
+  });
+
+  test("the default connection's model keeps the block's tuning; local removes the target and keeps the rest", () => {
+    seed({ endpoint: "http://127.0.0.1:2/v1", model: "m", apiKey: "$EMBED_KEY", dimension: 256, batchSize: 4 });
+    config.saveEmbedding({ kind: "connection", model: "embed-b" });
+    expect(saved().embedding).toEqual({ model: "embed-b", batchSize: 4 });
+    expect(saved().semanticSearchMode).toBe("auto");
+    if (config.get().localEmbeddings) {
+      expect(config.saveEmbedding({ kind: "local" })).toEqual({ saved: true, embedding: { batchSize: 4 } });
+      expect(saved().embedding).toEqual({ batchSize: 4 });
+      seed({ model: "m" });
+      expect(config.saveEmbedding({ kind: "local" })).toEqual({ saved: true, embedding: null });
+      expect(saved().embedding).toBeUndefined();
+    }
+  });
+
+  test("the model's dimension goes with the model and stays with it across endpoints", () => {
+    seed({ endpoint: "http://127.0.0.1:2/v1", model: "m", dimension: 256, batchSize: 4 });
+    config.saveEmbedding({ kind: "endpoint", endpoint: "http://127.0.0.1:3/v1", model: "m" });
+    expect(saved().embedding).toEqual({ endpoint: "http://127.0.0.1:3/v1", model: "m", dimension: 256, batchSize: 4 });
+    config.saveEmbedding({ kind: "endpoint", endpoint: "http://127.0.0.1:3/v1", model: "other" });
+    expect(saved().embedding).toEqual({ endpoint: "http://127.0.0.1:3/v1", model: "other", batchSize: 4 });
+  });
+
+  test("a bad answer throws before anything is written", async () => {
+    seed();
+    const before = fs.readFileSync(getConfigPath(), "utf8");
+    await expectUsage(() =>
+      config.saveEmbedding({ kind: "endpoint", endpoint: "nope", model: "m", key: { pasted: KEY } }),
+    );
+    await expectUsage(() => config.saveEmbedding({ kind: "endpoint", endpoint: "http://u:p@h/v1", model: "m" }));
+    await expectUsage(() =>
+      config.saveEmbedding({ kind: "endpoint", endpoint: "http://h/v1", model: "m", key: { env: KEY } }),
+    );
+    await expectUsage(() =>
+      config.saveEmbedding({ kind: "endpoint", endpoint: "http://h/v1", model: "m", key: { pasted: " " } }),
+    );
+    await expectUsage(() => config.saveEmbedding({ kind: "connection", model: " " }));
+    expect(fs.readFileSync(getConfigPath(), "utf8")).toBe(before);
+    expect(storedCredential({ service: "embedding" })).toBeUndefined();
+  });
+
+  test("a model on the default connection needs a default connection", async () => {
+    writeSandboxConfig({ bundles: { stash: { path: ctx.storage.stashDir, writable: true } }, defaultBundle: "stash" });
+    resetConfigCache();
+    await expectUsage(() => config.saveEmbedding({ kind: "connection", model: "m" }), "MISSING_REQUIRED_ARGUMENT");
   });
 });

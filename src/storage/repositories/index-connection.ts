@@ -38,7 +38,16 @@ function isCorruptionError(error: unknown): boolean {
   return message.includes("database disk image is malformed") || message.includes("SQLITE_CORRUPT");
 }
 
-export function openIndexDatabase(dbPath?: string, options?: { beforeSchema?: (db: Database) => void }): Database {
+/**
+ * Open `index.db` for writing, creating and migrating it. A corrupt file is
+ * deleted and rebuilt only when the caller says it may (`rebuildCorrupt`): the
+ * build, which holds the rebuild lock. Any other writable opener raises the
+ * corruption error instead of deleting a file a build or a reader may be using.
+ */
+export function openIndexDatabase(
+  dbPath?: string,
+  options?: { beforeSchema?: (db: Database) => void; rebuildCorrupt?: boolean },
+): Database {
   const resolvedPath = dbPath ?? getDbPath();
   const spec = {
     path: resolvedPath,
@@ -60,7 +69,7 @@ export function openIndexDatabase(dbPath?: string, options?: { beforeSchema?: (d
     // quietly falling through to an unreadable index (#865). This is the ONE
     // from-scratch rebuild: an older layout is migrated in place by
     // ensureSchema, never dropped.
-    if (!isCorruptionError(error)) throw error;
+    if (!options?.rebuildCorrupt || !isCorruptionError(error)) throw error;
     warn(`Index database is corrupt at ${resolvedPath} — rebuilding.`);
     for (const suffix of ["", "-wal", "-shm"]) {
       try {

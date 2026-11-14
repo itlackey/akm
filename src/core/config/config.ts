@@ -44,6 +44,7 @@ import { isOpaqueSchema, resolveSchemaAt } from "./config-walker";
 import { convertEngineConfig, type EngineTarget } from "./convert-engines";
 import { fileFlatCredentials, writeCredential } from "./credentials";
 import { deepMergeConfig, isPlainObject } from "./deep-merge";
+import { warnDeprecatedConfigKeys } from "./deprecated-keys";
 import { readLearningAliases } from "./learning-aliases";
 import { documentEndpoint, planKeyMoves } from "./migrate-keys";
 import { modelsFileExists, readModelsFile, retireModelsFile } from "./models-file";
@@ -414,6 +415,7 @@ function buildEffectiveConfig(liftedLocalRaw: Record<string, unknown>, sourcePat
       `\`extends\` is Deprecated and is removed in 0.11: copy the inherited settings into this config file${sourcePath ? ` (${sourcePath})` : ""}; \`akm config get <key> --show-source\` shows which come from the base.`,
     );
   }
+  warnDeprecatedConfigKeys(liftedLocalRaw, sourcePath);
   warnUnknownConfigKeys(liftedLocalRaw, sourcePath);
   const parsed = AkmConfigSchema.safeParse(withExtends);
   if (!parsed.success) {

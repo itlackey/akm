@@ -666,8 +666,11 @@ describe("R-015: akm bundle update --all with mixed plain and managed sources", 
 
     expect(result.index.mode).toBe("incremental");
     expect(result.plainSynced).toContainEqual({ id: "local-fs", kind: "filesystem", ref: fsDir });
-    expect((await akmSearch({ query: "currentnarwhalmarker", skipLogging: true })).hits).toHaveLength(1);
-    expect((await akmSearch({ query: "obsoletewalrusmarker", skipLogging: true })).hits).toHaveLength(0);
+    // Search serves the library the update indexed (reads never build one for another primary stash).
+    await withEnv({ AKM_BUNDLE_DIR: fsDir }, async () => {
+      expect((await akmSearch({ query: "currentnarwhalmarker", skipLogging: true })).hits).toHaveLength(1);
+      expect((await akmSearch({ query: "obsoletewalrusmarker", skipLogging: true })).hits).toHaveLength(0);
+    });
   });
 
   test("targeted filesystem update reports an incomplete scan without claiming reconciliation", async () => {

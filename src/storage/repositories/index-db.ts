@@ -9,7 +9,7 @@ import { openExistingDatabase, openReadonlyExistingDatabase } from "./index-conn
 
 /**
  * Busy-timeout (ms) for read-path telemetry writers. Small on purpose: a
- * usage-event insert contending with a background reindex should be dropped,
+ * usage-event insert contending with a running build should be dropped,
  * not waited on for the default 30s.
  */
 export const TELEMETRY_BUSY_TIMEOUT_MS = 250;
@@ -24,7 +24,7 @@ export interface WithIndexDbOptions {
    * Override the connection's `busy_timeout` (the standard pragmas set 30s).
    * Read-path TELEMETRY writers pass a small value (e.g. 250) so a usage-event
    * insert can never stall a `search`/`show`/`curate` command behind a
-   * background reindex holding the write lock — under contention the write is
+   * build holding the write lock — under contention the write is
    * skipped (fire-and-forget) instead of waited for.
    */
   busyTimeoutMs?: number;

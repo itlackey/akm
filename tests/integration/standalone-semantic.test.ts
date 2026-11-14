@@ -4,9 +4,9 @@
  * stash. The binary embeds no native file. Where akm offers local embeddings,
  * `akm setup --yes --embedding local` gets onnxruntime-node's binding and library
  * into akm's cache (from the shared copy in `.ci-cache/akm/onnxruntime/` when a
- * run has kept one, else from the npm registry) and the model, and
- * `akm index --full` reports a ready status, a vector for every entry and the
- * `onnxruntime-node` runtime. Everywhere else the same setup warns and saves
+ * run has kept one, else from the npm registry) and the model, and builds the
+ * index: `akm health` then reports semantic search ready, a vector for every
+ * entry and the `onnxruntime-node` runtime that embedded them. Everywhere else the same setup warns and saves
  * keyword search; with semantic search turned on anyway the index reports it
  * unavailable for the platform, `akm health` warns, and search is keyword.
  *
@@ -97,7 +97,7 @@ describe.skipIf(!SEMANTIC_TESTS)("the standalone binary's semantic search", () =
   });
 
   test.skipIf(!hasLocalEmbeddings())(
-    "setup gets the runtime and the model, and the index embeds a vector per entry on onnxruntime-node",
+    "setup gets the runtime and the model, and builds an index with a vector per entry on onnxruntime-node",
     () => {
       const { storage, cacheDir, akm } = sandbox();
       try {
@@ -115,13 +115,13 @@ describe.skipIf(!SEMANTIC_TESTS)("the standalone binary's semantic search", () =
           ].sort(),
         );
 
-        const index = akm("index", "--full", "--format", "json");
-        expect(index.status, shown(index)).toBe(0);
-        const { verification } = JSON.parse(index.stdout as string) as { verification: Verification };
-        expect(verification.semanticStatus).toBe("ready-js");
-        expect(verification.entryCount).toBeGreaterThan(0);
-        expect(verification.embeddingCount).toBe(verification.entryCount);
-        expect(verification.embeddingRuntime).toBe("onnxruntime-node");
+        // Setup built the index and embedded it; health reads what that build recorded.
+        const health = akm("health", "--no-probe", "--format", "json");
+        const check = (
+          JSON.parse(health.stdout as string) as { hardChecks: { name: string; status: string; message: string }[] }
+        ).hardChecks.find((c) => c.name === "semantic-search");
+        expect(check?.status, shown(health)).toBe("pass");
+        expect(check?.message).toBe("Semantic search ready (5/5 embeddings on onnxruntime-node).");
       } finally {
         storage.cleanup();
       }

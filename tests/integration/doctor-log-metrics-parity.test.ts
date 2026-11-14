@@ -13,6 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { openStateDatabase } from "../../src/core/state-db";
 import { upsertTaskHistory } from "../../src/storage/repositories/task-history-repository";
+import { withoutBundleDirNotice } from "../_helpers/bundle-dir-notice";
 import { withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
 const CLI = path.resolve(import.meta.dir, "../../src/cli.ts");
@@ -35,7 +36,7 @@ function akm(args: string[]) {
     timeout: 60_000,
     env: { ...process.env, NO_COLOR: "1", AKM_EVENT_SOURCE: undefined },
   });
-  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+  return { status: result.status, stdout: result.stdout, stderr: withoutBundleDirNotice(result.stderr) };
 }
 
 /** Old and new commands give the same stdout and exit code; only the old one prints the notice. */

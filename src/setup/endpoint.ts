@@ -6,6 +6,10 @@
  * The endpoint as a connection stores it: the OpenAI-compatible base URL
  * (`…/v1`), whatever form the user typed it in.
  */
+import { openAiBaseUrl } from "../core/endpoint-url";
+
+/** Ollama's native embedding routes, which the embedder calls as they are (`src/llm/embedders/remote.ts`). */
+const OLLAMA_EMBED_ROUTE = /\/api\/embed(?:dings)?$/;
 
 /** The base URL for `input`, or a thrown Error saying what is wrong with it. */
 export function normalizeEndpoint(input: string): string {
@@ -18,8 +22,12 @@ export function normalizeEndpoint(input: string): string {
   if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("endpoint must use http or https");
   if (url.username || url.password || url.search || url.hash)
     throw new Error("endpoint cannot contain credentials, query, or fragment");
-  let pathname = url.pathname.replace(/\/+$/, "").replace(/\/chat\/completions$/, "");
-  if (!pathname.endsWith("/v1") && !pathname.includes("/openai")) pathname += "/v1";
+  let pathname = url.pathname.replace(/\/+$/, "");
+  if (!OLLAMA_EMBED_ROUTE.test(pathname)) {
+    // An operation URL (`…/chat/completions`, `…/embeddings`) names its base.
+    pathname = new URL(openAiBaseUrl(url.toString())).pathname.replace(/\/+$/, "");
+    if (!pathname.endsWith("/v1") && !pathname.includes("/openai")) pathname += "/v1";
+  }
   url.pathname = pathname;
   return url.toString().replace(/\/$/, "");
 }

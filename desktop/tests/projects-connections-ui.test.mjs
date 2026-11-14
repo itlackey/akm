@@ -158,11 +158,12 @@ test("Projects: list, overview with counts, assets, add, edit, rename, remove; u
   await expect(page).toHaveURL(/\/settings\/connections\?add$/);
   await page.goto(`${server.origin}/settings/config`);
   const sections = page.getByRole("navigation", { name: "Configuration sections" });
-  await expect(sections.getByRole("link")).toHaveCount(4);
+  await expect(sections.getByRole("link")).toHaveCount(5);
   assert.deepEqual(await sections.getByRole("link").allInnerTexts(), [
     "Library defaults",
     "Search",
     "Command output",
+    "Embeddings",
     "Advanced",
   ]);
   assert.deepEqual(errors, []);

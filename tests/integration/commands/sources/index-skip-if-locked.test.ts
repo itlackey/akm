@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm index --skip-if-locked` (#956) — mirrors
+ * `akm index --skip-if-locked` (#956) and the wait a plain `akm index` does instead — mirrors
  * `tests/integration/commands/improve/improve-skip-if-locked.test.ts`.
  * Integration-scoped (ORG-03/06): drives the real CLI via `runCliCapture`,
  * which opens a real index.db.
@@ -14,6 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { saveConfig } from "../../../../src/core/config/config";
 import { getIndexRebuildLockPath } from "../../../../src/core/paths";
+import { _setIndexBuildWaitTimingForTests } from "../../../../src/indexer/index-build";
 import { runCliCapture } from "../../../_helpers/cli";
 import { type Cleanup, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 
@@ -57,17 +58,34 @@ describe("akm index — skip-if-locked", () => {
     expect(JSON.parse(fs.readFileSync(lockPath, "utf8")).pid).toBe(process.pid);
   });
 
-  test("without the flag, a held lock warns and the run proceeds unlocked (contends)", async () => {
-    plantHeldRebuildLock();
+  test("without the flag, a held lock makes the run wait, with a notice, then build once it is released", async () => {
+    const lockPath = plantHeldRebuildLock();
+    const run = runCliCapture(["index", "--full", "--format=json"]);
+    // The run is waiting, not building beside the holder.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(fs.existsSync(getIndexRebuildLockPath())).toBe(true);
+    expect(JSON.parse(fs.readFileSync(lockPath, "utf8")).pid).toBe(process.pid);
+    fs.rmSync(lockPath);
 
-    const result = await runCliCapture(["index", "--full", "--format=json"]);
-
+    const result = await run;
     expect(result.code).toBe(0);
-    expect(result.stderr).toMatch(/another index run is active/);
-    expect(result.stderr).toMatch(/--skip-if-locked/);
     const parsed = JSON.parse(result.stdout);
     expect(parsed.skipped).toBeUndefined();
     expect(typeof parsed.totalEntries).toBe("number");
+    // The waiter took the lock to build and released it on exit.
+    expect(fs.existsSync(getIndexRebuildLockPath())).toBe(false);
+  });
+
+  test("without the flag, a lock that stays held past the wait bound fails with exit 75 INDEX_DB_CONTENDED", async () => {
+    plantHeldRebuildLock();
+    _setIndexBuildWaitTimingForTests({ maxWaitMs: 300, noticeIntervalMs: 100 });
+    try {
+      const result = await runCliCapture(["index", "--full", "--format=json"]);
+      expect(result.code).toBe(75);
+      expect(JSON.parse(result.stderr.slice(result.stderr.indexOf("{"))).code).toBe("INDEX_DB_CONTENDED");
+    } finally {
+      _setIndexBuildWaitTimingForTests(undefined);
+    }
   });
 
   test("a lock left by a dead pid is reclaimed silently and the run acquires it", async () => {

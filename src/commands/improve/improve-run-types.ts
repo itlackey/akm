@@ -16,7 +16,6 @@ import type {
   ImprovePlanGate,
 } from "../../core/improve-types";
 import type { ResolvedWriteTarget } from "../../core/write-source";
-import type { EnsureIndexOptions } from "../../indexer/ensure-index";
 import type { MemoryInferenceResult, runMemoryInferencePass } from "../../indexer/passes/memory-inference";
 import type { SessionLogHarness } from "../../integrations/session-logs/types";
 import type { saveGitStash } from "../../sources/providers/git";
@@ -33,6 +32,9 @@ export type ImproveScope = ReturnType<typeof resolveImproveScope>;
 
 type ReflectFn = (options: NonNullable<Parameters<typeof akmReflect>[0]>) => Promise<AkmReflectResult>;
 type DistillFn = (options: NonNullable<Parameters<typeof akmDistill>[0]>) => Promise<AkmDistillResult>;
+
+/** Improve's index build: its pre-run index and its reindex after memory cleanup. */
+export type ReindexFn = (options: { stashDir: string; signal?: AbortSignal; implicit?: boolean }) => Promise<unknown>;
 
 export interface AkmImproveOptions {
   scope?: string;
@@ -75,8 +77,8 @@ export interface AkmImproveOptions {
   extractCandidateCountFn?: (...args: Parameters<typeof countNewExtractCandidates>) => number | Promise<number>;
   /** Session-log harnesses for both the `minNewSessions` gate and the extract pass. */
   extractHarnesses?: SessionLogHarness[];
-  ensureIndexFn?: (stashDir: string, options?: EnsureIndexOptions) => Promise<unknown>;
-  reindexFn?: (options: { stashDir: string; signal?: AbortSignal }) => Promise<unknown>;
+  /** Builds the index. `Promise<unknown>` keeps test stubs simple; the default is `buildIndex(options, "try")`. */
+  reindexFn?: ReindexFn;
   drainProposalsFn?: typeof drainProposals;
   saveGitStashFn?: typeof saveGitStash;
 }

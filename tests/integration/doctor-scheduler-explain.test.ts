@@ -17,6 +17,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { withoutBundleDirNotice } from "../_helpers/bundle-dir-notice";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../_helpers/sandbox";
 
 const CLI = path.resolve(import.meta.dir, "../../src/cli.ts");
@@ -41,7 +42,7 @@ afterEach(() => {
 });
 
 function run(args: string[]) {
-  return spawnSync("bun", [CLI, ...args, "--format", "json"], {
+  const result = spawnSync("bun", [CLI, ...args, "--format", "json"], {
     encoding: "utf8",
     env: {
       ...process.env,
@@ -53,6 +54,7 @@ function run(args: string[]) {
     },
     timeout: 60000,
   });
+  return { ...result, stderr: withoutBundleDirNotice(result.stderr) };
 }
 const notices = (stderr: string) => stderr.split("\n").filter((line) => line.includes("[deprecated]"));
 
