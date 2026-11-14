@@ -52,7 +52,7 @@ import {
   deleteEntriesByDirAndBundle,
   deleteEntriesByDirExceptRefs,
   deleteEntriesByIds,
-  deleteEntriesOutsideDirs,
+  deleteEntriesOutsideLibrary,
   deleteUsageEventsForEntries,
   findEntryIdByRef,
   getAllEntries,
@@ -1385,11 +1385,12 @@ function persistDirRecords(
   const findPersisted = db.prepare("SELECT id, content_hash, file_path, adapter_id FROM entries WHERE item_ref = ?");
 
   const persist = (): void => {
-    // Entries are about to describe another library: the old watermark and the old library's rows are not theirs.
+    // Entries are about to describe another library: the old watermark and the rows of bundles it no longer has are not theirs.
     // The rows go in this transaction, so the marker never names a library whose index still serves another's.
     if (getMeta(db, "stashDir") !== library.stashDir) {
       deleteMeta(db, "builtAt");
-      addDeletedEntries(deletedEntries, deleteEntriesOutsideDirs(db, library.sourceDirs));
+      const bundleIds = new Set([...bundleByRoot.values()].map((bundle) => bundle.bundleId));
+      addDeletedEntries(deletedEntries, deleteEntriesOutsideLibrary(db, library.sourceDirs, bundleIds));
     }
     setMeta(db, "stashDir", library.stashDir);
     setMeta(db, "stashDirs", JSON.stringify(library.sourceDirs));
