@@ -386,6 +386,20 @@ async function prepareLocalEmbeddings(config: AkmConfig, noProbe: boolean | unde
   return `blocked: ${result.message}`;
 }
 
+/**
+ * Build the index for the library a non-interactive setup just configured, so a search works straight away
+ * (reads never build). A missing library directory (`--no-init`) has nothing to index; a failed build never
+ * fails setup.
+ */
+async function indexConfiguredLibrary(stashDir: string): Promise<void> {
+  if (!fs.existsSync(stashDir)) return;
+  try {
+    await buildIndex({ stashDir }, "wait");
+  } catch (err) {
+    warn(`[akm setup] The search index was not built (${toErrorMessage(err)}); run \`akm index\` to build it.`);
+  }
+}
+
 /** The wizard's offer to fetch what akm's own agent runtime runs, when the saved config runs agent work there. */
 async function offerAgentRuntimeFetch(config: AkmConfig): Promise<void> {
   if (processRow(config, "agents")?.kind !== "connection") return;
@@ -809,6 +823,7 @@ export async function runSetupWithDefaults(opts: {
     return akmInit({ dir: stashDir, setDefault: true, persistConfig: false });
   });
   const semanticAssets = await prepareLocalEmbeddings(savedConfig, opts.noProbe);
+  await indexConfiguredLibrary(stashDir);
 
   return {
     configPath: getConfigPath(),
@@ -948,6 +963,7 @@ export async function runSetupFromConfig(opts: {
     return akmInit({ dir: stashDir, setDefault: true, persistConfig: false });
   });
   const semanticAssets = await prepareLocalEmbeddings(savedConfig, opts.noProbe);
+  await indexConfiguredLibrary(stashDir);
 
   return {
     configPath: getConfigPath(),

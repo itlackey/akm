@@ -370,7 +370,9 @@ describe("runSetupWithDefaults — idempotency", () => {
     const result = await runSetupWithDefaults({ noInit: false });
     expect(result.stashCreated).toBe(true);
     expect(fs.existsSync(getConfigPath())).toBe(true);
-    expect(fs.existsSync(backupDir())).toBe(false);
+    // Setup's own write has no previous config to back up; the one backup is the index build's adapter-detection
+    // write that follows it.
+    expect(fs.readdirSync(backupDir()).filter((n) => n !== "config.latest.json")).toHaveLength(1);
   });
 
   test("rejects an invalid connection before config or stash side effects", async () => {

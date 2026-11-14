@@ -12,6 +12,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { akmSearch } from "../../src/commands/read/search";
 import { _setAkmInitForTests } from "../../src/commands/sources/init";
 import type { EmbeddingConnectionConfig } from "../../src/core/config/config";
 import { loadUserConfig, resetConfigCache } from "../../src/core/config/config";
@@ -502,7 +503,7 @@ describe("akm setup --embedding", () => {
     expect(written().semanticSearchMode).toBe("off");
     expect(summary.semanticAssets).toBeUndefined();
     expect(checked).toEqual([]);
-    expect(warnings).toEqual([
+    expect(warnings.filter((w) => w.startsWith("[akm setup]"))).toEqual([
       expect.stringMatching(
         /^\[akm setup\] Local embeddings are not available on \S+-ia32; choose a remote endpoint or keyword search\. --embedding local is ignored: semantic search stays off\.$/,
       ),
@@ -560,5 +561,25 @@ describe("akm setup --from <file> --yes with answer flags", () => {
     expect(written().output).toEqual({ format: "text", detail: "brief" });
     expect((written().connections as Record<string, unknown>).default).toBeDefined();
     expect(summary.fields).toEqual(["output"]);
+  });
+});
+
+describe("akm setup --yes builds the index", () => {
+  test("a search finds an asset of the configured library without running `akm index`", async () => {
+    fs.mkdirSync(path.join(storage.stashDir, "memories"), { recursive: true });
+    fs.writeFileSync(
+      path.join(storage.stashDir, "memories", "quokka-habits.md"),
+      "---\ndescription: quokka habits\n---\n\n# quokka habits\n\nQuokkas nap in the afternoon.\n",
+    );
+
+    await runSetupWithDefaults({
+      dir: storage.stashDir,
+      noInit: true,
+      noProbe: true,
+      flags: flags({ embedding: "off" }),
+    });
+
+    const result = await akmSearch({ query: "quokka", skipLogging: true });
+    expect(result.hits.flatMap((hit) => ("ref" in hit ? [hit.ref] : []))).toContain("memories/quokka-habits");
   });
 });
