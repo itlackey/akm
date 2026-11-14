@@ -5,9 +5,9 @@
 import fs from "node:fs";
 import { parseBundleRef } from "../../core/asset/asset-ref";
 import { loadConfig } from "../../core/config/config";
+import { readUsableIndex } from "../../indexer/index-readiness";
 import { applyEntryFilters } from "../../indexer/search/db-search";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
-import { closeDatabase, openReadonlyExistingDatabase } from "../../storage/repositories/index-connection";
 import {
   getEntriesByIds,
   getEntryIdByFilePath,
@@ -36,9 +36,7 @@ export async function akmRelated(ref: string, scope: RelatedScope = "all") {
   if (shown.type === "env" || shown.type === "secret")
     return unavailable("This asset has no comparable indexed content.");
   const file = shown.path;
-  const db = openReadonlyExistingDatabase();
-  if (!db) return unavailable("No index is available. Build the AKM index to compare stored embeddings.");
-  try {
+  return readUsableIndex((db) => {
     const id = file ? getEntryIdByFilePath(db, file) : undefined;
     const bundle = id === undefined ? undefined : parseBundleRef(getItemRefById(db, id) ?? "").bundle;
     if (id === undefined || !bundle || !hasStoredEmbedding(db, id))
@@ -89,7 +87,5 @@ export async function akmRelated(ref: string, scope: RelatedScope = "all") {
       matches,
       note: `Up to ${RELATED_LIMIT} nearest stored embeddings. Scores describe indexed content; refresh the index after external edits.`,
     };
-  } finally {
-    closeDatabase(db);
-  }
+  }, unavailable("No index is available. Build the AKM index to compare stored embeddings."));
 }

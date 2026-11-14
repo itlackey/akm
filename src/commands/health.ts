@@ -10,6 +10,8 @@ import { ConfigError, rethrowIfTestIsolationError, UsageError } from "../core/er
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
 import { getConfigPath, getDataDir, getDbPath, getStateDbPathInDataDir } from "../core/paths";
 import {
+  classifyStateDbError,
+  isStateDbCorruption,
   listExistingTableNames,
   listPendingStateMigrations,
   openStateDatabaseWithReport,
@@ -687,29 +689,6 @@ function degradedStateDbReport(hardCheck: HealthCheckResult, options: AkmHealthO
   };
 }
 
-/** SQLite refused the file: garbage, a truncated copy, or a non-database file left where state.db belongs. */
-function isNotADatabase(error: unknown): boolean {
-  return (
-    (error as { code?: unknown } | undefined)?.code === "SQLITE_NOTADB" ||
-    /not a database/i.test(error instanceof Error ? error.message : String(error))
-  );
-}
-
-function corruptStateDbCheck(stateDbPath: string, detail: string): HealthCheckResult {
-  return {
-    name: "state-db-readable",
-    kind: "deterministic",
-    status: "fail",
-    confidence: "high",
-    message:
-      `state.db at ${stateDbPath} is not a SQLite database (${detail}). Every other health check is skipped because ` +
-      'none of them can read it. Repair: back up state.db, run `sqlite3 -readonly state.db ".recover" | sqlite3 state.new.db`, ' +
-      "stop every akm process, delete state.db-wal and state.db-shm, then swap state.new.db in as state.db; if nothing " +
-      "can be recovered, move state.db aside and the next akm command creates a new one.",
-    evidence: { path: stateDbPath, detail },
-  };
-}
-
 function unreadableStateDbCheck(detail: string): HealthCheckResult {
   return {
     name: "state-db-readable",
@@ -776,12 +755,8 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
     if (access === "inaccessible") {
       return degradedStateDbReport(unreadableStateDbCheck(describeInaccessiblePath(stateDbPath, code)), options);
     }
-    if (isNotADatabase(error)) {
-      return degradedStateDbReport(
-        corruptStateDbCheck(stateDbPath, error instanceof Error ? error.message : String(error)),
-        options,
-      );
-    }
+    // Damaged state.db: the classified error names the file and the repair.
+    if (isStateDbCorruption(error)) throw classifyStateDbError(error, stateDbPath);
     // A migration that failed to apply rolled back and is still pending:
     // name it from a read-only listing (which never applies anything) rather
     // than pattern-matching the error text. A ledger too broken to enumerate

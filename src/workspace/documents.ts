@@ -25,7 +25,7 @@ import { appendEvent } from "../core/events";
 import { resolveBundleWriteTarget } from "../core/mutation-target";
 import { warn } from "../core/warn";
 import { assertAkmAssetWrite } from "../core/write-source";
-import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
+import { readUsableIndex } from "../indexer/index-readiness";
 import { getEntryIdByFilePath, getItemRefById } from "../storage/repositories/index-entries-repository";
 import { interactive } from "./lease";
 import { redactUrlsInText } from "./redact";
@@ -41,16 +41,10 @@ async function resolveWritableIndexedAsset(ref: string) {
   }
   const shown = await akmShowUnified({ ref, readOnly: true });
   if (!shown.path) throw new UsageError("The document has no local source file.");
-  const db = openReadonlyExistingDatabase();
-  let canonical: string | undefined;
-  if (db) {
-    try {
-      const id = getEntryIdByFilePath(db, shown.path);
-      canonical = id === undefined ? undefined : (getItemRefById(db, id) ?? undefined);
-    } finally {
-      closeDatabase(db);
-    }
-  }
+  const canonical = readUsableIndex((db) => {
+    const id = getEntryIdByFilePath(db, shown.path as string);
+    return id === undefined ? undefined : (getItemRefById(db, id) ?? undefined);
+  }, undefined);
   if (!canonical) throw new UsageError("Only indexed documents can be edited.");
   const target = resolveBundleWriteTarget(loadConfig(), parseBundleRef(canonical).bundle!);
   assertAkmAssetWrite(target.source);

@@ -71,6 +71,7 @@ import {
 } from "../storage/sqlite-migrations";
 import { applyReadonlyPragmas } from "../storage/sqlite-pragmas";
 import { pkgVersion } from "../version";
+import { ConfigError } from "./errors";
 import { getDataDir } from "./paths";
 import { getStateMigrationSafety, STATE_MIGRATIONS } from "./state/migrations";
 import { warnOnce } from "./warn";
@@ -158,16 +159,48 @@ function migrateStateDatabase(db: Database, dbPath: string): StateDatabaseMigrat
   return backupPath ? { applied, backupPath } : { applied };
 }
 
+/** SQLite refused the file as a database, or found its pages damaged or missing: garbage, zero-filled, truncated. */
+export function isStateDbCorruption(error: unknown): boolean {
+  const code = (error as { code?: unknown } | undefined)?.code;
+  if (code === "SQLITE_NOTADB" || code === "SQLITE_CORRUPT" || code === "SQLITE_IOERR_SHORT_READ") return true;
+  return /not a database|disk image is malformed|SQLITE_CORRUPT/i.test(
+    error instanceof Error ? error.message : String(error),
+  );
+}
+
+/**
+ * The one error every state.db reader raises for a damaged file. state.db holds
+ * what akm cannot regenerate, so a damaged file is never "no rows": it is a
+ * configuration error (exit 78) that names the file. Other errors pass through.
+ */
+export function classifyStateDbError(error: unknown, dbPath: string): unknown {
+  if (error instanceof ConfigError || !isStateDbCorruption(error)) return error;
+  return damagedStateDbError(dbPath, error instanceof Error ? error.message : String(error));
+}
+
+export function damagedStateDbError(dbPath: string, detail: string): ConfigError {
+  return new ConfigError(
+    `state.db at ${dbPath} is damaged (${detail}).`,
+    "INVALID_CONFIG_FILE",
+    "state.db holds non-regenerable state. Back it up, then recover it with " +
+      '`sqlite3 -readonly state.db ".recover" | sqlite3 state.new.db`, or restore a copy; if nothing can be recovered, move it aside and the next akm command creates a new one.',
+  );
+}
+
 function openAndMigrate(dbPath: string): StateDatabaseMigrationReport & { db: Database } {
   let report: StateDatabaseMigrationReport = { applied: [] };
-  const db = openManagedDatabase({
-    path: dbPath,
-    pragmas: { dataDir: path.dirname(dbPath) },
-    init: (handle) => {
-      report = migrateStateDatabase(handle, dbPath);
-    },
-  });
-  return { db, ...report };
+  try {
+    const db = openManagedDatabase({
+      path: dbPath,
+      pragmas: { dataDir: path.dirname(dbPath) },
+      init: (handle) => {
+        report = migrateStateDatabase(handle, dbPath);
+      },
+    });
+    return { db, ...report };
+  } catch (error) {
+    throw classifyStateDbError(error, dbPath);
+  }
 }
 
 /**
@@ -213,13 +246,17 @@ export function listPendingStateMigrations(dbPath: string = getStateDbPath()): s
  */
 export function withReadonlyStateDb<T>(fn: (db: Database) => T, fallback: T): T {
   const dbPath = getStateDbPath();
-  if (!fs.existsSync(dbPath) || listPendingStateMigrations(dbPath).length > 0) return fallback;
-  const db = openDatabase(dbPath, { readonly: true, create: false });
   try {
-    applyReadonlyPragmas(db);
-    return fn(db);
-  } finally {
-    db.close();
+    if (!fs.existsSync(dbPath) || listPendingStateMigrations(dbPath).length > 0) return fallback;
+    const db = openDatabase(dbPath, { readonly: true, create: false });
+    try {
+      applyReadonlyPragmas(db);
+      return fn(db);
+    } finally {
+      db.close();
+    }
+  } catch (error) {
+    throw classifyStateDbError(error, dbPath);
   }
 }
 

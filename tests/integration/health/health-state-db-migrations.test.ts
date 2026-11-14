@@ -113,17 +113,15 @@ test("a current, freshly-created state.db reports pass with no pending migration
   expect(check.evidence?.pending).toEqual([]);
 });
 
-test("a file that is not a SQLite database is a failing state-db-readable check with repair steps, not a config error (F11)", async () => {
+test("a file that is not a SQLite database is the classified state.db error (exit 78) naming the file", async () => {
   const file = getStateDbPath();
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, "garbage garbage garbage\n");
 
-  const result = await akmHealth();
-  expect(result.status).toBe("fail");
-  expect(result.hardChecks.map((check) => check.name)).toEqual(["state-db-readable"]);
-  expect(result.hardChecks[0]?.message).toContain("is not a SQLite database");
-  expect(result.hardChecks[0]?.message).toContain(".recover");
+  await expect(akmHealth()).rejects.toThrow(file);
 
-  const { code } = await runCliCapture(["health", "--format", "json"]);
-  expect(code).toBe(EXIT_CODES.GENERAL);
+  const { code, stdout, stderr } = await runCliCapture(["health", "--format", "json"]);
+  expect(code).toBe(EXIT_CODES.CONFIG);
+  expect(stdout + stderr).toContain(file);
+  expect(stdout + stderr).toContain(".recover");
 });
