@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - `akm lint <file>` checks one file with the same rules the bundle lint applies to it, and returns the same result. A file inside a bundle takes its type from where it sits; a file outside every bundle needs `--type`, for example `akm lint ./nightly.yml --type tasks`, which checks a draft task file without installing it. Checks that need other files, such as broken refs, run only for a file inside a bundle. `--fix` changes only that file; `--prune-dangling-edges` with a file is a usage error.
+- AKM Desktop, Settings, Configuration, Embeddings: choose the embedding model without editing config.json: the built-in embedder (offered only where akm has it), a model served by the default connection, or a remote endpoint with its model and API key. It saves what `akm setup` saves for the same choice (the endpoint normalized to `…/v1`) and turns semantic search on. A `$VAR` key is the block's `apiKey`; a typed key is stored in `credentials.json` for that endpoint and never shown again. `akm-cli/workspace`: new `config.saveEmbedding({ kind, model, endpoint, key })`, and `config.get()` gains `localEmbeddings` and `embeddingKeyEndpoint` (the endpoint the stored key belongs to, never the key).
 
 ### Changed
 
@@ -25,6 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `akm setup` (and AKM Desktop) no longer discard the `embedding` block's other settings when the embedder changes. Where it runs (`endpoint`, `model`, `apiKey`, `provider`) is replaced; settings tied to the model (`dimension`, `queryTemplate`, `documentTemplate`) are kept only while the model is the same; every other key (`batchSize`, `timeoutMs`, `localModel`, …) is kept. The built-in embedder removes the block only when nothing is left in it.
 - An index build no longer spends most of its time rewriting utility scores one commit at a time. The recompute wrote each `utility_scores` row in its own transaction, one disk sync per row; it now writes them all in one, with identical values. On a 20,900-entry library this was about 43 of the 45 seconds of finalize (8,327 syncs, now 1); generating 3,000 rows and counting `fsync` calls gave 3,010 before and 1 after.
 - Concurrent reads on a cold library no longer fail with exit 75 or start several builds at once ([akm-plugins#175](https://github.com/itlackey/akm-plugins/issues/175)): reads do not build.
 - `akm task add --rebind` named `akm import <file> --type task` as its replacement; it now names `akm doctor scheduler sync --rebind`.
