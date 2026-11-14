@@ -147,6 +147,17 @@ describe("reads on a cold library never build", () => {
     expect(readEvents({ type: "index_completed" }).events).toHaveLength(0);
   }, 60_000);
 
+  test("show serves the file while a build has created the index file but not its tables", async () => {
+    seedLibrary();
+    fs.mkdirSync(path.dirname(getDbPath()), { recursive: true });
+    const db = new Database(getDbPath());
+    db.exec("CREATE TABLE index_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    db.close();
+    const show = await cli("show", "knowledge/guide-1", "--format=json");
+    expect({ code: show.code, stderr: show.code === 0 ? "" : show.stderr }).toEqual({ code: 0, stderr: "" });
+    expect(JSON.parse(show.stdout).path).toBe(path.join(storage.stashDir, "knowledge", "guide-1.md"));
+  });
+
   test("reads beside a running `akm index` all exit 0 and the index run is the only build", async () => {
     seedLibrary(40);
     const [indexed, ...reads] = await Promise.all([
@@ -157,7 +168,8 @@ describe("reads on a cold library never build", () => {
       child("show", "knowledge/guide-1", "--format=json"),
     ]);
     expect(indexed.code).toBe(0);
-    for (const read of reads) expect(read.code).toBe(0);
+    for (const read of reads)
+      expect({ code: read.code, stderr: read.code === 0 ? "" : read.stderr }).toEqual({ code: 0, stderr: "" });
     expect(readEvents({ type: "index_completed" }).events).toHaveLength(1);
   }, 60_000);
 });
