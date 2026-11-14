@@ -689,6 +689,19 @@ function degradedStateDbReport(hardCheck: HealthCheckResult, options: AkmHealthO
   };
 }
 
+/** The one failing finding for a damaged state.db, worded by the same classified error every other verb raises. */
+function corruptStateDbCheck(stateDbPath: string, error: unknown): HealthCheckResult {
+  const damaged = classifyStateDbError(error, stateDbPath) as ConfigError;
+  return {
+    name: "state-db-readable",
+    kind: "deterministic",
+    status: "fail",
+    confidence: "high",
+    message: `${damaged.message} ${damaged.hint()} Every other health check is skipped because none of them can read it.`,
+    evidence: { path: stateDbPath, detail: damaged.message },
+  };
+}
+
 function unreadableStateDbCheck(detail: string): HealthCheckResult {
   return {
     name: "state-db-readable",
@@ -755,8 +768,7 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
     if (access === "inaccessible") {
       return degradedStateDbReport(unreadableStateDbCheck(describeInaccessiblePath(stateDbPath, code)), options);
     }
-    // Damaged state.db: the classified error names the file and the repair.
-    if (isStateDbCorruption(error)) throw classifyStateDbError(error, stateDbPath);
+    if (isStateDbCorruption(error)) return degradedStateDbReport(corruptStateDbCheck(stateDbPath, error), options);
     // A migration that failed to apply rolled back and is still pending:
     // name it from a read-only listing (which never applies anything) rather
     // than pattern-matching the error text. A ledger too broken to enumerate

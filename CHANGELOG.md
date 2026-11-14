@@ -9,7 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - The Desktop workspace API (`assets.show`, `assets.related`, `documents.readSource`, the graph) threw `no such table: entries` or `file is not a database` on a first-build, zero-filled or garbage `index.db`; they now treat an index that cannot serve as no index, so `assets.show` answers from the file with `durableRef: null`.
-- A garbage, zero-filled or truncated `state.db` now raises one error everywhere, exit 78 naming the file: `feedback`, `index` and `health` no longer exit 70 or 1, `akm log` / `akm doctor log` no longer return zero events at exit 0, and workspace readers no longer throw a raw SQLite error.
+- A garbage, zero-filled or truncated `state.db` now raises one error, exit 78 naming the file, from every verb except `health`: `feedback` and `index` no longer exit 70, `akm health` reports it as one failing finding (exit 1) for every kind of damage, `akm log` / `akm doctor log` no longer return zero events at exit 0, and workspace readers no longer throw a raw SQLite error.
 
 ## [0.10.261124] - 2026-11-14
 

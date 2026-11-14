@@ -25,7 +25,7 @@ import { appendEvent } from "../core/events";
 import { resolveBundleWriteTarget } from "../core/mutation-target";
 import { warn } from "../core/warn";
 import { assertAkmAssetWrite } from "../core/write-source";
-import { readUsableIndex } from "../indexer/index-readiness";
+import { NO_INDEX_MESSAGE, readUsableIndex } from "../indexer/index-readiness";
 import { getEntryIdByFilePath, getItemRefById } from "../storage/repositories/index-entries-repository";
 import { interactive } from "./lease";
 import { redactUrlsInText } from "./redact";
@@ -44,7 +44,8 @@ async function resolveWritableIndexedAsset(ref: string) {
   const canonical = readUsableIndex((db) => {
     const id = getEntryIdByFilePath(db, shown.path as string);
     return id === undefined ? undefined : (getItemRefById(db, id) ?? undefined);
-  }, undefined);
+  }, null);
+  if (canonical === null) throw new UsageError(NO_INDEX_MESSAGE, "MISSING_REQUIRED_ARGUMENT", "akm index");
   if (!canonical) throw new UsageError("Only indexed documents can be edited.");
   const target = resolveBundleWriteTarget(loadConfig(), parseBundleRef(canonical).bundle!);
   assertAkmAssetWrite(target.source);

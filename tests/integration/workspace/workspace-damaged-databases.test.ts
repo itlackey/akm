@@ -63,7 +63,7 @@ function damage(
 
 describe("index.db that cannot serve", () => {
   for (const how of ["meta-only", "interior", "zero-length", "zero-filled", "garbage"] as const) {
-    test(`${how}: assets.show and assets.related answer from the file, readSource refuses cleanly`, async () => {
+    test(`${how}: assets.show and assets.related answer from the file, readSource says there is no index`, async () => {
       await seed();
       await akmIndex({ stashDir: ctx.storage.stashDir });
       damage(getDbPath(), how);
@@ -74,7 +74,7 @@ describe("index.db that cannot serve", () => {
       expect((await assets.related({ ref: "knowledge/guide" })).available).toBe(false);
       await expectAkmError(documents.readSource({ ref: "knowledge/guide" }), {
         kind: "usage",
-        message: "Only indexed documents can be edited.",
+        message: "no search index for this library yet",
       });
     });
   }
@@ -82,7 +82,7 @@ describe("index.db that cannot serve", () => {
 
 describe("damaged state.db", () => {
   for (const how of ["zero-filled", "garbage", "truncated"] as const) {
-    test(`${how}: assets.show, events, feedback, log and index raise the classified error naming the file`, async () => {
+    test(`${how}: assets.show, events, feedback, log and index raise the classified error naming the file (health reports it as one finding)`, async () => {
       await seed();
       expect((await child(["index"])).code).toBe(0);
       const file = getStateDbPath();
@@ -91,11 +91,14 @@ describe("damaged state.db", () => {
       await expectAkmError(assets.show({ ref: "knowledge/guide" }), { kind: "config", message: file });
       expect(() => readEvents({}, { readOnly: true })).toThrow(file);
 
-      for (const args of [["feedback", "knowledge/guide", "--positive"], ["doctor", "log"], ["index"], ["health"]]) {
+      for (const args of [["feedback", "knowledge/guide", "--positive"], ["doctor", "log"], ["index"]]) {
         const out = await child(args);
         expect(out.code, args.join(" ") + out.stdout + out.stderr).toBe(78);
         expect(out.stdout + out.stderr).toContain(file);
       }
+      const health = await child(["health", "--format", "json"]);
+      expect(health.code).toBe(1);
+      expect(health.stdout).toContain(file);
     });
   }
 });

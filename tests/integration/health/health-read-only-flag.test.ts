@@ -166,24 +166,14 @@ describe.each(["health", "doctor"])("akm %s --read-only", (command) => {
     expect(dataSnapshot()).toEqual(before);
   });
 
-  test.each([
-    false,
-    true,
-  ])("corrupt state is the classified error without repair or replacement (report=%s)", async (report) => {
+  test.each([false, true])("corrupt state is reported without repair or replacement (report=%s)", async (report) => {
     const file = getStateDbPath();
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, "not a sqlite database\n");
     const before = dataSnapshot();
-    const result = await cli(command, [
-      "--read-only",
-      "--no-probe",
-      "--format",
-      "json",
-      "--quiet",
-      ...(report ? ["--report"] : []),
-    ]);
-    expect(result.code).toBe(78);
-    expect(result.stdout + result.stderr).toContain(file);
+    const result = await health(command, ["--read-only", ...(report ? ["--report"] : [])]);
+    expect(result.code).toBe(1);
+    expect(result.data.hardChecks).toMatchObject([{ name: "state-db-readable", status: "fail" }]);
     expect(dataSnapshot()).toEqual(before);
   });
 
