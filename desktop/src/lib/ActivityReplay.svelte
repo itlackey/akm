@@ -5,53 +5,35 @@
 -->
 
 <script lang="ts">
+  // A period of searches, reads and feedback, played back: a timeline of events by kind with a playhead, the library
+  // mind map lighting up the tags each event touches, and the events as a log. It opens at the end of the period with
+  // every figure full; clicking or dragging the timeline moves the playhead.
   import { onDestroy } from "svelte";
   import { api } from "./client";
-  import GraphView from "./GraphView.svelte";
-  import {
-    type Arrangement,
-    buildGraph,
-    edgePairs,
-    type GraphPayload,
-    type LibraryGraph,
-    legendRows,
-    openingArrangement,
-  } from "./graph-model";
+  import { buildOverview, mindMap, type Overview, type OverviewPayload } from "./library-overview";
   import { searchHref } from "./library-model";
+  import MindMap from "./MindMap.svelte";
   import {
     advance,
     axisLabels,
     describe,
-    emitterAt,
-    emitterRing,
-    MAX_PULSES,
-    PULSE_PX,
-    PULSE_SECONDS,
-    PULSE_TOKENS,
+    KINDS,
+    kindBins,
     playText,
-    pulseOf,
-    replayBins,
     replaySteps,
-    replayState,
     type ReplayStep,
     SCRUB_STEP,
     SPEEDS,
-    scaleText,
     scrubTime,
     stampText,
     totalsAt,
     truncationNote,
     type UsageEventRow,
-    undrawn,
-    undrawnText,
     usedList,
   } from "./replay-model";
 
-  // biome-ignore lint/suspicious/noExplicitAny: the renderer is untyped presentation code.
-  type View = any;
   let period = $state<"24h" | "7d">("24h");
-  let graph = $state.raw<LibraryGraph | null>(null);
-  let arrange = $state<Arrangement>("bundle");
+  let o = $state.raw<Overview | null>(null);
   let steps = $state.raw<ReplayStep[]>([]);
   let range = $state<{ since: string; until: string } | null>(null);
   let truncated = $state(false);
@@ -59,83 +41,90 @@
   let unavailable = $state("");
   let error = $state("");
   let loading = $state(true);
-  let data: Record<string, unknown> | null = $state.raw(null);
   /** The replay opens at the end of the period, with every figure full. */
   let clock = $state(0);
   let playing = $state(false);
   let speed = $state(1);
-  let view: View;
-  let colours: Uint8Array;
-  let used: Uint8Array;
-  let drawn: Uint8Array;
-  let cursor = 0;
-  let positions: Float32Array;
-  let ring = emitterRing([], []);
-  let unusedInk: number[] = [];
-  let slots: number[][] = [];
-  let pulseInk: Record<string, number[]> = {};
-  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let selected = $state("");
 
   const start = $derived(range ? Date.parse(range.since) : 0);
   const end = $derived(range ? Date.parse(range.until) : 0);
   const span = $derived(end - start);
-  const bins = $derived(replayBins(steps, start, end));
   const totals = $derived(totalsAt(steps, clock));
   const axis = $derived(axisLabels(start, end));
-  const mostUsed = $derived(usedList(steps, clock, 8));
-  const notDrawn = $derived(graph ? undrawnText(undrawn(steps, graph, arrange), arrange) : "");
+  const timeline = $derived(kindBins(steps, start, end));
+  const mostUsed = $derived(usedList(steps, clock, 6));
   const cutNote = $derived(truncationNote(truncated, steps[0]?.t));
-  const types = $derived(graph ? legendRows(graph, "family") : []);
   const recent = $derived.by(() => {
     const out: ReplayStep[] = [];
-    for (let i = steps.length - 1; i >= 0 && out.length < 8; i--)
+    for (let i = steps.length - 1; i >= 0 && out.length < 14; i--)
       if (steps[i]!.t <= clock && steps[i]!.kind !== "hit") out.push(steps[i]!);
     return out;
   });
 
-  /** The map is drawn once, from the library as the page first read it; a new Period reads only the events. */
-  let graphOnce: Promise<LibraryGraph | null> | null = null;
-  /** A new graph gets a new renderer: its buffers are sized and ordered for the graph it was made with. */
-  let mapKey = $state(0);
-  async function readGraph(): Promise<LibraryGraph | null> {
-    const payload = await api<GraphPayload>("/graph");
+  // ---- The mind map of the assets the period's events touched, its bars counting the events on each type and tag ----
+  const touched = $derived(new Set(steps.filter((s) => s.node >= 0 && s.kind !== "hit").map((s) => s.node)));
+  const branches = $derived(
+    o
+      ? mindMap(
+          o,
+          30,
+          [...touched].sort((a, b) => a - b),
+        )
+      : [],
+  );
+  /** The types and tags each asset is under on the map. */
+  const keysOf = $derived.by(() => {
+    const keys = new Map<number, string[]>();
+    for (const b of branches)
+      for (const k of [b.key, ...b.leaves.map((l) => l.key)])
+        for (const i of k === b.key ? b.members : b.leaves.find((l) => l.key === k)!.members) {
+          if (!keys.has(i)) keys.set(i, []);
+          keys.get(i)!.push(k);
+        }
+    return keys;
+  });
+  /** Events so far on each type and tag (search hits are part of their search, not counted). */
+  function countsAt(t: number) {
+    const counts = new Map<string, number>();
+    for (const step of steps) {
+      if (step.t > t) break;
+      if (step.node < 0 || step.kind === "hit") continue;
+      for (const k of keysOf.get(step.node) ?? []) counts.set(k, (counts.get(k) ?? 0) + 1);
+    }
+    return counts;
+  }
+  const counts = $derived(countsAt(clock));
+  /** The bars share the scale of the busiest tag over the whole period, so they grow as it plays. */
+  const most = $derived.by(() => {
+    const full = countsAt(end);
+    return Math.max(1, ...branches.flatMap((b) => b.leaves.map((l) => full.get(l.key) ?? 0)));
+  });
+  const eventsText = (n: number) => (n ? `${n.toLocaleString()} event${n === 1 ? "" : "s"}` : "");
+  const offMap = $derived(
+    steps.filter((s) => s.t <= clock && s.kind !== "hit" && s.ref && (s.node < 0 || !keysOf.has(s.node))).length,
+  );
+
+  /** The latest load: a response to an earlier one (an earlier Period) changes nothing. */
+  let generation = 0;
+  let overviewOnce: Promise<Overview | null> | null = null;
+  async function readOverview(): Promise<Overview | null> {
+    const payload = await api<OverviewPayload>("/graph");
     if (!payload.available) {
       unavailable = payload.note;
       return null;
     }
-    const built = buildGraph(payload);
-    arrange = openingArrangement(built);
-    positions = Float32Array.from(arrange === "meaning" ? built.meaning! : built.byBundle);
-    colours = new Uint8Array(built.count * 4);
-    used = new Uint8Array(built.count);
-    drawn = replayState(built, arrange, used);
-    data = {
-      count: built.count,
-      pos: positions,
-      color: colours,
-      // Size means reads in the map; here every asset is the same size, so only the ring says "used".
-      size: new Float32Array(built.count),
-      edges: edgePairs(built, () => true),
-      anchors: arrange === "bundle" ? built.bundleAnchors : [],
-      label: (i: number) => built.name(i),
-    };
-    view = null;
-    mapKey++;
-    graph = built;
-    return built;
+    return buildOverview(payload);
   }
-
-  /** The latest load: a response to an earlier one (an earlier Period) changes nothing. */
-  let generation = 0;
   async function load() {
     const mine = ++generation;
     loading = true;
     error = "";
     pause();
     try {
-      graphOnce ??= readGraph();
+      overviewOnce ??= readOverview();
       const [built, events] = await Promise.all([
-        graphOnce,
+        overviewOnce,
         api<{
           available: boolean;
           window: { since: string; until: string };
@@ -147,12 +136,13 @@
       if (!built) return;
       unavailable =
         events.available === false ? "Usage events are not recorded here yet, so there is nothing to replay." : "";
-      steps = replaySteps(events.events, built.index);
+      o = built;
+      steps = replaySteps(events.events, new Map(built.ref.map((ref, i) => [ref, i])));
       range = events.window;
       truncated = events.truncated;
-      seek(Date.parse(events.window.until));
+      clock = Date.parse(events.window.until);
     } catch (cause) {
-      graphOnce = null;
+      overviewOnce = null;
       if (mine === generation) error = (cause as Error).message;
     } finally {
       if (mine === generation) loading = false;
@@ -163,101 +153,19 @@
     void load();
   });
 
-  function readTokens(read: (token: string) => number[]) {
-    slots = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => read(`--map-${n}`));
-    unusedInk = read("--use-0");
-    pulseInk = Object.fromEntries(Object.entries(PULSE_TOKENS).map(([kind, token]) => [kind, read(token)]));
-    if (view) paint();
-  }
-  /** Used assets in their type's colour (and ringed by their state), the rest in the quietest mark. */
-  function paint() {
-    if (!graph || !view) return;
-    for (let i = 0; i < graph.count; i++) {
-      colours.set(used[i] ? slots[graph.family[i]!]! : unusedInk, i * 4);
-      colours[i * 4 + 3] = 255;
-    }
-    view.setColors(colours);
-  }
-  function refresh() {
-    if (!graph || !view) return;
-    drawn = replayState(graph, arrange, used);
-    view.setState(drawn);
-    paint();
-  }
-
-  /** Move to `t`: the totals and the used assets are recomputed; nothing animates. */
   function seek(t: number) {
     clock = Math.max(start, Math.min(end, t));
-    if (!graph) return;
-    used.fill(0);
-    for (cursor = 0; cursor < steps.length && steps[cursor]!.t <= clock; cursor++) {
-      const step = steps[cursor]!;
-      if (step.node >= 0 && step.kind !== "hit") used[step.node] = 1;
-    }
-    if (view) {
-      view.particles = [];
-      view.animating = false;
-      refresh();
-    }
   }
-
-  /** Play one event on the map; true when it made an asset used for the first time. */
-  function apply(step: ReplayStep): boolean {
-    if (step.node < 0 || !graph || drawn[step.node] === 3) return false;
-    const first = step.kind !== "hit" && !used[step.node];
-    if (step.kind !== "hit") used[step.node] = 1;
-    const pulse = pulseOf(step);
-    // Reduced motion: no pulses, state changes snap.
-    if (pulse && view && !reduced && view.particles.length < MAX_PULSES) {
-      const at = Math.max(0, bins.actors.indexOf(step.actor));
-      view.particles.push({
-        fromPos: emitterAt(ring, at, bins.actors.length),
-        to: step.node,
-        t: 0,
-        color: pulseInk[pulse.kind],
-        size: pulse.size,
-        arc: ring.arc,
-      });
-      view.animating = true;
-      view.invalidate();
-    }
-    return first;
-  }
-
-  function ready(next: View) {
-    view = next;
-    view.autoRotate = false;
-    if (arrange === "bundle") view.setFlat(true);
-    view.edgeScale = 0.45;
-    refresh();
-    // Frame the drawn points, and open already framed rather than flying in from the default camera.
-    view.fit();
-    view.cam.dist = view.goal.dist;
-    Object.assign(view.cam, { tx: view.goal.tx, ty: view.goal.ty, tz: view.goal.tz });
-    ring = emitterRing(positions, drawn);
-    view.onFrame = (dt: number) => {
-      for (const p of view.particles) p.t += dt / 1000 / PULSE_SECONDS;
-      view.particles = view.particles.filter((p: { t: number }) => p.t < 1);
-      if (!view.particles.length) view.animating = false;
-    };
-    view.animating = false;
-    seek(clock);
-  }
-
-  // The clock has its own frames, so playback works without WebGL: the figures, ticker and timeline still move.
   let ticking = 0;
   let lastTick = 0;
   function tick(now: number) {
     const dt = Math.min(64, now - lastTick);
     lastTick = now;
     clock = advance(clock, dt, start, end, speed);
-    let lit = false;
-    while (cursor < steps.length && steps[cursor]!.t <= clock) lit = apply(steps[cursor++]!) || lit;
-    if (lit) refresh();
     if (clock >= end) playing = false;
     ticking = playing ? requestAnimationFrame(tick) : 0;
   }
-  /** Play always starts from the beginning when the clock is at the end, which is where the replay opens. */
+  /** Play starts from the beginning when the playhead is at the end, which is where the replay opens. */
   function play() {
     if (clock >= end) seek(start);
     playing = true;
@@ -269,208 +177,169 @@
     playing = false;
     cancelAnimationFrame(ticking);
   }
-  onDestroy(() => {
+  onDestroy(pause);
+
+  // ---- The timeline: click or drag to move the playhead ----
+  const W = 960;
+  const H = 120;
+  let dragging = false;
+  function seekAt(event: PointerEvent) {
+    const box = (event.currentTarget as SVGSVGElement).getBoundingClientRect();
     pause();
-    view = null;
-  });
+    seek(start + ((event.clientX - box.left) / box.width) * span);
+  }
+  const playheadX = $derived(span ? ((clock - start) / span) * W : W);
 </script>
 
 <section class="replay" aria-label="Activity replay" aria-busy={loading}>
   <div class="replay-toolbar">
-    <p class="muted small">
-      Searches, reads and feedback, played over the library map. Each row of the timeline is who made them: the agent
-      harness when akm recorded it, else the event's source. Every source is shown, including scheduled tasks and
-      Improve.
-    </p>
-    <span class="grow"></span>
-    <label
-      >Period<select bind:value={period}
-        ><option value="24h">Last 24 hours</option><option value="7d">Last 7 days</option></select
-      ></label
-    >
-    {#if playing}<button class="btn-secondary" onclick={pause}>Pause</button>{:else}<button
-        class="btn-secondary"
+    <div class="now">
+      <span class="muted small">Playhead</span>
+      <strong>{range ? stampText(clock, span) : "–"}</strong>
+    </div>
+    {#if playing}<button class="btn-primary" onclick={pause}>Pause</button>{:else}<button
+        class="btn-primary"
         onclick={play}
-        disabled={!steps.length || loading}>Play</button
+        disabled={!steps.length || loading}>{clock >= end ? "Play from start" : "Play"}</button
       >{/if}
     <label
       >Speed<select bind:value={speed}
         >{#each SPEEDS as option}<option value={option.value}>{option.label}</option>{/each}</select
       ></label
     >
+    <label
+      >Period<select bind:value={period}
+        ><option value="24h">Last 24 hours</option><option value="7d">Last 7 days</option></select
+      ></label
+    >
+    <span class="grow"></span>
+    <p class="muted small">{playText(speed)}. Click or drag the timeline to move the playhead.</p>
   </div>
-  <p class="muted small play-time">
-    {playText(speed)}. It opens at the end of the period, with every figure full; Play starts again from the beginning.
-  </p>
   {#if error}<div class="notice notice-warn" role="alert">
       {error}<button
         class="btn-secondary"
         onclick={() => {
-          graphOnce = null;
+          overviewOnce = null;
           void load();
         }}>Retry</button
       >
     </div>{/if}
-  {#if loading}<p class="muted" role="status">{graph ? "Loading events…" : "Loading activity…"}</p>{/if}
+  {#if loading}<p class="muted" role="status">Loading activity…</p>{/if}
   {#if unavailable && !loading}<div class="notice" role="status">{unavailable}</div>{/if}
-  {#if graph && range && !unavailable}
+  {#if o && range && !unavailable}
+    <div class="figures">
+      <div><strong>{totals.events.toLocaleString()}</strong><span>events</span></div>
+      <div><strong>{totals.shows.toLocaleString()}</strong><span>reads</span></div>
+      <div><strong>{totals.searches.toLocaleString()}</strong><span>searches</span></div>
+      <div class:bad={totals.foundNothing > 0}>
+        <strong>{totals.foundNothing.toLocaleString()}</strong><span>found nothing</span>
+      </div>
+      <div><strong>{totals.positive}/{totals.negative}</strong><span>feedback +/−</span></div>
+      <div><strong>{totals.used.size.toLocaleString()}</strong><span>assets used</span></div>
+    </div>
+
+    <div class="timeline">
+      <ul class="kinds" aria-label="Timeline key">
+        {#each KINDS as k}<li><span class="swatch" style={`background:var(${k.token})`}></span>{k.label}</li>{/each}
+      </ul>
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        preserveAspectRatio="none"
+        aria-hidden="true"
+        onpointerdown={(e) => {
+          dragging = true;
+          (e.currentTarget as SVGSVGElement).setPointerCapture(e.pointerId);
+          seekAt(e);
+        }}
+        onpointermove={(e) => dragging && seekAt(e)}
+        onpointerup={() => (dragging = false)}
+      >
+        {#each timeline.counts as bin, b}
+          {@const x = (b / timeline.counts.length) * W}
+          {@const bw = W / timeline.counts.length - 1}
+          {@const played = start + (b + 1) * timeline.width <= clock}
+          {#each KINDS as k, n}
+            {@const below = KINDS.slice(0, n).reduce((s, q) => s + bin[q.id], 0)}
+            {#if bin[k.id]}<rect
+                {x}
+                y={H - ((below + bin[k.id]) / timeline.max) * (H - 4)}
+                width={bw}
+                height={(bin[k.id] / timeline.max) * (H - 4)}
+                style={`fill:var(${k.token});opacity:${played ? 1 : 0.35}`}
+              />{/if}
+          {/each}
+        {/each}
+        <line class="playhead" x1={playheadX} x2={playheadX} y1="0" y2={H} />
+      </svg>
+      <input
+        type="range"
+        min={start}
+        max={end}
+        step={SCRUB_STEP}
+        value={clock}
+        aria-label="Playhead"
+        aria-valuetext={stampText(clock, span)}
+        oninput={(event) => {
+          pause();
+          seek(scrubTime(Number(event.currentTarget.value), start, end));
+        }}
+      />
+      <div class="ticks"><span>{axis[0]}</span><span>{axis[1]}</span><span>{axis[2]}</span></div>
+      <p class="muted small">Tallest bar = {timeline.max} events. Faded bars are after the playhead.</p>
+    </div>
+
     <div class="replay-body">
-      <div class="replay-left">
-        <div class="replay-map">
-          {#if data}{#key mapKey}<GraphView
-                {data}
-                label="The library map. Assets used so far in the period are ringed and in colour; pulses fly to an asset as it is searched, read and given feedback. The panel beside it lists the same events."
-                onReady={ready}
-                onTheme={readTokens}
-                fallback="This view needs WebGL 2, which this window does not have. The figures, the latest events and the timeline below still play."
-              />{/key}{/if}
-        </div>
-        <ul class="replay-key" aria-label="Key">
-          <li>
-            <span class="mark used" style="--core: var(--map-1)"></span>Used so far in this period: ringed, in its
-            type's colour
-          </li>
-          <li><span class="mark unused"></span>Not used yet: faint</li>
-          <li class="pulses-title muted">Pulses fly to an asset when:</li>
-          <li>
-            <span
-              class="dot"
-              style={`background:var(--pulse-read);inline-size:${PULSE_PX.read}px;block-size:${PULSE_PX.read}px`}
-            ></span>it is read
-          </li>
-          <li>
-            <span
-              class="dot"
-              style={`background:var(--pulse-hit);inline-size:${PULSE_PX.hit}px;block-size:${PULSE_PX.hit}px`}
-            ></span>a search returns it (a hit: it does not count as used)
-          </li>
-          <li>
-            <span
-              class="dot"
-              style={`background:var(--pulse-up);inline-size:${PULSE_PX.feedback}px;block-size:${PULSE_PX.feedback}px`}
-            ></span>it gets positive feedback
-          </li>
-          <li>
-            <span
-              class="dot"
-              style={`background:var(--pulse-down);inline-size:${PULSE_PX.feedback}px;block-size:${PULSE_PX.feedback}px`}
-            ></span>it gets negative feedback
-          </li>
-          <li class="muted small">
-            Every point is the same size. Other events (curate and the like) have no pulse; the latest list names them.
-          </li>
-          <li class="types muted small">
-            Type colours:
-            {#each types as row}<span class="type"
-                ><span class="dot" style={`background:var(--map-${row.slot + 1})`}></span>{row.label}</span
-              >{/each}
-          </li>
-        </ul>
+      <div class="replay-map">
+        <h3>Where the events landed, by type and tag</h3>
+        <MindMap
+          {branches}
+          rootLabel="Library"
+          rootFigure={eventsText(branches.reduce((sum, b) => sum + (counts.get(b.key) ?? 0), 0))}
+          figure={(_, key) => eventsText(counts.get(key) ?? 0)}
+          bar={(_, key) => [{ n: counts.get(key) ?? 0, token: "--accent" }]}
+          scale={most}
+          {selected}
+          onSelect={(key) => (selected = selected === key ? "" : key)}
+          pulse={playing ? counts : null}
+          label="The library mind map: its asset types and the tags their assets carry most, each with the number of events on it so far. The log beside it lists the same events."
+        />
+        {#if offMap}<p class="muted small">
+            {offMap.toLocaleString()} events so far touched assets under none of the tags drawn, or no longer in the library.
+          </p>{/if}
       </div>
       <aside class="replay-side">
-        <div class="replay-stats">
-          <div><strong>{totals.searches}</strong><span>searches</span></div>
-          <div><strong>{totals.foundNothing}</strong><span>found nothing</span></div>
-          <div><strong>{totals.shows}</strong><span>reads</span></div>
-          <div><strong>{totals.positive}</strong><span>positive</span></div>
-          <div><strong>{totals.negative}</strong><span>negative</span></div>
-          <div><strong>{totals.others}</strong><span>other events</span></div>
-          <div><strong>{totals.used.size}</strong><span>assets used</span></div>
-          <div><strong>{totals.events}</strong><span>events in all</span></div>
-        </div>
-        {#if notDrawn}<p class="muted small">{notDrawn}</p>{/if}
         <section>
-          <h3>Used in this period</h3>
-          <ol class="ticker">
-            {#each mostUsed as row}<li>
-                <a href={searchHref(new URLSearchParams(), row.ref)}>{graph.name(row.node)}</a>
-                <span class="muted small">×{row.count}</span>
+          <h3>Latest events</h3>
+          <ol class="log">
+            {#each recent as step}<li>
+                <span class="when muted small">{stampText(step.t, span)}</span>
+                <span class="kind" data-kind={step.kind === "search" && step.results === 0 ? "miss" : step.kind}></span>
+                <span class="what" title={describe(step)}>{describe(step)}</span>
               </li>{:else}<li class="muted">Nothing yet</li>{/each}
           </ol>
-          <p class="muted small">The eight assets with the most events so far; search hits are not counted.</p>
         </section>
         <section>
-          <h3>Latest at {stampText(clock, span)}</h3>
-          <ol class="ticker">
-            {#each recent as step}<li>
-                <span class="muted small">{stampText(step.t, span)}</span> <span class="who">{step.actor}</span>
-                {describe(step)}
+          <h3>Most used so far</h3>
+          <ol class="log">
+            {#each mostUsed as row}<li>
+                <a href={searchHref(new URLSearchParams(), row.ref)}>{o.path(row.node)}</a>
+                <span class="muted small">×{row.count}</span>
               </li>{:else}<li class="muted">Nothing yet</li>{/each}
           </ol>
         </section>
         <section>
           <h3>Searches that found nothing</h3>
-          <ul class="ticker">
+          <ul class="log">
             {#each totals.misses.slice(0, 6) as [query, count]}<li>
-                {query} <span class="muted small">×{count}</span>
+                {query}<span class="muted small count">×{count}</span>
               </li>{:else}<li class="muted">None so far</li>{/each}
           </ul>
         </section>
         {#if cutNote}<p class="muted small">{cutNote}</p>{/if}
       </aside>
     </div>
-
-    <div class="replay-timeline">
-      <table class="lanes">
-        <caption class="sr-only">Events per period slice, by who made them, busiest first</caption>
-        <tbody>
-          <tr class="scrub"
-            ><th scope="row">Time</th><td
-              ><input
-                type="range"
-                min={start}
-                max={end}
-                step={SCRUB_STEP}
-                value={clock}
-                aria-label="Time"
-                aria-valuetext={stampText(clock, span)}
-                oninput={(event) => seek(scrubTime(Number(event.currentTarget.value), start, end))}
-              /></td
-            ></tr
-          >
-          {#each bins.actors as actor}{@const counts = bins.counts.get(actor) ?? []}<tr
-              ><th scope="row"
-                ><span class="lane-name">{actor}</span><span class="muted small"
-                  >{bins.totals.get(actor)} event{bins.totals.get(actor) === 1 ? "" : "s"}</span
-                ></th
-              ><td
-                ><div class="bars">
-                  {#each counts as n, b}<span
-                      class:has={n > 0}
-                      class:played={start + (b + 1) * bins.width <= clock}
-                      style={`block-size:${(n / bins.max) * 100}%`}
-                    ></span>{/each}
-                </div></td
-              ></tr
-            >{/each}
-          <tr class="misses"
-            ><th scope="row"
-              ><span class="lane-name">Found nothing</span><span class="muted small"
-                >{bins.missTotal} search{bins.missTotal === 1 ? "" : "es"}</span
-              ></th
-            ><td
-              ><div class="bars">
-                {#each bins.misses as n, b}<span
-                    class:has={n > 0}
-                    class:played={start + (b + 1) * bins.width <= clock}
-                    style={`block-size:${(n / bins.max) * 100}%`}
-                  ></span>{/each}
-              </div></td
-            ></tr
-          >
-          <tr class="axis"
-            ><th scope="row"><span class="sr-only">Time axis</span></th><td
-              ><div class="ticks"><span>{axis[0]}</span><span>{axis[1]}</span><span>{axis[2]}</span></div></td
-            ></tr
-          >
-        </tbody>
-      </table>
-      <p class="muted small">
-        {scaleText(bins.max, bins.width)}; every lane uses that scale. Lanes run from the most events to the fewest,
-        ties by name.
-      </p>
-      {#if !steps.length}<p>No searches, reads or feedback recorded in this period.</p>{/if}
-    </div>
+    {#if !steps.length}<p>No searches, reads or feedback recorded in this period.</p>{/if}
   {/if}
 </section>
 
@@ -480,10 +349,9 @@
     flex-wrap: wrap;
     gap: 12px 16px;
     align-items: end;
-    margin-bottom: 12px;
+    margin-bottom: 16px;
   }
   .replay-toolbar p {
-    max-inline-size: 40rem;
     margin: 0;
   }
   .replay-toolbar label {
@@ -492,170 +360,85 @@
     font-size: 12px;
     color: var(--muted);
   }
+  .now {
+    display: grid;
+    min-inline-size: 11rem;
+  }
+  .now strong {
+    font-size: 1.375rem;
+    font-variant-numeric: tabular-nums;
+  }
   .grow {
     flex: 1;
   }
-  .replay-body {
+  .figures {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 20rem;
-    gap: 16px;
-    align-items: start;
-  }
-  .replay-map {
-    position: relative;
-    border: 1px solid var(--border);
-    min-inline-size: 0;
-    block-size: min(60vh, 680px);
-    min-block-size: 380px;
-  }
-  .replay-key {
-    list-style: none;
-    margin: 8px 0 0;
-    padding: 8px 10px;
-    font-size: 13px;
-    border: 1px solid var(--border);
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px 18px;
-    align-items: center;
-  }
-  .replay-key li {
-    display: flex;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
     gap: 8px;
-    align-items: center;
+    margin-bottom: 12px;
   }
-  .replay-key .types {
-    flex-basis: 100%;
-    flex-wrap: wrap;
-    gap: 4px 14px;
-  }
-  .type {
-    display: inline-flex;
-    gap: 5px;
-    align-items: center;
-  }
-  .dot {
-    flex: none;
-    inline-size: 10px;
-    block-size: 10px;
-    border-radius: 50%;
-  }
-  /* The two marks on the map: a used asset is a coloured point inside a ring, an unused one a faint point. */
-  .mark {
-    flex: none;
-    inline-size: 10px;
-    block-size: 10px;
-    border-radius: 50%;
-  }
-  .mark.used {
-    background: var(--core);
-    outline: 1.5px solid var(--text);
-    outline-offset: 1px;
-    margin: 3px;
-  }
-  .mark.unused {
-    background: var(--use-0);
-    opacity: 0.4;
-    margin: 3px;
-  }
-  .play-time {
-    margin: 0 0 8px;
-  }
-  .replay-left {
-    min-inline-size: 0;
-  }
-  .replay-side {
-    max-block-size: min(85vh, 780px);
-    overflow: auto;
+  .figures div {
     display: grid;
-    align-content: start;
-    gap: 16px;
-    min-inline-size: 0;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    background: var(--surface);
   }
-  .replay-side h3 {
-    font-size: 12px;
-    color: var(--muted);
-    margin: 0 0 6px;
-  }
-  .replay-stats {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 10px;
-  }
-  .replay-stats div {
-    display: grid;
-  }
-  .replay-stats strong {
+  .figures strong {
     font-size: 1.25rem;
     font-variant-numeric: tabular-nums;
   }
-  .replay-stats span {
+  .figures span {
     font-size: 12px;
     color: var(--muted);
   }
-  .ticker {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    font-size: 13px;
-  }
-  .ticker li {
-    padding: 3px 0;
-    border-bottom: 1px solid var(--border);
-    overflow-wrap: anywhere;
-  }
-  .who {
-    font-weight: 600;
-  }
-  .replay-timeline {
-    margin-top: 12px;
-  }
-  .lanes {
-    inline-size: 100%;
-    border-collapse: collapse;
-    table-layout: fixed;
-  }
-  .lanes .scrub th,
-  .lanes .scrub td {
-    vertical-align: middle;
-  }
-  .lanes th {
-    inline-size: 11rem;
-    text-align: start;
-    font-weight: 500;
-    font-size: 13px;
-    padding: 2px 8px 2px 0;
-    vertical-align: bottom;
-  }
-  .lane-name {
-    display: block;
-    overflow-wrap: anywhere;
-  }
-  .lanes .misses th .lane-name {
+  .figures .bad strong {
     color: var(--fail);
   }
-  .bars {
+  .timeline {
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    margin-bottom: 16px;
+  }
+  .timeline svg {
+    display: block;
+    inline-size: 100%;
+    block-size: 120px;
+    cursor: ew-resize;
+    touch-action: none;
+  }
+  .playhead {
+    stroke: var(--text);
+    stroke-width: 2;
+    vector-effect: non-scaling-stroke;
+  }
+  .timeline input {
+    inline-size: 100%;
+    margin: 4px 0 0;
+    accent-color: var(--accent);
+  }
+  .timeline p {
+    margin: 4px 0 0;
+  }
+  .kinds {
+    list-style: none;
+    margin: 0 0 8px;
+    padding: 0;
     display: flex;
-    align-items: end;
-    gap: 1px;
-    block-size: 32px;
-    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+    gap: 4px 16px;
+    font-size: 13px;
   }
-  .bars span {
-    flex: 1;
-    min-block-size: 0;
-    background: var(--text);
-    opacity: 0.3;
+  .kinds li {
+    display: flex;
+    gap: 6px;
+    align-items: center;
   }
-  /* A slice with events always shows at least a hairline: a single event is small but not nothing. */
-  .bars span.has {
-    min-block-size: 2px;
-  }
-  .bars span.played {
-    opacity: 0.85;
-  }
-  .misses .bars span {
-    background: var(--fail);
+  .swatch {
+    inline-size: 10px;
+    block-size: 10px;
+    border-radius: 2px;
+    flex: none;
   }
   .ticks {
     display: grid;
@@ -669,55 +452,92 @@
   .ticks span:nth-child(3) {
     text-align: end;
   }
-  /* The slider's thumb centre runs from one end of the bars to the other: the track is one thumb wider than the bars. */
-  .scrub input {
-    appearance: none;
-    background: transparent;
-    inline-size: calc(100% + 16px);
-    margin: 0 -8px;
-    block-size: 16px;
-    cursor: pointer;
+  .replay-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 22rem;
+    gap: 24px;
+    align-items: start;
   }
-  .scrub input::-webkit-slider-runnable-track {
-    block-size: 4px;
-    background: var(--border-strong);
-    border-radius: 2px;
+  .replay-map {
+    border: 1px solid var(--border);
+    background: var(--surface);
+    padding: 8px;
+    min-inline-size: 0;
   }
-  .scrub input::-moz-range-track {
-    block-size: 4px;
-    background: var(--border-strong);
-    border-radius: 2px;
+  h3 {
+    font-size: 12px;
+    color: var(--muted);
+    margin: 0 0 6px;
   }
-  .scrub input::-webkit-slider-thumb {
-    appearance: none;
-    inline-size: 16px;
-    block-size: 16px;
-    margin-block-start: -6px;
+  .replay-side {
+    display: grid;
+    align-content: start;
+    gap: 16px;
+    min-inline-size: 0;
+  }
+  .log {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    font-size: 13px;
+  }
+  .log li {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    padding: 3px 0;
+    border-bottom: 1px solid var(--border);
+    min-inline-size: 0;
+  }
+  .log a,
+  .what {
+    overflow-wrap: anywhere;
+    min-inline-size: 0;
+  }
+  /* A long curate query or ref takes two lines at most; the full text is its title. */
+  .what {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
+  }
+  .when {
+    flex: none;
+    font-variant-numeric: tabular-nums;
+  }
+  .count {
+    margin-inline-start: auto;
+  }
+  .kind {
+    flex: none;
+    inline-size: 8px;
+    block-size: 8px;
     border-radius: 50%;
+    background: var(--border-strong);
+    align-self: center;
+  }
+  .kind[data-kind="show"] {
+    background: var(--use-2);
+  }
+  .kind[data-kind="search"] {
     background: var(--accent);
-    border: 0;
   }
-  .scrub input::-moz-range-thumb {
-    inline-size: 16px;
-    block-size: 16px;
-    border-radius: 50%;
-    background: var(--accent);
-    border: 0;
+  .kind[data-kind="miss"] {
+    background: var(--fail);
   }
-  .scrub td {
-    overflow: visible;
+  .kind[data-kind="feedback"] {
+    background: var(--ok);
   }
-  @media (max-width: 900px) {
+  /* The map needs about 1,000 px to be read at full size; below that the lists go under it. */
+  @media (max-width: 1400px) {
     .replay-body {
       grid-template-columns: 1fr;
-      block-size: auto;
     }
-    .replay-map {
-      block-size: 50vh;
-    }
-    .replay-side {
-      max-block-size: none;
-      overflow: visible;
+  }
+  @media (max-width: 1100px) {
+    .figures {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
     }
   }
 </style>

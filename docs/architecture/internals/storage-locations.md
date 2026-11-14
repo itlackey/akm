@@ -72,7 +72,6 @@ Vector search is an exact scan of `embeddings` (`src/storage/repositories/index-
 #### `index_meta`
 
 `key` TEXT PRIMARY KEY, `value` TEXT NOT NULL. Keys: `version`, `builtAt`,
-`stashDir`, `stashDirs`, `sourceOwners`, `last_utility_computed_at`, `embeddingFingerprint` (the model the
 vectors were made under), `hasEmbeddings` (`"0"` or `"1"`), `semanticSearch` (what the
 last `akm index` found about semantic search; `akm doctor` reads it), `vacuumPending`,
 and `ftsTotalsStale` (set when a delete removed a row from `entries_fts`;
