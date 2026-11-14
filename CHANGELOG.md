@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261123] - 2026-11-14
+
 ### Fixed
 
 - 0.10.261122 `show` served a file by its file-name spelling when the index had no row, for example `akm show tasks/nightly.yml`. It resolves from files only a ref that is the asset's concept ID (`tasks/nightly`, `knowledge/guide`, `knowledge/guide.md`), so any other spelling is refused again with or without an index row.
