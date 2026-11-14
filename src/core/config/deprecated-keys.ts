@@ -7,14 +7,37 @@
  * `extends` notice. The config is read exactly as before; a notice is not printed for akm's own runs
  * (the scheduler, a task, improve, audit) or with `--help`, and `--quiet` silences it (it goes through `warnOnce`).
  */
-import { deprecationNoticesSuppressed } from "../../cli/deprecations";
 import { warnOnce } from "../warn";
 import { isPlainObject } from "./deep-merge";
 
 type Dict = Record<string, unknown>;
 
+const INTERNAL_SOURCES = new Set(["task", "improve", "audit"]);
+
+/**
+ * True for akm's own invocations (the scheduler, a task, improve or audit), `--help` and `--scheduled`: no
+ * deprecation notice. `hasFlag` answers for the invocation's own arguments (before any `--`).
+ */
+export function deprecationNoticesSuppressed(
+  hasFlag: (flag: string) => boolean,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return (
+    INTERNAL_SOURCES.has(env.AKM_EVENT_SOURCE ?? "") || hasFlag("--help") || hasFlag("-h") || hasFlag("--scheduled")
+  );
+}
+
+/** Whether this process was started with `flag` (or `flag=true`) among its own arguments. */
+function processHasFlag(flag: string): boolean {
+  for (const arg of process.argv.slice(2)) {
+    if (arg === "--") return false;
+    if (arg === flag || arg === `${flag}=true`) return true;
+  }
+  return false;
+}
+
 export function warnDeprecatedConfigKeys(raw: Dict, sourcePath?: string): void {
-  if (deprecationNoticesSuppressed()) return;
+  if (deprecationNoticesSuppressed(processHasFlag)) return;
   const where = sourcePath ? ` (${sourcePath})` : "";
   const improve = isPlainObject(raw.improve) ? raw.improve : {};
   if (improve.strategies !== undefined || improve.qualityGate !== undefined) {

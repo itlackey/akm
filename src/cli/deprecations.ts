@@ -15,6 +15,7 @@
  */
 
 import { type ArgsDef, parseArgs } from "citty";
+import { deprecationNoticesSuppressed } from "../core/config/deprecated-keys";
 import { warnOnce } from "../core/warn";
 import { getParsedInvocation, type ParsedInvocation } from "./invocation";
 
@@ -152,28 +153,13 @@ const DEPRECATED_ENV: readonly {
   },
 ];
 
-const INTERNAL_SOURCES = new Set(["task", "improve", "audit"]);
-
-/** True for akm's own invocations (the scheduler, a task, improve or audit), `--help` and `--scheduled`: no notice. */
-export function deprecationNoticesSuppressed(
-  invocation: ParsedInvocation = getParsedInvocation(),
-  env: NodeJS.ProcessEnv = process.env,
-): boolean {
-  return (
-    INTERNAL_SOURCES.has(env.AKM_EVENT_SOURCE ?? "") ||
-    invocation.hasFlag("--help") ||
-    invocation.hasFlag("-h") ||
-    invocation.hasFlag("--scheduled")
-  );
-}
-
 export function warnDeprecatedUse(
   commandPath: readonly string[],
   invocation: ParsedInvocation,
   leafArgs: ArgsDef | undefined,
   env: NodeJS.ProcessEnv = process.env,
 ): void {
-  if (deprecationNoticesSuppressed(invocation, env)) return;
+  if (deprecationNoticesSuppressed((flag) => invocation.hasFlag(flag), env)) return;
   for (const row of DEPRECATED_ENV) {
     const value = env[row.name];
     if (value !== undefined && row.active(value, commandPath, invocation)) {
@@ -215,7 +201,7 @@ export function warnDeprecatedUse(
  * by `--quiet`, and not printed for scheduled or internal runs.
  */
 export function warnWorkflowUse(what: string, env: NodeJS.ProcessEnv = process.env): void {
-  if (deprecationNoticesSuppressed(getParsedInvocation(), env)) return;
+  if (deprecationNoticesSuppressed((flag) => getParsedInvocation().hasFlag(flag), env)) return;
   warnOnce(
     "deprecated-use",
     `[deprecated] ${what} is deprecated and is removed in 0.11: ${WORKFLOWS_NOTE}. See STABILITY.md.`,
