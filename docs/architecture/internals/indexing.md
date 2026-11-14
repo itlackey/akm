@@ -68,24 +68,28 @@ One function builds the live index: `buildIndex` (`src/indexer/index-build.ts`).
 
 | Mode | Callers | When a live process holds the lock |
 | --- | --- | --- |
-| `wait` | `akm index`, `akm setup`, `bundle add`, `bundle update`, `bundle remove`, `source add` | Prints a notice, polls every 100 ms, repeats the notice every 15 seconds, and builds when the lock frees. After 10 minutes (the asset mutation lease's bound) it fails with `INDEX_DB_CONTENDED` (exit 75). |
+| `wait` | `akm index`, `akm setup` (the wizard, `--yes` and `--from`), `bundle add`, `bundle update`, `bundle remove`, `source add` | Prints a notice, polls every 100 ms, repeats the notice every 15 seconds, and builds when the lock frees. After 10 minutes (the asset mutation lease's bound) it fails with `INDEX_DB_CONTENDED` (exit 75). |
 | `try` | `akm index --skip-if-locked` (the shipped `index-refresh` task), `improve`'s pre-run index and its reindex after memory cleanup | Does not build. `akm index` exits 0 with `skipped`; `improve` plans on the entries the index has and adds a warning. |
 
 `akm upgrade` spawns a plain `akm index`, which waits. Reads never build: see below.
+
+Non-interactive setup builds the index for the library it configured, when that directory exists; a failed build is a one-line warning naming `akm index`, never a failed setup.
+
+`bundle update` publishes a new revision and indexes it under the asset mutation lease. It takes the rebuild lock first (`withIndexBuildLock`, which hands the caller a `build` that runs under that lock) and holds it across publish and index, so lock order is always the rebuild lock, then the lease, and no path waits for the rebuild lock while holding the lease. If the index step fails after the publish, the update says the bundle was updated and its index not refreshed, then rethrows the original error; `akm index` or the next scheduled build indexes it.
 
 ## Usable index
 
 An index is usable for a library when the keyword data for it is persisted: the `entries` table exists and `index_meta.stashDir` or `stashDirs` names the library. The persist transaction writes both with the entries and their FTS rows, so a build that is still embedding, was interrupted after the scan, or had one source fail is usable, and so is an empty library that was indexed (akm#1469). An index an older akm finished has the same two keys, so it is usable with no migration. `openUsableIndex` (`src/indexer/index-readiness.ts`) is the one check; `search`, `curate`, `feedback` and write-through all use it.
 
-`builtAt` is not part of usable. It is the incremental watermark, written when a build completes with a complete scan. A persist for a different library clears it.
+`builtAt` is not part of usable. It is the incremental watermark, written when a build completes with a complete scan. A persist for a different library clears it and, in the same transaction, deletes every entry outside the new library's source directories, so the marker never names a library whose index still serves another's rows.
 
 ## How reads degrade
 
 Reads (`search`, `curate`, `show`, the in-process API, Desktop) never build and never wait. They exit 0 in every case below:
 
 - **Usable, `builtAt` set.** Served as it is.
-- **Usable, no `builtAt`** (the first build is still embedding, was interrupted, or a source failed). Keyword results are served with one warning: results may be incomplete, and semantic results arrive when a build completes.
-- **No usable index** (no file, no schema, nothing persisted for the library, built for another library, a corrupt file). An empty result with one warning: there is no search index for this library yet, run `akm index`. When a live process holds the rebuild lock the warning says a build is running instead.
+- **Usable, no `builtAt`** (the first build is still embedding, was interrupted, or a source failed). Keyword results are served with one warning that results may be incomplete. It says the index is still being built when a live process holds the rebuild lock; otherwise it says the last build did not complete (it was interrupted or a source could not be scanned) and names `akm index`.
+- **No usable index** (no file, no schema, nothing persisted for the library, built for another library, a corrupt file). An empty result with one warning: there is no search index for this library yet, run `akm index`. When a live process holds the rebuild lock the warning says a build is running instead. `feedback` has no result to return: with no usable index it exits 2 (run `akm index`), and while a build holds the rebuild lock it exits 75 (`INDEX_DB_CONTENDED`, retry when the build finishes).
 - **`show`.** The asset is resolved from the bundle's files first: the index-free owner lookup (`resolveConceptOwner`) and the owning adapter's `recognize`. The index adds only what it alone has (links, indexed fragment context, usage ids) when a row exists. `--context lead` without a row shows the exact section and warns. Not found means no file resolves.
 
 Two refusals are not "no index" and still raise: an index file akm may not read (`DATA_DIR_UNREADABLE`) and an index laid out by a newer akm (`INDEX_SCHEMA_INCOMPATIBLE`, exit 78).
@@ -94,7 +98,7 @@ Two refusals are not "no index" and still raise: an index file akm may not read 
 
 - `$DATA/index.rebuild.lock`: see [Who builds the index](#who-builds-the-index).
 - `$DATA/index.db.write.lock` (`src/indexer/index-writer-lock.ts`) serializes writes to authored content (`remember`, `import`, source updates, proposal apply). Indexing does not take it.
-- `indexWrittenAssets` (the immediate upsert after `remember`, `import`, `proposal accept`, and similar) upserts whenever a usable index exists. It does not look for a build: it waits up to 5 seconds for the write lock and, if a build holds it longer, skips and fails open. A write that overlaps a build can be missed by it, and the next build indexes it from the directory fingerprints it takes.
+- `indexWrittenAssets` (the immediate upsert after `remember`, `import`, `proposal accept`, and similar) upserts whenever a usable index exists. It does not look for a build: it waits up to 5 seconds for the write lock and, if a build holds it longer, skips and fails open, reporting the write as done (the next build indexes it). It checks the files it was given against the walk's rules with one `git check-ignore` process. A write that overlaps a build can be missed by it, and the next build indexes it from the directory fingerprints it takes.
 - Only a build, which holds the rebuild lock, deletes and rebuilds a corrupt `index.db`. Any other opener raises the corruption error; readers treat it as "no usable index".
 
 ## Embedding phase
