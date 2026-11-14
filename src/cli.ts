@@ -38,14 +38,11 @@
 // cleanup are also covered.
 // A reader that closed early (`akm search … | head`) is not a failure of the work: the command keeps
 // running, its remaining output goes nowhere, and the process ends with the code the work earned.
-const isBrokenPipe = (err: unknown): boolean => (err as NodeJS.ErrnoException | undefined)?.code === "EPIPE";
-for (const stream of [process.stdout, process.stderr]) {
-  stream.on("error", (err) => {
-    if (!isBrokenPipe(err)) throw err;
-  });
-}
+// Only our own stdio is forgiven: an EPIPE from a socket (an embedding or LLM call) is still a failure.
+const stdioStreams = [process.stdout, process.stderr];
+const stdioReaderGone = trackStdioReaderGone(stdioStreams);
 process.on("unhandledRejection", (reason) => {
-  if (isBrokenPipe(reason)) return;
+  if (stdioReaderGone.explains(reason)) return;
   const err = reason instanceof Error ? reason : new Error(String(reason));
   console.error(
     JSON.stringify(
@@ -63,7 +60,7 @@ process.on("unhandledRejection", (reason) => {
   process.exit(EXIT_CODES.INTERNAL);
 });
 process.on("uncaughtException", (err) => {
-  if (isBrokenPipe(err)) return;
+  if (stdioReaderGone.explains(err)) return;
   console.error(
     JSON.stringify(
       {
@@ -124,6 +121,7 @@ import { akmHealth } from "./commands/health";
 import { doctorMetricsCommand } from "./commands/metrics/usage-cli";
 import { akmTasksDoctor } from "./commands/tasks/tasks";
 import { closestMatch } from "./core/closest-match";
+import { trackStdioReaderGone } from "./core/stdio-reader-gone";
 import "./commands/health/renderers";
 import "./commands/metrics/md-report";
 import type { WindowSpec } from "./commands/health/types";

@@ -10,10 +10,12 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
+import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import path from "node:path";
 import { saveConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
+import { trackStdioReaderGone } from "../../src/core/stdio-reader-gone";
 import { closeDatabase, openExistingDatabase } from "../../src/storage/repositories/index-connection";
 import { getMeta } from "../../src/storage/repositories/index-meta-repository";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
@@ -67,5 +69,25 @@ describe("stdout closed by the reader", () => {
     } finally {
       closeDatabase(db);
     }
+  });
+});
+
+describe("which EPIPE is forgiven", () => {
+  const epipe = () => Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
+
+  test("an EPIPE is ignored once our own stdio reported it, and not before", () => {
+    const stdout = new EventEmitter();
+    const tracker = trackStdioReaderGone([stdout as unknown as NodeJS.WritableStream]);
+    expect(tracker.explains(epipe())).toBe(false);
+    stdout.emit("error", epipe());
+    expect(tracker.explains(epipe())).toBe(true);
+  });
+
+  test("a different error is never ignored, and a stdio error other than EPIPE still throws", () => {
+    const stdout = new EventEmitter();
+    const tracker = trackStdioReaderGone([stdout as unknown as NodeJS.WritableStream]);
+    stdout.emit("error", epipe());
+    expect(tracker.explains(new Error("boom"))).toBe(false);
+    expect(() => stdout.emit("error", Object.assign(new Error("full"), { code: "ENOSPC" }))).toThrow("full");
   });
 });

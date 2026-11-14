@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { isWithin, resolveStashDir, safeRealpath } from "../../core/common";
+import { isWithin, relativeToRoot, resolveStashDir, safeRealpath } from "../../core/common";
 import type { AkmConfig, SourceConfigEntry } from "../../core/config/config";
 import {
   bundleComponentConfig,
@@ -262,17 +262,24 @@ export function resolveEntryContentDir(entry: SourceConfigEntry): string | undef
  * corrupting origin / editability / provenance decisions for the affected files.
  */
 export function findSourceForPath(filePath: string, sources: SearchSource[]): SearchSource | undefined {
-  const resolved = path.resolve(filePath);
-  let best: SearchSource | undefined;
-  let bestLen = -1;
-  for (const source of sources) {
-    const base = path.resolve(source.path);
-    if (resolved.startsWith(base + path.sep) && base.length > bestLen) {
-      best = source;
-      bestLen = base.length;
+  const longest = (within: (base: string) => boolean): SearchSource | undefined => {
+    let best: SearchSource | undefined;
+    let bestLen = -1;
+    for (const source of sources) {
+      const base = path.resolve(source.path);
+      if (base.length > bestLen && within(base)) {
+        best = source;
+        bestLen = base.length;
+      }
     }
-  }
-  return best;
+    return best;
+  };
+  const resolved = path.resolve(filePath);
+  // Paths from the index and the sources share one spelling; a caller's may not (a symlinked library).
+  return (
+    longest((base) => resolved.startsWith(base + path.sep)) ??
+    longest((base) => relativeToRoot(resolved, base) !== undefined)
+  );
 }
 
 // ── Editability ─────────────────────────────────────────────────────────────

@@ -708,6 +708,7 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
   try {
     // `--full` folds into `isIncremental`: a full run drains every directory
     // through the same diff-persist path as an incremental one.
+    canonicalizeStoredPaths(db);
     const prevStashDir = getMeta(db, "stashDir");
     const prevBuiltAt = getMeta(db, "builtAt");
     const isIncremental = !full && servesLibrary(prevStashDir, stashDir) && !!prevBuiltAt;
@@ -1366,6 +1367,35 @@ interface PersistedEntryRow {
   content_hash: string | null;
   file_path: string;
   adapter_id: string;
+}
+
+/**
+ * An index built before sources were keyed by real path stores the library under another spelling of
+ * its directories. Rewriting those paths in place keeps its rows, and with them their embeddings,
+ * which a delete and re-insert under the real spelling would drop.
+ */
+function canonicalizeStoredPaths(db: Database): void {
+  const stored = [getMeta(db, "stashDir"), ...(JSON.parse(getMeta(db, "stashDirs") ?? "[]") as string[])];
+  const moves = [...new Set(stored.filter((dir): dir is string => dir !== undefined))]
+    .map((dir) => ({ from: dir, to: safeRealpath(dir) }))
+    .filter(({ from, to }) => from !== to);
+  if (moves.length === 0) return;
+  const rewrite = (table: string, column: string, exact: boolean) =>
+    db.prepare(
+      `UPDATE OR IGNORE ${table} SET ${column} = ?1 || substr(${column}, ?2) WHERE substr(${column}, 1, ?3) = ?4${
+        exact ? ` OR ${column} = ?5` : ""
+      }`,
+    );
+  db.transaction(() => {
+    for (const { from, to } of moves) {
+      const prefix = `${from}${path.sep}`;
+      rewrite("entries", "file_path", false).run(to, from.length + 1, prefix.length, prefix);
+      rewrite("index_dir_state", "dir_path", true).run(to, from.length + 1, prefix.length, prefix, from);
+    }
+    setMeta(db, "stashDirs", JSON.stringify(JSON.parse(getMeta(db, "stashDirs") ?? "[]").map(safeRealpath)));
+    const stashDir = getMeta(db, "stashDir");
+    if (stashDir !== undefined) setMeta(db, "stashDir", safeRealpath(stashDir));
+  })();
 }
 
 /** Whether the stored library marker names `stashDir`: the same directory, however either is spelled. */
