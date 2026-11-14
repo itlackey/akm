@@ -231,7 +231,7 @@ plan). Target branch `main`, enforcement active, no bypass list:
 - Require status checks to pass, with "Require branches to be up to date
   before merging" on. Require every check a release pull request reports: the
   CI jobs (`check`, `release-branch-only`, `desktop`, and each `node-smoke`,
-  `desktop-package` and `upgrade-rehearsal` matrix entry) and the five Gated CI
+  `desktop-package` and `upgrade-rehearsal` matrix entry, `plugins-contract`) and the five Gated CI
   jobs. GitHub lists them by name once the first release pull request has run.
 
 Rulesets cannot restrict which branch a pull request comes from; the

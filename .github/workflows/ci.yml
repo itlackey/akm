@@ -3,7 +3,8 @@ name: CI
 # Every pull request, whatever its base branch, runs the fast gate: `check` (lint, types, the unit and integration
 # suites, the build), the Node fallback smoke on both supported Node versions, and Desktop's own tests on Linux.
 # A pull request into `main` is a release, and the only place the platform jobs run: Desktop packaged on all three
-# platforms, the upgrade rehearsals and Gated CI. It must come from a release branch (`release-branch-only`).
+# platforms, the upgrade rehearsals, akm-plugins' contract tests and Gated CI. It must come from a release branch
+# (`release-branch-only`).
 # The Release workflow calls this workflow on a prerelease dispatch; a stable needs no run of its own because the
 # pull request that merged it ran everything here. docs/maintainers/release-checklist.md describes the branch model.
 on:
@@ -218,6 +219,41 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run build
       - run: AKM_UPGRADE_REHEARSAL=1 AKM_UPGRADE_REHEARSAL_ORIGIN="${{ matrix.origin }}" TMPDIR=/tmp bun test --timeout=900000 tests/integration/upgrade-rehearsal/
+
+  plugins-contract:
+    # akm-plugins' contract tests against this build, on release pull requests only: they run the real akm the way
+    # the plugins call it (envelopes, ref grammar, show/feedback refusals), which akm's own suites do not.
+    needs: release-branch-only
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+        with:
+          repository: itlackey/akm-plugins
+          ref: main
+          path: akm-plugins
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
+        with:
+          bun-version: 1.3.14
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444  # v5.0.0
+        with:
+          node-version: 24
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+      - name: Install this build into the plugins
+        run: |
+          npm pack --pack-destination "$RUNNER_TEMP"
+          cd akm-plugins
+          bun install --frozen-lockfile
+          cd opencode
+          bun install --frozen-lockfile
+          bun add "$RUNNER_TEMP"/akm-cli-*.tgz
+      - name: Run the contract tests
+        working-directory: akm-plugins
+        # Name filters, not paths: the files are the plugins' (fake-akm-contract, ref-extraction, ref-resolver-contract).
+        run: bun test fake-akm-contract ref-extraction ref-resolver-contract
 
   gated:
     # Real embeddings, the Docker install matrix and the native schedulers, on release pull requests only.
