@@ -134,12 +134,6 @@
         ],
       },
       {
-        id: "embedding-settings",
-        title: "Embeddings",
-        description: "The model that turns assets into vectors for semantic search.",
-        fields: [],
-      },
-      {
         id: "library-settings",
         title: "Library defaults",
         description: "Where AKM reads by default and writes new knowledge, memories and accepted proposals.",
@@ -491,6 +485,9 @@
               aria-current={selectedGroup === group.id ? "page" : undefined}
               >{group.title}{#if editCounts[group.id]}<span aria-label="Unsaved changes">•</span>{/if}</a
             >{/each}<a
+            href="/settings/config?section=embedding-settings"
+            aria-current={selectedGroup === "embedding-settings" ? "page" : undefined}>Embeddings</a
+          ><a
             href="/settings/config?section=advanced-settings"
             aria-current={selectedGroup === "advanced-settings" ? "page" : undefined}>Advanced</a
           >
@@ -500,8 +497,8 @@
             value={selectedGroup}
             onchange={(event) => navigate(`/settings/config?section=${event.currentTarget.value}`)}
             >{#each groups as group}<option value={group.id}>{group.title}</option>{/each}<option
-              value="advanced-settings">Advanced</option
-            ></select
+              value="embedding-settings">Embeddings</option
+            ><option value="advanced-settings">Advanced</option></select
           ></label
         >
       </aside>
@@ -517,46 +514,57 @@
               <h2 id={group.id}>{group.title}</h2>
               <p>{group.description}</p>
             </div>
-            {#if group.id === "embedding-settings"}<EmbeddingSettings
-                {config}
-                saved={async () => {
-                  receipt = "Embedding settings saved.";
-                  await load();
-                }}
-              />{:else}<form
-                class="card settings-card"
-                onsubmit={(event) => {
-                  event.preventDefault();
-                  void action("/config/set", configurationChanges(group.fields, initial, drafts));
-                }}
-              >
-                <div class="settings-fields">
-                  {#each group.fields as field (field.key)}<SettingsFieldControl
-                      {field}
-                      bind:value={drafts[field.key]}
-                      source={sourceMap.get(field.key)}
-                      disabled={busy || loading}
-                    />{/each}
+            <form
+              class="card settings-card"
+              onsubmit={(event) => {
+                event.preventDefault();
+                void action("/config/set", configurationChanges(group.fields, initial, drafts));
+              }}
+            >
+              <div class="settings-fields">
+                {#each group.fields as field (field.key)}<SettingsFieldControl
+                    {field}
+                    bind:value={drafts[field.key]}
+                    source={sourceMap.get(field.key)}
+                    disabled={busy || loading}
+                  />{/each}
+              </div>
+              <div class="settings-footer">
+                <span class="muted small"
+                  >{editCounts[group.id] ? `${editCounts[group.id]} unsaved changes` : "No unsaved changes"}</span
+                >
+                <div class="btn-row">
+                  <button
+                    class="btn-secondary"
+                    type="button"
+                    disabled={busy || !editCounts[group.id]}
+                    onclick={() =>
+                      (drafts = {
+                        ...drafts,
+                        ...Object.fromEntries(group.fields.map((field) => [field.key, initial[field.key]])),
+                      })}>Reset changes</button
+                  ><button disabled={busy || !editCounts[group.id]}>Save {group.title.toLowerCase()}</button>
                 </div>
-                <div class="settings-footer">
-                  <span class="muted small"
-                    >{editCounts[group.id] ? `${editCounts[group.id]} unsaved changes` : "No unsaved changes"}</span
-                  >
-                  <div class="btn-row">
-                    <button
-                      class="btn-secondary"
-                      type="button"
-                      disabled={busy || !editCounts[group.id]}
-                      onclick={() =>
-                        (drafts = {
-                          ...drafts,
-                          ...Object.fromEntries(group.fields.map((field) => [field.key, initial[field.key]])),
-                        })}>Reset changes</button
-                    ><button disabled={busy || !editCounts[group.id]}>Save {group.title.toLowerCase()}</button>
-                  </div>
-                </div>
-              </form>{/if}
+              </div>
+            </form>
           </section>{/each}
+        <section
+          class="settings-section configuration-group"
+          aria-labelledby="embedding-settings"
+          hidden={selectedGroup !== "embedding-settings"}
+        >
+          <div class="settings-intro">
+            <h2 id="embedding-settings">Embeddings</h2>
+            <p>The model that turns assets into vectors for semantic search.</p>
+          </div>
+          <EmbeddingSettings
+            {config}
+            saved={async () => {
+              receipt = "Embedding settings saved.";
+              await load();
+            }}
+          />
+        </section>
         <div hidden={selectedGroup !== "advanced-settings"}>
           <section class="settings-section configuration-group" aria-labelledby="advanced-settings">
             <div class="settings-intro">

@@ -5,23 +5,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  embeddingChange,
+  embeddingAnswer,
   embeddingChanges,
   embeddingDraft,
   embeddingErrors,
   embeddingSource,
   keyStatus,
   reembeds,
+  tuningKeys,
 } from "../src/lib/embedding-model.ts";
 
-const remote = {
-  endpoint: "http://127.0.0.1:2/v1",
-  model: "embed-a",
-  apiKey: "$EMBED_KEY",
-  dimension: 768,
-  batchSize: 8,
-};
-const change = (draft, block, mode = "auto") => embeddingChange(draft, embeddingDraft(block), block, mode);
+const remote = { endpoint: "http://127.0.0.1:2/v1", model: "embed-a", apiKey: "$EMBED_KEY", batchSize: 8 };
 
 test("the source follows akm: an endpoint, a model alone on the default connection, else the built-in embedder", () => {
   assert.equal(embeddingSource(remote), "endpoint");
@@ -33,81 +27,33 @@ test("the source follows akm: an endpoint, a model alone on the default connecti
     model: "embed-a",
     endpoint: "http://127.0.0.1:2/v1",
     apiKey: "",
-    dimension: "768",
   });
-});
-
-test("an untouched draft writes nothing, and a key reference held is never put in the draft", () => {
-  assert.deepEqual(change(embeddingDraft(remote), remote), { set: {}, unset: [] });
   assert.equal(embeddingChanges(embeddingDraft(remote), embeddingDraft(remote)), 0);
 });
 
-test("a remote endpoint writes endpoint, model and dimension; a $VAR key is the block's apiKey", () => {
-  const draft = {
-    source: "endpoint",
-    model: " embed-b ",
-    endpoint: " http://h:1/v1 ",
-    apiKey: "$K",
-    dimension: "1024",
-  };
-  assert.deepEqual(change(draft, undefined, "off"), {
-    set: {
-      "embedding.model": "embed-b",
-      "embedding.dimension": "1024",
-      "embedding.endpoint": "http://h:1/v1",
-      "embedding.apiKey": "$K",
-      semanticSearchMode: "auto",
-    },
-    unset: [],
+test("the answer is what setup takes: a $VAR is a variable name, other text a pasted key, none no key", () => {
+  const base = embeddingDraft(remote);
+  assert.deepEqual(embeddingAnswer({ ...base, model: " m ", endpoint: " http://h:11434 " }), {
+    kind: "endpoint",
+    endpoint: "http://h:11434",
+    model: "m",
   });
-});
-
-test("a typed key is stored for the endpoint and never written to the config; it replaces a held reference", () => {
-  const draft = { ...embeddingDraft(remote), apiKey: " sk-typed " };
-  const result = change(draft, remote);
-  assert.deepEqual(result, {
-    set: {},
-    unset: ["embedding.apiKey"],
-    key: { key: "sk-typed", endpoint: remote.endpoint },
+  assert.deepEqual(embeddingAnswer({ ...base, apiKey: " $K " }).key, { env: "K" });
+  assert.deepEqual(embeddingAnswer({ ...base, apiKey: " sk-typed " }).key, { pasted: "sk-typed" });
+  assert.deepEqual(embeddingAnswer({ ...base, source: "connection", apiKey: "sk-x" }), {
+    kind: "connection",
+    model: "embed-a",
   });
-  assert.ok(!JSON.stringify(result.set).includes("sk-typed"));
-});
-
-test("a new endpoint without a key drops the old reference; the same endpoint keeps it", () => {
-  const moved = { ...embeddingDraft(remote), endpoint: "http://other:1/v1" };
-  assert.deepEqual(change(moved, remote), {
-    set: { "embedding.endpoint": "http://other:1/v1" },
-    unset: ["embedding.apiKey"],
-  });
-  const renamed = { ...embeddingDraft(remote), model: "embed-c" };
-  assert.deepEqual(change(renamed, remote), { set: { "embedding.model": "embed-c" }, unset: [] });
-});
-
-test("the default connection's model drops the endpoint and key; the built-in embedder drops those and the model", () => {
-  const connection = { ...embeddingDraft(remote), source: "connection" };
-  assert.deepEqual(change(connection, remote), { set: {}, unset: ["embedding.endpoint", "embedding.apiKey"] });
-  const local = { ...embeddingDraft(remote), source: "local" };
-  assert.deepEqual(change(local, remote), {
-    set: {},
-    unset: ["embedding.endpoint", "embedding.model", "embedding.apiKey"],
-  });
-  // Keys with no control stay: only the three above are ever unset.
-  assert.ok(![...change(local, remote).unset].includes("embedding.batchSize"));
-});
-
-test("choosing an embedder turns semantic search on only when it is not already", () => {
-  const local = { ...embeddingDraft(remote), source: "local" };
-  assert.equal(change(local, remote, "off").set.semanticSearchMode, "auto");
-  assert.equal(change(local, remote, "auto").set.semanticSearchMode, undefined);
+  assert.deepEqual(embeddingAnswer({ ...base, source: "local" }), { kind: "local" });
 });
 
 test("what stops a draft", () => {
   const ok = { hasConnection: true };
   assert.deepEqual(embeddingErrors(embeddingDraft(undefined), ok), {});
-  assert.deepEqual(
-    Object.keys(embeddingErrors({ ...embeddingDraft(remote), model: "", endpoint: "nope", dimension: "0" }, ok)),
-    ["model", "endpoint", "dimension"],
-  );
+  assert.deepEqual(Object.keys(embeddingErrors({ ...embeddingDraft(remote), model: "", endpoint: "nope" }, ok)), [
+    "model",
+    "endpoint",
+  ]);
   assert.match(
     embeddingErrors({ ...embeddingDraft({ model: "m" }), source: "connection" }, { hasConnection: false }).model,
     /No default connection/,
@@ -115,14 +61,20 @@ test("what stops a draft", () => {
   assert.deepEqual(embeddingErrors({ ...embeddingDraft(remote), source: "connection" }, ok), {});
 });
 
-test("only a new model or dimension means the next index embeds again; an endpoint alone does not", () => {
+test("only another model, or local against remote, means the next index embeds again", () => {
   const base = embeddingDraft(remote);
-  assert.equal(reembeds({ ...base, endpoint: "http://other/v1" }, base), false);
+  assert.equal(reembeds({ ...base, endpoint: "http://other/v1", apiKey: "$K" }, base), false);
   assert.equal(reembeds({ ...base, source: "connection" }, base), false);
   assert.equal(reembeds({ ...base, model: "embed-b" }, base), true);
-  assert.equal(reembeds({ ...base, dimension: "" }, base), true);
   assert.equal(reembeds({ ...base, source: "local" }, base), true);
   assert.equal(reembeds(embeddingDraft(undefined), embeddingDraft(undefined)), false);
+  assert.equal(reembeds({ ...embeddingDraft(undefined), model: "ignored" }, embeddingDraft(undefined)), false);
+});
+
+test("the built-in embedder removes the block's keys Desktop does not show", () => {
+  assert.deepEqual(tuningKeys(remote), ["batchSize"]);
+  assert.deepEqual(tuningKeys({ endpoint: "x", model: "m" }), []);
+  assert.deepEqual(tuningKeys(undefined), []);
 });
 
 test("the key status names a reference or the endpoint a stored key belongs to, and warns when the endpoint moves", () => {

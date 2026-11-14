@@ -7,12 +7,13 @@
 <script lang="ts">
   import { api, type ApiError } from "./client";
   import {
-    embeddingChange,
+    embeddingAnswer,
     embeddingChanges,
     embeddingDraft,
     embeddingErrors,
     keyStatus,
     reembeds,
+    tuningKeys,
     type EmbeddingBlock,
     type EmbeddingDraft,
     type EmbeddingSource,
@@ -48,18 +49,13 @@
     event.preventDefault();
     submitted = true;
     if (Object.keys(errors).length) return;
-    const { set, unset, key } = embeddingChange(draft, base, original, String(config.config.semanticSearchMode ?? ""));
     busy = true;
     failure = "";
-    let stored = false;
     try {
-      if (Object.keys(set).length || unset.length) await api("/config/set", {}, { set, unset });
-      stored = true;
-      if (key) await api("/config/embedding-key", {}, key);
+      await api("/config/embedding", {}, embeddingAnswer(draft));
       await saved();
     } catch (cause) {
-      failure = `${stored ? "The settings were saved, but the key was not stored" : "Nothing was saved"}: ${(cause as ApiError).message}`;
-      if (stored) await saved();
+      failure = `Nothing was saved: ${(cause as ApiError).message}`;
     } finally {
       busy = false;
     }
@@ -130,22 +126,13 @@
             when needed; a key is kept in credentials.json, never in config.json. Leave empty to keep it.
           </p>
         </div>{/if}
-      <div class="field">
-        <label class="field-label" for="embedding-dimension">Dimension</label>
-        <input
-          id="embedding-dimension"
-          inputmode="numeric"
-          bind:value={draft.dimension}
-          disabled={busy}
-          aria-invalid={submitted && errors.dimension ? "true" : undefined}
-          aria-describedby={submitted && errors.dimension ? "embedding-dimension-error" : undefined}
-        />
-        <p class="field-hint">Optional: the vector size, for a model that can return several.</p>
-        {#if submitted && errors.dimension}<p class="field-error" id="embedding-dimension-error">
-            {errors.dimension}
-          </p>{/if}
-      </div>
     {/if}
+    {#if draft.source === "local" && base.source !== "local" && tuningKeys(original).length}<p
+        class="notice"
+        role="status"
+      >
+        The built-in embedder removes the embedding block, including {tuningKeys(original).join(", ")}.
+      </p>{/if}
     {#if reembeds(draft, base)}<p class="notice" role="status">
         Vectors already built stop applying with this change. The next <code>akm index</code> embeds each entry again under
         the new model.

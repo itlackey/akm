@@ -22,8 +22,9 @@ import { dropUnusableProjects, NO_PROJECT, type ProjectConfig } from "../core/co
 import { UsageError } from "../core/errors";
 import { getConfigPath } from "../core/paths";
 import { redactUrlCredentials } from "../core/redaction";
-import { hasLocalEmbeddings } from "../llm/embedders/onnx-runtime";
-import { endpointProblem } from "../setup/endpoint";
+import { hasLocalEmbeddings, noLocalEmbeddingsReason } from "../llm/embedders/onnx-runtime";
+import { parseSetupFlags } from "../setup/setup-flags";
+import { applySetupAnswers, type EmbeddingAnswer } from "../setup/setup-plan";
 import { automaticWriteTarget, configSource, preserveUnrelatedConfig } from "./readers";
 import { isSecretEnvName, redactForUi } from "./redact";
 
@@ -261,17 +262,69 @@ export function saveConnection(input: { name: string; entry: Record<string, unkn
   return { saved: result.written };
 }
 
+/** The answer a host sends: `endpoint` is any form `akm setup --embedding-endpoint` takes; `key` is `{ env }` or `{ pasted }`. */
+export interface EmbeddingInput {
+  kind: "local" | "connection" | "endpoint";
+  model?: string;
+  endpoint?: string;
+  key?: { env?: string; pasted?: string };
+}
+
 /**
- * Store the embedding key typed for `endpoint` in `credentials.json` (`services.embedding`), as `akm setup` does for a
- * key it was given at the prompt. The key belongs to that endpoint alone; every other stored entry is kept. A key
- * is never written to config.json: the block's own `apiKey` is a `$VAR` reference, set with `change`.
+ * Set the embedding model as `akm setup` does: the same block and credential from the same answer
+ * (`applySetupAnswers`), the endpoint and key variable checked and normalized as the setup flags are. A pasted key is
+ * stored in `credentials.json` (`services.embedding`) first, so a bad answer fails before the config changes, and is
+ * never written to config.json. Choosing an embedder turns semantic search on. Returns the block now configured.
  */
-export function saveEmbeddingKey(input: { key: string; endpoint: string }) {
-  const key = typeof input.key === "string" ? input.key.trim() : "";
-  if (!key) throw new UsageError("An embedding key is required.", "MISSING_REQUIRED_ARGUMENT");
-  const endpoint = typeof input.endpoint === "string" ? input.endpoint.trim() : "";
-  const problem = endpointProblem(endpoint);
-  if (problem) throw new UsageError(problem);
-  writeCredential({ service: "embedding" }, key, endpoint);
-  return { saved: true };
+export function saveEmbedding(input: EmbeddingInput) {
+  const answer = embeddingAnswer(input);
+  const before = loadConfig();
+  if (answer.kind === "local" && !hasLocalEmbeddings()) throw new UsageError(noLocalEmbeddingsReason());
+  if (answer.kind === "connection" && defaultConnection(before) === undefined)
+    throw new UsageError(
+      "No default connection serves this model. Add one, or give an endpoint.",
+      "MISSING_REQUIRED_ARGUMENT",
+    );
+  const { patch, credentials } = applySetupAnswers(before, { embedding: answer });
+  for (const { slot, key, endpoint } of credentials) writeCredential(slot, key, endpoint);
+  const result = mutateConfig((current) => {
+    const { embedding: _held, ...rest } = current;
+    const next = {
+      ...rest,
+      semanticSearchMode: "auto" as const,
+      ...(patch.embedding ? { embedding: patch.embedding } : {}),
+    };
+    if (isDeepStrictEqual(next, current)) return current;
+    preserveUnrelatedConfig(current);
+    return next;
+  });
+  resetConfigCache();
+  return { saved: result.written, embedding: patch.embedding ?? null };
+}
+
+/** The answer as `akm setup --embedding … --embedding-endpoint … --embedding-api-key-env …` would take it. */
+function embeddingAnswer(input: EmbeddingInput): EmbeddingAnswer {
+  if (!isRecord(input)) throw new UsageError("An embedding answer is required.", "MISSING_REQUIRED_ARGUMENT");
+  if (input.kind === "local") return { kind: "local" };
+  if (input.kind !== "connection" && input.kind !== "endpoint")
+    throw new UsageError("kind must be local, connection or endpoint.");
+  const model = typeof input.model === "string" ? input.model.trim() : "";
+  if (!model) throw new UsageError("An embedding model is required.", "MISSING_REQUIRED_ARGUMENT");
+  if (input.kind === "connection") return { kind: "connection", model };
+  const { env, pasted } = isRecord(input.key) ? input.key : ({} as { env?: unknown; pasted?: unknown });
+  if (input.key !== undefined && typeof env !== "string" && typeof pasted !== "string")
+    throw new UsageError("key must name an environment variable ({ env }) or hold the key ({ pasted }).");
+  const flags = parseSetupFlags({
+    embedding: model,
+    embeddingEndpoint: input.endpoint,
+    embeddingApiKeyEnv: typeof env === "string" ? env : undefined,
+  });
+  const key = typeof pasted === "string" ? pasted.trim() : "";
+  if (typeof pasted === "string" && !key) throw new UsageError("The embedding key is empty.");
+  return {
+    kind: "endpoint",
+    endpoint: flags.embeddingEndpoint as string,
+    model,
+    ...(flags.embeddingApiKeyEnv ? { key: { env: flags.embeddingApiKeyEnv } } : key ? { key: { pasted: key } } : {}),
+  };
 }
