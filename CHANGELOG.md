@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261125] - 2026-11-14
+
 ### Added
 
 - AKM Desktop's library map answers four questions about the whole library, one view each: Contents (what is in it, by topic, with the searches that found nothing), Use (what is read and what is dead weight), Problems (what is outdated, disliked or duplicated) and Relations (how its topics link to each other, in 3D or flat). It replaces the point cloud of every asset, which showed none of these. The figures of each view are also in words beside it.
