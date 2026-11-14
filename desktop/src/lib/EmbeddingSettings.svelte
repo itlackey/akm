@@ -13,7 +13,6 @@
     embeddingErrors,
     keyStatus,
     reembeds,
-    tuningKeys,
     type EmbeddingBlock,
     type EmbeddingDraft,
     type EmbeddingSource,
@@ -127,12 +126,6 @@
           </p>
         </div>{/if}
     {/if}
-    {#if draft.source === "local" && base.source !== "local" && tuningKeys(original).length}<p
-        class="notice"
-        role="status"
-      >
-        The built-in embedder removes the embedding block, including {tuningKeys(original).join(", ")}.
-      </p>{/if}
     {#if reembeds(draft, base)}<p class="notice" role="status">
         Vectors already built stop applying with this change. The next <code>akm index</code> embeds each entry again under
         the new model.

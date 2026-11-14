@@ -8,6 +8,7 @@
  * `connections`, `harnesses` and `embedding`, and the keys to put in
  * `credentials.json`. Nothing here prompts, reads the network or writes.
  */
+import { isDeepStrictEqual } from "node:util";
 import {
   type AkmConfig,
   type ConnectionConfig,
@@ -141,6 +142,20 @@ function connectionEntry(existing: ConnectionConfig | undefined, answer: Connect
   };
 }
 
+/**
+ * The block with its target (`endpoint`, `model`, `apiKey`, `provider`: where embeddings run, and the label of that
+ * endpoint) replaced by `target`; every other key is kept. An empty block is no block.
+ */
+function withTarget(
+  current: EmbeddingConnectionConfig | undefined,
+  target: EmbeddingConnectionConfig,
+): EmbeddingConnectionConfig | undefined {
+  const { endpoint: _endpoint, model: _model, apiKey: _apiKey, provider: _provider, ...kept } = current ?? {};
+  const next = { ...target, ...kept };
+  if (Object.keys(next).length === 0) return undefined;
+  return current !== undefined && isDeepStrictEqual(next, current) ? current : next;
+}
+
 function embeddingBlock(
   current: EmbeddingConnectionConfig | undefined,
   answer: EmbeddingAnswer,
@@ -149,26 +164,22 @@ function embeddingBlock(
     case "off":
       return current;
     case "local":
-      return undefined;
+      return withTarget(current, {});
     case "connection":
-      return current?.endpoint === undefined && current?.model === answer.model ? current : { model: answer.model };
+      return withTarget(current, { model: answer.model });
     case "endpoint": {
-      // A key belongs to the endpoint it was given for: another endpoint starts without one.
-      const apiKey =
-        answer.key === undefined
-          ? current?.apiKey !== undefined &&
-            current.endpoint !== undefined &&
-            sameEndpoint(current.endpoint, answer.endpoint)
-            ? { apiKey: current.apiKey }
-            : {}
-          : "env" in answer.key
-            ? { apiKey: `$${answer.key.env}` }
-            : {};
-      if (current?.endpoint === answer.endpoint && current.model === answer.model) {
-        const { apiKey: _apiKey, ...kept } = current;
-        return { ...kept, ...apiKey };
-      }
-      return { endpoint: answer.endpoint, model: answer.model, ...apiKey };
+      // A key and a label belong to the endpoint they were given for: another endpoint starts without them.
+      const held =
+        current?.endpoint !== undefined && sameEndpoint(current.endpoint, answer.endpoint)
+          ? { apiKey: current.apiKey, provider: current.provider }
+          : {};
+      const apiKey = answer.key === undefined ? held.apiKey : "env" in answer.key ? `$${answer.key.env}` : undefined;
+      return withTarget(current, {
+        endpoint: answer.endpoint,
+        model: answer.model,
+        ...(apiKey === undefined ? {} : { apiKey }),
+        ...(held.provider === undefined ? {} : { provider: held.provider }),
+      });
     }
   }
 }

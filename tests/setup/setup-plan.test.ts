@@ -212,10 +212,67 @@ describe("an embedding answer", () => {
     expect(patch.embedding).toBe(current.embedding);
   });
 
-  test("the built-in embedder removes the block; off leaves it for a later return", () => {
+  test("the built-in embedder removes the target and keeps the rest; a block left empty is removed; off leaves it as it is", () => {
     expect(applySetupAnswers(withModel, { embedding: { kind: "local" } }).patch.embedding).toBeUndefined();
     expect("embedding" in applySetupAnswers(withModel, { embedding: { kind: "local" } }).patch).toBe(true);
+    const tuned = cfg({
+      embedding: {
+        endpoint: "https://emb.example.test/v1",
+        model: "e5",
+        apiKey: "$EMB_KEY",
+        provider: "openai",
+        dimension: 1024,
+        batchSize: 8,
+        localModel: "bge-small",
+      },
+    });
+    expect(applySetupAnswers(tuned, { embedding: { kind: "local" } }).patch.embedding).toEqual({
+      dimension: 1024,
+      batchSize: 8,
+      localModel: "bge-small",
+    });
     expect(applySetupAnswers(withModel, { embedding: { kind: "off" } }).patch.embedding).toBe(withModel.embedding);
+  });
+
+  test("a model on the connection drops the endpoint, key and label and keeps the rest", () => {
+    const tuned = cfg({
+      embedding: {
+        endpoint: "https://emb.example.test/v1",
+        model: "e5",
+        apiKey: "$EMB_KEY",
+        provider: "openai",
+        batchSize: 8,
+      },
+    });
+    expect(
+      applySetupAnswers(tuned, { embedding: { kind: "connection", model: "nomic-embed-text" } }).patch.embedding,
+    ).toEqual({ model: "nomic-embed-text", batchSize: 8 });
+  });
+
+  test("another endpoint replaces the target, drops the old key and label, and keeps the tuning", () => {
+    const tuned = cfg({
+      embedding: {
+        endpoint: "https://emb.example.test/v1",
+        model: "e5",
+        apiKey: "$EMB_KEY",
+        provider: "openai",
+        timeoutMs: 5000,
+      },
+    });
+    const moved = applySetupAnswers(tuned, {
+      embedding: {
+        kind: "endpoint",
+        endpoint: "https://other.example.test/v1",
+        model: "bge",
+        key: { pasted: "typed" },
+      },
+    });
+    expect(moved.patch.embedding).toEqual({
+      endpoint: "https://other.example.test/v1",
+      model: "bge",
+      timeoutMs: 5000,
+    });
+    expect(moved.credentials).toHaveLength(1);
   });
 
   test("another endpoint carries its own URL, model and key reference", () => {

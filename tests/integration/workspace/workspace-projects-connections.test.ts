@@ -292,12 +292,15 @@ describe("config.saveEmbedding", () => {
     expect(saved().embedding).toEqual({ endpoint: "http://127.0.0.1:3/v1", model: "m2" });
   });
 
-  test("the default connection's model is {model}; local removes the block", () => {
+  test("the default connection's model keeps the block's tuning; local removes the target and keeps the rest", () => {
     seed({ endpoint: "http://127.0.0.1:2/v1", model: "m", apiKey: "$EMBED_KEY", batchSize: 4 });
     config.saveEmbedding({ kind: "connection", model: "embed-b" });
-    expect(saved().embedding).toEqual({ model: "embed-b" });
+    expect(saved().embedding).toEqual({ model: "embed-b", batchSize: 4 });
     expect(saved().semanticSearchMode).toBe("auto");
     if (config.get().localEmbeddings) {
+      expect(config.saveEmbedding({ kind: "local" })).toEqual({ saved: true, embedding: { batchSize: 4 } });
+      expect(saved().embedding).toEqual({ batchSize: 4 });
+      seed({ model: "m" });
       expect(config.saveEmbedding({ kind: "local" })).toEqual({ saved: true, embedding: null });
       expect(saved().embedding).toBeUndefined();
     }

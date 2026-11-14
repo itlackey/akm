@@ -78,10 +78,6 @@ export function embeddingChanges(draft: EmbeddingDraft, base: EmbeddingDraft): n
   return (["source", "model", "endpoint", "apiKey"] as const).filter((key) => draft[key] !== base[key]).length;
 }
 
-/** The keys of the block that choosing the built-in embedder would remove along with it: the ones Desktop does not show. */
-export const tuningKeys = (block: EmbeddingBlock | undefined): string[] =>
-  Object.keys(block ?? {}).filter((key) => !["endpoint", "model", "apiKey"].includes(key));
-
 /** What the form says about the key: the reference the block names, else the endpoint a stored key belongs to. Never the key. */
 export function keyStatus(
   original: EmbeddingBlock | undefined,

@@ -12,7 +12,6 @@ import {
   embeddingSource,
   keyStatus,
   reembeds,
-  tuningKeys,
 } from "../src/lib/embedding-model.ts";
 
 const remote = { endpoint: "http://127.0.0.1:2/v1", model: "embed-a", apiKey: "$EMBED_KEY", batchSize: 8 };
@@ -69,12 +68,6 @@ test("only another model, or local against remote, means the next index embeds a
   assert.equal(reembeds({ ...base, source: "local" }, base), true);
   assert.equal(reembeds(embeddingDraft(undefined), embeddingDraft(undefined)), false);
   assert.equal(reembeds({ ...embeddingDraft(undefined), model: "ignored" }, embeddingDraft(undefined)), false);
-});
-
-test("the built-in embedder removes the block's keys Desktop does not show", () => {
-  assert.deepEqual(tuningKeys(remote), ["batchSize"]);
-  assert.deepEqual(tuningKeys({ endpoint: "x", model: "m" }), []);
-  assert.deepEqual(tuningKeys(undefined), []);
 });
 
 test("the key status names a reference or the endpoint a stored key belongs to, and warns when the endpoint moves", () => {
