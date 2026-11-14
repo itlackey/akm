@@ -8,7 +8,7 @@ import type { BundleAdapter } from "../core/adapter/bundle-adapter";
 import { detectAdapterId } from "../core/adapter/detect-adapter";
 import { adapterForId } from "../core/adapter/registry";
 import type { BundleComponent } from "../core/adapter/types";
-import { compareCodePoints, isHttpUrl } from "../core/common";
+import { compareCodePoints, isHttpUrl, safeRealpath } from "../core/common";
 import type { AkmConfig } from "../core/config/config";
 import { appendEvent } from "../core/events";
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
@@ -710,7 +710,7 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
     // through the same diff-persist path as an incremental one.
     const prevStashDir = getMeta(db, "stashDir");
     const prevBuiltAt = getMeta(db, "builtAt");
-    const isIncremental = !full && prevStashDir === stashDir && !!prevBuiltAt;
+    const isIncremental = !full && servesLibrary(prevStashDir, stashDir) && !!prevBuiltAt;
     const builtAtMs = isIncremental && prevBuiltAt ? new Date(prevBuiltAt).getTime() : 0;
     const mode = isIncremental ? "incremental" : "full";
 
@@ -1368,6 +1368,11 @@ interface PersistedEntryRow {
   adapter_id: string;
 }
 
+/** Whether the stored library marker names `stashDir`: the same directory, however either is spelled. */
+function servesLibrary(stored: string | undefined, stashDir: string): boolean {
+  return stored !== undefined && safeRealpath(stored) === safeRealpath(stashDir);
+}
+
 /**
  * Phase 2 (sync): write all pre-generated scan records inside a single transaction.
  *
@@ -1394,14 +1399,14 @@ function persistDirRecords(
   const persist = (): void => {
     // Entries are about to describe another library: the old watermark is not theirs, and neither are rows outside
     // its directories. They go in this transaction, so the marker never names a library whose index serves another's.
-    if (getMeta(db, "stashDir") !== library.stashDir) {
+    if (!servesLibrary(getMeta(db, "stashDir"), library.stashDir)) {
       deleteMeta(db, "builtAt");
       addDeletedEntries(
         deletedEntries,
         deleteEntriesOutsideLibrary(db, library.sourceDirs, library.unresolvedBundleIds),
       );
     }
-    setMeta(db, "stashDir", library.stashDir);
+    setMeta(db, "stashDir", safeRealpath(library.stashDir));
     setMeta(db, "stashDirs", JSON.stringify(library.sourceDirs));
     for (const {
       dirPath,

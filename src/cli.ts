@@ -36,7 +36,16 @@
 // and lazy `import()` failures are the typical sources. Registered before
 // any other top-level work so the startup IIFE banner and the stale-DB
 // cleanup are also covered.
+// A reader that closed early (`akm search … | head`) is not a failure of the work: the command keeps
+// running, its remaining output goes nowhere, and the process ends with the code the work earned.
+const isBrokenPipe = (err: unknown): boolean => (err as NodeJS.ErrnoException | undefined)?.code === "EPIPE";
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on("error", (err) => {
+    if (!isBrokenPipe(err)) throw err;
+  });
+}
 process.on("unhandledRejection", (reason) => {
+  if (isBrokenPipe(reason)) return;
   const err = reason instanceof Error ? reason : new Error(String(reason));
   console.error(
     JSON.stringify(
@@ -54,6 +63,7 @@ process.on("unhandledRejection", (reason) => {
   process.exit(EXIT_CODES.INTERNAL);
 });
 process.on("uncaughtException", (err) => {
+  if (isBrokenPipe(err)) return;
   console.error(
     JSON.stringify(
       {

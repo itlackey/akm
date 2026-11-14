@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { isWithin, resolveStashDir } from "../../core/common";
+import { isWithin, resolveStashDir, safeRealpath } from "../../core/common";
 import type { AkmConfig, SourceConfigEntry } from "../../core/config/config";
 import {
   bundleComponentConfig,
@@ -83,18 +83,12 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
 
   // Explicit and environment overrides stay first. Without either override,
   // the configured default enters through the validated loop below.
+  // A source's path is its real path, so one directory reached through two spellings
+  // (a symlink, macOS `/tmp` and `/private/tmp`) keys the same index rows.
   const sources: SearchSource[] = implicitStash
-    ? [{ path: implicitStash, writable: true, isDefault: true, type: "filesystem" }]
+    ? [{ path: safeRealpath(implicitStash), writable: true, isDefault: true, type: "filesystem" }]
     : [];
-  const sourceIdentity = (dir: string): string => {
-    const resolved = path.resolve(dir);
-    try {
-      return fs.realpathSync.native(resolved);
-    } catch {
-      return resolved;
-    }
-  };
-  const seen = new Set<string>(implicitStash ? [sourceIdentity(implicitStash)] : []);
+  const seen = new Set<string>(implicitStash ? [safeRealpath(implicitStash)] : []);
 
   const addSource = (
     dir: string,
@@ -106,7 +100,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
     isDefault = false,
   ) => {
     const resolved = path.resolve(dir);
-    const identity = sourceIdentity(resolved);
+    const identity = safeRealpath(resolved);
     if (seen.has(identity)) {
       // Already in the source list — typically the primary stash injected at
       // sources[0] before this loop. Enrich that entry with whatever metadata
@@ -114,7 +108,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
       // find it via registryId. Without this, the primary stash entry stays
       // identity-less and a user-named primary source ("name": "my-stash")
       // would validate but match zero entries when filtering.
-      const existing = sources.find((source) => sourceIdentity(source.path) === identity);
+      const existing = sources.find((source) => safeRealpath(source.path) === identity);
       if (existing && existing.registryId === undefined) {
         if (registryId) existing.registryId = registryId;
         if (isDefault) existing.isDefault = true;
@@ -130,7 +124,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
       warn(`Warning: stash root "${dir}" appears to be a system directory. This may be unintentional.`);
     }
     sources.push({
-      path: resolved,
+      path: identity,
       ...(registryId ? { registryId } : {}),
       ...(isDefault ? { isDefault: true } : {}),
       writable,

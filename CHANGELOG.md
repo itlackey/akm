@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `akm search … | head` and `akm index 2>&1 | head -1` exited 70 ("Unhandled rejection: EPIPE") once the reader closed the pipe. A closed stdout or stderr no longer fails the command: it runs to completion (an index build finishes) and exits with the code its work earned, normally 0.
+- A library reached through two path spellings (a symlink and its target, macOS `/tmp` and `/private/tmp`) was a different library to the index: reads said "no search index", and every build through the other spelling re-minted every entry id. A source's path is now its real path, and the library directory is compared by real path, so an index that stored the other spelling still serves.
+- `akm setup --embedding-endpoint https://host/v1/models` stored `https://host/v1/models/v1`, and `…/V1` became `…/V1/v1`. An endpoint typed with `/models`, `/completions`, `/embeddings` or `/chat/completions` (any case) now names its base, and `/V1` counts as the `/v1` root.
+
 ## [0.10.261124] - 2026-11-14
 
 ### Fixed

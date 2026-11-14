@@ -20,6 +20,7 @@
  * gets {@link incompleteIndexWarning} alongside its results.
  */
 
+import { safeRealpath } from "../core/common";
 import { ConfigError } from "../core/errors";
 import { classifyPathAccess } from "../core/path-access";
 import { getDbPath } from "../core/paths";
@@ -67,6 +68,12 @@ export interface UsableIndex {
  * Two failures are not "no index" and still raise: a file akm lacks permission
  * to read (#791, `DATA_DIR_UNREADABLE`), and an index laid out by a newer akm.
  */
+/** Whether the index's `stashDir` / `stashDirs` meta names `library` (a realpath), however the stored value is spelled. */
+function namesLibrary(db: Database, library: string): boolean {
+  const stored = [getMeta(db, "stashDir"), ...(JSON.parse(getMeta(db, "stashDirs") ?? "[]") as string[])];
+  return stored.some((dir) => dir !== undefined && safeRealpath(dir) === library);
+}
+
 export function openUsableIndex(
   stashDir: string,
   options: { readOnly?: boolean; busyTimeoutMs?: number } = {},
@@ -81,10 +88,7 @@ export function openUsableIndex(
     if (!db) return undefined;
     if (options.busyTimeoutMs !== undefined)
       db.exec(`PRAGMA busy_timeout = ${Math.max(0, Math.floor(options.busyTimeoutMs))}`);
-    const servesLibrary =
-      hasCurrentEntriesTable(db) &&
-      (getMeta(db, "stashDir") === stashDir ||
-        (JSON.parse(getMeta(db, "stashDirs") ?? "[]") as string[]).includes(stashDir));
+    const servesLibrary = hasCurrentEntriesTable(db) && namesLibrary(db, safeRealpath(stashDir));
     if (servesLibrary) return { db, complete: Boolean(getMeta(db, "builtAt")) };
   } catch (error) {
     // Anything else (corrupt, unreadable meta, mid-write) is an index that cannot serve.
