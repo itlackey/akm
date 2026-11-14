@@ -59,6 +59,7 @@ describe("source commands and resolution", () => {
     writeFile(path.join(stashDir, "scripts", "README.md"), "ignore\n");
 
     await withBundle(stashDir, async () => {
+      await akmIndex({ stashDir, full: true });
       const result = await akmSearch({ query: "", type: "script" });
       const localHits = result.results.filter(isLocalHit);
 
@@ -77,6 +78,7 @@ describe("source commands and resolution", () => {
     writeFile(path.join(stashDir, "scripts", "package.json"), '{"name":"root"}');
 
     await withBundle(stashDir, async () => {
+      await akmIndex({ stashDir, full: true });
       const result = await akmSearch({ query: "job", type: "script" });
       const hit = result.results.filter(isLocalHit)[0];
 
@@ -93,6 +95,7 @@ describe("source commands and resolution", () => {
     writeFile(path.join(stashDir, "scripts", "group", "nested", "package.json"), '{"name":"group"}');
 
     await withBundle(stashDir, async () => {
+      await akmIndex({ stashDir, full: true });
       const result = await akmSearch({ query: "job", type: "script" });
       const hit = result.results.filter(isLocalHit)[0];
       expect(result.results.length).toBe(1);
@@ -305,6 +308,7 @@ Creates a user.
     writeFile(path.join(stashDir, "knowledge", "api-guide.md"), KNOWLEDGE_DOC);
 
     await withBundle(stashDir, async () => {
+      await akmIndex({ stashDir, full: true });
       const result = await akmSearch({ query: "", type: "knowledge" });
 
       expect(result.results.length).toBe(1);
@@ -347,6 +351,7 @@ Creates a user.
       `---\ndescription: fragment fixture\n---\n\n${body}\n\nNeedleFragmentCase: Proof Appears Here!`,
     );
     await withBundle(stashDir, async () => {
+      await akmIndex({ stashDir, full: true });
       const searched = await akmSearch({ query: "NeedleFragmentCase", type: "knowledge" });
       const hit = searched.results[0];
       if (!hit || !isLocalHit(hit)) throw new Error("expected a local hit");
@@ -384,6 +389,7 @@ Creates a user.
       ].join("\n"),
     );
     await withBundle(stashDir, async () => {
+      await akmIndex({ stashDir, full: true });
       const hit = (await akmSearch({ query: "workflowfragmentneedle", type: "workflow" })).results.find(isLocalHit);
       if (!hit) throw new Error("expected a local workflow hit");
       expect(hit.ref).toBe("workflows/release");
@@ -409,6 +415,7 @@ Creates a user.
       `# Oversized\n\n${Array.from({ length: 900 }, () => "section background").join(" ")}\n\noversizedsectiontoken evidence`,
     );
     await withBundle(stashDir, async () => {
+      await akmIndex({ stashDir, full: true });
       const cases: Array<[string, string]> = [
         ["preambleuniquetoken", "preambleuniquetoken"],
         ["duplicateuniquetoken", "duplicateuniquetoken"],
@@ -504,6 +511,7 @@ Creates a user.
 
     try {
       await withBundle(stashDir, async () => {
+        await akmIndex({ stashDir, full: true });
         const result = await akmSearch({ query: "", type: "script" });
 
         expect(result.results.length).toBe(2);
@@ -521,6 +529,7 @@ Creates a user.
 
     try {
       await withBundle(stashDir, async () => {
+        await akmIndex({ stashDir, full: true });
         const result = await akmSearch({ query: "", type: "script" });
         const hit = result.results.filter(isLocalHit)[0];
 

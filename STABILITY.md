@@ -96,7 +96,7 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | Command | Status | Contract or migration action |
 | --- | --- | --- |
 | `akm doctor` | Evolving | Reuses health checks, flags, output, and exits in 0.10, including transitional report flags. Bare `doctor` adds a `scheduler` field (the former `task doctor` report) since 0.10.261120, and `doctor scheduler sync` and `doctor explain <ref>` are new in that release. Use `--read-only --no-probe` for offline inspection without health writes; `--read-only` also records no CLI usage. |
-| `akm doctor metrics` | Evolving | Reuses `metrics`; its report content, layout, and JSON payload remain Experimental, except `doctor metrics usage --export`, whose JSON (schema version 1) is the stable part. Improve-run report selection is not yet consolidated here. |
+| `akm doctor metrics` | Evolving | Reuses `metrics`; its report content, layout, and JSON payload remain Experimental, except `doctor metrics usage --export`, whose JSON (schema version 1) is the stable part. `doctor metrics improve` (`--run`, `--since`) selects improve runs and reports their usage, routing and cost, since 0.10.261120. |
 | `akm doctor info` | Evolving | Reuses `info`, preserving its existing fields and broken-config recovery behavior; `learning` remains Experimental. |
 | `akm doctor log` | Evolving | Reuses the existing event-stream command and output. |
 | `akm doctor scheduler sync` | Evolving | First in 0.10.261120. Installs, updates or removes the OS scheduler entry; reuses `task sync`, with its reconciliation and `--rebind`. In 0.11 it keeps only `--rebind` and removes the old per-task rows itself. |
@@ -107,7 +107,7 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | `akm metrics` | Deprecated | Removed in 0.11: use `akm doctor metrics`. Current report content and JSON shape are Experimental. |
 | `akm info` | Deprecated | Removed in 0.11: use `akm doctor info`. The current `learning` field is Experimental. |
 | `akm log` | Deprecated | Removed in 0.11: use `akm doctor log`. |
-| `akm lint` | Evolving | |
+| `akm lint` | Evolving | `akm lint <file>` checks one file, first in 0.10.261122; a file outside every bundle needs `--type`. |
 | `akm improve` | Evolving | `--require-feedback-signal` and `--show-prompt` are Deprecated, removed in 0.11 (replacements: a strategy with `processes.proactiveMaintenance.enabled: false` selected with `--strategy`, and `doctor prompt`). `--json-to-stdout` stays: stdout is empty for a live run without it, and the evaluators read the result through it. `--timeout-ms` is already removed on the 0.11 branch: it is an unknown flag, and the error names `--timeout`. Gate-passed proposals are accepted and committed by default. The [three named autonomous lanes](#akm-improve-autonomy) require `experimental.improveAutonomy`; other documented writes do not. |
 | `akm improve report` | Deprecated | Removed in 0.11: use `akm doctor metrics improve` (`--run`, `--since`), first in 0.10.261120, retaining run/window selection and usage, routing, and cost data. |
 | `akm improve judge` | Deprecated | Removed in 0.11: use `akm doctor judge`. Subcommand since 0.10 (was a magic `scope` value); reads one revision as JSON on stdin and writes nothing. The same as `akm judge reflect.quality`, in its older input and output shape; its `--strategy` flag was removed. Already an unknown command on the 0.11 branch, whose error names `akm doctor judge reflect.quality`. |
@@ -836,7 +836,7 @@ spelling is in the CHANGELOG entry and the CLI reference.
 | `--shape agent` | `--detail agent` (itself removed in 0.11: use `--detail normal`) |
 | `--shape summary` | `--detail brief` (it only had a projection on `akm show`) |
 | `--target` on `import`, `env create`, `env remove`, `secret set`, `proposal accept`, `proposal diff`, `proposal revert` | `--bundle` |
-| `akm task validate <path>` | `akm lint --type tasks` |
+| `akm task validate <path>` | `akm lint <file> --type tasks` for one file (first in 0.10.261122), `akm lint --type tasks` for a bundle |
 | `akm config path --all` | `akm info` |
 | `--run` / `--since` on `akm improve` | `akm improve report --run` / `--since` |
 

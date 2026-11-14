@@ -128,6 +128,13 @@ export namespace config {
   function get(): unknown;
   /** Replace one connection with `entry` as a whole (removed aliases and options leave the file); a literal API key is refused. */
   function saveConnection(input: { name: string; entry: Record<string, unknown> }): { saved: boolean };
+  /** Set the embedding model as `akm setup` does (local, a model on the default connection, or an endpoint with a `{ env }` or `{ pasted }` key); a pasted key goes to credentials.json, never config.json. */
+  function saveEmbedding(input: {
+    kind: "local" | "connection" | "endpoint";
+    model?: string;
+    endpoint?: string;
+    key?: { env?: string; pasted?: string };
+  }): { saved: boolean; embedding: Record<string, unknown> | null };
   /** Remove one connection; reports the `connection` references to it (each fails until changed: a named connection is never replaced by the default), whether it was the default and the default after. */
   function removeConnection(input: { name: string }): {
     saved: boolean;

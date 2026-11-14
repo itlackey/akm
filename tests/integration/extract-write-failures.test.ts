@@ -274,7 +274,6 @@ describe("the enclosing improve run carries the extract write failures (#1290)",
         scope: "memory",
         config: cfg,
         stashDir: stash,
-        ensureIndexFn: async () => false,
         reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
         extractHarnesses: [harness([session("s1")])],
       });

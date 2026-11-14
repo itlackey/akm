@@ -171,7 +171,6 @@ const okDistill = (ref: string): AkmDistillResult => ({
 });
 
 const noopIndexFns = {
-  ensureIndexFn: async () => false,
   reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
 };
 

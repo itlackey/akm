@@ -115,7 +115,7 @@ describe("generic lookup/show installation-priority ownership", () => {
       relativePath: "physical-owner/SKILL.md",
       content: skillDocument("physical-owner", "EARLY_AGENT_SKILL"),
     },
-  ])("a missing first index row still stops at $label without rendering its physical file", async (shape) => {
+  ])("a missing first index row still stops at $label; show serves its file, not the later owner's", async (shape) => {
     const early = fixture(`early-${shape.adapter}-${shape.conceptId.replaceAll("/", "-")}`, shape.adapter);
     const later = fixture(`later-${shape.adapter}-${shape.conceptId.replaceAll("/", "-")}`, shape.adapter);
     const earlyPath = write(early.root, shape.relativePath, shape.content);
@@ -142,7 +142,7 @@ describe("generic lookup/show installation-priority ownership", () => {
       readSpy.mockRestore();
     }
     await expect(showByRef(shape.conceptId)).rejects.toThrow(/not found/i);
-    await expect(showLocal({ ref: shape.conceptId })).rejects.toThrow(/not found/i);
+    expect((await showLocal({ ref: shape.conceptId })).path).toBe(earlyPath);
     expect(await lookupBundleRef(parseBundleRef(`later//${shape.conceptId}`))).toMatchObject({
       filePath: laterPath,
       adapterId: shape.adapter,
@@ -221,7 +221,7 @@ describe("generic lookup/show installation-priority ownership", () => {
 
     deleteIndexEntry("early//workflows/same");
     expect(await lookupBundleRef(parseBundleRef("workflows/same"))).toBeNull();
-    await expect(showLocal({ ref: "workflows/same" })).rejects.toThrow(/not found/i);
+    expect((await showLocal({ ref: "workflows/same" })).path).toBe(earlyPath);
 
     const stateBeforeRuntimeRejection = fs.readFileSync(getStateDbPath());
     await expect(loadWorkflowAsset("workflows/same")).rejects.toThrow(
@@ -260,7 +260,7 @@ describe("generic lookup/show installation-priority ownership", () => {
     expect((await showLocal({ ref: "workflows/same" })).content).toContain("EARLY_INSULATED_OWNER");
     deleteIndexEntry("early//workflows/same");
     expect(await lookupBundleRef(parseBundleRef("workflows/same"))).toBeNull();
-    await expect(showLocal({ ref: "workflows/same" })).rejects.toThrow(/not found/i);
+    expect((await showLocal({ ref: "workflows/same" })).path).toBe(earlyPath);
     const stateBeforeRuntimeRejection = fs.readFileSync(getStateDbPath());
     await expect(loadWorkflowAsset("workflows/same")).rejects.toThrow(/adapter "okf"/i);
     expect(fs.readFileSync(getStateDbPath())).toEqual(stateBeforeRuntimeRejection);
@@ -296,10 +296,10 @@ describe("generic lookup/show installation-priority ownership", () => {
     expect((await loadWorkflowAsset("index")).path).toBe(indexPath);
   });
 
-  test("a missing first-native index row cannot retarget lookup to a lower indexed owner or render an unindexed file", async () => {
+  test("a missing first-native index row cannot retarget lookup to a lower indexed owner; show serves the first owner's file", async () => {
     const early = fixture("early-native-stale-index", "akm");
     const later = fixture("later-native-stale-index", "akm");
-    write(early.root, "workflows/stale.md", getWorkflowTemplate());
+    const earlyPath = write(early.root, "workflows/stale.md", getWorkflowTemplate());
     write(later.root, "workflows/stale.md", getWorkflowTemplate());
     configure(early, later);
     await akmIndex({ stashDir: early.root, full: true });
@@ -308,6 +308,6 @@ describe("generic lookup/show installation-priority ownership", () => {
 
     expect(await lookupBundleRef(parseBundleRef("workflows/stale"))).toBeNull();
     await expect(showByRef("workflows/stale")).rejects.toThrow(/not found/i);
-    await expect(showLocal({ ref: "workflows/stale" })).rejects.toThrow(/not found/i);
+    expect((await showLocal({ ref: "workflows/stale" })).path).toBe(earlyPath);
   });
 });

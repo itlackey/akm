@@ -783,6 +783,10 @@ model the default connection serves, at its endpoint and with its key; with no
 default connection there is nothing to serve it, and the built-in local embedder
 runs, with a warning.
 
+Choosing another embedder with `akm setup` (or in AKM Desktop) replaces `endpoint`, `model`, `apiKey` and `provider`;
+keeps `dimension`, `queryTemplate` and `documentTemplate` only while the model is the same; and keeps every other key.
+The built-in embedder leaves no block when nothing remains.
+
 Retrieval models expect a prompt around queries and documents. akm picks it by
 model name (`src/llm/embedders/profile.ts`): Qwen3-Embedding gets
 `Instruct: Given a question or task, retrieve the knowledge asset that helps with it\nQuery:{text}`

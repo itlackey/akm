@@ -49,7 +49,7 @@ const READ_COMMANDS: readonly (readonly string[])[] = [
 let stashDir = "";
 let cleanup: Cleanup = () => {};
 
-beforeEach(() => {
+beforeEach(async () => {
   const dataResult = sandboxXdgDataHome();
   const cacheResult = sandboxXdgCacheHome(dataResult.cleanup);
   const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
@@ -60,6 +60,8 @@ beforeEach(() => {
   const notePath = path.join(stashDir, "memories", "alias-note.md");
   fs.mkdirSync(path.dirname(notePath), { recursive: true });
   fs.writeFileSync(notePath, ["---", "description: Shell alias tip", "---", "", "Use aliases.", ""].join("\n"), "utf8");
+  // Reads never build the index: search and curate need one to return the note.
+  await runCliCapture(["index"]);
 });
 
 afterEach(() => {

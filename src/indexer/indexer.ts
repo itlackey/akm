@@ -13,7 +13,6 @@ import type { AkmConfig } from "../core/config/config";
 import { appendEvent } from "../core/events";
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
 import { getDbPath } from "../core/paths";
-import { SCRIPT_EXTENSIONS } from "../core/recognition-util";
 import { withStateDb } from "../core/state-db";
 import { isVerbose, warn, warnOnce, warnVerbose } from "../core/warn";
 import { foldBeforePurge } from "../indexer/metrics/fold";
@@ -53,6 +52,7 @@ import {
   deleteEntriesByDirAndBundle,
   deleteEntriesByDirExceptRefs,
   deleteEntriesByIds,
+  deleteEntriesOutsideLibrary,
   deleteUsageEventsForEntries,
   findEntryIdByRef,
   getAllEntries,
@@ -68,6 +68,7 @@ import { rebuildFtsIfTotalsStale } from "../storage/repositories/index-fts-repos
 import { clearStaleCacheEntries } from "../storage/repositories/index-llm-cache-repository";
 import {
   deleteIndexDirState,
+  deleteMeta,
   getIndexDirState,
   getMeta,
   setMeta,
@@ -76,11 +77,18 @@ import {
 import { upsertUtilityScore } from "../storage/repositories/index-utility-repository";
 import { getEmbeddingCount } from "../storage/repositories/index-vec-repository";
 import { purgeFoldedUsageEvents } from "../storage/repositories/metrics-rollup-repository";
+import { withImmediateTransaction } from "../storage/sqlite-transaction";
 import { INDEX_DB_VACUUMED_EVENT, readFreelistInfo, vacuumIfReclaimable } from "../storage/state-db-integrity";
 import { assertIndexedWorkflowSourceIdentity, WorkflowSourceIdentityError } from "../workflows/source-files";
 import { reclassifyIndexDbContention } from "./index-db-contention";
 import { deriveEntryProvenance, deriveInstallations } from "./installations";
-import { type AdapterConceptOwner, indexedPathMatchesOwner, resolveConceptOwner } from "./lookup/adapter-concept-owner";
+import {
+  type AdapterConceptOwner,
+  type ConceptOwnerMatch,
+  entryFromFiles,
+  indexedPathMatchesOwner,
+  resolveConceptOwner,
+} from "./lookup/adapter-concept-owner";
 import { type EmbeddingGenerationResult, embeddingInputCap, generateEmbeddingsForDb } from "./materialize-embeddings";
 import {
   canUseIncrementalSkip,
@@ -166,12 +174,12 @@ export interface IndexProgressEvent {
   total?: number;
 }
 
-interface IndexOptions {
+export interface IndexOptions {
   /**
    * The stash directory to index. Resolved once at each command boundary
    * (WI-9.10 CLI-wide sweep) and threaded in — the indexer no longer reads the
    * ambient stash-dir resolver. Every caller (source add, wiki, workflow,
-   * setup, ensure-index, tests) already passes it.
+   * setup, improve, tests) already passes it.
    */
   stashDir: string;
   full?: boolean;
@@ -198,10 +206,9 @@ interface IndexOptions {
   /**
    * Whether this run may materialize (clone/pull/fetch) cache-backed sources.
    * Default `true` — the sanctioned materialization callers (`akm index`,
-   * source add/update/sync, improve's blocking preflight). A READ command's
-   * inline auto-index passes `false` so query time never touches the network:
-   * absent source caches are skipped with a warning instead
-   * of cloned.
+   * source add/sync, improve's pre-run index). `bundle update` passes `false`
+   * because it has just fetched; absent source caches are then skipped with a
+   * warning instead of cloned.
    */
   hydrateSources?: boolean;
   /**
@@ -211,8 +218,8 @@ interface IndexOptions {
    */
   persistDetectedAdapters?: boolean;
   /**
-   * Whether this run was triggered implicitly by another command's inline
-   * auto-index rather than by an explicit `akm index`.
+   * Whether this run was triggered implicitly by another command (improve's
+   * pre-run index) rather than by an explicit `akm index`.
    *
    * Only affects DISCLOSURE, never behavior. The adapter-detection config
    * write (R-056) is always reported in the result envelope, but its stderr
@@ -362,13 +369,11 @@ export async function runEmbeddingPass(params: {
 function finalizeIndex(args: {
   db: Database;
   sources: SearchSource[];
-  sourceDirs: string[];
-  stashDir: string;
   scanComplete: boolean;
   signal: AbortSignal | undefined;
   onProgress: (event: IndexProgressEvent) => void;
 }): { tFtsEnd: number } {
-  const { db, sources, sourceDirs, stashDir, signal, onProgress } = args;
+  const { db, sources, signal, onProgress } = args;
   // Rows replaced or removed since its BM25 totals were taken leave them off; recompute them (#1048).
   const rebuilt = rebuildFtsIfTotalsStale(db);
   onProgress({
@@ -399,13 +404,12 @@ function finalizeIndex(args: {
 
   throwIfAborted(signal);
 
-  // An incomplete run preserves the prior freshness watermark. Advancing it
-  // could make a recovered source look unchanged even though this run never
-  // persisted its files.
+  // The incremental watermark, written only when the whole build completed. An
+  // incomplete run preserves the prior one: advancing it could make a recovered
+  // source look unchanged even though this run never persisted its files.
+  // (Which library the index serves is recorded when the entries are persisted.)
   if (args.scanComplete) {
     setMeta(db, "builtAt", new Date().toISOString());
-    setMeta(db, "stashDir", stashDir);
-    setMeta(db, "stashDirs", JSON.stringify(sourceDirs));
     setMeta(db, "sourceOwners", JSON.stringify(sourceOwners(sources)));
   }
 
@@ -692,7 +696,8 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
   const t0 = Date.now();
 
   const dbPath = getDbPath();
-  const db = openIndexDatabase(dbPath);
+  // The build holds the rebuild lock, so it alone may delete and rebuild a corrupt file.
+  const db = openIndexDatabase(dbPath, { rebuildCorrupt: true });
 
   try {
     // `--full` folds into `isIncremental`: a full run drains every directory
@@ -731,7 +736,15 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
     // …then write it in one transaction: `item_ref = <bundle>//<conceptId>`
     // plus canonical component/adapter provenance per source root.
     const bundleByRoot = buildIndexedSourceOwners(sources);
-    persistDirRecords(db, dirRecords, warnings, bundleByRoot, embeddingInputCap(config));
+    // A source that did not resolve this run keeps its last-known-good rows through a library switch.
+    const unresolvedBundleIds = new Set(
+      sources.flatMap((source) => (source.unresolved ? [bundleByRoot.get(path.resolve(source.path))?.bundleId] : [])),
+    );
+    persistDirRecords(db, dirRecords, warnings, bundleByRoot, embeddingInputCap(config), {
+      stashDir,
+      sourceDirs,
+      unresolvedBundleIds,
+    });
     onProgress({
       phase: "scan",
       message: `Scanned ${scannedDirs} ${scannedDirs === 1 ? "directory" : "directories"} and skipped ${skippedDirs}.`,
@@ -794,8 +807,6 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
     const { tFtsEnd } = finalizeIndex({
       db,
       sources,
-      sourceDirs,
-      stashDir,
       scanComplete: complete,
       signal,
       onProgress,
@@ -1351,18 +1362,40 @@ interface PersistedEntryRow {
   adapter_id: string;
 }
 
-/** Phase 2 (sync): write all pre-generated scan records inside a single transaction. */
+/**
+ * Phase 2 (sync): write all pre-generated scan records inside a single transaction.
+ *
+ * The same transaction records which library the persisted keyword data is for
+ * (`stashDir` / `stashDirs`). That is the "usable index" marker readers test
+ * (`index-readiness.ts`), so it commits atomically with the entries and FTS rows
+ * it describes, however the rest of the build goes.
+ *
+ * It takes the write lock up front (`BEGIN IMMEDIATE`): a writer that overlaps
+ * it waits out the busy timeout instead of failing at once on a stale snapshot.
+ */
 function persistDirRecords(
   db: Database,
   dirRecords: DirRecord[],
   warnings: string[],
   bundleByRoot: ReadonlyMap<string, { bundleId: string; componentId: string; adapterId: string }>,
   maxInputTokens: number,
+  library: { stashDir: string; sourceDirs: string[]; unresolvedBundleIds: ReadonlySet<string | undefined> },
 ): void {
   const deletedEntries = new Map<number, DeletedEntry>();
   const findPersisted = db.prepare("SELECT id, content_hash, file_path, adapter_id FROM entries WHERE item_ref = ?");
 
-  const insertTransaction = db.transaction(() => {
+  const persist = (): void => {
+    // Entries are about to describe another library: the old watermark is not theirs, and neither are rows outside
+    // its directories. They go in this transaction, so the marker never names a library whose index serves another's.
+    if (getMeta(db, "stashDir") !== library.stashDir) {
+      deleteMeta(db, "builtAt");
+      addDeletedEntries(
+        deletedEntries,
+        deleteEntriesOutsideLibrary(db, library.sourceDirs, library.unresolvedBundleIds),
+      );
+    }
+    setMeta(db, "stashDir", library.stashDir);
+    setMeta(db, "stashDirs", JSON.stringify(library.sourceDirs));
     for (const {
       dirPath,
       currentStashDir,
@@ -1515,28 +1548,14 @@ function persistDirRecords(
         rowCount: dedupedRows === 0 ? persistedRows : undefined,
         indexVariant,
       });
-      if (persistedRows === 0) {
-        // Warn only when the dir had files that *could* produce entries (.md or
-        // known script extensions). Dirs with only non-indexable types (.json,
-        // .yaml, .conf, .env, .gitkeep) or deduped-only rows are expected and
-        // not actionable at normal log level.
-        const hasIndexableExtension = files.some((f) => {
-          const ext = path.extname(f).toLowerCase();
-          return ext === ".md" || SCRIPT_EXTENSIONS.has(ext);
-        });
-        if (persistedReason !== "deduped-zero-row" && hasIndexableExtension) {
-          warn(`[index] zero-row ${dirPath}: ${persistedReason}`);
-        } else {
-          warnVerbose(`[index] zero-row ${dirPath}: ${persistedReason}`);
-        }
-      }
+      if (persistedRows === 0) warnVerbose(`[index] zero-row ${dirPath}: ${persistedReason}`);
     }
     // Atomicity observation point: the new generation is fully written but
     // uncommitted, so it must still be invisible to other connections.
     indexTransactionHookForTests?.("records-persisted");
-  });
+  };
 
-  insertTransaction();
+  withImmediateTransaction(db, persist, reclassifyIndexDbContention);
   // A ref deleted from one directory may have been re-inserted by another in
   // this same run: only refs that no longer exist lose their events.
   const refStillIndexed = db.prepare("SELECT 1 FROM entries WHERE item_ref = ?");
@@ -1648,9 +1667,16 @@ export interface IndexEntry {
 }
 
 export interface BundleRefLookupResolution {
+  /** The indexed row, when the index has one for the physical owner. */
   entry: IndexEntry | null;
   /** First physical owner, retained even when its index row is absent/stale. */
   owner?: AdapterConceptOwner;
+  /**
+   * What the owning file and its adapter give without the index, set when `entry` is null and
+   * a file owns the ref. `show` serves it, so no read depends on a build; it has no links,
+   * usage or indexed fragments.
+   */
+  fileEntry?: IndexEntry;
   /** Deferred index failure for callers (such as show) that can use owner.path. */
   indexError?: unknown;
 }
@@ -1685,11 +1711,15 @@ async function lookupBundleRefWithResolutionUsing(
   } catch (error) {
     indexError = error;
   }
-  const resolved = (entry: IndexEntry | null, owner?: AdapterConceptOwner): BundleRefLookupResolution => ({
-    entry,
-    ...(owner ? { owner } : {}),
-    ...(indexError === undefined ? {} : { indexError }),
-  });
+  const resolved = (entry: IndexEntry | null, match?: ConceptOwnerMatch): BundleRefLookupResolution => {
+    const fileEntry = !entry && match ? entryFromFiles(match) : undefined;
+    return {
+      entry,
+      ...(match ? { owner: match.owner } : {}),
+      ...(fileEntry ? { fileEntry } : {}),
+      ...(indexError === undefined ? {} : { indexError }),
+    };
+  };
   try {
     const match = resolveConceptOwner(ref, sources);
     if (!match) return resolved(null);
@@ -1708,17 +1738,17 @@ async function lookupBundleRefWithResolutionUsing(
           } catch (error) {
             if (!(error instanceof WorkflowSourceIdentityError)) throw error;
             warn(`${error.message} Falling back to the physical owner.`);
-            return resolved(null, owner);
+            return resolved(null, match);
           }
         } else if (entry.adapterId !== adapterId || !indexedPathMatchesOwner(entry.filePath, owner)) {
-          return resolved(null, owner);
+          return resolved(null, match);
         }
-        return resolved(entry, owner);
+        return resolved(entry, match);
       }
     }
     // A physical owner with a missing/incomplete index row still owns this
     // concept: no later source can retarget it.
-    return resolved(null, owner);
+    return resolved(null, match);
   } finally {
     if (db && !borrowed) closeDatabase(db);
   }
@@ -1953,43 +1983,47 @@ export function recomputeUtilityScores(db: Database, stateDb: Database, onlyEntr
   }
 
   const entryIds = new Set([...existingScores.keys(), ...usageByEntry.keys()]);
-  for (const entryId of entryIds) {
-    const row = usageByEntry.get(entryId) ?? {
-      entry_id: entryId,
-      search_count: 0,
-      show_count: 0,
-      positive_feedback_count: 0,
-      negative_feedback_count: 0,
-      last_used_at: null,
-    };
-    const selectRate = row.search_count > 0 ? Math.min(1, row.show_count / row.search_count) : 0;
-    const feedbackTotal = row.positive_feedback_count + row.negative_feedback_count;
-    const feedbackRate =
-      feedbackTotal > 0 ? Math.max(0, row.positive_feedback_count - row.negative_feedback_count) / feedbackTotal : 0;
-    const effectiveRate = Math.max(selectRate, feedbackRate);
-    const existing = existingScores.get(row.entry_id);
-    const prevUtility = existing?.utility ?? 0;
-    const utility = prevUtility * emaDecay + effectiveRate * emaNew;
-    // `utility_scores.last_used_at` is consumed by salience as the timestamp of
-    // the most-recent retrieval. Preserve that meaning by carrying the event's
-    // timestamp through verbatim. The former `effectiveRate > 0.5 ? now : ...`
-    // branch stamped every high-select-rate entry with the index run time,
-    // making unrelated assets look simultaneously fresh and flattening the
-    // recency component of retrieval salience.
-    //
-    // `usage_events` is the source of truth within its retention window. A
-    // missing row therefore clears legacy/index-time stamps on the next index
-    // pass; salience already treats an absent timestamp as long ago.
-    const lastUsedAt = row.last_used_at ?? undefined;
+  // One transaction for every row: per-row autocommits cost one WAL sync each (~43 s of a 45 s finalize on a
+  // 20,900-entry library). The reads above stay outside, so state.db is held no longer than before.
+  db.transaction(() => {
+    for (const entryId of entryIds) {
+      const row = usageByEntry.get(entryId) ?? {
+        entry_id: entryId,
+        search_count: 0,
+        show_count: 0,
+        positive_feedback_count: 0,
+        negative_feedback_count: 0,
+        last_used_at: null,
+      };
+      const selectRate = row.search_count > 0 ? Math.min(1, row.show_count / row.search_count) : 0;
+      const feedbackTotal = row.positive_feedback_count + row.negative_feedback_count;
+      const feedbackRate =
+        feedbackTotal > 0 ? Math.max(0, row.positive_feedback_count - row.negative_feedback_count) / feedbackTotal : 0;
+      const effectiveRate = Math.max(selectRate, feedbackRate);
+      const existing = existingScores.get(row.entry_id);
+      const prevUtility = existing?.utility ?? 0;
+      const utility = prevUtility * emaDecay + effectiveRate * emaNew;
+      // `utility_scores.last_used_at` is consumed by salience as the timestamp of
+      // the most-recent retrieval. Preserve that meaning by carrying the event's
+      // timestamp through verbatim. The former `effectiveRate > 0.5 ? now : ...`
+      // branch stamped every high-select-rate entry with the index run time,
+      // making unrelated assets look simultaneously fresh and flattening the
+      // recency component of retrieval salience.
+      //
+      // `usage_events` is the source of truth within its retention window. A
+      // missing row therefore clears legacy/index-time stamps on the next index
+      // pass; salience already treats an absent timestamp as long ago.
+      const lastUsedAt = row.last_used_at ?? undefined;
 
-    upsertUtilityScore(db, row.entry_id, {
-      utility,
-      showCount: row.show_count,
-      searchCount: row.search_count,
-      selectRate,
-      lastUsedAt,
-    });
-  }
+      upsertUtilityScore(db, row.entry_id, {
+        utility,
+        showCount: row.show_count,
+        searchCount: row.search_count,
+        selectRate,
+        lastUsedAt,
+      });
+    }
 
-  if (!scoped) setMeta(db, "last_utility_computed_at", new Date().toISOString());
+    if (!scoped) setMeta(db, "last_utility_computed_at", new Date().toISOString());
+  })();
 }

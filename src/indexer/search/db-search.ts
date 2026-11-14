@@ -17,8 +17,6 @@ import { displayRef } from "../../core/asset/resolve-ref";
 import { closestMatch } from "../../core/closest-match";
 import { compareCodePoints } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
-import { classifyPathAccess } from "../../core/path-access";
-import { getDbPath } from "../../core/paths";
 import { KNOWN_TYPES } from "../../core/recognition-util";
 import { withStateDbTelemetry } from "../../core/state-db";
 import { systemErrorCode } from "../../core/system-error";
@@ -35,25 +33,19 @@ import type {
   SourceSearchHit,
 } from "../../sources/types";
 import type { Database } from "../../storage/database";
-import {
-  assertIndexPathReadable,
-  closeDatabase,
-  openExistingDatabase,
-  openReadonlyExistingDatabase,
-} from "../../storage/repositories/index-connection";
+import { closeDatabase } from "../../storage/repositories/index-connection";
 import {
   getAllEntries,
   getBaseBeliefStatesForDerivedTwins,
   getEntriesByIds,
   getEntryById,
-  getEntryCount,
   getEntryRefsAndTypes,
 } from "../../storage/repositories/index-entries-repository";
 import type { CandidateFilter, DbVecResult } from "../../storage/repositories/index-entry-types";
 import { searchFts } from "../../storage/repositories/index-fts-repository";
 import { getMeta } from "../../storage/repositories/index-meta-repository";
 import { getEmbeddingCount, searchVec } from "../../storage/repositories/index-vec-repository";
-import { ensureIndex } from "../ensure-index";
+import { incompleteIndexWarning, noIndexWarning, openUsableIndex } from "../index-readiness";
 import {
   appliesToProject,
   type IndexDocument,
@@ -185,10 +177,7 @@ export interface SearchLocalInput {
   includeExcludedTypes?: boolean;
   /** Named default type exclusions to relax. */
   includeTypes?: string[];
-  /**
-   * Serve the index as it is: skip the inline bootstrap build `ensureIndex`
-   * would run for a stash the index cannot serve yet (the workspace never writes).
-   */
+  /** Open the index read-only: the workspace never writes it. */
   readOnly?: boolean;
   /** Present: the call runs under project selection (see {@link ProjectContext}). */
   project?: ProjectContext;
@@ -218,40 +207,16 @@ export async function searchLocal(input: SearchLocalInput): Promise<{
     );
   }
 
-  // Bootstrap-only: builds the index inline when it cannot serve this stash.
-  // Content freshness is the writers' job (indexWrittenAssets + full runs);
-  // reads serve the existing index as-is.
-  if (!input.readOnly) await ensureIndex(stashDir);
-
-  const dbPath = getDbPath();
-  // An index we cannot READ is not an index that does not exist (#791). Saying
-  // "No search index available" for a populated index the caller merely lacks
-  // permission on is a lie at exit 0 — and an agent consuming this JSON has no
-  // way to tell it from a genuine empty result, so it relays the lie onward.
-  assertIndexPathReadable(dbPath);
-  if (classifyPathAccess(dbPath).access === "absent") {
-    return {
-      results: [],
-      tip: "No search index available. Run 'akm index' to build one.",
-      warnings: warnings.length > 0 ? warnings : undefined,
-      mode: "keyword",
-    };
+  // Reads never build and never wait: they serve what is persisted for this
+  // library and say so when that is nothing, or not yet everything. Content
+  // freshness is the writers' job (indexWrittenAssets + explicit runs).
+  const usable = openUsableIndex(stashDir, { readOnly: input.readOnly });
+  if (!usable) {
+    return { results: [], warnings: [...warnings, noIndexWarning()], mode: "keyword" };
   }
-
-  // A read-only search (the workspace) must not open the index for write: closing a
-  // read-write connection can checkpoint the WAL into the main file, which
-  // changes it even though nothing was written.
-  const db = input.readOnly ? (openReadonlyExistingDatabase(dbPath) as Database) : openExistingDatabase(dbPath);
+  const { db, complete } = usable;
   try {
-    const entryCount = getEntryCount(db);
-    if (entryCount === 0) {
-      return {
-        results: [],
-        tip: "Index is empty. Run 'akm index' to populate it.",
-        warnings: warnings.length > 0 ? warnings : undefined,
-        mode: "keyword",
-      };
-    }
+    if (!complete) warnings.push(incompleteIndexWarning());
 
     const staleHint = buildStaleIndexHint(db);
     if (staleHint) warnings.push(staleHint);

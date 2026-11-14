@@ -56,7 +56,7 @@ test("improve dedupes safe lowering notices through JSON and text output", async
       akmImprove({
         config,
         stashDir: stash.dir,
-        ensureIndexFn: async () => undefined,
+        reindexFn: async () => undefined,
         collectEligibleRefsFn: (async () => ({
           plannedRefs: [],
           memorySummary: { eligible: 0, derived: 0 },

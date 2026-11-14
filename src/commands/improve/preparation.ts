@@ -33,6 +33,7 @@ import type {
 } from "../../core/improve-types";
 import { withStateDb } from "../../core/state-db";
 import { info, warn } from "../../core/warn";
+import { isSkippedIndexBuild } from "../../indexer/index-build";
 import {
   countUsageEventsByType,
   listZeroResultSearchQueries,
@@ -64,6 +65,7 @@ import type {
   ConsolidationPassResult,
   ImprovePreparationResult,
   ImproveScope,
+  ReindexFn,
 } from "./improve-run-types";
 import type { ResolvedImprovePlan } from "./improve-strategies";
 import {
@@ -483,11 +485,11 @@ export interface ImprovePreparationStageArgs {
   memoryCleanupPlan?: MemoryCleanupPlan;
   primaryStashDir?: string;
   memorySummary: { eligible: number; derived: number };
-  reindexFn: (options: { stashDir: string; signal?: AbortSignal }) => Promise<unknown>;
+  reindexFn: ReindexFn;
   startMs: number;
   budgetMs: number;
   eventsCtx?: EventsContext;
-  /** Warnings from before this stage (e.g. the ensureIndex bootstrap). */
+  /** Warnings from before this stage (e.g. the pre-run index). */
   initialCleanupWarnings?: string[];
   improveProfile: ImproveProfileConfig;
   resolvedPlan: ResolvedImprovePlan;
@@ -574,7 +576,12 @@ export async function runImprovePreparationStage(args: ImprovePreparationStageAr
     }
     if ((appliedCleanup.archived.length > 0 || appliedCleanup.beliefStateTransitions.length > 0) && primaryStashDir) {
       try {
-        await args.reindexFn({ stashDir: primaryStashDir, signal: args.budgetSignal });
+        const built = await args.reindexFn({ stashDir: primaryStashDir, signal: args.budgetSignal });
+        if (isSkippedIndexBuild(built)) {
+          cleanupWarnings.push(
+            "reindex after cleanup skipped: another index run holds the rebuild lock; the next build picks the cleanup up",
+          );
+        }
       } catch (err) {
         cleanupWarnings.push(`reindex after cleanup failed: ${errMessage(err)}`);
       }

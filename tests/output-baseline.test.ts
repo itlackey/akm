@@ -53,6 +53,8 @@ async function runCli(
     { XDG_CACHE_HOME: xdgCache, XDG_CONFIG_HOME: xdgConfig, XDG_DATA_HOME: xdgData, XDG_STATE_HOME: xdgState },
     () =>
       withBundle(stashDir, async () => {
+        // Reads never build the index: build it before a search or curate.
+        if (args[0] === "search" || args[0] === "curate") await runCliCapture(["index"]);
         const { code, stdout } = await runCliCapture(args);
         expect(code).toBe(0);
         return stdout.trim();

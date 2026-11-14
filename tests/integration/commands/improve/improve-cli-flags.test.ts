@@ -168,7 +168,7 @@ describe("coverage-gaps", () => {
       scope: "skill",
       stashDir: stash,
       config,
-      ensureIndexFn: async () => false,
+      reindexFn: async () => undefined,
     });
 
     expect(result.coverageGaps).toEqual(["kubernetes ingress"]);
@@ -209,7 +209,7 @@ test("improve failure events redact materialized engine credentials", async () =
               },
             },
           },
-          ensureIndexFn: async () => undefined,
+          reindexFn: async () => undefined,
           collectEligibleRefsFn: (async () => ({
             plannedRefs: [],
             memorySummary: { eligible: 0, derived: 0 },

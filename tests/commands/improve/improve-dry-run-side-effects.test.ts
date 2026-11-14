@@ -141,8 +141,8 @@ describe("akm improve --dry-run writes no AKM artifacts", () => {
     fs.mkdirSync(path.dirname(lessonPath), { recursive: true });
     fs.writeFileSync(lessonPath, "---\nwhen_to_use: Testing dry planning\n---\n\nBody.\n", "utf8");
     const before = snapshotSandboxRoots(stashDir);
-    const ensureIndexFn = mock(async () => {
-      throw new Error("dry-run invoked ensureIndex");
+    const reindexFn = mock(async () => {
+      throw new Error("dry-run invoked the index");
     });
     const fetchCalls: string[] = [];
 
@@ -152,7 +152,7 @@ describe("akm improve --dry-run writes no AKM artifacts", () => {
           scope: "lesson",
           stashDir,
           dryRun: true,
-          ensureIndexFn,
+          reindexFn,
           collectEligibleRefsFn: (async () => ({
             plannedRefs: [{ ref: "lessons/broken", type: "lesson", reason: "scope-type", filePath: lessonPath }],
             memorySummary: { eligible: 0, derived: 0 },
@@ -208,7 +208,7 @@ describe("akm improve --dry-run writes no AKM artifacts", () => {
 
     expect(result.plan?.gates.find((gate) => gate.name === "validation")?.removed).toBe(1);
     expect(fetchCalls).toEqual([]);
-    expect(ensureIndexFn).not.toHaveBeenCalled();
+    expect(reindexFn).not.toHaveBeenCalled();
     expect(fs.existsSync(getStateDbPath())).toBe(false);
     expect(fs.existsSync(path.join(getStashLocksDir(stashDir), "improve.lock"))).toBe(false);
     expectSandboxRootsUnchanged(before, stashDir);
@@ -222,7 +222,7 @@ describe("akm improve --dry-run writes no AKM artifacts", () => {
     fs.writeFileSync(filePath, original);
     const result = await akmImprove({
       stashDir,
-      ensureIndexFn: async () => false,
+      reindexFn: async () => false,
       collectEligibleRefsFn: (async () => ({
         plannedRefs: [],
         memorySummary: { eligible: 1, derived: 0 },
@@ -267,8 +267,8 @@ describe("akm improve --dry-run writes no AKM artifacts", () => {
           scope: "memory",
           stashDir,
           dryRun: true,
-          ensureIndexFn: mock(async () => {
-            throw new Error("dry-run invoked ensureIndex");
+          reindexFn: mock(async () => {
+            throw new Error("dry-run invoked the index");
           }),
         });
 
@@ -316,8 +316,8 @@ describe("akm improve --dry-run writes no AKM artifacts", () => {
       "---\ndescription: Deploy without VPN\ninferred: true\nsource: memories/deploy\n---\n\nDo not use the VPN.\n",
     );
     const before = snapshotSandboxRoots(stashDir);
-    const ensureIndexFn = mock(async () => {
-      throw new Error("dry-run invoked ensureIndex");
+    const reindexFn = mock(async () => {
+      throw new Error("dry-run invoked the index");
     });
     const fetchCalls: string[] = [];
 
@@ -327,7 +327,7 @@ describe("akm improve --dry-run writes no AKM artifacts", () => {
           stashDir,
           dryRun: true,
           strategy: "dry-safe",
-          ensureIndexFn,
+          reindexFn,
           collectEligibleRefsFn: (async () => ({
             plannedRefs: [],
             memorySummary: { eligible: 2, derived: 2 },
@@ -373,7 +373,7 @@ describe("akm improve --dry-run writes no AKM artifacts", () => {
     expect(result.memoryCleanup).toBeDefined();
     expect(result.memoryCleanup?.analyzedDerived).toBe(2);
     expect(result.memoryCleanup?.archived).toBeUndefined();
-    expect(ensureIndexFn).not.toHaveBeenCalled();
+    expect(reindexFn).not.toHaveBeenCalled();
     expect(fetchCalls).toEqual([]);
     expectSandboxRootsUnchanged(before, stashDir);
     expect(fs.readFileSync(firstPath, "utf8")).not.toContain("contradictedBy");

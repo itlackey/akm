@@ -10,6 +10,7 @@
   import SettingsBundleCard from "./SettingsBundle.svelte";
   import SettingsFieldControl from "./SettingsField.svelte";
   import Connections from "./Connections.svelte";
+  import EmbeddingSettings from "./EmbeddingSettings.svelte";
   import Software from "./Software.svelte";
   import Icon from "./Icon.svelte";
   import { configurationChanges, fieldText, provenance, valueAt } from "./settings-presenter";
@@ -462,6 +463,9 @@
               aria-current={selectedGroup === group.id ? "page" : undefined}
               >{group.title}{#if editCounts[group.id]}<span aria-label="Unsaved changes">•</span>{/if}</a
             >{/each}<a
+            href="/settings/config?section=embedding-settings"
+            aria-current={selectedGroup === "embedding-settings" ? "page" : undefined}>Embeddings</a
+          ><a
             href="/settings/config?section=advanced-settings"
             aria-current={selectedGroup === "advanced-settings" ? "page" : undefined}>Advanced</a
           >
@@ -471,8 +475,8 @@
             value={selectedGroup}
             onchange={(event) => navigate(`/settings/config?section=${event.currentTarget.value}`)}
             >{#each groups as group}<option value={group.id}>{group.title}</option>{/each}<option
-              value="advanced-settings">Advanced</option
-            ></select
+              value="embedding-settings">Embeddings</option
+            ><option value="advanced-settings">Advanced</option></select
           ></label
         >
       </aside>
@@ -522,6 +526,23 @@
               </div>
             </form>
           </section>{/each}
+        <section
+          class="settings-section configuration-group"
+          aria-labelledby="embedding-settings"
+          hidden={selectedGroup !== "embedding-settings"}
+        >
+          <div class="settings-intro">
+            <h2 id="embedding-settings">Embeddings</h2>
+            <p>The model that turns assets into vectors for semantic search.</p>
+          </div>
+          <EmbeddingSettings
+            {config}
+            saved={async () => {
+              receipt = "Embedding settings saved.";
+              await load();
+            }}
+          />
+        </section>
         <div hidden={selectedGroup !== "advanced-settings"}>
           <section class="settings-section configuration-group" aria-labelledby="advanced-settings">
             <div class="settings-intro">

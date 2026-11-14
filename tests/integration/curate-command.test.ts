@@ -18,9 +18,8 @@ import {
 // (tests/_helpers/cli.ts). Each runCli call pins a fresh isolated set of XDG
 // dirs (cache/config/data) plus AKM_BUNDLE_DIR via the allowlisted withEnv
 // wrapper and resets the config cache before driving the CLI in-process,
-// restoring env in finally. The `curate` command auto-indexes into index.db
-// (not state.db), so the in-process write does not contend with the suite's
-// open state DB.
+// restoring env in finally. Curate never builds the index, so the helper below runs `akm index` first (into index.db,
+// not state.db, so the in-process write does not contend with the suite's open state DB).
 
 const tempDirs: string[] = [];
 
@@ -47,6 +46,8 @@ async function runCliWithDataDir(stashDir: string, args: string[]): Promise<{ st
   const res = await withEnv({ XDG_CACHE_HOME: xdgCache, XDG_CONFIG_HOME: xdgConfig, XDG_DATA_HOME: xdgData }, () =>
     withBundle(stashDir, async () => {
       resetConfigCache();
+      // Reads never build the index: build it before a curate.
+      if (args[0] === "curate") await runCliCapture(["index"]);
       return runCliCapture(args);
     }),
   );
@@ -154,8 +155,8 @@ describe("curate command", () => {
     const json = JSON.parse(output) as { results: Array<Record<string, unknown>>; tip?: string; summary: string };
 
     expect(json.results).toEqual([]);
-    // Auto-index runs but finds nothing in the empty stash
-    expect(json.tip).toContain("Index is empty");
+    // The helper indexed the empty stash: an indexed empty library is usable, so this is an ordinary empty result.
+    expect(json.tip).toContain("No matching assets");
   });
 
   test("logs a curate event to usage_events", async () => {

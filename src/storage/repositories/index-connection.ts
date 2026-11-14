@@ -38,7 +38,16 @@ function isCorruptionError(error: unknown): boolean {
   return message.includes("database disk image is malformed") || message.includes("SQLITE_CORRUPT");
 }
 
-export function openIndexDatabase(dbPath?: string, options?: { beforeSchema?: (db: Database) => void }): Database {
+/**
+ * Open `index.db` for writing, creating and migrating it. A corrupt file is
+ * deleted and rebuilt only when the caller says it may (`rebuildCorrupt`): the
+ * build, which holds the rebuild lock. Any other writable opener raises the
+ * corruption error instead of deleting a file a build or a reader may be using.
+ */
+export function openIndexDatabase(
+  dbPath?: string,
+  options?: { beforeSchema?: (db: Database) => void; rebuildCorrupt?: boolean },
+): Database {
   const resolvedPath = dbPath ?? getDbPath();
   const spec = {
     path: resolvedPath,
@@ -58,9 +67,12 @@ export function openIndexDatabase(dbPath?: string, options?: { beforeSchema?: (d
     // note) — so real on-disk corruption is recovered by deleting the file
     // and rebuilding, not by surfacing a raw SQLITE_CORRUPT to the caller or
     // quietly falling through to an unreadable index (#865). An index below the
-    // oldest layout ensureSchema upgrades is rebuilt the same way.
+    // oldest layout ensureSchema upgrades is rebuilt the same way. A corrupt file is
+    // deleted only by the build (`rebuildCorrupt`, under the rebuild lock): any other
+    // writable opener raises, so a file a build or a reader may be using is never
+    // removed under it.
     const belowFloor = error instanceof IndexLayoutBelowFloorError;
-    if (!belowFloor && !isCorruptionError(error)) throw error;
+    if (!belowFloor && (!options?.rebuildCorrupt || !isCorruptionError(error))) throw error;
     warn(
       belowFloor
         ? `Index database at ${resolvedPath} uses layout ${error.storedVersion}, older than this akm upgrades — rebuilding it from the sources (embeddings are regenerated).`

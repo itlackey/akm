@@ -57,7 +57,6 @@ async function runImprove(
     scope: "memory",
     config,
     stashDir,
-    ensureIndexFn: async () => false,
     reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
     ...overrides,
   });

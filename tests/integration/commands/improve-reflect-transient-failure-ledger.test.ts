@@ -70,7 +70,6 @@ async function runWithReflectFailure(reason: string): Promise<{ stash: string; m
 
   const result = await akmImprove({
     stashDir: stash,
-    ensureIndexFn: async () => undefined,
     reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
     reflectFn: async (options): Promise<AkmReflectResult> =>
       ({

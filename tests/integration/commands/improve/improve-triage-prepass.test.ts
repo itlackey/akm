@@ -29,8 +29,7 @@ import { saveConfig } from "../../../../src/core/config/config";
 import { readEvents } from "../../../../src/core/events";
 import { getStashLocksDir } from "../../../../src/core/paths";
 import { recordWrittenPath } from "../../../../src/core/write-provenance";
-import type { EnsureIndexOptions } from "../../../../src/indexer/ensure-index";
-import { ensureIndex } from "../../../../src/indexer/ensure-index";
+import { buildIndex } from "../../../../src/indexer/index-build";
 import { akmIndex } from "../../../../src/indexer/indexer";
 import { LLM_USAGE_EVENT, LLM_USAGE_SUMMARY_EVENT } from "../../../../src/llm/usage-persist";
 import { currentLlmStage, emitLlmUsage, hasLlmUsageSink } from "../../../../src/llm/usage-telemetry";
@@ -189,7 +188,7 @@ describe("akm improve — triage pre-pass", () => {
         scope: "memory",
         stashDir,
         config: triageEnabledConfig(true),
-        ensureIndexFn: async () => undefined,
+        reindexFn: async () => undefined,
         collectEligibleRefsFn: (async () => ({
           plannedRefs: [],
           memorySummary: { eligible: 0, derived: 0 },
@@ -255,7 +254,7 @@ describe("akm improve — triage pre-pass", () => {
         scope: "memory",
         stashDir,
         config: triageEnabledConfig(true),
-        ensureIndexFn: async () => undefined,
+        reindexFn: async () => undefined,
         drainProposalsFn: (async () => {
           emitLlmUsage({ outcome: "success", modelSource: "configured", durationMs: 1, model: "prepass" });
           return emptyDrainResult();
@@ -419,7 +418,7 @@ describe("akm improve — triage pre-pass", () => {
     "lock-leak guard: improve.lock is released and a second run is not blocked",
     async () => {
       // Regression guard for the Phase 4 lock hoist (§7): the lock is now
-      // acquired ABOVE the pre-index region (ensureIndex / collectEligibleRefs /
+      // acquired ABOVE the pre-index region (pre-run index / collectEligibleRefs /
       // contradiction-detection / memory-cleanup analysis) so the triage pre-pass
       // runs under it. A throw anywhere in that region must release the lock
       // (lock-leak guard try/catch) rather than leak `improve.lock`. We assert the
@@ -499,7 +498,7 @@ describe("akm improve — triage pre-pass", () => {
   );
 
   test(
-    "R6: ensureIndex runs BEFORE triage, and triage's own writes are indexed " +
+    "R6: the pre-run index runs BEFORE triage, and triage's own writes are indexed " +
       "incrementally before collectEligibleRefs runs",
     async () => {
       writeMemory("alpha", "Remember alpha details.");
@@ -512,9 +511,9 @@ describe("akm improve — triage pre-pass", () => {
         scope: "memory",
         stashDir,
         config: triageEnabledConfig(true),
-        ensureIndexFn: async (dir: string, opts?: EnsureIndexOptions) => {
-          callOrder.push("ensureIndex");
-          return ensureIndex(dir, opts);
+        reindexFn: async (options) => {
+          callOrder.push("index");
+          return buildIndex(options, "try");
         },
         drainProposalsFn: (async () => {
           callOrder.push("triage");
@@ -553,7 +552,7 @@ describe("akm improve — triage pre-pass", () => {
       });
 
       expect(result.ok).toBe(true);
-      expect(callOrder).toEqual(["ensureIndex", "triage", "collect"]);
+      expect(callOrder).toEqual(["index", "triage", "collect"]);
 
       // Confirm from OUTSIDE the run too: the promoted file is indexed without
       // this test ever having called a second full `akmIndex`.

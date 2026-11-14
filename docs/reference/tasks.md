@@ -417,8 +417,8 @@ report only the violated constraint.
 - `akm doctor explain <ref>` prints a task's declared inputs, resolved target,
   effective execution settings, and schedule bindings without running
   anything — see [`akm doctor explain`](#akm-task-explain) above.
-- `akm lint --type tasks` reports what `akm task dispatch` would refuse to start
-  for a task file: a document that does not parse as task source v4, a version 2/3 file or
+- `akm lint <file> --type tasks` checks one draft task file, inside a bundle or not, without installing it; `akm lint --type tasks` checks every task in a bundle. Both report what `akm task dispatch` would refuse for a task
+  file: a document that does not parse as task source v4, a version 2/3 file or
   a `version: 4` file still carrying a retired `schedule[].enabled` (the finding
   names `akm migrate apply`, which converts them), a cron that does not parse,
   and a schedule entry whose `inputs` leave a required

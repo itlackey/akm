@@ -3,7 +3,6 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import type { AkmConfig } from "../core/config/config";
-import { ensureIndex } from "./ensure-index";
 import type { SearchSource } from "./search/search-source";
 import { resolveSourceEntries } from "./search/search-source";
 
@@ -18,10 +17,4 @@ export interface ReadSourceEnvelope {
 export function resolveReadSources(overrideStashDir?: string, existingConfig?: AkmConfig): ReadSourceEnvelope {
   const sources = resolveSourceEntries(overrideStashDir, existingConfig);
   return { sources, primarySource: sources[0] };
-}
-
-/** Ensure the primary source index is readable for reads, when a primary exists. */
-export async function ensurePrimaryIndexForRead(primarySource?: SearchSource): Promise<boolean> {
-  if (!primarySource?.path) return false;
-  return ensureIndex(primarySource.path);
 }

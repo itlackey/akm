@@ -11,6 +11,13 @@ describe("normalizeEndpoint", () => {
     expect(normalizeEndpoint("http://localhost:11434/")).toBe("http://localhost:11434/v1");
     expect(normalizeEndpoint("http://localhost:11434/v1")).toBe("http://localhost:11434/v1");
     expect(normalizeEndpoint("https://api.openai.com/v1/chat/completions")).toBe("https://api.openai.com/v1");
+    expect(normalizeEndpoint("https://lab.example/v1/embeddings")).toBe("https://lab.example/v1");
+    expect(normalizeEndpoint("https://lab.example/v1/embeddings/")).toBe("https://lab.example/v1");
+  });
+
+  test("keeps Ollama's native embedding route, which the embedder calls as it is", () => {
+    expect(normalizeEndpoint("http://localhost:11434/api/embed")).toBe("http://localhost:11434/api/embed");
+    expect(normalizeEndpoint("http://localhost:11434/api/embeddings")).toBe("http://localhost:11434/api/embeddings");
   });
 
   test("leaves a path that already names its API root alone", () => {

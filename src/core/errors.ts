@@ -148,7 +148,7 @@ export type TransientErrorCode =
   | "STATE_DB_CONTENDED"
   // Field follow-up to #956 (dev-team field review 2026-09-10): a
   // concurrent `akm index` (or any other writer touching index.db — source
-  // add/update, the implicit per-command background reindex) can make a
+  // add/update) can make a
   // rebuild's write hit the same contention-shaped SQLite condition
   // `isSqliteContentionError` already classifies for state.db, but index.db
   // writes had no reclassification boundary of their own — the raw driver

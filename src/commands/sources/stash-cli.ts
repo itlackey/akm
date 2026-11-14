@@ -43,8 +43,7 @@ import { appendEvent } from "../../core/events";
 import { getRunLogDir } from "../../core/paths";
 import { clearLogFile, info, isVerbose, setLogFile, warn } from "../../core/warn";
 import { exportVectors } from "../../indexer/export-vectors";
-import { releaseIndexRebuildLock, tryAcquireIndexRebuildLock } from "../../indexer/index-rebuild-lock";
-import { akmIndex } from "../../indexer/indexer";
+import { buildIndex, isSkippedIndexBuild } from "../../indexer/index-build";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { getOutputMode } from "../../output/context";
 import { resolveBundleWriteTarget } from "../../sources/mutation-target";
@@ -103,7 +102,7 @@ export const indexCommand = defineCommand({
     },
     "skip-if-locked": {
       type: "boolean",
-      description: "Skip (exit 0) if another `akm index` holds the rebuild lock",
+      description: "Skip (exit 0) instead of waiting if another `akm index` holds the rebuild lock",
       default: false,
     },
   },
@@ -121,39 +120,21 @@ export const indexCommand = defineCommand({
       }
       const importFile = args["import-vectors"];
       if (importFile === "") warn("--import-vectors needs a file path; indexing without it.");
-      // #956: opt-in, non-blocking rebuild lock — never gates a human-typed
-      // `akm index` (it only warns and contends), but a scheduled/opportunistic
-      // caller can pass --skip-if-locked to step aside instead of piling up
-      // behind a run already in progress. Acquired before any other side
-      // effect (log file, spinner) so a skip does neither.
-      const lockAcquisition = tryAcquireIndexRebuildLock(args["skip-if-locked"]);
-      if (lockAcquisition.state === "skipped") {
-        output("index", {
-          ok: true,
-          skipped: {
-            reason: "lock-held",
-            pid: lockAcquisition.holder.pid,
-            // #956: the launcher pid (when known) alongside the pid that
-            // actually holds the lock — every process listing and task log
-            // shows the launcher pid, not the bun/node child's.
-            launcherPid: lockAcquisition.holder.launcherPid,
-            startedAt: lockAcquisition.holder.startedAt,
-          },
-        });
-        return;
-      }
       const outputMode = getOutputMode();
       const controller = new AbortController();
       const abort = (): void => controller.abort(new Error("index interrupted"));
       process.once("SIGINT", abort);
       process.once("SIGTERM", abort);
-      const indexLogFile = path.join(getRunLogDir("index"), `${new Date().toISOString().replace(/[:.]/g, "-")}.log`);
-      setLogFile(indexLogFile);
       const verbose = isVerbose();
       const spin = !verbose && outputMode.format === "text" ? p.spinner() : null;
-      if (spin) {
-        spin.start(`Building search index${args.full ? " (full rebuild)" : ""}...`);
-      }
+      // The log file and spinner start with the build, not while waiting for the lock: a skipped run leaves neither.
+      let started = false;
+      const begin = (): void => {
+        if (started) return;
+        started = true;
+        setLogFile(path.join(getRunLogDir("index"), `${new Date().toISOString().replace(/[:.]/g, "-")}.log`));
+        spin?.start(`Building search index${args.full ? " (full rebuild)" : ""}...`);
+      };
       let latestMessage = "";
       // Resolve the stash dir once at the `akm index` command boundary and
       // thread it into the indexer (WI-9.10 CLI-wide sweep) — the indexer leaf
@@ -164,41 +145,53 @@ export const indexCommand = defineCommand({
       const firstSource = resolveSourceEntries(undefined, indexConfig)[0]?.path;
       const stashDir = indexConfig.defaultBundle ? resolveStashDir() : (firstSource ?? resolveStashDir());
       try {
-        const result = await akmIndex({
-          stashDir,
-          full: args.full,
-          clean: args.clean,
-          dryRun: args["dry-run"],
-          reembed: args.reembed,
-          importVectors: importFile ? path.resolve(importFile) : undefined,
-          onProgress: ({ phase, message, processed, total }) => {
-            latestMessage = message;
-            const progressPrefix = processed !== undefined && total !== undefined ? `[${processed}/${total}] ` : "";
-            if (verbose) {
-              info(`[index:${phase}] ${progressPrefix}${message}`);
-            } else if (spin) {
-              spin.stop(`${progressPrefix}${message}`);
-              spin.start(`${progressPrefix}${message}`);
-            } else if (!EMBEDDED_BATCH_PROGRESS_PATTERN.test(message)) {
-              // Non-verbose, non-text (JSON/yaml/etc) mode: silence used to be
-              // total until the run finished (#954) — a stalled
-              // run looked identical to "nothing written". Phase-start
-              // messages and the embedding heartbeat now reach stderr here
-              // too; the high-frequency per-batch `Embedded N/M entries.`
-              // line (emitted after every committed batch)
-              // is deliberately excluded — that would be spam, not a
-              // heartbeat.
-              info(`[index:${phase}] ${progressPrefix}${message}`);
-            }
+        // One build at a time: wait for a running build, or with --skip-if-locked step aside.
+        const result = await buildIndex(
+          {
+            stashDir,
+            full: args.full,
+            clean: args.clean,
+            dryRun: args["dry-run"],
+            reembed: args.reembed,
+            importVectors: importFile ? path.resolve(importFile) : undefined,
+            onProgress: ({ phase, message, processed, total }) => {
+              begin();
+              latestMessage = message;
+              const progressPrefix = processed !== undefined && total !== undefined ? `[${processed}/${total}] ` : "";
+              if (verbose) {
+                info(`[index:${phase}] ${progressPrefix}${message}`);
+              } else if (spin) {
+                spin.stop(`${progressPrefix}${message}`);
+                spin.start(`${progressPrefix}${message}`);
+              } else if (!EMBEDDED_BATCH_PROGRESS_PATTERN.test(message)) {
+                // Structured output modes still show phase starts and the embedding heartbeat on stderr (#954);
+                // the per-batch "Embedded N/M" line is excluded as spam.
+                info(`[index:${phase}] ${progressPrefix}${message}`);
+              }
+            },
+            signal: controller.signal,
           },
-          signal: controller.signal,
-        });
+          args["skip-if-locked"] ? "try" : "wait",
+        );
+        if (isSkippedIndexBuild(result)) {
+          output("index", {
+            ok: true,
+            skipped: {
+              reason: "lock-held",
+              pid: result.skipped.pid,
+              // The launcher pid is what process listings and task logs show, not the bun/node child's.
+              launcherPid: result.skipped.launcherPid,
+              startedAt: result.skipped.startedAt,
+            },
+          });
+          return;
+        }
         if (spin) {
           spin.stop(`Indexed ${result.totalEntries} assets.`);
         }
         output("index", result);
       } catch (error) {
-        if (spin) {
+        if (spin && started) {
           spin.stop(latestMessage ? `Indexing failed after: ${latestMessage}` : "Indexing failed.");
         }
         throw error;
@@ -206,7 +199,6 @@ export const indexCommand = defineCommand({
         clearLogFile();
         process.off("SIGINT", abort);
         process.off("SIGTERM", abort);
-        if (lockAcquisition.state === "acquired") releaseIndexRebuildLock(lockAcquisition.ownership);
       }
     });
   },

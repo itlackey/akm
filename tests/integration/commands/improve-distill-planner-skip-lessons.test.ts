@@ -155,7 +155,6 @@ describe("improve planner: skip distill-refused input types", () => {
 
     const result = await akmImprove({
       stashDir: stash,
-      ensureIndexFn: async () => undefined,
       reindexFn: async () => ({
         schemaVersion: 1,
         ok: true,

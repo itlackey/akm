@@ -77,16 +77,13 @@ function parseTrailingJsonEnvelope(stderr: string): { ok: boolean; error: string
 }
 
 describe("akm index — index.db contention (field follow-up to #956, F1)", () => {
-  test("without --skip-if-locked: a busy index.db reclassifies to exit 75 INDEX_DB_CONTENDED; " +
-    "--skip-if-locked on the same setup still skips at exit 0 without ever touching the DB", async () => {
+  test("a busy index.db reclassifies to exit 75 INDEX_DB_CONTENDED; " +
+    "with a live rebuild lock --skip-if-locked still skips at exit 0 without ever touching the DB", async () => {
     writeMemory("note-0");
 
-    // Simulate a second `akm index` already in progress: it holds the
-    // rebuild-lock sentinel AND has an open write transaction on
-    // index.db — the two independent mechanisms `--skip-if-locked`
-    // (#956) and this contention reclassification (field follow-up)
-    // each react to.
-    plantHeldRebuildLock();
+    // A writer outside any akm build holds an open write transaction on
+    // index.db: a plain `akm index` takes the rebuild lock, then runs out
+    // the busy timeout (this contention reclassification, a field follow-up).
     const holder: Database = openIndexDatabase();
     holder.exec("BEGIN IMMEDIATE");
 
@@ -99,10 +96,10 @@ describe("akm index — index.db contention (field follow-up to #956, F1)", () =
       expect(envelope.ok).toBe(false);
       expect(envelope.code).toBe("INDEX_DB_CONTENDED");
       expect(envelope.error).toContain("index database is busy");
-      // Pins the brief-mandated holder-pid clause (describeIndexRebuildLockHolder / formatLockHolderPid):
-      // the rebuild lock planted above is still live for this assertion, so the message must name its holder.
-      expect(envelope.error).toContain(`held by pid ${process.pid}`);
       expect(envelope.hint).toContain("--skip-if-locked");
+
+      // A second `akm index` already in progress holds the rebuild lock.
+      plantHeldRebuildLock();
 
       // --skip-if-locked, same live rebuild-lock + held index.db
       // transaction: skips because of the rebuild-lock sentinel alone,
