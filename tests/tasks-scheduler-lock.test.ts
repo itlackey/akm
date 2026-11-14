@@ -9,6 +9,7 @@ import { akmTasksSync } from "../src/commands/tasks/tasks";
 import { TransientError } from "../src/core/errors";
 import type { SchedulerBackend } from "../src/tasks/backends/types";
 import { schedulerLockPath, withSchedulerLock } from "../src/tasks/scheduler-lock";
+import { spawnLiveHolder, stopLiveHolders } from "./_helpers/live-holder";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "./_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
@@ -23,7 +24,10 @@ beforeEach(() => {
   writeSandboxConfig({ bundles: { stash: { path: storage.stashDir, writable: true } }, defaultBundle: "stash" });
 });
 
-afterEach(() => storage.cleanup());
+afterEach(() => {
+  stopLiveHolders();
+  storage.cleanup();
+});
 
 describe("the scheduler lock", () => {
   test("is held for the duration of the work and released afterwards, even when the work throws", async () => {
@@ -49,7 +53,7 @@ describe("the scheduler lock", () => {
   });
 
   test("a live holder makes a scheduler write fail as retryable contention, before reading anything", async () => {
-    holdLock({ pid: process.pid });
+    holdLock({ pid: spawnLiveHolder().pid });
     let listed = false;
     const backend: SchedulerBackend = {
       name: "cron",

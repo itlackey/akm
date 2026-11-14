@@ -588,7 +588,7 @@ describe("two-parent-process contention on one child (C-04)", () => {
     expect(result.run.status).toBe("failed");
     const composingReport = result.executed.find((e) => e.stepId === "dispatch");
     expect(composingReport?.ok).toBe(false);
-    expect(composingReport?.summary).toContain(`pid ${process.pid}`);
+    expect(composingReport?.summary).toContain(`pid ${releaseForeignLock.pid}`);
     // The lock refusal happens before any child unit ever reaches the
     // dispatcher — the busy child is never driven.
     expect(dispatchedFirstAttempt.size).toBe(0);

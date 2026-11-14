@@ -6,7 +6,15 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { probeLock, reclaimStaleLock, releaseLock, tryAcquireLockSync } from "../../src/core/file-lock";
+import {
+  createLockPayload,
+  probeLock,
+  processIdentity,
+  reclaimStaleLock,
+  releaseLock,
+  tryAcquireLockSync,
+} from "../../src/core/file-lock";
+import { spawnLiveHolder, stopLiveHolders } from "../_helpers/live-holder";
 import { type Cleanup, sandboxXdgDataHome } from "../_helpers/sandbox";
 
 const FILE_LOCK_MODULE = path.resolve(import.meta.dir, "../../src/core/file-lock.ts");
@@ -221,33 +229,34 @@ describe("probeLock: launcherPid (#956)", () => {
     dir = r.dir;
     cleanup = r.cleanup;
   });
-  afterEach(() => cleanup());
+  afterEach(() => {
+    stopLiveHolders();
+    cleanup();
+  });
 
   test("a 'held' probe exposes the holder's launcherPid when the payload recorded one", () => {
     const lock = path.join(dir, "index-rebuild.lock");
-    fs.writeFileSync(
-      lock,
-      JSON.stringify({ pid: process.pid, launcherPid: 4240, startedAt: new Date().toISOString() }),
-      "utf8",
-    );
+    const holder = spawnLiveHolder();
+    fs.writeFileSync(lock, holder.payload({ launcherPid: 4240 }), "utf8");
 
     const probe = probeLock(lock);
     expect(probe.state).toBe("held");
     if (probe.state === "held") {
-      expect(probe.holderPid).toBe(process.pid);
+      expect(probe.holderPid).toBe(holder.pid);
       expect(probe.launcherPid).toBe(4240);
     }
   });
 
   test("a 'held' probe has no launcherPid when the payload carries none (bare-pid or JSON without it)", () => {
     const bareLock = path.join(dir, "bare.lock");
-    fs.writeFileSync(bareLock, String(process.pid), "utf8");
+    const holder = spawnLiveHolder();
+    fs.writeFileSync(bareLock, String(holder.pid), "utf8");
     const bareProbe = probeLock(bareLock);
     expect(bareProbe.state).toBe("held");
     if (bareProbe.state === "held") expect(bareProbe.launcherPid).toBeUndefined();
 
     const jsonLock = path.join(dir, "json-no-launcher.lock");
-    fs.writeFileSync(jsonLock, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }), "utf8");
+    fs.writeFileSync(jsonLock, holder.payload(), "utf8");
     const jsonProbe = probeLock(jsonLock);
     expect(jsonProbe.state).toBe("held");
     if (jsonProbe.state === "held") expect(jsonProbe.launcherPid).toBeUndefined();
@@ -273,6 +282,78 @@ describe("probeLock: launcherPid (#956)", () => {
 // A lock must carry its owner's payload from the moment it exists. It used to be created empty (`wx`)
 // and filled in afterwards; a contender probing in that gap read no pid, called the live lock stale
 // (`invalid_pid`) and reclaimed it, so two `akm config set` processes wrote at once and one was lost.
+describe("probeLock: a live PID is not proof of a live holder", () => {
+  let dir: string;
+  let cleanup: Cleanup;
+  beforeEach(() => {
+    const r = sandboxXdgDataHome();
+    dir = r.dir;
+    cleanup = r.cleanup;
+  });
+  afterEach(() => {
+    stopLiveHolders();
+    cleanup();
+  });
+  const hasIdentity = processIdentity(process.pid) !== undefined;
+
+  test("a lock naming this very process is stale: this process has not acquired it", () => {
+    const lock = path.join(dir, "self.lock");
+    fs.writeFileSync(lock, createLockPayload(), "utf8");
+    expect(probeLock(lock)).toMatchObject({ state: "stale", reason: "pid_reused", holderPid: process.pid });
+  });
+
+  test("a lock this process acquired is held until it releases it", () => {
+    const lock = path.join(dir, "own.lock");
+    const ownership = tryAcquireLockSync(lock, createLockPayload());
+    if (!ownership) throw new Error("expected to acquire");
+    expect(probeLock(lock)).toMatchObject({ state: "held", holderPid: process.pid });
+    releaseLock(ownership);
+    expect(probeLock(lock).state).toBe("absent");
+  });
+
+  test("a bare-pid lock naming this process is stale", () => {
+    const lock = path.join(dir, "self-bare.lock");
+    fs.writeFileSync(lock, String(process.pid), "utf8");
+    expect(probeLock(lock).state).toBe("stale");
+  });
+
+  test("a lock whose holder is dead is stale", async () => {
+    const holder = spawnLiveHolder();
+    const lock = path.join(dir, "dead.lock");
+    fs.writeFileSync(lock, holder.payload(), "utf8");
+    await holder.stop();
+    expect(probeLock(lock)).toMatchObject({ state: "stale", reason: "pid_dead" });
+  });
+
+  test("a live other holder with the identity it recorded is held", () => {
+    const holder = spawnLiveHolder();
+    const lock = path.join(dir, "held.lock");
+    fs.writeFileSync(lock, holder.payload(), "utf8");
+    expect(probeLock(lock)).toMatchObject({ state: "held", holderPid: holder.pid });
+  });
+
+  test("a live holder recorded without any identity (an older lock file) is held", () => {
+    const holder = spawnLiveHolder();
+    const lock = path.join(dir, "legacy.lock");
+    fs.writeFileSync(lock, JSON.stringify({ pid: holder.pid, startedAt: new Date().toISOString() }), "utf8");
+    expect(probeLock(lock).state).toBe("held");
+  });
+
+  test.skipIf(!hasIdentity)("a live PID with a different process start time is a reused PID: stale", () => {
+    const holder = spawnLiveHolder();
+    const lock = path.join(dir, "reused-start.lock");
+    fs.writeFileSync(lock, holder.payload({ startTime: "1" }), "utf8");
+    expect(probeLock(lock)).toMatchObject({ state: "stale", reason: "pid_reused", holderPid: holder.pid });
+  });
+
+  test.skipIf(!hasIdentity)("a live PID recorded under a different boot is stale", () => {
+    const holder = spawnLiveHolder();
+    const lock = path.join(dir, "reused-boot.lock");
+    fs.writeFileSync(lock, holder.payload({ bootId: "00000000-0000-0000-0000-000000000000" }), "utf8");
+    expect(probeLock(lock)).toMatchObject({ state: "stale", reason: "pid_reused", holderPid: holder.pid });
+  });
+});
+
 describe("tryAcquireLockSync: no empty window", () => {
   let dir: string;
   let cleanup: Cleanup;

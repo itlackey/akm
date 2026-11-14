@@ -26,7 +26,6 @@ import type { AkmConfig } from "../../src/core/config/config";
 import { ImproveProcessConfigSchema, ImproveProfileConfigSchema } from "../../src/core/config/config-schema";
 import { TransientError, UsageError } from "../../src/core/errors";
 import { appendEvent, readEvents } from "../../src/core/events";
-import { createLockPayload } from "../../src/core/file-lock";
 import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
 import { detectTruncatedDescription } from "../../src/core/text-truncation";
 import { ClaudeCodeProvider } from "../../src/integrations/harnesses/claude/session-log";
@@ -47,6 +46,7 @@ import { recordImproveLedger } from "../../src/storage/repositories/improve-ledg
 import { codexMessage, writeCodexRollout } from "../_helpers/codex-rollout";
 import { durableItemRef } from "../_helpers/durable-ref";
 import { rejectJsonSchemaOn } from "../_helpers/json-schema-endpoint";
+import { spawnLiveHolder, stopLiveHolders } from "../_helpers/live-holder";
 import { asLlmRunner } from "../_helpers/llm-runner";
 import {
   type IsolatedAkmStorage,
@@ -77,6 +77,7 @@ beforeEach(() => {
   storage = withIsolatedAkmStorage();
 });
 afterEach(() => {
+  stopLiveHolders();
   storage.cleanup();
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -1651,7 +1652,7 @@ describe("akmExtract — connection, harness + strategy config resolution", () =
       ...baseHarness,
       readSession: (ref) => {
         fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-        lockBytes ||= createLockPayload();
+        lockBytes ||= spawnLiveHolder().payload();
         if (!fs.existsSync(lockPath)) fs.writeFileSync(lockPath, lockBytes, "utf8");
         return baseHarness.readSession(ref);
       },
@@ -1699,7 +1700,7 @@ describe("akmExtract — connection, harness + strategy config resolution", () =
       readSession: (ref) => {
         if (ref.sessionId === first.ref.sessionId && !fs.existsSync(firstLockPath)) {
           fs.mkdirSync(path.dirname(firstLockPath), { recursive: true });
-          fs.writeFileSync(firstLockPath, createLockPayload(), "utf8");
+          fs.writeFileSync(firstLockPath, spawnLiveHolder().payload(), "utf8");
         }
         return baseHarness.readSession(ref);
       },
@@ -1764,7 +1765,7 @@ describe("akmExtract — connection, harness + strategy config resolution", () =
         // claims the second planned session before this run reaches it.
         if (chatCalls === 1) {
           fs.mkdirSync(path.dirname(secondLockPath), { recursive: true });
-          fs.writeFileSync(secondLockPath, createLockPayload(), "utf8");
+          fs.writeFileSync(secondLockPath, spawnLiveHolder().payload(), "utf8");
         }
         return JSON.stringify({ candidates: [], rationale_if_empty: "nothing durable" });
       },
