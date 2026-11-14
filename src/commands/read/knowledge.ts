@@ -21,7 +21,7 @@ import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement"
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { type AssetRef, conceptIdFromTypeName, parsePlacementRef } from "../../core/asset/resolve-ref";
-import { isHttpUrl, isWithin, resolveStashDir, tryReadStdinText } from "../../core/common";
+import { isHttpUrl, isWithin, resolveStashDir, safeRealpath, samePath, tryReadStdinText } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { resolveBundleWriteTarget, resolveMutationTarget } from "../../core/mutation-target";
@@ -257,7 +257,7 @@ function resolveWriteRefRoots(target?: string, targetFlag?: string): { roots: Wr
     // No working stash configured — the write target alone.
   }
   const mutableRoots: string[] = [stashRoot];
-  if (workingStash && path.resolve(workingStash) !== path.resolve(stashRoot)) mutableRoots.push(workingStash);
+  if (workingStash && !samePath(workingStash, stashRoot)) mutableRoots.push(workingStash);
   const namedSources = resolveSourceEntries(undefined, cfg);
   const installations = deriveInstallations(namedSources);
   const bundleByPath = new Map(
@@ -267,21 +267,20 @@ function resolveWriteRefRoots(target?: string, targetFlag?: string): { roots: Wr
     }),
   );
   const otherSources = namedSources.filter(
-    (s) => !mutableRoots.some((m) => path.resolve(m) === path.resolve(s.path)) && fs.existsSync(s.path),
+    (s) => !mutableRoots.some((m) => samePath(m, s.path)) && fs.existsSync(s.path),
   );
   const roots = [
     ...mutableRoots
       .filter((p) => fs.existsSync(p))
       .map((p) => {
-        const source = namedSources.find((candidate) => path.resolve(candidate.path) === path.resolve(p));
-        const mutable =
-          path.resolve(p) === path.resolve(stashRoot)
-            ? writeTarget.source.adapterId === "akm"
-            : source?.writable === true && (source.adapterId ?? detectAdapterId(p)) === "akm";
+        const source = namedSources.find((candidate) => samePath(candidate.path, p));
+        const mutable = samePath(p, stashRoot)
+          ? writeTarget.source.adapterId === "akm"
+          : source?.writable === true && (source.adapterId ?? detectAdapterId(p)) === "akm";
         return {
           path: p,
           source,
-          bundleId: bundleByPath.get(path.resolve(p)) ?? slugForPath(p),
+          bundleId: bundleByPath.get(safeRealpath(p)) ?? slugForPath(p),
           mutable,
         };
       }),
@@ -820,7 +819,7 @@ export async function writeMarkdownAsset(options: MarkdownAssetWriteOptions): Pr
       // on a git target, uncommitted (and a re-run hits RESOURCE_ALREADY_EXISTS).
       // Degrade to the same applied:false report the non-writable path uses.
       try {
-        const sameSource = path.resolve(item.stashRoot) === path.resolve(source.path);
+        const sameSource = samePath(item.stashRoot, source.path);
         writeSupersededEdge(item.filePath, durableRef);
         if (sameSource) {
           recordWriteTargetPath(source, item.filePath);
@@ -859,7 +858,7 @@ export async function writeMarkdownAsset(options: MarkdownAssetWriteOptions): Pr
   const sourceEntries = resolveSourceEntries(undefined, cfg);
   const sourceInstallations = deriveInstallations(sourceEntries);
   for (const [root, files] of demotedByRoot) {
-    const sourceIndex = sourceEntries.findIndex((entry) => path.resolve(entry.path) === path.resolve(root));
+    const sourceIndex = sourceEntries.findIndex((entry) => samePath(entry.path, root));
     await indexWrittenAssets(root, files, { bundleId: sourceInstallations[sourceIndex]?.id });
   }
   // Placement hint (stash-organization conventions): CLI writers never receive
