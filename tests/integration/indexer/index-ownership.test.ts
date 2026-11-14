@@ -172,14 +172,28 @@ describe("a read of an index that is only partly there", () => {
     expect(search.code).toBe(0);
     const response = JSON.parse(search.stdout);
     expect(response.hits.length).toBeGreaterThan(0);
-    expect(response.warnings.join("\n")).toContain("may be incomplete");
+    expect(response.warnings.join("\n")).toContain("The last index build for this library did not complete");
+    expect(response.warnings.join("\n")).toContain("Run `akm index`.");
 
     const curate = await cli("curate", "deploy the app safely", "--format=json");
     expect(curate.code).toBe(0);
-    expect(JSON.parse(curate.stdout).warnings.join("\n")).toContain("may be incomplete");
+    expect(JSON.parse(curate.stdout).warnings.join("\n")).toContain("did not complete");
 
     editMeta((db) => expect(getMeta(db, "builtAt")).toBeUndefined());
     expect(readEvents({ type: "index_completed" }).events).toHaveLength(1);
+  });
+
+  test("while a build holds the rebuild lock the incomplete-index warning says it is still being built", async () => {
+    seedLibrary();
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+    editMeta((db) => deleteMeta(db, "builtAt"));
+    holdLock();
+
+    const search = await cli("search", "deployment", "--format=json");
+    expect(search.code).toBe(0);
+    const warnings = JSON.parse(search.stdout).warnings.join("\n");
+    expect(warnings).toContain("is still being built; results may be incomplete.");
+    expect(warnings).not.toContain("did not complete");
   });
 
   test("an index built for a different library: empty result and the warning, and no rebuild from the read", async () => {
@@ -199,11 +213,21 @@ describe("a read of an index that is only partly there", () => {
     expect(readEvents({ type: "index_completed" }).events).toHaveLength(1);
   });
 
-  test("feedback with no usable index says the same thing and exits 2", async () => {
+  test("feedback with no usable index says so and exits 2", async () => {
     seedLibrary();
     const feedback = await cli("feedback", "knowledge/guide-0", "--positive");
     expect(feedback.code).toBe(2);
     expect(feedback.stderr).toMatch(NO_INDEX);
+    expect(feedback.stderr).toContain("akm index");
+    expect(fs.existsSync(getDbPath())).toBe(false);
+  });
+
+  test("feedback while a build holds the rebuild lock exits 75: retry when the build finishes", async () => {
+    seedLibrary();
+    holdLock();
+    const feedback = await cli("feedback", "knowledge/guide-0", "--positive");
+    expect(feedback.code).toBe(75);
+    expect(feedback.stderr).toContain("being built; retry when the build finishes");
     expect(fs.existsSync(getDbPath())).toBe(false);
   });
 });
@@ -348,7 +372,7 @@ describe("write-through and the persist transaction", () => {
     expect(search.code).toBe(0);
     const response = JSON.parse(search.stdout);
     expect(response.hits.length).toBeGreaterThan(0);
-    expect(response.warnings.join("\n")).toContain("may be incomplete");
+    expect(response.warnings.join("\n")).toContain("did not complete");
   });
 });
 

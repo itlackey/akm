@@ -17,7 +17,7 @@
  *
  * Reads never build and never wait. A library with no usable index gets an
  * empty result and {@link noIndexWarning}; one whose build has not completed
- * gets {@link INDEX_INCOMPLETE_WARNING} alongside its results.
+ * gets {@link incompleteIndexWarning} alongside its results.
  */
 
 import { ConfigError } from "../core/errors";
@@ -34,15 +34,22 @@ import { hasCurrentEntriesTable } from "../storage/repositories/index-entry-sche
 import { getMeta } from "../storage/repositories/index-meta-repository";
 import { heldRebuildLock } from "./index-rebuild-lock";
 
-export const INDEX_INCOMPLETE_WARNING =
-  "Search results may be incomplete: the index for this library has not finished building. " +
-  "Semantic results arrive when a build completes.";
+/** Said when the library has no usable index and no build is running. */
+export const NO_INDEX_MESSAGE = "There is no search index for this library yet; run `akm index` to build one.";
 
 /** The single "no usable index" warning; it names the build when a live process holds the rebuild lock. */
 export function noIndexWarning(): string {
   return heldRebuildLock()
     ? "The search index for this library is being built; results will appear when the build has persisted them."
-    : "There is no search index for this library yet; run `akm index` to build one.";
+    : NO_INDEX_MESSAGE;
+}
+
+/** The warning served beside results from an index whose build has not completed; it says whether a build is running. */
+export function incompleteIndexWarning(): string {
+  return heldRebuildLock()
+    ? "The search index for this library is still being built; results may be incomplete."
+    : "The last index build for this library did not complete (it was interrupted or a source could not be scanned); " +
+        "results may be incomplete. Run `akm index`.";
 }
 
 export interface UsableIndex {
