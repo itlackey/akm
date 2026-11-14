@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261124] - 2026-11-14
+
 ### Fixed
 
 - `akm show` beside a first `akm index` exited 70 (`no such table: entries`) when the build had created `index.db` but not its tables yet; the lookup now treats that like an index it cannot open and serves the asset from its file.
