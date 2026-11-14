@@ -282,10 +282,14 @@ async function checkCli(state: State, verb: CliVerb): Promise<void> {
     }
     return;
   }
+  // `--lead` asks for indexed-safe context: an index that cannot supply it refuses and points at `akm index`.
+  const leadRefusal =
+    verb.name === "show #slug --lead" && out.code === 1 && `${out.stdout}${out.stderr}`.includes("akm index");
   if (
     verb.name.startsWith("show") &&
     !state.stateDamaged &&
     !(state.refusesIndex && out.code === 78) &&
+    !leadRefusal &&
     out.code !== 0
   ) {
     throw new Error(`show is served from the files and must exit 0 — ${describeOutcome(out)}`);
@@ -299,8 +303,9 @@ async function checkHealth(state: State): Promise<void> {
   const out = await cli("health", "--format=json");
   expectNotInternal(out);
   if (state.stateDamaged) {
-    if (out.code !== 78) {
-      throw new Error(`damaged state.db must be one classified error (exit 78) — ${describeOutcome(out)}`);
+    // Health stays a report: one failing finding naming state.db, exit 1.
+    if (out.code !== 1 || !out.stdout.includes("state.db")) {
+      throw new Error(`damaged state.db must be one failing health finding (exit 1) — ${describeOutcome(out)}`);
     }
     return;
   }

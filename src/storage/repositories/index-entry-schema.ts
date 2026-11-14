@@ -168,14 +168,16 @@ export function retiredEntryColumns(db: EntrySchemaInspectionDatabase): string[]
 }
 
 /**
- * Whether an index database has an `entries` table this release can read. A
- * fresh or empty file has none; an index older than layout 21 has one keyed
- * by columns this release no longer reads (or lacks the ones it does), and
- * serves nothing until the next `akm index` recreates it.
+ * Whether an index database has an `entries` table this release can read,
+ * with its full-text table. A fresh or empty file has none; an index older
+ * than layout 21 has one keyed by columns this release no longer reads (or
+ * lacks the ones it does); a file whose schema was cut short has entries
+ * without `entries_fts`. Each serves nothing until the next `akm index`.
  */
 export function hasCurrentEntriesTable(db: EntrySchemaInspectionDatabase): boolean {
   try {
-    return missingEntryColumns(db).length === 0 && retiredEntryColumns(db).length === 0;
+    const fts = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'entries_fts'").get();
+    return Boolean(fts) && missingEntryColumns(db).length === 0 && retiredEntryColumns(db).length === 0;
   } catch {
     return false;
   }

@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- An `index.db` whose `entries` table exists without its full-text table made `akm search` and `akm curate` exit 70 while `akm health` passed. Such an index now counts as unusable: reads report it and `akm index` rebuilds it, and health fails it.
 - `akm feedback` accepted spellings `akm show` refuses (`tasks/x.md`, `skills/x.md`, `scripts/x.sh.md`, `env/x.md`, `secrets/x.md`), and echoed the typed spelling as `ref` (`knowledge\x`, `akm//knowledge/x.md`). It now accepts the spellings `show` accepts, and `ref` is the ref `show` returns. The `.md` toggle in an index lookup applies only to markdown files.
 - A lock left by a killed process was never reclaimed once its PID was alive again, for example PID 1 in a container: `akm index` waited ten minutes and exited 75, `--skip-if-locked` runs skipped forever, and reads said the index was being built. The index rebuild lock, `akm improve`'s run lock, the asset mutation lease and the other lock files now record the holder's boot id and process start time (Linux) and treat a live PID with a different identity as stale; a lock naming this process that it did not acquire is stale too. Lock files without those fields are read as before.
 - `akm bundle update --skip-if-locked` waited up to ten minutes for a running index build instead of skipping. It now returns at once with exit 0 and a skipped result.

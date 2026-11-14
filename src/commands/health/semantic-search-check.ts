@@ -20,6 +20,7 @@ import {
   openReadonlyExistingDatabase,
 } from "../../storage/repositories/index-connection";
 import { getEmbeddableEntryCount } from "../../storage/repositories/index-entries-repository";
+import { hasCurrentEntriesTable } from "../../storage/repositories/index-entry-schema";
 import { getMeta } from "../../storage/repositories/index-meta-repository";
 import { getEmbeddingCount } from "../../storage/repositories/index-vec-repository";
 import type { HealthCheckResult } from "./types";
@@ -43,6 +44,7 @@ export function readSemanticSearchState(mode: string | undefined): SemanticSearc
     const db = openReadonlyExistingDatabase(getDbPath());
     if (!db) return { mode };
     try {
+      if (!hasCurrentEntriesTable(db)) throw new Error("index.db has no searchable entries table");
       const raw = getMeta(db, SEMANTIC_SEARCH_META_KEY);
       return {
         mode,
