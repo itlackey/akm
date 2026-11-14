@@ -33,6 +33,7 @@ import type {
 } from "../../core/improve-types";
 import { withStateDb } from "../../core/state-db";
 import { info, warn } from "../../core/warn";
+import { isSkippedIndexBuild } from "../../indexer/index-build";
 import {
   countUsageEventsByType,
   listZeroResultSearchQueries,
@@ -578,7 +579,12 @@ export async function runImprovePreparationStage(args: ImprovePreparationStageAr
     }
     if ((appliedCleanup.archived.length > 0 || appliedCleanup.beliefStateTransitions.length > 0) && primaryStashDir) {
       try {
-        await args.reindexFn({ stashDir: primaryStashDir, signal: args.budgetSignal });
+        const built = await args.reindexFn({ stashDir: primaryStashDir, signal: args.budgetSignal });
+        if (isSkippedIndexBuild(built)) {
+          cleanupWarnings.push(
+            "reindex after cleanup skipped: another index run holds the rebuild lock; the next build picks the cleanup up",
+          );
+        }
       } catch (err) {
         cleanupWarnings.push(`reindex after cleanup failed: ${errMessage(err)}`);
       }
