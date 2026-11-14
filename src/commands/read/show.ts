@@ -391,9 +391,7 @@ export async function showLocal(input: {
   // or when the caller explicitly opts into indexed-safe contextual output.
   const indexedFragment =
     !fromFiles && parsed.fragment && (opaqueFragmentSelector || input.contextMode === "lead")
-      ? withIndexDb((db) => getIndexedMarkdownFragment(db, indexedEntry.itemRef, parsed.fragment!), {
-          readOnly: input.readOnly === true,
-        })
+      ? readIndexedFragment(indexedEntry.itemRef, parsed.fragment, input.readOnly === true)
       : undefined;
   const indexedFragmentContent = opaqueFragmentSelector ? indexedFragment?.content : undefined;
   const indexedRenderer = rendererForIndexedEntry(indexedEntry, fileCtx);
@@ -528,6 +526,21 @@ export async function showLocal(input: {
   }
 
   return fullResponse;
+}
+
+/** The indexed-safe fragment, or undefined when the index cannot supply it (an older layout without `entry_fragments`); the caller then serves from files. */
+function readIndexedFragment(
+  itemRef: string,
+  fragment: string,
+  readOnly: boolean,
+): ReturnType<typeof getIndexedMarkdownFragment> | undefined {
+  try {
+    return withIndexDb((db) => getIndexedMarkdownFragment(db, itemRef, fragment), { readOnly });
+  } catch (err) {
+    rethrowIfTestIsolationError(err);
+    rethrowIfDataDirUnreadable(err);
+    return undefined;
+  }
 }
 
 /** Refs listed per kind of declared link; `total` still counts them all (one memory is named by 1,437 others). */

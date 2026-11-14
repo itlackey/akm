@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A damaged `index.db` (a bad header, `file is not a database`, or a bad interior page) is rebuilt by `akm index`: the build deletes the file and builds again once, wherever it finds the damage. Search and curate report "no search index; run `akm index`" and `feedback` reports no usable index, instead of exiting 70.
+- `akm health` no longer passes an `index.db` that has a damaged page, and during a first build it reports the build instead of failing and advising to move `index.db` aside.
+- Opening or migrating `index.db` is one transaction, so a reader or a crash can no longer meet entries without their full-text table (search and curate exited 70).
+- `akm show <ref>#<fragment>` against an index laid out by 0.9.13 or earlier exited 70 (`no such table: entry_fragments`); it reports the fragment unavailable like any index that cannot supply it.
+
 ## [0.10.261124] - 2026-11-14
 
 ### Fixed
