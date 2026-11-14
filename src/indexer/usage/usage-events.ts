@@ -210,23 +210,37 @@ export function usageRetentionSince(): string {
 }
 
 /**
- * How many times each asset was shown and how many searches returned it, by durable `entry_ref`: user-attributed
- * events at or after `sinceIso`, in one pass. The same definition of use as the utility aggregation in the indexer,
+ * How many times each asset was shown, how many searches returned it, and when it was last shown, by durable
+ * `entry_ref`: user-attributed events at or after `sinceIso`, in one pass. The same definition of use as the utility aggregation in the indexer,
  * read live instead of as of the last index.
  */
-export function countUseByRef(db: Database, sinceIso: string): Map<string, { shows: number; searches: number }> {
+export function countUseByRef(
+  db: Database,
+  sinceIso: string,
+): Map<string, { shows: number; searches: number; lastShownAt: string | null }> {
   const rows = db
     .prepare(
       `SELECT entry_ref,
               SUM(CASE WHEN event_type = 'show' THEN 1 ELSE 0 END) AS shows,
-              SUM(CASE WHEN event_type = 'search' THEN 1 ELSE 0 END) AS searches
+              SUM(CASE WHEN event_type = 'search' THEN 1 ELSE 0 END) AS searches,
+              MAX(CASE WHEN event_type = 'show' THEN datetime(created_at) END) AS last_shown
        FROM usage_events
        WHERE event_type IN ('show', 'search') AND source = 'user' AND entry_ref IS NOT NULL
          AND datetime(created_at) >= datetime(?)
        GROUP BY entry_ref`,
     )
-    .all(sinceIso) as Array<{ entry_ref: string; shows: number; searches: number }>;
-  return new Map(rows.map((row) => [row.entry_ref, { shows: row.shows, searches: row.searches }]));
+    .all(sinceIso) as Array<{ entry_ref: string; shows: number; searches: number; last_shown: string | null }>;
+  return new Map(
+    rows.map((row) => [
+      row.entry_ref,
+      {
+        shows: row.shows,
+        searches: row.searches,
+        // SQLite's datetime() is UTC without a zone: say so, so it parses as UTC everywhere.
+        lastShownAt: row.last_shown ? `${row.last_shown.replace(" ", "T")}Z` : null,
+      },
+    ]),
+  );
 }
 
 /**
