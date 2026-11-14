@@ -94,6 +94,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `akm show` beside a first `akm index` exited 70 (`no such table: entries`) when the build had created `index.db` but not its tables yet; the lookup now treats that like an index it cannot open and serves the asset from its file.
 - `akm remember --help` advertised `-showSimilar`, which was rejected; it now shows `--show-similar` only, and `--showSimilar` still works.
 - `akm improve --auto-accept` names its replacement (`akm proposal drain --promote --yes`, or a `triage` block with `applyMode: "promote"`).
 - The flags removed in 0.11 that still reach the unknown-flag check (`improve --require-engines`, `lint --auto-fix`, `migrate apply --dry-run`, `workflow list|status --all-scopes`, `--allow-dangerous-env-keys`, `bundle update --yes`, `registry add --options`, `task sync --dry-run|--bundle`, `task add --rebind`, `task history --id`) now name their replacement or say to drop them, like `--auto-accept`.
