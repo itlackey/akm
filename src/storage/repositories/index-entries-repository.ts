@@ -495,15 +495,14 @@ export function deleteEntriesByBundle(db: Database, bundleId: string): void {
 }
 
 /**
- * Delete every entry that is neither under one of `dirs` nor owned by one of `bundleIds`, with its child rows. A
- * bundle that is still configured keeps its rows even when its directory is not among `dirs` (an unresolved source
- * keeps its last-known-good snapshot). Usage events live in state.db, so the caller deletes them after its
- * transaction commits, from the returned entries.
+ * Delete every entry that is neither under one of `dirs` nor owned by one of `keepBundleIds` (bundles whose source
+ * did not resolve, which keep their last-known-good snapshot), with its child rows. Usage events live in state.db,
+ * so the caller deletes them after its transaction commits, from the returned entries.
  */
 export function deleteEntriesOutsideLibrary(
   db: Database,
   dirs: readonly string[],
-  bundleIds: ReadonlySet<string>,
+  keepBundleIds: ReadonlySet<string | undefined>,
 ): DeletedEntry[] {
   return db.transaction(() => {
     const roots = dirs.map((dir) => `${path.resolve(dir)}${path.sep}`);
@@ -514,7 +513,7 @@ export function deleteEntriesOutsideLibrary(
       bundle_id: string;
     }>;
     const doomed = rows.filter(
-      (row) => !bundleIds.has(row.bundle_id) && !roots.some((root) => path.resolve(row.file_path).startsWith(root)),
+      (row) => !keepBundleIds.has(row.bundle_id) && !roots.some((root) => path.resolve(row.file_path).startsWith(root)),
     );
     return deleteEntryRows(db, doomed, { cleanupUsageEvents: false });
   })();

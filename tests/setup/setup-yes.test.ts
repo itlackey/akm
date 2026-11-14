@@ -503,7 +503,7 @@ describe("akm setup --embedding", () => {
     expect(written().semanticSearchMode).toBe("off");
     expect(summary.semanticAssets).toBeUndefined();
     expect(checked).toEqual([]);
-    expect(warnings.filter((w) => w.startsWith("[akm setup]"))).toEqual([
+    expect(warnings).toEqual([
       expect.stringMatching(
         /^\[akm setup\] Local embeddings are not available on \S+-ia32; choose a remote endpoint or keyword search\. --embedding local is ignored: semantic search stays off\.$/,
       ),

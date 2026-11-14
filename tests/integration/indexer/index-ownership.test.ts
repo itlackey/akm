@@ -15,7 +15,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { saveConfig } from "../../../src/core/config/config";
+import { resetConfigCache, saveConfig } from "../../../src/core/config/config";
 import { readEvents } from "../../../src/core/events";
 import { getDbPath, getIndexRebuildLockPath } from "../../../src/core/paths";
 import { heldRebuildLock } from "../../../src/indexer/index-rebuild-lock";
@@ -29,7 +29,7 @@ import {
 } from "../../../src/storage/repositories/index-connection";
 import { deleteMeta, getMeta, setMeta } from "../../../src/storage/repositories/index-meta-repository";
 import { runCliCapture } from "../../_helpers/cli";
-import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage } from "../../_helpers/sandbox";
+import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 
 const repoRoot = path.resolve(import.meta.dir, "../../..");
 const NO_INDEX = /no search index for this library yet/;
@@ -392,6 +392,33 @@ describe("a library switch", () => {
     await withEnv({ AKM_BUNDLE_DIR: other }, async () => {
       const search = JSON.parse((await cli("search", "deployment", "--format=json")).stdout);
       expect(search.hits).toEqual([]);
+    });
+  });
+
+  test("a bundle repointed at another directory loses its old rows even when another source fails to scan", async () => {
+    seedLibrary();
+    const bundles = (dir: string, extra = {}) => ({ main: { path: dir }, ...extra });
+    writeSandboxConfig({ semanticSearchMode: "off", defaultBundle: "main", bundles: bundles(storage.stashDir) });
+    resetConfigCache();
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+
+    const moved = path.join(storage.root, "moved-library");
+    fs.mkdirSync(path.join(moved, "knowledge"), { recursive: true });
+    fs.writeFileSync(path.join(moved, "knowledge", "fresh.md"), "---\ndescription: Fresh note\n---\n\n# Fresh\n");
+    writeSandboxConfig({
+      semanticSearchMode: "off",
+      defaultBundle: "main",
+      bundles: bundles(moved, { gone: { path: path.join(storage.root, "never-created") } }),
+    });
+    resetConfigCache();
+    const built = await akmIndex({ stashDir: moved, full: true });
+    expect(built.scanComplete).toBe(false);
+
+    editMeta((db) => {
+      const paths = (db.prepare("SELECT file_path FROM entries").all() as Array<{ file_path: string }>).map(
+        (row) => row.file_path,
+      );
+      expect(paths).toEqual([path.join(moved, "knowledge", "fresh.md")]);
     });
   });
 });

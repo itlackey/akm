@@ -81,7 +81,7 @@ Non-interactive setup builds the index for the library it configured, when that 
 
 An index is usable for a library when the keyword data for it is persisted: the `entries` table exists and `index_meta.stashDir` or `stashDirs` names the library. The persist transaction writes both with the entries and their FTS rows, so a build that is still embedding, was interrupted after the scan, or had one source fail is usable, and so is an empty library that was indexed (akm#1469). An index an older akm finished has the same two keys, so it is usable with no migration. `openUsableIndex` (`src/indexer/index-readiness.ts`) is the one check; `search`, `curate`, `feedback` and write-through all use it.
 
-`builtAt` is not part of usable. It is the incremental watermark, written when a build completes with a complete scan. A persist for a different library clears it and, in the same transaction, deletes every entry outside the new library's source directories that belongs to a bundle the new library does not configure (a configured source keeps its last-known-good rows), so the marker never names a library whose index still serves another's rows.
+`builtAt` is not part of usable. It is the incremental watermark, written when a build completes with a complete scan. A persist for a different library clears it and, in the same transaction, deletes every entry outside the new library's source directories (a bundle whose source did not resolve in that build keeps its last-known-good rows), so the marker never names a library whose index still serves another's rows.
 
 ## How reads degrade
 

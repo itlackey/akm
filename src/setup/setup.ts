@@ -389,12 +389,12 @@ async function prepareLocalEmbeddings(config: AkmConfig, noProbe: boolean | unde
 /**
  * Build the index for the library a non-interactive setup just configured, so a search works straight away
  * (reads never build). A missing library directory (`--no-init`) has nothing to index; a failed build never
- * fails setup.
+ * fails setup. Setup's config write stays the only one: detected adapters are recorded by the next `akm index`.
  */
 async function indexConfiguredLibrary(stashDir: string): Promise<void> {
   if (!fs.existsSync(stashDir)) return;
   try {
-    await buildIndex({ stashDir }, "wait");
+    await buildIndex({ stashDir, persistDetectedAdapters: false }, "wait");
   } catch (err) {
     warn(`[akm setup] The search index was not built (${toErrorMessage(err)}); run \`akm index\` to build it.`);
   }
