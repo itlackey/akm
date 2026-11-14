@@ -222,31 +222,67 @@ describe("an embedding answer", () => {
         apiKey: "$EMB_KEY",
         provider: "openai",
         dimension: 1024,
+        queryTemplate: "q: {text}",
         batchSize: 8,
         localModel: "bge-small",
       },
     });
     expect(applySetupAnswers(tuned, { embedding: { kind: "local" } }).patch.embedding).toEqual({
-      dimension: 1024,
       batchSize: 8,
       localModel: "bge-small",
     });
+    const local = cfg({ embedding: { dimension: 384, documentTemplate: "d: {text}", batchSize: 8 } });
+    expect(applySetupAnswers(local, { embedding: { kind: "local" } }).patch.embedding).toBe(local.embedding);
     expect(applySetupAnswers(withModel, { embedding: { kind: "off" } }).patch.embedding).toBe(withModel.embedding);
   });
 
-  test("a model on the connection drops the endpoint, key and label and keeps the rest", () => {
+  test("a model on the connection drops the endpoint, key, label and the old model's dimension and templates, and keeps the rest", () => {
     const tuned = cfg({
       embedding: {
         endpoint: "https://emb.example.test/v1",
         model: "e5",
         apiKey: "$EMB_KEY",
         provider: "openai",
+        dimension: 1024,
+        queryTemplate: "q: {text}",
+        documentTemplate: "d: {text}",
         batchSize: 8,
       },
+    });
+    const same = applySetupAnswers(tuned, { embedding: { kind: "connection", model: "e5" } }).patch.embedding;
+    expect(same).toEqual({
+      model: "e5",
+      dimension: 1024,
+      queryTemplate: "q: {text}",
+      documentTemplate: "d: {text}",
+      batchSize: 8,
     });
     expect(
       applySetupAnswers(tuned, { embedding: { kind: "connection", model: "nomic-embed-text" } }).patch.embedding,
     ).toEqual({ model: "nomic-embed-text", batchSize: 8 });
+  });
+
+  test("the same model on another endpoint keeps its dimension; another model drops it", () => {
+    const current = cfg({
+      embedding: { endpoint: "https://emb.example.test/v1", model: "e5", dimension: 1024, batchSize: 8 },
+    });
+    const moved = applySetupAnswers(current, {
+      embedding: { kind: "endpoint", endpoint: "https://other.example.test/v1", model: "e5" },
+    });
+    expect(moved.patch.embedding).toEqual({
+      endpoint: "https://other.example.test/v1",
+      model: "e5",
+      dimension: 1024,
+      batchSize: 8,
+    });
+    const remodelled = applySetupAnswers(current, {
+      embedding: { kind: "endpoint", endpoint: "https://emb.example.test/v1", model: "bge" },
+    });
+    expect(remodelled.patch.embedding).toEqual({
+      endpoint: "https://emb.example.test/v1",
+      model: "bge",
+      batchSize: 8,
+    });
   });
 
   test("another endpoint replaces the target, drops the old key and label, and keeps the tuning", () => {

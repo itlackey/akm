@@ -142,15 +142,21 @@ function connectionEntry(existing: ConnectionConfig | undefined, answer: Connect
   };
 }
 
+/** Where embeddings run, and the label of that endpoint: replaced by every choice. */
+const TARGET_KEYS = ["endpoint", "model", "apiKey", "provider"] as const;
+/** Settings that only fit one model (its vector size, its prompt templates): kept only while the model is the same. */
+const MODEL_KEYS = ["dimension", "queryTemplate", "documentTemplate"] as const;
+
 /**
- * The block with its target (`endpoint`, `model`, `apiKey`, `provider`: where embeddings run, and the label of that
- * endpoint) replaced by `target`; every other key is kept. An empty block is no block.
+ * The block with its target replaced by `target`; the model-bound keys are kept when `target.model` is the model the
+ * block already has (neither, for the built-in embedder), and every other key is kept. An empty block is no block.
  */
 function withTarget(
   current: EmbeddingConnectionConfig | undefined,
   target: EmbeddingConnectionConfig,
 ): EmbeddingConnectionConfig | undefined {
-  const { endpoint: _endpoint, model: _model, apiKey: _apiKey, provider: _provider, ...kept } = current ?? {};
+  const dropped: readonly string[] = current?.model === target.model ? TARGET_KEYS : [...TARGET_KEYS, ...MODEL_KEYS];
+  const kept = Object.fromEntries(Object.entries(current ?? {}).filter(([key]) => !dropped.includes(key)));
   const next = { ...target, ...kept };
   if (Object.keys(next).length === 0) return undefined;
   return current !== undefined && isDeepStrictEqual(next, current) ? current : next;

@@ -293,7 +293,7 @@ describe("config.saveEmbedding", () => {
   });
 
   test("the default connection's model keeps the block's tuning; local removes the target and keeps the rest", () => {
-    seed({ endpoint: "http://127.0.0.1:2/v1", model: "m", apiKey: "$EMBED_KEY", batchSize: 4 });
+    seed({ endpoint: "http://127.0.0.1:2/v1", model: "m", apiKey: "$EMBED_KEY", dimension: 256, batchSize: 4 });
     config.saveEmbedding({ kind: "connection", model: "embed-b" });
     expect(saved().embedding).toEqual({ model: "embed-b", batchSize: 4 });
     expect(saved().semanticSearchMode).toBe("auto");
@@ -304,6 +304,14 @@ describe("config.saveEmbedding", () => {
       expect(config.saveEmbedding({ kind: "local" })).toEqual({ saved: true, embedding: null });
       expect(saved().embedding).toBeUndefined();
     }
+  });
+
+  test("the model's dimension goes with the model and stays with it across endpoints", () => {
+    seed({ endpoint: "http://127.0.0.1:2/v1", model: "m", dimension: 256, batchSize: 4 });
+    config.saveEmbedding({ kind: "endpoint", endpoint: "http://127.0.0.1:3/v1", model: "m" });
+    expect(saved().embedding).toEqual({ endpoint: "http://127.0.0.1:3/v1", model: "m", dimension: 256, batchSize: 4 });
+    config.saveEmbedding({ kind: "endpoint", endpoint: "http://127.0.0.1:3/v1", model: "other" });
+    expect(saved().embedding).toEqual({ endpoint: "http://127.0.0.1:3/v1", model: "other", batchSize: 4 });
   });
 
   test("a bad answer throws before anything is written", async () => {

@@ -26,7 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- `akm setup` (and AKM Desktop) keep the `embedding` block's tuning settings when the embedder changes: only `endpoint`, `model`, `apiKey` and `provider` change, and every other key (`dimension`, `batchSize`, `timeoutMs`, `localModel`, …) stays. The built-in embedder removes the block only when nothing else is left in it.
+- `akm setup` (and AKM Desktop) no longer discard the `embedding` block's other settings when the embedder changes. Where it runs (`endpoint`, `model`, `apiKey`, `provider`) is replaced; settings tied to the model (`dimension`, `queryTemplate`, `documentTemplate`) are kept only while the model is the same; every other key (`batchSize`, `timeoutMs`, `localModel`, …) is kept. The built-in embedder removes the block only when nothing is left in it.
 - An index build no longer spends most of its time rewriting utility scores one commit at a time. The recompute wrote each `utility_scores` row in its own transaction, one disk sync per row; it now writes them all in one, with identical values. On a 20,900-entry library this was about 43 of the 45 seconds of finalize (8,327 syncs, now 1); generating 3,000 rows and counting `fsync` calls gave 3,010 before and 1 after.
 - Concurrent reads on a cold library no longer fail with exit 75 or start several builds at once ([akm-plugins#175](https://github.com/itlackey/akm-plugins/issues/175)): reads do not build.
 - `akm task add --rebind` named `akm import <file> --type task` as its replacement; it now names `akm doctor scheduler sync --rebind`.
