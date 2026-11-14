@@ -205,7 +205,9 @@ export async function indexWrittenAssets(
     }
     const message = error instanceof Error ? error.message : String(error);
     if (isSqliteContentionError(error) || (error instanceof TransientError && error.code === "INDEX_DB_CONTENDED")) {
-      warnVerbose(`Write-path index update skipped, the index is busy (asset appears after the next build): ${message}`);
+      warnVerbose(
+        `Write-path index update skipped, the index is busy (asset appears after the next build): ${message}`,
+      );
       return true;
     }
     warnVerbose("Write-path index update skipped (asset appears after the next full index):", message);
