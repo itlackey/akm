@@ -104,7 +104,7 @@ function runImprove(atIndex: () => void, options: { sync?: { push?: boolean } } 
     stashDir,
     config,
     ...options,
-    ensureIndexFn: async () => {
+    reindexFn: async () => {
       atIndex();
     },
     collectEligibleRefsFn: (async () => ({

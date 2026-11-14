@@ -412,6 +412,10 @@ test("keyboard order, focus hand-back and names at the shortest windows", { time
   // software-ui.test.mjs: the page runs the host's own tools, which can outlive this test and write into its fixture.
   const violations = [];
   const audit = async (state) => {
+    // Colours ease over 120ms (a button coming back from busy), so contrast is measured once they have settled.
+    await page.waitForFunction(() =>
+      document.getAnimations().every((animation) => animation.effect?.getTiming().iterations === Infinity),
+    );
     const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze();
     violations.push(...results.violations.map(({ id, nodes }) => `${state}: ${id} ${nodes[0].target}`));
   };

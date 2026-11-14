@@ -5,13 +5,9 @@
 /**
  * Write-path indexing: targeted single-file index updates for asset writers.
  *
- * The index is maintained eagerly by every first-class mutation command
- * (`source add`, `wiki`, `workflow`, `setup` all run `akmIndex()` after
- * writing). The memory write paths — `akm remember` / `writeMarkdownAsset`
- * and extract's session assets — historically did not, which is why reads
- * used to compensate with stale-triggered background reindexes (the
- * lock-contention footgun removed alongside this module's introduction, per
- * the 2026-07 read-path reindex-contention findings §7).
+ * Writers index what they write; reads never walk. Mutation commands (`source add`, `bundle update`, ...)
+ * build the index after writing, and the memory write paths (`akm remember`, extract's session assets)
+ * call this instead.
  *
  * This is NOT a general reindex. It upserts exactly the files the caller just
  * wrote: frontmatter/metadata via the shared matcher pipeline, the canonical
@@ -24,48 +20,49 @@ import fs from "node:fs";
 import path from "node:path";
 import { akmAdapter } from "../core/adapter/adapters/akm-adapter";
 import { loadConfig } from "../core/config/config";
-import { isDataDirUnreadableError } from "../core/errors";
-import { probeLock } from "../core/file-lock";
+import { isDataDirUnreadableError, TransientError } from "../core/errors";
 import { isPathAbsent } from "../core/path-access";
-import { getDbPath, getIndexRebuildLockPath } from "../core/paths";
-import { formatLockHolderPid } from "../core/run-lock";
+import { getDbPath } from "../core/paths";
 import { warn, warnVerbose } from "../core/warn";
-import { closeDatabase, openExistingDatabase } from "../storage/repositories/index-connection";
+import { closeDatabase } from "../storage/repositories/index-connection";
 import { deleteEntriesByIds, upsertEntry } from "../storage/repositories/index-entries-repository";
-import { getMeta } from "../storage/repositories/index-meta-repository";
+import { isSqliteContentionError } from "../storage/sqlite-transaction";
+import { openUsableIndex } from "./index-readiness";
 import { deriveEntryProvenance, deriveInstallations } from "./installations";
 import { embeddingInputCap, generateEmbeddingsForDb, publishTargetedEmbeddingMeta } from "./materialize-embeddings";
 import { type IndexDocument, withFileSize } from "./passes/metadata";
 import { drainDirDocuments } from "./scan/drain-dir";
 import { buildFileContext } from "./walk/file-context";
+import { walkedFiles } from "./walk/walker";
 
 /**
  * Busy-timeout (ms) for write-path index upserts. A real write — unlike the
  * 250ms telemetry inserts — but it must not hang `akm remember` for the full
- * default 30s behind a running full reindex. When it times out, the upsert is
- * skipped and the asset becomes searchable after that reindex instead.
+ * default 30s behind a running build. When it times out, the upsert is
+ * skipped and the asset becomes searchable after the next build instead.
  */
 export const WRITE_PATH_INDEX_BUSY_TIMEOUT_MS = 5_000;
 
 /**
  * Index the given just-written asset files into the existing local index.
  *
- * FAIL-OPEN at every step: any error (index.db absent, empty, locked past the
- * busy timeout, unparseable file) is reduced to a verbose-only warning and the
- * write command succeeds untouched. The degraded outcome is exactly the
- * pre-write-path-indexing behavior: the asset appears after the next full
- * `akm index` / improve-cron run.
+ * FAIL-OPEN at every step: any error (index.db absent, locked past the busy timeout, unparseable file) is
+ * reduced to a verbose-only warning and the write command succeeds untouched. A write the index misses is
+ * picked up by the next build. Returns `true` when the index is busy (a build holds the write lock past the
+ * busy timeout, or the embedding step reports contention): the file is on disk and the next build indexes it,
+ * so the write is not reported as unindexed. `false` is for an index akm may not read and for genuine errors.
  *
- * An absent index, or one that never completed a build (no `builtAt`), is skipped on purpose — bootstrap belongs to the
- * first read (`ensureIndex`) or an explicit `akm index`, which also cover
- * embeddings and the other passes this fast path skips.
+ * Upserts whenever a usable index exists for the library (`index-readiness.ts`):
+ * persisted keyword data, whether or not a build has completed. An absent or
+ * unusable index is skipped on purpose — building one is `akm index`'s job, and
+ * it also covers the embeddings and other passes this fast path skips.
  *
- * A live rebuild holding the rebuild lock is the SAME kind of skip, not a
- * failure (#956 fix): a live `akm index` run owns bringing the index to the
- * expected state on its own, so this call returns `true` on that skip
- * exactly like the absent-index and never-built cases above. Callers that
- * gate their own success on this boolean (`acceptProposal`, `source clone`)
- * must never fail or warn just because a concurrent rebuild is in progress.
+ * A write that lands while a build runs is not a failure and does not look for
+ * the build: the upsert goes in on the 5 s busy timeout, or is skipped (still
+ * `true`) when the build holds the write lock longer, and the next build picks
+ * the change up from the directory fingerprints it takes. Callers that gate
+ * their own success on this boolean (`acceptProposal`, `source clone`) never
+ * fail or warn just because a build is in progress.
  */
 export async function indexWrittenAssets(
   stashDir: string,
@@ -76,43 +73,14 @@ export async function indexWrittenAssets(
   } = {},
 ): Promise<boolean> {
   try {
-    // #956: a live `akm index` rebuild holds index.db under one long
-    // transaction (persistDirRecords), which this fast path's own 5s
-    // busy_timeout would just contend with pointlessly. Interactive
-    // commands (remember, import, extract session assets) must never wait
-    // on it — skip the inline upsert/embedding entirely; the write itself
-    // (file + commit) has already succeeded by the time this runs, and the
-    // rebuild in progress will pick up the change on its own.
-    const rebuildProbe = probeLock(getIndexRebuildLockPath());
-    if (rebuildProbe.state === "held") {
-      // #956: name the launcher pid alongside the holder pid when known —
-      // every process listing and task log shows the launcher's pid, not
-      // the bun/node child's.
-      const holderLabel = formatLockHolderPid({
-        pid: rebuildProbe.holderPid,
-        launcherPid: rebuildProbe.launcherPid ?? null,
-      });
-      warn(`index rebuild in progress (pid ${holderLabel}); the next index pass will index ${filePaths.join(", ")}`);
-      return true;
-    }
-
     const dbPath = getDbPath();
-    // `true` here means "the index is in the state the caller expects" — and
-    // `acceptProposal` advances its journal to `index-finalized` on the
-    // strength of it. Only a genuinely ABSENT index earns that answer: an
-    // index we cannot read has NOT been updated, so it falls through to
-    // `openExistingDatabase` and surfaces as the honest `false` (#791).
+    // `true` means "nothing more to do here": the files are indexed, or there is no usable index to update
+    // (absent, unusable, built for another library) and the next build indexes them. An index akm may not
+    // read is the exception: `openUsableIndex` raises and the catch below reports `false` (#791).
     if (isPathAbsent(dbPath)) return true;
 
-    // The full walk never descends into dot-directories (for example `.meta/`)
-    // — mirror that dot-segment skip here so this fast path indexes exactly
-    // what a full run would. Sensitive/
-    // infra abstention is the adapter's job now (see the `akmAdapter` note
-    // below), not a path pre-filter.
-    const files = filePaths.filter((f) => {
-      const rel = path.relative(stashDir, f);
-      return !rel.split(/[\\/]+/).some((segment) => segment.startsWith("."));
-    });
+    // Index exactly what a full walk would list: skipped and ignored directories, sidecar files and the like stay out.
+    const files = walkedFiles(stashDir, filePaths);
     if (files.length === 0) return true;
 
     // Generate metadata BEFORE opening the DB so the write window stays
@@ -156,10 +124,10 @@ export async function indexWrittenAssets(
       else unindexable.add(file);
     }
 
-    const db = openExistingDatabase(dbPath);
+    const usable = openUsableIndex(stashDir, { busyTimeoutMs: WRITE_PATH_INDEX_BUSY_TIMEOUT_MS });
+    if (!usable) return true;
+    const { db } = usable;
     try {
-      db.exec(`PRAGMA busy_timeout = ${WRITE_PATH_INDEX_BUSY_TIMEOUT_MS}`);
-      if (!getMeta(db, "builtAt")) return true;
       const config = loadConfig();
       const targetEntryIds = new Set<number>();
       let mutated = false;
@@ -235,10 +203,14 @@ export async function indexWrittenAssets(
       );
       return false;
     }
-    warnVerbose(
-      "Write-path index update skipped (asset appears after the next full index):",
-      error instanceof Error ? error.message : String(error),
-    );
+    const message = error instanceof Error ? error.message : String(error);
+    if (isSqliteContentionError(error) || (error instanceof TransientError && error.code === "INDEX_DB_CONTENDED")) {
+      warnVerbose(
+        `Write-path index update skipped, the index is busy (asset appears after the next build): ${message}`,
+      );
+      return true;
+    }
+    warnVerbose("Write-path index update skipped (asset appears after the next full index):", message);
     return false;
   }
 }

@@ -21,9 +21,9 @@
  * The hand-rename signature is: a configured bundle id with NO indexed rows
  * co-existing with indexed rows under a bundle id that is no longer configured.
  *
- * SEAM CHOICE: invoked from `ensureIndex` — the single funnel every read/index
- * path passes through before consuming or (re)building the index, so the guard
- * fires BEFORE a stale-index rebuild could re-mint fresh rows under the new id.
+ * SEAM CHOICE: invoked from `buildIndex` — the single funnel every build
+ * passes through, so the guard fires BEFORE a rebuild could re-mint fresh rows
+ * under the new id.
  * It has a handful of call sites (vs. `loadConfig`'s hundreds), reads a cached
  * config plus one indexed `DISTINCT` query, and settles after the first
  * comparison over a non-empty index so the steady-state cost is a boolean check.

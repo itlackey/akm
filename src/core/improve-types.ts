@@ -962,12 +962,10 @@ export interface AkmImproveResult {
    */
   memoryInferenceDurationMs?: number;
   /**
-   * R6: wall-clock duration of the start-of-run inline index (ms) that
-   * `ensureIndex` runs in blocking mode — the previous no-op call discarded
-   * this entirely, hiding blocking rebuilds (tens of minutes on a large stash)
-   * from the ledger. Same top-level surfacing convention as
-   * `memoryInferenceDurationMs`. Omitted when the run did not index inline
-   * (dry-run, or the index step failed).
+   * R6: duration (ms) of the start-of-run index build, so rebuilds (tens of minutes on a large
+   * stash) show in the ledger. Same top-level surfacing convention as
+   * `memoryInferenceDurationMs`. Omitted when the run did not index
+   * (dry-run, or the index step failed or was skipped).
    */
   ensureIndexDurationMs?: number;
   /** Number of pending proposals purged because their target ref no longer exists on disk. */

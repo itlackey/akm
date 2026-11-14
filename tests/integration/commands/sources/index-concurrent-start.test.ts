@@ -3,8 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * A concurrent plain `akm index` must exit 75, never 78 (field follow-up to
- * #956, G1). Spawns TWO REAL CLI child processes (`bun src/cli.ts index
+ * Concurrent plain `akm index` runs wait for each other, take the rebuild lock one at a time and
+ * all exit 0, never 75 or 78 (field follow-up to #956, G1). Spawns TWO REAL CLI child processes (`bun src/cli.ts index
  * --full --format=json`) launched back to back with no work between the two
  * `Bun.spawn` calls, so the index.db write contention `INDEX_DB_CONTENDED`
  * (F1) reclassifies is exercised exactly as a real scheduler/hook double-launch would hit it,
@@ -16,9 +16,7 @@
  * small pairs reproduce a real `exit 78` in a handful of trials, where a
  * single pair usually does not collide at all). Across every trial this pins
  * the property the field bug broke: no process ever exits 78 (config error —
- * the reported regression) or 70 (internal/unclassified) — only 0 (no
- * collision, or a "contended" warn-and-proceed that still completed) or 75
- * (`TransientError`, code `INDEX_DB_CONTENDED`).
+ * the reported regression) or 70 (internal/unclassified), and none exits 75 either.
  *
  * Integration-scoped (ORG-03/06): spawns real child processes, each opening a
  * real index.db.
@@ -28,6 +26,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { saveConfig } from "../../../../src/core/config/config";
+import { readEvents } from "../../../../src/core/events";
 import { type IsolatedAkmStorage, withDefaultBundle, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 
 const repoRoot = path.resolve(import.meta.dir, "../../../..");
@@ -76,16 +75,6 @@ async function spawnIndexChild(extraArgs: string[]): Promise<ChildResult> {
   return { code, stdout, stderr };
 }
 
-/** The CLI's JSON error envelope is pretty-printed (emitJsonError uses JSON.stringify(..., null, 2)), so it can span
- * several lines after any plain warn/info lines already on stderr — take the LAST top-level `{...}` block. */
-function parseTrailingJsonEnvelope(
-  stderr: string,
-): { ok: boolean; error: string; code?: string; hint?: string } | undefined {
-  const start = stderr.lastIndexOf("{\n");
-  if (start === -1) return undefined;
-  return JSON.parse(stderr.slice(start));
-}
-
 // A handful of tiny files keeps each trial's own run fast; the collision
 // this test needs comes from repeating many concurrent pairs (below), not
 // from making any one pair's run slow.
@@ -95,26 +84,28 @@ const FILES_PER_TRIAL = 5;
 // local runs — see the module doc.
 const CONCURRENT_TRIALS = 15;
 
-describe("akm index — two real concurrent runs never exit 78 or 70 (field follow-up to #956, G1)", () => {
-  test("without --skip-if-locked: every exit code across many concurrent pairs is 0 or 75, and every 75 carries a transient code with a --skip-if-locked hint", async () => {
+describe("akm index — two real concurrent runs wait for each other and never fail (field follow-up to #956, G1)", () => {
+  test("without --skip-if-locked: every run across many concurrent pairs exits 0, and the two builds do not overlap", async () => {
     seedMemoryFiles(FILES_PER_TRIAL);
 
     for (let trial = 0; trial < CONCURRENT_TRIALS; trial += 1) {
-      // Launched back to back with no work in between — whichever internal
-      // race actually resolves (the barrier or index.db) is real, not staged.
+      // Launched back to back with no work in between: whichever process
+      // takes the rebuild lock builds first, the other waits and builds after it.
       const results = await Promise.all([spawnIndexChild([]), spawnIndexChild([])]);
 
       for (const result of results) {
-        expect([0, 75]).toContain(result.code);
-        if (result.code === 75) {
-          expect(result.stdout.trim()).toBe("");
-          const envelope = parseTrailingJsonEnvelope(result.stderr);
-          if (!envelope) throw new Error(`expected a JSON error envelope on stderr, got:\n${result.stderr}`);
-          expect(envelope.ok).toBe(false);
-          expect(["INDEX_DB_CONTENDED"]).toContain(envelope.code ?? "");
-          expect(envelope.hint ?? "").toContain("--skip-if-locked");
-        }
+        expect(result.code).toBe(0);
+        expect(JSON.parse(result.stdout).totalEntries).toBeGreaterThanOrEqual(FILES_PER_TRIAL);
       }
+    }
+    // Each build records `index_completed` with its duration. Sorted by completion, a build must have started
+    // (completion time minus its own duration) after the previous one finished: no two builds overlap.
+    const completions = readEvents({ type: "index_completed" })
+      .events.map((event) => ({ end: Date.parse(event.ts), totalMs: Number(event.metadata?.totalMs ?? 0) }))
+      .sort((a, b) => a.end - b.end);
+    expect(completions).toHaveLength(CONCURRENT_TRIALS * 2);
+    for (let i = 1; i < completions.length; i += 1) {
+      expect(completions[i]!.end - completions[i]!.totalMs).toBeGreaterThanOrEqual(completions[i - 1]!.end - 5);
     }
   }, 120_000);
 

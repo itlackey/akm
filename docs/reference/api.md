@@ -121,7 +121,7 @@ are ignored) and returns plain JSON-safe data without a CLI envelope; failures r
 | `documents` | `readSource`, `save`, `createKnowledge`, `copy`, `retire` |
 | `proposals` | `list`, `get`, `recentChanges`, `accept`, `reject`, `revert`, `reopen`, `acceptMany`, `rejectMany` |
 | `bundles` | `list`, `add`, `remove`, `update`, `rename`, `setSettings` |
-| `config` | `get`, `change`, `changeProjects`, `saveConnection`, `removeConnection` |
+| `config` | `get`, `change`, `changeProjects`, `saveConnection`, `removeConnection`, `saveEmbedding` |
 | `feedback` | `record` |
 | `setup` | `detect`, `apply` (first-run setup: the library, and the agent programs akm may use; `akm bundle create`, `akm setup --yes --harness`) |
 | `sensitive` | `describe`, `readValue`, `save`, `remove` (env files and secrets; only `readValue` returns a value) |

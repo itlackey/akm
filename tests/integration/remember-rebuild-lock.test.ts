@@ -4,10 +4,11 @@
 
 /**
  * `akm remember` while a live rebuild holds the index rebuild lock (#956
- * addendum): the write must return in seconds — not wait or block on the
- * rebuild — leaving the file written and unindexed until the next `akm
- * index` pass heals it. Integration-scoped (ORG-03): drives the real CLI via
- * `runCliCapture`, which opens a real index.db.
+ * addendum): the write must return in seconds and never wait on the rebuild.
+ * Write-through does not look for the lock: it upserts into the usable index
+ * at once (a build that overlaps the upsert itself is covered in
+ * `tests/integration/indexer/index-ownership.test.ts`). Integration-scoped
+ * (ORG-03): drives the real CLI via `runCliCapture`, which opens a real index.db.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -42,9 +43,8 @@ function entryCountForPath(filePath: string): number {
 }
 
 describe("akm remember while a rebuild holds the lock (#956)", () => {
-  test("returns quickly, writes the file, leaves it unindexed, and a later akm index heals it", async () => {
-    // Seed an index so index.db exists (indexWrittenAssets fails open on an
-    // absent index — the rebuild-lock skip must be observed against a real one).
+  test("returns quickly, writes the file, and indexes it without looking for the lock", async () => {
+    // Seed an index so index.db exists (indexWrittenAssets fails open on an absent index).
     expect((await runCliCapture(["index", "--full", "--format=json"])).code).toBe(0);
 
     const lockPath = getIndexRebuildLockPath();
@@ -64,10 +64,7 @@ describe("akm remember while a rebuild holds the lock (#956)", () => {
     const parsed = JSON.parse(remembered.stdout) as { ok: boolean; path: string };
     expect(parsed.ok).toBe(true);
     expect(fs.existsSync(parsed.path)).toBe(true);
-    expect(entryCountForPath(parsed.path)).toBe(0);
-
-    fs.rmSync(lockPath);
-    expect((await runCliCapture(["index", "--format=json"])).code).toBe(0);
     expect(entryCountForPath(parsed.path)).toBeGreaterThan(0);
+    fs.rmSync(lockPath);
   });
 });

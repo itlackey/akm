@@ -37,7 +37,7 @@ function disabledProcesses(overrides: Record<string, unknown> = {}): ImproveProf
 
 describe("improve plan boundaries", () => {
   test("a missing fallback fails before index or stash side effects", async () => {
-    const ensureIndexFn = mock(async () => undefined);
+    const reindexFn = mock(async () => undefined);
     await expect(
       akmImprove({
         strategy: "default",
@@ -47,10 +47,10 @@ describe("improve plan boundaries", () => {
           // plan resolve; switch it off so every enabled process wants one.
           improve: { strategies: { default: { processes: { triage: { enabled: false } } } } },
         },
-        ensureIndexFn,
+        reindexFn,
       }),
     ).rejects.toThrow("require a connection or harness that is not configured");
-    expect(ensureIndexFn).not.toHaveBeenCalled();
+    expect(reindexFn).not.toHaveBeenCalled();
   });
 
   test("structural validation still runs when validation repair is disabled", async () => {
@@ -161,7 +161,7 @@ describe("improve plan boundaries", () => {
           strategy: "contradictions",
           config,
           stashDir: stash.dir,
-          ensureIndexFn: async () => undefined,
+          reindexFn: async () => undefined,
           collectEligibleRefsFn: (async () => ({
             plannedRefs: [],
             memorySummary: { eligible: 1, derived: 1 },

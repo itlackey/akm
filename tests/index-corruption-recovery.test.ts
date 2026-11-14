@@ -83,13 +83,24 @@ test("real SQLITE_CORRUPT on index.db is detected and the index rebuilds", async
   // index — never $HOME/.akm or anything outside `storage.root`.
   expect(path.resolve(dbPath).startsWith(path.resolve(storage.dataDir))).toBe(true);
 
+  const damaged = fs.readFileSync(dbPath);
   const after = await runCliCapture(["search", "deployment", "--format=json"]);
 
-  // The corrupt-index gap this issue is about: silently answering "no hits"
-  // is indistinguishable from a genuine empty result. Detecting SQLITE_CORRUPT
-  // must rebuild and answer correctly again, not quietly go blank.
+  // A read never deletes or rebuilds the file: with a corrupt index it is an
+  // empty result at exit 0 that says there is no usable index, not a silent
+  // "found nothing" and not a delete under other readers.
   expect(after.code).toBe(0);
-  const hits = JSON.parse(after.stdout).results;
+  const response = JSON.parse(after.stdout);
+  expect(response.results).toEqual([]);
+  expect(response.warnings.join("\n")).toContain("no search index for this library yet");
+  expect(fs.readFileSync(dbPath).equals(damaged)).toBe(true);
+
+  // A build holds the rebuild lock, so it alone deletes and rebuilds the corrupt file.
+  const rebuilt = await runCliCapture(["index", "--full"]);
+  expect(rebuilt.code).toBe(0);
+  const healed = await runCliCapture(["search", "deployment", "--format=json"]);
+  expect(healed.code).toBe(0);
+  const hits = JSON.parse(healed.stdout).results;
   expect(hits.length).toBeGreaterThan(0);
   expect(hits.some((hit: { ref?: string }) => hit.ref?.includes("deploy"))).toBe(true);
 });

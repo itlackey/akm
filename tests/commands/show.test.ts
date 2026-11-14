@@ -7,6 +7,7 @@ import { slugForPath } from "../../src/core/bundle-id";
 import { saveConfig } from "../../src/core/config/config";
 import { NotFoundError } from "../../src/core/errors";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
+import { akmIndex } from "../../src/indexer/indexer";
 
 import { seedLockEntries } from "../_helpers/lockfile";
 import {
@@ -338,40 +339,28 @@ describe("akmShow agents across bundles", () => {
     expect(result.type).toBe("agent");
   });
 
-  test("a read against a cold git bundle (no cache, no lock) skips it fast with a warning — never clones (spec §14.3)", async () => {
+  test("a read against a cold git bundle (no cache, no lock) never clones: the primary stash still resolves (spec §14.3)", async () => {
     // Query time must never touch the network (spec §14.3 / D11). A configured
     // git bundle with NO materialized cache AND NO lock localRoot is UNAVAILABLE
-    // for the read: it is skipped with a warning naming the remedy, while the
-    // primary stash still resolves. The hostile `git:contrib/pack` URL would
-    // hang for 120s on any read that cloned — completing under the tight test
-    // timeout proves no `git clone`/`ssh git-upload-pack` subprocess was spawned.
-    const warnings: unknown[][] = [];
-    _setWarnSinkForTests((level, args) => {
-      if (level === "warn") warnings.push(args);
-    });
-    try {
-      // A resolvable asset in the PRIMARY stash proves "everything else resolves".
-      writeFile(path.join(stashDir, "agents", "local.md"), AGENT_MD);
-      saveConfig(
-        withDefaultBundle(
-          {
-            semanticSearchMode: "off",
-            bundles: { remote: { git: "git:contrib/pack" } },
-          },
-          stashDir,
-        ),
-      );
-      // Deliberately NO lock entry for "remote" — the cache is cold.
+    // for the read, while the primary stash still resolves. The hostile
+    // `git:contrib/pack` URL would hang for 120s on any read that cloned —
+    // completing under the tight test timeout proves no `git clone`/`ssh
+    // git-upload-pack` subprocess was spawned.
+    // A resolvable asset in the PRIMARY stash proves "everything else resolves".
+    writeFile(path.join(stashDir, "agents", "local.md"), AGENT_MD);
+    saveConfig(
+      withDefaultBundle(
+        {
+          semanticSearchMode: "off",
+          bundles: { remote: { git: "git:contrib/pack" } },
+        },
+        stashDir,
+      ),
+    );
+    // Deliberately NO lock entry for "remote" — the cache is cold.
 
-      const result = await akmShow({ ref: "agents/local" });
-      expect(result.type).toBe("agent");
-
-      const joined = warnings.map((a) => a.map(String).join(" ")).join("\n");
-      expect(joined).toContain('source "remote" is not materialized');
-      expect(joined).toContain("akm index");
-    } finally {
-      _setWarnSinkForTests(undefined);
-    }
+    const result = await akmShow({ ref: "agents/local" });
+    expect(result.type).toBe("agent");
   }, 5000);
 
   test("a configured secondary source resolves its agent", async () => {
@@ -421,6 +410,7 @@ describe("akmShow stale indexed paths", () => {
     const file = path.join(stashDir, "knowledge", "gone.md");
     writeFile(file, "# Gone\n");
     saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
+    await akmIndex({ stashDir, full: true });
     await akmShow({ ref: "knowledge/gone", skipLogging: true });
     fs.rmSync(file);
 

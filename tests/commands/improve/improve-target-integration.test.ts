@@ -254,7 +254,7 @@ describe("improve named target integration", () => {
           scope: "vendor//knowledge/guide",
           dryRun: true,
           config,
-          ensureIndexFn: async () => {},
+          reindexFn: async () => {},
           collectEligibleRefsFn: async (_scope, stashDir) => {
             selectedRoot = stashDir;
             return { plannedRefs: [], memorySummary: { eligible: 0, derived: 0 }, strategyFilteredRefs: [] };

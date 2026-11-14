@@ -65,6 +65,8 @@ async function runCli(
     },
     () =>
       withBundle(stashDir, async () => {
+        // Reads never build the index: build it before a search or curate.
+        if (args[0] === "search" || args[0] === "curate") await runCliCapture(["index"]);
         const { code, stdout, stderr } = await runCliCapture(args);
         if (code !== 0) {
           throw new Error(`CLI exited ${code}:\n${stderr}`);
@@ -107,7 +109,12 @@ describe("search, show and curate output", () => {
         XDG_DATA_HOME: runtime.xdgData,
         XDG_STATE_HOME: runtime.xdgState,
       },
-      () => withBundle(stashDir, () => runCliCapture(["search", "architect", "--format=json", "--detail=agent"])),
+      () =>
+        withBundle(stashDir, async () => {
+          // Reads never build the index: this runtime's own index is built first.
+          await runCliCapture(["index"]);
+          return runCliCapture(["search", "architect", "--format=json", "--detail=agent"]);
+        }),
     );
     expect(code).toBe(0);
     expect(stderr.match(/Unknown --detail value "agent"/g)).toHaveLength(1);

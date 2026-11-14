@@ -10,7 +10,7 @@ import { deriveEntryProvenance } from "../../../src/indexer/installations";
 import { openDatabase } from "../../../src/storage/database";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
-import { DB_VERSION, ensureSchema } from "../../../src/storage/repositories/index-schema";
+import { DB_VERSION, ensureSchema, IndexLayoutBelowFloorError } from "../../../src/storage/repositories/index-schema";
 
 const CURRENT_ENTRY_COLUMNS: string[] = [
   "id",
@@ -76,7 +76,7 @@ describe("canonical derived-index entry schema", () => {
     });
   });
 
-  test("opening a pre-current index rebuilds its derived entry generation", () => {
+  test("the build's opener rebuilds a pre-current index; any other writable opener refuses it", () => {
     withTempIndex((dbPath) => {
       const legacy = openDatabase(dbPath);
       legacy.exec(`
@@ -100,7 +100,8 @@ describe("canonical derived-index entry schema", () => {
       `);
       legacy.close();
 
-      const current = openIndexDatabase(dbPath);
+      expect(() => openIndexDatabase(dbPath)).toThrow(IndexLayoutBelowFloorError);
+      const current = openIndexDatabase(dbPath, { rebuildCorrupt: true });
       try {
         const count = current.prepare("SELECT COUNT(*) AS count FROM entries").get() as { count: number };
         expect(count.count).toBe(0);
@@ -160,7 +161,7 @@ describe("canonical derived-index entry schema", () => {
       legacy.prepare("UPDATE index_meta SET value = '21' WHERE key = 'version'").run();
       closeDatabase(legacy);
 
-      const current = openIndexDatabase(dbPath);
+      const current = openIndexDatabase(dbPath, { rebuildCorrupt: true });
       try {
         expect(current.prepare("SELECT COUNT(*) AS n FROM entries").get()).toEqual({ n: 0 });
         expect(current.prepare("SELECT value FROM index_meta WHERE key = 'version'").get()).toEqual({

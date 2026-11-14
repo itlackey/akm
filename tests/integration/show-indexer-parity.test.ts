@@ -433,14 +433,15 @@ Run the tests.
     });
   });
 
-  test("an invalid owned workflow is not indexed and show does not parse an unindexed file", async () => {
+  test("an invalid owned workflow is not indexed and show reports its validation errors from the file", async () => {
     const invalidPath = path.join(stashDir, "workflows", "invalid-template.md");
     writeFile(invalidPath, "---\ntype: workflow\nsteps:\n  - id: dup\n  - id: dup\n---\n\n## dup\n\nRun it.\n");
     await akmIndex({ stashDir, full: true });
 
     expect(await lookupBundleRef(parseBundleRef("workflows/invalid-template"))).toBeNull();
+    // Show resolves from the file, so it reports the workflow's own validation errors.
     await expect(akmShowUnified({ ref: "workflows/invalid-template", skipLogging: true })).rejects.toThrow(
-      /not found/i,
+      /Duplicate step id/,
     );
   });
 

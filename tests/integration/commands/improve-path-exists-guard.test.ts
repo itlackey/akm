@@ -126,7 +126,6 @@ describe("akmImprove final pathExists guard", () => {
     const result = await akmImprove({
       scope: "lesson",
       stashDir,
-      ensureIndexFn: async () => false,
       reindexFn,
       reflectFn: async (args) => {
         if (args.ref) reflectedRefs.push(args.ref);
@@ -169,7 +168,6 @@ describe("akmImprove final pathExists guard", () => {
       const result = await akmImprove({
         scope: "lesson",
         stashDir,
-        ensureIndexFn: async () => false,
         reindexFn,
         reflectFn,
         distillFn,
@@ -223,7 +221,6 @@ describe("akmImprove final pathExists guard", () => {
     const result = await akmImprove({
       scope: "lesson",
       stashDir,
-      ensureIndexFn: async () => false,
       reindexFn,
       reflectFn,
       distillFn,

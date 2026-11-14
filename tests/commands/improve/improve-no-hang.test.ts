@@ -110,7 +110,6 @@ describe("akmImprove: process does not hang after consolidation returns", () => 
         akmImprove({
           scope: "memory",
           stashDir,
-          ensureIndexFn: async () => false,
           reindexFn: async () => ({
             schemaVersion: 1 as const,
             ok: true,
@@ -142,7 +141,6 @@ describe("akmImprove: process does not hang after consolidation returns", () => 
       const done = await Promise.race([
         akmImprove({
           stashDir,
-          ensureIndexFn: async () => false,
           reindexFn: async () => ({
             schemaVersion: 1 as const,
             ok: true,

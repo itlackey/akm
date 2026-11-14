@@ -17,14 +17,14 @@ written are in [Core Principles](akm-core-principles.md).
   capability lands as a file: an accepted proposal becomes the asset, memory
   inference writes derived children, retirement leaves an archive and a
   tombstone, extraction writes session assets. Pinned by
-  `tests/integration/indexer/ensure-index-serve.test.ts`.
+  `tests/integration/indexer/index-ownership.test.ts`.
 - **One local retrieval layer.** Every source materializes to disk and is
-  indexed the same way; `show` resolves through the index and reads from
-  disk. Registry results are opt-in and arrive in `registryHits`, never
+  indexed the same way; `show` resolves the asset from the bundle's files,
+  using the index only for links and indexed fragments. Registry results are opt-in and arrive in `registryHits`, never
   merged into `results`. A source provider fetches and refreshes and implements
   no search or show, so source resolution, registry install and provider
   plumbing stay behind indexing and the path from `search` or `curate` to
-  `show` is a lookup in the local index. Pinned by the `SourceProvider`
+  `show` is a lookup of the file the hit names. Pinned by the `SourceProvider`
   interface in `src/sources/provider.ts` and
   `tests/integration/output-baseline.test.ts`.
 - **Discovery chooses, show delivers.** `search` and `curate` return enough

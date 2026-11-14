@@ -3,82 +3,61 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Opt-in, non-blocking rebuild lock for `akm index` (#956).
- *
- * #872 removed the blocking index-rebuild lease: the index is a regenerable
- * cache, so a concurrent rebuild only wastes work rather than corrupts
- * anything, and a live-but-wedged holder passed a PID-liveness check forever
- * — only an age-based clock could ever free it, which is exactly the hazard
- * #872 deleted. This module does not reinstate that lock. It adds a
- * PID-liveness-only sentinel an explicit `akm index` run acquires and
- * releases on exit purely so a *scheduled or opportunistic* run
- * (`--skip-if-locked`) can step aside instead of piling up behind a rebuild
- * already in progress. A human-typed `akm index` with no flag is never
- * gated: it warns and proceeds exactly as it did before this lock existed.
+ * The rebuild lock: one index build at a time on a host. A PID-liveness sentinel
+ * (`$DATA/index.rebuild.lock`) that every build takes through `buildIndex` (`index-build.ts`); it stops two
+ * builds repeating the same walk and tells readers a build is running. A dead holder is reclaimed at once;
+ * nothing ages out.
  *
  * Built on the shared PID-liveness mechanics in `core/run-lock.ts` (the same
  * ones `akm improve`'s whole-run lock uses) — see that module's doc for the
  * no-stale-age-window rationale.
  */
 
-import { type LockOwnership, releaseLock } from "../core/file-lock";
+import { type LockOwnership, probeLock, releaseLock } from "../core/file-lock";
 import { getIndexRebuildLockPath } from "../core/paths";
-import { formatLockHolderPid, type RunLockHolder, tryAcquireRunLock } from "../core/run-lock";
-import { warn, warnVerbose } from "../core/warn";
-
-export type IndexRebuildLockAcquisition =
-  | { state: "acquired"; ownership: LockOwnership }
-  /** `--skip-if-locked` and the lock is held: the caller must skip the run entirely (exit 0). */
-  | { state: "skipped"; holder: RunLockHolder }
-  /** No flag and the lock is held: the caller proceeds unlocked, contending with the holder. */
-  | { state: "contended"; holder: RunLockHolder };
-
-export function indexRebuildLockPath(): string {
-  return getIndexRebuildLockPath();
-}
+import {
+  formatLockHolderPid,
+  type RunLockAcquireResult,
+  type RunLockHolder,
+  tryAcquireRunLock,
+} from "../core/run-lock";
+import { warnVerbose } from "../core/warn";
 
 /**
- * Acquire the rebuild lock for the duration of one `akm index` run.
- *
- *  - Free: always returns `"acquired"`.
- *  - Held, `skipIfLocked`: warns once (naming the holder) and returns
- *    `"skipped"` — the caller must not run `akmIndex()` at all.
- *  - Held, no flag: warns once and returns `"contended"` — the caller runs
- *    `akmIndex()` unlocked, exactly as every `akm index` did before #956.
- *
- * A dead holder's lease is reclaimed silently (verbose-only log line, never
- * a user-facing warning) — the operator did nothing wrong and nothing here
- * requires their attention.
+ * One attempt at the rebuild lock: acquired, or held by a live process. A dead
+ * holder's lease is reclaimed silently (verbose-only log line) — the operator
+ * did nothing wrong and nothing here requires their attention.
  */
-export function tryAcquireIndexRebuildLock(skipIfLocked: boolean | undefined): IndexRebuildLockAcquisition {
-  const lockPath = indexRebuildLockPath();
-  const acquire = () =>
-    tryAcquireRunLock(lockPath, {
-      label: "index rebuild",
-      onReclaimed: (info) => {
-        warnVerbose(
-          `[index] reclaimed a rebuild lock left by pid ${info.holderPid ?? "unknown"} ` +
-            `(${info.reason}); that process is no longer running.`,
-        );
-      },
-    });
-
-  const result = acquire();
-  if (result.state === "acquired") return result;
-  if (skipIfLocked) {
-    warn(
-      `[index] another index run holds the lock (PID ${formatLockHolderPid(result.holder)}, started ${result.holder.startedAt}); ` +
-        "skipping (--skip-if-locked)",
-    );
-    return { state: "skipped", holder: result.holder };
-  }
-  warn(
-    `[index] another index run is active (pid ${formatLockHolderPid(result.holder)}, started ${result.holder.startedAt}); ` +
-      "this run will contend with it — pass --skip-if-locked for scheduled runs",
-  );
-  return { state: "contended", holder: result.holder };
+export function tryAcquireIndexRebuildLock(): RunLockAcquireResult {
+  return tryAcquireRunLock(getIndexRebuildLockPath(), {
+    label: "index rebuild",
+    onReclaimed: (info) => {
+      warnVerbose(
+        `[index] reclaimed a rebuild lock left by pid ${info.holderPid ?? "unknown"} ` +
+          `(${info.reason}); that process is no longer running.`,
+      );
+    },
+  });
 }
 
 export function releaseIndexRebuildLock(ownership: LockOwnership): void {
   releaseLock(ownership);
+}
+
+/** The live process holding the rebuild lock right now, if any. Read-only: it never acquires or reclaims. */
+export function heldRebuildLock(): RunLockHolder | undefined {
+  const probe = probeLock(getIndexRebuildLockPath());
+  if (probe.state !== "held") return undefined;
+  let startedAt: string | null = null;
+  try {
+    startedAt = (JSON.parse(probe.rawContent) as { startedAt?: string }).startedAt ?? null;
+  } catch {
+    // A payload that is not JSON still names a live holder by pid.
+  }
+  return { pid: probe.holderPid, launcherPid: probe.launcherPid ?? null, startedAt };
+}
+
+/** How a lock holder is named in a message: `pid 4242 (launcher 4240), started <time>`. */
+export function describeLockHolder(holder: RunLockHolder): string {
+  return `pid ${formatLockHolderPid(holder)}, started ${holder.startedAt ?? "unknown"}`;
 }

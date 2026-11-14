@@ -48,17 +48,21 @@ function runCli(stashDir: string, args: string[], config?: Record<string, unknow
   const xdgData = envDirs?.xdgData ?? makeTempDir("akm-output-data-");
   const xdgState = envDirs?.xdgState ?? makeTempDir("akm-output-state-");
   if (config) writeConfig(xdgConfig, config);
-  const result = spawnSync("bun", [CLI, ...args], {
-    encoding: "utf8",
-    timeout: 30_000,
-    env: {
-      ...process.env,
-      XDG_CACHE_HOME: xdgCache,
-      XDG_CONFIG_HOME: configHomeWithBundle(xdgConfig, stashDir),
-      XDG_DATA_HOME: xdgData,
-      XDG_STATE_HOME: xdgState,
-    },
-  });
+  const spawnCli = (cliArgs: string[]) =>
+    spawnSync("bun", [CLI, ...cliArgs], {
+      encoding: "utf8",
+      timeout: 30_000,
+      env: {
+        ...process.env,
+        XDG_CACHE_HOME: xdgCache,
+        XDG_CONFIG_HOME: configHomeWithBundle(xdgConfig, stashDir),
+        XDG_DATA_HOME: xdgData,
+        XDG_STATE_HOME: xdgState,
+      },
+    });
+  // Reads never build the index: build it before a search or curate.
+  if (args[0] === "search" || args[0] === "curate") expect(spawnCli(["index"]).status).toBe(0);
+  const result = spawnCli(args);
   expect(result.status).toBe(0);
   return result.stdout.trim();
 }
@@ -68,23 +72,25 @@ async function runCliAsync(stashDir: string, args: string[], config?: Record<str
   const xdgConfig = makeTempDir("akm-output-config-");
   const xdgData = makeTempDir("akm-output-data-");
   const xdgState = makeTempDir("akm-output-state-");
-  // Semantic off keeps auto-index stderr deterministic: with the default
+  // Semantic off keeps the index run's stderr deterministic: with the default
   // ("auto") the local embedder fetches its model from huggingface.co and a
   // blocked/offline fetch emits "Embedding generation failed" on stderr,
   // tripping the stderr-cleanliness check below. This test suite pins output
   // shapes, not semantic ranking.
   writeConfig(xdgConfig, { semanticSearchMode: "off", ...(config ?? {}) });
 
-  const child = spawn("bun", [CLI, ...args], {
-    stdio: ["ignore", "pipe", "pipe"],
-    env: {
-      ...process.env,
-      XDG_CACHE_HOME: xdgCache,
-      XDG_CONFIG_HOME: configHomeWithBundle(xdgConfig, stashDir),
-      XDG_DATA_HOME: xdgData,
-      XDG_STATE_HOME: xdgState,
-    },
-  });
+  const childEnv = {
+    ...process.env,
+    XDG_CACHE_HOME: xdgCache,
+    XDG_CONFIG_HOME: configHomeWithBundle(xdgConfig, stashDir),
+    XDG_DATA_HOME: xdgData,
+    XDG_STATE_HOME: xdgState,
+  };
+  // Reads never build the index: build it before a search or curate.
+  if (args[0] === "search" || args[0] === "curate") {
+    expect(spawnSync("bun", [CLI, "index"], { encoding: "utf8", timeout: 30_000, env: childEnv }).status).toBe(0);
+  }
+  const child = spawn("bun", [CLI, ...args], { stdio: ["ignore", "pipe", "pipe"], env: childEnv });
 
   let stdout = "";
   let stderr = "";
@@ -101,7 +107,7 @@ async function runCliAsync(stashDir: string, args: string[], config?: Record<str
   });
 
   expect(exitCode).toBe(0);
-  // Auto-index may produce progress output on stderr; only fail on actual errors
+  // The index run may produce progress output on stderr; only fail on actual errors
   const isAutoIndexOutput =
     stderr.includes("Starting") ||
     stderr.includes("Scanned") ||

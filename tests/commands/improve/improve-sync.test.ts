@@ -379,7 +379,7 @@ describe("akm improve — end-of-run auto-sync", () => {
         scope: "memory",
         stashDir,
         config: cheapConfig(),
-        ensureIndexFn: async () => {
+        reindexFn: async () => {
           order.push("index");
         },
         saveGitStashFn: saveGitStashFn as never,

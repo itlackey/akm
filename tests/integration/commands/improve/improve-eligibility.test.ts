@@ -410,7 +410,6 @@ describe("reflect signal-delta eligibility", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {
         if (ref) reflected.push(ref);
@@ -442,7 +441,6 @@ describe("reflect signal-delta eligibility", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {
         if (ref) reflected.push(ref);
@@ -469,7 +467,6 @@ describe("reflect signal-delta eligibility", () => {
       scope: "memory",
       stashDir: stash,
       config: configWithoutProactiveLane(stash),
-      ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {
         if (ref) reflected.push(ref);
@@ -495,7 +492,6 @@ describe("reflect signal-delta eligibility", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {
         if (ref) reflected.push(ref);
@@ -519,7 +515,6 @@ describe("reflect signal-delta eligibility", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {
         if (ref) reflected.push(ref);
@@ -541,7 +536,6 @@ describe("reflect signal-delta eligibility", () => {
       scope: "memory",
       stashDir: stash,
       config: configWithoutProactiveLane(stash), // isolate the signal-delta gate from proactive selection
-      ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {
         if (ref) reflected.push(ref);
@@ -576,7 +570,6 @@ describe("distill signal-delta eligibility", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => okReflect(ref ?? ""),
       distillFn: async ({ ref }) => {
@@ -607,7 +600,6 @@ describe("distill signal-delta eligibility", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => okReflect(ref ?? ""),
       distillFn: async ({ ref }) => {
@@ -633,7 +625,6 @@ describe("distill signal-delta eligibility", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => okReflect(ref ?? ""),
       distillFn: async ({ ref }) => {
@@ -660,7 +651,6 @@ describe("distill signal-delta eligibility", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {
         if (ref) reflected.push(ref);
@@ -702,7 +692,6 @@ describe("distill signal-delta eligibility", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {
         if (ref) reflected.push(ref);
@@ -738,7 +727,6 @@ describe("distill signal-delta eligibility", () => {
     const result = await akmImprove({
       scope: "memory",
       stashDir: stash,
-      ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => okReflect(ref ?? ""),
       distillFn: async ({ ref }) => {
@@ -768,7 +756,6 @@ describe("distill signal-delta eligibility", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => okReflect(ref ?? ""),
       distillFn: async ({ ref }) => {
@@ -794,7 +781,6 @@ describe("consolidate ledger eligibility", () => {
       scope: "memory",
       config: configWithoutProactiveLane(stash),
       stashDir: stash,
-      ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => okReflect(ref ?? ""),
       distillFn: async ({ ref }) => okDistill(ref ?? ""),
@@ -831,7 +817,6 @@ describe("consolidate ledger eligibility", () => {
       scope: "memory",
       config: configWithoutProactiveLane(stash),
       stashDir: stash,
-      ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => okReflect(ref ?? ""),
       distillFn: async ({ ref }) => okDistill(ref ?? ""),
@@ -858,7 +843,6 @@ describe("consolidate ledger eligibility", () => {
       scope: "memory",
       config: configWithoutProactiveLane(stash),
       stashDir: stash,
-      ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => okReflect(ref ?? ""),
       distillFn: async ({ ref }) => okDistill(ref ?? ""),
@@ -918,7 +902,6 @@ describe("aggregated no_new_signal skip event", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => okReflect(ref ?? ""),
       distillFn: async ({ ref }) => okDistill(ref ?? ""),
@@ -958,7 +941,6 @@ describe("attribution: eligibilitySource lane tagging", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref, eligibilitySource }) => {
         if (ref) seen.set(ref, eligibilitySource);
@@ -979,7 +961,6 @@ describe("attribution: eligibilitySource lane tagging", () => {
     await akmImprove({
       scope: "memories/targeted",
       stashDir: stash,
-      ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref, eligibilitySource }) => {
         if (ref) seen.set(ref, eligibilitySource);
