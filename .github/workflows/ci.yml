@@ -249,7 +249,10 @@ jobs:
           bun install --frozen-lockfile
           cd opencode
           bun install --frozen-lockfile
-          bun add "$RUNNER_TEMP"/akm-cli-*.tgz
+          # Over the pinned akm-cli: `bun add <tarball>` reports a dependency loop for a package already in the lock.
+          rm -rf node_modules/akm-cli
+          mkdir node_modules/akm-cli
+          tar -xzf "$RUNNER_TEMP"/akm-cli-*.tgz -C node_modules/akm-cli --strip-components=1
       - name: Run the contract tests
         working-directory: akm-plugins
         # Name filters, not paths: the files are the plugins' (fake-akm-contract, ref-extraction, ref-resolver-contract).
