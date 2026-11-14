@@ -13,7 +13,6 @@ import type { AkmConfig } from "../core/config/config";
 import { appendEvent } from "../core/events";
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
 import { getDbPath } from "../core/paths";
-import { SCRIPT_EXTENSIONS } from "../core/recognition-util";
 import { withStateDb } from "../core/state-db";
 import { isVerbose, warn, warnOnce, warnVerbose } from "../core/warn";
 import { localEmbeddingRuntime } from "../llm/embedder";
@@ -1561,21 +1560,7 @@ function persistDirRecords(
         rowCount: dedupedRows === 0 ? persistedRows : undefined,
         indexVariant,
       });
-      if (persistedRows === 0) {
-        // Warn only when the dir had files that *could* produce entries (.md or
-        // known script extensions). Dirs with only non-indexable types (.json,
-        // .yaml, .conf, .env, .gitkeep) or deduped-only rows are expected and
-        // not actionable at normal log level.
-        const hasIndexableExtension = files.some((f) => {
-          const ext = path.extname(f).toLowerCase();
-          return ext === ".md" || SCRIPT_EXTENSIONS.has(ext);
-        });
-        if (persistedReason !== "deduped-zero-row" && hasIndexableExtension) {
-          warn(`[index] zero-row ${dirPath}: ${persistedReason}`);
-        } else {
-          warnVerbose(`[index] zero-row ${dirPath}: ${persistedReason}`);
-        }
-      }
+      if (persistedRows === 0) warnVerbose(`[index] zero-row ${dirPath}: ${persistedReason}`);
     }
     // Atomicity observation point: the new generation is fully written but
     // uncommitted, so it must still be invisible to other connections.
