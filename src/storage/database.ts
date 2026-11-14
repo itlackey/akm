@@ -120,52 +120,47 @@ export interface OpenDatabaseOptions {
  * Open a SQLite database handle at `path` on the current runtime's driver
  * (`bun:sqlite` on Bun, `better-sqlite3` on Node). Returns a handle conforming
  * to the structural {@link Database} type.
+ *
+ * On Bun, `close()` means CLOSED. bun:sqlite's own `close()` is a
+ * `sqlite3_close_v2`: while any `prepare()` statement is unfinalized the
+ * connection survives as a zombie, holding the file, its WAL and its
+ * shared memory, until GC finalizes the statements. When GC finally closes it,
+ * the last-connection checkpoint writes that WAL into whatever file now sits at
+ * the path, a restored or replaced copy included. It also kept a later
+ * connection from leaving WAL mode (issue #720). So the handle finalizes every
+ * statement it prepared that is still alive before the real close. Statements
+ * are held weakly, so a per-row `prepare()` is not kept alive until close.
+ * better-sqlite3's `close()` already closes the connection outright.
  */
 export function openDatabase(path: string, opts?: OpenDatabaseOptions): Database {
-  return isBun ? openBunDatabase(path, opts) : openNodeDatabase(path, opts);
+  return isBun ? finalizeOnClose(openBunDatabase(path, opts)) : openNodeDatabase(path, opts);
 }
 
-/**
- * {@link openDatabase} with a finalize-on-close guard (issue #720).
- *
- * bun:sqlite's `Database.close()` is a `sqlite3_close_v2`: with any UNFINALIZED
- * `prepare()` statement outstanding, the underlying connection — and its WAL
- * shared-memory mapping — survives as a zombie until GC finalizes the
- * statements. A later connection in the same process then cannot leave WAL
- * mode (`PRAGMA journal_mode = DELETE` → "database is locked"), which is
- * exactly what silently defeated the migrate-apply single-file conversion.
- * (`db.query()` statements are Database-cached and immune; `prepare()` is the
- * dominant idiom in the migration helpers.)
- *
- * This variant tracks `prepare()` results and finalizes them (idempotently)
- * before the real `close()`, so close always means CLOSED. It is deliberately
- * OPT-IN for the migrate-apply flow's short-lived helper connections and the
- * migration test fixtures — NOT the global default: long-lived/hot paths cache
- * prepared statements per connection (e.g. the entries upsert WeakMap) and
- * worker flows may still be stepping a statement when a sibling close lands;
- * force-finalizing under them changes behavior they were built on.
- */
-export function openDatabaseFinalizing(path: string, opts?: OpenDatabaseOptions): Database {
-  const db = openDatabase(path, opts);
-  const tracked = new Set<{ finalize?: () => void }>();
-  const origPrepare = db.prepare.bind(db);
-  const origClose = db.close.bind(db);
-  (db as { prepare: typeof db.prepare }).prepare = ((sql: string, ...rest: unknown[]) => {
-    const stmt = (origPrepare as (...a: unknown[]) => { finalize?: () => void })(sql, ...rest);
-    tracked.add(stmt);
+type Finalizable = { finalize?: () => void };
+
+function finalizeOnClose(db: Database): Database {
+  const live = new Set<WeakRef<Finalizable>>();
+  const forget = new FinalizationRegistry<WeakRef<Finalizable>>((ref) => live.delete(ref));
+  const prepare = db.prepare.bind(db);
+  const close = db.close.bind(db);
+  (db as { prepare: typeof db.prepare }).prepare = ((sql: string) => {
+    const stmt = prepare(sql) as Finalizable;
+    const ref = new WeakRef(stmt);
+    live.add(ref);
+    forget.register(stmt, ref);
     return stmt;
   }) as typeof db.prepare;
-  (db as { close: typeof db.close }).close = ((...args: unknown[]) => {
-    for (const stmt of tracked) {
+  (db as { close: typeof db.close }).close = () => {
+    for (const ref of live) {
       try {
-        stmt.finalize?.();
+        ref.deref()?.finalize?.();
       } catch {
-        // Already finalized (double-finalize is the idempotent no-op case).
+        // Already finalized by its owner.
       }
     }
-    tracked.clear();
-    return (origClose as (...a: unknown[]) => unknown)(...args);
-  }) as typeof db.close;
+    live.clear();
+    close();
+  };
   return db;
 }
 
