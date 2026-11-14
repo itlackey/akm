@@ -30,7 +30,7 @@ import {
   fragmentForSelector,
   MARKDOWN_FRAGMENT_CONTEXT_DEFAULT_MAX_CHARS,
 } from "../../core/asset/markdown-fragments";
-import { displayRef, displayRefForConceptId } from "../../core/asset/resolve-ref";
+import { displayDefaultBundle, displayRef, displayRefForConceptId } from "../../core/asset/resolve-ref";
 import { META_DIR, type MetaRef, parseMetaRef, readMetaFile } from "../../core/asset/stash-meta";
 import { asNonEmptyString, isContainedResolvedPath } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
@@ -384,9 +384,7 @@ export async function showLocal(input: {
   // or when the caller explicitly opts into indexed-safe contextual output.
   const indexedFragment =
     !fromFiles && parsed.fragment && (opaqueFragmentSelector || input.contextMode === "lead")
-      ? withIndexDb((db) => getIndexedMarkdownFragment(db, indexedEntry.itemRef, parsed.fragment!), {
-          readOnly: input.readOnly === true,
-        })
+      ? readIndexedFragment(indexedEntry.itemRef, parsed.fragment, input.readOnly === true)
       : undefined;
   const indexedFragmentContent = opaqueFragmentSelector ? indexedFragment?.content : undefined;
   const indexedRenderer = rendererForIndexedEntry(indexedEntry, fileCtx);
@@ -414,7 +412,7 @@ export async function showLocal(input: {
       }
 
       const renderBundle = indexedEntry.bundleId;
-      const renderDefaultBundle = config.defaultBundle ?? (source?.isDefault === true ? renderBundle : undefined);
+      const renderDefaultBundle = displayDefaultBundle(config.defaultBundle, source, renderBundle);
       const renderCtx = buildRenderContext(fileCtx, match, allSourceDirs, renderBundle, renderDefaultBundle);
       response = renderer.buildShowResponse(renderCtx);
       markdown = match.renderer.endsWith("-md");
@@ -439,11 +437,10 @@ export async function showLocal(input: {
   }
   response.type = indexedEntry.type;
   response.name = indexedEntry.name;
-  const isPrimaryStash = source?.isDefault === true;
-  const displayDefaultBundle = config.defaultBundle ?? (isPrimaryStash ? indexedEntry.bundleId : undefined);
+  const defaultBundle = displayDefaultBundle(config.defaultBundle, source, indexedEntry.bundleId);
   const canonicalRef = displayRef(
     { conceptId: indexedEntry.conceptId, bundleId: indexedEntry.bundleId },
-    displayDefaultBundle,
+    defaultBundle,
   );
   if (parsed.fragment && indexedFragment) {
     const selectedFragmentId = indexedFragment.fragments[indexedFragment.ordinal]!.fragmentId;
@@ -509,7 +506,7 @@ export async function showLocal(input: {
     origin: source?.registryId ?? null,
     editable,
     ...(!editable ? { editHint: buildEditHint(canonicalRef) } : {}),
-    ...(fromFiles ? {} : showLinks(indexedEntry.itemRef, displayDefaultBundle, input.readOnly === true)),
+    ...(fromFiles ? {} : showLinks(indexedEntry.itemRef, defaultBundle, input.readOnly === true)),
   };
 
   if (input.detail === "brief") {
@@ -521,6 +518,20 @@ export async function showLocal(input: {
   }
 
   return fullResponse;
+}
+
+/** The indexed-safe fragment, or undefined when the index cannot supply it (an older layout without `entry_fragments`). The caller then refuses with "fragment context unavailable; run `akm index`" (exit 1) for a `--lead` or opaque fragment selector. */
+function readIndexedFragment(
+  itemRef: string,
+  fragment: string,
+  readOnly: boolean,
+): ReturnType<typeof getIndexedMarkdownFragment> | undefined {
+  try {
+    return withIndexDb((db) => getIndexedMarkdownFragment(db, itemRef, fragment), { readOnly });
+  } catch (err) {
+    rethrowIfDataDirUnreadable(err);
+    return undefined;
+  }
 }
 
 /** Refs listed per kind of declared link; `total` still counts them all (one memory is named by 1,437 others). */

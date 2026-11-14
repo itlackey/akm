@@ -26,7 +26,7 @@ export function normalizeEndpoint(input: string): string {
   if (!OLLAMA_EMBED_ROUTE.test(pathname)) {
     // An operation URL (`…/chat/completions`, `…/embeddings`) names its base.
     pathname = new URL(openAiBaseUrl(url.toString())).pathname.replace(/\/+$/, "");
-    if (!pathname.endsWith("/v1") && !pathname.includes("/openai")) pathname += "/v1";
+    if (!/\/v1$/i.test(pathname) && !pathname.toLowerCase().includes("/openai")) pathname += "/v1";
   }
   url.pathname = pathname;
   return url.toString().replace(/\/$/, "");

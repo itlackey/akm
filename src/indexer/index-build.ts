@@ -75,13 +75,20 @@ export async function buildIndex(
 /**
  * Take the rebuild lock (waiting for a running build, as `"wait"`), then run `run` with a `build` that builds under
  * that lock; release it when `run` settles. A build cannot start without the lock, and `build` must not be called
- * after `run` returns.
+ * after `run` returns. With `"try"` a live holder throws `INDEX_DB_CONTENDED` at once instead of being waited for.
  */
 export async function withIndexBuildLock<T>(
   signal: AbortSignal | undefined,
   run: (build: (options: IndexOptions) => Promise<IndexResponse>) => Promise<T>,
+  mode: "wait" | "try" = "wait",
 ): Promise<T> {
-  const lock = await acquireBuildLock("wait", signal);
+  const lock = await acquireBuildLock(mode, signal);
+  if ("skipped" in lock) {
+    throw new TransientError(
+      `Another akm process is building the index (${describeLockHolder(lock.skipped)}); not building.`,
+      "INDEX_DB_CONTENDED",
+    );
+  }
   try {
     return await run(buildUnderLock);
   } finally {

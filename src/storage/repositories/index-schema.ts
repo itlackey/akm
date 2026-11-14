@@ -110,7 +110,29 @@ function ensureFtsLayout(db: Database): void {
   })();
 }
 
+/**
+ * Bring `index.db` to the current layout in one transaction, so no reader or
+ * crash can observe a half-migrated file (entries without their FTS table).
+ * One `BEGIN IMMEDIATE`, waiting out the connection's busy timeout once: a
+ * busy index surfaces to the caller (the build reports it as contention)
+ * rather than being retried here. Joins a transaction the caller already holds.
+ */
 export function ensureSchema(db: Database): void {
+  if (db.inTransaction) {
+    applySchema(db);
+    return;
+  }
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    applySchema(db);
+    db.exec("COMMIT");
+  } catch (error) {
+    if (db.inTransaction) db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function applySchema(db: Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS index_meta (
       key   TEXT PRIMARY KEY,

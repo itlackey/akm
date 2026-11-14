@@ -95,6 +95,7 @@ import { _resetWarnOnceForTests, _setWarnSinkForTests, resetQuiet, setQuiet } fr
 import { deriveEntryProvenance } from "../../src/indexer/installations";
 import {
   closeDatabase,
+  deleteIndexDatabase,
   openIndexDatabase,
   openReadonlyExistingDatabase,
 } from "../../src/storage/repositories/index-connection";
@@ -126,7 +127,7 @@ function readFixture(name: string): string {
 describe("previous-release corpus — upgrade must not break reads", () => {
   // index.db is derived, so a layout below the floor (26) is rebuilt, not upgraded in place.
   for (const fixture of ["index-v20.sql", "index-v22.sql", "index-v22-with-embedding.sql", "index-v25.sql"]) {
-    test(`${fixture}: a reader finds it unservable without failing, and the build's open rebuilds it empty`, () => {
+    test(`${fixture}: a reader finds it unservable without failing, and an index deleted for the build opens empty`, () => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-old-index-"));
       try {
         const dbPath = path.join(root, "index.db");
@@ -142,7 +143,9 @@ describe("previous-release corpus — upgrade must not break reads", () => {
           closeDatabase(reader);
         }
 
-        const rebuilt = openIndexDatabase(dbPath, { rebuildCorrupt: true });
+        deleteIndexDatabase(dbPath);
+
+        const rebuilt = openIndexDatabase(dbPath);
         try {
           expect(getMeta(rebuilt, "version")).toBe(String(CANONICAL_INDEX_DB_VERSION));
           expect(hasCurrentEntriesTable(rebuilt)).toBe(true);

@@ -13,17 +13,22 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { saveConfig } from "../../../../src/core/config/config";
+import { processIdentity } from "../../../../src/core/file-lock";
 import { getIndexRebuildLockPath } from "../../../../src/core/paths";
 import { _setIndexBuildWaitTimingForTests } from "../../../../src/indexer/index-build";
 import { runCliCapture } from "../../../_helpers/cli";
+import { type LiveHolder, spawnLiveHolder, stopLiveHolders } from "../../../_helpers/live-holder";
 import { type Cleanup, withDefaultBundle, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 
 let cleanup: Cleanup = () => {};
 
+let holder: LiveHolder;
+
 function plantHeldRebuildLock(): string {
+  holder = spawnLiveHolder();
   const lockPath = getIndexRebuildLockPath();
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-  fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }), "utf8");
+  fs.writeFileSync(lockPath, holder.payload(), "utf8");
   return lockPath;
 }
 
@@ -34,6 +39,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  stopLiveHolders();
   cleanup();
   cleanup = () => {};
 });
@@ -49,13 +55,13 @@ describe("akm index — skip-if-locked", () => {
     expect(parsed.ok).toBe(true);
     expect(parsed.skipped).toEqual({
       reason: "lock-held",
-      pid: process.pid,
+      pid: holder.pid,
       launcherPid: null,
       startedAt: expect.any(String),
     });
     // The existing owner's sentinel is untouched.
     expect(fs.existsSync(lockPath)).toBe(true);
-    expect(JSON.parse(fs.readFileSync(lockPath, "utf8")).pid).toBe(process.pid);
+    expect(JSON.parse(fs.readFileSync(lockPath, "utf8")).pid).toBe(holder.pid);
   });
 
   test("without the flag, a held lock makes the run wait, with a notice, then build once it is released", async () => {
@@ -64,7 +70,7 @@ describe("akm index — skip-if-locked", () => {
     // The run is waiting, not building beside the holder.
     await new Promise((resolve) => setTimeout(resolve, 500));
     expect(fs.existsSync(getIndexRebuildLockPath())).toBe(true);
-    expect(JSON.parse(fs.readFileSync(lockPath, "utf8")).pid).toBe(process.pid);
+    expect(JSON.parse(fs.readFileSync(lockPath, "utf8")).pid).toBe(holder.pid);
     fs.rmSync(lockPath);
 
     const result = await run;
@@ -102,6 +108,32 @@ describe("akm index — skip-if-locked", () => {
     // Released on exit — no sentinel left behind.
     expect(fs.existsSync(lockPath)).toBe(false);
   });
+
+  test("a lock naming this process's own pid, which it never acquired, is reclaimed", async () => {
+    const lockPath = getIndexRebuildLockPath();
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startedAt: new Date(0).toISOString() }), "utf8");
+
+    const result = await runCliCapture(["index", "--full", "--skip-if-locked", "--format=json"]);
+
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout).skipped).toBeUndefined();
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
+  test.skipIf(processIdentity(process.pid) === undefined)(
+    "a lock whose pid is alive again under a different start time is reclaimed",
+    async () => {
+      const lockPath = plantHeldRebuildLock();
+      fs.writeFileSync(lockPath, holder.payload({ startTime: "1" }), "utf8");
+
+      const result = await runCliCapture(["index", "--full", "--skip-if-locked", "--format=json"]);
+
+      expect(result.code).toBe(0);
+      expect(JSON.parse(result.stdout).skipped).toBeUndefined();
+      expect(fs.existsSync(lockPath)).toBe(false);
+    },
+  );
 
   test("no lock is left behind after a normal run", async () => {
     const result = await runCliCapture(["index", "--full", "--format=json"]);
