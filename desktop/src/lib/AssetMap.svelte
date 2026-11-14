@@ -87,8 +87,7 @@
               ></a
             >{/if}
         {/each}
-        {#if group.more}<text class="more" {x} y={group.moreY + PAD} text-anchor={anchor}
-            >and {group.more} more</text
+        {#if group.more}<text class="more" {x} y={group.moreY + PAD} text-anchor={anchor}>and {group.more} more</text
           >{/if}
       {/each}
     {/each}

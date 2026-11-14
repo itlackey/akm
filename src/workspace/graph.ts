@@ -4,6 +4,7 @@
 
 /** The whole library as a graph: every indexed asset, every declared link between them, and how each is used. */
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { loadConfig } from "../core/config/config";
 import { getDbPath } from "../core/paths";
@@ -32,7 +33,22 @@ const HIDDEN_TYPES = ["secret", "env", "session"];
  * to the event loop as it goes, so a host serving other requests keeps answering them.
  */
 export async function graph() {
-  const empty = {
+  try {
+    return await readGraph();
+  } catch (error) {
+    // A damaged or unreadable index file is "no usable index" to the map, not a raw SQLite error.
+    if (error instanceof Error && error.name === "SQLiteError")
+      return {
+        available: false,
+        note: `The index could not be read (${error.message}). Rebuild it with 'akm index --full'.`,
+        ...emptyGraph(),
+      };
+    throw error;
+  }
+}
+
+function emptyGraph() {
+  return {
     types: [] as string[],
     bundles: [] as string[],
     beliefs: [] as string[],
@@ -61,10 +77,17 @@ export async function graph() {
     topics: [] as Topics["topics"],
     duplicates: null as Topics["duplicates"] | null,
   };
+}
+
+async function readGraph() {
+  const empty = emptyGraph();
   const db = openReadonlyExistingDatabase();
   if (!db) return { available: false, note: "No index is available. Build the AKM index first.", ...empty };
   let closed = false;
   try {
+    // An index still being built for the first time has its meta table but not yet its entries.
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'entries'").get())
+      return { available: false, note: "The index is still being built. Try again when it finishes.", ...empty };
     const sources = resolveSourceEntries(undefined, loadConfig()).filter((source) => !source.unresolved);
     const rows = applyEntryFilters(getAllEntries(db, undefined, HIDDEN_TYPES), {
       db,
@@ -142,10 +165,14 @@ export async function graph() {
       build,
     );
     result.meaning = placed.embedded ? placed : null;
+    const libraryKey = createHash("sha1")
+      .update(rows.map((row) => row.id).join(","))
+      .digest("hex");
     const found = await findTopics(
       rows.map((row) => vectors.get(row.id)),
       rows.map((row, i) => `${row.conceptId} ${result.nodes.title[i]}`),
-      build,
+      // Topics are per asset: the same build read through a different set of enabled bundles is a different library.
+      `${build}|${libraryKey}`,
     );
     result.topics = found.topics;
     result.nodes.topic = found.topic;

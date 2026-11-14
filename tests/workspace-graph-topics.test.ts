@@ -73,3 +73,22 @@ test("a topic is named by its most particular words, not by words every asset ha
   expect(nameTopic(all.slice(0, 2), all).terms[0]).toBe("deploy");
   expect(nameTopic(all.slice(0, 2), all).terms).not.toContain("team");
 });
+
+test("a library of copies reports the first 2,000 pairs, most alike first, and says it was cut", async () => {
+  // 200 identical vectors make 19,900 pairs at cosine 1: more than are kept, in the order of their indexes.
+  const same = Array.from({ length: 200 }, () => Float32Array.from([1, 0, 0, 0, 0, 0, 0, 0]));
+  const others = Array.from({ length: 10 }, (_, i) =>
+    Float32Array.from([0, 0, 0, 0, 0, 0, 0, 0].map((_, d) => (d === 1 + (i % 7) ? 1 : 0))),
+  );
+  const vectors = [...same, ...others];
+  const found = await findTopics(
+    vectors,
+    vectors.map((_, i) => `knowledge/n-${i}`),
+  );
+  expect(found.duplicates.truncated).toBe(true);
+  expect(found.duplicates.a).toHaveLength(2000);
+  const expected: Array<[number, number]> = [];
+  for (let a = 0; a < 200 && expected.length < 2000; a++)
+    for (let b = a + 1; b < 200 && expected.length < 2000; b++) expected.push([a, b]);
+  expect(found.duplicates.a.map((a, k) => [a, found.duplicates.b[k]])).toEqual(expected);
+});

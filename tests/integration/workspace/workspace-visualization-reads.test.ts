@@ -15,6 +15,8 @@ import { resetConfigCache } from "../../../src/core/config/config";
 import { getDbPath } from "../../../src/core/paths";
 import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import { akmIndex } from "../../../src/indexer/indexer";
+import { openExistingDatabase } from "../../../src/storage/repositories/index-connection";
+import { upsertEmbedding } from "../../../src/storage/repositories/index-vec-repository";
 import { upsertTaskHistory } from "../../../src/storage/repositories/task-history-repository";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
 import { activity, assets } from "../../../src/workspace";
@@ -200,6 +202,103 @@ describe("visualization reads", () => {
     const graph = await out(assets.graph());
     expect(graph.nodes.shows.every((n: number) => n === 0)).toBe(true);
     expect(graph.note).toContain("Use counts are zero");
+  });
+
+  test("graph: an empty library, a one-asset library, an index with only its meta table and a damaged index all answer without a raw SQLite error", async () => {
+    await seed();
+    const stash = ctx.storage.stashDir;
+    // One asset: no topics, no positions.
+    for (const entry of fs.readdirSync(stash))
+      if (entry !== "knowledge") fs.rmSync(path.join(stash, entry), { recursive: true, force: true });
+    const keep = fs.readdirSync(path.join(stash, "knowledge"))[0]!;
+    for (const file of fs.readdirSync(path.join(stash, "knowledge")))
+      if (file !== keep) fs.rmSync(path.join(stash, "knowledge", file), { recursive: true, force: true });
+    resetConfigCache();
+    await akmIndex({ stashDir: stash, full: true });
+    const one = await out(assets.graph());
+    expect(one.nodes.ref).toHaveLength(1);
+    expect(one.topics).toEqual([]);
+    expect(one.nodes.topic).toEqual([-1]);
+    // Empty library.
+    fs.rmSync(path.join(stash, "knowledge", keep), { recursive: true, force: true });
+    await akmIndex({ stashDir: stash, full: true });
+    const none = await out(assets.graph());
+    expect(none.nodes.ref).toEqual([]);
+    expect(none.topics).toEqual([]);
+    expect(none.duplicates).toBeNull();
+    // An index being built for the first time: only its meta table exists.
+    const file = getDbPath();
+    fs.rmSync(file, { force: true });
+    fs.rmSync(`${file}-wal`, { force: true });
+    fs.rmSync(`${file}-shm`, { force: true });
+    const partial = new Database(file);
+    partial.exec("CREATE TABLE index_meta (key TEXT PRIMARY KEY, value TEXT)");
+    partial.close();
+    const building = await out(assets.graph());
+    expect(building.available).toBe(false);
+    expect(building.nodes.ref).toEqual([]);
+    // A file that is not a database.
+    fs.writeFileSync(file, "this is not a sqlite database".repeat(100));
+    const damaged = await out(assets.graph());
+    expect(damaged.available).toBe(false);
+    expect(damaged.note).toContain("could not be read");
+    expect(damaged.nodes.ref).toEqual([]);
+  });
+
+  test("graph: topics follow the enabled bundles, not only the index build", async () => {
+    await seed();
+    const stash = ctx.storage.stashDir;
+    const word = { x: "xenon", y: "yankee", z: "zulu" } as const;
+    const roots: Record<string, string> = {};
+    for (const [name, term] of Object.entries(word)) {
+      roots[name] = path.join(stash, "..", `bundle-${name}`);
+      fs.mkdirSync(path.join(roots[name]!, "knowledge"), { recursive: true });
+      for (let i = 0; i < 10; i++)
+        fs.writeFileSync(path.join(roots[name]!, "knowledge", `${term}-${i}.md`), `# ${term} page ${i}\n`);
+    }
+    const configure = (enabled: string[]) => {
+      writeSandboxConfig({
+        ...makeConfig(stash),
+        bundles: {
+          stash: { path: stash, writable: true },
+          ...Object.fromEntries(
+            Object.keys(word).map((name) => [name, { path: roots[name]!, enabled: enabled.includes(name) }]),
+          ),
+        },
+        semanticSearchMode: "off",
+      } as never);
+      resetConfigCache();
+    };
+    configure(["x", "y", "z"]);
+    await akmIndex({ stashDir: stash, full: true });
+    // Stored vectors: one direction per bundle.
+    const db = openExistingDatabase();
+    try {
+      const rows = db.prepare("SELECT id, bundle_id FROM entries WHERE bundle_id != 'stash'").all() as Array<{
+        id: number;
+        bundle_id: string;
+      }>;
+      const axis = { x: 0, y: 1, z: 2 } as Record<string, number>;
+      rows.forEach((row, i) => {
+        const vector = new Array(8).fill(0);
+        vector[axis[row.bundle_id]!] = 1;
+        vector[3 + (i % 4)] = 0.05;
+        upsertEmbedding(db, row.id, vector);
+      });
+    } finally {
+      db.close();
+    }
+    configure(["x", "y"]);
+    const first = await out(assets.graph());
+    expect(first.nodes.ref.filter((ref: string) => !ref.startsWith("stash//"))).toHaveLength(20);
+    expect(first.topics.flatMap((t: { terms: string[] }) => t.terms)).toContain("yankee");
+    // Same index build, same number of assets, different bundles: the topics are the new library's.
+    configure(["x", "z"]);
+    const second = await out(assets.graph());
+    expect(second.nodes.ref.filter((ref: string) => !ref.startsWith("stash//"))).toHaveLength(20);
+    const terms = second.topics.flatMap((t: { terms: string[] }) => t.terms);
+    expect(terms).toContain("zulu");
+    expect(terms).not.toContain("yankee");
   });
 
   test("taskRuns: every task's runs of the window, newest first, with what started each", async () => {

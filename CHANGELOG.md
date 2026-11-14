@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- AKM Desktop's library map answers four questions about the whole library, one view each: Contents (what is in it, by topic, with the searches that found nothing), Use (what is read and what is dead weight), Problems (what is outdated, disliked or duplicated) and Relations (how its topics link to each other, in 3D or flat). It replaces the point cloud of every asset, which showed none of these. The figures of each view are also in words beside it.
+- `assets.graph` (`akm-cli/workspace`) answers what a library holds, what is used and what overlaps: `topics` (the embedded assets grouped by meaning, each named by its most particular words, with its nearest topics), `nodes.topic`, `duplicates` (pairs of one topic whose embeddings have a cosine of 0.96 or more), and per asset `lastShownAt`, `modifiedAt` and the feedback counts `positive` and `negative`.
+
 ## [0.10.261124] - 2026-11-14
 
 ### Fixed
@@ -22,8 +27,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- AKM Desktop's library map answers four questions about the whole library, one view each: Contents (what is in it, by topic, with the searches that found nothing), Use (what is read and what is dead weight), Problems (what is outdated, disliked or duplicated) and Relations (how its topics link to each other, in 3D or flat). It replaces the point cloud of every asset, which showed none of these. The figures of each view are also in words beside it.
-- `assets.graph` (`akm-cli/workspace`) answers what a library holds, what is used and what overlaps: `topics` (the embedded assets grouped by meaning, each named by its most particular words, with its nearest topics), `nodes.topic`, `duplicates` (pairs of one topic whose embeddings have a cosine of 0.96 or more), and per asset `lastShownAt`, `modifiedAt` and the feedback counts `positive` and `negative`.
 - `akm lint <file>` checks one file with the same rules the bundle lint applies to it, and returns the same result. A file inside a bundle takes its type from where it sits; a file outside every bundle needs `--type`, for example `akm lint ./nightly.yml --type tasks`, which checks a draft task file without installing it. Checks that need other files, such as broken refs, run only for a file inside a bundle. `--fix` changes only that file; `--prune-dangling-edges` with a file is a usage error.
 - AKM Desktop, Settings, Configuration, Embeddings: choose the embedding model without editing config.json: the built-in embedder (offered only where akm has it), a model served by the default connection, or a remote endpoint with its model and API key. It saves what `akm setup` saves for the same choice (the endpoint normalized to `…/v1`) and turns semantic search on. A `$VAR` key is the block's `apiKey`; a typed key is stored in `credentials.json` for that endpoint and never shown again. `akm-cli/workspace`: new `config.saveEmbedding({ kind, model, endpoint, key })`, and `config.get()` gains `localEmbeddings` and `embeddingKeyEndpoint` (the endpoint the stored key belongs to, never the key).
 

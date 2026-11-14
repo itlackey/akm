@@ -178,7 +178,12 @@ export async function findTopics(
 
   // Near-duplicates: every pair inside a topic. Pairs across topics are not compared; two assets that alike almost
   // always share a topic.
-  const pairs: Array<[number, number, number]> = [];
+  // Only the best MAX_PAIRS are kept, so a library full of copies does not hold every pair in memory: the list is cut
+  // back whenever it grows to eight times that, to the same top pairs a full sort would keep.
+  let pairs: Array<[number, number, number]> = [];
+  let pairCount = 0;
+  const byAlike = (x: [number, number, number], y: [number, number, number]) =>
+    y[2] - x[2] || x[0] - y[0] || x[1] - y[1];
   for (const rows of members) {
     for (let x = 0; x < rows.length; x++) {
       const p = rows[x]! * dims;
@@ -186,14 +191,17 @@ export async function findTopics(
         const q = rows[y]! * dims;
         let cosine = 0;
         for (let d = 0; d < dims; d++) cosine += unit[p + d]! * unit[q + d]!;
-        if (cosine >= DUPLICATE_COSINE) pairs.push([usable[rows[x]!]!, usable[rows[y]!]!, cosine]);
+        if (cosine >= DUPLICATE_COSINE) {
+          pairs.push([usable[rows[x]!]!, usable[rows[y]!]!, cosine]);
+          pairCount++;
+          if (pairs.length >= MAX_PAIRS * 8) pairs = pairs.sort(byAlike).slice(0, MAX_PAIRS);
+        }
       }
       if (x % 200 === 199) await yieldToLoop();
     }
     await yieldToLoop();
   }
-  pairs.sort((x, y) => y[2] - x[2] || x[0] - y[0] || x[1] - y[1]);
-  const kept = pairs.slice(0, MAX_PAIRS);
+  const kept = pairs.sort(byAlike).slice(0, MAX_PAIRS);
   const result: Topics = {
     topics,
     topic,
@@ -202,7 +210,7 @@ export async function findTopics(
       a: kept.map((p) => p[0]),
       b: kept.map((p) => p[1]),
       cosine: kept.map((p) => Math.round(p[2] * 10000) / 10000),
-      truncated: pairs.length > MAX_PAIRS,
+      truncated: pairCount > MAX_PAIRS,
     },
   };
   if (key !== undefined) cache = { key, result };

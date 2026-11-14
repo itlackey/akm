@@ -297,6 +297,57 @@ test("visualizations survive late responses, no WebGL, a changed library and an 
     await page.close();
   });
 
+  await t.test("Library map: no index, an empty library and a failed read each say so, and Retry recovers", async () => {
+    const empty = {
+      ...mapPayload,
+      note: "0 assets.",
+      types: [],
+      bundles: [],
+      beliefs: [],
+      use: null,
+      kinds: [],
+      nodes: Object.fromEntries(Object.keys(mapPayload.nodes).map((column) => [column, []])),
+      links: { from: [], to: [], kind: [] },
+      topics: [],
+      duplicates: null,
+    };
+    {
+      const { page, errors } = await fresh((page) =>
+        withGraph(page, { ...empty, available: false, note: "The index could not be read." }),
+      );
+      await open(page, server, "/library/map");
+      await expect(page.getByText("The index could not be read.")).toBeVisible();
+      await expect(page.getByText("Reading the library")).toHaveCount(0);
+      assert.deepEqual(errors, []);
+      await page.close();
+    }
+    {
+      const { page, errors } = await fresh((page) => withGraph(page, empty));
+      await open(page, server, "/library/map");
+      await expect(figures(page).locator(".stats")).toContainText("0assets");
+      for (const name of ["Use", "Problems", "Relations", "Contents"]) await tab(page, name).click();
+      assert.deepEqual(errors, []);
+      await page.close();
+    }
+    {
+      let fail = true;
+      const { page } = await fresh((page) =>
+        page.route("**/api/graph", (route) =>
+          fail
+            ? route.fulfill({ status: 500, json: { ok: false, error: "Synthetic: the graph failed." } })
+            : route.fulfill({ json: { ok: true, data: mapPayload } }),
+        ),
+      );
+      await open(page, server, "/library/map");
+      await expect(page.getByRole("alert")).toContainText("Synthetic: the graph failed.");
+      fail = false;
+      await page.getByRole("button", { name: "Retry" }).click();
+      await expect(figures(page).locator(".stats")).toContainText("7assets");
+      await expect(page.getByRole("alert")).toHaveCount(0);
+      await page.close();
+    }
+  });
+
   await t.test("Library map: without WebGL the page says so and the figures are all still there", async () => {
     const { page } = await fresh(async (page) => {
       await withGraph(page);
