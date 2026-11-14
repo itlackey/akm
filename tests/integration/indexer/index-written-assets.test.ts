@@ -256,6 +256,25 @@ describe("indexWrittenAssets", () => {
     expect(search.searchMode).toBe("fts-fallback");
   });
 
+  test("a busy index is not a failed write: true, with no warn-level message", async () => {
+    const filePath = writeMemory("busy-index-note", "Written while a build holds the write lock.");
+    const levels: string[] = [];
+    _setWarnSinkForTests((level) => {
+      levels.push(level);
+    });
+    const holder = openExistingDatabase(getDbPath());
+    try {
+      holder.exec("BEGIN IMMEDIATE");
+      expect(await indexWrittenAssets(stashDir, [filePath])).toBe(true);
+    } finally {
+      holder.exec("ROLLBACK");
+      closeDatabase(holder);
+      _setWarnSinkForTests(undefined);
+    }
+    expect(levels.filter((l) => l === "warn" || l === "error")).toEqual([]);
+    expect(indexedFileCount(filePath)).toBe(0);
+  }, 30_000);
+
   test("fail-open: absent index.db is a silent no-op (no DB created)", async () => {
     fs.rmSync(getDbPath());
     const filePath = writeMemory("orphan-note", "Body.");

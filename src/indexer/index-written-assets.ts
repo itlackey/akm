@@ -20,12 +20,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { akmAdapter } from "../core/adapter/adapters/akm-adapter";
 import { loadConfig } from "../core/config/config";
-import { isDataDirUnreadableError } from "../core/errors";
+import { isDataDirUnreadableError, TransientError } from "../core/errors";
 import { isPathAbsent } from "../core/path-access";
 import { getDbPath } from "../core/paths";
 import { warn, warnVerbose } from "../core/warn";
 import { closeDatabase } from "../storage/repositories/index-connection";
 import { deleteEntriesByIds, upsertEntry } from "../storage/repositories/index-entries-repository";
+import { isSqliteContentionError } from "../storage/sqlite-transaction";
 import { openUsableIndex } from "./index-readiness";
 import { deriveEntryProvenance, deriveInstallations } from "./installations";
 import { embeddingInputCap, generateEmbeddingsForDb, publishTargetedEmbeddingMeta } from "./materialize-embeddings";
@@ -47,7 +48,9 @@ export const WRITE_PATH_INDEX_BUSY_TIMEOUT_MS = 5_000;
  *
  * FAIL-OPEN at every step: any error (index.db absent, locked past the busy timeout, unparseable file) is
  * reduced to a verbose-only warning and the write command succeeds untouched. A write the index misses is
- * picked up by the next build.
+ * picked up by the next build. Returns `true` when the index is busy (a build holds the write lock past the
+ * busy timeout, or the embedding step reports contention): the file is on disk and the next build indexes it,
+ * so the write is not reported as unindexed. `false` is for an index akm may not read and for genuine errors.
  *
  * Upserts whenever a usable index exists for the library (`index-readiness.ts`):
  * persisted keyword data, whether or not a build has completed. An absent or
@@ -55,11 +58,11 @@ export const WRITE_PATH_INDEX_BUSY_TIMEOUT_MS = 5_000;
  * it also covers the embeddings and other passes this fast path skips.
  *
  * A write that lands while a build runs is not a failure and does not look for
- * the build: the upsert goes in on the 5 s busy timeout, or is skipped when the
- * build holds the write lock longer, and the next build picks the change up
- * from the directory fingerprints it takes. Callers that gate their own
- * success on this boolean (`acceptProposal`, `source clone`) never fail or warn
- * just because a build is in progress.
+ * the build: the upsert goes in on the 5 s busy timeout, or is skipped (still
+ * `true`) when the build holds the write lock longer, and the next build picks
+ * the change up from the directory fingerprints it takes. Callers that gate
+ * their own success on this boolean (`acceptProposal`, `source clone`) never
+ * fail or warn just because a build is in progress.
  */
 export async function indexWrittenAssets(
   stashDir: string,
@@ -200,10 +203,12 @@ export async function indexWrittenAssets(
       );
       return false;
     }
-    warnVerbose(
-      "Write-path index update skipped (asset appears after the next full index):",
-      error instanceof Error ? error.message : String(error),
-    );
+    const message = error instanceof Error ? error.message : String(error);
+    if (isSqliteContentionError(error) || (error instanceof TransientError && error.code === "INDEX_DB_CONTENDED")) {
+      warnVerbose(`Write-path index update skipped, the index is busy (asset appears after the next build): ${message}`);
+      return true;
+    }
+    warnVerbose("Write-path index update skipped (asset appears after the next full index):", message);
     return false;
   }
 }
