@@ -29,8 +29,8 @@ import {
 } from "../../../src/storage/repositories/index-connection";
 import { deleteMeta, getMeta, setMeta } from "../../../src/storage/repositories/index-meta-repository";
 import { runCliCapture } from "../../_helpers/cli";
-import { spawnLiveHolder, stopLiveHolders } from "../../_helpers/live-holder";
 import { damageIndexHeader, damageIndexInterior } from "../../_helpers/index-damage";
+import { spawnLiveHolder, stopLiveHolders } from "../../_helpers/live-holder";
 import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 
 const repoRoot = path.resolve(import.meta.dir, "../../..");
