@@ -11,6 +11,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `akm feedback` accepted spellings `akm show` refuses (`tasks/x.md`, `skills/x.md`, `scripts/x.sh.md`, `env/x.md`, `secrets/x.md`), and echoed the typed spelling as `ref` (`knowledge\x`, `akm//knowledge/x.md`). It now accepts the spellings `show` accepts, and `ref` is the ref `show` returns. The `.md` toggle in an index lookup applies only to markdown files.
 - A lock left by a killed process was never reclaimed once its PID was alive again, for example PID 1 in a container: `akm index` waited ten minutes and exited 75, `--skip-if-locked` runs skipped forever, and reads said the index was being built. The index rebuild lock, `akm improve`'s run lock, the asset mutation lease and the other lock files now record the holder's boot id and process start time (Linux) and treat a live PID with a different identity as stale; a lock naming this process that it did not acquire is stale too. Lock files without those fields are read as before.
 - `akm bundle update --skip-if-locked` waited up to ten minutes for a running index build instead of skipping. It now returns at once with exit 0 and a skipped result.
+- A damaged `index.db` (a bad header, `file is not a database`, or a bad interior page) is rebuilt by `akm index`: the build deletes the file and builds again once, wherever it finds the damage. Search and curate report "no search index; run `akm index`" and `feedback` reports no usable index, instead of exiting 70.
+- `akm health` no longer passes an `index.db` that has a damaged page, and during a first build it reports the build instead of failing and advising to move `index.db` aside.
+- Opening or migrating `index.db` is one transaction, so a reader or a crash can no longer meet entries without their full-text table (search and curate exited 70).
+- `akm show <ref>#<fragment>` against an index laid out by 0.9.13 or earlier exited 70 (`no such table: entry_fragments`); it reports the fragment unavailable like any index that cannot supply it.
 
 ## [0.10.261124] - 2026-11-14
 

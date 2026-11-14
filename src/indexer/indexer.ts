@@ -41,6 +41,9 @@ import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 import type { Database } from "../storage/database";
 import {
   closeDatabase,
+  deleteIndexDatabase,
+  indexDbIsDamaged,
+  isCorruptionError,
   openExistingDatabase,
   openIndexDatabase,
   openReadonlyExistingDatabase,
@@ -507,9 +510,27 @@ export function _setAkmIndexForTests(fake?: typeof akmIndexReal): void {
 export async function akmIndex(options: IndexOptions): Promise<IndexResponse> {
   try {
     const override = akmIndexOverride;
-    return override ? await override(options) : await akmIndexReal(options);
+    return override ? await override(options) : await akmIndexRecoveringCorruption(options);
   } catch (error) {
     throw reclassifyIndexDbContention(error);
+  }
+}
+
+/**
+ * index.db is a derived cache, fully regenerable from the library, and the
+ * build holds the rebuild lock: damage to index.db found anywhere in a build
+ * (the header, the schema, an interior page hit mid-walk) deletes the file and
+ * builds again once. A corruption error from another database leaves it alone. An older layout is migrated in place, never dropped.
+ */
+async function akmIndexRecoveringCorruption(options: IndexOptions): Promise<IndexResponse> {
+  try {
+    return await akmIndexReal(options);
+  } catch (error) {
+    const dbPath = getDbPath();
+    if (!isCorruptionError(error) || !indexDbIsDamaged(dbPath)) throw error;
+    warn(`Index database is corrupt at ${dbPath} — rebuilding.`);
+    deleteIndexDatabase(dbPath);
+    return await akmIndexReal(options);
   }
 }
 
@@ -702,8 +723,7 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
   const t0 = Date.now();
 
   const dbPath = getDbPath();
-  // The build holds the rebuild lock, so it alone may delete and rebuild a corrupt file.
-  const db = openIndexDatabase(dbPath, { rebuildCorrupt: true });
+  const db = openIndexDatabase(dbPath);
 
   try {
     // `--full` folds into `isIncremental`: a full run drains every directory

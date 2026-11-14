@@ -30,6 +30,7 @@ import {
 import { deleteMeta, getMeta, setMeta } from "../../../src/storage/repositories/index-meta-repository";
 import { runCliCapture } from "../../_helpers/cli";
 import { spawnLiveHolder, stopLiveHolders } from "../../_helpers/live-holder";
+import { damageIndexHeader, damageIndexInterior } from "../../_helpers/index-damage";
 import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 
 const repoRoot = path.resolve(import.meta.dir, "../../..");
@@ -438,26 +439,25 @@ describe("a library switch", () => {
 });
 
 describe("corruption", () => {
-  function corrupt(): Buffer {
-    const dbPath = getDbPath();
-    const db = new Database(dbPath);
-    db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-    db.close();
-    const bytes = fs.readFileSync(dbPath);
-    for (let i = 100; i < bytes.length; i++) bytes[i] = 0xff;
-    fs.writeFileSync(dbPath, bytes);
-    return bytes;
-  }
-
-  test("a writable opener that is not a build raises instead of deleting the corrupt file; a build rebuilds it", async () => {
+  test("a writable opener that is not a build raises instead of deleting a header-damaged file", async () => {
     seedLibrary();
     await akmIndex({ stashDir: storage.stashDir, full: true });
-    const damaged = corrupt();
+    damageIndexHeader(getDbPath());
+    const damaged = fs.readFileSync(getDbPath());
 
     expect(() => openIndexDatabase(getDbPath())).toThrow();
     expect(fs.readFileSync(getDbPath()).equals(damaged)).toBe(true);
+  });
 
+  test.each([
+    ["header", damageIndexHeader],
+    ["interior pages", damageIndexInterior],
+  ] as const)("a build rebuilds an index with damaged %s", async (_name, damage) => {
+    seedLibrary(400);
     await akmIndex({ stashDir: storage.stashDir, full: true });
+    damage(getDbPath());
+
+    await akmIndex({ stashDir: storage.stashDir });
     const search = await cli("search", "deployment", "--format=json");
     expect(JSON.parse(search.stdout).hits.length).toBeGreaterThan(0);
   });

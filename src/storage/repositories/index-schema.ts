@@ -28,6 +28,7 @@ import { ConfigError } from "../../core/errors";
 import { warn } from "../../core/warn";
 import { sha256Hex } from "../../runtime";
 import type { Database } from "../database";
+import { withImmediateTransaction } from "../sqlite-transaction";
 import {
   CANONICAL_ENTRY_SCHEMA_SQL,
   CANONICAL_INDEX_DB_VERSION,
@@ -233,7 +234,15 @@ function ensureColumn(db: Database, table: string, column: string, type: string)
   return true;
 }
 
+/**
+ * Bring `index.db` to the current layout in one transaction, so no reader or
+ * crash can observe a half-migrated file (entries without their FTS table).
+ */
 export function ensureSchema(db: Database): void {
+  withImmediateTransaction(db, () => applySchema(db));
+}
+
+function applySchema(db: Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS index_meta (
       key   TEXT PRIMARY KEY,
