@@ -712,7 +712,7 @@ export function findEntryIdByRef(db: Database, ref: string, bundleId?: string): 
 }
 
 /** `name` plus its `.md`-toggled sibling — the markdown ext-keep/strip ambiguity. */
-function withMdVariants(name: string): string[] {
+export function withMdVariants(name: string): string[] {
   return name.endsWith(".md") ? [name, name.slice(0, -3)] : [name, `${name}.md`];
 }
 
