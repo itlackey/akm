@@ -138,10 +138,11 @@ test("visualizations survive late responses, no WebGL, a changed library and an 
     });
     await open(page, server, "/activity/replay");
     await expect(slider(page)).toBeVisible();
-    // Opens at the end of the period: the slider is at its maximum and the totals are full.
+    // Opens at the end of the period: the slider is on its last step (a window that is not whole minutes stops short
+    // of its maximum, and scrubTime reads that step as the end) and the totals are full.
     await expect
-      .poll(async () => (await slider(page).inputValue()) === (await slider(page).getAttribute("max")))
-      .toBe(true);
+      .poll(async () => Number(await slider(page).getAttribute("max")) - Number(await slider(page).inputValue()))
+      .toBeLessThan(60_000);
     const replay = page.getByRole("region", { name: "Activity replay", exact: true });
     await expect(replay.getByText("searches", { exact: true })).toBeVisible();
     await expect(replay).toContainText("Plays the whole period in about 1 minute");

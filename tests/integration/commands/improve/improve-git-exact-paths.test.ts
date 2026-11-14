@@ -62,7 +62,7 @@ test("improve auto-sync excludes pre-staged WIP from the same content directory"
     scope: "memory",
     stashDir,
     config,
-    ensureIndexFn: async () => undefined,
+    reindexFn: async () => undefined,
     collectEligibleRefsFn: (async () => ({
       plannedRefs: [{ ref: "memories/seed" }],
       memorySummary: { eligible: 1, derived: 0 },

@@ -18,7 +18,7 @@ import {
   resolveSecret,
 } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
-import { akmIndex } from "../../indexer/indexer";
+import { buildIndex } from "../../indexer/index-build";
 import { deriveBundleId } from "../../indexer/installations";
 import { readLockfile, removeLockEntry, upsertLockEntry } from "../../integrations/lockfile";
 import { parseRegistryRef } from "../../registry/resolve";
@@ -123,7 +123,7 @@ async function addLocalSource(
     return { ...config, bundles: placeBundle(bundles, bundleKey, entry, position) };
   });
 
-  const index = await akmIndex({ stashDir });
+  const index = await buildIndex({ stashDir }, "wait");
   const updatedConfig = loadConfig();
 
   return {
@@ -215,7 +215,7 @@ async function addWebsiteSource(
     resolveSecret: storeSecretResolver.resolveSecret,
     ...(allowPrivateHosts ? { allowPrivateHosts: true } : {}),
   });
-  const index = await akmIndex({ stashDir });
+  const index = await buildIndex({ stashDir }, "wait");
   const updatedConfig = loadConfig();
 
   return {
@@ -340,7 +340,7 @@ async function addRegistryStash(
     }
   }
 
-  const index = await akmIndex({ stashDir });
+  const index = await buildIndex({ stashDir }, "wait");
 
   return {
     schemaVersion: 1,

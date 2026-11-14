@@ -19,7 +19,7 @@ import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { _setEmbedderForTests } from "../../../src/llm/embedder";
 import { closeDatabase, openExistingDatabase } from "../../../src/storage/repositories/index-connection";
-import { getMeta } from "../../../src/storage/repositories/index-meta-repository";
+import { deleteMeta, getMeta, setMeta } from "../../../src/storage/repositories/index-meta-repository";
 import {
   type Cleanup,
   sandboxEnvDir,
@@ -127,6 +127,31 @@ describe("indexWrittenAssets", () => {
     expect(idx.ftsCount).toBeGreaterThan(0);
   });
 
+  test("upserts into a usable index that has no builtAt (a build still embedding, or interrupted)", async () => {
+    const db = openExistingDatabase(getDbPath());
+    try {
+      deleteMeta(db, "builtAt");
+    } finally {
+      closeDatabase(db);
+    }
+    const filePath = writeMemory("mid-build-note", "Written while the first build has not completed.");
+    expect(await indexWrittenAssets(stashDir, [filePath])).toBe(true);
+    expect(indexedFileCount(filePath)).toBeGreaterThan(0);
+  });
+
+  test("skips an index built for another library", async () => {
+    const db = openExistingDatabase(getDbPath());
+    try {
+      setMeta(db, "stashDir", "/somewhere/else");
+      setMeta(db, "stashDirs", JSON.stringify(["/somewhere/else"]));
+    } finally {
+      closeDatabase(db);
+    }
+    const filePath = writeMemory("other-library-note", "Written against an index for a different library.");
+    expect(await indexWrittenAssets(stashDir, [filePath])).toBe(true);
+    expect(indexedFileCount(filePath)).toBe(0);
+  });
+
   test("a file under the root .scratch/ is not indexed (#1435)", async () => {
     const filePath = path.join(stashDir, ".scratch", "memories", "draft-note.md");
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -231,6 +256,25 @@ describe("indexWrittenAssets", () => {
     expect(search.searchMode).toBe("fts-fallback");
   });
 
+  test("a busy index is not a failed write: true, with no warn-level message", async () => {
+    const filePath = writeMemory("busy-index-note", "Written while a build holds the write lock.");
+    const levels: string[] = [];
+    _setWarnSinkForTests((level) => {
+      levels.push(level);
+    });
+    const holder = openExistingDatabase(getDbPath());
+    try {
+      holder.exec("BEGIN IMMEDIATE");
+      expect(await indexWrittenAssets(stashDir, [filePath])).toBe(true);
+    } finally {
+      holder.exec("ROLLBACK");
+      closeDatabase(holder);
+      _setWarnSinkForTests(undefined);
+    }
+    expect(levels.filter((l) => l === "warn" || l === "error")).toEqual([]);
+    expect(indexedFileCount(filePath)).toBe(0);
+  }, 30_000);
+
   test("fail-open: absent index.db is a silent no-op (no DB created)", async () => {
     fs.rmSync(getDbPath());
     const filePath = writeMemory("orphan-note", "Body.");
@@ -297,7 +341,7 @@ describe("indexWrittenAssets", () => {
       return lockPath;
     }
 
-    test("skips the inline upsert while a rebuild holds the lock, warns once, reports success, and never opens index.db", async () => {
+    test("upserts while a rebuild holds the lock: no lock probe, no warning, reports success", async () => {
       const lockPath = plantHeldRebuildLock();
       const filePath = writeMemory("busy-rebuild-note", "Written while a rebuild holds the lock.");
 
@@ -306,42 +350,12 @@ describe("indexWrittenAssets", () => {
         if (level === "warn") notices.push(args.map(String).join(" "));
       });
 
-      // A live rebuild owns bringing the index to the expected state; the
-      // skip is fail-open success (#956 fix), not a failure — a caller that
-      // gates on this boolean (acceptProposal, source clone) must not fail.
+      // Write-through does not look for a build: the upsert goes in on its own
+      // busy timeout, and a build that overlaps it is healed by the next build.
       expect(await indexWrittenAssets(stashDir, [filePath])).toBe(true);
 
-      expect(notices.some((n) => /index rebuild in progress \(pid \d+\)/.test(n) && n.includes(filePath))).toBe(true);
-      expect(indexedFileCount(filePath)).toBe(0);
-      fs.rmSync(lockPath);
-      // Once the rebuild finishes and releases its lock, the same write-path
-      // upsert heals the missing entry.
-      expect(await indexWrittenAssets(stashDir, [filePath])).toBe(true);
+      expect(notices).toEqual([]);
       expect(indexedFileCount(filePath)).toBeGreaterThan(0);
-    });
-
-    test("names the launcher pid alongside the holder pid when the lock payload recorded one (#956)", async () => {
-      const lockPath = getIndexRebuildLockPath();
-      fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-      fs.writeFileSync(
-        lockPath,
-        JSON.stringify({ pid: process.ppid, launcherPid: 4240, startedAt: new Date().toISOString() }),
-        "utf8",
-      );
-      const filePath = writeMemory("launcher-note", "Written while a launcher-tracked rebuild holds the lock.");
-
-      const notices: string[] = [];
-      _setWarnSinkForTests((level, args) => {
-        if (level === "warn") notices.push(args.map(String).join(" "));
-      });
-
-      expect(await indexWrittenAssets(stashDir, [filePath])).toBe(true);
-
-      expect(
-        notices.some((n) =>
-          new RegExp(`index rebuild in progress \\(pid ${process.ppid} \\(launcher 4240\\)\\)`).test(n),
-        ),
-      ).toBe(true);
       fs.rmSync(lockPath);
     });
 
@@ -353,8 +367,8 @@ describe("indexWrittenAssets", () => {
       const filePath = writeMemory("dead-lock-note", "A stale rebuild lock must not block this.");
       expect(await indexWrittenAssets(stashDir, [filePath])).toBe(true);
       expect(indexedFileCount(filePath)).toBeGreaterThan(0);
-      // The write path only probes — reclaiming a stale lock stays `akm
-      // index`'s job, not every writer's.
+      // The write path never touches the lock — reclaiming a stale one stays
+      // the builds' job, not every writer's.
       expect(fs.existsSync(lockPath)).toBe(true);
     });
   });

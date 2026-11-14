@@ -1,23 +1,19 @@
 /**
- * Regression test for #339: `akmImprove` must run `ensureIndex` BEFORE
- * `collectEligibleRefs`, otherwise an empty/stale `entries` table (e.g. right
- * after a full reindex clears the table before repopulating) makes the improve
- * loop silently no-op with `plannedRefs = []`.
- *
- * Before this fix: ensureIndex ran AFTER collectEligibleRefs, so the very
- * first run after a DB rebuild saw an empty entries table, captured
- * `plannedRefs = []`, and the rebuild only helped the NEXT run.
- *
- * Real runs use this ordering. Dry-runs intentionally consume the existing
- * index without invoking an index writer.
+ * Improve's pre-run index (#339): `akmImprove` builds the index (incrementally, under the rebuild lock in
+ * `"try"` mode) BEFORE `collectEligibleRefs`, otherwise an empty/stale `entries` table makes the loop
+ * silently no-op with `plannedRefs = []`. With another process holding the lock it builds nothing, plans on
+ * the entries it has and says so. Dry-runs consume the existing index without invoking an index writer.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
+import path from "node:path";
 import { akmImprove } from "../../../src/commands/improve/improve";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { saveConfig } from "../../../src/core/config/config";
-import { getDbPath } from "../../../src/core/paths";
+import { getDbPath, getIndexRebuildLockPath } from "../../../src/core/paths";
+import { _setWarnSinkForTests } from "../../../src/core/warn";
+import { buildIndex } from "../../../src/indexer/index-build";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { closeDatabase, openExistingDatabase } from "../../../src/storage/repositories/index-connection";
 import { getEntryCount } from "../../../src/storage/repositories/index-entries-repository";
@@ -54,7 +50,7 @@ afterEach(() => {
   for (const cleanup of dirCleanups.splice(0)) cleanup();
 });
 
-describe("akmImprove ordering: ensureIndex must run before collectEligibleRefs (#339)", () => {
+describe("akmImprove pre-run index (#339)", () => {
   test("empty entries table on entry still produces non-empty plannedRefs after the call", async () => {
     const stashDir = makeTempDir("akm-improve-ensure-stash-");
     mutateScopedEnv("AKM_BUNDLE_DIR", stashDir);
@@ -75,8 +71,7 @@ describe("akmImprove ordering: ensureIndex must run before collectEligibleRefs (
       const db = openExistingDatabase();
       try {
         db.exec("DELETE FROM entries");
-        // Force ensureIndex's staleness check to fire by also clearing builtAt
-        // (so ensureIndex treats the index as never built).
+        // Also clear builtAt, as a build killed mid-way leaves it.
         db.prepare("DELETE FROM index_meta WHERE key = 'builtAt'").run();
         expect(getEntryCount(db)).toBe(0);
       } finally {
@@ -128,7 +123,7 @@ describe("akmImprove ordering: ensureIndex must run before collectEligibleRefs (
     expect(entryCountAtCollect).toBe(2);
   });
 
-  test("R6: ensureIndexDurationMs is surfaced on the result when the inline index ran", async () => {
+  test("R6: ensureIndexDurationMs is surfaced on the result when the pre-run index built", async () => {
     const stashDir = makeTempDir("akm-improve-ensure-duration-");
     mutateScopedEnv("AKM_BUNDLE_DIR", stashDir);
     saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
@@ -137,7 +132,7 @@ describe("akmImprove ordering: ensureIndex must run before collectEligibleRefs (
     await akmIndex({ stashDir, full: true });
 
     // Same staleness-forcing setup as the ordering test above: wipe entries
-    // and builtAt so the run's ensureIndex call must rebuild inline.
+    // and builtAt so the run's pre-run index must rebuild.
     {
       const db = openExistingDatabase();
       try {
@@ -188,8 +183,8 @@ describe("akmImprove ordering: ensureIndex must run before collectEligibleRefs (
     expect(rebuiltResult.ok).toBe(true);
     expect(rebuiltResult.ensureIndexDurationMs).toBeGreaterThanOrEqual(0);
 
-    // Second run: the index is current, but blocking mode still runs the
-    // incremental index and lets its fingerprints decide, so the field is set.
+    // Second run: the index is current, but the pre-run index still runs the
+    // incremental build and lets its fingerprints decide, so the field is set.
     const freshResult = await akmImprove({
       stashDir,
       strategy: "duration-order",
@@ -201,7 +196,55 @@ describe("akmImprove ordering: ensureIndex must run before collectEligibleRefs (
     expect(freshResult.ensureIndexDurationMs).toBeGreaterThanOrEqual(0);
   });
 
-  test("dry-run never invokes ensureIndex and uses only the existing index", async () => {
+  test("a live process holding the rebuild lock: improve builds nothing, plans on the existing entries and says so", async () => {
+    const stashDir = makeTempDir("akm-improve-ensure-locked-");
+    mutateScopedEnv("AKM_BUNDLE_DIR", stashDir);
+    saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
+    writeLesson(stashDir, "locked-lesson", "Locked lesson", "Trigger");
+    await akmIndex({ stashDir, full: true });
+    // Added after the index was built: only a build would pick it up.
+    writeLesson(stashDir, "added-late", "Added late", "Trigger");
+
+    const lockPath = getIndexRebuildLockPath();
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }), "utf8");
+    let entryCountAtCollect = -1;
+    const notices: string[] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") notices.push(args.map(String).join(" "));
+    });
+    try {
+      const result = await akmImprove({
+        stashDir,
+        repairValidationFailures: false,
+        config: {
+          configVersion: "0.9.0",
+          semanticSearchMode: "off",
+          bundles: { stash: { path: stashDir, writable: true } },
+          defaultBundle: "stash",
+        },
+        collectEligibleRefsFn: (async () => {
+          const db = openExistingDatabase();
+          try {
+            entryCountAtCollect = getEntryCount(db);
+          } finally {
+            closeDatabase(db);
+          }
+          return { plannedRefs: [], memorySummary: { eligible: 0, derived: 0 }, strategyFilteredRefs: [] };
+        }) as never,
+      });
+      expect(result.ok).toBe(true);
+      expect(entryCountAtCollect).toBe(1);
+      expect(notices.join("\n")).toContain("another index run holds the rebuild lock");
+      // The holder's lock is untouched.
+      expect(JSON.parse(fs.readFileSync(lockPath, "utf8")).pid).toBe(process.pid);
+    } finally {
+      _setWarnSinkForTests(undefined);
+      fs.rmSync(lockPath, { force: true });
+    }
+  });
+
+  test("dry-run never builds the index and uses only the existing one", async () => {
     const stashDir = makeTempDir("akm-improve-ensure-dryrun-");
     mutateScopedEnv("AKM_BUNDLE_DIR", stashDir);
     saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
@@ -210,21 +253,17 @@ describe("akmImprove ordering: ensureIndex must run before collectEligibleRefs (
 
     // Drive a no-DB starting state. Dry-run must not create one merely to make
     // planning more complete.
-    let ensureCalls = 0;
-    let ensureMode: string | undefined;
+    let indexCalls = 0;
     const result = await akmImprove({
       dryRun: true,
       stashDir,
-      ensureIndexFn: async (dir: string, options) => {
-        ensureCalls += 1;
-        ensureMode = options?.mode;
-        const { ensureIndex } = await import("../../../src/indexer/ensure-index");
-        return ensureIndex(dir, options);
+      reindexFn: async (options) => {
+        indexCalls += 1;
+        return buildIndex(options, "try");
       },
     });
 
-    expect(ensureCalls).toBe(0);
-    expect(ensureMode).toBeUndefined();
+    expect(indexCalls).toBe(0);
     expect(result.ok).toBe(true);
     expect(result.plannedRefs).toEqual([]);
   });

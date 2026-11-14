@@ -49,4 +49,4 @@ On failure stderr carries `{"ok": false, "error": "...", "code": "...", "hint": 
 | 75 | Transient: retry shortly |
 | 78 | Configuration error |
 
-`akm hints --detail full` prints the complete guide.
+`akm help <command>` prints one command's flags and examples.

@@ -36,8 +36,7 @@ let db: Database;
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
   db = openIndexDatabase(getDbPath());
-  // Satisfies ensure-index's indexCanServeStash() so searchLocal serves this
-  // hand-built index instead of rebuilding it from the (empty) stash.
+  // Makes this hand-built index usable for the stash, so searchLocal serves it.
   setMeta(db, "stashDir", storage.stashDir);
   setMeta(db, "builtAt", new Date().toISOString());
 });

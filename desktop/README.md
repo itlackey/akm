@@ -54,6 +54,10 @@ AKM version appear in the header. Nothing is copied from another machine.
 - **Settings:** full bundle management and grouped, validated settings with
   scoped saves. Changing one settings group does not discard another's edits.
   Rename a bundle through **Manage → Rename bundle** without moving its folder.
+  **Configuration → Embeddings** sets the embedding model for semantic search: the built-in embedder (where akm
+  offers it), a model served by the default connection, or a remote endpoint with its model and key, saved as `akm setup` saves them. A
+  `$VAR` key is written as the block's `apiKey`; a typed key goes to `credentials.json` for that endpoint and is never
+  shown again. Changing the model makes the next `akm index` embed each entry again.
   **Software** manages the host CLI and harness plugins.
 
 Writes use AKM's normal policy: a Git-backed bundle may commit and push changes.

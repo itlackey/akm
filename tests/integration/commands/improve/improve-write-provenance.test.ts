@@ -141,7 +141,7 @@ async function runImprove(
     scope: "memory",
     stashDir,
     config,
-    ensureIndexFn: async () => undefined,
+    reindexFn: async () => undefined,
     collectEligibleRefsFn: (async () => ({
       plannedRefs: [{ ref: "memories/human" }],
       memorySummary: { eligible: 1, derived: 0 },

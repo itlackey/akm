@@ -54,6 +54,21 @@ prerelease() {
   echo "Dispatched Release ($stage) on $branch. Follow it: gh run list --workflow release.yml --branch $branch"
 }
 
+# The release pull request's gate runs on HEAD: its first check, release-branch-only, is there and is not the
+# skipped one of a draft's run. Looks for up to a minute.
+gate_started() {
+  local sha
+  sha="$(git rev-parse HEAD)"
+  for _ in 1 2 3 4 5 6; do
+    sleep 10
+    if [ "$(gh api "repos/{owner}/{repo}/commits/$sha/check-runs?check_name=release-branch-only" \
+      --jq 'any(.check_runs[]; .conclusion != "skipped")')" = "true" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 stable() {
   on_release_branch
   if ! grep -q '^## \[Unreleased\]$' CHANGELOG.md; then
@@ -75,6 +90,16 @@ stable() {
   existing="$(gh pr list --base main --head "$branch" --state open --json number,url --jq '.[0] | "\(.number) \(.url)"')"
   if [ -n "$existing" ]; then
     gh pr ready "${existing%% *}"
+    # Marked ready seconds after the push, GitHub can start only the draft's run, which skips every job (it did
+    # for 0.10.261121). Marking the pull request ready again starts the gate.
+    if ! gate_started; then
+      gh pr ready "${existing%% *}" --undo
+      gh pr ready "${existing%% *}"
+      if ! gate_started; then
+        echo "The gate did not start on ${existing#* }. Mark the pull request draft, then ready, to run it." >&2
+        exit 1
+      fi
+    fi
     # gh pr edit fails on the deprecated Projects (classic) GraphQL field; the REST call sets only the title.
     gh api -X PATCH "repos/{owner}/{repo}/pulls/${existing%% *}" -f title="release: $version" --silent
     url="${existing#* }"

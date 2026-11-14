@@ -128,7 +128,7 @@ export const lintCommand = defineCommand({
   meta: {
     name: "lint",
     description:
-      "Scan bundle .md files for structural issues (unquoted colons, missing updated field, orphaned stubs, placeholder stubs, missing name/type, stale paths, broken refs in body text and in refs/xrefs/supersededBy/contradictedBy frontmatter). Use --fix to auto-fix Tier 1 issues. Exits 0 on success regardless of findings; use --fail-on-flagged for CI fail-on-finding behavior.",
+      "Scan bundle .md files for structural issues (unquoted colons, missing updated field, orphaned stubs, placeholder stubs, missing name/type, stale paths, broken refs in body text and in refs/xrefs/supersededBy/contradictedBy frontmatter). Takes one file (`akm lint <file>`) or the whole bundle. Use --fix to auto-fix Tier 1 issues. Exits 0 on success regardless of findings; use --fail-on-flagged for CI fail-on-finding behavior.",
   },
   args: {
     // R-051: `lint` is a raw `defineCommand` (not `defineJsonCommand`), so it
@@ -154,6 +154,12 @@ export const lintCommand = defineCommand({
       description: "Apply auto-fixes in place (same as --fix)",
       default: false,
     },
+    file: {
+      type: "positional",
+      description:
+        "Lint just this file (e.g. `akm lint ./nightly.yml --type tasks`); needs --type when it is outside every bundle",
+      required: false,
+    },
     dir: { type: "string", description: "Override bundle root directory (default: from config)" },
     "fail-on-flagged": {
       type: "boolean",
@@ -172,7 +178,7 @@ export const lintCommand = defineCommand({
     },
     type: {
       type: "string",
-      description: "Only lint assets of this type (akm bundles only; e.g. workflows, tasks)",
+      description: "Only lint assets of this type (akm bundles only; e.g. workflows, tasks); with a file, its type",
       default: undefined,
     },
   },
@@ -181,6 +187,7 @@ export const lintCommand = defineCommand({
       const result = await akmLint({
         fix: args.fix === true || getHyphenatedBoolean(args, "auto-fix"),
         dir: getStringArg(args, "dir"),
+        file: getStringArg(args, "file"),
         typeFilter: getStringArg(args, "type"),
         pruneDanglingEdges: getHyphenatedBoolean(args, "prune-dangling-edges"),
       });

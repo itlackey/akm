@@ -658,7 +658,10 @@ export function runBaseChecks(ctx: LintContext): LintIssue[] {
   // single scalar (`lint_skip: missing-ref`). Non-string entries are coerced
   // and trimmed so loosely-typed YAML still gates correctly.
   const rawLintSkip = ctx.data?.lint_skip;
-  const lintSkip: string[] = (Array.isArray(rawLintSkip) ? rawLintSkip : rawLintSkip != null ? [rawLintSkip] : [])
+  const lintSkip: string[] = [
+    ...(ctx.lintSkip ?? []),
+    ...(Array.isArray(rawLintSkip) ? rawLintSkip : rawLintSkip != null ? [rawLintSkip] : []),
+  ]
     .map((v) => String(v).trim())
     .filter(Boolean);
   const shouldRun = (issueType: string) => !lintSkip.includes(issueType);

@@ -57,6 +57,8 @@ async function runCli(
       XDG_STATE_HOME: xdgState,
     },
     async () => {
+      // Reads never build the index: build it before a search or curate.
+      if (args[0] === "search" || args[0] === "curate") await runCliCapture(["index"]);
       const { code, stdout } = await runCliCapture(args);
       expect(code).toBe(0);
       return stdout.trim();

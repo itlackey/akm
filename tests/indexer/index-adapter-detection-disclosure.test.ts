@@ -136,11 +136,9 @@ test("akmIndex does not re-report a bundle whose adapter is already configured",
   expect(warnCalls.some((m) => m.includes("persisted to config.json"))).toBe(false);
 });
 
-test("an implicit auto-index still reports the write in the envelope but stays off stderr", async () => {
-  // A read command's inline auto-index must not print the disclosure notice:
-  // its stderr carries the JSON error envelope, so an extra human-readable
-  // line makes `JSON.parse(stderr)` fail for callers, and it would leak past
-  // `--quiet`. The structured disclosure is never lost — only the notice is
+test("an implicit index run still reports the write in the envelope but stays off stderr", async () => {
+  // An implicit run (improve's pre-run index) must not print the disclosure notice: an extra
+  // human-readable stderr line breaks callers that `JSON.parse(stderr)`, and would leak past `--quiet`. The structured disclosure is never lost — only the notice is
   // suppressed. Regression for two goldens (d-quiet-search, f-not-found) that
   // this notice broke when it fired unconditionally.
   writeSandboxConfig({
