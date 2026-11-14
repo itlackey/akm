@@ -285,6 +285,28 @@ describe("an embedding answer", () => {
     });
   });
 
+  test("the same endpoint, however it is spelled, keeps its spelling, key and label", () => {
+    const current = cfg({
+      embedding: {
+        endpoint: "https://emb.example.test/v1/embeddings",
+        model: "e5",
+        apiKey: "$EMB_KEY",
+        provider: "openai",
+        batchSize: 8,
+      },
+    });
+    const remodelled = applySetupAnswers(current, {
+      embedding: { kind: "endpoint", endpoint: "https://emb.example.test/v1", model: "bge" },
+    });
+    expect(remodelled.patch.embedding).toEqual({
+      endpoint: "https://emb.example.test/v1/embeddings",
+      model: "bge",
+      apiKey: "$EMB_KEY",
+      provider: "openai",
+      batchSize: 8,
+    });
+  });
+
   test("another endpoint replaces the target, drops the old key and label, and keeps the tuning", () => {
     const tuned = cfg({
       embedding: {

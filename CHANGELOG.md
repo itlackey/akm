@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261124] - 2026-11-14
+
+### Fixed
+
+- `akm show` beside a first `akm index` exited 70 (`no such table: entries`) when the build had created `index.db` but not its tables yet; the lookup now treats that like an index it cannot open and serves the asset from its file.
+
+## [0.10.261123] - 2026-11-14
+
+### Fixed
+
+- 0.10.261122 `show` served a file by its file-name spelling when the index had no row, for example `akm show tasks/nightly.yml`. It resolves from files only a ref that is the asset's concept ID (`tasks/nightly`, `knowledge/guide`, `knowledge/guide.md`), so any other spelling is refused again with or without an index row.
+
+## [0.10.261122] - 2026-11-14
+
 ### Added
 
 - AKM Desktop's library map answers four questions about the whole library, one view each: Contents (what is in it, by topic, with the searches that found nothing), Use (what is read and what is dead weight), Problems (what is outdated, disliked or duplicated) and Relations (how its topics link to each other, in 3D or flat). It replaces the point cloud of every asset, which showed none of these. The figures of each view are also in words beside it.
@@ -28,6 +42,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `akm setup` (and AKM Desktop) no longer turn an embedding endpoint given as its operation URL (`…/v1/embeddings`) into `…/v1/embeddings/v1`: an `/embeddings` URL is stored as its base, like a `/chat/completions` one, and Ollama's native `/api/embed` route is kept as typed. Choosing a model on the endpoint already configured keeps that endpoint as it is spelled, with its key and `provider`.
 - `akm index` no longer warns for every directory whose files the bundle's adapter does not treat as assets, such as a bundle-root README.md (about 1,000 lines on a full build of a large library). The line is shown with `--verbose`.
 - `akm setup` (and AKM Desktop) no longer discard the `embedding` block's other settings when the embedder changes. Where it runs (`endpoint`, `model`, `apiKey`, `provider`) is replaced; settings tied to the model (`dimension`, `queryTemplate`, `documentTemplate`) are kept only while the model is the same; every other key (`batchSize`, `timeoutMs`, `localModel`, …) is kept. The built-in embedder removes the block only when nothing is left in it.
 - An index build no longer spends most of its time rewriting utility scores one commit at a time. The recompute wrote each `utility_scores` row in its own transaction, one disk sync per row; it now writes them all in one, with identical values. On a 20,900-entry library this was about 43 of the 45 seconds of finalize (8,327 syncs, now 1); generating 3,000 rows and counting `fsync` calls gave 3,010 before and 1 after.

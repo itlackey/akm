@@ -128,4 +128,23 @@ describe("show from files and write-through use it", () => {
     expect(paths).toContain(dotfile);
     expect(paths).not.toContain(hidden);
   });
+
+  test("show refuses a file-name spelling of an asset, with or without an index row, and serves its concept ID", async () => {
+    write("knowledge/guide.md");
+    fs.mkdirSync(path.join(storage.stashDir, "tasks"));
+    fs.writeFileSync(path.join(storage.stashDir, "tasks", "nightly.yml"), "name: nightly\n");
+    const shown = async (ref: string) => {
+      const result = await runCliCapture(["show", ref, "--format=json"]);
+      return [ref, result.code, result.code === 0 ? JSON.parse(result.stdout).ref : result.stdout] as const;
+    };
+    const check = async () => {
+      expect(await shown("tasks/nightly.yml")).toEqual(["tasks/nightly.yml", 1, ""]);
+      expect(await shown("tasks/nightly")).toEqual(["tasks/nightly", 0, "tasks/nightly"]);
+      expect(await shown("knowledge/guide")).toEqual(["knowledge/guide", 0, "knowledge/guide"]);
+      expect(await shown("knowledge/guide.md")).toEqual(["knowledge/guide.md", 0, "knowledge/guide"]);
+    };
+    await check(); // no index row: served from files
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+    await check();
+  });
 });
