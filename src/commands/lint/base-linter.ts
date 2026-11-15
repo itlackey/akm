@@ -50,6 +50,7 @@ import {
   spliceFrontmatterLine,
 } from "../../core/asset/frontmatter";
 import { checkUnquotedDescriptionColon } from "../../core/asset/frontmatter-lint";
+import { findCurrentPathReferences, homeRootOf, stripTrailingSentencePunctuation } from "../../core/asset/lint-text";
 import { isArchivedRelPath } from "../../core/asset/memory-archive";
 import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
 import { localDateStamp } from "../../core/common";
@@ -156,46 +157,16 @@ function fixMissingUpdated(raw: string, mtime: Date): string {
 // ── stale-path helpers ────────────────────────────────────────────────────────
 
 /**
- * A path segment shaped like a run-time filename template rather than a
- * literal reference: `<timestamp>`-style angle brackets, `{stamp}`/`${VAR}`
- * braces, a `YYYYMMDD`/`HHMMSS`-style run of date-format letters, or a glob
- * character. Such a path never exists under its literal spelling, so
- * `stale-path` skips it instead of flagging it.
- */
-const PATH_PLACEHOLDER_PATTERN = /[<{]|[*?]|[YMDHS]{4,}/;
-
-/** A line that presents a path as a record of the past or as an illustration, not as guidance to follow. */
-const NON_CURRENT_LINE_PATTERN =
-  /\b(?:historical(?:ly)?|previously|formerly|originally|used to|moved from|archived|for example|for instance|sample|examples?)\b|\be\.g\./i;
-
-/** A heading whose section holds records or illustrations rather than current guidance. */
-const NON_CURRENT_HEADING_PATTERN = /^#{1,6}\s.*\b(?:history|changelog|archive|examples?)\b/i;
-
-/** True when the `/home/<user>` a path lives under does not exist here: the path belongs to another host or user. */
-function isOtherHostPath(candidate: string): boolean {
-  const home = candidate.match(/^\/home\/[^/]+/);
-  return home !== null && !fs.existsSync(home[0]);
-}
-
-/**
  * Absolute paths presented as current guidance that do not exist on this host.
- * Paths on lines or in sections that frame them as history or examples, and
- * paths under a home directory this host does not have, are not checked.
+ * Paths under a home directory this host does not have belong to another host
+ * or user and are not checked.
  */
 function checkStalePath(body: string): string[] {
-  const pathRe = /(?:\/home\/|\/tmp\/|\/var\/|\/root\/|\/opt\/)[^\s"'`)\]>,\n]+/g;
-  const stale: string[] = [];
-  let inNonCurrentSection = false;
-  for (const line of body.split(/\r?\n/)) {
-    if (/^#{1,6}\s/.test(line)) inNonCurrentSection = NON_CURRENT_HEADING_PATTERN.test(line);
-    if (inNonCurrentSection || NON_CURRENT_LINE_PATTERN.test(line)) continue;
-    for (const match of line.matchAll(pathRe)) {
-      const candidate = match[0].replace(/[.;:!?]+$/, "");
-      if (PATH_PLACEHOLDER_PATTERN.test(candidate) || isOtherHostPath(candidate)) continue;
-      if (!fs.existsSync(candidate)) stale.push(candidate);
-    }
-  }
-  return stale;
+  return findCurrentPathReferences(body).filter((candidate) => {
+    const home = homeRootOf(candidate);
+    if (home !== undefined && !fs.existsSync(home)) return false;
+    return !fs.existsSync(candidate);
+  });
 }
 
 // ── fence-strip helper ────────────────────────────────────────────────────────
@@ -379,7 +350,7 @@ function scanBundleRefs(scanBody: string, allRoots: string[]): Array<{ ref: stri
   let match: RegExpExecArray | null;
   // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic regex loop
   while ((match = re.exec(scanBody)) !== null) {
-    const token = match[1]!.replace(/[.;:!?]+$/, ""); // e.g. "core//memories/foo"
+    const token = stripTrailingSentencePunctuation(match[1]!); // e.g. "core//memories/foo"
     if (token.includes("$(") || token.includes("${") || token.includes("::")) continue;
     const boundary = token.indexOf("//");
     if (boundary < 0) continue;

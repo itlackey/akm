@@ -151,25 +151,34 @@ describe("agent-skills: a package directory with no SKILL.md is flagged (issue #
     expect(missing.map((issue) => issue.file).sort()).toEqual(["skills/incomplete", "skills/sec/half-built"]);
   });
 
-  test("akm adapter validate: a change under a grouped skill is covered by its own SKILL.md", async () => {
+  test.each([
+    ["covered change first", ["skills/personal/a/SKILL.md", "skills/personal/b/x.md"]],
+    ["incomplete change first", ["skills/personal/b/x.md", "skills/personal/a/SKILL.md"]],
+  ])("akm adapter validate: grouped skills are checked per child (%s)", async (_label, changed) => {
     storage = withIsolatedAkmStorage();
     const root = storage.stashDir;
-    write(root, "skills/personal/writer/SKILL.md", skillManifest("writer"));
-    write(root, "skills/personal/writer/reference/NOTES.md", "# Notes\n");
+    write(root, "skills/personal/a/SKILL.md", skillManifest("a"));
+    write(root, "skills/personal/b/x.md", "# X\n");
+
+    const seen = new Set<string>();
+    const ctx = createValidateContext({ root });
+    const diagnostics = (await Promise.all(changed.map((file) => skillDirectoryDiagnostics(file, seen, ctx)))).flat();
+
+    expect(diagnostics.map((d) => d.file)).toEqual(["skills/personal/b"]);
+  });
+
+  test("akm adapter validate: a plain skill dir without SKILL.md is reported once", async () => {
+    storage = withIsolatedAkmStorage();
+    const root = storage.stashDir;
     write(root, "skills/incomplete/notes.md", "# Notes\n");
+    write(root, "skills/incomplete/more.md", "# More\n");
 
-    const diagnostics = await skillDirectoryDiagnostics(
-      "skills/personal/writer/reference/NOTES.md",
-      new Set(),
-      createValidateContext({ root }),
-    );
-    const broken = await skillDirectoryDiagnostics(
-      "skills/incomplete/notes.md",
-      new Set(),
-      createValidateContext({ root }),
-    );
+    const seen = new Set<string>();
+    const ctx = createValidateContext({ root });
+    const first = await skillDirectoryDiagnostics("skills/incomplete/notes.md", seen, ctx);
+    const second = await skillDirectoryDiagnostics("skills/incomplete/more.md", seen, ctx);
 
-    expect(diagnostics).toEqual([]);
-    expect(broken.map((d) => d.file)).toEqual(["skills/incomplete"]);
+    expect(first.map((d) => d.file)).toEqual(["skills/incomplete"]);
+    expect(second).toEqual([]);
   });
 });

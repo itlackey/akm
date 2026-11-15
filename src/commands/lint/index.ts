@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   factDiagnostics,
+  MAX_SKILL_GROUP_DEPTH,
   matchWorkflowPlaceholder,
   memoryOrphanStubApplies,
   nameOrTypeDiagnostics,
@@ -472,9 +473,6 @@ function isFileDeletion(issue: LintIssue): boolean {
 // definition of each finding. The adapter never writes; the delete-fix for the
 // two stub types is applied HERE (a core/CLI concern), reproducing the old
 // MemoryLinter/WorkflowLinter `--fix` behavior byte-for-byte.
-
-/** How many directory levels below `skills/` a skill package may sit (`skills/<group>/<name>`). */
-const MAX_SKILL_GROUP_DEPTH = 3;
 
 /**
  * Reproduce `SkillLinter.lintDirectory`: a skill subdirectory with no
