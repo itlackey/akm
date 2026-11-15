@@ -214,4 +214,25 @@ describe("akm-task adapter validate() — malformed task YAML (issue #760)", () 
     const findings = result.flagged.filter((issue) => issue.file.endsWith("misnamed.yaml"));
     expect(findings.map((issue) => issue.issue)).toEqual(["invalid-task-yaml"]);
   });
+
+  test("sentence punctuation after a task ref is not part of the ref; a broken ref is still reported", async () => {
+    storage = withIsolatedAkmStorage();
+    writeTask(storage.stashDir, "learning.yml", VALID_TASK);
+    fs.mkdirSync(path.join(storage.stashDir, "knowledge"), { recursive: true });
+    fs.writeFileSync(
+      path.join(storage.stashDir, "knowledge", "note.md"),
+      "---\ndescription: Note\nupdated: 2026-01-01\n---\n\nSee core//tasks/learning. Also core//tasks/gone.\n",
+      "utf8",
+    );
+    writeTask(storage.stashDir, "other.yml", `${VALID_TASK}description: see core//tasks/learning.\n`);
+    writeTask(storage.stashDir, "broken.yml", `${VALID_TASK}description: see core//tasks/gone.\n`);
+
+    const result = await akmLint({ dir: storage.stashDir, config: makeConfig(storage.stashDir) });
+    const missing = result.flagged.filter((issue) => issue.issue === "missing-ref");
+
+    expect(missing.map((issue) => `${issue.file}: ${issue.detail}`).sort()).toEqual([
+      "knowledge/note.md: missing ref: core//tasks/gone (resolved to tasks/gone.md)",
+      "tasks/broken.yml: missing ref: core//tasks/gone (resolved to tasks/gone.md)",
+    ]);
+  });
 });

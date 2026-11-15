@@ -31,7 +31,7 @@ function renderTable(headers: string[], rows: string[][]): string {
  * Render `--detail per-run` rows as a TSV-ish aligned table. The column
  * shape is stable so repeated operator reports remain easy to compare.
  *
- * Columns: ts | ok | actions | refl_ok/fail/cd/skip |
+ * Columns: ts | ok | actions | refl_ok/fail/cd/skip/rej |
  *   distill_q/llm-fail/qrej/cfg/skip | cons_proc/promo/merge/del |
  *   mem_cons/written/nochange/skip | orphans | lint_f/fl
  */
@@ -41,7 +41,7 @@ export function renderRunsDetailMd(runs: ImproveRunSummary[]): string {
     "ok",
     "strategy",
     "actions",
-    "refl_ok/fail/cd/skip",
+    "refl_ok/fail/cd/skip/rej",
     "distill_q/llm-fail/judge/validator/cfg/skip",
     "cons_proc/promo/merge/del",
     "mem_cons/written/nochange/skip",
@@ -55,6 +55,7 @@ export function renderRunsDetailMd(runs: ImproveRunSummary[]): string {
       r.actions.reflect.failed +
       r.actions.reflect.cooldown +
       r.actions.reflect.skipped +
+      r.actions.reflect.rejected +
       r.actions.distill.queued +
       r.actions.distill.llmFailed +
       r.actions.distill.judgeRejected +
@@ -69,7 +70,7 @@ export function renderRunsDetailMd(runs: ImproveRunSummary[]): string {
       String(r.ok),
       r.strategy ?? "",
       String(totalActions),
-      `${r.actions.reflect.ok}/${r.actions.reflect.failed}/${r.actions.reflect.cooldown}/${r.actions.reflect.skipped}`,
+      `${r.actions.reflect.ok}/${r.actions.reflect.failed}/${r.actions.reflect.cooldown}/${r.actions.reflect.skipped}/${r.actions.reflect.rejected}`,
       `${r.actions.distill.queued}/${r.actions.distill.llmFailed}/${r.actions.distill.judgeRejected}/${r.actions.distill.validatorRejected}/${r.actions.distill.configDisabled}/${r.actions.distill.skipped}`,
       `${r.consolidation.processed}/${r.consolidation.promoted}/${r.consolidation.merged}/${r.consolidation.deleted}`,
       `${r.memoryInference.considered}/${r.memoryInference.written}/${r.memoryInference.noChange}/${r.memoryInference.skippedNoFacts}`,

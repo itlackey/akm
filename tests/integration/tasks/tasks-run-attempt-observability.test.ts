@@ -3,9 +3,12 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { shouldBypassConfigStartup } from "../../../src/cli";
+import { computeTaskWindowRates } from "../../../src/commands/health/windows";
 import { buildTaskRunId, openLogsDatabase, queryTaskLogs } from "../../../src/core/logs-db";
 import { openStateDatabase } from "../../../src/core/state-db";
 import type { SpawnFn } from "../../../src/core/subprocess";
@@ -15,7 +18,8 @@ import {
   getTaskHistoryRuns,
   reserveTaskHistoryAttempt,
 } from "../../../src/storage/repositories/task-history-repository";
-import { recordTaskAttemptFailure } from "../../../src/tasks/run/attempt-lifecycle";
+import { recordTaskAttemptFailure, reserveTaskAttempt } from "../../../src/tasks/run/attempt-lifecycle";
+import { reconcileAbandonedExecutionState } from "../../../src/tasks/run/reconcile-abandoned";
 import { runTask } from "../../../src/tasks/run/run-task";
 import { readTaskHistory } from "../../../src/tasks/run/task-history";
 import { runCliCapture } from "../../_helpers/cli";
@@ -366,5 +370,85 @@ describe("a failure before the task ran records how it was triggered", () => {
     } finally {
       stateDb.close();
     }
+  });
+});
+
+describe("abandoned task attempts", () => {
+  function statusOf(taskId: string): string | undefined {
+    const stateDb = openStateDatabase();
+    try {
+      return getTaskHistoryRuns(stateDb, taskId)[0]?.status;
+    } finally {
+      stateDb.close();
+    }
+  }
+
+  function seedActive(taskId: string, startedAt: string, owner?: Record<string, unknown>): void {
+    const stateDb = openStateDatabase();
+    try {
+      reserveTaskHistoryAttempt(stateDb, {
+        task_id: taskId,
+        status: "active",
+        started_at: startedAt,
+        completed_at: null,
+        failed_at: null,
+        log_path: null,
+        target_kind: null,
+        target_ref: null,
+        metadata_json: JSON.stringify({ metadataVersion: 2, durationMs: 0, detail: null, ...(owner ? { owner } : {}) }),
+      });
+    } finally {
+      stateDb.close();
+    }
+  }
+
+  test("a live owner's long-running attempt stays active", () => {
+    const attempt = reserveTaskAttempt("long-live", new Date(Date.now() - 6 * 3600_000));
+    expect(attempt.historyReserved).toBe(true);
+    reconcileAbandonedExecutionState();
+    expect(statusOf("long-live")).toBe("active");
+  });
+
+  test("an attempt whose owner process is gone becomes interrupted and keeps its row", () => {
+    const done = spawnSync(process.execPath, ["-e", "0"]);
+    const deadPid = done.pid;
+    const identity = { host: os.hostname(), bootId: fs.readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim() };
+    seedActive("crashed", new Date().toISOString(), { pid: deadPid, ...identity, startTime: "1" });
+    reconcileAbandonedExecutionState();
+    expect(statusOf("crashed")).toBe("interrupted");
+    const [shown] = readTaskHistory({ id: "crashed" });
+    expect(shown?.status).toBe("interrupted");
+    const stateDb = openStateDatabase();
+    const rows = getTaskHistoryRuns(stateDb, "crashed");
+    stateDb.close();
+    const rates = computeTaskWindowRates(rows, Date.now);
+    expect(rates.taskFailRate).toBe(0);
+    expect(rates.stuckActiveRuns).toBe(0);
+  });
+
+  test("an owner from an earlier boot is interrupted; an owner on another host is left active", () => {
+    seedActive("old-boot", new Date().toISOString(), {
+      pid: process.pid,
+      host: os.hostname(),
+      bootId: "older-boot",
+      startTime: "1",
+    });
+    seedActive("other-host", new Date().toISOString(), {
+      pid: 1,
+      host: "some-other-host-name",
+      bootId: "x",
+      startTime: "1",
+    });
+    reconcileAbandonedExecutionState();
+    expect(statusOf("old-boot")).toBe("interrupted");
+    expect(statusOf("other-host")).toBe("active");
+  });
+
+  test("an attempt without a recorded owner is interrupted only when it predates this boot", () => {
+    seedActive("pre-boot", "2001-01-01T00:00:00.000Z");
+    seedActive("post-boot", new Date().toISOString());
+    reconcileAbandonedExecutionState();
+    expect(statusOf("pre-boot")).toBe("interrupted");
+    expect(statusOf("post-boot")).toBe("active");
   });
 });

@@ -32,7 +32,8 @@ import type { runWorkflowSteps } from "../../workflows/exec/run-workflow";
 import type { ExecutionProvenanceContext, TaskInvocation } from "../model/invocation";
 import type { PreparedTaskV3Script, PreparedTaskV3Shell } from "../prepare/prepared-execution";
 
-export type TaskRunStatus = "completed" | "blocked" | "failed" | "active";
+/** `active` and `interrupted` occur only on stored history rows: an attempt in flight, and one whose owner is gone with no finish recorded. */
+export type TaskRunStatus = "completed" | "blocked" | "failed" | "active" | "interrupted";
 
 export type TaskAttemptFailureReason =
   | "invalid_task_id"
@@ -154,6 +155,8 @@ export function exitCodeForStatus(status: TaskRunStatus): number {
     case "blocked":
       return 1;
     case "failed":
+      return 1;
+    case "interrupted":
       return 1;
   }
 }

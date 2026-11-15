@@ -23,7 +23,7 @@ export const OUTCOME_LABEL: Record<Outcome, string> = {
 /** One kind of run and how its recorded runs ended, for the summary above the timeline. */
 export type OutcomeRow = { label: string; counts: Record<Outcome, number>; failed?: string[]; note?: string };
 
-/** A task or workflow run's recorded status. `blocked` and `active` have no end recorded, so they are unknown. */
+/** A task or workflow run's recorded status. `blocked`, `active` and `interrupted` have no end recorded, so they are unknown. */
 export function statusOutcome(status: string): Outcome {
   return status === "completed" ? "completed" : status === "failed" ? "failed" : "unknown";
 }

@@ -1870,6 +1870,9 @@ updates with its own release.
 
 `akm upgrade --next` means "newest available, prereleases included". The result
 carries `channel: "next"` (`"latest"` otherwise), plus the CLI's inferred `currentChannel` and each installed plugin's configured `channel` and `channelMismatch`.
+A plugin is updated, current within its configured channel, or skipped with the reason in its `message`; a channel is
+never switched without `--channel`. When a plugin's bundled akm differs from the CLI, its `message` also names the
+engine skew `akm health` reports. The text output, AKM Desktop and the scheduled version check show the same result.
 
 - **CLI.** The target is the `next` dist-tag of `akm-cli` (read from the npm
   registry, so it works for binary installs too) when that is newer than the
@@ -2608,12 +2611,14 @@ in order:
    rewritten every such key it can reach forgets the old engine names and adds one
    note to `assetEngineKeys.notes` listing each renamed engine and the flag that
    replaces it (see [The `engines` form](configuration.md#the-engines-form));
-5. refs in the text files akm indexes in writable bundles that still use the spelling from
+5. refs in the markdown and YAML files akm indexes in writable bundles that still use the spelling from
    before refs became bundle paths (`knowledge/WORK/x`, now `WORK/x`; #1432),
    in frontmatter and body: `[bundle//]<folder>/<path>[.md]`, `<type>:<path>`
    and `wiki:<path>`, rewritten (`assetContentRefs`) under one backup directory
    per run. An old spelling that is now another file's ref is not rewritten
-   and is listed in `assetContentRefs.shadowed`;
+   and is listed in `assetContentRefs.shadowed`. JSON, plain text, scripts and
+   other files are never read or rewritten, so frozen corpora and captured
+   results stay byte-for-byte, and a second run changes nothing;
 6. superseded residue removed (`deadResidue`): pre-0.9.0 `.akm` leftovers in
    the stash, and the transaction-journal, maintenance-barrier, lock-mutex and
    version-stamp files older releases kept under `$DATA`, `$STATE` and

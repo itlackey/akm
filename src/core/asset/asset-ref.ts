@@ -91,9 +91,10 @@ export function isBundleSlug(s: string): boolean {
  * leading boundary char (e.g. the `[` of a markdown link) is not absorbed into
  * the slug. The concept segment reuses the same terminator charset as the
  * body-ref scan (whitespace/quotes/brackets/comma/nl), and admits `/`,
- * `.`, and a trailing `#fragment`.
+ * `.`, and a trailing `#fragment`. Its last character is never sentence
+ * punctuation (`.;:!?`), so a ref that ends a sentence stops before the period.
  */
-export const BUNDLE_REF_RE = /(?:^|[\s`"'(,[])([^\s:.#/`"'()[\],<>]+\/\/[^\s"'`)\]>,\n]+)/gm;
+export const BUNDLE_REF_RE = /(?:^|[\s`"'(,[])([^\s:.#/`"'()[\],<>]+\/\/[^\s"'`)\]>,\n]*[^\s"'`)\]>,\n.;:!?])/gm;
 
 /** NFC-normalize + traversal/null-byte/drive-letter guard + path-normalize a concept id. */
 function normalizeConceptId(raw: string): string {
