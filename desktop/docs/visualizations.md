@@ -90,6 +90,15 @@ map. Choosing a type or tag (on the map or by keyboard) draws lines from it to e
 joined to, fades the rest, and opens its answers in the column beside the map; Escape closes them.
 `/library/map?select=<ref>` opens with that asset's tag chosen.
 
+When the index holds groups by meaning (`assets.graph` `groups`, stored by `akm index`), the map opens in 3D (Flat
+switches back to the mind map): every embedded asset is a point, coloured by its group, at the place `akm index` gave
+it, with groups alike in meaning near each other and each named by the tags its assets carry far more than the rest of
+the library. The column lists the groups when nothing is chosen. Choosing a group or a point flies to it, draws its
+links and near-duplicates, and opens the group's answers in the column; a chosen point also lists the assets it is
+joined to. Depth inside a group follows use: assets read lately sit at the front, those read earlier just ahead of the
+middle, and never-read, superseded, contradicted or deprecated ones at the back. The 3D view needs WebGL (three.js,
+`src/lib/SimilarityMap.svelte`).
+
 | View | Question | Tags drawn, ranked by | Lines from the chosen group | Beside the map |
 | --- | --- | --- | --- | --- |
 | Contents | What is in the library, and how does it connect? | assets | declared links and near-duplicates | what it is made of (bundles and types); how it connects; its most linked assets; other bundles that repeat it |
@@ -105,7 +114,7 @@ them: scheduled tasks and Improve are not counted. When no usage history is avai
 calling every asset unread.
 
 It reads `assets.graph`, `assets.searchMisses` and, on Closest, `assets.related`. The view model is
-`src/lib/library-overview.ts`; the drawing is SVG (`src/lib/MindMap.svelte`), and the page is `src/lib/LibraryMap.svelte`.
+`src/lib/library-overview.ts`; the flat drawing is SVG (`src/lib/MindMap.svelte`), and the page is `src/lib/LibraryMap.svelte`.
 
 | Limit | Why |
 | --- | --- |

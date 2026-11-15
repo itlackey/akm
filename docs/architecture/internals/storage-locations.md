@@ -55,9 +55,9 @@ filesystem (NFS, SMB/CIFS, 9p, CephFS, FUSE including virtiofs; Linux detection 
 ### `$DATA/index.db` (search index)
 
 A derived cache. `src/storage/repositories/index-schema.ts` (`ensureSchema`)
-creates ten tables: `index_meta`, `entries`, `entries_fts`, `entry_fragments`,
-`asset_links`, `embeddings`, `utility_scores`, `index_dir_state`,
-`llm_enrichment_cache`, and `registry_index_cache`.
+creates twelve tables: `index_meta`, `entries`, `entries_fts`, `entry_fragments`,
+`asset_links`, `embeddings`, `entry_layout`, `duplicate_pairs`, `utility_scores`,
+`index_dir_state`, `llm_enrichment_cache`, and `registry_index_cache`.
 
 The layout number is `index_meta.version`, currently 26
 (`CANONICAL_INDEX_DB_VERSION`, `src/storage/repositories/index-entry-schema.ts`).
@@ -164,6 +164,17 @@ unchanged input is a validated hit with no model call (`cacheHits`); the cached
 value is a derived memory or `{ "noChange": true }`, and an unrecognised or
 corrupt value falls through to a recompute (`src/indexer/passes/memory-inference.ts`,
 `src/indexer/db/llm-cache.ts`). `clearStaleCacheEntries` removes orphans.
+
+#### `entry_layout` and `duplicate_pairs`
+
+`entry_layout`: `entry_id` INTEGER PRIMARY KEY, `grp`, `x`, `y`, `z` (each
+embedded entry's group by meaning and place in 3D). `duplicate_pairs`: `rank`
+INTEGER PRIMARY KEY, `a`, `b` (entry ids), `cosine`. Derived from the stored
+vectors at the end of `akm index` and rewritten whole when they change
+(`src/storage/repositories/index-layout-repository.ts`); `index_meta.layoutKey`
+is the hash of the vectors they were computed from, and `layoutGroups`,
+`duplicateThreshold` and `duplicatesTruncated` describe them. `assets.graph`
+reads them.
 
 #### `utility_scores`
 

@@ -21,6 +21,7 @@ export interface OverviewPayload extends GraphPayload {
   };
   tags: string[];
   duplicates: { threshold: number; a: number[]; b: number[]; cosine: number[]; truncated: boolean } | null;
+  groups?: { count: number; group: number[]; x: number[]; y: number[]; z: number[] } | null;
 }
 
 export type View = "contents" | "use" | "problems";
@@ -77,6 +78,10 @@ export interface Overview {
   problems: Array<Problem[]>;
   /** Each declared link: from asset, to asset, and its kind's name. */
   links: Array<{ from: number; to: number; kind: string }>;
+  /** Each asset's group by meaning (-1: no embedding) and its place in 3D, three numbers per asset. */
+  group: Int32Array;
+  place: Float32Array;
+  groupCount: number;
   /** Duplicate pairs by asset index, most alike first. */
   duplicates: Array<{ a: number; b: number; cosine: number }>;
   duplicatesTruncated: boolean;
@@ -92,6 +97,48 @@ export function useClass(lastShownAt: string | null, modifiedAt: string | null, 
   const edited = modifiedAt ? Date.parse(modifiedAt) : Number.NaN;
   // An asset whose edit time cannot be read is not called new.
   return now - edited <= OLD_DAYS * DAY ? "new" : "unread";
+}
+
+/** How far forward (+1) or back (-1) in its group an asset sits: recent use in front, never read and outdated behind. */
+const DEPTH: Record<UseClass, number> = { recent: 1, earlier: 0.4, new: -0.7, unread: -0.7 };
+
+/**
+ * Each asset's place in 3D, three numbers per asset: akm's place by meaning, with the depth inside its group (z) set by
+ * use and state, so what is read lately sits at the front of a group and what was never read in the window, or is
+ * superseded, contradicted or deprecated, at the back. A fifth of the depth keeps akm's own z, so a group does not flatten into layers.
+ */
+function placeByUse(payload: OverviewPayload, use: Array<UseClass | null>, outdated: Uint8Array): Float32Array {
+  const g = payload.groups;
+  const n = payload.nodes.ref.length;
+  const place = new Float32Array(n * 3);
+  if (!g) return place;
+  const sum = new Map<number, { n: number; z: number; r: number[] }>();
+  for (let i = 0; i < n; i++) {
+    place.set([g.x[i]!, g.y[i]!, g.z[i]!], i * 3);
+    if (g.group[i]! < 0) continue;
+    const s = sum.get(g.group[i]!) ?? { n: 0, z: 0, r: [0, 0, 0] };
+    s.n++;
+    s.z += g.z[i]!;
+    s.r[0]! += g.x[i]!;
+    s.r[1]! += g.y[i]!;
+    sum.set(g.group[i]!, s);
+  }
+  const spread = new Map<number, number>();
+  for (let i = 0; i < n; i++) {
+    const s = sum.get(g.group[i]!);
+    if (!s) continue;
+    const d = Math.hypot(g.x[i]! - s.r[0]! / s.n, g.y[i]! - s.r[1]! / s.n, g.z[i]! - s.z / s.n);
+    spread.set(g.group[i]!, (spread.get(g.group[i]!) ?? 0) + (d * d) / s.n);
+  }
+  for (let i = 0; i < n; i++) {
+    const s = sum.get(g.group[i]!);
+    if (!s) continue;
+    const centre = s.z / s.n;
+    const radius = Math.sqrt(spread.get(g.group[i]!)!) || 1;
+    const depth = outdated[i] ? -1 : use[i] ? DEPTH[use[i]!] : 0;
+    place[i * 3 + 2] = centre + radius * (0.8 * depth) + 0.2 * (g.z[i]! - centre);
+  }
+  return place;
 }
 
 export function buildOverview(payload: OverviewPayload, now = Date.now()): Overview {
@@ -147,6 +194,9 @@ export function buildOverview(payload: OverviewPayload, now = Date.now()): Overv
       to: payload.links.to[e]!,
       kind: payload.kinds[payload.links.kind[e]!] ?? "",
     })),
+    group: payload.groups ? Int32Array.from(payload.groups.group) : new Int32Array(n).fill(-1),
+    place: placeByUse(payload, use, outdated),
+    groupCount: payload.groups?.count ?? 0,
     duplicates,
     duplicatesTruncated: payload.duplicates?.truncated ?? false,
     duplicateThreshold: payload.duplicates?.threshold ?? 0,
@@ -374,4 +424,74 @@ export function mindMap(
       untagged: members.length - drawn.size,
     };
   });
+}
+
+// ---- Groups by meaning ----
+
+export interface Group {
+  key: string;
+  id: number;
+  /** Its two most particular tags, or its largest asset type when its assets carry none. */
+  label: string;
+  members: number[];
+  /** The middle of its assets in 3D. */
+  centre: [number, number, number];
+}
+
+/**
+ * The groups by meaning among `scope`, largest first. A group is named by the tags its assets carry far more than the
+ * rest of the scope does (count in the group times the log of how rare the tag is in the scope), so a tag every asset
+ * carries names nothing; a third tag is added where two groups would share a name.
+ */
+export function groupsOf(o: Overview, scope: readonly number[]): Group[] {
+  const members = Array.from({ length: o.groupCount }, () => [] as number[]);
+  for (const i of scope) if (o.group[i]! >= 0) members[o.group[i]!]!.push(i);
+  const everywhere = new Map<number, number>();
+  for (const i of scope) for (const t of o.tags[i] ?? []) everywhere.set(t, (everywhere.get(t) ?? 0) + 1);
+  const found = members
+    .map((list, id) => {
+      const here = new Map<number, number>();
+      for (const i of list)
+        for (const t of o.tags[i] ?? []) if (isSubject(o.tagNames[t] ?? "")) here.set(t, (here.get(t) ?? 0) + 1);
+      const named = [...here]
+        .filter(([, n]) => n >= Math.max(2, list.length * 0.05))
+        .map(([t, n]) => ({ t, score: n * Math.log(scope.length / everywhere.get(t)!) }))
+        .sort((x, y) => y.score - x.score || x.t - y.t)
+        .slice(0, 3)
+        .map((x) => o.tagNames[x.t]!);
+      const types = tally(list, (i) => o.types[o.type[i]!]!, o.types);
+      const largest = o.types.slice().sort((x, y) => types[y]! - types[x]!)[0] ?? "";
+      const centre: [number, number, number] = [0, 0, 0];
+      for (const i of list) for (let d = 0; d < 3; d++) centre[d]! += o.place[i * 3 + d]! / list.length;
+      return { key: `g:${id}`, id, named, label: `${largest}, untagged`, members: list, centre };
+    })
+    .filter((g) => g.members.length)
+    .sort((x, y) => y.members.length - x.members.length || x.id - y.id);
+  // Two tags each; a third where two groups would otherwise share a name.
+  const twice = new Map<string, number>();
+  for (const g of found)
+    if (g.named.length)
+      twice.set(g.named.slice(0, 2).join(" · "), (twice.get(g.named.slice(0, 2).join(" · ")) ?? 0) + 1);
+  return found.map(({ named, ...g }) => ({
+    ...g,
+    label: named.length ? named.slice(0, twice.get(named.slice(0, 2).join(" · "))! > 1 ? 3 : 2).join(" · ") : g.label,
+  }));
+}
+
+/** The other groups the chosen one is joined to by declared links (of `linkKinds`, or any) and near-duplicates. */
+export function groupJoins(o: Overview, id: number, linkKinds: readonly string[] | null = null): Relation[] {
+  const counts = new Map<number, Relation>();
+  const add = (a: number, b: number, what: "links" | "duplicates") => {
+    const ga = o.group[a]!;
+    const gb = o.group[b]!;
+    if (ga < 0 || gb < 0 || ga === gb || (ga !== id && gb !== id)) return;
+    const other = ga === id ? gb : ga;
+    if (!counts.has(other)) counts.set(other, { key: `g:${other}`, links: 0, duplicates: 0 });
+    counts.get(other)![what]++;
+  };
+  for (const l of o.links) if (!linkKinds || linkKinds.includes(l.kind)) add(l.from, l.to, "links");
+  for (const d of o.duplicates) add(d.a, d.b, "duplicates");
+  return [...counts.values()].sort(
+    (x, y) => y.links + y.duplicates - (x.links + x.duplicates) || (x.key < y.key ? -1 : 1),
+  );
 }
