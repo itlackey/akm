@@ -36,7 +36,7 @@ export interface ImproveHealthMetrics {
   resultRows?: ImproveResultRowAccounting;
   /** `improve_runs.result_json.actions[]` outcomes by mode. */
   actions: {
-    reflect: { ok: number; failed: number; cooldown: number; skipped: number };
+    reflect: { ok: number; failed: number; cooldown: number; skipped: number; rejected: number };
     distill: {
       queued: number;
       llmFailed: number;

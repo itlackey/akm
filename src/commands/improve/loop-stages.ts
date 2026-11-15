@@ -229,13 +229,14 @@ async function runLoopReflectPass(planned: ImproveEligibleRef, env: ImproveLoopE
   const result = await attributeStage(resolvedPlan, "reflect", () => env.reflectFn(reflectArgs));
   const reason = result.ok ? undefined : result.reason;
   // A refused type or an unchanged asset is a deterministic skip, not an LLM
-  // fault; a guard rejection (size rail) gets its own bucket for health.
+  // fault; a guard or quality-judge rejection is a verdict on produced content,
+  // not an execution failure, and gets its own bucket for health.
   const skipped = reason === "unsupported_type" || reason === "no_change";
   tally.actions.push({
     ref: planned.ref,
     mode: result.ok
       ? "reflect"
-      : reason === "content_policy_reject"
+      : reason === "content_policy_reject" || reason === "quality_rejected"
         ? "reflect-guard-rejected"
         : skipped
           ? "reflect-skipped"
