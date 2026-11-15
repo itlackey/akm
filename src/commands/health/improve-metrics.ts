@@ -127,6 +127,8 @@ export function emptyImproveMetrics(): ImproveHealthMetrics {
       judgedNoAction: 0,
       failedChunks: 0,
       totalChunks: 0,
+      pairsJudged: 0,
+      failedPairs: 0,
       durationMs: 0,
     },
     memoryInference: {
@@ -243,6 +245,11 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
     cons.failedChunks += toFiniteNumber(consolidation.failedChunks);
     cons.totalChunks += toFiniteNumber(consolidation.totalChunks);
     cons.durationMs += toFiniteNumber(consolidation.durationMs);
+    const pairPass = consolidation.pairPass as Record<string, unknown> | undefined;
+    if (pairPass) {
+      cons.pairsJudged += toFiniteNumber(pairPass.pairsJudged);
+      cons.failedPairs += toFiniteNumber(pairPass.failedJudgments);
+    }
   }
 
   const memoryInference = result.memoryInference as Record<string, unknown> | undefined;
@@ -304,6 +311,8 @@ function mergeImproveMetrics(dst: ImproveHealthMetrics, src: ImproveHealthMetric
   dst.consolidation.judgedNoAction += src.consolidation.judgedNoAction;
   dst.consolidation.failedChunks += src.consolidation.failedChunks;
   dst.consolidation.totalChunks += src.consolidation.totalChunks;
+  dst.consolidation.pairsJudged += src.consolidation.pairsJudged;
+  dst.consolidation.failedPairs += src.consolidation.failedPairs;
   dst.consolidation.durationMs += src.consolidation.durationMs;
   dst.memoryInference.considered += src.memoryInference.considered;
   dst.memoryInference.freshAttempts += src.memoryInference.freshAttempts;
@@ -365,6 +374,7 @@ export function summarizeImproveRuns(
       perRow.actions.distill.llmFailed > 0 ||
       perRow.actions.error > 0 ||
       perRow.consolidation.failedChunks > 0 ||
+      perRow.consolidation.failedPairs > 0 ||
       perRow.memoryInference.skippedNoFacts > 0 ||
       (!interrupted && (!row.ok || terminationReason !== undefined))
     ) {

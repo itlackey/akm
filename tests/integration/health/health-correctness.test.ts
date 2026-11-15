@@ -207,6 +207,42 @@ describe("health reporting correctness", () => {
     });
   });
 
+  test("a completed consolidation with failed pair judgments warns and counts them", async () => {
+    improve("failed", now - 120_000, {
+      consolidation: {
+        schemaVersion: 1,
+        ok: true,
+        shape: "consolidate-result",
+        dryRun: false,
+        previewOnly: false,
+        target: "all",
+        processed: 0,
+        merged: 0,
+        deleted: 0,
+        promoted: [],
+        contradicted: 0,
+        failedChunks: 0,
+        totalChunks: 0,
+        pairPass: {
+          initiators: 5,
+          initiatorsBacklog: 0,
+          pairsJudged: 2,
+          labelCounts: { duplicate: 1, subsumed: 1, supersedes: 0, contradicts: 0, overlap: 0, unrelated: 0 },
+          retired: [],
+          failedJudgments: 3,
+        },
+        warnings: [],
+        durationMs: 10,
+      },
+    });
+    const result = await health();
+    expect(result.improve.consolidation).toMatchObject({ pairsJudged: 2, failedPairs: 3 });
+    expect(result.advisories.find((c) => c.name === "improve-failures")).toMatchObject({
+      status: "warn",
+      evidence: { failedRuns: 1, runIds: ["failed"] },
+    });
+  });
+
   test.each([
     "exception",
     "budget_exhausted",
