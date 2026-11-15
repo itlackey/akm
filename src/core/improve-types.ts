@@ -462,8 +462,26 @@ export interface ConsolidatePairPassResult {
   labelCounts: Record<ConsolidatePairJudgeLabel, number>;
   /** Retire proposal ids minted this run (or, in a dry run, `retiredRef -> successorRef` preview strings). */
   retired: string[];
-  /** Judge calls that failed or returned an unparseable verdict. */
+  /** Pairs that did not settle: transport error, unparseable verdict, cancellation or a failed mint. Retried next run; not a no-action verdict. */
   failedJudgments: number;
+  /** `failedJudgments` by kind; present only when some failed. */
+  failureKinds?: Partial<Record<PairFailureKind, number>>;
+  /** The first failed pairs (bounded), each with a clipped one-line reason; never a prompt or reply. */
+  failures?: PairFailure[];
+}
+
+/**
+ * Why a pair did not settle: `transport` (call error or timeout), `parse` (the
+ * verdict stayed unparseable after the corrective retry), `cancelled` (aborted
+ * or never sent), `other` (a post-verdict step failed).
+ */
+export type PairFailureKind = "transport" | "parse" | "cancelled" | "other";
+
+export interface PairFailure {
+  initiator: string;
+  other: string;
+  kind: PairFailureKind;
+  reason: string;
 }
 
 /**
