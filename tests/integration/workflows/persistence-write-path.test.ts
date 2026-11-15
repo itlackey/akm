@@ -10,6 +10,7 @@ import {
   withWorkflowRunsConnection,
   withWorkflowRunsRepo,
 } from "../../../src/storage/repositories/workflow-runs-repository";
+import { reconcileAbandonedExecutionState } from "../../../src/tasks/run/reconcile-abandoned";
 import { enqueueUnitWrite } from "../../../src/workflows/exec/unit-writer";
 import { completeWorkflowStep, getWorkflowStatus } from "../../../src/workflows/runtime/runs";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
@@ -422,4 +423,61 @@ describe("a big artifact survives both a live run and a resume (issue C fix)", (
     expect(status.workflow.steps[1]?.status).toBe("completed");
     expect(status.run.status).toBe("completed");
   }, 30_000);
+});
+
+describe("units under a terminal run", () => {
+  function reserve(unitId: string): void {
+    void withWorkflowRunsRepo((repo) =>
+      repo.reserveUnitAttempt({
+        runId: RUN_ID,
+        unitId,
+        stepId: "step-1",
+        nodeId: "n",
+        parentUnitId: null,
+        phase: "unit",
+        runner: "agent",
+        engine: null,
+        model: null,
+        inputHash: "h",
+        now: new Date().toISOString(),
+      }),
+    );
+  }
+
+  async function unitStatuses(): Promise<string[]> {
+    return withWorkflowRunsRepo((repo) => repo.getUnitsForRun(RUN_ID).map((u) => `${u.status}:${u.failure_reason}`));
+  }
+
+  test("a failed parent leaves no unit running", async () => {
+    reserve("u1");
+    await withWorkflowRunsRepo((repo) =>
+      repo.updateRunState({
+        status: "failed",
+        currentStepId: null,
+        updatedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+        runId: RUN_ID,
+      }),
+    );
+    expect(await unitStatuses()).toEqual(["failed:interrupted"]);
+  });
+
+  test("units left running under an already-failed parent are settled by reconcile", async () => {
+    reserve("u1");
+    const db = openStateDatabase();
+    try {
+      db.prepare("UPDATE workflow_runs SET status = 'failed' WHERE id = ?").run(RUN_ID);
+    } finally {
+      db.close();
+    }
+    expect(await unitStatuses()).toEqual(["running:null"]);
+    reconcileAbandonedExecutionState();
+    expect(await unitStatuses()).toEqual(["failed:interrupted"]);
+  });
+
+  test("an active parent's running unit is left alone", async () => {
+    reserve("u1");
+    reconcileAbandonedExecutionState();
+    expect(await unitStatuses()).toEqual(["running:null"]);
+  });
 });

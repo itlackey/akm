@@ -19,7 +19,9 @@
  * `detail.error` code). The comment on the set says why each code is reachable.
  */
 
+import os from "node:os";
 import { AkmError, rethrowIfTestIsolationError } from "../../core/errors";
+import { processIdentity } from "../../core/file-lock";
 import { withStateDb } from "../../core/state-db";
 import { reserveTaskHistoryAttempt } from "../../storage/repositories/task-history-repository";
 import { validateTaskId } from "../task-id";
@@ -49,7 +51,12 @@ export function reserveTaskAttempt(taskId: string, requestedStartedAt: Date): Re
           log_path: null,
           target_kind: null,
           target_ref: null,
-          metadata_json: JSON.stringify({ metadataVersion: 2, durationMs: 0, detail: null }),
+          metadata_json: JSON.stringify({
+            metadataVersion: 2,
+            durationMs: 0,
+            detail: null,
+            owner: { pid: process.pid, host: os.hostname(), ...processIdentity(process.pid) },
+          }),
         });
         if (reserved) return { startedAt, historyReserved: true };
       }
