@@ -1,6 +1,5 @@
 /**
- * `recomputeUtilityScores` writes every row (and its `last_utility_computed_at`
- * stamp) in one index.db transaction: same values as the per-row path, no
+ * `recomputeUtilityScores` writes every row in one index.db transaction: same values as the per-row path, no
  * partial write when one upsert fails, and the scoped call touches one row.
  */
 
@@ -77,26 +76,21 @@ describe("recomputeUtilityScores transaction", () => {
         expect(r.search_count).toBe(e?.search ?? -1);
         expect(r.show_count).toBe(e?.show ?? -1);
         expect(r.select_rate).toBeCloseTo(e?.rate ?? -1, 12);
-        // First run: elapsed days = 1, previous utility 0, so utility = rate * (1 - 0.7).
-        expect(r.utility).toBeCloseTo((e?.rate ?? 0) * 0.3, 12);
+        // First run: a new row starts at its rate.
+        expect(r.utility).toBeCloseTo(e?.rate ?? 0, 12);
       }
-      // Second run decays existing rows and still covers entries that have a row.
+      // A second run right after decays by the tiny elapsed time only.
       recomputeUtilityScores(db, stateDb);
       for (const r of rows(db)) {
-        const e = expected.get(r.entry_id);
-        const first = (e?.rate ?? 0) * 0.3;
-        expect(r.utility).toBeCloseTo(first * 0.7 + (e?.rate ?? 0) * 0.3, 6);
+        expect(r.utility).toBeCloseTo(expected.get(r.entry_id)?.rate ?? 0, 3);
       }
-      expect(
-        db.prepare("SELECT value FROM index_meta WHERE key = 'last_utility_computed_at'").get() ?? null,
-      ).not.toBeNull();
     } finally {
       closeDatabase(db);
       stateDb.close();
     }
   });
 
-  test("a failing upsert midway leaves no row and no stamp from the run", () => {
+  test("a failing upsert midway leaves no row from the run", () => {
     const { db, stateDb } = fixture();
     try {
       db.exec(`CREATE TRIGGER fail_midway BEFORE INSERT ON utility_scores
@@ -104,9 +98,6 @@ describe("recomputeUtilityScores transaction", () => {
         BEGIN SELECT RAISE(ABORT, 'injected'); END`);
       expect(() => recomputeUtilityScores(db, stateDb)).toThrow("injected");
       expect(rows(db)).toEqual([]);
-      expect(
-        db.prepare("SELECT value FROM index_meta WHERE key = 'last_utility_computed_at'").get() ?? null,
-      ).toBeNull();
     } finally {
       closeDatabase(db);
       stateDb.close();
@@ -120,9 +111,27 @@ describe("recomputeUtilityScores transaction", () => {
       recomputeUtilityScores(db, stateDb, target);
       const got = rows(db);
       expect(got.map((r) => r.entry_id)).toEqual([target]);
-      expect(
-        db.prepare("SELECT value FROM index_meta WHERE key = 'last_utility_computed_at'").get() ?? null,
-      ).toBeNull();
+    } finally {
+      closeDatabase(db);
+      stateDb.close();
+    }
+  });
+
+  test("many builds within a day apply about one day of decay in total", () => {
+    const { db, stateDb, ids, expected } = fixture();
+    try {
+      const target = ids.find((id) => (expected.get(id)?.rate ?? 0) > 0) as number;
+      const rate = expected.get(target)?.rate ?? 0;
+      recomputeUtilityScores(db, stateDb);
+      // Pretend the row was written a day ago and its usage has since vanished.
+      db.prepare("UPDATE utility_scores SET updated_at = datetime('now', '-1 day') WHERE entry_id = ?").run(target);
+      stateDb.exec("DELETE FROM usage_events");
+      recomputeUtilityScores(db, stateDb);
+      const oneDay = (rows(db).find((r) => r.entry_id === target) as { utility: number }).utility;
+      expect(oneDay).toBeCloseTo(rate * 0.7, 3);
+      for (let i = 0; i < 5; i++) recomputeUtilityScores(db, stateDb);
+      const after = (rows(db).find((r) => r.entry_id === target) as { utility: number }).utility;
+      expect(after).toBeCloseTo(oneDay, 3);
     } finally {
       closeDatabase(db);
       stateDb.close();

@@ -1943,7 +1943,7 @@ function readLookupEntry(db: Database, id: number, fallbackConceptId: string, so
  * Recompute utility scores based on usage_events data: every entry by default,
  * or just `onlyEntryId` (what `akm feedback` passes so the value it stores is
  * the one `akm index` would compute, not a second formula). A one-entry call
- * leaves the retention purge and the `last_utility_computed_at` watermark alone.
+ * leaves the retention purge alone.
  *
  * For each entry:
  *   - Count search appearances (event_type = 'search')
@@ -1965,19 +1965,6 @@ export function recomputeUtilityScores(db: Database, stateDb: Database, onlyEntr
   // Purge stale usage events (90-day retention). usage_events lives in state.db
   // (Chunk-8 WI-8.3); its table is created by state migration 020.
   if (!scoped) purgeOldUsageEvents(stateDb, USAGE_EVENT_RETENTION_DAYS);
-
-  // Decay is raised to the days since the last run, floored at one day. Every
-  // run therefore applies at least one full round of EMA decay (so runs less
-  // than a day apart each decay a full round), and a longer gap applies
-  // proportionally more rounds. The first run counts as one day.
-  const lastComputedAt = getMeta(db, "last_utility_computed_at");
-  let elapsedDays = 1; // default for first run
-  if (lastComputedAt) {
-    const ms = Date.now() - new Date(lastComputedAt).getTime();
-    elapsedDays = Math.max(1, ms / (1000 * 60 * 60 * 24));
-  }
-  const emaDecay = EMA_DECAY ** elapsedDays;
-  const emaNew = 1 - emaDecay; // complement so weights still sum to 1
 
   // Aggregate explicit user demand per `entry_ref` from state.db's usage_events
   // (the stable identity every event carries; search and curate telemetry hold
@@ -2033,18 +2020,19 @@ export function recomputeUtilityScores(db: Database, stateDb: Database, onlyEntr
   }
 
   // Batch-load existing utility scores
-  const existingScores = new Map<number, { utility: number; lastUsedAt: string | undefined }>();
+  const existingScores = new Map<number, { utility: number; updatedAt: string | null }>();
   const scoreRows = db
-    .prepare(`SELECT entry_id, utility, last_used_at FROM utility_scores${scoped ? " WHERE entry_id = ?" : ""}`)
+    .prepare(`SELECT entry_id, utility, updated_at FROM utility_scores${scoped ? " WHERE entry_id = ?" : ""}`)
     .all(...(scoped ? [onlyEntryId] : [])) as Array<{
     entry_id: number;
     utility: number;
-    last_used_at: string | null;
+    updated_at: string | null;
   }>;
   for (const row of scoreRows) {
-    existingScores.set(row.entry_id, { utility: row.utility, lastUsedAt: row.last_used_at ?? undefined });
+    existingScores.set(row.entry_id, { utility: row.utility, updatedAt: row.updated_at });
   }
 
+  const now = Date.now();
   const entryIds = new Set([...existingScores.keys(), ...usageByEntry.keys()]);
   // One transaction for every row: per-row autocommits cost one WAL sync each (~43 s of a 45 s finalize on a
   // 20,900-entry library). The reads above stay outside, so state.db is held no longer than before.
@@ -2064,8 +2052,15 @@ export function recomputeUtilityScores(db: Database, stateDb: Database, onlyEntr
         feedbackTotal > 0 ? Math.max(0, row.positive_feedback_count - row.negative_feedback_count) / feedbackTotal : 0;
       const effectiveRate = Math.max(selectRate, feedbackRate);
       const existing = existingScores.get(row.entry_id);
-      const prevUtility = existing?.utility ?? 0;
-      const utility = prevUtility * emaDecay + effectiveRate * emaNew;
+      // Decay by the time since this row was last written, so any number of builds
+      // in a day apply about one day of decay in total. A new row starts at its rate.
+      let utility = effectiveRate;
+      if (existing) {
+        const updatedMs = existing.updatedAt ? Date.parse(`${existing.updatedAt.replace(" ", "T")}Z`) : Number.NaN;
+        const elapsedDays = Number.isFinite(updatedMs) ? Math.max(0, (now - updatedMs) / 86_400_000) : 1;
+        const decay = EMA_DECAY ** elapsedDays;
+        utility = existing.utility * decay + effectiveRate * (1 - decay);
+      }
       // `utility_scores.last_used_at` is consumed by salience as the timestamp of
       // the most-recent retrieval. Preserve that meaning by carrying the event's
       // timestamp through verbatim. The former `effectiveRate > 0.5 ? now : ...`
@@ -2086,7 +2081,5 @@ export function recomputeUtilityScores(db: Database, stateDb: Database, onlyEntr
         lastUsedAt,
       });
     }
-
-    if (!scoped) setMeta(db, "last_utility_computed_at", new Date().toISOString());
   })();
 }

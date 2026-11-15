@@ -3,16 +3,36 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import assert from "node:assert/strict";
+import { writeFile } from "node:fs/promises";
+import path from "node:path";
 import { test } from "node:test";
 import { chromium, expect } from "@playwright/test";
-import { launchFixture, open } from "./support.mjs";
+import { akm, launchFixture, open } from "./support.mjs";
 
-// The replay and the library map: responses in the wrong order, no WebGL, the four views of the library map, and
-// leaving while a picture is moving.
-test("visualizations survive late responses, no WebGL, a changed library and an early exit", {
+// The replay and the library mind map: responses in the wrong order, the three views of the map, choosing a tag, a
+// library that is missing or empty, and a page that scrolls in one place only.
+const tagged = (title, tags, body) =>
+  `---\ntitle: ${title}\ndescription: Synthetic tagged reference\ntags: [${tags}]\n---\n# ${title}\n\n${body}\n`;
+
+test("visualizations survive late responses, a changed library and a narrow window", {
   timeout: 240000,
 }, async (t) => {
-  const server = await launchFixture({ metrics: true, similarity: true });
+  // The fixture's assets carry only the tags the maintenance references have, so tag a few for a map with several leaves.
+  const server = await launchFixture({
+    metrics: true,
+    similarity: true,
+    configureFixture: async (fixture) => {
+      const put = (file, text) => writeFile(path.join(fixture.root, "personal", file), text);
+      await put(
+        "knowledge/restore-laptop.md",
+        tagged("Restore a laptop", "backup, recovery", "Verify the checksum before restoring a backup."),
+      );
+      await put("memories/backup-preference.md", tagged("Backup preference", "backup, preferences", "Keep one copy."));
+      await put("knowledge/offsite-copy.md", tagged("Offsite copy", "backup, retention", "Keep a copy offsite."));
+      await put("knowledge/retention-policy.md", tagged("Retention policy", "retention, recovery", "Keep for a year."));
+      akm(fixture, ["index", "--full"]);
+    },
+  });
   t.after(() => server.stop());
   const browser = await chromium.launch({ headless: true });
   t.after(() => browser.close());
@@ -23,7 +43,7 @@ test("visualizations survive late responses, no WebGL, a changed library and an 
     await setup?.(page);
     return { page, errors };
   };
-  const slider = (page) => page.getByRole("slider", { name: "Time" });
+  const slider = (page) => page.getByRole("slider", { name: "Playhead" });
   const toEnd = (page) =>
     slider(page).evaluate((input) => {
       input.value = input.max;
@@ -106,28 +126,33 @@ test("visualizations survive late responses, no WebGL, a changed library and an 
     await page.close();
   });
 
-  await t.test("Replay: without WebGL the page says so, and Play still moves the clock", async () => {
-    const { page, errors } = await fresh((page) =>
-      page.addInitScript(() => {
-        const getContext = HTMLCanvasElement.prototype.getContext;
-        HTMLCanvasElement.prototype.getContext = function (kind, ...rest) {
-          return kind === "webgl2" ? null : getContext.call(this, kind, ...rest);
-        };
-      }),
-    );
-    await open(page, server, "/activity/replay");
-    await expect(page.getByText("The figures, the latest events and the timeline below still play.")).toBeVisible();
-    // The replay opens at the end; Play starts again from the beginning, so the clock drops, then moves forward.
-    const before = Number(await slider(page).inputValue());
-    await page.getByRole("combobox", { name: "Speed" }).selectOption({ label: "Fast (4×)" });
-    await page.getByRole("button", { name: "Play", exact: true }).click();
-    await expect.poll(async () => Number(await slider(page).inputValue())).toBeLessThan(before);
-    const first = Number(await slider(page).inputValue());
-    await expect.poll(async () => Number(await slider(page).inputValue())).toBeGreaterThan(first);
-    await page.getByRole("button", { name: "Pause", exact: true }).click();
-    assert.deepEqual(errors, []);
-    await page.close();
-  });
+  await t.test(
+    "Replay: Play starts again from the beginning and moves the clock; the timeline moves the playhead",
+    async () => {
+      const { page, errors } = await fresh();
+      await open(page, server, "/activity/replay");
+      await expect(slider(page)).toBeVisible();
+      const min = Number(await slider(page).getAttribute("min"));
+      const max = Number(await slider(page).getAttribute("max"));
+      // The replay opens at the end, so the button offers to play from the start.
+      const before = Number(await slider(page).inputValue());
+      await page.getByRole("combobox", { name: "Speed" }).selectOption({ label: "Fast (4×)" });
+      await page.getByRole("button", { name: "Play from start", exact: true }).click();
+      await expect.poll(async () => Number(await slider(page).inputValue())).toBeLessThan(before);
+      const first = Number(await slider(page).inputValue());
+      await expect.poll(async () => Number(await slider(page).inputValue())).toBeGreaterThan(first);
+      // Clicking the timeline seeks and pauses.
+      const timeline = page.locator(".timeline svg");
+      await expect(page.getByRole("button", { name: "Pause", exact: true })).toBeVisible();
+      const box = await timeline.boundingBox();
+      await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+      await expect(page.getByRole("button", { name: "Play", exact: true })).toBeVisible();
+      const middle = Number(await slider(page).inputValue());
+      assert.ok(Math.abs(middle - (min + max) / 2) < (max - min) * 0.05, `playhead ${middle} is not mid-window`);
+      assert.deepEqual(errors, []);
+      await page.close();
+    },
+  );
 
   await t.test("Replay: it opens at the end with full figures, and a new period reads only the events", async () => {
     const { page, errors } = await fresh();
@@ -144,13 +169,16 @@ test("visualizations survive late responses, no WebGL, a changed library and an 
       .poll(async () => Number(await slider(page).getAttribute("max")) - Number(await slider(page).inputValue()))
       .toBeLessThan(60_000);
     const replay = page.getByRole("region", { name: "Activity replay", exact: true });
-    await expect(replay.getByText("searches", { exact: true })).toBeVisible();
+    for (const figure of ["events", "reads", "searches", "found nothing", "feedback +/−", "assets used"])
+      await expect(replay.getByText(figure, { exact: true })).toBeVisible();
+    for (const list of ["Latest events", "Most used so far", "Searches that found nothing"])
+      await expect(replay.getByRole("heading", { name: list })).toBeVisible();
     await expect(replay).toContainText("Plays the whole period in about 1 minute");
     await expect(replay).toContainText("Tallest bar =");
     await page.getByRole("combobox", { name: "Period" }).selectOption("7d");
     await expect(slider(page)).toBeVisible();
     await toEnd(page);
-    await page.getByRole("button", { name: "Play", exact: true }).click();
+    await page.getByRole("button", { name: /^Play/ }).click();
     await page.waitForTimeout(500);
     await page.getByRole("button", { name: "Pause", exact: true }).click();
     assert.equal(requests.filter((r) => r.startsWith("/api/graph")).length, 1, requests.join(" "));
@@ -171,12 +199,13 @@ test("visualizations survive late responses, no WebGL, a changed library and an 
     await open(page, server, "/activity/replay");
     await expect(page.getByText("Synthetic: no index here.")).toBeVisible();
     await expect(page.getByText("assets used")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /^Play/ })).toBeDisabled();
     assert.deepEqual(errors, []);
     await page.close();
   });
 
-  // A library the page is given instead of the fixture's: two topics, an asset with no embedding, one link inside a
-  // topic and one across, and one of each problem.
+  // A library the page is given instead of the fixture's: two asset types carrying tags (some of them not subjects),
+  // one link, and one of each problem.
   const day = 86_400_000;
   const ago = (days) => new Date(Date.now() - days * day).toISOString();
   const mapPayload = {
@@ -185,9 +214,7 @@ test("visualizations survive late responses, no WebGL, a changed library and an 
     types: ["knowledge", "memory"],
     bundles: ["wiki", "notes"],
     beliefs: ["superseded"],
-    emptyBundles: [],
     use: { since: ago(90), source: "user" },
-    unresolvedLinks: 0,
     kinds: ["xref"],
     nodes: {
       ref: [
@@ -199,100 +226,170 @@ test("visualizations survive late responses, no WebGL, a changed library and an 
         "notes//memories/auth/f",
         "notes//memories/misc/g",
       ],
-      title: ["A", "B", "C", "D", "E", "F", "G"],
       type: [0, 0, 1, 0, 1, 1, 1],
       bundle: [0, 0, 1, 0, 1, 1, 1],
       belief: [-1, 0, -1, -1, -1, -1, -1],
       shows: [9, 0, 2, 0, 0, 1, 0],
-      searches: [0, 0, 0, 0, 0, 0, 0],
       lastShownAt: [ago(2), null, ago(60), null, null, ago(10), null],
       modifiedAt: [ago(5), ago(400), ago(30), ago(20), ago(500), ago(1), ago(900)],
       positive: [1, 0, 0, 0, 0, 0, 0],
       negative: [0, 0, 0, 2, 0, 0, 0],
-      topic: [0, 0, 0, 1, 1, 1, -1],
+      // deploy, auth, rollout; skill, creating, 2026, example.com and a1b2c3d4 name no subject and are not drawn.
+      tags: [[0, 2, 3, 4, 5], [0, 2, 6], [0, 7], [1], [1], [1, 3], []],
     },
     links: { from: [0, 2], to: [1, 3], kind: [0, 0] },
-    meaning: null,
-    topics: [
-      { label: "deploy · rollout", terms: ["deploy", "rollout"], size: 3, related: [{ topic: 1, cosine: 0.7 }] },
-      { label: "auth · token", terms: ["auth", "token"], size: 3, related: [{ topic: 0, cosine: 0.7 }] },
-    ],
+    tags: ["deploy", "auth", "rollout", "skill", "creating", "2026", "example.com", "a1b2c3d4"],
     duplicates: { threshold: 0.96, a: [3], b: [5], cosine: [0.98], truncated: false },
   };
   const withGraph = (page, payload = mapPayload) =>
     page.route("**/api/graph", (route) => route.fulfill({ json: { ok: true, data: payload } }));
   const tab = (page, name) => page.getByRole("tab", { name, exact: true });
   const figures = (page) => page.getByRole("complementary", { name: "Figures" });
+  const mapButton = (page, name) => page.locator(".mind-map").getByRole("button", { name, exact: true });
+  const consoleErrors = (page, errors) =>
+    page.on("console", (message) => message.type() === "error" && errors.push(message.text()));
+  /** Elements inside `selector` that scroll on their own: more than one scroller means a page you scroll twice. */
+  const innerScrollers = (page, selector) =>
+    page.evaluate((root) => {
+      const top = document.querySelector(root);
+      return [top, ...top.querySelectorAll("*")]
+        .filter((el) => {
+          const style = getComputedStyle(el);
+          return /auto|scroll/.test(style.overflowY) && el.scrollHeight > el.clientHeight + 1;
+        })
+        .map((el) => `${el.tagName.toLowerCase()}.${el.className}`);
+    }, selector);
 
-  await t.test("Library map: four views of the whole library, each with its figures in words", async () => {
+  const sideHeading = (page) => figures(page).getByRole("heading", { level: 2 });
+
+  await t.test("Library map: each view draws the tags its question is about, and the column answers it", async () => {
     const { page, errors } = await fresh((page) => withGraph(page));
     await open(page, server, "/library/map");
-    // Contents: what is in it, by topic, type and bundle.
+    // Contents: the largest tags, what the library is made of, and its most connected assets.
     await expect(tab(page, "Contents")).toHaveAttribute("aria-selected", "true");
     await expect(page.getByText("What is in the library?")).toBeVisible();
-    await expect(figures(page).locator(".stats")).toContainText("7assets");
-    await expect(figures(page).locator(".stats")).toContainText("3topics");
-    const rows = figures(page).locator("table.groups tbody tr");
-    await expect(rows).toHaveCount(3);
-    await expect(rows.nth(2)).toContainText("No embedding");
-    // Use: each asset in one class; the four add up to the library.
+    await expect(mapButton(page, "Knowledge: 3")).toBeVisible();
+    await expect(mapButton(page, "Memories and facts: 4")).toBeVisible();
+    await expect(mapButton(page, "auth (Memories and facts): 2")).toBeVisible();
+    await expect(mapButton(page, "rollout (Knowledge): 2")).toBeVisible();
+    // Tags that name no subject are not drawn.
+    await expect(
+      page.locator(".mind-map").getByRole("button", { name: /^(skill|creating|2026|example\.com)/ }),
+    ).toHaveCount(0);
+    await expect(sideHeading(page)).toHaveText("All bundles");
+    await expect(figures(page)).toContainText("7 assets");
+    const madeOf = figures(page).locator("section", { hasText: "What it is made of" });
+    await expect(madeOf).toContainText("notes4");
+    await expect(madeOf).toContainText("knowledge3");
+    const connected = figures(page).locator("section", { hasText: "Most connected" });
+    await expect(connected.locator(".read-row")).toHaveCount(4);
+    await expect(connected.locator(".read-row").first()).toContainText("knowledge/deploy/a1 link");
+    // Use: the most read tags with their reads; the most read assets and the ones never read, longest unchanged first.
     await tab(page, "Use").click();
     await expect(page.getByText("What is used, and what is dead weight?")).toBeVisible();
-    const legend = page.locator(".map-legend");
-    await expect(legend).toContainText("Read in the last 30 days2");
-    await expect(legend).toContainText("Read earlier in the window, not since1");
-    await expect(legend).toContainText("Not read, edited in the last 180 days1");
-    await expect(legend).toContainText("Not read, last edited over 180 days ago3");
-    // Problems: outdated, disliked and duplicated, with the pair named.
+    await expect(mapButton(page, "Knowledge: 9 reads")).toBeVisible();
+    await expect(mapButton(page, "deploy (Memories and facts): 2 reads")).toBeVisible();
+    // Knowledge's auth asset was never read, so the tag is not among the most read.
+    await expect(page.locator(".mind-map").getByRole("button", { name: /^auth \(Knowledge\)/ })).toHaveCount(0);
+    const mostRead = figures(page).locator("section", { hasText: "Most read" });
+    await expect(mostRead.locator(".read-row").first()).toContainText("knowledge/deploy/a9 reads");
+    const never = figures(page).locator("section", { hasText: "Never read" });
+    await expect(never.locator(".read-row").first()).toContainText("memories/misc/g");
+    await expect(never.locator(".read-row")).toHaveCount(4);
+    // Problems: the tags with problem assets, and what to fix.
     await tab(page, "Problems").click();
-    await expect(figures(page).locator(".stats")).toContainText("1outdated");
-    await expect(figures(page).locator(".stats")).toContainText("1disliked");
-    await expect(figures(page).locator(".stats")).toContainText("1duplicate pairs");
-    await expect(figures(page).locator(".pairs")).toContainText("wiki//knowledge/auth/d");
-    await expect(figures(page).locator(".pairs")).toContainText("notes//memories/auth/f");
-    // Relations: links inside and across topics, and the strongest pairs.
-    await tab(page, "Relations").click();
-    await expect(figures(page).locator(".stats")).toContainText("1links inside a part");
-    await expect(figures(page).locator(".stats")).toContainText("1links across parts");
-    await expect(figures(page)).toContainText("deploy · rollout ↔ auth · token");
-    await expect(page.getByRole("checkbox", { name: "Flat" })).toBeVisible();
+    await expect(page.getByText("What is wrong or duplicated?")).toBeVisible();
+    await expect(mapButton(page, "Knowledge: 2 problems")).toBeVisible();
+    await expect(mapButton(page, "auth (Memories and facts): 1 problem")).toBeVisible();
+    await expect(page.locator(".mind-map").getByRole("button", { name: /^deploy \(Memories and facts\)/ })).toHaveCount(
+      0,
+    );
+    const fix = figures(page).locator("section", { hasText: "What to fix" });
+    await expect(fix.locator("summary", { hasText: "Outdated but still here" })).toContainText("1");
+    await expect(fix).toContainText("knowledge/deploy/b");
+    await expect(fix.locator("summary", { hasText: "Near-duplicates inside" })).toContainText("1");
+    await expect(fix.locator("summary", { hasText: "Disliked" })).toContainText("1");
     assert.deepEqual(errors, []);
     await page.close();
   });
 
-  await t.test("Library map: choosing a topic opens its figures in every view; Escape closes them", async () => {
-    const { page, errors } = await fresh((page) => withGraph(page));
+  await t.test("Library map: choosing a tag draws what joins it and fills the column; Escape closes it", async () => {
+    const { page, errors } = await fresh(async (page) => {
+      await withGraph(page);
+      await page.route("**/api/asset/related**", (route) =>
+        route.fulfill({
+          json: {
+            ok: true,
+            data: {
+              available: true,
+              matches: [{ ref: "notes//memories/auth/f", title: "f", type: "memory", cosine: 0.91 }],
+            },
+          },
+        }),
+      );
+    });
     await open(page, server, "/library/map");
-    await figures(page).getByRole("button", { name: "auth · token", exact: true }).click();
-    const detail = figures(page).locator(".detail");
-    await expect(detail.getByRole("heading", { name: "auth · token" })).toBeVisible();
-    await expect(detail).toContainText("3 assets · about auth, token");
+    await mapButton(page, "auth (Knowledge): 1").click();
+    await expect(mapButton(page, "auth (Knowledge): 1")).toHaveAttribute("aria-pressed", "true");
+    await expect(sideHeading(page)).toHaveText("auth");
+    await expect(figures(page)).toContainText("Tag in Knowledge");
+    // c links to d, and d nearly duplicates f: two groups, two lines.
+    await expect(page.locator(".mind-map .relations path")).toHaveCount(2);
+    const joined = figures(page).locator(".joined");
+    await expect(joined).toContainText("auth · Memories and facts 1 duplicate");
+    await expect(joined).toContainText("deploy · Memories and facts 1 link");
+    // A joined group in the column is chosen in turn.
+    await joined.getByRole("button", { name: "auth · Memories and facts" }).click();
+    await expect(sideHeading(page)).toHaveText("auth");
+    await expect(figures(page)).toContainText("Tag in Memories and facts");
+    // Problems: the pair with the other bundle, compared in one click, and the bundle that repeats it.
     await tab(page, "Problems").click();
-    await expect(detail).toContainText("knowledge/auth/d");
-    await expect(detail).toContainText("more negative feedback than positive");
-    await tab(page, "Relations").click();
-    await expect(detail).toContainText("Linked with");
-    await expect(detail.getByRole("button", { name: "deploy · rollout" }).first()).toBeVisible();
+    const elsewhere = figures(page).locator("details", { hasText: "Near-duplicates elsewhere" });
+    await elsewhere.locator("summary").click();
+    await expect(elsewhere.getByRole("link", { name: "Compare" })).toHaveAttribute("href", /compare=.*compare=/);
+    await expect(figures(page).locator("section", { hasText: "Repeated in other bundles" })).toContainText(
+      "wiki1 near-duplicate pair",
+    );
+    // Use: the closest content to a read asset, by embedding.
+    await tab(page, "Use").click();
+    await figures(page).getByRole("button", { name: "Closest" }).first().click();
+    await expect(figures(page).locator(".near")).toContainText("memories/auth/f0.91");
     await page.keyboard.press("Escape");
-    await expect(detail).toHaveCount(0);
+    await expect(sideHeading(page)).toHaveText("All bundles");
+    await expect(page.locator(".mind-map .relations path")).toHaveCount(0);
+    // One bundle: the map and the column follow it.
+    await page.getByRole("combobox", { name: /^Bundle/ }).selectOption({ label: "notes" });
+    await expect(sideHeading(page)).toHaveText("notes");
+    await expect(figures(page)).toContainText("4 assets");
+    await expect(page.locator(".mind-map").getByRole("button", { name: /^Knowledge/ })).toHaveCount(0);
     assert.deepEqual(errors, []);
     await page.close();
   });
 
-  await t.test("Library map: ?select= opens that asset's topic, and an unknown asset is named", async () => {
+  await t.test("Library map: ?select= opens that asset's tag, and an unknown asset is named", async () => {
     const { page } = await fresh((page) => withGraph(page));
     await open(page, server, `/library/map?select=${encodeURIComponent("notes//memories/auth/e")}`);
-    await expect(figures(page).locator(".detail").getByRole("heading", { name: "auth · token" })).toBeVisible();
+    await expect(sideHeading(page)).toHaveText("auth");
+    await expect(mapButton(page, "auth (Memories and facts): 2")).toHaveAttribute("aria-pressed", "true");
     await page.goto(`${server.origin}/library/map?select=${encodeURIComponent("wiki//knowledge/missing")}`);
     await expect(page.getByText("No asset “wiki//knowledge/missing” is in the library.")).toBeVisible();
     await page.close();
   });
 
-  await t.test("Library map: without embeddings the fixture library is grouped by folder, and says why", async () => {
+  await t.test("Library map: the fixture library draws its tags, with no errors and one scroller", async () => {
     const { page, errors } = await fresh();
+    consoleErrors(page, errors);
     await open(page, server, "/library/map");
-    await expect(figures(page).locator(".stats")).toContainText("folders");
-    await expect(figures(page)).toContainText("No embeddings, so the library is grouped by folder.");
+    await expect(sideHeading(page)).toHaveText("All bundles");
+    // The tagged knowledge assets: recovery on the restore guide and the policy, retention on the policy and the copy note.
+    await expect(mapButton(page, "recovery (Knowledge): 2")).toBeVisible();
+    await expect(mapButton(page, "retention (Knowledge): 2")).toBeVisible();
+    assert.ok((await page.locator(".mind-map").getByRole("button").count()) >= 5);
+    assert.deepEqual(await innerScrollers(page, ".map-page"), []);
+    for (const name of ["Use", "Problems", "Contents"]) {
+      await tab(page, name).click();
+      assert.deepEqual(await innerScrollers(page, ".map-page"), [], name);
+    }
     assert.deepEqual(errors, []);
     await page.close();
   });
@@ -310,7 +407,7 @@ test("visualizations survive late responses, no WebGL, a changed library and an 
         kinds: [],
         nodes: Object.fromEntries(Object.keys(mapPayload.nodes).map((column) => [column, []])),
         links: { from: [], to: [], kind: [] },
-        topics: [],
+        tags: [],
         duplicates: null,
       };
       {
@@ -326,8 +423,8 @@ test("visualizations survive late responses, no WebGL, a changed library and an 
       {
         const { page, errors } = await fresh((page) => withGraph(page, empty));
         await open(page, server, "/library/map");
-        await expect(figures(page).locator(".stats")).toContainText("0assets");
-        for (const name of ["Use", "Problems", "Relations", "Contents"]) await tab(page, name).click();
+        await expect(figures(page)).toContainText("0 assets");
+        for (const name of ["Use", "Problems", "Contents"]) await tab(page, name).click();
         assert.deepEqual(errors, []);
         await page.close();
       }
@@ -344,59 +441,99 @@ test("visualizations survive late responses, no WebGL, a changed library and an 
         await expect(page.getByRole("alert")).toContainText("Synthetic: the graph failed.");
         fail = false;
         await page.getByRole("button", { name: "Retry" }).click();
-        await expect(figures(page).locator(".stats")).toContainText("7assets");
+        await expect(figures(page)).toContainText("7 assets");
         await expect(page.getByRole("alert")).toHaveCount(0);
         await page.close();
       }
     },
   );
 
-  await t.test("Library map: without WebGL the page says so and the figures are all still there", async () => {
-    const { page } = await fresh(async (page) => {
-      await withGraph(page);
-      await page.addInitScript(() => {
-        const getContext = HTMLCanvasElement.prototype.getContext;
-        HTMLCanvasElement.prototype.getContext = function (kind, ...rest) {
-          return kind === "webgl2" || kind === "webgl" ? null : getContext.call(this, kind, ...rest);
-        };
-      });
-    });
-    await open(page, server, "/library/map");
-    await expect(page.getByText(/This view needs WebGL/)).toBeVisible();
-    await expect(figures(page).locator(".stats")).toContainText("7assets");
-    await page.close();
-  });
-
-  await t.test("Library map: leaving while the 3D view turns leaves nothing running", async () => {
-    const { page, errors } = await fresh((page) => withGraph(page));
-    await open(page, server, "/library/map");
-    await tab(page, "Relations").click();
-    await page.waitForTimeout(800);
-    await page
-      .getByRole("navigation", { name: "Library views" })
-      .getByRole("link", { name: "Search", exact: true })
-      .click();
-    await expect(page).toHaveURL(/\/library\/search/);
-    await page.waitForTimeout(1500);
-    assert.deepEqual(errors, []);
-    await page.close();
-  });
-
   await t.test(
-    "Library map: at phone width the page does not scroll sideways and the picture keeps its height",
+    "Library map: at phone width the page does not scroll sideways and the map stays inside it",
     async () => {
       const { page, errors } = await fresh(async (page) => {
         await page.setViewportSize({ width: 390, height: 844 });
         await withGraph(page);
       });
       await open(page, server, "/library/map");
-      await expect(tab(page, "Relations")).toBeVisible();
+      await expect(tab(page, "Problems")).toBeVisible();
+      await expect(mapButton(page, "Knowledge: 3")).toBeVisible();
       const sideways = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       assert.ok(sideways <= 1, `the page scrolls ${sideways}px sideways`);
-      const stage = await page.locator(".map-stage").boundingBox();
-      assert.ok(stage && stage.height > 250, `the picture is ${stage?.height}px tall`);
+      const map = await page.locator(".mind-map").boundingBox();
+      assert.ok(
+        map && map.x >= 0 && map.x + map.width <= 391,
+        `the map spans ${map?.x} to ${map && map.x + map.width}`,
+      );
       assert.deepEqual(errors, []);
       await page.close();
     },
   );
+
+  // The replay's mind map counts the events on the assets the period touched: reads on e, f and a, and a search that
+  // hit a (part of its search, not an event of its own).
+  await t.test("Replay: the map counts events on each type and tag up to the playhead", async () => {
+    const hours = (h) => new Date(Date.now() - h * 3_600_000).toISOString();
+    const { page, errors } = await fresh(async (page) => {
+      await withGraph(page);
+      await page.route("**/api/events?since=24h", (route) =>
+        route.fulfill({
+          json: {
+            ok: true,
+            data: {
+              available: true,
+              truncated: false,
+              window: { since: hours(24), until: hours(0) },
+              events: [
+                { id: 1, at: hours(3), eventType: "show", ref: "notes//memories/auth/e", source: "user" },
+                { id: 2, at: hours(2), eventType: "show", ref: "notes//memories/auth/f", source: "user" },
+                {
+                  id: 3,
+                  at: hours(1.5),
+                  eventType: "search",
+                  ref: "wiki//knowledge/deploy/a",
+                  query: "ship",
+                  source: "user",
+                },
+                { id: 4, at: hours(1), eventType: "show", ref: "wiki//knowledge/deploy/a", source: "user" },
+              ],
+            },
+          },
+        }),
+      );
+    });
+    consoleErrors(page, errors);
+    await open(page, server, "/activity/replay");
+    const replay = page.getByRole("region", { name: "Activity replay", exact: true });
+    await expect(mapButton(page, "auth (Memories and facts): 2 events")).toBeVisible();
+    await expect(mapButton(page, "deploy (Knowledge): 1 event")).toBeVisible();
+    await expect(replay.locator(".root")).toContainText("3 events");
+    await expect(replay.getByText("Where the events landed, by type and tag")).toBeVisible();
+    await expect(replay).toContainText("read notes//memories/auth/e");
+    await mapButton(page, "auth (Memories and facts): 2 events").click();
+    await expect(mapButton(page, "auth (Memories and facts): 2 events")).toHaveAttribute("aria-pressed", "true");
+    // At the start of the period nothing has happened yet.
+    await slider(page).evaluate((input) => {
+      input.value = input.min;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await expect(mapButton(page, "auth (Memories and facts)")).toBeVisible();
+    await expect(replay.locator(".root")).not.toContainText("3 events");
+    assert.deepEqual(errors, []);
+    await page.close();
+  });
+
+  await t.test("Replay: the fixture's events draw with no console errors and one scroller", async () => {
+    const { page, errors } = await fresh();
+    consoleErrors(page, errors);
+    await open(page, server, "/activity/replay");
+    await expect(slider(page)).toBeVisible();
+    await expect(mapButton(page, "recovery (Knowledge): 2 events")).toBeVisible();
+    assert.deepEqual(await innerScrollers(page, ".replay"), []);
+    await page.getByRole("combobox", { name: "Period" }).selectOption("7d");
+    await expect(slider(page)).toBeVisible();
+    assert.deepEqual(await innerScrollers(page, ".replay"), []);
+    assert.deepEqual(errors, []);
+    await page.close();
+  });
 });

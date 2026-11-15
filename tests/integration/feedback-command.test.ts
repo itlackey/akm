@@ -534,8 +534,12 @@ describe("akm feedback", () => {
       const stateDb = openStateDatabase();
       try {
         const entryId = (db.prepare("SELECT id FROM entries LIMIT 1").get() as { id: number }).id;
+        // A score last written a day ago, so the recompute decays it by one day (EMA weight 0.3 on the new rate).
         const seed = (): void => {
           upsertUtilityScore(db, entryId, { utility: 0.6, showCount: 0, searchCount: 0, selectRate: 0 });
+          db.prepare("UPDATE utility_scores SET updated_at = datetime('now', '-1 day') WHERE entry_id = ?").run(
+            entryId,
+          );
         };
         seed();
 
@@ -555,7 +559,8 @@ describe("akm feedback", () => {
         const fromIndex = getUtilityScore(db, entryId)?.utility;
 
         expect(fromIndex).toBeDefined();
-        expect(fromFeedback).toBe(fromIndex as number);
+        // The two recomputes run moments apart, so their elapsed days differ in the last digits.
+        expect(fromFeedback).toBeCloseTo(fromIndex as number, 6);
         // Not the retired bounded-step EMA (0.64 / 0.54 from a 0.6 start).
         expect(fromFeedback).toBeCloseTo(signal === "positive" ? 0.72 : 0.42, 2);
       } finally {

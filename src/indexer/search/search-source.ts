@@ -262,24 +262,33 @@ export function resolveEntryContentDir(entry: SourceConfigEntry): string | undef
  * corrupting origin / editability / provenance decisions for the affected files.
  */
 export function findSourceForPath(filePath: string, sources: SearchSource[]): SearchSource | undefined {
-  const longest = (within: (base: string) => boolean): SearchSource | undefined => {
-    let best: SearchSource | undefined;
-    let bestLen = -1;
-    for (const source of sources) {
-      const base = path.resolve(source.path);
-      if (base.length > bestLen && within(base)) {
-        best = source;
-        bestLen = base.length;
-      }
-    }
-    return best;
-  };
-  const resolved = path.resolve(filePath);
-  // Paths from the index and the sources share one spelling; a caller's may not (a symlinked library).
+  // A caller's path may spell the library another way (a symlink); only then are real paths compared.
   return (
-    longest((base) => resolved.startsWith(base + path.sep)) ??
-    longest((base) => relativeToRoot(resolved, base) !== undefined)
+    findSourceForIndexedPath(filePath, sources) ??
+    longestSource(sources, (base) => relativeToRoot(filePath, base) !== undefined)
   );
+}
+
+/**
+ * {@link findSourceForPath} for a path read from the index. The index and the sources both store the library's real
+ * path, so the spelling is compared and nothing is read from disk: filtering every index row stays fast.
+ */
+export function findSourceForIndexedPath(filePath: string, sources: SearchSource[]): SearchSource | undefined {
+  const resolved = path.resolve(filePath);
+  return longestSource(sources, (base) => resolved.startsWith(base + path.sep));
+}
+
+function longestSource(sources: SearchSource[], within: (base: string) => boolean): SearchSource | undefined {
+  let best: SearchSource | undefined;
+  let bestLen = -1;
+  for (const source of sources) {
+    const base = path.resolve(source.path);
+    if (base.length > bestLen && within(base)) {
+      best = source;
+      bestLen = base.length;
+    }
+  }
+  return best;
 }
 
 // ── Editability ─────────────────────────────────────────────────────────────

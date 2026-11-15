@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261126] - 2026-11-15
+
+### Changed
+
+- AKM Desktop's library map is a mind map: the library, its asset types, and the tags each type's assets carry most, every label drawn, with a bar under each tag for its figure in the view. Contents, Use and Problems each draw the tags their question is about (by size, by reads, by problems), for all bundles or the one picked. Choosing a type or tag draws lines to every group its assets link to or nearly duplicate, and the column beside the map answers the view's question for it: what it is made of and its most linked assets; what is read, never read and searched for without a result; what is outdated, duplicated or disliked; and which other bundles repeat it. Every listed asset can show its closest assets by content, with a Compare link. It replaces the topic circles of 0.10.261125, whose topic names were word pairs from paths, and drops the Relations view. The map and the replay no longer need WebGL.
+- AKM Desktop's activity replay is a timeline: events per kind stacked over the period with a playhead you click or drag, the mind map of the assets the period touched counting the events on each type and tag, and a log of the latest events. A curate counts as a search, and its results as that search's hits. It replaces the point cloud with flying pulses and the per-agent lanes.
+- `akm-cli/workspace`: `assets.graph()` returns each asset's own tags (`nodes.tags`, indexes into a new `tags` list, lower case); it no longer returns `meaning`, `topics`, `nodes.topic`, `nodes.title`, `nodes.searches`, `emptyBundles` or `unresolvedLinks`. `duplicates` stays.
+
+### Fixed
+
+- AKM Desktop's library map no longer shows "This view needs WebGL" after the pointer leaves an item, and the map and replay pages scroll as one page instead of a side panel scrolling inside a scrolling page.
+- Matching indexed files to their bundle (curate, related, `search --from`, AKM Desktop's library map) no longer resolves real paths on disk for files outside the enabled bundles: the index and the sources both store real paths, so the spelling is compared. Since 0.10.261125 this added about 3.6 seconds to each library map read on a library of 20,000 indexed files.
+- Each index build no longer applies a full day of decay to utility scores: a score now decays by the time since it was last written, so many builds in a day decay it about one day in total, and a new score starts at its select or feedback rate (itlackey/akm#1659).
+
 ## [0.10.261125] - 2026-11-14
 
 ### Added
