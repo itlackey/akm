@@ -44,7 +44,7 @@ describe("stale-path skips run-time filename templates (#927)", () => {
 
   test("a genuinely missing literal path is still reported", () => {
     storage = withIsolatedAkmStorage();
-    const issues = staleIssues(storage, "Write to /home/founder3/akm/reports/portfolio-review-final.md.");
+    const issues = staleIssues(storage, `Write to ${storage.stashDir}/reports/portfolio-review-final.md.`);
     expect(issues.length).toBe(1);
     expect(issues[0]?.detail).toContain("portfolio-review-final");
   });
@@ -52,5 +52,28 @@ describe("stale-path skips run-time filename templates (#927)", () => {
   test("an existing literal path is not reported", () => {
     storage = withIsolatedAkmStorage();
     expect(staleIssues(storage, `Read from \`${storage.stashDir}\` for config.`)).toEqual([]);
+  });
+
+  test("sentence punctuation after a path is not part of it", () => {
+    storage = withIsolatedAkmStorage();
+    expect(staleIssues(storage, `Read from ${storage.stashDir}.`)).toEqual([]);
+  });
+
+  test.each([
+    ["historical wording", "Historically the run wrote to /tmp/akm-5-gone/out.md."],
+    ["example wording", "For example, copy it to /tmp/akm-5-gone/out.md."],
+    ["other-host home", "Config lives at /home/akm-5-nobody/.config/x.json."],
+  ])("%s is not current guidance", (_label, body) => {
+    storage = withIsolatedAkmStorage();
+    expect(staleIssues(storage, body)).toEqual([]);
+  });
+
+  test("a historical section and a current section are told apart", () => {
+    storage = withIsolatedAkmStorage();
+    const issues = staleIssues(
+      storage,
+      "## History\n\nWrote /tmp/akm-5-gone/old.md.\n\n## Usage\n\nWrite to /tmp/akm-5-gone/current.md.\n",
+    );
+    expect(issues.map((issue) => issue.detail)).toEqual(["nonexistent path: /tmp/akm-5-gone/current.md"]);
   });
 });

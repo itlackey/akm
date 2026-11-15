@@ -21,8 +21,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { akmLint } from "../src/commands/lint/index";
 import { agentSkillsAdapter } from "../src/core/adapter/adapters/agent-skills-adapter";
+import { skillDirectoryDiagnostics } from "../src/core/adapter/adapters/akm-lint";
 import { detectAdapterId } from "../src/core/adapter/detect-adapter";
 import { createValidateContext } from "../src/core/adapter/validate-context";
+import { makeConfig } from "./_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
 
 function write(root: string, relPath: string, content: string): void {
@@ -130,5 +132,44 @@ describe("agent-skills: a package directory with no SKILL.md is flagged (issue #
     );
 
     expect(diagnostics.filter((d) => d.issue === "missing-skill-md")).toEqual([]);
+  });
+
+  test("akm lint: grouping directories are clean, a manifest-less skill still flagged", async () => {
+    storage = withIsolatedAkmStorage();
+    const root = storage.stashDir;
+
+    write(root, "skills/personal/writer/SKILL.md", skillManifest("writer"));
+    write(root, "skills/personal/writer/reference/NOTES.md", "# Notes\n");
+    write(root, "skills/sec/audit/SKILL.md", skillManifest("audit"));
+    write(root, "skills/solo/SKILL.md", skillManifest("solo"));
+    write(root, "skills/sec/half-built/reference/NOTES.md", "# Notes\n");
+    write(root, "skills/incomplete/notes.md", "# Notes\n");
+
+    const result = await akmLint({ dir: root, config: makeConfig(root) });
+    const missing = result.flagged.filter((issue) => issue.issue === "missing-skill-md");
+
+    expect(missing.map((issue) => issue.file).sort()).toEqual(["skills/incomplete", "skills/sec/half-built"]);
+  });
+
+  test("akm adapter validate: a change under a grouped skill is covered by its own SKILL.md", async () => {
+    storage = withIsolatedAkmStorage();
+    const root = storage.stashDir;
+    write(root, "skills/personal/writer/SKILL.md", skillManifest("writer"));
+    write(root, "skills/personal/writer/reference/NOTES.md", "# Notes\n");
+    write(root, "skills/incomplete/notes.md", "# Notes\n");
+
+    const diagnostics = await skillDirectoryDiagnostics(
+      "skills/personal/writer/reference/NOTES.md",
+      new Set(),
+      createValidateContext({ root }),
+    );
+    const broken = await skillDirectoryDiagnostics(
+      "skills/incomplete/notes.md",
+      new Set(),
+      createValidateContext({ root }),
+    );
+
+    expect(diagnostics).toEqual([]);
+    expect(broken.map((d) => d.file)).toEqual(["skills/incomplete"]);
   });
 });

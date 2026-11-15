@@ -6,8 +6,17 @@ import { describe, expect, test } from "bun:test";
 import { checkUnquotedDescriptionColon } from "../src/core/asset/frontmatter-lint";
 
 describe("checkUnquotedDescriptionColon", () => {
-  test("flags a plain colon-bearing description", () => {
-    expect(checkUnquotedDescriptionColon("description: Proposal lint:blocks invalid output.")).toContain(
+  test("accepts plain descriptions whose colons are valid YAML (URLs, scope:name)", () => {
+    expect(checkUnquotedDescriptionColon("description: See https://example.com/docs for details.")).toBeNull();
+    expect(checkUnquotedDescriptionColon("description: Needs the admin:snapshot scope.")).toBeNull();
+  });
+
+  test("a colon-bearing description is not blamed for malformed YAML elsewhere", () => {
+    expect(checkUnquotedDescriptionColon("description: See https://example.com\ntags: [unclosed")).toBeNull();
+  });
+
+  test("flags a wrapped plain description whose continuation is malformed", () => {
+    expect(checkUnquotedDescriptionColon("description: See https://example.com\n  and more: text")).toContain(
       "unquoted colon",
     );
   });

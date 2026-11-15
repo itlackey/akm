@@ -211,8 +211,12 @@ export async function skillDirectoryDiagnostics(
   const skillDir = `${segments[0]}/${segments[1]}`;
   if (seen.has(skillDir)) return [];
   seen.add(skillDir);
-  const skillMd = await ctx.readFile(`${skillDir}/SKILL.md`);
-  if (skillMd !== null) return [];
+  // A grouping directory (`skills/<group>/<name>/SKILL.md`) owns no manifest of
+  // its own; the change is covered when any directory above it has one.
+  for (let depth = segments.length - 1; depth >= 2; depth--) {
+    const skillMd = await ctx.readFile(`${segments.slice(0, depth).join("/")}/SKILL.md`);
+    if (skillMd !== null) return [];
+  }
   return [{ file: skillDir, issue: "missing-skill-md", detail: `no SKILL.md in ${skillDir}/`, fixed: false }];
 }
 

@@ -164,16 +164,35 @@ function fixMissingUpdated(raw: string, mtime: Date): string {
  */
 const PATH_PLACEHOLDER_PATTERN = /[<{]|[*?]|[YMDHS]{4,}/;
 
+/** A line that presents a path as a record of the past or as an illustration, not as guidance to follow. */
+const NON_CURRENT_LINE_PATTERN =
+  /\b(?:historical(?:ly)?|previously|formerly|originally|used to|moved from|archived|for example|for instance|sample|examples?)\b|\be\.g\./i;
+
+/** A heading whose section holds records or illustrations rather than current guidance. */
+const NON_CURRENT_HEADING_PATTERN = /^#{1,6}\s.*\b(?:history|changelog|archive|examples?)\b/i;
+
+/** True when the `/home/<user>` a path lives under does not exist here: the path belongs to another host or user. */
+function isOtherHostPath(candidate: string): boolean {
+  const home = candidate.match(/^\/home\/[^/]+/);
+  return home !== null && !fs.existsSync(home[0]);
+}
+
+/**
+ * Absolute paths presented as current guidance that do not exist on this host.
+ * Paths on lines or in sections that frame them as history or examples, and
+ * paths under a home directory this host does not have, are not checked.
+ */
 function checkStalePath(body: string): string[] {
   const pathRe = /(?:\/home\/|\/tmp\/|\/var\/|\/root\/|\/opt\/)[^\s"'`)\]>,\n]+/g;
-  let match: RegExpExecArray | null;
   const stale: string[] = [];
-  // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic regex loop
-  while ((match = pathRe.exec(body)) !== null) {
-    const candidate = match[0];
-    if (PATH_PLACEHOLDER_PATTERN.test(candidate)) continue;
-    if (!fs.existsSync(candidate)) {
-      stale.push(candidate);
+  let inNonCurrentSection = false;
+  for (const line of body.split(/\r?\n/)) {
+    if (/^#{1,6}\s/.test(line)) inNonCurrentSection = NON_CURRENT_HEADING_PATTERN.test(line);
+    if (inNonCurrentSection || NON_CURRENT_LINE_PATTERN.test(line)) continue;
+    for (const match of line.matchAll(pathRe)) {
+      const candidate = match[0].replace(/[.;:!?]+$/, "");
+      if (PATH_PLACEHOLDER_PATTERN.test(candidate) || isOtherHostPath(candidate)) continue;
+      if (!fs.existsSync(candidate)) stale.push(candidate);
     }
   }
   return stale;
@@ -193,6 +212,19 @@ function stripFencedBlocks(body: string): string {
     for (let i = start; i <= end; i++) lines[i] = "";
   }
   return lines.join("\n");
+}
+
+/**
+ * `raw` without fenced code blocks, inline code spans, double-quoted text and
+ * blockquote lines: places where `[REDACTED]` is documented or quoted as an
+ * example rather than left behind by damaged content.
+ */
+function stripQuotedExamples(raw: string): string {
+  return stripFencedBlocks(raw)
+    .split("\n")
+    .filter((line) => !/^\s*>/.test(line))
+    .join("\n")
+    .replace(/`[^`\n]*`|"[^"\n]*"|\u201c[^\u201d\n]*\u201d/g, "");
 }
 
 // ── missing-ref helpers ───────────────────────────────────────────────────────
@@ -347,7 +379,7 @@ function scanBundleRefs(scanBody: string, allRoots: string[]): Array<{ ref: stri
   let match: RegExpExecArray | null;
   // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic regex loop
   while ((match = re.exec(scanBody)) !== null) {
-    const token = match[1]!; // e.g. "core//memories/foo"
+    const token = match[1]!.replace(/[.;:!?]+$/, ""); // e.g. "core//memories/foo"
     if (token.includes("$(") || token.includes("${") || token.includes("::")) continue;
     const boundary = token.indexOf("//");
     if (boundary < 0) continue;
@@ -666,7 +698,7 @@ export function runBaseChecks(ctx: LintContext): LintIssue[] {
     .filter(Boolean);
   const shouldRun = (issueType: string) => !lintSkip.includes(issueType);
 
-  if (shouldRun("redacted-content") && containsRedactedContent(currentRaw)) {
+  if (shouldRun("redacted-content") && containsRedactedContent(stripQuotedExamples(currentRaw))) {
     issues.push({
       file: ctx.relPath,
       issue: "redacted-content",
