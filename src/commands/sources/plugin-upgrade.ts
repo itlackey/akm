@@ -28,6 +28,7 @@ import { detectOpencodeMajor, OPENCODE_BIN, resolveOpencodeBin } from "../../int
 import { isExactSemver, isPrerelease } from "../../registry/semver";
 import { semverOrder } from "../../runtime";
 import type { PluginUpgradeEntry, UpgradeChannel, UpgradeCheckResponse, UpgradeResponse } from "../../sources/types";
+import { collectPluginStalenessAdvisories } from "../health/plugin-staleness";
 import {
   ChannelWriteError,
   claudeChannelEdits,
@@ -665,6 +666,26 @@ export function upgradePlugins(opts: {
   }));
 }
 
+const SKEW_ADVISORY_HARNESS: Record<string, PluginUpgradeEntry["harness"]> = {
+  "plugin-version": "claude-code",
+  "opencode-plugin-version": "opencode",
+  "opencode-v2-plugin-version": "opencode-v2",
+};
+
+/** Adds the `akm health` verdict to a plugin whose bundled akm-cli differs from the CLI, so the upgrade names the skew it leaves. */
+function withEngineSkew(entries: PluginUpgradeEntry[], cliVersion: string): PluginUpgradeEntry[] {
+  const skew = new Map<string, string>();
+  // Codex records no engine version, so its reader (a `codex plugin list` spawn) is skipped.
+  for (const advisory of collectPluginStalenessAdvisories({ cliVersion, probe: false, readCodex: () => undefined })) {
+    const harness = SKEW_ADVISORY_HARNESS[advisory.name];
+    if (advisory.status === "warn" && harness && !skew.has(harness)) skew.set(harness, advisory.message);
+  }
+  return entries.map((entry) => {
+    const note = skew.get(entry.harness);
+    return note ? { ...entry, message: `${entry.message ? `${entry.message}; ` : ""}engine skew: ${note}` } : entry;
+  });
+}
+
 export interface UpgradeRunDependencies {
   checkForUpdate: (
     currentVersion: string,
@@ -937,7 +958,10 @@ export async function runUpgrade(
       mode: "check",
       result: {
         ...check,
-        plugins: upgradePlugins({ dryRun: true, next, openCode, channel: switchChannel, currentChannel }),
+        plugins: withEngineSkew(
+          upgradePlugins({ dryRun: true, next, openCode, channel: switchChannel, currentChannel }),
+          currentVersion,
+        ),
       },
     };
   }
@@ -980,14 +1004,17 @@ export async function runUpgrade(
       failed: true,
     };
   }
-  const plugins = upgradePlugins({
-    dryRun: false,
-    next,
-    openCode,
-    channel: switchChannel,
-    keep,
-    currentChannel: upgraded.upgraded ? (isPrerelease(upgraded.newVersion) ? "next" : "latest") : currentChannel,
-  });
+  const plugins = withEngineSkew(
+    upgradePlugins({
+      dryRun: false,
+      next,
+      openCode,
+      channel: switchChannel,
+      keep,
+      currentChannel: upgraded.upgraded ? (isPrerelease(upgraded.newVersion) ? "next" : "latest") : currentChannel,
+    }),
+    upgraded.upgraded ? upgraded.newVersion : currentVersion,
+  );
   const result = {
     ...upgraded,
     channel,

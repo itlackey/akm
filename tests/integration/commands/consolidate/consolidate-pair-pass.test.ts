@@ -41,6 +41,7 @@ import { getDbPath } from "../../../../src/core/paths";
 import { openStateDatabase } from "../../../../src/core/state-db";
 import type { IndexDocument } from "../../../../src/indexer/passes/metadata";
 import { insertUsageEvent } from "../../../../src/indexer/usage/usage-events";
+import { LlmCallError } from "../../../../src/llm/client";
 import {
   getImproveLedgerRow,
   recordImproveLedger,
@@ -326,6 +327,78 @@ describe("complete retirement evidence (#1195)", () => {
     await expect(akmProposalAccept({ stashDir: storage.stashDir, id, config })).rejects.toThrow();
     expect(getProposal(storage.stashDir, id).status).toBe("pending");
     expect(paths.map((file) => fs.readFileSync(file, "utf8"))).toEqual(raw);
+  });
+});
+
+describe("pair judgment failures are retained and retried", () => {
+  /** Five pairs, each its own cluster (axis vectors and their diagonal); both notes of a pair share a vector. */
+  const clusters = [
+    [1, 0, 0, 0],
+    [0, 1, 0, 0],
+    [0, 0, 1, 0],
+    [0, 0, 0, 1],
+    [0.5, 0.5, 0.5, 0.5],
+  ];
+  const kinds = ["settled", "no-action", "parse", "transport", "cancelled"] as const;
+
+  function plantPairs(): void {
+    const db = openIndexDatabase(getDbPath());
+    try {
+      kinds.forEach((kind, i) => {
+        for (const side of ["x", "y"]) {
+          const name = `${kind}-${side}`;
+          const file = writeAsset(`memories/${name}.md`, `description: ${kind} pair`, `Distinct body for ${name}.\n`);
+          dateAsset(file, side === "x" ? 3 : 1);
+          const id = indexAsset(db, "memory", name, file, 0);
+          upsertEmbedding(db, id, clusters[i]!);
+        }
+      });
+    } finally {
+      closeDatabase(db);
+    }
+  }
+
+  const mixedChat: PairJudgeChat = async (connection, messages) => {
+    const prompt = messages.at(-1)!.content;
+    if (!isJudgeCall(messages)) return fixedChat({})(connection, messages);
+    if (prompt.includes("Ref: memories/no-action-"))
+      return fixedChat({ onlyInA: ["a"], onlyInB: ["b"] })(connection, messages);
+    if (prompt.includes("Ref: memories/parse-")) return "not json at all SECRET-PROMPT-ECHO";
+    if (prompt.includes("Ref: memories/transport-"))
+      throw new Error("ECONNRESET from https://llm.example/v1 while sending the prompt");
+    if (prompt.includes("Ref: memories/cancelled-")) throw new LlmCallError("request aborted", "aborted");
+    return fixedChat({})(connection, messages);
+  };
+
+  test("mixed fixture: coverage counts, classified bounded reasons, failed initiators unsettled", async () => {
+    plantPairs();
+    const warnings: string[] = [];
+    const config = makeConfig(storage.stashDir);
+    const result = await runConsolidatePairPass(baseOpts(), config, storage.stashDir, "stash", warnings, {
+      chat: mixedChat,
+    });
+    expect(result.pairsConsidered).toBe(5);
+    expect(result.pairsJudged).toBe(2);
+    expect(result.failedJudgments).toBe(3);
+    expect(result.retired).toHaveLength(1);
+    expect(result.failureKinds).toEqual({ parse: 1, transport: 1, cancelled: 1 });
+    const byKind = Object.fromEntries(result.failures!.map((f) => [f.kind, f]));
+    expect(byKind.parse!.initiator).toMatch(/^memories\/parse-/);
+    expect(byKind.transport!.reason).toContain("ECONNRESET");
+    expect(byKind.transport!.reason).not.toContain("https://");
+    for (const f of result.failures!) expect(f.reason.length).toBeLessThanOrEqual(160);
+    expect(JSON.stringify(result.failures)).not.toContain("SECRET-PROMPT-ECHO");
+    expect(warnings.join("\n")).toMatch(/3 of 5 pair judgments did not settle \(parse 1, transport 1, cancelled 1\)/);
+    // A failed pair's initiator has no ledger row (so the pair is retried); settled and no-action ones do.
+    const stateDb = openStateDatabase();
+    try {
+      const row = (name: string) =>
+        getImproveLedgerRow(stateDb, storage.stashDir, `memories/${name}`, "consolidate-pair");
+      for (const name of ["settled", "no-action"]) expect(row(`${name}-x`)).toBeDefined();
+      for (const failure of result.failures!) expect(row(failure.initiator.replace("memories/", ""))).toBeUndefined();
+    } finally {
+      stateDb.close();
+    }
   });
 });
 

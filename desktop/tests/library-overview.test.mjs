@@ -8,6 +8,8 @@ import {
   buildOverview,
   DAY,
   groupFacts,
+  groupJoins,
+  groupsOf,
   mindMap,
   OLD_DAYS,
   OUTDATED_LINKS,
@@ -239,4 +241,55 @@ test("mind map: a tag carried by one asset of a big type is not a leaf", () => {
     beliefs: [],
   };
   assert.deepEqual(labels(mindMap(buildOverview(big, now))), [["f0", "Knowledge", 10, ["shared"]]]);
+});
+
+/** The same assets placed by meaning: deploy's three in group 0, auth's three in group 1, g not embedded. */
+const placed = {
+  ...payload,
+  groups: {
+    count: 2,
+    group: [0, 0, 0, 1, 1, 1, -1],
+    x: [0, 2, -2, 50, 52, 48, 0],
+    y: [0, 1, -1, 0, 1, -1, 0],
+    z: [0, 0, 0, 10, 10, 10, 0],
+  },
+};
+
+test("groups by meaning: named by the tags they carry most particularly, largest first, an asset with no group in none", () => {
+  const o = buildOverview(placed, now);
+  const groups = groupsOf(o, [0, 1, 2, 3, 4, 5, 6]);
+  assert.deepEqual(
+    groups.map((g) => [g.key, g.label, g.members]),
+    [
+      ["g:0", "deploy · rollout", [0, 1, 2]],
+      ["g:1", "auth", [3, 4, 5]],
+    ],
+  );
+  assert.deepEqual(
+    groupsOf(o, [3, 6]).map((g) => g.members),
+    [[3]],
+  );
+  // No groups in the payload: every asset is ungrouped.
+  assert.deepEqual(groupsOf(buildOverview(payload, now), [0, 1, 2]), []);
+});
+
+test("group joins: links and near-duplicates across groups, or only the given link kinds", () => {
+  const o = buildOverview(placed, now);
+  // c→d crosses from deploy to auth; d and f nearly duplicate inside auth.
+  assert.deepEqual(groupJoins(o, 0), [{ key: "g:1", links: 1, duplicates: 0 }]);
+  assert.deepEqual(groupJoins(o, 1), [{ key: "g:0", links: 1, duplicates: 0 }]);
+  // e's contradiction of f stays inside auth.
+  assert.deepEqual(groupJoins(o, 1, OUTDATED_LINKS), []);
+});
+
+test("depth in a group: read lately in front, read earlier ahead of the middle, never read and outdated behind", () => {
+  const o = buildOverview(placed, now);
+  const z = (i) => o.place[i * 3 + 2];
+  // a read lately, c read earlier, b superseded.
+  assert.ok(z(0) > z(2) && z(2) > z(1));
+  // f read lately; d never read (edited lately); e contradicted.
+  assert.ok(z(5) > z(3) && z(3) > z(4));
+  assert.ok(z(3) < 10 && z(5) > 10);
+  // x and y stay akm's.
+  assert.deepEqual([o.place[3 * 3], o.place[3 * 3 + 1]], [50, 0]);
 });

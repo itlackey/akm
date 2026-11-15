@@ -327,6 +327,25 @@ function applySchema(db: Database): void {
     if (fingerprint) db.prepare("UPDATE embeddings SET model = ? WHERE model IS NULL").run(fingerprint);
   }
 
+  // The library's layout by meaning and its near-duplicate pairs, rewritten whole at the end of a build whose vectors
+  // changed (index-layout-repository.ts).
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS entry_layout (
+      entry_id INTEGER PRIMARY KEY,
+      grp      INTEGER NOT NULL,
+      x        REAL NOT NULL,
+      y        REAL NOT NULL,
+      z        REAL NOT NULL,
+      FOREIGN KEY (entry_id) REFERENCES entries(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS duplicate_pairs (
+      rank   INTEGER PRIMARY KEY,
+      a      INTEGER NOT NULL,
+      b      INTEGER NOT NULL,
+      cosine REAL NOT NULL
+    );
+  `);
+
   // Utility scores (aggregated per-entry utility metrics) — a regenerable
   // cache recomputed from state.db's usage_events on every index run.
   db.exec(`

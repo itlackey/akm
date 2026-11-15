@@ -685,7 +685,8 @@ function formatUpgradePluginLines(r: Record<string, unknown>): string[] {
     const versions = p.from && p.to && p.from !== p.to ? ` v${p.from} → v${p.to}` : "";
     const channel = p.channel ? ` [channel ${p.channel}${p.channelMismatch ? "; differs from CLI" : ""}]` : "";
     const note = p.message ? ` (${p.message})` : "";
-    lines.push(`${HARNESS_LABELS[String(p.harness)] ?? p.harness} plugin ${p.outcome}${versions}${channel}${note}`);
+    const outcome = p.outcome === "current" && p.channel ? "current within its configured channel" : p.outcome;
+    lines.push(`${HARNESS_LABELS[String(p.harness)] ?? p.harness} plugin ${outcome}${versions}${channel}${note}`);
   }
   return lines;
 }

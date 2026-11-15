@@ -202,7 +202,8 @@ them, in column form, so 30,000 assets stay a few megabytes:
              "lastShownAt": ["2026-11-02T09:14:03Z"], "modifiedAt": ["2026-03-30T17:02:11.000Z"],
              "positive": [2], "negative": [0], "tags": [[0]] },
   "links": { "from": [0], "to": [3], "kind": [1] },
-  "duplicates": { "threshold": 0.96, "a": [0], "b": [9], "cosine": [0.9871], "truncated": false }
+  "duplicates": { "threshold": 0.96, "a": [0], "b": [9], "cosine": [0.9871], "truncated": false },
+  "groups": { "count": 36, "group": [4], "x": [12.5], "y": [-3.1], "z": [40.2] }
 }
 ```
 
@@ -218,13 +219,15 @@ usage history is available. `lastShownAt` is the latest of those shows (UTC), `n
 answered by an accepted fix does not count). `modifiedAt` is the file's modification time, `null` when it cannot be
 read; in a Git checkout it is when the file was last written there, not its last commit.
 
-`duplicates` lists pairs of assets (indexes into `nodes`) whose stored embeddings have a cosine of at least `threshold`
-(0.96), most alike first, at most 2,000 (`truncated` says there were more). To avoid comparing every pair, the assets
-are first grouped by meaning (spherical k-means on their vectors, from a fixed start, so the same index gives the same
-pairs) and only pairs inside a group are compared. It is `null` without at least eight embedded assets. It is kept
-while the embeddings are the same, so an index build that changes none costs nothing; after one that does, the first
-read of a 16,000-asset library takes about five seconds. `available` is `false`,
-with a `note`, when there is no index.
+`groups` and `duplicates` are computed by `akm index` at the end of each build whose vectors changed, over every
+embedded asset, and stored in `index.db`; the read only looks them up. The embedded assets are grouped by meaning
+(spherical k-means on their vectors, from a fixed start, so the same vectors give the same groups), at most 36 groups.
+`groups.group[i]` is asset `i`'s group (`-1` when it has no vector), and `x`, `y`, `z` its place in 3D: groups alike in
+meaning lie near each other, and an asset sits inside its group's sphere. `duplicates` lists pairs of assets (indexes
+into `nodes`) whose stored embeddings have a cosine of at least `threshold` (0.96), most alike first, at most 2,000
+(`truncated` says there were more); only pairs inside a group are compared. Pairs and places of assets that are not
+returned (a bundle that is not enabled) are left out. Both are `null` without at least eight embedded assets, and until
+an `akm index` of this release has run. `available` is `false`, with a `note`, when there is no index.
 
 ## `bundles.list`
 

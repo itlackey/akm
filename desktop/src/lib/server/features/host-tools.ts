@@ -45,7 +45,13 @@ export interface UpgradeSummary {
   currentChannel?: string;
   targetChannel?: string;
   /** Each harness plugin akm found: the channel it follows (`latest`, `next`, `pinned`, `unknown`) and what the run did. */
-  plugins?: Array<{ harness: string; channel?: string; outcome?: string; reason?: string }>;
+  plugins?: Array<{
+    harness: string;
+    channel?: string;
+    channelMismatch?: boolean;
+    outcome?: string;
+    reason?: string;
+  }>;
   /** The status of the migration the upgrade ran: `current`, `applied`, `blocked`, `failed`, and so on. */
   migration?: string;
   postUpgradeFailed?: boolean;
@@ -713,7 +719,7 @@ export class HostTools {
 }
 
 const bounded = (value: unknown) =>
-  typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, 200) : undefined;
+  typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, 400) : undefined;
 
 /** Why an upgrade did not finish, in words, from its summary; undefined when it finished. */
 function upgradeFailure(summary: UpgradeSummary): string | undefined {
@@ -745,18 +751,17 @@ export function summarizeUpgrade(result: Loose): UpgradeSummary {
       .filter((key) => ["string", "boolean"].includes(typeof result?.[key]))
       .map((key) => [key, result[key]]),
   );
-  // Which plugin follows which channel and what the run did with it, plus the reason a plugin was deferred or failed:
-  // the entries' backups and file paths stay out of the snapshot.
+  // Which plugin follows which channel and what the run did with it, plus the entry's message (why it was deferred,
+  // failed or skipped, and any engine skew): the entries' backups and file paths stay out of the snapshot.
   if (Array.isArray(result?.plugins)) {
     summary.plugins = result.plugins
       .filter((entry: Loose) => typeof entry?.harness === "string")
       .map((entry: Loose) => ({
         harness: entry.harness as string,
         ...(typeof entry.channel === "string" ? { channel: entry.channel as string } : {}),
+        ...(typeof entry.channelMismatch === "boolean" ? { channelMismatch: entry.channelMismatch as boolean } : {}),
         ...(typeof entry.outcome === "string" ? { outcome: entry.outcome as string } : {}),
-        ...(["deferred", "failed"].includes(entry.outcome) && bounded(entry.message)
-          ? { reason: bounded(entry.message) }
-          : {}),
+        ...(typeof entry.outcome === "string" && bounded(entry.message) ? { reason: bounded(entry.message) } : {}),
       }));
   }
   if (typeof result?.migration?.status === "string") summary.migration = result.migration.status;

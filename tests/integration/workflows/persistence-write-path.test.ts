@@ -4,12 +4,16 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { serializeByKey } from "../../../src/core/concurrent";
+import { releaseLock } from "../../../src/core/file-lock";
+import { tryAcquireRunLock } from "../../../src/core/run-lock";
 import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import { borrowScopedStateDb, openScopedStateDbCount } from "../../../src/core/state-db-scope";
 import {
   withWorkflowRunsConnection,
   withWorkflowRunsRepo,
 } from "../../../src/storage/repositories/workflow-runs-repository";
+import { reconcileAbandonedExecutionState } from "../../../src/tasks/run/reconcile-abandoned";
+import { workflowRunLockPath } from "../../../src/workflows/exec/run-workflow";
 import { enqueueUnitWrite } from "../../../src/workflows/exec/unit-writer";
 import { completeWorkflowStep, getWorkflowStatus } from "../../../src/workflows/runtime/runs";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
@@ -422,4 +426,66 @@ describe("a big artifact survives both a live run and a resume (issue C fix)", (
     expect(status.workflow.steps[1]?.status).toBe("completed");
     expect(status.run.status).toBe("completed");
   }, 30_000);
+});
+
+describe("units under a terminal run", () => {
+  function reserve(unitId: string): void {
+    void withWorkflowRunsRepo((repo) =>
+      repo.reserveUnitAttempt({
+        runId: RUN_ID,
+        unitId,
+        stepId: "step-1",
+        nodeId: "n",
+        parentUnitId: null,
+        phase: "unit",
+        runner: "agent",
+        engine: null,
+        model: null,
+        inputHash: "h",
+        now: new Date().toISOString(),
+      }),
+    );
+  }
+
+  async function unitStatuses(): Promise<string[]> {
+    return withWorkflowRunsRepo((repo) => repo.getUnitsForRun(RUN_ID).map((u) => `${u.status}:${u.failure_reason}`));
+  }
+
+  function failRun(): void {
+    const db = openStateDatabase();
+    try {
+      db.prepare("UPDATE workflow_runs SET status = 'failed' WHERE id = ?").run(RUN_ID);
+    } finally {
+      db.close();
+    }
+  }
+
+  test("units left running under a failed run no process drives are settled by reconcile", async () => {
+    reserve("u1");
+    failRun();
+    expect(await unitStatuses()).toEqual(["running:null"]);
+    reconcileAbandonedExecutionState();
+    expect(await unitStatuses()).toEqual(["failed:interrupted"]);
+  });
+
+  test("a failed run whose lock a live driver holds keeps its running unit: the driver still journals it", async () => {
+    reserve("u1");
+    failRun();
+    const lock = tryAcquireRunLock(workflowRunLockPath(RUN_ID), { label: "test driver" });
+    if (lock.state !== "acquired") throw new Error("the test could not take the run lock");
+    try {
+      reconcileAbandonedExecutionState();
+      expect(await unitStatuses()).toEqual(["running:null"]);
+    } finally {
+      releaseLock(lock.ownership);
+    }
+    reconcileAbandonedExecutionState();
+    expect(await unitStatuses()).toEqual(["failed:interrupted"]);
+  });
+
+  test("an active parent's running unit is left alone", async () => {
+    reserve("u1");
+    reconcileAbandonedExecutionState();
+    expect(await unitStatuses()).toEqual(["running:null"]);
+  });
 });

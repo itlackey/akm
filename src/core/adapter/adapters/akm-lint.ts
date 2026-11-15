@@ -186,13 +186,30 @@ export function dangerousEnvKeyDiagnostics(type: string | undefined, relPath: st
 /** The akm-native skill placement dir — the default gate for {@link skillDirectoryDiagnostics}. */
 const AKM_SKILL_DIRS: ReadonlySet<string> = new Set(["skills"]);
 
+/** How many directory levels below `skills/` a skill package may sit (`skills/<group>/<name>`). */
+export const MAX_SKILL_GROUP_DEPTH = 3;
+
+/** True when a skill package (a `SKILL.md`) sits somewhere below `dir`, which is `depth` levels under the type dir. */
+async function hasSkillBelow(dir: string, depth: number, ctx: ValidateContext): Promise<boolean> {
+  if (depth >= MAX_SKILL_GROUP_DEPTH) return false;
+  for (const entry of await ctx.list(dir)) {
+    if (entry.startsWith(".")) continue;
+    const child = `${dir}/${entry}`;
+    if ((await ctx.readFile(`${child}/SKILL.md`)) !== null) return true;
+    if (await hasSkillBelow(child, depth + 1, ctx)) return true;
+  }
+  return false;
+}
+
 /**
  * Reproduce `SkillLinter.lintDirectory` (`skill-linter.ts:31-45`) in the
  * change-set model: for a change under `<skillDir>/<name>/…`, emit
- * `missing-skill-md` when `<skillDir>/<name>/SKILL.md` is absent from the
- * overlay. `seen` dedups so a dir with multiple changed files reports once
- * (matching the per-subdir call). `file`/`detail` mirror the live check exactly
- * (relDir + `no SKILL.md in <relDir>/`).
+ * `missing-skill-md` for the skill directory that owns the changed file when
+ * it has no `SKILL.md` in the overlay. A directory with skill packages below
+ * it is a grouping directory, not a skill: the check moves to the child that
+ * owns the file. `seen` dedups per reported directory (matching the per-subdir
+ * call). `file`/`detail` mirror the live check exactly (relDir + `no SKILL.md
+ * in <relDir>/`).
  *
  * `skillDirs` defaults to the akm-native `skills/` placement dir. Tool-dir
  * adapters pass their own canonical placement directory.
@@ -208,12 +225,15 @@ export async function skillDirectoryDiagnostics(
     .split("/")
     .filter((s) => s.length > 0);
   if (segments.length < 3 || !skillDirs.has(segments[0]!)) return []; // must be <skillDir>/<name>/<file…>
-  const skillDir = `${segments[0]}/${segments[1]}`;
-  if (seen.has(skillDir)) return [];
-  seen.add(skillDir);
-  const skillMd = await ctx.readFile(`${skillDir}/SKILL.md`);
-  if (skillMd !== null) return [];
-  return [{ file: skillDir, issue: "missing-skill-md", detail: `no SKILL.md in ${skillDir}/`, fixed: false }];
+  for (let depth = 2; depth < segments.length; depth++) {
+    const dir = segments.slice(0, depth).join("/");
+    if ((await ctx.readFile(`${dir}/SKILL.md`)) !== null) return [];
+    if (await hasSkillBelow(dir, depth - 1, ctx)) continue; // grouping directory
+    if (seen.has(dir)) return [];
+    seen.add(dir);
+    return [{ file: dir, issue: "missing-skill-md", detail: `no SKILL.md in ${dir}/`, fixed: false }];
+  }
+  return [];
 }
 
 // ── per-type dispatch (mirrors getLinterForType) ─────────────────────────────
