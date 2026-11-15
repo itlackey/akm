@@ -3,14 +3,14 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The library's near-duplicate pairs, from the stored embeddings: what `assets.graph` reports so a host can list assets
- * that say the same thing. To avoid comparing every pair, the assets are first bucketed by meaning (spherical k-means
- * on the unit vectors) and only pairs inside a bucket are compared; the buckets are not reported. Nothing is embedded
- * and nothing is written; the work yields to the event loop as it goes, and the result is kept while the vectors stay
- * the same.
+ * The library's shape by meaning, from the stored embeddings: what `assets.graph` reports so a host can show which assets
+ * are alike and list the ones that say the same thing. The assets are grouped by meaning (spherical k-means on the unit
+ * vectors); each group is placed in 3D by its centre, so alike groups sit near each other, and each asset around its
+ * group's centre by how its vector differs from it. Near-duplicate pairs are looked for only inside a group, to avoid
+ * comparing every pair. `akm index` runs it at the end of a build whose vectors changed and stores the result
+ * (index-layout-repository.ts); the graph read only reads it back. Nothing is embedded; the work yields to the event loop
+ * as it goes.
  */
-
-import { createHash } from "node:crypto";
 
 /** Fewest embedded assets duplicates are looked for in. */
 const MIN_ASSETS = 8;
@@ -35,30 +35,36 @@ export interface Duplicates {
   truncated: boolean;
 }
 
+/**
+ * Each asset's group by meaning and its place in 3D, in input order: `group[i]` is -1 and the place 0 for an asset with
+ * no embedding. Groups have no names; a host names them by what their assets carry.
+ */
+export interface Groups {
+  count: number;
+  group: number[];
+  x: number[];
+  y: number[];
+  z: number[];
+}
+
+/** Near-duplicate pairs and groups by meaning; see {@link findSimilarity}. */
+export interface Similarity {
+  duplicates: Duplicates;
+  groups: Groups;
+}
+
 /** How many buckets for `n` embedded assets: about the square root of n/2, from 2 to {@link MAX_BUCKETS}. */
 export function bucketCount(n: number): number {
   return Math.max(2, Math.min(MAX_BUCKETS, Math.round(Math.sqrt(n / 2))));
 }
 
-let cache: { key: string; result: Duplicates | null } | undefined;
-
-/** The vectors' content, in order: an index build that changed no embedding gives the same key. */
-function contentKey(vectors: Array<Float32Array | undefined>): string {
-  const hash = createHash("sha1");
-  for (const v of vectors) hash.update(v ? new Uint8Array(v.buffer, v.byteOffset, v.byteLength) : NO_VECTOR);
-  return hash.digest("hex");
-}
-const NO_VECTOR = new Uint8Array(1);
-
 /**
- * Near-duplicate pairs among the assets: spherical k-means puts the assets into buckets (centres from an evenly spaced
+ * Groups by meaning and near-duplicate pairs among the assets: spherical k-means puts the assets into buckets (centres from an evenly spaced
  * sample of at most 4,000, seeded deterministically, so the same vectors give the same pairs), and every pair inside a
- * bucket whose cosine is at least {@link DUPLICATE_COSINE} is reported. `null` without at least eight embedded assets.
- * The last result is reused while the vectors are the same, so index builds that change no embedding cost nothing here.
+ * bucket whose cosine is at least {@link DUPLICATE_COSINE} is reported; the buckets are the groups, placed by
+ * {@link place}. `null` without at least eight embedded assets.
  */
-export async function findDuplicates(vectors: Array<Float32Array | undefined>): Promise<Duplicates | null> {
-  const key = contentKey(vectors);
-  if (cache?.key === key) return cache.result;
+export async function findSimilarity(vectors: Array<Float32Array | undefined>): Promise<Similarity | null> {
   const dims = vectors.find((v) => v)?.length ?? 0;
   const usable: number[] = [];
   for (let i = 0; i < vectors.length; i++) if (vectors[i]?.length === dims) usable.push(i);
@@ -193,13 +199,118 @@ export async function findDuplicates(vectors: Array<Float32Array | undefined>): 
     await yieldToLoop();
   }
   const kept = pairs.sort(byAlike).slice(0, MAX_PAIRS);
-  const result: Duplicates = {
-    threshold: DUPLICATE_COSINE,
-    a: kept.map((p) => p[0]),
-    b: kept.map((p) => p[1]),
-    cosine: kept.map((p) => Math.round(p[2] * 10000) / 10000),
-    truncated: pairCount > MAX_PAIRS,
+  const result: Similarity = {
+    duplicates: {
+      threshold: DUPLICATE_COSINE,
+      a: kept.map((p) => p[0]),
+      b: kept.map((p) => p[1]),
+      cosine: kept.map((p) => Math.round(p[2] * 10000) / 10000),
+      truncated: pairCount > MAX_PAIRS,
+    },
+    groups: place(unit, dims, usable, members, centres, vectors.length),
   };
-  cache = { key, result };
   return result;
+}
+
+/**
+ * Where each asset sits in 3D. A group's centre is placed along the three directions its centres differ most in (found
+ * by power iteration from fixed starts), scaled so the groups spread about 100 units from the middle, then groups that
+ * overlap are pushed apart. An asset sits around its centre along three fixed directions, by how its vector differs
+ * from the centre, so a group's most typical assets are near its middle; a group's radius grows with the cube root of
+ * its size.
+ */
+function place(
+  unit: Float32Array,
+  dims: number,
+  usable: number[],
+  members: number[][],
+  centres: Float32Array,
+  n: number,
+): Groups {
+  const k = members.length;
+  const groups: Groups = {
+    count: k,
+    group: new Array<number>(n).fill(-1),
+    x: new Array<number>(n).fill(0),
+    y: new Array<number>(n).fill(0),
+    z: new Array<number>(n).fill(0),
+  };
+  const live = members.flatMap((rows, c) => (rows.length ? [c] : []));
+  const mean = new Float64Array(dims);
+  for (const c of live) for (let d = 0; d < dims; d++) mean[d]! += centres[c * dims + d]! / live.length;
+  const centred = (c: number, d: number) => centres[c * dims + d]! - mean[d]!;
+  const axes: Float64Array[] = [];
+  for (let a = 0; a < 3; a++) {
+    let axis = Float64Array.from({ length: dims }, (_, d) => Math.sin(d * (a + 1) + 1));
+    for (let round = 0; round < 60; round++) {
+      const next = new Float64Array(dims);
+      for (const c of live) {
+        let along = 0;
+        for (let d = 0; d < dims; d++) along += centred(c, d) * axis[d]!;
+        for (let d = 0; d < dims; d++) next[d]! += along * centred(c, d);
+      }
+      for (const done of axes) {
+        let along = 0;
+        for (let d = 0; d < dims; d++) along += next[d]! * done[d]!;
+        for (let d = 0; d < dims; d++) next[d]! -= along * done[d]!;
+      }
+      const norm = Math.hypot(...next) || 1;
+      axis = next.map((v) => v / norm);
+    }
+    axes.push(axis);
+  }
+  // Group centres in 3D, spread to a root mean square of 100 from the middle.
+  const at = members.map(() => [0, 0, 0]);
+  for (const c of live)
+    at[c] = axes.map((axis) => {
+      let along = 0;
+      for (let d = 0; d < dims; d++) along += centred(c, d) * axis[d]!;
+      return along;
+    });
+  const spread = Math.sqrt(live.reduce((sum, c) => sum + at[c]!.reduce((s, v) => s + v * v, 0), 0) / live.length) || 1;
+  for (const c of live) at[c] = at[c]!.map((v) => (100 * v) / spread);
+  const radius = members.map((rows) => 2.6 * Math.cbrt(rows.length));
+  for (let round = 0; round < 80; round++)
+    for (const a of live)
+      for (const b of live) {
+        if (b <= a) continue;
+        const gap = at[b]!.map((v, i) => v - at[a]![i]!);
+        const apart = Math.hypot(...gap) || 1e-6;
+        const need = 1.15 * (radius[a]! + radius[b]!);
+        if (apart >= need) continue;
+        const push = (need - apart) / 2 / apart;
+        at[a] = at[a]!.map((v, i) => v - gap[i]! * push);
+        at[b] = at[b]!.map((v, i) => v + gap[i]! * push);
+      }
+  // Three fixed directions for the spread inside a group.
+  let seed = 11;
+  const random = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 2 ** 32 - 0.5;
+  };
+  const inner = [0, 1, 2].map(() => {
+    const v = Float64Array.from({ length: dims }, random);
+    const norm = Math.hypot(...v) || 1;
+    return v.map((x) => x / norm);
+  });
+  members.forEach((rows, c) => {
+    if (!rows.length) return;
+    const offsets = rows.map((row) =>
+      inner.map((dir) => {
+        let along = 0;
+        for (let d = 0; d < dims; d++) along += (unit[row * dims + d]! - centres[c * dims + d]!) * dir[d]!;
+        return along;
+      }),
+    );
+    const rms = Math.sqrt(offsets.reduce((sum, o) => sum + o[0]! ** 2 + o[1]! ** 2 + o[2]! ** 2, 0) / rows.length) || 1;
+    const scale = radius[c]! / rms;
+    rows.forEach((row, r) => {
+      const i = usable[row]!;
+      groups.group[i] = c;
+      groups.x[i] = Math.round((at[c]![0]! + offsets[r]![0]! * scale) * 10) / 10;
+      groups.y[i] = Math.round((at[c]![1]! + offsets[r]![1]! * scale) * 10) / 10;
+      groups.z[i] = Math.round((at[c]![2]! + offsets[r]![2]! * scale) * 10) / 10;
+    });
+  });
+  return groups;
 }

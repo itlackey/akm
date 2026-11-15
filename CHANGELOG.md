@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- AKM Desktop's library map draws every embedded asset in 3D, grouped by meaning instead of by bundle or type, when the index holds groups: each group is named by the tags its assets carry most particularly, and choosing a group or an asset flies to it and draws its links and near-duplicates. Inside a group, assets read lately sit at the front and never-read or outdated ones at the back. Flat switches to the mind map. The 3D view needs WebGL.
+- `akm-cli/workspace`: `assets.graph()` returns `groups`, each asset's group by meaning and its place in 3D.
+
+### Changed
+
+- `akm index` groups the embedded assets by meaning and finds the near-duplicate pairs at the end of a build whose vectors changed, and stores them in `index.db` (`entry_layout`, `duplicate_pairs`); `assets.graph` reads them instead of computing them, so a library map read of 16,000 assets takes about one second instead of six. Near-duplicates are now compared across all embedded assets and filtered to the enabled bundles, and they and `groups` are `null` until the first `akm index` of this release.
+
 ## [0.10.261126] - 2026-11-15
 
 ### Changed

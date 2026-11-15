@@ -12,9 +12,9 @@ import { resolveSourceEntries } from "../indexer/search/search-source";
 import { countFeedbackSignalsByRef, countUseByRef, usageRetentionSince } from "../indexer/usage/usage-events";
 import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
 import { getAllEntries } from "../storage/repositories/index-entries-repository";
+import { readLayout } from "../storage/repositories/index-layout-repository";
 import { listDeclaredLinks } from "../storage/repositories/index-links-repository";
-import { listCurrentEmbeddings } from "../storage/repositories/index-vec-repository";
-import { type Duplicates, findDuplicates } from "./graph-duplicates";
+import type { Duplicates, Groups } from "./graph-duplicates";
 import { withReadonlyStateDb } from "./readers";
 
 /** Types never drawn: protected files and session logs, as `assets.related` leaves them out. */
@@ -26,9 +26,10 @@ const HIDDEN_TYPES = ["secret", "env", "session"];
  * recorded). `shows`, `lastShownAt` and the feedback counts `positive` and `negative` are read live from the
  * user-attributed usage events within retention (`use`); `modifiedAt` is the file's modification time. A link joins two
  * nodes by index and names its kind by index into `kinds`. `nodes.tags[i]` indexes `tags`, the asset's own frontmatter
- * tags. `duplicates` pairs assets whose stored embeddings are nearly the same (see {@link findDuplicates}); it is `null`
- * when too few assets are embedded. Nothing is written. The duplicate search yields to the event loop as it goes, so a
- * host serving other requests keeps answering them.
+ * tags. `duplicates` pairs assets whose stored embeddings are nearly the same, and `groups` gives each asset its group by
+ * meaning and a place in 3D where alike assets sit close, as the last `akm index` stored them (index-layout-repository.ts);
+ * both are `null` when too few assets are embedded. An asset embedded since then has no group (-1) until the next
+ * build. Nothing is written.
  */
 export async function graph() {
   try {
@@ -69,6 +70,7 @@ function emptyGraph() {
     },
     links: { from: [] as number[], to: [] as number[], kind: [] as number[] },
     duplicates: null as Duplicates | null,
+    groups: null as Groups | null,
   };
 }
 
@@ -147,10 +149,40 @@ async function readGraph() {
       result.links.to.push(to);
       result.links.kind.push(kindCode(link.kind));
     }
-    const vectors = listCurrentEmbeddings(db);
+    const layout = readLayout(db);
     closeDatabase(db);
     closed = true;
-    result.duplicates = await findDuplicates(rows.map((row) => vectors.get(row.id)));
+    if (layout?.groups) {
+      const n = rows.length;
+      const groups: Groups = {
+        count: layout.groups,
+        group: new Array<number>(n).fill(-1),
+        x: new Array<number>(n).fill(0),
+        y: new Array<number>(n).fill(0),
+        z: new Array<number>(n).fill(0),
+      };
+      for (const p of layout.places) {
+        const i = index.get(p.id);
+        if (i === undefined) continue;
+        groups.group[i] = p.grp;
+        groups.x[i] = p.x;
+        groups.y[i] = p.y;
+        groups.z[i] = p.z;
+      }
+      const pairs = layout.pairs.flatMap((p) => {
+        const a = index.get(p.a);
+        const b = index.get(p.b);
+        return a === undefined || b === undefined ? [] : [[a, b, p.cosine] as const];
+      });
+      result.groups = groups;
+      result.duplicates = {
+        threshold: layout.threshold,
+        a: pairs.map((p) => p[0]),
+        b: pairs.map((p) => p[1]),
+        cosine: pairs.map((p) => p[2]),
+        truncated: layout.truncated,
+      };
+    }
     const noted = [`${rows.length} assets and ${result.links.from.length} links of the enabled bundles.`];
     if (!use) noted.push("Use counts are zero: no usage history is available.");
     return {

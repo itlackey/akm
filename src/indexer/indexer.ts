@@ -67,6 +67,7 @@ import {
 } from "../storage/repositories/index-entries-repository";
 import type { EntryProvenance } from "../storage/repositories/index-entry-types";
 import { rebuildFtsIfTotalsStale } from "../storage/repositories/index-fts-repository";
+import { storeLayout } from "../storage/repositories/index-layout-repository";
 import { clearStaleCacheEntries } from "../storage/repositories/index-llm-cache-repository";
 import {
   deleteIndexDirState,
@@ -827,6 +828,10 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
       reembed: options.reembed === true,
       importVectorsFile: options.importVectors,
     });
+    // The library's layout by meaning and its near-duplicates, from the vectors, when they changed.
+    throwIfAborted(signal);
+    onProgress({ phase: "finalize", message: "Grouping assets by meaning." });
+    await storeLayout(db);
     const tEmbedEnd = Date.now();
 
     // ── Finalize ──────────────────────────────────────────────────────────

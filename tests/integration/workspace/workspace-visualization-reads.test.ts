@@ -16,6 +16,7 @@ import { getDbPath } from "../../../src/core/paths";
 import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { openExistingDatabase } from "../../../src/storage/repositories/index-connection";
+import { storeLayout } from "../../../src/storage/repositories/index-layout-repository";
 import { upsertEmbedding } from "../../../src/storage/repositories/index-vec-repository";
 import { upsertTaskHistory } from "../../../src/storage/repositories/task-history-repository";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
@@ -233,7 +234,7 @@ describe("visualization reads", () => {
     expect(damaged.nodes.ref).toEqual([]);
   });
 
-  test("graph: duplicates follow the enabled bundles, not only the index build", async () => {
+  test("graph: groups and duplicates are stored at index time and follow the enabled bundles", async () => {
     await seed();
     const stash = ctx.storage.stashDir;
     const word = { x: "xenon", y: "yankee", z: "zulu" } as const;
@@ -273,6 +274,9 @@ describe("visualization reads", () => {
         vector[3 + (i % 4)] = 0.05;
         upsertEmbedding(db, row.id, vector);
       });
+      // What the end of an index build does with changed vectors; with none changed it does nothing.
+      expect(await storeLayout(db)).toBe(true);
+      expect(await storeLayout(db)).toBe(false);
     } finally {
       db.close();
     }
@@ -284,6 +288,10 @@ describe("visualization reads", () => {
       return [...graph.duplicates.a, ...graph.duplicates.b].map((i) => graph.nodes.ref[i]!);
     };
     expect(pairRefs(first).some((ref) => ref.includes("yankee"))).toBe(true);
+    // Every embedded asset has its group and place; the stash's own assets have no vector, so no group.
+    const placed = first.nodes.ref.filter((_: string, i: number) => first.groups.group[i] >= 0);
+    expect(placed).toHaveLength(20);
+    expect(placed.every((ref: string) => !ref.startsWith("stash//"))).toBe(true);
     // Same index build, same number of assets, different bundles: the duplicates are the new library's.
     configure(["x", "z"]);
     const second = await out(assets.graph());

@@ -366,6 +366,36 @@ test("visualizations survive late responses, a changed library and a narrow wind
     await page.close();
   });
 
+  await t.test("Library map: an index with groups draws them in 3D, names them, and Flat draws the tags", async () => {
+    const { page, errors } = await fresh((page) =>
+      withGraph(page, {
+        ...mapPayload,
+        groups: {
+          count: 2,
+          group: [0, 0, 0, 1, 1, 1, -1],
+          x: [0, 2, -2, 50, 52, 48, 0],
+          y: [0, 1, -1, 0, 1, -1, 0],
+          z: [0, 0, 0, 10, 10, 10, 0],
+        },
+      }),
+    );
+    consoleErrors(page, errors);
+    await open(page, server, "/library/map");
+    const drawing = page.getByRole("group", { name: "Drawing" });
+    await expect(drawing.getByRole("button", { name: "3D" })).toHaveAttribute("aria-pressed", "true");
+    const named = figures(page).locator("section", { hasText: "Groups by meaning" });
+    await expect(named.getByRole("button")).toHaveText(["deploy · rollout", "auth"]);
+    await named.getByRole("button", { name: "auth" }).click();
+    await expect(sideHeading(page)).toHaveText("auth");
+    await expect(figures(page)).toContainText("Group by meaning");
+    await figures(page).getByRole("button", { name: "Close", exact: true }).click();
+    await drawing.getByRole("button", { name: "Flat" }).click();
+    await expect(mapButton(page, "Knowledge: 3")).toBeVisible();
+    await expect(named).toHaveCount(0);
+    assert.deepEqual(errors, []);
+    await page.close();
+  });
+
   await t.test("Library map: ?select= opens that asset's tag, and an unknown asset is named", async () => {
     const { page } = await fresh((page) => withGraph(page));
     await open(page, server, `/library/map?select=${encodeURIComponent("notes//memories/auth/e")}`);

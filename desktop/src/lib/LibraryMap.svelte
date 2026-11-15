@@ -14,6 +14,8 @@
     buildOverview,
     firstProblem,
     groupFacts,
+    groupJoins,
+    groupsOf,
     mindMap,
     OUTDATED_LINKS,
     type Overview,
@@ -30,6 +32,7 @@
   import { filesHref } from "./library-files-model";
   import { libraryRead, searchHref } from "./library-model";
   import MindMap, { type Segment } from "./MindMap.svelte";
+  import SimilarityMap from "./SimilarityMap.svelte";
   import { workspace } from "./state/workspace.svelte";
 
   /** `?select=<ref>`: open the tag this asset is under. */
@@ -45,6 +48,12 @@
   let view = $state<View>("contents");
   let bundle = $state(-1);
   let selected = $state("");
+  /** The map drawn flat (types and tags, SVG) or in 3D (every asset by meaning, three.js); unchosen, 3D when the index
+   * has assets grouped by meaning. */
+  let chosenDepth = $state<"2d" | "3d" | null>(null);
+  const depth = $derived(chosenDepth ?? (o?.groupCount ? "3d" : "2d"));
+  /** In 3D, the asset chosen on the map, or -1. */
+  let picked = $state(-1);
   /** The asset whose closest content is open, and what was found. */
   let near = $state<{ ref: string; matches: Similar[] | null; error: string } | null>(null);
 
@@ -85,13 +94,18 @@
   const branches = $derived(
     o ? mindMap(o, 44, scope, view === "use" ? readsOf : view === "problems" ? (m) => problemsOf(m) : undefined) : [],
   );
+  /** Groups by meaning, for the 3D map. */
+  const groups = $derived(o ? groupsOf(o, scope) : []);
   const parts = $derived(
-    new Map(
-      branches.flatMap((b) => [
-        [b.key, { name: b.label, type: "", tag: "", members: b.members }] as const,
-        ...b.leaves.map((l) => [l.key, { name: l.label, type: b.label, tag: l.label, members: l.members }] as const),
+    new Map<string, { name: string; type: string; tag: string; group: boolean; members: number[] }>([
+      ...branches.flatMap((b) => [
+        [b.key, { name: b.label, type: "", tag: "", group: false, members: b.members }] as const,
+        ...b.leaves.map(
+          (l) => [l.key, { name: l.label, type: b.label, tag: l.label, group: false, members: l.members }] as const,
+        ),
       ]),
-    ),
+      ...groups.map((g) => [g.key, { name: g.label, type: "", tag: "", group: true, members: g.members }] as const),
+    ]),
   );
   const largestTag = $derived(Math.max(1, ...branches.flatMap((b) => b.leaves.map((l) => l.members.length))));
   $effect(() => {
@@ -141,10 +155,22 @@
 
   function choose(key: string) {
     selected = selected === key ? "" : key;
+    picked = -1;
+    near = null;
+  }
+  /** A point chosen on the 3D map: it and its group. */
+  function pick(i: number) {
+    if (picked === i) {
+      choose(selected);
+      return;
+    }
+    selected = `g:${o!.group[i]}`;
+    picked = i;
     near = null;
   }
   function onKey(event: KeyboardEvent) {
-    if (event.key === "Escape" && selected) choose(selected);
+    if (event.key === "Escape" && picked >= 0) picked = -1;
+    else if (event.key === "Escape" && selected) choose(selected);
   }
 
   // ---- The side column ----
@@ -153,7 +179,11 @@
   const facts = $derived(o ? groupFacts(o, members) : null);
   // Problems draws only what makes a problem: replacement and contradiction links, and near-duplicates.
   const joined = $derived(
-    o && selected ? relations(o, branches, selected, view === "problems" ? OUTDATED_LINKS : null) : [],
+    !o || !selected
+      ? []
+      : selected.startsWith("g:")
+        ? groupJoins(o, Number(selected.slice(2)), view === "problems" ? OUTDATED_LINKS : null)
+        : relations(o, branches, selected, view === "problems" ? OUTDATED_LINKS : null),
   );
   /** How many declared links each asset has, either way. */
   const degree = $derived.by(() => {
@@ -197,7 +227,8 @@
   const scopeName = $derived(bundle < 0 ? "All bundles" : (o?.bundles[bundle] ?? ""));
   const nameOf = (key: string) => {
     const p = parts.get(key);
-    return p ? (p.type ? `${p.name} · ${p.type}` : `${p.name}, under no tag on the map`) : key;
+    if (!p) return key;
+    return p.group || p.type ? (p.type ? `${p.name} · ${p.type}` : p.name) : `${p.name}, under no tag on the map`;
   };
 
   async function similar(ref: string) {
@@ -213,6 +244,46 @@
       if (near?.ref === ref) near = { ref, matches: [], error: (cause as Error).message };
     }
   }
+
+  // ---- The 3D map ----
+  /** Contents colours a point by its group (hues spaced by the golden angle), Use by its use, Problems by its problem. */
+  const colourOf = (i: number) => {
+    if (view === "use" && o!.useKnown) return USE_CLASSES.find((u) => u.id === o!.use[i])?.token ?? "--use-0";
+    if (view === "problems") return PROBLEMS.find((p) => p.id === firstProblem(o!, i))?.token ?? "--border";
+    return `hsl(${Math.round((o!.group[i]! * 137.508) % 360)} 62% 56%)`;
+  };
+  /** What the picked asset is joined to: its declared links (Problems: replacement and contradiction only) and its
+   * near-duplicates. */
+  const pickedJoins = $derived.by(() => {
+    if (!o || picked < 0) return [] as Array<{ i: number; what: string }>;
+    const out: Array<{ i: number; what: string }> = [];
+    for (const l of o.links)
+      if ((l.from === picked || l.to === picked) && (view !== "problems" || OUTDATED_LINKS.includes(l.kind)))
+        out.push({ i: l.from === picked ? l.to : l.from, what: l.kind.replaceAll("_", " ") });
+    for (const d of o.duplicates)
+      if (d.a === picked || d.b === picked)
+        out.push({ i: d.a === picked ? d.b : d.a, what: `near-duplicate ${d.cosine.toFixed(3)}` });
+    return out;
+  });
+  const lit = $derived(
+    picked >= 0 ? new Set([picked, ...pickedJoins.map((j) => j.i)]) : part?.group ? new Set(part.members) : null,
+  );
+  const lines = $derived.by(() => {
+    if (!o) return [];
+    const at = (i: number) => o!.place.subarray(i * 3, i * 3 + 3);
+    if (picked >= 0) return pickedJoins.map((j) => ({ from: at(picked), to: at(j.i), weight: 1 }));
+    if (!part?.group) return [];
+    const centre = new Map(groups.map((g) => [g.key, g.centre]));
+    const strongest = Math.max(1, ...joined.map((r) => r.links + r.duplicates));
+    return joined
+      .slice(0, 12)
+      .filter((r) => centre.has(r.key))
+      .map((r) => ({
+        from: centre.get(selected)!,
+        to: centre.get(r.key)!,
+        weight: (r.links + r.duplicates) / strongest,
+      }));
+  });
 
   const filesLink = $derived(
     filesHref({
@@ -326,6 +397,13 @@
           onclick={() => (view = v.id)}>{v.label}</button
         >{/each}
     </div>
+    <div class="views" role="group" aria-label="Drawing">
+      {#each [["2d", "Flat"], ["3d", "3D"]] as const as [id, name]}<button
+          class="btn-quiet"
+          aria-pressed={depth === id}
+          onclick={() => (chosenDepth = id)}>{name}</button
+        >{/each}
+    </div>
     {#if o}<label class="bundle-pick"
         >Bundle <select
           bind:value={bundle}
@@ -348,13 +426,18 @@
     <div class="map-body">
       <div class="map-main">
         <div class="map-legend">
-          {#if view === "contents"}<p class="muted small">
+          {#if depth === "3d" && view === "contents"}<p class="muted small">
+              Each point is an asset, coloured by its group by meaning. Inside a group, assets read lately sit at the
+              front, and never-read, superseded, contradicted or deprecated ones at the back.
+            </p>
+          {:else if view === "contents"}<p class="muted small">
               Each branch is an asset type; at its end are the tags its assets carry most. Choose a type or tag to draw
               what it is joined to by links or near-duplicate content.
             </p>
           {:else if view === "use"}{#if o.useKnown}<p class="muted small">
-                The tags read most; each shows its number of reads, and its bar splits its assets by when they were last
-                read.
+                {depth === "3d"
+                  ? "Each point is an asset, coloured by when it was last read."
+                  : "The tags read most; each shows its number of reads, and its bar splits its assets by when they were last read."}
               </p>
               <ul>
                 {#each USE_CLASSES as u}<li>
@@ -362,7 +445,9 @@
                   </li>{/each}
               </ul>{:else}<p class="muted small">No usage history is available, so use cannot be shown.</p>{/if}
           {:else}<p class="muted small">
-              The tags with the most problem assets; each bar splits its assets by their worst problem.
+              {depth === "3d"
+                ? "Each point is an asset, coloured by its worst problem; assets with none are faint."
+                : "The tags with the most problem assets; each bar splits its assets by their worst problem."}
             </p>
             <ul>
               {#each PROBLEMS as p}<li>
@@ -372,18 +457,40 @@
             </ul>{/if}
         </div>
         <div class="map-stage">
-          <MindMap
-            {branches}
-            rootLabel={scopeName}
-            rootFigure={view === "contents" ? scope.length.toLocaleString() : figure(scope)}
-            {figure}
-            {bar}
-            scale={largestTag}
-            {selected}
-            related={joined.slice(0, 12)}
-            onSelect={choose}
-            label={mapLabel}
-          />
+          {#if depth === "3d"}{#if groups.length}<SimilarityMap
+                {o}
+                {scope}
+                {groups}
+                {colourOf}
+                {lit}
+                {lines}
+                {picked}
+                {selected}
+                related={joined.slice(0, 12).map((r) => r.key)}
+                onPick={pick}
+                onGroup={choose}
+                label={`${question} Every asset of ${scopeName} as a point, alike assets close together, in ${plural(groups.length, "group")} by meaning named by their tags.`}
+              />
+              <p class="muted small">
+                Each point is an asset; alike assets sit close, and each group by meaning is named by the tags its
+                assets carry most. Drag to turn, scroll to zoom, hover a point for its name. Choose a group's name to
+                draw what joins it to other groups, or a point to draw its links and near-duplicates.
+              </p>{:else}<p class="notice">
+                No stored embeddings, so assets cannot be placed by meaning. Build the index with embeddings, or use the
+                flat map.
+              </p>{/if}
+          {:else}<MindMap
+              {branches}
+              rootLabel={scopeName}
+              rootFigure={view === "contents" ? scope.length.toLocaleString() : figure(scope)}
+              {figure}
+              {bar}
+              scale={largestTag}
+              {selected}
+              related={joined.slice(0, 12)}
+              onSelect={choose}
+              label={mapLabel}
+            />{/if}
         </div>
       </div>
 
@@ -392,12 +499,37 @@
           <div>
             <h2>{part ? part.name : scopeName}</h2>
             <p class="muted small">
-              {part ? `${part.type ? `Tag in ${part.type} · ` : "Asset type · "}${scopeName}` : "The whole scope"} ·
+              {part
+                ? `${part.group ? "Group by meaning · " : part.type ? `Tag in ${part.type} · ` : "Asset type · "}${scopeName}`
+                : "The whole scope"} ·
               {plural(facts.count, "asset")}
             </p>
           </div>
           {#if part}<button class="btn-quiet" onclick={() => choose(selected)} aria-label="Close">✕</button>{/if}
         </header>
+
+        {#if picked >= 0}<section>
+            <h3>Chosen asset</h3>
+            {@render assetList([picked], (i) => plural(o!.shows[i]!, "read"))}
+            {#if pickedJoins.length}<ul class="rows">
+                {#each pickedJoins.slice(0, 10) as j}<li>
+                    <button class="link" onclick={() => pick(j.i)} title={o.ref[j.i]}>{short(o.ref[j.i]!)}</button><span
+                      class="count">{j.what}</span
+                    >
+                  </li>{/each}
+              </ul>{:else}<p class="muted small">No links or near-duplicates.</p>{/if}
+          </section>{/if}
+
+        {#if depth === "3d" && !part && groups.length}<section>
+            <h3>Groups by meaning</h3>
+            <ul class="rows">
+              {#each groups as g (g.key)}<li>
+                  <button class="link" onclick={() => choose(g.key)}>{g.label}</button><span class="count"
+                    >{figure(g.members)}</span
+                  >
+                </li>{/each}
+            </ul>
+          </section>{/if}
 
         {#if view === "contents"}<section>
             <h3>What it is made of</h3>
@@ -548,7 +680,8 @@
     gap: 4px;
     min-inline-size: 0;
   }
-  .views button[aria-selected="true"] {
+  .views button[aria-selected="true"],
+  .views button[aria-pressed="true"] {
     color: var(--text);
     background: var(--surface-2);
     font-weight: 600;
