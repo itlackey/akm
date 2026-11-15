@@ -24,7 +24,7 @@ const NON_CURRENT_LINE_PATTERN = /\b(?:historical(?:ly)?|previously|formerly|for
 const NON_CURRENT_HEADING_PATTERN = /^#{1,6}\s.*\b(?:history|changelog|archive|examples?)\b/i;
 
 /** Drop sentence punctuation absorbed at the end of a path or ref token. */
-export function stripTrailingSentencePunctuation(token: string): string {
+function stripTrailingSentencePunctuation(token: string): string {
   return token.replace(/[.;:!?]+$/, "");
 }
 

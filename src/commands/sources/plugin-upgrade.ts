@@ -675,7 +675,8 @@ const SKEW_ADVISORY_HARNESS: Record<string, PluginUpgradeEntry["harness"]> = {
 /** Adds the `akm health` verdict to a plugin whose bundled akm-cli differs from the CLI, so the upgrade names the skew it leaves. */
 function withEngineSkew(entries: PluginUpgradeEntry[], cliVersion: string): PluginUpgradeEntry[] {
   const skew = new Map<string, string>();
-  for (const advisory of collectPluginStalenessAdvisories({ cliVersion, probe: false })) {
+  // Codex records no engine version, so its reader (a `codex plugin list` spawn) is skipped.
+  for (const advisory of collectPluginStalenessAdvisories({ cliVersion, probe: false, readCodex: () => undefined })) {
     const harness = SKEW_ADVISORY_HARNESS[advisory.name];
     if (advisory.status === "warn" && harness && !skew.has(harness)) skew.set(harness, advisory.message);
   }

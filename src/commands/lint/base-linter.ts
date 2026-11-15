@@ -50,7 +50,7 @@ import {
   spliceFrontmatterLine,
 } from "../../core/asset/frontmatter";
 import { checkUnquotedDescriptionColon } from "../../core/asset/frontmatter-lint";
-import { findCurrentPathReferences, homeRootOf, stripTrailingSentencePunctuation } from "../../core/asset/lint-text";
+import { findCurrentPathReferences, homeRootOf } from "../../core/asset/lint-text";
 import { isArchivedRelPath } from "../../core/asset/memory-archive";
 import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
 import { localDateStamp } from "../../core/common";
@@ -350,7 +350,7 @@ function scanBundleRefs(scanBody: string, allRoots: string[]): Array<{ ref: stri
   let match: RegExpExecArray | null;
   // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic regex loop
   while ((match = re.exec(scanBody)) !== null) {
-    const token = stripTrailingSentencePunctuation(match[1]!); // e.g. "core//memories/foo"
+    const token = match[1]!; // e.g. "core//memories/foo"
     if (token.includes("$(") || token.includes("${") || token.includes("::")) continue;
     const boundary = token.indexOf("//");
     if (boundary < 0) continue;

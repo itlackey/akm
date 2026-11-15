@@ -17,6 +17,7 @@
  */
 
 import os from "node:os";
+import { isProcessAlive } from "../../core/common";
 import { probeLock, processIdentity } from "../../core/file-lock";
 import { withStateDb } from "../../core/state-db";
 import type { Database } from "../../storage/database";
@@ -32,48 +33,45 @@ import { workflowRunLockPath } from "../../workflows/exec/run-workflow";
 
 type AttemptLiveness = "running" | "interrupted" | "indeterminate";
 
-function pidIsGone(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return false;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "ESRCH";
-  }
+/** This host and process, read once per reconcile. */
+interface Here {
+  host: string;
+  self: ReturnType<typeof processIdentity>;
+  bootedAtMs: number;
 }
 
-function classifyOwner(owner: TaskHistoryOwner): AttemptLiveness {
-  if (owner.host !== os.hostname()) return "indeterminate";
-  const self = processIdentity(process.pid);
-  if (owner.bootId !== undefined && self !== undefined && owner.bootId !== self.bootId) return "interrupted";
-  const current = processIdentity(owner.pid);
-  if (owner.bootId !== undefined && owner.startTime !== undefined && self !== undefined) {
-    if (current === undefined) return pidIsGone(owner.pid) ? "interrupted" : "indeterminate";
-    return current.startTime === owner.startTime ? "running" : "interrupted";
+function classifyOwner(owner: TaskHistoryOwner, here: Here): AttemptLiveness {
+  if (owner.host !== here.host) return "indeterminate";
+  if (owner.bootId !== undefined && here.self !== undefined && owner.bootId !== here.self.bootId) return "interrupted";
+  if (owner.startTime !== undefined && here.self !== undefined) {
+    const current = processIdentity(owner.pid);
+    if (current !== undefined) return current.startTime === owner.startTime ? "running" : "interrupted";
   }
-  return pidIsGone(owner.pid) ? "interrupted" : "indeterminate";
+  return isProcessAlive(owner.pid) ? "indeterminate" : "interrupted";
 }
 
-function classifyAttempt(row: TaskHistoryRow, bootedAtMs: number): AttemptLiveness {
+function classifyAttempt(row: TaskHistoryRow, here: Here): AttemptLiveness {
   let owner: TaskHistoryOwner | undefined;
   try {
     owner = decodeTaskHistoryMetadata(row.metadata_json).owner;
   } catch {
     owner = undefined;
   }
-  if (owner) return classifyOwner(owner);
-  return new Date(row.started_at).getTime() < bootedAtMs ? "interrupted" : "indeterminate";
+  if (owner) return classifyOwner(owner, here);
+  return new Date(row.started_at).getTime() < here.bootedAtMs ? "interrupted" : "indeterminate";
 }
 
-/** Mark every `active` attempt whose owner is provably gone `interrupted`; returns how many changed. */
-export function reconcileAbandonedTaskAttempts(db: Database): number {
-  const bootedAtMs = Date.now() - os.uptime() * 1000;
-  let changed = 0;
+/** Mark every `active` attempt whose owner is provably gone `interrupted`. */
+function reconcileAbandonedTaskAttempts(db: Database): void {
+  const here: Here = {
+    host: os.hostname(),
+    self: processIdentity(process.pid),
+    bootedAtMs: Date.now() - os.uptime() * 1000,
+  };
   for (const row of listActiveTaskHistoryAttempts(db)) {
-    if (row.id !== undefined && classifyAttempt(row, bootedAtMs) === "interrupted") {
-      if (markTaskHistoryAttemptInterrupted(db, row.id)) changed++;
-    }
+    if (row.id !== undefined && classifyAttempt(row, here) === "interrupted")
+      markTaskHistoryAttemptInterrupted(db, row.id);
   }
-  return changed;
 }
 
 /**

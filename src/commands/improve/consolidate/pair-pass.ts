@@ -47,6 +47,7 @@ import type {
 } from "../../../core/improve-types";
 import { parseEmbeddedJsonResponse } from "../../../core/parse";
 import { DERIVED_SUFFIX } from "../../../core/recognition-util";
+import { redactErrorBody } from "../../../core/redaction";
 import { warnOnce } from "../../../core/warn";
 import { sameScope, scopeFromFrontmatter } from "../../../indexer/passes/metadata";
 import type { RunnerSpec } from "../../../integrations/agent/runner";
@@ -841,26 +842,20 @@ async function confirmNothingLost(ctx: PairPassContext, retired: PairSide, succe
   return claimList(parseEmbeddedJsonResponse<{ missing?: unknown }>(outcome.raw)?.missing)?.length === 0;
 }
 
-/** A judged pair's outcome: whether it failed to settle (so is retried), and why. */
+/** A judged pair's outcome: `failure` when it did not settle (so it is retried), with why. */
 interface PairJudgeResult {
-  failed: boolean;
   failure?: { kind: PairFailureKind; reason: string };
 }
 
-const PAIR_FAILURE_REASON_MAX = 160;
 const PAIR_FAILURES_REPORTED_MAX = 20;
 
-/** A bounded one-line reason with URLs removed; never the prompt or the reply. */
-function clipFailureReason(reason: string): string {
+/** A bounded one-line reason with URLs and credentials removed; never the prompt or the reply. */
+function failedPair(kind: PairFailureKind, reason: string): PairJudgeResult {
   const line = reason
     .replace(/https?:\/\/\S+/g, "<url>")
     .replace(/\s+/g, " ")
     .trim();
-  return line.length > PAIR_FAILURE_REASON_MAX ? `${line.slice(0, PAIR_FAILURE_REASON_MAX - 1)}…` : line;
-}
-
-function failedPair(kind: PairFailureKind, reason: string): PairJudgeResult {
-  return { failed: true, failure: { kind, reason: clipFailureReason(reason) } };
+  return { failure: { kind, reason: redactErrorBody(line) } };
 }
 
 /**
@@ -871,10 +866,10 @@ function failedPair(kind: PairFailureKind, reason: string): PairJudgeResult {
 async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise<PairJudgeResult> {
   const initiatorSide = loadSide(candidate.initiator, ctx.gitFirstAdded, ctx.stashDir);
   const otherSide = loadSide(candidate.other, ctx.gitFirstAdded, ctx.stashDir);
-  if (!initiatorSide || !otherSide) return { failed: false }; // unreadable since selection — skip, not a judge failure
+  if (!initiatorSide || !otherSide) return {}; // unreadable since selection — skip, not a judge failure
 
   const judgedScope = scopeFromFrontmatter(initiatorSide.frontmatter);
-  if (!sameScope(judgedScope, scopeFromFrontmatter(otherSide.frontmatter))) return { failed: false };
+  if (!sameScope(judgedScope, scopeFromFrontmatter(otherSide.frontmatter))) return {};
   const scopesStillFresh = (): boolean =>
     [initiatorSide, otherSide].every((side) => {
       const live = loadSide(side.asset, ctx.gitFirstAdded, ctx.stashDir);
@@ -893,7 +888,7 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
     ctx.rejectedPairKeys.has(rejectedPairKey(initiatorSide.asset.ref, otherSide.asset.ref, initiatorHash, otherHash)) ||
     ctx.rejectedPairKeys.has(rejectedPairKey(otherSide.asset.ref, initiatorSide.asset.ref, otherHash, initiatorHash))
   ) {
-    return { failed: false };
+    return {};
   }
 
   const { older, newer } = orderByAge(initiatorSide, otherSide);
@@ -912,17 +907,17 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
   const { verdict } = judged;
 
   ctx.labelCounts[verdict.relation]++;
-  if (verdict.relation === "contradicts") return { failed: false }; // counted; stays human — no proposal, no belief write
-  if (!isRetireLabel(verdict.relation)) return { failed: false }; // overlap / unrelated: judged_no_action
+  if (verdict.relation === "contradicts") return {}; // counted; stays human — no proposal, no belief write
+  if (!isRetireLabel(verdict.relation)) return {}; // overlap / unrelated: judged_no_action
 
   const decision = decideRetirement(verdict.relation, verdict.redundant, older, newer, verdict);
-  if (!decision) return { failed: false };
+  if (!decision) return {};
   let { retired, successor } = decision;
   // Owner rule (#1092): knowledge is never replaced with a memory (a `.derived` memory is a memory). When the memory
   // holds nothing the note lacks, retire the memory in favour of the note instead; otherwise leave the pair alone.
   // The flipped pair then runs every guard below like any memory retirement.
   if (retired.asset.type === "knowledge" && successor.asset.type === "memory") {
-    if ((successor === older ? verdict.onlyInA : verdict.onlyInB).length > 0) return { failed: false };
+    if ((successor === older ? verdict.onlyInA : verdict.onlyInB).length > 0) return {};
     [retired, successor] = [successor, retired];
   }
 
@@ -933,7 +928,7 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
     // name already carries "sub/", so joining dirname(filePath) (which ALSO
     // ends in "sub") with it used to double the subfolder segment.
     const parentPath = retired.asset.filePath.replace(/\.derived\.md$/, ".md");
-    if (fs.existsSync(parentPath)) return { failed: false }; // never retire a .derived memory whose parent still exists
+    if (fs.existsSync(parentPath)) return {}; // never retire a .derived memory whose parent still exists
   }
   const retiredHash = contentHash(retired.raw, "body");
   const successorHash = contentHash(successor.raw, "body");
@@ -958,7 +953,7 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
   if (ctx.opts.dryRun) {
     ctx.retired.push(`${retired.asset.ref} -> ${successor.asset.ref}`);
     ctx.perInitiatorProposed.add(candidate.initiator.ref);
-    return { failed: false };
+    return {};
   }
   // Continuity check (plan §5.4, rule R3): replay the retired asset's own
   // past queries and flag, but do not block, a pair where the successor
@@ -1035,7 +1030,7 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
         ctx.opts.proposalsCtx,
       );
     }
-    return { failed: false };
+    return {};
   } catch (error) {
     ctx.warnings.push(
       `Pair pass: could not mint a retire proposal for ${retired.asset.ref}: ${error instanceof Error ? error.message : String(error)}`,
@@ -1184,9 +1179,7 @@ export async function runConsolidatePairPass(
     continuitySearch: seams.continuitySearch ?? createContinuitySearch(stashDir, config),
   };
 
-  let failedJudgments = 0;
   const failures: PairFailure[] = [];
-  const failureKinds: Partial<Record<PairFailureKind, number>> = {};
   // An initiator with any failed (or never-sent) judge call
   // gets no ledger row — a failure attempted nothing conclusive, so writing
   // one would mean the pair is never retried.
@@ -1199,20 +1192,14 @@ export async function runConsolidatePairPass(
       { signal: opts.signal },
     );
     results.forEach((r, idx) => {
-      // `concurrentMap` leaves an entry `undefined` for a call an
-      // aborted run never sent at all — `r?.failed === true` reads that as
-      // `undefined === true` (false), so an unsent call counted as a clean
-      // "no action" verdict. Explicit `undefined` check closes that gap.
-      if (r === undefined || r.failed === true) {
-        const candidate = judgeable[idx]!;
-        const failure = r?.failure ?? { kind: "cancelled" as const, reason: "not sent: the run was cancelled" };
-        failedJudgments++;
-        failedInitiators.add(candidate.initiator.ref);
-        failureKinds[failure.kind] = (failureKinds[failure.kind] ?? 0) + 1;
-        if (failures.length < PAIR_FAILURES_REPORTED_MAX) {
-          failures.push({ initiator: candidate.initiator.ref, other: candidate.other.ref, ...failure });
-        }
-      }
+      // `concurrentMap` leaves an entry `undefined` for a call an aborted run never sent at all: that pair did not
+      // settle either, so it is counted as cancelled rather than as a clean "no action" verdict.
+      const failure =
+        r === undefined ? { kind: "cancelled" as const, reason: "not sent: the run was cancelled" } : r.failure;
+      if (!failure) return;
+      const candidate = judgeable[idx]!;
+      failedInitiators.add(candidate.initiator.ref);
+      failures.push({ initiator: candidate.initiator.ref, other: candidate.other.ref, ...failure });
     });
   }
 
@@ -1245,6 +1232,9 @@ export async function runConsolidatePairPass(
     recordLedgerAttempt({ proposalsCtx: opts.proposalsCtx }, ledgerInputs);
   }
 
+  const failedJudgments = failures.length;
+  const failureKinds: Partial<Record<PairFailureKind, number>> = {};
+  for (const { kind } of failures) failureKinds[kind] = (failureKinds[kind] ?? 0) + 1;
   if (failedJudgments > 0) {
     const kinds = Object.entries(failureKinds)
       .map(([kind, n]) => `${kind} ${n}`)
@@ -1264,6 +1254,6 @@ export async function runConsolidatePairPass(
     labelCounts: ctx.labelCounts,
     retired: ctx.retired,
     failedJudgments,
-    ...(failedJudgments > 0 ? { failureKinds, failures } : {}),
+    ...(failedJudgments > 0 ? { failureKinds, failures: failures.slice(0, PAIR_FAILURES_REPORTED_MAX) } : {}),
   };
 }

@@ -25,7 +25,7 @@
  */
 
 import path from "node:path";
-import { TransientError } from "../../core/errors";
+import { rethrowIfTestIsolationError, TransientError } from "../../core/errors";
 import { releaseLock } from "../../core/file-lock";
 import { getStateDir } from "../../core/paths";
 import { formatLockHolderPid, tryAcquireRunLock } from "../../core/run-lock";
@@ -50,7 +50,12 @@ export async function runTask(id: string, options: RunTaskOptions): Promise<Task
   const provenance = resolveProvenanceContext(options.provenance, options.scheduled === true);
 
   const task = await loadPreparedTask(id, options);
-  reconcileAbandonedExecutionState();
+  try {
+    reconcileAbandonedExecutionState();
+  } catch (error) {
+    rethrowIfTestIsolationError(error);
+    // Settling abandoned state is housekeeping; it never prevents a run.
+  }
 
   // Experimental steps task: a run does not start while the previous one is alive, and `task:`
   // steps and `--resume` are settled before any attempt is reserved.
