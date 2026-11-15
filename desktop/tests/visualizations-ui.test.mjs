@@ -260,15 +260,14 @@ test("visualizations survive late responses, a changed library and a narrow wind
         .map((el) => `${el.tagName.toLowerCase()}.${el.className}`);
     }, selector);
 
-  await t.test("Library map: three views of the whole library, each with its figures in words", async () => {
+  const sideHeading = (page) => figures(page).getByRole("heading", { level: 2 });
+
+  await t.test("Library map: each view draws the tags its question is about, and the column answers it", async () => {
     const { page, errors } = await fresh((page) => withGraph(page));
     await open(page, server, "/library/map");
-    // Contents: what is in it, by type, bundle and tag.
+    // Contents: the largest tags, what the library is made of, and its most connected assets.
     await expect(tab(page, "Contents")).toHaveAttribute("aria-selected", "true");
     await expect(page.getByText("What is in the library?")).toBeVisible();
-    await expect(tab(page, "Relations")).toHaveCount(0);
-    await expect(figures(page).locator(".stats")).toContainText("7assets");
-    await expect(figures(page).locator(".stats")).toContainText("8tags");
     await expect(mapButton(page, "Knowledge: 3")).toBeVisible();
     await expect(mapButton(page, "Memories and facts: 4")).toBeVisible();
     await expect(mapButton(page, "auth (Memories and facts): 2")).toBeVisible();
@@ -277,57 +276,92 @@ test("visualizations survive late responses, a changed library and a narrow wind
     await expect(
       page.locator(".mind-map").getByRole("button", { name: /^(skill|creating|2026|example\.com)/ }),
     ).toHaveCount(0);
-    const rows = figures(page).locator("table.tag-table tbody tr");
-    await expect(rows).toHaveCount(5);
-    await expect(rows.first()).toContainText("2");
-    // Use: each asset in one class; the four add up to the library.
+    await expect(sideHeading(page)).toHaveText("All bundles");
+    await expect(figures(page)).toContainText("7 assets");
+    const madeOf = figures(page).locator("section", { hasText: "What it is made of" });
+    await expect(madeOf).toContainText("notes4");
+    await expect(madeOf).toContainText("knowledge3");
+    const connected = figures(page).locator("section", { hasText: "Most connected" });
+    await expect(connected.locator(".read-row")).toHaveCount(4);
+    await expect(connected.locator(".read-row").first()).toContainText("knowledge/deploy/a1 link");
+    // Use: the most read tags with their reads; the most read assets and the ones never read, longest unchanged first.
     await tab(page, "Use").click();
     await expect(page.getByText("What is used, and what is dead weight?")).toBeVisible();
-    const legend = page.locator(".map-legend");
-    await expect(legend).toContainText("Read in the last 30 days2");
-    await expect(legend).toContainText("Read earlier in the window, not since1");
-    await expect(legend).toContainText("Not read, edited in the last 180 days1");
-    await expect(legend).toContainText("Not read, last edited over 180 days ago3");
-    await expect(mapButton(page, "Knowledge: 33% read")).toBeVisible();
-    await expect(mapButton(page, "auth (Memories and facts): 50% read")).toBeVisible();
-    // Problems: outdated, disliked and duplicated, with the pair named.
+    await expect(mapButton(page, "Knowledge: 9 reads")).toBeVisible();
+    await expect(mapButton(page, "deploy (Memories and facts): 2 reads")).toBeVisible();
+    // Knowledge's auth asset was never read, so the tag is not among the most read.
+    await expect(page.locator(".mind-map").getByRole("button", { name: /^auth \(Knowledge\)/ })).toHaveCount(0);
+    const mostRead = figures(page).locator("section", { hasText: "Most read" });
+    await expect(mostRead.locator(".read-row").first()).toContainText("knowledge/deploy/a9 reads");
+    const never = figures(page).locator("section", { hasText: "Never read" });
+    await expect(never.locator(".read-row").first()).toContainText("memories/misc/g");
+    await expect(never.locator(".read-row")).toHaveCount(4);
+    // Problems: the tags with problem assets, and what to fix.
     await tab(page, "Problems").click();
     await expect(page.getByText("What is wrong or duplicated?")).toBeVisible();
-    await expect(figures(page).locator(".stats")).toContainText("1outdated");
-    await expect(figures(page).locator(".stats")).toContainText("1disliked");
-    await expect(figures(page).locator(".stats")).toContainText("1duplicate pairs");
-    await expect(figures(page).locator(".pairs")).toContainText("wiki//knowledge/auth/d");
-    await expect(figures(page).locator(".pairs")).toContainText("notes//memories/auth/f");
     await expect(mapButton(page, "Knowledge: 2 problems")).toBeVisible();
     await expect(mapButton(page, "auth (Memories and facts): 1 problem")).toBeVisible();
+    await expect(page.locator(".mind-map").getByRole("button", { name: /^deploy \(Memories and facts\)/ })).toHaveCount(
+      0,
+    );
+    const fix = figures(page).locator("section", { hasText: "What to fix" });
+    await expect(fix.locator("summary", { hasText: "Outdated but still here" })).toContainText("1");
+    await expect(fix).toContainText("knowledge/deploy/b");
+    await expect(fix.locator("summary", { hasText: "Near-duplicates inside" })).toContainText("1");
+    await expect(fix.locator("summary", { hasText: "Disliked" })).toContainText("1");
     assert.deepEqual(errors, []);
     await page.close();
   });
 
-  await t.test("Library map: choosing a tag opens its figures in every view; Escape closes them", async () => {
-    const { page, errors } = await fresh((page) => withGraph(page));
+  await t.test("Library map: choosing a tag draws what joins it and fills the column; Escape closes it", async () => {
+    const { page, errors } = await fresh(async (page) => {
+      await withGraph(page);
+      await page.route("**/api/asset/related**", (route) =>
+        route.fulfill({
+          json: {
+            ok: true,
+            data: {
+              available: true,
+              matches: [{ ref: "notes//memories/auth/f", title: "f", type: "memory", cosine: 0.91 }],
+            },
+          },
+        }),
+      );
+    });
     await open(page, server, "/library/map");
-    const detail = figures(page).locator(".detail");
-    await expect(detail).toHaveCount(0);
-    await mapButton(page, "rollout (Knowledge): 2").click();
-    await expect(mapButton(page, "rollout (Knowledge): 2")).toHaveAttribute("aria-pressed", "true");
-    await expect(detail.getByRole("heading", { name: /^rollout/ })).toBeVisible();
-    await expect(detail).toContainText("2 assets");
+    await mapButton(page, "auth (Knowledge): 1").click();
+    await expect(mapButton(page, "auth (Knowledge): 1")).toHaveAttribute("aria-pressed", "true");
+    await expect(sideHeading(page)).toHaveText("auth");
+    await expect(figures(page)).toContainText("Tag in Knowledge");
+    // c links to d, and d nearly duplicates f: two groups, two lines.
+    await expect(page.locator(".mind-map .relations path")).toHaveCount(2);
+    const joined = figures(page).locator(".joined");
+    await expect(joined).toContainText("auth · Memories and facts 1 duplicate");
+    await expect(joined).toContainText("deploy · Memories and facts 1 link");
+    // A joined group in the column is chosen in turn.
+    await joined.getByRole("button", { name: "auth · Memories and facts" }).click();
+    await expect(sideHeading(page)).toHaveText("auth");
+    await expect(figures(page)).toContainText("Tag in Memories and facts");
+    // Problems: the pair with the other bundle, compared in one click, and the bundle that repeats it.
     await tab(page, "Problems").click();
-    await expect(detail).toContainText("deploy/b");
-    await expect(detail).toContainText("superseded, contradicted or deprecated");
+    const elsewhere = figures(page).locator("details", { hasText: "Near-duplicates elsewhere" });
+    await elsewhere.locator("summary").click();
+    await expect(elsewhere.getByRole("link", { name: "Compare" })).toHaveAttribute("href", /compare=.*compare=/);
+    await expect(figures(page).locator("section", { hasText: "Repeated in other bundles" })).toContainText(
+      "wiki1 near-duplicate pair",
+    );
+    // Use: the closest content to a read asset, by embedding.
     await tab(page, "Use").click();
-    await expect(detail).toContainText("Read in the last 30 days");
+    await figures(page).getByRole("button", { name: "Closest" }).first().click();
+    await expect(figures(page).locator(".near")).toContainText("memories/auth/f0.91");
     await page.keyboard.press("Escape");
-    await expect(detail).toHaveCount(0);
-    await expect(mapButton(page, "rollout (Knowledge): 50% read")).toHaveAttribute("aria-pressed", "false");
-    // A type opens its figures too, and the list beside the map chooses a tag as well.
-    await mapButton(page, "Memories and facts: 25% read").click();
-    await expect(detail.getByRole("heading", { name: /^Memories and facts/ })).toBeVisible();
-    await figures(page).locator("tr", { hasText: "Memories and facts" }).getByRole("button", { name: "auth" }).click();
-    await expect(detail.getByRole("heading", { name: /^auth/ })).toBeVisible();
-    await detail.getByRole("button", { name: "Close" }).click();
-    await expect(detail).toHaveCount(0);
+    await expect(sideHeading(page)).toHaveText("All bundles");
+    await expect(page.locator(".mind-map .relations path")).toHaveCount(0);
+    // One bundle: the map and the column follow it.
+    await page.getByRole("combobox", { name: /^Bundle/ }).selectOption({ label: "notes" });
+    await expect(sideHeading(page)).toHaveText("notes");
+    await expect(figures(page)).toContainText("4 assets");
+    await expect(page.locator(".mind-map").getByRole("button", { name: /^Knowledge/ })).toHaveCount(0);
     assert.deepEqual(errors, []);
     await page.close();
   });
@@ -335,7 +369,7 @@ test("visualizations survive late responses, a changed library and a narrow wind
   await t.test("Library map: ?select= opens that asset's tag, and an unknown asset is named", async () => {
     const { page } = await fresh((page) => withGraph(page));
     await open(page, server, `/library/map?select=${encodeURIComponent("notes//memories/auth/e")}`);
-    await expect(figures(page).locator(".detail").getByRole("heading", { name: /^auth/ })).toBeVisible();
+    await expect(sideHeading(page)).toHaveText("auth");
     await expect(mapButton(page, "auth (Memories and facts): 2")).toHaveAttribute("aria-pressed", "true");
     await page.goto(`${server.origin}/library/map?select=${encodeURIComponent("wiki//knowledge/missing")}`);
     await expect(page.getByText("No asset “wiki//knowledge/missing” is in the library.")).toBeVisible();
@@ -346,7 +380,7 @@ test("visualizations survive late responses, a changed library and a narrow wind
     const { page, errors } = await fresh();
     consoleErrors(page, errors);
     await open(page, server, "/library/map");
-    await expect(figures(page).locator(".stats")).toContainText("assets");
+    await expect(sideHeading(page)).toHaveText("All bundles");
     // The tagged knowledge assets: recovery on the restore guide and the policy, retention on the policy and the copy note.
     await expect(mapButton(page, "recovery (Knowledge): 2")).toBeVisible();
     await expect(mapButton(page, "retention (Knowledge): 2")).toBeVisible();
@@ -389,7 +423,7 @@ test("visualizations survive late responses, a changed library and a narrow wind
       {
         const { page, errors } = await fresh((page) => withGraph(page, empty));
         await open(page, server, "/library/map");
-        await expect(figures(page).locator(".stats")).toContainText("0assets");
+        await expect(figures(page)).toContainText("0 assets");
         for (const name of ["Use", "Problems", "Contents"]) await tab(page, name).click();
         assert.deepEqual(errors, []);
         await page.close();
@@ -407,7 +441,7 @@ test("visualizations survive late responses, a changed library and a narrow wind
         await expect(page.getByRole("alert")).toContainText("Synthetic: the graph failed.");
         fail = false;
         await page.getByRole("button", { name: "Retry" }).click();
-        await expect(figures(page).locator(".stats")).toContainText("7assets");
+        await expect(figures(page)).toContainText("7 assets");
         await expect(page.getByRole("alert")).toHaveCount(0);
         await page.close();
       }

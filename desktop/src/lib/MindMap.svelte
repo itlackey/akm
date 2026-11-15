@@ -12,7 +12,7 @@
 <script lang="ts">
   // The library as a two-sided mind map: the library in the middle, its asset types around it, and the tags each type's
   // assets carry most at the ends. Every label is drawn; the bar under a tag is its size, split by what the view shows.
-  import type { Branch } from "./library-overview";
+  import type { Branch, Relation } from "./library-overview";
 
   let {
     branches,
@@ -24,6 +24,7 @@
     selected = "",
     onSelect,
     pulse = null,
+    related = [],
     label,
   }: {
     branches: Branch[];
@@ -39,6 +40,8 @@
     onSelect: (key: string) => void;
     /** Replay: how many events each tag has had; a tag whose count changes flashes. */
     pulse?: Map<string, number> | null;
+    /** The groups joined to the selected one, drawn as lines to it; the others fade. */
+    related?: Relation[];
     label: string;
   } = $props();
 
@@ -98,6 +101,26 @@
     return { height, placed, left, width };
   });
 
+  /** Where each type's pill and each tag's dot sit, by key. */
+  const at = $derived(
+    new Map(
+      layout.placed.flatMap((p) => [
+        [p.b.key, { x: p.dir * p.r1, y: p.y }] as const,
+        ...p.leaves.map((l) => [l.leaf.key, { x: p.dir * p.r2, y: l.y - 3 }] as const),
+      ]),
+    ),
+  );
+  const joined = $derived(new Set(related.map((r) => r.key)));
+  const strongest = $derived(Math.max(1, ...related.map((r) => r.links + r.duplicates)));
+  /** Faded: something is selected and this is neither it, its type, nor joined to it. */
+  const faded = (key: string, branch: string) =>
+    selected !== "" && selected !== key && selected !== branch && !joined.has(key);
+  /** A line from the selected group to a joined one, bowed toward the middle: deeply across the map, gently along one side. */
+  const bow = (from: { x: number; y: number }, to: { x: number; y: number }) => {
+    const pull = Math.sign(from.x) === Math.sign(to.x) ? 0.75 : 0.35;
+    return `M${from.x},${from.y} C${from.x * pull},${from.y} ${to.x * pull},${to.y} ${to.x},${to.y}`;
+  };
+
   const curve = (x1: number, y1: number, x2: number, y2: number) => {
     const mid = (x1 + x2) / 2;
     return `M${x1},${y1} C${mid},${y1} ${mid},${y2} ${x2},${y2}`;
@@ -141,12 +164,21 @@
     {#each p.leaves as l (l.leaf.key)}
       <path
         class="leaf-line"
-        class:dim={selected && selected !== l.leaf.key && selected !== p.b.key}
+        class:dim={faded(l.leaf.key, p.b.key)}
         d={curve(p.dir * (p.r1 + p.pill / 2), p.y, p.dir * (p.r2 - 6), l.y)}
         style={`stroke:${colour(p.b.family)}`}
       />
     {/each}
   {/each}
+
+  {#if selected && at.has(selected)}<g class="relations">
+      {#each related as r (r.key)}{#if at.has(r.key)}<path
+            d={bow(at.get(selected)!, at.get(r.key)!)}
+            style={`stroke-width:${1.5 + 5 * Math.sqrt((r.links + r.duplicates) / strongest)}`}
+            ><title>{`${r.links.toLocaleString()} links, ${r.duplicates.toLocaleString()} near-duplicate pairs`}</title
+            ></path
+          >{/if}{/each}
+    </g>{/if}
 
   <g class="root">
     <rect x={-rootWidth / 2} y={layout.height / 2 - 24} width={rootWidth} height="48" rx="24" />
@@ -186,7 +218,7 @@
       <g
         class="leaf"
         class:selected={selected === l.leaf.key}
-        class:dim={selected && selected !== l.leaf.key && selected !== p.b.key}
+        class:dim={faded(l.leaf.key, p.b.key)}
         role="button"
         tabindex="0"
         aria-label={lfig ? `${l.leaf.label} (${p.b.label}): ${lfig}` : `${l.leaf.label} (${p.b.label})`}
@@ -305,6 +337,12 @@
   }
   .dim {
     opacity: 0.35;
+  }
+  .relations path {
+    fill: none;
+    stroke: var(--accent);
+    stroke-linecap: round;
+    opacity: 0.55;
   }
   .branch,
   .leaf {

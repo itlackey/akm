@@ -271,21 +271,17 @@ test("built desktop UI: each section's happy path and one refusal", { timeout: 2
       const map = page.locator(".mind-map");
       await expect(map).toBeVisible();
       const figures = page.getByRole("complementary", { name: "Figures" });
-      await expect(figures.locator(".stats")).toContainText("assets");
+      await expect(figures).toContainText("assets");
       // Env and secret files are never on the map.
       await expect(map.getByRole("button", { name: /^(env|secrets?)\b/i })).toHaveCount(0);
       await expect(figures).not.toContainText(/\b(env|secrets?)\b/i);
-      // Choosing a type shows its detail beside the map, and its assets link to their pages.
+      // Choosing a type fills the column beside the map, and its assets link to their pages.
       await map.getByRole("button", { name: /^Knowledge: / }).click();
-      const detail = figures.locator(".detail");
-      await expect(detail.getByRole("heading", { name: "Knowledge" })).toBeVisible();
-      await detail.locator(".assets a").first().click();
+      await expect(figures.getByRole("heading", { level: 2 })).toHaveText("Knowledge");
+      await page.getByRole("tab", { name: "Use", exact: true }).click();
+      await figures.locator("section", { hasText: "Never read" }).locator(".read-row a").first().click();
       await expect(page).toHaveURL(/\/library\/search\?ref=/);
       await expect(page.locator(".markdown")).toBeVisible();
-      // Choosing a tag does the same.
-      await go(page, "/library/map");
-      await figures.locator(".tag-table button.link").first().click();
-      await expect(detail.locator(".assets a").first()).toHaveAttribute("href", /\/library\/search\?ref=/);
     },
   );
 

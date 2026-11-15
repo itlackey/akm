@@ -53,7 +53,7 @@ export const PROBLEMS: Array<{ id: Problem; label: string; token: string }> = [
   { id: "duplicate", label: "Nearly the same as another asset", token: "--warn" },
 ];
 const OUTDATED_BELIEFS = ["superseded", "contradicted", "deprecated"];
-const OUTDATED_LINKS = ["superseded_by", "contradicted_by"];
+export const OUTDATED_LINKS = ["superseded_by", "contradicted_by"];
 
 export interface Overview {
   count: number;
@@ -65,11 +65,18 @@ export interface Overview {
   bundles: string[];
   bundle: number[];
   shows: number[];
+  /** When each asset's file was last changed (ISO), or null. */
+  modified: Array<string | null>;
+  /** Positive and negative feedback each asset has had in the window. */
+  positive: number[];
+  negative: number[];
   tagNames: string[];
   /** Each asset's tags, as indexes into `tagNames`. */
   tags: number[][];
   use: Array<UseClass | null>;
   problems: Array<Problem[]>;
+  /** Each declared link: from asset, to asset, and its kind's name. */
+  links: Array<{ from: number; to: number; kind: string }>;
   /** Duplicate pairs by asset index, most alike first. */
   duplicates: Array<{ a: number; b: number; cosine: number }>;
   duplicatesTruncated: boolean;
@@ -128,10 +135,18 @@ export function buildOverview(payload: OverviewPayload, now = Date.now()): Overv
     bundles: payload.bundles,
     bundle: payload.nodes.bundle,
     shows: payload.nodes.shows,
+    modified: payload.nodes.modifiedAt ?? payload.nodes.ref.map(() => null),
+    positive: payload.nodes.positive ?? payload.nodes.ref.map(() => 0),
+    negative: payload.nodes.negative ?? payload.nodes.ref.map(() => 0),
     tagNames: payload.tags ?? [],
     tags: payload.nodes.tags ?? payload.nodes.ref.map(() => []),
     use,
     problems,
+    links: payload.links.from.map((from, e) => ({
+      from,
+      to: payload.links.to[e]!,
+      kind: payload.kinds[payload.links.kind[e]!] ?? "",
+    })),
     duplicates,
     duplicatesTruncated: payload.duplicates?.truncated ?? false,
     duplicateThreshold: payload.duplicates?.threshold ?? 0,
@@ -153,26 +168,124 @@ export function tally<T extends string>(indices: readonly number[], classOf: (i:
   return counts;
 }
 
-/** Assets by type family, then by bundle: the library's make-up as rows of { label, count }, largest first. */
-export function makeUp(o: Overview, indices: readonly number[] = o.ref.map((_, i) => i)) {
-  const byFamily = new Array(FAMILIES.length).fill(0);
-  const byBundle = new Array(o.bundles.length).fill(0);
-  for (const i of indices) {
-    byFamily[o.family[i]!]++;
-    byBundle[o.bundle[i]!]++;
+// ---- What a group of assets is, and how it relates to the rest ----
+
+/** A duplicate pair by asset index. */
+export type Pair = { a: number; b: number; cosine: number };
+
+/** The questions the side column answers for a group of assets (a type, a tag, a bundle or the whole library). */
+export interface GroupFacts {
+  count: number;
+  use: Record<UseClass, number>;
+  /** Superseded, contradicted or deprecated, and still in the library. */
+  outdated: number[];
+  /** More negative feedback than positive. */
+  disliked: number[];
+  /** Near-duplicate pairs with both assets in the group. */
+  duplicatesInside: Pair[];
+  /** Near-duplicate pairs with one asset in the group and one outside it. */
+  duplicatesOutside: Pair[];
+  /** Assets of the group with a declared link to or from another asset. */
+  linked: number;
+  /** Links between the group and assets outside it. */
+  linksOut: number;
+  /** For each other bundle, how many near-duplicate pairs the group shares with it. */
+  overlap: Array<{ bundle: string; pairs: number }>;
+}
+
+export function groupFacts(o: Overview, members: readonly number[]): GroupFacts {
+  const inside = new Uint8Array(o.count);
+  for (const i of members) inside[i] = 1;
+  const linked = new Uint8Array(o.count);
+  let linksOut = 0;
+  for (const l of o.links) {
+    if (inside[l.from]) linked[l.from] = 1;
+    if (inside[l.to]) linked[l.to] = 1;
+    if (inside[l.from] !== inside[l.to]) linksOut++;
   }
-  const rows = (labels: readonly string[], counts: number[]) =>
-    labels
-      .map((label, k) => ({ label, count: counts[k]!, slot: k }))
-      .filter((r) => r.count > 0)
-      .sort((x, y) => y.count - x.count);
+  const duplicatesInside: Pair[] = [];
+  const duplicatesOutside: Pair[] = [];
+  const overlap = new Map<number, number>();
+  for (const d of o.duplicates) {
+    if (inside[d.a] && inside[d.b]) duplicatesInside.push(d);
+    else if (inside[d.a] || inside[d.b]) {
+      duplicatesOutside.push(d);
+      const mine = inside[d.a] ? d.a : d.b;
+      const theirs = inside[d.a] ? d.b : d.a;
+      if (o.bundle[theirs] !== o.bundle[mine])
+        overlap.set(o.bundle[theirs]!, (overlap.get(o.bundle[theirs]!) ?? 0) + 1);
+    }
+  }
   return {
-    families: rows(
-      FAMILIES.map((f) => f.label),
-      byFamily,
+    count: members.length,
+    use: tally(
+      members,
+      (i) => o.use[i] ?? null,
+      USE_CLASSES.map((u) => u.id),
     ),
-    bundles: rows(o.bundles, byBundle),
+    outdated: members.filter((i) => o.problems[i]!.includes("outdated")),
+    disliked: members.filter((i) => o.problems[i]!.includes("negative")),
+    duplicatesInside,
+    duplicatesOutside,
+    linked: members.filter((i) => linked[i]).length,
+    linksOut,
+    overlap: [...overlap]
+      .map(([b, pairs]) => ({ bundle: o.bundles[b]!, pairs }))
+      .sort((x, y) => y.pairs - x.pairs || (x.bundle < y.bundle ? -1 : 1)),
   };
+}
+
+/** A group on the map related to the chosen one: how many links and near-duplicate pairs join them. */
+export interface Relation {
+  key: string;
+  links: number;
+  duplicates: number;
+}
+
+/**
+ * The groups on the map joined to the one at `key` by declared links (either way; only of `linkKinds` when given) or
+ * near-duplicate pairs, most joined first. An asset counts under each drawn tag it carries, or under its type when it carries none of them.
+ */
+export function relations(
+  o: Overview,
+  branches: readonly Branch[],
+  key: string,
+  linkKinds: readonly string[] | null = null,
+): Relation[] {
+  const groupsOf = new Map<number, string[]>();
+  for (const b of branches) {
+    const tagged = new Set<number>();
+    for (const leaf of b.leaves)
+      for (const i of leaf.members) {
+        tagged.add(i);
+        groupsOf.set(i, [...(groupsOf.get(i) ?? []), leaf.key]);
+      }
+    for (const i of b.members) if (!tagged.has(i)) groupsOf.set(i, [b.key]);
+  }
+  const chosen = branches.find((b) => b.key === key) ?? branches.flatMap((b) => b.leaves).find((l) => l.key === key);
+  if (!chosen) return [];
+  const inside = new Set(chosen.members);
+  const found = new Map<string, Relation>();
+  const add = (i: number, field: "links" | "duplicates") => {
+    for (const k of groupsOf.get(i) ?? []) {
+      if (k === key || (k.startsWith(`${key}:`) && key.indexOf(":") < 0)) continue;
+      const r = found.get(k) ?? { key: k, links: 0, duplicates: 0 };
+      r[field]++;
+      found.set(k, r);
+    }
+  };
+  for (const l of o.links) {
+    if (linkKinds && !linkKinds.includes(l.kind)) continue;
+    if (inside.has(l.from) && !inside.has(l.to)) add(l.to, "links");
+    else if (inside.has(l.to) && !inside.has(l.from)) add(l.from, "links");
+  }
+  for (const d of o.duplicates) {
+    if (inside.has(d.a) && !inside.has(d.b)) add(d.b, "duplicates");
+    else if (inside.has(d.b) && !inside.has(d.a)) add(d.a, "duplicates");
+  }
+  return [...found.values()].sort(
+    (x, y) => y.links + y.duplicates - (x.links + x.duplicates) || (x.key < y.key ? -1 : 1),
+  );
 }
 
 /** The first problem of an asset (the one it is coloured by), or null. */
@@ -219,9 +332,15 @@ export interface Branch {
  * The library as a mind map: one branch per asset type that has assets, largest first, and under each the tags its
  * assets carry most, up to `leaves` across the whole map (shared by the square root of each type's size, at least one
  * and at most ten each). An asset with several drawn tags is under each of them, as tags are. `only` maps just those
- * assets (the ones a replay's events touched).
+ * assets (the ones a replay's events touched). `rank` orders the tags (by default, how many assets carry them); a tag
+ * it ranks at zero is not drawn.
  */
-export function mindMap(o: Overview, leaves = 44, only?: Iterable<number>): Branch[] {
+export function mindMap(
+  o: Overview,
+  leaves = 44,
+  only?: Iterable<number>,
+  rank: (members: number[]) => number = (members) => members.length,
+): Branch[] {
   const byFamily = FAMILIES.map(() => [] as number[]);
   for (const i of only ?? o.ref.keys()) byFamily[o.family[i]!]!.push(i);
   const families = byFamily
@@ -240,8 +359,11 @@ export function mindMap(o: Overview, leaves = 44, only?: Iterable<number>): Bran
     const budget = Math.max(1, Math.min(10, Math.round((leaves * Math.sqrt(members.length)) / weight)));
     const top = [...carriers]
       .filter(([, m]) => m.length >= 2 || members.length < 10)
-      .sort((x, y) => y[1].length - x[1].length || (o.tagNames[x[0]]! < o.tagNames[y[0]]! ? -1 : 1))
-      .slice(0, budget);
+      .map(([t, m]) => ({ t, m, r: rank(m) }))
+      .filter((x) => x.r > 0)
+      .sort((x, y) => y.r - x.r || y.m.length - x.m.length || (o.tagNames[x.t]! < o.tagNames[y.t]! ? -1 : 1))
+      .slice(0, budget)
+      .map((x) => [x.t, x.m] as const);
     const drawn = new Set(top.flatMap(([, m]) => m));
     return {
       key: `f${family}`,

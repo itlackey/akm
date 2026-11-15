@@ -7,10 +7,12 @@ import test from "node:test";
 import {
   buildOverview,
   DAY,
-  makeUp,
+  groupFacts,
   mindMap,
   OLD_DAYS,
+  OUTDATED_LINKS,
   RECENT_DAYS,
+  relations,
   tally,
   useClass,
 } from "../src/lib/library-overview.ts";
@@ -78,23 +80,54 @@ test("problems: outdated by belief or by the link it declares, more negative tha
   assert.deepEqual(o.duplicates, [{ a: 3, b: 5, cosine: 0.98 }]);
 });
 
-test("make-up counts families and bundles, largest first", () => {
+test("the overview carries links by kind name, edit times and feedback counts", () => {
   const o = buildOverview(payload, now);
-  const m = makeUp(o);
-  assert.deepEqual(
-    m.families.map((r) => [r.label, r.count]),
-    [
-      ["Memories and facts", 4],
-      ["Knowledge", 3],
-    ],
-  );
-  assert.deepEqual(
-    m.bundles.map((r) => [r.label, r.count]),
-    [
-      ["notes", 4],
-      ["wiki", 3],
-    ],
-  );
+  assert.deepEqual(o.links, [
+    { from: 0, to: 1, kind: "xref" },
+    { from: 1, to: 2, kind: "xref" },
+    { from: 2, to: 3, kind: "xref" },
+    { from: 4, to: 5, kind: "contradicted_by" },
+  ]);
+  assert.equal(o.modified[1], ago(400));
+  assert.deepEqual([o.positive[0], o.negative[3]], [1, 2]);
+});
+
+test("group facts: use, what is outdated, disliked and duplicated, what links out, and which bundles repeat it", () => {
+  const o = buildOverview(payload, now);
+  const auth = groupFacts(o, [3, 4, 5]);
+  assert.equal(auth.count, 3);
+  assert.deepEqual(auth.use, { recent: 1, earlier: 0, new: 1, unread: 1 });
+  assert.deepEqual(auth.outdated, [4]);
+  assert.deepEqual(auth.disliked, [3]);
+  // d and f are both in the group; c links in to d from outside it; e and f link to each other inside it.
+  assert.deepEqual(auth.duplicatesInside, [{ a: 3, b: 5, cosine: 0.98 }]);
+  assert.deepEqual(auth.duplicatesOutside, []);
+  assert.equal(auth.linked, 3);
+  assert.equal(auth.linksOut, 1);
+  assert.deepEqual(auth.overlap, []);
+  // Knowledge holds d; its twin f is a memory in the other bundle.
+  const knowledge = groupFacts(o, [0, 1, 3]);
+  assert.deepEqual(knowledge.duplicatesOutside, [{ a: 3, b: 5, cosine: 0.98 }]);
+  assert.deepEqual(knowledge.overlap, [{ bundle: "notes", pairs: 1 }]);
+});
+
+test("relations: the groups joined to the chosen one by links either way or near-duplicates, most joined first", () => {
+  const o = buildOverview(payload, now);
+  const map = mindMap(o);
+  // d (Knowledge's auth) is linked from c (Memories' deploy) and nearly duplicates f (Memories' auth).
+  assert.deepEqual(relations(o, map, "f0:auth"), [
+    { key: "f1:auth", links: 0, duplicates: 1 },
+    { key: "f1:deploy", links: 1, duplicates: 0 },
+  ]);
+  // A type is joined to other types' tags, never to its own; g carries no drawn tag and counts under its type.
+  assert.deepEqual(relations(o, map, "f1"), [
+    { key: "f0:auth", links: 1, duplicates: 1 },
+    { key: "f0:deploy", links: 1, duplicates: 0 },
+    { key: "f0:rollout", links: 1, duplicates: 0 },
+  ]);
+  // Only some link kinds: e's contradiction of f stays inside the group, so only the duplicate joins it.
+  assert.deepEqual(relations(o, map, "f1:auth", OUTDATED_LINKS), [{ key: "f0:auth", links: 0, duplicates: 1 }]);
+  assert.deepEqual(relations(o, map, "nothing"), []);
 });
 
 test("the overview carries each asset's tags as indexes into the tag names", () => {
@@ -108,6 +141,15 @@ test("the overview carries each asset's tags as indexes into the tag names", () 
 });
 
 const labels = (branches) => branches.map((b) => [b.key, b.label, b.members.length, b.leaves.map((l) => l.label)]);
+
+test("mind map: a view ranks the tags its own way, and a tag it ranks at zero is not drawn", () => {
+  const o = buildOverview(payload, now);
+  const reads = (members) => members.reduce((sum, i) => sum + o.shows[i], 0);
+  assert.deepEqual(labels(mindMap(o, 44, undefined, reads)), [
+    ["f1", "Memories and facts", 4, ["deploy", "auth"]],
+    ["f0", "Knowledge", 3, ["deploy", "rollout"]],
+  ]);
+});
 
 test("mind map: one branch per type that has assets, largest first, with keys f<family> and f<family>:<tag>", () => {
   const o = buildOverview(payload, now);
