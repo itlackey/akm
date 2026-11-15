@@ -4,7 +4,7 @@
 
 /**
  * The `assetContentRefs` step: a ref that names an asset by its pre-#1432 spelling (`knowledge/WORK/x`, now `WORK/x`)
- * in a writable bundle's text files is rewritten to the new one, under one backup directory per run. The old to new
+ * in a writable bundle's markdown and YAML files is rewritten to the new one, under one backup directory per run. The old to new
  * map comes from the files themselves (each recognized asset's ref), so no index is needed. A spelling that
  * is now another file's live ref is left as written and listed ({@link ShadowedRef}). Only a file akm reads as an asset
  * (and a wiki's live `index.md` and `schema.md`, or an `index.md` beside assets) is rewritten (an active reference); frozen corpora, captured results and other fixtures stay byte-for-byte. The pure rewrite is
@@ -57,11 +57,15 @@ export interface ContentRefsMigrationStatus {
   assetContentRefs: ContentRefsSummary;
 }
 
-/** The files whose refs are read and rewritten; the rest of a bundle (binaries, databases) is not content. */
-const TEXT_EXTENSIONS = new Set([".md", ".yml", ".yaml", ".sh", ".ts", ".js", ".json", ".txt", ".py", ".mjs", ".jsonc", ".toml", ""]);
+/**
+ * The formats whose refs this step owns: markdown assets (frontmatter and body) and the YAML task/workflow files.
+ * An adapter that recognizes every file (generic-files) also lists JSON, scripts and plain text; those are data or
+ * code akm does not author refs in, so they are never read or rewritten.
+ */
+const TEXT_EXTENSIONS = new Set([".md", ".yml", ".yaml"]);
 
 /**
- * The text files of a root, by the runtime's own walk (git-ignored files and, outside git, dot directories are not
+ * The owned-format files of a root, by the runtime's own walk (git-ignored files and, outside git, dot directories are not
  * content). A link is left alone: it may lead anywhere, and a write would replace it with a file.
  */
 function textFiles(root: string): string[] {
