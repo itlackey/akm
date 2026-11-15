@@ -102,7 +102,7 @@ export function emptyImproveMetrics(): ImproveHealthMetrics {
     skipReasons: {},
     resultRows: { total: 0, included: 0, skipped: { invalid: 0 } },
     actions: {
-      reflect: { ok: 0, failed: 0, cooldown: 0, skipped: 0 },
+      reflect: { ok: 0, failed: 0, cooldown: 0, skipped: 0, rejected: 0 },
       distill: {
         queued: 0,
         llmFailed: 0,
@@ -158,8 +158,15 @@ function applyAction(metrics: ImproveHealthMetrics, action: Record<string, unkno
     case "reflect":
       metrics.actions.reflect.ok += 1;
       break;
-    case "reflect-failed":
-      metrics.actions.reflect.failed += 1;
+    case "reflect-failed": {
+      // Runs recorded before a quality rejection had its own mode carry it as `reflect-failed`.
+      const result = action.result as Record<string, unknown> | undefined;
+      if (result?.reason === "quality_rejected") metrics.actions.reflect.rejected += 1;
+      else metrics.actions.reflect.failed += 1;
+      break;
+    }
+    case "reflect-guard-rejected":
+      metrics.actions.reflect.rejected += 1;
       break;
     case "reflect-cooldown":
       metrics.actions.reflect.cooldown += 1;
@@ -282,6 +289,7 @@ function mergeImproveMetrics(dst: ImproveHealthMetrics, src: ImproveHealthMetric
   dst.actions.reflect.failed += src.actions.reflect.failed;
   dst.actions.reflect.cooldown += src.actions.reflect.cooldown;
   dst.actions.reflect.skipped += src.actions.reflect.skipped;
+  dst.actions.reflect.rejected += src.actions.reflect.rejected;
   dst.actions.distill.queued += src.actions.distill.queued;
   dst.actions.distill.llmFailed += src.actions.distill.llmFailed;
   dst.actions.distill.judgeRejected += src.actions.distill.judgeRejected;

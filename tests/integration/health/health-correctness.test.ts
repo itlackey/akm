@@ -158,6 +158,17 @@ describe("health reporting correctness", () => {
     expect(result.status).toBe("warn");
   });
 
+  test.each([
+    ["reflect-guard-rejected", { ok: false, reason: "quality_rejected", error: "unsupported claims" }],
+    ["reflect-failed", { ok: false, reason: "quality_rejected", error: "lost specificity" }],
+  ] as never[][])("a quality-rejected reflect candidate (%s) is counted but does not warn", async (mode, result) => {
+    improve("rejected", now - 120_000, { actions: [{ mode, ref: "knowledge/fixture", result }] } as never);
+    const health_ = await health();
+    expect(health_.improve.actions.reflect.rejected).toBe(1);
+    expect(health_.improve.actions.reflect.failed).toBe(0);
+    expect(health_.advisories.find((c) => c.name === "improve-failures")?.status).toBe("pass");
+  });
+
   test.each(["distill", "error"] as const)("a completed %s failure warns despite outer ok", async (mode) => {
     improve("failed", now - 120_000, {
       actions: [
