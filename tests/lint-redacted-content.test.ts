@@ -41,4 +41,37 @@ describe("akm lint redacted durable content (#962)", () => {
     const result = await akmLint({ dir: storage.stashDir, config: makeConfig(storage.stashDir) });
     expect(result.flagged.filter((finding) => finding.issue === "redacted-content")).toEqual([]);
   });
+
+  test("does not flag [REDACTED] documented in code spans, fences, quotes or blockquotes", async () => {
+    fs.writeFileSync(
+      path.join(storage.stashDir, "knowledge", "template.md"),
+      [
+        "---",
+        "description: Security template",
+        "---",
+        "",
+        "Set the token to `sk-[REDACTED]` before sharing.",
+        'Output shows "API_KEY=[REDACTED]" for masked values.',
+        "> Masked values print as [REDACTED].",
+        "",
+        "```",
+        "API_KEY=[REDACTED]",
+        "```",
+        "",
+      ].join("\n"),
+    );
+
+    const result = await akmLint({ dir: storage.stashDir, config: makeConfig(storage.stashDir) });
+    expect(result.flagged.filter((finding) => finding.issue === "redacted-content")).toEqual([]);
+  });
+
+  test("still flags [REDACTED] in prose beside a documented example", async () => {
+    fs.writeFileSync(
+      path.join(storage.stashDir, "knowledge", "mixed.md"),
+      "---\ndescription: Mixed\n---\n\nExample `[REDACTED]`.\n\nThe [REDACTED] password rotates weekly.\n",
+    );
+
+    const result = await akmLint({ dir: storage.stashDir, config: makeConfig(storage.stashDir) });
+    expect(result.flagged.filter((finding) => finding.issue === "redacted-content")).toHaveLength(1);
+  });
 });

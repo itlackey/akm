@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   factDiagnostics,
+  MAX_SKILL_GROUP_DEPTH,
   matchWorkflowPlaceholder,
   memoryOrphanStubApplies,
   nameOrTypeDiagnostics,
@@ -475,13 +476,38 @@ function isFileDeletion(issue: LintIssue): boolean {
 
 /**
  * Reproduce `SkillLinter.lintDirectory`: a skill subdirectory with no
- * `SKILL.md` is flagged `missing-skill-md` (never auto-fixable). Exported for
- * the lint-parity golden (`tests/integration/goldens-lint-output.test.ts`).
+ * `SKILL.md` is flagged `missing-skill-md` (never auto-fixable). A directory
+ * that has none itself but holds skill packages is a grouping directory: it is
+ * not flagged, its children are checked instead. Exported for the lint-parity
+ * golden (`tests/integration/goldens-lint-output.test.ts`).
  */
-export function lintSkillDirectory(subdirPath: string, stashRoot: string): LintIssue[] {
+export function lintSkillDirectory(subdirPath: string, stashRoot: string, depth = 1): LintIssue[] {
   if (fs.existsSync(path.join(subdirPath, "SKILL.md"))) return [];
+  const children =
+    depth < MAX_SKILL_GROUP_DEPTH
+      ? fs
+          .readdirSync(subdirPath, { withFileTypes: true })
+          .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+          .map((entry) => path.join(subdirPath, entry.name))
+      : [];
+  if (children.some((child) => containsSkillManifest(child, depth + 1))) {
+    return children.flatMap((child) => lintSkillDirectory(child, stashRoot, depth + 1));
+  }
   const relDir = path.relative(stashRoot, subdirPath);
   return [{ file: relDir, issue: "missing-skill-md", detail: `no SKILL.md in ${relDir}/`, fixed: false }];
+}
+
+function containsSkillManifest(dir: string, depth: number): boolean {
+  if (fs.existsSync(path.join(dir, "SKILL.md"))) return true;
+  if (depth >= MAX_SKILL_GROUP_DEPTH) return false;
+  return fs
+    .readdirSync(dir, { withFileTypes: true })
+    .some(
+      (entry) =>
+        entry.isDirectory() &&
+        !entry.name.startsWith(".") &&
+        containsSkillManifest(path.join(dir, entry.name), depth + 1),
+    );
 }
 
 /** MemoryLinter's `orphaned-stub` check WITH its `--fix` delete (memory-linter.ts:19-65). */

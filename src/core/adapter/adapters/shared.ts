@@ -52,6 +52,7 @@
 import { createHash } from "node:crypto";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { checkUnquotedDescriptionColon } from "../../asset/frontmatter-lint";
+import { findCurrentPathReferences, homeRootOf, stripTrailingSentencePunctuation } from "../../asset/lint-text";
 import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
 import type { BundleComponent, Diagnostic, ValidateContext } from "../types";
@@ -84,15 +85,6 @@ export const RESERVED_FILES = new Set(["index.md", "log.md"]);
 
 function checkMissingUpdated(data: Record<string, unknown>, frontmatterText: string | null): boolean {
   return frontmatterText !== null && !("updated" in data);
-}
-
-function findStalePathCandidates(body: string): string[] {
-  const pathRe = /(?:\/home\/|\/tmp\/|\/var\/|\/root\/|\/opt\/)[^\s"'`)\]>,\n]+/g;
-  const out: string[] = [];
-  let match: RegExpExecArray | null;
-  // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic regex loop
-  while ((match = pathRe.exec(body)) !== null) out.push(match[0]);
-  return out;
 }
 
 /** See file header: same intent as `markdown-insertion.ts#findFenceRegions`, not byte-identical. */
@@ -147,7 +139,7 @@ function extractProseRefTokens(text: string): string[] {
   let match: RegExpExecArray | null;
   // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic regex loop
   while ((match = re.exec(scanBody)) !== null) {
-    const token = match[1]!;
+    const token = stripTrailingSentencePunctuation(match[1]!);
     if (token.includes("$(") || token.includes("${") || token.includes("::")) continue;
     if (isNonRefConceptId(token.slice(token.indexOf("//") + 2))) continue;
     refs.push(token);
@@ -232,10 +224,12 @@ export async function runBaseValidateChecks(
   }
 
   const staleCandidates = [
-    ...findStalePathCandidates(body),
-    ...(frontmatter ? findStalePathCandidates(frontmatter) : []),
+    ...findCurrentPathReferences(body),
+    ...(frontmatter ? findCurrentPathReferences(frontmatter) : []),
   ];
   for (const candidate of staleCandidates) {
+    const home = homeRootOf(candidate);
+    if (home !== undefined && (await ctx.list(home)).length === 0) continue; // another host's or user's path
     const found = await ctx.readFile(candidate);
     if (found !== null) continue;
     const portableHint = candidate.startsWith(componentRoot)
