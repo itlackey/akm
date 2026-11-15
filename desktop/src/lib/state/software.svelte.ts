@@ -29,7 +29,13 @@ interface UpgradeView {
   channel?: string;
   currentChannel?: string;
   /** Each harness plugin akm found: the channel it follows and what the run did with it. */
-  plugins?: Array<{ harness: string; channel?: string; outcome?: string; reason?: string }>;
+  plugins?: Array<{
+    harness: string;
+    channel?: string;
+    channelMismatch?: boolean;
+    outcome?: string;
+    reason?: string;
+  }>;
 }
 export interface SoftwareSnapshot {
   engine: string;
