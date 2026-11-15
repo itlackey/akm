@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261126] - 2026-11-15
+
 ### Changed
 
 - AKM Desktop's library map is a mind map: the library, its asset types, and the tags each type's assets carry most, every label drawn, with a bar under each tag for its figure in the view. Contents, Use and Problems each draw the tags their question is about (by size, by reads, by problems), for all bundles or the one picked. Choosing a type or tag draws lines to every group its assets link to or nearly duplicate, and the column beside the map answers the view's question for it: what it is made of and its most linked assets; what is read, never read and searched for without a result; what is outdated, duplicated or disliked; and which other bundles repeat it. Every listed asset can show its closest assets by content, with a Compare link. It replaces the topic circles of 0.10.261125, whose topic names were word pairs from paths, and drops the Relations view. The map and the replay no longer need WebGL.
