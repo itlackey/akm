@@ -473,26 +473,36 @@ export class WorkflowRunsRepository {
            WHERE id = ?`,
       )
       .run(input.status, input.currentStepId, input.updatedAt, input.completedAt, input.runId);
-    this.finalizeUnitsOfTerminalRuns(input.updatedAt, input.runId);
+  }
+
+  /** Runs that are `completed` or `failed` yet still hold a `running` unit or unit attempt. */
+  listTerminalRunsWithRunningUnits(): string[] {
+    const rows = this.db
+      .prepare(
+        `SELECT id FROM workflow_runs
+          WHERE status IN ('completed', 'failed')
+            AND (EXISTS (SELECT 1 FROM workflow_run_units u WHERE u.run_id = workflow_runs.id AND u.status = 'running')
+              OR EXISTS (SELECT 1 FROM workflow_run_unit_attempts a WHERE a.run_id = workflow_runs.id AND a.status = 'running'))`,
+      )
+      .all() as Array<{ id: string }>;
+    return rows.map((row) => row.id);
   }
 
   /**
-   * A terminal (`completed`/`failed`) run has no driver, so a unit or attempt
-   * still `running` under it was cut off. Settle them as `failed` with
-   * failure_reason `interrupted` — the unit's own outcome is unknown, not a
-   * recorded success — keeping their rows. `runId` limits it to one run.
+   * Settle the units and unit attempts still `running` under a terminal run as `failed` with failure_reason
+   * `interrupted`: their own outcome is unknown, not a recorded success. Their rows are kept. The caller makes sure
+   * no driver still holds the run, since a live driver journals a unit's result after the run turns terminal.
    */
-  finalizeUnitsOfTerminalRuns(finishedAt: string, runId?: string): void {
-    const terminalRuns = `SELECT id FROM workflow_runs WHERE status IN ('completed', 'failed')${runId ? " AND id = ?" : ""}`;
-    const args = runId ? [finishedAt, runId] : [finishedAt];
+  settleRunningUnitsOfTerminalRun(runId: string, finishedAt: string): void {
     for (const table of ["workflow_run_unit_attempts", "workflow_run_units"]) {
       this.db
         .prepare(
           `UPDATE ${table}
               SET status = 'failed', failure_reason = 'interrupted', finished_at = ?
-            WHERE status = 'running' AND run_id IN (${terminalRuns})`,
+            WHERE status = 'running'
+              AND run_id IN (SELECT id FROM workflow_runs WHERE id = ? AND status IN ('completed', 'failed'))`,
         )
-        .run(...args);
+        .run(finishedAt, runId);
     }
   }
 
@@ -504,9 +514,7 @@ export class WorkflowRunsRepository {
            WHERE id = ? AND status IN ('active', 'blocked')`,
       )
       .run(updatedAt, updatedAt, runId);
-    if (Number(result.changes) !== 1) return false;
-    this.finalizeUnitsOfTerminalRuns(updatedAt, runId);
-    return true;
+    return Number(result.changes) === 1;
   }
 
   /**

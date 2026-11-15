@@ -256,12 +256,20 @@ One row per task run.
 |---|---|---|
 | `id` | INTEGER PRIMARY KEY AUTOINCREMENT | |
 | `task_id` | TEXT NOT NULL | |
-| `status` | TEXT NOT NULL | |
+| `status` | TEXT NOT NULL | `active` while running, then `completed`, `blocked` or `failed`; `interrupted` when its owner process is provably gone (see below) |
 | `started_at` | TEXT NOT NULL | ISO-8601 |
 | `completed_at`, `failed_at` | TEXT | ISO-8601 |
 | `log_path` | TEXT | The per-run flat log file |
 | `target_kind`, `target_ref` | TEXT | Task target |
 | `metadata_json` | TEXT NOT NULL DEFAULT '{}' | |
+
+An `active` row records its owner in `metadata_json.owner` (pid, host, and on Linux the boot id and process start
+time). Each task run first marks `interrupted` the active rows whose owner is provably gone: a different boot, a dead
+pid, or a pid reused by another process. A row owned by another host, or with no liveness evidence, stays `active`; a
+row reserved before owners were recorded is interrupted only when it started before the current boot. Elapsed time
+never decides, and no row is deleted. The same pass settles workflow units and unit attempts still `running` under a
+`completed` or `failed` run that no live process drives (its run lock is absent or stale) as `failed` with
+`failure_reason` `interrupted`.
 
 Unique index `idx_task_history_run` on `(task_id, started_at)`; indexes on
 `task_id`, `started_at`, `(target_kind, target_ref)`, `status`.

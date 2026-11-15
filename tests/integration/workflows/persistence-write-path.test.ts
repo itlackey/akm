@@ -4,6 +4,8 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { serializeByKey } from "../../../src/core/concurrent";
+import { releaseLock } from "../../../src/core/file-lock";
+import { tryAcquireRunLock } from "../../../src/core/run-lock";
 import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import { borrowScopedStateDb, openScopedStateDbCount } from "../../../src/core/state-db-scope";
 import {
@@ -11,6 +13,7 @@ import {
   withWorkflowRunsRepo,
 } from "../../../src/storage/repositories/workflow-runs-repository";
 import { reconcileAbandonedExecutionState } from "../../../src/tasks/run/reconcile-abandoned";
+import { workflowRunLockPath } from "../../../src/workflows/exec/run-workflow";
 import { enqueueUnitWrite } from "../../../src/workflows/exec/unit-writer";
 import { completeWorkflowStep, getWorkflowStatus } from "../../../src/workflows/runtime/runs";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
@@ -448,29 +451,34 @@ describe("units under a terminal run", () => {
     return withWorkflowRunsRepo((repo) => repo.getUnitsForRun(RUN_ID).map((u) => `${u.status}:${u.failure_reason}`));
   }
 
-  test("a failed parent leaves no unit running", async () => {
-    reserve("u1");
-    await withWorkflowRunsRepo((repo) =>
-      repo.updateRunState({
-        status: "failed",
-        currentStepId: null,
-        updatedAt: new Date().toISOString(),
-        completedAt: new Date().toISOString(),
-        runId: RUN_ID,
-      }),
-    );
-    expect(await unitStatuses()).toEqual(["failed:interrupted"]);
-  });
-
-  test("units left running under an already-failed parent are settled by reconcile", async () => {
-    reserve("u1");
+  function failRun(): void {
     const db = openStateDatabase();
     try {
       db.prepare("UPDATE workflow_runs SET status = 'failed' WHERE id = ?").run(RUN_ID);
     } finally {
       db.close();
     }
+  }
+
+  test("units left running under a failed run no process drives are settled by reconcile", async () => {
+    reserve("u1");
+    failRun();
     expect(await unitStatuses()).toEqual(["running:null"]);
+    reconcileAbandonedExecutionState();
+    expect(await unitStatuses()).toEqual(["failed:interrupted"]);
+  });
+
+  test("a failed run whose lock a live driver holds keeps its running unit: the driver still journals it", async () => {
+    reserve("u1");
+    failRun();
+    const lock = tryAcquireRunLock(workflowRunLockPath(RUN_ID), { label: "test driver" });
+    if (lock.state !== "acquired") throw new Error("the test could not take the run lock");
+    try {
+      reconcileAbandonedExecutionState();
+      expect(await unitStatuses()).toEqual(["running:null"]);
+    } finally {
+      releaseLock(lock.ownership);
+    }
     reconcileAbandonedExecutionState();
     expect(await unitStatuses()).toEqual(["failed:interrupted"]);
   });

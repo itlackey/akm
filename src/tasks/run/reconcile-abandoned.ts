@@ -17,7 +17,7 @@
  */
 
 import os from "node:os";
-import { processIdentity } from "../../core/file-lock";
+import { probeLock, processIdentity } from "../../core/file-lock";
 import { withStateDb } from "../../core/state-db";
 import type { Database } from "../../storage/database";
 import {
@@ -28,6 +28,7 @@ import {
   type TaskHistoryRow,
 } from "../../storage/repositories/task-history-repository";
 import { WorkflowRunsRepository } from "../../storage/repositories/workflow-runs-repository";
+import { workflowRunLockPath } from "../../workflows/exec/run-workflow";
 
 type AttemptLiveness = "running" | "interrupted" | "indeterminate";
 
@@ -75,10 +76,18 @@ export function reconcileAbandonedTaskAttempts(db: Database): number {
   return changed;
 }
 
-/** Settle abandoned task attempts and workflow units left running under a terminal run. */
+/**
+ * Settle abandoned task attempts, and workflow units left running under a terminal run that no live process drives
+ * (its lock is absent or stale; a held or unreadable lock leaves the run alone).
+ */
 export function reconcileAbandonedExecutionState(): void {
   withStateDb((db) => {
     reconcileAbandonedTaskAttempts(db);
-    new WorkflowRunsRepository(db).finalizeUnitsOfTerminalRuns(new Date().toISOString());
+    const repo = new WorkflowRunsRepository(db);
+    const now = new Date().toISOString();
+    for (const runId of repo.listTerminalRunsWithRunningUnits()) {
+      const lock = probeLock(workflowRunLockPath(runId)).state;
+      if (lock === "absent" || lock === "stale") repo.settleRunningUnitsOfTerminalRun(runId, now);
+    }
   });
 }
