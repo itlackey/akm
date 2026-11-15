@@ -473,6 +473,27 @@ export class WorkflowRunsRepository {
            WHERE id = ?`,
       )
       .run(input.status, input.currentStepId, input.updatedAt, input.completedAt, input.runId);
+    this.finalizeUnitsOfTerminalRuns(input.updatedAt, input.runId);
+  }
+
+  /**
+   * A terminal (`completed`/`failed`) run has no driver, so a unit or attempt
+   * still `running` under it was cut off. Settle them as `failed` with
+   * failure_reason `interrupted` — the unit's own outcome is unknown, not a
+   * recorded success — keeping their rows. `runId` limits it to one run.
+   */
+  finalizeUnitsOfTerminalRuns(finishedAt: string, runId?: string): void {
+    const terminalRuns = `SELECT id FROM workflow_runs WHERE status IN ('completed', 'failed')${runId ? " AND id = ?" : ""}`;
+    const args = runId ? [finishedAt, runId] : [finishedAt];
+    for (const table of ["workflow_run_unit_attempts", "workflow_run_units"]) {
+      this.db
+        .prepare(
+          `UPDATE ${table}
+              SET status = 'failed', failure_reason = 'interrupted', finished_at = ?
+            WHERE status = 'running' AND run_id IN (${terminalRuns})`,
+        )
+        .run(...args);
+    }
   }
 
   markRunAbandoned(runId: string, updatedAt: string): boolean {
@@ -483,7 +504,9 @@ export class WorkflowRunsRepository {
            WHERE id = ? AND status IN ('active', 'blocked')`,
       )
       .run(updatedAt, updatedAt, runId);
-    return Number(result.changes) === 1;
+    if (Number(result.changes) !== 1) return false;
+    this.finalizeUnitsOfTerminalRuns(updatedAt, runId);
+    return true;
   }
 
   /**

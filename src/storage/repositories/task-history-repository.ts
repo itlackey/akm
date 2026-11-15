@@ -48,6 +48,17 @@ export interface TaskHistoryMetadata {
   steps?: TaskHistoryStep[];
   /** Whether the OS scheduler (`schedule`) or a person or script (`manual`) started the run; absent when not recorded. */
   trigger?: "schedule" | "manual";
+  /** The process that reserved the attempt; present only while the row is `active`. Absent on rows reserved before it was recorded. */
+  owner?: TaskHistoryOwner;
+}
+
+/** Who is executing an `active` attempt: enough to tell a live owner from a gone one on the same host. */
+export interface TaskHistoryOwner {
+  pid: number;
+  host: string;
+  /** Kernel boot id and process start time (Linux); absent where `/proc` is unavailable. */
+  bootId?: string;
+  startTime?: string;
 }
 
 function metadataError(message: string): never {
@@ -109,6 +120,7 @@ export function decodeTaskHistoryMetadata(input: string | unknown): TaskHistoryM
   const trigger = parsed.trigger === "schedule" || parsed.trigger === "manual" ? parsed.trigger : undefined;
   validateDetail(detail);
   const steps = decodeSteps(parsed.steps);
+  const owner = decodeOwner(parsed.owner);
   const cleanDetail: TaskHistoryDetail | null = detail
     ? {
         ...(detail.runId !== undefined ? { runId: detail.runId } : {}),
@@ -124,6 +136,18 @@ export function decodeTaskHistoryMetadata(input: string | unknown): TaskHistoryM
     ...(engine !== undefined ? { engine } : {}),
     ...(steps !== undefined ? { steps } : {}),
     ...(trigger !== undefined ? { trigger } : {}),
+    ...(owner !== undefined ? { owner } : {}),
+  };
+}
+
+/** Tolerant: a malformed `owner` is dropped, never a reason to reject the row. */
+function decodeOwner(value: unknown): TaskHistoryOwner | undefined {
+  if (!isRecord(value) || typeof value.pid !== "number" || typeof value.host !== "string") return undefined;
+  return {
+    pid: value.pid,
+    host: value.host,
+    ...(typeof value.bootId === "string" ? { bootId: value.bootId } : {}),
+    ...(typeof value.startTime === "string" ? { startTime: value.startTime } : {}),
   };
 }
 
@@ -219,6 +243,27 @@ export function finalizeTaskHistoryAttempt(db: Database, row: TaskHistoryRow): b
       row.started_at,
     );
   return Number(result.changes) === 1;
+}
+
+/** Mark a still-`active` attempt `interrupted`: its owner is provably gone and it never recorded a finish. */
+export function markTaskHistoryAttemptInterrupted(db: Database, id: number): boolean {
+  const result = db
+    .prepare(
+      "UPDATE task_history SET status = 'interrupted' WHERE id = ? AND status = 'active' AND completed_at IS NULL",
+    )
+    .run(id);
+  return Number(result.changes) === 1;
+}
+
+/** Every attempt still `active` and unfinished, oldest first. */
+export function listActiveTaskHistoryAttempts(db: Database): TaskHistoryRow[] {
+  return db
+    .prepare(
+      `SELECT id, task_id, status, started_at, completed_at, failed_at, log_path,
+              target_kind, target_ref, metadata_json
+       FROM task_history WHERE status = 'active' AND completed_at IS NULL ORDER BY started_at ASC, id ASC`,
+    )
+    .all() as TaskHistoryRow[];
 }
 
 /**

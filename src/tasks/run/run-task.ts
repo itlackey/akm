@@ -35,6 +35,7 @@ import { nameStepError } from "../prepare/prepare-steps";
 import { recordTaskAttemptFailure, reserveTaskAttempt } from "./attempt-lifecycle";
 import { loadPreparedTask } from "./load-task";
 import { resolveProvenanceContext } from "./provenance";
+import { reconcileAbandonedExecutionState } from "./reconcile-abandoned";
 import { runPreparedCommandTask } from "./run-command-task";
 import { runNativeTask } from "./run-native-task";
 import { resolveResume, runStepsTask } from "./run-steps-task";
@@ -49,6 +50,7 @@ export async function runTask(id: string, options: RunTaskOptions): Promise<Task
   const provenance = resolveProvenanceContext(options.provenance, options.scheduled === true);
 
   const task = await loadPreparedTask(id, options);
+  reconcileAbandonedExecutionState();
 
   // Experimental steps task: a run does not start while the previous one is alive, and `task:`
   // steps and `--resume` are settled before any attempt is reserved.
