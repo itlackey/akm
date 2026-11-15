@@ -8,6 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { shouldBypassConfigStartup } from "../../../src/cli";
+import { computeTaskWindowRates } from "../../../src/commands/health/windows";
 import { buildTaskRunId, openLogsDatabase, queryTaskLogs } from "../../../src/core/logs-db";
 import { openStateDatabase } from "../../../src/core/state-db";
 import type { SpawnFn } from "../../../src/core/subprocess";
@@ -415,6 +416,14 @@ describe("abandoned task attempts", () => {
     seedActive("crashed", new Date().toISOString(), { pid: deadPid, ...identity, startTime: "1" });
     reconcileAbandonedExecutionState();
     expect(statusOf("crashed")).toBe("interrupted");
+    const [shown] = readTaskHistory({ id: "crashed" });
+    expect(shown?.status).toBe("interrupted");
+    const stateDb = openStateDatabase();
+    const rows = getTaskHistoryRuns(stateDb, "crashed");
+    stateDb.close();
+    const rates = computeTaskWindowRates(rows, Date.now);
+    expect(rates.taskFailRate).toBe(0);
+    expect(rates.stuckActiveRuns).toBe(0);
   });
 
   test("an owner from an earlier boot is interrupted; an owner on another host is left active", () => {
