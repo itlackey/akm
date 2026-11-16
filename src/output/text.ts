@@ -54,6 +54,7 @@ import { getTextFormatterHandler, registerTextFormatters, type TextFormatterEntr
 import { registryCommandFormatters } from "./text/registry-commands";
 import { rememberFormatters } from "./text/remember";
 import { removeFormatters } from "./text/remove";
+import { rulesFormatters } from "./text/rules";
 import { searchFormatters } from "./text/search";
 import { showFormatters } from "./text/show";
 import { syncFormatters } from "./text/sync";
@@ -75,6 +76,7 @@ const BUILT_IN_TEXT_FORMATTERS: TextFormatterEntry[] = [
   ...showFormatters,
   ...searchFormatters,
   ...curateFormatters,
+  ...rulesFormatters,
   ...workflowFormatters,
   ...listFormatters,
   ...addFormatters,

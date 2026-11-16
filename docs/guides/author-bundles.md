@@ -259,8 +259,8 @@ by ref.
 
 `rules/` holds the short rules an agent should follow for a project: a Markdown file
 per topic, nested folders allowed, each a bullet list of imperative, checkable lines.
-Rules are standing context: the AKM agent plugins load the applicable ones at session
-start and after compaction, so keep them to a handful of lines.
+Rules are standing context: the AKM agent plugins load the applicable ones (`akm rules`) at
+session start and after compaction, so keep them to a handful of lines.
 
 ```markdown
 ---
@@ -282,16 +282,17 @@ or when it has none (shared); with no project in force only shared rules apply. 
 project's rules are never returned while a project is selected. If the project's own `filters`
 constrain `project`, that filter decides instead. Only the bundle's top-level `rules/` folder
 holds rules. After adding `rules/` to a bundle that already has files there, run
-`akm index --full` so they are retyped.
+`akm index --full` so search retypes them; `akm rules` reads the files and needs no index.
 
-To list the rules that apply: `akm search "" --type rule --limit 200 --detail normal`
-(rules only, honouring the project; exactly 200 results means the list was cut), then
-`akm show <ref>` to read one. `akm search "rules/"` is a plain path listing that also
-returns other files and stops at 20.
-
-Rules are ordinary search hits and follow the same `--from`, `--filter` and
-disabled-bundle selection as every asset. Agents without a plugin list them with the
-command above.
+`akm rules` prints the rules that apply, in full: the project's first, then shared ones. It
+reads the files, so a new rule applies at once and no index is needed. A rule is an
+instruction the agent obeys, so only the bundles you named supply them: with a project, its
+`from` list, else the default bundle and the project's `write.bundle`; with no project, the
+default bundle. A bundle you installed from a registry or a git URL supplies rules only if it
+is the default bundle or you list it in the project's `from`. A rule with `quality: proposed`
+does not load until it is accepted. The plugins run `akm rules` at session start and after
+compaction; an agent without a plugin runs it too. In search and curate, rules are still
+ordinary hits that follow `--from`, `--filter` and disabled-bundle selection.
 
 ## Bundle Structure Tips
 

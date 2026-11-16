@@ -147,7 +147,8 @@ regenerable. akm also writes into it:
   and a small metadata payload; search events include the query text and the
   refs returned. `akm env run`, a workflow unit's `env:` binding and
   `akm secret run` record the names of the keys injected, not their values.
-- **Usage records**: queries, search impressions, show/curate engagement and
+- **Usage records**: queries, search impressions, show/curate engagement, rule loads
+  (`akm rules`: the refs and characters loaded) and
   feedback. They feed utility scores and `akm doctor metrics`, and the feedback recorded
   as the user adjusts search ranking. Each record is stamped with its source
   (`user`, `improve`, `task`, `audit` or `unknown`); only `user` records count.

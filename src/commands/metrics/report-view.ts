@@ -99,6 +99,9 @@ export function buildMetricsView(r: AkmMetricsResult, detail: DetailLevel): Metr
         ["shows", int(usage.totals.shows)],
         ["curates", int(usage.totals.curates)],
         ["selects", int(usage.totals.selects)],
+        ["rule loads", int(usage.rules.loads)],
+        ["rules per load", fixed(usage.rules.meanRules, 1)],
+        ["characters per load", fixed(usage.rules.meanChars, 0)],
         ["searches with hits", int(usage.totals.searchesWithHits)],
         ["selects per search with hits", fixed(usage.selectsPerSearch, 2)],
         [
@@ -125,6 +128,12 @@ export function buildMetricsView(r: AkmMetricsResult, detail: DetailLevel): Metr
           ]),
         },
         {
+          title: "Rule loads",
+          headers: ["ref", "loads"],
+          rows: cut(usage.rules.byRule).map((rule) => [rule.ref, int(rule.loads)]),
+          hideWhenEmpty: true,
+        },
+        {
           title: "Top queries",
           headers: ["query", "count", "avg results", "last"],
           rows: cut(usage.topQueries).map((q) => [q.query, int(q.count), fixed(q.avgResults, 1), q.lastAt]),
@@ -136,10 +145,10 @@ export function buildMetricsView(r: AkmMetricsResult, detail: DetailLevel): Metr
         },
         {
           title: "Daily",
-          headers: ["day", "search", "show", "curate", "feedback"],
+          headers: ["day", "search", "show", "curate", "feedback", "rules"],
           rows: brief
             ? []
-            : usage.daily.map((d) => [d.day, int(d.search), int(d.show), int(d.curate), int(d.feedback)]),
+            : usage.daily.map((d) => [d.day, int(d.search), int(d.show), int(d.curate), int(d.feedback), int(d.rules)]),
           hideWhenEmpty: true,
         },
       ],

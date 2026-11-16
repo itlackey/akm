@@ -276,18 +276,18 @@ Unique index `idx_task_history_run` on `(task_id, started_at)`; indexes on
 
 #### `usage_events`
 
-Search, show, curate, and feedback telemetry. It lives in `state.db` so
+Search, show, curate, feedback, and rules telemetry. It lives in `state.db` so
 rebuilding `index.db` does not discard it.
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | INTEGER PRIMARY KEY AUTOINCREMENT | |
-| `event_type` | TEXT NOT NULL | `search`, `show`, `curate`, `feedback` |
+| `event_type` | TEXT NOT NULL | `search`, `show`, `curate`, `feedback`, `rules` |
 | `query` | TEXT | The search or curate query; NULL for show and feedback |
 | `entry_id` | INTEGER | `index.db` entry id; re-linked after a rebuild. Null at write time on search, curate and nested command/persona read events, which record only `entry_ref`; the next index fills it from `entry_ref`. Utility scores aggregate by `entry_ref`. Deleting an entry also deletes its events that carry no `entry_id` yet, matched by `entry_ref` |
 | `entry_ref` | TEXT | Stable ref string |
 | `signal` | TEXT | `positive` or `negative` for feedback |
-| `metadata` | TEXT | JSON. A `show` event carries `project` (the project in force when it ran; absent on events recorded before project attribution and when none applied), which `akm doctor metrics assets` counts by |
+| `metadata` | TEXT | JSON. A `show` event carries `project` (the project in force when it ran; absent on events recorded before project attribution and when none applied), which `akm doctor metrics assets` counts by. A `rules` event (one per `akm rules` call, no `entry_ref`) carries `project`, `bundles`, `refs` (durable refs) and `chars` |
 | `source` | TEXT NOT NULL DEFAULT 'user' | `user`, `improve`, `task`, `audit`, `unknown` (`AKM_EVENT_SOURCE` sets it for child processes) |
 | `created_at` | TEXT NOT NULL | |
 

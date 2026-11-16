@@ -34,7 +34,7 @@ import { akmCurate, type CuratePackResult, type CurateResponse, packCuratedHits 
 import { akmSearch, parseBeliefFilterMode, parseScopeFilterFlags, parseSearchSource } from "./search";
 import { akmShowUnified } from "./show";
 
-const scopeFilterArg = {
+export const scopeFilterArg = {
   type: "string",
   description:
     "Frontmatter key=value filter (repeatable); a repeated key matches any value, different keys must all match",
@@ -164,13 +164,16 @@ export const doctorMetricsAssetsCommand = defineJsonCommand({
 });
 
 /** The value a project's writes carry as `project`: what its rules and usage are matched against. */
-function stampedProject(project: ResolvedProject | undefined): string | undefined {
+export function stampedProject(project: ResolvedProject | undefined): string | undefined {
   const value = project?.write.metadata.project;
   return value === undefined ? undefined : String(value);
 }
 
 /** The project a search or curate runs under; a `project` filter in force has already decided eligibility. */
-function projectContext(project: ResolvedProject | undefined, filters: ScopeFilters | undefined): ProjectContext {
+export function projectContext(
+  project: ResolvedProject | undefined,
+  filters: ScopeFilters | undefined,
+): ProjectContext {
   return {
     name: stampedProject(project),
     ...(filters && Object.hasOwn(filters, "project") ? { byFilter: true } : {}),
@@ -182,7 +185,7 @@ function projectContext(project: ResolvedProject | undefined, filters: ScopeFilt
  * project's value for that kind, and a kind neither gave stays at today's default.
  * `view` is the project as applied: the same effective values, for the response to report.
  */
-function withProjectDefaults(
+export function withProjectDefaults(
   project: ResolvedProject | undefined,
   explicit: { source?: string | string[]; filters?: ScopeFilters; prefer?: ScopeFilters; include?: IncludeSelectors },
 ) {
@@ -200,7 +203,7 @@ function withProjectDefaults(
 }
 
 /** `--from` is repeatable; citty keeps only the last value, so read every occurrence from argv. */
-function fromValues(parsed: unknown): string | string[] | undefined {
+export function fromValues(parsed: unknown): string | string[] | undefined {
   const all = parseAllFlagValues("--from");
   return all.length > 1 ? all : (parsed as string | undefined);
 }
