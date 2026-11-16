@@ -656,7 +656,7 @@ that rule's default list, and `[]` turns the rule off.
 |---|---|---|
 | `placeholders` | `placeholder_added` | `please confirm`, `please verify`, `to be confirmed`, `to be determined`, `to be verified` |
 | `metaCommentary` | `meta_commentary_added` | `feedback signal`, `feedback signals`, `feedback indicate`, `feedback indicates`, `feedback suggest`, `feedback suggests`, `feedback ask`, `feedback asks`, `feedback says`, `feedback report`, `feedback reports`, `feedback request`, `feedback requests`, `this revision`, `the source asset`, `the source note`, `the source memory`, `the original asset`, `the original note`, `the original memory`, `the original version of this`, `quality gate rejected`, `proposal rejected` |
-| `frontmatterKeys` | `frontmatter_copied_into_body` | `sources`, `updated`, `inferenceProcessed`, `captureMode`, `beliefState`, `xrefs`, `contradictedBy`, `outcomeData`, `orderedActions`, `generated`, `verified`, `description`, `when_to_use`, `tags`, `searchHints`, `quality`, `salience`, `salienceInputs`, `lint_skip`, `type` |
+| `frontmatterKeys` | `frontmatter_copied_into_body` | `sources`, `updated`, `inferenceProcessed`, `captureMode`, `beliefState`, `xrefs`, `contradictedBy`, `outcomeData`, `orderedActions`, `generated`, `verified`, `description`, `when_to_use`, `tags`, `searchHints`, `quality`, `salience`, `salienceInputs`, `type` |
 
 `placeholders` and `metaCommentary` entries are plain phrases, not patterns:
 whole words, in any case, with any run of whitespace between words.
@@ -915,10 +915,16 @@ the key is ignored, and enables nothing; `akm migrate apply` drops it.
 and `defaultBundle` are the 0.9 source configuration shape — see
 [Concepts](../guides/concepts.md) and the [CLI reference](cli.md) for the
 full bundle model (`path`, `git`, `website`, `npm`, `writable`, `registryId`,
-`components`). `defaultBundle` must name a key in `bundles` when set. A
+`components`, `lint`). `defaultBundle` must name a key in `bundles` when set. A
 bundle's `components.<id>.adapter` key pins it to a specific format adapter
 instead of relying on auto-detection — see [Bundle Types](bundle-types.md)
 for the full adapter list and what each one reads/writes.
+
+A bundle entry also carries the lint policy for its own files:
+
+| Key | Purpose |
+| --- | --- |
+| `lint.skip` | `{ "<rule>": ["<glob>", ...] }`: lint skips the rule for files whose bundle-relative path matches a glob (`**` is the whole bundle), for example `"stale-path": ["skills/sec/**"]` or `"tracked-secrets": ["**"]`. Any rule `akm lint` reports can be skipped. See [`akm lint`](cli.md#lint). A rule name lint does not know is warned about once and ignored. |
 
 Each physical content root has one bundle id. Duplicate paths and symbolic-link
 aliases are rejected because source ownership, scheduler authority, and default

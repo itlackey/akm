@@ -2622,7 +2622,15 @@ in order:
    and is listed in `assetContentRefs.shadowed`. JSON, plain text, scripts and
    other files are never read or rewritten, so frozen corpora and captured
    results stay byte-for-byte, and a second run changes nothing;
-6. superseded residue removed (`deadResidue`): pre-0.9.0 `.akm` leftovers in
+6. stale bundle policy removed from files (`bundlePolicy`), in writable
+   bundles: an asset's `lint_skip:` frontmatter is stripped (lint skips live in
+   the bundle's `lint.skip` config), and a `.gitignore` with the old
+   `# akm: intentionally track env and secrets` line adds
+   `"tracked-secrets": ["**"]` to that bundle's `lint.skip`. `.gitignore` is
+   never modified. The config is written first (its own backup), then the
+   files under one backup directory per run. A bundle with that line and no
+   config entry is listed in `bundlePolicy.notes`;
+7. superseded residue removed (`deadResidue`): pre-0.9.0 `.akm` leftovers in
    the stash, and the transaction-journal, maintenance-barrier, lock-mutex and
    version-stamp files older releases kept under `$DATA`, `$STATE` and
    `$CONFIG`.
@@ -3302,6 +3310,7 @@ akm lint --type workflows       # Only lint one asset type
 akm lint --dir ~/other-bundle    # Override the bundle root (default: from config)
 akm lint --fail-on-flagged      # CI-friendly: exit non-zero when summary.flagged > 0
 akm lint --prune-dangling-edges # Opt-in: drop belief edges whose target is gone
+akm lint --rule stale-path      # List one rule's findings, grouped by asset
 ```
 
 | Argument or flag | Description |
@@ -3310,12 +3319,57 @@ akm lint --prune-dangling-edges # Opt-in: drop belief edges whose target is gone
 | `--fix` (alias `--auto-fix`) | Apply auto-fixes in place. Refused with a usage error when the target bundle is configured `writable: false`. |
 | `--dir` | Override the bundle root directory (default: from config) |
 | `--type` | Only lint assets of this type (e.g. `workflows`, `tasks`, `memories`). **akm bundles only** — every other adapter validates the whole bundle and warns on stderr that the flag had no effect. |
+| `--rule` | List this rule's findings grouped by asset: the asset ref and file, then each finding with its line, path, reason, nearest existing directory and line text. Combines with `--type`. A listing: it cannot combine with `--fix` or `--prune-dangling-edges`. An unknown rule name warns and shows every rule. |
 | `--fail-on-flagged` | Exit non-zero when `summary.flagged > 0`. Default: exit 0 regardless of findings. |
 | `--prune-dangling-edges` | Opt-in repair (#884): drop `supersededBy`/`contradictedBy` entries whose target has neither a file nor a prune tombstone. **Not** implied by `--fix` — it edits well-formed files to delete a belief-graph claim, so review a plain `akm lint` report first. Clears the same `writable: false` gate `--fix` does. |
 
 Returns `fixed[]` and `flagged[]` arrays plus a `summary: { fixed, flagged }`
-count. Each entry carries `file`, `issue`, `detail`, and whether it was
-`fixed`.
+count and `byRule: { <rule>: { findings, assets } }` for the flagged findings.
+Each entry carries `file`, `issue`, `detail`, whether it was `fixed`, and, for
+a finding about one asset of the bundle, its `ref`.
+
+The default text output is one line per rule: its findings and assets, the
+three folders holding most of them, whether `--fix` fixes it, and how to fix
+it. `akm lint --rule <rule>` lists that rule's findings.
+
+```
+stale-path: 41 findings in 12 assets; memories (30), knowledge/guides (11); --fix does not fix it; correct the path; ...
+```
+
+`stale-path` reports an absolute path in an asset that does not exist, so an
+agent can find it and correct it. It judges only paths this machine can check:
+under the current user's home, under a configured bundle or project root
+(`projects`), and under `/tmp`. Paths under `/opt`, `/var`, `/etc`, `/root` or
+another user's home are not checked unless they sit under a bundle or project
+root. A line that says it records the past or an example ("historically",
+"formerly", "for example", "e.g.") and a section under a History, Changelog,
+Archive or Examples heading are skipped, as are run-time filename templates
+(`<stamp>`, `{stamp}`, `YYYYMMDD`, globs). Each finding carries `ref`, `file`,
+`line` (1-based, in the file), `path`, `lineText`, `nearestExisting` (the
+deepest existing directory above the path) and `reason`: `missing` for a path
+under the home, a bundle or a project, `ephemeral` for a `/tmp` path that no
+longer exists. To clear a finding, correct the path, or say on the line that it
+records the past or an example, or move it under a History or Examples heading.
+
+`tracked-secrets` flags each `env/` or `secrets/` file that git tracks in a
+bundle that has a remote (a push can leak it); `git rm --cached` the file.
+
+`missing-updated` does not apply to skills. `redacted-content` ignores
+`[REDACTED]` in code (fenced, indented and inline), quotes and table cells.
+
+A bundle skips a rule for some of its assets in its config entry:
+`lint.skip` maps any rule lint reports to globs matched against the path
+relative to the bundle root, where `**` is the whole bundle. A rule name lint
+does not know is warned about once and ignored.
+
+```json
+"bundles": {
+  "docs": {
+    "path": "~/docs",
+    "lint": { "skip": { "stale-path": ["skills/sec/**", "knowledge/articles/**"], "tracked-secrets": ["**"] } }
+  }
+}
+```
 
 Task files are checked for more than their fields: a `tasks/*.yml` whose YAML
 does not parse is reported as `invalid-task-yaml` (it used to fall through as an

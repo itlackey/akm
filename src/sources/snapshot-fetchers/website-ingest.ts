@@ -1233,8 +1233,6 @@ function buildMarkdownSnapshot(page: WebsitePage, slug: string, tags?: string[])
     `sourceUrl: ${JSON.stringify(page.url)}`,
     `title: ${JSON.stringify(title)}`,
     `updated: ${todayIso()}`,
-    "lint_skip:",
-    "  - stale-path",
     "tags:",
     ...normalizedTags.map((tag) => `  - ${JSON.stringify(tag)}`),
     "---",

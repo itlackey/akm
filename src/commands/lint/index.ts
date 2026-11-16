@@ -18,13 +18,15 @@ import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { adapterForId } from "../../core/adapter/registry";
 import type { Diagnostic } from "../../core/adapter/types";
 import { createValidateContext } from "../../core/adapter/validate-context";
-import { stashDirFor } from "../../core/asset/asset-placement";
+import { refForFile, stashDirFor, typeForStashDir } from "../../core/asset/asset-placement";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { conceptIdForStashFile, displayRefForConceptId } from "../../core/asset/resolve-ref";
+import { stalePathRoots } from "../../core/asset/stale-path";
 import { deriveBundleIds } from "../../core/bundle-id";
 import { compareCodePoints, isAkmRegistryCachePath, resolveStashDir, safeRealpath, samePath } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { loadConfig, primaryBundlePath } from "../../core/config/config";
+import { bundleKeyForContentRoot } from "../../core/config/config-sources";
 import { UsageError } from "../../core/errors";
 import type { FileChange } from "../../core/file-change";
 import { warn } from "../../core/warn";
@@ -32,8 +34,10 @@ import { resolveSourceEntries, type SearchSource } from "../../indexer/search/se
 import { TASK_EXTENSION, TASK_NEAR_MISS_EXTENSION, taskExtensionDetail } from "../../tasks/source-v3";
 import { resolveWorkflowSourceDomains } from "../../workflows/source-files";
 import { runBaseChecks } from "./base-linter";
+import { bundleLintSkip } from "./bundle-skip";
 import { checkEnvForDangerousKeys } from "./env-key-rules";
-import { isAdvisoryLintIssue, type LintContext, type LintIssue, type LintIssueType } from "./types";
+import { trackedSecretIssues } from "./tracked-secrets";
+import { isAdvisoryLintIssue, LINT_RULES, type LintContext, type LintIssue, type LintIssueType } from "./types";
 
 // ── Public API types (re-exported for consumers) ──────────────────────────────
 
@@ -50,6 +54,17 @@ export interface AkmLintResult {
    */
   warnings: LintIssue[];
   summary: { fixed: number; flagged: number; warnings: number };
+  /** Flagged findings per rule: how many findings, in how many assets. */
+  byRule: Record<string, { findings: number; assets: number }>;
+  /** The rule the run was narrowed to (`--rule`). */
+  rule?: string;
+}
+
+/** What a lint pass found, before skips, refs and the per-rule summary are applied. */
+interface LintFindings {
+  fixed: LintIssue[];
+  flagged: LintIssue[];
+  warnings: LintIssue[];
 }
 
 export interface AkmLintOptions {
@@ -63,6 +78,8 @@ export interface AkmLintOptions {
   dir?: string;
   config?: AkmConfig;
   typeFilter?: string;
+  /** Only report this rule's findings (listing only: it cannot combine with a fix). */
+  rule?: string;
   /** Lint this one file instead of a whole bundle (`akm lint <file>`). */
   file?: string;
 }
@@ -269,19 +286,8 @@ const KNOWN_ADAPTER_ISSUE_TYPES: ReadonlySet<string> = new Set<LintIssueType>([
 
 /** Map one adapter {@link Diagnostic} onto a {@link LintIssue} — see `types.ts`'s `"adapter-diagnostic"` doc comment for the open→closed reconciliation. */
 export function diagnosticToLintIssue(diag: Diagnostic): LintIssue {
-  // `line` is optional on both shapes: carry it only when the adapter set one,
-  // so whole-file findings keep their exact existing serialization.
-  const location = typeof diag.line === "number" ? { line: diag.line } : {};
-  if (KNOWN_ADAPTER_ISSUE_TYPES.has(diag.issue)) {
-    return { file: diag.file, issue: diag.issue as LintIssueType, detail: diag.detail, fixed: diag.fixed, ...location };
-  }
-  return {
-    file: diag.file,
-    issue: "adapter-diagnostic",
-    detail: `[${diag.issue}] ${diag.detail}`,
-    fixed: diag.fixed,
-    ...location,
-  };
+  if (KNOWN_ADAPTER_ISSUE_TYPES.has(diag.issue)) return { ...diag, issue: diag.issue as LintIssueType };
+  return { ...diag, issue: "adapter-diagnostic", detail: `[${diag.issue}] ${diag.detail}` };
 }
 
 /**
@@ -298,7 +304,7 @@ async function lintViaAdapter(
   sources: SearchSource[],
   cfg: AkmConfig,
   options: AkmLintOptions,
-): Promise<AkmLintResult> {
+): Promise<LintFindings> {
   const adapter = adapterForId(adapterId);
   // Defensive fallback (shouldn't happen via `detectAdapterId`/a valid config
   // — both only ever name a registered built-in): an unregistered adapter id
@@ -361,13 +367,7 @@ async function lintViaAdapter(
       flagged.push(issue);
     }
   }
-  return {
-    ok: true,
-    fixed: [],
-    flagged,
-    warnings,
-    summary: { fixed: 0, flagged: flagged.length, warnings: warnings.length },
-  };
+  return { fixed: [], flagged, warnings };
 }
 
 function lintIssueDedupeKey(issue: LintIssue): string {
@@ -540,6 +540,7 @@ function appendMemoryStubIssue(ctx: LintContext, issues: LintIssue[]): void {
  * both halves.
  */
 function appendWorkflowStubIssue(ctx: LintContext, issues: LintIssue[]): void {
+  if (ctx.lintSkip?.includes("placeholder-stub")) return;
   const placeholder = matchWorkflowPlaceholder(ctx.body);
   if (!placeholder) return;
   if (ctx.fix) {
@@ -611,8 +612,12 @@ interface SweepScope {
   extraStashRoots: string[];
   fix: boolean;
   pruneDanglingEdges: boolean;
-  /** Rules to skip for this run, on top of the file's own `lint_skip:`. */
+  /** Rules to skip for this run, on top of the bundle's `lint.skip`. */
   lintSkip?: string[];
+  /** Roots that make an absolute path judgeable for `stale-path`. */
+  stalePathRoots: string[];
+  /** The bundle's `lint.skip` rules for a bundle-relative path. */
+  bundleSkip?: (relPath: string) => string[];
 }
 
 interface SweepSinks {
@@ -629,7 +634,8 @@ function lintSweepFile(
   scope: SweepScope,
   { fixed, flagged, warnings }: SweepSinks,
 ): void {
-  const { stashRoot, extraStashRoots, fix, pruneDanglingEdges, lintSkip } = scope;
+  const { stashRoot, extraStashRoots, fix, pruneDanglingEdges, stalePathRoots } = scope;
+  const lintSkip = [...(scope.lintSkip ?? []), ...(scope.bundleSkip?.(relPath) ?? [])];
   let raw: string;
   try {
     raw = fs.readFileSync(filePath, "utf8");
@@ -640,6 +646,7 @@ function lintSweepFile(
   let data: Record<string, unknown>;
   let body: string;
   let frontmatter: string | null;
+  let bodyStartLine = 1;
   // File-identity findings the per-type rules cannot produce: they describe
   // the FILE (its extension, whether it parsed at all), not its fields.
   const fileIssues: LintIssue[] = [];
@@ -659,7 +666,7 @@ function lintSweepFile(
     body = raw;
     frontmatter = null;
   } else {
-    ({ data, content: body, frontmatter } = parseFrontmatter(raw));
+    ({ data, content: body, frontmatter, bodyStartLine } = parseFrontmatter(raw));
   }
 
   // One file's checks — including its `--fix` mutations — must never abort
@@ -679,9 +686,11 @@ function lintSweepFile(
           data,
           body,
           frontmatter,
+          bodyStartLine,
           fix,
           pruneDanglingEdges,
           stashRoot,
+          stalePathRoots,
           extraStashRoots,
           lintSkip,
         },
@@ -757,7 +766,7 @@ function lintAkmSweep(
   cfg: AkmConfig,
   sources: SearchSource[],
   options: AkmLintOptions,
-): AkmLintResult {
+): LintFindings {
   const fix = options.fix === true;
   // #884: the dangling-edge repair writes too, so it clears the same
   // read-only gate `--fix` does.
@@ -766,6 +775,8 @@ function lintAkmSweep(
   const flagged: LintIssue[] = [];
   const warnings: LintIssue[] = [];
 
+  const bundleSkip = bundleLintSkip(cfg, stashRoot);
+  const roots = stalePathRoots(cfg, stashRoot);
   const dirsToScan = options.typeFilter ? STASH_SUBDIRS.filter((d) => d === options.typeFilter) : STASH_SUBDIRS;
 
   for (const subdir of dirsToScan) {
@@ -815,7 +826,14 @@ function lintAkmSweep(
         filePath,
         path.relative(stashRoot, filePath),
         subdir,
-        { stashRoot, extraStashRoots, fix, pruneDanglingEdges: options.pruneDanglingEdges === true },
+        {
+          stashRoot,
+          extraStashRoots,
+          fix,
+          pruneDanglingEdges: options.pruneDanglingEdges === true,
+          stalePathRoots: roots,
+          bundleSkip,
+        },
         { fixed, flagged, warnings },
       );
     }
@@ -836,13 +854,7 @@ function lintAkmSweep(
   //   2. `ok` is the shared `{ok, error, code}` failure indicator across the
   //      whole CLI; reusing it for "found stuff" forced callers to disambiguate
   //      a successful-but-flagged run from a hard error by inspecting fields.
-  return {
-    ok: true,
-    fixed,
-    flagged,
-    warnings,
-    summary: { fixed: fixed.length, flagged: flagged.length, warnings: warnings.length },
-  };
+  return { fixed, flagged, warnings };
 }
 
 /** The configured bundle root (or `--dir`) that contains `file`, deepest first; undefined when `file` is outside every bundle. */
@@ -909,15 +921,12 @@ async function lintFile(file: string, options: AkmLintOptions, cfg: AkmConfig): 
       );
       const only = (issues: LintIssue[]): LintIssue[] =>
         issues.filter((i) => path.resolve(realRoot as string, i.file) === absFile);
-      const flagged = only(result.flagged);
-      const warnings = only(result.warnings);
-      return {
-        ok: true,
-        fixed: [],
-        flagged,
-        warnings,
-        summary: { fixed: 0, flagged: flagged.length, warnings: warnings.length },
-      };
+      return finishLint(
+        { fixed: [], flagged: only(result.flagged), warnings: only(result.warnings) },
+        cfg,
+        options,
+        root,
+      );
     }
     // The type comes from where the file sits, as the bundle sweep decides it.
     const located = STASH_SUBDIRS.find((d) => relPath.split(path.sep)[0] === d);
@@ -976,18 +985,62 @@ async function lintFile(file: string, options: AkmLintOptions, cfg: AkmConfig): 
         : [],
       fix: options.fix === true,
       pruneDanglingEdges: false,
+      stalePathRoots: stalePathRoots(cfg, root ?? path.dirname(absFile)),
+      bundleSkip: root ? bundleLintSkip(cfg, root) : undefined,
       // Outside a bundle there are no other assets to resolve refs or a derived stub against.
       lintSkip: root ? undefined : ["missing-ref", "orphaned-stub"],
     },
     sinks,
   );
-  const { fixed, flagged, warnings } = sinks;
+  return finishLint(sinks, cfg, options, root);
+}
+
+/** The ref of an asset of the bundle at `root` by its bundle-relative `file`; undefined when `file` is not an asset path. */
+function refOfFile(root: string, file: string, cfg: AkmConfig): string | undefined {
+  const type = typeForStashDir(file.split(/[\\/]/)[0] ?? "");
+  const conceptId = type ? refForFile(type, root, path.join(root, file)) : undefined;
+  if (conceptId === undefined) return undefined;
+  const bundleId = bundleKeyForContentRoot(cfg, root);
+  return displayRefForConceptId(conceptId, bundleId, cfg.defaultBundle);
+}
+
+/**
+ * Turn what a pass found into the result: drop what the bundle's `lint.skip`
+ * names, give each finding its asset ref, narrow to `--rule`, and count the
+ * flagged findings per rule.
+ */
+function finishLint(found: LintFindings, cfg: AkmConfig, options: AkmLintOptions, root?: string): AkmLintResult {
+  const skippedRules = root ? bundleLintSkip(cfg, root) : () => [];
+  let rule = options.rule;
+  if (rule !== undefined && !(LINT_RULES as readonly string[]).includes(rule)) {
+    warn(
+      `Warning: lint --rule "${rule}" is not a lint rule — valid rules: ${LINT_RULES.join(", ")}. Showing every rule.`,
+    );
+    rule = undefined;
+  }
+  const keep = (issue: LintIssue): boolean =>
+    (rule === undefined || issue.issue === rule) && !skippedRules(issue.file).includes(issue.issue);
+  const fixed = found.fixed.filter((issue) => rule === undefined || issue.issue === rule);
+  const flagged = found.flagged.filter(keep);
+  const warnings = found.warnings.filter(keep);
+  if (root) {
+    for (const issue of [...fixed, ...flagged, ...warnings]) issue.ref ??= refOfFile(root, issue.file, cfg);
+  }
+  const byRule: AkmLintResult["byRule"] = {};
+  const assetsByRule = new Map<string, Set<string>>();
+  for (const issue of flagged) {
+    const assets = (assetsByRule.get(issue.issue) ?? new Set<string>()).add(issue.file);
+    assetsByRule.set(issue.issue, assets);
+    byRule[issue.issue] = { findings: (byRule[issue.issue]?.findings ?? 0) + 1, assets: assets.size };
+  }
   return {
     ok: true,
     fixed,
     flagged,
     warnings,
     summary: { fixed: fixed.length, flagged: flagged.length, warnings: warnings.length },
+    byRule,
+    ...(rule === undefined ? {} : { rule }),
   };
 }
 
@@ -1003,6 +1056,12 @@ async function lintFile(file: string, options: AkmLintOptions, cfg: AkmConfig): 
  * `commands/improve/preparation.ts`) or is a test that can `await` it.
  */
 export async function akmLint(options: AkmLintOptions = {}): Promise<AkmLintResult> {
+  if (options.rule !== undefined && (options.fix || options.pruneDanglingEdges)) {
+    throw new UsageError(
+      "lint: --rule lists findings; run it without --fix or --prune-dangling-edges.",
+      "INVALID_FLAG_VALUE",
+    );
+  }
   // Fail closed on a mistyped invocation (§24.2 "Lint" release gate): a
   // nonexistent --dir used to walk nothing and report a clean
   // `ok:true, flagged:0`, silently passing scripted --fail-on-flagged gates.
@@ -1021,7 +1080,11 @@ export async function akmLint(options: AkmLintOptions = {}): Promise<AkmLintResu
   const adapterId = configuredAdapter ?? detectAdapterId(stashRoot);
   const extraStashRoots = sources.map((s) => s.path).filter((p) => p !== stashRoot && fs.existsSync(p));
 
-  if (adapterId !== "akm") return lintViaAdapter(adapterId, stashRoot, extraStashRoots, sources, cfg, options);
+  if (adapterId !== "akm") {
+    const found = await lintViaAdapter(adapterId, stashRoot, extraStashRoots, sources, cfg, options);
+    found.flagged.push(...trackedSecretIssues(stashRoot));
+    return finishLint(found, cfg, options, stashRoot);
+  }
   // Same fail-closed rule for --type on the akm sweep: an unknown value used
   // to filter the walk to ZERO directories — a false-clean result on the
   // classic singular/plural typo ("workflow" for "workflows"). Non-akm
@@ -1033,5 +1096,7 @@ export async function akmLint(options: AkmLintOptions = {}): Promise<AkmLintResu
     );
     options = { ...options, typeFilter: undefined };
   }
-  return lintAkmSweep(stashRoot, extraStashRoots, cfg, sources, options);
+  const found = lintAkmSweep(stashRoot, extraStashRoots, cfg, sources, options);
+  found.flagged.push(...trackedSecretIssues(stashRoot));
+  return finishLint(found, cfg, options, stashRoot);
 }

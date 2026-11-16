@@ -442,10 +442,10 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
     // checks need only a frontmatter-free placeholder here.
     let parsed: ParsedForValidate;
     if (type === "task") {
-      parsed = { data: {}, content: raw, frontmatter: null };
+      parsed = { data: {}, content: raw, frontmatter: null, bodyStartLine: 1 };
     } else {
       const p = parseFrontmatter(raw);
-      parsed = { data: p.data, content: p.content, frontmatter: p.frontmatter };
+      parsed = { data: p.data, content: p.content, frontmatter: p.frontmatter, bodyStartLine: p.bodyStartLine };
     }
 
     diagnostics.push(...(await runBaseValidateChecks(change.path, parsed, c.root, ctx)));

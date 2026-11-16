@@ -176,10 +176,11 @@ bundle keeps its previous contents and index. If an update is interrupted, rerun
 `akm bundle update <name>`, then `akm doctor`, and `akm index --full` if health
 reports an index or state mismatch.
 
-New bundles get a `.gitignore` that keeps `env/` and `secrets/` out of git. A
-private bundle that versions them on purpose can put
-`# akm: intentionally track env and secrets` anywhere in its root `.gitignore`
-and akm leaves the file alone.
+New bundles get `env/` and `secrets/` lines in their `.gitignore` (added only
+when the file mentions neither), and akm's own commits follow git. `akm lint`
+reports an `env/` or `secrets/` file that git tracks in a bundle with a remote
+as `tracked-secrets`; a private bundle that versions them on purpose lists
+`"tracked-secrets": ["**"]` under `lint.skip` in its config entry.
 
 **Example: keep bundles fresh**
 
