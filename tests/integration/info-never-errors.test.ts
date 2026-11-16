@@ -48,6 +48,13 @@ const cliPath = path.join(repoRoot, "src", "cli.ts");
 /** Bounded-time budget every real-process scenario below must finish within (owner ruling: "about 1 second" per read; generously bounded for a loaded CI box). */
 const MAX_MS = 4_000;
 
+/**
+ * The most a held index lock may add to `akm info`. Its own wait is two 750 ms busy timeouts, but a
+ * loaded CI box stretches the locked run by seconds more (3.5 s seen); the bound only has to tell that
+ * apart from the 30 s shared busy timeout it replaced.
+ */
+const LOCK_WAIT_MAX_MS = 10_000;
+
 interface ChildResult {
   code: number;
   stdout: string;
@@ -304,12 +311,17 @@ describe("akm info under real index.db lock contention (a10-info)", () => {
     // (a ~30s wait) and after (bounded here).
     const holder = openIndexDatabase();
     holder.exec("PRAGMA journal_mode=DELETE");
+    // The same command with nothing holding the index: its time is the child's
+    // start-up, which a loaded CI box stretches; the lock may add only info's
+    // own bounded wait (two 750 ms busy timeouts) on top of it.
+    const unlocked = await spawnAkm(["info", "--format", "json"]);
+    expect(unlocked.code, unlocked.stderr).toBe(0);
     holder.exec("BEGIN EXCLUSIVE");
 
     try {
       const result = await spawnAkm(["info", "--format", "json"]);
       expect(result.code, result.stderr).toBe(0);
-      expect(result.elapsedMs).toBeLessThan(MAX_MS);
+      expect(result.elapsedMs - unlocked.elapsedMs).toBeLessThan(LOCK_WAIT_MAX_MS);
       const parsed = JSON.parse(result.stdout);
       expect(parsed.ok).toBe(true);
       expect(parsed.indexStats.unavailable).toBeDefined();

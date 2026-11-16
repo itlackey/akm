@@ -6,8 +6,10 @@
 
 <script lang="ts">
   // Every asset in scope as a point in 3D (three.js), placed by akm so alike assets sit close, in groups by meaning,
-  // each group named over its middle by a label that stays the same size on screen. Drag turns it, the wheel zooms, a point names its asset on hover; choosing a point
-  // or a group's name picks it, and the lines show what the pick is joined to.
+  // each group named over its middle by a label that stays the same size on screen. Drag turns it, right-drag or
+  // Shift-drag moves it, the wheel zooms toward the pointer (the page never scrolls over the map), and the point nearest
+  // the pointer, within a fixed reach on screen, names its asset on hover. Choosing a point or a group's name picks it:
+  // the pick is ringed, what it is joined to is ringed and lined, and the rest fades.
   import type { Group, Overview } from "./library-overview";
 
   let {
@@ -42,6 +44,11 @@
     label: string;
   } = $props();
 
+  /** Where the camera starts, and returns to on reset. */
+  const HOME = { position: [0, 60, 330], target: [0, 0, 0] } as const;
+  /** How far from a point, in screen pixels, the pointer still chooses it, at any zoom. */
+  const REACH = 14;
+
   let host = $state<HTMLDivElement>();
   let tip = $state<{ x: number; y: number; text: string } | null>(null);
   let failed = $state("");
@@ -49,10 +56,31 @@
   let ready = $state(false);
   /** The group name labels, by group key. */
   const nameEls: Record<string, HTMLButtonElement> = $state({});
+  /** The groups with no lit asset: their names fade like the points. */
+  const dimmed = $derived(
+    new Set(lit ? groups.filter((g) => !g.members.some((i) => lit.has(i))).map((g) => g.key) : []),
+  );
   const largest = $derived(Math.max(1, ...groups.map((g) => g.members.length)));
+
+  /** The camera back where it started, whatever is chosen. */
+  export function reset() {
+    if (!world) return;
+    world.flight = null;
+    world.camera.position.set(...HOME.position);
+    world.controls.target.set(...HOME.target);
+    world.controls.update();
+  }
 
   // biome-ignore lint/suspicious/noExplicitAny: three.js is loaded on demand, so its namespace is held untyped here.
   let THREE: any;
+  /** A geometry holding the places of these assets. */
+  function placesOf(list: readonly number[]) {
+    const place = new Float32Array(list.length * 3);
+    list.forEach((i, k) => place.set(o.place.subarray(i * 3, i * 3 + 3), k * 3));
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(place, 3));
+    return geometry;
+  }
   // biome-ignore lint/suspicious/noExplicitAny: see above.
   let world: any = null;
 
@@ -76,71 +104,157 @@
     let gone = false;
     let frame = 0;
     let resize: ResizeObserver | null = null;
+    // The wheel belongs to the map from the first moment, wherever over it: on a group's name or while three.js is
+    // still loading as much as on the canvas, so the page behind never scrolls. A wheel over a name is handed on.
+    const wheel = (event: WheelEvent) => {
+      event.preventDefault();
+      const canvas = world?.renderer.domElement;
+      if (canvas && event.target !== canvas) canvas.dispatchEvent(new WheelEvent("wheel", event));
+    };
+    host.addEventListener("wheel", wheel, { passive: false });
+    const element = host;
     (async () => {
       try {
-        const [three, { OrbitControls }] = await Promise.all([
-          import("three"),
-          import("three/examples/jsm/controls/OrbitControls.js"),
-        ]);
+        const [three, { OrbitControls }, { LineSegments2 }, { LineSegmentsGeometry }, { LineMaterial }] =
+          await Promise.all([
+            import("three"),
+            import("three/examples/jsm/controls/OrbitControls.js"),
+            import("three/examples/jsm/lines/LineSegments2.js"),
+            import("three/examples/jsm/lines/LineSegmentsGeometry.js"),
+            import("three/examples/jsm/lines/LineMaterial.js"),
+          ]);
         if (gone || !host) return;
         THREE = three;
+        // The colours are read from CSS as sRGB and drawn as they are: three.js would otherwise treat them as linear
+        // and lighten them, which turned the dark theme's background grey and washed out every faded point.
+        THREE.ColorManagement.enabled = false;
         const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
         renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
         renderer.setSize(host.clientWidth, host.clientHeight);
         host.prepend(renderer.domElement);
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(...rgb("--bg"));
         const camera = new THREE.PerspectiveCamera(50, host.clientWidth / host.clientHeight, 1, 5000);
-        camera.position.set(0, 60, 330);
+        camera.position.set(...HOME.position);
         const controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
-        // A round dot for each point.
-        const dot = document.createElement("canvas");
-        dot.width = dot.height = 64;
-        const ctx = dot.getContext("2d")!;
-        ctx.beginPath();
-        ctx.arc(32, 32, 28, 0, Math.PI * 2);
-        ctx.fillStyle = "#fff";
-        ctx.fill();
+        controls.zoomToCursor = true;
+        controls.minDistance = 15;
+        controls.maxDistance = 1500;
+        // A round dot for each point, and a ring for the marks drawn over it.
+        const sprite = (draw: (ctx: CanvasRenderingContext2D) => void) => {
+          const canvas = document.createElement("canvas");
+          canvas.width = canvas.height = 64;
+          draw(canvas.getContext("2d")!);
+          return new THREE.CanvasTexture(canvas);
+        };
+        const dot = sprite((ctx) => {
+          ctx.beginPath();
+          ctx.arc(32, 32, 28, 0, Math.PI * 2);
+          ctx.fillStyle = "#fff";
+          ctx.fill();
+        });
+        const ring = sprite((ctx) => {
+          ctx.beginPath();
+          ctx.arc(32, 32, 26, 0, Math.PI * 2);
+          ctx.lineWidth = 7;
+          ctx.strokeStyle = "#fff";
+          ctx.stroke();
+        });
         const points = new THREE.Points(
           new THREE.BufferGeometry(),
           new THREE.PointsMaterial({
-            size: 2.6,
+            size: 8,
             vertexColors: true,
-            map: new THREE.CanvasTexture(dot),
+            map: dot,
             alphaTest: 0.5,
             sizeAttenuation: true,
           }),
         );
         scene.add(points);
-        const joins = new THREE.LineSegments(
+        // The lit points again, larger, over the faded rest.
+        const bright = new THREE.Points(
           new THREE.BufferGeometry(),
-          new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.85 }),
+          new THREE.PointsMaterial({
+            size: 12,
+            vertexColors: true,
+            map: dot,
+            alphaTest: 0.5,
+            sizeAttenuation: true,
+          }),
         );
+        scene.add(bright);
+        // Rings of a fixed size on screen, drawn over everything: the pick, what it is joined to, and the point under
+        // the pointer.
+        const mark = (size: number, token: string) => {
+          const marks = new THREE.Points(
+            new THREE.BufferGeometry(),
+            new THREE.PointsMaterial({
+              size,
+              color: new THREE.Color(...rgb(token)),
+              map: ring,
+              alphaTest: 0.5,
+              sizeAttenuation: false,
+              depthTest: false,
+            }),
+          );
+          marks.renderOrder = 2;
+          scene.add(marks);
+          return marks;
+        };
+        const focus = mark(26, "--map-highlight");
+        const near = mark(18, "--map-highlight");
+        const under = mark(20, "--text");
+        const joins = new LineSegments2(
+          new LineSegmentsGeometry(),
+          new LineMaterial({
+            linewidth: 2.5,
+            vertexColors: true,
+            depthTest: false,
+            resolution: new THREE.Vector2(host.clientWidth, host.clientHeight),
+          }),
+        );
+        joins.renderOrder = 1;
         scene.add(joins);
-        const raycaster = new THREE.Raycaster();
-        raycaster.params.Points.threshold = 1.6;
         world = {
           renderer,
           scene,
           camera,
           controls,
           points,
+          bright,
           joins,
-          raycaster,
+          focus,
+          near,
+          under,
           order: [] as number[],
+          flight: null,
         };
 
-        const pointer = new THREE.Vector2();
+        // The point nearest the pointer on screen, within REACH pixels, so a click lands whatever the zoom; a faded
+        // point must be that much nearer than a lit one.
+        const probe = new THREE.Vector3();
         const hit = (event: PointerEvent) => {
+          const position = points.geometry.getAttribute("position");
+          if (!position) return null;
           const box = renderer.domElement.getBoundingClientRect();
-          pointer.set(
-            ((event.clientX - box.left) / box.width) * 2 - 1,
-            -((event.clientY - box.top) / box.height) * 2 + 1,
-          );
-          raycaster.setFromCamera(pointer, camera);
-          const point = raycaster.intersectObject(points)[0];
-          return point ? { i: world.order[point.index] as number } : null;
+          const x = event.clientX - box.left;
+          const y = event.clientY - box.top;
+          let best = -1;
+          let nearest = REACH;
+          for (let k = 0; k < position.count; k++) {
+            probe.fromBufferAttribute(position, k).project(camera);
+            if (probe.z < -1 || probe.z > 1) continue;
+            const d =
+              Math.hypot(((probe.x + 1) / 2) * box.width - x, ((1 - probe.y) / 2) * box.height - y) +
+              (lit && !lit.has(world.order[k]) ? REACH / 2 : 0);
+            if (d < nearest) {
+              nearest = d;
+              best = k;
+            }
+          }
+          return best < 0 ? null : { k: best, i: world.order[best] as number };
         };
         let down = { x: 0, y: 0 };
         renderer.domElement.addEventListener(
@@ -156,12 +270,19 @@
           if (e.buttons) return;
           const h = hit(e);
           const box = host!.getBoundingClientRect();
-          tip = h ? { x: e.clientX - box.left + 12, y: e.clientY - box.top + 12, text: o.ref[h.i]! } : null;
+          tip = h ? { x: e.clientX - box.left, y: e.clientY - box.top + 12, text: o.ref[h.i]! } : null;
           renderer.domElement.style.cursor = h ? "pointer" : "grab";
+          under.geometry.dispose();
+          under.geometry = placesOf(h ? [h.i] : []);
         });
-        renderer.domElement.addEventListener("pointerleave", () => (tip = null));
+        renderer.domElement.addEventListener("pointerleave", () => {
+          tip = null;
+          under.geometry.dispose();
+          under.geometry = placesOf([]);
+        });
         resize = new ResizeObserver(() => {
           if (!host) return;
+          joins.material.resolution.set(host.clientWidth, host.clientHeight);
           renderer.setSize(host.clientWidth, host.clientHeight);
           camera.aspect = host.clientWidth / host.clientHeight;
           camera.updateProjectionMatrix();
@@ -194,7 +315,7 @@
               at.z >= 1 ||
               (first(g) > 0 && placed.some((p) => box[0] < p[2] && box[2] > p[0] && box[1] < p[3] && box[3] > p[1]));
             el.style.visibility = hidden ? "hidden" : "visible";
-            el.style.opacity = selected && first(g) === 2 ? "0.45" : "1";
+            el.style.opacity = dimmed.has(g.key) ? "0.3" : selected && first(g) === 2 ? "0.45" : "1";
             el.style.transform = `translate(${box[0]}px, ${box[1]}px)`;
             if (!hidden) placed.push(box);
           }
@@ -208,6 +329,7 @@
     })();
     return () => {
       gone = true;
+      element.removeEventListener("wheel", wheel);
       cancelAnimationFrame(frame);
       resize?.disconnect();
       if (world) {
@@ -227,12 +349,22 @@
     const bg = rgb("--bg");
     const place = new Float32Array(order.length * 3);
     const colour = new Float32Array(order.length * 3);
+    const shining: number[] = [];
     order.forEach((i, k) => {
       place.set(o.place.subarray(i * 3, i * 3 + 3), k * 3);
       const c = rgb(colourOf(i));
-      const f = lit && !lit.has(i) ? 0.85 : 0;
+      const faded = lit && !lit.has(i);
+      if (lit && !faded) shining.push(i);
+      const f = faded ? 0.8 : 0;
       for (let d = 0; d < 3; d++) colour[k * 3 + d] = c[d]! * (1 - f) + bg[d]! * f;
     });
+    const glow = placesOf(shining);
+    glow.setAttribute(
+      "color",
+      new THREE.BufferAttribute(Float32Array.from(shining.flatMap((i) => rgb(colourOf(i)))), 3),
+    );
+    world.bright.geometry.dispose();
+    world.bright.geometry = glow;
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.BufferAttribute(place, 3));
     geometry.setAttribute("color", new THREE.BufferAttribute(colour, 3));
@@ -241,24 +373,32 @@
     world.order = order;
   });
 
-  // The lines, in the accent colour, fainter for lighter weights.
+  // The lines, in the highlight colour, fainter for lighter weights.
   $effect(() => {
     if (!ready || !world) return;
-    const accent = rgb("--accent");
+    const highlight = rgb("--map-highlight");
     const bg = rgb("--bg");
-    const place = new Float32Array(lines.length * 6);
-    const colour = new Float32Array(lines.length * 6);
-    lines.forEach((l, k) => {
-      place.set([l.from[0]!, l.from[1]!, l.from[2]!, l.to[0]!, l.to[1]!, l.to[2]!], k * 6);
-      const f = 0.75 * (1 - l.weight);
-      for (let end = 0; end < 2; end++)
-        for (let d = 0; d < 3; d++) colour[k * 6 + end * 3 + d] = accent[d]! * (1 - f) + bg[d]! * f;
-    });
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute("position", new THREE.BufferAttribute(place, 3));
-    geometry.setAttribute("color", new THREE.BufferAttribute(colour, 3));
-    world.joins.geometry.dispose();
-    world.joins.geometry = geometry;
+    const place: number[] = [];
+    const colour: number[] = [];
+    for (const l of lines) {
+      place.push(l.from[0]!, l.from[1]!, l.from[2]!, l.to[0]!, l.to[1]!, l.to[2]!);
+      const f = 0.6 * (1 - l.weight);
+      for (let end = 0; end < 2; end++) for (let d = 0; d < 3; d++) colour.push(highlight[d]! * (1 - f) + bg[d]! * f);
+    }
+    world.joins.visible = lines.length > 0;
+    if (!lines.length) return;
+    world.joins.geometry.setPositions(place);
+    world.joins.geometry.setColors(colour);
+  });
+
+  // A pick is ringed, and so is what it is joined to; the group chosen is told by the fade and the lines alone.
+  $effect(() => {
+    if (!ready || !world) return;
+    const joined = picked >= 0 && lit ? [...lit].filter((i) => i !== picked && o.group[i]! >= 0) : [];
+    world.focus.geometry.dispose();
+    world.focus.geometry = placesOf(picked >= 0 ? [picked] : []);
+    world.near.geometry.dispose();
+    world.near.geometry = placesOf(joined);
   });
 
   // A pick turns the view to it: an asset close up, a group so it fills the view.
@@ -277,7 +417,10 @@
       .sub(controls.target)
       .setLength(picked >= 0 ? 90 : 60 + 12 * Math.cbrt(group!.members.length));
     const start = performance.now();
+    const flight = {};
+    world.flight = flight;
     const step = (now: number) => {
+      if (world?.flight !== flight) return;
       const t = Math.min(1, (now - start) / 700);
       const ease = t * (2 - t);
       controls.target.lerpVectors(from, target, ease);
@@ -294,10 +437,15 @@
       class="group-name"
       class:chosen={selected === g.key}
       bind:this={nameEls[g.key]}
-      style={`font-size:${11 + 4 * Math.sqrt(g.members.length / largest)}px`}
+      style={`font-size:${13 + 4 * Math.sqrt(g.members.length / largest)}px`}
       onclick={() => onGroup(g.key)}>{g.label}<span>{g.members.length.toLocaleString()}</span></button
     >{/each}
-  {#if tip}<div class="tip" style={`left:${tip.x}px;top:${tip.y}px`}>{tip.text}</div>{/if}
+  {#if tip}<div
+      class="tip"
+      style={`${tip.y > host!.clientHeight - 40 ? `bottom:${host!.clientHeight - tip.y + 24}px` : `top:${tip.y}px`};${tip.x < host!.clientWidth / 2 ? `left:${tip.x + 12}px` : `right:${host!.clientWidth - tip.x + 12}px`}`}
+    >
+      {tip.text}
+    </div>{/if}
 </div>
 
 <style>
@@ -318,13 +466,13 @@
     display: flex;
     gap: 6px;
     align-items: baseline;
-    padding: 1px 6px;
+    padding: 2px 8px;
     font-weight: 600;
     line-height: 1.3;
     white-space: nowrap;
     color: var(--text);
-    background: color-mix(in srgb, var(--surface) 78%, transparent);
-    border: 1px solid transparent;
+    background: color-mix(in srgb, var(--surface) 92%, transparent);
+    border: 1px solid var(--border);
     border-radius: 4px;
     cursor: pointer;
     will-change: transform;
@@ -337,8 +485,11 @@
   }
   .group-name:hover,
   .group-name.chosen {
-    border-color: var(--accent);
+    border-color: var(--map-highlight);
     background: var(--surface);
+  }
+  .group-name.chosen {
+    box-shadow: 0 0 0 1px var(--map-highlight);
   }
   .tip {
     position: absolute;

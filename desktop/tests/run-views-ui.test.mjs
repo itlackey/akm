@@ -131,3 +131,43 @@ test("run views show outcomes, failures and error detail, and mark what is match
 
   assert.deepEqual(errors, []);
 });
+
+// A chart's tooltip is drawn on the page, so neither a short chart nor the window's edge cuts it off.
+test("chart tooltips stay inside the window, over a strip chart and at a narrow width", {
+  timeout: 120000,
+}, async (t) => {
+  const server = await launchFixture({ metrics: true, runViews: true });
+  t.after(() => server.stop());
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  for (const viewport of [
+    { width: 1280, height: 900 },
+    { width: 390, height: 800 },
+  ]) {
+    const page = await browser.newPage({ viewport });
+    await open(page, server, "/activity/overview?view=usage");
+    const strip = page.locator('.echarts-view[data-height="strip"]');
+    await strip.scrollIntoViewIfNeeded();
+    const box = await strip.boundingBox();
+    assert.ok(box, "the strip chart is drawn");
+    // Sweep the strip: wherever a mark's tooltip shows, the whole of it is inside the window.
+    let shown = 0;
+    for (let x = box.x + 2; x < box.x + box.width; x += 4) {
+      await page.mouse.move(x, box.y + box.height / 2);
+      const tip = await page.evaluate(() => {
+        for (const el of document.querySelectorAll("body > div")) {
+          if (el.style.pointerEvents !== "none" || !el.textContent.trim() || getComputedStyle(el).opacity === "0")
+            continue;
+          const r = el.getBoundingClientRect();
+          return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, wide: innerWidth, high: innerHeight };
+        }
+        return null;
+      });
+      if (!tip) continue;
+      shown++;
+      assert.ok(tip.left >= 0 && tip.top >= 0 && tip.right <= tip.wide && tip.bottom <= tip.high, JSON.stringify(tip));
+    }
+    assert.ok(shown > 0, `a tooltip showed at ${viewport.width}px`);
+    await page.close();
+  }
+});

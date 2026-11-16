@@ -8,6 +8,7 @@
 // missing literal path is still reported.
 
 import { afterEach, describe, expect, test } from "bun:test";
+import os from "node:os";
 import { runBaseChecks } from "../src/commands/lint/base-linter";
 import { runBaseValidateChecks } from "../src/core/adapter/adapters/shared";
 import { createValidateContext } from "../src/core/adapter/validate-context";
@@ -21,8 +22,10 @@ function staleIssues(storage: IsolatedAkmStorage, body: string) {
     data: { name: "w" },
     body,
     frontmatter: "name: w",
+    bodyStartLine: 4,
     fix: false,
     stashRoot: storage.stashDir,
+    stalePathRoots: [os.homedir(), storage.stashDir],
   });
   return issues.filter((issue) => issue.issue === "stale-path");
 }
@@ -76,7 +79,7 @@ describe("stale-path skips run-time filename templates (#927)", () => {
       storage,
       "## History\n\nWrote /tmp/akm-5-gone/old.md.\n\n## Usage\n\nWrite to /tmp/akm-5-gone/current.md.\n",
     );
-    expect(issues.map((issue) => issue.detail)).toEqual(["nonexistent path: /tmp/akm-5-gone/current.md"]);
+    expect(issues.map((issue) => issue.detail)).toEqual(["ephemeral path: /tmp/akm-5-gone/current.md"]);
   });
 
   test("the adapter validate path applies the same rules", async () => {
@@ -89,12 +92,17 @@ describe("stale-path skips run-time filename templates (#927)", () => {
     ].join("\n");
     const diagnostics = await runBaseValidateChecks(
       "knowledge/n.md",
-      { data: { name: "n", updated: "2026-01-01" }, content: body, frontmatter: "name: n\nupdated: 2026-01-01" },
+      {
+        data: { name: "n", updated: "2026-01-01" },
+        content: body,
+        frontmatter: "name: n\nupdated: 2026-01-01",
+        bodyStartLine: 5,
+      },
       storage.stashDir,
       createValidateContext({ root: storage.stashDir }),
     );
     expect(diagnostics.map((d) => `${d.issue}: ${d.detail}`)).toEqual([
-      "stale-path: nonexistent path: /tmp/akm-5-gone/current.md",
+      "stale-path: ephemeral path: /tmp/akm-5-gone/current.md",
       "missing-ref: missing ref: core//tasks/akm-5-gone",
     ]);
   });

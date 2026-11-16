@@ -32,7 +32,13 @@ order, and print one combined JSON plan (exit 1 when any step is blocked):
      `<type>:<path>` and `wiki:<path>`, rewritten under one backup directory
      per run. An old spelling that is now another file's ref is not
      rewritten, only listed
-  6. superseded residue removed: pre-0.9.0 `.akm` leftovers in the stash,
+  6. bundle policy in writable bundles: an asset's `lint_skip:` frontmatter
+     is stripped (lint skips live in the bundle's `lint.skip` config); a
+     `.gitignore` with the old marker for tracking env and secrets adds
+     `"tracked-secrets": ["**"]` to that bundle's `lint.skip`. `.gitignore` is
+     never modified. The config is written first, the files under one backup
+     directory per run
+  7. superseded residue removed: pre-0.9.0 `.akm` leftovers in the stash,
      and the transaction-journal, maintenance-barrier, lock-mutex and
      version-stamp files older releases kept under $DATA, $STATE and $CONFIG
 

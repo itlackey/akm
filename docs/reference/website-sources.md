@@ -106,8 +106,8 @@ export interface WikiSnapshotFetcher {
 
 `markdown` should contain only the body content. akm still wraps the result in
 the standard raw snapshot frontmatter (`name`, `description`, `sourceUrl`,
-`title`, `updated`, a `lint_skip` entry for `stale-path`, and `tags`) so
-downstream wiki tooling continues to work normally.
+`title`, `updated`, and `tags`) so downstream wiki tooling continues to work
+normally.
 
 Custom `tags` are appended to the default snapshot tags (`website` and the
 resolved hostname). They do not replace those defaults.

@@ -53,8 +53,10 @@ import { createHash } from "node:crypto";
 import { BUNDLE_REF_RE } from "../../asset/asset-ref";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { checkUnquotedDescriptionColon } from "../../asset/frontmatter-lint";
-import { findCurrentPathReferences, homeRootOf } from "../../asset/lint-text";
+import { isSkillPath } from "../../asset/lint-text";
+import { findStalePaths, stalePathRoots } from "../../asset/stale-path";
 import { toPosix } from "../../common";
+import { loadConfig } from "../../config/config";
 import type { FileChange } from "../../file-change";
 import type { BundleComponent, Diagnostic, ValidateContext } from "../types";
 
@@ -84,8 +86,8 @@ export const RESERVED_FILES = new Set(["index.md", "log.md"]);
 
 // ── Base validate checks (port of `BaseLinter.runBaseChecks`) ────────────────
 
-function checkMissingUpdated(data: Record<string, unknown>, frontmatterText: string | null): boolean {
-  return frontmatterText !== null && !("updated" in data);
+function checkMissingUpdated(relPath: string, data: Record<string, unknown>, frontmatterText: string | null): boolean {
+  return frontmatterText !== null && !("updated" in data) && !isSkillPath(relPath);
 }
 
 /** See file header: same intent as `markdown-insertion.ts#findFenceRegions`, not byte-identical. */
@@ -178,6 +180,8 @@ export interface ParsedForValidate {
   data: Record<string, unknown>;
   content: string;
   frontmatter: string | null;
+  /** File line the body starts on. */
+  bodyStartLine: number;
 }
 
 /**
@@ -201,14 +205,14 @@ export async function runBaseValidateChecks(
   ctx: ValidateContext,
 ): Promise<Diagnostic[]> {
   const diagnostics: Diagnostic[] = [];
-  const { data, content: body, frontmatter } = parsed;
+  const { data, content: body, frontmatter, bodyStartLine } = parsed;
 
   const unquotedColonDetail = checkUnquotedDescriptionColon(frontmatter);
   if (unquotedColonDetail) {
     diagnostics.push({ file: relPath, issue: "unquoted-colon", detail: unquotedColonDetail, fixed: false });
   }
 
-  if (checkMissingUpdated(data, frontmatter)) {
+  if (checkMissingUpdated(relPath, data, frontmatter)) {
     diagnostics.push({
       file: relPath,
       issue: "missing-updated",
@@ -217,25 +221,12 @@ export async function runBaseValidateChecks(
     });
   }
 
-  const staleCandidates = [
-    ...findCurrentPathReferences(body),
-    ...(frontmatter ? findCurrentPathReferences(frontmatter) : []),
+  const roots = stalePathRoots(loadConfig(), componentRoot);
+  const stale = [
+    ...(frontmatter ? findStalePaths(frontmatter, 2, roots, componentRoot) : []),
+    ...findStalePaths(body, bodyStartLine, roots, componentRoot),
   ];
-  for (const candidate of staleCandidates) {
-    const home = homeRootOf(candidate);
-    if (home !== undefined && (await ctx.list(home)).length === 0) continue; // another host's or user's path
-    const found = await ctx.readFile(candidate);
-    if (found !== null) continue;
-    const portableHint = candidate.startsWith(componentRoot)
-      ? ` (portable form: $AKM_BUNDLE_DIR${candidate.slice(componentRoot.length)})`
-      : "";
-    diagnostics.push({
-      file: relPath,
-      issue: "stale-path",
-      detail: `nonexistent path: ${candidate}${portableHint}`,
-      fixed: false,
-    });
-  }
+  for (const finding of stale) diagnostics.push({ file: relPath, issue: "stale-path", fixed: false, ...finding });
 
   for (const ref of extractProseRefTokens(body)) {
     const { exists } = await ctx.resolveRef(ref);

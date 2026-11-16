@@ -396,6 +396,92 @@ test("visualizations survive late responses, a changed library and a narrow wind
     await page.close();
   });
 
+  await t.test("Library map: the wheel over the 3D map, even over a group's name, never scrolls the page", async () => {
+    const { page } = await fresh((page) =>
+      withGraph(page, {
+        ...mapPayload,
+        groups: {
+          count: 2,
+          group: [0, 0, 0, 1, 1, 1, -1],
+          x: [0, 2, -2, 50, 52, 48, 0],
+          y: [0, 1, -1, 0, 1, -1, 0],
+          z: [0, 0, 0, 10, 10, 10, 0],
+        },
+      }),
+    );
+    await open(page, server, "/library/map");
+    const name = page.locator(".group-name").first();
+    await expect(name).toBeVisible();
+    await page.evaluate(() => document.querySelector(".stage-3d").scrollIntoView({ block: "center" }));
+    const before = await page.evaluate(() => scrollY);
+    assert.ok(await page.evaluate(() => document.documentElement.scrollHeight > innerHeight + 300), "page can scroll");
+    const box = await name.boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.wheel(0, 300);
+    await page.waitForTimeout(300);
+    assert.equal(await page.evaluate(() => scrollY), before);
+    await page.close();
+  });
+
+  await t.test("Library map: the filter narrows by name or tag with a count, and Reset restores the map", async () => {
+    const { page } = await fresh((page) => withGraph(page));
+    await open(page, server, "/library/map");
+    await tab(page, "Use").click();
+    await page.getByRole("group", { name: "Drawing" }).getByRole("button", { name: "Flat" }).click();
+    const filter = page.getByRole("searchbox", { name: "Filter" });
+    await filter.fill("auth");
+    await expect(page.getByText("3 of 7 assets")).toBeVisible();
+    await expect(figures(page)).toContainText("3 assets");
+    await expect(page.locator(".mind-map").getByRole("button", { name: /^deploy/ })).toHaveCount(0);
+    await filter.fill("");
+    await expect(page.getByText("3 of 7 assets")).toHaveCount(0);
+    await filter.fill("auth");
+    await page.getByRole("button", { name: "Reset", exact: true }).click();
+    await expect(filter).toHaveValue("");
+    await expect(tab(page, "Contents")).toHaveAttribute("aria-selected", "true");
+    await expect(sideHeading(page)).toHaveText("All bundles");
+    await expect(page.getByText("of 7 assets")).toHaveCount(0);
+    await page.close();
+  });
+
+  await t.test("Library map: in 3D a filter fades the names of groups with no match", async () => {
+    const { page } = await fresh((page) =>
+      withGraph(page, {
+        ...mapPayload,
+        groups: {
+          count: 2,
+          group: [0, 0, 0, 1, 1, 1, -1],
+          x: [0, 2, -2, 50, 52, 48, 0],
+          y: [0, 1, -1, 0, 1, -1, 0],
+          z: [0, 0, 0, 10, 10, 10, 0],
+        },
+      }),
+    );
+    await open(page, server, "/library/map");
+    const opacity = (label) => page.locator(".group-name", { hasText: label }).evaluate((el) => el.style.opacity);
+    await expect.poll(() => opacity("auth")).toBe("1");
+    await page.getByRole("searchbox", { name: "Filter" }).fill("auth");
+    await expect.poll(() => opacity("deploy")).toBe("0.3");
+    assert.equal(await opacity("auth"), "1");
+    await page.getByRole("button", { name: "Reset", exact: true }).click();
+    await expect.poll(() => opacity("deploy")).toBe("1");
+    await page.close();
+  });
+
+  await t.test("Files editor: it uses the pane's width and scrolls in one place, its own text", async () => {
+    const { page } = await fresh();
+    await open(page, server, `/library/edit?${new URLSearchParams({ ref: server.refs.document })}`);
+    const editor = page.getByRole("textbox", { name: "Markdown source, including optional frontmatter" });
+    await editor.fill(Array.from({ length: 150 }, (_, n) => `Line ${n} of a long note`).join("\n"));
+    const scrollers = await innerScrollers(page, ".files-content");
+    assert.deepEqual(
+      scrollers.map((s) => s.split(" ")[0]),
+      ["textarea.source-editor"],
+    );
+    assert.ok((await editor.boundingBox()).width > 800, "the editor fills the pane");
+    await page.close();
+  });
+
   await t.test("Library map: ?select= opens that asset's tag, and an unknown asset is named", async () => {
     const { page } = await fresh((page) => withGraph(page));
     await open(page, server, `/library/map?select=${encodeURIComponent("notes//memories/auth/e")}`);

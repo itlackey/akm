@@ -12,7 +12,7 @@ export interface ReviewProposal extends Proposal {
   createdAt?: string;
   sourceRun?: string;
   decider?: string | null;
-  gateDecision?: { outcome: string; reason?: string } | null;
+  gateDecision?: { outcome: string; reason?: string; judgeReason?: string } | null;
   proposedTarget?: { source: string; root: string } | null;
 }
 export const ageBands = {
@@ -55,6 +55,11 @@ export function rows(value: unknown): Record<string, unknown>[] {
 }
 export function text(value: unknown, fallback = "Not recorded"): string {
   return typeof value === "string" || typeof value === "number" ? String(value) : fallback;
+}
+/** Why a proposal was made, as far as it is on record: its own reason, a retirement's judge reason, or the quality judge's sentence. */
+export function proposalReason(p: ReviewProposal): string {
+  const retirement = record(p.retirement);
+  return p.reason || (p.retirement ? text(retirement.judgeReason, "") : "") || (p.gateDecision?.judgeReason ?? "");
 }
 /** What to tell a reviewer about the Git commit an accept made; empty when there is none to report. */
 export function commitOutcome(value: unknown): string {
@@ -205,4 +210,6 @@ export interface LastDecision {
   ref: string;
   title: string;
   revertable: boolean;
+  /** What an accept saved to Git history, when it did. */
+  commit?: string;
 }

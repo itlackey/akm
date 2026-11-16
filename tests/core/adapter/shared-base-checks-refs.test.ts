@@ -37,7 +37,12 @@ function parsed(
 ): ParsedForValidate {
   // A non-null frontmatter with an `updated` field suppresses the unrelated
   // missing-updated base diagnostic so tests can focus on missing-ref.
-  return { data: { updated: "2026-01-01", ...data }, content, frontmatter: frontmatter ?? "updated: 2026-01-01" };
+  return {
+    data: { updated: "2026-01-01", ...data },
+    content,
+    frontmatter: frontmatter ?? "updated: 2026-01-01",
+    bodyStartLine: 1,
+  };
 }
 
 describe("shared base-check missing-ref scanner (D-R3 flip)", () => {

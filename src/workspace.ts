@@ -20,6 +20,7 @@ export {
 export { indexWrittenAssets } from "./indexer/index-written-assets";
 export * as activity from "./workspace/activity";
 export * as assets from "./workspace/assets";
+export * as backups from "./workspace/backups";
 export * as bundles from "./workspace/bundles";
 export * as config from "./workspace/config";
 export * as documents from "./workspace/documents";

@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261129] - 2026-11-16
+
+### Added
+
+- `akm backups prune [--older-than <duration>] [--dry-run] [--yes]` removes the copies `akm migrate apply` leaves under the data directory's `backups/` that are older than the duration (default 30d), keeps the newest entry of each folder, and reports the count and bytes per folder. `akm-cli/workspace` has `backups.prune`.
+- AKM Desktop: the "Data directory size" advisory has a "Prune backups…" action that shows what a dry run would free and asks before it removes anything.
+
+### Changed
+
+- AKM Desktop: the Review page and the Library file views fill the window instead of stopping at a 1600px column; accepting or rejecting one proposal no longer raises a toast (the "Last:" line reports it, with Undo… or Reopen…); "Why AKM proposed this" and its facts sit above the change; the judge's sentence is shown as the reason when the proposal has none of its own.
+- `akm lint` policy lives in the bundle's config entry. `lint.skip` maps any rule lint reports to globs of bundle-relative paths (`**` is the whole bundle), for example `"stale-path": ["skills/sec/**"]`; a rule name lint does not know is warned about once and ignored. The `lint_skip:` frontmatter key is no longer read, and `akm import <url>` and website snapshots no longer write it.
+- `stale-path` is for finding and correcting paths. It checks only paths this machine can judge: under the current user's home, a configured bundle or project root, and `/tmp`; `/opt`, `/var`, `/etc`, `/root` and other users' homes are not checked. Each finding carries `ref`, `file`, `line`, `path`, `lineText`, `nearestExisting` and `reason` (`missing`, or `ephemeral` for a `/tmp` path).
+- `akm lint` prints one line per rule (findings, assets, top folders, whether `--fix` fixes it, how to fix it), and `--json` adds `byRule`. The new `--rule <name>` lists one rule's findings grouped by asset and combines with `--type`.
+- `missing-updated` no longer applies to skills. `redacted-content` also ignores `[REDACTED]` in table cells and indented code.
+- The `stash-git-exposure` health advisory is now the `tracked-secrets` lint rule: one finding per `env/` or `secrets/` file that git tracks in a bundle with a remote. List `"tracked-secrets": ["**"]` under `lint.skip` to keep tracking them on purpose.
+- akm's own commits follow git: they no longer filter `env/` and `secrets/`. `akm bundle create` adds plain `env/` and `secrets/` lines to the bundle `.gitignore` when it mentions neither, and akm never reads `.gitignore` for policy.
+- `akm migrate` (and `akm upgrade`) gain a `bundlePolicy` step: in writable bundles it strips `lint_skip:` frontmatter, and a `.gitignore` with the old `# akm: intentionally track env and secrets` line adds `"tracked-secrets": ["**"]` to the bundle's `lint.skip`. `.gitignore` is not modified. Run `akm migrate apply --dry-run` first.
+
+### Fixed
+
+- AKM Desktop: chart tooltips are no longer cut off by a short chart or by the window's edge, and the library map's name tip flips above the pointer near the bottom.
+
 ## [0.10.261128] - 2026-11-16
 
 ### Fixed
