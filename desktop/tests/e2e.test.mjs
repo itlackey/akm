@@ -157,8 +157,7 @@ test("built desktop UI: each section's happy path and one refusal", { timeout: 2
     await expect(page.getByRole("textbox", { name: "Details" })).toHaveValue(/verify the evidence/);
     await expect(page.getByRole("heading", { name: "review example", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Confirm reject", exact: true }).click();
-    // The next proposal opens by itself, and a toast (no Dismiss step) says what was rejected, with Reopen….
-    await expect(page.getByRole("status").filter({ hasText: "Rejected “review example”" })).toBeVisible();
+    // The next proposal opens by itself, and the Last line (no toast, no Dismiss step) says what was rejected, with Reopen….
     await expect(page.getByRole("heading", { name: "review example", exact: true })).toHaveCount(0);
     await expect(
       page.getByRole("region", { name: "Proposal detail" }).getByRole("heading", { level: 2 }),
@@ -172,7 +171,9 @@ test("built desktop UI: each section's happy path and one refusal", { timeout: 2
     await page.screenshot({ path: path.join(screenshots, "review-desktop.png"), fullPage: true });
     await page.getByRole("button", { name: "Accept…", exact: true }).click();
     await page.getByRole("button", { name: "Confirm accept", exact: true }).click();
-    await expect(page.getByRole("status").filter({ hasText: "Accepted “recovery checklist”" })).toBeVisible();
+    await expect(
+      page.getByRole("region", { name: "Proposal detail" }).getByText(/^Last: Accepted “recovery checklist”/),
+    ).toBeVisible();
     assert.match(
       await readFile(path.join(server.root, "personal/knowledge/recovery-checklist.md"), "utf8"),
       /Preserve the original backup/,

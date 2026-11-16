@@ -107,6 +107,10 @@ export namespace assets {
   function searchMisses(input?: { since?: string }): unknown;
   function show(input: { ref: string }): Promise<unknown>;
 }
+export namespace backups {
+  /** `akm backups prune`: remove backups older than `olderThan` (default 30d), keeping the newest of each folder. A real run needs `confirm`; `dryRun` removes nothing. */
+  function prune(input?: { olderThan?: string; dryRun?: boolean; confirm?: boolean }): Promise<Record<string, unknown>>;
+}
 export namespace bundles {
   function add(input: { source: string; name?: string; writable?: boolean }): Promise<unknown>;
   function list(): Promise<unknown>;

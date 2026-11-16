@@ -2666,6 +2666,32 @@ forces `status: "blocked"` and adds a matching line to `blockers`, so
 `akm migrate status|apply` reports the plan and exits 1 (not the internal-error
 70) the same way it does for any other blocked plan.
 
+### backups prune
+
+Remove old backups from the data directory. `akm migrate apply` copies each
+file into `backups/<folder>/<timestamp>-<id>/` (`tasks`, `asset-engine-keys`,
+`asset-content-refs`) before it rewrites it, and nothing deletes those copies
+later; `akm health` reports a `backups/` that has grown large (`data-dir-usage`).
+Nothing reads an old backup back at run time, so removing one only gives up
+restoring that run by hand.
+
+```sh
+akm backups prune --dry-run              # what would go, nothing removed
+akm backups prune                        # prompts; --yes skips the prompt
+akm backups prune --older-than 7d --yes
+```
+
+| Flag | Meaning |
+| --- | --- |
+| `--older-than <duration>` | Remove entries last modified longer ago than this (`30d`, `12h`, `3M`; default `30d`). |
+| `--dry-run` | Report the same result and remove nothing. |
+| `--yes`, `-y` | Skip the confirmation prompt, which a non-interactive run requires. |
+
+The newest entry of each folder is always kept, however old, so the latest
+rollback point survives. The result is `{dryRun, olderThan, cutoff, count, bytes,
+folders: [{folder, count, bytes, kept}]}`: what was removed (or would be) in
+total and per folder. A missing `backups/` directory is nothing to prune.
+
 ### config
 
 Read and write configuration. Bare `akm config` runs `akm config list`.

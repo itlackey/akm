@@ -89,6 +89,7 @@ Windows uses per-user app-data directories (`%LOCALAPPDATA%\akm\data`,
 | `state.db.pre-<migration id>.bak` | A copy of `state.db` taken before a migration that drops schema (`018`, `028`) runs. Yours to delete. |
 | `workflow-run-locks/` | One lock file per running workflow run. |
 | `backups/tasks/` | Copies of task files made by `akm migrate apply` before it rewrites them. |
+| `backups/asset-content-refs/` | Copies of the markdown and YAML files `akm migrate apply` rewrote to the current ref spelling. `akm backups prune` removes the old ones. |
 | `backups/asset-engine-keys/` | Copies of commands, agents, workflows and task sources made by `akm migrate apply` before it rewrites their `engine:` key. |
 | `migrate/engine-targets.json` | The connection or harness each old engine name became, kept by `akm migrate apply` until every `engine:` key is rewritten. |
 | `opencode-runtime/` | Everything akm's own agent runtime keeps: OpenCode's `config/` (with akm's plugin), `data/` (logs, repositories, shell output, and `data/opencode/opencode.db`, the runtime's sessions, which `akm proposal extract --type opencode` reads back, read-only), `cache/`, `state/` and `tmp/` (the binary's own native pieces). Recreated on next use; deleting it loses the runtime's session history. |

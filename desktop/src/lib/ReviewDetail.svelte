@@ -21,8 +21,8 @@
   const current = $derived(detail.proposal as ReviewProposal);
 </script>
 
-<!-- Reading order, visual and DOM, at every window size: what it is, what to watch for, the change itself, then why it
-     was proposed. A short window has room for the change or for the reasons, and the change is what is decided. -->
+<!-- Reading order, visual and DOM, at every window size: what it is, what to watch for, why it was proposed, the change
+     itself, then the rest of the evidence. The reason is short, so it never pushes out of view with a long diff. -->
 <nav class="crumbs proposal-back" aria-label="Proposal breadcrumb">
   <a class="back" href={proposalHref("", query)}><Icon name="arrow-left" size={16} /><span>Back to queue</span></a>
 </nav>
