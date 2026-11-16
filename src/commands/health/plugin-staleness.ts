@@ -386,6 +386,7 @@ function readCodexPlugin(): CodexPlugin | undefined {
 /** One `codex-plugin-version` advisory, or none when the marketplace is registered but the plugin is not installed. */
 function buildCodexAdvisory(
   codex: CodexPlugin,
+  cliVersion: string,
   probe: boolean,
   listRemoteTagsAt: ListRemoteTagsAtFn,
 ): HealthCheckResult | undefined {
@@ -416,6 +417,21 @@ function buildCodexAdvisory(
     availableVersion !== undefined &&
     installed !== availableVersion &&
     highestVersion([installed, availableVersion]) === availableVersion;
+  // The akm-cli Codex's plugin cache holds for the installed plugin version: read, never executed.
+  const bundledCli = readPackageVersion(
+    path.join(
+      path.dirname(codexConfigFile()),
+      "plugins",
+      "cache",
+      "akm-plugins",
+      "akm",
+      installed,
+      "node_modules",
+      "akm-cli",
+      "package.json",
+    ),
+  );
+  const cliMatches = bundledCli === undefined ? undefined : bundledCli === cliVersion;
   const messageParts = [`akm@akm-plugins (Codex): installed ${installed} (${channel} channel)`];
   if (!probe) messageParts.push("newest tag was not probed");
   else if (remoteUnavailable) messageParts.push(REMOTE_UNAVAILABLE_NOTE);
@@ -423,9 +439,10 @@ function buildCodexAdvisory(
     messageParts.push(stale ? `available ${availableVersion} (STALE)` : `available ${availableVersion} (up to date)`);
   }
   if (stale) messageParts.push("-> codex plugin marketplace upgrade akm-plugins");
+  if (bundledCli !== undefined && cliMatches === false) messageParts.push(bundledCliNote(bundledCli, cliVersion));
   return {
     ...base,
-    status: stale ? "warn" : probe && availableVersion !== undefined ? "pass" : "unknown",
+    status: stale || cliMatches === false ? "warn" : probe && availableVersion !== undefined ? "pass" : "unknown",
     message: messageParts.join(" — "),
     evidence: {
       harness: "codex",
@@ -435,6 +452,9 @@ function buildCodexAdvisory(
       ...(probe ? {} : { probed: false }),
       ...(remoteUnavailable ? { remoteUnavailable: true } : {}),
       stale,
+      bundledCliVersion: bundledCli ?? null,
+      cliVersion,
+      cliMatches: cliMatches ?? null,
     },
   };
 }
@@ -496,7 +516,12 @@ export function collectPluginStalenessAdvisories(options: PluginStalenessOptions
 
   const codex = (options.readCodex ?? readCodexPlugin)();
   if (codex) {
-    const advisory = buildCodexAdvisory(codex, probe, options.listRemoteTagsAt ?? realListRemoteTagsAt);
+    const advisory = buildCodexAdvisory(
+      codex,
+      options.cliVersion,
+      probe,
+      options.listRemoteTagsAt ?? realListRemoteTagsAt,
+    );
     if (advisory) results.push(advisory);
   }
 
@@ -508,6 +533,13 @@ export function collectPluginStalenessAdvisories(options: PluginStalenessOptions
   }
 
   return results;
+}
+
+/** Which side of a plugin's bundled akm-cli and the running CLI is behind, with the remedy when the plugin is ahead. */
+function bundledCliNote(bundled: string, cliVersion: string, olderSuffix = ""): string {
+  return highestVersion([bundled, cliVersion]) === bundled
+    ? `bundles akm-cli ${bundled}, newer than the running CLI ${cliVersion}; both share the same databases -> akm upgrade`
+    : `bundles akm-cli ${bundled}, older than the running CLI ${cliVersion}; both share the same databases${olderSuffix}`;
 }
 
 function buildAdvisory(
@@ -540,10 +572,6 @@ function buildAdvisory(
   // Point 3: does the akm-cli the plugin runs match the running CLI? Both read and write the same databases.
   const pinnedCliVersion = readPinnedCli(plugin.pluginDir);
   const cliMatches = pinnedCliVersion === undefined ? undefined : pinnedCliVersion === cliVersion;
-  const pinNewer =
-    pinnedCliVersion !== undefined &&
-    cliMatches === false &&
-    highestVersion([pinnedCliVersion, cliVersion]) === pinnedCliVersion;
 
   const messageParts = [
     `${pluginRef}: installed ${plugin.version} (${plugin.scope}${plugin.projectPath ? `: ${plugin.projectPath}` : ""})`,
@@ -561,11 +589,11 @@ function buildAdvisory(
   if (stale) messageParts.push(`-> claude plugin update ${pluginRef}`);
   if (plugin.selectionKnown && plugin.enabled === true && cliMatches === false) {
     messageParts.push(
-      pinNewer
-        ? `bundles akm-cli ${pinnedCliVersion}, newer than the running CLI ${cliVersion}; both share the same databases -> akm upgrade`
-        : `bundles akm-cli ${pinnedCliVersion}, older than the running CLI ${cliVersion}; both share the same databases${
-            !stale && availableVersion === plugin.version ? " and no newer plugin is published on its channel" : ""
-          }`,
+      bundledCliNote(
+        pinnedCliVersion as string,
+        cliVersion,
+        !stale && availableVersion === plugin.version ? " and no newer plugin is published on its channel" : "",
+      ),
     );
   }
 

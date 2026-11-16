@@ -664,6 +664,7 @@ export function upgradePlugins(opts: {
 
 const SKEW_ADVISORY_HARNESS: Record<string, PluginUpgradeEntry["harness"]> = {
   "plugin-version": "claude-code",
+  "codex-plugin-version": "codex",
   "opencode-plugin-version": "opencode",
   "opencode-v2-plugin-version": "opencode-v2",
 };
@@ -671,8 +672,8 @@ const SKEW_ADVISORY_HARNESS: Record<string, PluginUpgradeEntry["harness"]> = {
 /** Adds the `akm health` verdict to a plugin whose bundled akm-cli differs from the CLI, so the upgrade names the skew it leaves. */
 function withEngineSkew(entries: PluginUpgradeEntry[], cliVersion: string): PluginUpgradeEntry[] {
   const skew = new Map<string, string>();
-  // Codex records no engine version, so its reader (a `codex plugin list` spawn) is skipped.
-  for (const advisory of collectPluginStalenessAdvisories({ cliVersion, probe: false, readCodex: () => undefined })) {
+  // Codex is read only when its config registers the akm-plugins marketplace: one `codex plugin list` spawn.
+  for (const advisory of collectPluginStalenessAdvisories({ cliVersion, probe: false })) {
     const harness = SKEW_ADVISORY_HARNESS[advisory.name];
     if (advisory.status === "warn" && harness && !skew.has(harness)) skew.set(harness, advisory.message);
   }

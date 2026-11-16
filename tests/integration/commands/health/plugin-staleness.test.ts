@@ -1033,6 +1033,53 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
       expect(offline?.evidence?.remoteUnavailable).toBe(true);
     });
 
+    describe("bundled akm-cli", () => {
+      /** A Codex home whose plugin cache holds akm-plugins/akm/<plugin>/node_modules/akm-cli at `engine`. */
+      const codexHome = (plugin: string, engine: string | undefined) => {
+        const home = makeTempDir("akm-codex-home-");
+        const pkg = path.join(home, "plugins", "cache", "akm-plugins", "akm", plugin, "node_modules", "akm-cli");
+        fs.mkdirSync(pkg, { recursive: true });
+        if (engine !== undefined) fs.writeFileSync(path.join(pkg, "package.json"), JSON.stringify({ version: engine }));
+        return home;
+      };
+      const collectIn = (home: string, probe: boolean) =>
+        withEnvSync({ CODEX_HOME: home }, () =>
+          collect({ ref: undefined, listed: listed("0.10.261118") }, { probe, cliVersion: "0.10.261120" }),
+        );
+
+      test("a bundled akm-cli older than the running CLI warns, even unprobed", () => {
+        for (const probe of [true, false]) {
+          const [adv] = collectIn(codexHome("0.10.261118", "0.10.261116"), probe);
+          expect(adv?.status).toBe("warn");
+          expect(adv?.message).toContain("bundles akm-cli 0.10.261116, older than the running CLI 0.10.261120");
+          expect(adv?.evidence).toMatchObject({ bundledCliVersion: "0.10.261116", cliMatches: false });
+        }
+      });
+
+      test("a bundled akm-cli newer than the running CLI says to run akm upgrade", () => {
+        const [adv] = collectIn(codexHome("0.10.261118", "0.10.261122"), false);
+        expect(adv?.status).toBe("warn");
+        expect(adv?.message).toContain("newer than the running CLI 0.10.261120");
+        expect(adv?.message).toContain("akm upgrade");
+      });
+
+      test("a matching bundled akm-cli is not skew", () => {
+        const [adv] = collectIn(codexHome("0.10.261118", "0.10.261120"), true);
+        expect(adv?.status).toBe("pass");
+        expect(adv?.message).not.toContain("bundles akm-cli");
+        expect(adv?.evidence).toMatchObject({ cliMatches: true });
+      });
+
+      test("a missing package is not skew", () => {
+        for (const home of [codexHome("0.10.261118", undefined), codexHome("0.10.261117", "0.10.261116")]) {
+          const [adv] = collectIn(home, false);
+          expect(adv?.status).toBe("unknown");
+          expect(adv?.message).not.toContain("bundles akm-cli");
+          expect(adv?.evidence).toMatchObject({ cliMatches: null });
+        }
+      });
+    });
+
     test("codex off PATH, or a failed listing, is unknown with the reason", () => {
       const [missing] = collect({ ref: undefined, listed: { error: { ok: false, missing: true, error: "ENOENT" } } });
       expect(missing?.status).toBe("unknown");
