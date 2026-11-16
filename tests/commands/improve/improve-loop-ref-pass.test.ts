@@ -132,7 +132,7 @@ describe("processImproveLoopRef — reflect half", () => {
     ["content_policy_reject", "reflect-guard-rejected", true],
     ["unsupported_type", "reflect-skipped", false],
     ["no_change", "reflect-skipped", false],
-    ["quality_rejected", "reflect-failed", false],
+    ["quality_rejected", "reflect-guard-rejected", false],
     ["agent_error", "reflect-failed", true],
   ] as const)("reflect failure reason %s → mode %s (error push: %p)", async (reason, mode, pushed) => {
     const { stashDir } = freshSandbox();
@@ -142,6 +142,20 @@ describe("processImproveLoopRef — reflect half", () => {
 
     expect(tally.actions.map((a) => a.mode)).toEqual([mode, "distill-skipped"]);
     expect(tally.recentErrorPushes).toEqual(pushed ? [{ originator: "reflect", message: `${reason} error` }] : []);
+  });
+
+  test.each([
+    ["a thrown runtime error", new Error("model server unreachable")],
+    ["a persistence failure", new Error("SQLITE_FULL: database or disk is full")],
+  ])("%s is recorded as an error action, not a rejection", async (_label, thrown) => {
+    const { stashDir } = freshSandbox();
+    const env = makeEnv({ stashDir, reflectFn: () => Promise.reject(thrown) });
+
+    const tally = await processImproveLoopRef(eligibleRef("knowledge/guide.md"), env);
+
+    expect(tally.actions).toEqual([
+      { ref: "knowledge/guide.md", mode: "error", result: { ok: false, error: thrown.message } },
+    ]);
   });
 
   test("recent reflect errors are injected as avoidPatterns and tallied", async () => {

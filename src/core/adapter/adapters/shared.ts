@@ -50,8 +50,10 @@
  */
 
 import { createHash } from "node:crypto";
+import { BUNDLE_REF_RE } from "../../asset/asset-ref";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { checkUnquotedDescriptionColon } from "../../asset/frontmatter-lint";
+import { findCurrentPathReferences, homeRootOf } from "../../asset/lint-text";
 import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
 import type { BundleComponent, Diagnostic, ValidateContext } from "../types";
@@ -86,15 +88,6 @@ function checkMissingUpdated(data: Record<string, unknown>, frontmatterText: str
   return frontmatterText !== null && !("updated" in data);
 }
 
-function findStalePathCandidates(body: string): string[] {
-  const pathRe = /(?:\/home\/|\/tmp\/|\/var\/|\/root\/|\/opt\/)[^\s"'`)\]>,\n]+/g;
-  const out: string[] = [];
-  let match: RegExpExecArray | null;
-  // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic regex loop
-  while ((match = pathRe.exec(body)) !== null) out.push(match[0]);
-  return out;
-}
-
 /** See file header: same intent as `markdown-insertion.ts#findFenceRegions`, not byte-identical. */
 function stripFencedBlocksSimple(body: string): string {
   const lines = body.split(/\r?\n/);
@@ -110,16 +103,9 @@ function stripFencedBlocksSimple(body: string): string {
   return out.join("\n");
 }
 
-// Ref-token grammar — copied from `base-linter.ts`'s `BUNDLE_REF_RE`
-// (`core/asset/asset-ref.ts`) as a VALUE,
-// not an import (same cycle-avoidance rationale as the file header — the source
-// string is duplicated so no new `core/adapter` -> `core/asset` edge is added for
-// this scan). Recognizes the 0.9.0 FULLY-QUALIFIED `<bundle>//<concept-id>
-// [#fragment]` prose body-ref anchored form ONLY. A bare short
-// conceptId in prose is NOT a ref, so it is never flagged here (it is a ref only
-// in the ref-LIST channels — {@link refTokenFromListValue}). The pre-0.9.0
-// `<type>:<slug>` colon grammar is gone from every recognition surface.
-const BUNDLE_BODY_REF_RE_SRC = "(?:^|[\\s`\"'(,[])([^\\s:.#/`\"'()[\\],<>]+\\/\\/[^\\s\"'`)\\]>,\\n]+)";
+// Prose refs use the canonical `BUNDLE_REF_RE` (`core/asset/asset-ref.ts`): the 0.9.0 FULLY-QUALIFIED
+// `<bundle>//<concept-id>[#fragment]` form ONLY. A bare short conceptId in prose is NOT a ref, so it is never flagged
+// here (it is a ref only in the ref-LIST channels — {@link refTokenFromListValue}).
 
 /**
  * A conceptId that is a lint false positive rather than a real ref — mirrors the
@@ -141,7 +127,7 @@ function isNonRefConceptId(conceptId: string): boolean {
  * ACP (`::`) false positives are dropped.
  */
 function extractProseRefTokens(text: string): string[] {
-  const re = new RegExp(BUNDLE_BODY_REF_RE_SRC, "gm");
+  const re = new RegExp(BUNDLE_REF_RE.source, BUNDLE_REF_RE.flags);
   const scanBody = stripFencedBlocksSimple(text);
   const refs: string[] = [];
   let match: RegExpExecArray | null;
@@ -232,10 +218,12 @@ export async function runBaseValidateChecks(
   }
 
   const staleCandidates = [
-    ...findStalePathCandidates(body),
-    ...(frontmatter ? findStalePathCandidates(frontmatter) : []),
+    ...findCurrentPathReferences(body),
+    ...(frontmatter ? findCurrentPathReferences(frontmatter) : []),
   ];
   for (const candidate of staleCandidates) {
+    const home = homeRootOf(candidate);
+    if (home !== undefined && (await ctx.list(home)).length === 0) continue; // another host's or user's path
     const found = await ctx.readFile(candidate);
     if (found !== null) continue;
     const portableHint = candidate.startsWith(componentRoot)

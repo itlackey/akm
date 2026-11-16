@@ -181,11 +181,6 @@ describe("createProposal / listProposals / getProposal", () => {
 
   test.each([
     {
-      issue: "unquoted-colon",
-      content:
-        "---\ndescription: Proposal lint:blocks invalid output.\nwhen_to_use: Testing proposal lint\n---\n\nUseful body.\n",
-    },
-    {
       issue: "missing-ref",
       content:
         "---\ndescription: Proposal with a missing ref\nwhen_to_use: Testing proposal lint\nxrefs:\n  - memories/proposal-lint-missing\n---\n\nUseful body.\n",

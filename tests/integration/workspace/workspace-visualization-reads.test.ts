@@ -16,6 +16,7 @@ import { getDbPath } from "../../../src/core/paths";
 import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { openExistingDatabase } from "../../../src/storage/repositories/index-connection";
+import { storeLayout } from "../../../src/storage/repositories/index-layout-repository";
 import { upsertEmbedding } from "../../../src/storage/repositories/index-vec-repository";
 import { upsertTaskHistory } from "../../../src/storage/repositories/task-history-repository";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
@@ -32,7 +33,7 @@ describe("visualization reads", () => {
     const stash = ctx.storage.stashDir;
     fs.writeFileSync(
       path.join(stash, "knowledge", "index-page.md"),
-      "---\ndescription: A page of links\nxrefs:\n  - knowledge/guide\n  - knowledge/not-written\n---\n# Index page\n",
+      "---\ndescription: A page of links\ntags: [Deploy, rollout, deploy]\nxrefs:\n  - knowledge/guide\n  - knowledge/not-written\n---\n# Index page\n",
     );
     resetConfigCache();
     await akmIndex({ stashDir: stash });
@@ -44,21 +45,23 @@ describe("visualization reads", () => {
     expect(at("knowledge/guide")).toBeGreaterThanOrEqual(0);
     expect(refs.some((ref) => ref.includes("env/") || ref.includes("secrets/"))).toBe(false);
     for (const column of [
-      "title",
       "type",
       "bundle",
       "belief",
       "shows",
-      "searches",
       "lastShownAt",
       "modifiedAt",
       "positive",
       "negative",
-      "topic",
+      "tags",
     ])
       expect(graph.nodes[column]).toHaveLength(refs.length);
     expect(graph.types[graph.nodes.type[at("knowledge/guide")]]).toBe("knowledge");
-    expect(graph.nodes.title[at("knowledge/index-page")]).toBe("Index page");
+    // Its own tags, lower case and once each, by index into the payload's tag list.
+    expect(graph.nodes.tags[at("knowledge/index-page")].map((t: number) => graph.tags[t])).toEqual([
+      "deploy",
+      "rollout",
+    ]);
     // The one resolved link; the link to a page nobody wrote is left out.
     expect(
       graph.links.from.map((from: number, i: number) => [
@@ -67,18 +70,12 @@ describe("visualization reads", () => {
         graph.kinds[graph.links.kind[i]],
       ]),
     ).toEqual([[refs[at("knowledge/index-page")], refs[at("knowledge/guide")], "xref"]]);
-    // No embeddings in this sandbox: no positions by meaning, no topics, no duplicates.
-    expect(graph.meaning).toBeNull();
-    expect(graph.topics).toEqual([]);
-    expect(graph.nodes.topic.every((t: number) => t === -1)).toBe(true);
+    // No embeddings in this sandbox: no duplicates.
     expect(graph.duplicates).toBeNull();
     // The file's modification time.
     expect(graph.nodes.modifiedAt[at("knowledge/index-page")]).toBe(
       fs.statSync(path.join(stash, "knowledge", "index-page.md")).mtime.toISOString(),
     );
-    // The page the dropped link was declared on: one unresolved link, none of its own.
-    expect(graph.unresolvedLinks).toBe(1);
-    expect(graph.note).toContain("No assets are embedded");
     expect(dbSnapshot(getDbPath())).toBe(before);
   });
 
@@ -145,13 +142,8 @@ describe("visualization reads", () => {
     expect(graph.bundles).toEqual(["stash", "small"]);
     expect(graph.nodes.bundle[at("small//knowledge/solo")]).toBe(1);
     expect(graph.nodes.bundle[at("stash//knowledge/guide")]).toBe(0);
-    expect(graph.emptyBundles).toEqual(["blank"]);
-    expect(graph.note).toContain("No assets in: blank");
     expect(refs.some((ref) => ref.startsWith("off//"))).toBe(false);
     expect(refs.some((ref) => ref.includes("draft"))).toBe(false);
-    // Three declared links leave the map: a missing page, a disabled bundle and a hidden type; the self-link is not counted.
-    expect(graph.unresolvedLinks).toBe(3);
-    expect(graph.note).toContain("3 declared links are not drawn");
     const kinds = (ref: string) => graph.beliefs[graph.nodes.belief[at(ref)]];
     expect(kinds("stash//knowledge/old")).toBe("superseded");
     expect(kinds("stash//knowledge/doubt")).toBe("contradicted");
@@ -187,7 +179,6 @@ describe("visualization reads", () => {
     }
     const live = await out(assets.graph());
     expect(live.nodes.shows[at("stash//knowledge/guide")]).toBe(before + 1);
-    expect(live.nodes.searches[at("stash//knowledge/guide")]).toBe(graph.nodes.searches[guide] + 1);
     // The latest user show inside retention, in UTC; feedback from people only.
     expect(live.nodes.lastShownAt[guide]).toBe(`${now.replace(" ", "T")}Z`);
     expect(live.nodes.negative[guide]).toBe(graph.nodes.negative[guide] + 1);
@@ -207,7 +198,7 @@ describe("visualization reads", () => {
   test("graph: an empty library, a one-asset library, an index with only its meta table and a damaged index all answer without a raw SQLite error", async () => {
     await seed();
     const stash = ctx.storage.stashDir;
-    // One asset: no topics, no positions.
+    // One asset: no duplicates.
     for (const entry of fs.readdirSync(stash))
       if (entry !== "knowledge") fs.rmSync(path.join(stash, entry), { recursive: true, force: true });
     const keep = fs.readdirSync(path.join(stash, "knowledge"))[0]!;
@@ -217,14 +208,12 @@ describe("visualization reads", () => {
     await akmIndex({ stashDir: stash, full: true });
     const one = await out(assets.graph());
     expect(one.nodes.ref).toHaveLength(1);
-    expect(one.topics).toEqual([]);
-    expect(one.nodes.topic).toEqual([-1]);
+    expect(one.duplicates).toBeNull();
     // Empty library.
     fs.rmSync(path.join(stash, "knowledge", keep), { recursive: true, force: true });
     await akmIndex({ stashDir: stash, full: true });
     const none = await out(assets.graph());
     expect(none.nodes.ref).toEqual([]);
-    expect(none.topics).toEqual([]);
     expect(none.duplicates).toBeNull();
     // An index being built for the first time: only its meta table exists.
     const file = getDbPath();
@@ -245,7 +234,7 @@ describe("visualization reads", () => {
     expect(damaged.nodes.ref).toEqual([]);
   });
 
-  test("graph: topics follow the enabled bundles, not only the index build", async () => {
+  test("graph: groups and duplicates are stored at index time and follow the enabled bundles", async () => {
     await seed();
     const stash = ctx.storage.stashDir;
     const word = { x: "xenon", y: "yankee", z: "zulu" } as const;
@@ -271,7 +260,7 @@ describe("visualization reads", () => {
     };
     configure(["x", "y", "z"]);
     await akmIndex({ stashDir: stash, full: true });
-    // Stored vectors: one direction per bundle.
+    // Stored vectors: one direction per bundle, so assets of one bundle are near-duplicates.
     const db = openExistingDatabase();
     try {
       const rows = db.prepare("SELECT id, bundle_id FROM entries WHERE bundle_id != 'stash'").all() as Array<{
@@ -285,20 +274,30 @@ describe("visualization reads", () => {
         vector[3 + (i % 4)] = 0.05;
         upsertEmbedding(db, row.id, vector);
       });
+      // What the end of an index build does with changed vectors; with none changed it does nothing.
+      expect(await storeLayout(db)).toBe(true);
+      expect(await storeLayout(db)).toBe(false);
     } finally {
       db.close();
     }
     configure(["x", "y"]);
     const first = await out(assets.graph());
     expect(first.nodes.ref.filter((ref: string) => !ref.startsWith("stash//"))).toHaveLength(20);
-    expect(first.topics.flatMap((t: { terms: string[] }) => t.terms)).toContain("yankee");
-    // Same index build, same number of assets, different bundles: the topics are the new library's.
+    const pairRefs = (payload: unknown): string[] => {
+      const graph = payload as { nodes: { ref: string[] }; duplicates: { a: number[]; b: number[] } };
+      return [...graph.duplicates.a, ...graph.duplicates.b].map((i) => graph.nodes.ref[i]!);
+    };
+    expect(pairRefs(first).some((ref) => ref.includes("yankee"))).toBe(true);
+    // Every embedded asset has its group and place; the stash's own assets have no vector, so no group.
+    const placed = first.nodes.ref.filter((_: string, i: number) => first.groups.group[i] >= 0);
+    expect(placed).toHaveLength(20);
+    expect(placed.every((ref: string) => !ref.startsWith("stash//"))).toBe(true);
+    // Same index build, same number of assets, different bundles: the duplicates are the new library's.
     configure(["x", "z"]);
     const second = await out(assets.graph());
     expect(second.nodes.ref.filter((ref: string) => !ref.startsWith("stash//"))).toHaveLength(20);
-    const terms = second.topics.flatMap((t: { terms: string[] }) => t.terms);
-    expect(terms).toContain("zulu");
-    expect(terms).not.toContain("yankee");
+    expect(pairRefs(second).some((ref) => ref.includes("zulu"))).toBe(true);
+    expect(pairRefs(second).some((ref) => ref.includes("yankee"))).toBe(false);
   });
 
   test("taskRuns: every task's runs of the window, newest first, with what started each", async () => {

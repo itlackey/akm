@@ -257,40 +257,48 @@ test("built desktop UI: each section's happy path and one refusal", { timeout: 2
     await expect(trace).toContainText("No units recorded for this run yet.");
   });
 
-  await t.test("Library: the map shows every asset by folder, and a folder's assets link to their pages", async () => {
-    await go(page, "/library/map");
-    await expect(page.getByRole("heading", { name: "Library map", exact: true })).toBeVisible();
-    // The map keeps Library's tabs.
-    await expect(page.getByRole("navigation", { name: "Library views" }).getByRole("link")).toHaveText([
-      "Search",
-      "Files",
-      "Map",
-    ]);
-    const figures = page.getByRole("complementary", { name: "Figures" });
-    // The fixture has no embeddings: the library is grouped by folder.
-    await expect(figures.locator(".stats")).toContainText("folders");
-    // Env and secret files are never on the map.
-    await expect(figures.locator("table.groups")).not.toContainText("env");
-    await figures.getByRole("button", { name: "knowledge", exact: true }).click();
-    const detail = figures.locator(".detail");
-    await expect(detail.getByRole("heading", { name: "knowledge" })).toBeVisible();
-    await detail.locator(".assets a").first().click();
-    await expect(page).toHaveURL(/\/library\/search\?ref=/);
-    await expect(page.locator(".markdown")).toBeVisible();
-  });
+  await t.test(
+    "Library: the mind map shows the library's types and tags, and a chosen one's assets link to their pages",
+    async () => {
+      await go(page, "/library/map");
+      await expect(page.getByRole("heading", { name: "Library map", exact: true })).toBeVisible();
+      // The map keeps Library's tabs.
+      await expect(page.getByRole("navigation", { name: "Library views" }).getByRole("link")).toHaveText([
+        "Search",
+        "Files",
+        "Map",
+      ]);
+      const map = page.locator(".mind-map");
+      await expect(map).toBeVisible();
+      const figures = page.getByRole("complementary", { name: "Figures" });
+      await expect(figures).toContainText("assets");
+      // Env and secret files are never on the map.
+      await expect(map.getByRole("button", { name: /^(env|secrets?)\b/i })).toHaveCount(0);
+      await expect(figures).not.toContainText(/\b(env|secrets?)\b/i);
+      // Choosing a type fills the column beside the map, and its assets link to their pages.
+      await map.getByRole("button", { name: /^Knowledge: / }).click();
+      await expect(figures.getByRole("heading", { level: 2 })).toHaveText("Knowledge");
+      await page.getByRole("tab", { name: "Use", exact: true }).click();
+      await figures.locator("section", { hasText: "Never read" }).locator(".read-row a").first().click();
+      await expect(page).toHaveURL(/\/library\/search\?ref=/);
+      await expect(page.locator(".markdown")).toBeVisible();
+    },
+  );
 
   await t.test("Activity: the replay plays the period's searches, reads and feedback", async () => {
     await go(page, "/activity/replay");
     const replay = page.getByRole("region", { name: "Activity replay", exact: true });
-    await expect(replay.getByRole("slider", { name: "Time" })).toBeVisible();
-    // At the end of the period the figures are the fixture's: three searches for "backup" and one that found nothing.
-    await replay.getByRole("slider", { name: "Time" }).evaluate((input) => {
+    await expect(replay.getByRole("slider", { name: "Playhead" })).toBeVisible();
+    // At the end of the period the figures are the fixture's: three searches for "backup" and one for "missing restore steps".
+    await replay.getByRole("slider", { name: "Playhead" }).evaluate((input) => {
       input.value = input.max;
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    await expect(replay).toContainText("missing restore steps");
-    await expect(replay.getByRole("rowheader", { name: /^No agent recorded \d+ events?$/ })).toBeVisible();
-    await expect(replay.getByRole("button", { name: "Play", exact: true })).toBeEnabled();
+    // The fixture's four searches, one read and two feedback events are in the figures and the log.
+    await expect(replay.locator(".figures")).toContainText(/4\s*searches/);
+    await expect(replay.locator(".figures")).toContainText(/1\s*reads/);
+    await expect(replay.locator(".log").first()).toContainText("“missing restore steps”");
+    await expect(replay.getByRole("button", { name: "Play from start", exact: true })).toBeEnabled();
   });
 
   await t.test("Activity: charts follow the chosen appearance", async () => {

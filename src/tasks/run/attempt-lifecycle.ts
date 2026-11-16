@@ -19,7 +19,9 @@
  * `detail.error` code). The comment on the set says why each code is reachable.
  */
 
+import os from "node:os";
 import { AkmError } from "../../core/errors";
+import { processIdentity } from "../../core/file-lock";
 import { withStateDb } from "../../core/state-db";
 import { reserveTaskHistoryAttempt } from "../../storage/repositories/task-history-repository";
 import { validateTaskId } from "../task-id";
@@ -49,8 +51,13 @@ export function reserveTaskAttempt(taskId: string, requestedStartedAt: Date): Re
           log_path: null,
           target_kind: null,
           target_ref: null,
-          // `pid` lets `akm task dispatch` tell a running attempt from one a crash or reboot left behind.
-          metadata_json: JSON.stringify({ metadataVersion: 2, durationMs: 0, detail: null, pid: process.pid }),
+          // `owner` lets `akm task dispatch` and the abandoned-attempt reconcile tell a running attempt from one a crash or reboot left behind.
+          metadata_json: JSON.stringify({
+            metadataVersion: 2,
+            durationMs: 0,
+            detail: null,
+            owner: { pid: process.pid, host: os.hostname(), ...processIdentity(process.pid) },
+          }),
         });
         if (reserved) return { startedAt, historyReserved: true };
       }

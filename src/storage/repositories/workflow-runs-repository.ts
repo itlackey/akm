@@ -475,6 +475,37 @@ export class WorkflowRunsRepository {
       .run(input.status, input.currentStepId, input.updatedAt, input.completedAt, input.runId);
   }
 
+  /** Runs that are `completed` or `failed` yet still hold a `running` unit or unit attempt. */
+  listTerminalRunsWithRunningUnits(): string[] {
+    const rows = this.db
+      .prepare(
+        `SELECT id FROM workflow_runs
+          WHERE status IN ('completed', 'failed')
+            AND (EXISTS (SELECT 1 FROM workflow_run_units u WHERE u.run_id = workflow_runs.id AND u.status = 'running')
+              OR EXISTS (SELECT 1 FROM workflow_run_unit_attempts a WHERE a.run_id = workflow_runs.id AND a.status = 'running'))`,
+      )
+      .all() as Array<{ id: string }>;
+    return rows.map((row) => row.id);
+  }
+
+  /**
+   * Settle the units and unit attempts still `running` under a terminal run as `failed` with failure_reason
+   * `interrupted`: their own outcome is unknown, not a recorded success. Their rows are kept. The caller makes sure
+   * no driver still holds the run, since a live driver journals a unit's result after the run turns terminal.
+   */
+  settleRunningUnitsOfTerminalRun(runId: string, finishedAt: string): void {
+    for (const table of ["workflow_run_unit_attempts", "workflow_run_units"]) {
+      this.db
+        .prepare(
+          `UPDATE ${table}
+              SET status = 'failed', failure_reason = 'interrupted', finished_at = ?
+            WHERE status = 'running'
+              AND run_id IN (SELECT id FROM workflow_runs WHERE id = ? AND status IN ('completed', 'failed'))`,
+        )
+        .run(finishedAt, runId);
+    }
+  }
+
   markRunAbandoned(runId: string, updatedAt: string): boolean {
     const result = this.db
       .prepare(

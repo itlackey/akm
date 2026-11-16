@@ -195,49 +195,39 @@ them, in column form, so 30,000 assets stay a few megabytes:
   "types": ["knowledge", "memory"],
   "bundles": ["team-wiki"],
   "beliefs": ["superseded"],
-  "emptyBundles": [],
   "use": { "since": "2026-08-15T08:00:00.000Z", "source": "user" },
-  "unresolvedLinks": 2,
   "kinds": ["xref", "links_to"],
-  "nodes": { "ref": ["team-wiki//knowledge/a"], "title": ["A"], "type": [0], "bundle": [0], "belief": [-1],
-             "shows": [12], "searches": [40], "lastShownAt": ["2026-11-02T09:14:03Z"],
-             "modifiedAt": ["2026-03-30T17:02:11.000Z"], "positive": [2], "negative": [0], "topic": [4] },
+  "tags": ["deploy"],
+  "nodes": { "ref": ["team-wiki//knowledge/a"], "type": [0], "bundle": [0], "belief": [-1], "shows": [12],
+             "lastShownAt": ["2026-11-02T09:14:03Z"], "modifiedAt": ["2026-03-30T17:02:11.000Z"],
+             "positive": [2], "negative": [0], "tags": [[0]] },
   "links": { "from": [0], "to": [3], "kind": [1] },
-  "meaning": { "embedded": 29840, "xyz": [12.5, -40.1, 3.2] },
-  "topics": [{ "label": "deploy · canary", "terms": ["deploy", "canary", "rollout"], "size": 812,
-               "related": [{ "topic": 7, "cosine": 0.81 }] }],
-  "duplicates": { "threshold": 0.96, "a": [0], "b": [9], "cosine": [0.9871], "truncated": false }
+  "duplicates": { "threshold": 0.96, "a": [0], "b": [9], "cosine": [0.9871], "truncated": false },
+  "groups": { "count": 36, "group": [4], "x": [12.5], "y": [-3.1], "z": [40.2] }
 }
 ```
 
 Node `i` is index `i` of every `nodes` array; `type`, `bundle`, `belief` and `kind` index `types`, `bundles`, `beliefs`
-and `kinds`. `bundles` runs from the bundle with the most assets to the one with the fewest, and `emptyBundles` names
-the enabled bundles with none. `belief` is the asset's recorded belief state, `-1` when it has none. A link runs from
-the asset that declares it to its target; `unresolvedLinks` counts the declared links that are left out because the
-target is missing, of a type that is not returned, or in a bundle that is not enabled. `shows` and `searches` are
-counted from the usage events when the operation is called: events of source `user` (people and their agent
-sessions, not scheduled tasks or Improve) at or after `use.since`, the start of the usage retention window. They are
-zero, and the note says so, when no usage history is available. `lastShownAt` is the latest of those shows (UTC), `null`
-when there is none in the window. `positive` and `negative` count feedback from people inside the retention window, as
-search ranks by it (a negative answered by an accepted fix does not count). `modifiedAt` is the file's modification
-time, `null` when it cannot be read; in a Git checkout it is when the file was last written there, not its last commit. `meaning` places each asset with a stored embedding
-of the index's current model in three dimensions (three coordinates per node, `null` for one with no embedding): its
-projection on the three principal components of the vectors, so assets with similar content land near each other. The
-components are found from an evenly spaced sample of at most 4,000 vectors and kept for the life of the process until
-the index's embedding model or full build changes; an asset embedded since is projected onto them. The work yields to
-the event loop as it goes, so a host's other requests are served meanwhile. `meaning` is `null` when the index has no
-embeddings.
+and `kinds`, and each entry of `nodes.tags[i]` indexes `tags`, the asset's own frontmatter tags (lower case, once each).
+`bundles` runs from the bundle with the most assets to the one with the fewest. `belief` is the asset's recorded belief
+state, `-1` when it has none. A link runs from the asset that declares it to its target; links whose target is missing,
+of a type that is not returned, or in a bundle that is not enabled are left out. `shows` is counted from the usage
+events when the operation is called: events of source `user` (people and their agent sessions, not scheduled tasks or
+Improve) at or after `use.since`, the start of the usage retention window. It is zero, and the note says so, when no
+usage history is available. `lastShownAt` is the latest of those shows (UTC), `null` when there is none in the window.
+`positive` and `negative` count feedback from people inside the retention window, as search ranks by it (a negative
+answered by an accepted fix does not count). `modifiedAt` is the file's modification time, `null` when it cannot be
+read; in a Git checkout it is when the file was last written there, not its last commit.
 
-`topics` groups the embedded assets by meaning: spherical k-means on their stored vectors, about √(n/2) topics (2 to 36),
-largest first, the centres found from an evenly spaced sample of at most 4,000 vectors from a fixed start, so the same
-index gives the same topics. A topic's `terms` are the words of its assets' paths and titles most particular to it
-(frequent in the topic, rare in the library), and its `label` the first two; `related` names the three topics whose
-centres are nearest, with the cosine between them. `nodes.topic` indexes `topics`, `-1` for an asset with no embedding.
-`duplicates` lists pairs of assets of one topic whose vectors have a cosine of at least `threshold` (0.96), most alike
-first, at most 2,000 (`truncated` says there were more); pairs across topics are not compared. Both are `[]` and `null`
-without at least eight embedded assets. They are found once per index build and kept, like the projection: the first
-read of a 20,000-asset index takes several seconds. `available` is `false`, with a `note`,
-when there is no index.
+`groups` and `duplicates` are computed by `akm index` at the end of each build whose vectors changed, over every
+embedded asset, and stored in `index.db`; the read only looks them up. The embedded assets are grouped by meaning
+(spherical k-means on their vectors, from a fixed start, so the same vectors give the same groups), at most 36 groups.
+`groups.group[i]` is asset `i`'s group (`-1` when it has no vector), and `x`, `y`, `z` its place in 3D: groups alike in
+meaning lie near each other, and an asset sits inside its group's sphere. `duplicates` lists pairs of assets (indexes
+into `nodes`) whose stored embeddings have a cosine of at least `threshold` (0.96), most alike first, at most 2,000
+(`truncated` says there were more); only pairs inside a group are compared. Pairs and places of assets that are not
+returned (a bundle that is not enabled) are left out. Both are `null` without at least eight embedded assets, and until
+an `akm index` of this release has run. `available` is `false`, with a `note`, when there is no index.
 
 ## `bundles.list`
 

@@ -177,7 +177,7 @@ describe("akm lint --fix preserves multiline descriptions", () => {
   let storage: IsolatedAkmStorage;
   afterEach(() => storage?.cleanup());
 
-  test("repairs valid plain and malformed quoted wrapping without corrupting YAML", async () => {
+  test("leaves valid plain wrapping alone, repairs malformed quoted wrapping, without corrupting YAML", async () => {
     storage = withIsolatedAkmStorage();
     const cases = [
       {
@@ -221,7 +221,7 @@ describe("akm lint --fix preserves multiline descriptions", () => {
     }
 
     const result = await akmLint({ fix: true, config: makeConfig(storage.stashDir) });
-    expect(result.fixed.filter((issue) => issue.issue === "unquoted-colon")).toHaveLength(cases.length);
+    expect(result.fixed.filter((issue) => issue.issue === "unquoted-colon")).toHaveLength(1);
     expect(result.flagged.filter((issue) => issue.issue === "unquoted-colon")).toEqual([]);
 
     for (const testCase of cases) {

@@ -17,6 +17,7 @@
     software,
     watchSoftware,
   } from "./state/software.svelte";
+  import { upgradeOutcomeText } from "./upgrade-outcome";
   const releases = "https://github.com/itlackey/akm/releases";
   const data = $derived(software.data),
     error = $derived(software.error),
@@ -41,10 +42,6 @@
   );
   const channelName = (value: string) => (value === "next" ? "prerelease" : "stable");
   const outcomes = $derived((data?.host.action?.upgrade?.plugins ?? []).filter((item) => item.outcome));
-  const outcomeText = (item: { harness: string; outcome?: string; reason?: string }) =>
-    `${item.harness}: ${item.outcome}${item.reason ? ` (${item.reason})` : ""}${
-      item.outcome === "deferred" ? ". Close the harness, then update again." : ""
-    }`;
   // Desktop's own update state, from the main process (electron-updater).
   const update = $derived(data?.desktop.update);
   const embeddedPrerelease = $derived(/^\d+\.\d+\.\d+-/.test(data?.desktop.version ?? ""));
@@ -301,7 +298,7 @@
       <!-- The region is always there, so a receipt arriving in it is announced. -->
       <div role="status">
         {#if data.host.receipt}<p class="notice">{data.host.receipt}</p>{/if}
-        {#each outcomes as item (item.harness)}<p class="field-hint">{outcomeText(item)}</p>{/each}
+        {#each outcomes as item (item.harness)}<p class="field-hint">{upgradeOutcomeText(item)}</p>{/each}
         {#if data.host.upgrade?.installMethod === "package-local"}<p class="field-hint">
             This CLI belongs to another package, which owns its updates. Update it there.
           </p>{/if}

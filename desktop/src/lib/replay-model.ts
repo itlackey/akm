@@ -2,9 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-/** The event stream `activity.events` returns, made into steps a replay plays over the library map. */
-
-import { type Arrangement, isPlaced, type LibraryGraph } from "./graph-model.ts";
+/** The event stream `activity.events` returns, made into steps a replay plays over the library mind map. */
 
 export interface UsageEventRow {
   id: number;
@@ -23,35 +21,21 @@ export type ReplayStep = {
   kind: "search" | "hit" | "show" | "feedback" | "other";
   /** The asset on the map, or -1 when the event names none or names one not on the map. */
   node: number;
-  actor: string;
   query?: string;
   results?: number;
   signal?: "positive" | "negative";
   ref?: string;
-  /** What akm recorded the event as; the ticker names it for `other` events. */
+  /** What akm recorded the event as: the log says "curated" or "searched", and names it for `other` events. */
   eventType: string;
 };
-
-const SOURCES: Record<string, string> = {
-  user: "No agent recorded",
-  improve: "Improve",
-  task: "Scheduled tasks",
-  audit: "Audit",
-  unknown: "Unknown source",
-};
-
-/**
- * Who made an event: the agent harness when akm recorded one, else the event's source. A person and an agent akm could
- * not recognise both record `user` and no agent, so that row says so rather than guessing.
- */
-export const actorOf = (event: UsageEventRow) => event.agent?.harness ?? SOURCES[event.source] ?? event.source;
 
 export function replaySteps(events: UsageEventRow[], index: Map<string, number>): ReplayStep[] {
   return events
     .map((event): ReplayStep => {
       const node = event.ref ? (index.get(event.ref) ?? -1) : -1;
+      // A curate is a search: one row for the query and one per result, like a search and its hits.
       const kind =
-        event.eventType === "search"
+        event.eventType === "search" || event.eventType === "curate"
           ? event.ref
             ? "hit"
             : "search"
@@ -64,7 +48,6 @@ export function replaySteps(events: UsageEventRow[], index: Map<string, number>)
         t: Date.parse(event.at),
         kind,
         node,
-        actor: actorOf(event),
         eventType: event.eventType,
         ...(event.query ? { query: event.query } : {}),
         ...(event.resultCount !== undefined ? { results: event.resultCount } : {}),
@@ -79,49 +62,48 @@ export function replaySteps(events: UsageEventRow[], index: Map<string, number>)
 /** `activity.events` keeps the newest this many events of a period. */
 export const EVENT_LIMIT = 20_000;
 
-/** A search that found nothing: the one definition the lane, the total and the list of queries share. */
+/** A search that found nothing: the one definition the timeline, the total and the list of queries share. */
 export const foundNothing = (step: ReplayStep) => step.kind === "search" && step.results === 0;
 
-/** A hit is part of its search, so it is not an event of its own on the lanes or in the totals. */
+/** A hit is part of its search, so it is not an event of its own in the totals. */
 const counted = (step: ReplayStep) => step.kind !== "hit";
 
-/**
- * Events per actor in `bins` equal slices of the window. Lanes run from the busiest actor to the quietest, ties by
- * name without regard to case. Every lane, the found-nothing lane included, is drawn on one scale: `max`, the most
- * events any lane has in one slice.
- */
-export function replayBins(steps: ReplayStep[], start: number, end: number, bins = 96) {
+/** The kinds the timeline stacks, bottom first, with the colour of each. */
+export const KINDS = [
+  { id: "read", label: "Reads", token: "--use-2" },
+  { id: "search", label: "Searches", token: "--accent" },
+  { id: "miss", label: "Searches that found nothing", token: "--fail" },
+  { id: "feedback", label: "Feedback", token: "--ok" },
+  { id: "other", label: "Other events", token: "--border-strong" },
+] as const;
+export type KindId = (typeof KINDS)[number]["id"];
+const kindOf = (step: ReplayStep): KindId | null =>
+  step.kind === "show"
+    ? "read"
+    : step.kind === "search"
+      ? foundNothing(step)
+        ? "miss"
+        : "search"
+      : step.kind === "feedback"
+        ? "feedback"
+        : step.kind === "other"
+          ? "other"
+          : null;
+
+/** Events per kind in `bins` equal slices of the window, for the stacked timeline; `max` is the tallest slice. */
+export function kindBins(steps: ReplayStep[], start: number, end: number, bins = 96) {
   const width = Math.max(1, end - start) / bins;
-  const at = (t: number) => Math.min(bins - 1, Math.max(0, Math.floor((t - start) / width)));
-  const own = steps.filter(counted);
-  const counts = new Map<string, number[]>();
-  for (const step of own) {
-    if (!counts.has(step.actor)) counts.set(step.actor, new Array<number>(bins).fill(0));
-    counts.get(step.actor)![at(step.t)]!++;
-  }
-  const misses = new Array<number>(bins).fill(0);
-  for (const step of own) if (foundNothing(step)) misses[at(step.t)]!++;
-  const sum = (values: number[]) => values.reduce((a, b) => a + b, 0);
-  const totals = new Map([...counts].map(([actor, values]) => [actor, sum(values)]));
-  const actors = [...counts.keys()].sort(
-    (a, b) =>
-      totals.get(b)! - totals.get(a)! || a.localeCompare(b, undefined, { sensitivity: "base" }) || (a < b ? -1 : 1),
+  const counts = Array.from(
+    { length: bins },
+    () => Object.fromEntries(KINDS.map((k) => [k.id, 0])) as Record<KindId, number>,
   );
-  const max = Math.max(1, ...misses, ...[...counts.values()].flat());
-  return { actors, counts, totals, misses, missTotal: sum(misses), max, width };
-}
-
-/** "tallest bar = 12 events per 15 minutes": what the shared scale of the lanes is. */
-export const scaleText = (max: number, width: number) =>
-  `Tallest bar = ${max} event${max === 1 ? "" : "s"} per ${durationText(width)}`;
-
-/** A length of time as people read it: "15 minutes", "1 h 45 min", "6 hours". */
-export function durationText(ms: number): string {
-  const minutes = Math.max(1, Math.round(ms / 60_000));
-  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"}`;
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  return m ? `${h} h ${m} min` : `${h} hour${h === 1 ? "" : "s"}`;
+  for (const step of steps) {
+    const kind = kindOf(step);
+    if (!kind) continue;
+    counts[Math.min(bins - 1, Math.max(0, Math.floor((step.t - start) / width)))]![kind]++;
+  }
+  const max = Math.max(1, ...counts.map((c) => KINDS.reduce((sum, k) => sum + c[k.id], 0)));
+  return { counts, max, width };
 }
 
 /** The running totals at a moment: what the replay's figures say once it has played up to `t`. */
@@ -132,7 +114,7 @@ export function totalsAt(steps: ReplayStep[], t: number) {
     shows: 0,
     positive: 0,
     negative: 0,
-    /** Events of a kind without a total of its own (curate, for one). */
+    /** Events of a kind without a total of its own. */
     others: 0,
     used: new Set<number>(),
   };
@@ -173,42 +155,13 @@ export function usedList(steps: ReplayStep[], t: number, limit = 10) {
 export function describe(step: ReplayStep): string {
   const quoted = step.query ? ` “${step.query}”` : "";
   if (step.kind === "search") {
-    if (foundNothing(step)) return `searched${quoted}, found nothing`;
-    return `searched${quoted}${step.results === undefined ? "" : `, ${step.results} result${step.results === 1 ? "" : "s"}`}`;
+    const verb = step.eventType === "curate" ? "curated" : "searched";
+    if (foundNothing(step)) return `${verb}${quoted}, found nothing`;
+    return `${verb}${quoted}${step.results === undefined ? "" : `, ${step.results} result${step.results === 1 ? "" : "s"}`}`;
   }
   if (step.kind === "show") return `read ${step.ref ?? "an asset"}`;
   if (step.kind === "feedback") return `${step.signal ?? ""} feedback on ${step.ref ?? "an asset"}`.trim();
   return `${step.eventType}${quoted}${step.ref ? ` on ${step.ref}` : ""}`;
-}
-
-/** The events that touched assets the map does not draw: counted in the figures, not lit. */
-export function undrawn(steps: ReplayStep[], graph: LibraryGraph, arrange: Arrangement) {
-  let events = 0;
-  const assets = new Set<string>();
-  let noPosition = 0;
-  for (const step of steps) {
-    if (!counted(step) || !step.ref) continue;
-    if (step.node >= 0 && isPlaced(graph, arrange, step.node)) continue;
-    events++;
-    assets.add(step.ref);
-    if (step.node >= 0) noPosition++;
-  }
-  return { events, assets: assets.size, noPosition };
-}
-export function undrawnText(u: ReturnType<typeof undrawn>, arrange: Arrangement): string {
-  if (!u.events) return "";
-  const why = [
-    u.noPosition ? `${u.noPosition} on assets with no position ${arrange === "meaning" ? "by meaning" : "here"}` : "",
-    u.events - u.noPosition ? `${u.events - u.noPosition} on assets that are not in the library map` : "",
-  ].filter(Boolean);
-  return `${u.events} event${u.events === 1 ? "" : "s"} in this period touched ${u.assets} asset${u.assets === 1 ? "" : "s"} that ${u.assets === 1 ? "is" : "are"} not drawn (${why.join("; ")}). They are counted in the figures and the lanes.`;
-}
-
-/** The renderer's state for each asset: not on this arrangement is hidden, used so far is ringed (emphasised), the rest normal in the quietest colour. */
-export function replayState(graph: LibraryGraph, arrange: Arrangement, used: ArrayLike<number>): Uint8Array {
-  const state = new Uint8Array(graph.count);
-  for (let i = 0; i < graph.count; i++) state[i] = !isPlaced(graph, arrange, i) ? 3 : used[i] ? 2 : 1;
-  return state;
 }
 
 // ---- The clock ----
@@ -259,60 +212,6 @@ export function truncationNote(truncated: boolean, firstAt: number | undefined, 
   const from =
     firstAt === undefined ? "" : `, so the replay starts at ${dateTimeText(firstAt, z)}, later than the period`;
   return `This period held more than ${EVENT_LIMIT.toLocaleString("en-US")} events; the replay keeps the latest ${EVENT_LIMIT.toLocaleString("en-US")}${from}.`;
-}
-
-// ---- Pulses ----
-
-/** Pulse diameters in CSS px (the renderer draws them that size, capped at 32). */
-export const PULSE_PX = { read: 14, hit: 12, feedback: 18 };
-export const PULSE_SECONDS = 1.2;
-/** The most pulses in flight at once. */
-export const MAX_PULSES = 600;
-/** The tokens a pulse is coloured with, by kind (see tokens.css). */
-export const PULSE_TOKENS = {
-  read: "--pulse-read",
-  hit: "--pulse-hit",
-  positive: "--pulse-up",
-  negative: "--pulse-down",
-} as const;
-export type PulseKind = keyof typeof PULSE_TOKENS;
-/** The pulse an event sends to its asset, or null for events that have none (searches, curate). */
-export function pulseOf(step: ReplayStep): { kind: PulseKind; size: number } | null {
-  if (step.kind === "show") return { kind: "read", size: PULSE_PX.read };
-  if (step.kind === "hit") return { kind: "hit", size: PULSE_PX.hit };
-  if (step.kind === "feedback")
-    return { kind: step.signal === "negative" ? "negative" : "positive", size: PULSE_PX.feedback };
-  return null;
-}
-
-/** How far outside the drawn points the pulses start, as a multiple of their extent. */
-export const RING_MARGIN = 1.15;
-/** Pulses arc this fraction of the ring's radius above their path. */
-export const ARC_FRACTION = 0.12;
-/** The ring the pulses start from: round the drawn points (not hidden ones), just outside them, at the top of the cloud. */
-export function emitterRing(pos: ArrayLike<number>, state: ArrayLike<number>) {
-  const lo = [Infinity, Infinity, Infinity];
-  const hi = [-Infinity, -Infinity, -Infinity];
-  for (let i = 0; i < state.length; i++) {
-    if (state[i] === 3) continue;
-    for (let a = 0; a < 3; a++) {
-      lo[a] = Math.min(lo[a]!, pos[i * 3 + a]!);
-      hi[a] = Math.max(hi[a]!, pos[i * 3 + a]!);
-    }
-  }
-  if (lo[0] === Infinity) return { centre: [0, 0, 0], radius: 0, arc: 0 };
-  const centre = [(lo[0]! + hi[0]!) / 2, hi[1]!, (lo[2]! + hi[2]!) / 2];
-  const radius = (Math.hypot(hi[0]! - lo[0]!, hi[2]! - lo[2]!) / 2) * RING_MARGIN;
-  return { centre, radius, arc: radius * ARC_FRACTION };
-}
-/** Emitter `at` of `of` on the ring. */
-export function emitterAt(ring: ReturnType<typeof emitterRing>, at: number, of: number): number[] {
-  const angle = (at / Math.max(1, of)) * Math.PI * 2;
-  return [
-    ring.centre[0]! + Math.cos(angle) * ring.radius,
-    ring.centre[1]!,
-    ring.centre[2]! + Math.sin(angle) * ring.radius,
-  ];
 }
 
 /** The scrubber's step: one minute. */
