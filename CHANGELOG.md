@@ -102,6 +102,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `akm help <command...>` prints the same help as `akm <command...> --help`, also for one quoted argument (`akm help "bundle add"`); `akm help help` prints help's own help; an unknown command is an error whose hint names `akm <command> --help`.
 - Root help: a short concept list (bundle, registry, connection, harness, project) replaces the closing bundle paragraph, and the version sits on the first line instead of the last exit-code line. `akm improve --help` no longer lists `report` as a trailing argument in its USAGE line.
 
+## [0.10.261127] - 2026-11-15
+
+### Added
+
+- AKM Desktop's library map draws every embedded asset in 3D, grouped by meaning instead of by bundle or type, when the index holds groups: each group is named by the tags its assets carry most particularly, and choosing a group or an asset flies to it and draws its links and near-duplicates. Inside a group, assets read lately sit at the front and never-read or outdated ones at the back. Flat switches to the mind map. The 3D view needs WebGL.
+- `akm-cli/workspace`: `assets.graph()` returns `groups`, each asset's group by meaning and its place in 3D.
+
+### Fixed
+
+- `akm migrate` (and the migration every `akm upgrade` runs) rewrote legacy asset refs inside any file a bundle's adapter recognized, so in a bundle read with `generic-files` it changed frozen benchmark JSON, captured results and scripts, which then blocked `akm bundle update`. It now rewrites refs only in markdown and YAML files; everything else stays byte-for-byte. Files an earlier run already rewrote are not restored: restore them from git or from the run's backup under `$DATA/backups/asset-content-refs/`.
+- A consolidate pair judgment that failed (transport error, an unparseable verdict after the retry, cancellation, or a failed proposal mint) kept no reason. The pair pass result now carries `failureKinds` and up to 20 `failures`, each with a clipped one-line reason and no prompt or reply text; the run gets a warning, and `akm health` counts failed pairs (`consolidation.failedPairs`) and lists the run among failed runs. The pairs are still retried next run.
+- An improve run whose reflection candidates the quality judge rejected (churn, unsupported claims, lost specificity) was reported as failed by `akm health`. A quality rejection is now `reflect-guard-rejected` and counted as `reflect.rejected` (also for older runs that recorded it as `reflect-failed`), not as a failure; runtime and persistence failures still are. The candidates stay unapplied.
+- A task attempt whose process crashed stayed `active` in task history forever, and workflow units stayed `running` under a run that had failed. Each task run now marks an attempt `interrupted` when its owner is provably gone (a different boot, a dead or reused pid), and settles units still running under a finished run that no process drives any more as failed with reason `interrupted`. An attempt whose owner is alive, or on another host, is left as it is however long it runs; no history is deleted.
+- `akm lint` and bundle validation no longer report: a description that parses as valid YAML (a URL, `admin:snapshot`) as an unquoted colon; a grouping directory such as `skills/personal/` that holds skills as a skill without `SKILL.md` (an incomplete skill inside a group is reported by its own path); `[REDACTED]` inside code, quotes or a blockquote as damaged content; sentence punctuation after a ref as part of it (`tasks/x.` looked for `x..md`); or a missing path on a line or under a heading that presents it as history or an example, or under another host's home directory. Malformed YAML, incomplete skills, broken refs and missing current paths are still reported.
+- `akm upgrade` printed a plugin left on its own channel as just "current" and did not say when its bundled akm differed from the CLI. A plugin is now "current within its configured channel", a skipped plugin keeps its reason in AKM Desktop too, and a plugin whose bundled akm differs from the CLI names the engine skew `akm health` reports, in the CLI, its JSON and AKM Desktop alike. Channels are still never switched without `--channel`.
+
+### Changed
+
+- `akm index` groups the embedded assets by meaning and finds the near-duplicate pairs at the end of a build whose vectors changed, and stores them in `index.db` (`entry_layout`, `duplicate_pairs`); `assets.graph` reads them instead of computing them, so a library map read of 16,000 assets takes about one second instead of six. Near-duplicates are now compared across all embedded assets and filtered to the enabled bundles, and they and `groups` are `null` until the first `akm index` of this release.
+
+## [0.10.261126] - 2026-11-15
+
+### Changed
+
+- AKM Desktop's library map is a mind map: the library, its asset types, and the tags each type's assets carry most, every label drawn, with a bar under each tag for its figure in the view. Contents, Use and Problems each draw the tags their question is about (by size, by reads, by problems), for all bundles or the one picked. Choosing a type or tag draws lines to every group its assets link to or nearly duplicate, and the column beside the map answers the view's question for it: what it is made of and its most linked assets; what is read, never read and searched for without a result; what is outdated, duplicated or disliked; and which other bundles repeat it. Every listed asset can show its closest assets by content, with a Compare link. It replaces the topic circles of 0.10.261125, whose topic names were word pairs from paths, and drops the Relations view. The map and the replay no longer need WebGL.
+- AKM Desktop's activity replay is a timeline: events per kind stacked over the period with a playhead you click or drag, the mind map of the assets the period touched counting the events on each type and tag, and a log of the latest events. A curate counts as a search, and its results as that search's hits. It replaces the point cloud with flying pulses and the per-agent lanes.
+- `akm-cli/workspace`: `assets.graph()` returns each asset's own tags (`nodes.tags`, indexes into a new `tags` list, lower case); it no longer returns `meaning`, `topics`, `nodes.topic`, `nodes.title`, `nodes.searches`, `emptyBundles` or `unresolvedLinks`. `duplicates` stays.
+
+### Fixed
+
+- AKM Desktop's library map no longer shows "This view needs WebGL" after the pointer leaves an item, and the map and replay pages scroll as one page instead of a side panel scrolling inside a scrolling page.
+- Matching indexed files to their bundle (curate, related, `search --from`, AKM Desktop's library map) no longer resolves real paths on disk for files outside the enabled bundles: the index and the sources both store real paths, so the spelling is compared. Since 0.10.261125 this added about 3.6 seconds to each library map read on a library of 20,000 indexed files.
+- Each index build no longer applies a full day of decay to utility scores: a score now decays by the time since it was last written, so many builds in a day decay it about one day in total, and a new score starts at its select or feedback rate (itlackey/akm#1659).
+
 ## [0.10.261125] - 2026-11-14
 
 ### Added

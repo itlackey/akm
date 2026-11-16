@@ -14,11 +14,9 @@
 // common case; layer 2 ensures that even when the user opts in to the
 // escape hatch, the host config is still preserved.
 //
-// Requires TMPDIR (if set) to be a /tmp-family path: fixtures are built
-// under os.tmpdir() (via makeSandboxDir), and isTransientStashPath()
-// deliberately hardcodes /tmp, /var/tmp, and their macOS /private
-// equivalents rather than reading TMPDIR. A relocated TMPDIR makes these
-// fixtures fail for reasons unrelated to the guard under test.
+// isTransientStashPath() deliberately hardcodes /tmp, /var/tmp and their macOS
+// /private equivalents rather than reading TMPDIR, so the fixtures are built
+// under /tmp itself, wherever TMPDIR points.
 
 import { beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
@@ -50,7 +48,7 @@ function captureWarnings(): { warnings: string[]; restore: () => void } {
 
 describe("setup tmp-stash guard (layer 1: assertSetupSandbox)", () => {
   test("runSetupWithDefaults warns and proceeds for --dir /tmp/X", async () => {
-    const { dir: tmpDir, cleanup } = makeSandboxDir("akm-setup-guard-");
+    const { dir: tmpDir, cleanup } = makeSandboxDir("akm-setup-guard-", "/tmp");
     const { warnings, restore } = captureWarnings();
     try {
       await withEnv({ XDG_DATA_HOME: path.join(tmpDir, "data"), XDG_STATE_HOME: path.join(tmpDir, "state") }, () =>
@@ -69,7 +67,7 @@ describe("setup tmp-stash guard (layer 1: assertSetupSandbox)", () => {
   });
 
   test("runSetupFromConfig warns and proceeds for --dir /tmp/X", async () => {
-    const { dir: tmpDir, cleanup } = makeSandboxDir("akm-setup-guard-");
+    const { dir: tmpDir, cleanup } = makeSandboxDir("akm-setup-guard-", "/tmp");
     const { warnings, restore } = captureWarnings();
     try {
       await withEnv({ XDG_DATA_HOME: path.join(tmpDir, "data"), XDG_STATE_HOME: path.join(tmpDir, "state") }, () =>
@@ -114,8 +112,8 @@ describe("setup points AKM_CONFIG_FILE into the stash when --dir is transient (s
     // --dir /tmp/X but pre-arranges nothing would, without isolateTransientSetup,
     // still see getConfigPath() fall through to the host ~/.config/akm and
     // clobber it. Setup must choose a config file under the stash for the run.
-    const { dir: tmpDir, cleanup: cleanupTmp } = makeSandboxDir("akm-setup-isolation-cli-");
-    const { dir: fakeHome, cleanup: cleanupHome } = makeSandboxDir("akm-setup-fakehome-cli-");
+    const { dir: tmpDir, cleanup: cleanupTmp } = makeSandboxDir("akm-setup-isolation-cli-", "/tmp");
+    const { dir: fakeHome, cleanup: cleanupHome } = makeSandboxDir("akm-setup-fakehome-cli-", "/tmp");
     const hostConfigDir = path.join(fakeHome, ".config", "akm");
     fs.mkdirSync(hostConfigDir, { recursive: true });
     const hostConfigPath = path.join(hostConfigDir, "config.json");
@@ -168,8 +166,8 @@ describe("setup points AKM_CONFIG_FILE into the stash when --dir is transient (s
   test("a config file the operator chose wins over the auto-set (existing env preserved)", async () => {
     // If the operator already exported AKM_CONFIG_FILE=somewhere-else, do not
     // overwrite it, and write nothing into the stash.
-    const { dir: stashDir, cleanup: cleanupStash } = makeSandboxDir("akm-setup-prefer-env-stash-");
-    const { dir: otherDir, cleanup: cleanupOther } = makeSandboxDir("akm-setup-prefer-env-other-");
+    const { dir: stashDir, cleanup: cleanupStash } = makeSandboxDir("akm-setup-prefer-env-stash-", "/tmp");
+    const { dir: otherDir, cleanup: cleanupOther } = makeSandboxDir("akm-setup-prefer-env-other-", "/tmp");
     const chosen = path.join(otherDir, "chosen.json");
 
     try {
@@ -194,7 +192,7 @@ describe("setup points AKM_CONFIG_FILE into the stash when --dir is transient (s
   });
 
   test("an XDG_CONFIG_HOME the operator pre-arranged wins too, and a persistent --dir is not isolated", async () => {
-    const { dir: stashDir, cleanup: cleanupStash } = makeSandboxDir("akm-setup-prefer-xdg-");
+    const { dir: stashDir, cleanup: cleanupStash } = makeSandboxDir("akm-setup-prefer-xdg-", "/tmp");
     const xdg = path.join(stashDir, "xdg-config");
     try {
       await withEnv({ AKM_CONFIG_FILE: undefined, XDG_CONFIG_HOME: xdg }, async () => {
@@ -216,7 +214,7 @@ describe("setup config isolation (layer 2: isolateTransientSetup under a transie
     // Verify the second layer: setup routes config writes into the stash
     // regardless of the layer-1 warning. The host config file at
     // ~/.config/akm/config.json must not be modified.
-    const { dir: tmpDir, cleanup: cleanupTmp } = makeSandboxDir("akm-setup-isolation-");
+    const { dir: tmpDir, cleanup: cleanupTmp } = makeSandboxDir("akm-setup-isolation-", "/tmp");
     const hostConfigContent = '{"hostConfigCanary":true,"stashDir":"/home/test/host-akm"}\n';
 
     // Synthesize a host config in a sandboxed HOME so we can assert it
@@ -224,7 +222,7 @@ describe("setup config isolation (layer 2: isolateTransientSetup under a transie
     // moves the host's ~/.config/akm into our sandbox; if isolation
     // works, the file at HOME/.config/akm/config.json remains as
     // hostConfigContent. If isolation fails, setup overwrites it.)
-    const { dir: fakeHome, cleanup: cleanupHome } = makeSandboxDir("akm-setup-fakehome-");
+    const { dir: fakeHome, cleanup: cleanupHome } = makeSandboxDir("akm-setup-fakehome-", "/tmp");
     const hostConfigDir = path.join(fakeHome, ".config", "akm");
     fs.mkdirSync(hostConfigDir, { recursive: true });
     const hostConfigPath = path.join(hostConfigDir, "config.json");

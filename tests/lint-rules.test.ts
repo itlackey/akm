@@ -16,8 +16,13 @@ import { akmProposalAccept } from "../src/commands/proposal/proposal";
 import { createRetireProposal } from "../src/commands/proposal/repository";
 import { agentSkillsAdapter } from "../src/core/adapter/adapters/agent-skills-adapter";
 import { akmAdapter } from "../src/core/adapter/adapters/akm-adapter";
-import { workflowFrontendDiagnostics, workflowStructureDiagnostics } from "../src/core/adapter/adapters/akm-lint";
+import {
+  skillDirectoryDiagnostics,
+  workflowFrontendDiagnostics,
+  workflowStructureDiagnostics,
+} from "../src/core/adapter/adapters/akm-lint";
 import { akmTaskAdapter } from "../src/core/adapter/adapters/akm-task-adapter";
+import { runBaseValidateChecks } from "../src/core/adapter/adapters/shared";
 import { detectAdapterId } from "../src/core/adapter/detect-adapter";
 import type { BundleComponent } from "../src/core/adapter/types";
 import { createValidateContext } from "../src/core/adapter/validate-context";
@@ -62,6 +67,39 @@ describe("akm lint redacted durable content (#962)", () => {
     const result = await akmLint({ dir: storage.stashDir, config: makeConfig(storage.stashDir) });
     expect(result.flagged.filter((finding) => finding.issue === "redacted-content")).toEqual([]);
   });
+
+  test("does not flag [REDACTED] documented in code spans, fences, quotes or blockquotes", async () => {
+    fs.writeFileSync(
+      path.join(storage.stashDir, "knowledge", "template.md"),
+      [
+        "---",
+        "description: Security template",
+        "---",
+        "",
+        "Set the token to `sk-[REDACTED]` before sharing.",
+        'Output shows "API_KEY=[REDACTED]" for masked values.',
+        "> Masked values print as [REDACTED].",
+        "",
+        "```",
+        "API_KEY=[REDACTED]",
+        "```",
+        "",
+      ].join("\n"),
+    );
+
+    const result = await akmLint({ dir: storage.stashDir, config: makeConfig(storage.stashDir) });
+    expect(result.flagged.filter((finding) => finding.issue === "redacted-content")).toEqual([]);
+  });
+
+  test("still flags [REDACTED] in prose beside a documented example", async () => {
+    fs.writeFileSync(
+      path.join(storage.stashDir, "knowledge", "mixed.md"),
+      "---\ndescription: Mixed\n---\n\nExample `[REDACTED]`.\n\nThe [REDACTED] password rotates weekly.\n",
+    );
+
+    const result = await akmLint({ dir: storage.stashDir, config: makeConfig(storage.stashDir) });
+    expect(result.flagged.filter((finding) => finding.issue === "redacted-content")).toHaveLength(1);
+  });
 });
 
 // #927 — `stale-path` flagged a run-time filename template (e.g.
@@ -102,7 +140,7 @@ describe("stale-path skips run-time filename templates (#927)", () => {
 
   test("a genuinely missing literal path is still reported", () => {
     storage = withIsolatedAkmStorage();
-    const issues = staleIssues(storage, "Write to /home/founder3/akm/reports/portfolio-review-final.md.");
+    const issues = staleIssues(storage, `Write to ${storage.stashDir}/reports/portfolio-review-final.md.`);
     expect(issues.length).toBe(1);
     expect(issues[0]?.detail).toContain("portfolio-review-final");
   });
@@ -110,6 +148,49 @@ describe("stale-path skips run-time filename templates (#927)", () => {
   test("an existing literal path is not reported", () => {
     storage = withIsolatedAkmStorage();
     expect(staleIssues(storage, `Read from \`${storage.stashDir}\` for config.`)).toEqual([]);
+  });
+
+  test("sentence punctuation after a path is not part of it", () => {
+    storage = withIsolatedAkmStorage();
+    expect(staleIssues(storage, `Read from ${storage.stashDir}.`)).toEqual([]);
+  });
+
+  test.each([
+    ["historical wording", "Historically the run wrote to /tmp/akm-5-gone/out.md."],
+    ["example wording", "For example, copy it to /tmp/akm-5-gone/out.md."],
+    ["other-host home", "Config lives at /home/akm-5-nobody/.config/x.json."],
+  ])("%s is not current guidance", (_label, body) => {
+    storage = withIsolatedAkmStorage();
+    expect(staleIssues(storage, body)).toEqual([]);
+  });
+
+  test("a historical section and a current section are told apart", () => {
+    storage = withIsolatedAkmStorage();
+    const issues = staleIssues(
+      storage,
+      "## History\n\nWrote /tmp/akm-5-gone/old.md.\n\n## Usage\n\nWrite to /tmp/akm-5-gone/current.md.\n",
+    );
+    expect(issues.map((issue) => issue.detail)).toEqual(["nonexistent path: /tmp/akm-5-gone/current.md"]);
+  });
+
+  test("the adapter validate path applies the same rules", async () => {
+    storage = withIsolatedAkmStorage();
+    const body = [
+      "Historically wrote /tmp/akm-5-gone/old.md.",
+      "Write to /tmp/akm-5-gone/current.md.",
+      "Config at /home/akm-5-nobody/.config/x.json.",
+      "See core//tasks/akm-5-gone.",
+    ].join("\n");
+    const diagnostics = await runBaseValidateChecks(
+      "knowledge/n.md",
+      { data: { name: "n", updated: "2026-01-01" }, content: body, frontmatter: "name: n\nupdated: 2026-01-01" },
+      storage.stashDir,
+      createValidateContext({ root: storage.stashDir }),
+    );
+    expect(diagnostics.map((d) => `${d.issue}: ${d.detail}`)).toEqual([
+      "stale-path: nonexistent path: /tmp/akm-5-gone/current.md",
+      "missing-ref: missing ref: core//tasks/akm-5-gone",
+    ]);
   });
 });
 
@@ -315,6 +396,54 @@ describe("agent-skills: a package directory with no SKILL.md is flagged (issue #
     );
 
     expect(diagnostics.filter((d) => d.issue === "missing-skill-md")).toEqual([]);
+  });
+
+  test("akm lint: grouping directories are clean, a manifest-less skill still flagged", async () => {
+    storage = withIsolatedAkmStorage();
+    const root = storage.stashDir;
+
+    write(root, "skills/personal/writer/SKILL.md", skillManifest("writer"));
+    write(root, "skills/personal/writer/reference/NOTES.md", "# Notes\n");
+    write(root, "skills/sec/audit/SKILL.md", skillManifest("audit"));
+    write(root, "skills/solo/SKILL.md", skillManifest("solo"));
+    write(root, "skills/sec/half-built/reference/NOTES.md", "# Notes\n");
+    write(root, "skills/incomplete/notes.md", "# Notes\n");
+
+    const result = await akmLint({ dir: root, config: makeConfig(root) });
+    const missing = result.flagged.filter((issue) => issue.issue === "missing-skill-md");
+
+    expect(missing.map((issue) => issue.file).sort()).toEqual(["skills/incomplete", "skills/sec/half-built"]);
+  });
+
+  test.each([
+    ["covered change first", ["skills/personal/a/SKILL.md", "skills/personal/b/x.md"]],
+    ["incomplete change first", ["skills/personal/b/x.md", "skills/personal/a/SKILL.md"]],
+  ])("akm adapter validate: grouped skills are checked per child (%s)", async (_label, changed) => {
+    storage = withIsolatedAkmStorage();
+    const root = storage.stashDir;
+    write(root, "skills/personal/a/SKILL.md", skillManifest("a"));
+    write(root, "skills/personal/b/x.md", "# X\n");
+
+    const seen = new Set<string>();
+    const ctx = createValidateContext({ root });
+    const diagnostics = (await Promise.all(changed.map((file) => skillDirectoryDiagnostics(file, seen, ctx)))).flat();
+
+    expect(diagnostics.map((d) => d.file)).toEqual(["skills/personal/b"]);
+  });
+
+  test("akm adapter validate: a plain skill dir without SKILL.md is reported once", async () => {
+    storage = withIsolatedAkmStorage();
+    const root = storage.stashDir;
+    write(root, "skills/incomplete/notes.md", "# Notes\n");
+    write(root, "skills/incomplete/more.md", "# More\n");
+
+    const seen = new Set<string>();
+    const ctx = createValidateContext({ root });
+    const first = await skillDirectoryDiagnostics("skills/incomplete/notes.md", seen, ctx);
+    const second = await skillDirectoryDiagnostics("skills/incomplete/more.md", seen, ctx);
+
+    expect(first.map((d) => d.file)).toEqual(["skills/incomplete"]);
+    expect(second).toEqual([]);
   });
 });
 
@@ -1395,6 +1524,27 @@ describe("akm lint — malformed task YAML (issue #760)", () => {
       .map((issue) => issue.detail);
     expect(details.some((d) => /invalid|YAML|parse/i.test(d))).toBe(true);
     expect(details.some((d) => /\.yaml extension/.test(d))).toBe(true);
+  });
+
+  test("sentence punctuation after a task ref is not part of the ref; a broken ref is still reported", async () => {
+    storage = withIsolatedAkmStorage();
+    writeTask(storage.stashDir, "learning.yml", VALID_TASK);
+    fs.mkdirSync(path.join(storage.stashDir, "knowledge"), { recursive: true });
+    fs.writeFileSync(
+      path.join(storage.stashDir, "knowledge", "note.md"),
+      "---\ndescription: Note\nupdated: 2026-01-01\n---\n\nSee core//tasks/learning. Also core//tasks/gone.\n",
+      "utf8",
+    );
+    writeTask(storage.stashDir, "other.yml", `${VALID_TASK}description: see core//tasks/learning.\n`);
+    writeTask(storage.stashDir, "broken.yml", `${VALID_TASK}description: see core//tasks/gone.\n`);
+
+    const result = await akmLint({ dir: storage.stashDir, config: makeConfig(storage.stashDir) });
+    const missing = result.flagged.filter((issue) => issue.issue === "missing-ref");
+
+    expect(missing.map((issue) => `${issue.file}: ${issue.detail}`).sort()).toEqual([
+      "knowledge/note.md: missing ref: core//tasks/gone (resolved to tasks/gone.md)",
+      "tasks/broken.yml: missing ref: core//tasks/gone (resolved to tasks/gone.md)",
+    ]);
   });
 });
 

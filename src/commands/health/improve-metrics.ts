@@ -103,7 +103,7 @@ export function emptyImproveMetrics(): ImproveHealthMetrics {
     skipReasons: {},
     resultRows: { total: 0, included: 0, skipped: { invalid: 0 } },
     actions: {
-      reflect: { ok: 0, failed: 0, cooldown: 0, skipped: 0 },
+      reflect: { ok: 0, failed: 0, cooldown: 0, skipped: 0, rejected: 0 },
       distill: {
         queued: 0,
         llmFailed: 0,
@@ -128,6 +128,8 @@ export function emptyImproveMetrics(): ImproveHealthMetrics {
       judgedNoAction: 0,
       failedChunks: 0,
       totalChunks: 0,
+      pairsJudged: 0,
+      failedPairs: 0,
       durationMs: 0,
     },
     memoryInference: {
@@ -159,8 +161,15 @@ function applyAction(metrics: ImproveHealthMetrics, action: Record<string, unkno
     case "reflect":
       metrics.actions.reflect.ok += 1;
       break;
-    case "reflect-failed":
-      metrics.actions.reflect.failed += 1;
+    case "reflect-failed": {
+      // Runs recorded before a quality rejection had its own mode carry it as `reflect-failed`.
+      const result = action.result as Record<string, unknown> | undefined;
+      if (result?.reason === "quality_rejected") metrics.actions.reflect.rejected += 1;
+      else metrics.actions.reflect.failed += 1;
+      break;
+    }
+    case "reflect-guard-rejected":
+      metrics.actions.reflect.rejected += 1;
       break;
     case "reflect-cooldown":
       metrics.actions.reflect.cooldown += 1;
@@ -244,6 +253,11 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
     cons.failedChunks += toFiniteNumber(consolidation.failedChunks);
     cons.totalChunks += toFiniteNumber(consolidation.totalChunks);
     cons.durationMs += toFiniteNumber(consolidation.durationMs);
+    const pairPass = consolidation.pairPass as Record<string, unknown> | undefined;
+    if (pairPass) {
+      cons.pairsJudged += toFiniteNumber(pairPass.pairsJudged);
+      cons.failedPairs += toFiniteNumber(pairPass.failedJudgments);
+    }
   }
 
   const memoryInference = result.memoryInference as Record<string, unknown> | undefined;
@@ -283,6 +297,7 @@ function mergeImproveMetrics(dst: ImproveHealthMetrics, src: ImproveHealthMetric
   dst.actions.reflect.failed += src.actions.reflect.failed;
   dst.actions.reflect.cooldown += src.actions.reflect.cooldown;
   dst.actions.reflect.skipped += src.actions.reflect.skipped;
+  dst.actions.reflect.rejected += src.actions.reflect.rejected;
   dst.actions.distill.queued += src.actions.distill.queued;
   dst.actions.distill.llmFailed += src.actions.distill.llmFailed;
   dst.actions.distill.judgeRejected += src.actions.distill.judgeRejected;
@@ -305,6 +320,8 @@ function mergeImproveMetrics(dst: ImproveHealthMetrics, src: ImproveHealthMetric
   dst.consolidation.judgedNoAction += src.consolidation.judgedNoAction;
   dst.consolidation.failedChunks += src.consolidation.failedChunks;
   dst.consolidation.totalChunks += src.consolidation.totalChunks;
+  dst.consolidation.pairsJudged += src.consolidation.pairsJudged;
+  dst.consolidation.failedPairs += src.consolidation.failedPairs;
   dst.consolidation.durationMs += src.consolidation.durationMs;
   dst.memoryInference.considered += src.memoryInference.considered;
   dst.memoryInference.freshAttempts += src.memoryInference.freshAttempts;
@@ -366,6 +383,7 @@ export function summarizeImproveRuns(
       perRow.actions.distill.llmFailed > 0 ||
       perRow.actions.error > 0 ||
       perRow.consolidation.failedChunks > 0 ||
+      perRow.consolidation.failedPairs > 0 ||
       perRow.memoryInference.skippedNoFacts > 0 ||
       (!interrupted && (!row.ok || terminationReason !== undefined))
     ) {

@@ -46,7 +46,7 @@ describe("renderRunsDetailMd", () => {
       "ok",
       "strategy",
       "actions",
-      "refl_ok/fail/cd/skip",
+      "refl_ok/fail/cd/skip/rej",
       "distill_q/llm-fail/judge/validator/cfg/skip",
       "cons_proc/promo/merge/del",
       "mem_cons/written/nochange/skip",
@@ -65,7 +65,7 @@ describe("renderRunsDetailMd", () => {
       startedAt: "2026-07-03T00:00:00.000Z",
       ok: true,
       actions: {
-        reflect: { ok: 2, failed: 1, cooldown: 0, skipped: 3 },
+        reflect: { ok: 2, failed: 1, cooldown: 0, skipped: 3, rejected: 1 },
         distill: {
           queued: 4,
           llmFailed: 0,
@@ -92,7 +92,7 @@ describe("renderRunsDetailMd", () => {
     // actions total = 2+1+0+3 + 4+0+1+0+2 + 1+1+0 = 15
     const data = lines[1];
     expect(data).toContain("2026-07-03T00:00:00.000Z");
-    expect(data).toContain("2/1/0/3"); // reflect
+    expect(data).toContain("2/1/0/3/1"); // reflect
     expect(data).toContain("4/0/1/0/0/2"); // distill
     expect(data).toContain("5/2/1/0"); // consolidation
     expect(data).toContain("7/3/2/4"); // mem inference

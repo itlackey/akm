@@ -36,10 +36,10 @@ describe("the step", () => {
     return file;
   }
 
-  function configure(writable = true): void {
+  function configure(writable = true, adapter = "akm"): void {
     writeSandboxConfig({
       defaultBundle: "primary",
-      bundles: { primary: { path: stash(), writable, components: { main: { root: ".", adapter: "akm" } } } },
+      bundles: { primary: { path: stash(), writable, components: { main: { root: ".", adapter } } } },
     });
   }
 
@@ -153,6 +153,29 @@ describe("the step", () => {
     expect(plan.assetContentRefs?.files.map((file) => file.filePath)).toEqual([page]);
     expect(fs.readFileSync(page, "utf8")).toBe("---\ntitle: a\n---\nSee wikis/articles/raw/example.\n");
     expect(fs.readFileSync(frozen).equals(before)).toBe(true);
+  });
+
+  test("a bundle whose adapter recognizes every file still rewrites only markdown and yaml, and a rerun changes nothing", async () => {
+    configure(true, "generic-files");
+    const links = seed();
+    const frozen = [
+      write("benchmarks/results/run.json", '{"ref":"knowledge/WORK/note","t":"wiki:a/page"}\n'),
+      write("eval/frozen/inputs.json", '{"prompt":"see knowledge/WORK/note.md"}\n'),
+      write("eval/frozen/cases.jsonc", '// knowledge/WORK/note\n{"a":1}\n'),
+      write("eval/frozen/prompt.txt", "Captured: knowledge/WORK/note\n"),
+    ];
+    const before = frozen.map((file) => fs.readFileSync(file));
+
+    const plan = await runMigration({ apply: true });
+
+    expect(plan.assetContentRefs?.files.map((file) => file.filePath)).toEqual([links]);
+    expect(fs.readFileSync(links, "utf8")).toBe(REWRITTEN);
+    for (const [index, file] of frozen.entries()) expect(fs.readFileSync(file).equals(before[index]!)).toBe(true);
+
+    const again = await runMigration({ apply: true });
+    expect(again.assetContentRefs?.changed).toBe(0);
+    expect(again.assetContentRefs?.backupPath).toBeUndefined();
+    for (const [index, file] of frozen.entries()) expect(fs.readFileSync(file).equals(before[index]!)).toBe(true);
   });
 
   test("live index.md and wiki schema.md are rewritten; log.md, README.md, raw/ and frozen files are not", async () => {

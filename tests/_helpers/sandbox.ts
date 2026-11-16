@@ -351,8 +351,8 @@ export function makeStashDir(): SandboxedDir {
  * Like {@link makeStashDir} but without the stash subdir scaffold — for project
  * dirs, config dirs, etc. Keeps `fs.mkdtempSync` out of test files.
  */
-export function makeSandboxDir(prefix = "akm-sb-dir"): SandboxedDir {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `${prefix}-${sandboxCounter++}-`));
+export function makeSandboxDir(prefix = "akm-sb-dir", base = os.tmpdir()): SandboxedDir {
+  const dir = fs.mkdtempSync(path.join(base, `${prefix}-${sandboxCounter++}-`));
   registerTestRoot(dir);
   return { dir, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
 }

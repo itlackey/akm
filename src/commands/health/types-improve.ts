@@ -36,7 +36,7 @@ export interface ImproveHealthMetrics {
   resultRows?: ImproveResultRowAccounting;
   /** `improve_runs.result_json.actions[]` outcomes by mode. */
   actions: {
-    reflect: { ok: number; failed: number; cooldown: number; skipped: number };
+    reflect: { ok: number; failed: number; cooldown: number; skipped: number; rejected: number };
     distill: {
       queued: number;
       llmFailed: number;
@@ -71,6 +71,10 @@ export interface ImproveHealthMetrics {
     judgedNoAction: number;
     failedChunks: number;
     totalChunks: number;
+    /** Pair-pass pairs that returned a verdict (no-action included). */
+    pairsJudged: number;
+    /** Pair-pass pairs that did not settle (transport, parse, cancelled); retried next run. */
+    failedPairs: number;
     durationMs: number;
   };
   memoryInference: {

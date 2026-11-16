@@ -23,7 +23,12 @@ import type { ChatCompletionConfig, ChatCompletionOptions, ChatMessage } from ".
 
 export type JudgeOutcome<V> =
   | { outcome: "verdict"; verdict: V }
-  | { outcome: "error"; reason: string }
+  | {
+      outcome: "error";
+      reason: string;
+      /** The call was aborted (not a transport fault). */
+      aborted?: true;
+    }
   | { outcome: "unparseable"; reason: string };
 
 /** What one judge call runs on. The runner is already resolved; a judge never picks its own. */

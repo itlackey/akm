@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import test, { after } from "node:test";
 import { HostTools, hostEnvironment, runHost, summarizeUpgrade } from "../src/lib/server/features/host-tools.ts";
+import { upgradeOutcomeText } from "../src/lib/upgrade-outcome.ts";
 
 const temporary = [];
 after(() => Promise.all(temporary.map((dir) => rm(dir, { recursive: true, force: true }))));
@@ -184,17 +185,43 @@ test("host checks are read-only and upgrades invoke the existing CLI, not the bu
   assert.deepEqual(
     summarizeUpgrade({
       plugins: [
-        { harness: "claude-code", channel: "next", message: "private", backups: ["x"] },
+        { harness: "claude-code", channel: "next", channelMismatch: true, message: "private", backups: ["x"] },
         { harness: "codex", outcome: "skipped" },
       ],
     }),
     {
       plugins: [
-        { harness: "claude-code", channel: "next" },
+        { harness: "claude-code", channel: "next", channelMismatch: true },
         { harness: "codex", outcome: "skipped" },
       ],
     },
   );
+  // A skipped plugin keeps its reason, so Desktop says why the run left it alone.
+  assert.deepEqual(
+    summarizeUpgrade({ plugins: [{ harness: "opencode", outcome: "skipped", message: "config names @next" }] }).plugins,
+    [{ harness: "opencode", outcome: "skipped", reason: "config names @next" }],
+  );
+});
+
+test("a stable CLI with plugins on next and OpenCode on another channel reads as the CLI's plugin lines do", () => {
+  const { plugins } = summarizeUpgrade({
+    plugins: [
+      { harness: "claude-code", outcome: "current", channel: "next", channelMismatch: true },
+      { harness: "codex", outcome: "updated", channel: "next", channelMismatch: true },
+      {
+        harness: "opencode",
+        outcome: "skipped",
+        channel: "next",
+        channelMismatch: true,
+        message: "left alone; engine skew: bundled akm-cli v0.9.20 is older",
+      },
+    ],
+  });
+  assert.deepEqual(plugins.map(upgradeOutcomeText), [
+    "Claude Code plugin current within its configured channel [channel next; differs from CLI]",
+    "Codex plugin updated [channel next; differs from CLI]",
+    "OpenCode plugin skipped [channel next; differs from CLI] (left alone; engine skew: bundled akm-cli v0.9.20 is older)",
+  ]);
 });
 
 test("missing CLI uses official user-local installer and verifies the result", async () => {

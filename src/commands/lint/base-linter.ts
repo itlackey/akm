@@ -50,6 +50,7 @@ import {
   spliceFrontmatterLine,
 } from "../../core/asset/frontmatter";
 import { checkUnquotedDescriptionColon } from "../../core/asset/frontmatter-lint";
+import { findCurrentPathReferences, homeRootOf } from "../../core/asset/lint-text";
 import { isArchivedRelPath } from "../../core/asset/memory-archive";
 import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
 import { localDateStamp } from "../../core/common";
@@ -156,27 +157,16 @@ function fixMissingUpdated(raw: string, mtime: Date): string {
 // ── stale-path helpers ────────────────────────────────────────────────────────
 
 /**
- * A path segment shaped like a run-time filename template rather than a
- * literal reference: `<timestamp>`-style angle brackets, `{stamp}`/`${VAR}`
- * braces, a `YYYYMMDD`/`HHMMSS`-style run of date-format letters, or a glob
- * character. Such a path never exists under its literal spelling, so
- * `stale-path` skips it instead of flagging it.
+ * Absolute paths presented as current guidance that do not exist on this host.
+ * Paths under a home directory this host does not have belong to another host
+ * or user and are not checked.
  */
-const PATH_PLACEHOLDER_PATTERN = /[<{]|[*?]|[YMDHS]{4,}/;
-
 function checkStalePath(body: string): string[] {
-  const pathRe = /(?:\/home\/|\/tmp\/|\/var\/|\/root\/|\/opt\/)[^\s"'`)\]>,\n]+/g;
-  let match: RegExpExecArray | null;
-  const stale: string[] = [];
-  // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic regex loop
-  while ((match = pathRe.exec(body)) !== null) {
-    const candidate = match[0];
-    if (PATH_PLACEHOLDER_PATTERN.test(candidate)) continue;
-    if (!fs.existsSync(candidate)) {
-      stale.push(candidate);
-    }
-  }
-  return stale;
+  return findCurrentPathReferences(body).filter((candidate) => {
+    const home = homeRootOf(candidate);
+    if (home !== undefined && !fs.existsSync(home)) return false;
+    return !fs.existsSync(candidate);
+  });
 }
 
 // ── fence-strip helper ────────────────────────────────────────────────────────
@@ -193,6 +183,19 @@ function stripFencedBlocks(body: string): string {
     for (let i = start; i <= end; i++) lines[i] = "";
   }
   return lines.join("\n");
+}
+
+/**
+ * `raw` without fenced code blocks, inline code spans, double-quoted text and
+ * blockquote lines: places where `[REDACTED]` is documented or quoted as an
+ * example rather than left behind by damaged content.
+ */
+function stripQuotedExamples(raw: string): string {
+  return stripFencedBlocks(raw)
+    .split("\n")
+    .filter((line) => !/^\s*>/.test(line))
+    .join("\n")
+    .replace(/`[^`\n]*`|"[^"\n]*"|\u201c[^\u201d\n]*\u201d/g, "");
 }
 
 // ── missing-ref helpers ───────────────────────────────────────────────────────
@@ -666,7 +669,7 @@ export function runBaseChecks(ctx: LintContext): LintIssue[] {
     .filter(Boolean);
   const shouldRun = (issueType: string) => !lintSkip.includes(issueType);
 
-  if (shouldRun("redacted-content") && containsRedactedContent(currentRaw)) {
+  if (shouldRun("redacted-content") && containsRedactedContent(stripQuotedExamples(currentRaw))) {
     issues.push({
       file: ctx.relPath,
       issue: "redacted-content",

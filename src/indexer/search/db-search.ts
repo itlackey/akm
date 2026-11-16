@@ -66,7 +66,7 @@ import {
 } from "./ranking";
 import { attachSearchHitAttribution } from "./search-attribution";
 import { enrichSearchHit, type SearchHitContext } from "./search-hit-enrichers";
-import { buildEditHint, findSourceForPath, isEditable, type SearchSource } from "./search-source";
+import { buildEditHint, findSourceForIndexedPath, isEditable, type SearchSource } from "./search-source";
 
 /**
  * Age past which search surfaces a "run akm index" hint. Reads serve the
@@ -697,7 +697,7 @@ export function applyEntryFilters<T extends { id: number; entry: IndexDocument; 
   // index spans every configured source, so without this filter a narrowed
   // --from request would still leak results from other sources.
   const sourceFiltered = opts.restrictToSources
-    ? items.filter((item) => findSourceForPath(item.filePath, opts.sources) !== undefined)
+    ? items.filter((item) => findSourceForIndexedPath(item.filePath, opts.sources) !== undefined)
     : items;
   // Scope filter: drop entries whose stored scope does not satisfy every
   // supplied key.
@@ -895,7 +895,7 @@ export async function buildDbHit(input: {
   eligible?: SearchHitContext["eligible"];
 }): Promise<SourceSearchHit> {
   const absolutePath = path.resolve(input.path);
-  const source = findSourceForPath(absolutePath, input.sources);
+  const source = findSourceForIndexedPath(absolutePath, input.sources);
   const entryStashDir = source?.path ?? input.defaultStashDir;
 
   const defaultBundleId =

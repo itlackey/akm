@@ -77,46 +77,52 @@ It reads the `links` of `assets.show`, which the page already has, and `assets.r
 
 | Limit | Why |
 | --- | --- |
-| One step only | This view stays on one asset; the library map's Relations view shows how the library's topics link. |
+| One step only | This view stays on one asset; the library map shows how the library's types and tags link. |
 | At most 10 assets per kind and direction | `assets.show` returns ten refs per group and a total; the rest are counted ("and N more"). |
 | At most 20 similar assets | `assets.related` returns the 20 nearest. |
 
 ## Library map (Library, Map)
 
-The whole library, in four views that each answer one question. Every view shows every asset of the enabled bundles;
-choosing a topic (on the picture or in the list) opens its figures, and Escape closes them. Beside each picture, the
-same figures are in words: a summary, a list of the parts of the library, and the selected topic.
-`/library/map?select=<ref>` opens with that asset's topic chosen.
+The whole library, or one bundle (the bundle picker), as a mind map: the library in the middle, its asset types around
+it, and on each type the tags its assets carry, every label drawn, with a bar under each tag for its figure. Three
+views each answer one question, and each changes which tags are drawn, the lines between them and the lists beside the
+map. Choosing a type or tag (on the map or by keyboard) draws lines from it to every other type and tag its assets are
+joined to, fades the rest, and opens its answers in the column beside the map; Escape closes them.
+`/library/map?select=<ref>` opens with that asset's tag chosen.
 
-The parts of the library are **topics**: `assets.graph` groups the embedded assets by meaning (about √(n/2) topics, 2 to
-36) and names each by the words of its assets' paths and titles most particular to it. Assets with no embedding form one
-more part, "No embedding". An index with no embeddings has no topics: the library is then grouped by folder (the first
-two parts of each path), and the page says so.
+When the index holds groups by meaning (`assets.graph` `groups`, stored by `akm index`), the map opens in 3D (Flat
+switches back to the mind map): every embedded asset is a point, coloured by its group, at the place `akm index` gave
+it, with groups alike in meaning near each other and each named by the tags its assets carry far more than the rest of
+the library. The column lists the groups when nothing is chosen. Choosing a group or a point flies to it, draws its
+links and near-duplicates, and opens the group's answers in the column; a chosen point also lists the assets it is
+joined to. Depth inside a group follows use: assets read lately sit at the front, those read earlier just ahead of the
+middle, and never-read, superseded, contradicted or deprecated ones at the back. The 3D view needs WebGL (three.js,
+`src/lib/SimilarityMap.svelte`).
 
-| View | Question | Picture | In words |
-| --- | --- | --- | --- |
-| Contents | What is in the library? | A circle per topic, its area its number of assets, placed near the topics most like it or most linked to it; a dot per asset, coloured by type | assets, topics and bundles; the searches of the last 30 days that found nothing (from `assets.searchMisses`); assets per bundle |
-| Use | What is used, and what is dead weight? | The same circles, each asset coloured by its use: read in the last 30 days, read earlier in the window but not since, not read but edited in the last 180 days, not read and last edited over 180 days ago (dead weight). Recent reads fill the middle of a circle, so its proportions read at a glance | the share read, the share not read, and how many are unread and old; topics by unread share |
-| Problems | What is wrong or duplicated? | The same circles, each asset coloured by its first problem: superseded, contradicted or deprecated (belief state, or a `supersededBy`/`contradictedBy` link it declares); more negative feedback than positive; nearly the same as another asset | counts of each; the most alike pairs with their cosine; topics by number of problems |
-| Relations | How do its parts relate? | A ball per topic in 3D (Flat shows it top-down), joined by the declared links between topics (wider is more; each topic's strongest connection and every pair with at least a fifth of the strongest pair's links are drawn) and, dashed, to the topic most alike in content | links inside topics and across them, topics linked to no other, the most linked pairs; the selected topic's links and the topics most like it |
+| View | Question | Tags drawn, ranked by | Lines from the chosen group | Beside the map |
+| --- | --- | --- | --- | --- |
+| Contents | What is in the library, and how does it connect? | assets | declared links and near-duplicates | what it is made of (bundles and types); how it connects; its most linked assets; other bundles that repeat it |
+| Use | What is used, and what is dead weight? | reads (a tag with no reads is not drawn) | declared links and near-duplicates | the share read and never read, liked and disliked; most read; never read, longest unchanged first; searches of the last 90 days that found nothing and name one of its tags (from `assets.searchMisses`); how it connects |
+| Problems | What is wrong or duplicated? | problems (a tag with none is not drawn) | `supersededBy`/`contradictedBy` links and near-duplicates | outdated assets (superseded, contradicted or deprecated); near-duplicates inside it and in other groups, with their cosine; disliked assets; how it connects; other bundles that repeat it |
+
+A line's width is how many links and near-duplicate pairs join the two groups; its title gives both counts. An asset
+with none of the drawn tags is counted under its type. Every listed asset opens its page, and Closest lists the assets
+most alike in content (from `assets.related`), each with its cosine and a Compare link to the search page's comparison.
 
 Use is reads by people and their agents inside the usage retention window (`use.since`), as `assets.graph` reports
 them: scheduled tasks and Improve are not counted. When no usage history is available, the Use view says so instead of
 calling every asset unread.
 
-It reads `assets.graph` and `assets.searchMisses`. The view model is `src/lib/library-overview.ts`; the drawing is deck.gl
-(`src/lib/ui/deck-stage.js` for the canvas, the camera and the labels, `src/lib/ui/overview-layers.js` for the layers),
-wrapped by `DeckStage.svelte`. Type colours are the `--map-1` to `--map-8` tokens; use is `--use-4`, `--use-2`, `--use-0`
-and `--warn`; problems are `--map-highlight`, `--fail` and `--warn`.
+It reads `assets.graph`, `assets.searchMisses` and, on Closest, `assets.related`. The view model is
+`src/lib/library-overview.ts`; the flat drawing is SVG (`src/lib/MindMap.svelte`), and the page is `src/lib/LibraryMap.svelte`.
 
 | Limit | Why |
 | --- | --- |
-| Topics need stored embeddings | Without at least eight embedded assets there are no topics; the library is grouped by folder, and Problems finds no duplicates. |
-| The first read after an index build takes several seconds on a large library | akm finds the topics and near-duplicates then (about 8 seconds for 20,000 assets in testing) and keeps them for that build. |
-| Near-duplicates are pairs inside one topic at a cosine of 0.96 or more, at most 2,000 | Comparing every pair of a large library is too slow; two assets that alike almost always share a topic. The threshold is set for akm's local embedding model. |
+| About 44 tags in all, at most 10 per type | More labels cannot all be drawn and read; a type gets tags in proportion to the square root of its size, and a tag carried by one asset is left out of a type with ten or more assets. |
+| Near-duplicates are pairs at a cosine of 0.96 or more, at most 2,000, and need stored embeddings | `assets.graph` compares only assets alike in meaning, to avoid comparing every pair; the threshold is set for akm's local embedding model. The page says when the list was cut. |
+| Closest needs stored embeddings | Without them `assets.related` says so, and the page shows its note. |
 | Old is the file's modification time | akm records no edit date; in a Git checkout the time is when the file was last written there. |
 | Use covers the retention window only | Usage events older than the window are deleted, so an asset last read before it reads as not read. |
-| Needs WebGL | Without it the page says so; the figures in words are all still there. |
 
 ## Activity replay (Activity, Replay)
 
