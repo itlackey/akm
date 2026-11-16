@@ -12,7 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- Which bundles supply rules to a session: the project's `from`, else the default bundle and the project's write bundle; with no project, the default bundle. Before, a session read the shared rules of every enabled bundle the selection read, so a bundle installed from a registry or a git URL could add a rule to every session. Name such a bundle in the project's `from` to keep loading its rules. Search and curate are unchanged.
+- Which bundles supply rules to a session, once the plugins load them with `akm rules`: the project's `from`, else the default bundle and the project's write bundle; with no project, the default bundle. The plugins' search-based listing read the shared rules of every enabled bundle the selection read, so a bundle installed from a registry or a git URL could add a rule to every session. Name such a bundle in the project's `from` to keep loading its rules. Search and curate are unchanged.
 
 ## [0.10.261129] - 2026-11-16
 
