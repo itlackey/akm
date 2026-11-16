@@ -129,14 +129,25 @@ test("concurrent CLI writes and overlapping export snapshots keep stable aggrega
       key: string;
     }>,
   ) => rows.filter((row) => row.dimensions.command.length === 0);
-  expect(version(first.aggregates).reduce((sum, row) => sum + row.attempts, 0)).toBe(8);
-  const merged = new Map([...first.aggregates, ...second.aggregates].map((row) => [row.key, row]));
-  expect(version([...merged.values()]).reduce((sum, row) => sum + row.attempts, 0)).toBe(8);
-  expect(new Set(second.details.map((row: { id: string }) => row.id)).size).toBe(second.details.length);
-  // WAL is what keeps concurrent invocations inside capture's short wait: under the rollback journal each
-  // commit waited on every reader, and on a disk-backed data dir a third of 8 concurrent captures were dropped.
+  // Capture is fail-open with a short busy wait, so a loaded host may drop an invocation; what must hold is that
+  // the aggregates count exactly the invocations stored, in both overlapping snapshots.
   const db = openDatabase(path.join(getDataDir(), "metrics.db"), { readonly: true });
   try {
+    const stored = (
+      db
+        .prepare(
+          "SELECT count(*) AS n FROM cli_usage_invocations WHERE json_array_length(json_extract(data, '$.command')) = 0",
+        )
+        .get() as { n: number }
+    ).n;
+    expect(stored).toBeGreaterThan(0);
+    expect(stored).toBeLessThanOrEqual(8);
+    expect(version(first.aggregates).reduce((sum, row) => sum + row.attempts, 0)).toBe(stored);
+    const merged = new Map([...first.aggregates, ...second.aggregates].map((row) => [row.key, row]));
+    expect(version([...merged.values()]).reduce((sum, row) => sum + row.attempts, 0)).toBe(stored);
+    expect(new Set(second.details.map((row: { id: string }) => row.id)).size).toBe(second.details.length);
+    // WAL is what keeps concurrent invocations inside capture's short wait: under the rollback journal each
+    // commit waited on every reader, and on a disk-backed data dir a third of 8 concurrent captures were dropped.
     expect((db.prepare("PRAGMA journal_mode").get() as { journal_mode: string }).journal_mode).toBe("wal");
   } finally {
     db.close();

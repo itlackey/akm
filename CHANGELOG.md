@@ -102,6 +102,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `akm help <command...>` prints the same help as `akm <command...> --help`, also for one quoted argument (`akm help "bundle add"`); `akm help help` prints help's own help; an unknown command is an error whose hint names `akm <command> --help`.
 - Root help: a short concept list (bundle, registry, connection, harness, project) replaces the closing bundle paragraph, and the version sits on the first line instead of the last exit-code line. `akm improve --help` no longer lists `report` as a trailing argument in its USAGE line.
 
+## [0.10.261128] - 2026-11-16
+
+### Fixed
+
+- `akm migrate` no longer rewrites legacy asset refs in any file of a bundle read with the `generic-files`, `code-project` or `website-snapshot` adapter, so frozen Markdown prompts and YAML cases there stay byte-for-byte; those bundles' refs still count as live.
+- `akm health` and `akm upgrade` report when the akm-cli bundled in the Codex plugin differs from the running CLI, as they already did for the Claude and OpenCode plugins.
+
 ## [0.10.261127] - 2026-11-15
 
 ### Added
