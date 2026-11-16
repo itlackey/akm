@@ -2611,7 +2611,8 @@ in order:
    rewritten every such key it can reach forgets the old engine names and adds one
    note to `assetEngineKeys.notes` listing each renamed engine and the flag that
    replaces it (see [The `engines` form](configuration.md#the-engines-form));
-5. refs in the markdown and YAML files akm indexes in writable bundles that still use the spelling from
+5. refs in the markdown and YAML files akm indexes in writable bundles (not those read with the `generic-files`,
+   `code-project` or `website-snapshot` adapters) that still use the spelling from
    before refs became bundle paths (`knowledge/WORK/x`, now `WORK/x`; #1432),
    in frontmatter and body: `[bundle//]<folder>/<path>[.md]`, `<type>:<path>`
    and `wiki:<path>`, rewritten (`assetContentRefs`) under one backup directory

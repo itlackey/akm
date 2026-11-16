@@ -7,7 +7,8 @@
  * in a writable bundle's markdown and YAML files is rewritten to the new one, under one backup directory per run. The old to new
  * map comes from the files themselves (each recognized asset's ref), so no index is needed. A spelling that
  * is now another file's live ref is left as written and listed ({@link ShadowedRef}). Only a file akm reads as an asset
- * (and a wiki's live `index.md` and `schema.md`, or an `index.md` beside assets) is rewritten (an active reference); frozen corpora, captured results and other fixtures stay byte-for-byte. The pure rewrite is
+ * (and a wiki's live `index.md` and `schema.md`, or an `index.md` beside assets) is rewritten (an active reference), and
+ * only in a bundle whose adapter reads akm's own asset formats; a bundle read as arbitrary files is left whole; frozen corpora, captured results and other fixtures stay byte-for-byte. The pure rewrite is
  * `./migrate/content-ref-planner.ts`.
  */
 
@@ -63,6 +64,12 @@ export interface ContentRefsMigrationStatus {
  * code akm does not author refs in, so they are never read or rewritten.
  */
 const TEXT_EXTENSIONS = new Set([".md", ".yml", ".yaml"]);
+
+/**
+ * Adapters that read arbitrary files or captures (any repository, any frozen corpus or snapshot) rather than akm's own
+ * asset formats. Their concept ids still count as live refs for the resolver, but none of their files is rewritten.
+ */
+const UNOWNED_ADAPTERS = new Set(["generic-files", "code-project", "website-snapshot"]);
 
 /**
  * The owned-format files of a root, by the runtime's own walk (git-ignored files and, outside git, dot directories are not
@@ -150,6 +157,7 @@ function plan(): {
   const assetDirs = new Set([...documents.files].map((file) => path.dirname(file)));
   for (const root of roots.filter((candidate) => candidate.writable)) {
     const adapterId = root.adapter ?? detectAdapterId(root.root);
+    if (UNOWNED_ADAPTERS.has(adapterId)) continue;
     for (const filePath of textFiles(root.root)) {
       if (seen.has(filePath) || !(documents.files.has(filePath) || isStructuralFile(root.root, adapterId, filePath, assetDirs))) continue;
       seen.add(filePath);
