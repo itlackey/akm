@@ -91,7 +91,7 @@ export function scaffoldScratch(stashDir: string): void {
   }
 }
 
-/** Add the root-scoped scratch ignore rule unless present. Independent of the secret-ignore block and its opt-out. */
+/** Add the root-scoped scratch ignore rule unless present.  */
 export function ensureScratchGitignore(stashDir: string): void {
   try {
     const gitignorePath = path.join(stashDir, ".gitignore");
@@ -107,38 +107,18 @@ export function ensureScratchGitignore(stashDir: string): void {
 
 const SCRATCH_GITIGNORE_RULE = `/${SCRATCH_DIR}/`;
 
-/** Marks the akm-authored block in a stash `.gitignore` (idempotency anchor). */
-const STASH_GITIGNORE_MARKER = "# akm: keep secret material out of git by default";
-/** Documented opt-out for private bundles that deliberately version env/ and secrets/. */
-export const STASH_GITIGNORE_TRACK_SECRETS_MARKER = "# akm: intentionally track env and secrets";
-const STASH_GITIGNORE_BLOCK = [
-  STASH_GITIGNORE_MARKER,
-  "# env/ and secrets/ assets hold tokens and keys. They are ignored by default",
-  "# so `git push` can never leak them. To version a specific one (e.g. for a",
-  "# private-remote backup), un-ignore its path below once you accept the risk.",
-  "env/",
-  "secrets/",
-  "",
-].join("\n");
-
 /**
- * Ensure the stash `.gitignore` keeps `env/` and `secrets/` out of git by
- * default (08-F1: the v0.8.0 `vaults/` → `env/`+`secrets/` migration never
- * carried the ignore rules forward, and init scaffolded none).
- *
- * Idempotent + non-clobbering: creates the file when absent, appends the akm
- * block when the file exists but lacks it (preserving the user's own rules),
- * and no-ops once the marker is present. A private bundle that deliberately
- * versions all secret material can add `# akm: intentionally track env and
- * secrets`; that explicit marker suppresses this helper entirely (#981).
+ * Add `env/` and `secrets/` to the bundle `.gitignore` when it mentions neither, so a
+ * new bundle does not commit its tokens and keys. A `.gitignore` that already names
+ * either one is the owner's choice and is left as written.
  */
 export function ensureStashGitignore(stashDir: string): void {
   try {
     const gitignorePath = path.join(stashDir, ".gitignore");
     const existing = fs.existsSync(gitignorePath) ? fs.readFileSync(gitignorePath, "utf8") : "";
-    if (existing.includes(STASH_GITIGNORE_MARKER) || existing.includes(STASH_GITIGNORE_TRACK_SECRETS_MARKER)) return;
-    const gap = existing.length === 0 ? "" : existing.endsWith("\n") ? "\n" : "\n\n";
-    fs.writeFileSync(gitignorePath, `${existing}${gap}${STASH_GITIGNORE_BLOCK}`);
+    if (existing.includes("env/") || existing.includes("secrets/")) return;
+    const gap = existing.length === 0 ? "" : existing.endsWith("\n") ? "" : "\n";
+    fs.writeFileSync(gitignorePath, `${existing}${gap}env/\nsecrets/\n`);
   } catch {
     // Non-fatal — the stash is usable without the ignore scaffold.
   }

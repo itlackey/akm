@@ -145,6 +145,9 @@ export const BundleConfigEntrySchema = z
     // (e.g. registryId `github:owner/repo` → key `repo`).
     registryId: z.string().min(1).optional(),
     components: z.record(z.string().min(1), BundleComponentConfigSchema).optional(),
+    // Lint rules to skip, per rule, for the assets whose bundle-relative path matches one of the
+    // globs (`**` is the whole bundle). A rule name lint does not know is warned about and ignored.
+    lint: z.object({ skip: z.record(z.string(), z.array(z.string())).optional() }).optional(),
   })
   .passthrough()
   .superRefine((entry, ctx) => {

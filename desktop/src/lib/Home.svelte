@@ -7,8 +7,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, date } from "./client";
+  import BackupsPrune from "./BackupsPrune.svelte";
   import Icon from "./Icon.svelte";
-  import { homeConcerns, homeCoverage, taskOutcomes } from "./home-model";
+  import { homeConcerns, homeCoverage, pruneSummary, taskOutcomes } from "./home-model";
   import { refreshContext, workspace } from "./state/workspace.svelte";
   import type { ActivityOverview, ActivityPulse } from "./activity-types";
 
@@ -17,6 +18,7 @@
   let loading = $state(false);
   let refreshedAt = $state("");
   let error = $state("");
+  let pruned = $state("");
   let generation = 0;
   let checkButton = $state<HTMLButtonElement>();
 
@@ -108,6 +110,7 @@
                 ></span
               >{/if}
           </div>
+          {#if pruned}<p class="home-pruned muted small" role="status">Removed {pruned}.</p>{/if}
           {#if concerns.length}
             <ul class="home-concerns">
               {#each concerns.slice(0, 4) as item}
@@ -122,6 +125,12 @@
                   <div class="home-concern-copy">
                     <h3>{item.title}</h3>
                     <p>{item.description}</p>
+                    {#if item.key === "data-dir-usage"}<BackupsPrune
+                        onDone={(result) => {
+                          pruned = pruneSummary(result);
+                          void load();
+                        }}
+                      />{/if}
                   </div>
                   <a
                     href={item.href}
@@ -312,6 +321,9 @@
     align-items: center;
     justify-content: space-between;
     gap: 16px;
+    margin-bottom: 16px;
+  }
+  .home-pruned {
     margin-bottom: 16px;
   }
   .home-count {

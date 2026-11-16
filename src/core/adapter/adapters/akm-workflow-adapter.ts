@@ -100,7 +100,12 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
     const relPath = toPosix(change.path);
     if (!isWorkflowFile(raw)) continue;
     const p = parseFrontmatter(raw);
-    const parsed: ParsedForValidate = { data: p.data, content: p.content, frontmatter: p.frontmatter };
+    const parsed: ParsedForValidate = {
+      data: p.data,
+      content: p.content,
+      frontmatter: p.frontmatter,
+      bodyStartLine: p.bodyStartLine,
+    };
     diagnostics.push(...(await runBaseValidateChecks(relPath, parsed, c.root, ctx)));
     diagnostics.push(
       ...(await perTypeValidateChecks({

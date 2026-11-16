@@ -57,7 +57,13 @@ In order, every run applies (or, under `status`, plans):
    proposals, events, task history, improve ledger, asset salience and outcome)
    stored under an old spelling to the new one, `stateRows` of them; `index.db`
    is rebuilt by the next `akm index`.
-5. **The OS scheduler** (`scheduler`): akm 0.10 keeps one scheduler entry that
+5. **Bundle policy** (`bundlePolicy`): in each writable bundle, `lint_skip:`
+   frontmatter is stripped from the assets, and a `.gitignore` carrying the old
+   `# akm: intentionally track env and secrets` marker adds
+   `"tracked-secrets": ["**"]` to the bundle's `lint.skip`. `.gitignore` is
+   never modified. The config is written first, the files then under one
+   backup directory per run.
+6. **The OS scheduler** (`scheduler`): akm 0.10 keeps one scheduler entry that
    runs `akm task dispatch`; `apply` replaces akm 0.9's per-task rows with it
    in one write, the same as `akm task sync`. This is the only step that
    leaves akm's own files: it runs `crontab` (Linux), `launchctl` (macOS) or
@@ -89,6 +95,7 @@ same step names):
   "stateMigrations": { "pending": [] },
   "assetEngineKeys": { "schemaVersion": 1, "changed": 0, "skipped": 0, "files": [] },
   "assetContentRefs": { "schemaVersion": 1, "changed": 0, "skipped": 0, "refs": 0, "files": [], "shadowed": [] },
+  "bundlePolicy": { "schemaVersion": 1, "changed": 0, "bundles": [], "notes": [] },
   "scheduler": { "backend": "cron", "entry": "absent", "removedLegacy": [], "keptLegacy": [], "hasRemovals": false, "failures": [] }
 }
 ```
@@ -126,6 +133,7 @@ Key fields:
 | `stateMigrations` | `{ pending: string[] }` under `status`; `{ applied: string[] }` after a real `apply`. |
 | `assetEngineKeys` | `changed`/`skipped` counts and a `files[]` array with each rewritten file's `rewrites` (`at`, `from`, `to`). |
 | `assetContentRefs` | `changed`/`skipped` file counts, `refs` (old-spelling refs found), a `files[]` array with each file's `refs`, and `shadowed[]` (`bundleId`, `from`, `to`): old spellings another file holds as its ref, not rewritten; `stateRows`, the `state.db` rows keyed by an old spelling that move to the new one; and `reconcile[]`, present after an apply that rewrote files inside a git checkout: the checkout path and how to review, commit or restore the edits. Only asset files, `index.md` and wiki `schema.md` are rewritten. |
+| `bundlePolicy` | `changed` (files to rewrite plus bundles whose config gains the skip), `bundles[]` (`bundleId`, `stripped`: assets whose `lint_skip` is removed, `skipTrackedSecrets`), and `notes[]`: a bundle with the marker and no config entry. After a real apply: `applied`, and `backupPath` when files were rewritten. |
 | `scheduler` | `backend`, `entry` (`installed`, `updated`, `unchanged`, `removed`, `absent` or `unmanaged`), `removedLegacy[]` (akm 0.9 per-task rows removed), `keptLegacy[]` (rows that name another installation), `warnings[]`. |
 
 **Backups and their retention:**

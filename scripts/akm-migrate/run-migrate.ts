@@ -5,7 +5,8 @@
 /**
  * The whole migration, in order, as one plan: config.json in its current
  * shape, pending state.db migrations, assets' retired `engine:` keys, refs
- * in content that use the pre-#1432 spelling, then the OS scheduler entry. A state.db below the 0.9.32
+ * in content that use the pre-#1432 spelling, stale bundle policy (`lint_skip`, the track-secrets marker), then the OS
+ * scheduler entry. A state.db below the 0.9.32
  * floor stops the run before any step. `akm-migrate status` / `apply` print exactly
  * this; `akm migrate` and `akm upgrade` spawn that executable and re-emit
  * it. Config, `engine:` keys and content refs are converted here, so the CLI
@@ -32,6 +33,11 @@ import {
   type ContentRefsMigrationStatus,
   inspectContentRefsMigration,
 } from "./content-ref-migrate";
+import {
+  applyBundlePolicyMigration,
+  type BundlePolicyMigrationStatus,
+  inspectBundlePolicyMigration,
+} from "./bundle-policy-migrate";
 
 export type MigrationStatus = "current" | "ready" | "blocked";
 
@@ -73,6 +79,8 @@ export interface CombinedMigrationPlan {
   assetEngineKeys?: EngineKeysMigrationStatus["assetEngineKeys"];
   /** Refs in writable bundles' files that still use the pre-#1432 spelling (`knowledge/WORK/x`, now `WORK/x`). */
   assetContentRefs?: ContentRefsMigrationStatus["assetContentRefs"];
+  /** Writable bundles' stale `lint_skip` frontmatter and track-secrets marker, with the config skip that replaces the marker. */
+  bundlePolicy?: BundlePolicyMigrationStatus["bundlePolicy"];
   /**
    * The OS scheduler: akm 0.10 keeps one entry that runs `akm task dispatch`, and `apply` replaces akm 0.9's per-task
    * rows with it in one write (what `akm task sync` does).
@@ -208,6 +216,12 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
     () => (apply ? applyContentRefsMigration() : inspectContentRefsMigration()),
     apply ? () => inspectContentRefsMigration() : undefined,
   );
+  const bundlePolicy = await migrationStep(
+    failedSteps,
+    "bundlePolicy",
+    () => (apply ? applyBundlePolicyMigration() : inspectBundlePolicyMigration()),
+    apply ? () => inspectBundlePolicyMigration() : undefined,
+  );
   // Last: it reads the config the steps above settled. Needs `crontab`/`launchctl`/`schtasks` only when it has
   // something to write; an installation that moves its locations leaves the OS scheduler alone.
   // A file that could not take `paths` or the working bundle leaves the host's locations out of it: an entry written now would run
@@ -230,6 +244,7 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
   const configFileStatus: MigrationStatus = configFile?.changed && !configFile.applied ? "ready" : "current";
   const engineKeysStatus: MigrationStatus = assetEngineKeys?.status ?? "current";
   const contentRefsStatus: MigrationStatus = assetContentRefs?.status ?? "current";
+  const bundlePolicyStatus: MigrationStatus = bundlePolicy?.status ?? "current";
   const legacyTasksStatus: MigrationStatus = legacyTasks && legacyTasks.blockers.length > 0 ? "blocked" : "current";
   const schedulerStatus: MigrationStatus =
     !apply && scheduler && (scheduler.removedLegacy.length > 0 || scheduler.entry === "installed" || scheduler.entry === "removed")
@@ -243,6 +258,7 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
         configFileStatus,
         engineKeysStatus,
         contentRefsStatus,
+        bundlePolicyStatus,
         schedulerStatus,
         legacyTasksStatus,
         pathsUnwritten ? "blocked" : "current",
@@ -265,6 +281,7 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
     ...(stateMigrations !== undefined ? { stateMigrations } : {}),
     ...(assetEngineKeys !== undefined ? { assetEngineKeys: assetEngineKeys.assetEngineKeys } : {}),
     ...(assetContentRefs !== undefined ? { assetContentRefs: assetContentRefs.assetContentRefs } : {}),
+    ...(bundlePolicy !== undefined ? { bundlePolicy: bundlePolicy.bundlePolicy } : {}),
     ...(scheduler !== undefined ? { scheduler } : {}),
   };
 }

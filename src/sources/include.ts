@@ -94,7 +94,7 @@ function isIncludeEntryPattern(entry: string): boolean {
  * negation); those fall through to being treated as a literal, almost
  * certainly non-matching path, same as an ordinary typo would.
  */
-function includeEntryToRegExp(entry: string): RegExp {
+export function includeEntryToRegExp(entry: string): RegExp {
   const normalized = entry.split(path.sep).join("/");
   let pattern = "";
   for (let i = 0; i < normalized.length; ) {

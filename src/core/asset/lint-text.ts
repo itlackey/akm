@@ -12,10 +12,10 @@
 /**
  * A path segment shaped like a run-time filename template rather than a
  * literal reference: `<timestamp>`-style angle brackets, `{stamp}`/`${VAR}`
- * braces, a `YYYYMMDD`/`HHMMSS`-style run of date-format letters, or a glob
- * character. Such a path never exists under its literal spelling.
+ * braces, a `YYYYMMDD`/`HHMMSS`-style run of date-format letters, a glob
+ * character, or an elided `...` segment. Such a path never exists under its literal spelling.
  */
-const PATH_PLACEHOLDER_PATTERN = /[<{]|[*?]|[YMDHS]{4,}/;
+const PATH_PLACEHOLDER_PATTERN = /[<{]|[*?]|[YMDHS]{4,}|\.\.\./;
 
 /** A line that presents a path as a record of the past or as an illustration, not as guidance to follow. */
 const NON_CURRENT_LINE_PATTERN = /\b(?:historical(?:ly)?|previously|formerly|for example|for instance)\b|\be\.g\./i;
@@ -28,9 +28,18 @@ function stripTrailingSentencePunctuation(token: string): string {
   return token.replace(/[.;:!?]+$/, "");
 }
 
-/** The `/home/<user>` directory a path lives under, or `undefined` for any other path. */
-export function homeRootOf(candidate: string): string | undefined {
-  return candidate.match(/^\/home\/[^/]+/)?.[0];
+/** True for a file under a bundle's `skills/` directory: a skill carries no `updated` field. */
+export function isSkillPath(relPath: string): boolean {
+  return relPath.split(/[\\/]/)[0] === "skills";
+}
+
+/** An absolute path found in text, with where it sits. */
+export interface PathReference {
+  path: string;
+  /** 1-based line in the file: `firstLine` is the line of the text's first line. */
+  line: number;
+  /** The line the path appears on, trimmed. */
+  lineText: string;
 }
 
 /**
@@ -38,17 +47,19 @@ export function homeRootOf(candidate: string): string | undefined {
  * sections that frame them as history or examples, run-time filename
  * templates, and trailing sentence punctuation are all excluded.
  */
-export function findCurrentPathReferences(text: string): string[] {
-  const pathRe = /(?:\/home\/|\/tmp\/|\/var\/|\/root\/|\/opt\/)[^\s"'`)\]>,\n]+/g;
-  const out: string[] = [];
+export function findCurrentPathReferences(text: string, firstLine = 1): PathReference[] {
+  const pathRe = /(?<=^|[\s"'`([=])\/[^\s"'`)\]>,:\[\n]+/g;
+  const out: PathReference[] = [];
   let inNonCurrentSection = false;
-  for (const line of text.split(/\r?\n/)) {
+  text.split(/\r?\n/).forEach((line, index) => {
     if (/^#{1,6}\s/.test(line)) inNonCurrentSection = NON_CURRENT_HEADING_PATTERN.test(line);
-    if (inNonCurrentSection || NON_CURRENT_LINE_PATTERN.test(line)) continue;
+    if (inNonCurrentSection || NON_CURRENT_LINE_PATTERN.test(line)) return;
     for (const match of line.matchAll(pathRe)) {
       const candidate = stripTrailingSentencePunctuation(match[0]);
-      if (!PATH_PLACEHOLDER_PATTERN.test(candidate)) out.push(candidate);
+      if (candidate.length > 1 && !PATH_PLACEHOLDER_PATTERN.test(candidate)) {
+        out.push({ path: candidate, line: firstLine + index, lineText: line.trim() });
+      }
     }
-  }
+  });
   return out;
 }

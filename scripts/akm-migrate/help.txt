@@ -32,7 +32,13 @@ is not enabled is only a `legacyTaskWarnings` line):
      `<type>:<path>` and `wiki:<path>`, rewritten under one backup directory
      per run. An old spelling that is now another file's ref is not
      rewritten, only listed
-  5. the OS scheduler: the one entry that runs `akm task dispatch` replaces
+  5. bundle policy in writable bundles: an asset's `lint_skip:` frontmatter
+     is stripped (lint skips live in the bundle's `lint.skip` config); a
+     `.gitignore` with the old marker for tracking env and secrets adds
+     `"tracked-secrets": ["**"]` to that bundle's `lint.skip`. `.gitignore` is
+     never modified. The config is written first, the files under one backup
+     directory per run
+  6. the OS scheduler: the one entry that runs `akm task dispatch` replaces
      akm 0.9's per-task rows in one write (what `akm task sync` does). It runs
      `crontab`, `launchctl` or `schtasks` only when it has something to write;
      an installation that moves a location (a config file other than the default

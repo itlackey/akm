@@ -28,6 +28,7 @@ import {
 } from "../../core/asset/frontmatter";
 import { MEMORY_ARCHIVE_REL } from "../../core/asset/memory-archive";
 import { type AssetRef, parsePlacementRef } from "../../core/asset/resolve-ref";
+import { stalePathRoots } from "../../core/asset/stale-path";
 import { type AkmConfig, loadConfig } from "../../core/config/config";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
@@ -1371,6 +1372,7 @@ function promotionLintBlockers(
   let data: Record<string, unknown>;
   let body: string;
   let frontmatter: string | null;
+  let bodyStartLine = 1;
   if (refType === "task") {
     try {
       const parsed = parseYaml(raw);
@@ -1381,7 +1383,7 @@ function promotionLintBlockers(
     body = raw;
     frontmatter = null;
   } else {
-    ({ data, content: body, frontmatter } = parseFrontmatter(raw));
+    ({ data, content: body, frontmatter, bodyStartLine } = parseFrontmatter(raw));
   }
   const resolvedRoot = path.resolve(targetRoot);
   return runBaseChecks({
@@ -1391,8 +1393,10 @@ function promotionLintBlockers(
     data,
     body,
     frontmatter,
+    bodyStartLine,
     fix: false,
     stashRoot: targetRoot,
+    stalePathRoots: stalePathRoots(config, targetRoot),
     extraStashRoots: resolveSourceEntries(targetRoot, config)
       .map((source) => source.path)
       .filter((sourcePath) => path.resolve(sourcePath) !== resolvedRoot),

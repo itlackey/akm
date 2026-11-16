@@ -48,6 +48,11 @@
   let view = $state<View>("contents");
   let bundle = $state(-1);
   let selected = $state("");
+  /** Words typed to narrow the map: an asset matches when its name and tags together contain every one. */
+  let filter = $state("");
+  let cloud = $state<ReturnType<typeof SimilarityMap>>();
+  /** The `?select=` asset already opened, so choosing anything else, or resetting, is not undone by it. */
+  let opened = "";
   /** The map drawn flat (types and tags, SVG) or in 3D (every asset by meaning, three.js); unchosen, 3D when the index
    * has assets grouped by meaning. */
   let chosenDepth = $state<"2d" | "3d" | null>(null);
@@ -87,15 +92,28 @@
   }
   void load();
 
-  /** The assets in scope: one bundle, or all of them. */
-  const scope = $derived(o ? o.ref.map((_, i) => i).filter((i) => bundle < 0 || o!.bundle[i] === bundle) : []);
+  /** The assets in the bundle chosen, or in all of them. */
+  const bundleScope = $derived(o ? o.ref.map((_, i) => i).filter((i) => bundle < 0 || o!.bundle[i] === bundle) : []);
+  const words = $derived(filter.toLowerCase().split(/\s+/).filter(Boolean));
+  /** The assets whose name or tags hold every word typed, or null when nothing is typed. */
+  const matching = $derived.by(() => {
+    if (!o || !words.length) return null;
+    const found = new Set<number>();
+    for (const i of bundleScope) {
+      const text = `${o.ref[i]} ${(o.tags[i] ?? []).map((t) => o!.tagNames[t]).join(" ")}`.toLowerCase();
+      if (words.every((w) => text.includes(w))) found.add(i);
+    }
+    return found;
+  });
+  /** The assets in scope: those of the bundle that match what is typed. */
+  const scope = $derived(matching ? bundleScope.filter((i) => matching.has(i)) : bundleScope);
   const readsOf = (members: readonly number[]) => members.reduce((sum, i) => sum + o!.shows[i]!, 0);
   // Each view draws the tags its question is about: the largest, the most read, or the ones with most problems.
   const branches = $derived(
     o ? mindMap(o, 44, scope, view === "use" ? readsOf : view === "problems" ? (m) => problemsOf(m) : undefined) : [],
   );
   /** Groups by meaning, for the 3D map. */
-  const groups = $derived(o ? groupsOf(o, scope) : []);
+  const groups = $derived(o ? groupsOf(o, bundleScope) : []);
   const parts = $derived(
     new Map<string, { name: string; type: string; tag: string; group: boolean; members: number[] }>([
       ...branches.flatMap((b) => [
@@ -109,7 +127,7 @@
   );
   const largestTag = $derived(Math.max(1, ...branches.flatMap((b) => b.leaves.map((l) => l.members.length))));
   $effect(() => {
-    if (!o || !wanted) return;
+    if (!o || !wanted || opened === wanted) return;
     const i = o.ref.indexOf(wanted);
     if (i < 0) {
       notice = `No asset “${wanted}” is in the library.`;
@@ -117,6 +135,7 @@
     }
     const b = branches.find((x) => x.members.includes(i));
     selected = b?.leaves.find((l) => l.members.includes(i))?.key ?? b?.key ?? "";
+    opened = wanted;
   });
 
   const useOf = (members: readonly number[]) =>
@@ -168,8 +187,21 @@
     picked = i;
     near = null;
   }
+  /** Everything the map can be changed by, and the camera, back to how it opens. */
+  function reset() {
+    view = "contents";
+    bundle = -1;
+    filter = "";
+    chosenDepth = null;
+    selected = "";
+    picked = -1;
+    near = null;
+    opened = wanted;
+    cloud?.reset();
+  }
   function onKey(event: KeyboardEvent) {
-    if (event.key === "Escape" && picked >= 0) picked = -1;
+    if (event.key === "Escape" && filter && event.target instanceof HTMLInputElement) filter = "";
+    else if (event.key === "Escape" && picked >= 0) picked = -1;
     else if (event.key === "Escape" && selected) choose(selected);
   }
 
@@ -266,7 +298,11 @@
     return out;
   });
   const lit = $derived(
-    picked >= 0 ? new Set([picked, ...pickedJoins.map((j) => j.i)]) : part?.group ? new Set(part.members) : null,
+    picked >= 0
+      ? new Set([picked, ...pickedJoins.map((j) => j.i)])
+      : part?.group
+        ? new Set(matching ? part.members.filter((i) => matching.has(i)) : part.members)
+        : matching,
   );
   const lines = $derived.by(() => {
     if (!o) return [];
@@ -414,7 +450,19 @@
           ><option value={-1}>All bundles</option>{#each o.bundles as name, b}<option value={b}>{name}</option
             >{/each}</select
         ></label
-      >{/if}
+      >
+      <label class="map-filter"
+        >Filter <input type="search" bind:value={filter} placeholder="Name or tag" autocomplete="off" /></label
+      >
+      {#if matching}<span class="muted small" role="status"
+          >{matching.size.toLocaleString()} of {plural(bundleScope.length, "asset")}</span
+        >{/if}
+      <button
+        class="btn-quiet"
+        title="Camera, view, bundle, filter and selection back to how the map opens"
+        onclick={reset}>Reset</button
+      >
+    {/if}
   </div>
   <p class="question">{question}</p>
   {#if error}<div class="notice notice-warn" role="alert">
@@ -458,8 +506,9 @@
         </div>
         <div class="map-stage">
           {#if depth === "3d"}{#if groups.length}<SimilarityMap
+                bind:this={cloud}
                 {o}
-                {scope}
+                scope={bundleScope}
                 {groups}
                 {colourOf}
                 {lit}
@@ -473,8 +522,8 @@
               />
               <p class="muted small">
                 Each point is an asset; alike assets sit close, and each group by meaning is named by the tags its
-                assets carry most. Drag to turn, scroll to zoom, hover a point for its name. Choose a group's name to
-                draw what joins it to other groups, or a point to draw its links and near-duplicates.
+                assets carry most. Drag to turn, right-drag to move, scroll to zoom, hover a point for its name. Choose
+                a group's name to draw what joins it to other groups, or a point to draw its links and near-duplicates.
               </p>{:else}<p class="notice">
                 No stored embeddings, so assets cannot be placed by meaning. Build the index with embeddings, or use the
                 flat map.
@@ -685,6 +734,13 @@
     color: var(--text);
     background: var(--surface-2);
     font-weight: 600;
+  }
+  .map-filter {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    font-size: 13px;
+    color: var(--muted);
   }
   .bundle-pick {
     display: flex;

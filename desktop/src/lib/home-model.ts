@@ -23,7 +23,6 @@ export const checkLabels: Record<string, string> = {
   "cli-version": "akm CLI version",
   "scheduler-binary": "Scheduler's akm binary",
   "index-state-generation": "Index and state generations",
-  "stash-git-exposure": "Secrets tracked by git",
   "binary-config-skew": "Config newer than this akm",
   "egress-endpoints": "Remote endpoints",
   "type-directory-disagreement": "Asset types and folders",
@@ -114,4 +113,28 @@ export function homeCoverage(data: ActivityOverview | null, pulse: ActivityPulse
     if (!["health", "metrics", "state"].includes(key)) unavailable.add(key);
   }
   return [...unavailable];
+}
+
+export interface BackupsPrune {
+  dryRun: boolean;
+  olderThan: string;
+  count: number;
+  bytes: number;
+  folders: Array<{ folder: string; count: number; bytes: number; kept: number }>;
+}
+/** `1610612736` -> `"1.5 GB"`. */
+export function formatBytes(bytes: number): string {
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes,
+    unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  return `${unit === 0 || value >= 10 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`;
+}
+/** What a prune removed, or would, in words: "12 backups, 1.9 GB (tasks 8, asset-engine-keys 4)". */
+export function pruneSummary(result: BackupsPrune): string {
+  const folders = result.folders.map((f) => `${f.folder} ${f.count}`).join(", ");
+  return `${plural(result.count, "backup")}, ${formatBytes(result.bytes)}${folders ? ` (${folders})` : ""}`;
 }
