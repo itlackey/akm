@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261128] - 2026-11-16
+
+### Fixed
+
+- `akm migrate` no longer rewrites legacy asset refs in any file of a bundle read with the `generic-files`, `code-project` or `website-snapshot` adapter, so frozen Markdown prompts and YAML cases there stay byte-for-byte; those bundles' refs still count as live.
+- `akm health` and `akm upgrade` report when the akm-cli bundled in the Codex plugin differs from the running CLI, as they already did for the Claude and OpenCode plugins.
+
 ## [0.10.261127] - 2026-11-15
 
 ### Added

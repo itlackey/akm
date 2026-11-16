@@ -105,6 +105,23 @@ esac`,
   );
 }
 
+/** The akm-cli Codex's plugin cache holds for an installed plugin version (omitted: no package). */
+function writeCodexEngine(plugin: string, engine?: string): void {
+  const dir = path.join(
+    world.root,
+    "codex-home",
+    "plugins",
+    "cache",
+    "akm-plugins",
+    "akm",
+    plugin,
+    "node_modules",
+    "akm-cli",
+  );
+  fs.mkdirSync(dir, { recursive: true });
+  if (engine) fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "akm-cli", version: engine }));
+}
+
 function stubCodex(opts: { from: string; to: string; installed?: boolean }): void {
   setState("codex-version", opts.from);
   setState("codex-next", opts.to);
@@ -756,6 +773,7 @@ posixOnly("mixed channels: stable CLI, plugins on next, OpenCode on another chan
     const dir = path.join(world.root, "xdg-config", "opencode");
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, "opencode.json"), JSON.stringify({ plugin: ["akm-opencode@next"] }));
+    writeCodexEngine("0.9.27", "0.9.20");
     writeCachedOpenCode("0.9.27-rc.2", "next");
     const engine = path.join(cacheDir("next"), "node_modules", "akm-cli");
     fs.mkdirSync(engine, { recursive: true });
@@ -775,10 +793,12 @@ posixOnly("mixed channels: stable CLI, plugins on next, OpenCode on another chan
       "engine skew: OpenCode's bundled akm-cli (akm-opencode@next) is v0.9.20, older than the running CLI v0.9.28",
     );
     expect(entry(run, "claude-code").message).toBeUndefined();
+    expect(entry(run, "codex").message).toContain("engine skew:");
+    expect(entry(run, "codex").message).toContain("bundles akm-cli 0.9.20, older than the running CLI 0.9.28");
     expect(mutations().some((m) => m.startsWith("trash-put") || m.startsWith("opencode"))).toBe(false);
     expect(formatUpgradePlain(run.result as never)?.split("\n")).toEqual([
       "Claude Code plugin current within its configured channel [channel next; differs from CLI]",
-      "Codex plugin updated v0.9.26 → v0.9.27 [channel next; differs from CLI]",
+      `Codex plugin updated v0.9.26 → v0.9.27 [channel next; differs from CLI] (${entry(run, "codex").message})`,
       `OpenCode plugin skipped [channel next; differs from CLI] (${entry(run, "opencode").message})`,
     ]);
   });
