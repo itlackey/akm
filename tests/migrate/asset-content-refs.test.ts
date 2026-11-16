@@ -154,15 +154,26 @@ describe("the step", () => {
     expect(fs.readFileSync(frozen).equals(before)).toBe(true);
   });
 
-  test("a bundle whose adapter recognizes every file still rewrites only markdown and yaml, and a rerun changes nothing", async () => {
-    configure(true, "generic-files");
-    const links = seed();
+  test("a generic-files bundle is never rewritten, beside an akm bundle that is, and a rerun changes nothing", async () => {
+    const frozenRoot = path.join(path.dirname(stash()), "frozen");
     const frozen = [
-      write("benchmarks/results/run.json", '{"ref":"knowledge/WORK/note","t":"wiki:a/page"}\n'),
-      write("eval/frozen/inputs.json", '{"prompt":"see knowledge/WORK/note.md"}\n'),
-      write("eval/frozen/cases.jsonc", '// knowledge/WORK/note\n{"a":1}\n'),
-      write("eval/frozen/prompt.txt", "Captured: knowledge/WORK/note\n"),
-    ];
+      ["prompts/captured.md", "---\ntitle: captured\n---\nSee knowledge/WORK/note and wiki:a/page.\n"],
+      ["eval/cases.yaml", "ref: knowledge/WORK/note\n"],
+      ["benchmarks/run.json", '{"ref":"knowledge/WORK/note"}\n'],
+    ].map(([relative, text]) => {
+      const file = path.join(frozenRoot, relative!);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, text!);
+      return file;
+    });
+    writeSandboxConfig({
+      defaultBundle: "primary",
+      bundles: {
+        primary: { path: stash(), writable: true, components: { main: { root: ".", adapter: "akm" } } },
+        frozen: { path: frozenRoot, writable: true, components: { main: { root: ".", adapter: "generic-files" } } },
+      },
+    });
+    const links = seed();
     const before = frozen.map((file) => fs.readFileSync(file));
 
     const plan = await runMigration({ apply: true });
