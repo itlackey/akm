@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261129] - 2026-11-16
+
 ### Added
 
 - `akm backups prune [--older-than <duration>] [--dry-run] [--yes]` removes the copies `akm migrate apply` leaves under the data directory's `backups/` that are older than the duration (default 30d), keeps the newest entry of each folder, and reports the count and bytes per folder. `akm-cli/workspace` has `backups.prune`.
