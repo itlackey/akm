@@ -649,6 +649,7 @@
       </div>{/snippet}
     {#snippet children({ selectedFile, loading: folderLoading, error: folderError })}<section
         class="inspector files-inspector"
+        class:editing
         aria-label="Asset workspace"
       >
         {#if newSensitive}
@@ -1142,6 +1143,14 @@
   }
   .files-inspector {
     padding: 24px clamp(24px, 3vw, 40px) 48px;
+  }
+  @media (min-width: 851px) {
+    .files-inspector.editing {
+      display: flex;
+      flex-direction: column;
+      box-sizing: border-box;
+      block-size: 100%;
+    }
   }
   .comparison-inspector {
     padding: 28px 40px;

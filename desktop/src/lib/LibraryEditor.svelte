@@ -603,7 +603,6 @@
   .source-editor {
     display: block;
     inline-size: 100%;
-    max-inline-size: 90ch;
     font-family: var(--mono);
     font-size: 14px;
     line-height: 1.75;
@@ -636,6 +635,34 @@
     padding: 8px 20px;
     margin: 24px 0;
     color: var(--muted);
+  }
+  /* Beside the folder tree the editor fills the pane: the text area takes the height the header leaves and scrolls its
+     own text, so the pane itself does not scroll. */
+  @media (min-width: 851px) {
+    .editor-form,
+    .editor-fields,
+    #editor-write:not([hidden]) {
+      display: flex;
+      flex: 1;
+      flex-direction: column;
+      min-block-size: 0;
+    }
+    #editor-write:not([hidden]) > label {
+      display: flex;
+      flex: 1;
+      min-block-size: 0;
+    }
+    .source-editor {
+      flex: 1;
+      height: auto;
+      min-block-size: 240px;
+      resize: none;
+    }
+    #editor-preview:not([hidden]) {
+      flex: 1;
+      min-block-size: 0;
+      overflow: auto;
+    }
   }
   @media (max-width: 850px) {
     .editor-header {
