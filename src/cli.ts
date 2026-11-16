@@ -110,6 +110,7 @@ import {
 import { assertKnownFlags, consumeConfigFileFlag, type FlagScanCommand } from "./cli/unknown-flags";
 import { startUsage, type UsageCommand } from "./cli/usage";
 import { agentCommand, lintCommand } from "./commands/agent/contribute-cli";
+import { backupsCommand } from "./commands/backups-cli";
 import { commandCommand } from "./commands/command/command-cli";
 import { generateBashCompletions, installBashCompletions } from "./commands/completions";
 import { configCommand } from "./commands/config-cli";
@@ -669,6 +670,7 @@ const commands = {
   metrics: metricsCommand,
   info: infoCommand,
   bundle: bundleCommand,
+  backups: backupsCommand,
   upgrade: upgradeCommand,
   search: searchCommand,
   curate: curateCommand,

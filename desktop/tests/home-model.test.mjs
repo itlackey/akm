@@ -4,7 +4,15 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { checkLabel, healthCheckAnchor, homeConcerns, homeCoverage, taskOutcomes } from "../src/lib/home-model.ts";
+import {
+  checkLabel,
+  formatBytes,
+  healthCheckAnchor,
+  homeConcerns,
+  homeCoverage,
+  pruneSummary,
+  taskOutcomes,
+} from "../src/lib/home-model.ts";
 
 const overview = () => ({
   health: { status: "pass", hardChecks: [], advisories: [] },
@@ -65,4 +73,22 @@ test("Unavailable is not all-clear; measured zero stays zero; proposals are not 
   assert.deepEqual(homeCoverage(data, weekly), []);
   assert.deepEqual(homeConcerns(data), []);
   assert.deepEqual(homeConcerns(null), []);
+});
+
+test("a prune is said in counts, size and folders", () => {
+  assert.equal(formatBytes(512), "512 B");
+  assert.equal(formatBytes(1536), "1.5 KB");
+  assert.equal(formatBytes(2_800_000_000), "2.6 GB");
+  const result = { dryRun: true, olderThan: "30d", count: 3, bytes: 3_000_000_000, folders: [] };
+  assert.equal(
+    pruneSummary({
+      ...result,
+      folders: [
+        { folder: "tasks", count: 2, bytes: 1, kept: 1 },
+        { folder: "asset-engine-keys", count: 1, bytes: 1, kept: 1 },
+      ],
+    }),
+    "3 backups, 2.8 GB (tasks 2, asset-engine-keys 1)",
+  );
+  assert.equal(pruneSummary({ ...result, count: 1, bytes: 0 }), "1 backup, 0 B");
 });

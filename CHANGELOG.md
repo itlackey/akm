@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `akm backups prune [--older-than <duration>] [--dry-run] [--yes]` removes the copies `akm migrate apply` leaves under the data directory's `backups/` that are older than the duration (default 30d), keeps the newest entry of each folder, and reports the count and bytes per folder. `akm-cli/workspace` has `backups.prune`.
+- AKM Desktop: the "Data directory size" advisory has a "Prune backups…" action that shows what a dry run would free and asks before it removes anything.
+
+### Changed
+
+- AKM Desktop: the Review page and the Library file views fill the window instead of stopping at a 1600px column; accepting or rejecting one proposal no longer raises a toast (the "Last:" line reports it, with Undo… or Reopen…); "Why AKM proposed this" and its facts sit above the change; the judge's sentence is shown as the reason when the proposal has none of its own.
+
+### Fixed
+
+- AKM Desktop: chart tooltips are no longer cut off by a short chart or by the window's edge, and the library map's name tip flips above the pointer near the bottom.
+
 ## [0.10.261128] - 2026-11-16
 
 ### Fixed

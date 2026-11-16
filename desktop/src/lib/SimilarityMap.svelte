@@ -442,7 +442,7 @@
     >{/each}
   {#if tip}<div
       class="tip"
-      style={`top:${tip.y}px;${tip.x < host!.clientWidth / 2 ? `left:${tip.x + 12}px` : `right:${host!.clientWidth - tip.x + 12}px`}`}
+      style={`${tip.y > host!.clientHeight - 40 ? `bottom:${host!.clientHeight - tip.y + 24}px` : `top:${tip.y}px`};${tip.x < host!.clientWidth / 2 ? `left:${tip.x + 12}px` : `right:${host!.clientWidth - tip.x + 12}px`}`}
     >
       {tip.text}
     </div>{/if}

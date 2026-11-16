@@ -7,7 +7,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import type { ProposalDetail } from "./types";
-  import { plural, record, relativeAge, rows, text, type ReviewProposal } from "./review-model";
+  import { plural, proposalReason, record, relativeAge, rows, text, type ReviewProposal } from "./review-model";
   import { date } from "./client";
 
   let {
@@ -17,7 +17,7 @@
   }: {
     detail: ProposalDetail;
     noop: boolean;
-    /** The proposed change: it is read after the warnings and before the reasons. */
+    /** The proposed change: it is read after the warnings and the reason, and before the rest of the evidence. */
     children?: Snippet;
   } = $props();
   const p = $derived(detail.proposal as ReviewProposal);
@@ -28,8 +28,7 @@
   const retirement = $derived(record(p.retirement));
   const risk = $derived(record(retirement.continuityRisk));
   const review = $derived(record(p.review));
-  // A retirement carries its own judge and reason; show them where the proposal has none of its own.
-  const reasonText = $derived(p.reason || (p.retirement ? text(retirement.judgeReason, "") : ""));
+  const reasonText = $derived(proposalReason(p));
   const judgeText = $derived(
     p.gateDecision?.outcome ?? (p.retirement && typeof retirement.judgeLabel === "string" ? retirement.judgeLabel : ""),
   );
@@ -49,7 +48,7 @@
   );
 </script>
 
-<!-- Actionable warnings come first and are never hidden beneath the diff; the reasons and the evidence follow it. -->
+<!-- Actionable warnings and the reason come first, so they are never hidden beneath the diff; the rest of the evidence follows it. -->
 {#if validation.ok === false}<div class="notice notice-fail">
     <strong>Validation did not pass.</strong> Read the findings below before deciding.
   </div>{/if}
@@ -67,10 +66,13 @@
     {detail.diffError}. AKM still validates a decision.
   </div>{/if}
 
-{@render children?.()}
 <section class="why" aria-labelledby="review-why">
-  <h3 id="review-why">Why AKM proposed this</h3>
-  {#if reasonText}<p class="reason">{reasonText}</p>{:else}<p class="reason muted">No reason recorded.</p>{/if}
+  <!-- With no reason on record the note shares the heading's line, so a short window keeps room for the change. -->
+  <div class="why-head">
+    <h3 id="review-why">Why AKM proposed this</h3>
+    {#if !reasonText}<span class="muted">No reason recorded.</span>{/if}
+  </div>
+  {#if reasonText}<p class="reason">{reasonText}</p>{/if}
   <dl class="facts">
     <div>
       <dt>Process</dt>
@@ -97,6 +99,10 @@
       <dd class={missing(validationText) ? "missing" : undefined}>{validationText}</dd>
     </div>
   </dl>
+</section>
+
+{@render children?.()}
+<section class="evidence" aria-label="Evidence">
   {#if p.gateDecision?.reason}<p class="judge muted small" title={p.gateDecision.reason}>
       Judge: {p.gateDecision.reason}
     </p>{/if}
@@ -189,12 +195,19 @@
 {/snippet}
 
 <style>
-  .why {
+  .why,
+  .evidence {
     margin-block: var(--space-3);
   }
   h3 {
     font-size: var(--text-m);
     margin: 0 0 var(--space-2);
+  }
+  .why-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0 var(--space-3);
   }
   .reason {
     max-width: 72ch;

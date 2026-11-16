@@ -18,7 +18,6 @@
     ageBands,
     activityReturn,
     batchOutcome,
-    clip,
     commitOutcome,
     conceptLocation,
     decisionVerb,
@@ -357,30 +356,19 @@
         intent = "";
         reason = "";
         choice = "";
-        last = { action, id: target.id, ref: target.ref, title: label, revertable };
+        last = {
+          action,
+          id: target.id,
+          ref: target.ref,
+          title: label,
+          revertable,
+          ...(action === "accept" ? { commit: commitOutcome(receipt.commit) } : {}),
+        };
         if (advance) {
           reviewed++;
           if (queue) queue = withoutDecided(queue, [target.id]);
           if (workspace.pendingCount !== null) workspace.pendingCount = Math.max(0, workspace.pendingCount - 1);
         }
-        showToast({
-          // One decision toast at a time: the newest replaces the last (Recent decisions keeps the history).
-          key: "decision",
-          title: `${decisionVerb(action)} “${label}”`,
-          detail:
-            action === "accept"
-              ? [target.ref, commitOutcome(receipt.commit)].filter(Boolean).join("\n")
-              : action === "reject"
-                ? `${target.ref}\nReason: ${clip(String("reason" in payload ? payload.reason : ""), 60)}`
-                : action === "revert"
-                  ? "Restored the backup kept at acceptance."
-                  : "Back in the pending queue.",
-          ...(action === "accept" && revertable
-            ? { action: { label: "Undo…", run: () => openDecided(target.id, "revert") } }
-            : action === "reject"
-              ? { action: { label: "Reopen…", run: () => openDecided(target.id, "reopen") } }
-              : {}),
-        });
         queue = await fetchQueue();
       },
     );

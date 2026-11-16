@@ -105,7 +105,11 @@ export async function runCli(args: string[], input?: string, userFeedback = fals
           resolve(
             parseCommandResponse(
               stdout,
-              args[0] === "bundle" ? bundleShape(args[1]!) : args[0] === "task" ? `task-${args[1]}` : args[0]!,
+              args[0] === "bundle"
+                ? bundleShape(args[1]!)
+                : args[0] === "task" || args[0] === "backups"
+                  ? `${args[0]}-${args[1]}`
+                  : args[0]!,
             ),
           );
         } catch (error) {

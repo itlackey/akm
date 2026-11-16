@@ -148,23 +148,32 @@ test("workspace pages, panels and menus fit the shortest windows", { timeout: 18
     `the inline diff must wrap long lines, not scroll sideways: ${JSON.stringify(inline)}`,
   );
 
-  // Short and wide (a laptop browser, the native minimum): the proposed change is readable without scrolling the pane.
+  // Short and wide (a laptop browser, the native minimum): the reason and its facts, and the start of the proposed
+  // change, are readable without scrolling the pane.
   for (const viewport of [
     { width: 900, height: 593 },
     { width: 1280, height: 600 },
   ]) {
     await page.setViewportSize(viewport);
     await open(`/review/${app.proposals.fresh}`, ".dcol.inline");
-    const visibleRows = await page.evaluate(() => {
+    const { visibleRows, whyVisible } = await page.evaluate(() => {
       const pane = document.querySelector(".review-scroll").getBoundingClientRect();
-      return [...document.querySelectorAll(".dcol .drow")].filter((row) => {
-        const r = row.getBoundingClientRect();
+      const inPane = (el) => {
+        const r = el.getBoundingClientRect();
         return r.top >= pane.top && r.bottom <= pane.bottom;
-      }).length;
+      };
+      return {
+        visibleRows: [...document.querySelectorAll(".dcol .drow")].filter(inPane).length,
+        whyVisible: inPane(document.querySelector(".why")),
+      };
     });
     assert.ok(
-      visibleRows >= 5,
-      `${viewport.width}×${viewport.height}: at least five diff rows must be visible without scrolling, saw ${visibleRows}`,
+      whyVisible,
+      `${viewport.width}×${viewport.height}: the reason and its facts must be visible without scrolling`,
+    );
+    assert.ok(
+      visibleRows >= 3,
+      `${viewport.width}×${viewport.height}: at least three diff rows must be visible without scrolling, saw ${visibleRows}`,
     );
   }
   await page.setViewportSize({ width: 900, height: 593 });

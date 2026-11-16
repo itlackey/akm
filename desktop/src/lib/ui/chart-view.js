@@ -5,7 +5,7 @@
 // @ts-nocheck -- presentation code copied from AKM: DOM string building, not type-checked here.
 // SVG charts supplement the adjacent data tables; they never own a write action.
 
-import { html } from "./lib.js";
+import { esc, html } from "./lib.js";
 
 /**
  * The colour a token resolves to now. A token is a `light-dark()` pair, which a custom property keeps unresolved, so
@@ -22,6 +22,23 @@ function colourReader(near) {
     },
     done: () => probe.remove(),
   };
+}
+
+/**
+ * Where a tooltip goes, in the chart's own coordinates: beside the pointer, on the other side of it where the window
+ * has no room, and never past the window's edges. `point` is the pointer in the chart, `size` the tooltip's.
+ */
+function beside(element, point, [width, height]) {
+  const gap = 12;
+  const edge = 4;
+  const box = element.getBoundingClientRect();
+  const wide = document.documentElement.clientWidth;
+  const high = document.documentElement.clientHeight;
+  const pointer = [box.left + point[0], box.top + point[1]];
+  const fit = (at, size, room) => Math.max(edge, Math.min(at, room - size - edge));
+  const x = pointer[0] + gap + width > wide - edge ? pointer[0] - gap - width : pointer[0] + gap;
+  const y = pointer[1] + gap + height > high - edge ? pointer[1] - gap - height : pointer[1] + gap;
+  return [fit(x, width, wide) - box.left, fit(y, height, high) - box.top];
 }
 
 /**
@@ -72,17 +89,20 @@ export function chart(ctx, id, label, options, { height, rows, onSelect } = {}) 
           },
           grid: { left: 12, right: 22, top: 24, bottom: 16, containLabel: true },
           ...option,
-          // richText draws the tooltip as chart text, never as HTML, so a series name or a query cannot inject markup.
-          // A builder's own `tooltip` adds to these settings; it cannot turn richText off.
+          // The tooltip is an element of the page, not drawing inside the chart, so a short chart cannot clip it, and
+          // `beside` keeps it inside the window. ECharts escapes the names and values it prints; a builder's own
+          // `formatter` must escape what it prints with `esc`. A builder's `tooltip` adds to these settings; it cannot
+          // turn the escaping off.
           tooltip: {
             trigger: "axis",
-            confine: true,
+            appendToBody: true,
+            position: (point, _params, _dom, _rect, { contentSize }) => beside(element, point, contentSize),
             backgroundColor: token("--surface"),
             borderColor: token("--border-strong"),
             textStyle: { color: token("--text"), fontFamily: font, fontSize: 12 },
             axisPointer: { type: "line", lineStyle: { color: token("--border-strong") } },
             ...option.tooltip,
-            renderMode: "richText",
+            renderMode: "html",
           },
           series: option.series.map(({ colorIndex, ...series }, index) => ({
             ...series,
@@ -192,7 +212,8 @@ export function runTimeline(rows, { since, until, token, say }) {
     grid: { left: 12, right: 22, top: 8, bottom: 16, containLabel: true },
     tooltip: {
       trigger: "item",
-      formatter: (mark) => `${mark.data.row}\n${new Date(mark.data.run.at).toLocaleString()}\n${say(mark.data.run)}`,
+      formatter: (mark) =>
+        [mark.data.row, new Date(mark.data.run.at).toLocaleString(), say(mark.data.run)].map(esc).join("<br>"),
     },
     xAxis: { type: "time", min: since, max: until, axisLabel: { hideOverlap: true } },
     yAxis: {
