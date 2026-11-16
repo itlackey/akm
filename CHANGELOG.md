@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `akm health` and `akm upgrade` report when the akm-cli bundled in the Codex plugin differs from the running CLI, as they already did for the Claude and OpenCode plugins.
+
 ## [0.10.261127] - 2026-11-15
 
 ### Added
