@@ -109,6 +109,9 @@ test("real entry captures help/version/invalid/config failures once and redacts 
 
 test("concurrent CLI writes and overlapping export snapshots keep stable aggregate identities", async () => {
   sandbox();
+  // One run creates metrics.db and switches it to WAL first: eight processes racing to create the store can wait
+  // past capture's short busy timeout on a loaded host, and capture drops the record by design (it never stalls a command).
+  expect(cli(["--version"]).status).toBe(0);
   await Promise.all(
     Array.from(
       { length: 8 },
@@ -129,9 +132,9 @@ test("concurrent CLI writes and overlapping export snapshots keep stable aggrega
       key: string;
     }>,
   ) => rows.filter((row) => row.dimensions.command.length === 0);
-  expect(version(first.aggregates).reduce((sum, row) => sum + row.attempts, 0)).toBe(8);
+  expect(version(first.aggregates).reduce((sum, row) => sum + row.attempts, 0)).toBe(9);
   const merged = new Map([...first.aggregates, ...second.aggregates].map((row) => [row.key, row]));
-  expect(version([...merged.values()]).reduce((sum, row) => sum + row.attempts, 0)).toBe(8);
+  expect(version([...merged.values()]).reduce((sum, row) => sum + row.attempts, 0)).toBe(9);
   expect(new Set(second.details.map((row: { id: string }) => row.id)).size).toBe(second.details.length);
   // WAL is what keeps concurrent invocations inside capture's short wait: under the rollback journal each
   // commit waited on every reader, and on a disk-backed data dir a third of 8 concurrent captures were dropped.
