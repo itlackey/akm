@@ -48,8 +48,12 @@ const cliPath = path.join(repoRoot, "src", "cli.ts");
 /** Bounded-time budget every real-process scenario below must finish within (owner ruling: "about 1 second" per read; generously bounded for a loaded CI box). */
 const MAX_MS = 4_000;
 
-/** The most a held index lock may add to `akm info`: its two 750 ms busy timeouts plus margin, far below the 30 s wait it replaced. */
-const LOCK_WAIT_MAX_MS = 3_000;
+/**
+ * The most a held index lock may add to `akm info`. Its own wait is two 750 ms busy timeouts, but a
+ * loaded CI box stretches the locked run by seconds more (3.5 s seen); the bound only has to tell that
+ * apart from the 30 s shared busy timeout it replaced.
+ */
+const LOCK_WAIT_MAX_MS = 10_000;
 
 interface ChildResult {
   code: number;
