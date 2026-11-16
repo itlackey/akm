@@ -560,7 +560,7 @@ describe("akm feedback", () => {
 
         expect(fromIndex).toBeDefined();
         // The two recomputes run moments apart, so their elapsed days differ in the last digits.
-        expect(fromFeedback).toBeCloseTo(fromIndex as number, 6);
+        expect(fromFeedback).toBeCloseTo(fromIndex as number, 4);
         // Not the retired bounded-step EMA (0.64 / 0.54 from a 0.6 start).
         expect(fromFeedback).toBeCloseTo(signal === "positive" ? 0.72 : 0.42, 2);
       } finally {

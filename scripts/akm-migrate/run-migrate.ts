@@ -5,7 +5,7 @@
 /**
  * The whole migration, in order, as one plan: config.json in its current
  * shape, pending state.db migrations, task files to task source v4, assets'
- * retired `engine:` keys, refs in content that use the pre-#1432 spelling, then the residue sweep. `akm-migrate status` / `apply [--dry-run]` print exactly
+ * retired `engine:` keys, refs in content that use the pre-#1432 spelling, stale bundle policy (`lint_skip`, the track-secrets marker), then the residue sweep. `akm-migrate status` / `apply [--dry-run]` print exactly
  * this; `akm migrate` and `akm upgrade` spawn that executable and re-emit
  * it. Every historical shape lives here or under `./migrate/`, so the CLI
  * proper only ever reads current schemas.
@@ -40,6 +40,11 @@ import {
   type ContentRefsMigrationStatus,
   inspectContentRefsMigration,
 } from "./content-ref-migrate";
+import {
+  applyBundlePolicyMigration,
+  type BundlePolicyMigrationStatus,
+  inspectBundlePolicyMigration,
+} from "./bundle-policy-migrate";
 import { applyTaskFilesMigration, inspectTaskFilesMigration, type TaskFilesMigrationStatus } from "./task-migrate";
 
 export type MigrationStatus = "current" | "ready" | "blocked";
@@ -77,6 +82,8 @@ export interface CombinedMigrationPlan {
   assetEngineKeys?: EngineKeysMigrationStatus["assetEngineKeys"];
   /** Refs in writable bundles' files that still use the pre-#1432 spelling (`knowledge/WORK/x`, now `WORK/x`). */
   assetContentRefs?: ContentRefsMigrationStatus["assetContentRefs"];
+  /** Writable bundles' stale `lint_skip` frontmatter and track-secrets marker, with the config skip that replaces the marker. */
+  bundlePolicy?: BundlePolicyMigrationStatus["bundlePolicy"];
   /** Present after a real apply that rewrote at least one task file: the run's backup directory. */
   backupPath?: string;
   applied?: number;
@@ -209,6 +216,12 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
     () => (apply ? applyContentRefsMigration() : inspectContentRefsMigration()),
     apply ? () => inspectContentRefsMigration() : undefined,
   );
+  const bundlePolicy = await migrationStep(
+    failedSteps,
+    "bundlePolicy",
+    () => (apply ? applyBundlePolicyMigration() : inspectBundlePolicyMigration()),
+    apply ? () => inspectBundlePolicyMigration() : undefined,
+  );
   // Resolving the stash dir runs as its own step: a config that fails to
   // load here is this step's own failure, not an uncaught throw out of
   // `runMigration`.
@@ -227,10 +240,14 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
   const configFileStatus: MigrationStatus = configFile?.changed && !configFile.applied ? "ready" : "current";
   const engineKeysStatus: MigrationStatus = assetEngineKeys?.status ?? "current";
   const contentRefsStatus: MigrationStatus = assetContentRefs?.status ?? "current";
+  const bundlePolicyStatus: MigrationStatus = bundlePolicy?.status ?? "current";
   return {
     schemaVersion: 1,
     status: statusWithFailedSteps(
-      [stateStatus, configFileStatus, engineKeysStatus, contentRefsStatus].reduce(worstStatus, taskFiles?.status ?? "blocked"),
+      [stateStatus, configFileStatus, engineKeysStatus, contentRefsStatus, bundlePolicyStatus].reduce(
+        worstStatus,
+        taskFiles?.status ?? "blocked",
+      ),
       failedSteps,
     ),
     blockers: [...(taskFiles?.blockers ?? []), ...failedStepBlockers(failedSteps)],
@@ -242,6 +259,7 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
     ...(taskFiles?.applied !== undefined ? { applied: taskFiles.applied } : {}),
     ...(assetEngineKeys !== undefined ? { assetEngineKeys: assetEngineKeys.assetEngineKeys } : {}),
     ...(assetContentRefs !== undefined ? { assetContentRefs: assetContentRefs.assetContentRefs } : {}),
+    ...(bundlePolicy !== undefined ? { bundlePolicy: bundlePolicy.bundlePolicy } : {}),
     ...(deadResidue !== undefined ? { deadResidue } : {}),
   };
 }

@@ -162,8 +162,10 @@ describe("akm lint --fix is transactional per file (issue #761)", () => {
       data: { name: "note", type: "memory" },
       body: "\nSome content.\n",
       frontmatter: "name: note\ntype: memory",
+      bodyStartLine: 5,
       fix: true,
       stashRoot: storage.stashDir,
+      stalePathRoots: [storage.stashDir],
     });
 
     const updated = issues.filter((issue) => issue.issue === "missing-updated");

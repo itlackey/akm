@@ -23,7 +23,6 @@ export const checkLabels: Record<string, string> = {
   "cli-version": "akm CLI version",
   "scheduler-binary": "Scheduler's akm binary",
   "index-state-generation": "Index and state generations",
-  "stash-git-exposure": "Secrets tracked by git",
   "binary-config-skew": "Config newer than this akm",
   "egress-endpoints": "Remote endpoints",
   "type-directory-disagreement": "Asset types and folders",
