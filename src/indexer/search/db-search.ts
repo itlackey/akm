@@ -663,7 +663,7 @@ export interface ProjectContext {
 }
 
 /** Whether an asset applies under the project: it names it or no project, unless the selection's filter decided. */
-function appliesUnder(entry: IndexDocument, project: ProjectContext): boolean {
+export function appliesUnder(entry: IndexDocument, project: ProjectContext): boolean {
   return project.byFilter === true || appliesToProject(entry, project.name);
 }
 

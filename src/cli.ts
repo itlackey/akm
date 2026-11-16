@@ -135,6 +135,7 @@ import { modelsCommand } from "./commands/models-cli";
 import { doctorLogCommand, logCommand } from "./commands/observability-cli";
 import { proposalCommand } from "./commands/proposal/proposal-cli";
 import { rememberCommand } from "./commands/read/remember-cli";
+import { rulesCommand } from "./commands/read/rules";
 import { curateCommand, searchCommand, showCommand } from "./commands/read/search-cli";
 import { registryCommand } from "./commands/registry-cli";
 import { runAssetCommand } from "./commands/run-cli";
@@ -675,6 +676,7 @@ const commands = {
   search: searchCommand,
   curate: curateCommand,
   show: showCommand,
+  rules: rulesCommand,
   run: runAssetCommand,
   workflow: workflowCommand,
   remember: rememberCommand,
@@ -1022,7 +1024,7 @@ const HELP_SECTIONS: ReadonlyArray<{
 }> = [
   {
     title: "AGENT LOOP",
-    commands: ["curate", "search", "show", "feedback", "remember"],
+    commands: ["curate", "search", "show", "rules", "feedback", "remember"],
   },
   {
     title: "ASSETS",

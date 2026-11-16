@@ -10,6 +10,7 @@ akm curate "<task>" --max-tokens 4000 # Same hits' content as one bundle of at m
 akm search "<query>"                 # Local sources (or the project's `from`); --type <t> filters
 akm search "<query>" --from all      # Also search registries
 akm show <ref>                       # Read an asset
+akm rules                            # The rules that apply here, in full
 akm run <ref>                        # Run an agent, command, task or workflow asset
 akm doctor                           # Health checks; `doctor metrics|info|log` report
 akm help <command>                   # A command's options

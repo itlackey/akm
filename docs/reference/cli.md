@@ -747,7 +747,7 @@ Deprecated; use `akm doctor metrics`; removed in 0.11.
 **Experimental** (see [STABILITY.md](../../STABILITY.md)): the report, its JSON shape and the
 dashboard may change in any release.
 
-Report what akm has recorded locally: asset usage (search, show, curate),
+Report what akm has recorded locally: asset usage (search, show, curate, rule loads),
 feedback, derived utility, LLM tokens, task runs, proposal
 flow, workflow token spend, and index runs. Read-only, and every number comes
 from `state.db` or `index.db`; nothing is collected that was not already
@@ -773,7 +773,7 @@ Result sections (`schemaVersion: 1`):
 | Field | Description |
 | --- | --- |
 | `window`, `filters` | The resolved window and the usage source counted |
-| `usage` | Search, show, curate and select totals, `searchesWithHits` and `selectsPerSearch` (selects divided by searches that returned a hit: a plain ratio that can exceed 1, not a conversion percentage; selects are deduped per search id and ref, and kept only when they followed a search from the counted source, except legacy selects with no source, which count for every source), `searchMedianMs` (over searches with `totalMs >= 0`), a daily series, top assets, top and zero-result queries, and rows by source |
+| `usage` | Search, show, curate and select totals, `searchesWithHits` and `selectsPerSearch` (selects divided by searches that returned a hit: a plain ratio that can exceed 1, not a conversion percentage; selects are deduped per search id and ref, and kept only when they followed a search from the counted source, except legacy selects with no source, which count for every source), `searchMedianMs` (over searches with `totalMs >= 0`), a daily series (with `rules`, the `akm rules` loads per day), `rules` (`loads`, the mean `meanRules` and `meanChars` per load, and `byRule`, loads per rule), top assets, top and zero-result queries, and rows by source |
 | `feedback` | Positive and negative totals, per-asset valence, per-tag counts, and the most recent negatives with their reasons |
 | `utility` | A ten-bucket histogram of `utility_scores`, the lowest and highest assets, and how many indexed entries were never used |
 | `outcomes` | The assets with the lowest `outcome_score` |
@@ -2164,17 +2164,56 @@ folder deeper down (`docs/rules/`) is not. A rule applies when its frontmatter `
 equals the value the project in force writes as `project` (its `write.metadata.project`,
 default its name) or it has none (shared); with no project, only shared rules apply. If the
 selection's own `project` filter is in force, that filter decides and the comparison is
-skipped. Rules are ordinary search hits: nothing is added to a page for them. They follow
-`--from`, `--filter`, `--since`/`--until`, disabled bundles and `--belief` like any asset. A
-rule of another project is never returned while a project is selected, by any search or
-curate, including `--type rule`. The AKM agent plugins load the applicable rules at session
-start and after compaction; an agent without a plugin lists them with the command below.
+skipped. In search and curate, rules are ordinary hits: nothing is added to a page for them,
+and they follow `--from`, `--filter`, `--since`/`--until`, disabled bundles and `--belief`
+like any asset. A rule of another project is never returned while a project is selected, by
+any search or curate, including `--type rule`.
 
-**Listing contract (for plugins):** `akm search "" --type rule --limit 200 --detail normal`
-returns exactly the applicable rules (honouring `--project`, the working directory, `--from`
-and the other selection), with `ref` and `description`; read each with `akm show <ref>`. A
-result of exactly 200 means the list was cut. `akm search "rules/"` is a plain path
-listing: it also returns `README` and scripts under `rules/` and stops at 20.
+A session loads its rules with [`akm rules`](#rules), not with search. The AKM agent plugins
+run it at session start and after compaction; an agent without a plugin runs the same command.
+
+### rules
+
+Print the rules that apply here, in full: the project's rules first, then shared ones, each
+group by ref.
+
+```sh
+akm rules
+akm rules --project acme
+akm rules --project none --from team
+akm rules --filter team=platform --format text
+```
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--project <name\|none>` | the project whose path contains the working directory | The project to use instead (`none`: no project); an unknown name is a usage error |
+| `--from <bundle>` | the project's `from` | Bundle name (repeatable), replacing the project's `from`. `local`, `registry` and `all` do not apply to rules: they are ignored with one warning and the default below is read. A disabled or unknown bundle is a usage error |
+| `--filter <key>=<value>` | the project's `filters` | Repeatable frontmatter filter with the matching of `akm search --filter`, replacing the project's `filters` |
+
+**Which bundles supply rules.** A rule is an instruction the agent obeys, so only bundles you
+named supply them. With `--from`, those bundles; else the project's `from`; else, with a
+project, the default bundle and the project's `write.bundle`; with no project, the default
+bundle. A bundle installed from a registry or a git URL supplies rules only when it is the
+default bundle or you name it in `from`. A disabled bundle is never read.
+
+**Which rules.** Files the index walker types as `rule` in those bundles (a Markdown file in
+the top-level `rules/` folder, `README.md` excepted), read from the files: no index is needed,
+a rule written a second ago applies, and a locked or rebuilding index changes nothing. A rule
+with `quality: proposed` is never returned. The project match is the one above and the
+filters match as in search. There is no query, limit, `--include` or `--prefer`, and nothing
+is cut.
+
+**Output.** JSON: `{ project?, bundles, rules: [{ ref, description, project?, content }] }`.
+`project` is the project as applied (as in search), present only when one applies; `bundles`
+are the bundle ids read, in order; `ref` is the ref search prints, so `akm show <ref>` reads
+it; `project` on a rule is the project it names (absent when shared); `content` is the body
+without frontmatter. `text` and `md` print the project line, then each rule under its ref
+(`No rules apply here.` when none).
+
+**Usage.** One `rules` usage event per call, never a `search` or `show` event, with the
+project in force, the bundles read, the refs returned and the total characters of their
+`content`. `akm metrics` reports rule loads, rules and characters per load, and loads per
+rule under usage. A call moves no search count, ranking or utility score.
 
 #### Usage list (`--by-usage`)
 
@@ -2184,7 +2223,7 @@ listing: it also returns `README` and scripts under `rules/` and stops at 20.
 most shown first. It applies the project's `from`, `filters` and your flags like any search, takes no
 query (one given is ignored with a warning) and no `--from registry|all` (warned; local is
 used), orders by use instead of `--prefer`, records no usage event, and leaves rules out
-(they have their own listing). Assets that were never shown are not listed, so with no
+(`akm rules` lists them). Assets that were never shown are not listed, so with no
 history the list is empty. What counts: `akm show` events of `source: user` in the last 90
 days (the usage retention); only `akm show` counts, not nested command or persona reads. Search and
 curate results are impressions and do not count. Each `akm show` records the project in force
@@ -2198,10 +2237,11 @@ session-start hook, an automatic rule read) run with `AKM_EVENT_SOURCE` set to `
 
 **Plugin recipe.** With the project resolved: `akm doctor metrics assets --detail normal
 [--project <p>]`, run in the session directory. With no project resolved, read the default
-bundle with no selection: `--project none --from <defaultBundle>` on both the rules listing
-and `doctor metrics assets`, where `<defaultBundle>` is `akm config get defaultBundle`. If none is
-configured there is no bundle to name (neither `--from <name>` nor `--from <path>` accepts the
-primary stash), so pass `--project none` without `--from`; every enabled bundle is then read.
+bundle with no selection: `--project none --from <defaultBundle>`, where `<defaultBundle>` is
+`akm config get defaultBundle`. If none is configured there is no bundle to name (neither
+`--from <name>` nor `--from <path>` accepts the primary stash), so pass `--project none`
+without `--from`; every enabled bundle is then read. Rules come from `akm rules`, not from
+this list.
 
 ### remember
 
