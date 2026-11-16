@@ -32,6 +32,7 @@
  */
 
 import type { TocHeading } from "../asset/markdown";
+import type { StalePathFields } from "../asset/stale-path";
 
 // ── §1.1 — bundle / component / installation model ─────────────────────────
 
@@ -381,7 +382,7 @@ export interface ValidateContext {
  * shape. Modeled on `LintIssue` (`src/commands/lint/types.ts:19-25`) with
  * `issue` generalized to an open string (see file header for rationale).
  */
-export interface Diagnostic {
+export interface Diagnostic extends Partial<StalePathFields> {
   file: string;
   issue: string;
   detail: string;

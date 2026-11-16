@@ -517,9 +517,6 @@
                 }
               }
             }
-          },
-          "trackSecrets": {
-            "type": "boolean"
           }
         },
         "additionalProperties": {}
@@ -2510,9 +2507,6 @@
                     }
                   }
                 }
-              },
-              "trackSecrets": {
-                "type": "boolean"
               }
             },
             "additionalProperties": {}

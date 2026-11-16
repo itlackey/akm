@@ -65,7 +65,7 @@ export function formatMigratePlain(result: unknown): string | null {
       `    asset content refs: ${refs.refs} in ${refs.changed} file(s) change, ${refs.skipped} skipped, ${refs.shadowed?.length ?? 0} shadowed`,
     );
   }
-  if (plan.bundlePolicy) lines.push(`    bundle policy: ${plan.bundlePolicy.changed} file(s) change`);
+  if (plan.bundlePolicy) lines.push(`    bundle policy: ${plan.bundlePolicy.changed} change(s)`);
 
   if (plan.blockers?.length) {
     lines.push("", "blockers:", ...plan.blockers.map((blocker) => `  - ${blocker}`));

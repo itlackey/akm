@@ -42,7 +42,7 @@ describe("akm lint redacted durable content (#962)", () => {
     expect(result.flagged.filter((finding) => finding.issue === "redacted-content")).toEqual([]);
   });
 
-  test("does not flag [REDACTED] documented in code spans, fences, quotes or blockquotes", async () => {
+  test("does not flag [REDACTED] documented in code spans, fences, indented code, tables, quotes or blockquotes", async () => {
     fs.writeFileSync(
       path.join(storage.stashDir, "knowledge", "template.md"),
       [
@@ -57,6 +57,12 @@ describe("akm lint redacted durable content (#962)", () => {
         "```",
         "API_KEY=[REDACTED]",
         "```",
+        "",
+        "| Field | Shown as |",
+        "| --- | --- |",
+        "| token | [REDACTED] |",
+        "",
+        "    export API_KEY=[REDACTED]",
         "",
       ].join("\n"),
     );

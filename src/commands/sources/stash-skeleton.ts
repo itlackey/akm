@@ -91,7 +91,7 @@ export function scaffoldScratch(stashDir: string): void {
   }
 }
 
-/** Add the root-scoped scratch ignore rule unless present. */
+/** Add the root-scoped scratch ignore rule unless present.  */
 export function ensureScratchGitignore(stashDir: string): void {
   try {
     const gitignorePath = path.join(stashDir, ".gitignore");
@@ -106,6 +106,23 @@ export function ensureScratchGitignore(stashDir: string): void {
 }
 
 const SCRATCH_GITIGNORE_RULE = `/${SCRATCH_DIR}/`;
+
+/**
+ * Add `env/` and `secrets/` to the bundle `.gitignore` when it mentions neither, so a
+ * new bundle does not commit its tokens and keys. A `.gitignore` that already names
+ * either one is the owner's choice and is left as written.
+ */
+export function ensureStashGitignore(stashDir: string): void {
+  try {
+    const gitignorePath = path.join(stashDir, ".gitignore");
+    const existing = fs.existsSync(gitignorePath) ? fs.readFileSync(gitignorePath, "utf8") : "";
+    if (existing.includes("env/") || existing.includes("secrets/")) return;
+    const gap = existing.length === 0 ? "" : existing.endsWith("\n") ? "" : "\n";
+    fs.writeFileSync(gitignorePath, `${existing}${gap}env/\nsecrets/\n`);
+  } catch {
+    // Non-fatal — the stash is usable without the ignore scaffold.
+  }
+}
 
 const STASH_META_INDEX_TEMPLATE = `---
 # Optional, human-authored orientation for this stash. Not indexed; surfaced

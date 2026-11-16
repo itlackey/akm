@@ -3,8 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The `bundlePolicy` step: `lint_skip` frontmatter and the `.gitignore` track-secrets marker move into the bundle's
- * config entry, and akm's own `.gitignore` blocks are removed. Runs through `runMigration` against an isolated bundle.
+ * The `bundlePolicy` step: `lint_skip` frontmatter is stripped, the old `.gitignore` track-secrets marker adds a
+ * `tracked-secrets` lint skip to the bundle's config entry, and `.gitignore` is never modified. Runs through
+ * `runMigration` against an isolated bundle.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -14,12 +15,7 @@ import { runMigration } from "../../scripts/akm-migrate/run-migrate";
 import { resetConfigCache } from "../../src/core/config/config";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
-const SECRETS_BLOCK =
-  "# akm: keep secret material out of git by default\n" +
-  "# env/ and secrets/ assets hold tokens and keys. They are ignored by default\n" +
-  "# so `git push` can never leak them. To version a specific one (e.g. for a\n" +
-  "# private-remote backup), un-ignore its path below once you accept the risk.\n" +
-  "env/\nsecrets/\n\n";
+const MARKER = "# akm: intentionally track env and secrets";
 
 describe("the step", () => {
   let storage: IsolatedAkmStorage;
@@ -57,34 +53,37 @@ describe("the step", () => {
   function seed(): void {
     write("knowledge/docs/a.md", page("lint_skip:\n  - stale-path\n"));
     write("knowledge/docs/b.md", page("lint_skip: [stale-path]\n"));
-    write("knowledge/docs/c.md", page("lint_skip: stale-path\n"));
-    write("knowledge/other/d.md", page("lint_skip:\n  - stale-path\n  - missing-ref\n  - made-up\n"));
-    write("knowledge/other/e.md", page(""));
+    write("knowledge/other/c.md", page("lint_skip: stale-path\n"));
     write("knowledge/keep.md", page(""));
-    write(".gitignore", `# mine\n*.log\n${SECRETS_BLOCK}# akm: intentionally track env and secrets\n!env/\n`);
+    write(".gitignore", `# mine\n*.log\n${MARKER}\n!env/\n`);
   }
 
-  test("moves lint_skip into lint.skip as directory globs or exact paths and strips the key", async () => {
+  test("strips lint_skip, moves nothing into lint.skip but the tracked-secrets skip, and leaves .gitignore alone", async () => {
     configure();
     seed();
+    const gitignore = read(".gitignore");
     const dry = await runMigration({ apply: false });
-    expect(dry.bundlePolicy?.changed).toBe(5);
+    expect(dry.bundlePolicy?.changed).toBe(4);
     expect(read("knowledge/docs/a.md")).toContain("lint_skip");
 
     const applied = await runMigration({ apply: true });
-    expect(applied.bundlePolicy?.applied).toBe(5);
+    expect(applied.bundlePolicy?.bundles).toEqual([{ bundleId: "primary", stripped: 3, skipTrackedSecrets: true }]);
     expect(applied.bundlePolicy?.backupPath).toBeDefined();
-    expect(bundleEntry().lint).toEqual({
-      skip: { "stale-path": ["knowledge/docs/**", "knowledge/other/d.md"], "missing-ref": ["knowledge/other/d.md"] },
-    });
-    expect(bundleEntry().trackSecrets).toBe(true);
-    for (const file of ["a", "b", "c"]) expect(read(`knowledge/docs/${file}.md`)).toBe(page(""));
-    expect(read("knowledge/other/d.md")).toBe(page(""));
-    expect(read(".gitignore")).toBe("# mine\n*.log\n!env/\n");
+    expect(bundleEntry().lint).toEqual({ skip: { "tracked-secrets": ["**"] } });
+    for (const file of ["docs/a", "docs/b", "other/c"]) expect(read(`knowledge/${file}.md`)).toBe(page(""));
+    expect(read(".gitignore")).toBe(gitignore);
     const backup = path.join(applied.bundlePolicy?.backupPath as string, "files");
     expect(fs.readdirSync(backup).map((name) => fs.readFileSync(path.join(backup, name), "utf8"))).toContain(
       page("lint_skip:\n  - stale-path\n"),
     );
+  });
+
+  test("without the marker the config gains nothing", async () => {
+    configure();
+    write("knowledge/one.md", page("lint_skip: [stale-path]\n"));
+    const applied = await runMigration({ apply: true });
+    expect(applied.bundlePolicy?.bundles).toEqual([{ bundleId: "primary", stripped: 1, skipTrackedSecrets: false }]);
+    expect(bundleEntry().lint).toBeUndefined();
   });
 
   test("is idempotent", async () => {
@@ -98,22 +97,23 @@ describe("the step", () => {
     expect(bundleEntry()).toEqual(before);
   });
 
-  test("keeps the globs the config already has", async () => {
+  test("keeps the skips the config already has", async () => {
     configure({ lint: { skip: { "stale-path": ["wikis/**"] } } });
-    write("knowledge/one.md", page("lint_skip: [stale-path]\n"));
+    write(".gitignore", `${MARKER}\n`);
     await runMigration({ apply: true });
-    expect(bundleEntry().lint).toEqual({ skip: { "stale-path": ["wikis/**", "knowledge/one.md"] } });
+    expect(bundleEntry().lint).toEqual({ skip: { "stale-path": ["wikis/**"], "tracked-secrets": ["**"] } });
   });
 
-  test("a bundle with no config entry keeps its files as written", async () => {
+  test("a bundle with no config entry has lint_skip stripped; its marker is reported, not moved", async () => {
     writeSandboxConfig({
       defaultBundle: "other",
       bundles: { other: { path: path.join(stash(), "elsewhere"), writable: true } },
     });
     seed();
     const plan = await runMigration({ apply: true });
-    expect(plan.bundlePolicy?.changed).toBe(0);
+    expect(plan.bundlePolicy?.changed).toBe(3);
     expect(plan.bundlePolicy?.notes).toHaveLength(1);
-    expect(read("knowledge/docs/a.md")).toContain("lint_skip");
+    expect(read("knowledge/docs/a.md")).toBe(page(""));
+    expect(read(".gitignore")).toContain(MARKER);
   });
 });

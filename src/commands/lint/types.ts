@@ -2,21 +2,25 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-export type LintIssueType =
-  | "unquoted-colon"
-  | "missing-updated"
-  | "orphaned-stub"
-  | "placeholder-stub"
-  | "missing-name-or-type"
-  | "missing-type"
-  | "stale-path"
-  | "missing-skill-md"
-  | "invalid-task-yaml"
-  | "missing-ref"
-  | "redacted-content"
-  | "dangerous-env-key"
-  | "invalid-workflow-structure"
-  | "missing-category"
+import type { StalePathFields } from "../../core/asset/stale-path";
+
+/** Every rule `akm lint` reports; a rule name in `lint.skip` or `--rule` is one of these. */
+export const LINT_RULES = [
+  "unquoted-colon",
+  "missing-updated",
+  "orphaned-stub",
+  "placeholder-stub",
+  "missing-name-or-type",
+  "missing-type",
+  "stale-path",
+  "missing-skill-md",
+  "invalid-task-yaml",
+  "missing-ref",
+  "redacted-content",
+  "dangerous-env-key",
+  "tracked-secrets",
+  "invalid-workflow-structure",
+  "missing-category",
   /**
    * A file the sweep reached but could not finish checking — the per-file
    * dispatch threw (unreadable mid-run, a `--fix` write that failed in a way
@@ -25,7 +29,7 @@ export type LintIssueType =
    * and the caller learned neither which file failed nor which fixes had
    * already landed on disk (issue #761).
    */
-  | "lint-failed"
+  "lint-failed",
   // ── non-akm adapter `validate()` codes (akm 0.9.0 lint/adapter-dispatch wiring) ──
   //
   // These four are `llm-wiki`'s native structural checks
@@ -33,10 +37,10 @@ export type LintIssueType =
   // dispatches every non-akm bundle through its OWN adapter's `validate()`
   // instead of the akm-shaped per-file sweep. `missing-type` / `missing-ref`
   // above are shared with `okf` (already closed members of this union).
-  | "uncited-raw"
-  | "missing-description"
-  | "broken-xref"
-  | "broken-source"
+  "uncited-raw",
+  "missing-description",
+  "broken-xref",
+  "broken-source",
   /**
    * Non-fatal workflow compile ADVISORY (`compileWorkflowPlan().warnings` —
    * e.g. a step with no `output:` schema, or a `params.<name>` reference to an
@@ -44,7 +48,7 @@ export type LintIssueType =
    * so `--fail-on-flagged` ignores it (see
    * `core/adapter/adapters/akm-lint.ts#workflowFrontendDiagnostics`).
    */
-  | "workflow-warning"
+  "workflow-warning",
   /**
    * Fallback for a `Diagnostic.issue` code this union does not (yet) name.
    * `Diagnostic.issue` (`core/adapter/types.ts`) is deliberately an OPEN
@@ -56,7 +60,10 @@ export type LintIssueType =
    * code in `detail` (prefixed `[<issue>] `) so nothing an adapter reports is
    * ever lost, even though the closed union can't type it precisely.
    */
-  | "adapter-diagnostic";
+  "adapter-diagnostic",
+] as const;
+
+export type LintIssueType = (typeof LINT_RULES)[number];
 
 /**
  * The issue codes that are ADVISORY: surfaced in lint output but never routed
@@ -82,7 +89,9 @@ export function isAdvisoryLintIssue(issue: { issue: string }): boolean {
   return ADVISORY_LINT_ISSUES.has(issue.issue);
 }
 
-export interface LintIssue {
+export interface LintIssue extends Partial<StalePathFields> {
+  /** The asset ref `akm show` takes, when the finding is about one asset of the linted bundle. */
+  ref?: string;
   file: string;
   issue: LintIssueType;
   detail: string;
@@ -106,10 +115,14 @@ export interface LintContext {
   data: Record<string, unknown>;
   body: string;
   frontmatter: string | null;
+  /** File line the body starts on (frontmatter findings sit on lines from 2). */
+  bodyStartLine: number;
   fix: boolean;
   /** #884: opt-in dangling belief-edge repair. Independent of `fix`. */
   pruneDanglingEdges?: boolean;
   stashRoot: string;
+  /** Roots that make an absolute path judgeable for `stale-path`; see `stalePathRoots`. */
+  stalePathRoots: string[];
   /** Additional stash roots (secondary sources) for cross-stash ref resolution. */
   extraStashRoots?: string[];
   /** Issue types to skip for this file: the bundle's `lint.skip` rules that match its path, plus the run's own. */

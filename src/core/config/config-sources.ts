@@ -171,11 +171,6 @@ export function bundleKeyForContentRoot(config: AkmConfig, resolvedContentRoot: 
   return bundleContentRoots(config).find((entry) => entry.contentRoot === physical)?.id;
 }
 
-/** Whether akm's own commits may stage `env/` and `secrets/` in the bundle `bundleId`. */
-export function bundleTracksSecrets(config: AkmConfig, bundleId: string | undefined): boolean {
-  return bundleId !== undefined && config.bundles?.[bundleId]?.trackSecrets === true;
-}
-
 export function bundlesToSourceEntries(config: AkmConfig): SourceConfigEntry[] | undefined {
   const bundles = config.bundles;
   if (!bundles) return undefined;

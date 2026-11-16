@@ -17,7 +17,13 @@ import { mutateConfig } from "../../core/config/config";
 import { assertSafeStashDir, getConfigPath, getDefaultStashDir } from "../../core/paths";
 import { warnOnce } from "../../core/warn";
 import { primaryBundlePath, withPrimaryBundle } from "./bundle-config-ops";
-import { copyStashSkeleton, ensureScratchGitignore, scaffoldScratch, scaffoldStashMeta } from "./stash-skeleton";
+import {
+  copyStashSkeleton,
+  ensureScratchGitignore,
+  ensureStashGitignore,
+  scaffoldScratch,
+  scaffoldStashMeta,
+} from "./stash-skeleton";
 
 /**
  * Refuse to persist a temporary-directory stashDir to the user's config when
@@ -129,6 +135,10 @@ async function akmInitReal(options?: {
   // Ensure the default stash is a local git repo (no remote required)
   ensureGitRepo(stashDir);
 
+  // 08-F1: scaffold a default `.gitignore` that keeps env/ + secrets/ out of git
+  // so a `git push` can never leak them. Idempotent + non-clobbering; the user
+  // opts into versioning by un-ignoring a path.
+  ensureStashGitignore(stashDir);
   ensureScratchGitignore(stashDir);
 
   // Run seeding UNCONDITIONALLY (not just when the stash was newly created) so

@@ -5,7 +5,7 @@
 /**
  * The whole migration, in order, as one plan: config.json in its current
  * shape, pending state.db migrations, task files to task source v4, assets'
- * retired `engine:` keys, refs in content that use the pre-#1432 spelling, bundle policy out of files and into the config, then the residue sweep. `akm-migrate status` / `apply [--dry-run]` print exactly
+ * retired `engine:` keys, refs in content that use the pre-#1432 spelling, stale bundle policy (`lint_skip`, the track-secrets marker), then the residue sweep. `akm-migrate status` / `apply [--dry-run]` print exactly
  * this; `akm migrate` and `akm upgrade` spawn that executable and re-emit
  * it. Every historical shape lives here or under `./migrate/`, so the CLI
  * proper only ever reads current schemas.
@@ -82,7 +82,7 @@ export interface CombinedMigrationPlan {
   assetEngineKeys?: EngineKeysMigrationStatus["assetEngineKeys"];
   /** Refs in writable bundles' files that still use the pre-#1432 spelling (`knowledge/WORK/x`, now `WORK/x`). */
   assetContentRefs?: ContentRefsMigrationStatus["assetContentRefs"];
-  /** Lint skips and the track-secrets marker in writable bundles' files, moved to their config entries. */
+  /** Writable bundles' stale `lint_skip` frontmatter and track-secrets marker, with the config skip that replaces the marker. */
   bundlePolicy?: BundlePolicyMigrationStatus["bundlePolicy"];
   /** Present after a real apply that rewrote at least one task file: the run's backup directory. */
   backupPath?: string;

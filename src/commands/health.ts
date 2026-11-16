@@ -6,8 +6,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { daysToMs, resolveStashDir } from "../core/common";
 import { loadConfig } from "../core/config/config";
-import { bundleKeyForContentRoot, bundleTracksSecrets } from "../core/config/config-sources";
-import type { AkmConfig } from "../core/config/config-types";
 import { ConfigError, rethrowIfTestIsolationError, UsageError } from "../core/errors";
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
 import { getConfigPath, getDataDir, getDbPath, getStateDbPathInDataDir } from "../core/paths";
@@ -49,7 +47,6 @@ import { emptyLlmUsageAggregate, readLlmUsageAggregate } from "./health/llm-usag
 import { collectPluginStalenessAdvisories } from "./health/plugin-staleness";
 import { collectSchedulerBinaryAdvisory } from "./health/scheduler-binary";
 import { readSemanticSearchState } from "./health/semantic-search-check";
-import { collectStashExposureAdvisory, type GitRunner } from "./health/stash-exposure";
 import { buildTypeDirectoryAdvisory } from "./health/type-directory-check";
 import {
   type AkmHealthResult,
@@ -91,15 +88,8 @@ export interface AkmHealthOptions {
    * to a foreign/just-deleted DB. Purely additive: omitted ⇒ identical to before.
    */
   stateDbPath?: string;
-  /** Working stash dir for the `stash-git-exposure` advisory (configured bundles are checked too). Defaults to `resolveStashDir()`. */
+  /** Working stash dir for the stash-directory advisories. Defaults to `resolveStashDir()`. */
   stashDir?: string;
-  /**
-   * Injectable git seam for the `stash-git-exposure` advisory. When omitted, the
-   * advisory only runs (via a real `git` subprocess) if the stash is actually a
-   * git repo, so the health hot path — including unit tests with non-git sandbox
-   * stashes — never spawns. Tests pass a fake to exercise the advisory directly.
-   */
-  stashExposureGit?: GitRunner;
   /**
    * Probe each connection's endpoint for reachability in the `connections-and-harnesses` check (#914). Off by default
    * so library callers and tests stay offline; the CLI turns it on unless
@@ -384,8 +374,7 @@ function gatherSessionExtractionLedgerPhase(
 }
 
 /**
- * The best-effort advisory groups beyond the health-check registry: the
- * `stash-git-exposure` probe, the 08 surfaces group (binary-config-skew,
+ * The best-effort advisory groups beyond the health-check registry: the 08 surfaces group (binary-config-skew,
  * egress-endpoints), `type-directory-disagreement` (#831), `data-dir-usage`
  * (#896), and `plugin-version` (itlackey/akm#832). Order matches emission
  * order in the returned array. A probe/filesystem failure in any try/catch
@@ -401,42 +390,6 @@ function gatherAncillaryAdvisories(
 
   const indexStateMismatch = detectIndexStateGenerationMismatch(db);
   if (indexStateMismatch) advisories.push(indexStateMismatch);
-
-  // Surface a `stash-git-exposure` advisory for each bundle whose env/secret
-  // assets are git-tracked AND that has a remote (the leak moment). Every
-  // configured bundle is checked, not just the working stash; each honours its
-  // own `trackSecrets` setting. Best-effort.
-  // Cheap guard: only shell out to git for a bundle root with its OWN `.git`
-  // (or when a test injected a fake seam), so the hot path never spawns for
-  // non-git bundles. Trade-off: a bundle pointed at a bare subdirectory of a
-  // parent git repo (no `.git` of its own) is not checked; akm-init and
-  // writable git installs put `.git` at the bundle root.
-  let exposureRoots: string[] = [];
-  let exposureConfig: AkmConfig | undefined;
-  try {
-    exposureConfig = loadConfig();
-    const exposureStashDir = options.stashDir ?? resolveStashDir();
-    exposureRoots = [exposureStashDir];
-    exposureRoots = resolveSourceEntries(exposureStashDir).map((source) => source.path);
-  } catch {
-    // An unreadable working stash skips the advisory; an unreadable bundle
-    // config still checks the working stash. Neither aborts the report.
-  }
-  for (const root of new Set(exposureRoots.map((dir) => path.resolve(dir)))) {
-    try {
-      if (options.stashExposureGit || fs.existsSync(path.join(root, ".git"))) {
-        const stashExposure = collectStashExposureAdvisory(
-          root,
-          exposureConfig !== undefined &&
-            bundleTracksSecrets(exposureConfig, bundleKeyForContentRoot(exposureConfig, root)),
-          options.stashExposureGit,
-        );
-        if (stashExposure) advisories.push(stashExposure);
-      }
-    } catch {
-      // Non-fatal — a git/probe failure must not abort the health report.
-    }
-  }
 
   // 08 surfaces: the remaining read-only advisory group (binary-config-skew,
   // egress-endpoints). Best-effort — a filesystem probe failure must not abort

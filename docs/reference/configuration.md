@@ -915,17 +915,16 @@ the key is ignored, and enables nothing; `akm migrate apply` drops it.
 and `defaultBundle` are the 0.9 source configuration shape — see
 [Concepts](../guides/concepts.md) and the [CLI reference](cli.md) for the
 full bundle model (`path`, `git`, `website`, `npm`, `writable`, `registryId`,
-`components`, `lint`, `trackSecrets`). `defaultBundle` must name a key in `bundles` when set. A
+`components`, `lint`). `defaultBundle` must name a key in `bundles` when set. A
 bundle's `components.<id>.adapter` key pins it to a specific format adapter
 instead of relying on auto-detection — see [Bundle Types](bundle-types.md)
 for the full adapter list and what each one reads/writes.
 
-A bundle entry also carries the policy for its own files:
+A bundle entry also carries the lint policy for its own files:
 
 | Key | Purpose |
 | --- | --- |
-| `lint.skip` | `{ "<rule>": ["<glob>", ...] }`: lint skips the rule for assets whose bundle-relative path matches a glob (`**` is the whole bundle). See [`akm lint`](cli.md#lint). A rule name lint does not know is warned about once and ignored. |
-| `trackSecrets` | **Defaults to `false`.** akm's own commits leave `env/` and `secrets/` out; `true` lets them stage those directories, and `akm health` stops reporting them as tracked. akm writes nothing to the bundle's `.gitignore` for this. |
+| `lint.skip` | `{ "<rule>": ["<glob>", ...] }`: lint skips the rule for files whose bundle-relative path matches a glob (`**` is the whole bundle), for example `"stale-path": ["skills/sec/**"]` or `"tracked-secrets": ["**"]`. Any rule `akm lint` reports can be skipped. See [`akm lint`](cli.md#lint). A rule name lint does not know is warned about once and ignored. |
 
 Each physical content root has one bundle id. Duplicate paths and symbolic-link
 aliases are rejected because source ownership, scheduler authority, and default
