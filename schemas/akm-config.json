@@ -378,6 +378,23 @@
               },
               "additionalProperties": {}
             }
+          },
+          "lint": {
+            "type": "object",
+            "properties": {
+              "skip": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
           }
         },
         "additionalProperties": {}
@@ -1890,6 +1907,23 @@
                     }
                   },
                   "additionalProperties": {}
+                }
+              },
+              "lint": {
+                "type": "object",
+                "properties": {
+                  "skip": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
                 }
               }
             },

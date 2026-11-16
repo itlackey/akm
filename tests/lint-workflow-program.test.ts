@@ -393,14 +393,15 @@ describe("akm lint — workflow findings carry a line number", () => {
     expect(json.flagged[0]!.line).toBe(8);
   });
 
-  test("the human formatter renders `file:line` for a line-anchored finding", async () => {
+  test("the rule listing renders the line of a line-anchored finding under its file", async () => {
     const stashDir = makeTempStash();
     writeWorkflowFile(stashDir, "anchored.md", BROKEN_AT_LINE_8);
 
-    const result = await akmLint({ dir: stashDir, typeFilter: "workflows" });
+    const result = await akmLint({ dir: stashDir, typeFilter: "workflows", rule: "invalid-workflow-structure" });
     const text = formatLintPlain(result as unknown as Record<string, unknown>) ?? "";
 
-    expect(text).toContain(`${path.join("workflows", "anchored.md")}:8  [invalid-workflow-structure]`);
+    expect(text).toContain(path.join("workflows", "anchored.md"));
+    expect(text).toContain("  line 8  ");
   });
 
   test("compile warnings are line-anchored too", async () => {
@@ -422,13 +423,14 @@ describe("akm lint — workflow findings carry a line number", () => {
     fs.mkdirSync(skillDir, { recursive: true });
     fs.writeFileSync(path.join(skillDir, "notes.md"), "# notes\n", "utf8");
 
-    const result = await akmLint({ dir: stashDir, typeFilter: "skills" });
+    const result = await akmLint({ dir: stashDir, typeFilter: "skills", rule: "missing-skill-md" });
 
     const missing = result.flagged.filter((i) => i.issue === "missing-skill-md");
     expect(missing).toHaveLength(1);
     expect(missing[0]!.line).toBeUndefined();
     expect(Object.hasOwn(missing[0]!, "line")).toBe(false);
     const text = formatLintPlain(result as unknown as Record<string, unknown>) ?? "";
-    expect(text).toContain(`${path.join("skills", "no-md")}  [missing-skill-md]`);
+    expect(text).toContain(path.join("skills", "no-md"));
+    expect(text).not.toContain("line ");
   });
 });

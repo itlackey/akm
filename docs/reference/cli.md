@@ -2583,7 +2583,15 @@ converts none (one that is not enabled is a `legacyTaskWarnings` line). The step
    results stay byte-for-byte, and a second run changes nothing. The same step
    re-keys the `state.db` history stored under an old spelling
    (`assetContentRefs.stateRows`);
-5. the OS scheduler (`scheduler`): akm 0.10 keeps one entry that runs `akm task
+5. stale bundle policy removed from files (`bundlePolicy`), in writable
+   bundles: an asset's `lint_skip:` frontmatter is stripped (lint skips live in
+   the bundle's `lint.skip` config), and a `.gitignore` with the old
+   `# akm: intentionally track env and secrets` line adds
+   `"tracked-secrets": ["**"]` to that bundle's `lint.skip`. `.gitignore` is
+   never modified. The config is written first (its own backup), then the
+   files under one backup directory per run. A bundle with that line and no
+   config entry is listed in `bundlePolicy.notes`;
+6. the OS scheduler (`scheduler`): akm 0.10 keeps one entry that runs `akm task
    dispatch`, and `apply` replaces akm 0.9's per-task rows with it in one
    write, as `akm task sync` does. It runs `crontab`, `launchctl` or
    `schtasks` only when it has something to write. An installation that moves a
@@ -2615,6 +2623,32 @@ plan. Any `failedSteps` entry
 forces `status: "blocked"` and adds a matching line to `blockers`, so
 `akm migrate status|apply` reports the plan and exits 1 (not the internal-error
 70) the same way it does for any other blocked plan.
+
+### backups prune
+
+Remove old backups from the data directory. `akm migrate apply` copies each
+file into `backups/<folder>/<timestamp>-<id>/` (`tasks`, `asset-engine-keys`,
+`asset-content-refs`) before it rewrites it, and nothing deletes those copies
+later; `akm health` reports a `backups/` that has grown large (`data-dir-usage`).
+Nothing reads an old backup back at run time, so removing one only gives up
+restoring that run by hand.
+
+```sh
+akm backups prune --dry-run              # what would go, nothing removed
+akm backups prune                        # prompts; --yes skips the prompt
+akm backups prune --older-than 7d --yes
+```
+
+| Flag | Meaning |
+| --- | --- |
+| `--older-than <duration>` | Remove entries last modified longer ago than this (`30d`, `12h`, `3M`; default `30d`). |
+| `--dry-run` | Report the same result and remove nothing. |
+| `--yes`, `-y` | Skip the confirmation prompt, which a non-interactive run requires. |
+
+The newest entry of each folder is always kept, however old, so the latest
+rollback point survives. The result is `{dryRun, olderThan, cutoff, count, bytes,
+folders: [{folder, count, bytes, kept}]}`: what was removed (or would be) in
+total and per folder. A missing `backups/` directory is nothing to prune.
 
 ### config
 
@@ -3230,6 +3264,7 @@ akm lint --type workflows       # Only lint one asset type
 akm lint --dir ~/other-bundle    # Override the bundle root (default: from config)
 akm lint --fail-on-flagged      # CI-friendly: exit non-zero when summary.flagged > 0
 akm lint --prune-dangling-edges # Opt-in: drop belief edges whose target is gone
+akm lint --rule stale-path      # List one rule's findings, grouped by asset
 ```
 
 | Argument or flag | Description |
@@ -3238,12 +3273,57 @@ akm lint --prune-dangling-edges # Opt-in: drop belief edges whose target is gone
 | `--fix` | Apply auto-fixes in place. Refused with a usage error when the target bundle is configured `writable: false`. |
 | `--dir` | Override the bundle root directory (default: from config) |
 | `--type` | Only lint assets of this type (e.g. `workflows`, `tasks`, `memories`). **akm bundles only** — every other adapter validates the whole bundle and warns on stderr that the flag had no effect. |
+| `--rule` | List this rule's findings grouped by asset: the asset ref and file, then each finding with its line, path, reason, nearest existing directory and line text. Combines with `--type`. A listing: it cannot combine with `--fix` or `--prune-dangling-edges`. An unknown rule name warns and shows every rule. |
 | `--fail-on-flagged` | Exit non-zero when `summary.flagged > 0`. Default: exit 0 regardless of findings. |
 | `--prune-dangling-edges` | Opt-in repair: drop `supersededBy`/`contradictedBy` entries whose target has neither a file nor a prune tombstone. **Not** implied by `--fix` — it edits well-formed files to delete a belief-graph claim, so review a plain `akm lint` report first. Clears the same `writable: false` gate `--fix` does. |
 
 Returns `fixed[]` and `flagged[]` arrays plus a `summary: { fixed, flagged }`
-count. Each entry carries `file`, `issue`, `detail`, and whether it was
-`fixed`.
+count and `byRule: { <rule>: { findings, assets } }` for the flagged findings.
+Each entry carries `file`, `issue`, `detail`, whether it was `fixed`, and, for
+a finding about one asset of the bundle, its `ref`.
+
+The default text output is one line per rule: its findings and assets, the
+three folders holding most of them, whether `--fix` fixes it, and how to fix
+it. `akm lint --rule <rule>` lists that rule's findings.
+
+```
+stale-path: 41 findings in 12 assets; memories (30), knowledge/guides (11); --fix does not fix it; correct the path; ...
+```
+
+`stale-path` reports an absolute path in an asset that does not exist, so an
+agent can find it and correct it. It judges only paths this machine can check:
+under the current user's home, under a configured bundle or project root
+(`projects`), and under `/tmp`. Paths under `/opt`, `/var`, `/etc`, `/root` or
+another user's home are not checked unless they sit under a bundle or project
+root. A line that says it records the past or an example ("historically",
+"formerly", "for example", "e.g.") and a section under a History, Changelog,
+Archive or Examples heading are skipped, as are run-time filename templates
+(`<stamp>`, `{stamp}`, `YYYYMMDD`, globs). Each finding carries `ref`, `file`,
+`line` (1-based, in the file), `path`, `lineText`, `nearestExisting` (the
+deepest existing directory above the path) and `reason`: `missing` for a path
+under the home, a bundle or a project, `ephemeral` for a `/tmp` path that no
+longer exists. To clear a finding, correct the path, or say on the line that it
+records the past or an example, or move it under a History or Examples heading.
+
+`tracked-secrets` flags each `env/` or `secrets/` file that git tracks in a
+bundle that has a remote (a push can leak it); `git rm --cached` the file.
+
+`missing-updated` does not apply to skills. `redacted-content` ignores
+`[REDACTED]` in code (fenced, indented and inline), quotes and table cells.
+
+A bundle skips a rule for some of its assets in its config entry:
+`lint.skip` maps any rule lint reports to globs matched against the path
+relative to the bundle root, where `**` is the whole bundle. A rule name lint
+does not know is warned about once and ignored.
+
+```json
+"bundles": {
+  "docs": {
+    "path": "~/docs",
+    "lint": { "skip": { "stale-path": ["skills/sec/**", "knowledge/articles/**"], "tracked-secrets": ["**"] } }
+  }
+}
+```
 
 Task files are checked for more than their fields: a `tasks/*.yml` whose YAML
 does not parse is reported as `invalid-task-yaml` (it used to fall through as an

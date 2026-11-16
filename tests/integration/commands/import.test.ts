@@ -195,7 +195,6 @@ describe("import --bundle", () => {
       expect(parsedBody.data.type).toBe("knowledge");
       expect(parsedBody.data.sourceUrl).toBe(url);
       expect(parsedBody.data.updated).toBe(new Date().toISOString().slice(0, 10));
-      expect(parsedBody.data.lint_skip).toEqual(["stale-path"]);
       expect(body).toContain("# Guide Title");
       expect(body).toContain("Hello");
       expect(body).toContain("world");

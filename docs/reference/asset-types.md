@@ -131,8 +131,7 @@ root-scoped: a nested `.scratch/` is ordinary content, and the existing
 `akm bundle create` (and `akm setup`, which reuses it) creates
 `.scratch/README.md` and adds `/.scratch/` to `.gitignore`. Re-running it
 restores a missing README or rule without touching existing scratch files or a
-customized README; the Git ignore rule is added even when the secret-ignore
-block or its track-secrets opt-out is present. Existing bundles work without
+customized README. Existing bundles work without
 the directory, and reads never create it. Index exclusion is independent of Git
 tracking: ignoring `.scratch/` does not untrack files already committed.
 

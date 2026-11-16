@@ -123,7 +123,7 @@ export const lintCommand = defineCommand({
   meta: {
     name: "lint",
     description:
-      "Scan bundle .md files for structural issues (unquoted colons, missing updated field, orphaned stubs, placeholder stubs, missing name/type, stale paths, broken refs in body text and in refs/xrefs/supersededBy/contradictedBy frontmatter). Takes one file (`akm lint <file>`) or the whole bundle. Use --fix to auto-fix Tier 1 issues. Exits 0 on success regardless of findings; use --fail-on-flagged for CI fail-on-finding behavior.",
+      "Scan bundle .md files for structural issues (unquoted colons, missing updated field, orphaned stubs, placeholder stubs, missing name/type, stale paths (paths the agent can find and correct; `--rule stale-path` lists them), tracked secrets, broken refs in body text and in refs/xrefs/supersededBy/contradictedBy frontmatter). Takes one file (`akm lint <file>`) or the whole bundle. Use --fix to auto-fix Tier 1 issues. Exits 0 on success regardless of findings; use --fail-on-flagged for CI fail-on-finding behavior.",
   },
   args: {
     // R-051: `lint` is a raw `defineCommand` (not `defineJsonCommand`), so it
@@ -164,6 +164,11 @@ export const lintCommand = defineCommand({
       description: "Only lint assets of this type (akm bundles only; e.g. workflows, tasks); with a file, its type",
       default: undefined,
     },
+    rule: {
+      type: "string",
+      description: "List the findings of this rule grouped by asset (e.g. stale-path); cannot combine with --fix",
+      default: undefined,
+    },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
@@ -172,6 +177,7 @@ export const lintCommand = defineCommand({
         dir: getStringArg(args, "dir"),
         file: getStringArg(args, "file"),
         typeFilter: getStringArg(args, "type"),
+        rule: getStringArg(args, "rule"),
         pruneDanglingEdges: getHyphenatedBoolean(args, "prune-dangling-edges"),
       });
       output("lint", result);

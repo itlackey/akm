@@ -193,7 +193,7 @@
       {:else if current}
         <div class="shelf-left muted">
           {#if last}<span class="last"
-              ><span class="last-text" title={`${last.title} — ${last.ref}`}
+              ><span class="last-text" title={[`${last.title} — ${last.ref}`, last.commit].filter(Boolean).join("\n")}
                 >Last: {decisionVerb(last.action)} “{last.title}”</span
               >{#if last.action === "accept" && last.revertable}
                 · <button type="button" class="link-button" disabled={busy} onclick={() => openLast("revert")}

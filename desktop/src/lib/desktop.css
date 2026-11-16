@@ -339,7 +339,9 @@
     .desktop-shell.workspace-active {
       block-size: 100dvh;
     }
+    /* A master-detail workspace uses the whole window; reading pages keep the content width. */
     .desktop-shell.workspace-active > main {
+      max-inline-size: none;
       display: flex;
       flex-direction: column;
       min-block-size: 0;

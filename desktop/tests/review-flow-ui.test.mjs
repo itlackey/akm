@@ -36,32 +36,31 @@ test("Review: focus stays on a control after a failed write, Undo, Reopen, batch
   await expect(page.getByRole("alert").filter({ hasText: "The decision was not recorded." })).toBeVisible();
   await expect(button("Confirm accept")).toBeFocused();
 
-  // Accept, then Undo… from the toast; Cancel returns to the shelf's Revert…, not to <body>.
+  // Accept, then Undo… from the Last line (a decision raises no toast); Cancel returns to the shelf's Revert…, not to <body>.
   await button("Confirm accept").click();
-  await expect(page.getByRole("status").filter({ hasText: "Accepted “restore laptop”" })).toContainText(
-    /restore-laptop/,
-  );
-  await page.getByRole("status").getByRole("button", { name: "Undo…" }).click();
+  const last = page.getByRole("region", { name: "Proposal detail" }).locator(".last");
+  await expect(last).toContainText("Last: Accepted “restore laptop”");
+  await expect(page.locator("[data-toast]")).toHaveCount(0);
+  await last.getByRole("button", { name: "Undo…" }).click();
   await expect(button("Confirm revert")).toBeFocused();
   await button("Cancel").click();
   await expect(button("Revert…")).toBeFocused();
 
-  // One decision toast at a time: a second decision replaces the first.
   await button("Revert…").click();
   await button("Confirm revert").click();
-  await expect(page.getByRole("status").filter({ hasText: "Reverted “restore laptop”" })).toBeVisible();
-  await expect(page.locator("[data-toast]")).toHaveCount(1);
+  await expect(last).toContainText("Last: Reverted “restore laptop”");
+  await expect(page.locator("[data-toast]")).toHaveCount(0);
 
   // Reject, then Reopen… from the Last line; after Confirm reopen focus is on a shelf control.
   await page.getByRole("region", { name: "Proposals" }).getByRole("link").filter({ hasText: "review example" }).click();
   await button("Reject…").click();
   await page.getByRole("radio", { name: "Wrong" }).check({ force: true });
   await button("Confirm reject").click();
-  await expect(page.getByRole("status").filter({ hasText: "Rejected “review example”" })).toBeVisible();
-  await page.getByRole("region", { name: "Proposal detail" }).getByRole("button", { name: "Reopen…" }).click();
+  await expect(last).toContainText("Last: Rejected “review example”");
+  await last.getByRole("button", { name: "Reopen…" }).click();
   await expect(button("Confirm reopen")).toBeFocused();
   await button("Confirm reopen").click();
-  await expect(page.getByRole("status").filter({ hasText: "Reopened “review example”" })).toBeVisible();
+  await expect(last).toContainText("Last: Reopened “review example”");
   await expect.poll(active).not.toBe("BODY");
   assert.notEqual(await active(), "BODY");
 
@@ -99,7 +98,7 @@ test("Review: focus stays on a control after a failed write, Undo, Reopen, batch
   assert.deepEqual(errors, []);
 });
 
-// Refresh says it worked without moving anything, and a decision toast sits above the shelf, never over its buttons.
+// Refresh says it worked without moving anything, and a batch toast sits above the shelf, never over its buttons.
 test("Review: Refresh confirms politely and keeps focus; a toast clears the decision shelf", {
   timeout: 120000,
 }, async (t) => {
@@ -119,6 +118,9 @@ test("Review: Refresh confirms politely and keeps focus; a toast clears the deci
   await open(page, server, `/review/${server.proposals.stale}`);
   await button("Accept…").click();
   await button("Confirm accept").click();
+  // A single decision is reported by the Last line alone.
+  await expect(page.locator(".last")).toContainText("Last: Accepted");
+  await expect(page.locator("[data-toast]")).toHaveCount(0);
   // The shelf unmounts while the next proposal loads, and the toast re-measures its lift a few times a second, so
   // read both rects in one synchronous evaluate and retry the comparison itself instead of two boundingBox() calls.
   const rects = (a, b) =>
@@ -133,15 +135,6 @@ test("Review: Refresh confirms politely and keeps focus; a toast clears the deci
       },
       [a, b],
     );
-  await expect
-    .poll(
-      async () => {
-        const p = await rects(".toast", ".decision-shelf");
-        return !!p && p[0].y + p[0].height <= p[1].y + 1;
-      },
-      { message: "the toast ends above the shelf", timeout: 10000 },
-    )
-    .toBe(true);
   // The next proposal's row is the highlighted one and is inside the queue list's view.
   await expect
     .poll(
@@ -150,6 +143,23 @@ test("Review: Refresh confirms politely and keeps focus; a toast clears the deci
         return !!p && p[0].y >= p[1].y - 1 && p[0].y + p[0].height <= p[1].y + p[1].height + 1;
       },
       { message: "the next row is active and in view", timeout: 10000 },
+    )
+    .toBe(true);
+  // A batch has no Last line, so it keeps its toast, and that sits above the shelf.
+  await page
+    .getByRole("checkbox", { name: /^Select (?!all)/ })
+    .first()
+    .check();
+  await button("Accept selected…").click();
+  await button("Confirm accept 1").click();
+  await expect(page.locator(".toast")).toContainText("Accepted 1 proposals");
+  await expect
+    .poll(
+      async () => {
+        const p = await rects(".toast", ".decision-shelf");
+        return !!p && p[0].y + p[0].height <= p[1].y + 1;
+      },
+      { message: "the toast ends above the shelf", timeout: 10000 },
     )
     .toBe(true);
 });

@@ -10,6 +10,7 @@
   import { navigate } from "./navigation";
   import ActivityChart from "./ActivityChart.svelte";
   import Icon from "./Icon.svelte";
+  import BackupsPrune from "./BackupsPrune.svelte";
   import { checkLabel, healthCheckAnchor } from "./home-model";
   import { verticalBars, lines, pChartLine, eventStrip, runTimeline } from "./ui/chart-view.js";
   import { weekStart } from "./ui/lib.js";
@@ -353,6 +354,7 @@
                   <span class="check-id muted small mono"><span class="sr-only">{"Check id: "}</span>{check.name}</span>
                 </div>
                 <p>{check.message}</p>
+                {#if check.name === "data-dir-usage" && check.status === "warn"}<BackupsPrune />{/if}
                 {#if check.evidence}<details class="check-evidence">
                     <summary>Evidence for {checkLabel(check.name)}</summary>
                     <pre class="code">{JSON.stringify(check.evidence, null, 2)}</pre>

@@ -13,6 +13,7 @@ import {
   nextAfterDecision,
   plural,
   proposalHref,
+  proposalReason,
   queueState,
   rejectionError,
   rejectionReason,
@@ -33,6 +34,18 @@ test("review helpers preserve route filters and bound composed rejection reasons
   assert.match(rejectionError("Wrong", "a".repeat(2000)), /2000/);
   assert.equal(commitOutcome(null), "");
   assert.equal(commitOutcome({ sha: "1234567890", subject: "akm accept: x" }), "Saved to Git history as 12345678.");
+  assert.equal(proposalReason({ id: "p", gateDecision: { outcome: "deferred", reason: "distill-review" } }), "");
+  assert.equal(
+    proposalReason({
+      id: "p",
+      gateDecision: { outcome: "deferred", reason: "distill-review", judgeReason: "Weakest: grounding." },
+    }),
+    "Weakest: grounding.",
+  );
+  assert.equal(
+    proposalReason({ id: "p", reason: "Own reason.", gateDecision: { outcome: "x", judgeReason: "Judge." } }),
+    "Own reason.",
+  );
   assert.equal(
     activityReturn("/activity/improve?since=365d&anchor=impact-drill"),
     "/activity/improve?since=365d&anchor=impact-drill",

@@ -50,9 +50,10 @@ import {
   spliceFrontmatterLine,
 } from "../../core/asset/frontmatter";
 import { checkUnquotedDescriptionColon } from "../../core/asset/frontmatter-lint";
-import { findCurrentPathReferences, homeRootOf } from "../../core/asset/lint-text";
+import { isSkillPath } from "../../core/asset/lint-text";
 import { isArchivedRelPath } from "../../core/asset/memory-archive";
 import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
+import { findStalePaths } from "../../core/asset/stale-path";
 import { localDateStamp } from "../../core/common";
 import { containsRedactedContent, REDACTED_CONTENT_MARKER } from "../../core/content-safety";
 import { DERIVED_SUFFIX } from "../../core/recognition-util";
@@ -146,27 +147,12 @@ function fixUnquotedColon(raw: string): string | null {
   return null;
 }
 
-function checkMissingUpdated(data: Record<string, unknown>, frontmatterText: string | null): boolean {
-  return frontmatterText !== null && !("updated" in data);
+function checkMissingUpdated(relPath: string, data: Record<string, unknown>, frontmatterText: string | null): boolean {
+  return frontmatterText !== null && !("updated" in data) && !isSkillPath(relPath);
 }
 
 function fixMissingUpdated(raw: string, mtime: Date): string {
   return spliceFrontmatterLine(raw, `updated: ${localDateStamp(mtime)}`) ?? raw;
-}
-
-// ── stale-path helpers ────────────────────────────────────────────────────────
-
-/**
- * Absolute paths presented as current guidance that do not exist on this host.
- * Paths under a home directory this host does not have belong to another host
- * or user and are not checked.
- */
-function checkStalePath(body: string): string[] {
-  return findCurrentPathReferences(body).filter((candidate) => {
-    const home = homeRootOf(candidate);
-    if (home !== undefined && !fs.existsSync(home)) return false;
-    return !fs.existsSync(candidate);
-  });
 }
 
 // ── fence-strip helper ────────────────────────────────────────────────────────
@@ -186,14 +172,21 @@ function stripFencedBlocks(body: string): string {
 }
 
 /**
- * `raw` without fenced code blocks, inline code spans, double-quoted text and
- * blockquote lines: places where `[REDACTED]` is documented or quoted as an
- * example rather than left behind by damaged content.
+ * `raw` without fenced and indented code blocks, table rows, inline code spans,
+ * double-quoted text and blockquote lines: places where `[REDACTED]` is
+ * documented or quoted as an example rather than left behind by damaged content.
  */
 function stripQuotedExamples(raw: string): string {
+  let inIndentedCode = true; // an indented line starts a code block at the top or after a blank line
   return stripFencedBlocks(raw)
     .split("\n")
-    .filter((line) => !/^\s*>/.test(line))
+    .filter((line) => {
+      const blank = line.trim() === "";
+      const indented = /^(?: {4}|\t)/.test(line);
+      const code = indented && inIndentedCode;
+      inIndentedCode = blank || code;
+      return !code && !/^\s*[>|]/.test(line);
+    })
     .join("\n")
     .replace(/`[^`\n]*`|"[^"\n]*"|\u201c[^\u201d\n]*\u201d/g, "");
 }
@@ -656,17 +649,7 @@ export function runBaseChecks(ctx: LintContext): LintIssue[] {
   /** Findings whose `fixed: true` is only true once the flush below succeeds. */
   const pendingFixes: LintIssue[] = [];
 
-  // M8: Parse lint_skip from frontmatter for per-file rule suppression.
-  // Accept both an array (`lint_skip: [missing-ref, stale-path]`) and a
-  // single scalar (`lint_skip: missing-ref`). Non-string entries are coerced
-  // and trimmed so loosely-typed YAML still gates correctly.
-  const rawLintSkip = ctx.data?.lint_skip;
-  const lintSkip: string[] = [
-    ...(ctx.lintSkip ?? []),
-    ...(Array.isArray(rawLintSkip) ? rawLintSkip : rawLintSkip != null ? [rawLintSkip] : []),
-  ]
-    .map((v) => String(v).trim())
-    .filter(Boolean);
+  const lintSkip = ctx.lintSkip ?? [];
   const shouldRun = (issueType: string) => !lintSkip.includes(issueType);
 
   if (shouldRun("redacted-content") && containsRedactedContent(stripQuotedExamples(currentRaw))) {
@@ -715,7 +698,7 @@ export function runBaseChecks(ctx: LintContext): LintIssue[] {
   } // end shouldRun("unquoted-colon")
 
   // ── 2. missing-updated ─────────────────────────────────────────────────
-  if (shouldRun("missing-updated") && checkMissingUpdated(ctx.data, ctx.frontmatter)) {
+  if (shouldRun("missing-updated") && checkMissingUpdated(ctx.relPath, ctx.data, ctx.frontmatter)) {
     if (ctx.fix) {
       let mtime: Date;
       try {
@@ -774,22 +757,14 @@ export function runBaseChecks(ctx: LintContext): LintIssue[] {
   flushIfModified();
 
   // ── 3. stale-path ──────────────────────────────────────────────────────
-  // M3: checkStalePath returns all stale matches; push one issue per path.
-  // M4: Also scan ctx.frontmatter for stale paths (absolute paths in frontmatter).
   if (shouldRun("stale-path")) {
-    const staleInBody = checkStalePath(ctx.body);
-    const staleInFrontmatter = ctx.frontmatter ? checkStalePath(ctx.frontmatter) : [];
-    for (const candidate of [...staleInBody, ...staleInFrontmatter]) {
-      // M4: Suggest portable replacement when path is under stashRoot.
-      const portableHint = candidate.startsWith(ctx.stashRoot)
-        ? ` (portable form: relative to the bundle root, ${candidate.slice(ctx.stashRoot.length).replace(/^[\\/]/, "")})`
-        : "";
-      issues.push({
-        file: ctx.relPath,
-        issue: "stale-path",
-        detail: `nonexistent path: ${candidate}${portableHint}`,
-        fixed: false,
-      });
+    const { frontmatter, body, bodyStartLine } = ctx;
+    const stale = [
+      ...(frontmatter ? findStalePaths(frontmatter, 2, ctx.stalePathRoots, ctx.stashRoot) : []),
+      ...findStalePaths(body, bodyStartLine, ctx.stalePathRoots, ctx.stashRoot),
+    ];
+    for (const { detail, ...finding } of stale) {
+      issues.push({ file: ctx.relPath, issue: "stale-path", detail, fixed: false, ...finding });
     }
   }
 

@@ -4,7 +4,18 @@
 
 import { createRequire } from "node:module";
 import os from "node:os";
-import { activity, assets, bundles, config, documents, feedback, proposals, sensitive, setup } from "akm-cli/workspace";
+import {
+  activity,
+  assets,
+  backups,
+  bundles,
+  config,
+  documents,
+  feedback,
+  proposals,
+  sensitive,
+  setup,
+} from "akm-cli/workspace";
 import { compareVersions } from "../engine-skew.js";
 import { readFile, saveFile } from "./features/files.js";
 import {
@@ -271,6 +282,7 @@ export const routes: Route[] = [
     return feedback.record({ ...rest, fix: fix(input) });
   }),
   post("/api/bundles/add", body(bundles.add, ["source", "name", "writable"], "bundle add")),
+  post("/api/backups/prune", body(backups.prune, ["olderThan", "dryRun", "confirm"], "backups prune")),
   post("/api/bundles/remove", body(bundles.remove, ["bundle", "confirm"], "bundle remove")),
   post("/api/bundles/update", body(bundles.update, ["bundle"], "bundle update")),
   post("/api/bundles/rename", body(bundles.rename, ["bundle", "name", "dryRun"], "bundle rename")),

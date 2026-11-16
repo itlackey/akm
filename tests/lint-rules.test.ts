@@ -68,7 +68,7 @@ describe("akm lint redacted durable content (#962)", () => {
     expect(result.flagged.filter((finding) => finding.issue === "redacted-content")).toEqual([]);
   });
 
-  test("does not flag [REDACTED] documented in code spans, fences, quotes or blockquotes", async () => {
+  test("does not flag [REDACTED] documented in code spans, fences, indented code, tables, quotes or blockquotes", async () => {
     fs.writeFileSync(
       path.join(storage.stashDir, "knowledge", "template.md"),
       [
@@ -83,6 +83,12 @@ describe("akm lint redacted durable content (#962)", () => {
         "```",
         "API_KEY=[REDACTED]",
         "```",
+        "",
+        "| Field | Shown as |",
+        "| --- | --- |",
+        "| token | [REDACTED] |",
+        "",
+        "    export API_KEY=[REDACTED]",
         "",
       ].join("\n"),
     );
@@ -115,8 +121,10 @@ function staleIssues(storage: IsolatedAkmStorage, body: string) {
     data: { name: "w" },
     body,
     frontmatter: "name: w",
+    bodyStartLine: 4,
     fix: false,
     stashRoot: storage.stashDir,
+    stalePathRoots: [os.homedir(), storage.stashDir],
   });
   return issues.filter((issue) => issue.issue === "stale-path");
 }
@@ -170,7 +178,7 @@ describe("stale-path skips run-time filename templates (#927)", () => {
       storage,
       "## History\n\nWrote /tmp/akm-5-gone/old.md.\n\n## Usage\n\nWrite to /tmp/akm-5-gone/current.md.\n",
     );
-    expect(issues.map((issue) => issue.detail)).toEqual(["nonexistent path: /tmp/akm-5-gone/current.md"]);
+    expect(issues.map((issue) => issue.detail)).toEqual(["ephemeral path: /tmp/akm-5-gone/current.md"]);
   });
 
   test("the adapter validate path applies the same rules", async () => {
@@ -183,12 +191,17 @@ describe("stale-path skips run-time filename templates (#927)", () => {
     ].join("\n");
     const diagnostics = await runBaseValidateChecks(
       "knowledge/n.md",
-      { data: { name: "n", updated: "2026-01-01" }, content: body, frontmatter: "name: n\nupdated: 2026-01-01" },
+      {
+        data: { name: "n", updated: "2026-01-01" },
+        content: body,
+        frontmatter: "name: n\nupdated: 2026-01-01",
+        bodyStartLine: 5,
+      },
       storage.stashDir,
       createValidateContext({ root: storage.stashDir }),
     );
     expect(diagnostics.map((d) => `${d.issue}: ${d.detail}`)).toEqual([
-      "stale-path: nonexistent path: /tmp/akm-5-gone/current.md",
+      "stale-path: ephemeral path: /tmp/akm-5-gone/current.md",
       "missing-ref: missing ref: core//tasks/akm-5-gone",
     ]);
   });

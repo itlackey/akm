@@ -158,10 +158,15 @@ a symlink out of the bundle.
 
 ### Indexing
 
-`akm bundle create` makes the bundle a git repository whose `.gitignore` lists
-`env/` and `secrets/`, so those files are never committed. The indexer skips
-git-ignored files everywhere else, but it still indexes the files under a
-bundle's `env/` and `secrets/` directories when git ignores them: `akm search
+`akm bundle create` makes the bundle a git repository and adds `env/` and
+`secrets/` lines to its `.gitignore` when the file mentions neither, so those
+files are not committed; akm's own commits follow git and apply no further
+filter. `akm lint` reports an `env/` or `secrets/` file that git tracks in a
+bundle with a remote as `tracked-secrets`; a bundle that versions them on
+purpose lists `"tracked-secrets": ["**"]` under `lint.skip` in its config
+entry. The indexer skips git-ignored files everywhere else, but it still
+indexes the files under a bundle's `env/` and `secrets/` directories when git
+ignores them: `akm search
 --type env` and `akm show env/<name>` find an env file of a default bundle after
 `akm index`. The index holds key names only for an env file and the name for a
 secret; values are never indexed. `env list`, `env path`, `env export`,
