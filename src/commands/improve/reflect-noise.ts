@@ -106,7 +106,6 @@ const DEFAULT_FRONTMATTER_KEYS = [
   "quality",
   "salience",
   "salienceInputs",
-  "lint_skip",
   "type",
 ];
 

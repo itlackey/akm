@@ -59,7 +59,13 @@ In order, every run applies (or, under `status`/`--dry-run`, plans):
    `WORK/x`), in frontmatter and body, rewritten under one backup directory per
    run. An old spelling that is now another file's ref is listed in `shadowed`
    and left as written.
-6. **Residue sweep**: superseded pre-0.9.0 `.akm` files in the stash and the
+6. **Bundle policy** (`bundlePolicy`): in each writable bundle that has a
+   config entry, `lint_skip:` frontmatter moves into the entry's `lint.skip`
+   and is stripped from the files, the `.gitignore` marker for tracking `env/`
+   and `secrets/` becomes `trackSecrets: true`, and akm's own `.gitignore`
+   blocks are removed. The config is written first, the files then under one
+   backup directory per run.
+7. **Residue sweep**: superseded pre-0.9.0 `.akm` files in the stash and the
    transaction-journal, maintenance-barrier, lock-mutex and version-stamp
    files older releases kept under `$DATA`/`$STATE`/`$CONFIG` (`deadResidue`).
 
@@ -80,6 +86,7 @@ same step names):
   "taskFiles": { "schemaVersion": 1, "changed": 0, "skipped": 0, "blocked": 0, "files": [] },
   "assetEngineKeys": { "schemaVersion": 1, "changed": 0, "skipped": 0, "files": [] },
   "assetContentRefs": { "schemaVersion": 1, "changed": 0, "skipped": 0, "refs": 0, "files": [], "shadowed": [] },
+  "bundlePolicy": { "schemaVersion": 1, "changed": 0, "bundles": [], "notes": [] },
   "deadResidue": { "pending": [] }
 }
 ```
@@ -133,6 +140,7 @@ Key fields:
 | `taskFiles` | `changed`/`skipped`/`blocked` counts and a `files[]` array with each file's `status` and `reason`. |
 | `assetEngineKeys` | `changed`/`skipped` counts and a `files[]` array with each rewritten file's `rewrites` (`at`, `from`, `to`). |
 | `assetContentRefs` | `changed`/`skipped` file counts, `refs` (old-spelling refs found), a `files[]` array with each file's `refs`, and `shadowed[]` (`bundleId`, `from`, `to`): old spellings another file holds as its ref, not rewritten; and `reconcile[]`, present after an apply that rewrote files inside a git checkout: the checkout path and how to review, commit or restore the edits. Only asset files, `index.md` and wiki `schema.md` are rewritten. |
+| `bundlePolicy` | `changed` (files to rewrite), `bundles[]` (`bundleId`, the `skip` globs added to its `lint.skip`, `trackSecrets`, the `files`), and `notes[]`: a bundle with policy in its files and no config entry, left as written. After a real apply that rewrote files: `applied` and `backupPath`. |
 | `backupPath` / `applied` | Present after a real apply that rewrote at least one task file: the run's backup directory and how many files it rewrote. |
 | `deadResidue` | `{ pending: [...] }` under a read-only run, `{ removed: [...] }` after apply. Each entry carries `relativePath` and `sizeBytes`; a removal entry adds `removed` (a boolean) and an `error` when the delete failed. A failed delete does not set `status` to `blocked`. |
 

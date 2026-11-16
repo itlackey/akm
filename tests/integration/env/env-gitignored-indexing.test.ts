@@ -5,8 +5,8 @@
 /**
  * Integration (ORG-03/04/05/06): opens the real index database via `akm index`.
  *
- * `akm bundle create` writes a `.gitignore` listing `env/` and `secrets/` so
- * credentials are never committed. The indexer walker skips git-ignored files,
+ * A bundle's `.gitignore` may list `env/` and `secrets/` so credentials are
+ * never committed. The indexer walker skips git-ignored files,
  * which used to leave env and secret assets of a default bundle out of the
  * index (`akm show env/<name>` found nothing while `env list` / `env run`
  * worked). The walker now indexes files under `env/` and `secrets/` even when
@@ -59,10 +59,8 @@ describe("git-ignored env/ and secrets/ are indexed", () => {
         const created = await runCliCapture(["bundle", "create"]);
         expect(created.code).toBe(0);
 
-        // The default scaffold ignores both directories.
-        const gitignore = fs.readFileSync(path.join(bundleDir, ".gitignore"), "utf8");
-        expect(gitignore).toContain("env/");
-        expect(gitignore).toContain("secrets/");
+        // The bundle owner ignores both directories.
+        fs.appendFileSync(path.join(bundleDir, ".gitignore"), "env/\nsecrets/\n");
 
         fs.mkdirSync(path.join(bundleDir, "env"), { recursive: true });
         fs.writeFileSync(path.join(bundleDir, "env", "staging.env"), `DATABASE_URL=${ENV_VALUE}\nLOG_LEVEL=debug\n`);

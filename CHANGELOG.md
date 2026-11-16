@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Per-bundle policy lives in the bundle's config entry instead of in assets and `.gitignore` files (owner-approved change of behaviour on the 0.10 line). `lint.skip` maps a lint rule to globs of bundle-relative paths (`**` is the whole bundle) and replaces the `lint_skip:` frontmatter key, which `akm lint` no longer reads. `trackSecrets: true` lets akm's own commits stage `env/` and `secrets/`; by default they stay out, and `akm health` reads the setting instead of the `.gitignore` marker. akm no longer writes secret-ignore rules to a bundle's `.gitignore` (`akm bundle create` still adds `/.scratch/`), so a hand-run `git add -A` now picks up `env/` and `secrets/`. `akm import <url>` and website snapshots no longer write `lint_skip`, so an imported page that names a missing absolute path is reported by `stale-path` unless the bundle's `lint.skip` covers it.
+- `akm migrate` (and `akm upgrade`) gain a `bundlePolicy` step: in writable bundles that have a config entry it moves `lint_skip:` frontmatter into `lint.skip` and strips the key, turns the `# akm: intentionally track env and secrets` `.gitignore` line into `trackSecrets: true`, and removes akm's own `.gitignore` blocks, under a backup; run `akm migrate apply --dry-run` first.
+
 ## [0.10.261128] - 2026-11-16
 
 ### Fixed

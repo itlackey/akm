@@ -9,12 +9,8 @@
  * tracked. Uses an injected git seam so no real subprocess is spawned.
  */
 
-import { afterEach, describe, expect, test } from "bun:test";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import { describe, expect, test } from "bun:test";
 import { collectStashExposureAdvisory, type GitRunner } from "../../../src/commands/health/stash-exposure";
-import { STASH_GITIGNORE_TRACK_SECRETS_MARKER } from "../../../src/commands/sources/stash-skeleton";
 
 /** Build a fake git runner from canned per-command outputs. */
 function fakeGit(opts: { isRepo?: boolean; tracked?: string[]; remotes?: string[] }): GitRunner {
@@ -30,6 +26,7 @@ describe("collectStashExposureAdvisory (08-F1)", () => {
   test("warns when env/secret assets are tracked AND a remote is configured", () => {
     const adv = collectStashExposureAdvisory(
       "/stash",
+      false,
       fakeGit({ tracked: ["env/prod.env", "secrets/signing.key"], remotes: ["origin"] }),
     );
     expect(adv?.name).toBe("stash-git-exposure");
@@ -38,58 +35,38 @@ describe("collectStashExposureAdvisory (08-F1)", () => {
   });
 
   test("silent when tracked but NO remote (private-backup opt-in must not nag)", () => {
-    const adv = collectStashExposureAdvisory("/stash", fakeGit({ tracked: ["env/prod.env"], remotes: [] }));
+    const adv = collectStashExposureAdvisory("/stash", false, fakeGit({ tracked: ["env/prod.env"], remotes: [] }));
     expect(adv).toBeUndefined();
   });
 
   test("silent when nothing tracked even with a remote (e.g. env/ is gitignored)", () => {
-    const adv = collectStashExposureAdvisory("/stash", fakeGit({ tracked: [], remotes: ["origin"] }));
+    const adv = collectStashExposureAdvisory("/stash", false, fakeGit({ tracked: [], remotes: ["origin"] }));
     expect(adv).toBeUndefined();
   });
 
   test("silent when the stash is not a git repo", () => {
-    const adv = collectStashExposureAdvisory("/stash", fakeGit({ isRepo: false, remotes: ["origin"] }));
+    const adv = collectStashExposureAdvisory("/stash", false, fakeGit({ isRepo: false, remotes: ["origin"] }));
     expect(adv).toBeUndefined();
   });
 });
 
-describe("collectStashExposureAdvisory intentional tracking marker (#1291)", () => {
-  const dirs: string[] = [];
-  afterEach(() => {
-    for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
-  });
-  function stashWithGitignore(content?: string): string {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-exposure-"));
-    dirs.push(dir);
-    if (content !== undefined) fs.writeFileSync(path.join(dir, ".gitignore"), content);
-    return dir;
-  }
+describe("collectStashExposureAdvisory trackSecrets (#1291)", () => {
   const exposed = { tracked: ["secrets/example.key"], remotes: ["origin"] };
 
-  test("without the marker the advisory prescribes untracking and names the opt-out", () => {
-    const adv = collectStashExposureAdvisory(stashWithGitignore("node_modules/\n"), fakeGit(exposed));
+  test("the advisory prescribes untracking and names the opt-out", () => {
+    const adv = collectStashExposureAdvisory("/stash", false, fakeGit(exposed));
     expect(adv?.status).toBe("warn");
     expect(adv?.message).toContain("git rm --cached");
-    expect(adv?.message).toContain(STASH_GITIGNORE_TRACK_SECRETS_MARKER);
+    expect(adv?.message).toContain("trackSecrets: true");
     expect(adv?.evidence).toMatchObject({ trackedSecretFiles: ["secrets/example.key"] });
   });
 
-  test("with the marker, acknowledged tracking is not warned about", () => {
-    const dir = stashWithGitignore(`node_modules/\n${STASH_GITIGNORE_TRACK_SECRETS_MARKER}\n`);
-    expect(collectStashExposureAdvisory(dir, fakeGit(exposed))).toBeUndefined();
-  });
-
-  test("missing or unreadable .gitignore is treated as no marker", () => {
-    const adv = collectStashExposureAdvisory(stashWithGitignore(), fakeGit(exposed));
-    expect(adv?.message).toContain("git rm --cached");
-    const asDir = stashWithGitignore();
-    fs.mkdirSync(path.join(asDir, ".gitignore"));
-    expect(collectStashExposureAdvisory(asDir, fakeGit(exposed))?.message).toContain("git rm --cached");
+  test("with trackSecrets, acknowledged tracking is not warned about", () => {
+    expect(collectStashExposureAdvisory("/stash", true, fakeGit(exposed))).toBeUndefined();
   });
 
   test("unreadable git metadata yields no advisory", () => {
-    const dir = stashWithGitignore(`${STASH_GITIGNORE_TRACK_SECRETS_MARKER}\n`);
     const broken: GitRunner = () => ({ ok: false, stdout: "" });
-    expect(collectStashExposureAdvisory(dir, broken)).toBeUndefined();
+    expect(collectStashExposureAdvisory("/stash", false, broken)).toBeUndefined();
   });
 });

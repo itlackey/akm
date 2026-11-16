@@ -8,6 +8,7 @@ import path from "node:path";
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig, SourceConfigEntry } from "../../core/config/config";
 import { getSources, loadConfig, resolveConfiguredSources, resolveSecret } from "../../core/config/config";
+import { bundleTracksSecrets } from "../../core/config/config-sources";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { sanitizeCommitMessage } from "../../core/git-message";
 import { lockContentRootFor } from "../../integrations/lockfile";
@@ -277,14 +278,16 @@ export function saveGitStash(
   let writable = false;
   let managedContentRoot: string | undefined;
   let namedCredential: string | undefined;
+  const config = loadConfig();
+  let bundleKey = config.defaultBundle;
 
   if (name) {
-    const config = loadConfig();
     const stash = findSyncStashByTarget(getSources(config), name);
     // NotFoundError (exit 1), not UsageError (exit 2): the argument is
     // well-formed, the bundle just isn't configured.
     if (!stash) throw new NotFoundError(`No git-backed bundle found with name "${name}"`, "SOURCE_NOT_FOUND");
     namedCredential = stash.credential;
+    bundleKey = stash.name;
     if (stash.enabled === false) {
       throw new UsageError(`Bundle "${name}" is disabled and cannot be synced.`, "INVALID_FLAG_VALUE");
     }
@@ -372,7 +375,7 @@ export function saveGitStash(
     ? path.relative(repoDir, managedContentRoot).replaceAll(path.sep, "/")
     : "";
   const changedPaths = listGitChangedPaths(repoDir);
-  const requestedPaths = normalizeExactPaths(
+  const stageablePaths = normalizeExactPaths(
     repoDir,
     options?.paths ??
       withoutIgnoredPaths(
@@ -388,6 +391,13 @@ export function saveGitStash(
         ),
       ),
   );
+  // `env/` and `secrets/` stay out of akm's commits unless the bundle's `trackSecrets` is set.
+  const secretDirs = ["env", "secrets"].map((dir) =>
+    managedRelativeRoot ? `${managedRelativeRoot}/${dir}/` : `${dir}/`,
+  );
+  const requestedPaths = bundleTracksSecrets(config, bundleKey)
+    ? stageablePaths
+    : stageablePaths.filter((filePath) => !secretDirs.some((dir) => filePath.startsWith(dir)));
   if (requestedPaths.length === 0) {
     return report(nothingToCommit(repoDir, "nothing to commit", syncWithRemote, remoteEnv));
   }

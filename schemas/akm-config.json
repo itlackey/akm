@@ -500,6 +500,26 @@
               },
               "additionalProperties": {}
             }
+          },
+          "lint": {
+            "type": "object",
+            "properties": {
+              "skip": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "trackSecrets": {
+            "type": "boolean"
           }
         },
         "additionalProperties": {}
@@ -2473,6 +2493,26 @@
                   },
                   "additionalProperties": {}
                 }
+              },
+              "lint": {
+                "type": "object",
+                "properties": {
+                  "skip": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              },
+              "trackSecrets": {
+                "type": "boolean"
               }
             },
             "additionalProperties": {}

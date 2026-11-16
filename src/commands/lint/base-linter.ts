@@ -656,17 +656,7 @@ export function runBaseChecks(ctx: LintContext): LintIssue[] {
   /** Findings whose `fixed: true` is only true once the flush below succeeds. */
   const pendingFixes: LintIssue[] = [];
 
-  // M8: Parse lint_skip from frontmatter for per-file rule suppression.
-  // Accept both an array (`lint_skip: [missing-ref, stale-path]`) and a
-  // single scalar (`lint_skip: missing-ref`). Non-string entries are coerced
-  // and trimmed so loosely-typed YAML still gates correctly.
-  const rawLintSkip = ctx.data?.lint_skip;
-  const lintSkip: string[] = [
-    ...(ctx.lintSkip ?? []),
-    ...(Array.isArray(rawLintSkip) ? rawLintSkip : rawLintSkip != null ? [rawLintSkip] : []),
-  ]
-    .map((v) => String(v).trim())
-    .filter(Boolean);
+  const lintSkip = ctx.lintSkip ?? [];
   const shouldRun = (issueType: string) => !lintSkip.includes(issueType);
 
   if (shouldRun("redacted-content") && containsRedactedContent(stripQuotedExamples(currentRaw))) {

@@ -112,10 +112,6 @@ export interface LintContext {
   stashRoot: string;
   /** Additional stash roots (secondary sources) for cross-stash ref resolution. */
   extraStashRoots?: string[];
-  /**
-   * M8: Per-file rule suppression. List of issue type strings to skip for this file.
-   * Populated from the `lint_skip:` frontmatter key (YAML array of strings).
-   * Example: `lint_skip: [missing-ref, stale-path]`
-   */
+  /** Issue types to skip for this file: the bundle's `lint.skip` rules that match its path, plus the run's own. */
   lintSkip?: string[];
 }

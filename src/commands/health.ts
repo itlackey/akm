@@ -6,6 +6,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { daysToMs, resolveStashDir } from "../core/common";
 import { loadConfig } from "../core/config/config";
+import { bundleKeyForContentRoot, bundleTracksSecrets } from "../core/config/config-sources";
+import type { AkmConfig } from "../core/config/config-types";
 import { ConfigError, rethrowIfTestIsolationError, UsageError } from "../core/errors";
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
 import { getConfigPath, getDataDir, getDbPath, getStateDbPathInDataDir } from "../core/paths";
@@ -402,15 +404,17 @@ function gatherAncillaryAdvisories(
 
   // Surface a `stash-git-exposure` advisory for each bundle whose env/secret
   // assets are git-tracked AND that has a remote (the leak moment). Every
-  // configured bundle is checked, not just the working stash; each honours the
-  // intentional-tracking marker in its own `.gitignore`. Best-effort.
+  // configured bundle is checked, not just the working stash; each honours its
+  // own `trackSecrets` setting. Best-effort.
   // Cheap guard: only shell out to git for a bundle root with its OWN `.git`
   // (or when a test injected a fake seam), so the hot path never spawns for
   // non-git bundles. Trade-off: a bundle pointed at a bare subdirectory of a
   // parent git repo (no `.git` of its own) is not checked; akm-init and
   // writable git installs put `.git` at the bundle root.
   let exposureRoots: string[] = [];
+  let exposureConfig: AkmConfig | undefined;
   try {
+    exposureConfig = loadConfig();
     const exposureStashDir = options.stashDir ?? resolveStashDir();
     exposureRoots = [exposureStashDir];
     exposureRoots = resolveSourceEntries(exposureStashDir).map((source) => source.path);
@@ -421,7 +425,12 @@ function gatherAncillaryAdvisories(
   for (const root of new Set(exposureRoots.map((dir) => path.resolve(dir)))) {
     try {
       if (options.stashExposureGit || fs.existsSync(path.join(root, ".git"))) {
-        const stashExposure = collectStashExposureAdvisory(root, options.stashExposureGit);
+        const stashExposure = collectStashExposureAdvisory(
+          root,
+          exposureConfig !== undefined &&
+            bundleTracksSecrets(exposureConfig, bundleKeyForContentRoot(exposureConfig, root)),
+          options.stashExposureGit,
+        );
         if (stashExposure) advisories.push(stashExposure);
       }
     } catch {

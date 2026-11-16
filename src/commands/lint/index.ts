@@ -32,6 +32,7 @@ import { resolveSourceEntries, type SearchSource } from "../../indexer/search/se
 import { TASK_EXTENSION, TASK_NEAR_MISS_EXTENSION, taskExtensionDetail } from "../../tasks/source-v3";
 import { resolveWorkflowSourceDomains } from "../../workflows/source-files";
 import { runBaseChecks } from "./base-linter";
+import { bundleLintSkip } from "./bundle-skip";
 import { checkEnvForDangerousKeys } from "./env-key-rules";
 import { isAdvisoryLintIssue, type LintContext, type LintIssue, type LintIssueType } from "./types";
 
@@ -611,8 +612,10 @@ interface SweepScope {
   extraStashRoots: string[];
   fix: boolean;
   pruneDanglingEdges: boolean;
-  /** Rules to skip for this run, on top of the file's own `lint_skip:`. */
+  /** Rules to skip for this run, on top of the bundle's `lint.skip`. */
   lintSkip?: string[];
+  /** The bundle's `lint.skip` rules for a bundle-relative path. */
+  bundleSkip?: (relPath: string) => string[];
 }
 
 interface SweepSinks {
@@ -629,7 +632,8 @@ function lintSweepFile(
   scope: SweepScope,
   { fixed, flagged, warnings }: SweepSinks,
 ): void {
-  const { stashRoot, extraStashRoots, fix, pruneDanglingEdges, lintSkip } = scope;
+  const { stashRoot, extraStashRoots, fix, pruneDanglingEdges } = scope;
+  const lintSkip = [...(scope.lintSkip ?? []), ...(scope.bundleSkip?.(relPath) ?? [])];
   let raw: string;
   try {
     raw = fs.readFileSync(filePath, "utf8");
@@ -766,6 +770,7 @@ function lintAkmSweep(
   const flagged: LintIssue[] = [];
   const warnings: LintIssue[] = [];
 
+  const bundleSkip = bundleLintSkip(cfg, stashRoot);
   const dirsToScan = options.typeFilter ? STASH_SUBDIRS.filter((d) => d === options.typeFilter) : STASH_SUBDIRS;
 
   for (const subdir of dirsToScan) {
@@ -815,7 +820,13 @@ function lintAkmSweep(
         filePath,
         path.relative(stashRoot, filePath),
         subdir,
-        { stashRoot, extraStashRoots, fix, pruneDanglingEdges: options.pruneDanglingEdges === true },
+        {
+          stashRoot,
+          extraStashRoots,
+          fix,
+          pruneDanglingEdges: options.pruneDanglingEdges === true,
+          bundleSkip,
+        },
         { fixed, flagged, warnings },
       );
     }
@@ -976,6 +987,7 @@ async function lintFile(file: string, options: AkmLintOptions, cfg: AkmConfig): 
         : [],
       fix: options.fix === true,
       pruneDanglingEdges: false,
+      bundleSkip: root ? bundleLintSkip(cfg, root) : undefined,
       // Outside a bundle there are no other assets to resolve refs or a derived stub against.
       lintSkip: root ? undefined : ["missing-ref", "orphaned-stub"],
     },

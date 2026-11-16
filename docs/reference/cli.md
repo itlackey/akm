@@ -2622,7 +2622,17 @@ in order:
    and is listed in `assetContentRefs.shadowed`. JSON, plain text, scripts and
    other files are never read or rewritten, so frozen corpora and captured
    results stay byte-for-byte, and a second run changes nothing;
-6. superseded residue removed (`deadResidue`): pre-0.9.0 `.akm` leftovers in
+6. bundle policy moved out of files and into the bundle's config entry
+   (`bundlePolicy`), in writable bundles that have one: an asset's `lint_skip:`
+   frontmatter becomes the entry's `lint.skip` (a rule's files collapse to
+   `<dir>/**` where every markdown asset of a directory of two or more skips
+   it, otherwise exact paths) and the key is stripped; the `.gitignore` line
+   `# akm: intentionally track env and secrets` becomes `trackSecrets: true`;
+   akm's own `.gitignore` blocks are removed and every other line stays. The
+   config is written first (its own backup), then the files under one backup
+   directory per run. A bundle with no config entry keeps its files as written
+   and is listed in `bundlePolicy.notes`;
+7. superseded residue removed (`deadResidue`): pre-0.9.0 `.akm` leftovers in
    the stash, and the transaction-journal, maintenance-barrier, lock-mutex and
    version-stamp files older releases kept under `$DATA`, `$STATE` and
    `$CONFIG`.
@@ -2831,8 +2841,8 @@ every other write command does: an explicit `--bundle <source>` wins, else
 writable — a non-writable `--bundle`/`defaultWriteTarget` fails with a
 `ConfigError` before anything is written — and on a git-backed writable target
 the mutation lands in a single boundary commit (filesystem targets are
-committed by `akm sync`; `env/` stays out of git when your bundle `.gitignore`
-excludes it). Reads (`list`, `path`, `run`, `export`) still span all configured
+committed by `akm sync`). akm's own commits leave `env/` and `secrets/` out
+unless the bundle's `trackSecrets` is `true`. Reads (`list`, `path`, `run`, `export`) still span all configured
 sources and are unchanged.
 
 Subcommands:
@@ -3316,6 +3326,16 @@ akm lint --prune-dangling-edges # Opt-in: drop belief edges whose target is gone
 Returns `fixed[]` and `flagged[]` arrays plus a `summary: { fixed, flagged }`
 count. Each entry carries `file`, `issue`, `detail`, and whether it was
 `fixed`.
+
+A bundle skips a rule for some of its assets in its config entry, not in the
+assets: `lint.skip` maps a rule (`redacted-content`, `unquoted-colon`,
+`missing-updated`, `stale-path`, `missing-ref`, `orphaned-stub`) to globs
+matched against the asset's path relative to the bundle root, where `**` is the
+whole bundle. A rule name lint does not know is warned about once and ignored.
+
+```json
+"bundles": { "docs": { "path": "~/docs", "lint": { "skip": { "stale-path": ["knowledge/imported/**"] } } } }
+```
 
 Task files are checked for more than their fields: a `tasks/*.yml` whose YAML
 does not parse is reported as `invalid-task-yaml` (it used to fall through as an

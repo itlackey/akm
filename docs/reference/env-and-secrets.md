@@ -158,10 +158,12 @@ a symlink out of the bundle.
 
 ### Indexing
 
-`akm bundle create` makes the bundle a git repository whose `.gitignore` lists
-`env/` and `secrets/`, so those files are never committed. The indexer skips
-git-ignored files everywhere else, but it still indexes the files under a
-bundle's `env/` and `secrets/` directories when git ignores them: `akm search
+akm's own commits (`akm sync`, an improve run, an accepted proposal) leave
+`env/` and `secrets/` out unless the bundle's `trackSecrets` is `true`; akm
+writes no `.gitignore` rule for them, so a `git add -A` you run yourself stages
+them. The indexer skips git-ignored files everywhere else, but it still indexes
+the files under a bundle's `env/` and `secrets/` directories when git ignores
+them: `akm search
 --type env` and `akm show env/<name>` find an env file of a default bundle after
 `akm index`. The index holds key names only for an env file and the name for a
 secret; values are never indexed. `env list`, `env path`, `env export`,

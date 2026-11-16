@@ -14,11 +14,7 @@ import path from "node:path";
 
 import { akmLint } from "../src/commands/lint/index";
 import { akmInit } from "../src/commands/sources/init";
-import {
-  ensureScratchGitignore,
-  ensureStashGitignore,
-  STASH_GITIGNORE_TRACK_SECRETS_MARKER,
-} from "../src/commands/sources/stash-skeleton";
+import { ensureScratchGitignore } from "../src/commands/sources/stash-skeleton";
 import { loadUserConfig, primaryBundlePath, saveConfig } from "../src/core/config/config";
 import { resolveTypeConventions } from "../src/core/standards/resolve-type-conventions";
 import { type Cleanup, sandboxHome, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
@@ -62,15 +58,6 @@ describe("akmInit (akm bundle create)", () => {
     expect(fs.existsSync(path.join(stashDir, "memories"))).toBe(true);
   });
 
-  test("scaffolds a .gitignore ignoring env/ and secrets/ (08-F1)", async () => {
-    const stashDir = makeTempDir("akm-init-gitignore-");
-    fs.rmSync(stashDir, { recursive: true, force: true });
-    await akmInit({ dir: stashDir });
-    const gitignore = fs.readFileSync(path.join(stashDir, ".gitignore"), "utf8");
-    expect(gitignore).toMatch(/^env\/$/m);
-    expect(gitignore).toMatch(/^secrets\/$/m);
-  });
-
   test("creates env/ and secrets/ with private permissions", async () => {
     if (process.platform === "win32") return;
     const stashDir = makeTempDir("akm-init-private-dirs-");
@@ -82,31 +69,12 @@ describe("akmInit (akm bundle create)", () => {
     expect(fs.statSync(path.join(stashDir, "secrets")).mode & 0o777).toBe(0o700);
   });
 
-  test("gitignore scaffold is idempotent and preserves the user's own rules", async () => {
-    const stashDir = makeTempDir("akm-init-gitignore-idem-");
+  test("writes no secret-ignore rules to .gitignore", async () => {
+    const stashDir = makeTempDir("akm-init-gitignore-none-");
     fs.rmSync(stashDir, { recursive: true, force: true });
-    fs.mkdirSync(stashDir, { recursive: true });
-    fs.writeFileSync(path.join(stashDir, ".gitignore"), "# my rules\n*.log\n");
-
     await akmInit({ dir: stashDir });
-    await akmInit({ dir: stashDir }); // second run must not duplicate the block
-
     const gitignore = fs.readFileSync(path.join(stashDir, ".gitignore"), "utf8");
-    expect(gitignore).toContain("*.log"); // user rule preserved
-    expect(gitignore).toMatch(/^env\/$/m);
-    const markerCount = gitignore.split("# akm: keep secret material out of git by default").length - 1;
-    expect(markerCount).toBe(1);
-  });
-
-  test("documented marker opts a private bundle out of secret ignore scaffolding (#981)", () => {
-    const stashDir = makeTempDir("akm-init-gitignore-optout-");
-    const gitignorePath = path.join(stashDir, ".gitignore");
-    const authored = `${STASH_GITIGNORE_TRACK_SECRETS_MARKER}\n!env/\n!secrets/\n`;
-    fs.writeFileSync(gitignorePath, authored);
-
-    ensureStashGitignore(stashDir);
-
-    expect(fs.readFileSync(gitignorePath, "utf8")).toBe(authored);
+    expect(gitignore).not.toMatch(/^(?:env|secrets)\/$/m);
   });
 
   test("scaffolds .scratch/README.md and a root-scoped /.scratch/ ignore rule (#1435)", async () => {
@@ -138,21 +106,6 @@ describe("akmInit (akm bundle create)", () => {
     const gitignore = fs.readFileSync(path.join(stashDir, ".gitignore"), "utf8");
     expect(gitignore).toContain("*.log");
     expect(gitignore.match(/^\/\.scratch\/$/gm)).toHaveLength(1);
-  });
-
-  test("the scratch rule is added despite the secret-ignore marker or the track-secrets opt-out (#1435)", () => {
-    for (const authored of [
-      "# akm: keep secret material out of git by default\nenv/\n",
-      `${STASH_GITIGNORE_TRACK_SECRETS_MARKER}\n!env/\n`,
-    ]) {
-      const stashDir = makeTempDir("akm-init-scratch-marker-");
-      fs.writeFileSync(path.join(stashDir, ".gitignore"), authored);
-      ensureScratchGitignore(stashDir);
-      ensureScratchGitignore(stashDir);
-      const gitignore = fs.readFileSync(path.join(stashDir, ".gitignore"), "utf8");
-      expect(gitignore.startsWith(authored)).toBe(true);
-      expect(gitignore.match(/^\/\.scratch\/$/gm)).toHaveLength(1);
-    }
   });
 
   test("an existing equivalent scratch ignore line is not duplicated (#1435)", () => {
