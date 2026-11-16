@@ -69,7 +69,7 @@
 <section class="why" aria-labelledby="review-why">
   <!-- With no reason on record the note shares the heading's line, so a short window keeps room for the change. -->
   <div class="why-head">
-    <h3 id="review-why">Why AKM proposed this</h3>
+    <h3 id="review-why">{p.reason ? "Why AKM proposed this" : "Why it needs your review"}</h3>
     {#if !reasonText}<span class="muted">No reason recorded.</span>{/if}
   </div>
   {#if reasonText}<p class="reason">{reasonText}</p>{/if}

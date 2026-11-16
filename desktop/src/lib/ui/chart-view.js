@@ -163,10 +163,24 @@ export function verticalBars(labels, series, unit) {
 
 const percent = (value) => `${value}%`;
 
-/** One row of marks over the same labels as the chart above it: an `events` entry is `{ index, tone }`. */
+/**
+ * One row of marks over the same labels as the chart above it: an `events` entry is `{ index, tone }`. Events on the
+ * same label share one mark, red when any failed, and its tooltip counts them.
+ */
 export function eventStrip(labels, events, { name, token }) {
+  const marks = new Map();
+  for (const event of events) {
+    const mark = marks.get(event.index) ?? { ok: 0, fail: 0 };
+    mark[event.tone === "fail" ? "fail" : "ok"] += 1;
+    marks.set(event.index, mark);
+  }
   return {
     grid: { left: 12, right: 22, top: 4, bottom: 4, containLabel: true },
+    tooltip: {
+      trigger: "item",
+      formatter: ({ data }) =>
+        [`${labels[data.value[0]]} · ${name}`, `${data.ok} finished, ${data.fail} failed`].map(esc).join("<br>"),
+    },
     xAxis: {
       type: "category",
       data: labels,
@@ -181,9 +195,11 @@ export function eventStrip(labels, events, { name, token }) {
         type: "scatter",
         name,
         symbolSize: 12,
-        data: events.map((event) => ({
-          value: [event.index, 0.5],
-          itemStyle: { color: token(event.tone === "fail" ? "--fail" : "--ok") },
+        data: [...marks].map(([index, { ok, fail }]) => ({
+          value: [index, 0.5],
+          ok,
+          fail,
+          itemStyle: { color: token(fail > 0 ? "--fail" : "--ok") },
         })),
       },
     ],

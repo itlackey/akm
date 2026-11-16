@@ -152,7 +152,7 @@ test("chart tooltips stay inside the window, over a strip chart and at a narrow 
     assert.ok(box, "the strip chart is drawn");
     // Sweep the strip: wherever a mark's tooltip shows, the whole of it is inside the window.
     let shown = 0;
-    for (let x = box.x + 4; x < box.x + box.width; x += Math.max(6, box.width / 40)) {
+    for (let x = box.x + 2; x < box.x + box.width; x += 4) {
       await page.mouse.move(x, box.y + box.height / 2);
       const tip = await page.evaluate(() => {
         for (const el of document.querySelectorAll("body > div")) {
