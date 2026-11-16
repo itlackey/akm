@@ -6,8 +6,7 @@
  * `egress-endpoints` advisory for `akm health` (meta-review 08, surfaces 3/9):
  * the remote-destination list, for eyeball diff. A pure projection over the
  * effective config (no process.env reads); silent when nothing remote is
- * configured, matching the `stash-git-exposure` / `binary-config-skew`
- * advisories' pattern.
+ * configured, matching the `binary-config-skew` advisory's pattern.
  */
 
 import { redactCredentialPatterns } from "../../core/redaction";
