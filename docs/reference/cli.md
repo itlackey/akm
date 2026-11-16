@@ -644,7 +644,9 @@ the `akm-cli` the plugin's `package.json` pins (the copy its hooks run, which
 shares the host's databases) with the running CLI, and says which side is older.
 `codex-plugin-version` does the same for a Codex install from the `akm-plugins`
 marketplace (the version from `codex plugin list`, the newest release on the
-`ref` its marketplace entry follows), and `opencode-plugin-version` /
+`ref` its marketplace entry follows, and the `akm-cli` in that version's plugin
+cache under `$CODEX_HOME/plugins/cache/akm-plugins/akm/`, compared with the
+running CLI), and `opencode-plugin-version` /
 `opencode-v2-plugin-version` compare the `akm-cli` bundled in the OpenCode plugin
 the config loads with the running CLI. A plugin ahead of the CLI is fixed by
 `akm upgrade`, one behind it by updating the plugin once its channel has a
