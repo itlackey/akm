@@ -152,7 +152,8 @@ afterEach(() => cleanup());
     ).toBe(true);
     expect(read("claude/settings.json")).toBe(originalClaude);
     expect(read("codex/config.toml")).toBe(originalCodex);
-    expect(read("calls.jsonl")).not.toContain('"clone"');
+    expect(read("calls.jsonl")).not.toContain('"update"');
+    expect(read("calls.jsonl")).not.toContain('"upgrade"');
   });
 
   test("--check --channel next reports the same shape as --check --next, plus the target channel", async () => {
@@ -210,12 +211,38 @@ afterEach(() => cleanup());
       });
     });
 
-    test("a marketplace remote that does not answer leaves Claude and Codex unknown, with the reason", async () => {
+    test("a marketplace that cannot be read: a switch leaves the plugin where it is, as the real switch does; a plain check says unknown", async () => {
       state({ remote: "down" });
       const run = await check("next");
       for (const harness of ["claude-code", "codex"])
-        expect(plan(run, harness)).toMatchObject({ outcome: "unknown", from: "0.10.1" });
-      expect(plan(run, "codex")?.message).toContain("could not be read from the akm-plugins marketplace remote");
+        expect(plan(run, harness)).toMatchObject({ outcome: "current", from: "0.10.1", to: "0.10.1" });
+      expect(plan(run, "codex")?.message).toContain("stays at 0.10.1; could not read the next build's version");
+      const plain = await withEnv(env, () => runUpgrade({ ...opts, check: true }, "0.10.1", deps("0.10.1", "0.10.1")));
+      for (const harness of ["claude-code", "codex"])
+        expect(plan(plain, harness)).toMatchObject({ outcome: "unknown", from: "0.10.1" });
+      expect(plan(plain, "codex")?.message).toContain("the latest build could not be read");
+    });
+
+    test("the plan reads the marketplace each harness registered, and the real switch installs what the plan said", async () => {
+      const planned = await check("next", "0.10.1");
+      const clones = () =>
+        read("calls.jsonl")
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line))
+          .filter((call) => call.command === "git" && call.args[0] === "clone")
+          .map((call) => call.args.at(-2));
+      expect(clones()).toEqual(["https://example.test/plugins.git", "https://example.test/plugins.git"]);
+      expect(read("calls.jsonl")).not.toContain("itlackey");
+      const real = await withEnv(env, () =>
+        runUpgrade({ ...opts, channel: "next" }, "0.10.1", deps("0.10.1", "0.10.3-beta")),
+      );
+      for (const harness of ["claude-code", "codex"])
+        expect(real.result.plugins.find((p) => p.harness === harness)).toMatchObject({
+          outcome: "updated",
+          from: plan(planned, harness)?.from,
+          to: plan(planned, harness)?.to,
+        });
     });
   });
 

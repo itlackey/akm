@@ -1853,15 +1853,16 @@ The result gains a `plugins` array, one entry per harness:
 `{ "harness": "claude-code" | "codex" | "opencode" | "opencode-v2", "outcome": ..., "from"?, "to"?, "message"? }`.
 `outcome` is `updated`, `current`, `skipped`, `deferred` or `failed`; under
 `--check` it can also be `pending` or `unknown`. `--check` writes nothing. For
-Claude Code and Codex it asks the `akm-plugins` marketplace remote (`git ls-remote`,
-the same read as `akm health`) for the newest release on the channel in force
-(the `--channel` asked for, else the channel the marketplace follows) and
-reports `pending`, with that release as `to`, when it is newer than the installed
-one, else `current`; with `--channel`, a plugin whose channel has nothing newer
-is `current` and stays, as the switch itself leaves it. A remote that does not
-answer leaves the entry `unknown`, with the reason in `message`. For OpenCode it
-compares the cached version with npm, so it reports `pending` when an update is
-due. A `failed` plugin makes `akm upgrade` exit `1` (not
+Claude Code and Codex it reads the akm build the channel in force offers, the same
+read the real switch makes: a shallow clone of the channel's branch of the
+marketplace the harness has registered, into a temporary folder. The channel is
+the `--channel` asked for, else the one the marketplace follows. It reports
+`pending`, with that build as `to`, when it is newer than the installed one, else
+`current`; with `--channel`, a plugin whose channel has nothing newer (or whose
+build cannot be read) is `current` and stays, as the switch itself leaves it. A
+plain check whose marketplace cannot be read reports `unknown`, with the reason in
+`message`. For OpenCode it compares the cached version with npm, so it reports
+`pending` when an update is due. A `failed` plugin makes `akm upgrade` exit `1` (not
 `--check`). On an up-to-date machine the text output prints nothing for
 plugins.
 

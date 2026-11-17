@@ -27,9 +27,9 @@ interface UpgradeView {
   currentVersion?: string;
   updateAvailable?: boolean;
   installMethod?: string;
-  /** The channel this check was made for, and the one the installed CLI follows. */
-  channel?: string;
-  currentChannel?: string;
+  /** The channel this check was made for, and the one akm reports the installed CLI follows. */
+  channel?: "latest" | "next";
+  currentChannel?: "latest" | "next";
   /** Each harness plugin akm found: the channel it follows and what the run did, or under `--check` would do, with it. */
   plugins?: PluginEntry[];
 }

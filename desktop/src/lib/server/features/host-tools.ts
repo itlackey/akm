@@ -407,11 +407,11 @@ export class HostTools {
    * `within` says whether a host release is one Desktop's own engine can still read: true when it is not newer, false
    * when it is, undefined when it is not a version. Without it no release is refused.
    */
-  start(action: string, harness?: string, channel = "latest", options: StartOptions = {}) {
+  start(action: string, harness?: string, chosen?: string, options: StartOptions = {}) {
     if (
       !["check", "install-cli", "upgrade-cli", "install-plugin"].includes(action) ||
       (action === "install-plugin" && !harnessIds.includes(harness as string)) ||
-      !["latest", "next"].includes(channel)
+      (chosen !== undefined && !["latest", "next"].includes(chosen))
     )
       throw new Error("Invalid software action.");
     if (this.pending) throw new Error("A software operation is already running.");
@@ -427,8 +427,9 @@ export class HostTools {
     this.state.command = undefined;
     this.state.consent = undefined;
     this.state.action = undefined;
-    // The one plan: Check reports it and Update runs it, both for the chosen channel.
-    const flags = ["--channel", channel];
+    // The one release channel: the saved choice, else the channel akm reports the host CLI follows.
+    let resolved = chosen as "latest" | "next" | undefined;
+    const channelOf = async (env: Env) => (resolved ??= await this.followedChannel(env));
     this.pending = Promise.resolve()
       .then(async () => {
         const env = await this.environment();
@@ -437,6 +438,7 @@ export class HostTools {
         if (action === "upgrade-cli") {
           if (!this.state.cli?.runnable || !this.state.cli.path)
             throw new SoftwareError("Install a working CLI first.");
+          const flags = ["--channel", await channelOf(env)];
           await this.verifyTarget(env, flags, options.within);
           this.state.command = ["akm upgrade", ...flags, "--format json"].join(" ");
           const upgraded = await this.upgrade(env, flags);
@@ -445,13 +447,14 @@ export class HostTools {
           this.state.action = { command: this.state.command, upgrade: upgraded };
           this.state.receipt = "Native AKM upgrade completed. The bundled desktop engine is unchanged.";
         }
-        if (action === "install-plugin") await this.installPlugin(harness as string, channel, env, options);
+        if (action === "install-plugin")
+          await this.installPlugin(harness as string, await channelOf(env), env, options);
         await this.inventory(env);
         if (this.state.cli?.runnable && this.state.cli.path) {
           const acted = this.state.command;
-          const checked = ["akm upgrade --check", ...flags, "--format json"].join(" ");
-          this.state.command = checked;
           try {
+            const flags = ["--channel", await channelOf(env)];
+            this.state.command = ["akm upgrade --check", ...flags, "--format json"].join(" ");
             const summary = summarizeUpgrade(
               json(
                 await this.invoke(
@@ -493,6 +496,17 @@ export class HostTools {
         if (action !== "check" && process.send) process.send({ type: "desktop-host-operation", busy: false });
       });
     return this.snapshot();
+  }
+  /** The channel with no saved choice: the one akm reports the installed CLI follows, from a check that names no channel. */
+  async followedChannel(env: Env): Promise<"latest" | "next"> {
+    const cli = this.state.cli;
+    if (!cli?.runnable || !cli.path) throw new SoftwareError("Install AKM and the harness first.");
+    const { currentChannel } = summarizeUpgrade(
+      json(await this.invoke(cli.path, ["upgrade", "--check", "--format", "json"], env, 120_000)),
+    );
+    if (currentChannel !== "latest" && currentChannel !== "next")
+      throw new SoftwareError("akm did not report which channel the CLI follows, so no channel was chosen.");
+    return currentChannel;
   }
   /** Run `akm upgrade`; a nonzero exit still carries akm's own result, so its lifecycle fields are kept. */
   async upgrade(env: Env, flags: string[]): Promise<UpgradeSummary> {

@@ -27,6 +27,10 @@ test("plugins follow Desktop's release stage and match on akm's major and minor"
   // A saved choice wins over the stage (F14).
   assert.equal(pluginChannel("0.10.261105", "next"), "next");
   assert.equal(pluginChannel("0.10.261105-beta", "latest"), "latest");
+  // With no saved choice, the channel akm reports the CLI follows comes before Desktop's own stage.
+  assert.equal(pluginChannel("0.10.261105", undefined, "next"), "next");
+  assert.equal(pluginChannel("0.10.261105-beta", undefined, "latest"), "latest");
+  assert.equal(pluginChannel("0.10.261105", "latest", "next"), "latest");
   assert.equal(pluginMatches("0.10.261105", "0.10.261020"), true);
   assert.equal(pluginMatches("0.10.261105-beta", "0.10.261020"), true);
   assert.equal(pluginMatches("0.10.261105", "0.9.15"), false);
@@ -43,6 +47,17 @@ test("the starter bundle is recognised by its source", () => {
   const bundle = (name, locator) => ({ name, source: locator ? { kind: "git", locator } : undefined });
   assert.equal(hasStarter([bundle("akm", undefined)]), false);
   assert.equal(hasStarter([bundle("akm-stash", "https://github.com/itlackey/akm-stash")]), true);
+  for (const locator of [
+    "github:itlackey/akm-stash",
+    "https://github.com/itlackey/akm-stash.git",
+    "https://github.com/itlackey/akm-stash/",
+    "github:itlackey/akm-stash.git",
+  ])
+    assert.equal(hasStarter([bundle("anything", locator)]), true, locator);
+  // The name, or a fork or private repository whose text contains akm-stash, is not the starter.
+  assert.equal(hasStarter([bundle("my-akm-stash-notes", "https://example.test/me/notes.git")]), false);
+  assert.equal(hasStarter([bundle("akm-stash", "https://github.com/someone/akm-stash")]), false);
+  assert.equal(hasStarter([bundle("notes", "https://github.com/itlackey/akm-stash-private")]), false);
 });
 
 const detected = (over = {}) => ({

@@ -42,7 +42,7 @@
 
   const host = $derived(software.data?.host),
     cli = $derived(host?.cli),
-    channel = $derived(pluginChannel(engine, software.data?.preferences?.pluginChannel)),
+    channel = $derived(pluginChannel(engine, software.data?.preferences?.pluginChannel, host?.upgrade?.currentChannel)),
     skew = $derived(classifyEngineSkew(engine, cli?.version)),
     desktopBehind = $derived(updateHeld(engine, host?.upgrade)),
     version = $derived(software.data?.desktop.version),

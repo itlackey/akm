@@ -22,8 +22,10 @@
   const data = $derived(software.data),
     error = $derived(software.error),
     submitting = $derived(software.submitting);
-  // The one release channel for the host's CLI and plugins: the saved choice, else Desktop's own release stage (the same rule as setup).
-  const channel = $derived(pluginChannel(data?.engine, data?.preferences?.pluginChannel));
+  // The one release channel for the host's CLI and plugins (the same rule as setup).
+  const channel = $derived(
+    pluginChannel(data?.engine, data?.preferences?.pluginChannel, data?.host.upgrade?.currentChannel),
+  );
   const hostBusy = $derived(submitting || Boolean(data && data.host.phase !== "idle"));
   const updateBusy = $derived(submitting || Boolean(data?.desktop.menu?.busy));
   const skew = $derived(classifyEngineSkew(data?.engine, data?.host.cli?.version));

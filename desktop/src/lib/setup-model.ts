@@ -51,11 +51,15 @@ export const harnessLabel = (harness: { id: string; major?: number }) =>
   harness.id === "opencode" && harness.major === 2 ? "OpenCode 2" : (harnessNames[harness.id] ?? harness.id);
 
 /**
- * The channel new plugins install from: the saved choice, else Desktop's own release stage, so its plugins follow the
- * same channel (see plugin-upgrade.ts).
+ * The one release channel for the host's CLI and plugins: the saved choice, else the channel akm reports the installed
+ * CLI follows, else (no host CLI yet, so setup installs the release that matches this app) Desktop's own release stage.
+ * Desktop never derives a channel from a host version.
  */
-export const pluginChannel = (engine: string | undefined, saved?: "latest" | "next"): "latest" | "next" =>
-  saved ?? (engine && /^\d+\.\d+\.\d+-/.test(engine) ? "next" : "latest");
+export const pluginChannel = (
+  engine: string | undefined,
+  saved?: "latest" | "next",
+  reported?: "latest" | "next",
+): "latest" | "next" => saved ?? reported ?? (engine && /^\d+\.\d+\.\d+-/.test(engine) ? "next" : "latest");
 
 /** What the harness says about the akm plugin, in words. */
 export function pluginLine(harness: HostHarness): string {
@@ -115,8 +119,18 @@ export function pluginMatches(engine: string | undefined, plugin: string | undef
 export const isUnconfigured = (listing: { bundles: unknown[]; workingStash: unknown | null }) =>
   listing.bundles.length === 0 && !listing.workingStash;
 
+const STARTER_LOCATORS = [STARTER, "https://github.com/itlackey/akm-stash"];
+
+/** The starter is a bundle whose source is the starter's repository, whatever its name, with or without `.git` or a slash. */
 export const hasStarter = (bundles: Bundle[]) =>
-  bundles.some((bundle) => /akm-stash/.test(`${bundle.name} ${bundle.source?.locator ?? ""}`));
+  bundles.some((bundle) =>
+    STARTER_LOCATORS.includes(
+      (bundle.source?.locator ?? "")
+        .trim()
+        .replace(/\/+$/, "")
+        .replace(/\.git$/, ""),
+    ),
+  );
 
 export interface AgentCard {
   id: string;

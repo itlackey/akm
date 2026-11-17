@@ -17,7 +17,6 @@ import {
   setup,
 } from "akm-cli/workspace";
 import { compareVersions } from "../engine-skew.js";
-import { pluginChannel } from "../setup-model.js";
 import { readFile, saveFile } from "./features/files.js";
 import {
   readPreferences,
@@ -154,8 +153,8 @@ export const routes: Route[] = [
           : hostTools.start(
               request.action,
               request.harness as string | undefined,
-              // The one release channel for the host's CLI and plugins: the saved choice.
-              pluginChannel(akmPackage.version, (await readPreferences()).pluginChannel),
+              // The saved release channel for the host's CLI and plugins; without one, HostTools asks akm.
+              (await readPreferences()).pluginChannel,
               {
                 consent: request.consent === true,
                 within: (version) => {

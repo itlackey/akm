@@ -48,6 +48,7 @@ async function hostFixture({
   installerVersion,
   latestVersion = "0.10.261105",
   checkFails = false,
+  currentChannel = "latest",
   upgradeResult,
   marketplace = false,
   extra,
@@ -110,6 +111,7 @@ async function hostFixture({
           currentVersion: "0.10.261104",
           latestVersion,
           updateAvailable: true,
+          currentChannel,
           plugins: [],
           migration: { status: "current" },
         });
@@ -298,7 +300,11 @@ test("all three harnesses use standard native installation commands and verify a
   f.manager.start("install-plugin", "codex");
   await f.manager.pending;
   assert.match(f.manager.snapshot().error, /already present/);
-  assert.ok(f.calls.slice(count).every((call) => call.args.includes("--version") || call.args.includes("list")));
+  assert.ok(
+    f.calls
+      .slice(count)
+      .every((call) => call.args.includes("--version") || call.args.includes("list") || call.args.includes("--check")),
+  );
 });
 
 // OpenCode 2 is the same `opencode` program; its major picks the v2 plugin and there is no separate row for it (F2).
@@ -436,7 +442,8 @@ test("the CLI upgrade asks akm for its target right before it runs and refuses o
   ok.manager.start("upgrade-cli", undefined, undefined, { within });
   await ok.manager.pending;
   const order = ok.calls.filter((call) => call.args[0] === "upgrade").map((call) => call.args.join(" "));
-  assert.deepEqual(order.slice(0, 2), [
+  assert.deepEqual(order.slice(0, 3), [
+    "upgrade --check --format json",
     "upgrade --check --channel latest --format json",
     "upgrade --channel latest --format json",
   ]);
@@ -449,7 +456,7 @@ test("the CLI upgrade asks akm for its target right before it runs and refuses o
   assert.ok(!newer.calls.some((call) => call.args.join(" ") === "upgrade --channel latest --format json"));
   // The check itself failed: unverifiable, so refused with guidance and nothing changed.
   const offline = await hostFixture({ checkFails: true });
-  offline.manager.start("upgrade-cli", undefined, undefined, { within });
+  offline.manager.start("upgrade-cli", undefined, "latest", { within });
   await offline.manager.pending;
   assert.match(offline.manager.snapshot().error, /nothing was changed/);
   assert.ok(!offline.calls.some((call) => call.args.join(" ") === "upgrade --channel latest --format json"));
@@ -466,6 +473,7 @@ test("the CLI upgrade asks akm for its target right before it runs and refuses o
             currentVersion: "0.10.261201",
             latestVersion: "0.10.261201",
             updateAvailable: false,
+            currentChannel: "latest",
             plugins: [],
             migration: { status: "current" },
           })
@@ -628,6 +636,42 @@ test("Check and Update run akm's one plan for the chosen channel: --check --chan
   assert.throws(() => f.manager.start("upgrade-cli", undefined, "beta"), /Invalid software action/);
 });
 
+test("with no saved choice the channel is the one akm reports the CLI follows, learned by a check that names none", async () => {
+  const calls = (f) => f.calls.filter((call) => call.args[0] === "upgrade").map((call) => call.args.join(" "));
+  const f = await hostFixture({ currentChannel: "next" });
+  f.manager.start("check");
+  await f.manager.pending;
+  assert.deepEqual(calls(f), ["upgrade --check --format json", "upgrade --check --channel next --format json"]);
+  f.calls.length = 0;
+  f.manager.start("upgrade-cli");
+  await f.manager.pending;
+  assert.deepEqual(calls(f), [
+    "upgrade --check --format json",
+    "upgrade --channel next --format json",
+    "upgrade --check --channel next --format json",
+  ]);
+  // A stable CLI is followed the same way.
+  const stable = await hostFixture({ currentChannel: "latest" });
+  stable.manager.start("check");
+  await stable.manager.pending;
+  assert.deepEqual(calls(stable), ["upgrade --check --format json", "upgrade --check --channel latest --format json"]);
+  // No host CLI: there is nothing to ask and nothing to install a plugin into, so no akm command runs.
+  const bare = await hostFixture({ absent: true });
+  bare.manager.start("install-plugin", "claude");
+  await bare.manager.pending;
+  assert.match(bare.manager.snapshot().error, /Install AKM and the harness first/);
+  assert.deepEqual(calls(bare), []);
+  // Installing the CLI makes it a host CLI to ask, so the check that follows uses the channel akm reports for it.
+  bare.manager.start("install-cli");
+  await bare.manager.pending;
+  assert.deepEqual(calls(bare), ["upgrade --check --format json", "upgrade --check --channel latest --format json"]);
+  // A CLI that does not say which channel it follows leaves nothing to choose from.
+  const silent = await hostFixture({ extra: (args) => (args[0] === "upgrade" ? "{}" : undefined) });
+  silent.manager.start("check");
+  await silent.manager.pending;
+  assert.match(silent.manager.snapshot().error, /did not report which channel the CLI follows/);
+});
+
 test("a prerelease CLI with Claude and Codex on stable and the channel on Prerelease: the plan shows both moving, and Update runs --channel next", async () => {
   let updated = false;
   const entry = (harness, from) => ({
@@ -702,7 +746,7 @@ test("a CLI that does not run is repaired only with consent and only where Deskt
         throw new Error("exec format error");
       }
       if (path.basename(file) === "bash") repaired = true;
-      return "{}";
+      return args[0] === "upgrade" ? JSON.stringify({ currentChannel: "latest" }) : "{}";
     },
   });
   // An earlier check reported a standalone binary; before that Desktop does not claim the file.
