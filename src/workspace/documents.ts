@@ -198,10 +198,7 @@ export async function retire(input: { ref: string; revision: string }) {
       ref: canonical,
       bundle: target.source.name,
       archiveDirs: accepted.retiredArchive?.dirs ?? [],
-      warnings:
-        type === "task"
-          ? ["Installed schedules are not changed. Run akm doctor scheduler sync to reconcile them."]
-          : [],
+      warnings: [],
     };
   });
 }

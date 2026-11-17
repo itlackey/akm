@@ -59,6 +59,7 @@ import type { InstalledSchedulerBinding, SchedulerBackend, SchedulerInstallOptio
 import { prepareTaskV3Execution } from "../../tasks/prepare/prepare";
 import type { PrepareTaskV3ExecutionContext } from "../../tasks/prepare/prepared-execution";
 import { isCheckoutInvocation, type ResolvedAkmInvocation, resolveAkmInvocation } from "../../tasks/resolve-akm-bin";
+import { recordTaskAttemptFailure } from "../../tasks/run/attempt-lifecycle";
 import { activeTaskSources, loadPreparedTask, resolveBundleAsset } from "../../tasks/run/load-task";
 import { createExecutionProvenanceContext } from "../../tasks/run/provenance";
 import { runTask } from "../../tasks/run/run-task";
@@ -311,11 +312,23 @@ export async function akmTasksRun(
   id: string,
   options: { scheduled?: boolean; target?: string; inputFlags?: readonly InputFlag[] } = {},
 ): Promise<TasksRunResultEnvelope> {
-  const parsed = parseTaskRef(id);
-  const bundle = resolveTaskReadBundle(parsed.bundle, options.target);
-  const adapterId = bundle.source.adapterId ?? detectAdapterId(bundle.source.path);
-  const resolvedId = taskIdForAdapter(parsed.id, adapterId);
   const scheduled = options.scheduled === true;
+  const startedAt = new Date();
+  let parsed: ReturnType<typeof parseTaskRef> | undefined;
+  let bundle: ReturnType<typeof resolveTaskReadBundle>;
+  let adapterId: string;
+  let resolvedId: string;
+  try {
+    parsed = parseTaskRef(id);
+    bundle = resolveTaskReadBundle(parsed.bundle, options.target);
+    adapterId = bundle.source.adapterId ?? detectAdapterId(bundle.source.path);
+    resolvedId = taskIdForAdapter(parsed.id, adapterId);
+  } catch (failure) {
+    if (scheduled) {
+      recordTaskAttemptFailure({ taskId: parsed?.id ?? id, reason: "task_load_failed", failure, startedAt, scheduled });
+    }
+    throw failure;
+  }
   // Built ONCE at this invocation boundary. eventSource is "task" whether or
   // not --scheduled was passed — scheduled stays a separate field carrying its
   // own meaning (activation policy, scheduler env), never selecting the event
@@ -341,8 +354,7 @@ export async function akmTasksRun(
     inputFlags: options.inputFlags,
     taskStepRunner: stepTaskRunner(scheduled),
   };
-  // The runner owns the prepare-before-reserve boundary. Invalid source,
-  // projectability, and resolver failures therefore create no history row.
+  // The runner records scheduled preparation failures; interactive preflight stays non-mutating.
   const result = await runTask(resolvedId, runOptions);
   if (!scheduled && result.target.kind === "workflow") {
     warnWorkflowUse(`task ${parsed.id}, which runs workflow ${result.target.ref},`);

@@ -24,7 +24,7 @@ import { AkmError, rethrowIfTestIsolationError } from "../../core/errors";
 import { processIdentity } from "../../core/file-lock";
 import { withStateDb } from "../../core/state-db";
 import { reserveTaskHistoryAttempt } from "../../storage/repositories/task-history-repository";
-import { validateTaskId } from "../task-id";
+import { validateTaskConceptId } from "../task-id";
 import { appendHistory } from "./task-history";
 import { persistRunLog, resolveTaskLogPath } from "./task-log";
 import type { TaskAttemptFailureReason, TaskRunResult } from "./task-result";
@@ -79,10 +79,8 @@ export function finishAttempt(startedAt: Date, observedFinishedAt: Date): Date {
  * usage failures, never an unclassified internal error that might leak
  * implementation detail.
  *
- * Every code here is reachable from the post-reservation dispatch catch: the
- * only caller of `recordTaskAttemptFailure` inside the runner is the
- * post-reservation catch in run-task.ts; task-source parsing happens BEFORE
- * reservation (load-task.ts), so the direct parse path never reaches it.
+ * Scheduled activations record preparation failures as well as dispatch failures.
+ * Interactive preparation stays non-mutating.
  * `TASK_SOURCE_INVALID`, `COMPOSITION_INVALID`, `TARGET_REF_INVALID` and
  * `INPUT_BINDING_INVALID` reach it through the WORKFLOW arm: a workflow task
  * whose plan freezes a `tasks/<ref>` step raises `TASK_SOURCE_INVALID` (via
@@ -103,6 +101,11 @@ const SAFE_TASK_ATTEMPT_ERROR_CODES = new Set([
   "STASH_DIR_NOT_A_DIRECTORY",
   "STASH_DIR_UNREADABLE",
   "LLM_NOT_CONFIGURED",
+  "AGENT_NOT_CONFIGURED",
+  "SELECTION_NOT_CONFIGURED",
+  "SECRET_REFERENCE_UNRESOLVED",
+  "RESOURCE_ALREADY_EXISTS",
+  "UNKNOWN_FLAG",
   "INVALID_CONFIG_FILE",
   "TEST_ISOLATION_MISSING",
   "INVALID_FLAG_VALUE",
@@ -139,7 +142,7 @@ export function recordTaskAttemptFailure(input: {
 }): void {
   let taskId = input.taskId;
   try {
-    validateTaskId(taskId);
+    validateTaskConceptId(taskId);
   } catch {
     taskId = INVALID_TASK_ATTEMPT_ID;
   }

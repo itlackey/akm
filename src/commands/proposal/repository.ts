@@ -19,7 +19,7 @@ import { isDeepStrictEqual } from "node:util";
 import { parse as parseYaml } from "yaml";
 import { ensureAkmMarkdownType } from "../../core/asset/akm-markdown";
 import { filesForRef, placementTypes, stashDirFor } from "../../core/asset/asset-placement";
-import { isBundleSlug, parseBundleRef } from "../../core/asset/asset-ref";
+import { isBundleSlug, makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { assembleAsset, serializeFrontmatter } from "../../core/asset/asset-serialize";
 import {
   carryForwardBookkeepingFrontmatter,
@@ -75,12 +75,14 @@ import {
   upsertProposal,
 } from "../../storage/repositories/proposals-repository";
 import { openSqliteReadSnapshot } from "../../storage/sqlite-read-snapshot";
+import { schedulerEnabledRefs } from "../../tasks/activation-config";
 import { pkgVersion } from "../../version";
 import { contentHash } from "../improve/content-hash";
 import { writeSupersededEdge } from "../improve/memory/memory-belief";
 import { archiveCleanupCandidate, derivedTwinPath } from "../improve/memory/memory-improve";
 import { runBaseChecks } from "../lint/base-linter";
 import type { LintIssue, LintIssueType } from "../lint/types";
+import { akmTasksDisable } from "../tasks/tasks";
 import { formatNewAssetDiff, formatRetireDiff, formatUnifiedDiff } from "./diff-format";
 import {
   ASSET_MISSING_GATE_REASON,
@@ -2000,6 +2002,7 @@ async function retireProposalWithLease(
         "INVALID_FLAG_VALUE",
       );
     }
+    await disableRetiredTask(resolveWriteAddress(target.source.path, proposal.ref), target.source.name);
     return { proposal, assetPath: recorded.path, ref: proposal.ref };
   }
   if (proposal.status !== "pending") {
@@ -2044,6 +2047,7 @@ async function retireProposalWithLease(
     // the original.
     intent = { assetPath, backupContent: currentBytes.toString("utf8") };
     working = recordRetireAcceptIntent(stashDir, proposal.id, intent, ctx);
+    await disableRetiredTask(ref, target.source.name);
     if (retirement?.judgeLabel === "supersedes") {
       try {
         writeSupersededEdge(assetPath, retirement.successorRef);
@@ -2055,6 +2059,16 @@ async function retireProposalWithLease(
     }
   } else {
     assertAkmAssetWrite(target.source);
+    if (
+      ref.type === "task" &&
+      fs.existsSync(intent.assetPath) &&
+      fs.readFileSync(intent.assetPath, "utf8") !== intent.backupContent
+    ) {
+      throw new UsageError(
+        `Retire proposal ${proposal.id} target (${proposal.ref}) changed since retirement started.`,
+        "PROPOSAL_STALE",
+      );
+    }
     // Revalidate the survivor even after a partial archive. The recorded original
     // is the judged retired side when its file has already moved.
     if (working.retirement) {
@@ -2067,6 +2081,8 @@ async function retireProposalWithLease(
       );
     }
   }
+
+  if (proposal.retireAcceptIntent) await disableRetiredTask(ref, target.source.name, true);
 
   // Phase 2: move, idempotently — a resumed call skips whichever file a
   // tombstone under this proposal's own id already claims. A failure undoes this
@@ -2166,6 +2182,21 @@ async function retireProposalWithLease(
   // The moved files left the index's view; drop their rows now, not at the next `akm index`.
   await indexWrittenProposalAssets(mutationTarget, twinPath ? [intent.assetPath, twinPath] : [intent.assetPath]);
   return { proposal: accepted, assetPath: intent.assetPath, ref: accepted.ref, ...(commit ? { commit } : {}) };
+}
+
+/** Scheduler ownership and reconciliation stay with the same operation used by `task disable`. */
+async function disableRetiredTask(ref: WriteAddress, bundle: string, resume = false): Promise<void> {
+  if (ref.type !== "task") return;
+  const qualifiedRef = makeBundleRef(bundle, ref.conceptId);
+  const enabled = schedulerEnabledRefs(loadConfig());
+  if (!resume && enabled !== undefined && !enabled.includes(qualifiedRef)) return;
+  const activation = await akmTasksDisable(qualifiedRef);
+  if (activation.sync.failures.length > 0) {
+    throw new Error(
+      `Task retirement could not reconcile the bundle scheduler: ${activation.sync.failures.map((failure) => `${failure.path}: ${failure.reason}`).join("; ")}. ` +
+        "The task is disabled in local config; retry retirement or run akm doctor scheduler sync.",
+    );
+  }
 }
 
 export interface RevertResult {

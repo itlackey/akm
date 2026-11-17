@@ -526,8 +526,16 @@ for full before/after examples and recovery guidance.
 - `akm doctor log --task <id> [--bundle <name>] [--limit <n>]` reads durable run
   history from `state.db`. Each row carries `trigger` (`schedule` when the OS
   scheduler started the run, `manual` otherwise; absent when not recorded).
+  Scheduled activations that cannot resolve, parse or prepare their source record
+  a failed row with `detail.reason: "task_load_failed"`, the typed error code,
+  timestamps and an unknown target. The task body did not run. Interactive
+  preparation errors and `task explain` remain non-mutating.
 - `akm task enable <ref>` / `akm task disable <ref>` change only local
   scheduler config, then reconcile that bundle.
+- Accepting a task retirement disables its host-local ref and reconciles its
+  native bindings before archiving the source. A failed reconciliation refuses
+  retirement and leaves the source in place; retry it or sync after repairing
+  the backend. Reverting retirement restores source bytes without enabling it.
 - Delete the `.yml` source and sync to remove its derived binding(s).
 - `akm doctor scheduler sync` reads the installed rows once, compares each against what
   its source renders, and installs, rewrites, or removes rows one at a time.
