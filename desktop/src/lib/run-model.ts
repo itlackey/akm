@@ -97,6 +97,8 @@ export function workflowFacts(trace: WorkflowTrace) {
   return {
     failures,
     engines: [...engines.values()].sort((a, b) => b.tokens - a.tokens || a.engine.localeCompare(b.engine)),
+    tokens: [...engines.values()].reduce((sum, row) => sum + row.tokens, 0),
+    unreported: [...engines.values()].reduce((sum, row) => sum + row.unreported, 0),
     failedWithoutFailedUnit: trace.run.status === "failed" && failures.length === 0,
   };
 }

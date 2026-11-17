@@ -85,5 +85,8 @@ test("a run that failed with no failed attempt says so, and an old unit with no 
   const facts = workflowFacts(trace("failed", [unit("a", null, "completed", [])]));
   assert.equal(facts.failedWithoutFailedUnit, true);
   assert.deepEqual(facts.engines, [{ engine: "Not recorded", attempts: 1, failed: 0, tokens: 0, unreported: 1 }]);
+  // No attempt reported tokens: the totals say none were reported rather than summing them to a reported zero.
+  assert.equal(facts.tokens, 0);
+  assert.equal(facts.unreported, 1);
   assert.equal(workflowFacts(trace("completed", [])).failedWithoutFailedUnit, false);
 });

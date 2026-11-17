@@ -271,7 +271,35 @@ test("a workflow trace: a band per step, a bar per attempt, and a step's span ta
     ],
   );
   assert.equal(layout.done, 2);
-  assert.equal(layout.tokens, 30);
+});
+
+test("a workflow trace: units that name no known step get no invented status, only what each unit reports", () => {
+  const unit = (unitId, status) => ({
+    unitId,
+    nodeId: unitId,
+    stepId: null,
+    phase: "unit",
+    status,
+    runtimeKind: null,
+    engine: null,
+    tokens: null,
+    startedAt: null,
+    finishedAt: null,
+    failureReason: null,
+    diagnostic: null,
+    sessionId: null,
+    attempts: [],
+  });
+  const trace = {
+    run: { id: "r", workflowRef: "workflows/w", workflowTitle: "W", status: "failed", createdAt: new Date(0).toISOString() },
+    steps: [],
+    units: [unit("a", "failed"), unit("b", "blocked"), unit("c", "completed")],
+    children: [],
+  };
+  const [other] = traceRows(trace).steps;
+  assert.equal(other.title, "Other units");
+  assert.equal(other.status, "");
+  assert.equal(other.unitStatuses, "1 failed, 1 blocked, 1 completed");
 });
 
 test("the scrubber reaches the end of a window that is not a whole number of steps", () => {
