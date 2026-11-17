@@ -124,6 +124,8 @@ test("the menu offers what akm allows and says why not: a read-only bundle, anot
 test("a rename in the tree is a rename on disk, announced, and the open page follows it", async (t) => {
   const { app, page } = await session(t);
   await go(page, opened(app.refs.document, "knowledge", "knowledge/restore-laptop.md"));
+  // An opened page moves focus to its heading once it has loaded; a rename started before then would lose focus.
+  await expect(page.getByRole("heading", { level: 1, name: "Restore a laptop" })).toBeFocused();
   const tree = page.getByRole("tree", { name: "Bundle files" });
   await tree.getByRole("treeitem", { name: "restore-laptop.md" }).focus();
   await page.keyboard.press("F2");
