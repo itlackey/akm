@@ -71,6 +71,8 @@ export namespace activity {
   /** One improve run by id, however old, in the shape of an overview `improveRuns` entry. */
   function improveRun(input: { id: string }): unknown;
   function meta(): { version: string; hostname: string; runtime: string };
+  /** The daily usage report for Desktop: sent at most once a UTC day, opt out with `usage.report: false`. Never rejects; `true` when sent. */
+  function reportUsage(): Promise<boolean>;
   /** Every search, show, feedback and curate row of the window, from every source, oldest first. */
   function events(input?: { since?: string; until?: string }): unknown;
   function overview(input?: { probe?: boolean; metricsSince?: string }): Promise<unknown>;

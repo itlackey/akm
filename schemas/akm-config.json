@@ -740,6 +740,9 @@
       "properties": {
         "capture": {
           "type": "boolean"
+        },
+        "report": {
+          "type": "boolean"
         }
       },
       "additionalProperties": {}
@@ -2729,6 +2732,9 @@
           "type": "object",
           "properties": {
             "capture": {
+              "type": "boolean"
+            },
+            "report": {
               "type": "boolean"
             }
           },
