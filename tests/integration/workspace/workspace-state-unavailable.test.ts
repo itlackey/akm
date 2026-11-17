@@ -9,7 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { resetConfigCache } from "../../../src/core/config/config";
 import { STATE_MIGRATIONS } from "../../../src/core/state/migrations";
-import { getStateDbPath } from "../../../src/core/state-db";
+import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import { openDatabase } from "../../../src/storage/database";
 import { runMigrations } from "../../../src/storage/sqlite-migrations";
 import { activity, assets, proposals } from "../../../src/workspace";
@@ -45,4 +45,16 @@ test("a state.db behind on migrations: the same reads say it needs migration", a
   runMigrations(seeded, STATE_MIGRATIONS.slice(0, STATE_MIGRATIONS.length - 1));
   seeded.close();
   for (const result of await reads()) expect(result).toEqual({ available: false, reason: "needs-migration" });
+});
+
+test("a readable state.db but no resolvable bundle directory: pulse, impact and asset history report it, not zero proposals", async () => {
+  openStateDatabase().close();
+  fs.rmSync(storage.stashDir, { recursive: true, force: true });
+  resetConfigCache();
+  await expect(Promise.resolve().then(() => activity.pulse())).rejects.toMatchObject({ code: "STASH_DIR_UNREADABLE" });
+  await expect(Promise.resolve().then(() => assets.improvement({ ref: "stash//lessons/rg" }))).rejects.toMatchObject({
+    code: "STASH_DIR_UNREADABLE",
+  });
+  const impact = await activity.improveImpact();
+  expect(impact).toMatchObject({ available: true, errors: { proposals: expect.stringContaining("bundle directory") } });
 });

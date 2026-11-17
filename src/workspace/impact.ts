@@ -11,11 +11,12 @@
 import { metricsWindow, readLlmRows, readUsageRows } from "../commands/metrics/metrics-cli";
 import type { MetricsUsageRow } from "../commands/metrics/types";
 import { isRetireProposal, type Proposal } from "../commands/proposal/proposal-types";
+import { resolveStashDir } from "../core/common";
 import { readStateEvents } from "../storage/repositories/events-repository";
 import { listIndexCompletedEvents } from "../storage/repositories/metrics-repository";
 import { listStateProposals } from "../storage/repositories/proposals-repository";
 import { classifyOutcome, decidedAt, deciderOf, weekOf, weekRange } from "./derive";
-import { attempt, tryStashDir, withReadonlyStateDb } from "./readers";
+import { attempt, withReadonlyStateDb } from "./readers";
 
 const DAY = 86_400_000;
 const FLAG_DAYS = 14;
@@ -183,13 +184,12 @@ export function improveImpact(input: { since?: string } = {}) {
   const errors: Record<string, string> = {};
   // The store reads are what can fail (one malformed proposal row throws), so each degrades on its own; the
   // derivations below are pure functions of what was read.
-  const stashDir = tryStashDir();
   const state = withReadonlyStateDb(
     (db) => ({
       proposals: attempt(
         errors,
         "proposals",
-        () => (stashDir ? listStateProposals(db, { stashDir, withContent: false }) : []),
+        () => listStateProposals(db, { stashDir: resolveStashDir(), withContent: false }),
         [],
       ),
       reopened: attempt(
