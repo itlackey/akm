@@ -169,12 +169,8 @@
         <h2>Quick actions</h2>
         <nav class="home-shortcuts" aria-label="Quick actions">
           <a href="/library/search"><Icon name="search" />Find an asset<Icon name="chevron-right" size={16} /></a>
-          <a
-            href={"/library/new?" +
-              new URLSearchParams({
-                returnTo: "/",
-                ...(workspace.defaultWriteTarget ? { bundle: workspace.defaultWriteTarget } : {}),
-              })}><Icon name="plus" />Create an asset<Icon name="chevron-right" size={16} /></a
+          <a href={"/library/files?" + new URLSearchParams({ bundle: workspace.defaultWriteTarget, path: "" })}
+            ><Icon name="plus" />Create in Files<Icon name="chevron-right" size={16} /></a
           >
           <a href="/settings/bundles"><Icon name="folder" />Manage bundles<Icon name="chevron-right" size={16} /></a>
         </nav>

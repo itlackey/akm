@@ -191,6 +191,16 @@ describe("the same checks apply to every type", () => {
   });
 });
 
+test("a type names the folder akm keeps it in, and not both a type and a folder", async () => {
+  const made = await documents.createFile({ bundle: "stash", type: "knowledge", name: "by-type" });
+
+  expect(made).toMatchObject({ file: "knowledge/by-type.md", type: "knowledge", ref: "stash//knowledge/by-type" });
+  expect(await message(documents.createFile({ bundle: "stash", type: "knowledge", folder: "x", name: "a" }))).toMatch(
+    /not both/,
+  );
+  expect(await message(documents.createFile({ bundle: "stash", type: "nonsense", name: "a" }))).toMatch(/no folder/);
+});
+
 describe("a listing says what a new file in its folder would be", () => {
   const verdict = async (bundle: string, folder: string) =>
     (

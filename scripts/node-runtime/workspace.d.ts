@@ -224,7 +224,7 @@ export namespace documents {
     changes: Array<{ key: string; value?: unknown; remove?: true }>;
   }): { content: string; bodyStart: number };
   /** A new file in a folder of a bundle, for any type: the folder's type decides the starting text; a folder with no type gets an empty file. */
-  function createFile(input: { bundle: string; folder?: string; name: string; content?: string }): Promise<{
+  function createFile(input: { bundle: string; folder?: string; type?: string; name: string; content?: string }): Promise<{
     bundle: string;
     file: string;
     type: string | null;

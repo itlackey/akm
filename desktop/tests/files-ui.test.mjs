@@ -462,3 +462,16 @@ test("Settings counts a bundle's uncommitted files as the Files header does, fro
   await page.getByRole("link", { name: "Manage personal", exact: true }).click();
   await expect(page.getByText("Uncommitted").locator("xpath=following-sibling::dd[1]")).toHaveText(/2 files/);
 });
+
+test("Write this up makes a knowledge file in akm's write target through the same create as New, and opens the editor", async (t) => {
+  const { app, page } = await session(t);
+  await go(page, "/library/search?q=zzqqxx+nothing+matches");
+  await page.getByRole("button", { name: "Write this up" }).click();
+  await expect(page.getByRole("button", { name: "Save changes" })).toBeVisible();
+  const writeTarget = (await app.call("/api/bundles")).body.data.writeTarget.name;
+  const place = (await folderOf(app, "knowledge", writeTarget)).entries.find(
+    (entry) => entry.name === "zzqqxx-nothing-matches.md",
+  );
+  assert.ok(place, "the file is in the knowledge folder of the write target");
+  assert.equal(place.assets[0].type, "knowledge");
+});

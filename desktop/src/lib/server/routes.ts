@@ -322,13 +322,8 @@ export const routes: Route[] = [
   post("/api/config/connections/save", body(config.saveConnection, ["name", "entry"], "connection save")),
   post("/api/config/connections/remove", body(config.removeConnection, ["name"], "connection remove")),
   post(
-    "/api/knowledge/create",
-    body(documents.createKnowledge, ["bundle", "name", "path", "content"], "knowledge create"),
-    { limit: "document" },
-  ),
-  post(
     "/api/documents/create-file",
-    body(documents.createFile, ["bundle", "folder", "name", "content"], "file create"),
+    body(documents.createFile, ["bundle", "folder", "type", "name", "content"], "file create"),
     {
       limit: "document",
     },

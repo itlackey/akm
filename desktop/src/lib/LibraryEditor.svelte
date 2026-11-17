@@ -6,9 +6,8 @@
 
 <script lang="ts">
   import { onMount, onDestroy, tick } from "svelte";
-  import { api, ApiError, pickFolder, saveContent } from "./client";
+  import { api, ApiError, saveContent } from "./client";
   import { libraryRead, documentTitle } from "./library-model";
-  import { folderUnder } from "./library-files-model";
   import { clearDraft, draftKey, readDraft, setUnsaved, storeDraft } from "./drafts";
   import type { Bundle, FrontmatterRead, Json, Source, TextCheck, WriteResult } from "./types";
   import PropertiesForm from "./PropertiesForm.svelte";
@@ -21,7 +20,6 @@
     ref = "",
     file = undefined,
     bundles = [],
-    defaultWriteTarget = "",
     query = new URLSearchParams(),
     returnTo = "/library/search",
     cancelHref = "",
@@ -31,7 +29,6 @@
     ref?: string;
     file?: { bundle: string; path: string };
     bundles?: Bundle[];
-    defaultWriteTarget?: string;
     query?: URLSearchParams;
     returnTo?: string;
     cancelHref?: string;
@@ -45,10 +42,6 @@
     busy = $state(false),
     loaded = $state(false),
     preview = $state(false);
-  let bundle = $state(""),
-    name = $state(""),
-    folder = $state(""),
-    folderInput = $state<HTMLInputElement>();
   let writeTab = $state<HTMLButtonElement>(),
     previewTab = $state<HTMLButtonElement>();
   let controller = new AbortController();
@@ -56,10 +49,7 @@
   let recovered = $state(false),
     retained = $state(false),
     discarding = $state(false);
-  let initialDraft = "",
-    initialName = "",
-    initialBundle = "",
-    initialFolder = "";
+  let initialDraft = "";
   let editorHeading = $state<HTMLHeadingElement>(),
     errorBox = $state<HTMLDivElement>();
   let textarea = $state<HTMLTextAreaElement>();
@@ -71,20 +61,23 @@
     checkFailure = $state(""),
     blocked = $state<TextCheck | null>(null),
     analysisRun = 0;
-  const creating = $derived(!ref && !file);
   const sourceParams = $derived<Record<string, string>>(file ? { bundle: file.bundle, file: file.path } : { ref });
-  // akm says whether this is a Markdown file (`documents.frontmatter`); a new document is one.
-  const markdown = $derived(creating || properties?.markdown === true);
+  // akm says whether this is a Markdown file (`documents.frontmatter`).
+  const markdown = $derived(properties?.markdown === true);
   const documentHref = $derived(
     "/library/asset?ref=" + encodeURIComponent(ref) + "&returnTo=" + encodeURIComponent(returnTo),
   );
-  const backHref = $derived(
-    cancelHref || (returnTo.startsWith("/library/files") ? returnTo : creating ? returnTo : documentHref),
-  );
+  const backHref = $derived(cancelHref || (returnTo.startsWith("/library/files") ? returnTo : documentHref));
   const readerHref = $derived(readingHref || query.get("readingFrom") || "");
-  const writable = $derived(bundles.filter((b) => b.writeBlocker === null));
-  const bundlePath = $derived(bundles.find((b) => b.name === bundle)?.path);
-  const root = $derived(bundlePath ? bundlePath.replace(/[\\/]+$/, "") + "/knowledge" : "");
+  const bundleName = $derived(source?.bundle ?? file?.bundle ?? ref.split("//")[0]);
+  // What is true of the bundle's Git, from akm's count: files a commit would take now, unknown when akm could not list them.
+  const gitNote = $derived.by(() => {
+    const git = bundles.find((entry) => entry.name === bundleName)?.git;
+    if (!git || git.error) return "";
+    return git.uncommitted === null || git.uncommitted === undefined
+      ? "Uncommitted files: unknown."
+      : `${git.uncommitted} ${git.uncommitted === 1 ? "file" : "files"} uncommitted.`;
+  });
   const where = $derived(source?.bundle && source.file ? { bundle: source.bundle, path: source.file } : null);
   // The form edits the frontmatter through akm and the box holds the body; Text shows the whole file in the box.
   const formMode = $derived(markdown && !!properties && !properties.error && !textMode);
@@ -93,45 +86,21 @@
   function persist() {
     retained = true;
     setUnsaved(true);
-    storeDraft(key(), { draft, bundle, name, folder, baseRevision: source?.revision, baseContent: source?.content });
+    storeDraft(key(), { draft, baseRevision: source?.revision, baseContent: source?.content });
   }
   async function initialize() {
     busy = true;
     error = "";
     setUnsaved(false);
     try {
-      if (ref || file) {
-        source = await libraryRead<Source>("/desktop/file", sourceParams, controller.signal);
-        draft = source.content.replace(/\r\n?/g, "\n");
-      } else {
-        bundle =
-          writable.find((b) => b.name === query.get("bundle"))?.name ??
-          writable.find((b) => b.name === defaultWriteTarget)?.name ??
-          writable[0]?.name ??
-          "";
-        const wanted = query.get("q") || "New document";
-        name =
-          query.get("name") ??
-          (query.get("q") ?? "")
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, "-")
-            .replace(/^-|-$/g, "");
-        draft = `# ${wanted}\n\n`;
-        const location = query.get("path") ?? "";
-        folder = location === "knowledge" ? "" : location.startsWith("knowledge/") ? location.slice(10) : "";
-      }
+      source = await libraryRead<Source>("/desktop/file", sourceParams, controller.signal);
+      draft = source.content.replace(/\r\n?/g, "\n");
       initialDraft = draft;
-      initialName = name;
-      initialBundle = bundle;
-      initialFolder = folder;
       const stored = readDraft(key());
       if (stored) {
         if (typeof stored.draft === "string") {
           retained = true;
           draft = stored.draft;
-          if (typeof stored.bundle === "string") bundle = stored.bundle || bundle;
-          if (typeof stored.name === "string") name = stored.name || name;
-          if (typeof stored.folder === "string") folder = stored.folder;
           if (source && typeof stored.baseRevision === "string" && stored.baseRevision !== source.revision) {
             latest = source;
             source = {
@@ -157,7 +126,7 @@
     }
   }
   async function save(reviewed = false, anyway = false) {
-    if (busy || (!creating && !retained) || (latest && !reviewed)) return;
+    if (busy || !retained || (latest && !reviewed)) return;
     busy = true;
     error = "";
     let writeCompleted = false;
@@ -165,7 +134,7 @@
       const base = reviewed ? latest : source;
       // akm checks the text that is about to be written. A text it could not read as the asset stops here; one it could
       // not check at all is saved and said so by the findings beside the editor.
-      if (!creating && where && !anyway) {
+      if (where && !anyway) {
         try {
           const verdict = await api<TextCheck>("/documents/check", {}, { ...where, content: toSave(base!) });
           check = verdict;
@@ -179,13 +148,11 @@
         }
       }
       blocked = null;
-      const result = creating
-        ? await api<WriteResult>("/knowledge/create", {}, { bundle, name, path: folder, content: draft })
-        : await api<WriteResult>(
-            "/desktop/file/save",
-            {},
-            { ...sourceParams, revision: base!.revision, content: saveContent(base!.content, draft) },
-          );
+      const result = await api<WriteResult>(
+        "/desktop/file/save",
+        {},
+        { ...sourceParams, revision: base!.revision, content: saveContent(base!.content, draft) },
+      );
       // Leaving an in-flight writer must not redirect or clear a newer editor's unsaved state.
       if (!alive) return;
       writeCompleted = true;
@@ -218,9 +185,7 @@
     } catch (e) {
       error = writeCompleted
         ? `The write completed, but the saved document could not be opened. ${(e as Error).message}`
-        : creating && e instanceof ApiError && e.code === "RESOURCE_ALREADY_EXISTS"
-          ? "That file name is already used in this folder. Choose a different file name; the existing asset has not been changed."
-          : (e as Error).message;
+        : (e as Error).message;
       if (e instanceof ApiError && e.code === "ASSET_CONTENT_CHANGED") {
         try {
           latest = await libraryRead<Source>("/desktop/file", sourceParams);
@@ -243,9 +208,6 @@
       error = "";
     }
     draft = source?.content ?? initialDraft;
-    name = initialName;
-    bundle = initialBundle;
-    folder = initialFolder;
     clearDraft(key());
     setUnsaved(false);
     retained = false;
@@ -265,24 +227,6 @@
     preview = event.key === "ArrowRight" || event.key === "End";
     await tick();
     (preview ? previewTab : writeTab)?.focus();
-  }
-  async function browse() {
-    error = "";
-    try {
-      const chosen = await pickFolder(root);
-      if (chosen !== null) {
-        const inside = folderUnder(root, chosen);
-        if (inside === null) error = `Choose a folder inside ${root}.`;
-        else {
-          folder = inside;
-          persist();
-        }
-      }
-    } catch (e) {
-      error = (e as Error).message;
-    }
-    await tick();
-    folderInput?.focus();
   }
   async function format(command: string) {
     const area = textarea;
@@ -374,7 +318,7 @@
   // The form and the findings follow the text a moment after it stops changing.
   $effect(() => {
     void draft;
-    if (!loaded || creating) return;
+    if (!loaded) return;
     const timer = setTimeout(() => void analyze(), 400);
     return () => clearTimeout(timer);
   });
@@ -387,21 +331,13 @@
 
 <div class="editor-header">
   <h1 bind:this={editorHeading} tabindex="-1">
-    {creating
-      ? "New knowledge"
-      : file
-        ? file.path.split("/").at(-1)
-        : source
-          ? documentTitle({ ref, content: source.content })
-          : "Opening editor…"}
+    {file ? file.path.split("/").at(-1) : source ? documentTitle({ ref, content: source.content }) : "Opening editor…"}
   </h1>
   <div class="editor-return">
     <a href={backHref}
-      ><Icon name="arrow-left" size={16} />{creating
-        ? "Cancel"
-        : backHref.startsWith("/library/files")
-          ? "Back to file"
-          : "Back to document"}</a
+      ><Icon name="arrow-left" size={16} />{backHref.startsWith("/library/files")
+        ? "Back to file"
+        : "Back to document"}</a
     >
   </div>
 </div>
@@ -410,10 +346,7 @@
         <a href={ref ? documentHref : backHref}>Open read-only</a> · Refresh the index if the source no longer matches.
       </p>{/if}
   </div>{/if}
-{#if creating && !writable.length}<p class="state">
-    No bundle accepts writes.{#each bundles as b}<br />{b.name}: {b.writeBlocker}{/each}
-  </p>
-{:else if loaded}<form
+{#if loaded}<form
     class="editor-form"
     class:grows={formMode}
     onsubmit={(event) => {
@@ -422,25 +355,6 @@
     }}
   >
     <fieldset class="editor-fields" disabled={busy}>
-      {#if creating}<div class="settings-grid">
-          <label
-            >Bundle<select bind:value={bundle} onchange={persist}
-              >{#each bundles as b}<option value={b.name} disabled={b.writeBlocker !== null}
-                  >{b.name}{b.writeBlocker === null ? "" : ": " + b.writeBlocker}</option
-                >{/each}</select
-            ></label
-          ><label>File name<input bind:value={name} required oninput={persist} placeholder="recovery-guide" /></label
-          ><label
-            >Folder under knowledge/
-            <div class="field-control">
-              <input bind:this={folderInput} bind:value={folder} oninput={persist} placeholder="Optional" /><button
-                type="button"
-                class="btn-secondary"
-                onclick={browse}>Browse…</button
-              >
-            </div></label
-          >
-        </div>{/if}
       <div class="editor-toolbar">
         <div class="editor-tabs" role="tablist" tabindex="-1" aria-label="Editor view" onkeydown={tabKey}>
           <button
@@ -463,8 +377,7 @@
             onclick={() => (preview = true)}>Preview</button
           >
         </div>
-        <button class="save-action" disabled={busy || !!latest || (!creating && !retained)}
-          >{busy ? "Saving…" : creating ? "Create knowledge" : "Save changes"}</button
+        <button class="save-action" disabled={busy || !!latest || !retained}>{busy ? "Saving…" : "Save changes"}</button
         >
       </div>
       <div class="editor-status">
@@ -475,11 +388,7 @@
                 ? "Restored unsaved draft · kept in this window"
                 : "Unsaved changes · kept in this window"
               : "No unsaved changes"}</span
-          ><span class="save-policy"
-            >{creating ? bundle : (file?.bundle ?? ref.split("//")[0])} · {creating
-              ? "AKM policy may commit and push."
-              : "Saved to the file; Git is not changed."}</span
-          >
+          ><span class="save-policy">{bundleName} · Saves to the file. {gitNote}</span>
         </div>
         {#if retained}<button type="button" class="discard-action quiet" onclick={() => (discarding = true)}
             >Discard draft…</button
@@ -510,7 +419,7 @@
             >
           </div>
         </div>{/if}
-      {#if !creating && markdown}<div class="properties-switch" role="group" aria-label="Frontmatter view">
+      {#if markdown}<div class="properties-switch" role="group" aria-label="Frontmatter view">
           <button
             type="button"
             class="quiet"
@@ -574,27 +483,27 @@
           {#if markdown}<Markdown content={draft} bodyStart={properties?.bodyStart} {ref} />{:else}<pre
               class="code">{draft}</pre>{/if}
         </div>
-        {#if !creating}<aside class="findings" aria-label="Checks">
-            {#if checkFailure}<p class="muted small">akm could not check this text: {checkFailure}</p>
-            {:else if check}
-              {#if check.unreadable}<p class="notice notice-warn reason">
-                  akm could not read this as an asset: {check.unreadable.reason}
-                  {#if check.unreadable.line}<button
-                      type="button"
-                      class="text-action"
-                      onclick={() => jumpTo(check!.unreadable!.line!)}>Line {check.unreadable.line}</button
-                    >{/if}
-                </p>{/if}
-              {#if check.findings.length || check.warnings.length}<ul class="plain">
-                  {#each [...check.findings, ...check.warnings] as finding}<li>
-                      {#if finding.line}<button type="button" class="text-action" onclick={() => jumpTo(finding.line!)}
-                          >Line {finding.line}</button
-                        >{/if}
-                      <strong>{finding.issue}</strong>: {finding.detail}
-                    </li>{/each}
-                </ul>{:else}<p class="muted small">akm found no problems.</p>{/if}
-            {/if}
-          </aside>{/if}
+        <aside class="findings" aria-label="Checks">
+          {#if checkFailure}<p class="muted small">akm could not check this text: {checkFailure}</p>
+          {:else if check}
+            {#if check.unreadable}<p class="notice notice-warn reason">
+                akm could not read this as an asset: {check.unreadable.reason}
+                {#if check.unreadable.line}<button
+                    type="button"
+                    class="text-action"
+                    onclick={() => jumpTo(check!.unreadable!.line!)}>Line {check.unreadable.line}</button
+                  >{/if}
+              </p>{/if}
+            {#if check.findings.length || check.warnings.length}<ul class="plain">
+                {#each [...check.findings, ...check.warnings] as finding}<li>
+                    {#if finding.line}<button type="button" class="text-action" onclick={() => jumpTo(finding.line!)}
+                        >Line {finding.line}</button
+                      >{/if}
+                    <strong>{finding.issue}</strong>: {finding.detail}
+                  </li>{/each}
+              </ul>{:else}<p class="muted small">akm found no problems.</p>{/if}
+          {/if}
+        </aside>
       </div>
     </fieldset>
   </form>{/if}
@@ -687,14 +596,6 @@
     margin: 0;
     padding: 0;
     min-inline-size: 0;
-  }
-  .settings-grid {
-    margin-bottom: 24px;
-  }
-  .settings-grid > label {
-    display: grid;
-    gap: 8px;
-    align-content: start;
   }
   .editor-toolbar {
     display: grid;

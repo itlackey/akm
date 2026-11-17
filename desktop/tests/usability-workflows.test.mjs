@@ -93,20 +93,6 @@ test("reviewed human workflows prevent dead ends and preserve focus and source",
     await workspace.getByRole("link", { name: /Search results/ }).click();
     await expect(page.locator(".library-hit-content").filter({ hasText: "restore laptop" })).toBeFocused();
   });
-  await t.test("duplicate creation keeps the draft and provides a usable recovery action", async () => {
-    await navigate("/library/new");
-    await page.getByRole("textbox", { name: "File name", exact: true }).fill("restore-laptop");
-    await editor.fill("# Synthetic duplicate\n\nKeep this draft.\n");
-    await page.getByRole("button", { name: "Create knowledge", exact: true }).click();
-    const alert = workspace.getByRole("alert");
-    await expect(alert).toContainText("Choose a different file name");
-    await expect(alert).toBeFocused();
-    await expect(alert).not.toContainText("--force");
-    await expect(editor).toHaveValue(/Keep this draft/);
-    assert.equal(await readFile(app.documentPath, "utf8"), original);
-    await workspace.getByRole("button", { name: "Discard draft…", exact: true }).click();
-    await workspace.getByRole("button", { name: "Discard draft", exact: true }).click();
-  });
   await t.test(
     "narrow review focuses selected detail and returns to queue; new files have no broken link",
     async () => {

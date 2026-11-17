@@ -50,10 +50,9 @@
   // First-run setup is reached from Home and Settings, not from the bar, so no section is current there.
   const current = $derived(prefix === "setup" ? undefined : section);
   const view = $derived(page.url.pathname.split("/")[2] ?? "");
-  const editing = $derived(prefix === "library" && ["edit", "new"].includes(view));
+  const editing = $derived(prefix === "library" && ["edit"].includes(view));
   const workspaceActive = $derived(
-    prefix === "review" ||
-      (prefix === "library" && ["files", "edit", "new", "new-sensitive", "compare"].includes(view)),
+    prefix === "review" || (prefix === "library" && ["files", "edit", "new-sensitive", "compare"].includes(view)),
   );
 
   beforeNavigate((navigation) => {

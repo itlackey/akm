@@ -13,7 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { renderTaskYaml } from "../commands/tasks/tasks";
 import { assertFlatAssetName, normalizeCreateSubPath } from "../core/asset/asset-create";
-import { refForFile } from "../core/asset/asset-placement";
+import { documentStashDirFor, refForFile } from "../core/asset/asset-placement";
 import { serializeFrontmatter } from "../core/asset/asset-serialize";
 import { frontmatterKeysFor } from "../core/asset/type-keys";
 import { isWithin } from "../core/common";
@@ -101,8 +101,10 @@ function startingText(type: string, stem: string): string {
 
 export interface CreateFileInput {
   bundle: string;
-  /** The folder inside the bundle; the bundle root when absent. */
+  /** The folder inside the bundle; the bundle root when absent (or, with `type`, the folder akm keeps that type in). */
   folder?: string;
+  /** Make a file of this type in the folder akm keeps it in (`knowledge` for knowledge). Not with `folder`. */
+  type?: string;
   name: string;
   /** The text to start with; the type's starting text when absent. */
   content?: string;
@@ -119,7 +121,12 @@ export async function createFile(input: CreateFileInput) {
   const name = required(input.name, "name");
   assertFlatAssetName(name);
   if (name === "." || name === ".." || name.includes("\0")) throw new UsageError(`"${name}" is not a file name.`);
-  const folder = normalizeCreateSubPath(input.folder);
+  if (input.type !== undefined && input.folder !== undefined)
+    throw new UsageError("Name the folder or the type of the new file, not both.");
+  const typeFolder = input.type === undefined ? undefined : documentStashDirFor(input.type);
+  if (input.type !== undefined && typeFolder === undefined)
+    throw new UsageError(`akm keeps no folder of documents for the type "${input.type}".`);
+  const folder = normalizeCreateSubPath(typeFolder ?? input.folder);
   if (typeof input.content !== "string" && input.content !== undefined) throw new UsageError("content must be text.");
   return interactive("ui-file-create", async () => {
     const config = loadConfig();

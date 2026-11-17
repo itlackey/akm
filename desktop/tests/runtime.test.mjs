@@ -97,13 +97,16 @@ test("loopback session bootstrap, authentication and strict write origin", async
     401,
   );
   assert.equal(
-    (await app.request("/knowledge/create", { name: "bad", content: "# bad" }, { Origin: "http://evil.example" }))
+    (await app.request("/documents/create-file", { name: "bad", content: "# bad" }, { Origin: "http://evil.example" }))
       .status,
     403,
   );
-  assert.equal((await app.request("/knowledge/create", { name: "bad", content: "# bad" }, { Origin: "" })).status, 403);
   assert.equal(
-    (await app.request("/knowledge/create", { name: "bad", content: "# bad" }, { "Content-Type": "text/plain" }))
+    (await app.request("/documents/create-file", { name: "bad", content: "# bad" }, { Origin: "" })).status,
+    403,
+  );
+  assert.equal(
+    (await app.request("/documents/create-file", { name: "bad", content: "# bad" }, { "Content-Type": "text/plain" }))
       .status,
     415,
   );

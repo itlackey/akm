@@ -6,7 +6,7 @@
 
 <script lang="ts">
   import { onDestroy, tick, untrack } from "svelte";
-  import { assetSource, title, toggleSelection, date, matchesAssetRef, type ApiError } from "./client";
+  import { api, assetSource, title, toggleSelection, date, matchesAssetRef, type ApiError } from "./client";
   import { libraryRead, resultContext, searchHref, documentTitle } from "./library-model";
   import { filesHref, parentPath, parseFilesHref } from "./library-files-model";
   import type { FileListing, FileLocation, FilesViewState, MovedLinksReport } from "./library-files-model";
@@ -95,7 +95,7 @@
   );
   const defaultBundle = $derived(bundles.find((b) => b.default)?.name ?? "");
   const normalizedRoute = $derived(route.replace(/^#?\//, ""));
-  const editing = $derived(normalizedRoute === "edit" || normalizedRoute === "new");
+  const editing = $derived(normalizedRoute === "edit");
   const newSensitive = $derived(normalizedRoute === "new-sensitive");
   const inFiles = $derived(normalizedRoute === "files" || editing || newSensitive);
   const ref = $derived(query.get("ref") ?? "");
@@ -111,11 +111,9 @@
   const readingHref = $derived(query.get("readingFrom") || fileQuery.get("readingFrom") || "");
   const reviewHref = $derived(query.get("reviewFrom") || fileQuery.get("reviewFrom") || "");
   const returnTo = $derived(
-    normalizedRoute === "new" && query.get("returnTo") === "/"
-      ? "/"
-      : inFiles
-        ? filesHref({ bundle: fileBundle, path: filePath, file: selectedFilePath, ref, open: !!ref }, readingHref)
-        : searchHref(resultContext(query)),
+    inFiles
+      ? filesHref({ bundle: fileBundle, path: filePath, file: selectedFilePath, ref, open: !!ref }, readingHref)
+      : searchHref(resultContext(query)),
   );
   const currentHref = $derived("/library/" + normalizedRoute + (query.size ? "?" + query : ""));
   const activeLocation = $derived(locatedRef === ref ? loadedAsset?.location : null);
@@ -457,6 +455,46 @@
   function navigateFiles(location: FileLocation) {
     void navigate(withReview(filesHref(location, readingHref)));
   }
+  /** A file was made: it opens in the editor, and Back returns to its folder. */
+  function openCreated(created: { bundle: string; folder: string; file: string; ref: string | null }) {
+    return navigate(
+      "/library/edit?" +
+        new URLSearchParams({
+          ...(created.ref ? { ref: created.ref } : { bundle: created.bundle, file: created.file }),
+          returnTo: filesHref(
+            {
+              bundle: created.bundle,
+              path: created.folder,
+              file: created.file,
+              ...(created.ref ? { ref: created.ref, open: true } : { open: true }),
+            },
+            readingHref,
+          ),
+        }),
+    );
+  }
+  /** The same create as the Files New button: a knowledge file in the folder akm keeps knowledge in, in akm's write target. */
+  async function writeThisUp(topic: string) {
+    error = "";
+    errorCode = "";
+    try {
+      const created = await api<{ bundle: string; file: string; ref: string | null }>(
+        "/documents/create-file",
+        {},
+        {
+          bundle: defaultWriteTarget,
+          type: "knowledge",
+          name: topic
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(/^-|-$/g, ""),
+        },
+      );
+      await openCreated({ ...created, folder: parentPath(created.file) });
+    } catch (cause) {
+      fail(cause);
+    }
+  }
   async function savedAsset(savedRef: string, unchanged: boolean, saved?: { bundle: string; file: string }) {
     if (query.get("file")) {
       const params = new URLSearchParams((query.get("returnTo") ?? "").split("?")[1]);
@@ -624,22 +662,7 @@
     onSelect={(chosen) => (selected = toggleSelection(selected, chosen, 2))}
     onSearch={(name) => navigate(searchHref(new URLSearchParams({ bundle: name })))}
     onCreateProtected={(kind, bundle, folder) => navigate(createSensitiveHref(kind, bundle, folder))}
-    onCreated={(created) =>
-      navigate(
-        "/library/edit?" +
-          new URLSearchParams({
-            ...(created.ref ? { ref: created.ref } : { bundle: created.bundle, file: created.file }),
-            returnTo: filesHref(
-              {
-                bundle: created.bundle,
-                path: created.folder,
-                file: created.file,
-                ...(created.ref ? { ref: created.ref, open: true } : { open: true }),
-              },
-              readingHref,
-            ),
-          }),
-      )}
+    onCreated={openCreated}
     onChanged={(change) => {
       mutationRevision++;
       if (change?.moved) {
@@ -669,13 +692,12 @@
             />{/key}
         {:else if editing}
           {#key normalizedRoute + ":" + ref + ":" + query.get("file")}<LibraryEditor
-              ref={normalizedRoute === "new" ? "" : ref}
+              {ref}
               file={normalizedRoute === "edit" && !ref && query.get("file")
                 ? { bundle: fileBundle, path: query.get("file")! }
                 : undefined}
               {query}
               {bundles}
-              {defaultWriteTarget}
               returnTo={withReview(returnTo)}
               cancelHref={query.get("file") ? query.get("returnTo")! : withReview(returnTo)}
               {readingHref}
@@ -780,12 +802,7 @@
             <thead><tr><th>Query</th><th>Times</th><th>Days</th><th>Last seen</th><th>Next step</th></tr></thead><tbody
               >{#each misses.misses as miss}<tr
                   ><td>{miss.query}</td><td>{miss.count}</td><td>{miss.days}</td><td>{date(miss.lastAt)}</td><td
-                    ><a
-                      href={"/library/new?q=" +
-                        encodeURIComponent(miss.query) +
-                        "&returnTo=" +
-                        encodeURIComponent(returnTo)}>Write this up</a
-                    ></td
+                    ><button class="text-action" onclick={() => writeThisUp(miss.query)}>Write this up</button></td
                   ></tr
                 >{/each}</tbody
             >
@@ -880,9 +897,7 @@
       {#if result && !result.hits.length}<div class="list-empty">
           <h2>No matching assets</h2>
           <p>{result.tip ?? "Try a shorter query or another bundle."}</p>
-          {#if q}<a href={"/library/new?q=" + encodeURIComponent(q) + "&returnTo=" + encodeURIComponent(returnTo)}
-              >Write this up</a
-            >{/if}
+          {#if q}<button class="text-action" onclick={() => writeThisUp(q)}>Write this up</button>{/if}
           <p><a href="/library/search">Clear filters</a></p>
         </div>{/if}
       <ul class="search-results">

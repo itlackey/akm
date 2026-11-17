@@ -39,7 +39,6 @@ test("populated workspace accessibility and reflow across both themes", { timeou
       ready: ".properties",
     },
     { id: "editor", route: `/library/edit?ref=${ref}`, ready: ".properties-form" },
-    { id: "create", route: "/library/new", ready: 'textarea[name="content"]' },
     { id: "review-queue", route: "/review", ready: '[aria-label="Queue summary"]' },
     { id: "review-detail", route: `/review/${app.proposals.stale}`, ready: ".change-preview" },
     { id: "activity", route: "/activity/overview", ready: "#attention-title" },
