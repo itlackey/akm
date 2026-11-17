@@ -12,6 +12,7 @@ import { parseBundleRef } from "../core/asset/asset-ref";
 import { parseMarkdownToc, uniqueHeadingSlugs } from "../core/asset/markdown";
 import { markdownLinkTargets } from "../core/asset/markdown-link-targets";
 import { loadConfig } from "../core/config/config";
+import { defaultExcludedTypes } from "../core/config/schema/search";
 import { resolveRefOwner } from "../core/env-secret-ref";
 import { UsageError } from "../core/errors";
 import { type IncludeSelectors, includedTypes, includesProposed } from "../core/include";
@@ -110,9 +111,7 @@ export function projectOverview(input: { project: string }) {
               db,
               readable,
               project.filters,
-              (config.search?.defaultExcludeTypes ?? ["session"]).filter(
-                (type) => !includedTypes(project.include).includes(type),
-              ),
+              defaultExcludedTypes(config).filter((type) => !includedTypes(project.include).includes(type)),
               includesProposed(project.include),
             ),
           undefined,

@@ -73,9 +73,7 @@ else {process.exitCode=1}
   await pluginChannel.focus();
   await pluginChannel.selectOption("next");
   await expect(
-    page
-      .getByRole("status")
-      .filter({ hasText: "Saved. Update brings the CLI and plugins to the prerelease channel." }),
+    page.getByRole("status").filter({ hasText: "Saved. Update brings the CLI and plugins to the prerelease channel." }),
   ).toBeVisible();
   // The plan for the new choice is asked for at once, and focus stays on the control.
   await expect(page.locator('section[aria-labelledby="host-cli"]')).toHaveAttribute("aria-busy", "false");
@@ -98,7 +96,12 @@ else {process.exitCode=1}
   const unreadable = page.getByRole("alert").filter({ hasText: "The saved channel could not be read" });
   await expect(unreadable).toBeVisible();
   await page.getByRole("button", { name: "Check CLI & plugins" }).click();
-  await expect(page.getByRole("alert").filter({ hasText: /preferences\.json could not be read/ }).first()).toBeVisible();
+  await expect(
+    page
+      .getByRole("alert")
+      .filter({ hasText: /preferences\.json could not be read/ })
+      .first(),
+  ).toBeVisible();
   await pluginChannel.selectOption("next");
   await expect(unreadable).toHaveCount(0);
   await expect(page.locator('section[aria-labelledby="host-cli"]')).toHaveAttribute("aria-busy", "false");

@@ -48,7 +48,7 @@ export interface PathReference {
  * templates, and trailing sentence punctuation are all excluded.
  */
 export function findCurrentPathReferences(text: string, firstLine = 1): PathReference[] {
-  const pathRe = /(?<=^|[\s"'`([=])\/[^\s"'`)\]>,:\[\n]+/g;
+  const pathRe = /(?<=^|[\s"'`([=])\/[^\s"'`)\]>,:[\n]+/g;
   const out: PathReference[] = [];
   let inNonCurrentSection = false;
   text.split(/\r?\n/).forEach((line, index) => {
