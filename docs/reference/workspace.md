@@ -143,6 +143,13 @@ an `improveRuns` entry above. An unknown id throws `NotFoundError` (`IMPROVE_RUN
 
 The `health` part of `activity.overview` on its own, with the same `probe` parameter. A host calls it with `probe` set to run all checks.
 
+## `activity.reportUsage`
+
+No input. AKM Desktop's server calls it once at start. Sends the Desktop daily usage report when it is due (at most
+once per UTC day, not when `usage.report` is `false`) and returns `true` when the server accepted it. It never throws
+and never waits on the network for longer than a few seconds. What is sent is listed in
+[Data and Telemetry](data-and-telemetry.md#daily-usage-report).
+
 ## `activity.taskHistory`
 
 Requires `taskId`; optional `since` (default `30d`, same syntax as metrics) and `limit` (default 50, maximum 200).

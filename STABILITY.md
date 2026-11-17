@@ -263,6 +263,16 @@ the collected baseline through the 0.11 storage migration, which keeps it in
 `metrics.db` in the resolved data directory;
 the migration guide tracks the data contract, retention, and verification.
 
+### Daily usage report (Experimental)
+
+0.10.x also sends one anonymous report a day per surface (the CLI and AKM Desktop, through
+`akm-cli/workspace` `activity.reportUsage`) to a self-hosted Aptabase: command counts from the
+data above and library sizes, never argument values, refs, paths or names. It is on by default and
+`usage.report: false` in the config file turns it off; `--read-only`, `usage.capture: false`, CI and
+test runs send nothing. The key, the event fields and `activity.reportUsage` are Experimental: the
+fields may change between releases, and every change is listed in
+[Data and Telemetry](docs/reference/data-and-telemetry.md#daily-usage-report).
+
 ### Remaining scheduled 0.11 removals and breaking changes
 
 The reviewed 0.11 branch already removes implicit

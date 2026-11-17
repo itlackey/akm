@@ -171,6 +171,20 @@
         ],
       },
       {
+        id: "usage-report-settings",
+        title: "Usage reports",
+        description:
+          "Whether AKM sends its daily usage report: command counts and library size, never content or names.",
+        fields: [
+          {
+            key: "usage.report",
+            label: "Send a daily usage report",
+            kind: "boolean",
+            hint: "At most once a day each from the CLI and Desktop. Applies to both.",
+          },
+        ],
+      },
+      {
         id: "output-settings",
         title: "Command output",
         description: "Defaults when the CLI receives no explicit format or detail option.",

@@ -1,10 +1,11 @@
 # Data and Telemetry
 
-akm keeps your data on your machine. It sends no analytics or crash reports.
-It records [local-only counts of its own commands](#cli-usage-counts), which
-never leave your machine. It makes network requests only to the endpoints you configure or the commands
-you run, listed below. This page covers what akm sends, and what it stores and
-where.
+akm keeps your data on your machine. It sends no crash reports. It records
+[local-only counts of its own commands](#cli-usage-counts) and, at most once a
+day per surface, sends an [anonymous usage report](#daily-usage-report) built
+from them. Apart from that report it makes network requests only to the
+endpoints you configure or the commands you run, listed below. This page covers
+what akm sends, and what it stores and where.
 
 ## Network destinations
 
@@ -204,8 +205,9 @@ are purged on `akm index`. Read these with `akm doctor log`, `akm doctor metrics
 
 ## CLI usage counts
 
-akm records how its own commands are used, on your machine only. Nothing is
-sent anywhere, and it is outside learning, feedback and ranking.
+akm records how its own commands are used, on your machine. The counts are
+outside learning, feedback and ranking; the only thing sent from them is the
+[daily usage report](#daily-usage-report), as totals.
 
 - **Where:** the `cli_usage_*` tables of `metrics.db` in the data directory.
 - **What is recorded** for every command, including `--help`, `--version` and
@@ -226,6 +228,40 @@ sent anywhere, and it is outside learning, feedback and ranking.
   that invocation.
 - It never changes a command's output or exit code: an unwritable, locked or
   corrupt `metrics.db` is skipped silently.
+
+## Daily usage report
+
+On by default. akm sends one event a day per surface, the CLI and AKM Desktop,
+to a self-hosted [Aptabase](https://aptabase.com) at `https://reporting.fwdslsh.dev`.
+It is sent after a command finishes (at most one command a day pays a request, with a
+1.5 second limit) or, for Desktop, in the background when its server starts. A failed send
+is not retried that day, and nothing is ever printed or changed in a command's result.
+A fresh data directory sends nothing until its next UTC day.
+
+- **CLI event (`cli_daily`):** `period_days` (complete UTC days since the last
+  report, up to yesterday; `0` for the first report), `commands`, `failures`,
+  `src_user`, `src_agent`, `src_task`, `src_improve` (commands by who ran them),
+  and `cmd_<command>` (the number of runs of each top-level command, only those
+  run). It is built from the counts above, so it has no argument values.
+- **Desktop event (`desktop_daily`):** the library sizes below.
+- **Library sizes, in both:** `bundles` (enabled bundles in the config), `assets`
+  (indexed assets), `assets_<type>` for each of akm's own asset types (skill,
+  command, and so on) and `assets_other` for every other type, which a bundle or
+  you named, so its name is never sent. They are left out when there is no
+  readable index; the report never builds or changes the index.
+- **System fields, in both:** `osName` (Linux, macOS or Windows), `osVersion`,
+  `locale`, `engineName` and `engineVersion` (`bun` or `node`), `appVersion`
+  (the akm version), `sdkVersion` (`akm@<version>`), `isDebug: false`, a random
+  per-event session id and the time.
+- **Never sent:** queries, refs, paths, bundle names, argument values, secrets,
+  the random instance id, or any asset content.
+- **What the server keeps:** Aptabase keeps the event and derives country, region
+  and city from the request's IP address; it does not store the IP address.
+- **Turning it off:** `akm config set usage.report false` (the config key
+  `usage.report`), or the **Usage reports** switch in AKM Desktop's settings. The switch follows
+  `extends`: `false` in a base config turns it off unless a nearer layer sets it
+  to `true`, and a config that cannot be loaded sends nothing. `--read-only` and `usage.capture: false` also send nothing from
+  the CLI. Runs in CI (the `CI` variable) or under `bun test` never send.
 
 ## Inspect and clear
 
