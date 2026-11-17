@@ -6,7 +6,7 @@
 
 <script lang="ts">
   import { onDestroy, tick } from "svelte";
-  import { api, date } from "./client";
+  import { api, apiState, date } from "./client";
   import { navigate } from "./navigation";
   import ActivityChart from "./ActivityChart.svelte";
   import { verticalBars, lines, stepLine } from "./ui/chart-view.js";
@@ -111,7 +111,7 @@
     proposals = [];
     drillError = "";
     try {
-      const result = await api<{ proposals: Proposal[] }>("/proposals", {
+      const result = await apiState<{ proposals: Proposal[] }>("/proposals", {
         status: "recent",
         source,
         week,

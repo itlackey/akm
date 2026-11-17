@@ -17,7 +17,7 @@ import { listStateProposals } from "../storage/repositories/proposals-repository
 import { queryTaskHistory } from "../storage/repositories/task-history-repository";
 import { againstUsual, classifyOutcome } from "./derive";
 import { isUserSearch, missesFromRows } from "./misses";
-import { tryStashDir, withReadonlyStateDb } from "./readers";
+import { stateDbUnavailable, tryStashDir, withReadonlyStateDb } from "./readers";
 import { nearestRank } from "./stats";
 
 const DAY = 86_400_000;
@@ -37,8 +37,9 @@ export function overviewPulse() {
       tasks: queryTaskHistory(db, { since: weekAgo }),
       proposals: stashDir ? listStateProposals(db, { stashDir, withContent: false }) : [],
     }),
-    { usage: [], llm: [], runs: [], tasks: [], proposals: [] },
+    null,
   );
+  if (!state) return stateDbUnavailable();
   const rows = state.usage;
 
   // Found nothing: this week's share against the eight weeks before.
@@ -120,6 +121,7 @@ export function overviewPulse() {
   };
 
   return {
+    available: true as const,
     tiles: { foundNothing, negativeFeedback, runs },
     improveLine,
     attention,

@@ -7,7 +7,7 @@
 <script lang="ts">
   import { onDestroy, tick, untrack } from "svelte";
   import { afterNavigate } from "$app/navigation";
-  import { api, assetSource, date, bodyOf } from "./client";
+  import { api, assetSource, date, bodyOf, stateUnavailableText, type StateUnavailable } from "./client";
   import { documentTitle, libraryRead, typedLinks } from "./library-model";
   import type { AssetRead, Improvement, SearchHit } from "./library-model";
   import type { Bundle, History, Retirement, Source, WriteResult } from "./types";
@@ -61,6 +61,7 @@
     retireRevision = $state("");
   let data = $state<AssetRead | null>(null),
     improve = $state<Improvement | null>(null),
+    improveNote = $state(""),
     history = $state<History | null>(null);
   let error = $state(""),
     loading = $state(false),
@@ -165,6 +166,7 @@
     error = "";
     data = null;
     improve = null;
+    improveNote = "";
     history = null;
     tab = query.get("history") === "1" ? "History" : "Read";
     notice = "";
@@ -188,9 +190,15 @@
               if (request === generation) retireRevision = source.revision;
             })
             .catch(() => {});
-        libraryRead<Improvement>("/asset/improve", { ref: read.durableRef ?? selected }, controller.signal)
+        libraryRead<Improvement | StateUnavailable>(
+          "/asset/improve",
+          { ref: read.durableRef ?? selected },
+          controller.signal,
+        )
           .then((next) => {
-            if (request === generation) improve = next;
+            if (request !== generation) return;
+            if ("reason" in next) improveNote = stateUnavailableText(next);
+            else improve = next;
           })
           .catch(() => {});
         if (tab === "History") await loadHistory();
@@ -747,7 +755,9 @@
               </ul>
               {#if !improve.proposals.length}<p class="muted small">
                   No proposals recorded for this asset.
-                </p>{/if}{:else}<p class="muted small">Usage and proposal context unavailable.</p>{/if}
+                </p>{/if}{:else}<p class="muted small">
+                Usage and proposal context unavailable.{improveNote ? ` ${improveNote}` : ""}
+              </p>{/if}
           </section>
         </div>
       {/if}

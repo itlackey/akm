@@ -6,7 +6,7 @@
 
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, date } from "./client";
+  import { api, apiState, date } from "./client";
   import BackupsPrune from "./BackupsPrune.svelte";
   import Icon from "./Icon.svelte";
   import { homeConcerns, homeCoverage, pruneSummary, taskOutcomes } from "./home-model";
@@ -15,6 +15,7 @@
 
   let data = $state<ActivityOverview | null>(null);
   let pulse = $state<ActivityPulse | null>(null);
+  let pulseNote = $state("");
   let loading = $state(false);
   let refreshedAt = $state("");
   let error = $state("");
@@ -34,12 +35,13 @@
     error = "";
     const [overview, weekly] = await Promise.allSettled([
       api<ActivityOverview>("/overview", { metricsSince: "7d" }),
-      api<ActivityPulse>("/overview/pulse"),
+      apiState<ActivityPulse>("/overview/pulse"),
       refreshContext(),
     ]);
     if (mine !== generation) return;
     data = overview.status === "fulfilled" ? overview.value : null;
     pulse = weekly.status === "fulfilled" ? weekly.value : null;
+    pulseNote = weekly.status === "rejected" && weekly.reason instanceof Error ? weekly.reason.message : "";
     if (overview.status === "rejected")
       error = overview.reason instanceof Error ? overview.reason.message : "Could not load the overview.";
     refreshedAt = new Date().toISOString();
@@ -158,7 +160,7 @@
             </div>{/if}
           {#if coverage.length}<div class="home-coverage" role="status">
               <strong>Incomplete snapshot</strong>
-              <p>Unavailable: {coverage.join(", ")}.</p>
+              <p>Unavailable: {coverage.join(", ")}.{pulseNote ? ` ${pulseNote}` : ""}</p>
               {#if !error}<button class="btn-quiet" aria-disabled={loading} onclick={retry}>Retry snapshot</button>{/if}
             </div>{/if}
         {/if}

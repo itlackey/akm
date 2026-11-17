@@ -794,7 +794,7 @@ describe("secrets and read-only guarantees", () => {
     // The remedy is one the person can take from the app, not only a CLI command (F8).
     expect(overview.health.hardChecks[0].message).toContain("Index the library");
     expect(overview.improveRuns).toEqual([]);
-    expect(await out(proposals.list())).toMatchObject({ totalCount: 0 });
+    expect(await out(proposals.list())).toEqual({ available: false, reason: "absent" });
     expect(fs.existsSync(getStateDbPath())).toBe(false);
   });
 });

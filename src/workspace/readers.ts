@@ -4,15 +4,24 @@
 
 /** Readers shared by the workspace operations: the read-only state database, the stash directory, per-section isolation and caps. */
 
+import fs from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import { resolveStashDir } from "../core/common";
 import { type AkmConfig, getConfigValueSource, loadConfig, sanitizeConfigForWrite } from "../core/config/config";
 import { bundleKeyForContentRoot } from "../core/config/config-sources";
 import { UsageError } from "../core/errors";
+import { getStateDbPath } from "../core/state-db";
 import { resolveWorkingStashTarget } from "../core/write-source";
 import { implicitStashDir } from "../indexer/search/search-source";
 
 export { withReadonlyStateDb } from "../core/state-db";
+
+/** Why `withReadonlyStateDb` could not read: there is no state.db yet, or akm has migrations to apply to it. */
+export type StateDbUnavailable = { available: false; reason: "absent" | "needs-migration" };
+
+export function stateDbUnavailable(): StateDbUnavailable {
+  return { available: false, reason: fs.existsSync(getStateDbPath()) ? "needs-migration" : "absent" };
+}
 
 export function tryStashDir(): string | null {
   try {

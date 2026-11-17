@@ -27,7 +27,7 @@ import { classifyOutcome, decidedAt, weekOf } from "./derive";
 import { type GitCommitSummary, readBundleGitStatus, readRecentCommits } from "./git-read";
 import { interactive } from "./lease";
 import { PROPOSAL_AGE_BANDS, proposalAgeBand, proposalBacklog } from "./metrics";
-import { capSide, clampLimit, withReadonlyStateDb } from "./readers";
+import { capSide, clampLimit, stateDbUnavailable, withReadonlyStateDb } from "./readers";
 
 const MAX_REJECT_REASON = 2000;
 const MAX_BATCH_IDS = 200;
@@ -100,8 +100,8 @@ export function list(input: ListInput = {}) {
   if (outcome && !["judge", "you", "unknown", "rejected", "reverted"].includes(outcome))
     throw new UsageError("Invalid outcome class.", "INVALID_FLAG_VALUE");
   const now = Date.now();
-  return withReadonlyStateDb(
-    (db) => {
+  return (
+    withReadonlyStateDb((db) => {
       // A list shows summaries, so the proposed content is not read.
       const all = listStateProposals(db, { stashDir: resolveStashDir(), withContent: false });
       const picked =
@@ -122,6 +122,7 @@ export function list(input: ListInput = {}) {
           (!outcome || classifyOutcome(p) === outcome),
       );
       return {
+        available: true as const,
         status,
         totalCount: filtered.length,
         fullCount: picked.length,
@@ -129,8 +130,7 @@ export function list(input: ListInput = {}) {
         backlog: proposalBacklog(picked, now),
         proposals: filtered.slice(0, limit).map(summary),
       };
-    },
-    { status, totalCount: 0, fullCount: 0, bySource: {}, backlog: [], proposals: [] },
+    }, null) ?? stateDbUnavailable()
   );
 }
 

@@ -29,6 +29,19 @@ export async function api<T = unknown>(path: string, query: Record<string, strin
   if (!response.ok) throw new ApiError(data.error ?? "The request failed.", data.code ?? "", response.status);
   return data.ok === true && Object.hasOwn(data, "data") ? data.data : data;
 }
+/** akm says its state database cannot be read: there is none yet, or it needs a migration first. */
+export type StateUnavailable = { available: false; reason: "absent" | "needs-migration" };
+export function stateUnavailableText(state: StateUnavailable): string {
+  return state.reason === "absent"
+    ? "AKM has no state database yet."
+    : "AKM's state database needs a migration first: run `akm migrate apply`.";
+}
+/** A read that needs akm's state database. When akm cannot read it that is a failure with its reason, never an empty result. */
+export async function apiState<T>(path: string, query: Record<string, string> = {}): Promise<T> {
+  const data = await api<T | StateUnavailable>(path, query);
+  if ((data as StateUnavailable).available === false) throw new Error(stateUnavailableText(data as StateUnavailable));
+  return data as T;
+}
 /** The folder the person picks in the operating system's dialog (AKM Desktop app only), or null when they cancel. */
 export async function pickFolder(start = ""): Promise<string | null> {
   return (await api<{ path: string | null }>("/desktop/pick-folder", {}, start ? { start } : {})).path;
