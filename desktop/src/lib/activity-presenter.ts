@@ -39,7 +39,7 @@ export function attentionItems(data: ActivityOverview, pulse: ActivityPulse | nu
   }
   // The pulse failure total includes unknown improve outcomes; use recorded false values instead.
   const failedImprove = data.improveRuns.filter((run) => run.ok === false).length;
-  const failedTasks = pulse?.tiles.runs.failedTasks.length ?? 0;
+  const failedTasks = pulse?.attention?.failedRuns.tasks ?? 0;
   if (failedImprove || failedTasks)
     items.splice(checks.some((check) => check.status === "fail") ? 1 : 0, 0, {
       tone: "fail",

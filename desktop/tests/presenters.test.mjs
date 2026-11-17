@@ -57,8 +57,13 @@ test("attention ranks real faults before review work and never treats unknown ru
     improveRuns: [{ ok: null }, { ok: false }],
   };
   const pulse = {
-    tiles: { runs: { failedTasks: [] } },
-    attention: { pending: { count: 3 }, misses: { queries: 1 }, harm: { reverted: 0 }, setup: null },
+    attention: {
+      pending: { count: 3 },
+      misses: { queries: 1 },
+      failedRuns: { improve: 0, tasks: 0 },
+      harm: { reverted: 0 },
+      setup: null,
+    },
   };
   const items = attentionItems(data, pulse);
   assert.deepEqual(
@@ -74,6 +79,21 @@ test("attention ranks real faults before review work and never treats unknown ru
   assert.equal(items[3].text, "3 proposals waiting for review");
   assert.equal(items[4].text, "1 query found nothing on multiple days");
   assert.equal(attentionItems({ health: null, improveRuns: [{ ok: null }] }, null).length, 0);
+});
+
+test("attention counts every failed task run akm reports, not the pulse's three-row preview", () => {
+  const pulse = {
+    tiles: { runs: { failedTasks: [{ taskId: "a" }, { taskId: "b" }, { taskId: "c" }] } },
+    attention: {
+      pending: { count: 0 },
+      misses: { queries: 0 },
+      failedRuns: { improve: 0, tasks: 25 },
+      harm: { reverted: 0 },
+      setup: null,
+    },
+  };
+  const [item] = attentionItems({ health: null, improveRuns: [] }, pulse);
+  assert.equal(item.text, "25 failed task runs this week");
 });
 
 test("rolling retrieval does not turn missing daily observations into measured zero", () => {
