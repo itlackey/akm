@@ -62,7 +62,6 @@
     refreshedAt = $state(""),
     probedAt = $state(""),
     historyFilter = $state(""),
-    historyOrigin = $state(""),
     refreshButton = $state<HTMLButtonElement>(),
     // A refresh reloads the view that is on screen; `refreshSaid` is what the status line says once it is back.
     refreshing = $state(false),
@@ -107,13 +106,12 @@
   const filteredCommits = $derived(
     (changes?.commits ?? []).filter(
       (commit) =>
-        (!historyOrigin || commit.origin === historyOrigin) &&
-        (!historyFilter.trim() ||
-          [commit.subject, commit.author, commit.sha, commit.origin, ...(commit.paths ?? [])].some((value) =>
-            String(value ?? "")
-              .toLowerCase()
-              .includes(historyFilter.trim().toLowerCase()),
-          )),
+        !historyFilter.trim() ||
+        [commit.subject, commit.author, commit.sha, ...(commit.paths ?? [])].some((value) =>
+          String(value ?? "")
+            .toLowerCase()
+            .includes(historyFilter.trim().toLowerCase()),
+        ),
     ),
   );
   const views = [
@@ -184,7 +182,6 @@
         if (request === generation) {
           changes = next;
           historyFilter = query.get("q") ?? "";
-          historyOrigin = query.get("origin") ?? "";
         }
       } else {
         const next = await apiState<NonNullable<typeof misses>>("/search/misses", { since: window });
@@ -226,7 +223,6 @@
   function filterHistory() {
     const params = new URLSearchParams();
     if (historyFilter) params.set("q", historyFilter);
-    if (historyOrigin) params.set("origin", historyOrigin);
     void navigate(`/activity/history${params.size ? `?${params}` : ""}`);
   }
   onDestroy(() => {
@@ -323,21 +319,14 @@
         filterHistory();
       }}
     >
-      <label>Subject, author or path<input type="search" bind:value={historyFilter} /></label><label
-        >Made by<select bind:value={historyOrigin}
-          ><option value="">Anything</option
-          >{#each [...new Set(changes.commits.map((commit) => commit.origin ?? "other"))].sort() as origin}<option
-              >{origin}</option
-            >{/each}</select
-        ></label
-      ><button>Filter history</button>
+      <label>Subject, author or path<input type="search" bind:value={historyFilter} /></label><button
+        >Filter history</button
+      >
     </form>
     <ol class="commits">
       {#each filteredCommits as commit}<li class="commit">
           <div class="commit-head">
-            <span>{date(commit.time)}</span><span class="badge">{commit.origin ?? "other"}</span><strong
-              >{commit.subject}</strong
-            >
+            <span>{date(commit.time)}</span><strong>{commit.subject}</strong>
           </div>
           <p class="muted small">
             <code>{commit.shortSha ?? commit.sha.slice(0, 8)}</code> by {commit.author ?? "Unknown author"}

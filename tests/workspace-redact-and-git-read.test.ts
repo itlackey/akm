@@ -2,17 +2,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-/** Pure helpers behind the workspace operations: config redaction and commit origin. */
+/** Pure helpers behind the workspace operations: config redaction and the git reads. */
 
 import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import { redactUrlCredentials } from "../src/core/redaction";
-import {
-  type ChangeOrigin,
-  classifyCommitOrigin,
-  readBundleGitStatus,
-  readRecentCommits,
-} from "../src/workspace/git-read";
+import { readBundleGitStatus, readRecentCommits } from "../src/workspace/git-read";
 import { isSecretEnvName, redactForUi, scrubUrlCredentials } from "../src/workspace/redact";
 import { git, makeGitRepo } from "./_helpers/git";
 
@@ -71,21 +66,6 @@ describe("URL credentials", () => {
   });
 });
 
-describe("classifyCommitOrigin", () => {
-  test.each<[string, ChangeOrigin]>([
-    ["akm improve auto-sync", "improve-sync"],
-    ["akm improve pre-run sync", "improve-sync"],
-    ["akm accept: consolidate ee66bc2f akm//knowledge/x", "accept"],
-    ["akm proposal drain: 37 accepted (consolidate-pair 30, consolidate 7)", "accept"],
-    ["akm save 2026-10-16 14:54:50", "sync"],
-    ["akm sync: merge origin upstream", "sync"],
-    ["akm remember: vpn note", "remember"],
-    ["retire 16 junk assets", "other"],
-  ])("%s -> %s", (subject, origin) => {
-    expect(classifyCommitOrigin(subject)).toBe(origin);
-  });
-});
-
 describe("a git read that fails is reported, not read as a pristine repository", () => {
   const made: string[] = [];
   afterEach(() => {
@@ -101,6 +81,19 @@ describe("a git read that fails is reported, not read as a pristine repository",
     expect(status?.error).toContain("not a git repository");
     expect((await readRecentCommits(dir, 5))?.error).toContain("not a git repository");
     expect((await readRecentCommits(dir, 5))?.commits).toEqual([]);
+  });
+
+  test("history lists each commit's own sha, author, date and subject, and judges no origin from the subject", async () => {
+    const dir = repo();
+    fs.writeFileSync(`${dir}/note.md`, "x\n");
+    git(dir, ["add", "note.md"]);
+    git(dir, ["commit", "-q", "-m", "Remember to rotate the key"]);
+    const read = await readRecentCommits(dir, 1);
+    const commit = read?.commits[0];
+    expect(commit).toMatchObject({ subject: "Remember to rotate the key", paths: ["note.md"], pathCount: 1 });
+    expect(commit?.author).toBeTruthy();
+    expect(Date.parse(commit?.time ?? "")).not.toBeNaN();
+    expect(commit).not.toHaveProperty("origin");
   });
 
   test("a detached HEAD and a repository with no commits are answers, not failures", async () => {

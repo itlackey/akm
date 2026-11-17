@@ -410,6 +410,20 @@ test("a Git bundle whose repository cannot be read says so instead of showing a 
   await expect(page.getByText("Detached HEAD", { exact: true })).toHaveCount(0);
 });
 
+test("Source history shows each commit's own author, date and subject and offers no origin filter", async (t) => {
+  const server = await launchFixture({ git: true });
+  t.after(() => server.stop());
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  await open(page, server, "/activity/history");
+  const commit = page.locator(".commit").filter({ hasText: "Add verified recovery step" });
+  await expect(commit).toContainText("by Synthetic UI test");
+  await expect(commit.locator(".commit-head span").first()).not.toBeEmpty();
+  await expect(page.getByText("Made by")).toHaveCount(0);
+  await expect(page.locator(".commit .badge")).toHaveCount(0);
+});
+
 test("new content goes where akm says: the working stash when no write target is configured", async (t) => {
   const server = await launchFixture({
     configureFixture: async (fixture) => {

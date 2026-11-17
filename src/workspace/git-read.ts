@@ -118,21 +118,9 @@ export async function readBundleGitStatus(repoDir: string): Promise<BundleGitSta
   };
 }
 
-/** What made a commit, judged from its subject: the subjects akm itself writes, else `other`. */
-export type ChangeOrigin = "improve-sync" | "accept" | "remember" | "sync" | "other";
-
-export function classifyCommitOrigin(subject: string): ChangeOrigin {
-  if (/^akm improve\b/i.test(subject)) return "improve-sync";
-  if (/^akm (accept|proposal)\b/i.test(subject)) return "accept";
-  if (/\bremember\b/i.test(subject)) return "remember";
-  if (/^akm (save|sync)\b/i.test(subject)) return "sync";
-  return "other";
-}
-
 export interface StashCommit extends GitCommitSummary {
   shortSha: string;
   author: string;
-  origin: ChangeOrigin;
   paths: string[];
   pathCount: number;
 }
@@ -168,7 +156,6 @@ export async function readRecentCommits(
       time,
       author,
       subject,
-      origin: classifyCommitOrigin(subject),
       paths: paths.slice(0, PATHS_PER_COMMIT),
       pathCount: paths.length,
     });

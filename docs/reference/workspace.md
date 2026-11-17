@@ -644,7 +644,6 @@ Recent commits of the write-target stash (`defaultWriteTarget`, else the default
         "time": "2026-10-16T10:46:41-05:00",
         "author": "akm-test",
         "subject": "akm save 2026-10-16 10:00:00",
-        "origin": "sync",
         "paths": ["knowledge/more.md"],
         "pathCount": 1
       }
@@ -654,16 +653,6 @@ Recent commits of the write-target stash (`defaultWriteTarget`, else the default
 ```
 
 - `git` is `false` and `commits` empty when the stash is not a git repository.
-- `origin` is derived from the subject, which is how akm names its own commits:
-
-  | `origin` | Subject |
-  | --- | --- |
-  | `improve-sync` | `akm improve ...` (the pre-run sync and the end-of-run auto-sync) |
-  | `accept` | `akm accept: ...`, `akm proposal ...` (including `akm proposal drain: N accepted ...`) |
-  | `remember` | contains `remember` |
-  | `sync` | `akm save ...`, `akm sync ...` |
-  | `other` | anything else, such as a hand-made commit |
-
 - `paths` lists at most 50 changed paths; `pathCount` is the real number. `time` is the commit's own committer date with
   its offset.
 
