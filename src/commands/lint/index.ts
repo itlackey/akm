@@ -4,6 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { classifyAkmFile } from "../../core/adapter/adapters/akm-adapter";
 import {
   factDiagnostics,
   MAX_SKILL_GROUP_DEPTH,
@@ -40,6 +41,7 @@ import { UsageError } from "../../core/errors";
 import type { FileChange } from "../../core/file-change";
 import { warn } from "../../core/warn";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
+import { walkStashFlat } from "../../indexer/walk/walker";
 import { TASK_EXTENSION, TASK_NEAR_MISS_EXTENSION, taskExtensionDetail } from "../../tasks/source-v3";
 import { resolveWorkflowSourceDomains } from "../../workflows/source-files";
 import { runBaseChecks } from "./base-linter";
@@ -130,40 +132,21 @@ function isNearMissTaskFileName(fileName: string): boolean {
   return fileName.toLowerCase().endsWith(TASK_NEAR_MISS_EXTENSION);
 }
 
-function collectMarkdownFiles(dir: string, caseInsensitive = false): string[] {
-  if (!fs.existsSync(dir)) return [];
-  const results: string[] = [];
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (entry.name === ".git" || entry.isSymbolicLink()) continue;
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      results.push(...collectMarkdownFiles(full, caseInsensitive));
-    } else if (entry.isFile() && (caseInsensitive ? entry.name.toLowerCase() : entry.name).endsWith(".md")) {
-      results.push(full);
-    }
+/**
+ * The Markdown assets of the bundle at `root` by the stash folder of their type: the files are the indexer's walk and
+ * each file's type is the akm adapter's classification, so lint reads what the index holds, wherever a file sits.
+ * Nothing under `env/` or `secrets/` is classified, because classifying a Markdown file reads it.
+ */
+function markdownAssetsByType(root: string): Map<string, string[]> {
+  const byDir = new Map<string, string[]>();
+  for (const file of walkStashFlat(root)) {
+    if (file.ext !== ".md" || file.ancestorDirs.some((dir) => dir === "env" || dir === "secrets")) continue;
+    const type = classifyAkmFile(root, file)?.match.type;
+    const dir = type === undefined ? undefined : documentStashDirFor(type);
+    if (dir === undefined || documentFormatForStashDir(dir) !== "markdown") continue;
+    byDir.set(dir, [...(byDir.get(dir) ?? []), file.absPath]);
   }
-  return results;
-}
-
-/** Workflow sources: Markdown only. */
-function collectWorkflowFiles(dir: string): string[] {
-  if (!fs.existsSync(dir)) return [];
-  const results: string[] = [];
-  for (const entry of fs
-    .readdirSync(dir, { withFileTypes: true })
-    .sort((left, right) => compareCodePoints(left.name, right.name))) {
-    if (entry.name === ".git") continue;
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (isAkmRegistryCachePath(full)) continue;
-      results.push(...collectWorkflowFiles(full));
-      continue;
-    }
-    if (!entry.isFile() && !entry.isSymbolicLink()) continue;
-    const extension = path.extname(entry.name).toLowerCase();
-    if (extension === ".md") results.push(full);
-  }
-  return results.sort(compareCodePoints);
+  return byDir;
 }
 
 interface WorkflowLintOwnership {
@@ -790,18 +773,12 @@ function lintAkmSweep(
     options.typeFilter ? d === options.typeFilter : !leftOut.has(d),
   );
 
+  const markdownAssets = markdownAssetsByType(stashRoot);
   for (const subdir of dirsToScan) {
     const dirPath = path.join(stashRoot, subdir);
-    // Tasks have their own `.yml` plus near-miss collector; every other AKM
-    // subdir is Markdown.
-    const files =
-      subdir === "tasks"
-        ? collectTaskFiles(dirPath)
-        : subdir === "workflows"
-          ? collectWorkflowFiles(dirPath)
-          : collectMarkdownFiles(dirPath, true);
-    let assetFiles =
-      subdir === "workflows" ? files.filter((file) => path.basename(file).toLowerCase() !== "readme.md") : files;
+    // Tasks have their own `.yml` plus near-miss collector; every other type is Markdown, wherever it sits.
+    const files = subdir === "tasks" ? collectTaskFiles(dirPath) : (markdownAssets.get(subdir) ?? []);
+    let assetFiles = files;
     if (subdir === "workflows") {
       assetFiles = assetFiles.filter((file) => !isAkmRegistryCachePath(file));
       const ownership = resolveWorkflowLintOwnership(stashRoot, assetFiles);

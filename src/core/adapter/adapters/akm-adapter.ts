@@ -82,7 +82,7 @@ import {
   hasMarkdownFragmentContent,
   setMarkdownFragmentContent,
 } from "../../../indexer/passes/metadata";
-import { buildFileContext, type FileContext } from "../../../indexer/walk/file-context";
+import { buildFileContext, type FileContext, type MatchResult } from "../../../indexer/walk/file-context";
 import { declaredTypeForPath } from "../../../indexer/walk/matchers";
 import {
   assetPathCandidatesForName,
@@ -284,7 +284,16 @@ function isWikiRaw(c: BundleComponent, file: FileContext): boolean {
   return false;
 }
 
-function recognize(c: BundleComponent, file: FileContext): IndexDocument | null {
+/**
+ * The type the akm adapter gives a file of the bundle at `root`, with its ref and canonical name, or `null` when the
+ * file is not an asset (a reserved structural file, one the adapter abstains on, one no matcher claims, or one whose
+ * placement gives no ref). Path rules and matchers only: this is the one place that decides what an akm bundle holds,
+ * for the index (`recognize`) and for `akm lint`.
+ */
+export function classifyAkmFile(
+  root: string,
+  file: FileContext,
+): { match: MatchResult; conceptId: string; canonicalName: string } | null {
   // `index.md` / `log.md` are OKF reserved structural files at
   // every depth — never items. Excluded BEFORE classification so a directory
   // listing or update log never becomes a `knowledge` (or other) concept.
@@ -292,16 +301,23 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   // Adapter-owned filtering (owner ruling 2026-07-21): AKM-stash policy that used
   // to live in the indexer's `shouldIndexStashFile` pre-filter. Path/stat-based —
   // `file.content()` is never read to reach this abstention.
-  if (akmStashAbstains(c.root, file.absPath)) return null;
+  if (akmStashAbstains(root, file.absPath)) return null;
   const match = recognizeMatch(file);
   if (match === null) return null;
   // The ref is the file's bundle-relative path minus the type's own suffix;
   // `entry.name` below keeps the canonical name relative to the type folder
   // (identity != search text). Invalid placements are not projected onto a
   // different identity.
-  const conceptId = refForFile(match.type, c.root, file.absPath);
-  const canonicalName = deriveCanonicalAssetNameFromStashRoot(match.type, c.root, file.absPath);
+  const conceptId = refForFile(match.type, root, file.absPath);
+  const canonicalName = deriveCanonicalAssetNameFromStashRoot(match.type, root, file.absPath);
   if (conceptId === undefined || canonicalName === undefined) return null;
+  return { match, conceptId, canonicalName };
+}
+
+function recognize(c: BundleComponent, file: FileContext): IndexDocument | null {
+  const classified = classifyAkmFile(c.root, file);
+  if (classified === null) return null;
+  const { match, conceptId, canonicalName } = classified;
   const dirPath = path.dirname(file.absPath);
 
   // recognize carries the FULL index-time metadata surface,
