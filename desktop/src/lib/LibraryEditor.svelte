@@ -179,7 +179,7 @@
     } catch (e) {
       error = writeCompleted
         ? `The write completed, but the saved document could not be opened. ${(e as Error).message}`
-        : creating && /already exists/i.test((e as Error).message)
+        : creating && e instanceof ApiError && e.code === "RESOURCE_ALREADY_EXISTS"
           ? "That file name is already used in this folder. Choose a different file name; the existing asset has not been changed."
           : (e as Error).message;
       if (e instanceof ApiError && e.code === "ASSET_CONTENT_CHANGED") {

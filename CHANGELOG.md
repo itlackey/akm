@@ -35,6 +35,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - AKM Desktop's 3D Library map says how many assets it leaves out: an asset with no group by meaning (not embedded, or added since the last index build) is not a point, and the map now states the count instead of titling itself "every asset".
 - AKM Desktop's Project assets page and Project overview say "Counts unknown" when akm reports no count for a bundle (it cannot be read, or nothing is indexed). The assets page read "0 eligible of 0 indexed" and blamed the project's filters; one presenter now serves both pages.
 - AKM Desktop's setup no longer decides that a plugin "was built for a different akm" by comparing its version with the engine's major and minor. The agent cards show what `akm upgrade --check` reports for that plugin (a tick for `current`, akm's own text for a pending, deferred or failed update, with its engine-skew message), and claim nothing until a check has run.
+- AKM Desktop's new-file editor says "That file name is already used" when akm's error code is `RESOURCE_ALREADY_EXISTS`, not when the message contains "already exists": a reworded message no longer shows akm's raw `--force` sentence, and an unrelated error that says "already exists" is no longer reported as a name collision.
 
 ## [0.10.261129] - 2026-11-16
 
