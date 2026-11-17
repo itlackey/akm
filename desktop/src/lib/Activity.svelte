@@ -44,7 +44,7 @@
   let misses = $state<{
     searches: number;
     foundNothing: number;
-    misses: Array<{ query: string; count: number; days: number; lastAt: string }>;
+    misses: Array<{ query: string; count: number; days: number; lastAt: string; repeated: boolean }>;
   } | null>(null);
   /** A read that needs akm's state database: the data, or null with the reason it could not be read. */
   async function readState<T>(path: string, query: Record<string, string>): Promise<{ data: T | null; note: string }> {
@@ -102,6 +102,8 @@
     revealed = query;
     void revealAnchor(query.get("anchor"));
   });
+  /** The queries that found nothing on two or more days, as akm reports them: a gap, not a one-off. */
+  const repeatedMisses = $derived((misses?.misses ?? []).filter((miss) => miss.repeated));
   const filteredCommits = $derived(
     (changes?.commits ?? []).filter(
       (commit) =>
@@ -361,12 +363,12 @@
         {misses.foundNothing} of {misses.searches} searches returned no results. Review the query and existing material before
         adding anything.
       </p>
-      {#if misses.misses.length}<div class="table-wrap">
+      {#if repeatedMisses.length}<div class="table-wrap">
           <table>
             <caption>Repeated search misses</caption><thead
               ><tr><th>Query</th><th>Times</th><th>Days</th><th>Last seen</th><th>Next step</th></tr></thead
             ><tbody
-              >{#each misses.misses as miss}<tr
+              >{#each repeatedMisses as miss}<tr
                   ><th>{miss.query}</th><td>{miss.count}</td><td>{miss.days}</td><td>{date(miss.lastAt)}</td><td
                     ><a href={`/library/search?tab=misses&q=${encodeURIComponent(miss.query)}`}>Review search gap</a
                     ></td
@@ -374,7 +376,7 @@
                 >{/each}</tbody
             >
           </table>
-        </div>{:else}<p>No search gaps recorded in this window.</p>{/if}{:else}<p class="muted">
+        </div>{:else}<p>No query found nothing on more than one day in this window.</p>{/if}{:else}<p class="muted">
         Search-gap measurements are unavailable.{missesNote ? ` ${missesNote}` : ""}
       </p>{/if}
   </section>{/if}

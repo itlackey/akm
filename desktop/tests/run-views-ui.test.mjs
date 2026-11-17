@@ -7,7 +7,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { test } from "node:test";
 import { chromium, expect } from "@playwright/test";
-import { launchFixture, open, runViewIds } from "./support.mjs";
+import { akm, launchFixture, open, runViewIds } from "./support.mjs";
 
 // The single-run views: an improve run, a task run and a workflow run, each with its outcome, what failed and the
 // recorded error detail; an improve run is not linked to a task run unless akm records the link.
@@ -191,7 +191,7 @@ test("with no state.db the Runs, Usage and search-gap views say it is absent, no
 
   await open(page, server, "/activity/overview?view=usage");
   await expect(page.locator("#search-gaps")).toContainText(absent);
-  await expect(page.locator("#search-gaps")).not.toContainText("No search gaps recorded");
+  await expect(page.locator("#search-gaps")).not.toContainText("No query found nothing");
   await expect(page.getByText("Usage and model measurements unavailable.")).toBeVisible();
   await expect(page.getByLabel("Selected-window activity")).toHaveCount(0);
 });
@@ -210,4 +210,23 @@ test("the Usage summary names the proposals updated in the window and does not c
   const summary = page.getByLabel("Selected-window activity");
   await expect(summary).toContainText("3 proposals updated in this window");
   await expect(summary).not.toContainText("pending proposals");
+});
+
+// The list under "Repeated search gaps" is the queries akm marks `repeated` (nothing on two or more days); a query
+// that came back empty once is counted in the sentence above it, not listed as a gap.
+test("Repeated search gaps lists only the queries akm marks as repeated", {
+  timeout: 240000,
+}, async (t) => {
+  const server = await launchFixture({
+    configureFixture: async (fixture) => akm(fixture, ["search", "zzqx unmatched phrase"]),
+  });
+  t.after(() => server.stop());
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
+  await open(page, server, "/activity/overview?view=usage");
+  const gaps = page.locator("#search-gaps");
+  await expect(gaps).toContainText("1 of 1 searches returned no results");
+  await expect(gaps).not.toContainText("zzqx unmatched phrase");
+  await expect(gaps).toContainText("No query found nothing on more than one day in this window.");
 });
