@@ -62,10 +62,16 @@ async function selection(input: Selector) {
   const inside = path.relative(physicalRoot, real);
   if (!inside || inside.startsWith("..") || path.isAbsolute(inside))
     throw new UsageError("The file must stay inside its bundle.");
-  // Checked on the real path, so neither `knowledge/../env/x.env` nor a link into env/ or secrets/ gets past it.
-  if (/^(?:env|secrets)(?:\/|$)/.test(inside.split(path.sep).join("/")))
-    throw new UsageError("Protected files are shown and edited from the protected-file view.");
   if (!fs.statSync(real).isFile()) throw new UsageError("Choose a file, not a folder.");
+  // akm's own answer for the real path, so neither `knowledge/../env/x.env` nor a link into an env/ or secrets/ folder
+  // at any depth gets past it.
+  const folder = (await assets.bundleFiles({
+    bundle,
+    path: path.dirname(inside).replace(/^\.$/, ""),
+    hidden: true,
+  })) as { entries: Array<{ name: string; protected: boolean }> };
+  if (folder.entries.find((entry) => entry.name === path.basename(inside))?.protected)
+    throw new UsageError("Protected files are shown and edited from the protected-file view.");
   return {
     bundle,
     file,

@@ -95,6 +95,14 @@ test("a link or path that leaves the bundle is refused; protected files have the
       await fs.symlink(path.join(fixture.root, "outside.md"), path.join(fixture.root, "personal/knowledge/escape.md"));
       await fs.mkdir(path.join(fixture.root, "personal/env"));
       await fs.writeFile(path.join(fixture.root, "personal/env/prod.env"), "TOKEN=synthetic\n");
+      await fs.mkdir(path.join(fixture.root, "personal/projects/x/secrets"), { recursive: true });
+      await fs.mkdir(path.join(fixture.root, "personal/projects/x/env"));
+      await fs.writeFile(path.join(fixture.root, "personal/projects/x/secrets/token"), "synthetic-token\n");
+      await fs.writeFile(path.join(fixture.root, "personal/projects/x/env/prod.env"), "TOKEN=nested\n");
+      await fs.symlink(
+        path.join(fixture.root, "personal/projects/x/secrets/token"),
+        path.join(fixture.root, "personal/knowledge/nested-token.md"),
+      );
       await fs.symlink(
         path.join(fixture.root, "personal/env/prod.env"),
         path.join(fixture.root, "personal/knowledge/prod.md"),
@@ -109,6 +117,9 @@ test("a link or path that leaves the bundle is refused; protected files have the
     "env/prod.env",
     "knowledge/../env/prod.env",
     "knowledge/prod.md",
+    "projects/x/secrets/token",
+    "projects/x/env/prod.env",
+    "knowledge/nested-token.md",
   ]) {
     assert.equal((await read(app, { bundle: "personal", file })).status, 400, file);
     assert.equal(
@@ -119,6 +130,23 @@ test("a link or path that leaves the bundle is refused; protected files have the
   }
   assert.equal(await fs.readFile(path.join(app.root, "outside.md"), "utf8"), "outside\n");
   assert.equal(await fs.readFile(path.join(app.root, "personal/env/prod.env"), "utf8"), "TOKEN=synthetic\n");
+  assert.equal(
+    await fs.readFile(path.join(app.root, "personal/projects/x/secrets/token"), "utf8"),
+    "synthetic-token\n",
+  );
+  assert.equal(await fs.readFile(path.join(app.root, "personal/projects/x/env/prod.env"), "utf8"), "TOKEN=nested\n");
+  const folder = value(await app.call("/api/bundles/files?bundle=personal&path=projects/x/secrets"));
+  assert.deepEqual(
+    folder.entries.map((entry) => [entry.name, entry.protected]),
+    [["token", true]],
+  );
+  assert.equal(
+    value(await app.call("/api/bundles/files?bundle=personal&path=knowledge")).entries.find(
+      (entry) => entry.name === "nested-token.md",
+    ).protected,
+    true,
+    "a link into a protected folder is protected",
+  );
   assert.equal((await read(app, { bundle: "missing", file: "knowledge/x.md" })).status, 400);
   assert.equal((await read(app, {})).status, 400);
 });
