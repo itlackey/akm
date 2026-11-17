@@ -29,7 +29,12 @@
   const tree = new FileTreeState();
   let dialog = $state<HTMLDialogElement>(),
     destination = $state(untrack(() => request.destination)),
-    name = $state(untrack(() => request.name)),
+    name = $state(
+      untrack(() => {
+        const copy = request.actions.copy;
+        return request.kind === "copy" && copy.allowed && copy.as ? copy.as.split("/").at(-1)! : request.name;
+      }),
+    ),
     focused = $state(""),
     busy = $state(false),
     error = $state("");
@@ -50,6 +55,10 @@
       : request.kind !== "delete" && listing && !listing.place.allowed
         ? listing.place.reason
         : "",
+  );
+  // What akm will copy, said before it happens: a skill's manifest copies as the skill's folder.
+  const copiesAs = $derived(
+    request.kind === "copy" && request.actions.copy.allowed ? request.actions.copy.as : undefined,
   );
   const title = $derived(
     {
@@ -120,6 +129,7 @@
     <p>The file is renamed on disk into that folder; its history goes with it.</p>
   {:else}
     <p id="file-dialog-where">Choose the folder it goes into.</p>
+    {#if copiesAs}<p class="notice">This copies the whole folder {copiesAs}, not only {request.name}.</p>{/if}
     <div class="picker" aria-describedby="file-dialog-where">
       <FileTree {bundles} {tree} label="Folders" selectedKey={key} foldersOnly bind:focused onOpen={choose} />
     </div>

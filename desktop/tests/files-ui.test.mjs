@@ -503,3 +503,51 @@ test("the editor's save line says what is true of Git from akm's count, not that
   await expect(page.locator(".save-policy")).toContainText("Saves to the file.");
   await expect(page.locator(".save-policy")).not.toContainText("uncommitted");
 });
+
+test("a skill copies as its folder, from its page and from the tree, and the dialog says so first", async (t) => {
+  const { app, page } = await session(t);
+  const target = (name) => path.join(app.root, "shared", name);
+  const arrived = async (folder) => {
+    for (const file of ["SKILL.md", "references/checklist.md", "scripts/check.sh"])
+      assert.ok(await exists(path.join(target(folder), file)), `${folder}/${file}`);
+    assert.match(
+      await fs.readFile(path.join(target(folder), "SKILL.md"), "utf8"),
+      /personal\/\/skills\/backup-check/,
+      "sources on the manifest",
+    );
+  };
+  // From its page: the dialog names the folder and offers the folder's name.
+  await go(
+    page,
+    opened(app.refs.skill, "skills/backup-check", "SKILL.md").replace(
+      /&ref=[^&]*/,
+      `&ref=${encodeURIComponent(app.refs.skill)}`,
+    ),
+  );
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  await page.getByRole("button", { name: "Copy to…", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Copy SKILL.md" });
+  await expect(dialog).toContainText("copies the whole folder skills/backup-check");
+  await expect(dialog.getByRole("textbox", { name: "Name of the copy" })).toHaveValue("backup-check");
+  await dialog.getByRole("treeitem", { name: "shared", exact: true }).click();
+  await dialog.getByRole("button", { name: "Copy here", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Copied" })).toBeVisible();
+  await arrived("backup-check");
+  // From the tree, under another name; the same copy twice is refused.
+  await go(page, "/library/files?bundle=personal&path=skills/backup-check");
+  await page.getByRole("button", { name: "Actions for SKILL.md", exact: true }).click();
+  await page.getByRole("menuitem", { name: /^Copy to…/ }).click();
+  const again = page.getByRole("dialog", { name: "Copy SKILL.md" });
+  await expect(again).toContainText("copies the whole folder");
+  await again.getByRole("treeitem", { name: "shared", exact: true }).click();
+  await again.getByRole("textbox", { name: "Name of the copy" }).fill("backup-check-b");
+  await again.getByRole("button", { name: "Copy here", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Copied" })).toBeVisible();
+  await arrived("backup-check-b");
+  await page.getByRole("button", { name: "Actions for SKILL.md", exact: true }).click();
+  await page.getByRole("menuitem", { name: /^Copy to…/ }).click();
+  const third = page.getByRole("dialog", { name: "Copy SKILL.md" });
+  await third.getByRole("treeitem", { name: "shared", exact: true }).click();
+  await third.getByRole("button", { name: "Copy here", exact: true }).click();
+  await expect(third.getByRole("alert")).toBeVisible();
+});

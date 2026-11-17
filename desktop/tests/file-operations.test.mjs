@@ -251,6 +251,24 @@ test("a copy is a new file at the chosen folder, in the same bundle or another; 
   assert.equal(await exists(path.join(app.root, "vendor/knowledge/copy.md")), false);
 });
 
+test("copying a skill's manifest copies the skill's folder, and the listing says what it will copy", async (t) => {
+  const app = await launchFixture();
+  t.after(() => app.stop());
+  const entry = (await folderOf(app, "skills/backup-check")).entries.find((e) => e.name === "SKILL.md");
+  assert.equal(entry.actions.copy.as, "skills/backup-check");
+  const copied = value(
+    await app.call("/api/desktop/files/copy", {
+      bundle: "personal",
+      from: "skills/backup-check/SKILL.md",
+      folder: "skills",
+      name: "backup-check-3",
+    }),
+  );
+  assert.equal(copied.to, "skills/backup-check-3");
+  for (const file of ["SKILL.md", "references/checklist.md", "scripts/check.sh"])
+    assert.ok(await exists(path.join(app.root, "personal/skills/backup-check-3", file)), file);
+});
+
 test("a skill's support file is moved like any file, and showing a file in the file manager needs the desktop app", async (t) => {
   const app = await launchFixture();
   t.after(() => app.stop());

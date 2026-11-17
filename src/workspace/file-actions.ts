@@ -17,7 +17,8 @@ import { isProtectedPlace, managedFolderOf } from "../indexer/walk/place-rules";
 
 export type FileAction = "read" | "edit" | "move" | "copy" | "retire" | "delete";
 /** Whether akm accepts the action, and the sentence why not when it does not. */
-export type FileVerdict = { allowed: true } | { allowed: false; reason: string };
+/** `as` (on a copy) is what is copied instead of the entry: a skill's manifest copies as the skill's folder. */
+export type FileVerdict = { allowed: true; as?: string } | { allowed: false; reason: string };
 /** `move` is rename or move. */
 export type FileActions = Record<FileAction, FileVerdict>;
 
@@ -155,7 +156,14 @@ export function fileActions(entry: EntryFacts, blockers: WriteBlockers): FileAct
     read: nature !== undefined ? refuse(nature) : textVerdict,
     edit: needsWrite(() => textVerdict),
     move: needsWrite(() => (skillManifest ? refuse("A skill moves as its folder.") : allowed)),
-    copy: nature !== undefined ? refuse(nature) : typeof probed === "object" ? textVerdict : allowed,
+    copy:
+      nature !== undefined
+        ? refuse(nature)
+        : typeof probed === "object"
+          ? textVerdict
+          : skillManifest
+            ? { allowed: true, as: path.posix.dirname(entry.relative) }
+            : allowed,
     retire: needsWrite(
       () =>
         entry.kind !== "file"

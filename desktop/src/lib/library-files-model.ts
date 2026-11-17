@@ -3,7 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /** What akm accepts doing to an entry, or the sentence why not. Desktop shows it and decides nothing. */
-export type Verdict = { allowed: true } | { allowed: false; reason: string };
+/** `as` (on a copy) is what akm copies instead of the entry: a skill's manifest copies as its folder. */
+export type Verdict = { allowed: true; as?: string } | { allowed: false; reason: string };
 export type FileAction = "read" | "edit" | "move" | "copy" | "retire" | "delete";
 export type FileActions = Record<FileAction, Verdict>;
 

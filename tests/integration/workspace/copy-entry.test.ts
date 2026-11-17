@@ -95,3 +95,29 @@ test("a copy goes to another bundle, and nothing is overwritten, protected or pu
   expect((await refusal(copy("knowledge/guide.md", "", "g.md", "locked"))).message).toMatch(/read-only/);
   expect(fs.existsSync(path.join(locked, "g.md"))).toBe(false);
 });
+
+test("copying a skill's manifest copies the skill's folder whole, and the verdict says so", async () => {
+  fs.mkdirSync(path.join(storage.stashDir, "skills/backup/scripts"), { recursive: true });
+  const script = path.join(storage.stashDir, "skills/backup/scripts/run.sh");
+  fs.writeFileSync(script, "#!/bin/sh\n");
+  fs.chmodSync(script, 0o755);
+  await akmIndex({ stashDir: storage.stashDir, full: true });
+  const listing = assets.bundleFiles({ bundle: "stash", path: "skills/backup" }) as {
+    entries: Array<{ name: string; actions: { copy: { allowed: boolean; as?: string } } }>;
+  };
+  expect(listing.entries.find((entry) => entry.name === "SKILL.md")?.actions.copy).toEqual({
+    allowed: true,
+    as: "skills/backup",
+  });
+
+  const done = await copy("skills/backup/SKILL.md", "skills", "backup-3");
+
+  expect(done.to).toBe("skills/backup-3");
+  const copied = path.join(storage.stashDir, "skills/backup-3");
+  expect(fs.readFileSync(path.join(copied, "references/list.md"), "utf8")).toBe("# List\n");
+  expect(fs.statSync(path.join(copied, "scripts/run.sh")).mode & 0o777).toBe(0o755);
+  expect(fs.readFileSync(path.join(copied, "SKILL.md"), "utf8")).toContain("stash//skills/backup");
+  expect(fs.existsSync(path.join(storage.stashDir, "skills/backup-3/SKILL.md"))).toBe(true);
+  expect((await refusal(copy("skills/backup/SKILL.md", "skills", "backup-3"))).code).toBe("RESOURCE_ALREADY_EXISTS");
+  expect(fs.readdirSync(copied).sort()).toEqual(["SKILL.md", "link.txt", "references", "scripts"]);
+});

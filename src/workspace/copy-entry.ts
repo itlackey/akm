@@ -63,9 +63,19 @@ function originOf(bundle: string, file: string): string | undefined {
   }
 }
 
+function isSkillManifest(bundle: string, file: string): boolean {
+  const db = openReadonlyExistingDatabase();
+  if (!db) return false;
+  try {
+    return (getAssetRefsForFiles(db, [file], bundle).get(file) ?? []).some((asset) => asset.type === "skill");
+  } finally {
+    closeDatabase(db);
+  }
+}
+
 export async function copyEntry(input: CopyEntryInput) {
   const bundle = text(input.bundle, "bundle");
-  const from = text(input.from, "from");
+  let from = text(input.from, "from");
   const toBundle = input.toBundle === undefined ? bundle : text(input.toBundle, "toBundle");
   const name = text(input.name, "name");
   assertFlatAssetName(name);
@@ -82,6 +92,9 @@ export async function copyEntry(input: CopyEntryInput) {
     (entry) => entry.registryId === bundle && !entry.unresolved,
   )?.path;
   if (!sourceRoot) throw new UsageError(`Bundle "${bundle}" is disabled or unavailable.`);
+  // A skill's manifest is not a skill: it copies as the skill's folder, the rule `move` states for the same file.
+  if (path.posix.basename(from) === "SKILL.md" && isSkillManifest(bundle, path.join(sourceRoot, from)))
+    from = path.posix.dirname(from);
   const absolute = path.join(sourceRoot, from);
   if (!isWithin(safeRealpath(absolute), safeRealpath(sourceRoot)))
     throw new UsageError("The file must stay inside its bundle.", "PATH_ESCAPE_VIOLATION");
