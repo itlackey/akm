@@ -111,6 +111,12 @@ export function folderBlocker(relative: string): string | null {
   return isProtectedPlace(relative) ? PROTECTED_REASON : managedReason(relative);
 }
 
+/** Whether a folder may be made in `folder`, or a file or folder moved into it: plain file operations of any bundle that is not read-only. */
+export function placeVerdict(folder: string, blockers: WriteBlockers): FileVerdict {
+  const blocker = folderBlocker(folder) ?? blockers.plain;
+  return blocker === null ? allowed : refuse(blocker);
+}
+
 /**
  * The verdicts for one entry. `blockers` are the bundle's own answers ({@link bundleWriteBlockers}), computed once for a
  * listing. Reading, editing, moving and deleting a file or folder are plain file operations and need only `plain`; retiring

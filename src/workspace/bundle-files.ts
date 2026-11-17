@@ -11,7 +11,7 @@ import { findSourceForPath, resolveSourceEntries } from "../indexer/search/searc
 import { protectedTypeOf } from "../indexer/walk/place-rules";
 import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
 import { getAssetRefsForFiles } from "../storage/repositories/index-entries-repository";
-import { bundleWriteBlockers, fileActions } from "./file-actions";
+import { bundleWriteBlockers, fileActions, placeVerdict } from "./file-actions";
 import { newFileVerdict } from "./new-file";
 
 export interface BundleFileLocation {
@@ -117,6 +117,9 @@ export function listBundleFiles(bundle: string, relative = "", showHidden = fals
     indexAvailable,
     // Whether a new file may be made in this folder, and the type its place gives it (null: none).
     newFile: newFileVerdict(current, writeBlockers),
+    // Whether a folder may be made here, or a file or folder moved in: plain file operations, which need only a place akm
+    // does not manage or protect and a bundle that is not read-only.
+    place: placeVerdict(current, writeBlockers),
     entries: rows.map(({ absolute, ...row }) => {
       const assets = refs.get(absolute) ?? [];
       const isProtected =

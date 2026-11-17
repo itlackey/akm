@@ -222,4 +222,17 @@ describe("a listing says what a new file in its folder would be", () => {
       reason: expect.stringContaining("read-only"),
     });
   });
+
+  test("a folder or a moved entry may go where no file of a type may, and nowhere akm refuses", async () => {
+    for (const folder of ["env", ".git"]) fs.mkdirSync(path.join(storage.stashDir, folder));
+    fs.mkdirSync(path.join(storage.stashDir, "skills"), { recursive: true });
+    const place = async (bundle: string, folder: string) =>
+      ((await assets.bundleFiles({ bundle, path: folder, hidden: true })) as { place: { allowed: boolean } }).place;
+
+    expect(await place("stash", "skills")).toEqual({ allowed: true });
+    expect(await place("stash", "")).toEqual({ allowed: true });
+    expect(await place("stash", "env")).toMatchObject({ allowed: false, reason: expect.stringContaining("protected") });
+    expect(await place("stash", ".git")).toMatchObject({ allowed: false, reason: ".git/ is managed by akm." });
+    expect(await place("locked", "")).toMatchObject({ allowed: false, reason: expect.stringContaining("read-only") });
+  });
 });
