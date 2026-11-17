@@ -17,7 +17,7 @@
     FilesViewState,
   } from "./library-files-model";
   import { FileTreeState } from "./file-tree-state.svelte";
-  import { workspace } from "./state/workspace.svelte";
+  import { refreshBundles, workspace } from "./state/workspace.svelte";
   import type { Bundle, Retirement } from "./types";
   import FileDialog from "./FileDialog.svelte";
   import FileMenu from "./FileMenu.svelte";
@@ -97,6 +97,15 @@
     renaming = $state<{ bundle: string; path: string } | null>(null),
     dragging = $state<{ bundle: string; path: string; name: string; actions: FileActions } | null>(null),
     dropKey = $state("");
+  let committing = $state(false),
+    committed = $state<{
+      committed: boolean;
+      pushed: boolean;
+      commit?: string;
+      output: string;
+      reason?: string;
+    } | null>(null),
+    commitFailure = $state("");
   let creating = $state<{ kind: "new-file" | "new-folder"; bundle: string; path: string } | null>(null),
     createName = $state(""),
     createBusy = $state(false);
@@ -124,6 +133,7 @@
         entry.unavailable || (entry.kind !== "directory" && (!listing.indexAvailable || entry.assets.length !== 1)),
     ) ?? false,
   );
+  const git = $derived(bundles.find((entry) => entry.name === bundleName)?.git);
   const newFile = $derived(listing?.newFile);
   const newPlace = $derived(listing?.place);
   const createLabel = $derived(
@@ -395,6 +405,21 @@
     dragging = null;
     dropKey = "";
   }
+  /** Commit the bundle as `akm sync` does: nothing commits unless this is chosen. */
+  async function commitBundle() {
+    if (committing) return;
+    committing = true;
+    committed = null;
+    commitFailure = "";
+    try {
+      committed = await api("/bundles/commit", {}, { bundle: bundleName });
+      await refreshBundles();
+    } catch (cause) {
+      commitFailure = (cause as Error).message;
+    } finally {
+      committing = false;
+    }
+  }
   // New file and new folder: a name for what is made in the folder shown.
   function startCreate(kind: "new-file" | "new-folder", bundle: string, folder: string) {
     creating = { kind, bundle, path: folder };
@@ -513,6 +538,26 @@
       </nav>
       {@render actions?.()}
     </div>
+    {#if git}<section class="bundle-git" aria-label={`Git for ${bundleName}`}>
+        {#if git.error}<span role="alert">Git could not be read: {git.error}</span>
+        {:else}<span
+            >{git.uncommitted === null || git.uncommitted === undefined
+              ? "Uncommitted files: unknown, akm could not list the changes."
+              : `${git.uncommitted} ${git.uncommitted === 1 ? "file" : "files"} uncommitted`}</span
+          ><button
+            class="btn btn-secondary"
+            aria-disabled={committing ? "true" : undefined}
+            aria-busy={committing || undefined}
+            onclick={commitBundle}>{committing ? "Committing…" : "Commit"}</button
+          >{/if}
+        {#if committed}<span role="status" class="muted small"
+            >{committed.committed
+              ? `Committed ${committed.commit ?? ""}${committed.pushed ? " and pushed." : "."}`
+              : `Nothing was committed${committed.reason ? `: ${committed.reason}` : "."}`}
+            <span class="mono wrap">{committed.output}</span></span
+          >{/if}
+        {#if commitFailure}<span role="alert">The commit failed: {commitFailure}</span>{/if}
+      </section>{/if}
     {#if failure}<p class="notice notice-warn files-failure" role="alert">{failure}</p>{/if}
     <div class="files-content" bind:this={contentPane}>
       {#if locationError}<section class="folder-content">
@@ -856,6 +901,15 @@
     gap: 4px;
     font-size: 13px;
     font-weight: 550;
+  }
+  .bundle-git {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+    padding: 8px 24px;
+    font-size: 13px;
+    border-bottom: 1px solid var(--border);
   }
   .files-failure {
     margin: 8px 24px 0;

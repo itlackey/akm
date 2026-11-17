@@ -387,3 +387,47 @@ test("a file that is no asset and an empty folder are deleted after one confirma
   await expect(row("review-example")).toHaveCount(0);
   assert.equal(await exists(path.join(app.root, "personal/knowledge/review-example.md")), false);
 });
+
+const uncommitted = async (app, bundle) =>
+  (await app.call("/api/bundles")).body.data.bundles.find((entry) => entry.name === bundle).git?.uncommitted;
+
+test("the bundle header counts the files akm would commit and a Commit button commits them, showing what it did; nothing commits by itself", async (t) => {
+  const { app, page } = await session(t, { git: true });
+  await fs.writeFile(path.join(app.root, "personal/knowledge/new-note.md"), "# New note\n");
+  await fs.writeFile(path.join(app.root, "personal/knowledge/another.md"), "# Another\n");
+  assert.equal(await uncommitted(app, "personal"), 2);
+  await go(page, "/library/files?bundle=personal&path=knowledge");
+  const header = page.getByRole("region", { name: "Git for personal" });
+  await expect(header).toContainText("2 files uncommitted");
+  assert.equal(
+    (await fs.readdir(path.join(app.root, "personal/.git"))).includes("COMMIT_EDITMSG"),
+    true,
+    "the fixture's own commits exist",
+  );
+  const head = async () =>
+    (await app.call("/api/bundles")).body.data.bundles.find((b) => b.name === "personal").git.lastCommit.sha;
+  const before = await head();
+  await header.getByRole("button", { name: "Commit" }).click();
+  await expect(header.getByRole("status")).toContainText("Committed");
+  await expect(header).toContainText("0 files uncommitted");
+  const after = await head();
+  assert.notEqual(after, before, "one commit was made");
+  assert.equal(await uncommitted(app, "personal"), 0);
+  // A bundle that is not a Git repository has no header.
+  await go(page, "/library/files?bundle=shared&path=knowledge");
+  await expect(page.getByRole("region", { name: "Git for shared" })).toHaveCount(0);
+});
+
+test("when akm could not list the changes the count is unknown, never zero", async (t) => {
+  const { app, page } = await session(t, { git: true });
+  await page.route("**/api/bundles", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    for (const entry of body.data.bundles) if (entry.git) entry.git.uncommitted = null;
+    await route.fulfill({ response, json: body });
+  });
+  await page.goto(`${app.origin}/library/files?bundle=personal&path=knowledge`);
+  const header = page.getByRole("region", { name: "Git for personal" });
+  await expect(header).toContainText("unknown");
+  await expect(header).not.toContainText("0 files");
+});
