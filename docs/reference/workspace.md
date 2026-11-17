@@ -240,6 +240,8 @@ fetched, so `ahead`/`behind` are measured against the remote-tracking branch as 
   "data": {
     "defaultBundle": "stash",
     "defaultWriteTarget": null,
+    "writeTarget": { "name": "stash", "blocker": null },
+    "starter": { "source": "https://github.com/itlackey/akm-stash", "identity": "github:itlackey/akm-stash" },
     "workingStash": null,
     "bundles": [
       {
@@ -247,8 +249,10 @@ fetched, so `ahead`/`behind` are measured against the remote-tracking branch as 
         "kind": "filesystem",
         "default": true,
         "source": { "kind": "path", "locator": "/home/me/akm" },
+        "identity": null,
         "path": "/home/me/akm",
         "writable": true,
+        "writeBlocker": null,
         "version": null,
         "exists": true,
         "itemCount": 14,
@@ -278,6 +282,18 @@ fetched, so `ahead`/`behind` are measured against the remote-tracking branch as 
 
 - `kind` is `filesystem`, `git`, `npm` or `website`. `source` describes where the bundle comes from; `path` is its local
   root (`null` if it has none).
+- `writeBlocker` is `null` when akm would accept a write to the bundle now, and otherwise the sentence the write would
+  be refused with (disabled, not writable, an adapter that takes no AKM asset writes, a Git bundle that is not a
+  checkout or is detached). It runs the write path's own checks and changes nothing, so a card never disagrees with a
+  save.
+- `writeTarget` is where a write goes when no bundle is named, as akm's write path resolves it: `name` is that bundle
+  (`null` when none resolves) and `blocker` is the sentence a write would be refused with, or `null`. Clients show this
+  and do not combine `defaultWriteTarget` with anything.
+- `identity` names where a bundle comes from, parsed by the code `akm bundle add` uses, so the same repository or package
+  has the same identity however its address is written (`github:itlackey/akm-stash` for `github:itlackey/akm-stash`,
+  `https://github.com/itlackey/akm-stash.git` and its other spellings). It is `null` for a folder, a website, or an
+  address that does not parse. `starter` is the AKM starter bundle: `source` is what `bundle add` takes and `identity`
+  is compared for equality with a card's.
 - The default bundle's card comes first; the rest keep their configured order.
 - `workingStash` is `{ path, git }` for the directory akm reads besides the configured bundles (`AKM_BUNDLE_DIR`, or the
   platform stash when no `defaultBundle` is set). `git` has the same shape as a card's `git`. It is `null` when a

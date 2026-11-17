@@ -304,17 +304,16 @@ export function assertAkmAssetWrite(source: WriteTargetSource, allowedAdapters: 
 }
 
 /**
- * Validate a write target before a command mutates it. A git target must be a
- * materialized checkout on a branch; its repository root is resolved from the
- * content root (which may be a subdirectory) so the boundary commit uses
- * repository-relative paths. Being ahead of or behind upstream only warns.
+ * The read-only checks a write target must pass: the adapter takes AKM asset writes, and a git target is a
+ * materialized checkout on a branch. Its repository root is resolved from the content root (which may be a
+ * subdirectory) so the boundary commit uses repository-relative paths. Nothing is changed and nothing is fetched.
  */
-export function prepareWriteTargetForMutation(
+function checkWriteTarget(
   target: ResolvedWriteTarget,
   options: { allowedAdapters?: readonly string[] } = {},
-): ResolvedWriteTarget {
+): { target: ResolvedWriteTarget; repoPath?: string } {
   assertAkmAssetWrite(target.source, options.allowedAdapters);
-  if (target.source.kind !== "git") return target;
+  if (target.source.kind !== "git") return { target };
 
   const contentRoot = path.resolve(target.source.path);
   const rootResult = runGit(["-C", contentRoot, "rev-parse", "--show-toplevel"]);
@@ -333,6 +332,41 @@ export function prepareWriteTargetForMutation(
       "INVALID_FLAG_VALUE",
     );
   }
+  return { target, repoPath };
+}
+
+/**
+ * Whether a write to `explicitTarget` (or, with none, to where a write goes by default) would be accepted, and the
+ * sentence why not when it would not. It runs the checks the write path runs, so it never disagrees with a save.
+ * `name` is the bundle the write resolves to, or null when none resolves.
+ */
+export function inspectWriteTarget(
+  akmConfig: AkmConfig,
+  explicitTarget?: string,
+): { name: string | null; blocker: string | null } {
+  try {
+    const resolved = resolveWriteTarget(akmConfig, explicitTarget);
+    checkWriteTarget(resolved);
+    return { name: resolved.source.name, blocker: null };
+  } catch (error) {
+    let name: string | null = null;
+    try {
+      name = resolveWriteTarget(akmConfig, explicitTarget, { requireWritable: false }).source.name;
+    } catch {
+      // Nothing resolves: the blocker above says why.
+    }
+    return { name, blocker: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/** Validate a write target before a command mutates it: the read-only checks, then an advisory upstream check. */
+export function prepareWriteTargetForMutation(
+  target: ResolvedWriteTarget,
+  options: { allowedAdapters?: readonly string[] } = {},
+): ResolvedWriteTarget {
+  const { repoPath } = checkWriteTarget(target, options);
+  if (repoPath === undefined) return target;
+  const contentRoot = path.resolve(target.source.path);
   try {
     const upstream = inspectGitUpstream(repoPath);
     if (upstream.behind > 0) {

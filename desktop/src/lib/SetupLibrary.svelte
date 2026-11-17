@@ -6,7 +6,7 @@
 
 <script lang="ts">
   import { api, pickFolder } from "./client";
-  import { hasStarter, STARTER } from "./setup-model";
+  import { hasStarter } from "./setup-model";
   import { refreshBundles, workspace } from "./state/workspace.svelte";
 
   let { stashDir }: { stashDir: string } = $props();
@@ -17,7 +17,8 @@
     dirInput = $state<HTMLInputElement>();
 
   const created = $derived(!workspace.unconfigured);
-  const wantsStarter = $derived(starter && !hasStarter(workspace.bundles));
+  const offerStarter = $derived(workspace.starter !== null && !hasStarter(workspace.bundles, workspace.starter));
+  const wantsStarter = $derived(starter && offerStarter);
   const failed = $derived(outcomes.some((outcome) => !outcome.ok));
   const message = (cause: unknown) => (cause as Error).message;
 
@@ -43,7 +44,7 @@
       }
       if (wantsStarter) {
         try {
-          await api("/bundles/add", {}, { source: STARTER });
+          await api("/bundles/add", {}, { source: workspace.starter!.source });
           outcomes.push({ ok: true, text: "Starter bundle added and indexed." });
         } catch (cause) {
           outcomes.push({ ok: false, text: `The starter bundle could not be added. ${message(cause)}` });
@@ -91,7 +92,7 @@
       </div>
     </div>
   {/if}
-  {#if !created || !hasStarter(workspace.bundles)}
+  {#if !created || offerStarter}
     <label class="check-label">
       <input type="checkbox" bind:checked={starter} /> Add the AKM starter bundle
       <span class="muted">(<code>itlackey/akm-stash</code>; downloads from GitHub)</span>

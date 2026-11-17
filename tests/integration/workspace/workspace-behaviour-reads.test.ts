@@ -21,6 +21,7 @@ import { akmSearch } from "../../../src/commands/read/search";
 import { loadConfig, resetConfigCache } from "../../../src/core/config/config";
 import { getDbPath } from "../../../src/core/paths";
 import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
+import { getCachePaths, parseGitRepoUrl } from "../../../src/sources/providers/git";
 import { recordImproveRun } from "../../../src/storage/repositories/improve-runs-repository";
 import { closeDatabase, openExistingDatabase } from "../../../src/storage/repositories/index-connection";
 import { upsertEmbedding } from "../../../src/storage/repositories/index-vec-repository";
@@ -501,6 +502,89 @@ describe("reads", () => {
     expect(listed.index.entryCount).toBeGreaterThanOrEqual(2);
     expect(listed.index).toMatchObject({ hasEmbeddings: false, embeddingCount: 0 });
     expect(listed.index.lastBuiltAt).toBeTruthy();
+  });
+
+  test("bundles reports, per bundle, the sentence akm's write path would refuse with", async () => {
+    await seed();
+    const url = "https://example.test/team/notes";
+    const checkout = getCachePaths(parseGitRepoUrl(url).canonicalUrl).repoDir;
+    fs.mkdirSync(checkout, { recursive: true });
+    git(checkout, ["init", "-q", "-b", "main"]);
+    git(checkout, ["config", "user.email", "t@example.test"]);
+    git(checkout, ["config", "user.name", "t"]);
+    fs.writeFileSync(path.join(checkout, "README.md"), "seed\n");
+    git(checkout, ["add", "."]);
+    git(checkout, ["commit", "-q", "-m", "seed"]);
+    git(checkout, ["checkout", "-q", "--detach"]);
+    const current = loadConfig();
+    writeSandboxConfig({
+      bundles: {
+        ...current.bundles,
+        team: { git: url, writable: true },
+        shared: { git: "https://example.test/team/shared", writable: false },
+        off: { path: fs.mkdtempSync(path.join(ctx.storage.root, "off-")), enabled: false },
+      },
+    });
+    resetConfigCache();
+
+    const listed = await out(bundles.list());
+    const blocker = (name: string) => listed.bundles.find((b: Json) => b.name === name)?.writeBlocker;
+    expect(blocker("stash")).toBeNull();
+    // A writable Git bundle that is detached: the card carries what the save would say.
+    expect(blocker("team")).toBe('Writable Git target "team" is detached from a branch.');
+    expect(blocker("shared")).toBe("source shared is not writable");
+    expect(blocker("off")).toBe('Bundle "off" is disabled.');
+    expect(git(checkout, ["status", "--porcelain"])).toBe("");
+  });
+
+  test("bundles reports the one bundle a write goes to when none is named, and why none does", async () => {
+    await seed();
+    expect((await out(bundles.list())).writeTarget).toEqual({ name: "stash", blocker: null });
+
+    const current = loadConfig();
+    writeSandboxConfig({ bundles: { ...current.bundles, stash: { path: ctx.storage.stashDir, writable: false } } });
+    resetConfigCache();
+    expect((await out(bundles.list())).writeTarget).toEqual({
+      name: "stash",
+      blocker: 'defaultWriteTarget "stash" is not writable',
+    });
+
+    // No working stash from the environment and no default bundle: nothing resolves, and akm says why.
+    const workingStash = process.env.AKM_BUNDLE_DIR;
+    delete process.env.AKM_BUNDLE_DIR;
+    try {
+      fs.writeFileSync(
+        path.join(process.env.XDG_CONFIG_HOME as string, "akm", "config.json"),
+        JSON.stringify({ bundles: { stash: { path: ctx.storage.stashDir, writable: true } } }),
+      );
+      resetConfigCache();
+      expect((await out(bundles.list())).writeTarget).toEqual({
+        name: null,
+        blocker: "No default bundle is configured.",
+      });
+    } finally {
+      process.env.AKM_BUNDLE_DIR = workingStash;
+    }
+  });
+
+  test("bundles reports one identity for a bundle's source and for the starter, however the address is written", async () => {
+    await seed();
+    const current = loadConfig();
+    writeSandboxConfig({
+      bundles: {
+        ...current.bundles,
+        mine: { git: "https://github.com/itlackey/akm-stash.git" },
+        fork: { git: "https://github.com/someone/akm-stash" },
+        "akm-stash": { path: fs.mkdtempSync(path.join(ctx.storage.root, "folder-")) },
+      },
+    });
+    resetConfigCache();
+    const listed = await out(bundles.list());
+    const identity = (name: string) => listed.bundles.find((b: Json) => b.name === name)?.identity;
+    expect(identity("mine")).toBe(listed.starter.identity);
+    expect(identity("fork")).not.toBe(listed.starter.identity);
+    // A folder has no source identity, whatever it is called.
+    expect(identity("akm-stash")).toBeNull();
   });
 
   test("bundles counts only the current model's vectors against the embeddable entries", async () => {

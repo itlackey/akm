@@ -101,7 +101,7 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
       : route.continue({ postData: JSON.stringify({ source: starter, name: "akm-stash" }) }),
   );
 
-  // The local folder stands in for the download, so the listing reports it with the starter's source.
+  // The local folder stands in for the download, so the listing reports it with the starter's identity.
   await page.route("**/api/bundles", async (route) => {
     if (route.request().method() !== "GET") return route.continue();
     // The page keeps refreshing while the test shuts the server down; a request that finds it gone is just dropped.
@@ -109,7 +109,7 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
     if (!response) return route.abort().catch(() => {});
     const body = await response.json();
     for (const bundle of body.data.bundles)
-      if (bundle.name === "akm-stash") bundle.source = { kind: "git", locator: "github:itlackey/akm-stash" };
+      if (bundle.name === "akm-stash") bundle.identity = body.data.starter.identity;
     await route.fulfill({ response, json: body });
   });
 
