@@ -16,6 +16,7 @@ import {
   RECENT_DAYS,
   relations,
   tally,
+  unplaced,
   useClass,
 } from "../src/lib/library-overview.ts";
 
@@ -108,6 +109,14 @@ test("feedback and near-duplicates akm could not report are unknown, not none", 
   // Feedback counts that akm did not measure never make an asset "disliked", and no pair is invented.
   assert.ok(unknown.problems.every((p) => !p.includes("negative") && !p.includes("duplicate")));
   assert.deepEqual(unknown.duplicates, []);
+});
+
+test("assets with no group by meaning are counted, so the 3D map can say how many it leaves out", () => {
+  const groups = { count: 1, group: [0, 0, -1, 0, -1, 0, 0], x: [], y: [], z: [] };
+  const o = buildOverview({ ...payload, groups }, now);
+  assert.equal(unplaced(o, [0, 1, 2, 3, 4, 5, 6]), 2);
+  assert.equal(unplaced(o, [0, 1, 3]), 0);
+  assert.equal(unplaced(buildOverview(payload, now), [0, 1]), 2);
 });
 
 test("the overview carries links by kind name, edit times and feedback counts", () => {

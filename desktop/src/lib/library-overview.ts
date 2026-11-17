@@ -449,6 +449,9 @@ export interface Group {
   centre: [number, number, number];
 }
 
+/** How many of `scope` have no group by meaning, so are not points on the 3D map. */
+export const unplaced = (o: Overview, scope: readonly number[]): number => scope.filter((i) => o.group[i]! < 0).length;
+
 /**
  * The groups by meaning among `scope`, largest first. A group is named by the tags its assets carry far more than the
  * rest of the scope does (count in the group times the log of how rare the tag is in the scope), so a tag every asset

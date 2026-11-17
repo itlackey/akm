@@ -25,6 +25,7 @@
     RECENT_DAYS,
     relations,
     tally,
+    unplaced,
     USE_CLASSES,
     VIEWS,
     type View,
@@ -256,6 +257,8 @@
     ` ${query.toLowerCase().replace(/[^a-z0-9]+/g, " ")} `.includes(` ${tag.replace(/[^a-z0-9]+/g, " ").trim()} `);
   /** Searches that found nothing: for a tag, the ones that mention it. */
   const gaps = $derived(part?.tag ? misses.filter((m) => mentions(m.query, part.tag)).slice(0, 6) : misses.slice(0, 6));
+  /** Assets in the bundle that are not points on the 3D map: akm's stored layout has no group for them. */
+  const offMap = $derived(o ? unplaced(o, bundleScope) : 0);
   const scopeName = $derived(bundle < 0 ? "All bundles" : (o?.bundles[bundle] ?? ""));
   const nameOf = (key: string) => {
     const p = parts.get(key);
@@ -523,13 +526,18 @@
                 related={joined.slice(0, 12).map((r) => r.key)}
                 onPick={pick}
                 onGroup={choose}
-                label={`${question} Every asset of ${scopeName} as a point, alike assets close together, in ${plural(groups.length, "group")} by meaning named by their tags.`}
+                label={`${question} The ${plural(bundleScope.length - offMap, "asset")} of ${scopeName} that have a group by meaning, as points, alike assets close together, in ${plural(groups.length, "group")} named by their tags.${offMap ? ` ${plural(offMap, "asset")} not shown.` : ""}`}
               />
               <p class="muted small">
                 Each point is an asset; alike assets sit close, and each group by meaning is named by the tags its
                 assets carry most. Drag to turn, right-drag to move, scroll to zoom, hover a point for its name. Choose
                 a group's name to draw what joins it to other groups, or a point to draw its links and near-duplicates.
-              </p>{:else}<p class="notice">
+              </p>
+              {#if offMap}<p class="muted small" role="status">
+                  {plural(offMap, "asset")}
+                  {offMap === 1 ? "has" : "have"} no group by meaning, so {offMap === 1 ? "is" : "are"} not shown (not embedded,
+                  or added since the last index build).
+                </p>{/if}{:else}<p class="notice">
                 No stored embeddings, so assets cannot be placed by meaning. Build the index with embeddings, or use the
                 flat map.
               </p>{/if}
