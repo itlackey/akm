@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { peekConfigValue } from "../core/config/peek";
 import { getDataDir } from "../core/paths";
-import { isKnownType } from "../core/recognition-util";
+import { isKnownType, KNOWN_TYPES } from "../core/recognition-util";
 import { hasSignalOwner, observeSignal } from "../core/signal-observers";
 import { type Database, openDatabase } from "../storage/database";
 import { applyStandardPragmas } from "../storage/sqlite-pragmas";
@@ -44,7 +44,7 @@ export interface InvocationUsage {
 const SAFE_VALUES: Record<string, readonly string[]> = {
   format: ["json", "jsonl", "yaml", "text", "md"],
   detail: ["agent", "brief", "normal", "full"],
-  type: ["skill", "agent", "command", "script", "knowledge", "workflow", "env", "secret", "memory", "lesson"],
+  type: [...KNOWN_TYPES, "any"],
 };
 
 /** Scan declared identities only. Unknown spellings can themselves contain secrets. */

@@ -11,6 +11,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { describeUsage } from "../src/cli/usage";
 import { akmLint } from "../src/commands/lint/index";
 import { documentFormatForStashDir, documentStashDirs, stashDirFor } from "../src/core/asset/asset-placement";
 import { UsageError } from "../src/core/errors";
@@ -85,5 +86,19 @@ describe("lint folders come from the placement registry", () => {
         await expect(lint({ file, typeFilter: "knowledge" })).rejects.toBeInstanceOf(UsageError);
       }
     });
+  });
+});
+
+describe("CLI usage records every known type", () => {
+  const root = { subCommands: { search: { args: { type: { type: "string" } } } } };
+  const recordedType = (value: string) =>
+    describeUsage(root, ["search", "--type", value]).arguments.find((arg) => arg.name === "type")?.value;
+
+  test("each known type, and any, is recorded as given", () => {
+    for (const type of [...KNOWN_TYPES, "any"]) expect(recordedType(type)).toBe(type);
+  });
+
+  test("a value that is not a type is redacted", () => {
+    expect(recordedType("PRIVATE_VALUE")).toBe("[redacted]");
   });
 });
