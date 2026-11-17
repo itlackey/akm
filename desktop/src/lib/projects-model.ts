@@ -252,6 +252,6 @@ export interface Overview {
   project: { name: string; prefer: Record<string, string | string[]>; write: { metadata: Record<string, unknown> } };
   fromImplicit: boolean;
   preferImplicit: boolean;
-  writeBundle: { name: string | null; implicit: boolean; usable: boolean | null };
+  writeBundle: { name: string | null; implicit: boolean; writeBlocker: string | null };
   bundles: OverviewBundle[];
 }

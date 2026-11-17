@@ -2,12 +2,15 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-export interface ActivityCheck {
+/** A check's verdict, or `unknown` with the reason akm gives for having none: off, not probed, blocked or idle. */
+export type ActivityCheck = {
   name: string;
-  status: string;
   message: string;
   evidence?: Record<string, unknown>;
-}
+} & (
+  | { status: "pass" | "warn" | "fail"; reason?: undefined }
+  | { status: "unknown"; reason: "off" | "not-probed" | "blocked" | "idle" }
+);
 export interface ActivityHealth {
   status: string;
   hardChecks: ActivityCheck[];

@@ -425,7 +425,29 @@ test("new content goes where akm says: the working stash when no write target is
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   await open(page, server, "/");
-  const akmAnswer = (await server.call("/api/config")).body.data.automaticWriteTarget.name;
+  const akmAnswer = (await server.call("/api/bundles")).body.data.writeTarget.name;
   assert.equal(akmAnswer, "personal", "AKM_BUNDLE_DIR is the working stash, not the default bundle");
   await expect(page.getByRole("link", { name: "Create an asset" })).toHaveAttribute("href", /bundle=personal(&|$)/);
+});
+
+test("a bundle akm would refuse a write to is listed with akm's sentence, not offered", async (t) => {
+  const server = await launchFixture({
+    configureFixture: async (fixture) => {
+      const file = path.join(fixture.root, "config/config.json");
+      const config = JSON.parse(await readFile(file, "utf8"));
+      // Writable and enabled, but never materialised as a checkout: a save would be refused.
+      config.bundles.team = { git: "https://example.test/team/notes", writable: true };
+      await writeFile(file, JSON.stringify(config));
+    },
+  });
+  t.after(() => server.stop());
+  const blocker = (await server.call("/api/bundles")).body.data.bundles.find((b) => b.name === "team").writeBlocker;
+  assert.match(blocker, /not materialized as a Git checkout/);
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  await open(page, server, "/library/new");
+  const option = page.getByRole("combobox", { name: "Bundle" }).locator("option", { hasText: "team" });
+  await expect(option).toHaveJSProperty("disabled", true);
+  await expect(option).toHaveText(`team: ${blocker}`);
 });

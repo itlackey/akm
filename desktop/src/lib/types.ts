@@ -43,8 +43,12 @@ export interface Bundle {
   name: string;
   enabled: boolean;
   writable: boolean;
+  /** The sentence akm's write path would refuse with, or null when a write to this bundle would be accepted. */
+  writeBlocker: string | null;
   default?: boolean;
   source?: { kind: string; locator: string };
+  /** akm's one name for where the bundle comes from; equal for the same repository however its address is written. Null for a folder or website. */
+  identity: string | null;
   path?: string;
   kind: string;
   itemCount?: number;

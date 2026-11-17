@@ -103,6 +103,14 @@ and must report a partial outcome as data. `tests/integration-contract.test.mjs`
 checks the import rule for server code. Desktop-owned routes are under
 `/api/desktop/*`; every other `/api` path is AKM's.
 
+## What Desktop shows
+
+Desktop shows what akm reports. It never infers state from a string's shape (a version pattern, a name or address
+substring, the wording of a message), a clock window, a default for a missing field, or the absence of an error.
+Unknown is shown as unknown, and a failed read is shown with its reason, never as zero, empty or up to date. A check
+and the action it previews call one function with the same inputs. A fact akm does not report is added to akm, which
+owns it; Desktop does not rebuild it from other fields.
+
 ## Local application boundary
 
 By default the server binds an OS-selected port on `127.0.0.1`; `akm-web` with `--host` and `--origin` binds elsewhere

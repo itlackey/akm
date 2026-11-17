@@ -157,7 +157,7 @@ test("reviewed human workflows prevent dead ends and preserve focus and source",
       await expect(health).toBeVisible();
       // The header says what did not run as a sentence, in the words the status line uses.
       await expect(page.locator(".health-overview p")).toHaveText(
-        "Observation window: last 24 hours. 1 turned off, 3 not checked.",
+        "Observation window: last 24 hours. 2 turned off, 3 not checked.",
       );
       // A group's heading says its count in words; a check is a heading of its own, with the id as separate text and
       // its evidence named by the same label.

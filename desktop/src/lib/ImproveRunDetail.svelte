@@ -5,40 +5,14 @@
 -->
 
 <script lang="ts">
-  import { api, date } from "./client";
+  import { date } from "./client";
   import { duration } from "./activity-presenter";
   import Icon from "./Icon.svelte";
   import Outcome from "./Outcome.svelte";
-  import { improveOutcome, tasksAroundImprove, MATCH_WINDOW_MS } from "./run-model";
-  import type { ActivityRun, ActivityRunUsage, ActivityTaskHistory, ActivityTaskRun } from "./activity-types";
+  import { improveOutcome } from "./run-model";
+  import type { ActivityRun, ActivityRunUsage } from "./activity-types";
 
   let { run, onClose, panel = $bindable() }: { run: ActivityRun; onClose: () => void; panel?: HTMLElement } = $props();
-  type Around = { task: ActivityTaskRun; detail: ActivityTaskHistory["runs"][number] | null };
-  let around = $state<Around[] | null>(null);
-  let aroundFailed = $state(false);
-  let request = 0;
-  // An improve run carries no id of the scheduled task run that started it, so the task rows within five minutes of its
-  // start are read, and shown as a match by time.
-  $effect(() => {
-    const mine = ++request;
-    const start = Date.parse(run.startedAt);
-    const since = new Date(start - MATCH_WINDOW_MS - 1000).toISOString();
-    around = null;
-    aroundFailed = false;
-    api<{ runs: ActivityTaskRun[] }>("/tasks/runs", { since })
-      .then(async ({ runs }) => {
-        const matches = tasksAroundImprove(run, runs);
-        const found: Around[] = [];
-        for (const task of matches) {
-          const history = await api<ActivityTaskHistory>("/tasks/history", { taskId: task.taskId, since });
-          found.push({ task, detail: history.runs.find((row) => row.startedAt === task.startedAt) ?? null });
-        }
-        if (mine === request) around = found;
-      })
-      .catch(() => {
-        if (mine === request) aroundFailed = true;
-      });
-  });
   const processes = $derived(Object.entries(run.modelCalls.byProcess).sort((a, b) => b[1].calls - a[1].calls));
   const failing = $derived(processes.filter(([, row]) => row.failures > 0));
   const most = $derived(
@@ -142,28 +116,9 @@
         {run.errors.shown.length} of {run.errors.count} shown.
       </p>{/if}{:else if !run.terminated}<p class="muted small">This run recorded no failed action.</p>{/if}
   <p class="muted small">
-    No record of an improve run carries the id of the scheduled task run that started it. The task runs below started
-    within {MATCH_WINDOW_MS / 60000} minutes of this run and are matched by time, so they may not be its own.
+    No record ties this run to the scheduled task run that started it, so none is shown here. A failed task run's error
+    detail is under its task in Task runs.
   </p>
-  {#if aroundFailed}<p class="notice notice-warn">The scheduled task runs around this run could not be read.</p>
-  {:else if around === null}<p role="status" class="muted">Reading the task runs around this run…</p>
-  {:else if !around.length}<p>
-      No scheduled task run started within {MATCH_WINDOW_MS / 60000} minutes of this run (a run started by hand has none),
-      so no error detail is recorded here.
-    </p>{:else}{#each around as { task, detail }}<div class="matched">
-        <p>
-          <strong>{task.taskId}</strong>, started {date(task.startedAt)}: {task.status}.
-          <span class="badge" data-tone="info">Matched by time</span>
-        </p>
-        {#if detail}<dl class="run-facts">
-            <dt>Reason</dt>
-            <dd>{String(detail.detail?.reason ?? "Not recorded")}</dd>
-            <dt>Error</dt>
-            <dd>{String(detail.detail?.error ?? "Not recorded")}</dd>
-            <dt>Exit code</dt>
-            <dd>{String(detail.detail?.exitCode ?? "Not recorded")}</dd>
-          </dl>{/if}
-      </div>{/each}{/if}
   {#each [{ name: "Before-run sync", value: run.preRunSync }, { name: "Sync result", value: run.sync }, { name: "Triage result", value: run.triage }] as detail}<details
     >
       <summary>{detail.name}</summary>

@@ -102,12 +102,8 @@
       ...names.map((name) => [name, name] as [string, string]),
     ];
     const target = config?.automaticWriteTarget;
-    const unavailableWrites = (listing?.bundles ?? bundles)
-      .filter(
-        (bundle) =>
-          !bundle.enabled || !bundle.writable || !bundle.components.some((component) => component.adapter === "akm"),
-      )
-      .map((bundle) => bundle.name);
+    const blockers = new Map((listing?.bundles ?? bundles).map((bundle) => [bundle.name, bundle.writeBlocker]));
+    const unavailableWrites = [...blockers].filter(([, blocker]) => blocker !== null).map(([name]) => name);
     const groups: SettingsGroup[] = [
       {
         id: "search-settings",
@@ -144,9 +140,9 @@
             label: "Default write target",
             kind: "select",
             disabledOptions: unavailableWrites,
-            hint: unavailableWrites.includes(String(config?.config.defaultWriteTarget ?? ""))
-              ? "The configured target cannot accept writes. Choose an enabled writable bundle."
-              : "New content needs an enabled, writable AKM bundle.",
+            hint:
+              blockers.get(String(config?.config.defaultWriteTarget ?? "")) ??
+              "New content needs a bundle that accepts writes.",
             options: [
               [
                 "",

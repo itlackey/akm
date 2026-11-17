@@ -24,6 +24,7 @@ describe("collectVersionDriftAdvisory (#950)", () => {
     expect(called).toBe(false);
     expect(result.name).toBe("cli-version");
     expect(result.status).toBe("unknown");
+    expect(result.reason).toBe("not-probed");
     expect(result.message).toContain("0.9.12");
     expect(result.message.toLowerCase()).toContain("not probed");
   });
@@ -67,6 +68,7 @@ describe("collectVersionDriftAdvisory (#950)", () => {
       },
     });
     expect(result.status).toBe("unknown");
+    expect(result.reason).toBe("blocked");
     expect(result.message).toContain("0.9.12");
     expect(result.evidence?.error).toBe("TypeError");
   });

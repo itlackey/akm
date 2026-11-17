@@ -277,6 +277,7 @@ describe("health reporting correctness", () => {
     const result = await health();
     expect(result.advisories.find((c) => c.name === "improve-failures")).toMatchObject({
       status: "unknown",
+      reason: "blocked",
       evidence: { failedRuns: 0, interruptedRuns: 1, interruptedRunIds: ["interrupted"] },
     });
   });

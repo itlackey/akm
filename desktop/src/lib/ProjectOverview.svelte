@@ -193,8 +193,9 @@
           >{" "}{/if}{/each}
     </dd>
   </dl>
-  {#if overview?.writeBundle.name && overview.writeBundle.usable === false}<p class="notice notice-warn">
-      {overview.writeBundle.name} cannot accept writes (disabled or read-only). New memories and proposals here will fail.
+  {#if overview?.writeBundle.name && overview.writeBundle.writeBlocker !== null}<p class="notice notice-warn">
+      {overview.writeBundle.name} cannot accept writes: {overview.writeBundle.writeBlocker} New memories and proposals here
+      will fail.
     </p>{/if}
 </section>
 

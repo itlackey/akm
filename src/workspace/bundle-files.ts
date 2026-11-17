@@ -20,6 +20,12 @@ export interface BundleFileLocation {
 
 const portable = (value: string) => value.split(path.sep).join("/");
 
+/** akm's own directory rules on a bundle-relative path: `env` or `secret` when any env/ or secrets/ ancestor makes it a protected file. */
+export function protectedTypeOf(relative: string): "env" | "secret" | undefined {
+  const type = declaredTypeForPath(buildFileContext("/", path.posix.join("/", relative)));
+  return type === "env" || type === "secret" ? type : undefined;
+}
+
 /** Source roots and identities come from the same resolver as search, never from a ref's spelling. */
 export function bundleFileLocation(filePath: string): BundleFileLocation | null {
   const source = findSourceForPath(filePath, resolveSourceEntries());
@@ -110,11 +116,11 @@ export function listBundleFiles(bundle: string, relative = "", showHidden = fals
     indexAvailable,
     entries: rows.map(({ absolute, ...row }) => {
       const assets = refs.get(absolute) ?? [];
-      // akm's own directory rules, on the real file: any env/ or secrets/ ancestor makes it a protected file.
-      const type = declaredTypeForPath(
-        buildFileContext("/", path.posix.join("/", portable(path.relative(source.path, absolute)))),
-      );
-      return { ...row, assets, protected: row.kind === "file" && (type === "env" || type === "secret") };
+      return {
+        ...row,
+        assets,
+        protected: row.kind === "file" && protectedTypeOf(portable(path.relative(source.path, absolute))) !== undefined,
+      };
     }),
   };
 }

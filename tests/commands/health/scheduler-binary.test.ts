@@ -41,6 +41,7 @@ describe("collectSchedulerBinaryAdvisory (#953)", () => {
     expect(listed).toBe(false);
     expect(result.name).toBe("scheduler-binary");
     expect(result.status).toBe("unknown");
+    expect(result.reason).toBe("not-probed");
     expect(result.message.toLowerCase()).toContain("not probed");
   });
 
@@ -50,6 +51,7 @@ describe("collectSchedulerBinaryAdvisory (#953)", () => {
       backend: { ...fakeBackend([]), list: () => [] },
     });
     expect(result.status).toBe("unknown");
+    expect(result.reason).toBe("off");
     expect(result.message.toLowerCase()).toContain("no scheduled task");
   });
 
@@ -85,6 +87,7 @@ describe("collectSchedulerBinaryAdvisory (#953)", () => {
       },
     });
     expect(result.status).toBe("unknown");
+    expect(result.reason).toBe("blocked");
     expect(result.message.toLowerCase()).toContain("could not");
   });
 
@@ -102,6 +105,7 @@ describe("collectSchedulerBinaryAdvisory (#953)", () => {
       },
     });
     expect(result.status).toBe("unknown");
+    expect(result.reason).toBe("blocked");
     expect(result.message).toContain("could not be inspected");
   });
 
@@ -120,6 +124,7 @@ describe("collectSchedulerBinaryAdvisory (#953)", () => {
       },
     });
     expect(result.status).toBe("unknown");
+    expect(result.reason).toBe("off");
     expect(result.message).toContain("No scheduler is available on this host");
     expect(result.message).toContain("crontab");
   });

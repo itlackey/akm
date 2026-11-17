@@ -17,6 +17,7 @@
   import {
     ageBands,
     activityReturn,
+    batchCommitOutcome,
     batchOutcome,
     commitOutcome,
     conceptLocation,
@@ -416,11 +417,13 @@
     const ids = [...selected];
     const payload = action === "reject" ? { reason: rejectionReason(choice, reason) } : {};
     let outcomeOf: BatchOutcome | undefined;
+    let commitSaid = "";
     const result = await settleDecision(
       () => api<WriteResult>(`/proposals/${action}`, {}, { ids, ...payload }),
       async (receipt) => {
         const done = batchOutcome(ids, receipt);
         outcomeOf = done;
+        if (action === "accept") commitSaid = batchCommitOutcome(receipt);
         intent = "";
         reason = "";
         choice = "";
@@ -449,11 +452,12 @@
     if (done.failed.length) {
       report = { ...done, verb, total: ids.length };
       afterFocus = "report";
-    } else
+    }
+    if (!done.failed.length || commitSaid)
       showToast({
         key: "decision",
         title: `${decisionVerb(action)} ${done.done.length} proposals`,
-        detail: "Details are in Recent decisions.",
+        detail: [commitSaid, "Details are in Recent decisions."].filter(Boolean).join(" "),
         action: { label: "View", run: () => navigate(proposalHref("", new URLSearchParams({ status: "recent" }))) },
       });
     if (desiredId && done.done.includes(desiredId)) await open(desiredId);

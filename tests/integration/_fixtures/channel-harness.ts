@@ -15,7 +15,15 @@ if (state.fail === command + " " + args.join(" ")) {
   console.error("fixture refresh failed");
   process.exit(1);
 }
-if (command === "git") {
+if (command === "git" && args[2] === "show") {
+  // `git -C <checkout> show HEAD:<file>`: the cloned marketplace's files live in the checkout folder.
+  const file = path.join(args[1]!, args[3]!.replace(/^HEAD:/, ""));
+  if (!fs.existsSync(file)) {
+    console.error(`fatal: path '${args[3]}' does not exist in 'HEAD'`);
+    process.exit(128);
+  }
+  process.stdout.write(fs.readFileSync(file));
+} else if (command === "git") {
   if (state.remote === "down") process.exit(128);
   const checkout = args.at(-1)!;
   const channel = args.includes("next") ? "next" : "latest";

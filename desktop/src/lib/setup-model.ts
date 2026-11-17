@@ -6,8 +6,11 @@
 
 import type { Bundle } from "./types";
 
-/** The official starter bundle: a git source, so adding it downloads from GitHub. */
-export const STARTER = "github:itlackey/akm-stash";
+/** The official starter bundle as akm reports it: the address `bundle add` takes (a git source, so adding it downloads from GitHub) and its identity. */
+export interface Starter {
+  source: string;
+  identity: string | null;
+}
 
 /** What `setup.detect` reports, and `setup.apply` returns once it has run. */
 export interface Detected {
@@ -119,18 +122,9 @@ export function pluginMatches(engine: string | undefined, plugin: string | undef
 export const isUnconfigured = (listing: { bundles: unknown[]; workingStash: unknown | null }) =>
   listing.bundles.length === 0 && !listing.workingStash;
 
-const STARTER_LOCATORS = [STARTER, "https://github.com/itlackey/akm-stash"];
-
-/** The starter is a bundle whose source is the starter's repository, whatever its name, with or without `.git` or a slash. */
-export const hasStarter = (bundles: Bundle[]) =>
-  bundles.some((bundle) =>
-    STARTER_LOCATORS.includes(
-      (bundle.source?.locator ?? "")
-        .trim()
-        .replace(/\/+$/, "")
-        .replace(/\.git$/, ""),
-    ),
-  );
+/** The starter is the bundle whose source has the starter's identity, whatever it is named. */
+export const hasStarter = (bundles: Bundle[], starter: Starter) =>
+  starter.identity !== null && bundles.some((bundle) => bundle.identity === starter.identity);
 
 export interface AgentCard {
   id: string;

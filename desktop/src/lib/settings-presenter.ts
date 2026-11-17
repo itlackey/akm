@@ -24,6 +24,8 @@ export interface SettingsBundle {
   path: string | null;
   source: { kind: string; locator: string };
   writable: boolean;
+  /** The sentence akm's write path would refuse with, or null when a write to this bundle would be accepted. */
+  writeBlocker: string | null;
   enabled: boolean;
   writableSetting?: boolean;
   components: Array<{ name: string; adapter: string; root?: string; writable?: boolean; configured: boolean }>;

@@ -4,13 +4,15 @@
 
 import { api, apiState } from "../client";
 import { renameBundle } from "../drafts";
-import { isUnconfigured } from "../setup-model";
+import { isUnconfigured, type Starter } from "../setup-model";
 import type { Bundle } from "../types";
 
 /** Workspace-wide state the shell and the sections share. Per-view state stays in the page. */
 export const workspace = $state({
   bundles: [] as Bundle[],
   defaultWriteTarget: "",
+  /** The starter bundle as akm reports it; null until the bundle list has been read. */
+  starter: null as Starter | null,
   bundlesReady: false,
   /** Nothing is configured: no bundle and no working library, so first-run setup is what comes next. */
   unconfigured: false,
@@ -48,18 +50,21 @@ export async function refreshPending() {
 }
 
 export async function refreshBundles(onlyIfChanged = false) {
-  const [data, akm] = await Promise.all([
-    api<{ bundles: Bundle[]; workingStash: unknown | null }>("/bundles"),
-    api<{ config: { defaultWriteTarget?: string }; automaticWriteTarget?: { name: string } | null }>("/config"),
-  ]);
-  // Where akm sends new content: the configured write target, else the target it picks itself.
-  const target = akm.config.defaultWriteTarget || akm.automaticWriteTarget?.name || "";
+  const data = await api<{
+    bundles: Bundle[];
+    workingStash: unknown | null;
+    writeTarget: { name: string | null; blocker: string | null };
+    starter: Starter;
+  }>("/bundles");
+  // Where akm sends new content when no bundle is named: its own answer, empty when none resolves.
+  const target = data.writeTarget.name ?? "";
   const changed =
     JSON.stringify(workspace.bundles) !== JSON.stringify(data.bundles) || workspace.defaultWriteTarget !== target;
   workspace.bundles = data.bundles;
   workspace.bundlesReady = true;
   workspace.unconfigured = isUnconfigured(data);
   workspace.defaultWriteTarget = target;
+  workspace.starter = data.starter;
   if (!onlyIfChanged || changed) workspace.bundleRevision++;
 }
 

@@ -25,12 +25,6 @@
     error = $state("");
   type Moved = { ref: string; proposalId?: string; retireError?: string };
   let moved = $state<Moved | null>(null);
-  const writable = $derived(
-    bundles.filter(
-      (bundle) =>
-        bundle.enabled && bundle.writable && bundle.components.some((component) => component.adapter === "akm"),
-    ),
-  );
   const unchanged = $derived(
     bundle === ref.split("//")[0] && name.trim() === (ref.split("//")[1]?.split("/").slice(1).join("/") ?? ""),
   );
@@ -87,7 +81,9 @@
     <div class="destination-fields">
       <label
         >Bundle<select bind:value={bundle} disabled={busy}
-          >{#each writable as target}<option value={target.name}>{target.name}</option>{/each}</select
+          >{#each bundles as target}<option value={target.name} disabled={target.writeBlocker !== null}
+              >{target.name}{target.writeBlocker === null ? "" : ": " + target.writeBlocker}</option
+            >{/each}</select
         ></label
       ><label>Name or folder/name<input bind:value={name} required disabled={busy} /></label>
     </div>

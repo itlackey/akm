@@ -71,6 +71,7 @@ export async function collectVersionDriftAdvisory(
       name: "cli-version",
       kind: "deterministic",
       status: "unknown",
+      reason: "not-probed",
       confidence: "high",
       message: `akm v${cliVersion} is installed. Version-drift was not probed.`,
       evidence: { installedVersion: cliVersion },
@@ -102,6 +103,7 @@ export async function collectVersionDriftAdvisory(
       name: "cli-version",
       kind: "deterministic",
       status: "unknown",
+      reason: "blocked",
       confidence: "high",
       message: `akm v${cliVersion} is installed; the update check could not reach the release source.`,
       evidence: {

@@ -10,14 +10,30 @@ import { akmListSources } from "../commands/sources/installed-stashes";
 import { loadConfig, mutateConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
 import { getDbPath } from "../core/paths";
+import { inspectWriteTarget } from "../core/write-source";
 import { deriveSemanticProviderFingerprint } from "../indexer/materialize-embeddings";
 import { effectiveEmbedding } from "../llm/embedders/connection";
+import { parseRegistryRef } from "../registry/resolve";
+import { STARTER_SOURCE } from "../setup/registry-stash-loader";
 import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
 import { getEmbeddableEntryCount } from "../storage/repositories/index-entries-repository";
 import { getEmbeddingCount } from "../storage/repositories/index-vec-repository";
 import { runCli } from "./cli-child";
 import { readBundleGitStatus } from "./git-read";
 import { configSource, preserveUnrelatedConfig, tryStashDir, workingStashDir } from "./readers";
+
+/**
+ * One name for where a bundle comes from, parsed by the code `bundle add` uses: the same repository or package gives
+ * the same identity however its address is written. Null for a folder, a website, or an address that does not parse.
+ */
+function sourceIdentity(source: { kind: string; locator: string }): string | null {
+  if (source.kind !== "git" && source.kind !== "npm") return null;
+  try {
+    return parseRegistryRef(source.locator).id;
+  } catch {
+    return null;
+  }
+}
 
 export async function list() {
   const config = loadConfig();
@@ -28,8 +44,11 @@ export async function list() {
       kind: source.kind,
       default: source.default,
       source: source.source,
+      identity: sourceIdentity(source.source),
       path: source.path ?? null,
       writable: source.writable,
+      // Whether akm would accept a write to this bundle now, and the sentence why not: the write path's own checks.
+      writeBlocker: inspectWriteTarget(config, source.name).blocker,
       enabled: config.bundles?.[source.name]?.enabled !== false,
       writableSetting: config.bundles?.[source.name]?.writable,
       components: source.components.map((component) => ({
@@ -72,6 +91,9 @@ export async function list() {
   return {
     defaultBundle: config.defaultBundle ?? null,
     defaultWriteTarget: config.defaultWriteTarget ?? null,
+    // Where a write goes when no bundle is named, and why none does (`name: null`) or why it would be refused.
+    writeTarget: inspectWriteTarget(config),
+    starter: { source: STARTER_SOURCE, identity: sourceIdentity({ kind: "git", locator: STARTER_SOURCE }) },
     bundles: cards,
     workingStash,
     index: {

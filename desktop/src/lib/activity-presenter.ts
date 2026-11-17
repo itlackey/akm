@@ -100,22 +100,9 @@ export const duration = (value: number | null | undefined) => {
 };
 export const tokens = (row: ModelCount) =>
   row.calls > 0 && !row.usageCalls ? "Not reported" : number(row.totalTokens);
-/**
- * Where an `unknown` check lands: turned off on purpose, not run (not probed, skipped, nothing to inspect), could not
- * run (a remote or program it needed did not answer), or run with nothing to report yet. akm reports no reason code,
- * so the message decides.
- */
-export function healthGroup(check: ActivityCheck, checks: ActivityCheck[]): string {
-  if (check.status !== "unknown") return check.status;
-  if (
-    ["connections-and-harnesses", "proposal-queue"].includes(check.name) ||
-    (check.name === "session-extraction" &&
-      checks.some((item) => item.name === "connections-and-harnesses" && item.status === "unknown"))
-  )
-    return "off";
-  if (/not probed|skipped|no scheduled task|no scheduler/i.test(check.message)) return "unchecked";
-  if (/could not|cannot|unable|not reach|failed|not on PATH/i.test(check.message)) return "blocked";
-  return "idle";
+/** Where a check lands: its status, or for `unknown` the reason akm reports. */
+export function healthGroup(check: ActivityCheck): string {
+  return check.status === "unknown" ? check.reason : check.status;
 }
 export const outcomeClasses = [
   { key: "judge", label: "Accepted by the judge" },

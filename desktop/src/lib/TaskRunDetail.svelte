@@ -8,17 +8,12 @@
   import { date } from "./client";
   import { duration } from "./activity-presenter";
   import Outcome from "./Outcome.svelte";
-  import { improveAroundTask, statusOutcome, MATCH_WINDOW_MS } from "./run-model";
-  import type { ActivityRun, ActivityTaskHistory } from "./activity-types";
+  import { statusOutcome } from "./run-model";
+  import type { ActivityTaskHistory } from "./activity-types";
 
-  let {
-    taskId,
-    run,
-    improveRuns,
-  }: { taskId: string; run: ActivityTaskHistory["runs"][number]; improveRuns: ActivityRun[] } = $props();
+  let { taskId, run }: { taskId: string; run: ActivityTaskHistory["runs"][number] } = $props();
   const detail = $derived(run.detail ?? {});
   const workflowRunId = $derived(typeof detail.runId === "string" ? detail.runId : "");
-  const improve = $derived(improveAroundTask({ taskId, startedAt: run.startedAt }, improveRuns));
   const recorded = $derived(["reason", "error", "exitCode"].filter((key) => detail[key] != null));
 </script>
 
@@ -61,14 +56,6 @@
       <a href={`/activity/overview?view=runs&run=${encodeURIComponent(workflowRunId)}&anchor=workflow-trace`}
         >Open the workflow run this task ran</a
       >.
-    </p>{/if}
-  {#if improve.length}<p>
-      <span class="badge" data-tone="info">Matched by time</span> An improve run started within {MATCH_WINDOW_MS /
-        60000}
-      minutes of this one; the task run holds no improve run id, so it may not be the one it started:
-      {#each improve as match, i}{i ? ", " : ""}<a
-          href={`/activity/overview?view=runs&improve=${encodeURIComponent(match.id)}&anchor=improve-run`}>{match.id}</a
-        >{/each}.
     </p>{/if}
 </div>
 

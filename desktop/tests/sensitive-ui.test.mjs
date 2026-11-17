@@ -73,7 +73,7 @@ test("protected file UI masks, shows, hides and clears values on navigation with
   assert.deepEqual(errors, []);
 });
 
-test("a file in a nested secrets folder opens in the protected view, never as plain text", async (t) => {
+test("a file in a nested secrets folder is named a protected file akm manages only at the top level, with no value", async (t) => {
   const app = await fixture();
   t.after(() => app.stop());
   await fs.mkdir(path.join(app.root, "personal/projects/x/secrets"), { recursive: true });
@@ -86,7 +86,9 @@ test("a file in a nested secrets folder opens in the protected view, never as pl
     page,
     `/library/files?${new URLSearchParams({ bundle: "personal", path: "projects/x/secrets", file: "projects/x/secrets/token", open: "1" })}`,
   );
-  await expect(page.getByRole("alert")).toContainText("Choose an environment file or secret");
+  await expect(page.getByRole("alert")).toContainText(
+    "protected secret file that akm manages only at the top level of a bundle",
+  );
   assert.ok(!(await page.content()).includes("synthetic-password"));
   await expect(page.getByRole("textbox")).toHaveCount(0);
 });
