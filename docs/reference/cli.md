@@ -4042,7 +4042,10 @@ for a drain) and the body has one `<proposal-id-8> <generator> <ref>` line per
 proposal. A retirement's archived copy and tombstone, and the source memory a
 consolidate promotion retires, are part of the same commit. The commit is local:
 `akm sync`, or the end-of-run sync of `akm improve`, pushes it. A commit that
-fails warns and the accept stands.
+fails warns and the accept stands. The accept's result (each entry of a batch)
+carries `commit`: `{ "committed": true, "sha" }`, or `{ "committed": false,
+"reason", "error"? }` with `reason` `not-git`, `ignored` (every written path is
+ignored by `.gitignore`), `nothing-to-commit` or `failed` (with git's `error`).
 
 #### proposal reject
 

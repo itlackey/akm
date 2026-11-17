@@ -582,6 +582,15 @@ export function withWriteTargetMutation<T>(
 }
 
 /**
+ * What a commit at a write boundary came to: the commit it made, or that it made none and why (`not-git`: the target
+ * is not a Git repository; `ignored`: every path is ignored by `.gitignore` and stays local; `nothing-to-commit`: no
+ * path or no change to commit; `failed`: git refused, with the `error`).
+ */
+export type CommitOutcome =
+  | { committed: true; sha: string }
+  | { committed: false; reason: "not-git" | "ignored" | "nothing-to-commit" | "failed"; error?: string };
+
+/**
  * Commit a git target's recorded paths plus `options.paths` (absolute or
  * repository-relative) as one commit, and push it with `--force-with-lease`
  * when the target is writable, has an upstream, and `push !== false`. A no-op
@@ -594,16 +603,25 @@ export function commitWriteTargetBoundary(
   message: string,
   options?: { push?: boolean; paths?: string[]; filesystem?: boolean; body?: string[] },
 ): void {
-  if (target.source.kind !== "git" && !options?.filesystem) return;
+  commitBoundary(target, message, options);
+}
+
+/** {@link commitWriteTargetBoundary}, reporting what the commit came to. */
+function commitBoundary(
+  target: ResolvedWriteTarget,
+  message: string,
+  options?: { push?: boolean; paths?: string[]; filesystem?: boolean; body?: string[] },
+): CommitOutcome {
+  if (target.source.kind !== "git" && !options?.filesystem) return { committed: false, reason: "not-git" };
   const repoDir = repoDirFor(target.source);
   const recorded = pendingGitPaths.get(repoDir) ?? new Set<string>();
   pendingGitPaths.delete(repoDir);
-  if (!isGitBackedStash(repoDir)) return;
+  if (!isGitBackedStash(repoDir)) return { committed: false, reason: "not-git" };
 
   const toRepoRelative = (filePath: string): string =>
     (path.isAbsolute(filePath) ? path.relative(repoDir, filePath) : filePath).replaceAll(path.sep, "/");
   const paths = [...new Set([...(options?.paths ?? []), ...recorded].map(toRepoRelative))];
-  if (paths.length === 0) return;
+  if (paths.length === 0) return { committed: false, reason: "nothing-to-commit" };
 
   const ignored = new Set(listIgnoredExactPaths(repoDir, paths));
   if (ignored.size > 0) {
@@ -612,7 +630,7 @@ export function commitWriteTargetBoundary(
     );
   }
   const committable = paths.filter((filePath) => !ignored.has(filePath));
-  if (committable.length === 0) return;
+  if (committable.length === 0) return { committed: false, reason: "ignored" };
 
   try {
     const saved = saveGitStash(undefined, message, resolveWritable(target.config), {
@@ -622,6 +640,7 @@ export function commitWriteTargetBoundary(
       ...(options?.push === undefined ? {} : { push: options.push }),
     });
     if (saved.reason) warn(`warning: "${target.source.name}" ${saved.reason}`);
+    return saved.commit ? { committed: true, sha: saved.commit } : { committed: false, reason: "nothing-to-commit" };
   } catch (error) {
     if (error instanceof GitStashPushError) {
       const what = error.committedNow
@@ -637,24 +656,24 @@ export function commitWriteTargetBoundary(
  * Commit exactly the paths an accepted proposal wrote or removed, when the
  * target is a git repository: a filesystem stash with a `.git` too, which the
  * boundary commit skips, locally (the end-of-run sync pushes). A failed commit
- * only warns, since the accept already landed.
+ * only warns, since the accept already landed. Returns what the commit came to.
  */
 export function commitAcceptedPaths(
   target: ResolvedWriteTarget,
   message: string,
   paths: string[],
   body?: string[],
-): void {
+): CommitOutcome {
   try {
-    commitWriteTargetBoundary(target, message, {
+    return commitBoundary(target, message, {
       paths,
       ...(body ? { body } : {}),
       filesystem: true,
       ...(target.source.kind === "git" ? {} : { push: false }),
     });
   } catch (error) {
-    warn(
-      `warning: could not commit the accept (${message}): ${error instanceof Error ? error.message : String(error)}`,
-    );
+    const detail = error instanceof Error ? error.message : String(error);
+    warn(`warning: could not commit the accept (${message}): ${detail}`);
+    return { committed: false, reason: "failed", error: detail };
   }
 }

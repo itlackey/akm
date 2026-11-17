@@ -514,15 +514,18 @@ Accept one pending proposal. `:id` is a proposal id or unambiguous prefix. The i
     "ref": "stash//lessons/rg",
     "assetPath": "/home/me/akm/lessons/rg.md",
     "proposal": { "id": "d6bb7f94-...", "status": "accepted", "ref": "stash//lessons/rg", "...": "summary fields as in proposals.list" },
-    "commit": { "sha": "9f1c...", "time": "2026-10-16T16:02:11-05:00", "subject": "akm accept: reflect d6bb7f94 stash//lessons/rg", "repo": "/home/me/akm" }
+    "commit": { "committed": true, "sha": "9f1c0a4e2b7d..." }
   }
 }
 ```
 
 - `data` is `akmProposalAccept`'s result, with `proposal` reduced to the list summary (the prior content kept for
-  `akm proposal revert` is never returned) and `commit` added.
-- `commit` is the commit the accept just made in the bundle's repository, or `null` when the bundle is not a git
-  repository (or the commit did not happen; a failed commit only warns, as in the CLI).
+  `akm proposal revert` is never returned).
+- `commit` is what akm reports the accept's own commit came to: `{ "committed": true, "sha" }`, or
+  `{ "committed": false, "reason", "error"? }` with `reason` `not-git` (the bundle is not a Git repository), `ignored`
+  (every written path is ignored by `.gitignore`), `nothing-to-commit` or `failed` (with the git `error`). The accept
+  stands in every case. Each entry of a batch `proposals.acceptMany` result carries the `commit` of the one commit the
+  batch made.
 
 ### `proposals.reject`
 
