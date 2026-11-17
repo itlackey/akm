@@ -62,13 +62,14 @@ import {
   getEntryCount,
   getIndexedBundleIdsByDir,
   getIndexedDirPathsByBundleId,
+  getStoredEntriesInDirectory,
   relinkUsageEvents,
   upsertEntry,
 } from "../storage/repositories/index-entries-repository";
 import type { EntryProvenance } from "../storage/repositories/index-entry-types";
 import { rebuildFtsIfTotalsStale } from "../storage/repositories/index-fts-repository";
 import { storeLayout } from "../storage/repositories/index-layout-repository";
-import { clearStaleCacheEntries } from "../storage/repositories/index-llm-cache-repository";
+import { clearStaleCacheEntries, rekeyLlmCache } from "../storage/repositories/index-llm-cache-repository";
 import {
   deleteIndexDirState,
   deleteMeta,
@@ -85,7 +86,7 @@ import { INDEX_DB_VACUUMED_EVENT, readFreelistInfo, vacuumIfReclaimable } from "
 import { assertIndexedWorkflowSourceIdentity, WorkflowSourceIdentityError } from "../workflows/source-files";
 import { reclassifyIndexDbContention } from "./index-db-contention";
 import { deriveEntryProvenance, deriveInstallations } from "./installations";
-import { type LegacyRefMove, legacyRefMove, rekeyLegacyEntry, rewriteLegacyStateRefs } from "./legacy-refs";
+import { legacyRefMove, rekeyLegacyEntry } from "./legacy-refs";
 import {
   type AdapterConceptOwner,
   type ConceptOwnerMatch,
@@ -110,6 +111,15 @@ import {
   type StashFile,
   withFileSize,
 } from "./passes/metadata";
+import {
+  type MovePairing,
+  type NewEntry,
+  pairMovedFiles,
+  type RefMove,
+  rekeyStateRefs,
+  repointEntry,
+  type StoredEntry,
+} from "./ref-moves";
 import { drainDirDocuments } from "./scan/drain-dir";
 import type { SearchSource } from "./search/search-source";
 import { purgeOldUsageEvents, USAGE_EVENT_RETENTION_DAYS } from "./usage/usage-events";
@@ -163,12 +173,24 @@ export interface IndexResponse {
   /** Present when --clean was passed: stale-entry purge results. */
   clean?: IndexCleanResult;
   /**
+   * Present when files were renamed or moved since the last run: each moved asset's old and new ref (its history
+   * went with it), and the number of vanished files whose identical-content matches could not be paired and were
+   * indexed as new.
+   */
+  moves?: IndexMoves;
+  /**
    * Present when this run auto-detected a bundle's adapter and persisted it
    * to config.json (`bundles.<id>.components.<component>.adapter`) — a
    * maintenance-command config write that would otherwise be invisible
    * (R-056). Keyed by bundle id, valued by the detected adapter id.
    */
   configUpdated?: { detectedAdapters: Record<string, string> };
+}
+
+/** Files renamed or moved on disk that the index paired with their old entry (same content), and how many it could not. */
+export interface IndexMoves {
+  moved: Array<{ from: string; to: string }>;
+  unpaired: number;
 }
 
 export interface IndexProgressEvent {
@@ -768,7 +790,7 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
     const unresolvedBundleIds = new Set(
       sources.flatMap((source) => (source.unresolved ? [bundleByRoot.get(path.resolve(source.path))?.bundleId] : [])),
     );
-    persistDirRecords(db, dirRecords, warnings, bundleByRoot, embeddingInputCap(config), {
+    const moves = persistDirRecords(db, dirRecords, warnings, bundleByRoot, embeddingInputCap(config), {
       stashDir,
       sourceDirs,
       unresolvedBundleIds,
@@ -889,6 +911,7 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
       verification,
       timing,
       ...(cleanResult !== undefined ? { clean: cleanResult } : {}),
+      ...(moves ? { moves } : {}),
     };
   } finally {
     closeDatabase(db);
@@ -1446,10 +1469,35 @@ function persistDirRecords(
   bundleByRoot: ReadonlyMap<string, { bundleId: string; componentId: string; adapterId: string }>,
   maxInputTokens: number,
   library: { stashDir: string; sourceDirs: string[]; unresolvedBundleIds: ReadonlySet<string | undefined> },
-): void {
+): IndexMoves | undefined {
   const deletedEntries = new Map<number, DeletedEntry>();
-  const legacyMoves: LegacyRefMove[] = [];
+  const legacyMoves: RefMove[] = [];
   const findPersisted = db.prepare("SELECT id, content_hash, file_path, adapter_id FROM entries WHERE item_ref = ?");
+  // Files renamed or moved on disk since the last run: each vanished entry whose content is now at another path.
+  let pairing: MovePairing = { pairs: [], unpaired: [] };
+  const movedRefs = new Set<string>();
+
+  const pairMoves = (): MovePairing => {
+    const stored: StoredEntry[] = [];
+    const fresh: NewEntry[] = [];
+    for (const record of dirRecords) {
+      const bundle = bundleByRoot.get(path.resolve(record.currentStashDir));
+      if (record.skip || !bundle) continue;
+      const kept = new Set<string>();
+      for (const entry of record.remove ? [] : (record.stash?.entries ?? [])) {
+        const found = identifyEntry(record.dirPath, bundle, entry, record.conceptIdByFile);
+        if ("problem" in found) continue;
+        kept.add(found.provenance.itemRef);
+        const contentHash = record.hashByFile?.get(found.entryPath);
+        if (contentHash !== undefined && !findPersisted.get(found.provenance.itemRef))
+          fresh.push({ filePath: found.entryPath, provenance: found.provenance, contentHash });
+      }
+      stored.push(
+        ...getStoredEntriesInDirectory(db, record.dirPath, bundle.bundleId).filter((row) => !kept.has(row.itemRef)),
+      );
+    }
+    return pairMovedFiles(stored, fresh);
+  };
 
   const persist = (): void => {
     // Entries are about to describe another library: the old watermark is not theirs, and neither are rows outside
@@ -1463,6 +1511,12 @@ function persistDirRecords(
     }
     setMeta(db, "stashDir", safeRealpath(library.stashDir));
     setMeta(db, "stashDirs", JSON.stringify(library.sourceDirs));
+    pairing = pairMoves();
+    for (const pair of pairing.pairs) {
+      repointEntry(db, pair.id, pair.entry);
+      rekeyLlmCache(db, pair.oldFilePath, pair.entry.filePath);
+      movedRefs.add(pair.entry.provenance.itemRef);
+    }
     for (const {
       dirPath,
       currentStashDir,
@@ -1528,23 +1582,15 @@ function persistDirRecords(
       if (stash) {
         const sourceRoot = `${path.resolve(currentStashDir)}${path.sep}`;
         for (const entry of stash.entries) {
-          const entryPath = entry.filename ? path.join(dirPath, entry.filename) : null;
-          if (!entryPath) {
-            warn(`Skipping entry with no resolvable path in ${dirPath}`);
+          const found = identifyEntry(dirPath, bundle, entry, conceptIdByFile);
+          if ("problem" in found) {
+            warn(found.problem);
             continue;
           }
-
-          const adapterConceptId = conceptIdByFile?.get(entryPath);
-          if (!adapterConceptId) {
-            warn(`Skipping entry without adapter-owned concept identity: ${entryPath}`);
-            continue;
-          }
+          const { entryPath, provenance } = found;
           // content_hash = doc.hash from the drain, keyed by the recognized
           // file's path. A missing hash preserves the existing value on upsert.
           const contentHash = hashByFile?.get(entryPath);
-          // Adapter-owned concept identity is path-based and cannot be replaced
-          // by presentation fields such as type/title.
-          const provenance = deriveEntryProvenance(bundle, entry.type, entry.name, adapterConceptId);
 
           // Two files of one source can claim one ref (a skill's references/a.md and
           // knowledge/skills/x/references/a.md are both knowledge/skills/x/references/a). The file with
@@ -1573,7 +1619,9 @@ function persistDirRecords(
           persistedRows++;
 
           const previous = sameVariant ? holder : undefined;
+          const moved = movedRefs.has(provenance.itemRef);
           const unchanged =
+            !moved &&
             previous !== undefined &&
             contentHash !== undefined &&
             previous.content_hash === contentHash &&
@@ -1588,7 +1636,7 @@ function persistDirRecords(
             rekeyLegacyEntry(db, legacy, provenance.conceptId, entryPath);
             legacyMoves.push(legacy);
           }
-          upsertEntry(db, entryPath, withFileSize(entry, entryPath), provenance, contentHash, maxInputTokens);
+          upsertEntry(db, entryPath, withFileSize(entry, entryPath), provenance, contentHash, maxInputTokens, moved);
         }
       }
 
@@ -1634,11 +1682,40 @@ function persistDirRecords(
   deleteUsageEventsForEntries(
     [...deletedEntries.values()].filter((entry) => refStillIndexed.get(entry.itemRef) == null),
   );
+  const movedAssets = pairing.pairs.map((pair) => ({ from: pair.oldItemRef, to: pair.entry.provenance.itemRef }));
   try {
-    rewriteLegacyStateRefs(legacyMoves);
+    rekeyStateRefs([...legacyMoves, ...movedAssets.map(({ from, to }) => ({ oldItemRef: from, newItemRef: to }))]);
   } catch (error) {
-    warn(`[index] could not carry over the history of ${legacyMoves.length} re-keyed asset(s): ${String(error)}`);
+    warnings.push(
+      `[index] could not carry over the history of ${legacyMoves.length + movedAssets.length} re-keyed asset(s): ${String(error)}`,
+    );
   }
+  // Each move is recorded on the asset's new ref, which later moves re-key with the rest of its history.
+  for (const { from, to } of movedAssets) appendEvent({ eventType: "moved", ref: to, metadata: { from } });
+  if (pairing.unpaired.length > 0) {
+    warnings.push(
+      `[index] ${pairing.unpaired.length} moved file(s) not paired: other files with identical content appeared, so ` +
+        `each is indexed as a new asset and its history stays with the old ref (${pairing.unpaired.map((entry) => entry.itemRef).join(", ")}).`,
+    );
+  }
+  return movedAssets.length > 0 || pairing.unpaired.length > 0
+    ? { moved: movedAssets, unpaired: pairing.unpaired.length }
+    : undefined;
+}
+
+/** The path and durable identity of a drained entry, or why it has none. */
+function identifyEntry(
+  dirPath: string,
+  bundle: { bundleId: string; componentId: string; adapterId: string },
+  entry: IndexDocument,
+  conceptIdByFile: Map<string, string> | undefined,
+): { entryPath: string; provenance: EntryProvenance } | { problem: string } {
+  const entryPath = entry.filename ? path.join(dirPath, entry.filename) : null;
+  if (!entryPath) return { problem: `Skipping entry with no resolvable path in ${dirPath}` };
+  const adapterConceptId = conceptIdByFile?.get(entryPath);
+  if (!adapterConceptId) return { problem: `Skipping entry without adapter-owned concept identity: ${entryPath}` };
+  // Adapter-owned concept identity is path-based and cannot be replaced by presentation fields such as type/title.
+  return { entryPath, provenance: deriveEntryProvenance(bundle, entry.type, entry.name, adapterConceptId) };
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

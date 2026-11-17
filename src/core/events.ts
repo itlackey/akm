@@ -148,6 +148,11 @@ export type EventType =
   /** Emitted once when an `akm index` run finishes. Metadata: `{mode, totalMs, walkMs, llmMs, embedMs, ftsMs, finalizeMs}`. */
   | "index_completed"
   /**
+   * Emitted by `akm index` for a file renamed or moved on disk that it paired with its old entry (same content): `ref` is
+   * the asset's current ref and metadata `{from}` the ref it had. A later move re-keys `ref` with the rest of the history.
+   */
+  | "moved"
+  /**
    * #733 — emitted by `runOrphanStateGcPass` (the orphan-state GC maintenance
    * pass) when a run has something to report: any `asset_salience` /
    * `asset_outcome` row currently pending (unresolved against
