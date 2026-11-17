@@ -30,6 +30,7 @@ const payload = {
   bundles: ["wiki", "notes"],
   beliefs: ["superseded"],
   use: { since: ago(90), source: "user" },
+  feedback: { since: ago(90), source: "user" },
   kinds: ["xref", "contradicted_by"],
   nodes: {
     ref: [
@@ -63,9 +64,12 @@ test("use: read lately, read only earlier, unread but recently edited, unread an
   assert.equal(useClass(ago(RECENT_DAYS + 1), null, now), "earlier");
   assert.equal(useClass(null, ago(OLD_DAYS - 1), now), "new");
   assert.equal(useClass(null, ago(OLD_DAYS + 1), now), "unread");
-  assert.equal(useClass(null, null, now), "unread");
+  // akm reports no edit time (the file could not be read): not new, not old, so not classed.
+  assert.equal(useClass(null, null, now), null);
   const o = buildOverview(payload, now);
-  assert.deepEqual(o.use, ["recent", "unread", "earlier", "new", "unread", "recent", "unread"]);
+  assert.deepEqual(o.use, ["recent", "unread", "earlier", "new", "unread", "recent", null]);
+  assert.equal(groupFacts(o, [3, 4, 5, 6]).useUnclassed, 1);
+  assert.deepEqual(groupFacts(o, [3, 4, 5, 6]).use, { recent: 1, earlier: 0, new: 1, unread: 1 });
   assert.deepEqual(
     tally([3, 4, 5], (i) => o.use[i], ["recent", "earlier", "new", "unread"]),
     { recent: 1, earlier: 0, new: 1, unread: 1 },
@@ -82,6 +86,28 @@ test("problems: outdated by belief or by the link it declares, more negative tha
   const o = buildOverview(payload, now);
   assert.deepEqual(o.problems, [[], ["outdated"], [], ["negative", "duplicate"], ["outdated"], ["duplicate"], []]);
   assert.deepEqual(o.duplicates, [{ a: 3, b: 5, cosine: 0.98 }]);
+});
+
+test("feedback and near-duplicates akm could not report are unknown, not none", () => {
+  const known = buildOverview(payload, now);
+  assert.equal(known.feedbackKnown, true);
+  assert.equal(known.duplicatesKnown, true);
+  // akm sends feedback: null with every count zero when the state store cannot be read, and duplicates: null when no layout is stored.
+  const unknown = buildOverview(
+    {
+      ...payload,
+      feedback: null,
+      duplicates: null,
+      groups: null,
+      nodes: { ...payload.nodes, negative: [0, 0, 0, 5, 0, 0, 0], positive: [0, 0, 0, 0, 0, 0, 0] },
+    },
+    now,
+  );
+  assert.equal(unknown.feedbackKnown, false);
+  assert.equal(unknown.duplicatesKnown, false);
+  // Feedback counts that akm did not measure never make an asset "disliked", and no pair is invented.
+  assert.ok(unknown.problems.every((p) => !p.includes("negative") && !p.includes("duplicate")));
+  assert.deepEqual(unknown.duplicates, []);
 });
 
 test("the overview carries links by kind name, edit times and feedback counts", () => {

@@ -86,17 +86,21 @@ export interface Overview {
   duplicates: Array<{ a: number; b: number; cosine: number }>;
   duplicatesTruncated: boolean;
   duplicateThreshold: number;
-  /** Whether the window's use is known (no usage history: every asset reads as not used). */
+  /** Whether akm reported the window's use; when not, no asset is classed by use. */
   useKnown: boolean;
+  /** Whether akm reported feedback counts; when not, the counts above are zeros, not measurements. */
+  feedbackKnown: boolean;
+  /** Whether akm stored the layout that holds near-duplicates; when not, `duplicates` is empty, not "none". */
+  duplicatesKnown: boolean;
   useSince: string | null;
   note: string;
 }
 
-export function useClass(lastShownAt: string | null, modifiedAt: string | null, now: number): UseClass {
+/** How an asset is used, or null when it was not read and akm could not report when it was last edited. */
+export function useClass(lastShownAt: string | null, modifiedAt: string | null, now: number): UseClass | null {
   if (lastShownAt) return now - Date.parse(lastShownAt) <= RECENT_DAYS * DAY ? "recent" : "earlier";
-  const edited = modifiedAt ? Date.parse(modifiedAt) : Number.NaN;
-  // An asset whose edit time cannot be read is not called new.
-  return now - edited <= OLD_DAYS * DAY ? "new" : "unread";
+  if (!modifiedAt) return null;
+  return now - Date.parse(modifiedAt) <= OLD_DAYS * DAY ? "new" : "unread";
 }
 
 /** How far forward (+1) or back (-1) in its group an asset sits: recent use in front, never read and outdated behind. */
@@ -149,6 +153,7 @@ export function buildOverview(payload: OverviewPayload, now = Date.now()): Overv
   };
 
   const useKnown = payload.use !== null;
+  const feedbackKnown = payload.feedback !== null;
   const use = Array.from({ length: n }, (_, i) =>
     useKnown ? useClass(payload.nodes.lastShownAt?.[i] ?? null, payload.nodes.modifiedAt?.[i] ?? null, now) : null,
   );
@@ -168,7 +173,8 @@ export function buildOverview(payload: OverviewPayload, now = Date.now()): Overv
   for (const d of duplicates) duplicated[d.a] = duplicated[d.b] = 1;
   for (let i = 0; i < n; i++) {
     if (outdated[i]) problems[i]!.push("outdated");
-    if ((payload.nodes.negative?.[i] ?? 0) > (payload.nodes.positive?.[i] ?? 0)) problems[i]!.push("negative");
+    if (feedbackKnown && (payload.nodes.negative?.[i] ?? 0) > (payload.nodes.positive?.[i] ?? 0))
+      problems[i]!.push("negative");
     if (duplicated[i]) problems[i]!.push("duplicate");
   }
 
@@ -201,6 +207,8 @@ export function buildOverview(payload: OverviewPayload, now = Date.now()): Overv
     duplicatesTruncated: payload.duplicates?.truncated ?? false,
     duplicateThreshold: payload.duplicates?.threshold ?? 0,
     useKnown,
+    feedbackKnown,
+    duplicatesKnown: payload.duplicates != null,
     useSince: payload.use?.since ?? null,
     note: payload.note,
   };
@@ -227,6 +235,8 @@ export type Pair = { a: number; b: number; cosine: number };
 export interface GroupFacts {
   count: number;
   use: Record<UseClass, number>;
+  /** Not read in the window, with no edit time akm could report: not classed in `use`. */
+  useUnclassed: number;
   /** Superseded, contradicted or deprecated, and still in the library. */
   outdated: number[];
   /** More negative feedback than positive. */
@@ -273,6 +283,7 @@ export function groupFacts(o: Overview, members: readonly number[]): GroupFacts 
       (i) => o.use[i] ?? null,
       USE_CLASSES.map((u) => u.id),
     ),
+    useUnclassed: o.useKnown ? members.filter((i) => o.use[i] === null).length : 0,
     outdated: members.filter((i) => o.problems[i]!.includes("outdated")),
     disliked: members.filter((i) => o.problems[i]!.includes("negative")),
     duplicatesInside,

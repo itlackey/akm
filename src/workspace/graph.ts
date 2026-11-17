@@ -189,6 +189,10 @@ async function readGraph() {
     const noted = [`${rows.length} assets and ${result.links.from.length} links of the enabled bundles.`];
     if (!use) noted.push("Use counts are zero: no usage history is available.");
     if (!feedback) noted.push("Feedback counts are zero: no feedback history is available.");
+    if (!result.groups)
+      noted.push(
+        "Groups by meaning and near-duplicates are not available: the last index stored no layout (it needs at least eight embedded assets).",
+      );
     return {
       available: true,
       note: noted.join(" "),
