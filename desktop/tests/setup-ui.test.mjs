@@ -104,7 +104,9 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
   // The local folder stands in for the download, so the listing reports it with the starter's source.
   await page.route("**/api/bundles", async (route) => {
     if (route.request().method() !== "GET") return route.continue();
-    const response = await route.fetch();
+    // The page keeps refreshing while the test shuts the server down; a request that finds it gone is just dropped.
+    const response = await route.fetch().catch(() => null);
+    if (!response) return route.abort().catch(() => {});
     const body = await response.json();
     for (const bundle of body.data.bundles)
       if (bundle.name === "akm-stash") bundle.source = { kind: "git", locator: "github:itlackey/akm-stash" };
