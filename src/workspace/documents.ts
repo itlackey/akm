@@ -27,6 +27,7 @@ import { warn } from "../core/warn";
 import { assertAkmAssetWrite } from "../core/write-source";
 import { NO_INDEX_MESSAGE, readUsableIndex } from "../indexer/index-readiness";
 import { getEntryIdByFilePath, getItemRefById } from "../storage/repositories/index-entries-repository";
+import { retireBlocker } from "./file-actions";
 import { interactive } from "./lease";
 import { redactUrlsInText } from "./redact";
 
@@ -177,8 +178,8 @@ export async function retire(input: { ref: string; revision: string }) {
   const revision = required(input.revision, "revision");
   return interactive("manual-retire", async () => {
     const { canonical, target, type } = await resolveWritableIndexedAsset(ref);
-    if (["skill", "env", "secret", "session"].includes(type))
-      throw new UsageError("Retire supports single-file assets, not skill packages or protected files.");
+    const blocker = retireBlocker(type);
+    if (blocker !== undefined) throw new UsageError(blocker);
     const stashDir = resolveStashDir();
     const minted = createRetireProposal(stashDir, {
       ref: canonical,

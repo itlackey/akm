@@ -26,7 +26,8 @@ import { findSourceForPath, resolveSourceEntries } from "../indexer/search/searc
 import { getEntryIdByFilePath, getItemRefById } from "../storage/repositories/index-entries-repository";
 import { countFeedbackBySignal, listFeedbackEventRows } from "../storage/repositories/metrics-repository";
 import { assetImprove } from "./asset-improve";
-import { bundleFileLocation, listBundleFiles } from "./bundle-files";
+import { bundleFileLocation, listBundleFiles, protectedTypeOf } from "./bundle-files";
+import { bundleWriteBlocker, fileActions } from "./file-actions";
 import { readFileRevision, readRecentCommits } from "./git-read";
 import { capSide, clampLimit, DIFF_SIDE_MAX_CHARS, withReadonlyStateDb } from "./readers";
 
@@ -209,12 +210,28 @@ export async function show(input: { ref: string }) {
       }
     }, undefined);
   }
+  const location = shown.path ? bundleFileLocation(shown.path) : null;
   return {
     redacted: false,
     durableRef,
     bundle: durableRef ? parseBundleRef(durableRef).bundle : null,
     asset: shown,
-    location: shown.path ? bundleFileLocation(shown.path) : null,
+    location,
+    // What akm accepts doing to this asset's file, and why not: the verdicts the file listing gives the same entry.
+    actions:
+      location && shown.path
+        ? fileActions(
+            {
+              bundle: location.bundle,
+              relative: location.path,
+              kind: "file",
+              absolute: shown.path,
+              protected: protectedTypeOf(location.path) !== undefined,
+              assets: durableRef ? [{ ref: durableRef, type: shown.type }] : [],
+            },
+            bundleWriteBlocker(loadConfig(), location.bundle),
+          )
+        : null,
     feedback: feedbackFor(durableRef),
     feedbackRequireReason: loadConfig().feedback?.requireReason !== false,
     links,

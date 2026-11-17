@@ -27,8 +27,10 @@ type Bundle = {
   components: Array<{ adapter: string }>;
 };
 type Selector = { ref?: string; bundle?: string; file?: string };
+type Verdict = { allowed: true } | { allowed: false; reason: string };
 
-async function selection(input: Selector) {
+/** `action` is what the route is about to do: akm's verdict for it on the file decides, and gives the reason. */
+async function selection(input: Selector, action: "read" | "edit") {
   const listing = (await bundles.list()) as { bundles: Bundle[] };
   let bundle = input.bundle,
     file = input.file,
@@ -69,11 +71,12 @@ async function selection(input: Selector) {
     bundle,
     path: path.dirname(inside).replace(/^\.$/, ""),
     hidden: true,
-  })) as { entries: Array<{ name: string; protected: boolean }> };
+  })) as { entries: Array<{ name: string; actions: Record<"read" | "edit", Verdict> }> };
   const listed = folder.entries.find((entry) => entry.name === path.basename(inside));
   // No answer about the file is not permission to open it.
   if (!listed) throw new UsageError("This file is unavailable. Check its location and filesystem permissions.");
-  if (listed.protected) throw new UsageError("Protected files are shown and edited from the protected-file view.");
+  const verdict = listed.actions[action];
+  if (!verdict.allowed) throw new UsageError(verdict.reason);
   return {
     bundle,
     file,
@@ -95,7 +98,7 @@ function text(bytes: Buffer) {
 }
 
 export async function readFile(query: Selector) {
-  const chosen = await selection(query);
+  const chosen = await selection(query, "read");
   const bytes = fs.readFileSync(chosen.real);
   return {
     ref: chosen.ref,
@@ -118,11 +121,7 @@ export async function saveFile(body: unknown) {
     !(typeof value.ref === "string" || (typeof value.bundle === "string" && typeof value.file === "string"))
   )
     throw new UsageError("Provide the file, revision and text.");
-  const chosen = await selection(value as Selector);
-  if (!chosen.writable)
-    throw new UsageError(
-      `Bundle ${chosen.bundle} is read-only: akm does not write to it, and an update would replace the edit.`,
-    );
+  const chosen = await selection(value as Selector, "edit");
   // From this read to the rename everything is synchronous, so no other Desktop request can interleave. Another
   // process could still write in that instant; akm's lease is not taken here, as an external editor would not take it.
   const live = fs.readFileSync(chosen.real);

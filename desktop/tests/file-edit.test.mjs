@@ -193,11 +193,11 @@ test("a bundle akm does not write to is readable, and a save into it is refused"
   assert.equal(source.writable, false);
   const refused = await save(app, { ref: app.refs.vendor, revision: source.revision, content: "planted\n" });
   assert.equal(refused.status, 400);
-  assert.match(refused.body.error, /read-only/);
+  assert.match(refused.body.error, /not writable/);
   assert.equal(await fs.readFile(app.vendorPath, "utf8"), before);
 });
 
-test("a filesystem failure is a 500 that names its cause", {
+test("a file akm cannot open is refused with its cause", {
   skip: process.getuid?.() === 0 && "root reads any file",
 }, async (t) => {
   const app = await launchFixture();
@@ -207,9 +207,8 @@ test("a filesystem failure is a 500 that names its cause", {
   t.after(() => app.stop());
   await fs.chmod(file, 0o000);
   const failed = await read(app, { bundle: "personal", file: skillFile });
-  assert.equal(failed.status, 500);
-  assert.equal(failed.body.code, "INTERNAL_ERROR");
-  assert.match(failed.body.error, /EACCES/);
+  assert.equal(failed.status, 400);
+  assert.match(failed.body.error, /cannot be opened: .*EACCES/);
 });
 
 test("every status comes from one mapping, and the moved routes answer only under /api/desktop", async (t) => {

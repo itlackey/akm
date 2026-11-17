@@ -5,12 +5,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isWithin, relativeToRoot, safeRealpath } from "../core/common";
+import { loadConfig } from "../core/config/config";
 import { NotFoundError, UsageError } from "../core/errors";
 import { findSourceForPath, resolveSourceEntries } from "../indexer/search/search-source";
 import { buildFileContext } from "../indexer/walk/file-context";
 import { declaredTypeForPath } from "../indexer/walk/matchers";
 import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
 import { getAssetRefsForFiles } from "../storage/repositories/index-entries-repository";
+import { bundleWriteBlocker, fileActions } from "./file-actions";
 
 export interface BundleFileLocation {
   bundle: string;
@@ -38,7 +40,11 @@ export function bundleFileLocation(filePath: string): BundleFileLocation | null 
   };
 }
 
-/** One directory, not a recursive walk or an index refresh. File contents are never read here. */
+/**
+ * One directory, not a recursive walk or an index refresh. Each entry says what akm accepts doing to it (`actions`) and
+ * why not. A file's contents are not listed; the first bytes of a file that is neither protected nor managed are probed
+ * to tell text from binary, and a protected file is never opened.
+ */
 export function listBundleFiles(bundle: string, relative = "", showHidden = false) {
   if (!bundle) throw new UsageError("Choose a registered bundle.", "MISSING_REQUIRED_ARGUMENT");
   const source = resolveSourceEntries().find((entry) => entry.registryId === bundle);
@@ -109,6 +115,7 @@ export function listBundleFiles(bundle: string, relative = "", showHidden = fals
     /* Files remain browsable when the derived index needs repair. */
   }
   const current = portable(path.relative(source.path, target));
+  const writeBlocker = bundleWriteBlocker(loadConfig(), bundle);
   return {
     bundle,
     path: current,
@@ -116,10 +123,24 @@ export function listBundleFiles(bundle: string, relative = "", showHidden = fals
     indexAvailable,
     entries: rows.map(({ absolute, ...row }) => {
       const assets = refs.get(absolute) ?? [];
+      const isProtected =
+        row.kind === "file" && protectedTypeOf(portable(path.relative(source.path, absolute))) !== undefined;
       return {
         ...row,
         assets,
-        protected: row.kind === "file" && protectedTypeOf(portable(path.relative(source.path, absolute))) !== undefined,
+        protected: isProtected,
+        actions: fileActions(
+          {
+            bundle,
+            relative: row.path,
+            kind: row.kind,
+            absolute: row.unavailable ? undefined : path.join(target, row.name),
+            unavailable: row.unavailable,
+            protected: isProtected,
+            assets,
+          },
+          writeBlocker,
+        ),
       };
     }),
   };
