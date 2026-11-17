@@ -112,6 +112,10 @@ export interface OutcomeCounts {
 export interface ActivityImpact {
   available: boolean;
   since: string;
+  /** Where the usage figures (flags, found and negative counts) start: usage older than akm keeps is gone. */
+  usageSince: string;
+  /** Whether the usage figures cover the whole window. */
+  usageComplete: boolean;
   weeks: string[];
   summary: {
     kept: number;
@@ -135,6 +139,8 @@ export interface ActivityImpact {
     before: { hits: number; negative: number };
     after: { hits: number; negative: number };
     complete: boolean;
+    /** False when the 28 days before the change start earlier than the usage akm kept. */
+    beforeComplete: boolean;
     afterDays: number;
   }>;
   errors?: Record<string, string>;

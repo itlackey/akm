@@ -230,3 +230,41 @@ test("Repeated search gaps lists only the queries akm marks as repeated", {
   await expect(gaps).not.toContainText("zzqx unmatched phrase");
   await expect(gaps).toContainText("No query found nothing on more than one day in this window.");
 });
+
+// akm says where its usage figures start and which changes have a before side it did not keep: the table says "Not
+// recorded" for that side, never a zero.
+test("Improve impact says where the usage figures start and shows an unkept before side as not recorded", {
+  timeout: 240000,
+}, async (t) => {
+  const server = await launchFixture({ metrics: true });
+  t.after(() => server.stop());
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
+  await page.route("**/api/improve/impact*", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    const data = body.data ?? body;
+    data.usageComplete = false;
+    data.usageSince = "2026-08-20T00:00:00.000Z";
+    data.changedAssets = [
+      {
+        ref: "stash//knowledge/old-change",
+        source: "reflect",
+        outcome: "judge",
+        decidedAt: "2026-08-25T00:00:00.000Z",
+        before: { hits: 0, negative: 0 },
+        after: { hits: 3, negative: 1 },
+        complete: true,
+        beforeComplete: false,
+        afterDays: 28,
+      },
+    ];
+    await route.fulfill({ response, json: body });
+  });
+  await open(page, server, "/activity/improve?since=365d");
+  const row = page.getByRole("row", { name: /old-change/ });
+  await expect(row).toContainText("Not recorded → 3");
+  await expect(row).toContainText("Not recorded → 1");
+  await expect(page.locator(".impact-summary")).toContainText("cover usage only from");
+});

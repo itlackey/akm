@@ -253,7 +253,7 @@ describe("reads", () => {
     await proposals.revert({ id });
 
     const impact = await out(activity.improveImpact());
-    expect(impact.changedAssets[0]).toMatchObject({ outcome: "reverted", decidedAt: acceptedAt });
+    expect(impact.changedAssets[0]).toMatchObject({ outcome: "reverted", decidedAt: acceptedAt, beforeComplete: true });
     const reverted = Object.fromEntries(impact.outcomes[0].weeks.map((w: Json) => [w.week, w.reverted]));
     expect(reverted[weekOf(acceptedAt)]).toBe(1);
     expect(reverted[impact.weeks.at(-1)]).toBe(0);
@@ -279,6 +279,39 @@ describe("reads", () => {
       waiting: 0,
     });
     expect(pulse.attention.harm.reverted).toBe(1);
+  });
+
+  test("usage is kept 90 days: a change whose 28 days before reach past that says its before side is not recorded", async () => {
+    await seed();
+    const id = propose("knowledge/notes", NOTES_REWRITE);
+    await proposals.accept({ id });
+    const day = 86_400_000;
+    const acceptedAt = new Date(Date.now() - 70 * day).toISOString();
+    const db = openStateDatabase();
+    try {
+      const accepted = listStateProposals(db, { stashDir: ctx.storage.stashDir, status: "accepted" })[0] as Proposal;
+      upsertProposal(
+        db,
+        {
+          ...accepted,
+          createdAt: new Date(Date.now() - 71 * day).toISOString(),
+          updatedAt: acceptedAt,
+          acceptedAt,
+          review: { ...accepted.review, decidedAt: acceptedAt },
+        } as Proposal,
+        ctx.storage.stashDir,
+      );
+    } finally {
+      db.close();
+    }
+    const ninety = await out(activity.improveImpact({ since: "90d" }));
+    expect(ninety.usageComplete).toBe(true);
+    expect(ninety.changedAssets[0]).toMatchObject({ beforeComplete: false });
+    // A year asks for more than the retained usage: the figures say where they start, and the 28 days before still do not reach it.
+    const year = await out(activity.improveImpact({ since: "365d" }));
+    expect(year.usageComplete).toBe(false);
+    expect(Date.parse(year.usageSince)).toBeGreaterThan(Date.now() - 91 * day);
+    expect(year.changedAssets[0]).toMatchObject({ beforeComplete: false });
   });
 
   test("an unreadable proposals table degrades the impact page's proposal cards, not the page", async () => {

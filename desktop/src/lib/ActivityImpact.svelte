@@ -152,6 +152,8 @@
     after a change · {number(impact.summary.tokens)} reported tokens. Token coverage: {percent(
       impact.summary.tokenCoverage,
     )}.
+    {#if !impact.usageComplete}Flags and the found and negative counts cover usage only from {date(impact.usageSince)}:
+      akm purges older usage, so earlier flags and counts are not recorded, not zero.{/if}
   </p>
   <p class="measurement-note">
     Weeks start Monday, UTC. Kept means accepted and not reverted. Flags are negative feedback within 14 days. These are
@@ -485,7 +487,8 @@
             >{#each impact.changedAssets ?? [] as item}<tr
                 ><th><a class="wrap" href={assetHref(item.ref)}>{item.ref}</a></th><td>{item.source}</td><td
                   >{date(item.decidedAt)}{item.outcome === "reverted" ? " · Reverted" : ""}</td
-                ><td>{item.before.hits} → {item.after.hits}</td><td>{item.before.negative} → {item.after.negative}</td
+                ><td>{item.beforeComplete ? item.before.hits : "Not recorded"} → {item.after.hits}</td><td
+                  >{item.beforeComplete ? item.before.negative : "Not recorded"} → {item.after.negative}</td
                 ><td>{item.complete ? "28 days" : `${item.afterDays} days so far (partial)`}</td></tr
               >{/each}</tbody
           >
