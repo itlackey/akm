@@ -98,8 +98,8 @@ const kindOf = (step: ReplayStep): KindId | null =>
         : step.kind === "feedback"
           ? "feedback"
           : step.kind === "other"
-          ? "other"
-          : null;
+            ? "other"
+            : null;
 
 /** Events per kind in `bins` equal slices of the window, for the stacked timeline; `max` is the tallest slice. */
 export function kindBins(steps: ReplayStep[], start: number, end: number, bins = 96) {

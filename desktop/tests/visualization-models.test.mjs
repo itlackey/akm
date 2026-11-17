@@ -34,10 +34,26 @@ test("asset types fold into families; a type akm does not list is Other, the las
 
 const replayAt = (minute) => new Date(Date.UTC(2026, 10, 11, 10, minute)).toISOString();
 const replayEvents = [
-  { id: 3, at: replayAt(2), eventType: "show", ref: "wiki//knowledge/a", source: "user", byPerson: true, agent: { harness: "claude" } },
+  {
+    id: 3,
+    at: replayAt(2),
+    eventType: "show",
+    ref: "wiki//knowledge/a",
+    source: "user",
+    byPerson: true,
+    agent: { harness: "claude" },
+  },
   { id: 1, at: replayAt(0), eventType: "search", query: "deploy", source: "user", byPerson: true, resultCount: 0 },
   { id: 2, at: replayAt(1), eventType: "search", ref: "wiki//knowledge/a", source: "improve", byPerson: false },
-  { id: 4, at: replayAt(3), eventType: "feedback", ref: "wiki//gone", signal: "negative", source: "task", byPerson: false },
+  {
+    id: 4,
+    at: replayAt(3),
+    eventType: "feedback",
+    ref: "wiki//gone",
+    signal: "negative",
+    source: "task",
+    byPerson: false,
+  },
 ];
 const replayIndex = new Map([["wiki//knowledge/a", 0]]);
 
@@ -98,7 +114,14 @@ test("replay (5): the used list ranks assets by events so far, ignoring hits, an
     ["wiki//knowledge/a", 0],
     ["wiki//knowledge/b", 1],
   ]);
-  const ev = (id, minute, ref, eventType = "show") => ({ id, at: replayAt(minute), eventType, ref, source: "user", byPerson: true });
+  const ev = (id, minute, ref, eventType = "show") => ({
+    id,
+    at: replayAt(minute),
+    eventType,
+    ref,
+    source: "user",
+    byPerson: true,
+  });
   const steps = replaySteps(
     [
       ev(1, 0, "wiki//knowledge/b"),
@@ -124,7 +147,14 @@ test("timeline bins stack events by kind: a search with no results is a miss, a 
     KINDS.map((k) => k.id),
     ["read", "search", "miss", "curate", "feedback", "other"],
   );
-  const ev = (id, minute, eventType, extra = {}) => ({ id, at: replayAt(minute), eventType, source: "user", byPerson: true, ...extra });
+  const ev = (id, minute, eventType, extra = {}) => ({
+    id,
+    at: replayAt(minute),
+    eventType,
+    source: "user",
+    byPerson: true,
+    ...extra,
+  });
   const steps = replaySteps(
     [
       ev(1, 0, "show", { ref: "wiki//knowledge/a" }),
@@ -152,8 +182,24 @@ test("timeline bins stack events by kind: a search with no results is a miss, a 
 });
 
 test("replay: by default only the person's events count, so the figures are the Usage tab's; everyone adds agents' and tasks'", () => {
-  const person = (id) => ({ id, at: replayAt(0), eventType: "search", query: `q${id}`, source: "user", byPerson: true, resultCount: 1 });
-  const agent = (id, eventType) => ({ id, at: replayAt(1), eventType, query: `a${id}`, source: "improve", byPerson: false, resultCount: 0 });
+  const person = (id) => ({
+    id,
+    at: replayAt(0),
+    eventType: "search",
+    query: `q${id}`,
+    source: "user",
+    byPerson: true,
+    resultCount: 1,
+  });
+  const agent = (id, eventType) => ({
+    id,
+    at: replayAt(1),
+    eventType,
+    query: `a${id}`,
+    source: "improve",
+    byPerson: false,
+    resultCount: 0,
+  });
   const events = [
     ...Array.from({ length: 6 }, (_, i) => person(i)),
     ...Array.from({ length: 100 }, (_, i) => agent(100 + i, "curate")),
@@ -291,7 +337,13 @@ test("a workflow trace: units that name no known step get no invented status, on
     attempts: [],
   });
   const trace = {
-    run: { id: "r", workflowRef: "workflows/w", workflowTitle: "W", status: "failed", createdAt: new Date(0).toISOString() },
+    run: {
+      id: "r",
+      workflowRef: "workflows/w",
+      workflowTitle: "W",
+      status: "failed",
+      createdAt: new Date(0).toISOString(),
+    },
     steps: [],
     units: [unit("a", "failed"), unit("b", "blocked"), unit("c", "completed")],
     children: [],
