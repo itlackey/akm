@@ -243,26 +243,40 @@ body text, and bare refs in the frontmatter ref fields (`xrefs`, `supersededBy`,
 
 ## Renames and moves
 
-A rename or move is **delete plus create**. The destination is a new identity:
-it gets a fresh index row, and learned state (utility, salience, outcomes,
-usage history) does not follow it.
+A rename or move is a plain filesystem move: `mv`, `git mv` or a file manager, of a
+file or of a folder. There is no move command. When `akm index` next runs, a file
+that is gone from one path while the same content is at another path, in the same
+bundle or in another indexed bundle, is **the same asset**: its index row, vector
+and utility are kept, and the learned state keyed by its old ref (usage,
+feedback, proposals, events, improve ledger, salience, outcomes) and its cached model
+results follow it to the new ref. The index result reports the moves
+(`moves.moved`), and each is recorded as a `moved` event on the new ref.
+
+A file whose content also changed is a new asset, and so is one whose content
+matches more than one vanished or new file and cannot be paired one to one by file
+name; the index says so (`moves.unpaired`, and a warning) and its history stays
+with the old ref.
 
 ```sh
 mv ~/akm/memories/old-note.md ~/akm/memories/new-note.md
-# update any intentional refs to it
 akm index
-akm lint          # confirms nothing dangles
+akm lint          # a link to memories/old-note is a missing-ref that names its new ref
+akm lint --fix    # rewrites links to a moved ref, and no other link
 ```
 
-Moving an item **between bundles** is copy/import followed by deletion from the
-source. Both the bundle and the concept identity change; there is no
-identity-preserving cross-bundle move.
+Links to the old ref in other assets are not rewritten by the index. `akm lint`
+reports each as a `missing-ref` carrying `movedFrom` and `movedTo`, and `--fix`
+rewrites it (frontmatter and prose, outside code fences); a `missing-ref` with no
+recorded move is never rewritten. The record of a move is the `moved` event, which
+the events table keeps for 90 days.
 
-Carrying learned state (utility, salience, usage history) across a rename is
-opt-in and out-of-band: run `bun scripts/rekey-asset-ref.ts <old-ref> <new-ref>`
-from a source checkout **before** `akm index`, and it re-keys the `entries` row
-plus `asset_salience`/`asset_outcome`/`usage_events` in place rather than letting
-`akm index` mint a fresh row. See
+Moving an item **between bundles** is the same filesystem move into the other
+bundle's folder. The bundle prefix of the ref changes, the history follows, and a
+bare link stays bare unless the asset moved to another bundle.
+
+A move that also edits the file, or whose pairing was ambiguous, can still carry
+its learned state by hand: run `bun scripts/rekey-asset-ref.ts <old-ref> <new-ref>`
+from a source checkout **before** `akm index`. See
 [`v0.9.0-troubleshooting.md`](../../migration/v0.9.0-troubleshooting.md) for the
 walkthrough.
 

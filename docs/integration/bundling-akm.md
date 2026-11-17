@@ -59,6 +59,9 @@ In order, every run applies (or, under `status`/`--dry-run`, plans):
    `WORK/x`), in frontmatter and body, rewritten under one backup directory per
    run. An old spelling that is now another file's ref is listed in `shadowed`
    and left as written.
+   The ref scan and rewrite is `src/core/asset/ref-rewrite.ts`, the same code
+   `akm lint --fix` uses to rewrite links to a ref that `akm index` recorded as
+   moved.
 6. **Bundle policy** (`bundlePolicy`): in each writable bundle, `lint_skip:`
    frontmatter is stripped from the assets, and a `.gitignore` carrying the old
    `# akm: intentionally track env and secrets` marker adds

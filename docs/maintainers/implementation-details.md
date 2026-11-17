@@ -8,7 +8,7 @@ CLI commands or compatibility promises.
 
 - Check the public command inventory against `main.subCommands` in `src/cli.ts` and each group's `subCommands`.
 - `scripts/build-registry-index.ts` builds registry indexes; it is maintainer tooling outside the public CLI.
-- `scripts/rekey-asset-ref.ts` re-keys earned signal from an old ref to a new one. Normal rename remains delete/create, with a new identity.
+- `scripts/rekey-asset-ref.ts` re-keys earned signal from an old ref to a new one by hand. A plain rename needs it no longer: `akm index` pairs a vanished entry with the new file of the same content and re-keys its history (`src/indexer/ref-moves.ts`); the script is for a move that also changed the content.
 - In 0.10, `akm-migrate` ships inside the `akm-cli` package alongside `akm`, with no separate package. `task-to-v4.ts` and `task-source-v3-frozen.ts` live under `scripts/akm-migrate/migrate/`, outside `src/`. The standalone executable is deprecated for 0.11; callers should use `akm migrate status` / `apply`.
 - `BundleAdapter.placeNew()` was removed in 0.10 because nothing called it. Writes use AKM's fixed type-to-directory table. Supporting writes into a non-AKM adapter layout would need placement support again ([#1163](https://github.com/itlackey/akm/issues/1163)).
 
