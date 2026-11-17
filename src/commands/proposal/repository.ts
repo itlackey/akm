@@ -2209,21 +2209,30 @@ async function disableRetiredTask(ref: WriteAddress, bundle: string, resume = fa
   if (ref.type !== "task") return [];
   return withSchedulerLock(async () => {
     const qualifiedRef = makeBundleRef(bundle, ref.conceptId);
+    const unverified = (reason: string) => [
+      `Task ${qualifiedRef} is disabled in local config, but native scheduler cleanup is unverified: ${reason}. ` +
+        "Installed bindings may remain; repair the scheduler and run akm doctor scheduler sync.",
+    ];
     const enabled = schedulerEnabledRefs(loadConfig());
     if (!resume && enabled !== undefined && !enabled.includes(qualifiedRef)) {
       const inspection = await inspectTaskSchedulerBindings(qualifiedRef);
       if (inspection.state === "not-installed") return [];
       if (inspection.state === "unknown") {
-        return [
-          `Task ${qualifiedRef} is disabled in local config, but native scheduler cleanup is unverified: ${inspection.reason}. ` +
-            "Installed bindings may remain; repair the scheduler and run akm doctor scheduler sync.",
-        ];
+        return unverified(inspection.reason);
       }
     }
     const activation = await akmTasksDisable(qualifiedRef);
     if (activation.sync.failures.length > 0) {
       throw new Error(
         `Task retirement could not reconcile the bundle scheduler: ${activation.sync.failures.map((failure) => `${failure.path}: ${failure.reason}`).join("; ")}. ` +
+          "The task is disabled in local config; retry retirement or run akm doctor scheduler sync.",
+      );
+    }
+    const inspection = await inspectTaskSchedulerBindings(qualifiedRef);
+    if (inspection.state === "unknown") return unverified(inspection.reason);
+    if (inspection.state === "installed") {
+      throw new Error(
+        `Task ${qualifiedRef} remains installed in the native scheduler after cleanup. ` +
           "The task is disabled in local config; retry retirement or run akm doctor scheduler sync.",
       );
     }

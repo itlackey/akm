@@ -332,3 +332,35 @@ test("a matching logical task with a definite foreign bundle path is preserved a
   expect(receipt.warnings).toEqual([]);
   expect(table).toBe(before);
 });
+
+test("enabled retirement verifies remaining unknown ownership after removing its known native rows", async () => {
+  const missingContext = path.join(storage.root, "missing-enabled-context.json");
+  const unknownRow = [
+    "# akm:task nightly-unknown BEGIN",
+    `0 2 * * * /usr/local/bin/akm --scheduler-context ${missingContext} task run nightly --bundle stash --scheduled > /tmp/nightly-unknown.log 2>&1`,
+    "# akm:task nightly-unknown END",
+    "",
+  ].join("\n");
+  table += unknownRow;
+  expect((await backend.list()).filter((row) => row.invocation?.[2] === "nightly")).toHaveLength(3);
+  const receipt = await documents.retire({ ref, revision: revision() });
+  expect(receipt.warnings?.[0]).toContain("owning bundle path could not be read");
+  expect(loadConfig().scheduler?.enabled).not.toContain(ref);
+  const remaining = (await backend.list()).filter((row) => row.invocation?.[2] === "nightly");
+  expect(remaining).toHaveLength(1);
+  expect(remaining[0]?.contextPath).toBe(missingContext);
+  expect(table).toContain(unknownRow.trim());
+});
+
+test("a backend reporting successful removal does not prove that native bindings disappeared", async () => {
+  const uninstall = spyOn(backend, "uninstall").mockImplementation(() => {});
+  try {
+    await expect(documents.retire({ ref, revision: revision() })).rejects.toThrow(
+      "remains installed in the native scheduler",
+    );
+    expect(fs.readFileSync(taskFile(), "utf8")).toBe(source);
+    expect((await backend.list()).some((row) => row.invocation?.[2] === "nightly")).toBe(true);
+  } finally {
+    uninstall.mockRestore();
+  }
+});
