@@ -67,6 +67,9 @@ export function parseForValidate(raw: string): ParsedForValidate {
   return { raw, data, content, frontmatter, bodyStartLine };
 }
 
+/** What a context with no way to read recorded moves offers. */
+const noMoves = (): [] => [];
+
 /** The base checks of one bundle's files. */
 export interface BaseChecker {
   /** What `runBaseChecks` reports for one file; `skip` is the rules this adapter leaves out for it, on top of the bundle's `lint.skip`. */
@@ -77,7 +80,7 @@ export interface BaseChecker {
 
 /** The base checks for the files of the bundle at `componentRoot`, among the bundles and with the settings `ctx` names (the settings are read once, here, only when `ctx` carries none). The scope (other bundles, moved refs, stale-path roots, LLM Wikis) is read once. */
 export function createBaseChecker(componentRoot: string, ctx: ValidateContext): BaseChecker {
-  const scope = lintScope(componentRoot, ctx.config ?? loadConfig(), ctx.sources ?? []);
+  const scope = lintScope(componentRoot, ctx.config ?? loadConfig(), ctx.sources ?? [], ctx.readMoves ?? noMoves);
   const rulesFor = (relPath: string, skip: readonly string[] = []): RuleScope => ({
     relPath,
     llmWiki: scope.inLlmWiki(relPath),

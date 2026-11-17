@@ -45,7 +45,7 @@ import { resolveWorkflowSourceDomains } from "../../workflows/source-files";
 import { runBaseChecks } from "./base-linter";
 import { bundleLintSkip } from "./bundle-skip";
 import { checkEnvForDangerousKeys } from "./env-key-rules";
-import { type MovedRefs, readMovedRefs } from "./moved-refs";
+import { type MovedRefs, type ReadMoves, readRecordedMoves } from "./moved-refs";
 import { lintScope } from "./scope";
 import { trackedSecretIssues } from "./tracked-secrets";
 import { isAdvisoryLintIssue, LINT_RULES, type LintContext, type LintIssue, type LintIssueType } from "./types";
@@ -98,6 +98,11 @@ export interface AkmLintOptions {
   rule?: string;
   /** Lint this one file instead of a whole bundle (`akm lint <file>`). */
   file?: string;
+  /**
+   * How the recorded moves are read, asked only when a ref did not resolve. A caller that holds its own connection to
+   * state.db (the improve dry run's snapshot) passes it; otherwise they are read through the ordinary read-only one.
+   */
+  readMoves?: ReadMoves;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -318,7 +323,12 @@ async function lintViaAdapter(
   const sourceIndex = sources.findIndex((s) => samePath(s.path, stashRoot));
   const componentId = sourceIndex >= 0 ? (ids[sourceIndex] as string) : stashRoot;
 
-  const ctx = createValidateContext({ root: stashRoot, sources, config: cfg });
+  const ctx = createValidateContext({
+    root: stashRoot,
+    sources,
+    config: cfg,
+    readMoves: options.readMoves ?? readRecordedMoves,
+  });
   const diagnostics = await adapter.validate(
     { id: componentId, adapter: adapterId, root: stashRoot, writable: true },
     changes,
@@ -738,7 +748,7 @@ function lintAkmSweep(
   const flagged: LintIssue[] = [];
   const warnings: LintIssue[] = [];
 
-  const scope = lintScope(stashRoot, cfg, sources);
+  const scope = lintScope(stashRoot, cfg, sources, options.readMoves ?? readRecordedMoves);
   // Types left out of an untyped search are left out of the sweep unless `--type` names one.
   const leftOut = new Set(defaultExcludedTypes(cfg).map((type) => stashDirFor(type)));
   const dirsToScan = documentStashDirs().filter((d) =>
@@ -942,7 +952,9 @@ async function lintFile(file: string, options: AkmLintOptions, cfg: AkmConfig): 
     realRoot ? path.relative(realRoot, absFile) : file,
     subdir,
     {
-      ...(root ? lintScope(root, cfg, resolveSourceEntries(root, cfg)) : lintScope(path.dirname(absFile), cfg, [])),
+      ...(root
+        ? lintScope(root, cfg, resolveSourceEntries(root, cfg), options.readMoves ?? readRecordedMoves)
+        : lintScope(path.dirname(absFile), cfg, [], options.readMoves ?? readRecordedMoves)),
       fix: options.fix === true,
       fixMovedRefs: options.fixMovedRefs === true,
       pruneDanglingEdges: false,
@@ -964,6 +976,7 @@ export function lintDocumentText(input: {
   subdir: string;
   content: string;
   config?: AkmConfig;
+  readMoves?: ReadMoves;
 }): Pick<AkmLintResult, "flagged" | "warnings"> {
   const cfg = input.config ?? loadConfig();
   const { root } = input;
@@ -974,7 +987,7 @@ export function lintDocumentText(input: {
     input.relPath,
     input.subdir,
     {
-      ...lintScope(root, cfg, resolveSourceEntries(root, cfg)),
+      ...lintScope(root, cfg, resolveSourceEntries(root, cfg), input.readMoves ?? readRecordedMoves),
       fix: false,
       fixMovedRefs: false,
       pruneDanglingEdges: false,

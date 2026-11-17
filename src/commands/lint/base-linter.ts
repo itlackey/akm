@@ -338,7 +338,7 @@ function localRefMissingRelPath(refType: string, refName: string, allRoots: stri
 function scanBundleRefs(
   scanBody: string,
   allRoots: string[],
-  movedConcepts: ReadonlySet<string>,
+  movedConcepts: MovedConcepts,
   bundleRoots: ReadonlyMap<string, string>,
 ): Array<{ ref: string; resolvedRelPath: string }> {
   const missing: Array<{ ref: string; resolvedRelPath: string }> = [];
@@ -360,7 +360,10 @@ function scanBundleRefs(
   return missing;
 }
 
-const NO_CONCEPTS: ReadonlySet<string> = new Set();
+/** The concept ids some recorded move left; asked only of a ref that did not resolve. */
+type MovedConcepts = { has(concept: string): boolean };
+
+const NO_CONCEPTS: MovedConcepts = new Set<string>();
 const NO_BUNDLES: ReadonlyMap<string, string> = new Map();
 
 /** A qualified ref is checked in the bundle it names; a bundle the config does not name is checked as an unqualified ref is. */
@@ -381,7 +384,7 @@ function rootsOfBundle(bundle: string, allRoots: string[], bundleRoots: Readonly
 function classifyConceptRef(
   rawConceptId: string,
   allRoots: string[],
-  movedConcepts: ReadonlySet<string> = NO_CONCEPTS,
+  movedConcepts: MovedConcepts = NO_CONCEPTS,
   declared = false,
 ): string | null {
   const conceptId = rawConceptId.split("#", 1)[0]!;
@@ -399,7 +402,7 @@ function classifyConceptRef(
     }
     // A path ref outside the type folders is checked only when the index recorded a move away from it.
     const gone =
-      movedConcepts.has(conceptId) && !allRoots.some((root) => fs.existsSync(path.join(root, `${conceptId}.md`)));
+      !allRoots.some((root) => fs.existsSync(path.join(root, `${conceptId}.md`))) && movedConcepts.has(conceptId);
     return gone ? `${conceptId}.md` : null;
   }
   if (isNonRefName(conceptId.slice(slash + 1))) return null;
@@ -448,7 +451,7 @@ function checkMissingRefs(
   body: string,
   stashRoot: string,
   extraStashRoots: string[] = [],
-  movedConcepts: ReadonlySet<string> = NO_CONCEPTS,
+  movedConcepts: MovedConcepts = NO_CONCEPTS,
   bundleRoots: ReadonlyMap<string, string> = NO_BUNDLES,
 ): Array<{ ref: string; resolvedRelPath: string }> {
   const allRoots = [stashRoot, ...extraStashRoots];
@@ -472,7 +475,7 @@ function checkMissingRefsInList(
   ownerRelPath: string,
   stashRoot: string,
   extraStashRoots: string[] = [],
-  movedConcepts: ReadonlySet<string> = NO_CONCEPTS,
+  movedConcepts: MovedConcepts = NO_CONCEPTS,
   bundleRoots: ReadonlyMap<string, string> = NO_BUNDLES,
 ): Array<{ ref: string; resolvedRelPath: string }> {
   const allRoots = [stashRoot, ...extraStashRoots];
@@ -839,7 +842,8 @@ function runMissingRefChecks(
   // stash.
   if (!shouldRun("missing-ref")) return { issues, raw, modified };
   const allRoots = [ctx.stashRoot, ...(ctx.extraStashRoots ?? [])];
-  const movedConcepts = ctx.moves?.concepts ?? NO_CONCEPTS;
+  const moves = ctx.moves;
+  const movedConcepts: MovedConcepts = moves ? { has: (concept) => moves.concepts.has(concept) } : NO_CONCEPTS;
   const bundleRoots = ctx.bundleRoots ?? NO_BUNDLES;
   // Links to an asset the index recorded as moved: reported with the new ref, and rewritten under `--fix`.
   const movedLinks = new Map<string, string>();

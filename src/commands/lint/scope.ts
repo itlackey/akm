@@ -8,7 +8,7 @@ import { isInLlmWiki } from "../../core/asset/llm-wiki-root";
 import { stalePathRoots } from "../../core/asset/stale-path";
 import type { AkmConfig } from "../../core/config/config";
 import { bundleLintSkip } from "./bundle-skip";
-import { type MovedRefs, readMovedRefs } from "./moved-refs";
+import { type MovedRefs, type ReadMoves, readMovedRefs } from "./moved-refs";
 
 /** What the base checks need to know about the bundle a file sits in, however the file's text was obtained. */
 export interface LintScope {
@@ -17,7 +17,7 @@ export interface LintScope {
   extraStashRoots: string[];
   /** Bundle id to root, so a qualified ref is checked in the bundle it names. */
   bundleRoots: ReadonlyMap<string, string>;
-  /** The refs the index recorded as moved. */
+  /** The refs the index recorded as moved; read the first time a ref that did not resolve asks. */
   moves: MovedRefs;
   /** Roots that make an absolute path judgeable for `stale-path`. */
   stalePathRoots: string[];
@@ -47,13 +47,21 @@ export function llmWikiPredicate(root: string): (relPath: string) => boolean {
   };
 }
 
-/** The scope of the configured bundle at `root` among the configured `sources` (none for a file outside every bundle). */
-export function lintScope(root: string, cfg: AkmConfig, sources: readonly BundleSourceRef[]): LintScope {
+/**
+ * The scope of the configured bundle at `root` among the configured `sources` (none for a file outside every bundle).
+ * `readMoves` is how the caller reads the recorded moves.
+ */
+export function lintScope(
+  root: string,
+  cfg: AkmConfig,
+  sources: readonly BundleSourceRef[],
+  readMoves: ReadMoves,
+): LintScope {
   return {
     stashRoot: root,
     extraStashRoots: sources.map((source) => source.path).filter((p) => p !== root && fs.existsSync(p)),
     bundleRoots: bundleRootsOf(sources),
-    moves: readMovedRefs(),
+    moves: readMovedRefs(readMoves),
     stalePathRoots: stalePathRoots(cfg, root),
     bundleSkip: bundleLintSkip(cfg, root),
     inLlmWiki: llmWikiPredicate(root),

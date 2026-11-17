@@ -34,6 +34,7 @@
 import type { TocHeading } from "../asset/markdown";
 import type { StalePathFields } from "../asset/stale-path";
 import type { AkmConfig } from "../config/config-types";
+import type { EventEnvelope } from "../events-types";
 
 // ── §1.1 — bundle / component / installation model ─────────────────────────
 
@@ -374,6 +375,8 @@ export interface BundleSourceRef {
 export interface ValidateContext {
   /** The configured bundles this run resolves refs against, the validated bundle among them. */
   readonly sources?: readonly BundleSourceRef[];
+  /** How the recorded `moved` events are read, when a ref does not resolve; absent when the caller has none to offer. */
+  readonly readMoves?: () => readonly EventEnvelope[];
   /** The settings this run was given; the base checks read stale-path roots and `lint.skip` from them. */
   readonly config?: AkmConfig;
   /**

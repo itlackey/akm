@@ -10,9 +10,7 @@
 
 import { rewritePathTokens } from "../../core/asset/ref-rewrite";
 import { readEvents } from "../../core/events";
-import { getStateDbPath } from "../../core/state-db";
-import { warn } from "../../core/warn";
-import { openSqliteReadSnapshot, SqliteReadSnapshotUnavailableError } from "../../storage/sqlite-read-snapshot";
+import type { EventEnvelope } from "../../core/events-types";
 import { findFenceRegions } from "./markdown-insertion";
 
 /** The ref a moved asset has now, and the link spelled as it is written to name it (a bare link stays bare). */
@@ -25,34 +23,35 @@ export interface MovedRefs {
   /** Where a link as it is written (`bundle//concept` or a bare concept id, with any `#fragment`) now points. */
   target(link: string): MovedTarget | undefined;
   /** Concept ids some move left: a path ref outside the type folders is checked only when a move names it. */
-  concepts: ReadonlySet<string>;
+  readonly concepts: ReadonlySet<string>;
 }
+
+/** How a run reads the recorded `moved` events; the caller owns the connection it reads them through. */
+export type ReadMoves = () => readonly EventEnvelope[];
+
+/** The recorded moves through akm's ordinary read-only connection to state.db (an absent database has none). */
+export const readRecordedMoves: ReadMoves = () => readEvents({ type: "moved" }, { readOnly: true }).events;
 
 const conceptOf = (itemRef: string): string => itemRef.slice(itemRef.indexOf("//") + 2);
 const bundleOf = (itemRef: string): string => itemRef.slice(0, itemRef.indexOf("//"));
 
-/** The recorded moves, each old ref with the ref its asset has now (a later move re-keys the earlier events). */
-export function readMovedRefs(): MovedRefs {
+/**
+ * The recorded moves, each old ref with the ref its asset has now (a later move re-keys the earlier events). `read` is
+ * called once, on the first question asked of the result, so a run with no ref that failed to resolve never reads them.
+ */
+export function readMovedRefs(read: ReadMoves): MovedRefs {
+  let loaded: MovedRefs | undefined;
+  return {
+    get concepts() {
+      return (loaded ??= loadMovedRefs(read())).concepts;
+    },
+    target: (link) => (loaded ??= loadMovedRefs(read())).target(link),
+  };
+}
+
+function loadMovedRefs(events: readonly EventEnvelope[]): MovedRefs {
   const current = new Map<string, string>();
-  let moves: ReturnType<typeof readEvents>["events"] = [];
-  // A private copy of state.db: a read-only connection to the live one would create its `-wal` and `-shm` files.
-  let snapshot: ReturnType<typeof openSqliteReadSnapshot>;
-  try {
-    snapshot = openSqliteReadSnapshot(getStateDbPath());
-  } catch (error) {
-    if (!(error instanceof SqliteReadSnapshotUnavailableError)) throw error;
-    warn(
-      `[lint] the recorded moves could not be read (${error.message}); a link to a moved ref is reported without its new ref.`,
-    );
-  }
-  if (snapshot !== undefined) {
-    try {
-      moves = readEvents({ type: "moved" }, { db: snapshot, readOnly: true }).events;
-    } finally {
-      snapshot.close();
-    }
-  }
-  for (const event of moves) {
+  for (const event of events) {
     const from = event.metadata?.from;
     if (typeof from === "string" && event.ref !== undefined && event.ref !== from) current.set(from, event.ref);
   }

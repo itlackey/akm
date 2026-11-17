@@ -141,6 +141,8 @@ export interface ValidateContextOptions {
   sources?: readonly BundleSourceRef[];
   /** The settings of the run. */
   config?: AkmConfig;
+  /** How the recorded `moved` events are read. */
+  readMoves?: ValidateContext["readMoves"];
   /** Pending changes to overlay onto the snapshot. Empty (or omitted) for a plain sweep with nothing pending. */
   changes?: readonly FileChange[];
 }
@@ -207,5 +209,5 @@ export function createValidateContext(options: ValidateContextOptions): Validate
     return { exists: false };
   }
 
-  return { sources, config: options.config, readFile, list, resolveRef };
+  return { sources, config: options.config, readMoves: options.readMoves, readFile, list, resolveRef };
 }
