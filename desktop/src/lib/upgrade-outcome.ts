@@ -19,6 +19,10 @@ const LABELS: Record<string, string> = {
   "opencode-v2": "OpenCode 2",
 };
 
+/** akm's plan is for the channel it was asked about; after the choice changes it describes the other one until Check runs. */
+export const planIsFor = (plan: { channel?: string } | undefined, channel: string): boolean =>
+  plan?.channel === channel;
+
 /** The channel akm says a plugin follows, as words that finish a sentence about it. */
 export const channelWords = (channel: string | undefined): string | undefined =>
   channel === "latest"

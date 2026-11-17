@@ -19,7 +19,7 @@
     type AgentCard,
     type Detected,
   } from "./setup-model";
-  import { planText } from "./upgrade-outcome";
+  import { planIsFor, planText } from "./upgrade-outcome";
   import { actSoftware, runSoftware, software, type Outcome } from "./state/software.svelte";
   import { workspace } from "./state/workspace.svelte";
 
@@ -53,8 +53,7 @@
   const host = $derived(software.data?.host),
     cli = $derived(host?.cli),
     channel = $derived(pluginChannel(engine, software.data?.preferences?.pluginChannel, host?.upgrade?.currentChannel)),
-    // akm's plan is for the channel it was asked about; after the choice changes it describes the other one until Check runs.
-    planned = $derived(host?.upgrade?.channel === channel),
+    planned = $derived(planIsFor(host?.upgrade, channel)),
     skew = $derived(classifyEngineSkew(engine, cli?.version)),
     desktopBehind = $derived(updateHeld(engine, host?.upgrade)),
     version = $derived(software.data?.desktop.version),
