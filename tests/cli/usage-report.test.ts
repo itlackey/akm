@@ -7,6 +7,10 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { openUsage } from "../../src/cli/usage";
 import { reportUsageIfDue } from "../../src/cli/usage-report";
+import { getDbPath } from "../../src/core/paths";
+import { deriveEntryProvenance } from "../../src/indexer/installations";
+import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
+import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
 import * as workspace from "../../src/workspace";
 import { withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
@@ -210,6 +214,41 @@ test("the desktop event carries the library snapshot and no command counts", asy
   const props = sent[0]?.body.props as Record<string, unknown>;
   expect(props.commands).toBeUndefined();
   expect(Object.keys(props).some((key) => key.startsWith("cmd_"))).toBe(false);
+});
+
+test("asset counts are named only for akm's own types; every other type is counted as assets_other", async () => {
+  const storage = sandbox();
+  seed("2026-11-01");
+  const db = openIndexDatabase(getDbPath());
+  try {
+    for (const [name, type] of [
+      ["a", "skill"],
+      ["b", "skill"],
+      ["c", "memory"],
+      ["d", "acme-private-notes"],
+      ["e", "Odd Type/with.stuff"],
+    ] as const) {
+      upsertEntry(
+        db,
+        path.join(storage.stashDir, `${name}.md`),
+        { name, type },
+        deriveEntryProvenance({ bundleId: "stash", componentId: "stash", adapterId: "akm" }, type, name),
+      );
+    }
+  } finally {
+    closeDatabase(db);
+  }
+  const { fn, sent } = fakeFetch();
+  await reportUsageIfDue({ surface: "desktop" }, { ...NOW, fetch: fn });
+  const props = sent[0]?.body.props as Record<string, number>;
+  expect(props).toMatchObject({ assets: 5, assets_skill: 2, assets_memory: 1, assets_other: 2 });
+  expect(
+    Object.keys(props)
+      .filter((key) => key.startsWith("assets_"))
+      .sort(),
+  ).toEqual(["assets_memory", "assets_other", "assets_skill"]);
+  expect(JSON.stringify(sent[0]?.body)).not.toContain("acme");
+  expect(JSON.stringify(sent[0]?.body)).not.toContain("Odd");
 });
 
 test("usage.report: false sends nothing and claims nothing", async () => {

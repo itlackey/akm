@@ -245,8 +245,10 @@ A fresh data directory sends nothing until its next UTC day.
   run). It is built from the counts above, so it has no argument values.
 - **Desktop event (`desktop_daily`):** the library sizes below.
 - **Library sizes, in both:** `bundles` (enabled bundles in the config), `assets`
-  (indexed assets) and `assets_<type>` for each asset type. They are left out
-  when there is no readable index; the report never builds or changes the index.
+  (indexed assets), `assets_<type>` for each of akm's own asset types (skill,
+  command, and so on) and `assets_other` for every other type, which a bundle or
+  you named, so its name is never sent. They are left out when there is no
+  readable index; the report never builds or changes the index.
 - **System fields, in both:** `osName` (Linux, macOS or Windows), `osVersion`,
   `locale`, `engineName` and `engineVersion` (`bun` or `node`), `appVersion`
   (the akm version), `sdkVersion` (`akm@<version>`), `isDebug: false`, a random

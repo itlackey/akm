@@ -13,6 +13,7 @@ import { randomUUID } from "node:crypto";
 import os from "node:os";
 import { peekConfigValue } from "../core/config/peek";
 import { getDbPath } from "../core/paths";
+import { isKnownType } from "../core/recognition-util";
 import { openDatabase } from "../storage/database";
 import { getEntryCountByType } from "../storage/repositories/index-entries-repository";
 import { pkgVersion } from "../version";
@@ -100,7 +101,7 @@ function cliCounts(last: string | undefined, today: string): Record<string, numb
   return props;
 }
 
-/** Enabled bundle count from the config file, and the indexed asset counts from the read-only index. Absent when unreadable. */
+/** Enabled bundle count from the config file, and the indexed asset counts (by akm's own types) from the read-only index. Absent when unreadable. */
 function librarySnapshot(): Record<string, number> {
   const props: Record<string, number> = {};
   const bundles = peekConfigValue(["bundles"]);
@@ -113,7 +114,11 @@ function librarySnapshot(): Record<string, number> {
       db.exec("PRAGMA busy_timeout=250; PRAGMA query_only=ON;");
       const byType = getEntryCountByType(db);
       props.assets = Object.values(byType).reduce((sum, n) => sum + n, 0);
-      for (const [type, n] of Object.entries(byType)) props[`assets_${type}`.slice(0, 40)] = n;
+      // A type outside akm's own set is named by a bundle's adapter or the user: it is counted, never named.
+      for (const [type, n] of Object.entries(byType)) {
+        const key = isKnownType(type) ? `assets_${type}` : "assets_other";
+        props[key] = (props[key] ?? 0) + n;
+      }
     } finally {
       db.close();
     }
