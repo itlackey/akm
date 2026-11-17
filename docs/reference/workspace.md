@@ -25,9 +25,13 @@ that.
   through the exported `scrubUrlCredentials` before showing it, which masks credentials inside any URL (userinfo,
   `token=`, `api_key=`, `sig=`, ...); Desktop does this on every response.
 - **Timestamps** are ISO 8601 UTC unless noted. Counts that cannot be computed are `null`, never `NaN`.
-- **Reads.** A read operation opens `state.db` and `index.db` read-only and never creates or migrates them: a missing or
-  behind-on-migrations `state.db` makes the sections that need it empty (and `health` report it as a failing check), not
-  an error. Searching and showing record no usage events and build no index. Reads write nothing to a bundle, config
+- **Reads.** A read operation opens `state.db` and `index.db` read-only and never creates or migrates them. A missing or
+  behind-on-migrations `state.db` is reported, never read as empty: the operations that need it return
+  `{ "available": false, "reason": "absent" | "needs-migration" }` (`proposals.list`, `activity.pulse`,
+  `assets.improvement`, `assets.searchMisses`, `activity.retrievalTrend`, `activity.improveImpact`, and `taskRuns`,
+  `workflowRuns` and `events` with their usual shape); `activity.overview` names it in `errors.state` and `health` reports
+  it as a failing check. `activity.pulse` and `assets.improvement` raise the error that names an unresolvable bundle
+  directory, and `activity.improveImpact` names it in `errors.proposals`, as `proposals.list` raises it. Searching and showing record no usage events and build no index. Reads write nothing to a bundle, config
   or database.
 
 A `limit` input is a positive integer capped at 200.
@@ -145,9 +149,18 @@ Requires `taskId`; optional `since` (default `30d`, same syntax as metrics) and 
 Returns `{ available, totalCount, count, runs }`, newest first. Each run has
 recorded `status`, `startedAt`, nullable `durationMs`, nullable `trigger` (`schedule` when the OS scheduler started
 it, `manual` otherwise; `null` on a run recorded before akm stored it, or one that failed before it was dispatched),
-and nullable decoded `detail` (`reason`, `error`, `exitCode`, `runId` when recorded). Invalid/missing historical detail stays
-unknown. No log paths are returned or files read; these are existing state.db records. `available: false` means
-state.db is absent or needs migration, not that this task has never failed.
+nullable `targetKind` (`command`, `workflow`, ...), `targetRef` (the workflow's ref) and `engine` (what ran a command or
+prompt task), and nullable decoded `detail` (`reason`, `error`, `exitCode`, `runId` when recorded). Invalid/missing
+historical detail stays unknown. No log paths are returned or files read; these are existing state.db records.
+`available: false` means state.db is absent or needs migration, not that this task has never failed. The run's output is
+[`activity.taskRunLog`](#activitytaskrunlog).
+
+## `activity.taskRunLog`
+
+Requires `taskId` and the run's `startedAt` as `activity.taskHistory` lists them. Returns the run's recorded output from
+`logs.db`, read-only: `{ available: true, truncated, lines: [{ stream, level, line }] }`, oldest line first, at most 500
+lines (`truncated` says there were more). Output is stored already redacted. `{ available: false, reason: "absent" }`
+when there is no `logs.db`; nothing is created or migrated.
 
 ## `activity.taskRuns`
 
@@ -179,7 +192,8 @@ migrated.
 
 Optional `since` (default `24h`) and `until` (default now). Every search, show, feedback and curate row of the window
 from every source, oldest first, as `akm doctor metrics --detail full` lists them (`rows.usage`):
-`{ available, window, truncated, events }`. A search writes one summary row (no `ref`, with `resultCount`) and one row
+`{ available, window, truncated, events }`. Each event carries `byPerson`: `true` for the person's own events (the ones
+`akm doctor metrics` and `assets.searchMisses` count), `false` for an agent's, improve's or a task's. A search writes one summary row (no `ref`, with `resultCount`) and one row
 per hit. An event carries `agent: { harness, session? }` when the agent harness that made it was recorded (from this
 release; older rows have none). At most 20,000 events; `truncated` says the window held more.
 
@@ -196,6 +210,7 @@ them, in column form, so 30,000 assets stay a few megabytes:
   "bundles": ["team-wiki"],
   "beliefs": ["superseded"],
   "use": { "since": "2026-08-15T08:00:00.000Z", "source": "user" },
+  "feedback": { "since": "2026-08-15T08:00:00.000Z", "source": "user" },
   "kinds": ["xref", "links_to"],
   "tags": ["deploy"],
   "nodes": { "ref": ["team-wiki//knowledge/a"], "type": [0], "bundle": [0], "belief": [-1], "shows": [12],
@@ -216,7 +231,8 @@ events when the operation is called: events of source `user` (people and their a
 Improve) at or after `use.since`, the start of the usage retention window. It is zero, and the note says so, when no
 usage history is available. `lastShownAt` is the latest of those shows (UTC), `null` when there is none in the window.
 `positive` and `negative` count feedback from people inside the retention window, as search ranks by it (a negative
-answered by an accepted fix does not count). `modifiedAt` is the file's modification time, `null` when it cannot be
+answered by an accepted fix does not count). `feedback` is `null`, and every count zero, when the state store could not
+be read: zeros then are not measurements, and a reader shows feedback as unavailable. `modifiedAt` is the file's modification time, `null` when it cannot be
 read; in a Git checkout it is when the file was last written there, not its last commit.
 
 `groups` and `duplicates` are computed by `akm index` at the end of each build whose vectors changed, over every
@@ -227,7 +243,7 @@ meaning lie near each other, and an asset sits inside its group's sphere. `dupli
 into `nodes`) whose stored embeddings have a cosine of at least `threshold` (0.96), most alike first, at most 2,000
 (`truncated` says there were more); only pairs inside a group are compared. Pairs and places of assets that are not
 returned (a bundle that is not enabled) are left out. Both are `null` without at least eight embedded assets, and until
-an `akm index` of this release has run. `available` is `false`, with a `note`, when there is no index.
+an `akm index` of this release has run, and the `note` says so; a reader shows near-duplicates as unavailable, not as none. `available` is `false`, with a `note`, when there is no index.
 
 ## `bundles.list`
 
@@ -637,7 +653,6 @@ Recent commits of the write-target stash (`defaultWriteTarget`, else the default
         "time": "2026-10-16T10:46:41-05:00",
         "author": "akm-test",
         "subject": "akm save 2026-10-16 10:00:00",
-        "origin": "sync",
         "paths": ["knowledge/more.md"],
         "pathCount": 1
       }
@@ -647,16 +662,6 @@ Recent commits of the write-target stash (`defaultWriteTarget`, else the default
 ```
 
 - `git` is `false` and `commits` empty when the stash is not a git repository.
-- `origin` is derived from the subject, which is how akm names its own commits:
-
-  | `origin` | Subject |
-  | --- | --- |
-  | `improve-sync` | `akm improve ...` (the pre-run sync and the end-of-run auto-sync) |
-  | `accept` | `akm accept: ...`, `akm proposal ...` (including `akm proposal drain: N accepted ...`) |
-  | `remember` | contains `remember` |
-  | `sync` | `akm save ...`, `akm sync ...` |
-  | `other` | anything else, such as a hand-made commit |
-
 - `paths` lists at most 50 changed paths; `pathCount` is the real number. `time` is the commit's own committer date with
   its offset.
 
@@ -815,7 +820,11 @@ A proposal that was later reverted is dated by its accept (`acceptedAt`) in `out
 - `harm`: the log, newest first: `reverted`, `reopened`, `risky-retirement`, `flag-after-change`.
 - `cost`: per week, model `calls`, `tokens`, `usageCalls` and calls by process.
 - `changedAssets`: for each accepted change, how often the asset was found and rated in the 28 days before and after
-  (`complete` is `false` until 28 days have passed since the change).
+  (`complete` is `false` until 28 days have passed since the change; `beforeComplete` is `false` when the 28 days before it
+  start earlier than the usage rows read, so the before counts are not recorded).
+- `usageSince` and `usageComplete`: where the usage figures (`changedAssets` counts and the `flag-after-change` entries of
+  `harm`) start. Usage older than akm keeps (`akm doctor metrics` notes the retention) is purged, so a window longer than
+  that is `usageComplete: false` and its usage figures cover only from `usageSince`.
 - `judgeAndYou`: accepted, rejected and reverted counts by who decided.
 
 ## `activity.pulse`
@@ -842,21 +851,26 @@ zero. Missing result counts do not mean zero results. The queries behind `zeroRe
 
 `weekly` is the same data by ISO week as a p-chart: per week `week`, `x` (found nothing), `n` (searches), `rate`, and the
 control limits `lower` and `upper` (centre ± 3 standard errors at that week's own n); `signal` is `true` for a week
-outside its limits. A week with no searches has `null` for all three. `centre` is the pooled share.
+outside its limits. A week with no searches has `null` for all three. `partial` is `true` for a week akm has only some of
+the days of (the window opens or ends inside it, or the data starts inside it): it has its `rate`, no limits and no
+`signal`. `centre` is the pooled share of the whole weeks, and `enoughHistory` says whether there are four whole weeks
+with searches: without it `centre` and every limit are `null`. When the state database cannot be read the response is
+`{ "available": false, "reason" }`.
 
 ## `assets.searchMisses`
 
 User searches that found nothing, grouped by normalised query: `query`, `count`, `days` (distinct UTC days),
 `lastAt` and `repeated` (`true` when it came up on two or more days). `since` is `30d` by default. The response also carries
-`searches` (all user searches in the window) and `foundNothing`.
+`searches` (all user searches in the window) and `foundNothing`. When the state database cannot be read it is
+`{ "available": false, "reason" }`.
 
 ## `setup.detect`
 
 What first-run setup could use on this computer, read from the file system and `PATH` only: nothing is contacted and
 nothing is written. It returns `stashDir`, the library directory the config already names, else `~/akm` or another
 existing candidate, else the default (`AKM_BUNDLE_DIR`, else `~/akm`, or `Documents\akm` on Windows); `harnesses`, the agent
-programs found on `PATH` that akm can run work on, each `{platform, path, modelWorkNote}` (akm's words for whether its
-model calls on that program can be limited to reading and searching); `enabled`, the platforms the config already
+programs found on `PATH` that akm can run work on, each `{platform, path, modelWorkReadOnly, modelWorkNote}` (`modelWorkReadOnly`: whether akm's model calls on that
+program can be limited to reading and searching; `modelWorkNote`: akm's words for it, for display); `enabled`, the platforms the config already
 enables; `modelCalls`, where akm's own model calls
 (improve, judging, extraction) run: `description` in the words of `akm setup`'s summary, and `platform` when they run on
 a harness (else `null`); `connection`, the name of the connection that takes them when no agent does (`null` when there is

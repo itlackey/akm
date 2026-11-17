@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import test, { after } from "node:test";
 import { HostTools, hostEnvironment, runHost, summarizeUpgrade } from "../src/lib/server/features/host-tools.ts";
-import { planText, upgradeOutcomeText } from "../src/lib/upgrade-outcome.ts";
+import { planIsFor, planText, upgradeOutcomeText } from "../src/lib/upgrade-outcome.ts";
 
 const temporary = [];
 after(() => Promise.all(temporary.map((dir) => rm(dir, { recursive: true, force: true }))));
@@ -870,4 +870,10 @@ test("output over the cap stops the command and leaves its action unsettled like
     }),
     (error) => error.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" && error.killed === true,
   );
+});
+
+test("akm's plan describes a channel only when it was made for that channel", () => {
+  assert.equal(planIsFor({ channel: "next" }, "next"), true);
+  assert.equal(planIsFor({ channel: "latest" }, "next"), false);
+  assert.equal(planIsFor(undefined, "next"), false);
 });

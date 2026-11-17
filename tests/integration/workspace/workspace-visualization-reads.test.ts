@@ -389,9 +389,16 @@ describe("visualization reads", () => {
         eventType: "show",
         ref: "stash//knowledge/guide",
         source: "user",
+        byPerson: true,
         agent: { harness: "claude", session: "s-1" },
       }),
-      expect.objectContaining({ eventType: "search", query: "deploy", source: "improve", resultCount: 0 }),
+      expect.objectContaining({
+        eventType: "search",
+        query: "deploy",
+        source: "improve",
+        byPerson: false,
+        resultCount: 0,
+      }),
     ]);
     expect(mine[1].agent).toBeUndefined();
     await expectUsage(() => activity.events({ since: "1h", until: "2000-01-01T00:00:00Z" }));

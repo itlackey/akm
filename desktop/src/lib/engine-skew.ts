@@ -98,17 +98,9 @@ export function updateHeld(engine: string | undefined, plan: CliPlan | undefined
 }
 
 /**
- * Why Update is held, said as the rule. akm updates the CLI and its plugins together, so the plugins wait with it. Says
- * when Desktop's own channel will not offer that release.
+ * Why Update is held, said as the rule. akm updates the CLI and its plugins together, so the plugins wait with it.
  */
-export function holdReason(
-  engine: string | undefined,
-  plan: CliPlan | undefined,
-  desktopChannel: "stable" | "prerelease",
-): string | undefined {
+export function holdReason(engine: string | undefined, plan: CliPlan | undefined): string | undefined {
   if (!updateHeld(engine, plan)) return undefined;
-  const notOffered = desktopChannel === "stable" && /-/.test(plan?.latestVersion ?? "");
-  return `Update would move the CLI to ${plan?.latestVersion}, newer than the AKM built into this app (${engine})${
-    notOffered ? ", and AKM Desktop follows stable releases only, so it will not be offered to Desktop" : ""
-  }. The plugins update with the CLI, so Update is held until AKM Desktop can read what the CLI migrates.`;
+  return `Update would move the CLI to ${plan?.latestVersion}, newer than the AKM built into this app (${engine}). The plugins update with the CLI, so Update is held until AKM Desktop can read what the CLI migrates.`;
 }

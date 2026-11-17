@@ -5,15 +5,32 @@
 -->
 
 <script lang="ts">
-  import { date } from "./client";
+  import { api, date } from "./client";
   import { duration } from "./activity-presenter";
   import Outcome from "./Outcome.svelte";
   import { statusOutcome } from "./run-model";
-  import type { ActivityTaskHistory } from "./activity-types";
+  import type { ActivityTaskHistory, ActivityTaskLog } from "./activity-types";
 
   let { taskId, run }: { taskId: string; run: ActivityTaskHistory["runs"][number] } = $props();
   const detail = $derived(run.detail ?? {});
   const workflowRunId = $derived(typeof detail.runId === "string" ? detail.runId : "");
+  let log = $state<ActivityTaskLog | null>(null);
+  let logError = $state("");
+  async function loadLog() {
+    logError = "";
+    try {
+      log = await api<ActivityTaskLog>("/tasks/log", { taskId, startedAt: run.startedAt });
+    } catch (cause) {
+      logError = (cause as Error).message;
+    }
+  }
+  const ran = $derived(
+    run.targetKind === "workflow"
+      ? `Workflow ${run.targetRef ?? ""}`
+      : run.targetKind
+        ? `${run.targetKind[0].toUpperCase()}${run.targetKind.slice(1)}${run.engine ? ` on ${run.engine}` : ""}`
+        : "Not recorded",
+  );
   const recorded = $derived(["reason", "error", "exitCode"].filter((key) => detail[key] != null));
 </script>
 
@@ -28,6 +45,8 @@
   <dl>
     <dt>Took</dt>
     <dd>{duration(run.durationMs)}</dd>
+    <dt>Ran</dt>
+    <dd>{ran}</dd>
     <dt>Started by</dt>
     <dd>
       {run.trigger === "schedule" ? "The schedule" : run.trigger === "manual" ? "A person or a script" : "Not recorded"}
@@ -51,6 +70,15 @@
     </p>{:else if run.status === "failed" && !recorded.length}<p>
       No error detail is recorded for this failed run.
     </p>{/if}
+  <details ontoggle={(event) => event.currentTarget.open && !log && !logError && void loadLog()}>
+    <summary>Log output</summary>
+    {#if logError}<p class="notice notice-warn" role="alert">{logError}</p>
+    {:else if !log}<p class="muted" role="status">Loading…</p>
+    {:else if !log.available}<p class="muted">AKM has no task log database, so this run's output is not available.</p>
+    {:else if !log.lines?.length}<p class="muted">No output is recorded for this run.</p>
+    {:else}<pre class="code">{log.lines.map((entry) => entry.line).join("\n")}</pre>
+      {#if log.truncated}<p class="muted small">Only the first {log.lines.length} lines are shown.</p>{/if}{/if}
+  </details>
   {#if workflowRunId}<p>
       <span class="badge" data-tone="ok">Matched by run id</span>
       <a href={`/activity/overview?view=runs&run=${encodeURIComponent(workflowRunId)}&anchor=workflow-trace`}

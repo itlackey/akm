@@ -253,7 +253,7 @@ describe("reads", () => {
     await proposals.revert({ id });
 
     const impact = await out(activity.improveImpact());
-    expect(impact.changedAssets[0]).toMatchObject({ outcome: "reverted", decidedAt: acceptedAt });
+    expect(impact.changedAssets[0]).toMatchObject({ outcome: "reverted", decidedAt: acceptedAt, beforeComplete: true });
     const reverted = Object.fromEntries(impact.outcomes[0].weeks.map((w: Json) => [w.week, w.reverted]));
     expect(reverted[weekOf(acceptedAt)]).toBe(1);
     expect(reverted[impact.weeks.at(-1)]).toBe(0);
@@ -279,6 +279,39 @@ describe("reads", () => {
       waiting: 0,
     });
     expect(pulse.attention.harm.reverted).toBe(1);
+  });
+
+  test("usage is kept 90 days: a change whose 28 days before reach past that says its before side is not recorded", async () => {
+    await seed();
+    const id = propose("knowledge/notes", NOTES_REWRITE);
+    await proposals.accept({ id });
+    const day = 86_400_000;
+    const acceptedAt = new Date(Date.now() - 70 * day).toISOString();
+    const db = openStateDatabase();
+    try {
+      const accepted = listStateProposals(db, { stashDir: ctx.storage.stashDir, status: "accepted" })[0] as Proposal;
+      upsertProposal(
+        db,
+        {
+          ...accepted,
+          createdAt: new Date(Date.now() - 71 * day).toISOString(),
+          updatedAt: acceptedAt,
+          acceptedAt,
+          review: { ...accepted.review, decidedAt: acceptedAt },
+        } as Proposal,
+        ctx.storage.stashDir,
+      );
+    } finally {
+      db.close();
+    }
+    const ninety = await out(activity.improveImpact({ since: "90d" }));
+    expect(ninety.usageComplete).toBe(true);
+    expect(ninety.changedAssets[0]).toMatchObject({ beforeComplete: false });
+    // A year asks for more than the retained usage: the figures say where they start, and the 28 days before still do not reach it.
+    const year = await out(activity.improveImpact({ since: "365d" }));
+    expect(year.usageComplete).toBe(false);
+    expect(Date.parse(year.usageSince)).toBeGreaterThan(Date.now() - 91 * day);
+    expect(year.changedAssets[0]).toMatchObject({ beforeComplete: false });
   });
 
   test("an unreadable proposals table degrades the impact page's proposal cards, not the page", async () => {
@@ -320,6 +353,11 @@ describe("reads", () => {
       [day(60), 2, 1],
       [day(1), 1, 0],
     ]);
+    // Two recorded days are not four whole weeks: no usual range, and the weeks at either end are partial.
+    expect(trend.enoughHistory).toBe(false);
+    expect(trend.centre).toBeNull();
+    expect(trend.weekly.at(-1)).toMatchObject({ partial: true, lower: null, upper: null, signal: false });
+    expect(trend.weekly[0]).toMatchObject({ lower: null, upper: null });
     const short = await out(activity.retrievalTrend({ since: "30d" }));
     expect(short.daily.map((d: { date: string }) => d.date)).not.toContain(day(60));
     await expectUsage(() => activity.retrievalTrend({ since: "nonsense" }));
@@ -778,12 +816,11 @@ describe("reads", () => {
     expect(detail.diff.unified).toContain("xxxx");
   });
 
-  test("recentChanges: recent commits of the write-target stash, classified by origin", async () => {
+  test("recentChanges: recent commits of the write-target stash, each with its own subject and author", async () => {
     await seed();
     const changes = await out(proposals.recentChanges({ limit: 10 }));
     expect(changes).toMatchObject({ bundle: "stash", git: true });
-    const origins = changes.commits.map((c: { origin: string }) => c.origin);
-    expect(origins.slice(0, 3)).toEqual(["sync", "accept", "improve-sync"]);
+    expect(changes.commits[0]).not.toHaveProperty("origin");
     expect(changes.commits[0]).toMatchObject({ subject: expect.stringContaining("akm save"), author: "akm-test" });
     expect(changes.commits[0].paths).toEqual(["knowledge/more.md"]);
     expect((await out(proposals.recentChanges({ limit: 1 }))).commits).toHaveLength(1);
@@ -906,6 +943,7 @@ describe("secrets and read-only guarantees", () => {
     // The remedy is one the person can take from the app, not only a CLI command (F8).
     expect(overview.health.hardChecks[0].message).toContain("Index the library");
     expect(overview.improveRuns).toEqual([]);
+    expect(overview.errors.state).toContain("state database");
     expect(await out(proposals.list())).toEqual({ available: false, reason: "absent" });
     expect(fs.existsSync(getStateDbPath())).toBe(false);
   });

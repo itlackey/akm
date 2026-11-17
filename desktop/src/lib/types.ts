@@ -80,7 +80,6 @@ export interface Commit {
   paths?: string[];
   pathCount?: number;
   author?: string;
-  origin?: string;
 }
 export interface History {
   available: boolean;

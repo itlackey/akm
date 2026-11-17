@@ -26,6 +26,7 @@
     SPEEDS,
     scrubTime,
     stampText,
+    stepsOf,
     totalsAt,
     truncationNote,
     type UsageEventRow,
@@ -34,7 +35,10 @@
 
   let period = $state<"24h" | "7d">("24h");
   let o = $state.raw<Overview | null>(null);
-  let steps = $state.raw<ReplayStep[]>([]);
+  let allSteps = $state.raw<ReplayStep[]>([]);
+  /** Whose events play: yours, as Usage counts them, or every source including agents, improve and tasks. */
+  let everyone = $state(false);
+  const steps = $derived(stepsOf(allSteps, everyone));
   let range = $state<{ since: string; until: string } | null>(null);
   let truncated = $state(false);
   /** What the server said when it has nothing to replay: no index, or no usage history. */
@@ -54,7 +58,7 @@
   const axis = $derived(axisLabels(start, end));
   const timeline = $derived(kindBins(steps, start, end));
   const mostUsed = $derived(usedList(steps, clock, 6));
-  const cutNote = $derived(truncationNote(truncated, steps[0]?.t));
+  const cutNote = $derived(truncationNote(truncated, allSteps[0]?.t));
   const recent = $derived.by(() => {
     const out: ReplayStep[] = [];
     for (let i = steps.length - 1; i >= 0 && out.length < 14; i--)
@@ -137,7 +141,7 @@
       unavailable =
         events.available === false ? "Usage events are not recorded here yet, so there is nothing to replay." : "";
       o = built;
-      steps = replaySteps(events.events, new Map(built.ref.map((ref, i) => [ref, i])));
+      allSteps = replaySteps(events.events, new Map(built.ref.map((ref, i) => [ref, i])));
       range = events.window;
       truncated = events.truncated;
       clock = Date.parse(events.window.until);
@@ -212,6 +216,11 @@
         ><option value="24h">Last 24 hours</option><option value="7d">Last 7 days</option></select
       ></label
     >
+    <label
+      >Events by<select bind:value={everyone}
+        ><option value={false}>You</option><option value={true}>Everyone: you, agents and automation</option></select
+      ></label
+    >
     <span class="grow"></span>
     <p class="muted small">{playText(speed)}. Click or drag the timeline to move the playhead.</p>
   </div>
@@ -231,6 +240,7 @@
       <div><strong>{totals.events.toLocaleString()}</strong><span>events</span></div>
       <div><strong>{totals.shows.toLocaleString()}</strong><span>reads</span></div>
       <div><strong>{totals.searches.toLocaleString()}</strong><span>searches</span></div>
+      <div><strong>{totals.curates.toLocaleString()}</strong><span>curates</span></div>
       <div class:bad={totals.foundNothing > 0}>
         <strong>{totals.foundNothing.toLocaleString()}</strong><span>found nothing</span>
       </div>
@@ -373,7 +383,7 @@
   }
   .figures {
     display: grid;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-columns: repeat(7, minmax(0, 1fr));
     gap: 8px;
     margin-bottom: 12px;
   }
@@ -522,6 +532,9 @@
   }
   .kind[data-kind="search"] {
     background: var(--accent);
+  }
+  .kind[data-kind="curate"] {
+    background: var(--use-1);
   }
   .kind[data-kind="miss"] {
     background: var(--fail);

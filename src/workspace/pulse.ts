@@ -11,14 +11,15 @@
 import { metricsWindow, readLlmRows, readUsageRows } from "../commands/metrics/metrics-cli";
 import type { MetricsUsageRow } from "../commands/metrics/types";
 import { proposalWaitingSince } from "../commands/proposal/proposal-types";
+import { resolveStashDir } from "../core/common";
 import { defaultConnection, loadConfig } from "../core/config/config";
 import { learningStatus } from "../setup/learning";
 import { queryImproveRuns } from "../storage/repositories/improve-runs-repository";
 import { listStateProposals } from "../storage/repositories/proposals-repository";
 import { queryTaskHistory } from "../storage/repositories/task-history-repository";
-import { againstUsual, classifyOutcome } from "./derive";
+import { againstUsual, classifyOutcome, MIN_USUAL_WEEKS } from "./derive";
 import { isUserSearch, missesFromRows } from "./misses";
-import { stateDbUnavailable, tryStashDir, withReadonlyStateDb } from "./readers";
+import { stateDbUnavailable, withReadonlyStateDb } from "./readers";
 import { nearestRank } from "./stats";
 
 const DAY = 86_400_000;
@@ -29,14 +30,13 @@ export function overviewPulse() {
   const weekAgo = iso(now - 7 * DAY);
   const baselineStart = iso(now - 63 * DAY);
   const window = metricsWindow("70d", now);
-  const stashDir = tryStashDir();
   const state = withReadonlyStateDb(
     (db) => ({
       usage: readUsageRows(db, window),
       llm: readLlmRows(db, window),
       runs: queryImproveRuns(db, weekAgo),
       tasks: queryTaskHistory(db, { since: weekAgo }),
-      proposals: stashDir ? listStateProposals(db, { stashDir, withContent: false }) : [],
+      proposals: listStateProposals(db, { stashDir: resolveStashDir(), withContent: false }),
     }),
     null,
   );
@@ -71,7 +71,7 @@ export function overviewPulse() {
     count: negativeNow.length,
     assets: new Set(negativeNow.map((row) => row.ref).filter(Boolean)).size,
     usual:
-      weeksWithData >= 4
+      weeksWithData >= MIN_USUAL_WEEKS
         ? { low: nearestRank(sortedWeeks, 0.1), high: nearestRank(sortedWeeks, 0.9), state: "ok" as const }
         : { low: null, high: null, state: "low-data" as const },
     latest: latest ? { ref: latest.ref ?? null, at: latest.at } : null,

@@ -6,7 +6,7 @@
 
 import { metricsWindow, readUsageRows } from "../commands/metrics/metrics-cli";
 import type { MetricsUsageRow } from "../commands/metrics/types";
-import { withReadonlyStateDb } from "./readers";
+import { stateDbUnavailable, withReadonlyStateDb } from "./readers";
 
 export interface Miss {
   query: string;
@@ -18,9 +18,12 @@ export interface Miss {
   repeated: boolean;
 }
 
+/** An event the person made themselves, not an agent's, improve's or a task's. */
+export const isUserEvent = (row: MetricsUsageRow): boolean => row.source === "user";
+
 /** A search the user ran themselves, not a lookup of one asset and not an agent's search. */
 export const isUserSearch = (row: MetricsUsageRow): boolean =>
-  row.eventType === "search" && row.ref === undefined && row.source === "user";
+  row.eventType === "search" && row.ref === undefined && isUserEvent(row);
 
 const normalize = (query: string): string => query.trim().replace(/\s+/g, " ").toLowerCase();
 
@@ -51,9 +54,11 @@ export function missesFromRows(rows: MetricsUsageRow[]): Miss[] {
 
 export function searchMisses(input: { since?: string } = {}) {
   const window = metricsWindow(input.since || "30d");
-  const rows = withReadonlyStateDb((db) => readUsageRows(db, window), []);
+  const rows = withReadonlyStateDb((db) => readUsageRows(db, window), null);
+  if (!rows) return stateDbUnavailable();
   const misses = missesFromRows(rows);
   return {
+    available: true as const,
     searches: rows.filter(isUserSearch).length,
     foundNothing: misses.reduce((sum, m) => sum + m.count, 0),
     misses,

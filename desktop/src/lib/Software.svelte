@@ -17,7 +17,7 @@
     software,
     watchSoftware,
   } from "./state/software.svelte";
-  import { channelWords, planText, upgradeOutcomeText } from "./upgrade-outcome";
+  import { channelWords, planIsFor, planText, upgradeOutcomeText } from "./upgrade-outcome";
   const releases = "https://github.com/itlackey/akm/releases";
   const data = $derived(software.data),
     error = $derived(software.error),
@@ -30,8 +30,7 @@
   const updateBusy = $derived(submitting || Boolean(data?.desktop.menu?.busy));
   const skew = $derived(classifyEngineSkew(data?.engine, data?.host.cli?.version));
   const upgrade = $derived(data?.host.upgrade);
-  // akm's plan is for the channel it was asked about; after the choice changes it describes the other one until Check runs.
-  const planned = $derived(upgrade?.channel === channel);
+  const planned = $derived(planIsFor(upgrade, channel));
   const held = $derived(planned && updateHeld(data?.engine, upgrade));
   const advice = $derived(skewAdvice(data?.engine, data?.host.cli?.version));
   const channelName = (value: string) => (value === "next" ? "prerelease" : "stable");
@@ -310,8 +309,8 @@
           </p>{/if}
       </div>
       {#if held}<p class="notice notice-warn" role="status" id="host-cli-behind">
-          {holdReason(data.engine, upgrade, updateChannel)} Update AKM Desktop (Check for updates above){data.host
-            .cliManaged && skew === "host-older"
+          {holdReason(data.engine, upgrade)} Update AKM Desktop (Check for updates above){data.host.cliManaged &&
+          skew === "host-older"
             ? ", or use Match this app's version"
             : ""}.
         </p>

@@ -410,6 +410,38 @@ test("a Git bundle whose repository cannot be read says so instead of showing a 
   await expect(page.getByText("Detached HEAD", { exact: true })).toHaveCount(0);
 });
 
+test("Source history shows each commit's own author, date and subject and offers no origin filter", async (t) => {
+  const server = await launchFixture({ git: true });
+  t.after(() => server.stop());
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  await open(page, server, "/activity/history");
+  const commit = page.locator(".commit").filter({ hasText: "Add verified recovery step" });
+  await expect(commit).toContainText("by Synthetic UI test");
+  await expect(commit.locator(".commit-head span").first()).not.toBeEmpty();
+  await expect(page.getByText("Made by")).toHaveCount(0);
+  await expect(page.locator(".commit .badge")).toHaveCount(0);
+});
+
+test("an asset whose improvement read fails says why, not only that the context is unavailable", async (t) => {
+  const server = await launchFixture();
+  t.after(() => server.stop());
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  await page.route("**/api/asset/improve*", (route) =>
+    route.fulfill({
+      status: 500,
+      json: { ok: false, code: "INTERNAL_ERROR", error: "Synthetic improve read failure." },
+    }),
+  );
+  await open(page, server, `/library/search?ref=${encodeURIComponent(server.refs.document)}`);
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  await page.getByRole("button", { name: "Details", exact: true }).click();
+  await expect(page.getByText("Usage and proposal context unavailable. Synthetic improve read failure.")).toBeVisible();
+});
+
 test("new content goes where akm says: the working stash when no write target is configured", async (t) => {
   const server = await launchFixture({
     configureFixture: async (fixture) => {
@@ -450,4 +482,30 @@ test("a bundle akm would refuse a write to is listed with akm's sentence, not of
   const option = page.getByRole("combobox", { name: "Bundle" }).locator("option", { hasText: "team" });
   await expect(option).toHaveJSProperty("disabled", true);
   await expect(option).toHaveText(`team: ${blocker}`);
+});
+
+test("creating a file whose name is taken says so by akm's error code, not by the wording of its message", async (t) => {
+  const server = await launchFixture();
+  t.after(() => server.stop());
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const answer = (code, error) => (route) =>
+    route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ ok: false, code, error }) });
+  const create = async () => {
+    await open(page, server, "/library/new");
+    await page.getByLabel("File name").fill("taken-name");
+    await page.locator('textarea[name="content"]').fill("# Taken\n");
+    await page.getByRole("button", { name: "Create knowledge" }).click();
+  };
+  // A reworded message with akm's code is still a name collision.
+  await page.route("**/api/knowledge/create", answer("RESOURCE_ALREADY_EXISTS", "Name in use."));
+  await create();
+  await expect(page.getByRole("alert")).toContainText("That file name is already used in this folder");
+  // Another error that happens to say "already exists" is shown as akm sent it.
+  await page.unroute("**/api/knowledge/create");
+  await page.route("**/api/knowledge/create", answer("INVALID_FLAG_VALUE", 'Bundle "x" already exists.'));
+  await create();
+  await expect(page.getByRole("alert")).toContainText('Bundle "x" already exists.');
+  await expect(page.getByRole("alert")).not.toContainText("existing asset has not been changed");
 });

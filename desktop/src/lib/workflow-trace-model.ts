@@ -12,6 +12,12 @@ export type TraceRow =
   | { kind: "step"; label: string }
   | { kind: "unit"; label: string; status: string; unit: Unit; attempts: TraceBar[] };
 
+const statusCounts = (units: Unit[]) => {
+  const counts = new Map<string, number>();
+  for (const unit of units) counts.set(unit.status, (counts.get(unit.status) ?? 0) + 1);
+  return [...counts].map(([status, n]) => `${n} ${status}`).join(", ");
+};
+
 /**
  * The rows of a trace, and the clock they share. A step's span and status come from its units: akm records no start
  * time for a step. An attempt still running ends at `now`.
@@ -33,14 +39,12 @@ export function traceRows(trace: WorkflowTrace, now = Date.now()) {
       step: { id: "", title: "Other units", status: "", sequenceIndex: null, completedAt: null },
       units: loose,
     });
-  let tokens = 0;
   let done = 0;
   const summary = steps.map(({ step, units }) => {
     rows.push({ kind: "step", label: step.title || step.id });
     let first = Number.POSITIVE_INFINITY;
     let last = Number.NEGATIVE_INFINITY;
     for (const unit of units) {
-      tokens += unit.tokens ?? 0;
       if (unit.status === "completed" || unit.status === "failed") done++;
       const attempts: TraceBar[] = (
         unit.attempts.length
@@ -94,7 +98,9 @@ export function traceRows(trace: WorkflowTrace, now = Date.now()) {
     }
     return {
       title: step.title || step.id,
-      status: step.status || (units.some((u) => u.status === "running") ? "running" : "completed"),
+      status: step.status,
+      // A step akm did not record (the units that name none) has no status of its own: say what its units report.
+      unitStatuses: step.id === "" ? statusCounts(units) : "",
       units: units.length,
       failed: units.filter((unit) => unit.status === "failed").length,
       span: Number.isFinite(first) && Number.isFinite(last) ? last - first : null,
@@ -102,5 +108,5 @@ export function traceRows(trace: WorkflowTrace, now = Date.now()) {
   });
   const start = starts.length ? Math.min(...starts) : time(trace.run.createdAt) || now;
   const end = Math.max(start + 1000, ends.length ? Math.max(...ends) : now);
-  return { rows, steps: summary, start, end, tokens, done, units: trace.units.length };
+  return { rows, steps: summary, start, end, done, units: trace.units.length };
 }
