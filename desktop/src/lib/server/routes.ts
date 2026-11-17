@@ -20,6 +20,7 @@ import { compareVersions } from "../engine-skew.js";
 import { readFile, saveFile } from "./features/files.js";
 import {
   preferencesView,
+  readPreferences,
   savePreferences,
   tryApply,
   validPluginChannel,

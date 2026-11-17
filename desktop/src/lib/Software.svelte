@@ -222,9 +222,13 @@
         ></label
       >
       <p class="field-hint" id="release-channel-hint">
-        The CLI and every installed plugin follow this channel. Changing it changes nothing until you use Update; Check
-        shows what Update would do. Setup and Install AKM plugin use it too.
+        The CLI and every installed plugin follow this channel. Changing it changes nothing on this computer until you
+        use Update; it shows what Update would do. Setup and Install AKM plugin use it too.
       </p>
+      {#if data.preferences?.unreadable}<p class="notice notice-warn" role="alert">
+          The saved channel could not be read ({data.preferences.unreadable.error}), so Check and Update are refused
+          until you choose the channel again. Choosing it moves that file aside and saves a new one.
+        </p>{/if}
       <p class="field-hint saved" role="status">{saved.pluginChannel}</p>
       <div class="software-row">
         <div>

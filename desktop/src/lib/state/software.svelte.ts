@@ -35,8 +35,12 @@ interface UpgradeView {
 }
 export interface SoftwareSnapshot {
   engine: string;
-  /** The saved Desktop choices that Software offers; absent means the default derived from the engine's stage. */
-  preferences?: { updateChannel?: "stable" | "prerelease"; pluginChannel?: "latest" | "next" };
+  /** The saved Desktop choices that Software offers, or `unreadable` when the file holding them could not be read. */
+  preferences?: {
+    updateChannel?: "stable" | "prerelease";
+    pluginChannel?: "latest" | "next";
+    unreadable?: { file: string; error: string };
+  };
   desktop: {
     version?: string;
     update?: UpdateState;

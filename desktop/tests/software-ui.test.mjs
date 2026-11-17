@@ -91,6 +91,19 @@ else {process.exitCode=1}
   await expect(updates).toHaveValue("prerelease");
   await expect(pluginChannel).toHaveValue("next");
 
+  // A saved file that cannot be read is said beside the choice, Check is refused with the reason, and choosing again
+  // moves the file aside and recovers.
+  await writeFile(path.join(server.root, "xdg-config", "akm-desktop", "preferences.json"), "{ not json");
+  await page.reload();
+  const unreadable = page.getByRole("alert").filter({ hasText: "The saved channel could not be read" });
+  await expect(unreadable).toBeVisible();
+  await page.getByRole("button", { name: "Check CLI & plugins" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: /preferences\.json could not be read/ }).first()).toBeVisible();
+  await pluginChannel.selectOption("next");
+  await expect(unreadable).toHaveCount(0);
+  await expect(page.locator('section[aria-labelledby="host-cli"]')).toHaveAttribute("aria-busy", "false");
+  await expect(pluginChannel).toHaveValue("next");
+
   // The harness rows are a list; each item starts with the harness and says its state in words.
   const rows = page.getByRole("list", { name: "Harness plugins" }).getByRole("listitem");
   await expect(rows.filter({ hasText: "Codex" })).toHaveText(/^Codex\s*0\.10\.261104\s*AKM plugin not installed/);
