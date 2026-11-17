@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { classifyAkmFile, isInLlmWiki } from "../../core/adapter/adapters/akm-adapter";
+import { classifyAkmFile } from "../../core/adapter/adapters/akm-adapter";
 import {
   factDiagnostics,
   MAX_SKILL_GROUP_DEPTH,
@@ -29,6 +29,7 @@ import {
   typeForStashDir,
 } from "../../core/asset/asset-placement";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { ruleApplies } from "../../core/asset/lint-text";
 import { conceptIdForStashFile, displayRefForConceptId } from "../../core/asset/resolve-ref";
 import { stalePathRoots } from "../../core/asset/stale-path";
 import { deriveBundleIds } from "../../core/bundle-id";
@@ -48,6 +49,7 @@ import { runBaseChecks } from "./base-linter";
 import { bundleLintSkip } from "./bundle-skip";
 import { checkEnvForDangerousKeys } from "./env-key-rules";
 import { type MovedRefs, readMovedRefs } from "./moved-refs";
+import { lintScope } from "./scope";
 import { trackedSecretIssues } from "./tracked-secrets";
 import { isAdvisoryLintIssue, LINT_RULES, type LintContext, type LintIssue, type LintIssueType } from "./types";
 
@@ -319,7 +321,7 @@ async function lintViaAdapter(
   const sourceIndex = sources.findIndex((s) => samePath(s.path, stashRoot));
   const componentId = sourceIndex >= 0 ? (ids[sourceIndex] as string) : stashRoot;
 
-  const ctx = createValidateContext({ root: stashRoot, extraRoots: extraStashRoots });
+  const ctx = createValidateContext({ root: stashRoot, sources });
   const diagnostics = await adapter.validate(
     { id: componentId, adapter: adapterId, root: stashRoot, writable: true },
     changes,
@@ -568,12 +570,13 @@ export function lintAssetFile(ctx: LintContext, subdir: string): LintIssue[] {
   const issues = runBaseChecks(ctx);
   switch (subdir) {
     case "agents":
-      if (!ctx.llmWiki)
-        issues.push(...(nameOrTypeDiagnostics(ctx.relPath, ctx.data, ctx.frontmatter, ["agent"]) as LintIssue[]));
-      break;
     case "commands":
-      if (!ctx.llmWiki)
-        issues.push(...(nameOrTypeDiagnostics(ctx.relPath, ctx.data, ctx.frontmatter, ["command"]) as LintIssue[]));
+      if (ruleApplies("missing-name-or-type", { relPath: ctx.relPath, llmWiki: ctx.llmWiki, skip: ctx.lintSkip }))
+        issues.push(
+          ...(nameOrTypeDiagnostics(ctx.relPath, ctx.data, ctx.frontmatter, [
+            subdir === "agents" ? "agent" : "command",
+          ]) as LintIssue[]),
+        );
       break;
     case "facts":
       issues.push(...(factDiagnostics(ctx.relPath, ctx.data) as LintIssue[]));
@@ -609,26 +612,6 @@ interface SweepScope {
   stalePathRoots: string[];
   /** The bundle's `lint.skip` rules for a bundle-relative path. */
   bundleSkip?: (relPath: string) => string[];
-}
-
-/** The root of each configured bundle by its id, for the checks that look a qualified ref up in the bundle it names. */
-function bundleRootsOf(sources: readonly SearchSource[]): ReadonlyMap<string, string> {
-  return new Map(sources.flatMap((source) => (source.registryId ? [[source.registryId, source.path] as const] : [])));
-}
-
-/** Whether a bundle-relative file is inside an LLM Wiki of the bundle at `root`; each directory is probed once. */
-function llmWikiPredicate(root: string): (relPath: string) => boolean {
-  const byDir = new Map<string, boolean>();
-  return (relPath) => {
-    const dirs = relPath.split(/[\\/]/).slice(0, -1);
-    const key = dirs.join("/");
-    let inside = byDir.get(key);
-    if (inside === undefined) {
-      inside = isInLlmWiki(root, dirs);
-      byDir.set(key, inside);
-    }
-    return inside;
-  };
 }
 
 interface SweepSinks {
@@ -811,9 +794,7 @@ function lintAkmSweep(
   const flagged: LintIssue[] = [];
   const warnings: LintIssue[] = [];
 
-  const bundleSkip = bundleLintSkip(cfg, stashRoot);
-  const roots = stalePathRoots(cfg, stashRoot);
-  const moves = readMovedRefs();
+  const scope = lintScope(stashRoot, cfg, sources);
   // Types left out of an untyped search are left out of the sweep unless `--type` names one.
   const leftOut = new Set(defaultExcludedTypes(cfg).map((type) => stashDirFor(type)));
   const dirsToScan = documentStashDirs().filter((d) =>
@@ -862,16 +843,10 @@ function lintAkmSweep(
         path.relative(stashRoot, filePath),
         subdir,
         {
-          stashRoot,
-          extraStashRoots,
+          ...scope,
           fix,
           fixMovedRefs: options.fixMovedRefs === true,
-          moves,
-          bundleRoots: bundleRootsOf(sources),
-          inLlmWiki: llmWikiPredicate(stashRoot),
           pruneDanglingEdges: options.pruneDanglingEdges === true,
-          stalePathRoots: roots,
-          bundleSkip,
         },
         { fixed, flagged, warnings },
       );
@@ -1023,20 +998,10 @@ async function lintFile(file: string, options: AkmLintOptions, cfg: AkmConfig): 
     realRoot ? path.relative(realRoot, absFile) : file,
     subdir,
     {
-      stashRoot: root ?? path.dirname(absFile),
-      extraStashRoots: root
-        ? resolveSourceEntries(root, cfg)
-            .map((s) => s.path)
-            .filter((p) => p !== root && fs.existsSync(p))
-        : [],
+      ...(root ? lintScope(root, cfg, resolveSourceEntries(root, cfg)) : lintScope(path.dirname(absFile), cfg, [])),
       fix: options.fix === true,
       fixMovedRefs: options.fixMovedRefs === true,
-      moves: readMovedRefs(),
-      bundleRoots: bundleRootsOf(root ? resolveSourceEntries(root, cfg) : []),
-      inLlmWiki: llmWikiPredicate(root ?? path.dirname(absFile)),
       pruneDanglingEdges: false,
-      stalePathRoots: stalePathRoots(cfg, root ?? path.dirname(absFile)),
-      bundleSkip: root ? bundleLintSkip(cfg, root) : undefined,
       // Outside a bundle there are no other assets to resolve refs or a derived stub against.
       lintSkip: root ? undefined : ["missing-ref", "orphaned-stub"],
     },
@@ -1065,18 +1030,10 @@ export function lintDocumentText(input: {
     input.relPath,
     input.subdir,
     {
-      stashRoot: root,
-      extraStashRoots: resolveSourceEntries(root, cfg)
-        .map((source) => source.path)
-        .filter((candidate) => candidate !== root && fs.existsSync(candidate)),
+      ...lintScope(root, cfg, resolveSourceEntries(root, cfg)),
       fix: false,
       fixMovedRefs: false,
-      moves: readMovedRefs(),
-      bundleRoots: bundleRootsOf(resolveSourceEntries(root, cfg)),
-      inLlmWiki: llmWikiPredicate(root),
       pruneDanglingEdges: false,
-      stalePathRoots: stalePathRoots(cfg, root),
-      bundleSkip: bundleLintSkip(cfg, root),
     },
     sinks,
   );

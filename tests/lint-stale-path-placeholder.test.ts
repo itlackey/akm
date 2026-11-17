@@ -10,8 +10,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import os from "node:os";
 import { runBaseChecks } from "../src/commands/lint/base-linter";
-import { runBaseValidateChecks } from "../src/core/adapter/adapters/shared";
-import { createValidateContext } from "../src/core/adapter/validate-context";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
 
 function staleIssues(storage: IsolatedAkmStorage, body: string) {
@@ -80,30 +78,5 @@ describe("stale-path skips run-time filename templates (#927)", () => {
       "## History\n\nWrote /tmp/akm-5-gone/old.md.\n\n## Usage\n\nWrite to /tmp/akm-5-gone/current.md.\n",
     );
     expect(issues.map((issue) => issue.detail)).toEqual(["ephemeral path: /tmp/akm-5-gone/current.md"]);
-  });
-
-  test("the adapter validate path applies the same rules", async () => {
-    storage = withIsolatedAkmStorage();
-    const body = [
-      "Historically wrote /tmp/akm-5-gone/old.md.",
-      "Write to /tmp/akm-5-gone/current.md.",
-      "Config at /home/akm-5-nobody/.config/x.json.",
-      "See core//tasks/akm-5-gone.",
-    ].join("\n");
-    const diagnostics = await runBaseValidateChecks(
-      "knowledge/n.md",
-      {
-        data: { name: "n", updated: "2026-01-01" },
-        content: body,
-        frontmatter: "name: n\nupdated: 2026-01-01",
-        bodyStartLine: 5,
-      },
-      storage.stashDir,
-      createValidateContext({ root: storage.stashDir }),
-    );
-    expect(diagnostics.map((d) => `${d.issue}: ${d.detail}`)).toEqual([
-      "stale-path: ephemeral path: /tmp/akm-5-gone/current.md",
-      "missing-ref: missing ref: core//tasks/akm-5-gone",
-    ]);
   });
 });

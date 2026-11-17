@@ -49,7 +49,7 @@ import path from "node:path";
 import { filesForRef } from "../asset/asset-placement";
 import { toPosix } from "../common";
 import type { FileChange } from "../file-change";
-import type { ValidateContext } from "./types";
+import type { BundleSourceRef, ValidateContext } from "./types";
 
 /** `null` = the overlay DELETES this path (never satisfies a read/exists check). */
 type OverlayValue = string | null;
@@ -141,8 +141,8 @@ function stripBundlePrefix(ref: string): string {
 export interface ValidateContextOptions {
   /** The primary root `changes` paths are relative to (a component's root, or a lint sweep's stash root). */
   root: string;
-  /** Additional stash roots consulted (disk only) for cross-bundle ref existence — mirrors `akmLint`'s `extraStashRoots`. */
-  extraRoots?: readonly string[];
+  /** The configured bundles; the roots other than `root` are consulted (disk only) for cross-bundle ref existence. */
+  sources?: readonly BundleSourceRef[];
   /** Pending changes to overlay onto the snapshot. Empty (or omitted) for a plain sweep with nothing pending. */
   changes?: readonly FileChange[];
 }
@@ -155,7 +155,8 @@ export interface ValidateContextOptions {
  */
 export function createValidateContext(options: ValidateContextOptions): ValidateContext {
   const root = options.root;
-  const extraRoots = options.extraRoots ?? [];
+  const sources = options.sources ?? [];
+  const extraRoots = sources.map((source) => source.path).filter((sourcePath) => sourcePath !== root);
   const overlay = buildOverlay(root, options.changes ?? []);
 
   async function readFile(p: string): Promise<string | Uint8Array | null> {
@@ -208,5 +209,5 @@ export function createValidateContext(options: ValidateContextOptions): Validate
     return { exists: false };
   }
 
-  return { readFile, list, resolveRef };
+  return { sources, readFile, list, resolveRef };
 }

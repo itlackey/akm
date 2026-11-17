@@ -157,7 +157,7 @@ describe("createValidateContext — resolveRef", () => {
     const root = makeRoot();
     const extra = makeRoot();
     write(extra, "tables/elsewhere.md", "---\ntype: table\n---\n");
-    const ctx = createValidateContext({ root, extraRoots: [extra] });
+    const ctx = createValidateContext({ root, sources: [{ path: extra }] });
     expect((await ctx.resolveRef("tables/elsewhere")).exists).toBe(true);
   });
 
@@ -166,7 +166,7 @@ describe("createValidateContext — resolveRef", () => {
     const extra = makeRoot();
     // The change targets a path relative to `root`; it must not leak into `extra`'s resolution.
     const changes: FileChange[] = [{ path: "tables/only-in-primary.md", after: "x", op: "create" }];
-    const ctx = createValidateContext({ root, extraRoots: [extra], changes });
+    const ctx = createValidateContext({ root, sources: [{ path: extra }], changes });
     expect((await ctx.resolveRef("tables/only-in-primary")).exists).toBe(true); // resolves via the primary root's overlay
     expect(fs.existsSync(path.join(extra, "tables/only-in-primary.md"))).toBe(false); // never written to the extra root
   });

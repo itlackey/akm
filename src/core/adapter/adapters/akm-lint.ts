@@ -58,6 +58,7 @@ import { assertTaskScheduleCronValid, assertTaskScheduleInputsSatisfyContract } 
 import { parseTaskSource } from "../../../tasks/source/parse-task-source";
 import { taskSourceErrorDetail } from "../../../tasks/source-v3";
 import { checkWorkflowPlan, compileWorkflowSource } from "../../../workflows/compile";
+import { type RuleScope, ruleApplies } from "../../asset/lint-text";
 import { conceptIdForStashFile } from "../../asset/resolve-ref";
 import { isAkmRegistryCachePath, scanEnvKeyNames } from "../../common";
 import type { BundleComponent, Diagnostic, ValidateContext } from "../types";
@@ -250,6 +251,8 @@ export interface PerTypeCheckArgs {
   body: string;
   /** File extension incl. dot, lower-cased (`.md`, `.yaml`, …). */
   ext: string;
+  /** What decides whether a rule applies to the file (see `ruleApplies`). */
+  rules: RuleScope;
   ctx: ValidateContext;
 }
 
@@ -259,12 +262,13 @@ export interface PerTypeCheckArgs {
  * routes through `ctx`.
  */
 export async function perTypeValidateChecks(args: PerTypeCheckArgs): Promise<Diagnostic[]> {
-  const { type, relPath, raw, data, frontmatter, body, ext, ctx } = args;
+  const { type, relPath, raw, data, frontmatter, body, ext, rules, ctx } = args;
   switch (type) {
     case "command":
-      return nameOrTypeDiagnostics(relPath, data, frontmatter, ["command"]);
     case "agent":
-      return nameOrTypeDiagnostics(relPath, data, frontmatter, ["agent"]);
+      return ruleApplies("missing-name-or-type", rules)
+        ? nameOrTypeDiagnostics(relPath, data, frontmatter, [type])
+        : [];
     case "fact":
       return factDiagnostics(relPath, data);
     case "task":

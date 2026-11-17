@@ -50,7 +50,7 @@ import {
   spliceFrontmatterLine,
 } from "../../core/asset/frontmatter";
 import { checkUnquotedDescriptionColon } from "../../core/asset/frontmatter-lint";
-import { isSkillPath } from "../../core/asset/lint-text";
+import { ruleApplies } from "../../core/asset/lint-text";
 import { isArchivedRelPath } from "../../core/asset/memory-archive";
 import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
 import { findStalePaths } from "../../core/asset/stale-path";
@@ -146,10 +146,6 @@ function fixUnquotedColon(raw: string): string | null {
     return candidate;
   }
   return null;
-}
-
-function checkMissingUpdated(relPath: string, data: Record<string, unknown>, frontmatterText: string | null): boolean {
-  return frontmatterText !== null && !("updated" in data) && !isSkillPath(relPath);
 }
 
 function fixMissingUpdated(raw: string, mtime: Date): string {
@@ -685,8 +681,8 @@ export function runBaseChecks(ctx: LintContext): LintIssue[] {
   /** Findings whose `fixed: true` is only true once the flush below succeeds. */
   const pendingFixes: LintIssue[] = [];
 
-  const lintSkip = ctx.lintSkip ?? [];
-  const shouldRun = (issueType: string) => !lintSkip.includes(issueType);
+  const shouldRun = (rule: string) =>
+    ruleApplies(rule, { relPath: ctx.relPath, llmWiki: ctx.llmWiki, skip: ctx.lintSkip });
 
   if (shouldRun("redacted-content") && containsRedactedContent(stripQuotedExamples(currentRaw))) {
     issues.push({
@@ -734,7 +730,7 @@ export function runBaseChecks(ctx: LintContext): LintIssue[] {
   } // end shouldRun("unquoted-colon")
 
   // ── 2. missing-updated ─────────────────────────────────────────────────
-  if (shouldRun("missing-updated") && !ctx.llmWiki && checkMissingUpdated(ctx.relPath, ctx.data, ctx.frontmatter)) {
+  if (shouldRun("missing-updated") && ctx.frontmatter !== null && !("updated" in ctx.data)) {
     if (ctx.fix) {
       let mtime: Date;
       try {

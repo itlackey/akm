@@ -357,6 +357,12 @@ export interface OkfProvenance {
   verified?: OkfVerifiedEntry[];
 }
 
+/** A configured bundle: where it is and the id its qualified refs name it by. */
+export interface BundleSourceRef {
+  path: string;
+  registryId?: string;
+}
+
 // ── §12.1 (normative) — ValidateContext ─────────────────────────────────────
 
 /**
@@ -365,6 +371,8 @@ export interface OkfProvenance {
  * Transcribed verbatim from there.
  */
 export interface ValidateContext {
+  /** The configured bundles this run resolves refs against, the validated bundle among them. */
+  readonly sources?: readonly BundleSourceRef[];
   /**
    * Reads served from the run's snapshot WITH the pending changes overlaid —
    * one core overlay implementation, not one per adapter.

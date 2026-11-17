@@ -29,8 +29,33 @@ function stripTrailingSentencePunctuation(token: string): string {
 }
 
 /** True for a file under a bundle's `skills/` directory: a skill carries no `updated` field. */
-export function isSkillPath(relPath: string): boolean {
+function isSkillPath(relPath: string): boolean {
   return relPath.split(/[\\/]/)[0] === "skills";
+}
+
+/** What decides whether a lint rule applies to one file. */
+export interface RuleScope {
+  /** The file's path in its bundle. */
+  relPath: string;
+  /** The file sits inside an LLM Wiki: written by the wiki's own process, not authored as an akm asset. */
+  llmWiki?: boolean;
+  /** The rules the bundle's `lint.skip` (and the run) leave out for this file. */
+  skip?: readonly string[];
+}
+
+/** The rules that state what an authored akm asset carries; they do not apply inside an LLM Wiki. */
+const AUTHORED_ASSET_RULES: ReadonlySet<string> = new Set(["missing-updated", "missing-name-or-type"]);
+
+/**
+ * Whether `rule` applies to the file: the one place that decides it. Every producer of a lint finding (the `akm lint`
+ * sweep and each adapter's `validate`) asks here before it reports a rule. What a check needs of the file's content (a
+ * frontmatter block, a type) stays in the check.
+ */
+export function ruleApplies(rule: string, file: RuleScope): boolean {
+  if (file.skip?.includes(rule)) return false;
+  if (file.llmWiki === true && AUTHORED_ASSET_RULES.has(rule)) return false;
+  if (rule === "missing-updated" && isSkillPath(file.relPath)) return false;
+  return true;
 }
 
 /** An absolute path found in text, with where it sits. */

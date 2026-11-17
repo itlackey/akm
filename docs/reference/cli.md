@@ -3408,6 +3408,12 @@ authored as an akm asset, so `missing-updated` and `missing-name-or-type` do not
 Types that search leaves out by default stay out unless `--type` names them, and the
 bundle's `lint.skip` globs apply.
 
+A bundle of another adapter is checked through that adapter's `validate`, and the
+checks every file gets (`unquoted-colon`, `missing-updated`, `stale-path`,
+`missing-ref`, `redacted-content`) are the same ones, with the same exemptions
+(skills, LLM Wikis, `lint.skip`), as in an akm bundle. An adapter can leave a rule out
+for its own files: `okf` and `website-snapshot` do not apply `missing-updated`.
+
 A link to a ref that `akm index` recorded as moved (see [index](#index)) is a
 `missing-ref` finding that carries `movedFrom` (the link as written) and `movedTo`
 (the ref the asset has now, as `bundle//conceptId`). `--fix` rewrites that link in

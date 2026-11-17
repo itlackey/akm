@@ -52,8 +52,8 @@
  *
  * ── validate ──
  *
- * Shared base checks (`validateChangesWithBaseChecks` — the ported
- * unquoted-colon / missing-updated / stale-path / missing-ref), then the
+ * The shared base checks (`createBaseChecker`: unquoted-colon / missing-updated /
+ * stale-path / missing-ref / redacted-content), then the
  * per-type linters (SkillLinter/WorkflowLinter/TaskLinter/…) in `akm-lint.ts`.
  *
  * ── Cycle-safety ──
@@ -93,6 +93,7 @@ import {
   typeForStashDir,
 } from "../../asset/asset-placement";
 import { parseFrontmatter } from "../../asset/frontmatter";
+import { looksLikeLlmWikiRoot } from "../../asset/llm-wiki-root";
 import type { FileChange } from "../../file-change";
 import { sensitiveMarkerPath } from "../../sensitive-marker-path";
 import type { BundleAdapter } from "../bundle-adapter";
@@ -101,8 +102,7 @@ import { recognizeMatch } from "../recognize-match";
 import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
 import { perTypeValidateChecks, skillDirectoryDiagnostics } from "./akm-lint";
 import { applyFoldedMetadata, foldRecognizedMetadata } from "./akm-metadata";
-import { llmWikiAdapter } from "./llm-wiki-adapter";
-import { hashContent, type ParsedForValidate, RESERVED_FILES, runBaseValidateChecks } from "./shared";
+import { createBaseChecker, hashContent, type ParsedForValidate, parseForValidate, RESERVED_FILES } from "./shared";
 
 // `recognizeMatch` + the builtin matcher list moved to the cycle-free leaf
 // `../recognize-match` (Chunk 5 M-b) so both this adapter AND the indexer
@@ -277,21 +277,9 @@ function isWikiRaw(c: BundleComponent, file: FileContext): boolean {
   if (file.ext !== ".md") return false;
   const dirs = file.ancestorDirs;
   for (let i = 0; i < dirs.length; i++) {
-    if (dirs[i] === "raw" && llmWikiAdapter.looksLikeRoot?.(path.join(c.root, ...dirs.slice(0, i))) === true) {
+    if (dirs[i] === "raw" && looksLikeLlmWikiRoot(path.join(c.root, ...dirs.slice(0, i)))) {
       return true;
     }
-  }
-  return false;
-}
-
-/**
- * Whether a file whose bundle-relative directories are `ancestorDirs` sits inside an LLM Wiki of the bundle at `root`: the
- * bundle root or an ancestor holding a root `schema.md` plus `pages/` (the llm-wiki adapter's own probe). A wiki keeps its own
- * schema and log and is written by the wiki's own process, so its files are not authored akm assets.
- */
-export function isInLlmWiki(root: string, ancestorDirs: readonly string[]): boolean {
-  for (let i = 0; i <= ancestorDirs.length; i++) {
-    if (llmWikiAdapter.looksLikeRoot?.(path.join(root, ...ancestorDirs.slice(0, i))) === true) return true;
   }
   return false;
 }
@@ -456,6 +444,7 @@ function buildOverlayContext(root: string, relPathInput: string, raw: string): F
 async function validate(c: BundleComponent, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
   const diagnostics: Diagnostic[] = [];
   const seenSkillDirs = new Set<string>();
+  const { check, rulesFor } = createBaseChecker(c.root, ctx);
 
   for (const change of changes) {
     if (change.op === "delete") continue;
@@ -468,15 +457,10 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
 
     // Task parsing belongs to perTypeValidateChecks' canonical v3 parser. Base
     // checks need only a frontmatter-free placeholder here.
-    let parsed: ParsedForValidate;
-    if (type === "task") {
-      parsed = { data: {}, content: raw, frontmatter: null, bodyStartLine: 1 };
-    } else {
-      const p = parseFrontmatter(raw);
-      parsed = { data: p.data, content: p.content, frontmatter: p.frontmatter, bodyStartLine: p.bodyStartLine };
-    }
+    const parsed: ParsedForValidate =
+      type === "task" ? { raw, data: {}, content: raw, frontmatter: null, bodyStartLine: 1 } : parseForValidate(raw);
 
-    diagnostics.push(...(await runBaseValidateChecks(change.path, parsed, c.root, ctx)));
+    diagnostics.push(...check(change.path, parsed));
     diagnostics.push(
       ...(await perTypeValidateChecks({
         type,
@@ -486,6 +470,7 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
         frontmatter: parsed.frontmatter,
         body: parsed.content,
         ext: overlay.ext,
+        rules: rulesFor(change.path),
         ctx,
       })),
     );
