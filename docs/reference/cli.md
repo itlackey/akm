@@ -637,14 +637,15 @@ GitHub's latest release, and for a prerelease install also npm's `next` tag, as
 runs the scheduler's recorded akm binary with `--version` to check it
 against the running CLI (`scheduler-binary`).
 The `plugin-version` advisory compares the installed Claude Code plugin with the
-channel its marketplace clone follows: the newest stable tag on the remote's
-default branch, the release tag on the branch head for another branch such as
-`next`, and the pinned tag for a marketplace added at a tag. It also compares
+newest build on the channel the registered marketplace follows, read the way
+`akm upgrade --check` reads it (the version the branch's catalog offers, from the
+source and `ref` Claude registered; a marketplace pinned to a tag offers nothing
+newer). It also compares
 the `akm-cli` the plugin's `package.json` pins (the copy its hooks run, which
 shares the host's databases) with the running CLI, and says which side is older.
 `codex-plugin-version` does the same for a Codex install from the `akm-plugins`
 marketplace (the version from `codex plugin list`, the newest release on the
-`ref` its marketplace entry follows, and the `akm-cli` in that version's plugin
+`ref` and source its marketplace entry registers, and the `akm-cli` in that version's plugin
 cache under `$CODEX_HOME/plugins/cache/akm-plugins/akm/`, compared with the
 running CLI), and `opencode-plugin-version` /
 `opencode-v2-plugin-version` compare the `akm-cli` bundled in the OpenCode plugin
@@ -1858,8 +1859,9 @@ The result gains a `plugins` array, one entry per harness:
 `outcome` is `updated`, `current`, `skipped`, `deferred` or `failed`; under
 `--check` it can also be `pending` or `unknown`. `--check` writes nothing. For
 Claude Code and Codex it reads the akm build the channel in force offers, the same
-read the real switch makes: a shallow clone of the channel's branch of the
-marketplace the harness has registered, into a temporary folder. The channel is
+read the real switch makes and `akm health` makes: the catalog and plugin manifest
+of the channel's branch of the marketplace the harness has registered, read from a
+blobless clone with nothing checked out in a temporary folder. The channel is
 the `--channel` asked for, else the one the marketplace follows. It reports
 `pending`, with that build as `to`, when it is newer than the installed one, else
 `current`; with `--channel`, a plugin whose channel has nothing newer (or whose
