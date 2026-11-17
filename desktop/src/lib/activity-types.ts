@@ -6,6 +6,8 @@ export interface ActivityCheck {
   name: string;
   status: string;
   message: string;
+  /** Why an `unknown` check has no result: `off`, `not-probed`, `blocked` or `idle`. */
+  reason?: string;
   evidence?: Record<string, unknown>;
 }
 export interface ActivityHealth {

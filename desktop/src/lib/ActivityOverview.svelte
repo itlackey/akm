@@ -156,20 +156,21 @@
     { key: "fail", label: "Failing", said: (n: number) => `${n} failing` },
     { key: "warn", label: "Warnings", said: (n: number) => `${n} ${n === 1 ? "warning" : "warnings"}` },
     { key: "off", label: "Turned off", said: (n: number) => `${n} turned off` },
-    { key: "unchecked", label: "Not checked", said: (n: number) => `${n} not checked` },
+    { key: "not-probed", label: "Not checked", said: (n: number) => `${n} not checked` },
     { key: "blocked", label: "Could not check", said: (n: number) => `${n} could not be checked` },
     { key: "idle", label: "No data yet", said: (n: number) => `${n} with no data yet` },
+    { key: "unreported", label: "No reason reported", said: (n: number) => `${n} with no reason reported` },
     { key: "pass", label: "Passing", said: (n: number) => `${n} passing` },
   ];
   // What the last "Run all checks" came to, for the status line; empty until one has run.
   let probeSaid = $state("");
   const checks = $derived([...(data.health?.hardChecks ?? []), ...(data.health?.advisories ?? [])]);
-  const classified = $derived(checks.map((check) => ({ check, group: healthGroup(check, checks) })));
+  const classified = $derived(checks.map((check) => ({ check, group: healthGroup(check) })));
   const grouped = (key: string) => classified.filter((item) => item.group === key).length;
   // What did not run, for the header.
   const notRun = $derived(
     groups
-      .filter((group) => ["off", "unchecked", "blocked"].includes(group.key) && grouped(group.key))
+      .filter((group) => ["off", "not-probed", "blocked", "unreported"].includes(group.key) && grouped(group.key))
       .map((group) => group.said(grouped(group.key)))
       .join(", "),
   );

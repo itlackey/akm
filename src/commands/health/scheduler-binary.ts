@@ -63,6 +63,7 @@ export async function collectSchedulerBinaryAdvisory(
       name: "scheduler-binary",
       kind: "deterministic",
       status: "unknown",
+      reason: "not-probed",
       confidence: "high",
       message: "Scheduler binary version drift was not probed.",
     };
@@ -73,13 +74,15 @@ export async function collectSchedulerBinaryAdvisory(
     installed = await (deps.backend ?? selectBackend()).list();
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
+    // A host without the scheduler's own binary (no crontab) runs no scheduled task: nothing is drifting there.
+    const noScheduler = /not found on PATH/.test(detail);
     return {
       name: "scheduler-binary",
       kind: "deterministic",
       status: "unknown",
+      reason: noScheduler ? "off" : "blocked",
       confidence: "high",
-      // A host without the scheduler's own binary (no crontab) runs no scheduled task: nothing is drifting there.
-      message: /not found on PATH/.test(detail)
+      message: noScheduler
         ? `No scheduler is available on this host (${detail}), so no scheduled task is installed or runs here.`
         : `Installed scheduled tasks could not be inspected: ${detail}`,
     };
@@ -94,6 +97,7 @@ export async function collectSchedulerBinaryAdvisory(
       name: "scheduler-binary",
       kind: "deterministic",
       status: "unknown",
+      reason: "off",
       confidence: "high",
       message: "No scheduled task is installed.",
     };
@@ -117,6 +121,7 @@ export async function collectSchedulerBinaryAdvisory(
       name: "scheduler-binary",
       kind: "deterministic",
       status: "unknown",
+      reason: "blocked",
       confidence: "high",
       message: "The scheduler's recorded akm binary could not be executed.",
       evidence: { binding },

@@ -69,10 +69,12 @@ export function semanticSearchCheck(state: SemanticSearchState): HealthCheckResu
     status: HealthCheckResult["status"],
     message: string,
     evidence?: Record<string, unknown>,
+    reason?: HealthCheckResult["reason"],
   ): HealthCheckResult => ({
     name: "semantic-search",
     kind: "deterministic",
     status,
+    ...(reason ? { reason } : {}),
     confidence: "high",
     message,
     ...(evidence ? { evidence } : {}),
@@ -84,10 +86,17 @@ export function semanticSearchCheck(state: SemanticSearchState): HealthCheckResu
       "fail",
       `Could not read the index: ${state.error}. Run \`akm index\`; it rebuilds a damaged index.db.`,
     );
-  if (state.building) return result("unknown", "The search index is being built; check again when the build finishes.");
+  if (state.building)
+    return result(
+      "unknown",
+      "The search index is being built; check again when the build finishes.",
+      undefined,
+      "idle",
+    );
   if (state.mode === "off") return result("pass", "Semantic search is off (semanticSearchMode: off).", { mode: "off" });
   const index = state.index;
-  if (!index?.record) return result("unknown", "No semantic-search state recorded yet; run `akm index`.");
+  if (!index?.record)
+    return result("unknown", "No semantic-search state recorded yet; run `akm index`.", undefined, "idle");
 
   const { record, builtAt, entryCount, embeddingCount } = index;
   const evidence = { ...record, ...(builtAt ? { builtAt } : {}), entryCount, embeddingCount };
@@ -126,8 +135,8 @@ export function semanticSearchCheck(state: SemanticSearchState): HealthCheckResu
         evidence,
       );
     case "disabled":
-      return result("unknown", `Semantic search was off${asOf}; run \`akm index\` to build it.`, evidence);
+      return result("unknown", `Semantic search was off${asOf}; run \`akm index\` to build it.`, evidence, "off");
     default:
-      return result("unknown", `No entries were indexed${asOf}.`, evidence);
+      return result("unknown", `No entries were indexed${asOf}.`, evidence, "idle");
   }
 }

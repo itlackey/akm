@@ -27,28 +27,14 @@ test("activity/settings presentation keeps measured zero separate from missing o
   assert.equal(percent(null), "Not measured");
   assert.equal(tokens({ calls: 2, usageCalls: 0, totalTokens: 0 }), "Not reported");
   assert.equal(tokens({ calls: 0, usageCalls: 0, totalTokens: 0 }), "0");
-  const checks = [{ name: "connections-and-harnesses", status: "unknown", message: "No model configured" }];
-  assert.equal(healthGroup(checks[0], checks), "off");
-  assert.equal(healthGroup({ name: "cli-version", status: "unknown", message: "Not probed" }, checks), "unchecked");
-  // Not run, could not run, and run with nothing to report are three different things (F9, F17).
-  const unknown = (name, message) => healthGroup({ name, status: "unknown", message }, []);
-  assert.equal(
-    unknown("state-db-round-trip", "state.db append/read round-trip skipped: this run is read-only."),
-    "unchecked",
-  );
-  assert.equal(
-    unknown("scheduler-binary", "No scheduler is available on this host (crontab -l failed: …)."),
-    "unchecked",
-  );
-  assert.equal(
-    unknown("cli-version", "akm v1 is installed; the update check could not reach the release source."),
-    "blocked",
-  );
-  assert.equal(
-    unknown("plugin-version", "akm@akm-plugins: installed 1 — the newest release could not be read"),
-    "blocked",
-  );
-  assert.equal(unknown("session-extraction", "No extraction recorded in the last 7 days."), "idle");
+  // An unknown check lands where akm's reason says, whatever its message says; no reason is its own group.
+  const unknown = (reason, message = "") => healthGroup({ name: "x", status: "unknown", reason, message });
+  assert.equal(unknown("off"), "off");
+  assert.equal(unknown("not-probed"), "not-probed");
+  assert.equal(unknown("blocked", "Nothing to report yet."), "blocked");
+  assert.equal(unknown("idle", "The update check could not reach the release source."), "idle");
+  assert.equal(unknown(undefined, "Not probed"), "unreported");
+  assert.equal(healthGroup({ name: "x", status: "warn", reason: "off", message: "" }), "warn");
   assert.deepEqual(
     configurationChanges(
       [

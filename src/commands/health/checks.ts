@@ -254,6 +254,7 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
       kind: "deterministic",
       // A skipped probe proved nothing: it is unknown, not a pass.
       status: ctx.probe.skipped ? "unknown" : ctx.probe.ok ? "pass" : "fail",
+      ...(ctx.probe.skipped ? { reason: "not-probed" as const } : {}),
       confidence: "high",
       message: ctx.probe.skipped
         ? "state.db append/read round-trip skipped: this run is read-only."
@@ -376,6 +377,7 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
         name: "improve-failures",
         kind: "deterministic",
         status: failedRunIds.length > 0 ? "warn" : interruptedRunIds.length > 0 ? "unknown" : "pass",
+        ...(failedRunIds.length === 0 && interruptedRunIds.length > 0 ? { reason: "blocked" as const } : {}),
         confidence: "high",
         message:
           failedRunIds.length > 0 || interruptedRunIds.length > 0
@@ -479,7 +481,9 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
       };
       const totalRows = rows.reduce((sum, row) => sum + row.count, 0);
       if (totalRows === 0) {
-        return { ...base, status: "unknown", message: `No extraction recorded in the last ${days} days.` };
+        // Extraction is off when the strategy does not enable it; with the config unreadable that is not known.
+        const reason = !ctx.proposalQueue ? "blocked" : ctx.proposalQueue.extractEnabled ? "idle" : "off";
+        return { ...base, status: "unknown", reason, message: `No extraction recorded in the last ${days} days.` };
       }
 
       // `read_failed` / `exception` land in the ledger as `failed`, not `skipped`.
@@ -552,13 +556,19 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
         return {
           ...base,
           status: "unknown",
+          reason: "blocked",
           message: "The primary stash or config could not be read; the proposal queue owner was not checked.",
         };
       }
       const { stashDir, extractEnabled, problem } = ctx.proposalQueue;
       const ranRecently = ctx.sessionExtractionLedger.rows.some((row) => row.count > 0);
       if (!extractEnabled && !ranRecently) {
-        return { ...base, status: "unknown", message: "Learning is off, so the proposal queue owner was not checked." };
+        return {
+          ...base,
+          status: "unknown",
+          reason: "off",
+          message: "Learning is off, so the proposal queue owner was not checked.",
+        };
       }
       if (!problem)
         return { ...base, status: "pass", message: `The proposal queue of ${stashDir} has a writable owner.` };

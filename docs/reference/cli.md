@@ -653,6 +653,10 @@ the config loads with the running CLI. A plugin ahead of the CLI is fixed by
 newer build; a lookup that could not reach the marketplace is `unknown` and
 says so.
 
+Every check result with status `unknown` also carries a `reason` saying why there is no result: `off` (the feature is
+turned off), `not-probed` (the probe was not asked for), `blocked` (the check could not run or could not decide) or
+`idle` (nothing has happened yet).
+
 Primary result fields:
 
 | Field | Description |

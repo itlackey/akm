@@ -8,10 +8,18 @@
  * collectors, and the report renderers.
  */
 
+/**
+ * Why a check has no result: the feature is `off`, the probe was `not-probed`, the check `blocked` (it could not run
+ * or could not decide), or nothing has happened yet (`idle`).
+ */
+export type HealthUnknownReason = "off" | "not-probed" | "blocked" | "idle";
+
 export interface HealthCheckResult {
   name: string;
   kind: "deterministic" | "heuristic";
   status: "pass" | "warn" | "fail" | "unknown";
+  /** Set on every `unknown` result, from the code path that knows; absent on any other status. */
+  reason?: HealthUnknownReason;
   message: string;
   confidence: "high" | "medium" | "low";
   evidence?: Record<string, unknown>;
