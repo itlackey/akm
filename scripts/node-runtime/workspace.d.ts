@@ -140,6 +140,8 @@ export namespace bundles {
     commit?: string;
   }>;
   function add(input: { source: string; name?: string; writable?: boolean }): Promise<unknown>;
+  /** `akm index`: the incremental build. A file renamed or moved on disk is paired with the asset it was and keeps its history; the result's `moves` says which (`moved: [{from, to}]`, `unpaired`). */
+  function index(): Promise<{ totalEntries: number; mode: string; warnings?: string[]; moves?: { moved: Array<{ from: string; to: string }>; unpaired: number } }>;
   function list(): Promise<unknown>;
   function remove(input: { bundle: string; confirm: boolean }): Promise<unknown>;
   function rename(input: { bundle: string; name: string; dryRun?: boolean }): Promise<unknown>;

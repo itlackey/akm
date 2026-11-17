@@ -153,6 +153,19 @@ export async function update(input: { bundle: string }) {
   return runCli(["bundle", "update", "--", configured(name(input.bundle, "bundle"))]);
 }
 
+/**
+ * `akm index`: the incremental build. It pairs a file renamed or moved on disk with the asset it was and carries the
+ * asset's history to the new ref (`moves` in the result), which the write-path index refresh does not do.
+ */
+export async function index() {
+  return (await runCli(["index"])) as {
+    totalEntries: number;
+    mode: string;
+    warnings?: string[];
+    moves?: { moved: Array<{ from: string; to: string }>; unpaired: number };
+  };
+}
+
 /** A dry run returns the plan and writes nothing. */
 export async function rename(input: { bundle: string; name: string; dryRun?: boolean }) {
   if (input.dryRun !== true) preserveUnrelatedConfig();
