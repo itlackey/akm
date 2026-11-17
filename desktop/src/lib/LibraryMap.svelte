@@ -30,6 +30,7 @@
     VIEWS,
     type View,
   } from "./library-overview";
+  import { joinsOf, LEVEL_CAP, LEVEL_STYLES, reach } from "./link-levels";
   import { filesHref } from "./library-files-model";
   import { libraryRead, searchHref } from "./library-model";
   import MindMap, { type Segment } from "./MindMap.svelte";
@@ -191,6 +192,15 @@
     picked = i;
     near = null;
   }
+  /** The arrow keys on the 3D map: the previous or next asset of the picked one's group, in name order; with nothing
+   * picked, the first of the first group. */
+  function step(direction: -1 | 1) {
+    const group = groups.find((g) => g.key === (picked >= 0 ? `g:${o!.group[picked]}` : ""));
+    const order = [...(group ?? groups[0])!.members].sort((a, b) => (o!.ref[a]! < o!.ref[b]! ? -1 : 1));
+    const at = order.indexOf(picked);
+    const next = at < 0 ? order[0] : order[(at + direction + order.length) % order.length];
+    if (next !== undefined && next !== picked) pick(next);
+  }
   /** Everything the map can be changed by, and the camera, back to how it opens. */
   function reset() {
     view = "contents";
@@ -290,22 +300,31 @@
     if (view === "problems") return PROBLEMS.find((p) => p.id === firstProblem(o!, i))?.token ?? "--border";
     return `hsl(${Math.round((o!.group[i]! * 137.508) % 360)} 62% 56%)`;
   };
-  /** What the picked asset is joined to: its declared links (Problems: replacement and contradiction only) and its
+  /** Every join akm reports for this view: declared links (Problems: replacement and contradiction only) and
    * near-duplicates. */
+  const allJoins = $derived(o ? joinsOf(o, view === "problems" ? OUTDATED_LINKS : null) : []);
+  /** What the picked asset is joined to directly. */
   const pickedJoins = $derived.by(() => {
-    if (!o || picked < 0) return [] as Array<{ i: number; what: string }>;
     const out: Array<{ i: number; what: string }> = [];
-    for (const l of o.links)
-      if ((l.from === picked || l.to === picked) && (view !== "problems" || OUTDATED_LINKS.includes(l.kind)))
-        out.push({ i: l.from === picked ? l.to : l.from, what: l.kind.replaceAll("_", " ") });
-    for (const d of o.duplicates)
-      if (d.a === picked || d.b === picked)
-        out.push({ i: d.a === picked ? d.b : d.a, what: `near-duplicate ${d.cosine.toFixed(3)}` });
+    if (picked >= 0)
+      for (const j of allJoins)
+        if (j.a === picked || j.b === picked) out.push({ i: j.a === picked ? j.b : j.a, what: j.what });
     return out;
   });
+  /** What it is joined to one, two and three steps out. */
+  const reached = $derived(o && picked >= 0 ? reach(allJoins, o.count, picked) : null);
+  /** Whether an asset is a point on this map: it has a group by meaning and is in the bundle chosen. */
+  const drawn = (i: number) => o!.group[i]! >= 0 && (bundle < 0 || o!.bundle[i] === bundle);
+  /** Per level: the assets shown on the map, those reached but not on it, and those cut by the cap. */
+  const levelFigures = $derived(
+    reached?.levels.map((l) => {
+      const shown = l.nodes.filter(drawn);
+      return { shown, off: l.nodes.length - shown.length, cut: l.cut };
+    }) ?? null,
+  );
   const lit = $derived(
     picked >= 0
-      ? new Set([picked, ...pickedJoins.map((j) => j.i)])
+      ? new Set([picked, ...(reached?.levels.flatMap((l) => l.nodes) ?? [])])
       : part?.group
         ? new Set(matching ? part.members.filter((i) => matching.has(i)) : part.members)
         : matching,
@@ -313,7 +332,10 @@
   const lines = $derived.by(() => {
     if (!o) return [];
     const at = (i: number) => o!.place.subarray(i * 3, i * 3 + 3);
-    if (picked >= 0) return pickedJoins.map((j) => ({ from: at(picked), to: at(j.i), weight: 1 }));
+    if (picked >= 0)
+      return (reached?.links ?? [])
+        .filter((l) => drawn(l.a) && drawn(l.b))
+        .map((l) => ({ from: at(l.a), to: at(l.b), weight: 1, level: l.level }));
     if (!part?.group) return [];
     const centre = new Map(groups.map((g) => [g.key, g.centre]));
     const strongest = Math.max(1, ...joined.map((r) => r.links + r.duplicates));
@@ -480,6 +502,11 @@
     <div class="map-body">
       <div class="map-main">
         <div class="map-legend">
+          {#if depth === "3d"}<p class="sr-only" role="status">
+              {picked >= 0 && levelFigures
+                ? `Selected ${o.ref[picked]}. ${levelFigures.map((l, k) => `${LEVEL_STYLES[k]!.label}: ${plural(l.shown.length, "asset")}`).join(". ")}.`
+                : ""}
+            </p>{/if}
           {#if depth === "3d" && view === "contents"}<p class="muted small">
               Each point is an asset, coloured by its group by meaning. Inside a group, assets read lately sit at the
               front, and never-read, superseded, contradicted or deprecated ones at the back.
@@ -524,13 +551,58 @@
                 {colourOf}
                 {lit}
                 {lines}
+                levels={levelFigures
+                  ? [levelFigures[0]!.shown, levelFigures[1]!.shown, levelFigures[2]!.shown]
+                  : undefined}
                 {picked}
                 {selected}
                 related={joined.slice(0, 12).map((r) => r.key)}
                 onPick={pick}
                 onGroup={choose}
+                onStep={step}
                 label={`${question} The ${plural(bundleScope.length - offMap, "asset")} of ${scopeName} that have a group by meaning, as points, alike assets close together, in ${plural(groups.length, "group")} named by their tags.${offMap ? ` ${plural(offMap, "asset")} not shown.` : ""}`}
-              />
+              >
+                {#snippet legend()}{#if picked >= 0 && levelFigures}<div class="levels">
+                      <p class="small">
+                        <strong>{short(o!.ref[picked]!)}</strong> and what it is joined to, three steps out. A join is drawn
+                        once, at the nearest level it belongs to.
+                      </p>
+                      <ul>
+                        {#each LEVEL_STYLES as style, k}
+                          {@const f = levelFigures[k]!}
+                          {@const colour = `color-mix(in srgb, var(--map-highlight) ${Math.round(100 - 100 * style.mute)}%, var(--bg))`}
+                          <li>
+                            <svg class="level-key" width="46" height="26" viewBox="0 0 46 26" aria-hidden="true">
+                              <line
+                                x1="2"
+                                x2="30"
+                                y1="13"
+                                y2="13"
+                                style={`stroke:${colour}`}
+                                stroke-width={style.width}
+                                stroke-dasharray={style.dash ? "5 3" : undefined}
+                              />
+                              <circle
+                                cx="36"
+                                cy="13"
+                                r={style.ring / 2 - 1.5}
+                                fill="none"
+                                style={`stroke:${colour}`}
+                                stroke-width="2"
+                              />
+                            </svg>
+                            <span
+                              >{style.label}: {plural(f.shown.length, "asset")}{f.off
+                                ? `, ${f.off.toLocaleString()} not on this map`
+                                : ""}{f.cut
+                                ? `, ${f.cut.toLocaleString()} more not shown (a level shows its ${LEVEL_CAP} most joined assets)`
+                                : ""}</span
+                            >
+                          </li>
+                        {/each}
+                      </ul>
+                    </div>{/if}{/snippet}
+              </SimilarityMap>
               <p class="muted small">
                 Each point is an asset; alike assets sit close, and each group by meaning is named by the tags its
                 assets carry most. Drag to turn, right-drag to move, scroll to zoom, hover a point for its name. Choose
@@ -801,6 +873,28 @@
     background: var(--surface);
     padding: 8px;
     min-inline-size: 0;
+  }
+  .levels {
+    padding: 6px 10px;
+  }
+  .levels p {
+    margin: 0 0 4px;
+  }
+  .levels ul {
+    display: grid;
+    gap: 2px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .levels li {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    font-size: var(--text-xs);
+  }
+  .level-key {
+    flex: none;
   }
   .map-legend {
     min-block-size: 24px;

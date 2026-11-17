@@ -95,7 +95,27 @@ switches back to the mind map): every embedded asset is a point, coloured by its
 it, with groups alike in meaning near each other and each named by the tags its assets carry far more than the rest of
 the library. The column lists the groups when nothing is chosen. Choosing a group or a point flies to it, draws its
 links and near-duplicates, and opens the group's answers in the column; a chosen point also lists the assets it is
-joined to. Depth inside a group follows use: assets read lately sit at the front, those read earlier just ahead of the
+joined to. A point is chosen from anywhere over its drawn disc and a few pixels beyond it (the one in front when
+several overlap), and the point under the pointer is ringed and named. The chosen point is ringed with a halo and named
+by a label that stays over every other mark, and the rest fades. With the map focused (Tab), the left and right arrow
+keys step to the previous and next asset of the chosen point's group in name order, and the page announces the new
+choice; Escape clears it.
+
+A chosen point also draws what it is joined to three steps out, each level in its own width and colour, with its assets
+ringed to match, and a key in the map's corner names the three levels with the assets at each:
+
+| Level | Reaches | Drawn |
+| --- | --- | --- |
+| 1st | the assets joined to the chosen one | widest line, the highlight colour, largest ring |
+| 2nd | the assets joined to those | thinner line, more muted, smaller ring |
+| 3rd | the assets joined to those | thinnest line, most muted, dashed, smallest ring |
+
+The joins are the ones `assets.graph` reports (declared links and near-duplicate pairs; in Problems only replacement and
+contradiction links and near-duplicates), either way round. Each join is drawn once, at the nearest level it belongs to:
+a join between two assets of one level belongs to the next. A level shows at most 300 assets, the most joined first, and
+the next level is walked from those; the key says how many a level left out, and how many it reached that are not on this
+map (no group by meaning, or in another bundle). The walk is `reach` in `src/lib/link-levels.ts`; each level's colour
+is held at 3:1 against the background in both themes by `tests/map-palette.test.mjs`. Depth inside a group follows use: assets read lately sit at the front, those read earlier just ahead of the
 middle, and never-read, superseded, contradicted or deprecated ones at the back. The 3D view needs WebGL (three.js,
 `src/lib/SimilarityMap.svelte`).
 
@@ -119,6 +139,7 @@ It reads `assets.graph`, `assets.searchMisses` and, on Closest, `assets.related`
 | Limit | Why |
 | --- | --- |
 | About 44 tags in all, at most 10 per type | More labels cannot all be drawn and read; a type gets tags in proportion to the square root of its size, and a tag carried by one asset is left out of a type with ten or more assets. |
+| A level shows at most 300 assets | Three steps from a well-joined asset can reach most of the library; the key says what a level left out. |
 | Near-duplicates are pairs at a cosine of 0.96 or more, at most 2,000, and need stored embeddings | `assets.graph` compares only assets alike in meaning, to avoid comparing every pair; the threshold is set for akm's local embedding model. The page says when the list was cut. |
 | Closest needs stored embeddings | Without them `assets.related` says so, and the page shows its note. |
 | Old is the file's modification time | akm records no edit date; in a Git checkout the time is when the file was last written there. |
@@ -131,13 +152,21 @@ opens at the end of the period with every figure full, so the result is readable
 Play starts again from the beginning and plays any period in about a minute (faster speeds are 4
 and 16 times that). With reduced motion nothing flies or eases, and it stays paused at the end.
 
-On the map an asset used so far is ringed in its type colour and every other asset is the faintest
-mark; all points are one size. A pulse flies to an asset when it is read, returned by a search (a
-hit, which does not count as use) or given feedback, each in its own colour and size (the
-`--pulse-*` tokens, held apart from each other and from the type colours by
-`tests/map-palette.test.mjs`). A key under the map names every mark. An asset with no position in
-the arrangement is not drawn; its events still count, and the page says how many they were. Beside
-the map: the running totals (other kinds of event, such as curate, have a total of their own, so the
+The map is drawn in 2D, the default: the library mind map, with the number of events on each type and tag so far, or in 3D
+(the 2D / 3D switch under Play; the choice is kept until the app closes). Everything else on the page is the same in both:
+the controls, the figures, the lists beside the map and the timeline.
+
+In 3D the replay plays on the same 3D map as Library, Map (`src/lib/SimilarityMap.svelte`, one renderer): every asset
+with a group by meaning is a point, as there. An asset used so far is in its type's colour and every other asset is faint.
+An asset is ringed, for the next 0.75 seconds of playing at the speed chosen, when an event reads it, a search returns it
+(a hit, which does not count as use) or gives it feedback, each in its own colour (the `--pulse-*` tokens, held apart from
+each other and from the type colours by `tests/map-palette.test.mjs`); an asset the latest of several events touched in
+that moment takes the colour of the latest. A curate's results and other kinds of event light the asset as used without a
+ring. A key on the map names every mark. An asset with no group by meaning has no place on the 3D map; its events still
+count in the figures, and the page says how many events so far touched assets with no place, and how many touched assets
+the index no longer lists. Without stored embeddings the 3D map cannot be drawn, and the page says so.
+
+Beside the map: the running totals (other kinds of event, such as curate, have a total of their own, so the
 totals add up to the lanes), the assets used most so far, the latest events and the searches that
 found nothing.
 
@@ -154,4 +183,4 @@ It reads `assets.graph` once and `activity.events` for each period.
 | At most 20,000 events in a period | `activity.events` keeps the latest 20,000; the page says so and from when the replay therefore starts. |
 | Older events have no agent | akm records the harness and session on usage events from this release. |
 | "No agent recorded" mixes a person with an agent akm did not recognise | Both record source `user` and no harness. |
-| Every point is one size | A replay is about one period, so it marks use with the ring only. |
+| Pulses ring an asset for 0.75 seconds of playing | At 16 times speed a ring marks the events of about a fifth of the period at once. |
