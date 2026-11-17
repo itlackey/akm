@@ -78,8 +78,15 @@ test("writes reach their operations and unknown fields are ignored", async (t) =
       surprise: true,
     }),
   );
-  const copy = ok(await app.call("/api/asset/copy", { sourceRef: ref, target: "personal", newName: "restore-copy" }));
-  assert.equal(copy.overwritten, false);
+  const copy = ok(
+    await app.call("/api/desktop/files/copy", {
+      bundle: "personal",
+      from: "knowledge/restore-laptop.md",
+      folder: "knowledge",
+      name: "restore-copy.md",
+    }),
+  );
+  assert.equal(copy.done, true);
   ok(await app.call("/api/documents/create-file", { bundle: "personal", type: "knowledge", name: "created-by-route" }));
   ok(await app.call("/api/config/set", { set: { "output.format": "text" } }));
   ok(await app.call("/api/config/projects", { set: { "my.project": { paths: ["/work/mine"] } } }));

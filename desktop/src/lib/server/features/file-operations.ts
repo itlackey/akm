@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { bundles, UsageError } from "akm-cli/workspace";
+import { assets, bundles, UsageError } from "akm-cli/workspace";
 import { fields } from "../input.js";
 import { bundleRoot, entryAt, listFolder, parentOf, segment, underRoot } from "./bundle-path.js";
 import { desktopApp } from "./software.js";
@@ -29,8 +29,9 @@ const exists = (file: string) => {
 };
 
 /**
- * Put `from` at `name` inside `folder` of `toBundle` (the same bundle when absent), by moving it or by copying it. akm's
- * verdicts on the entry and on the folder it goes into decide; nothing at the destination is replaced.
+ * Move or copy `from` to `name` inside `folder` of `toBundle` (the same bundle when absent). akm's verdicts on the entry
+ * and on the folder it goes into decide; nothing at the destination is replaced. A move is a rename on disk, then akm's
+ * index pairs the file with the asset it was; a copy is akm's (`assets.copyEntry`).
  */
 async function place(body: unknown, how: "move" | "copy") {
   const value = fields<Record<string, unknown>>(body, ["bundle", "from", "toBundle", "folder", "name"], `file ${how}`);
@@ -46,21 +47,7 @@ async function place(body: unknown, how: "move" | "copy") {
   if (how === "move" && to === from && toBundle === bundle) return { bundle, from, toBundle, to, done: false };
   const destination = (await listFolder(toBundle, folder)).place;
   if (!destination.allowed) throw new UsageError(destination.reason);
-  const source = underRoot((await bundleRoot(bundle)).physicalRoot, from),
-    target = underRoot((await bundleRoot(toBundle)).physicalRoot, to);
-  if (exists(target))
-    throw new UsageError(`There is already a file or folder named ${name} there.`, "RESOURCE_ALREADY_EXISTS");
-  try {
-    if (how === "move") fs.renameSync(source, target);
-    else fs.cpSync(source, target, { recursive: true, errorOnExist: true, force: false });
-  } catch (cause) {
-    throw new UsageError(
-      `${entry.name} could not be ${how === "move" ? "moved" : "copied"}: ${(cause as Error).message}`,
-    );
-  }
-  // The file operation stands whatever the index says: a failure is reported, never read as it not having happened.
-  try {
-    const indexed = await bundles.index();
+  const finish = async (indexed: { moves?: unknown; warnings?: string[] } | undefined, indexError?: string) => {
     const after = (await listFolder(toBundle, folder)).entries.find((listed) => listed.name === name);
     return {
       bundle,
@@ -69,9 +56,27 @@ async function place(body: unknown, how: "move" | "copy") {
       to,
       done: true,
       assets: after?.assets ?? [],
-      moves: indexed.moves,
-      warnings: indexed.warnings ?? [],
+      moves: indexed?.moves,
+      warnings: indexed?.warnings ?? [],
+      ...(indexError ? { indexError } : {}),
     };
+  };
+  if (how === "copy") {
+    const copied = await assets.copyEntry({ bundle, from, toBundle, folder, name });
+    return finish(undefined, copied.indexed ? undefined : "akm could not index the copy.");
+  }
+  const source = underRoot((await bundleRoot(bundle)).physicalRoot, from),
+    target = underRoot((await bundleRoot(toBundle)).physicalRoot, to);
+  if (exists(target))
+    throw new UsageError(`There is already a file or folder named ${name} there.`, "RESOURCE_ALREADY_EXISTS");
+  try {
+    fs.renameSync(source, target);
+  } catch (cause) {
+    throw new UsageError(`${entry.name} could not be moved: ${(cause as Error).message}`);
+  }
+  // The rename stands whatever the index says: a failure is reported, never read as the move not having happened.
+  try {
+    return await finish(await bundles.index());
   } catch (cause) {
     return { bundle, from, toBundle, to, done: true, indexError: (cause as Error).message };
   }
@@ -79,7 +84,7 @@ async function place(body: unknown, how: "move" | "copy") {
 
 /** Move or rename: a plain rename on disk, then the index follows the file and carries its history. */
 export const moveEntry = (body: unknown) => place(body, "move");
-/** Copy a file or folder to a folder, as a file manager does; the copy is a new file. */
+/** Copy a file or folder to a folder: a new file. */
 export const copyEntry = (body: unknown) => place(body, "copy");
 
 /** A new folder, `name`, inside `folder`. */

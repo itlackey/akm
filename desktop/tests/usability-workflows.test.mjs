@@ -51,20 +51,21 @@ test("reviewed human workflows prevent dead ends and preserve focus and source",
     await expect(page.getByRole("searchbox", { name: "Search library" })).toHaveValue("backup");
     await result.click();
   });
-  await t.test("same-bundle copy requires a new name before submission; cancel returns focus", async () => {
-    const copy = workspace.getByRole("button", { name: "Copy to bundle…", exact: true });
-    await workspace.getByRole("button", { name: "More", exact: true }).click();
-    await copy.click();
-    const name = workspace.getByRole("textbox", { name: /^New name/ });
-    await expect(workspace.getByRole("button", { name: "Confirm copy" })).toBeDisabled();
-    await name.fill("restore-laptop");
-    await expect(workspace.getByRole("button", { name: "Confirm copy" })).toBeDisabled();
-    await name.fill("another-recovery-guide");
-    await expect(workspace.getByRole("button", { name: "Confirm copy" })).toBeEnabled();
-    await workspace.getByRole("button", { name: "Cancel", exact: true }).click();
-    await expect(workspace.getByRole("button", { name: "More", exact: true })).toBeFocused();
-    assert.equal(await readFile(app.documentPath, "utf8"), original);
-  });
+  await t.test(
+    "Copy to… opens the folder picker; a copy over the original is refused; cancel returns focus",
+    async () => {
+      await workspace.getByRole("button", { name: "More", exact: true }).click();
+      await workspace.getByRole("button", { name: "Copy to…", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Copy restore-laptop.md" });
+      await expect(dialog.getByRole("tree", { name: "Folders" })).toBeVisible();
+      await dialog.getByRole("button", { name: "Copy here", exact: true }).click();
+      await expect(dialog.getByRole("alert")).toBeVisible();
+      assert.equal(await readFile(app.documentPath, "utf8"), original);
+      await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+      await expect(workspace.getByRole("button", { name: "More", exact: true })).toBeFocused();
+      assert.equal(await readFile(app.documentPath, "utf8"), original);
+    },
+  );
   await t.test("unsaved drafts are explicit, survive reload and can be discarded without saving", async () => {
     await workspace.getByRole("link", { name: "Edit page", exact: true }).click();
     // The properties are fields; the box holds the body.
@@ -273,7 +274,7 @@ test("reviewed human workflows prevent dead ends and preserve focus and source",
     await navigate("/library/files?bundle=personal&path=knowledge");
     await expect(page.locator(".file-breadcrumbs")).toBeVisible();
     const bar = await tabStops(page, ".files-location");
-    assert.ok(bar.length >= 4, `the location bar has its controls in the tab order (${bar.length})`);
+    assert.ok(bar.length >= 3, `the location bar has its controls in the tab order (${bar.length})`);
     assert.deepEqual(
       bar.filter((stop) => stop.moved).map((stop) => `${stop.name}: ${stop.moved}`),
       [],

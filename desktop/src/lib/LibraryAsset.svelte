@@ -10,6 +10,7 @@
   import { api, assetSource, date, stateUnavailableText, type StateUnavailable } from "./client";
   import { documentTitle, libraryRead, typedLinks } from "./library-model";
   import type { AssetRead, Improvement, SearchHit } from "./library-model";
+  import type { FileRequest } from "./library-files-model";
   import type { Bundle, FrontmatterRead, History, Retirement, Source, WriteResult } from "./types";
   import { headingId } from "./ui/markdown.js";
   import { sparkline } from "./ui/lib.js";
@@ -17,6 +18,7 @@
   import Diff from "./Diff.svelte";
   import Icon from "./Icon.svelte";
   import Properties from "./Properties.svelte";
+  import FileDialog from "./FileDialog.svelte";
   import AssetRelated from "./AssetRelated.svelte";
   import SensitiveAsset from "./SensitiveAsset.svelte";
   let {
@@ -24,7 +26,6 @@
     query = new URLSearchParams(),
     returnTo = "/library/search",
     bundles = [],
-    defaultWriteTarget = "",
     match = null,
     mode = "search",
     hideBack = false,
@@ -40,7 +41,6 @@
     query?: URLSearchParams;
     returnTo?: string;
     bundles?: Bundle[];
-    defaultWriteTarget?: string;
     match?: SearchHit | null;
     mode?: "search" | "files";
     /** Another view supplies the way back (project crumbs), so the reader's own link is left out. */
@@ -80,13 +80,10 @@
     replacement = $state(""),
     fixReason = $state(""),
     fixSource = $state("");
-  let copying = $state(false),
-    target = $state(""),
-    newName = $state(""),
+  let copyRequest = $state<FileRequest | null>(null),
     receipt = $state<WriteResult | null>(null);
   let more = $state<HTMLElement>(),
-    moreTrigger = $state<HTMLButtonElement>(),
-    copyDestination = $state<HTMLSelectElement>();
+    moreTrigger = $state<HTMLButtonElement>();
   let heading = $state<HTMLHeadingElement>(),
     viewHeading = $state<HTMLHeadingElement>();
   let outlineOpen = $state(false);
@@ -109,7 +106,6 @@
         Details: "Asset details",
         Feedback: "Give feedback",
         Fix: "Suggest a fix",
-        Copy: "Copy to a bundle",
       } as Record<string, string>
     )[tab] ?? "",
   );
@@ -134,9 +130,6 @@
       "Weekly finds and opens, last 90 days",
     ),
   );
-  const writable = $derived(bundles.filter((b) => b.writeBlocker === null));
-  const sameBundle = $derived(target === (data?.bundle ?? data?.asset?.origin));
-  const copyNameInvalid = $derived(sameBundle && (!newName.trim() || newName.trim() === canonical.split("/").at(-1)));
   // A new reference is read before the page updates, so the asset before it is never drawn under the new address.
   $effect.pre(() => {
     if (!ref || ref === previous) return;
@@ -175,7 +168,6 @@
     tab = query.get("history") === "1" ? "History" : "Read";
     notice = "";
     receipt = null;
-    copying = false;
     reason = "";
     tags = "";
     replace = "";
@@ -332,44 +324,34 @@
       busy = false;
     }
   }
-  async function copy() {
-    if (copyNameInvalid) return;
-    const request = generation;
-    busy = true;
-    error = "";
-    notice = "";
-    receipt = null;
-    try {
-      const outcome = await api<WriteResult>(
-        "/asset/copy",
-        {},
-        { sourceRef: canonical, target, ...(newName ? { newName } : {}) },
-      );
-      if (request !== generation) return;
-      receipt = outcome;
-      notice = "Copy completed without overwriting an existing asset.";
-      copying = false;
-      tab = "Read";
-    } catch (e) {
-      error = (e as Error).message;
-    } finally {
-      busy = false;
-    }
+  /** The same Copy to… as the tree's: akm's copy into a folder chosen in the folder picker. */
+  function beginCopy() {
+    const location = data?.location;
+    if (!location || !data?.actions?.copy.allowed) return;
+    more?.hidePopover();
+    copyRequest = {
+      kind: "copy",
+      bundle: location.bundle,
+      path: location.path,
+      name: location.path.split("/").at(-1) ?? "",
+      actions: data.actions,
+      destination: { bundle: location.bundle, path: location.parent },
+    };
   }
-  async function closeCopy() {
-    copying = false;
-    tab = "Read";
+  async function copied(
+    done: FileRequest,
+    _result: Record<string, unknown>,
+    destination: { bundle: string; path: string },
+  ) {
+    copyRequest = null;
+    notice = `Copied ${done.name} to ${destination.path || destination.bundle}.`;
     await tick();
     moreTrigger?.focus();
   }
-  async function beginCopy() {
-    more?.hidePopover();
-    copying = true;
-    tab = "Copy";
-    newName = "";
-    target = writable.find((b) => b.name === defaultWriteTarget)?.name ?? writable[0]?.name ?? "";
+  async function cancelCopy() {
+    copyRequest = null;
     await tick();
-    copyDestination?.focus();
+    moreTrigger?.focus();
   }
   async function showView(view: string) {
     more?.hidePopover();
@@ -472,8 +454,14 @@
                 <span class="menu-label">Organize</span>
                 <button onclick={compare}>Compare with another asset</button>
                 <button onclick={copyRef}><Icon name="link" size={16} />Copy ref</button>
-                {#if writable.length}<button onclick={beginCopy}><Icon name="copy" size={16} />Copy to bundle…</button
-                  >{/if}
+                {#if data.actions}<button
+                    onclick={beginCopy}
+                    aria-disabled={data.actions.copy.allowed ? undefined : "true"}
+                    aria-describedby={data.actions.copy.allowed ? undefined : "copy-reason"}
+                    ><Icon name="copy" size={16} />Copy to…</button
+                  >{#if !data.actions.copy.allowed}<span class="menu-reason" id="copy-reason"
+                      >{data.actions.copy.reason}</span
+                    >{/if}{/if}
                 {#if data.actions}<button
                     onclick={retire}
                     aria-disabled={busy || !data.actions.retire.allowed || !retireRevision ? "true" : undefined}
@@ -584,43 +572,6 @@
               redacted={history.diff.redacted ?? false}
             />{/if}
         {/if}
-      {:else if tab === "Copy" && copying}
-        <form
-          class="task-form form-grid"
-          onsubmit={(event) => {
-            event.preventDefault();
-            void copy();
-          }}
-        >
-          <p class="muted">The original stays unchanged. Existing files are never overwritten.</p>
-          <label
-            >Destination bundle<select bind:this={copyDestination} bind:value={target}
-              >{#each bundles as b}<option value={b.name} disabled={b.writeBlocker !== null}
-                  >{b.name}{b.writeBlocker === null ? "" : ": " + b.writeBlocker}</option
-                >{/each}</select
-            ></label
-          >
-          <label
-            >New name {sameBundle ? "(required in this bundle)" : "(optional)"}<input
-              bind:value={newName}
-              required={sameBundle}
-              aria-describedby="copy-name-hint"
-            /></label
-          >
-          <p id="copy-name-hint" class="muted small">
-            {sameBundle
-              ? "Choose a different name to keep both copies in this bundle."
-              : "Leave blank to keep the original name."}
-          </p>
-          <div class="task-submit">
-            <button disabled={busy || copyNameInvalid}>Confirm copy</button><button
-              type="button"
-              class="text-action"
-              onclick={closeCopy}>Cancel</button
-            >
-          </div>
-          <p class="muted small">The destination’s AKM write and Git publication policy applies.</p>
-        </form>
       {:else if tab === "Feedback"}
         <section class="feedback-view" id="asset-feedback" aria-label="Feedback">
           <form
@@ -782,6 +733,12 @@
     </div>
   {/if}
 {/if}
+{#if copyRequest}<FileDialog
+    request={copyRequest}
+    bundles={bundles.filter((entry) => entry.enabled).map((entry) => entry.name)}
+    onDone={copied}
+    onCancel={cancelCopy}
+  />{/if}
 
 <style>
   .retirement-receipt {

@@ -112,19 +112,24 @@ test("built desktop UI: each section's happy path and one refusal", { timeout: 2
       await readFile(path.join(server.root, "personal/knowledge/desktop-created.md"), "utf8"),
       /synthetic note written/,
     );
-    await page.goto(`${server.origin}/library/asset?ref=${encodeURIComponent(server.refs.skill)}`);
-    await page.getByRole("button", { name: "More", exact: true }).click();
-    await page.getByRole("button", { name: "Copy to bundle…", exact: true }).click();
-    await page.getByRole("combobox", { name: "Destination bundle", exact: true }).selectOption("shared");
-    await page.getByRole("button", { name: "Confirm copy", exact: true }).click();
-    await expect(page.getByRole("status").filter({ hasText: "Copy completed" })).toBeVisible();
-    assert.match(await readFile(path.join(server.root, "shared/skills/backup-check/SKILL.md"), "utf8"), /backup-check/);
-    // A second copy to the same place is refused by akm; the page shows why and leaves the first copy alone.
-    await page.getByRole("button", { name: "More", exact: true }).click();
-    await page.getByRole("button", { name: "Copy to bundle…", exact: true }).click();
-    await page.getByRole("combobox", { name: "Destination bundle", exact: true }).selectOption("shared");
-    await page.getByRole("button", { name: "Confirm copy", exact: true }).click();
-    await expect(page.getByRole("alert")).toBeVisible();
+    const copyToShared = async () => {
+      await page.getByRole("button", { name: "More", exact: true }).click();
+      await page.getByRole("button", { name: "Copy to…", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Copy restore-laptop.md" });
+      await dialog.getByRole("treeitem", { name: "shared", exact: true }).click();
+      await dialog.getByRole("button", { name: "Copy here", exact: true }).click();
+      return dialog;
+    };
+    await page.goto(`${server.origin}/library/asset?ref=${encodeURIComponent(server.refs.document)}`);
+    await copyToShared();
+    await expect(page.getByRole("status").filter({ hasText: "Copied restore-laptop.md to shared." })).toBeVisible();
+    assert.match(
+      await readFile(path.join(server.root, "shared/restore-laptop.md"), "utf8"),
+      /personal\/\/knowledge\/restore-laptop/,
+    );
+    // A second copy to the same place is refused by akm; the dialog shows why and leaves the first copy alone.
+    const again = await copyToShared();
+    await expect(again.getByRole("alert")).toBeVisible();
   });
 
   await t.test("Library: a move is a rename on disk; the asset is the same asset in its new bundle", async () => {

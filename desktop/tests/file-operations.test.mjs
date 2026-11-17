@@ -232,6 +232,11 @@ test("a copy is a new file at the chosen folder, in the same bundle or another; 
     }),
   );
   assert.deepEqual(across.assets, [{ ref: "shared//knowledge/restore-laptop", type: "knowledge" }]);
+  assert.match(
+    await fs.readFile(path.join(app.root, "shared/knowledge/restore-laptop.md"), "utf8"),
+    /personal\/\/knowledge\/restore-laptop/,
+    "a copied asset records where it came from",
+  );
   assert.ok(await exists(app.documentPath));
   const taken = await copy({ from: "knowledge/restore-laptop.md", folder: "knowledge", name: "restore-laptop.md" });
   assert.equal(taken.body.code, "RESOURCE_ALREADY_EXISTS");

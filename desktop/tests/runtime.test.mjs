@@ -213,33 +213,26 @@ test("existing AKM reads, revision-safe editing, creation and non-overwriting co
   });
   assert.equal(conflict.status, 409);
   assert.equal((await conflict.json()).code, "ASSET_CONTENT_CHANGED");
-  const created = await app.request("/knowledge/create", {
+  const created = await app.request("/documents/create-file", {
     name: "created-in-test",
-    content: "# Created\n\nA synthetic new note.",
+    type: "knowledge",
     bundle: "personal",
   });
   assert.equal(created.status, 200, await created.text());
-  const copied = await app.request("/asset/copy", {
-    sourceRef: app.fixture.refs.vendor,
-    target: "personal",
-    newName: "vendor-copy",
+  const copyTo = (extra = {}) => ({
+    bundle: "vendor",
+    from: "knowledge/vendor-backup.md",
+    toBundle: "personal",
+    folder: "knowledge",
+    name: "vendor-copy.md",
+    ...extra,
   });
+  const copied = await app.request("/desktop/files/copy", copyTo());
   assert.equal(copied.status, 200, await copied.text());
-  const repeat = await app.request("/asset/copy", {
-    sourceRef: app.fixture.refs.vendor,
-    target: "personal",
-    newName: "vendor-copy",
-  });
+  const repeat = await app.request("/desktop/files/copy", copyTo());
   assert.notEqual(repeat.status, 200);
   assert.notEqual(
-    (
-      await app.request("/asset/copy", {
-        sourceRef: app.fixture.refs.vendor,
-        target: "personal",
-        newName: "vendor-copy",
-        force: true,
-      })
-    ).status,
+    (await app.request("/desktop/files/copy", copyTo({ force: true }))).status,
     200,
     "an unknown force field is ignored; a copy never overwrites",
   );

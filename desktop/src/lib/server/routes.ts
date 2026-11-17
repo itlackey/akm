@@ -345,7 +345,6 @@ export const routes: Route[] = [
   post("/api/assets/update-moved-links", body(assets.updateMovedLinks, ["bundle"], "moved links")),
   post("/api/asset/save", body(documents.save, ["ref", "content", "revision"], "document save"), { limit: "document" }),
   post("/api/asset/retire", body(documents.retire, ["ref", "revision"], "document retire")),
-  post("/api/asset/copy", body(documents.copy, ["sourceRef", "target", "newName"], "copy")),
   post("/api/proposals/accept", body(proposals.acceptMany, ["ids"], "accept")),
   post("/api/proposals/reject", body(proposals.rejectMany, ["ids", "reason"], "reject")),
   post("/api/proposals/:id/accept", (_value, params) => proposals.accept({ id: params.id! })),

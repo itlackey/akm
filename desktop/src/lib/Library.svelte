@@ -715,7 +715,6 @@
               {query}
               returnTo={withReview(filesHref({ bundle: fileBundle, path: filePath }, readingHref))}
               {bundles}
-              {defaultWriteTarget}
               mode="files"
               filesHref={folderHref}
               {editHref}
@@ -776,7 +775,6 @@
       {query}
       {returnTo}
       {bundles}
-      {defaultWriteTarget}
       mode="search"
       filesHref={folderHref}
       {editHref}
