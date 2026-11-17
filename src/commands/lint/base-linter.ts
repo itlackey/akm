@@ -734,7 +734,7 @@ export function runBaseChecks(ctx: LintContext): LintIssue[] {
   } // end shouldRun("unquoted-colon")
 
   // ── 2. missing-updated ─────────────────────────────────────────────────
-  if (shouldRun("missing-updated") && checkMissingUpdated(ctx.relPath, ctx.data, ctx.frontmatter)) {
+  if (shouldRun("missing-updated") && !ctx.llmWiki && checkMissingUpdated(ctx.relPath, ctx.data, ctx.frontmatter)) {
     if (ctx.fix) {
       let mtime: Date;
       try {

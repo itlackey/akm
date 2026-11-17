@@ -3402,7 +3402,9 @@ In an akm bundle the files are the ones the indexer would index and each file's 
 is the type the indexer gives it, so a file under a wiki folder, a loose folder or the
 bundle root is linted with its type's checks, not only the files under the type
 folders. The walk is the indexer's: dot-directories, `node_modules`, git-ignored files
-and a root `.scratch/` are not linted. Nothing under `env/` or `secrets/` is read.
+and a root `.scratch/` are not linted. Nothing under `env/` or `secrets/` is read. A file inside an LLM Wiki
+(a folder with `schema.md` and `pages/`, the llm-wiki adapter's own probe) is written by the wiki's own process, not
+authored as an akm asset, so `missing-updated` and `missing-name-or-type` do not apply to it; every other check does.
 Types that search leaves out by default stay out unless `--type` names them, and the
 bundle's `lint.skip` globs apply.
 
@@ -3411,7 +3413,9 @@ A link to a ref that `akm index` recorded as moved (see [index](#index)) is a
 (the ref the asset has now, as `bundle//conceptId`). `--fix` rewrites that link in
 frontmatter and prose, outside code fences, keeping its spelling (a bare link stays
 bare unless the asset moved to another bundle); a second run changes nothing. A
-`missing-ref` with no recorded move is reported as before and never rewritten.
+`missing-ref` with no recorded move is reported as before and never rewritten. A qualified ref
+(`bundle//concept`) is looked up in the bundle it names, so one whose concept exists only in another bundle is a
+`missing-ref`; an unqualified ref is looked up in every bundle.
 
 ```sh
 akm lint                        # Report findings; exits 0 regardless

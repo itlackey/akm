@@ -133,6 +133,11 @@ export interface LintContext {
   lintSkip?: string[];
   /** The refs the index recorded as moved; a `missing-ref` to one carries the new ref. */
   moves?: MovedRefs;
+  /**
+   * The file sits inside an LLM Wiki: written by the wiki's own process, not authored as an akm asset, so the rules that
+   * state what an authored asset carries (`missing-updated`, `missing-name-or-type`) do not apply to it.
+   */
+  llmWiki?: boolean;
   /** Bundle id to root, so a qualified ref is checked in the bundle it names. */
   bundleRoots?: ReadonlyMap<string, string>;
   /** Rewrite the links to moved refs only (`fix` rewrites them too, with every other fix). */

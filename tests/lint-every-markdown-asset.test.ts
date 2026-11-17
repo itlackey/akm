@@ -115,3 +115,38 @@ describe("lint reaches every Markdown asset of an akm bundle", () => {
     expect(fs.readFileSync(file, "utf8")).toMatch(/^---\ndescription: Note\nupdated: \d{4}-\d{2}-\d{2}\n---/);
   });
 });
+
+describe("an LLM wiki's files are not authored akm assets", () => {
+  function wiki(): void {
+    put("wikis/notes/schema.md", "# Wiki schema\n");
+    put(
+      "wikis/notes/pages/page.md",
+      "---\ndescription: A page\npageKind: concept\nxrefs:\n  - stash//knowledge/gone\n---\n\nBody.\n",
+    );
+    put("wikis/notes/pages/runs.md", "---\ndescription: Runs\npageKind: concept\n---\n\nRun $ARGUMENTS.\n");
+    put(
+      "wikis/notes/raw/snap.md",
+      "---\nname: snap\ndescription: Snapshot\nsourceUrl: https://example.test\ntags: [a]\n---\n\nSnapshot.\n",
+    );
+    put("loose.md");
+  }
+
+  test("a page and a raw snapshot without updated, name or type are not flagged, a loose file still is", async () => {
+    wiki();
+
+    expect(await flaggedFiles()).toEqual(["loose.md"]);
+    expect(await flaggedFiles(undefined, "missing-name-or-type")).toEqual([]);
+  });
+
+  test("every other check still runs on wiki files", async () => {
+    wiki();
+    put("wikis/notes/pages/colon.md", "---\ndescription: Colon: in it\n---\n\nSee /tmp/akm-5-gone/current.md\n");
+
+    const result = (await akmLint({ dir: storage.stashDir, config: makeConfig(storage.stashDir) })).flagged;
+    const by = (rule: string) => result.filter((finding) => finding.issue === rule).map((finding) => finding.file);
+
+    expect(by("missing-ref")).toEqual(["wikis/notes/pages/page.md"]);
+    expect(by("unquoted-colon")).toEqual(["wikis/notes/pages/colon.md"]);
+    expect(by("stale-path")).toEqual(["wikis/notes/pages/colon.md"]);
+  });
+});

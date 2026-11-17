@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { classifyAkmFile } from "../../core/adapter/adapters/akm-adapter";
+import { classifyAkmFile, isInLlmWiki } from "../../core/adapter/adapters/akm-adapter";
 import {
   factDiagnostics,
   MAX_SKILL_GROUP_DEPTH,
@@ -568,10 +568,12 @@ export function lintAssetFile(ctx: LintContext, subdir: string): LintIssue[] {
   const issues = runBaseChecks(ctx);
   switch (subdir) {
     case "agents":
-      issues.push(...(nameOrTypeDiagnostics(ctx.relPath, ctx.data, ctx.frontmatter, ["agent"]) as LintIssue[]));
+      if (!ctx.llmWiki)
+        issues.push(...(nameOrTypeDiagnostics(ctx.relPath, ctx.data, ctx.frontmatter, ["agent"]) as LintIssue[]));
       break;
     case "commands":
-      issues.push(...(nameOrTypeDiagnostics(ctx.relPath, ctx.data, ctx.frontmatter, ["command"]) as LintIssue[]));
+      if (!ctx.llmWiki)
+        issues.push(...(nameOrTypeDiagnostics(ctx.relPath, ctx.data, ctx.frontmatter, ["command"]) as LintIssue[]));
       break;
     case "facts":
       issues.push(...(factDiagnostics(ctx.relPath, ctx.data) as LintIssue[]));
@@ -598,6 +600,8 @@ interface SweepScope {
   fixMovedRefs: boolean;
   moves: MovedRefs;
   bundleRoots: ReadonlyMap<string, string>;
+  /** Whether a bundle-relative file sits inside an LLM Wiki of the bundle. */
+  inLlmWiki: (relPath: string) => boolean;
   pruneDanglingEdges: boolean;
   /** Rules to skip for this run, on top of the bundle's `lint.skip`. */
   lintSkip?: string[];
@@ -610,6 +614,21 @@ interface SweepScope {
 /** The root of each configured bundle by its id, for the checks that look a qualified ref up in the bundle it names. */
 function bundleRootsOf(sources: readonly SearchSource[]): ReadonlyMap<string, string> {
   return new Map(sources.flatMap((source) => (source.registryId ? [[source.registryId, source.path] as const] : [])));
+}
+
+/** Whether a bundle-relative file is inside an LLM Wiki of the bundle at `root`; each directory is probed once. */
+function llmWikiPredicate(root: string): (relPath: string) => boolean {
+  const byDir = new Map<string, boolean>();
+  return (relPath) => {
+    const dirs = relPath.split(/[\\/]/).slice(0, -1);
+    const key = dirs.join("/");
+    let inside = byDir.get(key);
+    if (inside === undefined) {
+      inside = isInLlmWiki(root, dirs);
+      byDir.set(key, inside);
+    }
+    return inside;
+  };
 }
 
 interface SweepSinks {
@@ -642,8 +661,17 @@ function lintDocument(
   scope: SweepScope,
   { fixed, flagged, warnings }: SweepSinks,
 ): void {
-  const { stashRoot, extraStashRoots, fix, fixMovedRefs, moves, bundleRoots, pruneDanglingEdges, stalePathRoots } =
-    scope;
+  const {
+    stashRoot,
+    extraStashRoots,
+    fix,
+    fixMovedRefs,
+    moves,
+    bundleRoots,
+    inLlmWiki,
+    pruneDanglingEdges,
+    stalePathRoots,
+  } = scope;
   const lintSkip = [...(scope.lintSkip ?? []), ...(scope.bundleSkip?.(relPath) ?? [])];
 
   let data: Record<string, unknown>;
@@ -694,6 +722,7 @@ function lintDocument(
           fixMovedRefs,
           moves,
           bundleRoots,
+          llmWiki: inLlmWiki(relPath),
           pruneDanglingEdges,
           stashRoot,
           stalePathRoots,
@@ -839,6 +868,7 @@ function lintAkmSweep(
           fixMovedRefs: options.fixMovedRefs === true,
           moves,
           bundleRoots: bundleRootsOf(sources),
+          inLlmWiki: llmWikiPredicate(stashRoot),
           pruneDanglingEdges: options.pruneDanglingEdges === true,
           stalePathRoots: roots,
           bundleSkip,
@@ -1003,6 +1033,7 @@ async function lintFile(file: string, options: AkmLintOptions, cfg: AkmConfig): 
       fixMovedRefs: options.fixMovedRefs === true,
       moves: readMovedRefs(),
       bundleRoots: bundleRootsOf(root ? resolveSourceEntries(root, cfg) : []),
+      inLlmWiki: llmWikiPredicate(root ?? path.dirname(absFile)),
       pruneDanglingEdges: false,
       stalePathRoots: stalePathRoots(cfg, root ?? path.dirname(absFile)),
       bundleSkip: root ? bundleLintSkip(cfg, root) : undefined,
@@ -1042,6 +1073,7 @@ export function lintDocumentText(input: {
       fixMovedRefs: false,
       moves: readMovedRefs(),
       bundleRoots: bundleRootsOf(resolveSourceEntries(root, cfg)),
+      inLlmWiki: llmWikiPredicate(root),
       pruneDanglingEdges: false,
       stalePathRoots: stalePathRoots(cfg, root),
       bundleSkip: bundleLintSkip(cfg, root),

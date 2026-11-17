@@ -285,6 +285,18 @@ function isWikiRaw(c: BundleComponent, file: FileContext): boolean {
 }
 
 /**
+ * Whether a file whose bundle-relative directories are `ancestorDirs` sits inside an LLM Wiki of the bundle at `root`: the
+ * bundle root or an ancestor holding a root `schema.md` plus `pages/` (the llm-wiki adapter's own probe). A wiki keeps its own
+ * schema and log and is written by the wiki's own process, so its files are not authored akm assets.
+ */
+export function isInLlmWiki(root: string, ancestorDirs: readonly string[]): boolean {
+  for (let i = 0; i <= ancestorDirs.length; i++) {
+    if (llmWikiAdapter.looksLikeRoot?.(path.join(root, ...ancestorDirs.slice(0, i))) === true) return true;
+  }
+  return false;
+}
+
+/**
  * The type the akm adapter gives a file of the bundle at `root`, with its ref and canonical name, or `null` when the
  * file is not an asset (a reserved structural file, one the adapter abstains on, one no matcher claims, or one whose
  * placement gives no ref). Path rules and matchers only: this is the one place that decides what an akm bundle holds,

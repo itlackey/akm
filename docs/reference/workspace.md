@@ -351,9 +351,15 @@ Each entry also carries `actions`, what akm accepts doing to it:
 verdicts run the checks the operations run, so a control shown from one never fails
 after the click:
 
-- `edit`, `move`, `retire` and `delete` carry the write path's own sentence (`bundles.list`'s `writeBlocker`) for a
-  bundle that is read-only, disabled or of another adapter; `read` and `copy` leave a bundle as it is and do not.
-- An env or secret file, and a folder with an `env/` or `secrets/` in its path, refuse every action: they are shown and
+- Reading, editing, moving and deleting a file or folder, and making an untyped file, are plain file operations: they need
+  only a bundle that is not read-only, so a writable bundle of any adapter (claude, opencode, ...) can be edited and
+  reorganised. A read-only bundle refuses `edit`, `move`, `retire` and `delete` with "Bundle <name> is read-only: akm does
+  not write to it, and an update would replace the edit." `retire` (and making a typed asset) is an akm asset write and also
+  carries the write path's sentence (`bundles.list`'s `writeBlocker`), so a bundle of another adapter refuses it with
+  "Bundle "claude" uses adapter "claude", which does not support AKM asset writes." `read` and `copy` leave a bundle as it is.
+- A listing entry reports `read` and `edit` from probing the first bytes of the file (about 70 ms more than no probe for a
+  folder of 5,000 files).
+- An env or secret file, and a folder where akm's directory rules would type a file env or secret, refuse every action: they are shown and
   edited from the protected-file view. `.git/` and `.akm/` refuse every action: "`.git/` is managed by akm."
 - `read` and `edit` need a text file: "This is not a text file." for binary, invalid UTF-8 or a file over 8 MiB, and
   "This file cannot be opened: ..." with the cause when the probe failed. A folder has no text to open.
