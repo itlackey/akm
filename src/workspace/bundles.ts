@@ -14,15 +14,13 @@ import { inspectWriteTarget } from "../core/write-source";
 import { deriveSemanticProviderFingerprint } from "../indexer/materialize-embeddings";
 import { effectiveEmbedding } from "../llm/embedders/connection";
 import { parseRegistryRef } from "../registry/resolve";
+import { STARTER_SOURCE } from "../setup/registry-stash-loader";
 import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
 import { getEmbeddableEntryCount } from "../storage/repositories/index-entries-repository";
 import { getEmbeddingCount } from "../storage/repositories/index-vec-repository";
 import { runCli } from "./cli-child";
 import { readBundleGitStatus } from "./git-read";
 import { configSource, preserveUnrelatedConfig, tryStashDir, workingStashDir } from "./readers";
-
-/** The AKM starter bundle, as `bundle add` takes it. Desktop offers it and recognises it by its `identity`. */
-const STARTER_SOURCE = "https://github.com/itlackey/akm-stash";
 
 /**
  * One name for where a bundle comes from, parsed by the code `bundle add` uses: the same repository or package gives
