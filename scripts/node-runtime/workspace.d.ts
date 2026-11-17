@@ -129,6 +129,16 @@ export namespace backups {
   function prune(input?: { olderThan?: string; dryRun?: boolean; confirm?: boolean }): Promise<Record<string, unknown>>;
 }
 export namespace bundles {
+  /** `akm sync` for one bundle: commit every unignored change, and push when writable with a remote. Reports the commit and the push, or why nothing was committed (`output`, and `reason` when the push was skipped). */
+  function commit(input: { bundle: string; message?: string; push?: boolean }): Promise<{
+    bundle: string;
+    committed: boolean;
+    pushed: boolean;
+    skipped: boolean;
+    reason?: string;
+    output: string;
+    commit?: string;
+  }>;
   function add(input: { source: string; name?: string; writable?: boolean }): Promise<unknown>;
   function list(): Promise<unknown>;
   function remove(input: { bundle: string; confirm: boolean }): Promise<unknown>;

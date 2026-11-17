@@ -7,6 +7,7 @@
 import { setConfigValue } from "../commands/config-cli";
 import { assembleInfo } from "../commands/sources/info";
 import { akmListSources } from "../commands/sources/installed-stashes";
+import { akmSync } from "../commands/sources/sync";
 import { loadConfig, mutateConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
 import { getDbPath } from "../core/paths";
@@ -20,6 +21,7 @@ import { getEmbeddableEntryCount } from "../storage/repositories/index-entries-r
 import { getEmbeddingCount } from "../storage/repositories/index-vec-repository";
 import { runCli } from "./cli-child";
 import { readBundleGitStatus } from "./git-read";
+import { interactive } from "./lease";
 import { configSource, preserveUnrelatedConfig, tryStashDir, workingStashDir } from "./readers";
 
 /**
@@ -196,4 +198,17 @@ export function setSettings(input: {
     return updated;
   });
   return { saved: result.written };
+}
+
+/**
+ * `akm sync` for one bundle: commit every unignored change inside it, and push when it is writable with a remote. Says what it
+ * did: the commit, whether it was pushed, or why nothing was committed (`reason`).
+ */
+export async function commit(input: { bundle: string; message?: string; push?: boolean }) {
+  const bundle = configured(name(input.bundle, "bundle"));
+  const message = typeof input.message === "string" && input.message.trim() ? input.message.trim() : undefined;
+  return interactive("ui-bundle-commit", async () => ({
+    bundle,
+    ...akmSync({ name: bundle, message, push: input.push }),
+  }));
 }
