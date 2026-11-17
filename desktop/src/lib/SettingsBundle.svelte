@@ -235,7 +235,13 @@
             : `${bundle.git.upstream} · ${bundle.git.ahead} ahead / ${bundle.git.behind} behind`}
         </dd>
         <dt>Uncommitted</dt>
-        <dd>{bundle.git.dirtyPaths ? `${bundle.git.dirtyPaths} paths` : "Clean"}</dd>
+        <dd>
+          {bundle.git.uncommitted === null || bundle.git.uncommitted === undefined
+            ? "Unknown: akm could not list the changes"
+            : bundle.git.uncommitted === 0
+              ? "Clean"
+              : `${bundle.git.uncommitted} ${bundle.git.uncommitted === 1 ? "file" : "files"}`}
+        </dd>
         <dt>Last commit</dt>
         <dd>
           {#if bundle.git.lastCommit}<code>{bundle.git.lastCommit.sha.slice(0, 8)}</code> · {date(

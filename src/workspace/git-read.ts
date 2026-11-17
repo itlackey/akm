@@ -81,8 +81,6 @@ export interface BundleGitStatus {
   ahead: number | null;
   /** Commits only on the upstream (as of the last fetch); `null` without an upstream. */
   behind: number | null;
-  /** Paths with uncommitted changes, as `git status` lists them (an untracked folder is one). */
-  dirtyPaths: number;
   /** The files `akm sync` would commit now, from the function that selects them; `null` when git could not list the changes. */
   uncommitted: number | null;
   lastCommit: GitCommitSummary | null;
@@ -117,7 +115,6 @@ export async function readBundleGitStatus(repoDir: string): Promise<BundleGitSta
     upstream: (upstream.ok && upstream.out.trim()) || null,
     ahead,
     behind,
-    dirtyPaths: status.ok ? status.out.split("\n").filter((line) => line.trim() !== "").length : 0,
     uncommitted: syncing.ok ? syncing.paths.length : null,
     lastCommit: sha && time ? { sha, time, subject: subject ?? "" } : null,
   };

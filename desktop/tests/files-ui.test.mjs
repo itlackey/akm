@@ -452,3 +452,13 @@ test("in env/ and secrets/ the button names what akm says the folder takes and o
   await expect(page.getByRole("button", { name: /protected/i })).toHaveCount(0);
   await expect(page.getByRole("link", { name: /Environment file|Secret/ })).toHaveCount(0);
 });
+
+test("Settings counts a bundle's uncommitted files as the Files header does, from akm's one number", async (t) => {
+  const { app, page } = await session(t, { git: true });
+  await fs.writeFile(path.join(app.root, "personal/knowledge/one.md"), "# One\n");
+  await fs.writeFile(path.join(app.root, "personal/knowledge/two.md"), "# Two\n");
+  assert.equal(await uncommitted(app, "personal"), 2);
+  await go(page, "/settings/bundles");
+  await page.getByRole("link", { name: "Manage personal", exact: true }).click();
+  await expect(page.getByText("Uncommitted").locator("xpath=following-sibling::dd[1]")).toHaveText(/2 files/);
+});

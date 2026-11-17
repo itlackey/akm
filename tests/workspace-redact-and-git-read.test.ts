@@ -99,7 +99,7 @@ describe("a git read that fails is reported, not read as a pristine repository",
   test("a detached HEAD and a repository with no commits are answers, not failures", async () => {
     const dir = repo();
     git(dir, ["checkout", "-q", "--detach"]);
-    expect(await readBundleGitStatus(dir)).toMatchObject({ error: null, branch: null, dirtyPaths: 0 });
+    expect(await readBundleGitStatus(dir)).toMatchObject({ error: null, branch: null, uncommitted: 0 });
     const empty = makeGitRepo({ register: (d) => made.push(d) });
     git(empty, ["update-ref", "-d", "HEAD"]);
     fs.rmSync(`${empty}/.git/refs/heads`, { recursive: true, force: true });

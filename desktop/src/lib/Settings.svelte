@@ -372,7 +372,7 @@
               {listing.workingStash.git?.error
                 ? `Git could not be read: ${listing.workingStash.git.error}`
                 : listing.workingStash.git
-                  ? `Branch ${listing.workingStash.git.branch ?? "detached HEAD"} · ${listing.workingStash.git.dirtyPaths} uncommitted paths`
+                  ? `Branch ${listing.workingStash.git.branch ?? "detached HEAD"} · ${listing.workingStash.git.uncommitted === null ? "uncommitted files unknown" : `${listing.workingStash.git.uncommitted} uncommitted ${listing.workingStash.git.uncommitted === 1 ? "file" : "files"}`}`
                   : "Not a Git repository."}
             </p>
           </article>{/if}{#each listing?.bundles ?? [] as bundle (bundle.name)}<SettingsBundleCard

@@ -278,7 +278,6 @@ fetched, so `ahead`/`behind` are measured against the remote-tracking branch as 
           "upstream": "origin/main",
           "ahead": 1,
           "behind": 0,
-          "dirtyPaths": 0,
           "uncommitted": 0,
           "lastCommit": { "sha": "7591a50789d4cddc", "time": "2026-10-16T10:46:41-05:00", "subject": "akm save 2026-10-16 10:00:00" }
         }
@@ -316,8 +315,7 @@ fetched, so `ahead`/`behind` are measured against the remote-tracking branch as 
   platform stash when no `defaultBundle` is set). `git` has the same shape as a card's `git`. It is `null` when a
   configured bundle already covers that directory or it cannot be resolved.
 - `git` is `null` unless the bundle's root is itself a git repository. `upstream`, `ahead` and `behind` are `null` without an
-  upstream; `branch` is `null` on a detached HEAD; `lastCommit` is `null` for a repository with no commits. `dirtyPaths`
-  counts paths with uncommitted changes as `git status` lists them (an untracked folder is one). `uncommitted` is the
+  upstream; `branch` is `null` on a detached HEAD; `lastCommit` is `null` for a repository with no commits. `uncommitted` is the
   number of files `bundles.commit` (`akm sync`) would commit now, from the selection the sync itself uses (ignored files,
   nested repositories and work outside the bundle are left out); `null` when git could not list the changes.
 - `index` mirrors `akm doctor info`'s `indexStats` and `semanticSearch`. `embeddingCoverage` is embeddings over entries
