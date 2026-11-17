@@ -166,6 +166,19 @@ export namespace config {
   };
 }
 export namespace documents {
+  /**
+   * What akm says about text before it is saved at a path of an akm bundle: the findings `akm lint` reports for the file
+   * (with their lines where the check knows one), and whether akm could still read the asset. Nothing is written.
+   */
+  function check(input: { bundle: string; path: string; content: string }): Promise<{
+    bundle: string;
+    path: string;
+    type: string | null;
+    findings: Array<{ issue: string; file: string; detail: string; line?: number; ref?: string }>;
+    warnings: Array<{ issue: string; file: string; detail: string; line?: number; ref?: string }>;
+    readable: boolean;
+    unreadable?: { reason: string; line?: number };
+  }>;
   /** A new file in a folder of a bundle, for any type: the folder's type decides the starting text; a folder with no type gets an empty file. */
   function createFile(input: { bundle: string; folder?: string; name: string; content?: string }): Promise<{
     bundle: string;

@@ -613,7 +613,23 @@ interface SweepSinks {
 }
 
 /** Lint one asset file of `subdir` and file its findings into `sinks` (the sweep loop body, shared with {@link lintFile}). */
-function lintSweepFile(
+function lintSweepFile(filePath: string, relPath: string, subdir: string, scope: SweepScope, sinks: SweepSinks): void {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(filePath, "utf8");
+  } catch {
+    return;
+  }
+  lintDocument(raw, filePath, relPath, subdir, scope, sinks);
+}
+
+/**
+ * The checks of one asset's text, as the sweep runs them on a file: the file's own rules, its type's rules and the
+ * workflow frontend. {@link lintSweepFile} reads the file and calls this; {@link lintDocumentText} calls it for text not
+ * yet saved, so what a save is checked against is what a sweep would then report.
+ */
+function lintDocument(
+  raw: string,
   filePath: string,
   relPath: string,
   subdir: string,
@@ -622,12 +638,6 @@ function lintSweepFile(
 ): void {
   const { stashRoot, extraStashRoots, fix, fixMovedRefs, moves, pruneDanglingEdges, stalePathRoots } = scope;
   const lintSkip = [...(scope.lintSkip ?? []), ...(scope.bundleSkip?.(relPath) ?? [])];
-  let raw: string;
-  try {
-    raw = fs.readFileSync(filePath, "utf8");
-  } catch {
-    return;
-  }
 
   let data: Record<string, unknown>;
   let body: string;
@@ -992,6 +1002,43 @@ async function lintFile(file: string, options: AkmLintOptions, cfg: AkmConfig): 
     sinks,
   );
   return finishLint(sinks, cfg, options, root);
+}
+
+/**
+ * The findings for `content` as the text of the asset at `relPath` of the akm bundle at `root`, by the checks `akm lint`
+ * runs on that file. Nothing is read from or written to the file. `subdir` is the stash folder of the asset's type.
+ */
+export function lintDocumentText(input: {
+  root: string;
+  relPath: string;
+  subdir: string;
+  content: string;
+  config?: AkmConfig;
+}): Pick<AkmLintResult, "flagged" | "warnings"> {
+  const cfg = input.config ?? loadConfig();
+  const { root } = input;
+  const sinks: SweepSinks = { fixed: [], flagged: [], warnings: [] };
+  lintDocument(
+    input.content,
+    path.join(root, input.relPath),
+    input.relPath,
+    input.subdir,
+    {
+      stashRoot: root,
+      extraStashRoots: resolveSourceEntries(root, cfg)
+        .map((source) => source.path)
+        .filter((candidate) => candidate !== root && fs.existsSync(candidate)),
+      fix: false,
+      fixMovedRefs: false,
+      moves: readMovedRefs(),
+      pruneDanglingEdges: false,
+      stalePathRoots: stalePathRoots(cfg, root),
+      bundleSkip: bundleLintSkip(cfg, root),
+    },
+    sinks,
+  );
+  const { flagged, warnings } = finishLint(sinks, cfg, {}, root);
+  return { flagged, warnings };
 }
 
 /** The ref of an asset of the bundle at `root` by its bundle-relative `file`; undefined when `file` is not an asset path. */
