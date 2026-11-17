@@ -424,6 +424,21 @@ test("Source history shows each commit's own author, date and subject and offers
   await expect(page.locator(".commit .badge")).toHaveCount(0);
 });
 
+test("an asset whose improvement read fails says why, not only that the context is unavailable", async (t) => {
+  const server = await launchFixture();
+  t.after(() => server.stop());
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  await page.route("**/api/asset/improve*", (route) =>
+    route.fulfill({ status: 500, json: { ok: false, code: "INTERNAL_ERROR", error: "Synthetic improve read failure." } }),
+  );
+  await open(page, server, `/library/search?ref=${encodeURIComponent(server.refs.document)}`);
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  await page.getByRole("button", { name: "Details", exact: true }).click();
+  await expect(page.getByText("Usage and proposal context unavailable. Synthetic improve read failure.")).toBeVisible();
+});
+
 test("new content goes where akm says: the working stash when no write target is configured", async (t) => {
   const server = await launchFixture({
     configureFixture: async (fixture) => {

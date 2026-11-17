@@ -198,7 +198,9 @@
             if ("reason" in next) improveNote = stateUnavailableText(next);
             else improve = next;
           })
-          .catch(() => {});
+          .catch((cause: Error) => {
+            if (cause.name !== "AbortError" && request === generation) improveNote = cause.message;
+          });
         if (tab === "History") await loadHistory();
       }
     } catch (e) {
