@@ -28,6 +28,20 @@ import { ctx, dbSnapshot, expectAkmError, expectUsage, out, seed, useSandbox } f
 useSandbox();
 
 describe("visualization reads", () => {
+  test("graph: use and feedback are null, not zeros, when the state store cannot be read", async () => {
+    await seed();
+    resetConfigCache();
+    await akmIndex({ stashDir: ctx.storage.stashDir });
+    const read = await out(assets.graph());
+    expect(read.use).toMatchObject({ source: "user" });
+    expect(read.feedback).toMatchObject({ source: "user" });
+    for (const suffix of ["", "-wal", "-shm"]) fs.rmSync(`${getStateDbPath()}${suffix}`, { force: true });
+    const unread = await out(assets.graph());
+    expect(unread.available).toBe(true);
+    expect(unread.use).toBeNull();
+    expect(unread.feedback).toBeNull();
+  });
+
   test("graph: every asset of the enabled bundles, its declared links by index, and no protected asset", async () => {
     await seed();
     const stash = ctx.storage.stashDir;

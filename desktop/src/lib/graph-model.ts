@@ -14,6 +14,8 @@ export interface GraphPayload {
   beliefs: string[];
   /** The window the use figures cover: reads by people and their agents since `since`, not scheduled tasks or Improve. */
   use: { since: string; source: "user" } | null;
+  /** The same window for feedback counts; `null` when akm could not read them. */
+  feedback: { since: string; source: "user" } | null;
   kinds: string[];
   nodes: {
     ref: string[];
