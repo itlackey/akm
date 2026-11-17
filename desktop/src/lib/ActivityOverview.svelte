@@ -387,9 +387,10 @@
   {#if metrics && !data.errors?.state}<div class="metric-summary" aria-label="Selected-window activity">
       <span><strong>{number(metrics.usage.totals.searches)}</strong> searches</span><span
         ><strong>{number(metrics.usage.totals.shows)}</strong> asset opens</span
-      ><span><strong>{number(metrics.proposals.byStatus.pending)}</strong> pending proposals</span><span
-        >Median search time <strong>{duration(metrics.usage.searchMedianMs)}</strong></span
-      >
+      ><span
+        ><strong>{number(Object.values(metrics.proposals.byStatus).reduce((sum, count) => sum + count, 0))}</strong> proposals
+        updated in this window</span
+      ><span>Median search time <strong>{duration(metrics.usage.searchMedianMs)}</strong></span>
     </div>{/if}
   <section class="weekly-context" aria-labelledby="pulse-title">
     <h2 id="pulse-title">Last 7 days</h2>

@@ -195,3 +195,19 @@ test("with no state.db the Runs, Usage and search-gap views say it is absent, no
   await expect(page.getByText("Usage and model measurements unavailable.")).toBeVisible();
   await expect(page.getByLabel("Selected-window activity")).toHaveCount(0);
 });
+
+// The Usage summary counts what happened in the window, so it names the proposals it counts by what akm counts: the
+// ones updated in the window, not the queue (the queue is the badge on Review and Needs attention).
+test("the Usage summary names the proposals updated in the window and does not call them the queue", {
+  timeout: 240000,
+}, async (t) => {
+  const server = await launchFixture({ metrics: true, proposals: true });
+  t.after(() => server.stop());
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
+  await open(page, server, "/activity/overview?view=usage&window=7d");
+  const summary = page.getByLabel("Selected-window activity");
+  await expect(summary).toContainText("3 proposals updated in this window");
+  await expect(summary).not.toContainText("pending proposals");
+});
