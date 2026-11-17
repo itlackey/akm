@@ -158,14 +158,24 @@ test("Projects: list, overview with counts, assets, add, edit, rename, remove; u
   await expect(page).toHaveURL(/\/settings\/connections\?add$/);
   await page.goto(`${server.origin}/settings/config`);
   const sections = page.getByRole("navigation", { name: "Configuration sections" });
-  await expect(sections.getByRole("link")).toHaveCount(5);
+  await expect(sections.getByRole("link")).toHaveCount(6);
   assert.deepEqual(await sections.getByRole("link").allInnerTexts(), [
     "Library defaults",
     "Search",
+    "Usage reports",
     "Command output",
     "Embeddings",
     "Advanced",
   ]);
+
+  // Usage reports: on while the key is unset; switching it off writes `usage.report: false`.
+  await sections.getByRole("link", { name: "Usage reports" }).click();
+  const report = page.getByRole("switch", { name: "Send a daily usage report" });
+  await expect(report).toBeChecked();
+  await report.uncheck();
+  await page.getByRole("button", { name: "Save usage reports" }).click();
+  await expect.poll(async () => (await configOf(server)).usage?.report).toBe(false);
+  await expect(report).not.toBeChecked();
   assert.deepEqual(errors, []);
 });
 

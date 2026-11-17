@@ -256,7 +256,7 @@ A fresh data directory sends nothing until its next UTC day.
 - **What the server keeps:** Aptabase keeps the event and derives country, region
   and city from the request's IP address; it does not store the IP address.
 - **Turning it off:** `akm config set usage.report false` (the config key
-  `usage.report`). `--read-only` and `usage.capture: false` also send nothing from
+  `usage.report`), or the **Usage reports** switch in AKM Desktop's settings. `--read-only` and `usage.capture: false` also send nothing from
   the CLI. Runs in CI (the `CI` variable) or under `bun test` never send.
 
 ## Inspect and clear

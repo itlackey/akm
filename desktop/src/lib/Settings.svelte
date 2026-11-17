@@ -51,7 +51,10 @@
   function resetDrafts(loaded: SettingsConfig) {
     const next = Object.fromEntries(
       groups.flatMap((group) =>
-        group.fields.map((field) => [field.key, fieldText(valueAt(loaded.config, field.key), field.kind)]),
+        group.fields.map((field) => [
+          field.key,
+          fieldText(valueAt(loaded.config, field.key) ?? field.unsetValue, field.kind),
+        ]),
       ),
     );
     const retained = Object.fromEntries(
@@ -167,6 +170,21 @@
             label: "Require a reason with positive feedback too",
             kind: "boolean",
             hint: "Negative feedback always requires a reason.",
+          },
+        ],
+      },
+      {
+        id: "usage-report-settings",
+        title: "Usage reports",
+        description:
+          "Whether AKM sends its daily usage report: command counts and library size, never content or names.",
+        fields: [
+          {
+            key: "usage.report",
+            label: "Send a daily usage report",
+            kind: "boolean",
+            unsetValue: "true",
+            hint: "At most once a day each from the CLI and Desktop. Applies to both.",
           },
         ],
       },
