@@ -95,7 +95,11 @@ switches back to the mind map): every embedded asset is a point, coloured by its
 it, with groups alike in meaning near each other and each named by the tags its assets carry far more than the rest of
 the library. The column lists the groups when nothing is chosen. Choosing a group or a point flies to it, draws its
 links and near-duplicates, and opens the group's answers in the column; a chosen point also lists the assets it is
-joined to. Depth inside a group follows use: assets read lately sit at the front, those read earlier just ahead of the
+joined to. A point is chosen from anywhere over its drawn disc and a few pixels beyond it (the one in front when
+several overlap), and the point under the pointer is ringed and named. The chosen point is ringed with a halo and named
+by a label that stays over every other mark, and the rest fades. With the map focused (Tab), the left and right arrow
+keys step to the previous and next asset of the chosen point's group in name order, and the page announces the new
+choice; Escape clears it. Depth inside a group follows use: assets read lately sit at the front, those read earlier just ahead of the
 middle, and never-read, superseded, contradicted or deprecated ones at the back. The 3D view needs WebGL (three.js,
 `src/lib/SimilarityMap.svelte`).
 

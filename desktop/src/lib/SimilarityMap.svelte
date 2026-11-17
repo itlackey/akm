@@ -9,7 +9,8 @@
   // each group named over its middle by a label that stays the same size on screen. Drag turns it, right-drag or
   // Shift-drag moves it, the wheel zooms toward the pointer (the page never scrolls over the map), and the point nearest
   // the pointer, within a fixed reach on screen, names its asset on hover. Choosing a point or a group's name picks it:
-  // the pick is ringed, what it is joined to is ringed and lined, and the rest fades.
+  // the pick is ringed and haloed, named by a label that stays over everything, what it is joined to is ringed and lined,
+  // and the rest fades. With the map focused, the left and right arrow keys step to the previous and next asset.
   import type { Group, Overview } from "./library-overview";
 
   let {
@@ -24,6 +25,7 @@
     related,
     onPick,
     onGroup,
+    onStep,
     label,
   }: {
     o: Overview;
@@ -41,16 +43,23 @@
     related: string[];
     onPick: (i: number) => void;
     onGroup: (key: string) => void;
+    /** The arrow keys on the focused map: -1 for the previous asset, 1 for the next. */
+    onStep: (direction: -1 | 1) => void;
     label: string;
   } = $props();
 
   /** Where the camera starts, and returns to on reset. */
   const HOME = { position: [0, 60, 330], target: [0, 0, 0] } as const;
-  /** How far from a point, in screen pixels, the pointer still chooses it, at any zoom. */
-  const REACH = 14;
+  /** A point is chosen from this far outside its drawn disc, at least this far from its middle, in screen pixels. */
+  const SLACK = 6;
+  const LEAST_REACH = 10;
+  /** The drawn size of a point, in world units: the lit ones are larger. */
+  const SIZE = { faded: 8, lit: 12 };
 
   let host = $state<HTMLDivElement>();
   let tip = $state<{ x: number; y: number; text: string } | null>(null);
+  /** The label over the pick, which stays whatever is in front of it. */
+  let pickEl = $state<HTMLDivElement>();
   let failed = $state("");
   /** Set once three.js has loaded and the scene is up; the effects below draw into it. */
   let ready = $state(false);
@@ -162,10 +171,17 @@
           ctx.strokeStyle = "#fff";
           ctx.stroke();
         });
+        const glow = sprite((ctx) => {
+          const g = ctx.createRadialGradient(32, 32, 4, 32, 32, 31);
+          g.addColorStop(0, "#fff");
+          g.addColorStop(1, "rgba(255,255,255,0)");
+          ctx.fillStyle = g;
+          ctx.fillRect(0, 0, 64, 64);
+        });
         const points = new THREE.Points(
           new THREE.BufferGeometry(),
           new THREE.PointsMaterial({
-            size: 8,
+            size: SIZE.faded,
             vertexColors: true,
             map: dot,
             alphaTest: 0.5,
@@ -177,7 +193,7 @@
         const bright = new THREE.Points(
           new THREE.BufferGeometry(),
           new THREE.PointsMaterial({
-            size: 12,
+            size: SIZE.lit,
             vertexColors: true,
             map: dot,
             alphaTest: 0.5,
@@ -203,9 +219,30 @@
           scene.add(marks);
           return marks;
         };
-        const focus = mark(26, "--map-highlight");
+        // A soft disc of a fixed size on screen, behind the rings and over the points.
+        const halo = (size: number, token: string, opacity: number) => {
+          const marks = new THREE.Points(
+            new THREE.BufferGeometry(),
+            new THREE.PointsMaterial({
+              size,
+              color: new THREE.Color(...rgb(token)),
+              map: glow,
+              transparent: true,
+              opacity,
+              sizeAttenuation: false,
+              depthTest: false,
+              depthWrite: false,
+            }),
+          );
+          marks.renderOrder = 1;
+          scene.add(marks);
+          return marks;
+        };
+        const focusHalo = halo(60, "--map-highlight", 0.55);
+        const underHalo = halo(40, "--text", 0.3);
+        const focus = mark(28, "--map-highlight");
         const near = mark(18, "--map-highlight");
-        const under = mark(20, "--text");
+        const under = mark(24, "--text");
         const joins = new LineSegments2(
           new LineSegmentsGeometry(),
           new LineMaterial({
@@ -228,29 +265,40 @@
           focus,
           near,
           under,
+          focusHalo,
+          underHalo,
           order: [] as number[],
           flight: null,
         };
 
-        // The point nearest the pointer on screen, within REACH pixels, so a click lands whatever the zoom; a faded
-        // point must be that much nearer than a lit one.
+        // The point the pointer is on: the one whose drawn disc (plus a few pixels of slack, and at least LEAST_REACH
+        // from its middle) holds the pointer, the nearest to the camera first, so a click lands on what is drawn there
+        // at any zoom; a faded point must be that much nearer than a lit one.
         const probe = new THREE.Vector3();
-        const hit = (event: PointerEvent) => {
+        const hit = (clientX: number, clientY: number) => {
           const position = points.geometry.getAttribute("position");
           if (!position) return null;
           const box = renderer.domElement.getBoundingClientRect();
-          const x = event.clientX - box.left;
-          const y = event.clientY - box.top;
+          const x = clientX - box.left;
+          const y = clientY - box.top;
+          camera.updateMatrixWorld();
+          const view = camera.matrixWorldInverse;
+          const p = camera.projectionMatrix.elements;
           let best = -1;
-          let nearest = REACH;
+          let nearest = Infinity;
           for (let k = 0; k < position.count; k++) {
-            probe.fromBufferAttribute(position, k).project(camera);
-            if (probe.z < -1 || probe.z > 1) continue;
-            const d =
-              Math.hypot(((probe.x + 1) / 2) * box.width - x, ((1 - probe.y) / 2) * box.height - y) +
-              (lit && !lit.has(world.order[k]) ? REACH / 2 : 0);
-            if (d < nearest) {
-              nearest = d;
+            probe.fromBufferAttribute(position, k).applyMatrix4(view);
+            const depth = -probe.z;
+            if (depth < camera.near || depth > camera.far) continue;
+            const sx = ((probe.x * p[0]!) / depth + 1) * (box.width / 2);
+            const sy = (1 - (probe.y * p[5]!) / depth) * (box.height / 2);
+            const faded = lit && !lit.has(world.order[k]);
+            const radius = ((faded ? SIZE.faded : SIZE.lit) * box.height) / 2 / depth / 2;
+            const d = Math.hypot(sx - x, sy - y);
+            if (d > Math.max(LEAST_REACH, radius + SLACK)) continue;
+            const score = d - radius + (faded ? LEAST_REACH / 2 : 0);
+            if (score < nearest) {
+              nearest = score;
               best = k;
             }
           }
@@ -263,22 +311,36 @@
         );
         renderer.domElement.addEventListener("pointerup", (e: PointerEvent) => {
           if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4) return; // a drag, not a click
-          const h = hit(e);
+          const h = hit(e.clientX, e.clientY);
           if (h) onPick(h.i);
         });
-        renderer.domElement.addEventListener("pointermove", (e: PointerEvent) => {
-          if (e.buttons) return;
-          const h = hit(e);
+        // Hover is worked out once a frame at most: a library of thousands of points is searched on each look.
+        let moved: PointerEvent | null = null;
+        let hover = 0;
+        const look = () => {
+          hover = 0;
+          const e = moved;
+          if (!world || !e || e.buttons) return;
+          const h = hit(e.clientX, e.clientY);
           const box = host!.getBoundingClientRect();
           tip = h ? { x: e.clientX - box.left, y: e.clientY - box.top + 12, text: o.ref[h.i]! } : null;
           renderer.domElement.style.cursor = h ? "pointer" : "grab";
-          under.geometry.dispose();
-          under.geometry = placesOf(h ? [h.i] : []);
+          for (const mark of [under, world.underHalo]) {
+            mark.geometry.dispose();
+            mark.geometry = placesOf(h ? [h.i] : []);
+          }
+        };
+        renderer.domElement.addEventListener("pointermove", (e: PointerEvent) => {
+          moved = e;
+          hover ||= requestAnimationFrame(look);
         });
         renderer.domElement.addEventListener("pointerleave", () => {
+          moved = null;
           tip = null;
-          under.geometry.dispose();
-          under.geometry = placesOf([]);
+          for (const mark of [under, world.underHalo]) {
+            mark.geometry.dispose();
+            mark.geometry = placesOf([]);
+          }
         });
         resize = new ResizeObserver(() => {
           if (!host) return;
@@ -298,6 +360,29 @@
           const w = host!.clientWidth;
           const h = host!.clientHeight;
           const placed: Array<[number, number, number, number]> = [];
+          // The pick's label goes first, so no group name lies over it; it is held inside the view, and hidden only
+          // while the pick is behind the camera.
+          if (pickEl) {
+            if (picked < 0) pickEl.style.visibility = "hidden";
+            else {
+              at.set(o.place[picked * 3]!, o.place[picked * 3 + 1]!, o.place[picked * 3 + 2]!).project(camera);
+              const x = Math.min(
+                w - pickEl.offsetWidth / 2 - 4,
+                Math.max(pickEl.offsetWidth / 2 + 4, ((at.x + 1) / 2) * w),
+              );
+              const above = ((1 - at.y) / 2) * h - 30;
+              const y = Math.min(h - pickEl.offsetHeight - 4, Math.max(4, above));
+              const box: [number, number, number, number] = [
+                x - pickEl.offsetWidth / 2,
+                y,
+                x + pickEl.offsetWidth / 2,
+                y + pickEl.offsetHeight,
+              ];
+              pickEl.style.visibility = at.z >= 1 ? "hidden" : "visible";
+              pickEl.style.transform = `translate(${box[0]}px, ${box[1]}px)`;
+              if (at.z < 1) placed.push(box);
+            }
+          }
           const first = (g: Group) => (g.key === selected ? 0 : related.includes(g.key) ? 1 : 2);
           for (const g of [...groups].sort((a, b) => first(a) - first(b))) {
             const el = nameEls[g.key];
@@ -313,7 +398,8 @@
             ];
             const hidden =
               at.z >= 1 ||
-              (first(g) > 0 && placed.some((p) => box[0] < p[2] && box[2] > p[0] && box[1] < p[3] && box[3] > p[1]));
+              ((first(g) > 0 || (pickEl && picked >= 0)) &&
+                placed.some((p) => box[0] < p[2] && box[2] > p[0] && box[1] < p[3] && box[3] > p[1]));
             el.style.visibility = hidden ? "hidden" : "visible";
             el.style.opacity = dimmed.has(g.key) ? "0.3" : selected && first(g) === 2 ? "0.45" : "1";
             el.style.transform = `translate(${box[0]}px, ${box[1]}px)`;
@@ -395,8 +481,10 @@
   $effect(() => {
     if (!ready || !world) return;
     const joined = picked >= 0 && lit ? [...lit].filter((i) => i !== picked && o.group[i]! >= 0) : [];
-    world.focus.geometry.dispose();
-    world.focus.geometry = placesOf(picked >= 0 ? [picked] : []);
+    for (const mark of [world.focus, world.focusHalo]) {
+      mark.geometry.dispose();
+      mark.geometry = placesOf(picked >= 0 ? [picked] : []);
+    }
     world.near.geometry.dispose();
     world.near.geometry = placesOf(joined);
   });
@@ -431,7 +519,19 @@
   });
 </script>
 
-<div class="stage-3d" bind:this={host} role="group" aria-label={label}>
+<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+<div
+  class="stage-3d"
+  bind:this={host}
+  role="group"
+  aria-label={`${label} Arrow keys step to the previous or next asset.`}
+  tabindex="0"
+  onkeydown={(event) => {
+    if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+    event.preventDefault();
+    onStep(event.key === "ArrowRight" ? 1 : -1);
+  }}
+>
   {#if failed}<p class="notice notice-warn">{failed}</p>{/if}
   {#each groups as g (g.key)}<button
       class="group-name"
@@ -440,6 +540,7 @@
       style={`font-size:${13 + 4 * Math.sqrt(g.members.length / largest)}px`}
       onclick={() => onGroup(g.key)}>{g.label}<span>{g.members.length.toLocaleString()}</span></button
     >{/each}
+  {#if picked >= 0}<div class="pick-label" bind:this={pickEl}>{o.ref[picked]}</div>{/if}
   {#if tip}<div
       class="tip"
       style={`${tip.y > host!.clientHeight - 40 ? `bottom:${host!.clientHeight - tip.y + 24}px` : `top:${tip.y}px`};${tip.x < host!.clientWidth / 2 ? `left:${tip.x + 12}px` : `right:${host!.clientWidth - tip.x + 12}px`}`}
@@ -458,6 +559,29 @@
     overflow: hidden;
     background: var(--bg);
     cursor: grab;
+  }
+  .stage-3d:focus-visible {
+    outline: 2px solid var(--map-highlight);
+    outline-offset: -2px;
+  }
+  .pick-label {
+    position: absolute;
+    inset-block-start: 0;
+    inset-inline-start: 0;
+    z-index: 2;
+    max-inline-size: calc(100% - 16px);
+    padding: 3px 10px;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--text);
+    background: var(--surface);
+    border: 2px solid var(--map-highlight);
+    border-radius: 6px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    pointer-events: none;
+    will-change: transform;
   }
   .group-name {
     position: absolute;

@@ -191,6 +191,15 @@
     picked = i;
     near = null;
   }
+  /** The arrow keys on the 3D map: the previous or next asset of the picked one's group, in name order; with nothing
+   * picked, the first of the first group. */
+  function step(direction: -1 | 1) {
+    const group = groups.find((g) => g.key === (picked >= 0 ? `g:${o!.group[picked]}` : ""));
+    const order = [...(group ?? groups[0])!.members].sort((a, b) => (o!.ref[a]! < o!.ref[b]! ? -1 : 1));
+    const at = order.indexOf(picked);
+    const next = at < 0 ? order[0] : order[(at + direction + order.length) % order.length];
+    if (next !== undefined && next !== picked) pick(next);
+  }
   /** Everything the map can be changed by, and the camera, back to how it opens. */
   function reset() {
     view = "contents";
@@ -480,6 +489,11 @@
     <div class="map-body">
       <div class="map-main">
         <div class="map-legend">
+          {#if depth === "3d"}<p class="sr-only" role="status">
+              {picked >= 0
+                ? `Selected ${o.ref[picked]}, joined to ${plural(new Set(pickedJoins.map((j) => j.i)).size, "asset")}.`
+                : ""}
+            </p>{/if}
           {#if depth === "3d" && view === "contents"}<p class="muted small">
               Each point is an asset, coloured by its group by meaning. Inside a group, assets read lately sit at the
               front, and never-read, superseded, contradicted or deprecated ones at the back.
@@ -529,6 +543,7 @@
                 related={joined.slice(0, 12).map((r) => r.key)}
                 onPick={pick}
                 onGroup={choose}
+                onStep={step}
                 label={`${question} The ${plural(bundleScope.length - offMap, "asset")} of ${scopeName} that have a group by meaning, as points, alike assets close together, in ${plural(groups.length, "group")} named by their tags.${offMap ? ` ${plural(offMap, "asset")} not shown.` : ""}`}
               />
               <p class="muted small">
