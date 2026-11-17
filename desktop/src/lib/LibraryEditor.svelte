@@ -547,7 +547,12 @@
                 >{/each}
             </div>{/if}
           <label
-            ><span class="sr-only">{markdown ? "Markdown source, including optional frontmatter" : "Text source"}</span
+            ><span class="sr-only"
+              >{markdown
+                ? formMode
+                  ? "Markdown body"
+                  : "Markdown source, including optional frontmatter"
+                : "Text source"}</span
             ><textarea
               bind:this={textarea}
               class="source-editor"

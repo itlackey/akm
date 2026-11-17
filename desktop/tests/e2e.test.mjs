@@ -26,7 +26,7 @@ test("built desktop UI: each section's happy path and one refusal", { timeout: 2
     page
       .getByRole("navigation", { name: "Primary navigation" })
       .getByRole("link", { name: new RegExp(`^${name}(?:\\s|$)`) });
-  const editor = () => page.getByRole("textbox", { name: "Markdown source, including optional frontmatter" });
+  const editor = () => page.getByRole("textbox", { name: /^Markdown (body|source, including optional frontmatter)$/ });
   const searchBox = page.getByRole("searchbox", { name: "Search library" });
   const search = async (query) => {
     await searchBox.fill(query);

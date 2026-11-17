@@ -473,7 +473,7 @@ test("visualizations survive late responses, a changed library and a narrow wind
   await t.test("Files editor: it uses the pane's width and scrolls in one place, its own text", async () => {
     const { page } = await fresh();
     await open(page, server, `/library/edit?${new URLSearchParams({ ref: server.refs.document })}`);
-    const editor = page.getByRole("textbox", { name: "Markdown source, including optional frontmatter" });
+    const editor = page.getByRole("textbox", { name: /^Markdown (body|source, including optional frontmatter)$/ });
     await editor.fill(Array.from({ length: 150 }, (_, n) => `Line ${n} of a long note`).join("\n"));
     const scrollers = await innerScrollers(page, ".files-content");
     assert.deepEqual(

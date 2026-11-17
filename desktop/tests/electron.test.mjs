@@ -91,7 +91,7 @@ test("native Electron window preserves size, sandbox, isolated data, and server 
   await mkdir(screenshotRoot, { recursive: true });
   await page.screenshot({ path: path.join(screenshotRoot, "electron-library.png") });
   await page.getByRole("link", { name: "Edit page", exact: true }).click();
-  const editor = page.getByRole("textbox", { name: "Markdown source, including optional frontmatter", exact: true });
+  const editor = page.getByRole("textbox", { name: /^Markdown (body|source, including optional frontmatter)$/ });
   await editor.fill(`${await editor.inputValue()}\nAn unsaved native-close check.\n`);
   await app.evaluate(({ dialog, app }) => {
     globalThis.originalDialog = dialog.showMessageBoxSync;

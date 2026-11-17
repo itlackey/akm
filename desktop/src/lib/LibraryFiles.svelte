@@ -94,7 +94,7 @@
     } | null>(null),
     request = $state<FileRequest | null>(null),
     requestOrigin: HTMLElement | undefined,
-    renaming = $state<{ bundle: string; path: string } | null>(null),
+    renaming = $state<{ bundle: string; path: string; where: "tree" | "list" } | null>(null),
     dragging = $state<{ bundle: string; path: string; name: string; actions: FileActions } | null>(null),
     dropKey = $state("");
   let committing = $state(false),
@@ -217,6 +217,9 @@
         ? "Markdown"
         : "File";
   }
+  function focusOnShow(input: HTMLInputElement) {
+    input.focus();
+  }
   function focusName(input: HTMLInputElement) {
     input.focus();
     input.setSelectionRange(0, input.value.includes(".") ? input.value.lastIndexOf(".") : input.value.length);
@@ -257,7 +260,12 @@
     requestOrigin = target.origin;
     menu = null;
     const allowed = target.actions;
-    if (action === "rename") renaming = { bundle: target.bundle, path: target.path };
+    if (action === "rename")
+      renaming = {
+        bundle: target.bundle,
+        path: target.path,
+        where: target.origin.closest("[role=tree]") ? "tree" : "list",
+      };
     else if (action === "move" || action === "copy" || action === "delete") {
       if (!allowed) return;
       request = {
@@ -486,11 +494,12 @@
         label="Bundle files"
         {selectedKey}
         bind:focused
-        {renaming}
+        renaming={renaming?.where === "tree" ? renaming : null}
         {dropKey}
         onOpen={(node) => open(node.bundle, node)}
         onMenu={(node, at, origin) => openMenu(node, at, origin)}
-        onBeginRename={(node) => node.actions?.move.allowed && (renaming = { bundle: node.bundle, path: node.path })}
+        onBeginRename={(node) =>
+          node.actions?.move.allowed && (renaming = { bundle: node.bundle, path: node.path, where: "tree" })}
         onRename={(node, name) => renameTo(node, name)}
         onCancelRename={() => (renaming = null)}
         canDrag={movable}
@@ -500,7 +509,6 @@
         onDrop={(node, event) => dropOnto(node, event, false)}
       />
       {#if !names.length}<p class="muted small">No enabled bundles.</p>{/if}
-      <p class="sr-only" role="status">{notice}</p>
     </div>
     <label class="hidden-files"
       ><input type="checkbox" bind:checked={showHidden} onchange={invalidate} /> Show hidden entries</label
@@ -538,6 +546,7 @@
       </nav>
       {@render actions?.()}
     </div>
+    <p class="sr-only" role="status">{notice}</p>
     {#if git}<section class="bundle-git" aria-label={`Git for ${bundleName}`}>
         {#if git.error}<span role="alert">Git could not be read: {git.error}</span>
         {:else}<span
@@ -628,6 +637,7 @@
             >
               <label
                 >{createLabel}<input
+                  use:focusOnShow
                   bind:value={createName}
                   aria-busy={createBusy || undefined}
                   onkeydown={(event) => event.key === "Escape" && (creating = null)}
@@ -669,7 +679,7 @@
                           disabled={selectedCompare.length === 2 && !selectedCompare.includes(entry.assets[0].ref)}
                           onchange={() => onSelect?.(entry.assets[0].ref)}
                         />{/if}
-                      {#if renaming?.bundle === bundleName && renaming.path === entry.path}<input
+                      {#if renaming?.where === "list" && renaming.bundle === bundleName && renaming.path === entry.path}<input
                           class="row-rename"
                           aria-label={`New name for ${entry.name}`}
                           value={entry.name}
