@@ -10,6 +10,7 @@ import { akmListSources } from "../commands/sources/installed-stashes";
 import { loadConfig, mutateConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
 import { getDbPath } from "../core/paths";
+import { inspectWriteTarget } from "../core/write-source";
 import { deriveSemanticProviderFingerprint } from "../indexer/materialize-embeddings";
 import { effectiveEmbedding } from "../llm/embedders/connection";
 import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
@@ -30,6 +31,8 @@ export async function list() {
       source: source.source,
       path: source.path ?? null,
       writable: source.writable,
+      // Whether akm would accept a write to this bundle now, and the sentence why not: the write path's own checks.
+      writeBlocker: inspectWriteTarget(config, source.name).blocker,
       enabled: config.bundles?.[source.name]?.enabled !== false,
       writableSetting: config.bundles?.[source.name]?.writable,
       components: source.components.map((component) => ({

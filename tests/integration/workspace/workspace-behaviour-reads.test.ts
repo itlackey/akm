@@ -21,6 +21,7 @@ import { akmSearch } from "../../../src/commands/read/search";
 import { loadConfig, resetConfigCache } from "../../../src/core/config/config";
 import { getDbPath } from "../../../src/core/paths";
 import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
+import { getCachePaths, parseGitRepoUrl } from "../../../src/sources/providers/git";
 import { recordImproveRun } from "../../../src/storage/repositories/improve-runs-repository";
 import { closeDatabase, openExistingDatabase } from "../../../src/storage/repositories/index-connection";
 import { upsertEmbedding } from "../../../src/storage/repositories/index-vec-repository";
@@ -501,6 +502,39 @@ describe("reads", () => {
     expect(listed.index.entryCount).toBeGreaterThanOrEqual(2);
     expect(listed.index).toMatchObject({ hasEmbeddings: false, embeddingCount: 0 });
     expect(listed.index.lastBuiltAt).toBeTruthy();
+  });
+
+  test("bundles reports, per bundle, the sentence akm's write path would refuse with", async () => {
+    await seed();
+    const url = "https://example.test/team/notes";
+    const checkout = getCachePaths(parseGitRepoUrl(url).canonicalUrl).repoDir;
+    fs.mkdirSync(checkout, { recursive: true });
+    git(checkout, ["init", "-q", "-b", "main"]);
+    git(checkout, ["config", "user.email", "t@example.test"]);
+    git(checkout, ["config", "user.name", "t"]);
+    fs.writeFileSync(path.join(checkout, "README.md"), "seed\n");
+    git(checkout, ["add", "."]);
+    git(checkout, ["commit", "-q", "-m", "seed"]);
+    git(checkout, ["checkout", "-q", "--detach"]);
+    const current = loadConfig();
+    writeSandboxConfig({
+      bundles: {
+        ...current.bundles,
+        team: { git: url, writable: true },
+        shared: { git: "https://example.test/team/shared", writable: false },
+        off: { path: fs.mkdtempSync(path.join(ctx.storage.root, "off-")), enabled: false },
+      },
+    });
+    resetConfigCache();
+
+    const listed = await out(bundles.list());
+    const blocker = (name: string) => listed.bundles.find((b: Json) => b.name === name)?.writeBlocker;
+    expect(blocker("stash")).toBeNull();
+    // A writable Git bundle that is detached: the card carries what the save would say.
+    expect(blocker("team")).toBe('Writable Git target "team" is detached from a branch.');
+    expect(blocker("shared")).toBe("source shared is not writable");
+    expect(blocker("off")).toBe('Bundle "off" is disabled.');
+    expect(git(checkout, ["status", "--porcelain"])).toBe("");
   });
 
   test("bundles counts only the current model's vectors against the embeddable entries", async () => {

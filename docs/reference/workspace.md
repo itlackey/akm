@@ -249,6 +249,7 @@ fetched, so `ahead`/`behind` are measured against the remote-tracking branch as 
         "source": { "kind": "path", "locator": "/home/me/akm" },
         "path": "/home/me/akm",
         "writable": true,
+        "writeBlocker": null,
         "version": null,
         "exists": true,
         "itemCount": 14,
@@ -278,6 +279,10 @@ fetched, so `ahead`/`behind` are measured against the remote-tracking branch as 
 
 - `kind` is `filesystem`, `git`, `npm` or `website`. `source` describes where the bundle comes from; `path` is its local
   root (`null` if it has none).
+- `writeBlocker` is `null` when akm would accept a write to the bundle now, and otherwise the sentence the write would
+  be refused with (disabled, not writable, an adapter that takes no AKM asset writes, a Git bundle that is not a
+  checkout or is detached). It runs the write path's own checks and changes nothing, so a card never disagrees with a
+  save.
 - The default bundle's card comes first; the rest keep their configured order.
 - `workingStash` is `{ path, git }` for the directory akm reads besides the configured bundles (`AKM_BUNDLE_DIR`, or the
   platform stash when no `defaultBundle` is set). `git` has the same shape as a card's `git`. It is `null` when a

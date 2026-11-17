@@ -72,9 +72,7 @@
     cancelHref || (returnTo.startsWith("/library/files") ? returnTo : creating ? returnTo : documentHref),
   );
   const readerHref = $derived(readingHref || query.get("readingFrom") || "");
-  const writable = $derived(
-    bundles.filter((b) => b.enabled && b.writable && b.components.some((c) => c.adapter === "akm")),
-  );
+  const writable = $derived(bundles.filter((b) => b.writeBlocker === null));
   const bundlePath = $derived(bundles.find((b) => b.name === bundle)?.path);
   const root = $derived(bundlePath ? bundlePath.replace(/[\\/]+$/, "") + "/knowledge" : "");
   const key = () => draftKey({ file, ref });
@@ -318,7 +316,7 @@
       </p>{/if}
   </div>{/if}
 {#if creating && !writable.length}<p class="state">
-    No enabled writable AKM bundle is available. Check bundle settings.
+    No bundle accepts writes.{#each bundles as b}<br />{b.name}: {b.writeBlocker}{/each}
   </p>
 {:else if loaded}<form
     class="editor-form"
@@ -331,7 +329,9 @@
       {#if creating}<div class="settings-grid">
           <label
             >Bundle<select bind:value={bundle} onchange={persist}
-              >{#each writable as b}<option value={b.name}>{b.name}</option>{/each}</select
+              >{#each bundles as b}<option value={b.name} disabled={b.writeBlocker !== null}
+                  >{b.name}{b.writeBlocker === null ? "" : ": " + b.writeBlocker}</option
+                >{/each}</select
             ></label
           ><label>File name<input bind:value={name} required oninput={persist} placeholder="recovery-guide" /></label
           ><label
