@@ -338,3 +338,52 @@ test("where akm refuses a new file the button is disabled with its sentence; a f
   await expect(page.getByRole("row", { name: /^restore/ })).toBeVisible();
   assert.equal((await fs.stat(path.join(app.root, "personal/skills/restore"))).isDirectory(), true);
 });
+
+test("a file that is no asset and an empty folder are deleted after one confirmation; an asset is retired; a folder with files is not deleted", async (t) => {
+  const { app, page } = await session(t, {
+    configureFixture: async (fixture) => {
+      await fs.mkdir(path.join(fixture.root, "personal/notes"));
+      await fs.writeFile(path.join(fixture.root, "personal/notes/todo.txt"), "one\n");
+      await fs.mkdir(path.join(fixture.root, "personal/empty"));
+    },
+  });
+  const row = (name) => page.getByRole("row", { name: new RegExp(`^${name}`) });
+  const choose = async (name, item) => {
+    await page.getByRole("button", { name: `Actions for ${name}`, exact: true }).click();
+    return page.getByRole("menuitem", { name: new RegExp(`^${item}`) });
+  };
+  await go(page, "/library/files?bundle=personal&path=");
+  // A folder with files says why it is not deleted: akm's sentence, on a control that stays focusable.
+  const full = await choose("notes", "Delete");
+  await expect(full).toHaveAttribute("aria-disabled", "true");
+  await expect(full).toContainText(await reasonOf(app, "personal", "", "notes", "delete"));
+  await full.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  // An empty folder: one confirmation, then it is gone.
+  await (await choose("empty", "Delete")).click();
+  await expect(page.getByRole("dialog", { name: "Delete empty?" })).toBeVisible();
+  await page.getByRole("dialog").getByRole("button", { name: "Delete", exact: true }).click();
+  await expect(row("empty")).toHaveCount(0);
+  assert.equal(await exists(path.join(app.root, "personal/empty")), false);
+  // A file that is no asset.
+  await go(page, "/library/files?bundle=personal&path=notes");
+  await (await choose("todo.txt", "Delete")).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Cancel" }).click();
+  assert.equal(await exists(path.join(app.root, "personal/notes/todo.txt")), true, "cancelling deletes nothing");
+  await expect(page.getByRole("button", { name: "Actions for todo.txt" })).toBeFocused();
+  await (await choose("todo.txt", "Delete")).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Delete", exact: true }).click();
+  await expect(row("todo.txt")).toHaveCount(0);
+  assert.equal(await exists(path.join(app.root, "personal/notes/todo.txt")), false);
+  // An asset is retired, not deleted, and the archive is recoverable.
+  await go(page, "/library/files?bundle=personal&path=knowledge");
+  const asset = await choose("review-example.md", "Delete");
+  await expect(asset).toHaveAttribute("aria-disabled", "true");
+  await expect(asset).toContainText(await reasonOf(app, "personal", "knowledge", "review-example.md", "delete"));
+  await page.getByRole("menuitem", { name: /^Retire/ }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Retired review-example.md." })).toBeAttached();
+  await expect(row("review-example")).toHaveCount(0);
+  assert.equal(await exists(path.join(app.root, "personal/knowledge/review-example.md")), false);
+});
