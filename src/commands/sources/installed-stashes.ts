@@ -478,14 +478,33 @@ function gitOrThrow(repoDir: string, args: string[]): string {
   return result.stdout.trim();
 }
 
+/** The current branch's upstream in the origin that the provider verified, when configured. */
+function originUpstream(repo: string): { ref: string; revision: string } | undefined {
+  const branch = gitOrThrow(repo, ["rev-parse", "--symbolic-full-name", "HEAD"]);
+  const [ref, remote] = gitOrThrow(repo, ["for-each-ref", "--format=%(upstream) %(upstream:remotename)", branch]).split(
+    " ",
+  );
+  return ref && remote === "origin" ? { ref, revision: gitOrThrow(repo, ["rev-parse", "--verify", ref]) } : undefined;
+}
+
 /**
  * Publish a staged writable checkout: fast-forward the live checkout to
  * exactly the staged commit. Git refuses a non-fast-forward or a merge that
- * would overwrite local work, and changes nothing in that case.
+ * would overwrite local work, preserving those files in that case.
  */
 function fastForwardCheckout(liveRepo: string, stagedRepo: string): void {
   const head = gitOrThrow(stagedRepo, ["rev-parse", "HEAD"]);
-  gitOrThrow(liveRepo, ["fetch", "--no-tags", stagedRepo, head]);
+  const upstream = originUpstream(stagedRepo);
+  const liveUpstream = originUpstream(liveRepo);
+  if (upstream?.ref !== liveUpstream?.ref) {
+    throw new UsageError(`Writable Git install at ${liveRepo} changed its upstream while the update was prepared.`);
+  }
+  gitOrThrow(liveRepo, ["fetch", "--no-tags", stagedRepo, head, ...(upstream ? [upstream.ref] : [])]);
+  if (upstream && liveUpstream) {
+    // Use the tip Git fetched, not HEAD: local commits or a moving remote can
+    // make them differ. The old value preserves a concurrent live fetch.
+    gitOrThrow(liveRepo, ["update-ref", upstream.ref, upstream.revision, liveUpstream.revision]);
+  }
   const merge = runGit(["-C", liveRepo, "merge", "--ff-only", "--no-overwrite-ignore", head], { timeout: 120_000 });
   if (merge.status === null) {
     // Spawn failure, timeout or signal: git may have been interrupted mid-checkout.
@@ -495,7 +514,7 @@ function fastForwardCheckout(liveRepo: string, stagedRepo: string): void {
   }
   if (merge.status !== 0) {
     throw new UsageError(
-      `Writable Git install at ${liveRepo} cannot fast-forward without overwriting local work; nothing was changed. ${merge.stderr.trim()}`,
+      `Writable Git install at ${liveRepo} cannot fast-forward without overwriting local work; local work was preserved. ${merge.stderr.trim()}`,
       "INVALID_FLAG_VALUE",
       UPDATE_REFUSAL_HINT,
     );
@@ -627,7 +646,9 @@ async function stageManagedUpdate(
       return {
         synced: { ...fetched, contentDir: managed.localRoot, cacheDir: liveRepo, extractedDir: liveRepo },
         staged: {
-          unchanged: gitOrThrow(liveRepo, ["rev-parse", "HEAD"]) === gitOrThrow(stagedRepo, ["rev-parse", "HEAD"]),
+          unchanged:
+            gitOrThrow(liveRepo, ["rev-parse", "HEAD"]) === gitOrThrow(stagedRepo, ["rev-parse", "HEAD"]) &&
+            originUpstream(liveRepo)?.revision === originUpstream(stagedRepo)?.revision,
           publish: () => fastForwardCheckout(liveRepo, stagedRepo),
           cleanup: () => cleanupDirectoryBestEffort(stagingParent, "bundle update"),
         },

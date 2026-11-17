@@ -1705,7 +1705,8 @@ original error; `akm index` or the next scheduled build indexes it.
 An update reindexes incrementally: only directories whose files changed are
 re-read, and `akm index --full` is the explicit full pass. A writable Git
 install whose live checkout is already at the fetched commit, and whose lock
-already records that revision, publishes nothing and builds no index (the
+already records that revision and the fetched upstream tip is unchanged,
+publishes nothing and builds no index (the
 result reports `changed.any: false`); `--force` skips that shortcut. Local edits
 in a writable checkout are not part of an update: they reach the index with the
 next `akm index` or scheduled build.
@@ -1715,8 +1716,11 @@ generation, and searchable index for that bundle.
 
 A writable Git update is fetched into a staged copy of the checkout beside the
 live one, so a failed fetch leaves the live checkout, the lock and the index
-untouched. The live checkout is then fast-forwarded to exactly the staged
-commit (`git merge --ff-only`), which refuses, and changes nothing, when local
+untouched. Publication refreshes the configured origin tracking ref to the tip
+Git fetched in staging, independently of any local-ahead HEAD. A concurrent
+change to that live tracking ref is reported rather than overwritten.
+The live checkout is then fast-forwarded to exactly the staged
+commit (`git merge --ff-only`), which refuses, preserving local work, when local
 commits have diverged or the merge would overwrite local work. AKM holds its
 source/index writer lease through that fast-forward and the index pass; all AKM
 writers cooperate with this lease, but a non-cooperating local process is not
