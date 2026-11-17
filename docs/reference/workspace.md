@@ -25,9 +25,13 @@ that.
   through the exported `scrubUrlCredentials` before showing it, which masks credentials inside any URL (userinfo,
   `token=`, `api_key=`, `sig=`, ...); Desktop does this on every response.
 - **Timestamps** are ISO 8601 UTC unless noted. Counts that cannot be computed are `null`, never `NaN`.
-- **Reads.** A read operation opens `state.db` and `index.db` read-only and never creates or migrates them: a missing or
-  behind-on-migrations `state.db` makes the sections that need it empty (and `health` report it as a failing check), not
-  an error. Searching and showing record no usage events and build no index. Reads write nothing to a bundle, config
+- **Reads.** A read operation opens `state.db` and `index.db` read-only and never creates or migrates them. A missing or
+  behind-on-migrations `state.db` is reported, never read as empty: the operations that need it return
+  `{ "available": false, "reason": "absent" | "needs-migration" }` (`proposals.list`, `activity.pulse`,
+  `assets.improvement`, `assets.searchMisses`, `activity.retrievalTrend`, `activity.improveImpact`, and `taskRuns`,
+  `workflowRuns` and `events` with their usual shape); `activity.overview` names it in `errors.state` and `health` reports
+  it as a failing check. `activity.pulse` and `assets.improvement` raise the error that names an unresolvable bundle
+  directory, and `activity.improveImpact` names it in `errors.proposals`, as `proposals.list` raises it. Searching and showing record no usage events and build no index. Reads write nothing to a bundle, config
   or database.
 
 A `limit` input is a positive integer capped at 200.
@@ -179,7 +183,8 @@ migrated.
 
 Optional `since` (default `24h`) and `until` (default now). Every search, show, feedback and curate row of the window
 from every source, oldest first, as `akm doctor metrics --detail full` lists them (`rows.usage`):
-`{ available, window, truncated, events }`. A search writes one summary row (no `ref`, with `resultCount`) and one row
+`{ available, window, truncated, events }`. Each event carries `byPerson`: `true` for the person's own events (the ones
+`akm doctor metrics` and `assets.searchMisses` count), `false` for an agent's, improve's or a task's. A search writes one summary row (no `ref`, with `resultCount`) and one row
 per hit. An event carries `agent: { harness, session? }` when the agent harness that made it was recorded (from this
 release; older rows have none). At most 20,000 events; `truncated` says the window held more.
 
@@ -815,7 +820,11 @@ A proposal that was later reverted is dated by its accept (`acceptedAt`) in `out
 - `harm`: the log, newest first: `reverted`, `reopened`, `risky-retirement`, `flag-after-change`.
 - `cost`: per week, model `calls`, `tokens`, `usageCalls` and calls by process.
 - `changedAssets`: for each accepted change, how often the asset was found and rated in the 28 days before and after
-  (`complete` is `false` until 28 days have passed since the change).
+  (`complete` is `false` until 28 days have passed since the change; `beforeComplete` is `false` when the 28 days before it
+  start earlier than the usage rows read, so the before counts are not recorded).
+- `usageSince` and `usageComplete`: where the usage figures (`changedAssets` counts and the `flag-after-change` entries of
+  `harm`) start. Usage older than akm keeps (`akm doctor metrics` notes the retention) is purged, so a window longer than
+  that is `usageComplete: false` and its usage figures cover only from `usageSince`.
 - `judgeAndYou`: accepted, rejected and reverted counts by who decided.
 
 ## `activity.pulse`
@@ -842,13 +851,18 @@ zero. Missing result counts do not mean zero results. The queries behind `zeroRe
 
 `weekly` is the same data by ISO week as a p-chart: per week `week`, `x` (found nothing), `n` (searches), `rate`, and the
 control limits `lower` and `upper` (centre ± 3 standard errors at that week's own n); `signal` is `true` for a week
-outside its limits. A week with no searches has `null` for all three. `centre` is the pooled share.
+outside its limits. A week with no searches has `null` for all three. `partial` is `true` for a week akm has only some of
+the days of (the window opens or ends inside it, or the data starts inside it): it has its `rate`, no limits and no
+`signal`. `centre` is the pooled share of the whole weeks, and `enoughHistory` says whether there are four whole weeks
+with searches: without it `centre` and every limit are `null`. When the state database cannot be read the response is
+`{ "available": false, "reason" }`.
 
 ## `assets.searchMisses`
 
 User searches that found nothing, grouped by normalised query: `query`, `count`, `days` (distinct UTC days),
 `lastAt` and `repeated` (`true` when it came up on two or more days). `since` is `30d` by default. The response also carries
-`searches` (all user searches in the window) and `foundNothing`.
+`searches` (all user searches in the window) and `foundNothing`. When the state database cannot be read it is
+`{ "available": false, "reason" }`.
 
 ## `setup.detect`
 
