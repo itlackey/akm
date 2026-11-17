@@ -3476,13 +3476,17 @@ under the current user's home, under a configured bundle or project root
 another user's home are not checked unless they sit under a bundle or project
 root. A line that says it records the past or an example ("historically",
 "formerly", "for example", "e.g.") and a section under a History, Changelog,
-Archive or Examples heading are skipped, as are run-time filename templates
-(`<stamp>`, `{stamp}`, `YYYYMMDD`, globs). Each finding carries `ref`, `file`,
+Archive or Examples heading are skipped, as are fenced code blocks and
+run-time filename templates (`<stamp>`, `{stamp}`, `YYYYMMDD`, globs).
+Each finding carries `ref`, `file`,
 `line` (1-based, in the file), `path`, `lineText`, `nearestExisting` (the
 deepest existing directory above the path) and `reason`: `missing` for a path
 under the home, a bundle or a project, `ephemeral` for a `/tmp` path that no
 longer exists. To clear a finding, correct the path, or say on the line that it
 records the past or an example, or move it under a History or Examples heading.
+Fenced code can name generated outputs and sample inputs, so it makes no
+assertion that those literal files currently exist. State required current
+input paths in prose or frontmatter to have them checked.
 
 `tracked-secrets` flags each `env/` or `secrets/` file that git tracks in a
 bundle that has a remote (a push can leak it); `git rm --cached` the file.

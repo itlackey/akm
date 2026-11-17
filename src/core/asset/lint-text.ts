@@ -69,14 +69,32 @@ export interface PathReference {
 
 /**
  * Absolute paths in `text` presented as current guidance. Paths on lines or in
- * sections that frame them as history or examples, run-time filename
- * templates, and trailing sentence punctuation are all excluded.
+ * sections that frame them as history or examples, fenced code examples,
+ * run-time filename templates, and trailing sentence punctuation are excluded.
  */
 export function findCurrentPathReferences(text: string, firstLine = 1): PathReference[] {
   const pathRe = /(?<=^|[\s"'`([=])\/[^\s"'`)\]>,:[\n]+/g;
   const out: PathReference[] = [];
   let inNonCurrentSection = false;
+  let fence: { marker: string; length: number } | undefined;
   text.split(/\r?\n/).forEach((line, index) => {
+    // Fenced examples can name generated files or sample inputs. Their literal
+    // paths do not assert that a file exists on the author's current machine.
+    const delimiter = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (fence) {
+      if (
+        delimiter &&
+        delimiter[1]![0] === fence.marker &&
+        delimiter[1]!.length >= fence.length &&
+        delimiter[2]!.trim() === ""
+      )
+        fence = undefined;
+      return;
+    }
+    if (delimiter && (delimiter[1]![0] !== "`" || !delimiter[2]!.includes("`"))) {
+      fence = { marker: delimiter[1]![0]!, length: delimiter[1]!.length };
+      return;
+    }
     if (/^#{1,6}\s/.test(line)) inNonCurrentSection = NON_CURRENT_HEADING_PATTERN.test(line);
     if (inNonCurrentSection || NON_CURRENT_LINE_PATTERN.test(line)) return;
     for (const match of line.matchAll(pathRe)) {
