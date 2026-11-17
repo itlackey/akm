@@ -99,6 +99,16 @@ test("a write fails fast with ASSET_MUTATION_LEASE_HELD while another process ho
   expect(fs.existsSync(note())).toBe(true);
 }, 15_000);
 
+test("a shown asset says where its body starts in the text it is read from", async () => {
+  const shown = (await assets.show({ ref: "stash//knowledge/note" })) as {
+    asset: { content?: string };
+    bodyStart: number;
+  };
+
+  expect(shown.asset.content?.slice(shown.bodyStart).trim()).toBe("Original.");
+  expect(shown.asset.content?.slice(0, shown.bodyStart)).toContain("description: a note");
+});
+
 test("env and secret writes check the revision with the bytes they replace or remove", async () => {
   const created = await sensitive.save({ bundle: "stash", file: "env/app.env", content: "A=1\n" });
   expect(created).toMatchObject({ bundle: "stash", ref: "stash//env/app", revision: sha("A=1\n"), warnings: [] });

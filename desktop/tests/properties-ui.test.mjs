@@ -296,3 +296,31 @@ test("a text akm cannot check is saved, and the page says it could not check", a
   await expect(page.getByRole("status").filter({ hasText: "Changes saved." })).toBeVisible();
   assert.match(await fs.readFile(path.join(app.root, "claude/commands/review.md"), "utf8"), /Look closely/);
 });
+
+test("an asset with no file in a bundle is read from the text akm returned, from the body start akm gives", async (t) => {
+  const { app, page } = await session(t);
+  const ref = "registry//knowledge/remote-guide";
+  await page.route("**/api/asset?*", async (route) => {
+    const real = await (
+      await route.fetch({ url: `${app.origin}/api/asset?ref=${encodeURIComponent(app.refs.document)}` })
+    ).json();
+    const content = "---\ndescription: From a registry\ncustom: x\n---\n# Remote guide\n\nRead this remote text.\n";
+    await route.fulfill({
+      json: {
+        ...real,
+        data: {
+          ...real.data,
+          location: null,
+          actions: null,
+          durableRef: ref,
+          bodyStart: content.indexOf("# Remote guide"),
+          asset: { ref, type: "knowledge", name: "remote-guide", content },
+        },
+      },
+    });
+  });
+  await go(page, `/library/asset?ref=${encodeURIComponent(ref)}`);
+  await expect(page.locator(".document-body")).toContainText("Read this remote text.");
+  await expect(page.locator(".document-body")).not.toContainText("From a registry");
+  await expect(page.locator(".document-body")).not.toContainText("custom");
+});

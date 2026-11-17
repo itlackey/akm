@@ -480,7 +480,7 @@
           >
         </div>
         <div hidden={!preview} role="tabpanel" id="editor-preview" aria-labelledby="editor-preview-tab">
-          {#if markdown}<Markdown content={draft} bodyStart={properties?.bodyStart} {ref} />{:else}<pre
+          {#if markdown}<Markdown content={draft} bodyStart={properties?.bodyStart ?? 0} {ref} />{:else}<pre
               class="code">{draft}</pre>{/if}
         </div>
         <aside class="findings" aria-label="Checks">

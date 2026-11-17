@@ -115,7 +115,8 @@
   );
   // The page shows the file itself; only an asset with no file in a bundle shows what akm's renderer returned.
   const source = $derived(file ? file.content : data?.location ? "" : assetSource(data?.asset));
-  const bodyStart = $derived(properties?.bodyStart);
+  // Where the body starts: akm's reading of the file, or of the text akm's renderer returned for an asset with no file.
+  const bodyStart = $derived(file ? properties?.bodyStart : (data?.bodyStart ?? 0));
   const body = $derived(source.slice(bodyStart ?? 0));
   const openingTitle = $derived(body.match(/^#[ \t]+([^\n]+)(?:\n|$)/)?.[1]?.trim());
   const titleAnchor = $derived(
@@ -521,7 +522,7 @@
             {:else if file && !properties?.markdown}<pre class="code file-code">{file.content}</pre>
             {:else if body.trim()}<Markdown
                 content={source}
-                {bodyStart}
+                bodyStart={bodyStart ?? 0}
                 omitHeading={documentTitle(data.asset)}
                 ref={canonical}
                 bundle={data.bundle ?? ""}

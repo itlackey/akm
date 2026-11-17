@@ -9,6 +9,7 @@ import { akmRelated } from "../commands/read/related";
 import { akmSearch, narrowSourcesToName, normalizeScopeFilters, parseBeliefFilterMode } from "../commands/read/search";
 import { akmShowUnified } from "../commands/read/show";
 import { parseBundleRef } from "../core/asset/asset-ref";
+import { readFrontmatter } from "../core/asset/frontmatter-edit";
 import { parseMarkdownToc, uniqueHeadingSlugs } from "../core/asset/markdown";
 import { markdownLinkTargets } from "../core/asset/markdown-link-targets";
 import { loadConfig } from "../core/config/config";
@@ -182,6 +183,8 @@ export async function show(input: { ref: string }) {
   const shown = await akmShowUnified({ ref, readOnly: true });
   const durableRef = shown.path ? durableRefForPath(shown.path) : null;
   const content = shown.content ?? "";
+  // Where the body starts in the text an asset is read from (content, a command's template, an agent's prompt).
+  const bodyStart = readFrontmatter(shown.content || shown.template || shown.prompt || "").bodyStart;
   const headings = parseMarkdownToc(content).headings;
   const slugs = uniqueHeadingSlugs(headings);
   const links: Record<string, string> = {};
@@ -211,6 +214,7 @@ export async function show(input: { ref: string }) {
     bundle: durableRef ? parseBundleRef(durableRef).bundle : null,
     asset: shown,
     location,
+    bodyStart,
     // What akm accepts doing to this asset's file, and why not: the verdicts the file listing gives the same entry.
     actions:
       location && shown.path
