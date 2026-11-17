@@ -27,13 +27,12 @@ test("activity/settings presentation keeps measured zero separate from missing o
   assert.equal(percent(null), "Not measured");
   assert.equal(tokens({ calls: 2, usageCalls: 0, totalTokens: 0 }), "Not reported");
   assert.equal(tokens({ calls: 0, usageCalls: 0, totalTokens: 0 }), "0");
-  // An unknown check lands where akm's reason says, whatever its message says; no reason is its own group.
+  // An unknown check lands where akm's reason says, whatever its message says.
   const unknown = (reason, message = "") => healthGroup({ name: "x", status: "unknown", reason, message });
   assert.equal(unknown("off"), "off");
   assert.equal(unknown("not-probed"), "not-probed");
   assert.equal(unknown("blocked", "Nothing to report yet."), "blocked");
   assert.equal(unknown("idle", "The update check could not reach the release source."), "idle");
-  assert.equal(unknown(undefined, "Not probed"), "unreported");
   assert.equal(healthGroup({ name: "x", status: "warn", reason: "off", message: "" }), "warn");
   assert.deepEqual(
     configurationChanges(

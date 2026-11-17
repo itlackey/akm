@@ -159,7 +159,6 @@
     { key: "not-probed", label: "Not checked", said: (n: number) => `${n} not checked` },
     { key: "blocked", label: "Could not check", said: (n: number) => `${n} could not be checked` },
     { key: "idle", label: "No data yet", said: (n: number) => `${n} with no data yet` },
-    { key: "unreported", label: "No reason reported", said: (n: number) => `${n} with no reason reported` },
     { key: "pass", label: "Passing", said: (n: number) => `${n} passing` },
   ];
   // What the last "Run all checks" came to, for the status line; empty until one has run.
@@ -170,7 +169,7 @@
   // What did not run, for the header.
   const notRun = $derived(
     groups
-      .filter((group) => ["off", "not-probed", "blocked", "unreported"].includes(group.key) && grouped(group.key))
+      .filter((group) => ["off", "not-probed", "blocked"].includes(group.key) && grouped(group.key))
       .map((group) => group.said(grouped(group.key)))
       .join(", "),
   );

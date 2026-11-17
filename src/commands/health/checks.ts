@@ -253,8 +253,9 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
       name: "state-db-round-trip",
       kind: "deterministic",
       // A skipped probe proved nothing: it is unknown, not a pass.
-      status: ctx.probe.skipped ? "unknown" : ctx.probe.ok ? "pass" : "fail",
-      ...(ctx.probe.skipped ? { reason: "not-probed" as const } : {}),
+      ...(ctx.probe.skipped
+        ? ({ status: "unknown", reason: "not-probed" } as const)
+        : { status: ctx.probe.ok ? ("pass" as const) : ("fail" as const) }),
       confidence: "high",
       message: ctx.probe.skipped
         ? "state.db append/read round-trip skipped: this run is read-only."
@@ -376,8 +377,11 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
       return {
         name: "improve-failures",
         kind: "deterministic",
-        status: failedRunIds.length > 0 ? "warn" : interruptedRunIds.length > 0 ? "unknown" : "pass",
-        ...(failedRunIds.length === 0 && interruptedRunIds.length > 0 ? { reason: "blocked" as const } : {}),
+        ...(failedRunIds.length > 0
+          ? { status: "warn" as const }
+          : interruptedRunIds.length > 0
+            ? ({ status: "unknown", reason: "blocked" } as const)
+            : { status: "pass" as const }),
         confidence: "high",
         message:
           failedRunIds.length > 0 || interruptedRunIds.length > 0

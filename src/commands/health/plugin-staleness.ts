@@ -337,6 +337,7 @@ function buildCodexAdvisory(
     return {
       ...base,
       status: "unknown",
+      reason: "blocked",
       message: codex.listed.error.missing
         ? "Codex's config registers the akm-plugins marketplace, but `codex` is not on PATH, so its akm plugin was not checked."
         : `Codex's akm plugin could not be listed: ${codex.listed.error.error}`,
@@ -372,7 +373,11 @@ function buildCodexAdvisory(
   if (bundledCli !== undefined && cliMatches === false) messageParts.push(bundledCliNote(bundledCli, cliVersion));
   return {
     ...base,
-    status: stale || cliMatches === false ? "warn" : offered && !("error" in offered) ? "pass" : "unknown",
+    ...(stale || cliMatches === false
+      ? { status: "warn" }
+      : offered && !("error" in offered)
+        ? { status: "pass" }
+        : unreadOffer(offered)),
     message: messageParts.join(" — "),
     evidence: {
       harness: "codex",
@@ -387,6 +392,11 @@ function buildCodexAdvisory(
       cliMatches: cliMatches ?? null,
     },
   };
+}
+
+/** The `unknown` verdict of a check whose marketplace was not asked (`not-probed`) or could not be read (`blocked`). */
+function unreadOffer(offered: Offered | undefined) {
+  return { status: "unknown", reason: offered === undefined ? "not-probed" : "blocked" } as const;
 }
 
 /** What the read of the marketplace says in a message: that it was not made, why it failed, or what the channel offers. */
@@ -440,6 +450,7 @@ export function collectPluginStalenessAdvisories(options: PluginStalenessOptions
       name: "plugin-version",
       kind: "deterministic",
       status: "unknown",
+      reason: "blocked",
       confidence: "high",
       message:
         "Claude plugin installation and enabled state could not be resolved with `claude plugin list --json`; cached versions do not establish the selected installation.",
@@ -517,16 +528,17 @@ function buildAdvisory(
     kind: "deterministic",
     // Not probed => staleness is unknown, not "up to date"; only the local
     // pin comparison can still warn.
-    status:
-      plugin.enabled === false || !plugin.applicable
-        ? "pass"
-        : !plugin.selectionKnown || plugin.enabled === undefined
-          ? "unknown"
-          : stale || cliMatches === false
-            ? "warn"
-            : offered && !("error" in offered) && cliMatches !== undefined && plugin.enabled === true
-              ? "pass"
-              : "unknown",
+    ...(plugin.enabled === false || !plugin.applicable
+      ? { status: "pass" }
+      : !plugin.selectionKnown || plugin.enabled === undefined
+        ? ({ status: "unknown", reason: "blocked" } as const)
+        : stale || cliMatches === false
+          ? { status: "warn" }
+          : offered && !("error" in offered) && cliMatches !== undefined && plugin.enabled === true
+            ? { status: "pass" }
+            : cliMatches === undefined && offered !== undefined && !("error" in offered)
+              ? ({ status: "unknown", reason: "blocked" } as const)
+              : unreadOffer(offered)),
     confidence: "high",
     message: messageParts.join(" — "),
     evidence: {

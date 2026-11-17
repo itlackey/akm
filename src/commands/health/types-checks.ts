@@ -14,13 +14,14 @@
  */
 export type HealthUnknownReason = "off" | "not-probed" | "blocked" | "idle";
 
-export interface HealthCheckResult {
+interface HealthCheckBase {
   name: string;
   kind: "deterministic" | "heuristic";
-  status: "pass" | "warn" | "fail" | "unknown";
-  /** Set on every `unknown` result, from the code path that knows; absent on any other status. */
-  reason?: HealthUnknownReason;
   message: string;
   confidence: "high" | "medium" | "low";
   evidence?: Record<string, unknown>;
 }
+
+/** A check has a verdict, or is `unknown` and says why through its `reason`, set by the code path that knows. */
+export type HealthCheckResult = HealthCheckBase &
+  ({ status: "pass" | "warn" | "fail"; reason?: never } | { status: "unknown"; reason: HealthUnknownReason });

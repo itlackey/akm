@@ -147,6 +147,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
     expect(asked).toEqual([["https://example.test/plugins.git", "next", "claude"]]);
 
     expect(adv?.status).toBe("unknown");
+    expect(adv?.reason).toBe("blocked");
     expect(adv?.evidence?.stale).toBe(false);
     expect(adv?.evidence?.availableVersion).toBe("0.10.261013-beta");
     expect(adv?.message).not.toContain("STALE");
@@ -310,6 +311,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
 
     expect(asked).toEqual([]);
     expect(adv?.status).toBe("unknown");
+    expect(adv?.reason).toBe("blocked");
     expect(adv?.evidence?.availableVersion).toBeNull();
     expect(adv?.evidence?.stale).toBe(false);
     expect(adv?.evidence?.remoteUnavailable).toBe(true);
@@ -349,6 +351,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
     });
 
     expect(adv?.status).toBe("unknown");
+    expect(adv?.reason).toBe("blocked");
     expect(adv?.evidence?.availableVersion).toBeNull();
     expect(adv?.evidence?.stale).toBe(false);
     // Distinguishable from a probe that found no newer release (F10).
@@ -375,6 +378,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
 
     expect(calls).toBe(0);
     expect(adv?.status).toBe("unknown");
+    expect(adv?.reason).toBe("not-probed");
     expect(adv?.message).toContain("not probed");
     expect(adv?.evidence?.probed).toBe(false);
     expect(adv?.evidence?.availableVersion).toBeNull();
@@ -430,6 +434,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
     });
 
     expect(adv?.status).toBe("unknown");
+    expect(adv?.reason).toBe("blocked");
     expect(adv?.evidence?.cliMatches).toBeNull();
     expect(adv?.message).toContain("bundled akm-cli unknown");
     expect(adv?.message).not.toContain("than the running CLI");
@@ -448,6 +453,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
     });
 
     expect(adv?.status).toBe("unknown");
+    expect(adv?.reason).toBe("blocked");
     expect(adv?.evidence?.cliMatches).toBeNull();
     expect(adv?.evidence?.pinnedCliVersion).toBeNull();
   });
@@ -566,6 +572,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
       opencodeCacheRoot: noOpencode(pluginsRoot),
     });
     expect(adv?.status).toBe("unknown");
+    expect(adv?.reason).toBe("blocked");
     expect(adv?.evidence?.selectionKnown).toBe(false);
   });
 
@@ -582,6 +589,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
         readChannelVersion: () => "0.9.1",
       });
       expect(advisory?.status).toBe("unknown");
+      expect(advisory?.reason).toBe("blocked");
       expect(advisory?.evidence?.selectionKnown).toBe(false);
       expect(advisory?.message).not.toContain("than the running CLI");
     } finally {
@@ -599,6 +607,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
       opencodeCacheRoot: noOpencode(pluginsRoot),
     });
     expect(adv?.status).toBe("unknown");
+    expect(adv?.reason).toBe("blocked");
     expect(adv?.evidence?.installedVersion).toBeNull();
     expect(adv?.message).not.toContain("than the running CLI");
   });
@@ -1056,12 +1065,14 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
         { probe: false },
       );
       expect(unprobed?.status).toBe("unknown");
+      expect(unprobed?.reason).toBe("not-probed");
       expect(unprobed?.message).toContain("not probed");
       const [offline] = collect(
         { ref: undefined, source: CODEX_SOURCE, listed: listed("0.10.261118") },
         { readChannelVersion: fakeBuild(new Error("offline")) },
       );
       expect(offline?.status).toBe("unknown");
+      expect(offline?.reason).toBe("blocked");
       expect(offline?.message).toContain("could not be read from the marketplace (offline)");
       expect(offline?.evidence?.remoteUnavailable).toBe(true);
     });
@@ -1110,6 +1121,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
         for (const home of [codexHome("0.10.261118", undefined), codexHome("0.10.261117", "0.10.261116")]) {
           const [adv] = collectIn(home, false);
           expect(adv?.status).toBe("unknown");
+          expect(adv?.reason).toBe("not-probed");
           expect(adv?.message).not.toContain("bundles akm-cli");
           expect(adv?.evidence).toMatchObject({ cliMatches: null });
         }
@@ -1123,6 +1135,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
         listed: { error: { ok: false, missing: true, error: "ENOENT" } },
       });
       expect(missing?.status).toBe("unknown");
+      expect(missing?.reason).toBe("blocked");
       expect(missing?.message).toContain("`codex` is not on PATH");
       const [failed] = collect({
         ref: undefined,
@@ -1130,6 +1143,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
         listed: { error: { ok: false, missing: false, error: "`codex plugin list` failed: boom" } },
       });
       expect(failed?.status).toBe("unknown");
+      expect(failed?.reason).toBe("blocked");
       expect(failed?.message).toContain("could not be listed: `codex plugin list` failed: boom");
     });
   });
@@ -1232,6 +1246,7 @@ describe("the real channel read reads the channel the registered marketplace fol
     expect(adv?.evidence?.availableVersion).toBeNull();
     expect(adv?.evidence?.remoteUnavailable).toBe(true);
     expect(adv?.status).toBe("unknown");
+    expect(adv?.reason).toBe("blocked");
     expect(adv?.message).toContain("could not be read from the marketplace (");
   });
 });

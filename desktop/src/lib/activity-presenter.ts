@@ -100,9 +100,9 @@ export const duration = (value: number | null | undefined) => {
 };
 export const tokens = (row: ModelCount) =>
   row.calls > 0 && !row.usageCalls ? "Not reported" : number(row.totalTokens);
-/** Where a check lands: its status, or for `unknown` the reason akm reports (a check with no reason is its own group). */
+/** Where a check lands: its status, or for `unknown` the reason akm reports. */
 export function healthGroup(check: ActivityCheck): string {
-  return check.status === "unknown" ? (check.reason ?? "unreported") : check.status;
+  return check.status === "unknown" ? check.reason : check.status;
 }
 export const outcomeClasses = [
   { key: "judge", label: "Accepted by the judge" },
