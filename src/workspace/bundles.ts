@@ -75,6 +75,8 @@ export async function list() {
   return {
     defaultBundle: config.defaultBundle ?? null,
     defaultWriteTarget: config.defaultWriteTarget ?? null,
+    // Where a write goes when no bundle is named, and why none does (`name: null`) or why it would be refused.
+    writeTarget: inspectWriteTarget(config),
     bundles: cards,
     workingStash,
     index: {

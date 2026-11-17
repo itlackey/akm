@@ -537,6 +537,36 @@ describe("reads", () => {
     expect(git(checkout, ["status", "--porcelain"])).toBe("");
   });
 
+  test("bundles reports the one bundle a write goes to when none is named, and why none does", async () => {
+    await seed();
+    expect((await out(bundles.list())).writeTarget).toEqual({ name: "stash", blocker: null });
+
+    const current = loadConfig();
+    writeSandboxConfig({ bundles: { ...current.bundles, stash: { path: ctx.storage.stashDir, writable: false } } });
+    resetConfigCache();
+    expect((await out(bundles.list())).writeTarget).toEqual({
+      name: "stash",
+      blocker: 'defaultWriteTarget "stash" is not writable',
+    });
+
+    // No working stash from the environment and no default bundle: nothing resolves, and akm says why.
+    const workingStash = process.env.AKM_BUNDLE_DIR;
+    delete process.env.AKM_BUNDLE_DIR;
+    try {
+      fs.writeFileSync(
+        path.join(process.env.XDG_CONFIG_HOME as string, "akm", "config.json"),
+        JSON.stringify({ bundles: { stash: { path: ctx.storage.stashDir, writable: true } } }),
+      );
+      resetConfigCache();
+      expect((await out(bundles.list())).writeTarget).toEqual({
+        name: null,
+        blocker: "No default bundle is configured.",
+      });
+    } finally {
+      process.env.AKM_BUNDLE_DIR = workingStash;
+    }
+  });
+
   test("bundles counts only the current model's vectors against the embeddable entries", async () => {
     await seed();
     const db = openExistingDatabase(getDbPath());

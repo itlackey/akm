@@ -240,6 +240,7 @@ fetched, so `ahead`/`behind` are measured against the remote-tracking branch as 
   "data": {
     "defaultBundle": "stash",
     "defaultWriteTarget": null,
+    "writeTarget": { "name": "stash", "blocker": null },
     "workingStash": null,
     "bundles": [
       {
@@ -283,6 +284,9 @@ fetched, so `ahead`/`behind` are measured against the remote-tracking branch as 
   be refused with (disabled, not writable, an adapter that takes no AKM asset writes, a Git bundle that is not a
   checkout or is detached). It runs the write path's own checks and changes nothing, so a card never disagrees with a
   save.
+- `writeTarget` is where a write goes when no bundle is named, as akm's write path resolves it: `name` is that bundle
+  (`null` when none resolves) and `blocker` is the sentence a write would be refused with, or `null`. Clients show this
+  and do not combine `defaultWriteTarget` with anything.
 - The default bundle's card comes first; the rest keep their configured order.
 - `workingStash` is `{ path, git }` for the directory akm reads besides the configured bundles (`AKM_BUNDLE_DIR`, or the
   platform stash when no `defaultBundle` is set). `git` has the same shape as a card's `git`. It is `null` when a

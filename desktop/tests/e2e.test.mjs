@@ -425,7 +425,7 @@ test("new content goes where akm says: the working stash when no write target is
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   await open(page, server, "/");
-  const akmAnswer = (await server.call("/api/config")).body.data.automaticWriteTarget.name;
+  const akmAnswer = (await server.call("/api/bundles")).body.data.writeTarget.name;
   assert.equal(akmAnswer, "personal", "AKM_BUNDLE_DIR is the working stash, not the default bundle");
   await expect(page.getByRole("link", { name: "Create an asset" })).toHaveAttribute("href", /bundle=personal(&|$)/);
 });
