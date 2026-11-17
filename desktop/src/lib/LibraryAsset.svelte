@@ -10,12 +10,13 @@
   import { api, assetSource, date, bodyOf, stateUnavailableText, type StateUnavailable } from "./client";
   import { documentTitle, libraryRead, typedLinks } from "./library-model";
   import type { AssetRead, Improvement, SearchHit } from "./library-model";
-  import type { Bundle, History, Retirement, Source, WriteResult } from "./types";
-  import { splitFrontmatter, headingId } from "./ui/markdown.js";
+  import type { Bundle, FrontmatterRead, History, Retirement, Source, WriteResult } from "./types";
+  import { headingId } from "./ui/markdown.js";
   import { sparkline } from "./ui/lib.js";
   import Markdown from "./Markdown.svelte";
   import Diff from "./Diff.svelte";
   import Icon from "./Icon.svelte";
+  import Properties from "./Properties.svelte";
   import AssetRelated from "./AssetRelated.svelte";
   import SensitiveAsset from "./SensitiveAsset.svelte";
   let {
@@ -58,6 +59,11 @@
   } = $props();
   let retired = $state<Retirement | null>(null),
     retireRevision = $state("");
+  // The asset's own file as it is on disk, and akm's reading of its frontmatter. A failed read is kept with its reason.
+  let file = $state<Source | null>(null),
+    fileError = $state(""),
+    properties = $state<FrontmatterRead | null>(null),
+    propertiesFailure = $state("");
   let data = $state<AssetRead | null>(null),
     improve = $state<Improvement | null>(null),
     improveNote = $state(""),
@@ -98,7 +104,7 @@
     (
       {
         Related: "Related assets",
-        Source: "Markdown source",
+        Source: "Source",
         History: "Document history",
         Details: "Asset details",
         Feedback: "Give feedback",
@@ -111,8 +117,8 @@
     editHref ||
       `/library/edit?ref=${encodeURIComponent(canonical)}&returnTo=${encodeURIComponent(filesHref || returnTo)}&readingFrom=${encodeURIComponent(readingHref || `/library/asset?ref=${encodeURIComponent(canonical)}&returnTo=${encodeURIComponent(returnTo)}`)}`,
   );
-  const source = $derived(assetSource(data?.asset));
-  const fields = $derived(splitFrontmatter(source).fields);
+  // The page shows the file itself; only an asset with no file in a bundle shows what akm's renderer returned.
+  const source = $derived(file ? file.content : data?.location ? "" : assetSource(data?.asset));
   const openingTitle = $derived(
     bodyOf(source)
       .match(/^#[ \t]+([^\n]+)(?:\n|$)/)?.[1]
@@ -155,6 +161,10 @@
   async function load(selected: string) {
     retired = null;
     retireRevision = "";
+    file = null;
+    fileError = "";
+    properties = null;
+    propertiesFailure = "";
     controller?.abort();
     controller = new AbortController();
     const request = ++generation;
@@ -180,12 +190,7 @@
       data = read;
       onLoaded?.(read);
       if (!read.redacted) {
-        if (read.actions?.retire.allowed)
-          api<Source>("/desktop/file", { ref: read.durableRef ?? selected })
-            .then((source) => {
-              if (request === generation) retireRevision = source.revision;
-            })
-            .catch(() => {});
+        if (read.location) void loadFile(read, request);
         libraryRead<Improvement | StateUnavailable>(
           "/asset/improve",
           { ref: read.durableRef ?? selected },
@@ -212,6 +217,27 @@
           heading?.scrollIntoView({ block: "nearest" });
         }
       }
+    }
+  }
+  async function loadFile(read: AssetRead, request: number) {
+    const location = read.location!;
+    try {
+      const text = await libraryRead<Source>("/desktop/file", { ref: read.durableRef ?? ref }, controller.signal);
+      if (request !== generation) return;
+      file = text;
+      if (read.actions?.retire.allowed) retireRevision = text.revision;
+      try {
+        const found = await api<FrontmatterRead>(
+          "/documents/frontmatter",
+          {},
+          { bundle: location.bundle, path: location.path, content: text.content },
+        );
+        if (request === generation) properties = found;
+      } catch (cause) {
+        if (request === generation) propertiesFailure = (cause as Error).message;
+      }
+    } catch (cause) {
+      if ((cause as Error).name !== "AbortError" && request === generation) fileError = (cause as Error).message;
     }
   }
   async function loadHistory(revision = "") {
@@ -476,6 +502,7 @@
           >{/if}
       </div>
     </header>
+    {#if tab === "Read"}<Properties {properties} failure={propertiesFailure} />{/if}
     {#if notice}<div class="operation-notice" role="status">
         {notice}{#if receipt}<details>
             <summary>Operation receipt</summary
@@ -502,7 +529,9 @@
               </ul>
             </details>{/if}
           <section class="document-body" aria-label="Content">
-            {#if bodyOf(source).trim()}<Markdown
+            {#if fileError}<p class="notice notice-warn" role="alert">The file could not be read: {fileError}</p>
+            {:else if file && file.markdown === false}<pre class="code file-code">{file.content}</pre>
+            {:else if bodyOf(source).trim()}<Markdown
                 content={source}
                 omitHeading={documentTitle(data.asset)}
                 ref={canonical}
@@ -510,7 +539,7 @@
                 links={data.links ?? {}}
                 headings={data.headings ?? []}
               />
-            {:else}<p class="state">This asset has no body.</p>{/if}
+            {:else if !source.trim()}<p class="state">This file is empty.</p>{/if}
           </section>
         </div>
         <div class="reading-feedback">
@@ -527,8 +556,8 @@
             onCompare={onComparePair}
           />{/key}
       {:else if tab === "Source"}
-        <pre class="code raw-source" role="group" aria-label="Markdown source">{source ||
-            "This asset has no body."}</pre>
+        {#if fileError}<p class="notice notice-warn" role="alert">The file could not be read: {fileError}</p>
+        {:else}<pre class="code raw-source" role="group" aria-label="Source">{source}</pre>{/if}
       {:else if tab === "History"}
         {#if !history}<p class="muted">Reading history…</p>
         {:else if !history.available}<p class="state">
@@ -700,18 +729,6 @@
                 >
                   Search score: {match.score.toFixed(3)}
                 </p>{/if}{#if match.tags?.length}<p>{match.tags.join(" · ")}</p>{/if}
-            </section>{/if}
-          {#if fields.length}<section>
-              <h3>Frontmatter</h3>
-              <div class="table-wrap">
-                <table class="fm">
-                  <tbody
-                    >{#each fields as [key, value]}<tr
-                        ><th scope="row">{key}</th><td class="wrap pre-wrap">{value}</td></tr
-                      >{/each}</tbody
-                  >
-                </table>
-              </div>
             </section>{/if}
           {#if links.length}<section>
               <h3>Links</h3>

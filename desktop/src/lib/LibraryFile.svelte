@@ -6,9 +6,11 @@
 
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
+  import { api } from "./client";
   import { libraryRead } from "./library-model";
   import Markdown from "./Markdown.svelte";
-  import type { Source } from "./types";
+  import Properties from "./Properties.svelte";
+  import type { FrontmatterRead, Source, TextCheck } from "./types";
   let {
     bundle,
     file,
@@ -16,11 +18,29 @@
     folderHref = "",
   }: { bundle: string; file: string; returnTo: string; folderHref?: string } = $props();
   let source = $state<Source | null>(null),
-    error = $state("");
+    error = $state(""),
+    properties = $state<FrontmatterRead | null>(null),
+    propertiesFailure = $state(""),
+    unreadable = $state<TextCheck["unreadable"]>();
   const controller = new AbortController();
   onMount(() => {
     libraryRead<Source>("/desktop/file", { bundle, file }, controller.signal)
-      .then((value) => (source = value))
+      .then(async (value) => {
+        source = value;
+        // Why akm does not index this file, when it is an asset it could not read: akm's own reason.
+        void api<TextCheck>("/documents/check", {}, { bundle, path: file, content: value.content })
+          .then((checked) => (unreadable = checked.unreadable))
+          .catch(() => undefined);
+        try {
+          properties = await api<FrontmatterRead>(
+            "/documents/frontmatter",
+            {},
+            { bundle, path: file, content: value.content },
+          );
+        } catch (cause) {
+          if (!controller.signal.aborted) propertiesFailure = (cause as Error).message;
+        }
+      })
       .catch((cause) => {
         if (!controller.signal.aborted) error = cause.message;
       });
@@ -45,6 +65,12 @@
     A file in {bundle}{source.ref ? "" : ", not an indexed asset"}.
   </p>
   {#if !source.actions.edit.allowed}<p class="muted small" id="edit-reason">{source.actions.edit.reason}</p>{/if}
+  {#if unreadable && !source.ref}<p class="notice notice-warn reason" role="status">
+      Not indexed: akm could not read this as an asset. {unreadable.reason}{unreadable.line
+        ? ` (line ${unreadable.line})`
+        : ""}
+    </p>{/if}
+  <Properties {properties} failure={propertiesFailure} />
   {#if source.markdown}<Markdown content={source.content} ref={source.ref ?? ""} />{:else}<pre
       class="code">{source.content}</pre>{/if}
 {:else}<p role="status">Opening file…</p>{/if}
@@ -68,6 +94,9 @@
     line-height: inherit;
     letter-spacing: var(--tracking-snug);
     overflow-wrap: anywhere;
+  }
+  .reason {
+    white-space: pre-line;
   }
   pre {
     white-space: pre-wrap;

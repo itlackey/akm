@@ -6,11 +6,12 @@
 
 <script lang="ts">
   import { onMount, onDestroy, tick } from "svelte";
-  import { api, ApiError, pickFolder, saveContent } from "./client";
+  import { api, ApiError, bodyOf, pickFolder, saveContent } from "./client";
   import { libraryRead, documentTitle } from "./library-model";
   import { folderUnder } from "./library-files-model";
   import { clearDraft, draftKey, readDraft, setUnsaved, storeDraft } from "./drafts";
-  import type { Bundle, Source, WriteResult } from "./types";
+  import type { Bundle, FrontmatterRead, Json, Source, TextCheck, WriteResult } from "./types";
+  import PropertiesForm from "./PropertiesForm.svelte";
   import Markdown from "./Markdown.svelte";
   import Diff from "./Diff.svelte";
   import Icon from "./Icon.svelte";
@@ -35,7 +36,7 @@
     returnTo?: string;
     cancelHref?: string;
     readingHref?: string;
-    onSaved?: (ref: string, unchanged: boolean) => void | Promise<void>;
+    onSaved?: (ref: string, unchanged: boolean, saved?: { bundle: string; file: string }) => void | Promise<void>;
   } = $props();
   let source = $state<Source | null>(null),
     latest = $state<Source | null>(null),
@@ -62,6 +63,14 @@
   let editorHeading = $state<HTMLHeadingElement>(),
     errorBox = $state<HTMLDivElement>();
   let textarea = $state<HTMLTextAreaElement>();
+  // akm's reading of the frontmatter (the form) and its check of the text that would be saved (the findings).
+  let properties = $state<FrontmatterRead | null>(null),
+    propertiesFailure = $state(""),
+    textMode = $state(false),
+    check = $state<TextCheck | null>(null),
+    checkFailure = $state(""),
+    blocked = $state<TextCheck | null>(null),
+    analysisRun = 0;
   const creating = $derived(!ref && !file);
   const sourceParams = $derived<Record<string, string>>(file ? { bundle: file.bundle, file: file.path } : { ref });
   const markdown = $derived(source?.markdown !== false);
@@ -75,6 +84,11 @@
   const writable = $derived(bundles.filter((b) => b.writeBlocker === null));
   const bundlePath = $derived(bundles.find((b) => b.name === bundle)?.path);
   const root = $derived(bundlePath ? bundlePath.replace(/[\\/]+$/, "") + "/knowledge" : "");
+  const where = $derived(source?.bundle && source.file ? { bundle: source.bundle, path: source.file } : null);
+  // The form edits the frontmatter through akm and the box holds the body; Text shows the whole file in the box.
+  const formMode = $derived(markdown && !!properties && !properties.error && !textMode);
+  const shown = $derived(formMode ? bodyOf(draft) : draft);
+  const head = (text: string) => text.slice(0, text.length - bodyOf(text).length);
   const key = () => draftKey({ file, ref });
   function persist() {
     retained = true;
@@ -130,6 +144,8 @@
           setUnsaved(true);
         }
       }
+      // What the box holds (the body, or the whole file) is known before the editor opens, so it never changes under the person.
+      await analyze();
       loaded = true;
       recovered = retained;
       await tick();
@@ -140,13 +156,29 @@
       busy = false;
     }
   }
-  async function save(reviewed = false) {
+  async function save(reviewed = false, anyway = false) {
     if (busy || (!creating && !retained) || (latest && !reviewed)) return;
     busy = true;
     error = "";
     let writeCompleted = false;
     try {
       const base = reviewed ? latest : source;
+      // akm checks the text that is about to be written. A text it could not read as the asset stops here; one it could
+      // not check at all is saved and said so by the findings beside the editor.
+      if (!creating && where && !anyway) {
+        try {
+          const verdict = await api<TextCheck>("/documents/check", {}, { ...where, content: toSave(base!) });
+          check = verdict;
+          checkFailure = "";
+          if (!verdict.readable) {
+            blocked = verdict;
+            return;
+          }
+        } catch (cause) {
+          checkFailure = (cause as Error).message;
+        }
+      }
+      blocked = null;
       const result = creating
         ? await api<WriteResult>("/knowledge/create", {}, { bundle, name, path: folder, content: draft })
         : await api<WriteResult>(
@@ -167,7 +199,14 @@
         return;
       }
       const savedRef = result.ref ?? ref;
-      if (onSaved) await onSaved(savedRef, !!result.unchanged);
+      const savedBundle = (result.bundle as string | undefined) ?? where?.bundle,
+        savedFile = (result.file as string | undefined) ?? where?.path;
+      if (onSaved)
+        await onSaved(
+          savedRef,
+          !!result.unchanged,
+          savedBundle && savedFile ? { bundle: savedBundle, file: savedFile } : undefined,
+        );
       else {
         const params = new URLSearchParams(returnTo.startsWith("/library/files") ? (returnTo.split("?")[1] ?? "") : "");
         params.set("ref", savedRef);
@@ -249,14 +288,14 @@
     const area = textarea;
     if (busy || preview || !area) return;
     const scrollTop = area.scrollTop;
-    const formatted = formatMarkdown(draft, area.selectionStart, area.selectionEnd, command);
+    const formatted = formatMarkdown(shown, area.selectionStart, area.selectionEnd, command);
     // Chromium's plain-text edit command retains native Undo/Redo. Assigning
     // textarea.value (or setRangeText) does not. Never insert HTML here.
     let first = 0,
-      oldEnd = draft.length,
+      oldEnd = shown.length,
       newEnd = formatted.content.length;
-    while (first < oldEnd && first < newEnd && draft[first] === formatted.content[first]) first++;
-    while (oldEnd > first && newEnd > first && draft[oldEnd - 1] === formatted.content[newEnd - 1]) {
+    while (first < oldEnd && first < newEnd && shown[first] === formatted.content[first]) first++;
+    while (oldEnd > first && newEnd > first && shown[oldEnd - 1] === formatted.content[newEnd - 1]) {
       oldEnd--;
       newEnd--;
     }
@@ -265,12 +304,62 @@
     const replacement = formatted.content.slice(first, newEnd);
     if (typeof document.execCommand !== "function" || !document.execCommand("insertText", false, replacement))
       area.setRangeText(replacement, first, oldEnd);
-    draft = area.value;
+    setShown(area.value);
     persist();
     await tick();
     area.focus({ preventScroll: true });
     area.setSelectionRange(formatted.start, formatted.end);
     area.scrollTop = scrollTop;
+  }
+  function setShown(value: string) {
+    draft = formMode ? head(draft) + value : value;
+  }
+  /** The text that would be written: what the check and the save are both given. */
+  const toSave = (base: Source) => saveContent(base.content, draft);
+  async function analyze() {
+    if (!where) return;
+    const run = ++analysisRun;
+    const [front, checked] = await Promise.allSettled([
+      markdown
+        ? api<FrontmatterRead>("/documents/frontmatter", {}, { ...where, content: draft })
+        : Promise.resolve(null),
+      api<TextCheck>("/documents/check", {}, { ...where, content: toSave(source!) }),
+    ]);
+    if (run !== analysisRun || !alive) return;
+    properties = front.status === "fulfilled" ? front.value : null;
+    propertiesFailure = front.status === "rejected" ? front.reason.message : "";
+    check = checked.status === "fulfilled" ? checked.value : null;
+    checkFailure = checked.status === "rejected" ? checked.reason.message : "";
+  }
+  async function applyChange(change: { key: string; value?: Json; remove?: true }) {
+    try {
+      const result = await api<{ content: string }>(
+        "/documents/apply-frontmatter",
+        {},
+        { content: draft, changes: [change] },
+      );
+      draft = result.content;
+      error = "";
+      persist();
+      await analyze();
+    } catch (cause) {
+      error = (cause as Error).message;
+    }
+  }
+  /** Put the cursor on a line of the file: the whole file is in the box in Text. */
+  async function jumpTo(line: number) {
+    textMode = true;
+    preview = false;
+    await tick();
+    const area = textarea;
+    if (!area) return;
+    const offset =
+      draft
+        .split("\n")
+        .slice(0, line - 1)
+        .join("\n").length + (line > 1 ? 1 : 0);
+    area.focus();
+    area.setSelectionRange(offset, offset);
   }
   function editorKey(event: KeyboardEvent) {
     if (!event.ctrlKey && !event.metaKey) return;
@@ -283,6 +372,13 @@
       format(key === "b" ? "bold" : key === "i" ? "italic" : "link");
     }
   }
+  // The form and the findings follow the text a moment after it stops changing.
+  $effect(() => {
+    void draft;
+    if (!loaded || creating) return;
+    const timer = setTimeout(() => void analyze(), 400);
+    return () => clearTimeout(timer);
+  });
   onMount(initialize);
   onDestroy(() => {
     alive = false;
@@ -399,40 +495,97 @@
             >
           </div>
         </div>{/if}
-      <div hidden={preview} role="tabpanel" id="editor-write" aria-labelledby="editor-write-tab">
-        {#if markdown}<div class="formatting-tools" role="group" aria-label="Markdown formatting">
-            {#each markdownCommands as command}<button
-                type="button"
-                class:bold-tool={command.id === "bold"}
-                class:italic-tool={command.id === "italic"}
-                aria-label={command.label}
-                title={command.label + (command.shortcut ? ` (${command.shortcut})` : "")}
-                onmousedown={(event) => event.preventDefault()}
-                onclick={() => format(command.id)}
-                >{command.id === "link"
-                  ? "Link"
-                  : command.id === "bullet"
-                    ? "Bullets"
-                    : command.id === "number"
-                      ? "Numbers"
-                      : command.label}</button
-              >{/each}
-          </div>{/if}
-        <label
-          ><span class="sr-only">{markdown ? "Markdown source, including optional frontmatter" : "Text source"}</span
-          ><textarea
-            bind:this={textarea}
-            class="source-editor"
-            name="content"
-            bind:value={draft}
-            rows="24"
-            spellcheck={markdown}
-            oninput={persist}
-            onkeydown={editorKey}></textarea></label
-        >
-      </div>
-      <div hidden={!preview} role="tabpanel" id="editor-preview" aria-labelledby="editor-preview-tab">
-        {#if markdown}<Markdown content={draft} {ref} />{:else}<pre class="code">{draft}</pre>{/if}
+      {#if blocked}<div class="notice notice-warn" role="alert">
+          <p class="reason">
+            <strong>Not saved.</strong> akm could not read this as an asset: {blocked.unreadable?.reason}{blocked
+              .unreadable?.line
+              ? ` (line ${blocked.unreadable.line})`
+              : ""}
+          </p>
+          <div class="btn-row">
+            <button type="button" class="btn-secondary" onclick={() => (blocked = null)}>Keep editing</button><button
+              type="button"
+              class="btn-danger"
+              onclick={() => save(!!latest, true)}>Save anyway</button
+            >
+          </div>
+        </div>{/if}
+      {#if !creating && markdown}<div class="properties-switch" role="group" aria-label="Frontmatter view">
+          <button
+            type="button"
+            class="quiet"
+            aria-pressed={!textMode}
+            aria-disabled={!properties || properties.error ? "true" : undefined}
+            onclick={() => properties && !properties.error && (textMode = false)}>Fields</button
+          ><button type="button" class="quiet" aria-pressed={textMode} onclick={() => (textMode = true)}>Text</button>
+          {#if propertiesFailure}<span class="muted small">Fields are not available: {propertiesFailure}</span
+            >{:else if properties?.error}<span class="muted small" role="status"
+              >The frontmatter cannot be read as fields: {properties.error.reason}{properties.error.line
+                ? ` (line ${properties.error.line})`
+                : ""}. Edit it as text.</span
+            >{/if}
+        </div>
+        {#if formMode && properties}<PropertiesForm {properties} disabled={busy} onChange={applyChange} />{/if}{/if}
+      <div class="editor-columns">
+        <div hidden={preview} role="tabpanel" id="editor-write" aria-labelledby="editor-write-tab">
+          {#if markdown}<div class="formatting-tools" role="group" aria-label="Markdown formatting">
+              {#each markdownCommands as command}<button
+                  type="button"
+                  class:bold-tool={command.id === "bold"}
+                  class:italic-tool={command.id === "italic"}
+                  aria-label={command.label}
+                  title={command.label + (command.shortcut ? ` (${command.shortcut})` : "")}
+                  onmousedown={(event) => event.preventDefault()}
+                  onclick={() => format(command.id)}
+                  >{command.id === "link"
+                    ? "Link"
+                    : command.id === "bullet"
+                      ? "Bullets"
+                      : command.id === "number"
+                        ? "Numbers"
+                        : command.label}</button
+                >{/each}
+            </div>{/if}
+          <label
+            ><span class="sr-only">{markdown ? "Markdown source, including optional frontmatter" : "Text source"}</span
+            ><textarea
+              bind:this={textarea}
+              class="source-editor"
+              name="content"
+              value={shown}
+              rows="24"
+              spellcheck={markdown}
+              oninput={(event) => {
+                setShown(event.currentTarget.value);
+                persist();
+              }}
+              onkeydown={editorKey}></textarea></label
+          >
+        </div>
+        <div hidden={!preview} role="tabpanel" id="editor-preview" aria-labelledby="editor-preview-tab">
+          {#if markdown}<Markdown content={draft} {ref} />{:else}<pre class="code">{draft}</pre>{/if}
+        </div>
+        {#if !creating}<aside class="findings" aria-label="Checks">
+            {#if checkFailure}<p class="muted small">akm could not check this text: {checkFailure}</p>
+            {:else if check}
+              {#if check.unreadable}<p class="notice notice-warn reason">
+                  akm could not read this as an asset: {check.unreadable.reason}
+                  {#if check.unreadable.line}<button
+                      type="button"
+                      class="text-action"
+                      onclick={() => jumpTo(check!.unreadable!.line!)}>Line {check.unreadable.line}</button
+                    >{/if}
+                </p>{/if}
+              {#if check.findings.length || check.warnings.length}<ul class="plain">
+                  {#each [...check.findings, ...check.warnings] as finding}<li>
+                      {#if finding.line}<button type="button" class="text-action" onclick={() => jumpTo(finding.line!)}
+                          >Line {finding.line}</button
+                        >{/if}
+                      <strong>{finding.issue}</strong>: {finding.detail}
+                    </li>{/each}
+                </ul>{:else}<p class="muted small">akm found no problems.</p>{/if}
+            {/if}
+          </aside>{/if}
       </div>
     </fieldset>
   </form>{/if}
@@ -482,6 +635,41 @@
     gap: 6px;
     padding: 8px 0;
     white-space: nowrap;
+  }
+  .reason {
+    white-space: pre-line;
+  }
+  .editor-columns {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+  .findings {
+    font-size: 13px;
+  }
+  .findings ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    gap: 6px;
+  }
+  .properties-switch {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 8px;
+    margin: 12px 0 8px;
+  }
+  .properties-switch button[aria-pressed="true"] {
+    background: var(--accent-bg);
+    color: var(--accent);
+  }
+  @media (min-width: 1100px) {
+    .editor-columns {
+      grid-template-columns: minmax(0, 1fr) 280px;
+      align-items: start;
+    }
   }
   .editor-form {
     margin: 0;

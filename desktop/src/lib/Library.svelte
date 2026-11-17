@@ -9,8 +9,8 @@
   import { afterNavigate } from "$app/navigation";
   import { assetSource, title, toggleSelection, date, matchesAssetRef, type ApiError } from "./client";
   import { libraryRead, resultContext, searchHref, documentTitle } from "./library-model";
-  import { filesHref, parseFilesHref } from "./library-files-model";
-  import type { FileLocation, FilesViewState, MovedLinksReport } from "./library-files-model";
+  import { filesHref, parentPath, parseFilesHref } from "./library-files-model";
+  import type { FileListing, FileLocation, FilesViewState, MovedLinksReport } from "./library-files-model";
   import type { SearchResult, AssetRead } from "./library-model";
   import type { Bundle } from "./types";
   import LibraryAsset from "./LibraryAsset.svelte";
@@ -466,27 +466,32 @@
   function navigateFiles(location: FileLocation) {
     void navigate(withReview(filesHref(location, readingHref)));
   }
-  async function savedAsset(savedRef: string, unchanged: boolean) {
+  async function savedAsset(savedRef: string, unchanged: boolean, saved?: { bundle: string; file: string }) {
     if (query.get("file")) {
       const params = new URLSearchParams((query.get("returnTo") ?? "").split("?")[1]);
       params.set("saved", unchanged ? "unchanged" : "1");
       await navigate("/library/files?" + params);
       return;
     }
-    const read = await libraryRead<AssetRead>("/asset", { ref: savedRef });
-    const location = read.location;
-    const href = location
-      ? filesHref(
-          {
-            bundle: location.bundle,
-            path: location.parent,
-            file: location.path,
-            ref: read.durableRef || savedRef,
-            open: true,
-          },
-          readingHref,
-        )
-      : filesHref({ bundle: fileBundle, path: filePath, ref: savedRef, open: true }, readingHref);
+    // The saved file opens where it is. When akm indexes it as an asset it opens as that asset; a file akm could not
+    // read as one (it dropped out of the index) opens as a file, which says why.
+    let href: string;
+    if (saved) {
+      const folder = parentPath(saved.file);
+      const entry = (
+        await libraryRead<FileListing>("/bundles/files", { bundle: saved.bundle, path: folder })
+      ).entries.find((listed) => listed.path === saved.file);
+      href = filesHref(
+        {
+          bundle: saved.bundle,
+          path: folder,
+          file: saved.file,
+          ...(entry?.assets.length === 1 ? { ref: entry.assets[0].ref } : {}),
+          open: true,
+        },
+        readingHref,
+      );
+    } else href = filesHref({ bundle: fileBundle, path: filePath, ref: savedRef, open: true }, readingHref);
     const params = new URLSearchParams(href.split("?")[1]);
     params.set("saved", unchanged ? "unchanged" : "1");
     await navigate(withReview("/library/files?" + params));
