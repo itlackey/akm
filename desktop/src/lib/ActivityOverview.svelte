@@ -772,7 +772,6 @@
           {#each history.runs.filter((run) => run.startedAt === openRun) as run}<TaskRunDetail
               {taskId}
               {run}
-              improveRuns={data.improveRuns}
             />{/each}{/if}
       </section>{/if}
   </section>

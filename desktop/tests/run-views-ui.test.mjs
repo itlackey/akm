@@ -8,8 +8,8 @@ import { chromium, expect } from "@playwright/test";
 import { launchFixture, open, runViewIds } from "./support.mjs";
 
 // The single-run views: an improve run, a task run and a workflow run, each with its outcome, what failed and the
-// recorded error detail, and with a match by time named as one.
-test("run views show outcomes, failures and error detail, and mark what is matched by time", {
+// recorded error detail; an improve run is not linked to a task run unless akm records the link.
+test("run views show outcomes, failures and error detail, and guess no link between an improve run and a task run", {
   timeout: 240000,
 }, async (t) => {
   const server = await launchFixture({ metrics: true, runViews: true });
@@ -29,7 +29,7 @@ test("run views show outcomes, failures and error detail, and mark what is match
     await expect(summary).toContainText("No error recorded is Unknown, not Completed");
   });
 
-  await t.test("a failed improve run shows its failing processes and the task run matched by time", async () => {
+  await t.test("a failed improve run shows its failing processes and offers no guessed task run", async () => {
     await open(page, server, `${runs}&improve=${runViewIds.failedImprove}&anchor=improve-run`);
     const view = page.getByRole("region", { name: "Improve run details", exact: true });
     await expect(view).toContainText("Failed");
@@ -43,17 +43,17 @@ test("run views show outcomes, failures and error detail, and mark what is match
     await expect(view).toContainText("distill (no_signal)");
     await expect(view).toContainText("Synthetic: model timed out");
     await expect(view).not.toContainText("cannot show the model");
-    await expect(view).toContainText("no record of an improve run carries the id", { ignoreCase: true });
-    await expect(view).toContainText("Matched by time");
-    await expect(view).toContainText("Synthetic: the connection refused the request");
-    await expect(view).toContainText("agent_failed");
+    // A task run that started within minutes of it (the fixture has one) is not offered as its cause.
+    await expect(view).toContainText("No record ties this run to the scheduled task run that started it");
+    await expect(view).not.toContainText("Matched by time");
+    await expect(view).not.toContainText("Synthetic: the connection refused the request");
   });
 
   await t.test("an improve run without a usage report says so instead of showing zero", async () => {
     await open(page, server, `${runs}&improve=${runViewIds.oldImprove}&anchor=improve-run`);
     const view = page.getByRole("region", { name: "Improve run details", exact: true });
     await expect(view).toContainText("No model calls are recorded for this run");
-    await expect(view).toContainText("No scheduled task run started within 5 minutes");
+    await expect(view).toContainText("No record ties this run to the scheduled task run that started it");
   });
 
   await t.test("an improve run older than the latest ten opens by id and shows that it was terminated", async () => {
@@ -84,31 +84,26 @@ test("run views show outcomes, failures and error detail, and mark what is match
     await expect(task).toContainText("unknown, not succeeded");
   });
 
-  await t.test(
-    "a task run that ran a workflow links to it by run id, and one that started an improve run by time",
-    async () => {
-      await open(page, server, `${runs}&task=weekly-review`);
-      const task = page.getByRole("region", { name: "Task run details", exact: true });
-      await task
-        .getByRole("button", { name: /^Open run started/ })
-        .first()
-        .click();
-      await expect(task).toContainText("Matched by run id");
-      await task.getByRole("link", { name: "Open the workflow run this task ran" }).click();
-      await expect(page.getByRole("region", { name: "Workflow run trace" })).toBeVisible();
-      await open(page, server, `${runs}&task=akm-improve-frequent`);
-      const frequent = page.getByRole("region", { name: "Task run details", exact: true });
-      await frequent
-        .getByRole("row", { name: /failed/ })
-        .getByRole("button", { name: /^Open run started/ })
-        .click();
-      await expect(frequent).toContainText("Matched by time");
-      await frequent.getByRole("link", { name: runViewIds.failedImprove }).click();
-      await expect(page.getByRole("region", { name: "Improve run details", exact: true })).toContainText(
-        runViewIds.failedImprove,
-      );
-    },
-  );
+  await t.test("a task run that ran a workflow links to it by run id, and links no improve run", async () => {
+    await open(page, server, `${runs}&task=weekly-review`);
+    const task = page.getByRole("region", { name: "Task run details", exact: true });
+    await task
+      .getByRole("button", { name: /^Open run started/ })
+      .first()
+      .click();
+    await expect(task).toContainText("Matched by run id");
+    await task.getByRole("link", { name: "Open the workflow run this task ran" }).click();
+    await expect(page.getByRole("region", { name: "Workflow run trace" })).toBeVisible();
+    await open(page, server, `${runs}&task=akm-improve-frequent`);
+    const frequent = page.getByRole("region", { name: "Task run details", exact: true });
+    await frequent
+      .getByRole("row", { name: /failed/ })
+      .getByRole("button", { name: /^Open run started/ })
+      .click();
+    await expect(frequent).toContainText("Run started");
+    await expect(frequent).not.toContainText("Matched by time");
+    await expect(frequent.getByRole("link", { name: runViewIds.failedImprove })).toHaveCount(0);
+  });
 
   await t.test("a failed workflow run lists its failed attempts in order and its tokens by target", async () => {
     await open(page, server, `${runs}&run=${runViewIds.failedWorkflow}&anchor=workflow-trace`);
