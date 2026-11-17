@@ -19,7 +19,7 @@ import {
 import { compareVersions } from "../engine-skew.js";
 import { readFile, saveFile } from "./features/files.js";
 import {
-  readPreferences,
+  preferencesView,
   savePreferences,
   tryApply,
   validPluginChannel,
@@ -94,7 +94,7 @@ export const routes: Route[] = [
     akmVersion: akmPackage.version,
     commit: process.env.AKM_DESKTOP_COMMIT,
   })),
-  get("/api/desktop/preferences", () => readPreferences()),
+  get("/api/desktop/preferences", () => preferencesView()),
   post("/api/desktop/preferences", async (value) => {
     const { theme, updateChannel, pluginChannel } = fields<{
       theme?: unknown;
@@ -129,7 +129,7 @@ export const routes: Route[] = [
     host: hostTools.snapshot(),
     desktop: await desktopApp(),
     engine: akmPackage.version,
-    preferences: await readPreferences(),
+    preferences: await preferencesView(),
   })),
   post("/api/desktop/software", async (value) => {
     const request = fields<{ action?: unknown; harness?: unknown; channel?: unknown; consent?: unknown }>(

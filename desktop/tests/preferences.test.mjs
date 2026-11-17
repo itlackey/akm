@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test, { after } from "node:test";
@@ -12,7 +12,9 @@ import test, { after } from "node:test";
 const home = await mkdtemp(path.join(os.tmpdir(), "akm-preferences-test-"));
 process.env.XDG_CONFIG_HOME = home;
 after(() => rm(home, { recursive: true, force: true }));
-const { readPreferences, savePreferences, tryApply } = await import("../src/lib/server/features/preferences.ts");
+const { PreferencesUnreadable, preferencesView, readPreferences, savePreferences, tryApply } = await import(
+  "../src/lib/server/features/preferences.ts"
+);
 const file = path.join(home, "akm-desktop", "preferences.json");
 
 test("concurrent saves each keep their own choice and the unrelated ones (#1609-4)", async () => {
@@ -40,4 +42,32 @@ test("a choice that is saved but could not be applied is reported as saved, not 
     }),
     { applied: false, applyError: "Desktop service did not respond." },
   );
+});
+
+test("a damaged preferences file is reported, and a save moves it aside once instead of overwriting it", async () => {
+  await writeFile(file, '{"theme":"dark","updateChannel":"prerel');
+  await assert.rejects(readPreferences(), PreferencesUnreadable);
+  const view = await preferencesView();
+  assert.equal(view.theme, "system");
+  assert.equal(view.unreadable.file, file);
+  assert.match(view.unreadable.error, /could not be read/);
+
+  const saved = await savePreferences({ theme: "light" });
+  assert.equal(saved.theme, "light");
+  assert.match(saved.movedAside, /preferences\.json\.unreadable-/);
+  assert.equal(await readFile(saved.movedAside, "utf8"), '{"theme":"dark","updateChannel":"prerel');
+  assert.equal(await readFile(file, "utf8"), '{"theme":"light"}\n');
+  assert.equal((await readdir(path.dirname(file))).filter((name) => name.includes("unreadable")).length, 1);
+  assert.equal((await savePreferences({ theme: "dark" })).movedAside, undefined);
+});
+
+test("a preferences file that cannot be read at all is left alone and the save fails with the reason", async (t) => {
+  if (process.getuid?.() === 0) return t.skip("root reads any file");
+  await writeFile(file, '{"theme":"dark","pluginChannel":"next"}\n');
+  await chmod(file, 0o000);
+  t.after(() => chmod(file, 0o600));
+  assert.match((await preferencesView()).unreadable.error, /EACCES/);
+  await assert.rejects(savePreferences({ theme: "light" }), PreferencesUnreadable);
+  await chmod(file, 0o600);
+  assert.equal(await readFile(file, "utf8"), '{"theme":"dark","pluginChannel":"next"}\n');
 });
