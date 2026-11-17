@@ -1805,7 +1805,9 @@ Upgrade replaces the installed program when a newer release exists, then runs
 That makes `akm upgrade` safe as a container entrypoint: on a current
 installation it is a no-op. An akm installed as a dependency of another
 package (`installMethod: "package-local"`) is never reinstalled — the parent
-package owns that copy — but its migrations still run. Standalone downloads
+package owns that copy — but its migrations still run. An npm global upgrade
+requires evidence that this copy is inside the npm global root; a package-local
+Bun invocation without that evidence also leaves installation to its owner. Standalone downloads
 use a temporary rollback copy only during atomic executable replacement.
 
 Standalone downloads are streamed directly to the staged file while SHA-256 is

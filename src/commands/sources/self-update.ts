@@ -24,7 +24,7 @@ import { runMigrationTool } from "../migration-tool";
 const REPO = "itlackey/akm";
 const DEFAULT_PACKAGE_NAME = "akm-cli";
 const NODE_MODULES_SEGMENT = "/node_modules/";
-const BUN_GLOBAL_INSTALL_PATTERN = /(^|\/)\.bun\/(?:[^/]+\/)+node_modules\//;
+const BUN_GLOBAL_INSTALL_PATTERN = /(^|\/)\.bun\/install\/global\/node_modules\//;
 const PNPM_GLOBAL_INSTALL_PATTERN = /(^|\/)(?:pnpm\/global|\.pnpm-global)(?:\/\d+)?\/node_modules\//;
 const MAX_BINARY_DOWNLOAD_BYTES = 256 * 1024 * 1024;
 const MAX_CHECKSUM_METADATA_BYTES = 1024 * 1024;
@@ -134,7 +134,7 @@ function resolveNpmGlobalRootForThisProcess(): string | undefined {
   }
 }
 
-function isUnderDirectory(dir: string, root: string): boolean {
+function isSameDirectory(dir: string, root: string): boolean {
   const real = (value: string): string => {
     try {
       return fs.realpathSync(value);
@@ -142,14 +142,24 @@ function isUnderDirectory(dir: string, root: string): boolean {
       return path.resolve(value);
     }
   };
-  const relative = path.relative(real(root), real(dir));
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  return path.relative(real(root), real(dir)) === "";
 }
 
 /** The package that depends on this akm: the directory holding the `node_modules` it lives in. */
 function packageLocalRoot(importMetaDir: string): string {
   const index = normalizePathSeparators(importMetaDir).lastIndexOf(NODE_MODULES_SEGMENT);
   return index < 0 ? importMetaDir : importMetaDir.slice(0, index);
+}
+
+/** A global entry must own this package, including pnpm's realpathed store layout. */
+function isDirectGlobalPackage(importMetaDir: string, root: string): boolean {
+  const packageSuffix = importMetaDir.slice(
+    importMetaDir.lastIndexOf(NODE_MODULES_SEGMENT) + NODE_MODULES_SEGMENT.length,
+  );
+  const segments = packageSuffix.split("/");
+  const packageName = segments.slice(0, segments[0]?.startsWith("@") ? 2 : 1).join("/");
+  const packageRoot = importMetaDir.slice(0, importMetaDir.length - packageSuffix.length) + packageName;
+  return isSameDirectory(packageRoot, path.join(root, packageName));
 }
 
 // AKM_VERSION ambient type is declared in globals.d.ts
@@ -159,21 +169,23 @@ export function detectInstallMethod(signals?: InstallSignals): InstallMethod {
   const normalizedImportMetaDir = normalizePathSeparators(s.importMetaDir);
 
   if (normalizedImportMetaDir.includes(NODE_MODULES_SEGMENT)) {
-    if (BUN_GLOBAL_INSTALL_PATTERN.test(normalizedImportMetaDir)) {
-      return "bun";
-    }
-    if (PNPM_GLOBAL_INSTALL_PATTERN.test(normalizedImportMetaDir)) {
-      return "pnpm";
+    for (const [method, pattern] of [
+      ["bun", BUN_GLOBAL_INSTALL_PATTERN],
+      ["pnpm", PNPM_GLOBAL_INSTALL_PATTERN],
+    ] as const) {
+      const match = pattern.exec(normalizedImportMetaDir);
+      const root = match ? normalizedImportMetaDir.slice(0, match.index + match[0].length - 1) : undefined;
+      if (root && isDirectGlobalPackage(normalizedImportMetaDir, root)) return method;
     }
     // A node_modules install outside the npm global root is a DEPENDENCY of
     // some other package (an image's tools dir, a plugin's node_modules):
     // it moves when that package does, and an `npm install -g` here would
     // "succeed" while the parent kept executing its own copy. Only a proven
-    // global root can make that call; without one this stays "npm".
-    if (s.npmGlobalRoot && s.importMetaDir && !isUnderDirectory(s.importMetaDir, s.npmGlobalRoot)) {
-      return "package-local";
+    // global root can authorize a global package-manager upgrade.
+    if (s.npmGlobalRoot && isDirectGlobalPackage(normalizedImportMetaDir, s.npmGlobalRoot)) {
+      return "npm";
     }
-    return "npm";
+    return "package-local";
   }
 
   // Bun-compiled binaries: mainPath points to a virtual /$bunfs/
