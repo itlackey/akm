@@ -14,6 +14,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Which bundles supply rules to a session, once the plugins load them with `akm rules`: the project's `from`, else the default bundle and the project's write bundle; with no project, the default bundle. The plugins' search-based listing read the shared rules of every enabled bundle the selection read, so a bundle installed from a registry or a git URL could add a rule to every session. Name such a bundle in the project's `from` to keep loading its rules. Search and curate are unchanged.
 
+### Fixed
+
+- `akm lint` sweeps and accepts files in `rules/`, `instructions/` and `sessions/`, which it had skipped: it now takes its folders from the asset registry instead of its own list. `akm lint rules/x.md` no longer fails with "not under a known asset directory". `--type` accepts `rules`, `instructions` and `sessions`; a file under `env/` or `secrets/` is refused, never read. The `bundlePolicy` migration strips `lint_skip` in the same folders.
+- Usage records `--type` values `task`, `session`, `fact`, `instruction`, `rule` and `any` instead of `[redacted]`. Shell completion and the output config accept the `--format` and `--detail` values the output module defines.
+
 ## [0.10.261129] - 2026-11-16
 
 ### Added
