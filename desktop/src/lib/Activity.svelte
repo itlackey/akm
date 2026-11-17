@@ -35,6 +35,7 @@
     bundle: string;
     path: string;
     git: boolean;
+    error?: string;
     commits: Array<Commit & { shortSha?: string }>;
   } | null>(null);
   let misses = $state<{
@@ -293,6 +294,8 @@
   <p class="muted">{changes.bundle} · <span class="mono wrap">{changes.path}</span></p>
   {#if !changes.git}<p class="empty">
       This write target is not a Git repository. AKM does not retain general manual-edit undo for a non-Git bundle.
+    </p>{:else if changes.error}<p class="notice notice-warn" role="alert">
+      Git could not be read: {changes.error}
     </p>{:else}<form
       class="history-filter"
       role="search"

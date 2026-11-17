@@ -537,6 +537,7 @@
         {:else if !history.available}<p class="state">
             No Git history is available for this bundle. General manual-edit undo is not available for a non-Git source.
           </p>
+        {:else if history.error}<p class="notice notice-warn" role="alert">Git could not be read: {history.error}</p>
         {:else}
           <ul class="history-list">
             {#each history.commits as c}<li>

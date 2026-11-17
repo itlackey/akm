@@ -373,9 +373,11 @@
             <h3>Working stash</h3>
             <p class="mono wrap">{listing.workingStash.path}</p>
             <p>
-              {listing.workingStash.git
-                ? `Branch ${listing.workingStash.git.branch ?? "detached HEAD"} · ${listing.workingStash.git.dirtyPaths} uncommitted paths`
-                : "Not a Git repository."}
+              {listing.workingStash.git?.error
+                ? `Git could not be read: ${listing.workingStash.git.error}`
+                : listing.workingStash.git
+                  ? `Branch ${listing.workingStash.git.branch ?? "detached HEAD"} · ${listing.workingStash.git.dirtyPaths} uncommitted paths`
+                  : "Not a Git repository."}
             </p>
           </article>{/if}{#each listing?.bundles ?? [] as bundle (bundle.name)}<SettingsBundleCard
             {bundle}

@@ -231,7 +231,8 @@ export async function history(input: { ref: string; revision?: string; limit?: n
   if (!source) return { available: false, commits: [] };
   const file = path.relative(source.path, selected.asset.path).split(path.sep).join("/");
   if (file.startsWith("../") || path.isAbsolute(file)) throw new UsageError("Asset path is outside its bundle.");
-  const commits = await readRecentCommits(source.path, clampLimit(input.limit, 30), file);
+  const read = await readRecentCommits(source.path, clampLimit(input.limit, 30), file);
+  const commits = read?.commits ?? null;
   const revision = input.revision;
   if (revision && !commits?.some((commit) => commit.sha === revision))
     throw new UsageError("Choose a revision from this asset's history.");
@@ -241,6 +242,7 @@ export async function history(input: { ref: string; revision?: string; limit?: n
   return {
     available: commits !== null,
     commits: commits ?? [],
+    ...(read?.error ? { error: read.error } : {}),
     ...(diff
       ? {
           diff: {

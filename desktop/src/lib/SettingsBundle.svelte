@@ -223,7 +223,9 @@
         {#each counts as [name, count]}<li>{name} <strong>{count}</strong></li>{/each}
       </ul>{:else}<p class="muted">No indexed assets.</p>{/if}
     <h4>Git status</h4>
-    {#if bundle.git}<dl class="bundle-facts">
+    {#if bundle.git?.error}<p class="notice notice-warn" role="alert">
+        Git could not be read: {bundle.git.error}
+      </p>{:else if bundle.git}<dl class="bundle-facts">
         <dt>Branch</dt>
         <dd>{bundle.git.branch ?? "Detached HEAD"}</dd>
         <dt>Upstream</dt>

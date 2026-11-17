@@ -206,12 +206,13 @@ export function get(input: { id: string }) {
 export async function recentChanges(input: { limit?: number } = {}) {
   const limit = clampLimit(input.limit);
   const target = resolveWriteTarget(loadConfig(), undefined, { requireWritable: false });
-  const commits = await readRecentCommits(target.source.path, limit);
+  const read = await readRecentCommits(target.source.path, limit);
   return {
     bundle: target.source.name,
     path: target.source.path,
-    git: commits !== null,
-    commits: commits ?? [],
+    git: read !== null,
+    commits: read?.commits ?? [],
+    ...(read?.error ? { error: read.error } : {}),
   };
 }
 
