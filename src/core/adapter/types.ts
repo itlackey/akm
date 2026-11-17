@@ -33,6 +33,7 @@
 
 import type { TocHeading } from "../asset/markdown";
 import type { StalePathFields } from "../asset/stale-path";
+import type { AkmConfig } from "../config/config-types";
 
 // ── §1.1 — bundle / component / installation model ─────────────────────────
 
@@ -373,6 +374,8 @@ export interface BundleSourceRef {
 export interface ValidateContext {
   /** The configured bundles this run resolves refs against, the validated bundle among them. */
   readonly sources?: readonly BundleSourceRef[];
+  /** The settings this run was given; the base checks read stale-path roots and `lint.skip` from them. */
+  readonly config?: AkmConfig;
   /**
    * Reads served from the run's snapshot WITH the pending changes overlaid —
    * one core overlay implementation, not one per adapter.

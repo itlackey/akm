@@ -75,9 +75,9 @@ export interface BaseChecker {
   rulesFor(relPath: string, skip?: readonly string[]): RuleScope;
 }
 
-/** The base checks for the files of the bundle at `componentRoot`, among the bundles `ctx` names. The scope (other bundles, moved refs, stale-path roots, LLM Wikis) is read once. */
+/** The base checks for the files of the bundle at `componentRoot`, among the bundles and with the settings `ctx` names (the settings are read once, here, only when `ctx` carries none). The scope (other bundles, moved refs, stale-path roots, LLM Wikis) is read once. */
 export function createBaseChecker(componentRoot: string, ctx: ValidateContext): BaseChecker {
-  const scope = lintScope(componentRoot, loadConfig(), ctx.sources ?? []);
+  const scope = lintScope(componentRoot, ctx.config ?? loadConfig(), ctx.sources ?? []);
   const rulesFor = (relPath: string, skip: readonly string[] = []): RuleScope => ({
     relPath,
     llmWiki: scope.inLlmWiki(relPath),

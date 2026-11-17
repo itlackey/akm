@@ -11,7 +11,7 @@
  *
  * Reuses the akm adapter's per-type workflow checks (shared base checks +
  * `placeholder-stub` + `invalid-workflow-structure`). Delegates to the SAME
- * `perTypeValidateChecks` / `createBaseChecker` the `akm` adapter uses, so
+ * `perTypeDiagnostics` / `createBaseChecker` the `akm` adapter uses, so
  * workflow validation has one home.
  *
  * Conformance oracle (authored, DO NOT modify): fixture
@@ -27,7 +27,7 @@ import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
 import type { BundleAdapter } from "../bundle-adapter";
 import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
-import { perTypeValidateChecks } from "./akm-lint";
+import { perTypeDiagnostics } from "./akm-lint";
 import { createBaseChecker, hashContent, nonEmptyString, parseForValidate, readTags } from "./shared";
 
 /** A native workflow bundle is single-component; its one component is `main`. */
@@ -103,17 +103,20 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
     const parsed = parseForValidate(raw);
     diagnostics.push(...check(relPath, parsed));
     diagnostics.push(
-      ...(await perTypeValidateChecks({
-        type: "workflow",
+      ...perTypeDiagnostics(
+        {
+          type: "workflow",
+          relPath,
+          raw,
+          data: parsed.data,
+          frontmatter: parsed.frontmatter,
+          body: parsed.content,
+          ext,
+          rules: rulesFor(relPath),
+          derivedSiblingExists: false,
+        },
         relPath,
-        raw,
-        data: parsed.data,
-        frontmatter: parsed.frontmatter,
-        body: parsed.content,
-        ext,
-        rules: rulesFor(relPath),
-        ctx,
-      })),
+      ),
     );
   }
   return diagnostics;

@@ -100,7 +100,7 @@ import type { BundleAdapter } from "../bundle-adapter";
 import { executionDefaultsFromFrontmatter, renderMarkdownExecutionSource } from "../execution-source";
 import { recognizeMatch } from "../recognize-match";
 import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
-import { perTypeValidateChecks, skillDirectoryDiagnostics } from "./akm-lint";
+import { derivedSiblingPath, perTypeDiagnostics, skillDirectoryDiagnostics, type TypeCheckInput } from "./akm-lint";
 import { applyFoldedMetadata, foldRecognizedMetadata } from "./akm-metadata";
 import { createBaseChecker, hashContent, type ParsedForValidate, parseForValidate, RESERVED_FILES } from "./shared";
 
@@ -455,25 +455,24 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
     const match = recognizeMatch(overlay);
     const type = match?.type;
 
-    // Task parsing belongs to perTypeValidateChecks' canonical v3 parser. Base
+    // Task parsing belongs to perTypeChecks' canonical v3 parser. Base
     // checks need only a frontmatter-free placeholder here.
     const parsed: ParsedForValidate =
       type === "task" ? { raw, data: {}, content: raw, frontmatter: null, bodyStartLine: 1 } : parseForValidate(raw);
 
     diagnostics.push(...check(change.path, parsed));
-    diagnostics.push(
-      ...(await perTypeValidateChecks({
-        type,
-        relPath: change.path,
-        raw,
-        data: parsed.data,
-        frontmatter: parsed.frontmatter,
-        body: parsed.content,
-        ext: overlay.ext,
-        rules: rulesFor(change.path),
-        ctx,
-      })),
-    );
+    const input: TypeCheckInput = {
+      type,
+      relPath: change.path,
+      raw,
+      data: parsed.data,
+      frontmatter: parsed.frontmatter,
+      body: parsed.content,
+      ext: overlay.ext,
+      rules: rulesFor(change.path),
+      derivedSiblingExists: (await ctx.readFile(derivedSiblingPath(change.path))) !== null,
+    };
+    diagnostics.push(...perTypeDiagnostics(input, change.path));
     diagnostics.push(...(await skillDirectoryDiagnostics(change.path, seenSkillDirs, ctx)));
   }
 

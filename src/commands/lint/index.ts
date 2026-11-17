@@ -6,14 +6,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { classifyAkmFile } from "../../core/adapter/adapters/akm-adapter";
 import {
-  factDiagnostics,
+  derivedSiblingPath,
   MAX_SKILL_GROUP_DEPTH,
   matchWorkflowPlaceholder,
-  memoryOrphanStubApplies,
-  nameOrTypeDiagnostics,
-  ORPHANED_STUB_DETAIL,
-  taskDiagnostics,
-  workflowFrontendDiagnostics,
+  perTypeChecks,
+  perTypeFrontend,
 } from "../../core/adapter/adapters/akm-lint";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { adapterForId } from "../../core/adapter/registry";
@@ -321,7 +318,7 @@ async function lintViaAdapter(
   const sourceIndex = sources.findIndex((s) => samePath(s.path, stashRoot));
   const componentId = sourceIndex >= 0 ? (ids[sourceIndex] as string) : stashRoot;
 
-  const ctx = createValidateContext({ root: stashRoot, sources });
+  const ctx = createValidateContext({ root: stashRoot, sources, config: cfg });
   const diagnostics = await adapter.validate(
     { id: componentId, adapter: adapterId, root: stashRoot, writable: true },
     changes,
@@ -496,64 +493,23 @@ function containsSkillManifest(dir: string, depth: number): boolean {
     );
 }
 
-/** MemoryLinter's `orphaned-stub` check WITH its `--fix` delete (memory-linter.ts:19-65). */
-function appendMemoryStubIssue(ctx: LintContext, issues: LintIssue[]): void {
-  if (ctx.lintSkip?.includes("orphaned-stub") || !memoryOrphanStubApplies(ctx.data, ctx.body)) return;
-  const derivedPath = `${ctx.filePath.replace(/\.md$/i, "")}.derived.md`;
-  if (fs.existsSync(derivedPath)) return;
-  if (ctx.fix) {
-    try {
-      fs.unlinkSync(ctx.filePath);
-      issues.push({ file: ctx.relPath, issue: "orphaned-stub", detail: "deleted orphaned stub", fixed: true });
-    } catch (e) {
-      issues.push({
-        file: ctx.relPath,
-        issue: "orphaned-stub",
-        detail: `could not delete: ${e instanceof Error ? e.message : String(e)}`,
-        fixed: "failed",
-      });
-    }
-    return;
+/** Under `--fix`, a stub the per-type checks found is deleted; the finding then says so, or says why not. */
+function deleteStubWhenFixing(ctx: LintContext, found: Diagnostic): LintIssue {
+  const issue = found as LintIssue;
+  if (!ctx.fix || (issue.issue !== "orphaned-stub" && issue.issue !== "placeholder-stub")) return issue;
+  try {
+    fs.unlinkSync(ctx.filePath);
+    return {
+      ...issue,
+      detail:
+        issue.issue === "orphaned-stub"
+          ? "deleted orphaned stub"
+          : `deleted: found "${matchWorkflowPlaceholder(ctx.body)}"`,
+      fixed: true,
+    };
+  } catch (e) {
+    return { ...issue, detail: `could not delete: ${e instanceof Error ? e.message : String(e)}`, fixed: "failed" };
   }
-  issues.push({ file: ctx.relPath, issue: "orphaned-stub", detail: ORPHANED_STUB_DETAIL, fixed: false });
-}
-
-/**
- * WorkflowLinter's `placeholder-stub` check WITH its `--fix` delete
- * (workflow-linter.ts:22-79). Its sibling `invalid-workflow-structure` check is
- * deliberately NOT here: parse+compile is a single pass shared with the
- * advisory channel, so {@link lintAkmSweep} runs it once per file and routes
- * both halves.
- */
-function appendWorkflowStubIssue(ctx: LintContext, issues: LintIssue[]): void {
-  if (ctx.lintSkip?.includes("placeholder-stub")) return;
-  const placeholder = matchWorkflowPlaceholder(ctx.body);
-  if (!placeholder) return;
-  if (ctx.fix) {
-    try {
-      fs.unlinkSync(ctx.filePath);
-      issues.push({
-        file: ctx.relPath,
-        issue: "placeholder-stub",
-        detail: `deleted: found "${placeholder}"`,
-        fixed: true,
-      });
-    } catch (e) {
-      issues.push({
-        file: ctx.relPath,
-        issue: "placeholder-stub",
-        detail: `could not delete: ${e instanceof Error ? e.message : String(e)}`,
-        fixed: "failed",
-      });
-    }
-    return;
-  }
-  issues.push({
-    file: ctx.relPath,
-    issue: "placeholder-stub",
-    detail: `placeholder text: "${placeholder}"`,
-    fixed: false,
-  });
 }
 
 /**
@@ -568,31 +524,18 @@ function appendWorkflowStubIssue(ctx: LintContext, issues: LintIssue[]): void {
  */
 export function lintAssetFile(ctx: LintContext, subdir: string): LintIssue[] {
   const issues = runBaseChecks(ctx);
-  switch (subdir) {
-    case "agents":
-    case "commands":
-      if (ruleApplies("missing-name-or-type", { relPath: ctx.relPath, llmWiki: ctx.llmWiki, skip: ctx.lintSkip }))
-        issues.push(
-          ...(nameOrTypeDiagnostics(ctx.relPath, ctx.data, ctx.frontmatter, [
-            subdir === "agents" ? "agent" : "command",
-          ]) as LintIssue[]),
-        );
-      break;
-    case "facts":
-      issues.push(...(factDiagnostics(ctx.relPath, ctx.data) as LintIssue[]));
-      break;
-    case "tasks":
-      issues.push(...(taskDiagnostics(ctx.relPath, ctx.raw) as LintIssue[]));
-      break;
-    case "memories":
-      appendMemoryStubIssue(ctx, issues);
-      break;
-    case "workflows":
-      appendWorkflowStubIssue(ctx, issues);
-      break;
-    // knowledge / lessons / skills: base checks only (skill directory-level
-    // `missing-skill-md` runs separately, per-subdir, in the sweep loop).
-  }
+  const found = perTypeChecks({
+    type: typeForStashDir(subdir),
+    relPath: ctx.relPath,
+    raw: ctx.raw,
+    data: ctx.data,
+    frontmatter: ctx.frontmatter,
+    body: ctx.body,
+    ext: path.extname(ctx.relPath).toLowerCase(),
+    rules: { relPath: ctx.relPath, llmWiki: ctx.llmWiki, skip: ctx.lintSkip },
+    derivedSiblingExists: fs.existsSync(derivedSiblingPath(ctx.filePath)),
+  });
+  issues.push(...found.map((finding) => deleteStubWhenFixing(ctx, finding)));
   return issues;
 }
 
@@ -755,14 +698,15 @@ function lintDocument(
   // `--fail-on-flagged`.
   // The CLI passes the absolute filePath to the shared source-IR frontend,
   // whereas the adapter passes the change relPath.
-  if (subdir === "workflows") {
-    const frontend = workflowFrontendDiagnostics(relPath, raw, filePath);
-    for (const finding of [...frontend.errors, ...frontend.warnings]) {
-      if (isAdvisoryLintIssue(finding)) {
-        warnings.push(finding);
-      } else {
-        flagged.push(finding);
-      }
+  const frontend = perTypeFrontend(
+    { type: typeForStashDir(subdir), ext: path.extname(relPath).toLowerCase(), relPath, raw },
+    filePath,
+  );
+  for (const finding of [...frontend.errors, ...frontend.warnings]) {
+    if (isAdvisoryLintIssue(finding)) {
+      warnings.push(finding);
+    } else {
+      flagged.push(finding);
     }
   }
 }
