@@ -869,8 +869,8 @@ User searches that found nothing, grouped by normalised query: `query`, `count`,
 What first-run setup could use on this computer, read from the file system and `PATH` only: nothing is contacted and
 nothing is written. It returns `stashDir`, the library directory the config already names, else `~/akm` or another
 existing candidate, else the default (`AKM_BUNDLE_DIR`, else `~/akm`, or `Documents\akm` on Windows); `harnesses`, the agent
-programs found on `PATH` that akm can run work on, each `{platform, path, modelWorkNote}` (akm's words for whether its
-model calls on that program can be limited to reading and searching); `enabled`, the platforms the config already
+programs found on `PATH` that akm can run work on, each `{platform, path, modelWorkReadOnly, modelWorkNote}` (`modelWorkReadOnly`: whether akm's model calls on that
+program can be limited to reading and searching; `modelWorkNote`: akm's words for it, for display); `enabled`, the platforms the config already
 enables; `modelCalls`, where akm's own model calls
 (improve, judging, extraction) run: `description` in the words of `akm setup`'s summary, and `platform` when they run on
 a harness (else `null`); `connection`, the name of the connection that takes them when no agent does (`null` when there is

@@ -15,7 +15,7 @@ export interface Starter {
 /** What `setup.detect` reports, and `setup.apply` returns once it has run. */
 export interface Detected {
   stashDir: string;
-  harnesses: Array<{ platform: string; path: string; modelWorkNote: string }>;
+  harnesses: Array<{ platform: string; path: string; modelWorkReadOnly: boolean; modelWorkNote: string }>;
   /** The platforms akm's config already enables. */
   enabled: string[];
   modelCalls: { platform: string | null; description: string };
@@ -132,7 +132,7 @@ export interface AgentCard {
    * Whether akm can use this harness (it finds the program on its own PATH) and whether it is enabled in akm's config,
    * with akm's words for what its model calls could do there.
    */
-  learning: { available: boolean; enabled: boolean; note: string };
+  learning: { available: boolean; enabled: boolean; note: string; readOnly: boolean | null };
 }
 
 /**
@@ -168,6 +168,7 @@ export function agentCards(host: HostSnapshot, detected: Detected): AgentCard[] 
           available: seen !== undefined,
           enabled: detected.enabled.includes(platform),
           note: seen?.modelWorkNote ?? "",
+          readOnly: seen?.modelWorkReadOnly ?? null,
         },
       };
     });

@@ -82,10 +82,16 @@ test("one card per harness found, with the plugin's version, the Bun gate and ak
     {
       stashDir: "/x",
       harnesses: [
-        { platform: "claude", path: "/bin/claude", modelWorkNote: "model calls are limited to reading and searching" },
+        {
+          platform: "claude",
+          path: "/bin/claude",
+          modelWorkReadOnly: true,
+          modelWorkNote: "model calls are limited to reading and searching",
+        },
         {
           platform: "opencode",
           path: "/bin/opencode",
+          modelWorkReadOnly: false,
           modelWorkNote: "Model work on opencode cannot be restricted: it can edit files and run commands.",
         },
       ],
@@ -102,9 +108,9 @@ test("one card per harness found, with the plugin's version, the Bun gate and ak
         "claude",
         "ready",
         true,
-        { available: true, enabled: false, note: "model calls are limited to reading and searching" },
+        { available: true, enabled: false, note: "model calls are limited to reading and searching", readOnly: true },
       ],
-      ["codex", "connected", true, { available: false, enabled: false, note: "" }],
+      ["codex", "connected", true, { available: false, enabled: false, note: "", readOnly: null }],
       [
         "opencode",
         "connected",
@@ -113,6 +119,7 @@ test("one card per harness found, with the plugin's version, the Bun gate and ak
           available: true,
           enabled: true,
           note: "Model work on opencode cannot be restricted: it can edit files and run commands.",
+          readOnly: false,
         },
       ],
     ],
