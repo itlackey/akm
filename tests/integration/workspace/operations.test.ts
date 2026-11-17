@@ -104,7 +104,11 @@ test("env and secret writes check the revision with the bytes they replace or re
   expect(created).toMatchObject({ bundle: "stash", ref: "stash//env/app", revision: sha("A=1\n"), warnings: [] });
   expect(await code(sensitive.save({ ref: created.ref, content: "A=2\n" }))).toBe("RESOURCE_ALREADY_EXISTS");
   const info = sensitive.describe({ ref: created.ref });
-  expect(info).toMatchObject({ type: "env", writable: true, revision: created.revision });
+  expect(info).toMatchObject({
+    type: "env",
+    actions: { edit: { allowed: true }, delete: { allowed: true } },
+    revision: created.revision,
+  });
   expect(JSON.stringify(info)).not.toContain("A=1");
   expect(await code(sensitive.save({ ref: created.ref, content: "A=3\n", revision: sha("old") }))).toBe(
     "ASSET_CONTENT_CHANGED",
@@ -115,6 +119,29 @@ test("env and secret writes check the revision with the bytes they replace or re
   expect(saved.revision).toBe(sha("A=4\n"));
   expect(await sensitive.remove({ ref: created.ref, revision: saved.revision })).toMatchObject({ removed: true });
   expect(fs.existsSync(info.path)).toBe(false);
+});
+
+test("a protected file in a read-only bundle says why it cannot be edited or deleted, in the sentence akm's own write refuses with", async () => {
+  const locked = path.join(storage.root, "locked-bundle");
+  fs.mkdirSync(path.join(locked, "env"), { recursive: true });
+  fs.writeFileSync(path.join(locked, "env", "ro.env"), "A=1\n");
+  saveConfig({
+    semanticSearchMode: "off",
+    bundles: { stash: { path: storage.stashDir, writable: true }, locked: { path: locked, writable: false } },
+    defaultBundle: "stash",
+    defaultWriteTarget: "stash",
+    registries: [],
+  });
+  const info = sensitive.describe({ bundle: "locked", file: "env/ro.env" });
+  const refusal = await sensitive
+    .save({ bundle: "locked", file: "env/ro.env", content: "A=2\n", revision: info.revision })
+    .then(
+      () => "",
+      (error: Error) => error.message,
+    );
+  expect(refusal).not.toBe("");
+  expect(info.actions.edit).toEqual({ allowed: false, reason: refusal });
+  expect(info.actions.delete).toEqual({ allowed: false, reason: refusal });
 });
 
 test("a protected file below the top level is named as one akm manages only at the top level, and nothing opens or changes it", async () => {

@@ -110,12 +110,12 @@ function locate(input: SensitiveSelector) {
 
 export function describe(input: SensitiveSelector) {
   const found = locate(input);
-  let writable = false;
+  // What may be done to the file: allowed when akm would write it, else the sentence its write path refuses with.
+  let verdict: { allowed: true } | { allowed: false; reason: string } = { allowed: true };
   try {
     (found.type === "env" ? resolveEnvWriteTarget : resolveSecretWriteTarget)(found.ref, found.bundle);
-    writable = true;
-  } catch {
-    /* a readable bundle akm does not write to */
+  } catch (error) {
+    verdict = { allowed: false, reason: error instanceof Error ? error.message : String(error) };
   }
   const parent = path.posix.dirname(found.relative);
   return {
@@ -124,7 +124,7 @@ export function describe(input: SensitiveSelector) {
     name: path.basename(found.file),
     bundle: found.bundle,
     path: found.file,
-    writable,
+    actions: { edit: verdict, delete: verdict },
     revision: digest(fs.readFileSync(found.file)),
     location: { bundle: found.bundle, path: found.relative, parent },
   };

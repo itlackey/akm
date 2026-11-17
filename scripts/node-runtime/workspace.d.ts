@@ -282,7 +282,8 @@ export namespace sensitive {
     name: string;
     bundle: string;
     path: string;
-    writable: boolean;
+    /** What akm accepts doing to the file: allowed, or the sentence its write path refuses with. */
+    actions: Record<"edit" | "delete", { allowed: true } | { allowed: false; reason: string }>;
     revision: string;
     location: { bundle: string; path: string; parent: string };
   };
