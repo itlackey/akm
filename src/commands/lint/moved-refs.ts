@@ -10,6 +10,9 @@
 
 import { rewritePathTokens } from "../../core/asset/ref-rewrite";
 import { readEvents } from "../../core/events";
+import { getStateDbPath } from "../../core/state-db";
+import { warn } from "../../core/warn";
+import { openSqliteReadSnapshot, SqliteReadSnapshotUnavailableError } from "../../storage/sqlite-read-snapshot";
 import { findFenceRegions } from "./markdown-insertion";
 
 /** The ref a moved asset has now, and the link spelled as it is written to name it (a bare link stays bare). */
@@ -31,7 +34,25 @@ const bundleOf = (itemRef: string): string => itemRef.slice(0, itemRef.indexOf("
 /** The recorded moves, each old ref with the ref its asset has now (a later move re-keys the earlier events). */
 export function readMovedRefs(): MovedRefs {
   const current = new Map<string, string>();
-  for (const event of readEvents({ type: "moved" }, { readOnly: true }).events) {
+  let moves: ReturnType<typeof readEvents>["events"] = [];
+  // A private copy of state.db: a read-only connection to the live one would create its `-wal` and `-shm` files.
+  let snapshot: ReturnType<typeof openSqliteReadSnapshot>;
+  try {
+    snapshot = openSqliteReadSnapshot(getStateDbPath());
+  } catch (error) {
+    if (!(error instanceof SqliteReadSnapshotUnavailableError)) throw error;
+    warn(
+      `[lint] the recorded moves could not be read (${error.message}); a link to a moved ref is reported without its new ref.`,
+    );
+  }
+  if (snapshot !== undefined) {
+    try {
+      moves = readEvents({ type: "moved" }, { db: snapshot, readOnly: true }).events;
+    } finally {
+      snapshot.close();
+    }
+  }
+  for (const event of moves) {
     const from = event.metadata?.from;
     if (typeof from === "string" && event.ref !== undefined && event.ref !== from) current.set(from, event.ref);
   }
