@@ -431,6 +431,8 @@ test("Files by keyboard: rename, move, new folder, properties and commit are rea
     await expect(actions("review-example.md")).toBeFocused();
     // Rename by keyboard: the field takes focus, Enter renames, the status says so.
     await page.keyboard.press("Enter");
+    // The second Enter is for the menu's first item, so it waits until the menu has taken focus.
+    await expect(menu.getByRole("menuitem").first()).toBeFocused();
     await page.keyboard.press("Enter");
     const field = page.getByRole("textbox", { name: "New name for review-example.md" });
     await expect(field).toBeFocused();
