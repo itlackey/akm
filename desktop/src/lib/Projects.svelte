@@ -22,10 +22,9 @@
 
   let config = $state<{
     path: string;
-    config: { projects?: Record<string, ProjectEntry>; defaultWriteTarget?: string };
+    config: { projects?: Record<string, ProjectEntry> };
     localProjects?: string[];
     projectWarnings?: string[];
-    automaticWriteTarget?: { name: string } | null;
   } | null>(null);
   let loadError = $state(""),
     loading = $state(true),
@@ -36,7 +35,6 @@
   const rows = $derived(projectRows(config?.config.projects, config?.localProjects ?? []));
   const row = $derived<ProjectRow | undefined>(rows.find((r) => r.name === name));
   const adding = $derived(!name && query.has("add"));
-  const defaultTarget = $derived(config?.config.defaultWriteTarget || config?.automaticWriteTarget?.name || "");
   const bundleInfo = $derived(
     workspace.bundles.map((b) => ({ name: b.name, enabled: b.enabled, writable: b.writable })),
   );
@@ -145,7 +143,7 @@
       original={null}
       bundles={bundleInfo}
       existing={rows.map((r) => r.name)}
-      {defaultTarget}
+      defaultTarget={workspace.defaultWriteTarget}
       {busy}
       {failure}
       cancelHref="/projects"
@@ -171,7 +169,7 @@
         original={row}
         bundles={bundleInfo}
         existing={rows.map((r) => r.name)}
-        {defaultTarget}
+        defaultTarget={workspace.defaultWriteTarget}
         {busy}
         {failure}
         cancelHref={`/projects/${enc(row.name)}`}

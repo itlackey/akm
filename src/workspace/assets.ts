@@ -16,6 +16,7 @@ import { resolveRefOwner } from "../core/env-secret-ref";
 import { UsageError } from "../core/errors";
 import { type IncludeSelectors, includedTypes, includesProposed } from "../core/include";
 import { projectView, resolveProject } from "../core/projects";
+import { resolveWriteTarget } from "../core/write-source";
 import { readUsableIndex } from "../indexer/index-readiness";
 import type { ScopeFilters } from "../indexer/passes/metadata";
 import { resolveReadSources } from "../indexer/read-preflight";
@@ -26,7 +27,7 @@ import { countFeedbackBySignal, listFeedbackEventRows } from "../storage/reposit
 import { assetImprove } from "./asset-improve";
 import { bundleFileLocation, listBundleFiles } from "./bundle-files";
 import { readFileRevision, readRecentCommits } from "./git-read";
-import { automaticWriteTarget, capSide, clampLimit, DIFF_SIDE_MAX_CHARS, withReadonlyStateDb } from "./readers";
+import { capSide, clampLimit, DIFF_SIDE_MAX_CHARS, withReadonlyStateDb } from "./readers";
 
 export { graph } from "./graph";
 export { searchMisses } from "./misses";
@@ -117,7 +118,13 @@ export function projectOverview(input: { project: string }) {
           undefined,
         )
       : undefined;
-  const writeName = project.write.bundle ?? config.defaultWriteTarget ?? automaticWriteTarget(config)?.name ?? null;
+  // Where akm would write for this project; a write bundle that does not resolve is shown by the name it was given.
+  let writeName: string | null = project.write.bundle ?? null;
+  try {
+    writeName = resolveWriteTarget(config, project.write.bundle, { requireWritable: false }).source.name;
+  } catch {
+    /* No target resolves: the explicit name, or none. */
+  }
   const writeSource = writeName === null ? undefined : local.find((source) => source.registryId === writeName);
   return {
     project: { ...projectView(project), write: project.write },
