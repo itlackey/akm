@@ -21,6 +21,11 @@ export function dayRange(from: string, to: string): string[] {
   return days;
 }
 
+/** The seven UTC days, `YYYY-MM-DD`, of the ISO week that starts on `monday`. */
+export function weekDays(monday: string): string[] {
+  return dayRange(monday, new Date(Date.parse(`${monday}T00:00:00Z`) + 6 * DAY_MS).toISOString().slice(0, 10));
+}
+
 /** The Monday (ISO week start) of the UTC week that holds `day`, as `YYYY-MM-DD`. */
 export function isoWeekStart(day: string): string {
   const at = new Date(`${day}T00:00:00Z`);

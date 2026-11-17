@@ -17,7 +17,7 @@ import { learningStatus } from "../setup/learning";
 import { queryImproveRuns } from "../storage/repositories/improve-runs-repository";
 import { listStateProposals } from "../storage/repositories/proposals-repository";
 import { queryTaskHistory } from "../storage/repositories/task-history-repository";
-import { againstUsual, classifyOutcome } from "./derive";
+import { againstUsual, classifyOutcome, MIN_USUAL_WEEKS } from "./derive";
 import { isUserSearch, missesFromRows } from "./misses";
 import { stateDbUnavailable, withReadonlyStateDb } from "./readers";
 import { nearestRank } from "./stats";
@@ -71,7 +71,7 @@ export function overviewPulse() {
     count: negativeNow.length,
     assets: new Set(negativeNow.map((row) => row.ref).filter(Boolean)).size,
     usual:
-      weeksWithData >= 4
+      weeksWithData >= MIN_USUAL_WEEKS
         ? { low: nearestRank(sortedWeeks, 0.1), high: nearestRank(sortedWeeks, 0.9), state: "ok" as const }
         : { low: null, high: null, state: "low-data" as const },
     latest: latest ? { ref: latest.ref ?? null, at: latest.at } : null,

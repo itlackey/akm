@@ -178,6 +178,8 @@
   );
   const metrics = $derived(data.metrics);
   const weekly = $derived(retrieval?.weekly ?? []);
+  const weekLabel = (row: { week: string; partial: boolean }) =>
+    `${row.week.slice(5)}${row.partial ? " (partial)" : ""}`;
   const activity = $derived(metrics?.usage.daily ?? []);
   const processes = $derived(Object.entries(metrics?.llm.byProcess ?? {}).sort((a, b) => b[1].calls - a[1].calls));
   const tasks = $derived(metrics?.tasks.byTask ?? data.taskFailures ?? []);
@@ -432,18 +434,20 @@
               id="activity-retrieval-rate"
               legend={[
                 { name: "Found nothing, by week", index: 0 },
-                { name: "Band: usual range", index: 0, band: true },
-                { name: "Centre", index: 5 },
+                ...(retrieval?.enoughHistory
+                  ? [
+                      { name: "Band: usual range", index: 0, band: true },
+                      { name: "Centre", index: 5 },
+                    ]
+                  : []),
               ]}
               heading="Is search finding what you need?"
-              description="Weekly share that found nothing, with the usual control range. Retrieval does not measure whether an answer was right."
+              description={`Weekly share that found nothing${retrieval?.enoughHistory ? ", with its usual range" : ". Too few whole weeks for a usual range"}. A hollow mark is a partial week. Not a measure of correct answers.`}
               option={() =>
-                pChartLine(
-                  weekly.map((row) => row.week.slice(5)),
-                  weekly,
-                  retrieval?.centre,
-                  { name: "Found nothing", unit: "Found nothing" },
-                )}
+                pChartLine(weekly.map(weekLabel), weekly, retrieval?.centre, {
+                  name: "Found nothing",
+                  unit: "Found nothing",
+                })}
             >
               <table>
                 <caption>Weekly retrieval and control bands</caption><thead
@@ -454,11 +458,23 @@
                   ></thead
                 ><tbody
                   >{#each weekly as row}<tr
-                      ><th>{row.week}</th><td>{row.n}</td><td>{row.x}</td><td>{percent(row.rate)}</td><td
+                      ><th>{row.week}{row.partial ? " (partial week)" : ""}</th><td>{row.n}</td><td>{row.x}</td><td
+                        >{percent(row.rate)}</td
+                      ><td
                         >{row.lower === null || row.upper === null
                           ? "Not measured"
                           : `${percent(row.lower)} to ${percent(row.upper)}`}</td
-                      ><td>{row.signal ? "Unusual" : row.n ? "Within range" : "No searches"}</td></tr
+                      ><td
+                        >{row.partial
+                          ? "Partial week"
+                          : row.signal
+                            ? "Unusual"
+                            : row.lower === null
+                              ? "Not measured"
+                              : row.n
+                                ? "Within range"
+                                : "No searches"}</td
+                      ></tr
                     >{/each}</tbody
                 >
               </table>
@@ -470,7 +486,7 @@
               height="strip"
               option={(token) =>
                 eventStrip(
-                  weekly.map((row) => row.week.slice(5)),
+                  weekly.map(weekLabel),
                   runs
                     .filter((run) => run.ok !== null)
                     .map((run) => ({
@@ -502,13 +518,15 @@
               height="short"
               option={() =>
                 verticalBars(
-                  weekly.map((row) => row.week.slice(5)),
+                  weekly.map(weekLabel),
                   [{ name: "Searches", data: weekly.map((row) => row.n) }],
                   "Searches",
                 )}
               ><table>
                 <caption>Weekly search volume</caption><thead><tr><th>Week</th><th>Searches</th></tr></thead><tbody
-                  >{#each weekly as row}<tr><th>{row.week}</th><td>{row.n}</td></tr>{/each}</tbody
+                  >{#each weekly as row}<tr
+                      ><th>{row.week}{row.partial ? " (partial week)" : ""}</th><td>{row.n}</td></tr
+                    >{/each}</tbody
                 >
               </table></ActivityChart
             >

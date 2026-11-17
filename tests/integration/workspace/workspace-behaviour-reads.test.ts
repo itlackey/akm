@@ -353,6 +353,11 @@ describe("reads", () => {
       [day(60), 2, 1],
       [day(1), 1, 0],
     ]);
+    // Two recorded days are not four whole weeks: no usual range, and the weeks at either end are partial.
+    expect(trend.enoughHistory).toBe(false);
+    expect(trend.centre).toBeNull();
+    expect(trend.weekly.at(-1)).toMatchObject({ partial: true, lower: null, upper: null, signal: false });
+    expect(trend.weekly[0]).toMatchObject({ lower: null, upper: null });
     const short = await out(activity.retrievalTrend({ since: "30d" }));
     expect(short.daily.map((d: { date: string }) => d.date)).not.toContain(day(60));
     await expectUsage(() => activity.retrievalTrend({ since: "nonsense" }));

@@ -268,3 +268,25 @@ test("Improve impact says where the usage figures start and shows an unkept befo
   await expect(row).toContainText("Not recorded → 1");
   await expect(page.locator(".impact-summary")).toContainText("cover usage only from");
 });
+
+// akm marks the weeks it has only part of and says whether it has enough whole weeks for a usual range: the chart
+// shows a partial week as partial and draws no range or verdict from a week or two of searches.
+test("the weekly retrieval chart marks partial weeks and claims no usual range without enough history", {
+  timeout: 240000,
+}, async (t) => {
+  const server = await launchFixture({ metrics: true });
+  t.after(() => server.stop());
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
+  await open(page, server, "/activity/overview?view=usage&window=7d");
+  const rate = page.getByRole("region", { name: "Is search finding what you need?" });
+  await expect(rate).toContainText("Too few whole weeks for a usual range");
+  await expect(rate).not.toContainText("Band: usual range");
+  await rate.getByRole("button", { name: "Table" }).click();
+  const table = rate.getByRole("table", { name: "Weekly retrieval and control bands" });
+  await expect(table.getByRole("row").nth(1)).toContainText("(partial week)");
+  await expect(table.getByRole("row").nth(1)).toContainText("Partial week");
+  await expect(table).not.toContainText("Within range");
+  await expect(table).not.toContainText("Unusual");
+});

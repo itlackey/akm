@@ -96,11 +96,15 @@ export interface RetrievalWeek {
   lower: number | null;
   upper: number | null;
   signal: boolean;
+  /** akm has only part of this week's days: its rate is shown, with no range and no verdict. */
+  partial: boolean;
 }
 export interface ActivityRetrieval {
   daily: Array<{ date: string; searches: number; zeroResults: number; medianMs: number | null }>;
   weekly: RetrievalWeek[];
   centre: number | null;
+  /** Whether akm has enough whole weeks of searches to claim a usual range. */
+  enoughHistory: boolean;
 }
 export interface OutcomeCounts {
   judge: number;

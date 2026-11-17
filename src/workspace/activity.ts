@@ -22,10 +22,11 @@ import {
 import { WorkflowRunsRepository } from "../storage/repositories/workflow-runs-repository";
 import { pkgVersion } from "../version";
 import { listWorkflowRunSummaries, readWorkflowStatus } from "../workflows/runtime/runs";
-import { pChart, weekOf, weekRange } from "./derive";
+import { pChart, weekRange } from "./derive";
 import { filledActivity, retrievalSeries } from "./metrics";
 import { isUserEvent } from "./misses";
 import { clampLimit, section, stateDbUnavailable, withReadonlyStateDb } from "./readers";
+import { weekDays } from "./stats";
 
 export { improveImpact } from "./impact";
 export { overviewPulse as pulse } from "./pulse";
@@ -234,16 +235,25 @@ export function retrievalTrend(input: { since?: string } = {}) {
   // The same days by ISO week, for a p-chart of the share that found nothing.
   const first = series.daily[0]?.date;
   const weeks = first ? weekRange(first, window.until.slice(0, 10)) : [];
+  const byDate = new Map(series.daily.map((d) => [d.date, d]));
   const perWeek = weeks.map((week) => {
-    const days = series.daily.filter((d) => weekOf(d.date) === week);
+    const days = weekDays(week).map((date) => byDate.get(date));
     return {
       week,
-      x: days.reduce((sum, d) => sum + d.zeroResults, 0),
-      n: days.reduce((sum, d) => sum + d.searches, 0),
+      x: days.reduce((sum, d) => sum + (d?.zeroResults ?? 0), 0),
+      n: days.reduce((sum, d) => sum + (d?.searches ?? 0), 0),
+      // A day akm has no row for (before the first recorded day) or marks partial makes the week partial.
+      partial: days.some((d) => d === undefined || d.partial === true),
     };
   });
   const chart = pChart(perWeek);
-  return { available: true as const, ...series, weekly: chart.points, centre: chart.centre };
+  return {
+    available: true as const,
+    ...series,
+    weekly: chart.points,
+    centre: chart.centre,
+    enoughHistory: chart.enough,
+  };
 }
 
 /** Most runs or events one window read returns; a longer window says it was cut. */
