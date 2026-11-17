@@ -337,7 +337,7 @@ refused. Internal symbolic links can be traversed; unavailable links are labelle
 The result is `{bundle, path, parent, indexAvailable, entries}`.
 `parent` is null at the root. Each entry has `name`, bundle-relative `path`,
 `kind` (`directory`, `file`, or `other`), and `assets: [{ref, type}]`,
-with optional `symlink` and `unavailable`. Directories sort first, then names.
+with optional `symlink`, `unavailable`, `size` (a file's bytes) and `modified` (ISO time; both absent when the file cannot be read). Directories sort first, then names.
 Internal links retain their displayed path and their target's indexed assets.
 Assets come only from exact physical-file rows already in the index; absent
 indexes leave them empty. No recursive scan is run, index written, or source

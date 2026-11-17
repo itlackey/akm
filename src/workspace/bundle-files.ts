@@ -73,10 +73,18 @@ export function listBundleFiles(bundle: string, relative = "", showHidden = fals
           unavailable = "Link target is unavailable.";
         }
       }
+      // Size (a file's) and modified time, from the file the entry resolves to; absent when it cannot be read.
+      let stat: fs.Stats | undefined;
+      try {
+        stat = fs.statSync(absolute);
+      } catch {
+        stat = undefined;
+      }
       return {
         name: entry.name,
         path: portable(path.relative(source.path, absolute)),
         kind,
+        ...(stat ? { modified: stat.mtime.toISOString(), ...(stat.isFile() ? { size: stat.size } : {}) } : {}),
         // Keep the displayed alias, but look up the file under this bundle's indexed root.
         absolute: path.join(source.path, path.relative(physicalRoot, safeRealpath(absolute))),
         ...(entry.isSymbolicLink() ? { symlink: true } : {}),

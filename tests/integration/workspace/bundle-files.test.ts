@@ -49,6 +49,19 @@ test("lists real immediate entries with canonical indexed refs, never contents o
   expect(asset.location).toEqual(bundleFileLocation(path.join(dir, "guide.md")));
 });
 
+test("reports a file's size and every entry's modified time", () => {
+  const dir = path.join(storage.stashDir, "knowledge");
+  fs.writeFileSync(path.join(dir, "sized.txt"), "12345");
+  fs.mkdirSync(path.join(dir, "sub"));
+  const entries = listBundleFiles("stash", "knowledge").entries;
+  const file = entries.find((entry) => entry.name === "sized.txt");
+  const folder = entries.find((entry) => entry.name === "sub");
+  expect(file?.size).toBe(5);
+  expect(file?.modified).toBe(fs.statSync(path.join(dir, "sized.txt")).mtime.toISOString());
+  expect(folder?.size).toBeUndefined();
+  expect(folder?.modified).toBe(fs.statSync(path.join(dir, "sub")).mtime.toISOString());
+});
+
 test("marks a file protected when akm types it env or secret, at any depth", () => {
   fs.mkdirSync(path.join(storage.stashDir, "projects", "x", "secrets"), { recursive: true });
   fs.mkdirSync(path.join(storage.stashDir, "projects", "x", "env"));
