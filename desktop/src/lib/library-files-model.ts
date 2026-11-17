@@ -166,3 +166,14 @@ export interface FileRequest {
   /** Where it is dropped, or the folder the picker starts in. */
   destination: { bundle: string; path: string };
 }
+
+/** akm's list of the links that still name the old place of an asset that was moved, per bundle. */
+export interface MovedLinksReport {
+  bundles: Array<{
+    bundle: string;
+    writable: boolean;
+    writeBlocker: string | null;
+    links: Array<{ ref: string; file: string; from: string; to: string }>;
+  }>;
+  total: number;
+}

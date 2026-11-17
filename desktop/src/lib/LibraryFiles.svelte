@@ -37,6 +37,7 @@
     onSelect,
     onSearch,
     onChanged,
+    onCreated,
     actions,
     children,
   }: {
@@ -55,6 +56,8 @@
     onSearch?: (bundle: string) => void;
     /** A file operation finished; `moved` carries akm's answer to a move, a rename or a copy. */
     onChanged?: (change?: { moved?: Record<string, unknown> }) => void;
+    /** A new file was made: it opens in the editor. */
+    onCreated?: (created: { bundle: string; folder: string; file: string; ref: string | null }) => void;
     /** Links and buttons at the end of the location bar. */
     actions?: Snippet;
     /** The open document, with what the folder listing knows about its file. */
@@ -288,7 +291,7 @@
       toBundle = String(result.toBundle ?? node.bundle);
     const next = follow && bundleName === node.bundle ? followMove(file, node.path, to) : null;
     onChanged?.({ moved: result });
-    if (next !== null && toBundle === node.bundle && file) {
+    if (next !== null && file) {
       const assets = (result.assets as FileEntry["assets"] | undefined) ?? [];
       onNavigate?.({
         bundle: toBundle,
@@ -417,13 +420,7 @@
         );
         creating = null;
         onChanged?.();
-        onNavigate?.({
-          bundle: made.bundle,
-          path: made.path,
-          file: result.file,
-          open: true,
-          ...(result.ref ? { ref: result.ref } : {}),
-        });
+        onCreated?.({ bundle: made.bundle, folder: made.path, file: result.file, ref: result.ref });
       }
     } catch (cause) {
       failure = (cause as Error).message;

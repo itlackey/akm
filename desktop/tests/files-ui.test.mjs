@@ -180,3 +180,75 @@ test("the list shows size and modified time from akm", async (t) => {
   await expect(row.getByRole("cell").nth(2)).toHaveText(/\d+ B/);
   await expect(row.getByRole("cell").nth(3)).toHaveText(new Date(listed.modified).toLocaleString());
 });
+
+const linker = (name, ref) =>
+  `---\ndescription: Links to ${name}\nupdated: 2026-11-01\n---\n\nSee ${ref} for details.\n`;
+
+test("after a move the page counts the links that still name the old place; one button rewrites them and says what changed", async (t) => {
+  const { app, page } = await session(t, {
+    configureFixture: async (fixture) => {
+      await fs.mkdir(path.join(fixture.root, "personal/knowledge/archive"));
+      await fs.writeFile(
+        path.join(fixture.root, "personal/knowledge/linker.md"),
+        linker("the laptop guide", "personal//knowledge/restore-laptop"),
+      );
+      await fs.writeFile(
+        path.join(fixture.root, "vendor/knowledge/vendor-linker.md"),
+        linker("the laptop guide", "personal//knowledge/restore-laptop"),
+      );
+    },
+  });
+  await go(page, opened(app.refs.document, "knowledge", "knowledge/restore-laptop.md"));
+  await expect(page.getByRole("button", { name: /^Update \d+ links?$/ })).toHaveCount(0);
+  await page.getByRole("tree", { name: "Bundle files" }).getByRole("treeitem", { name: "restore-laptop.md" }).focus();
+  await page.keyboard.press("ContextMenu");
+  await page.getByRole("menuitem", { name: /^Move to…/ }).click();
+  await page.getByRole("dialog").getByRole("treeitem", { name: "archive" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Move here" }).click();
+  const notice = page.getByRole("region", { name: "Links to the old place" });
+  await expect(notice).toContainText("2 links still point at the old place.");
+  // The read-only bundle is counted and says why it is not updated: akm's sentence.
+  const blocker = (await app.call("/api/bundles")).body.data.bundles.find(
+    (entry) => entry.name === "vendor",
+  ).writeBlocker;
+  await expect(notice).toContainText(`1 in vendor, not updated: ${blocker}`);
+  const before = await fs.readFile(path.join(app.root, "personal/knowledge/linker.md"), "utf8");
+  assert.match(before, /personal\/\/knowledge\/restore-laptop /, "nothing is rewritten before the click");
+  await notice.getByRole("button", { name: "Update 1 link" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Updated 1 link in 1 file" })).toContainText("linker.md");
+  assert.match(
+    await fs.readFile(path.join(app.root, "personal/knowledge/linker.md"), "utf8"),
+    /personal\/\/knowledge\/archive\/restore-laptop for details/,
+  );
+  assert.equal(
+    await fs.readFile(path.join(app.root, "vendor/knowledge/vendor-linker.md"), "utf8"),
+    linker("the laptop guide", "personal//knowledge/restore-laptop"),
+    "a read-only bundle is not written",
+  );
+});
+
+test("the page has no move form: More offers no rename or move, and Edit and Retire come from akm's verdicts", async (t) => {
+  const { app, page } = await session(t);
+  await go(page, opened(app.refs.document, "knowledge", "knowledge/restore-laptop.md"));
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  const menu = page.locator("#asset-actions");
+  await expect(menu.getByRole("button", { name: /Rename or move/ })).toHaveCount(0);
+  await expect(menu.getByRole("button", { name: "Retire" })).not.toHaveAttribute("aria-disabled", "true");
+  await page.keyboard.press("Escape");
+  await go(
+    page,
+    opened(app.refs.vendor, "knowledge", "knowledge/vendor-backup.md").replace("bundle=personal", "bundle=vendor"),
+  );
+  const edit = page.getByRole("button", { name: "Edit page", exact: true });
+  await expect(edit).toHaveAttribute("aria-disabled", "true");
+  const reason = (await folderOf(app, "knowledge", "vendor")).entries.find((entry) => entry.name === "vendor-backup.md")
+    .actions.edit.reason;
+  await expect(page.locator(".asset-context")).toContainText(reason);
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  const retire = page.locator("#asset-actions").getByRole("button", { name: "Retire" });
+  await expect(retire).toHaveAttribute("aria-disabled", "true");
+  await expect(page.locator("#asset-actions")).toContainText(
+    (await folderOf(app, "knowledge", "vendor")).entries.find((entry) => entry.name === "vendor-backup.md").actions
+      .retire.reason,
+  );
+});

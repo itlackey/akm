@@ -10,7 +10,7 @@
   import { assetSource, title, toggleSelection, date, matchesAssetRef, type ApiError } from "./client";
   import { libraryRead, resultContext, searchHref, documentTitle } from "./library-model";
   import { filesHref, parseFilesHref } from "./library-files-model";
-  import type { FileLocation, FilesViewState } from "./library-files-model";
+  import type { FileLocation, FilesViewState, MovedLinksReport } from "./library-files-model";
   import type { SearchResult, AssetRead } from "./library-model";
   import type { Bundle } from "./types";
   import LibraryAsset from "./LibraryAsset.svelte";
@@ -19,6 +19,7 @@
   import SensitiveAsset from "./SensitiveAsset.svelte";
   import SensitiveEditor from "./SensitiveEditor.svelte";
   import LibraryFiles from "./LibraryFiles.svelte";
+  import MovedLinks from "./MovedLinks.svelte";
   import Diff from "./Diff.svelte";
   import Icon from "./Icon.svelte";
   import { navigate } from "./navigation";
@@ -73,6 +74,9 @@
     searchWindowScroll = 0,
     searchContainer = $state<HTMLElement>();
   const filesViewState: FilesViewState = {};
+  let movedLinks = $state<MovedLinksReport | null>(null),
+    movedLinksError = $state(""),
+    movedChecks = $state(0);
   let pendingResultFocus = "";
   let newFiles = $state<HTMLElement>(),
     writeWarnings = $state<string[]>([]);
@@ -217,6 +221,16 @@
     if (comparison && comparison !== compareKey && compareRefs.length === 2) {
       compareKey = comparison;
       void compare(compareRefs);
+    }
+  }
+  /** After a move akm lists the links that still name the old place; a failed read is said, never shown as none. */
+  async function checkMovedLinks() {
+    try {
+      movedLinks = await libraryRead<MovedLinksReport>("/assets/moved-links", {});
+      movedLinksError = "";
+    } catch (cause) {
+      movedLinks = null;
+      movedLinksError = `Could not check for links to the old place: ${(cause as Error).message}`;
     }
   }
   async function resolveLocation(edit: boolean) {
@@ -529,6 +543,14 @@
         >Retry</button
       >{/if}
   </p>{/if}
+{#if movedLinksError}<p class="notice notice-warn" role="alert">{movedLinksError}</p>{/if}
+{#if movedLinks}{#key movedChecks}<MovedLinks
+      report={movedLinks}
+      onUpdated={() => {
+        mutationRevision++;
+        void checkMovedLinks();
+      }}
+    />{/key}{/if}
 {#if comparisonMode && compareRefs.length !== 2}<div class="comparison-selection">
     <div>
       <strong
@@ -605,7 +627,29 @@
     onNavigate={navigateFiles}
     onSelect={(chosen) => (selected = toggleSelection(selected, chosen, 2))}
     onSearch={(name) => navigate(searchHref(new URLSearchParams({ bundle: name })))}
-    onChanged={() => mutationRevision++}
+    onCreated={(created) =>
+      navigate(
+        "/library/edit?" +
+          new URLSearchParams({
+            ...(created.ref ? { ref: created.ref } : { bundle: created.bundle, file: created.file }),
+            returnTo: filesHref(
+              {
+                bundle: created.bundle,
+                path: created.folder,
+                file: created.file,
+                ...(created.ref ? { ref: created.ref, open: true } : { open: true }),
+              },
+              readingHref,
+            ),
+          }),
+      )}
+    onChanged={(change) => {
+      mutationRevision++;
+      if (change?.moved) {
+        movedChecks++;
+        void checkMovedLinks();
+      }
+    }}
   >
     {#snippet actions()}<div class="files-actions">
         {#if reviewHref}<a href={reviewHref}>Back to review</a>{:else if readingHref && !editing}<a href={readingHref}

@@ -102,10 +102,11 @@ test("built desktop UI: each section's happy path and one refusal", { timeout: 2
   await t.test("Library: create knowledge; copy a skill; a refused copy changes nothing", async () => {
     await nav("Library").click();
     await page.goto(`${server.origin}/library/files?bundle=personal&path=knowledge`);
-    await page.getByRole("link", { name: /New knowledge/ }).click();
-    await page.getByRole("textbox", { name: "File name", exact: true }).fill("desktop-created");
+    await page.getByRole("button", { name: "New knowledge", exact: true }).click();
+    await page.getByRole("textbox", { name: "Name of the new knowledge", exact: true }).fill("desktop-created");
+    await page.getByRole("button", { name: "Create", exact: true }).click();
     await editor().fill("# Desktop created\n\nA synthetic note written by the UI through AKM.\n");
-    await page.getByRole("button", { name: "Create knowledge", exact: true }).click();
+    await page.getByRole("button", { name: "Save changes", exact: true }).click();
     await expect(page.getByRole("status").filter({ hasText: "Changes saved." })).toBeVisible();
     assert.match(
       await readFile(path.join(server.root, "personal/knowledge/desktop-created.md"), "utf8"),
@@ -126,15 +127,22 @@ test("built desktop UI: each section's happy path and one refusal", { timeout: 2
     await expect(page.getByRole("alert")).toBeVisible();
   });
 
-  await t.test("Library: a move copies, then retires the original", async () => {
-    await page.goto(`${server.origin}/library/files?${new URLSearchParams({ ref: server.refs.memory, open: "1" })}`);
-    await page.getByRole("button", { name: "More", exact: true }).click();
-    await page.getByRole("button", { name: "Rename or move…", exact: true }).click();
-    await page.getByRole("combobox", { name: "Bundle", exact: true }).selectOption("shared");
-    await page.getByRole("textbox", { name: "Name or folder/name", exact: true }).fill("moved-preference");
-    await page.getByRole("button", { name: "Move", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "Move completed", exact: true })).toBeVisible();
-    assert.match(await readFile(path.join(server.root, "shared/memories/moved-preference.md"), "utf8"), /offline copy/);
+  await t.test("Library: a move is a rename on disk; the asset is the same asset in its new bundle", async () => {
+    await page.goto(
+      `${server.origin}/library/files?${new URLSearchParams({ bundle: "personal", path: "memories", file: "memories/backup-preference.md", ref: server.refs.memory, open: "1" })}`,
+    );
+    await page
+      .getByRole("tree", { name: "Bundle files" })
+      .getByRole("treeitem", { name: "backup-preference.md" })
+      .focus();
+    await page.keyboard.press("ContextMenu");
+    await page.getByRole("menuitem", { name: /^Move to…/ }).click();
+    const dialog = page.getByRole("dialog", { name: "Move backup-preference.md" });
+    await dialog.getByRole("treeitem", { name: "shared", exact: true }).click();
+    await dialog.getByRole("button", { name: "Move here", exact: true }).click();
+    await expect(page).toHaveURL(/bundle=shared/);
+    await expect(page.locator(".document-body")).toContainText("offline copy");
+    assert.match(await readFile(path.join(server.root, "shared/backup-preference.md"), "utf8"), /offline copy/);
     await assert.rejects(stat(path.join(server.root, "personal/memories/backup-preference.md")), { code: "ENOENT" });
   });
 

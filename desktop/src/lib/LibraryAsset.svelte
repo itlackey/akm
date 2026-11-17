@@ -17,7 +17,6 @@
   import Diff from "./Diff.svelte";
   import Icon from "./Icon.svelte";
   import AssetRelated from "./AssetRelated.svelte";
-  import AssetOrganize from "./AssetOrganize.svelte";
   import SensitiveAsset from "./SensitiveAsset.svelte";
   let {
     ref,
@@ -98,7 +97,6 @@
   const viewTitle = $derived(
     (
       {
-        Move: "Rename or move",
         Related: "Related assets",
         Source: "Markdown source",
         History: "Document history",
@@ -182,7 +180,7 @@
       data = read;
       onLoaded?.(read);
       if (!read.redacted) {
-        if (read.asset.editable && !["skill", "secret", "env", "session"].includes(read.asset.type ?? ""))
+        if (read.actions?.retire.allowed)
           api<Source>("/desktop/file", { ref: read.durableRef ?? selected })
             .then((source) => {
               if (request === generation) retireRevision = source.revision;
@@ -237,7 +235,7 @@
     moreTrigger?.focus();
   }
   async function retire() {
-    if (busy || !retireRevision) return;
+    if (busy || !retireRevision || !data?.actions?.retire.allowed) return;
     more?.hidePopover();
     busy = true;
     error = "";
@@ -420,9 +418,12 @@
       <div class="asset-title-row">
         <h1 bind:this={heading} id={titleAnchor} tabindex="-1">{documentTitle(data.asset)}</h1>
         <div class="page-actions">
-          {#if data.asset.editable && !["env", "secret", "session"].includes(data.asset.type ?? "")}<a
+          {#if data.actions?.edit.allowed}<a class="btn btn-secondary" href={editorHref}
+              ><Icon name="edit" size={16} />Edit page</a
+            >{:else if data.actions}<button
               class="btn btn-secondary"
-              href={editorHref}><Icon name="edit" size={16} />Edit page</a
+              aria-disabled="true"
+              aria-describedby="edit-page-reason"><Icon name="edit" size={16} />Edit page</button
             >{/if}
           <div class="more-actions">
             <button type="button" class="more-trigger" bind:this={moreTrigger} popovertarget="asset-actions"
@@ -449,25 +450,23 @@
                 <button onclick={copyRef}><Icon name="link" size={16} />Copy ref</button>
                 {#if writable.length}<button onclick={beginCopy}><Icon name="copy" size={16} />Copy to bundle…</button
                   >{/if}
-                {#if data.asset.editable && !["env", "secret", "session", "skill"].includes(data.asset.type ?? "")}
-                  <button onclick={() => showView("Move")}><Icon name="folder" size={16} />Rename or move…</button>
-                  <button
+                {#if data.actions}<button
                     onclick={retire}
-                    disabled={busy || !retireRevision}
+                    aria-disabled={busy || !data.actions.retire.allowed || !retireRevision ? "true" : undefined}
+                    aria-describedby={data.actions.retire.allowed ? undefined : "retire-reason"}
                     title="Move to the recoverable archive now"><Icon name="history" size={16} />Retire</button
-                  >
-                {/if}
+                  >{#if !data.actions.retire.allowed}<span class="menu-reason" id="retire-reason"
+                      >{data.actions.retire.reason}</span
+                    >{/if}{/if}
               </div>
             </div>
           </div>
         </div>
       </div>
       <div class="asset-context">
-        <span
-          >{data.bundle || data.asset.origin || "Local"} · {data.asset.type}{!data.asset.editable
-            ? " · Read only"
-            : ""}</span
-        >
+        <span>{data.bundle || data.asset.origin || "Local"} · {data.asset.type}</span>
+        {#if data.actions && !data.actions.edit.allowed}<span id="edit-page-reason">{data.actions.edit.reason}</span
+          >{/if}
         {#if mode === "search" && filesHref}<a href={filesHref}><Icon name="folder" size={15} />View in folder</a>{/if}
         <button class="text-action" onclick={() => showView("Related")}
           ><Icon name="link" size={15} />Related assets</button
@@ -520,8 +519,6 @@
           >{#if data.durableRef}<button class="text-action" onclick={() => showView("Fix")}>Suggest a correction</button
             >{/if}
         </div>
-      {:else if tab === "Move"}
-        {#key canonical}<AssetOrganize ref={canonical} {bundles} {onChanged} />{/key}
       {:else if tab === "Related"}
         {#key canonical}<AssetRelated
             ref={canonical}
@@ -904,6 +901,12 @@
     box-shadow: 0 8px 24px rgb(0 0 0 / 0.12);
   }
   /* Menu rows are shorter than buttons, so the eight items fit the native minimum window without a scrollbar. */
+  .menu-reason {
+    display: block;
+    padding: 0 12px 8px;
+    font-size: 12px;
+    color: var(--muted);
+  }
   .action-menu button {
     display: flex;
     align-items: center;
