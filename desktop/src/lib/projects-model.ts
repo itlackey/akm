@@ -248,6 +248,22 @@ export interface OverviewBundle {
   total: BundleCount | null;
   eligible: BundleCount | null;
 }
+/** Why a count is missing: akm reports `null` where a bundle cannot be read or nothing is indexed in it. */
+export const COUNTS_UNKNOWN =
+  "Counts unknown: akm could not count these assets (the bundle cannot be read, or nothing is indexed).";
+
+/** The indexed and eligible asset counts of `bundles`, summed from what akm reported; null when it reported none for any of them. */
+export function assetCounts(bundles: readonly OverviewBundle[]): { total: number; eligible: number } | null {
+  let total = 0;
+  let eligible = 0;
+  for (const bundle of bundles) {
+    if (!bundle.total || !bundle.eligible) return null;
+    total += bundle.total.count;
+    eligible += bundle.eligible.count;
+  }
+  return { total, eligible };
+}
+
 export interface Overview {
   project: { name: string; prefer: Record<string, string | string[]>; write: { metadata: Record<string, unknown> } };
   fromImplicit: boolean;

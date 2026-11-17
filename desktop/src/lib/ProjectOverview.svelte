@@ -8,7 +8,14 @@
   import { onMount } from "svelte";
   import { api } from "./client";
   import Icon from "./Icon.svelte";
-  import { scopeText, type BundleCount, type Overview, type ProjectRow } from "./projects-model";
+  import {
+    assetCounts,
+    COUNTS_UNKNOWN,
+    scopeText,
+    type BundleCount,
+    type Overview,
+    type ProjectRow,
+  } from "./projects-model";
   import type { Bundle } from "./types";
 
   let { row, bundles }: { row: ProjectRow; bundles: Bundle[] } = $props();
@@ -92,7 +99,7 @@
   {#if !overview && !error}<p role="status" class="muted">Loading…</p>{/if}
   <div class="bundle-grid">
     {#each overview?.bundles ?? [] as bundle (bundle.name)}
-      {@const total = bundle.total?.count ?? 0}
+      {@const counts = assetCounts([bundle])}
       {@const types = topTypes(bundle.total)}
       <article class="card bundle-card">
         <header>
@@ -113,24 +120,24 @@
           <p class="small muted">
             {provider(bundle.name)} · Enabled · {bundle.writable ? "Writable" : "Read-only"}
           </p>
-          {#if bundle.total && bundle.eligible}
+          {#if counts}
             <p class="small">
-              <strong>{n(total)}</strong> indexed · <strong>{n(bundle.eligible.count)}</strong> eligible
+              <strong>{n(counts.total)}</strong> indexed · <strong>{n(counts.eligible)}</strong> eligible
             </p>
-            {#if total > 0 && bundle.eligible.count === 0}<p class="small muted">
-                {total === 1
+            {#if counts.total > 0 && counts.eligible === 0}<p class="small muted">
+                {counts.total === 1
                   ? "Its only asset doesn't match this project's filters."
-                  : `None of its ${n(total)} assets match this project's filters.`}
+                  : `None of its ${n(counts.total)} assets match this project's filters.`}
               </p>{/if}
-          {:else}<p class="small">
-              {n(bundles.find((b) => b.name === bundle.name)?.itemCount ?? 0)} indexed · eligible not counted
-            </p>{/if}
+          {:else}<p class="small">{COUNTS_UNKNOWN}</p>{/if}
           {#if types.text}<p class="small muted" title={types.full}>{types.text}</p>{/if}
-          {#if (bundle.eligible?.count ?? total) > 0}<a
+          {#if !counts}<a class="small" href={`${base}/assets?bundle=${encodeURIComponent(bundle.name)}`}
+              >Browse assets →</a
+            >{:else if counts.eligible > 0}<a
               class="small"
               href={`${base}/assets?bundle=${encodeURIComponent(bundle.name)}`}
-              >Browse {n(bundle.eligible?.count ?? total)}
-              {(bundle.eligible?.count ?? total) === 1 ? "asset" : "assets"} →</a
+              >Browse {n(counts.eligible)}
+              {counts.eligible === 1 ? "asset" : "assets"} →</a
             >{:else}<p class="small muted">No eligible assets</p>{/if}
         {/if}
       </article>

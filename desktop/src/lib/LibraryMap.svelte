@@ -25,6 +25,7 @@
     RECENT_DAYS,
     relations,
     tally,
+    unplaced,
     USE_CLASSES,
     VIEWS,
     type View,
@@ -259,6 +260,8 @@
     ` ${query.toLowerCase().replace(/[^a-z0-9]+/g, " ")} `.includes(` ${tag.replace(/[^a-z0-9]+/g, " ").trim()} `);
   /** Searches that found nothing: for a tag, the ones that mention it. */
   const gaps = $derived(part?.tag ? misses.filter((m) => mentions(m.query, part.tag)).slice(0, 6) : misses.slice(0, 6));
+  /** Assets in the bundle that are not points on the 3D map: akm's stored layout has no group for them. */
+  const offMap = $derived(o ? unplaced(o, bundleScope) : 0);
   const scopeName = $derived(bundle < 0 ? "All bundles" : (o?.bundles[bundle] ?? ""));
   const nameOf = (key: string) => {
     const p = parts.get(key);
@@ -283,7 +286,7 @@
   // ---- The 3D map ----
   /** Contents colours a point by its group (hues spaced by the golden angle), Use by its use, Problems by its problem. */
   const colourOf = (i: number) => {
-    if (view === "use" && o!.useKnown) return USE_CLASSES.find((u) => u.id === o!.use[i])?.token ?? "--use-0";
+    if (view === "use" && o!.useKnown) return USE_CLASSES.find((u) => u.id === o!.use[i])?.token ?? "--border";
     if (view === "problems") return PROBLEMS.find((p) => p.id === firstProblem(o!, i))?.token ?? "--border";
     return `hsl(${Math.round((o!.group[i]! * 137.508) % 360)} 62% 56%)`;
   };
@@ -505,7 +508,12 @@
                   <span class="swatch" style={`background:var(${p.token})`}></span>{p.label}
                 </li>{/each}
               <li><span class="swatch" style="background:var(--use-0)"></span>No problem recorded</li>
-            </ul>{/if}
+            </ul>
+            {#if !o.feedbackKnown || !o.duplicatesKnown}<p class="muted small">
+                {o.feedbackKnown ? "" : "Disliked assets cannot be shown. "}{o.duplicatesKnown
+                  ? ""
+                  : "Near-duplicates cannot be shown. "}{o.note}
+              </p>{/if}{/if}
         </div>
         <div class="map-stage">
           {#if depth === "3d"}{#if groups.length}<SimilarityMap
@@ -521,13 +529,18 @@
                 related={joined.slice(0, 12).map((r) => r.key)}
                 onPick={pick}
                 onGroup={choose}
-                label={`${question} Every asset of ${scopeName} as a point, alike assets close together, in ${plural(groups.length, "group")} by meaning named by their tags.`}
+                label={`${question} The ${plural(bundleScope.length - offMap, "asset")} of ${scopeName} that have a group by meaning, as points, alike assets close together, in ${plural(groups.length, "group")} named by their tags.${offMap ? ` ${plural(offMap, "asset")} not shown.` : ""}`}
               />
               <p class="muted small">
                 Each point is an asset; alike assets sit close, and each group by meaning is named by the tags its
                 assets carry most. Drag to turn, right-drag to move, scroll to zoom, hover a point for its name. Choose
                 a group's name to draw what joins it to other groups, or a point to draw its links and near-duplicates.
-              </p>{:else}<p class="notice">
+              </p>
+              {#if offMap}<p class="muted small" role="status">
+                  {plural(offMap, "asset")}
+                  {offMap === 1 ? "has" : "have"} no group by meaning, so {offMap === 1 ? "is" : "are"} not shown (not embedded,
+                  or added since the last index build).
+                </p>{/if}{:else}<p class="notice">
                 No stored embeddings, so assets cannot be placed by meaning. Build the index with embeddings, or use the
                 flat map.
               </p>{/if}
@@ -622,8 +635,15 @@
                 <dt>Never read since {o.useSince ? new Date(o.useSince).toLocaleDateString() : "–"}</dt>
                 <dd>{pct(facts.use.new + facts.use.unread, facts.count)}</dd>
                 <dt>Liked · disliked</dt>
-                <dd>{liked.toLocaleString()} · {facts.disliked.length.toLocaleString()}</dd>
+                <dd>
+                  {#if o.feedbackKnown}{liked.toLocaleString()} · {facts.disliked.length.toLocaleString()}{:else}unavailable{/if}
+                </dd>
               </dl>
+              {#if !o.feedbackKnown}<p class="muted small">Feedback is unavailable: {o.note}</p>{/if}
+              {#if facts.useUnclassed}<p class="muted small">
+                  {plural(facts.useUnclassed, "asset")} not read in the window and with no edit time akm could read, so they
+                  are not classed.
+                </p>{/if}
             </section>
             <section>
               <h3>Most read</h3>
@@ -663,7 +683,8 @@
             </details>
             <details open={facts.outdated.length === 0 && facts.duplicatesInside.length > 0}>
               <summary
-                >Near-duplicates inside<span class="count">{facts.duplicatesInside.length.toLocaleString()}</span
+                >Near-duplicates inside<span class="count"
+                  >{o.duplicatesKnown ? facts.duplicatesInside.length.toLocaleString() : "unavailable"}</span
                 ></summary
               >
               <p class="muted small">Both assets here: compare and keep one.</p>
@@ -671,14 +692,19 @@
             </details>
             <details>
               <summary
-                >Near-duplicates elsewhere<span class="count">{facts.duplicatesOutside.length.toLocaleString()}</span
+                >Near-duplicates elsewhere<span class="count"
+                  >{o.duplicatesKnown ? facts.duplicatesOutside.length.toLocaleString() : "unavailable"}</span
                 ></summary
               >
               <p class="muted small">One asset here, the other outside {part ? "this group" : "this bundle"}.</p>
               {@render pairList(facts.duplicatesOutside)}
             </details>
             <details>
-              <summary>Disliked<span class="count">{facts.disliked.length.toLocaleString()}</span></summary>
+              <summary
+                >Disliked<span class="count"
+                  >{o.feedbackKnown ? facts.disliked.length.toLocaleString() : "unavailable"}</span
+                ></summary
+              >
               <p class="muted small">More negative feedback than positive.</p>
               {@render assetList(facts.disliked, (i) => `${o!.negative[i]} − · ${o!.positive[i]} +`)}
             </details>

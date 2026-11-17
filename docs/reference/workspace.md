@@ -201,6 +201,7 @@ them, in column form, so 30,000 assets stay a few megabytes:
   "bundles": ["team-wiki"],
   "beliefs": ["superseded"],
   "use": { "since": "2026-08-15T08:00:00.000Z", "source": "user" },
+  "feedback": { "since": "2026-08-15T08:00:00.000Z", "source": "user" },
   "kinds": ["xref", "links_to"],
   "tags": ["deploy"],
   "nodes": { "ref": ["team-wiki//knowledge/a"], "type": [0], "bundle": [0], "belief": [-1], "shows": [12],
@@ -221,7 +222,8 @@ events when the operation is called: events of source `user` (people and their a
 Improve) at or after `use.since`, the start of the usage retention window. It is zero, and the note says so, when no
 usage history is available. `lastShownAt` is the latest of those shows (UTC), `null` when there is none in the window.
 `positive` and `negative` count feedback from people inside the retention window, as search ranks by it (a negative
-answered by an accepted fix does not count). `modifiedAt` is the file's modification time, `null` when it cannot be
+answered by an accepted fix does not count). `feedback` is `null`, and every count zero, when the state store could not
+be read: zeros then are not measurements, and a reader shows feedback as unavailable. `modifiedAt` is the file's modification time, `null` when it cannot be
 read; in a Git checkout it is when the file was last written there, not its last commit.
 
 `groups` and `duplicates` are computed by `akm index` at the end of each build whose vectors changed, over every
@@ -232,7 +234,7 @@ meaning lie near each other, and an asset sits inside its group's sphere. `dupli
 into `nodes`) whose stored embeddings have a cosine of at least `threshold` (0.96), most alike first, at most 2,000
 (`truncated` says there were more); only pairs inside a group are compared. Pairs and places of assets that are not
 returned (a bundle that is not enabled) are left out. Both are `null` without at least eight embedded assets, and until
-an `akm index` of this release has run. `available` is `false`, with a `note`, when there is no index.
+an `akm index` of this release has run, and the `note` says so; a reader shows near-duplicates as unavailable, not as none. `available` is `false`, with a `note`, when there is no index.
 
 ## `bundles.list`
 

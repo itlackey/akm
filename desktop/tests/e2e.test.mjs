@@ -451,3 +451,29 @@ test("a bundle akm would refuse a write to is listed with akm's sentence, not of
   await expect(option).toHaveJSProperty("disabled", true);
   await expect(option).toHaveText(`team: ${blocker}`);
 });
+
+test("creating a file whose name is taken says so by akm's error code, not by the wording of its message", async (t) => {
+  const server = await launchFixture();
+  t.after(() => server.stop());
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const answer = (code, error) => (route) =>
+    route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ ok: false, code, error }) });
+  const create = async () => {
+    await open(page, server, "/library/new");
+    await page.getByLabel("File name").fill("taken-name");
+    await page.locator('textarea[name="content"]').fill("# Taken\n");
+    await page.getByRole("button", { name: "Create knowledge" }).click();
+  };
+  // A reworded message with akm's code is still a name collision.
+  await page.route("**/api/knowledge/create", answer("RESOURCE_ALREADY_EXISTS", "Name in use."));
+  await create();
+  await expect(page.getByRole("alert")).toContainText("That file name is already used in this folder");
+  // Another error that happens to say "already exists" is shown as akm sent it.
+  await page.unroute("**/api/knowledge/create");
+  await page.route("**/api/knowledge/create", answer("INVALID_FLAG_VALUE", 'Bundle "x" already exists.'));
+  await create();
+  await expect(page.getByRole("alert")).toContainText('Bundle "x" already exists.');
+  await expect(page.getByRole("alert")).not.toContainText("existing asset has not been changed");
+});
