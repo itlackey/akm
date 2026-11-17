@@ -35,7 +35,7 @@ import {
 import { bundleKeyForContentRoot, resolveConfiguredSources } from "../../core/config/config-sources";
 import type { AkmConfig } from "../../core/config/config-types";
 import { IMPROVE_AUTONOMY_CONFIG_KEY, isImproveAutonomyEnabled } from "../../core/config/experimental";
-import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
+import { ConfigError, NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { getTaskLogDir } from "../../core/paths";
 import { warn } from "../../core/warn";
 import {
@@ -77,6 +77,7 @@ import {
   compileSchedulerSources,
   installedRowNativeId,
   installedRowOwner,
+  installedRowRef,
   installedRowScope,
   planSchedulerSync,
   renderSchedulerPlanPreview,
@@ -411,6 +412,7 @@ function resolveTaskActivation(
   qualifiedRef: string;
   sourcePath: string;
   bundleName: string;
+  scope: SchedulerBundleScope;
 } {
   const parsed = parseTaskRef(ref);
   const bundle = resolveTaskReadBundle(parsed.bundle, target);
@@ -433,7 +435,32 @@ function resolveTaskActivation(
       throw new UsageError(`Task ${JSON.stringify(ref)} has no schedule to enable.`, "INVALID_FLAG_VALUE");
     }
   }
-  return { qualifiedRef: makeBundleRef(bundle.source.name, conceptId), sourcePath, bundleName: bundle.source.name };
+  return {
+    qualifiedRef: makeBundleRef(bundle.source.name, conceptId),
+    sourcePath,
+    bundleName: bundle.source.name,
+    scope: { ...bundleScope(bundle.source.name, bundle.source.path), adapterId },
+  };
+}
+
+/** Native state for one ref, using the same row ownership and identity as scheduler sync. */
+export async function inspectTaskSchedulerBindings(
+  ref: string,
+  deps: SchedulerDeps = {},
+): Promise<{ state: "installed" | "not-installed" } | { state: "unknown"; reason: string }> {
+  const resolved = resolveTaskActivation(ref, undefined, false);
+  let installed: InstalledSchedulerBinding[];
+  try {
+    installed = await listInstalledRows(deps.backend ?? selectBackend());
+  } catch (cause) {
+    rethrowIfTestIsolationError(cause);
+    return { state: "unknown", reason: errorMessage(cause) };
+  }
+  const found = installed.some((row) => {
+    const scope = installedRowScope(row, [resolved.scope]);
+    return scope !== undefined && installedRowRef(row, scope) === resolved.qualifiedRef;
+  });
+  return { state: found ? "installed" : "not-installed" };
 }
 
 /**

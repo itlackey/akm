@@ -256,7 +256,9 @@ export function formatProposalShowPlain(r: Record<string, unknown>): string {
 }
 
 export function formatProposalAcceptPlain(r: Record<string, unknown>): string {
-  return `Accepted proposal ${String(r.id)} → ${String(r.ref)} at ${String(r.assetPath)}`;
+  const lines = [`Accepted proposal ${String(r.id)} → ${String(r.ref)} at ${String(r.assetPath)}`];
+  for (const warning of Array.isArray(r.warnings) ? r.warnings : []) lines.push(`Warning: ${String(warning)}`);
+  return lines.join("\n");
 }
 
 export function formatProposalRejectPlain(r: Record<string, unknown>): string {

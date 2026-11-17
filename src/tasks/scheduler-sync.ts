@@ -429,7 +429,7 @@ function installOptionsFor(
 }
 
 /** The source ref an installed row runs, read from its own invocation. */
-function installedRowRef(row: InstalledSchedulerBinding, scope: SchedulerBundleScope): string | undefined {
+export function installedRowRef(row: InstalledSchedulerBinding, scope: SchedulerBundleScope): string | undefined {
   const [verb, action, subject] = row.invocation ?? [];
   if (action !== "run" || !subject) return undefined;
   if (verb === "workflow") return subject;

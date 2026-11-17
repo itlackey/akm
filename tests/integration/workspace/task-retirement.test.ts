@@ -5,17 +5,19 @@ import fs from "node:fs";
 import path from "node:path";
 import { akmProposalAccept, akmProposalRevert } from "../../../src/commands/proposal/proposal";
 import { createRetireProposal, getProposal } from "../../../src/commands/proposal/repository";
-import { akmTasksSync } from "../../../src/commands/tasks/tasks";
+import { akmTasksDisable, akmTasksSync } from "../../../src/commands/tasks/tasks";
 import { loadConfig, saveConfig } from "../../../src/core/config/config";
 import { akmIndex } from "../../../src/indexer/indexer";
 import * as backends from "../../../src/tasks/backends";
 import { CRON_BACKEND } from "../../../src/tasks/backends/cron";
 import { documents } from "../../../src/workspace";
+import { runCliCapture } from "../../_helpers/cli";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
 let table: string;
 let failWrite: boolean;
+let duringWrite: (() => void) | undefined;
 let backend: ReturnType<typeof CRON_BACKEND>;
 let selection: ReturnType<typeof spyOn>;
 const ref = "stash//tasks/nightly";
@@ -27,11 +29,13 @@ beforeEach(async () => {
   storage = withIsolatedAkmStorage();
   table = "";
   failWrite = false;
+  duringWrite = undefined;
   backend = CRON_BACKEND({
     exec: {
       read: () => ({ status: 0, stdout: table, stderr: "" }),
       write: (content) => {
         if (failWrite) return { status: 1, stdout: "", stderr: "native scheduler unavailable" };
+        duringWrite?.();
         table = content;
         return { status: 0, stdout: "", stderr: "" };
       },
@@ -130,7 +134,7 @@ test("a stale proposal does not change scheduler config or native rows", async (
   expect(loadConfig().scheduler?.enabled).toEqual([ref, "stash//tasks/other"]);
 });
 
-test("a never-enabled task retires without accessing an unavailable scheduler", async () => {
+test("a disabled task can archive with an explicit warning when native cleanup cannot be inspected", async () => {
   saveConfig({ ...loadConfig(), scheduler: { enabled: ["stash//tasks/other"] } });
   table = "";
   selection.mockClear();
@@ -138,8 +142,9 @@ test("a never-enabled task retires without accessing an unavailable scheduler", 
     throw new Error("scheduler is unavailable");
   });
   const receipt = await documents.retire({ ref, revision: revision() });
-  expect(receipt.warnings).toEqual([]);
-  expect(selection).not.toHaveBeenCalled();
+  expect(receipt.warnings).toHaveLength(1);
+  expect(receipt.warnings[0]).toContain("native scheduler cleanup is unverified: scheduler is unavailable");
+  expect(selection).toHaveBeenCalled();
   expect(fs.existsSync(taskFile())).toBe(false);
   expect(loadConfig().scheduler?.enabled).toEqual(["stash//tasks/other"]);
 });
@@ -172,4 +177,119 @@ test("an unrelated source failure is reported with its path even when the retiri
   expect((await backend.list()).some((row) => row.invocation?.[2] === "nightly")).toBe(false);
   expect(fs.readFileSync(taskFile(), "utf8")).toBe(source);
   expect(getProposal(storage.stashDir, proposal.id).status).toBe("pending");
+});
+
+test("a failed task-disable followed by a fresh retirement still removes native leftovers", async () => {
+  failWrite = true;
+  const disabled = await akmTasksDisable(ref, {}, { backend });
+  expect(disabled.sync.failures.length).toBeGreaterThan(0);
+  expect(loadConfig().scheduler?.enabled).not.toContain(ref);
+  expect((await backend.list()).some((row) => row.invocation?.[2] === "nightly")).toBe(true);
+  await expect(documents.retire({ ref, revision: revision() })).rejects.toThrow("native scheduler unavailable");
+  expect(fs.readFileSync(taskFile(), "utf8")).toBe(source);
+  failWrite = false;
+  const receipt = await documents.retire({ ref, revision: revision() });
+  expect(receipt.warnings).toEqual([]);
+  expect(fs.existsSync(taskFile())).toBe(false);
+  expect((await backend.list()).some((row) => row.invocation?.[2] === "nightly")).toBe(false);
+});
+
+test("fresh workspace retries after rejected retirement cannot hide failed native cleanup", async () => {
+  failWrite = true;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await expect(documents.retire({ ref, revision: revision() })).rejects.toThrow("native scheduler unavailable");
+    expect(fs.readFileSync(taskFile(), "utf8")).toBe(source);
+    expect((await backend.list()).some((row) => row.invocation?.[2] === "nightly")).toBe(true);
+  }
+  failWrite = false;
+  const receipt = await documents.retire({ ref, revision: revision() });
+  expect(receipt.warnings).toEqual([]);
+  expect((await backend.list()).some((row) => row.invocation?.[2] === "nightly")).toBe(false);
+});
+
+test("proposal acceptance exposes incomplete cleanup when disabled native state is unknown", async () => {
+  failWrite = true;
+  await akmTasksDisable(ref, {}, { backend });
+  const proposal = createRetireProposal(storage.stashDir, { ref, source: "propose", expectedRevision: revision() });
+  selection.mockImplementation(() => {
+    throw new Error("scheduler is unavailable");
+  });
+  const result = await akmProposalAccept({ id: proposal.id });
+  expect(result.warnings).toHaveLength(1);
+  expect(result.warnings?.[0]).toContain("Installed bindings may remain");
+  expect(fs.existsSync(taskFile())).toBe(false);
+});
+
+test("an explicitly inactive task with no native bindings needs no reconcile or other source validation", async () => {
+  table = "";
+  saveConfig({ ...loadConfig(), scheduler: { enabled: ["stash//tasks/other"] } });
+  fs.writeFileSync(path.join(storage.stashDir, "tasks/other.yml"), "version: 4\nrun: [unterminated\n");
+  const receipt = await documents.retire({ ref, revision: revision() });
+  expect(receipt.warnings).toEqual([]);
+  expect(table).toBe("");
+  expect(fs.existsSync(taskFile())).toBe(false);
+});
+
+for (const resume of [false, true]) {
+  test(`a source edited during scheduler reconciliation is not archived (resume=${resume})`, async () => {
+    const proposal = createRetireProposal(storage.stashDir, { ref, source: "propose", expectedRevision: revision() });
+    if (resume) {
+      failWrite = true;
+      await expect(akmProposalAccept({ id: proposal.id })).rejects.toThrow("native scheduler unavailable");
+      failWrite = false;
+    }
+    duringWrite = () => {
+      duringWrite = undefined;
+      fs.appendFileSync(taskFile(), "# edit during native cleanup\n");
+    };
+    await expect(akmProposalAccept({ id: proposal.id })).rejects.toMatchObject({ code: "PROPOSAL_STALE" });
+    expect(fs.readFileSync(taskFile(), "utf8")).toBe(`${source}# edit during native cleanup\n`);
+    expect(getProposal(storage.stashDir, proposal.id).status).toBe("pending");
+    expect(getProposal(storage.stashDir, proposal.id).retiredArchive).toBeUndefined();
+  });
+}
+
+for (const detail of ["brief", "normal", "full"] as const) {
+  test(`proposal CLI preserves incomplete cleanup warnings at detail ${detail}`, async () => {
+    failWrite = true;
+    await akmTasksDisable(ref, {}, { backend });
+    const proposal = createRetireProposal(storage.stashDir, { ref, source: "propose", expectedRevision: revision() });
+    selection.mockImplementation(() => {
+      throw new Error("scheduler is unavailable");
+    });
+    const result = await runCliCapture(["proposal", "accept", proposal.id, "--detail", detail]);
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout).warnings?.[0]).toContain("native scheduler cleanup is unverified");
+  });
+}
+
+test("proposal CLI batch acceptance retains per-proposal incomplete cleanup warnings", async () => {
+  failWrite = true;
+  await akmTasksDisable(ref, {}, { backend });
+  await akmTasksDisable("stash//tasks/other", {}, { backend });
+  const ids = [ref, "stash//tasks/other"].map(
+    (taskRef) => createRetireProposal(storage.stashDir, { ref: taskRef, source: "propose" }).id,
+  );
+  selection.mockImplementation(() => {
+    throw new Error("scheduler is unavailable");
+  });
+  const result = await runCliCapture(["proposal", "accept", ...ids]);
+  expect(result.code).toBe(0);
+  const output = JSON.parse(result.stdout);
+  expect(output.results).toHaveLength(2);
+  for (const item of output.results) expect(item.warnings?.[0]).toContain("native scheduler cleanup is unverified");
+});
+
+test("proposal CLI text output displays incomplete cleanup warnings", async () => {
+  failWrite = true;
+  await akmTasksDisable(ref, {}, { backend });
+  const proposal = createRetireProposal(storage.stashDir, { ref, source: "propose", expectedRevision: revision() });
+  selection.mockImplementation(() => {
+    throw new Error("scheduler is unavailable");
+  });
+  const result = await runCliCapture(["proposal", "accept", proposal.id, "--format", "text"]);
+  expect(result.code).toBe(0);
+  expect(result.stdout).toContain(
+    "Warning: Task stash//tasks/nightly is disabled in local config, but native scheduler cleanup is unverified",
+  );
 });

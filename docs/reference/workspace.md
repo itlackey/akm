@@ -975,7 +975,11 @@ retirement, the archived bytes are purged after the grace period at the next `ak
 the row is listed in Review and Activity. If the accept is refused, the proposal is rejected and the operation fails.
 Task retirement uses proposal acceptance's scheduler cleanup: it removes the host-local activation and reconciles the
 bundle before archiving. If native removal fails, retirement fails with the source still present and local activation
-disabled so a retry can finish cleanup. Reverting retirement restores the source without enabling its schedules.
+disabled so a retry can finish cleanup. A disabled ref still inspects native bindings: config exclusion does not prove
+native removal. If inspection is unavailable, the source can archive, with an explicit incomplete-cleanup warning in
+both the proposal acceptance result and workspace receipt. Reverting retirement restores the source without enabling
+its schedules. Source bytes are rechecked after scheduler work, before the archive moves, so edits made during that
+work are preserved and retirement is refused.
 
 Configuration-affecting actions do not round-trip the redacted configuration. Existing mutation helpers retain
 unknown/unrelated fields, local overrides and supported `$VAR`/`${ref}` credential references. If the existing

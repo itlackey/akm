@@ -535,7 +535,11 @@ for full before/after examples and recovery guidance.
 - Accepting a task retirement disables its host-local ref and reconciles its
   native bindings before archiving the source. A failed reconciliation refuses
   retirement and leaves the source in place; retry it or sync after repairing
-  the backend. Reverting retirement restores source bytes without enabling it.
+  the backend. A ref absent from local activation still checks native bindings,
+  because a previous removal may have failed. If that inspection is unavailable,
+  an explicitly disabled task may archive with an incomplete-cleanup warning;
+  native bindings are unknown, never reported as absent. Reverting retirement
+  restores source bytes without enabling it.
 - Delete the `.yml` source and sync to remove its derived binding(s).
 - `akm doctor scheduler sync` reads the installed rows once, compares each against what
   its source renders, and installs, rewrites, or removes rows one at a time.
