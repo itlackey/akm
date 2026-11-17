@@ -193,7 +193,7 @@ test("a bundle akm does not write to is readable, and a save into it is refused"
   assert.equal(source.writable, false);
   const refused = await save(app, { ref: app.refs.vendor, revision: source.revision, content: "planted\n" });
   assert.equal(refused.status, 400);
-  assert.match(refused.body.error, /not writable/);
+  assert.match(refused.body.error, /is read-only/);
   assert.equal(await fs.readFile(app.vendorPath, "utf8"), before);
 });
 
