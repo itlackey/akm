@@ -70,19 +70,16 @@ test("a compatible patch difference is informational, an incompatible line names
   assert.equal(skewAdvice("0.10.261117", undefined).kind, "none");
 });
 
-test("the hold says the rule, and says when the Desktop channel will not offer that release (#1609-11)", () => {
+test("the hold says the rule and names the release the CLI would move to", () => {
   const plan = (latestVersion, updateAvailable = true) => ({ latestVersion, updateAvailable });
-  assert.equal(holdReason("0.10.261117", plan("0.10.261110"), "stable"), undefined);
-  assert.equal(holdReason("0.10.261117", plan("0.10.261201", false), "stable"), undefined);
-  assert.equal(holdReason("0.10.261117", undefined, "stable"), undefined);
-  const offered = holdReason("0.10.261117", plan("0.10.261201"), "stable");
+  assert.equal(holdReason("0.10.261117", plan("0.10.261110")), undefined);
+  assert.equal(holdReason("0.10.261117", plan("0.10.261201", false)), undefined);
+  assert.equal(holdReason("0.10.261117", undefined), undefined);
+  const reason = holdReason("0.10.261117", plan("0.11.261201-beta.1"));
   assert.match(
-    offered,
-    /Update would move the CLI to 0\.10\.261201, newer than the AKM built into this app \(0\.10\.261117\)\./,
+    reason,
+    /Update would move the CLI to 0\.11\.261201-beta\.1, newer than the AKM built into this app \(0\.10\.261117\)\./,
   );
-  assert.match(offered, /plugins update with the CLI, so Update is held/);
-  assert.ok(!offered.includes("stable releases only"));
-  const hidden = holdReason("0.10.261117", plan("0.11.261201-beta.1"), "stable");
-  assert.match(hidden, /follows stable releases only, so it will not be offered to Desktop/);
-  assert.ok(!holdReason("0.10.261117", plan("0.11.261201-beta.1"), "prerelease").includes("stable releases only"));
+  assert.match(reason, /plugins update with the CLI, so Update is held/);
+  assert.ok(!reason.includes("stable releases only"));
 });

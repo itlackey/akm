@@ -310,8 +310,8 @@
           </p>{/if}
       </div>
       {#if held}<p class="notice notice-warn" role="status" id="host-cli-behind">
-          {holdReason(data.engine, upgrade, updateChannel)} Update AKM Desktop (Check for updates above){data.host
-            .cliManaged && skew === "host-older"
+          {holdReason(data.engine, upgrade)} Update AKM Desktop (Check for updates above){data.host.cliManaged &&
+          skew === "host-older"
             ? ", or use Match this app's version"
             : ""}.
         </p>
