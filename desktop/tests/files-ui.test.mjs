@@ -483,3 +483,23 @@ test("Write this up makes a knowledge file in akm's write target through the sam
   assert.ok(place, "the file is in the knowledge folder of the write target");
   assert.equal(place.assets[0].type, "knowledge");
 });
+
+test("the editor's save line says what is true of Git from akm's count, not that Git is unchanged", async (t) => {
+  const { app, page } = await session(t, { git: true });
+  await fs.writeFile(path.join(app.root, "personal/knowledge/loose.md"), "# Loose\n");
+  const count = await uncommitted(app, "personal");
+  assert.equal(count, 1);
+  const editUrl = (ref) =>
+    `/library/edit?${new URLSearchParams({ ref, returnTo: "/library/files?bundle=personal&path=knowledge" })}`;
+  await go(page, editUrl(app.refs.document));
+  const line = page.locator(".save-policy");
+  await expect(line).toContainText(`${count} file uncommitted`);
+  await expect(line).not.toContainText("Git is not changed");
+  // A bundle that is not a Git repository says nothing about Git.
+  await go(
+    page,
+    `/library/edit?${new URLSearchParams({ ref: app.refs.shared, returnTo: "/library/files?bundle=shared&path=knowledge" })}`,
+  );
+  await expect(page.locator(".save-policy")).toContainText("Saves to the file.");
+  await expect(page.locator(".save-policy")).not.toContainText("uncommitted");
+});

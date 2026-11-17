@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, stat } from "node:fs/promises";
+import { mkdir, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -323,4 +323,43 @@ test("AppImage installs a real per-user menu copy, confirms replacements, and la
   await expect(installedPage.getByRole("heading", { name: "Library", exact: true })).toBeVisible();
   await app.close();
   app = undefined;
+});
+
+test("Reveal in file manager reaches the main process: the menu offers it, and choosing it shows that file", {
+  skip: Boolean(process.env.AKM_DESKTOP_TEST_RUNTIME),
+  timeout: 120000,
+}, async () => {
+  const fixture = await createFixture();
+  const app = await _electron.launch({
+    chromiumSandbox: true,
+    args: [root],
+    cwd: fixture.root,
+    env: fixture.env,
+    timeout: 45000,
+  });
+  try {
+    // The system file manager is not opened: the main process's call is recorded instead.
+    await app.evaluate(({ shell }) => {
+      globalThis.revealed = [];
+      shell.showItemInFolder = (file) => globalThis.revealed.push(file);
+    });
+    const page = await app.firstWindow();
+    await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible();
+    await page.goto(new URL("/library/files?bundle=personal&path=knowledge", page.url()).href);
+    await page.getByRole("button", { name: "Actions for restore-laptop.md", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Reveal in file manager", exact: true }).click();
+    await expect.poll(() => app.evaluate(() => globalThis.revealed.length)).toBe(1);
+    const [shown] = await app.evaluate(() => globalThis.revealed);
+    assert.equal(
+      await realpath(shown),
+      await realpath(path.join(fixture.root, "personal/knowledge/restore-laptop.md")),
+    );
+    await app.close();
+  } catch (error) {
+    await app.evaluate(({ app }) => app.exit(0)).catch(() => {});
+    await app.close().catch(() => {});
+    throw error;
+  } finally {
+    await fixture.cleanup();
+  }
 });
