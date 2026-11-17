@@ -178,7 +178,15 @@ test("the list shows size and modified time from akm", async (t) => {
   const listed = (await folderOf(app, "knowledge")).entries.find((entry) => entry.name === "restore-laptop.md");
   const row = page.getByRole("row", { name: /restore-laptop\.md/ });
   await expect(row.getByRole("cell").nth(2)).toHaveText(/\d+ B/);
-  await expect(row.getByRole("cell").nth(3)).toHaveText(new Date(listed.modified).toLocaleString());
+  // A compact time on one line, with the full timestamp in the cell's title.
+  const modified = row.getByRole("cell").nth(3);
+  await expect(modified).toHaveAttribute("title", new Date(listed.modified).toLocaleString());
+  const lines = await modified.evaluate((cell) => {
+    const range = document.createRange();
+    range.selectNodeContents(cell);
+    return new Set([...range.getClientRects()].map((box) => Math.round(box.top))).size;
+  });
+  assert.equal(lines, 1, "the time fits one line");
 });
 
 const linker = (name, ref) =>

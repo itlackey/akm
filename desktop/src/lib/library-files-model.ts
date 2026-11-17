@@ -146,6 +146,20 @@ export function sizeText(bytes: number | undefined): string {
   return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
 }
 
+/** A modified time that fits one line: month, day and time, with the year only when it is not this year's. */
+export function modifiedShort(iso: string | undefined, now = new Date()): string {
+  if (!iso) return "";
+  const when = new Date(iso);
+  if (Number.isNaN(when.valueOf())) return "";
+  return when.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    ...(when.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 /** Where a path goes when the folder `from` is renamed or moved to `to`; null when the path is not inside `from`. */
 export function followMove(path: string, from: string, to: string): string | null {
   if (path === from) return to;

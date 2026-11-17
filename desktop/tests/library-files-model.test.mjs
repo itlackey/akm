@@ -10,6 +10,7 @@ import {
   filesHref,
   folderUnder,
   followMove,
+  modifiedShort,
   newFileLabel,
   parentPath,
   parseFilesHref,
@@ -130,4 +131,12 @@ test("sizes read in the largest whole unit", () => {
   assert.equal(sizeText(1023), "1023 B");
   assert.equal(sizeText(1536), "1.5 KiB");
   assert.equal(sizeText(5 * 1024 * 1024), "5.0 MiB");
+});
+
+test("a modified time is compact, and carries the year only when it is not this year's", () => {
+  const now = new Date("2026-11-17T12:00:00");
+  assert.equal(modifiedShort("2026-03-05T14:30:00", now).includes("2026"), false);
+  assert.equal(modifiedShort("2025-03-05T14:30:00", now).includes("2025"), true);
+  assert.equal(modifiedShort(undefined, now), "");
+  assert.equal(modifiedShort("not a time", now), "");
 });

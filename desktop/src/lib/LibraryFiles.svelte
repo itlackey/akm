@@ -7,7 +7,15 @@
 <script lang="ts">
   import { onDestroy, onMount, tick, untrack, type Snippet } from "svelte";
   import { api } from "./client";
-  import { ancestorPaths, directoryKey, followMove, newFileLabel, parentPath, sizeText } from "./library-files-model";
+  import {
+    ancestorPaths,
+    directoryKey,
+    followMove,
+    modifiedShort,
+    newFileLabel,
+    parentPath,
+    sizeText,
+  } from "./library-files-model";
   import type {
     FileActions,
     FileEntry,
@@ -227,7 +235,6 @@
     input.focus();
     input.setSelectionRange(0, input.value.includes(".") ? input.value.lastIndexOf(".") : input.value.length);
   }
-  const modifiedText = (value?: string) => (value ? new Date(value).toLocaleString() : "");
   function entryOf(node: { bundle: string; path: string }) {
     return tree.listings
       .get(directoryKey(node.bundle, parentPath(node.path)))
@@ -706,7 +713,9 @@
                         >{/if}
                     </div>
                   </td><td>{entryKind(entry)}</td><td class="num">{sizeText(entry.size)}</td><td
-                    >{modifiedText(entry.modified)}</td
+                    class="modified"
+                    title={entry.modified ? new Date(entry.modified).toLocaleString() : undefined}
+                    >{modifiedShort(entry.modified)}</td
                   >{#if showStatus}<td class="entry-status"
                       >{#if entry.unavailable}Unavailable{:else if entry.kind !== "directory"}{#if !listing?.indexAvailable}Not
                           checked{:else if entry.assets.length > 1}{entry.assets.length} assets{:else if !entry.assets.length}Not
@@ -886,6 +895,9 @@
   }
   .folder-table th:first-child {
     width: 40%;
+  }
+  .folder-table .modified {
+    white-space: nowrap;
   }
   .folder-table .num {
     text-align: right;
