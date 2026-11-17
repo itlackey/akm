@@ -98,4 +98,78 @@ test("the 3D library map", { timeout: 150000 }, async (t) => {
     assert.deepEqual(errors, []);
     await page.close();
   });
+
+  /** The assets `steps` joins from asset `from` in the chain 0-1-...-7 (8 and 9 are joined to nothing). */
+  const inChain = (from, steps) =>
+    from > 7 ? 0 : [...Array(8).keys()].filter((i) => Math.abs(i - from) === steps).length;
+
+  await t.test("a chosen asset's legend names three levels with the assets at each", async () => {
+    const { page, errors } = await fresh();
+    await open(page, server, "/library/map");
+    await expect(page.locator(".stage-3d canvas")).toBeVisible();
+    await page.waitForTimeout(500);
+    const at = await findPoint(page);
+    await page.mouse.click(at.x, at.y);
+    const from = Number((await page.locator(".stage-3d .pick-label").textContent()).match(/n(\d)$/)[1]);
+    const levels = page.locator(".levels li");
+    await expect(levels).toHaveCount(3);
+    for (const [k, name] of ["1st level", "2nd level", "3rd level"].entries()) {
+      const n = inChain(from, k + 1);
+      await expect(levels.nth(k)).toHaveText(`${name}: ${n} ${n === 1 ? "asset" : "assets"}`);
+    }
+    // Nothing is cut or off the map here, so the legend says neither.
+    await expect(page.locator(".levels")).not.toContainText("not shown");
+    await expect(page.locator(".levels")).not.toContainText("not on this map");
+    await page.close();
+    assert.deepEqual(errors, []);
+  });
+
+  await t.test("a level that reaches more assets than the cap says how many it did not show", async () => {
+    const LEAVES = 305;
+    const total = LEAVES + 1;
+    const ref = [
+      "wiki//knowledge/chain/a-hub",
+      ...Array.from({ length: LEAVES }, (_, i) => `wiki//knowledge/chain/z-leaf-${i}`),
+    ];
+    const rnd = (i, k) => ((Math.sin(i * 12.9898 + k * 78.233) * 43758.5453) % 1) * 40;
+    const hub = {
+      ...chain,
+      nodes: {
+        ref,
+        type: new Array(total).fill(0),
+        bundle: new Array(total).fill(0),
+        belief: new Array(total).fill(-1),
+        shows: new Array(total).fill(0),
+        lastShownAt: new Array(total).fill(null),
+        modifiedAt: new Array(total).fill(null),
+        positive: new Array(total).fill(0),
+        negative: new Array(total).fill(0),
+        tags: new Array(total).fill([0]),
+      },
+      links: {
+        from: new Array(LEAVES).fill(0),
+        to: Array.from({ length: LEAVES }, (_, i) => i + 1),
+        kind: new Array(LEAVES).fill(0),
+      },
+      groups: {
+        count: 1,
+        group: new Array(total).fill(0),
+        x: ref.map((_, i) => (i ? rnd(i, 1) : 0)),
+        y: ref.map((_, i) => (i ? rnd(i, 2) : 0)),
+        z: ref.map((_, i) => (i ? rnd(i, 3) : 0)),
+      },
+    };
+    const { page, errors } = await fresh(hub);
+    await open(page, server, "/library/map");
+    await expect(page.locator(".stage-3d canvas")).toBeVisible();
+    await page.locator(".stage-3d").focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(page.locator(".stage-3d .pick-label")).toHaveText("wiki//knowledge/chain/a-hub");
+    await expect(page.locator(".levels li").nth(0)).toHaveText(
+      "1st level: 300 assets, 5 more not shown (a level shows its 300 most joined assets)",
+    );
+    await expect(page.locator(".levels li").nth(1)).toHaveText("2nd level: 0 assets");
+    await page.close();
+    assert.deepEqual(errors, []);
+  });
 });

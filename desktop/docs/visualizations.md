@@ -99,7 +99,23 @@ joined to. A point is chosen from anywhere over its drawn disc and a few pixels 
 several overlap), and the point under the pointer is ringed and named. The chosen point is ringed with a halo and named
 by a label that stays over every other mark, and the rest fades. With the map focused (Tab), the left and right arrow
 keys step to the previous and next asset of the chosen point's group in name order, and the page announces the new
-choice; Escape clears it. Depth inside a group follows use: assets read lately sit at the front, those read earlier just ahead of the
+choice; Escape clears it.
+
+A chosen point also draws what it is joined to three steps out, each level in its own width and colour, with its assets
+ringed to match, and a key in the map's corner names the three levels with the assets at each:
+
+| Level | Reaches | Drawn |
+| --- | --- | --- |
+| 1st | the assets joined to the chosen one | widest line, the highlight colour, largest ring |
+| 2nd | the assets joined to those | thinner line, more muted, smaller ring |
+| 3rd | the assets joined to those | thinnest line, most muted, dashed, smallest ring |
+
+The joins are the ones `assets.graph` reports (declared links and near-duplicate pairs; in Problems only replacement and
+contradiction links and near-duplicates), either way round. Each join is drawn once, at the nearest level it belongs to:
+a join between two assets of one level belongs to the next. A level shows at most 300 assets, the most joined first, and
+the next level is walked from those; the key says how many a level left out, and how many it reached that are not on this
+map (no group by meaning, or in another bundle). The walk is `reach` in `src/lib/link-levels.ts`; each level's colour
+is held at 3:1 against the background in both themes by `tests/map-palette.test.mjs`. Depth inside a group follows use: assets read lately sit at the front, those read earlier just ahead of the
 middle, and never-read, superseded, contradicted or deprecated ones at the back. The 3D view needs WebGL (three.js,
 `src/lib/SimilarityMap.svelte`).
 
@@ -123,6 +139,7 @@ It reads `assets.graph`, `assets.searchMisses` and, on Closest, `assets.related`
 | Limit | Why |
 | --- | --- |
 | About 44 tags in all, at most 10 per type | More labels cannot all be drawn and read; a type gets tags in proportion to the square root of its size, and a tag carried by one asset is left out of a type with ten or more assets. |
+| A level shows at most 300 assets | Three steps from a well-joined asset can reach most of the library; the key says what a level left out. |
 | Near-duplicates are pairs at a cosine of 0.96 or more, at most 2,000, and need stored embeddings | `assets.graph` compares only assets alike in meaning, to avoid comparing every pair; the threshold is set for akm's local embedding model. The page says when the list was cut. |
 | Closest needs stored embeddings | Without them `assets.related` says so, and the page shows its note. |
 | Old is the file's modification time | akm records no edit date; in a Git checkout the time is when the file was last written there. |

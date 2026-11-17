@@ -11,6 +11,8 @@
   // the pointer, within a fixed reach on screen, names its asset on hover. Choosing a point or a group's name picks it:
   // the pick is ringed and haloed, named by a label that stays over everything, what it is joined to is ringed and lined,
   // and the rest fades. With the map focused, the left and right arrow keys step to the previous and next asset.
+  import { LEVEL_STYLES } from "./link-levels";
+  import { untrack, type Snippet } from "svelte";
   import type { Group, Overview } from "./library-overview";
 
   let {
@@ -20,6 +22,7 @@
     colourOf,
     lit,
     lines,
+    levels = [[], [], []],
     picked,
     selected,
     related,
@@ -27,6 +30,7 @@
     onGroup,
     onStep,
     label,
+    legend,
   }: {
     o: Overview;
     scope: readonly number[];
@@ -36,7 +40,9 @@
     /** The assets drawn in full; the rest fade. Null: all in full. */
     lit: Set<number> | null;
     /** Lines from point to point, each a pair of places and a weight from 0 to 1. */
-    lines: Array<{ from: ArrayLike<number>; to: ArrayLike<number>; weight: number }>;
+    lines: Array<{ from: ArrayLike<number>; to: ArrayLike<number>; weight: number; level?: 1 | 2 | 3 }>;
+    /** The assets one, two and three joins from the pick, each ringed to match its lines. */
+    levels?: [number[], number[], number[]];
     picked: number;
     /** The chosen group's key, or "", and the keys of the groups joined to it. */
     selected: string;
@@ -46,6 +52,8 @@
     /** The arrow keys on the focused map: -1 for the previous asset, 1 for the next. */
     onStep: (direction: -1 | 1) => void;
     label: string;
+    /** What the map's corner says: the key to what is drawn. */
+    legend?: Snippet;
   } = $props();
 
   /** Where the camera starts, and returns to on reset. */
@@ -107,6 +115,13 @@
     resolved.set(token, value);
     return value;
   }
+
+  /** The highlight, mixed toward the background by `mute` (0 is the highlight itself): how a level is drawn. */
+  const muted = (mute: number): [number, number, number] => {
+    const highlight = rgb("--map-highlight");
+    const bg = rgb("--bg");
+    return [0, 1, 2].map((d) => highlight[d]! * (1 - mute) + bg[d]! * mute) as [number, number, number];
+  };
 
   $effect(() => {
     if (!host) return;
@@ -203,12 +218,12 @@
         scene.add(bright);
         // Rings of a fixed size on screen, drawn over everything: the pick, what it is joined to, and the point under
         // the pointer.
-        const mark = (size: number, token: string) => {
+        const mark = (size: number, colour: [number, number, number] | string) => {
           const marks = new THREE.Points(
             new THREE.BufferGeometry(),
             new THREE.PointsMaterial({
               size,
-              color: new THREE.Color(...rgb(token)),
+              color: new THREE.Color(...(typeof colour === "string" ? rgb(colour) : colour)),
               map: ring,
               alphaTest: 0.5,
               sizeAttenuation: false,
@@ -240,9 +255,28 @@
         };
         const focusHalo = halo(60, "--map-highlight", 0.55);
         const underHalo = halo(40, "--text", 0.3);
-        const focus = mark(28, "--map-highlight");
-        const near = mark(18, "--map-highlight");
-        const under = mark(24, "--text");
+        const focus = mark(34, "--map-highlight");
+        const rings = LEVEL_STYLES.map((style) => mark(style.ring, muted(style.mute)));
+        const under = mark(28, "--text");
+        // The lines of each level, strongest drawn last so it stays on top: its own width, colour and dash.
+        const levelJoins = LEVEL_STYLES.map((style, k) => {
+          const lines = new LineSegments2(
+            new LineSegmentsGeometry(),
+            new LineMaterial({
+              linewidth: style.width,
+              vertexColors: true,
+              depthTest: false,
+              dashed: style.dash,
+              dashSize: 4,
+              gapSize: 3,
+              resolution: new THREE.Vector2(host!.clientWidth, host!.clientHeight),
+            }),
+          );
+          lines.renderOrder = 0.8 - 0.2 * k;
+          lines.visible = false;
+          scene.add(lines);
+          return lines;
+        });
         const joins = new LineSegments2(
           new LineSegmentsGeometry(),
           new LineMaterial({
@@ -262,8 +296,9 @@
           points,
           bright,
           joins,
+          levelJoins,
           focus,
-          near,
+          rings,
           under,
           focusHalo,
           underHalo,
@@ -344,7 +379,8 @@
         });
         resize = new ResizeObserver(() => {
           if (!host) return;
-          joins.material.resolution.set(host.clientWidth, host.clientHeight);
+          for (const lines of [joins, ...levelJoins])
+            lines.material.resolution.set(host.clientWidth, host.clientHeight);
           renderer.setSize(host.clientWidth, host.clientHeight);
           camera.aspect = host.clientWidth / host.clientHeight;
           camera.updateProjectionMatrix();
@@ -459,34 +495,58 @@
     world.order = order;
   });
 
-  // The lines, in the highlight colour, fainter for lighter weights.
+  // The lines between groups, in the highlight colour, fainter for lighter weights; and, from a pick, the lines of
+  // each level, each in its own width and colour.
   $effect(() => {
     if (!ready || !world) return;
     const highlight = rgb("--map-highlight");
     const bg = rgb("--bg");
-    const place: number[] = [];
-    const colour: number[] = [];
-    for (const l of lines) {
-      place.push(l.from[0]!, l.from[1]!, l.from[2]!, l.to[0]!, l.to[1]!, l.to[2]!);
-      const f = 0.6 * (1 - l.weight);
-      for (let end = 0; end < 2; end++) for (let d = 0; d < 3; d++) colour.push(highlight[d]! * (1 - f) + bg[d]! * f);
-    }
-    world.joins.visible = lines.length > 0;
-    if (!lines.length) return;
-    world.joins.geometry.setPositions(place);
-    world.joins.geometry.setColors(colour);
+    const draw = (
+      object: { visible: boolean; geometry: any; computeLineDistances: () => void },
+      list: typeof lines,
+      colourOf: (l: (typeof lines)[number]) => ArrayLike<number>,
+    ) => {
+      object.visible = list.length > 0;
+      if (!list.length) return;
+      const place: number[] = [];
+      const colour: number[] = [];
+      for (const l of list) {
+        place.push(l.from[0]!, l.from[1]!, l.from[2]!, l.to[0]!, l.to[1]!, l.to[2]!);
+        for (let end = 0; end < 2; end++) colour.push(...Array.from(colourOf(l)));
+      }
+      object.geometry.setPositions(place);
+      object.geometry.setColors(colour);
+      object.computeLineDistances();
+    };
+    draw(
+      world.joins,
+      lines.filter((l) => !l.level),
+      (l) => {
+        const f = 0.6 * (1 - l.weight);
+        return [0, 1, 2].map((d) => highlight[d]! * (1 - f) + bg[d]! * f);
+      },
+    );
+    LEVEL_STYLES.forEach((style, k) =>
+      draw(
+        world.levelJoins[k],
+        lines.filter((l) => l.level === style.level),
+        () => muted(style.mute),
+      ),
+    );
   });
 
-  // A pick is ringed, and so is what it is joined to; the group chosen is told by the fade and the lines alone.
+  // A pick is ringed, and so is what it is joined to, a ring of a size and colour for each level; the group chosen is
+  // told by the fade and the lines alone.
   $effect(() => {
     if (!ready || !world) return;
-    const joined = picked >= 0 && lit ? [...lit].filter((i) => i !== picked && o.group[i]! >= 0) : [];
     for (const mark of [world.focus, world.focusHalo]) {
       mark.geometry.dispose();
       mark.geometry = placesOf(picked >= 0 ? [picked] : []);
     }
-    world.near.geometry.dispose();
-    world.near.geometry = placesOf(joined);
+    LEVEL_STYLES.forEach((_, k) => {
+      world.rings[k].geometry.dispose();
+      world.rings[k].geometry = placesOf(picked >= 0 ? levels[k]!.filter((i) => o.group[i]! >= 0) : []);
+    });
   });
 
   // A pick turns the view to it: an asset close up, a group so it fills the view.
@@ -500,10 +560,23 @@
         : new THREE.Vector3(...group!.centre);
     const { camera, controls } = world;
     const from = controls.target.clone();
+    // A pick is framed from 90 units away, or farther when its first two levels reach beyond that.
+    const reachOut = untrack(() =>
+      Math.max(
+        0,
+        ...levels
+          .slice(0, 2)
+          .flatMap((list) =>
+            list.map((i) => target.distanceTo(new THREE.Vector3(...o.place.subarray(i * 3, i * 3 + 3)))),
+          ),
+      ),
+    );
     const away = camera.position
       .clone()
       .sub(controls.target)
-      .setLength(picked >= 0 ? 90 : 60 + 12 * Math.cbrt(group!.members.length));
+      .setLength(
+        picked >= 0 ? Math.min(400, Math.max(90, 1.4 * reachOut)) : 60 + 12 * Math.cbrt(group!.members.length),
+      );
     const start = performance.now();
     const flight = {};
     world.flight = flight;
@@ -540,6 +613,7 @@
       style={`font-size:${13 + 4 * Math.sqrt(g.members.length / largest)}px`}
       onclick={() => onGroup(g.key)}>{g.label}<span>{g.members.length.toLocaleString()}</span></button
     >{/each}
+  {#if legend}<div class="stage-legend">{@render legend()}</div>{/if}
   {#if picked >= 0}<div class="pick-label" bind:this={pickEl}>{o.ref[picked]}</div>{/if}
   {#if tip}<div
       class="tip"
@@ -563,6 +637,21 @@
   .stage-3d:focus-visible {
     outline: 2px solid var(--map-highlight);
     outline-offset: -2px;
+  }
+  .stage-legend {
+    position: absolute;
+    inset-block-end: 8px;
+    inset-inline-start: 8px;
+    z-index: 2;
+    max-inline-size: min(34rem, calc(100% - 16px));
+    pointer-events: none;
+    background: color-mix(in srgb, var(--surface) 94%, transparent);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    empty-cells: hide;
+  }
+  .stage-legend:empty {
+    display: none;
   }
   .pick-label {
     position: absolute;
