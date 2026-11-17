@@ -676,6 +676,19 @@ describe("reads", () => {
     expect(view.config.someToken).toBe("[redacted]");
   });
 
+  test("config: usage.report is the value the usage report acts on, with its own provenance", async () => {
+    await seed();
+    const unset = await out(config.get());
+    expect(unset.config.usage.report).toBe(true);
+    expect(unset.entries.find((e: { path: string }) => e.path === "usage.report").source).toBe("default");
+
+    writeSandboxConfig({ ...loadConfig(), usage: { capture: false, report: false } });
+    resetConfigCache();
+    const off = await out(config.get());
+    expect(off.config.usage).toEqual({ capture: false, report: false });
+    expect(off.entries.find((e: { path: string }) => e.path === "usage.report").source).toBe("file");
+  });
+
   test("config: harnesses are listed by name with their own keys", async () => {
     await seed();
     const current = loadConfig();

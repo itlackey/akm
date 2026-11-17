@@ -51,10 +51,7 @@
   function resetDrafts(loaded: SettingsConfig) {
     const next = Object.fromEntries(
       groups.flatMap((group) =>
-        group.fields.map((field) => [
-          field.key,
-          fieldText(valueAt(loaded.config, field.key) ?? field.unsetValue, field.kind),
-        ]),
+        group.fields.map((field) => [field.key, fieldText(valueAt(loaded.config, field.key), field.kind)]),
       ),
     );
     const retained = Object.fromEntries(
@@ -183,7 +180,6 @@
             key: "usage.report",
             label: "Send a daily usage report",
             kind: "boolean",
-            unsetValue: "true",
             hint: "At most once a day each from the CLI and Desktop. Applies to both.",
           },
         ],

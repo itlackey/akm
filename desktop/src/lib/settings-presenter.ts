@@ -83,8 +83,6 @@ export interface SettingsField {
   disabledOptions?: string[];
   hint?: string;
   placeholder?: string;
-  /** What akm uses while the key is unset, shown as the field's value. */
-  unsetValue?: string;
 }
 export interface SettingsGroup {
   id: string;

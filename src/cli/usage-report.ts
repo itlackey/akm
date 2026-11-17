@@ -40,6 +40,11 @@ function underTestOrCi(env: NodeJS.ProcessEnv): boolean {
   return Boolean(env.CI) || env.NODE_ENV === "test" || env.BUN_TEST === "1";
 }
 
+/** Whether the report is on: `usage.report: false` in the config file turns it off; anything else, or no file, leaves it on. */
+export function usageReportEnabled(): boolean {
+  return peekConfigValue(["usage", "report"]) !== false;
+}
+
 function day(at: Date): string {
   return at.toISOString().slice(0, 10);
 }
@@ -150,7 +155,7 @@ export async function reportUsageIfDue(
 ): Promise<boolean> {
   try {
     const env = deps.env ?? process.env;
-    if (underTestOrCi(env) || peekConfigValue(["usage", "report"]) === false) return false;
+    if (underTestOrCi(env) || !usageReportEnabled()) return false;
     const now = deps.now ?? new Date();
     const today = day(now);
     const claim = claimDay(surface, today);
