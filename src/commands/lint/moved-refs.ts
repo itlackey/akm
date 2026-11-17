@@ -41,11 +41,15 @@ const bundleOf = (itemRef: string): string => itemRef.slice(0, itemRef.indexOf("
  */
 export function readMovedRefs(read: ReadMoves): MovedRefs {
   let loaded: MovedRefs | undefined;
+  const load = (): MovedRefs => {
+    loaded ??= loadMovedRefs(read());
+    return loaded;
+  };
   return {
     get concepts() {
-      return (loaded ??= loadMovedRefs(read())).concepts;
+      return load().concepts;
     },
-    target: (link) => (loaded ??= loadMovedRefs(read())).target(link),
+    target: (link) => load().target(link),
   };
 }
 
