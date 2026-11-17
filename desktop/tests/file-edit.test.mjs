@@ -175,7 +175,7 @@ test("knowledge is saved like any other file", async (t) => {
   const app = await launchFixture();
   t.after(() => app.stop());
   const source = value(await read(app, { ref: app.refs.document }));
-  assert.equal(source.writable, true);
+  assert.deepEqual(source.actions.edit, { allowed: true });
   assert.equal(
     value(
       await save(app, { ref: app.refs.document, revision: source.revision, content: `${source.content}\nChecked.\n` }),
@@ -190,10 +190,10 @@ test("a bundle akm does not write to is readable, and a save into it is refused"
   t.after(() => app.stop());
   const before = await fs.readFile(app.vendorPath, "utf8");
   const source = value(await read(app, { ref: app.refs.vendor }));
-  assert.equal(source.writable, false);
+  assert.equal(source.actions.edit.allowed, false, "the read says Edit is not offered");
   const refused = await save(app, { ref: app.refs.vendor, revision: source.revision, content: "planted\n" });
   assert.equal(refused.status, 400);
-  assert.match(refused.body.error, /is read-only/);
+  assert.equal(refused.body.error, source.actions.edit.reason, "the save is refused with the sentence the read gave");
   assert.equal(await fs.readFile(app.vendorPath, "utf8"), before);
 });
 

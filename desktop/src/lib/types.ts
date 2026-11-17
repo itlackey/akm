@@ -62,8 +62,9 @@ export interface Source {
   revision: string;
   content: string;
   type?: string;
-  markdown?: boolean /** False in a bundle akm does not write to (an installed one): view only. */;
-  writable?: boolean;
+  markdown?: boolean;
+  /** What akm accepts doing to the file: Edit is offered when `edit` is allowed, with akm's sentence when it is not. */
+  actions: import("./library-files-model").FileActions;
 }
 export interface TextDiff {
   before: string | null;

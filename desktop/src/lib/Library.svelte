@@ -477,19 +477,6 @@
     params.set("saved", unchanged ? "unchanged" : "1");
     await navigate(withReview("/library/files?" + params));
   }
-  function createHref(bundle: string, path: string, readingFrom: string, reviewFrom: string) {
-    const location = new URLSearchParams(filesHref({ bundle, path }, readingFrom).split("?")[1]);
-    if (reviewFrom) location.set("reviewFrom", reviewFrom);
-    return (
-      "/library/new?" +
-      new URLSearchParams({
-        bundle,
-        path,
-        returnTo: "/library/files?" + location,
-        ...(readingFrom ? { readingFrom } : {}),
-      })
-    );
-  }
   function createSensitiveHref(kind: string, bundle: string, path: string) {
     return "/library/new-sensitive?" + new URLSearchParams({ kind, bundle, returnTo: filesHref({ bundle, path }) });
   }
@@ -618,27 +605,23 @@
     onNavigate={navigateFiles}
     onSelect={(chosen) => (selected = toggleSelection(selected, chosen, 2))}
     onSearch={(name) => navigate(searchHref(new URLSearchParams({ bundle: name })))}
+    onChanged={() => mutationRevision++}
   >
     {#snippet actions()}<div class="files-actions">
         {#if reviewHref}<a href={reviewHref}>Back to review</a>{:else if readingHref && !editing}<a href={readingHref}
             >Back to reading</a
           >{/if}
-        {#if !editing && !newSensitive}<div class="new-file-actions">
-            <a class="btn btn-secondary" href={createHref(fileBundle, filePath, readingHref, reviewHref)}
-              ><Icon name="plus" size={16} />New knowledge</a
-            ><button
-              class="btn-secondary new-file-trigger"
-              popovertarget="new-file-types"
-              aria-label="Other file types"
-              title="Other file types"><Icon name="chevron-down" size={16} /></button
-            >
-          </div>
+        {#if !editing && !newSensitive}<button
+            class="btn btn-secondary new-file-trigger"
+            popovertarget="new-file-types"
+            aria-haspopup="menu"><Icon name="plus" size={16} />New protected file</button
+          >
           <div
             id="new-file-types"
             class="new-file-menu"
             popover="auto"
             role="group"
-            aria-label="Create file"
+            aria-label="Create protected file"
             bind:this={newFiles}
             onfocusout={leaveNewFiles}
           >
@@ -906,10 +889,6 @@
 {/if}
 
 <style>
-  .new-file-actions {
-    display: flex;
-    gap: 4px;
-  }
   .new-file-trigger {
     anchor-name: --new-file-types;
     padding-inline: 10px;

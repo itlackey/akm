@@ -9,8 +9,11 @@ import {
   directoryKey,
   filesHref,
   folderUnder,
+  followMove,
+  newFileLabel,
   parentPath,
   parseFilesHref,
+  sizeText,
   treeNodes,
 } from "../src/lib/library-files-model.ts";
 
@@ -96,7 +99,7 @@ test("tree only presents expanded immediate directory responses and keeps bundle
   assert.equal(visible[2].assets.length, 0, "unindexed text remains visible without an invented identity");
   assert.notEqual(directoryKey("team", "knowledge"), directoryKey("other", "knowledge"));
   assert.equal(visible[3].position, 2);
-  assert.equal(visible[3].size, 2);
+  assert.equal(visible[3].setSize, 2);
   assert.equal(visible[3].parentKey, folder);
 });
 
@@ -106,4 +109,25 @@ test("a chosen folder is a path under the root, with either separator, or nothin
   assert.equal(folderUnder("C:\\lib\\knowledge", "C:\\lib\\knowledge\\runbooks"), "runbooks");
   assert.equal(folderUnder("/lib/personal/knowledge", "/lib/personal/knowledge-other"), null);
   assert.equal(folderUnder("/lib/personal/knowledge", "/elsewhere"), null);
+});
+
+test("a moved path is followed inside the moved folder and nowhere else", () => {
+  assert.equal(followMove("skills/a", "skills/a", "archive/a"), "archive/a");
+  assert.equal(followMove("skills/a/SKILL.md", "skills/a", "archive/a"), "archive/a/SKILL.md");
+  assert.equal(followMove("skills/ab/SKILL.md", "skills/a", "archive/a"), null);
+  assert.equal(followMove("notes/x.md", "skills/a", "archive/a"), null);
+});
+
+test("the button names the type akm gives the folder, and a plain file when it gives none", () => {
+  assert.equal(newFileLabel({ allowed: true, type: "lesson" }), "New lesson");
+  assert.equal(newFileLabel({ allowed: true, type: null }), "New file");
+  assert.equal(newFileLabel(undefined), "New file");
+});
+
+test("sizes read in the largest whole unit", () => {
+  assert.equal(sizeText(undefined), "");
+  assert.equal(sizeText(0), "0 B");
+  assert.equal(sizeText(1023), "1023 B");
+  assert.equal(sizeText(1536), "1.5 KiB");
+  assert.equal(sizeText(5 * 1024 * 1024), "5.0 MiB");
 });

@@ -33,7 +33,7 @@
     { name: "Activity", prefix: "activity" },
     { name: "Settings", prefix: "settings" },
   ] as const;
-  type Metadata = { hostname: string; akmVersion: string; version: string; commit?: string };
+  type Metadata = { hostname: string; native: boolean; akmVersion: string; version: string; commit?: string };
 
   let ready = $state(false);
   let error = $state("");
@@ -119,7 +119,10 @@
   async function load() {
     error = "";
     const outcomes = await Promise.allSettled([
-      api<Metadata>("/desktop").then((value) => (metadata = value)),
+      api<Metadata>("/desktop").then((value) => {
+        metadata = value;
+        workspace.native = value.native;
+      }),
       refreshBundles(),
     ]);
     error = outcomes

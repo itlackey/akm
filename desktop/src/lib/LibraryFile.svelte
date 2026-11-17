@@ -31,17 +31,20 @@
 <header>
   <h1>{file.split("/").at(-1)}</h1>
   <div class="actions">
-    {#if folderHref}<a href={folderHref}>Back to folder</a>{/if}{#if source?.writable}<a
+    {#if folderHref}<a href={folderHref}>Back to folder</a>{/if}{#if source?.actions.edit.allowed}<a
         class="btn btn-secondary"
         href={"/library/edit?" + new URLSearchParams({ bundle, file, returnTo })}>Edit file</a
+      >{:else if source}<button class="btn btn-secondary" aria-disabled="true" aria-describedby="edit-reason"
+        >Edit file</button
       >{/if}
   </div>
 </header>
 {#if error}<p role="alert">{error}</p>
 {:else if source}
   <p class="muted small">
-    A file in {bundle}{source.ref ? "" : ", not an indexed asset"}{source.writable ? "" : " · Read only"}.
+    A file in {bundle}{source.ref ? "" : ", not an indexed asset"}.
   </p>
+  {#if !source.actions.edit.allowed}<p class="muted small" id="edit-reason">{source.actions.edit.reason}</p>{/if}
   {#if source.markdown}<Markdown content={source.content} ref={source.ref ?? ""} />{:else}<pre
       class="code">{source.content}</pre>{/if}
 {:else}<p role="status">Opening file…</p>{/if}

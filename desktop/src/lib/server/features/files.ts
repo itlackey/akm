@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { assets, bundles, indexWrittenAssets, UsageError } from "akm-cli/workspace";
 import { fields } from "../input.js";
+import { entryAt } from "./bundle-path.js";
 
 /**
  * Plain file editing for the human owner: any text file inside a configured bundle (an asset, a skill's support
@@ -27,7 +28,6 @@ type Bundle = {
   components: Array<{ adapter: string }>;
 };
 type Selector = { ref?: string; bundle?: string; file?: string };
-type Verdict = { allowed: true } | { allowed: false; reason: string };
 
 /** `action` is what the route is about to do: akm's verdict for it on the file decides, and gives the reason. */
 async function selection(input: Selector, action: "read" | "edit") {
@@ -67,14 +67,7 @@ async function selection(input: Selector, action: "read" | "edit") {
   if (!fs.statSync(real).isFile()) throw new UsageError("Choose a file, not a folder.");
   // akm's own answer for the real path, so neither `knowledge/../env/x.env` nor a link into an env/ or secrets/ folder
   // at any depth gets past it.
-  const folder = (await assets.bundleFiles({
-    bundle,
-    path: path.dirname(inside).replace(/^\.$/, ""),
-    hidden: true,
-  })) as { entries: Array<{ name: string; actions: Record<"read" | "edit", Verdict> }> };
-  const listed = folder.entries.find((entry) => entry.name === path.basename(inside));
-  // No answer about the file is not permission to open it.
-  if (!listed) throw new UsageError("This file is unavailable. Check its location and filesystem permissions.");
+  const listed = await entryAt(bundle, inside.split(path.sep).join("/"));
   const verdict = listed.actions[action];
   if (!verdict.allowed) throw new UsageError(verdict.reason);
   return {
@@ -85,7 +78,7 @@ async function selection(input: Selector, action: "read" | "edit") {
     real,
     indexable: path.join(root, inside),
     root,
-    writable: found.writable === true,
+    actions: listed.actions,
   };
 }
 
@@ -106,7 +99,7 @@ export async function readFile(query: Selector) {
     file: chosen.file,
     content: text(bytes),
     revision: digest(bytes),
-    writable: chosen.writable,
+    actions: chosen.actions,
     markdown: /\.(?:md|markdown)$/i.test(chosen.real) && !["script", "task"].includes(chosen.type ?? ""),
   };
 }
