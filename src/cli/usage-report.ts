@@ -62,6 +62,8 @@ function claimDay(surface: ReportSurface, today: string): { last: string | undef
     const key = `report.${surface}.last_day`;
     const last = (db.prepare("SELECT value FROM cli_usage_meta WHERE key=?").get(key) as { value: string } | undefined)
       ?.value;
+    // Already reported today (every command after the first): a read only, no write lock on the shared store.
+    if (last !== undefined && last >= today) return undefined;
     const claimed = db
       .prepare(
         "INSERT INTO cli_usage_meta(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE cli_usage_meta.value < excluded.value",
