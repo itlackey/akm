@@ -252,3 +252,89 @@ test("the page has no move form: More offers no rename or move, and Edit and Ret
       .retire.reason,
   );
 });
+
+test("New names what akm says the folder holds and makes it in this folder of this bundle, started with akm's text", async (t) => {
+  const { app, page } = await session(t, {
+    configureFixture: async (fixture) => {
+      for (const folder of ["personal/lessons", "personal/workflows", "personal/reports", "shared/knowledge/team"])
+        await fs.mkdir(path.join(fixture.root, folder), { recursive: true });
+    },
+  });
+  const typeOf = async (folder, bundle = "personal") => (await folderOf(app, folder, bundle)).newFile.type;
+  assert.equal(await typeOf("lessons"), "lesson");
+  assert.equal(await typeOf("reports"), null);
+  for (const [bundle, folder, type] of [
+    ["personal", "lessons", "lesson"],
+    ["personal", "workflows", "workflow"],
+    ["personal", "reports", null],
+  ]) {
+    await go(page, `/library/files?${new URLSearchParams({ bundle, path: folder })}`);
+    const label = type ? `New ${type}` : "New file";
+    await expect(page.getByRole("button", { name: label, exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "New knowledge" })).toHaveCount(0);
+  }
+  // In another bundle's folder it makes the file there, not in the default bundle's knowledge/ root.
+  await go(page, "/library/files?bundle=shared&path=knowledge/team");
+  await page.getByRole("button", { name: "New knowledge", exact: true }).click();
+  await page.getByRole("textbox", { name: "Name of the new knowledge" }).fill("onboarding");
+  await page.getByRole("button", { name: "Create", exact: true }).click();
+  await expect(page.getByRole("heading", { name: /onboarding/i })).toBeVisible();
+  assert.equal(await exists(path.join(app.root, "shared/knowledge/team/onboarding.md")), true);
+  assert.equal(await exists(path.join(app.root, "personal/knowledge/onboarding.md")), false);
+  // A lesson starts with the keys akm requires for one, and is indexed at once.
+  await go(page, "/library/files?bundle=personal&path=lessons");
+  await page.getByRole("button", { name: "New lesson", exact: true }).click();
+  await page.getByRole("textbox", { name: "Name of the new lesson" }).fill("restore-order");
+  await page.getByRole("button", { name: "Create", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Save changes" })).toBeVisible();
+  const text = await fs.readFile(path.join(app.root, "personal/lessons/restore-order.md"), "utf8");
+  assert.match(text, /^---\n/);
+  const found = (await app.call("/api/bundles/files?bundle=personal&path=lessons")).body.data.entries.find(
+    (entry) => entry.name === "restore-order.md",
+  );
+  assert.deepEqual(found.assets, [{ ref: "personal//lessons/restore-order", type: "lesson" }]);
+  // A name that is taken is refused by akm and the file is untouched.
+  await go(page, "/library/files?bundle=personal&path=lessons");
+  await page.getByRole("button", { name: "New lesson", exact: true }).click();
+  await page.getByRole("textbox", { name: "Name of the new lesson" }).fill("restore-order");
+  await page.getByRole("button", { name: "Create", exact: true }).click();
+  await expect(page.getByRole("alert")).toBeVisible();
+  assert.equal(await fs.readFile(path.join(app.root, "personal/lessons/restore-order.md"), "utf8"), text);
+});
+
+test("where akm refuses a new file the button is disabled with its sentence; a folder can still be made where only a file is refused", async (t) => {
+  const { app, page } = await session(t, {
+    configureFixture: async (fixture) => {
+      await claudeBundle(fixture);
+      await fs.mkdir(path.join(fixture.root, "personal/env"));
+    },
+  });
+  for (const [bundle, folder] of [
+    ["personal", "env"],
+    ["vendor", "knowledge"],
+    ["claude", "commands"],
+    ["personal", "skills"],
+  ]) {
+    await go(page, `/library/files?${new URLSearchParams({ bundle, path: folder })}`);
+    const listing = await folderOf(app, folder, bundle);
+    assert.equal(listing.newFile.allowed, false, `${bundle}/${folder}`);
+    const create = page.locator(".folder-new").getByRole("button", { name: /^New (?!folder)/ });
+    await expect(create).toHaveAttribute("aria-disabled", "true");
+    await expect(page.locator(".folder-new")).toContainText(listing.newFile.reason);
+    await create.click({ force: true });
+    await expect(page.getByRole("textbox", { name: /Name of the new/ })).toHaveCount(0);
+    const folderButton = page.getByRole("button", { name: "New folder", exact: true });
+    if (listing.place.allowed) await expect(folderButton).not.toHaveAttribute("aria-disabled", "true");
+    else {
+      await expect(folderButton).toHaveAttribute("aria-disabled", "true");
+      await expect(page.locator(".folder-new")).toContainText(listing.place.reason);
+    }
+  }
+  // skills/ takes a folder, and the folder is made there.
+  await go(page, "/library/files?bundle=personal&path=skills");
+  await page.getByRole("button", { name: "New folder", exact: true }).click();
+  await page.getByRole("textbox", { name: "Name of the new folder" }).fill("restore");
+  await page.getByRole("button", { name: "Create", exact: true }).click();
+  await expect(page.getByRole("row", { name: /^restore/ })).toBeVisible();
+  assert.equal((await fs.stat(path.join(app.root, "personal/skills/restore"))).isDirectory(), true);
+});
