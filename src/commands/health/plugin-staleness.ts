@@ -365,7 +365,7 @@ const realListRemoteTags: ListRemoteTagsFn = (marketplaceDir) => {
  */
 export type ListRemoteTagsAtFn = (remote: string, ref: string | undefined) => string[] | undefined;
 
-const realListRemoteTagsAt: ListRemoteTagsAtFn = (remote, ref) => {
+export const realListRemoteTagsAt: ListRemoteTagsAtFn = (remote, ref) => {
   let result: SpawnSyncReturns<string>;
   try {
     result = spawnSync("git", ["ls-remote", "--symref", remote], { encoding: "utf8", timeout: LS_REMOTE_TIMEOUT_MS });
@@ -380,8 +380,21 @@ const realListRemoteTagsAt: ListRemoteTagsAtFn = (remote, ref) => {
   return channelVersions(result.stdout, ref ?? "", undefined);
 };
 
-/** The marketplace every akm Codex install registers (`codex plugin marketplace add itlackey/akm-plugins`). */
-const CODEX_MARKETPLACE_REMOTE = "https://github.com/itlackey/akm-plugins";
+/** The marketplace every akm Claude Code and Codex install registers (`codex plugin marketplace add itlackey/akm-plugins`). */
+const MARKETPLACE_REMOTE = "https://github.com/itlackey/akm-plugins";
+
+/**
+ * The newest akm plugin release the marketplace offers on `ref` (a branch such as `next`, a tag, or none for the stable
+ * default branch): the one probe behind `akm health` and `akm upgrade --check`. `undefined` when the remote could not be
+ * read; `newest` is `undefined` when it answered with no release on that ref.
+ */
+export function probeMarketplace(
+  ref: string | undefined,
+  listRemoteTagsAt: ListRemoteTagsAtFn = realListRemoteTagsAt,
+): { newest: string | undefined } | undefined {
+  const tags = listRemoteTagsAt(MARKETPLACE_REMOTE, ref);
+  return tags === undefined ? undefined : { newest: highestVersion(tags) };
+}
 
 /** What Codex's own config and listing say about the akm plugin; `undefined` when the marketplace is not registered. */
 export interface CodexPlugin {
@@ -426,9 +439,9 @@ function buildCodexAdvisory(
   let availableVersion: string | undefined;
   let remoteUnavailable = false;
   if (probe) {
-    const tags = listRemoteTagsAt(CODEX_MARKETPLACE_REMOTE, ref);
-    if (tags === undefined) remoteUnavailable = true;
-    else availableVersion = highestVersion(tags);
+    const answer = probeMarketplace(ref, listRemoteTagsAt);
+    if (answer === undefined) remoteUnavailable = true;
+    else availableVersion = answer.newest;
   }
   const stale =
     availableVersion !== undefined &&

@@ -5,6 +5,7 @@
 import { api } from "../client";
 import type { HostHarness, HostSnapshot } from "../setup-model";
 import { snapshotFeed, waitUntilIdle } from "../software-model";
+import type { PluginEntry } from "../upgrade-outcome";
 
 export type Harness = HostHarness & { path?: string };
 /** Desktop's own update state, from the main process (electron-updater); absent in the web process. */
@@ -26,16 +27,11 @@ interface UpgradeView {
   currentVersion?: string;
   updateAvailable?: boolean;
   installMethod?: string;
+  /** The channel this check was made for, and the one the installed CLI follows. */
   channel?: string;
   currentChannel?: string;
-  /** Each harness plugin akm found: the channel it follows and what the run did with it. */
-  plugins?: Array<{
-    harness: string;
-    channel?: string;
-    channelMismatch?: boolean;
-    outcome?: string;
-    reason?: string;
-  }>;
+  /** Each harness plugin akm found: the channel it follows and what the run did, or under `--check` would do, with it. */
+  plugins?: PluginEntry[];
 }
 export interface SoftwareSnapshot {
   engine: string;

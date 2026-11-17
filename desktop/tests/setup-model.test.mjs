@@ -9,7 +9,6 @@ import {
   checkPrompt,
   harnessLabel,
   hasStarter,
-  installedChannel,
   isUnconfigured,
   learningRuns,
   learnPlan,
@@ -17,6 +16,7 @@ import {
   pluginChannel,
   pluginLine,
   pluginMatches,
+  pluginPlan,
   searchCount,
 } from "../src/lib/setup-model.ts";
 
@@ -153,15 +153,15 @@ test("OpenCode 2 is the same program told apart by its major, and the plugin row
     { harness: "opencode", channel: "pinned" },
     { harness: "opencode-v2", channel: "unknown" },
   ];
-  // The channel finishes the row's sentence in words, and only for a plugin that is there.
+  // akm's entry for the harness, and only for a plugin that is there.
   const present = (id, state, major) => ({ id, installed: true, runnable: true, major, plugin: { state } });
-  assert.equal(installedChannel(present("claude", "installed"), plugins), "on the prerelease channel");
-  assert.equal(installedChannel(present("codex", "disabled"), plugins), "on the stable channel");
-  assert.equal(installedChannel(present("opencode", "configured", 1), plugins), "pinned to one version");
-  assert.equal(installedChannel(present("opencode", "configured", 2), plugins), undefined);
-  assert.equal(installedChannel(present("claude", "installed"), undefined), undefined);
-  assert.equal(installedChannel(present("claude", "missing"), plugins), undefined);
-  assert.equal(installedChannel(present("claude", "unknown"), plugins), undefined);
+  assert.equal(pluginPlan(present("claude", "installed"), plugins), plugins[0]);
+  assert.equal(pluginPlan(present("codex", "disabled"), plugins), plugins[1]);
+  assert.equal(pluginPlan(present("opencode", "configured", 1), plugins), plugins[2]);
+  assert.equal(pluginPlan(present("opencode", "configured", 2), plugins), plugins[3]);
+  assert.equal(pluginPlan(present("claude", "installed"), undefined), undefined);
+  assert.equal(pluginPlan(present("claude", "missing"), plugins), undefined);
+  assert.equal(pluginPlan(present("claude", "unknown"), plugins), undefined);
 });
 
 test("a plugin that is turned off, or that the harness cannot report, is not offered an install", () => {

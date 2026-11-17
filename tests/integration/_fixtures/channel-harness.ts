@@ -15,7 +15,19 @@ if (state.fail === command + " " + args.join(" ")) {
   console.error("fixture refresh failed");
   process.exit(1);
 }
-if (command === "git") {
+if (command === "git" && args[0] === "ls-remote") {
+  if (state.remote === "down") process.exit(128);
+  // The marketplace remote: stable releases on its default branch, the newest prerelease on `next`.
+  console.log(
+    [
+      "ref: refs/heads/main\tHEAD",
+      "aaaa\trefs/heads/main",
+      "bbbb\trefs/heads/next",
+      `aaaa\trefs/tags/v${native("latest")}`,
+      `bbbb\trefs/tags/v${native("next")}`,
+    ].join("\n"),
+  );
+} else if (command === "git") {
   const checkout = args.at(-1)!;
   const channel = args.includes("next") ? "next" : "latest";
   fs.mkdirSync(path.join(checkout, ".claude-plugin"), { recursive: true });

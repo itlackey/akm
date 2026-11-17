@@ -17,6 +17,7 @@ import {
   setup,
 } from "akm-cli/workspace";
 import { compareVersions } from "../engine-skew.js";
+import { pluginChannel } from "../setup-model.js";
 import { readFile, saveFile } from "./features/files.js";
 import {
   readPreferences,
@@ -132,18 +133,17 @@ export const routes: Route[] = [
     preferences: await readPreferences(),
   })),
   post("/api/desktop/software", async (value) => {
-    const request = fields<{ action?: unknown; harness?: unknown; channel?: unknown; consent?: unknown }>(
+    const request = fields<{ action?: unknown; harness?: unknown; consent?: unknown }>(
       value,
-      ["action", "harness", "channel", "consent"],
+      ["action", "harness", "consent"],
       "software action",
     );
     if (
       typeof request.action !== "string" ||
       (request.harness !== undefined && typeof request.harness !== "string") ||
-      (request.channel !== undefined && typeof request.channel !== "string") ||
       (request.consent !== undefined && typeof request.consent !== "boolean")
     )
-      throw new HttpFailure(400, "INVALID_SOFTWARE_ACTION", "Invalid software action, harness or release channel.");
+      throw new HttpFailure(400, "INVALID_SOFTWARE_ACTION", "Invalid software action or harness.");
     try {
       // A host upgrade past Desktop's engine would leave Desktop unable to read an index the host migrated; HostTools
       // asks akm for the release it would install, right before it upgrades, and refuses one `within` cannot clear.
@@ -154,7 +154,8 @@ export const routes: Route[] = [
           : hostTools.start(
               request.action,
               request.harness as string | undefined,
-              request.channel as string | undefined,
+              // The one release channel for the host's CLI and plugins: the saved choice.
+              pluginChannel(akmPackage.version, (await readPreferences()).pluginChannel),
               {
                 consent: request.consent === true,
                 within: (version) => {

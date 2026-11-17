@@ -563,7 +563,7 @@ export type PluginHarness = "claude-code" | "codex" | "opencode" | "opencode-v2"
 /**
  * What `akm upgrade` did (or, under `--check`, would do) for one harness's akm
  * plugin. `pending` and `unknown` appear only in a `--check` result: `pending` is an
- * exact comparison, `unknown` means the answer needs a fetch `--check` does not do.
+ * exact comparison (`to` is the version the update installs), `unknown` means the marketplace remote did not answer.
  */
 export interface PluginUpgradeEntry {
   harness: PluginHarness;

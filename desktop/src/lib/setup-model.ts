@@ -79,14 +79,13 @@ export function pluginLine(harness: HostHarness): string {
 }
 
 /**
- * The channel a present plugin follows, as `akm upgrade --check` read it from the harness's own configuration, as
- * words that finish the row's sentence ("…installed, on the stable channel"); nothing for a plugin that is not there,
- * or when the host CLI has not been checked or did not say.
+ * What `akm upgrade --check` reported for a present plugin: nothing for a plugin that is not there, or when the host
+ * CLI has not been checked or did not list it.
  */
-export function installedChannel(
+export function pluginPlan<T extends { harness: string }>(
   harness: HostHarness,
-  plugins: Array<{ harness: string; channel?: string }> | undefined,
-): string | undefined {
+  plugins: T[] | undefined,
+): T | undefined {
   if (!["installed", "configured", "disabled"].includes(harness.plugin?.state ?? "")) return undefined;
   const name =
     harness.id === "claude"
@@ -94,14 +93,7 @@ export function installedChannel(
       : harness.id === "opencode" && harness.major === 2
         ? "opencode-v2"
         : harness.id;
-  const channel = plugins?.find((plugin) => plugin.harness === name)?.channel;
-  return channel === "latest"
-    ? "on the stable channel"
-    : channel === "next"
-      ? "on the prerelease channel"
-      : channel === "pinned"
-        ? "pinned to one version"
-        : undefined;
+  return plugins?.find((plugin) => plugin.harness === name);
 }
 
 const majorMinor = (version: string | undefined) =>

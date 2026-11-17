@@ -716,7 +716,7 @@ esac`,
   });
 
   describe("--check", () => {
-    test("reports each harness (unknown where it needs a fetch) and changes nothing", async () => {
+    test("reports each harness (unknown where the marketplace remote does not answer) and changes nothing", async () => {
       stubClaude({ from: "0.9.26", to: "0.9.27" });
       stubCodex({ from: "0.9.26", to: "0.9.27" });
       writeCachedOpenCode("0.9.26");
@@ -729,7 +729,7 @@ esac`,
         ["codex", "unknown"],
         ["opencode", "pending"],
       ]);
-      expect(entry(run, "claude-code").message).toContain("--check does not do");
+      expect(entry(run, "claude-code").message).toContain("could not be read from the akm-plugins marketplace remote");
       expect(deps.upgradeCalls).toHaveLength(0);
       expect(mutations()).toEqual([]);
       expect(fs.existsSync(cacheDir())).toBe(true);

@@ -6,7 +6,7 @@
 
 <script lang="ts">
   import { api } from "./client";
-  import { classifyEngineSkew, hostUpgradeOutrunsDesktop } from "./engine-skew";
+  import { classifyEngineSkew, updateHeld } from "./engine-skew";
   import Icon from "./Icon.svelte";
   import SetupLearning from "./SetupLearning.svelte";
   import { learnPlan, learnReceipt, learningRuns, pluginChannel, type AgentCard, type Detected } from "./setup-model";
@@ -44,7 +44,7 @@
     cli = $derived(host?.cli),
     channel = $derived(pluginChannel(engine, software.data?.preferences?.pluginChannel)),
     skew = $derived(classifyEngineSkew(engine, cli?.version)),
-    desktopBehind = $derived(hostUpgradeOutrunsDesktop(engine, host?.upgrade?.latestVersion)),
+    desktopBehind = $derived(updateHeld(engine, host?.upgrade)),
     version = $derived(software.data?.desktop.version),
     builtFor = $derived(engine?.split(".").slice(0, 2).join(".")),
     release = $derived(version && version !== "0.0.0" ? `akm ${version}` : "the latest akm"),
