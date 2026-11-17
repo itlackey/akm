@@ -108,7 +108,8 @@ import {
   withoutHelpHiddenArgs,
 } from "./cli/shared";
 import { assertKnownFlags, consumeConfigFileFlag, type FlagScanCommand } from "./cli/unknown-flags";
-import { startUsage, type UsageCommand } from "./cli/usage";
+import { startUsage, type UsageCommand, usageCaptureOff } from "./cli/usage";
+import { reportUsageIfDue } from "./cli/usage-report";
 import { agentCommand, lintCommand } from "./commands/agent/contribute-cli";
 import { backupsCommand } from "./commands/backups-cli";
 import { commandCommand } from "./commands/command/command-cli";
@@ -1265,6 +1266,9 @@ export async function runCli(): Promise<void> {
     // Deliver catchable signals queued during synchronous child execution.
     await new Promise<void>((resolve) => setImmediate(resolve));
     finishUsage();
+    // After the command's own work; never changes output or exit code (see src/cli/usage-report.ts).
+    if (!usageCaptureOff(main as UsageCommand, originalArgs))
+      await reportUsageIfDue({ surface: "cli", version: pkgVersion });
   }
 }
 

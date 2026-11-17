@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import type { Handle } from "@sveltejs/kit/hooks";
+import { activity } from "akm-cli/workspace";
 import { cookieName, failure, sameSecret } from "./lib/server/security.js";
 
 // Read once and removed from the environment, so the CLI children AKM spawns do not inherit the session credential.
@@ -11,6 +12,10 @@ const session = globalThis as { __akmDesktopSessionToken?: string };
 session.__akmDesktopSessionToken ??= process.env.AKM_DESKTOP_SESSION_TOKEN;
 delete process.env.AKM_DESKTOP_SESSION_TOKEN;
 const token = session.__akmDesktopSessionToken;
+
+// The daily usage report (docs/reference/data-and-telemetry.md): once at server start, in the background, never
+// throws. akm decides whether it is due; `usage.report: false` in the config turns it off.
+void activity.reportUsage();
 
 export const handle: Handle = async ({ event, resolve }) => {
   const origin = process.env.AKM_DESKTOP_ORIGIN;

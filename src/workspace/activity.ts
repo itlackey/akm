@@ -6,6 +6,7 @@
 
 import fs from "node:fs";
 import os from "node:os";
+import { reportUsageIfDue } from "../cli/usage-report";
 import { akmHealth, parseHealthSince } from "../commands/health";
 import { buildTasks } from "../commands/metrics/collect";
 import { akmMetrics, metricsWindow, readUsageRows } from "../commands/metrics/metrics-cli";
@@ -48,6 +49,11 @@ export function meta() {
     hostname: os.hostname(),
     runtime: process.versions.bun ? "bun" : "node",
   };
+}
+
+/** The Desktop daily usage report, once at server start: sent at most once a UTC day, never throws, `true` when sent. */
+export function reportUsage(): Promise<boolean> {
+  return reportUsageIfDue({ surface: "desktop" });
 }
 
 const IMPROVE_ERRORS_SHOWN = 20;
