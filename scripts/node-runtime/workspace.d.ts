@@ -166,6 +166,16 @@ export namespace config {
   };
 }
 export namespace documents {
+  /** A new file in a folder of a bundle, for any type: the folder's type decides the starting text; a folder with no type gets an empty file. */
+  function createFile(input: { bundle: string; folder?: string; name: string; content?: string }): Promise<{
+    bundle: string;
+    file: string;
+    type: string | null;
+    ref: string | null;
+    path: string;
+    stashDir: string;
+    indexed: boolean;
+  }>;
   function copy(input: { sourceRef: string; target?: string; newName?: string }): Promise<CloneResponse>;
   function createKnowledge(input: { bundle: string; name: string; path?: string; content: string }): Promise<unknown>;
   function readSource(input: {

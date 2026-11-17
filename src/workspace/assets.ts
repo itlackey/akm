@@ -29,7 +29,7 @@ import { assetImprove } from "./asset-improve";
 import { bundleFileLocation, listBundleFiles, protectedTypeOf } from "./bundle-files";
 import { bundleWriteBlocker, fileActions } from "./file-actions";
 import { readFileRevision, readRecentCommits } from "./git-read";
-import { capSide, clampLimit, DIFF_SIDE_MAX_CHARS, withReadonlyStateDb } from "./readers";
+import { capSide, clampLimit, DIFF_SIDE_MAX_CHARS, durableRefForPath, withReadonlyStateDb } from "./readers";
 
 export { graph } from "./graph";
 export { searchMisses } from "./misses";
@@ -143,14 +143,6 @@ export function projectOverview(input: { project: string }) {
       };
     }),
   };
-}
-
-/** The durable `bundle//conceptId` of the indexed asset at `filePath`, the key feedback rows use. */
-function durableRefForPath(filePath: string): string | null {
-  return readUsableIndex((db) => {
-    const id = getEntryIdByFilePath(db, filePath);
-    return id === undefined ? null : getItemRefById(db, id);
-  }, null);
 }
 
 function feedbackFor(durableRef: string | null) {

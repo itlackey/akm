@@ -13,6 +13,7 @@ import { declaredTypeForPath } from "../indexer/walk/matchers";
 import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
 import { getAssetRefsForFiles } from "../storage/repositories/index-entries-repository";
 import { bundleWriteBlocker, fileActions } from "./file-actions";
+import { newFileVerdict } from "./new-file";
 
 export interface BundleFileLocation {
   bundle: string;
@@ -121,6 +122,8 @@ export function listBundleFiles(bundle: string, relative = "", showHidden = fals
     path: current,
     parent: current ? portable(path.dirname(current)).replace(/^\.$/, "") : null,
     indexAvailable,
+    // Whether a new file may be made in this folder, and the type its place gives it (null: none).
+    newFile: newFileVerdict(current, writeBlocker),
     entries: rows.map(({ absolute, ...row }) => {
       const assets = refs.get(absolute) ?? [];
       const isProtected =

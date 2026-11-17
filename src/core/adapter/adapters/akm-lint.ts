@@ -63,7 +63,7 @@ import { isAkmRegistryCachePath, scanEnvKeyNames } from "../../common";
 import type { BundleComponent, Diagnostic, ValidateContext } from "../types";
 
 /** Recommended `category` values for facts — `commands/lint/fact-linter.ts:9`. */
-const KNOWN_CATEGORIES = new Set(["personal", "team", "project", "convention", "meta"]);
+export const KNOWN_CATEGORIES = new Set(["personal", "team", "project", "convention", "meta"]);
 
 /** Placeholder markers a workflow stub carries — `commands/lint/workflow-linter.ts:10`. */
 const PLACEHOLDER_STRINGS = ["Describe what this workflow accomplishes", "Example Workflow"];

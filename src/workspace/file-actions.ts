@@ -81,8 +81,15 @@ export function bundleWriteBlocker(config: AkmConfig, bundle: string): string | 
   return inspectWriteTarget(config, bundle).blocker;
 }
 
-function managedFolder(relative: string): string | undefined {
-  return relative.split("/").find((segment) => segment === ".git" || segment === ".akm");
+function managedReason(relative: string): string | null {
+  const managed = relative.split("/").find((segment) => segment === ".git" || segment === ".akm");
+  return managed === undefined ? null : `${managed}/ is managed by akm.`;
+}
+
+/** Why nothing is created, moved into or taken out of this folder whatever the bundle allows: a protected or managed place. */
+export function folderBlocker(relative: string): string | null {
+  const protectedPlace = relative.split("/").some((segment) => segment === "env" || segment === "secrets");
+  return protectedPlace ? PROTECTED_REASON : managedReason(relative);
 }
 
 /**
@@ -90,16 +97,15 @@ function managedFolder(relative: string): string | undefined {
  * a listing; copying and reading leave a bundle as it is, so they do not consult it.
  */
 export function fileActions(entry: EntryFacts, writeBlocker: string | null): FileActions {
-  const segments = entry.relative.split("/");
-  const managed = managedFolder(entry.relative);
-  const protectedFile =
-    entry.kind === "file" ? entry.protected : segments.some((segment) => segment === "env" || segment === "secrets");
-  // What the entry is rules out an action whatever the bundle allows.
-  const nature = protectedFile
-    ? PROTECTED_REASON
-    : managed
-      ? `${managed}/ is managed by akm.`
-      : (entry.unavailable ?? undefined);
+  // What the entry is rules out an action whatever the bundle allows. A file is protected by akm's typing of it.
+  const nature =
+    (entry.kind === "file"
+      ? entry.protected
+        ? PROTECTED_REASON
+        : managedReason(entry.relative)
+      : folderBlocker(entry.relative)) ??
+    entry.unavailable ??
+    undefined;
   const probed =
     entry.kind === "file" && entry.absolute !== undefined && nature === undefined
       ? probeText(entry.absolute)

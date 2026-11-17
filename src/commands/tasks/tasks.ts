@@ -1080,7 +1080,7 @@ function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
-interface RenderInput {
+export interface RenderInput {
   id: string;
   schedule: string;
   workflow?: string;
@@ -1127,7 +1127,7 @@ function renderInputsFromParams(params: Record<string, unknown>): Record<string,
   return inputs;
 }
 
-function renderTaskYaml(input: RenderInput): string {
+export function renderTaskYaml(input: RenderInput): string {
   const obj: Record<string, unknown> = { version: 4 };
   if (input.workflow) {
     obj.uses = input.workflow;
