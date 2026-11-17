@@ -902,12 +902,13 @@ the key is ignored, and enables nothing; `akm migrate apply` drops it.
 
 ## Usage
 
-`usage` configures the local-only CLI usage counts (see
+`usage` configures the local-only CLI usage counts and the daily usage report (see
 [Data and Telemetry](data-and-telemetry.md#cli-usage-counts)):
 
 | Key | Purpose |
 | --- | --- |
 | `usage.capture` | Whether akm records counts of its own commands in `metrics.db`. **Defaults to `true`**; `false` turns the recording off. Read from the config file itself (the one `--config` or `AKM_CONFIG_FILE` selects) before the rest of the config loads, so a missing or broken file leaves it on. `--read-only` records nothing either way. |
+| `usage.report` | Whether akm sends its [daily usage report](data-and-telemetry.md#daily-usage-report) (the CLI's and AKM Desktop's). **Defaults to `true`**; `false` sends nothing. Read from the config file itself like `usage.capture`. The CLI also sends nothing under `--read-only` or when `usage.capture` is `false`. |
 
 ## Bundles and write target
 

@@ -114,6 +114,8 @@ nothing else with 0.11's tables:
   unwritable, locked or corrupt file never changes a command's output or exit code.
 - **Off and read-only:** `usage.capture: false` and `--read-only` open and write
   nothing.
+- **Daily usage report:** the last UTC day each surface reported is a `report.<surface>.last_day` row in
+  `cli_usage_meta` (the claim that keeps it to one a day); a 0.11 that does not send the report leaves the rows alone.
 
 **What 0.11 must do to adopt it:** nothing to the file itself, but its readers must tolerate a `metrics.db` that holds only usage tables (see the known gap above). Its usage capture opens
 `metrics.db` in the data directory it resolves (after the location is known),

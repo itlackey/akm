@@ -4536,7 +4536,7 @@ key; never sum snapshots or add detail counts to aggregate counts. Detailed rows
 are a subset of the aggregates. A report includes its own unfinished attempt.
 
 Collection is enabled at CLI entry, before the full configuration is read (only `usage.capture` is read, from the selected config file, and a missing or broken file leaves capture on), with no network
-transmission and no sampling. `AKM_EVENT_SOURCE=user|agent|task|improve|audit` supplies
+transmission of its own and no sampling (the separate [daily usage report](data-and-telemetry.md#daily-usage-report) sends totals). `AKM_EVENT_SOURCE=user|agent|task|improve|audit` supplies
 known provenance and wins. Without it the source is `agent` when an agent harness
 is detected from the environment (the way usage events detect it), else `unknown`;
 nothing is inferred from a terminal. When a harness is detected, rows and aggregates
