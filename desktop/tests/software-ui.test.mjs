@@ -75,8 +75,11 @@ else {process.exitCode=1}
   await expect(
     page
       .getByRole("status")
-      .filter({ hasText: "Saved. The CLI and plugins follow the prerelease channel; Check shows what Update does." }),
+      .filter({ hasText: "Saved. Update brings the CLI and plugins to the prerelease channel." }),
   ).toBeVisible();
+  // The plan for the new choice is asked for at once, and focus stays on the control.
+  await expect(page.locator('section[aria-labelledby="host-cli"]')).toHaveAttribute("aria-busy", "false");
+  await expect(page.locator("dd", { hasText: "akm upgrade --check --channel next --format json" })).toHaveCount(1);
   await expect(pluginChannel).toBeFocused();
   await updates.focus();
   await updates.selectOption("prerelease");

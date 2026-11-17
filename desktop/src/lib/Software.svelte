@@ -75,10 +75,14 @@
       unapplied = value;
       return;
     }
-    saved[key] =
-      key === "updateChannel"
-        ? `Saved. AKM Desktop follows ${value === "prerelease" ? "stable and prerelease releases" : "stable releases only"}.`
-        : `Saved. The CLI and plugins follow the ${channelName(value)} channel; Check shows what Update does.`;
+    if (key === "updateChannel") {
+      saved[key] =
+        `Saved. AKM Desktop follows ${value === "prerelease" ? "stable and prerelease releases" : "stable releases only"}.`;
+      return;
+    }
+    // The choice changes what Update does, so the plan for it is asked for at once.
+    saved[key] = `Saved. Update brings the CLI and plugins to the ${channelName(value)} channel.`;
+    await run("check", {}, "host-cli");
   }
   /**
    * Run a host action from its button and wait for it. The button stays focusable while busy; if it is gone when the
