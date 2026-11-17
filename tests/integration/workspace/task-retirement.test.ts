@@ -293,3 +293,42 @@ test("proposal CLI text output displays incomplete cleanup warnings", async () =
     "Warning: Task stash//tasks/nightly is disabled in local config, but native scheduler cleanup is unverified",
   );
 });
+
+test("an unreadable legacy descriptor makes matching native ownership unknown, never absent", async () => {
+  saveConfig({ ...loadConfig(), scheduler: { enabled: [] } });
+  const missingContext = path.join(storage.root, "missing-context.json");
+  table = [
+    "# akm:task nightly BEGIN",
+    `0 2 * * * /usr/local/bin/akm --scheduler-context ${missingContext} task run nightly --bundle stash --scheduled > /tmp/nightly.log 2>&1`,
+    "# akm:task nightly END",
+    "",
+  ].join("\n");
+  expect((await backend.list())[0]?.contextPath).toBe(missingContext);
+  const before = table;
+  const receipt = await documents.retire({ ref, revision: revision() });
+  expect(receipt.warnings).toHaveLength(1);
+  expect(receipt.warnings[0]).toContain("native scheduler cleanup is unverified");
+  expect(receipt.warnings[0]).toContain("owning bundle path could not be read");
+  expect(table).toBe(before);
+});
+
+test("a matching logical task with a definite foreign bundle path is preserved and not attributed locally", async () => {
+  saveConfig({ ...loadConfig(), scheduler: { enabled: [] } });
+  table = "";
+  await backend.install(
+    {
+      id: "nightly",
+      logicalSource: { kind: "task", ref },
+      cron: "0 2 * * *",
+      source: "foreign.yml",
+      ordinal: 0,
+      enabled: true,
+      invocation: ["task", "run", "nightly", "--bundle", "stash", "--scheduled"],
+    },
+    { environment: { AKM_BUNDLE_DIR: path.join(storage.root, "another-host") } },
+  );
+  const before = table;
+  const receipt = await documents.retire({ ref, revision: revision() });
+  expect(receipt.warnings).toEqual([]);
+  expect(table).toBe(before);
+});

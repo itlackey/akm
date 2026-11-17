@@ -456,11 +456,17 @@ export async function inspectTaskSchedulerBindings(
     rethrowIfTestIsolationError(cause);
     return { state: "unknown", reason: errorMessage(cause) };
   }
-  const found = installed.some((row) => {
+  let unknownOwnership: string | undefined;
+  for (const row of installed) {
+    if (installedRowRef(row, resolved.scope) !== resolved.qualifiedRef) continue;
     const scope = installedRowScope(row, [resolved.scope]);
-    return scope !== undefined && installedRowRef(row, scope) === resolved.qualifiedRef;
-  });
-  return { state: found ? "installed" : "not-installed" };
+    if (scope !== undefined) return { state: "installed" };
+    const namedBundle = row.target ?? scheduledInvocationBundle(row.invocation);
+    if (namedBundle === resolved.scope.bundleName && row.ownerBundlePath === undefined) {
+      unknownOwnership = `Native binding ${installedRowNativeId(row)} names ${resolved.qualifiedRef}, but its owning bundle path could not be read.`;
+    }
+  }
+  return unknownOwnership === undefined ? { state: "not-installed" } : { state: "unknown", reason: unknownOwnership };
 }
 
 /**
