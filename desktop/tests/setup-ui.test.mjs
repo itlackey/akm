@@ -315,14 +315,14 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
 });
 
 /** An existing user: akm, Bun and Claude Code are installed, and the plugin is already there. */
-async function withHostTools(fixture, { akmVersion = "0.10.261104" } = {}) {
+async function withHostTools(fixture, { akmVersion = "0.10.261104", plugins = [] } = {}) {
   const bin = path.join(fixture.root, "bin");
   await mkdir(bin);
   await writeFile(path.join(bin, "claude"), harness(fixture.root, "claude"), { mode: 0o755 });
   await writeFile(path.join(fixture.root, "claude.json"), JSON.stringify({ marketplace: true, installed: true }));
   await writeFile(
     path.join(bin, "akm"),
-    `#!${process.execPath}\nconst args = process.argv.slice(2);\nif (args[0] === '--version') console.log('${akmVersion}');\nelse console.log(JSON.stringify({ currentVersion: '${akmVersion}', latestVersion: '${akmVersion}', updateAvailable: false, currentChannel: "latest", plugins: [] }));\n`,
+    `#!${process.execPath}\nconst args = process.argv.slice(2);\nif (args[0] === '--version') console.log('${akmVersion}');\nelse console.log(JSON.stringify({ currentVersion: '${akmVersion}', latestVersion: '${akmVersion}', updateAvailable: false, currentChannel: "latest", channel: "latest", plugins: ${JSON.stringify(plugins)} }));\n`,
     { mode: 0o755 },
   );
   await writeFile(path.join(bin, "bun"), `#!${process.execPath}\nconsole.log('1.3.14');\n`, { mode: 0o755 });
@@ -368,6 +368,25 @@ test("run again on an existing machine shows live state, offers the CLI update o
   await expect(page.getByText("No search has reached akm yet. Things to check:")).toBeVisible();
   await expect(page.getByText(/A search reached akm/)).toHaveCount(0);
 });
+
+// The tick on a plugin is akm's own "up to date" for it: a plugin akm reports as current has it, one akm did not check
+// (or did not list) has none.
+for (const [name, plugins, ticked] of [
+  ["a plugin akm reports as current shows the tick", [{ harness: "claude-code", outcome: "current" }], true],
+  ["a plugin akm did not check shows no tick", [], false],
+]) {
+  test(`Setup: ${name}`, { timeout: 120000 }, async (t) => {
+    const server = await launchFixture({ configureFixture: (fixture) => withHostTools(fixture, { plugins }) });
+    t.after(() => server.stop());
+    const browser = await chromium.launch({ headless: true });
+    t.after(() => browser.close());
+    const page = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
+    await page.goto(server.url);
+    await page.goto(`${server.origin}/setup`);
+    await expect(page.getByText(`AKM plugin ${PLUGIN}`)).toBeVisible();
+    await expect(page.getByText(`✓ AKM plugin ${PLUGIN}`)).toHaveCount(ticked ? 1 : 0);
+  });
+}
 
 test("a machine with the same akm as the app is not offered an update", { timeout: 120000 }, async (t) => {
   const server = await launchFixture({ configureFixture: (fixture) => withHostTools(fixture, { akmVersion: ENGINE }) });

@@ -293,3 +293,54 @@ test("the weekly retrieval chart marks partial weeks and claims no usual range w
   await expect(table).not.toContainText("Within range");
   await expect(table).not.toContainText("Unusual");
 });
+
+// Replay plays the person's events unless asked for everyone's, and says which it shows: the figures change with the
+// choice, and a curate is counted as a curate, not as a search.
+test("Replay: You and Everyone show different figures under their own labels", { timeout: 240000 }, async (t) => {
+  const server = await launchFixture({ metrics: true });
+  t.after(() => server.stop());
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
+  const now = Date.now();
+  const at = (minutesAgo) => new Date(now - minutesAgo * 60_000).toISOString();
+  const row = (id, minutes, eventType, source, extra = {}) => ({
+    id,
+    at: at(minutes),
+    eventType,
+    source,
+    byPerson: source === "user",
+    ...extra,
+  });
+  await page.route("**/api/events?since=24h", (route) =>
+    route.fulfill({
+      json: {
+        ok: true,
+        data: {
+          available: true,
+          truncated: false,
+          window: { since: at(24 * 60), until: at(0) },
+          events: [
+            row(1, 50, "search", "user", { query: "backup", resultCount: 2 }),
+            row(2, 40, "search", "user", { query: "nothing here", resultCount: 0 }),
+            row(3, 30, "search", "improve", { query: "agent one", resultCount: 1 }),
+            row(4, 20, "search", "improve", { query: "agent two", resultCount: 0 }),
+            row(5, 10, "curate", "improve", { query: "agent curate", resultCount: 1 }),
+          ],
+        },
+      },
+    }),
+  );
+  await open(page, server, "/activity/replay");
+  const replay = page.getByRole("region", { name: "Activity replay", exact: true });
+  const figures = replay.locator(".figures");
+  await expect(figures).toContainText(/2\s*searches/);
+  await expect(figures).toContainText(/0\s*curates/);
+  await expect(figures).toContainText(/1\s*found nothing/);
+  await replay.getByLabel("Events by").selectOption({ label: "Everyone: you, agents and automation" });
+  await expect(figures).toContainText(/4\s*searches/);
+  await expect(figures).toContainText(/1\s*curates/);
+  await expect(figures).toContainText(/2\s*found nothing/);
+  await replay.getByLabel("Events by").selectOption({ label: "You" });
+  await expect(figures).toContainText(/2\s*searches/);
+});
