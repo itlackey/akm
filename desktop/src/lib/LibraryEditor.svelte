@@ -416,6 +416,7 @@
   </p>
 {:else if loaded}<form
     class="editor-form"
+    class:grows={formMode}
     onsubmit={(event) => {
       event.preventDefault();
       void save();
@@ -673,7 +674,6 @@
   @media (min-width: 1100px) {
     .editor-columns {
       grid-template-columns: minmax(0, 1fr) 280px;
-      align-items: start;
     }
   }
   .editor-form {
@@ -840,6 +840,18 @@
       flex-direction: column;
       min-block-size: 0;
     }
+    .editor-columns {
+      flex: 1;
+      min-block-size: 0;
+      grid-template-rows: minmax(0, 1fr);
+    }
+    .editor-form.grows .editor-columns {
+      flex: none;
+      grid-template-rows: auto;
+    }
+    .findings {
+      overflow: auto;
+    }
     #editor-write:not([hidden]) > label {
       display: flex;
       flex: 1;
@@ -855,6 +867,15 @@
       flex: 1;
       min-block-size: 0;
       overflow: auto;
+    }
+  }
+  /* With the properties above it the body takes the height its text needs and the pane scrolls: one place, not two. */
+  @media (min-width: 851px) {
+    .editor-form.grows .source-editor {
+      flex: 1 1 auto;
+      inline-size: 100%;
+      field-sizing: content;
+      min-block-size: 320px;
     }
   }
   @media (max-width: 850px) {

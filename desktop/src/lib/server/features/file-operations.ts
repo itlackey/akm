@@ -6,8 +6,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { bundles, UsageError } from "akm-cli/workspace";
 import { fields } from "../input.js";
-import { desktopApp } from "./software.js";
 import { bundleRoot, entryAt, listFolder, parentOf, segment, underRoot } from "./bundle-path.js";
+import { desktopApp } from "./software.js";
 
 /**
  * Moving, renaming, making and deleting files and folders are plain file operations, as in a file manager. akm says

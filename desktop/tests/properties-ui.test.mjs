@@ -146,7 +146,7 @@ test("the editor's properties are fields: change, add and remove a key through a
   await form.getByLabel("Value", { exact: true }).fill("ops");
   await form.getByRole("button", { name: "Add property" }).click();
   await form.getByRole("button", { name: "Remove custom_key" }).click();
-  const box = page.getByRole("textbox", { name: /Markdown source/ });
+  const box = page.getByRole("textbox", { name: /^Markdown (body|source)/ });
   await expect(box).toHaveValue("# Restore order\n\nRestore the disk first.\n");
   await page.getByRole("button", { name: "Text", exact: true }).click();
   await expect(box).toHaveValue(/description: Restore a laptop in order\n/);
@@ -184,7 +184,7 @@ test("a frontmatter the form cannot express opens as text with akm's reason, and
   await expect(page.getByRole("group", { name: "Properties" })).toHaveCount(0);
   await expect(page.getByRole("status").filter({ hasText: "cannot be read as fields" })).toContainText(broken.reason);
   await expect(page.getByRole("button", { name: "Fields", exact: true })).toHaveAttribute("aria-disabled", "true");
-  await expect(page.getByRole("textbox", { name: /Markdown source/ })).toHaveValue(
+  await expect(page.getByRole("textbox", { name: /^Markdown (body|source)/ })).toHaveValue(
     /^---\ndescription: Broken\nwhen_to_use: \[unclosed/,
   );
 });
@@ -193,7 +193,7 @@ test("save checks: findings are listed with their lines and jump to them; one th
   const { app, page } = await session(t);
   await edit(page, "personal//lessons/restore-order", "personal", "lessons", "restore-order.md");
   await page.getByRole("button", { name: "Text", exact: true }).click();
-  const box = page.getByRole("textbox", { name: /Markdown source/ });
+  const box = page.getByRole("textbox", { name: /^Markdown (body|source)/ });
   const checks = page.getByRole("complementary", { name: "Checks" });
   await expect(checks).toContainText("akm found no problems.");
   // A finding that does not stop akm reading the asset is listed and does not block the save.
@@ -253,7 +253,7 @@ test("a workflow that would not compile stops the save; saved anyway it drops ou
   assert.notEqual(broken, before);
   await edit(page, ref, "personal", "workflows", "release-check.md");
   await page.getByRole("button", { name: "Text", exact: true }).click();
-  await page.getByRole("textbox", { name: /Markdown source/ }).fill(broken);
+  await page.getByRole("textbox", { name: /^Markdown (body|source)/ }).fill(broken);
   const verdict = (
     await app.call("/api/documents/check", { bundle: "personal", path: "workflows/release-check.md", content: broken })
   ).body.data;
@@ -265,7 +265,7 @@ test("a workflow that would not compile stops the save; saved anyway it drops ou
     .getByRole("button", { name: `Line ${lined.line}`, exact: true })
     .first()
     .click();
-  const box = page.getByRole("textbox", { name: /Markdown source/ });
+  const box = page.getByRole("textbox", { name: /^Markdown (body|source)/ });
   await expect(box).toBeFocused();
   assert.equal(await box.evaluate((area) => area.value.slice(0, area.selectionStart).split("\n").length), lined.line);
   await page.getByRole("button", { name: "Save changes" }).click();
@@ -289,7 +289,7 @@ test("a text akm cannot check is saved, and the page says it could not check", a
     `akm could not check this text: ${refused}`,
   );
   await page
-    .getByRole("textbox", { name: /Markdown source/ })
+    .getByRole("textbox", { name: /^Markdown (body|source)/ })
     .fill("---\ndescription: Review a change\n---\n# Review\n\nLook closely.\n");
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect(page.getByRole("status").filter({ hasText: "Changes saved." })).toBeVisible();

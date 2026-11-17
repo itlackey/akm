@@ -238,3 +238,34 @@ test("every status comes from one mapping, and the moved routes answer only unde
     "the new route exists and reports the missing file",
   );
 });
+
+test("the folders akm manages are not opened by the plain editor, hidden entries shown or not", async (t) => {
+  const app = await launchFixture({ git: true });
+  t.after(() => app.stop());
+  const listing = value(await app.call("/api/bundles/files?bundle=personal&hidden=1"));
+  const git = listing.entries.find((entry) => entry.name === ".git");
+  assert.equal(git.actions.read.allowed, false);
+  const config = await read(app, { bundle: "personal", file: ".git/config" });
+  assert.equal(config.status, 400);
+  const refused = await save(app, { bundle: "personal", file: ".git/config", revision: "x", content: "[core]\n" });
+  assert.equal(refused.status, 400);
+  const inside = value(await app.call("/api/bundles/files?bundle=personal&path=.git&hidden=1")).entries.find(
+    (entry) => entry.name === "config",
+  );
+  assert.equal(config.body.error, inside.actions.read.reason, "refused with the sentence akm reports for the file");
+});
+
+test("a file that is not text is listed with akm's reason for read and edit", async (t) => {
+  const app = await launchFixture({
+    configureFixture: async (fixture) => {
+      await fs.writeFile(path.join(fixture.root, "personal/pic.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 1, 2]));
+    },
+  });
+  t.after(() => app.stop());
+  const entry = value(await app.call("/api/bundles/files?bundle=personal")).entries.find((e) => e.name === "pic.png");
+  assert.equal(entry.actions.read.allowed, false);
+  assert.equal(entry.actions.edit.allowed, false);
+  const refused = await read(app, { bundle: "personal", file: "pic.png" });
+  assert.equal(refused.status, 400);
+  assert.equal(refused.body.error, entry.actions.read.reason);
+});

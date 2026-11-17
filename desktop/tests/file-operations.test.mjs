@@ -245,3 +245,28 @@ test("a copy is a new file at the chosen folder, in the same bundle or another; 
   assert.equal(intoVendor.body.error, (await folderOf(app, "knowledge", "vendor")).place.reason);
   assert.equal(await exists(path.join(app.root, "vendor/knowledge/copy.md")), false);
 });
+
+test("a skill's support file is moved like any file, and showing a file in the file manager needs the desktop app", async (t) => {
+  const app = await launchFixture();
+  t.after(() => app.stop());
+  const moved = value(
+    await move(app, {
+      from: "skills/backup-check/references/checklist.md",
+      folder: "skills/backup-check/references",
+      name: "checklist-v2.md",
+    }),
+  );
+  assert.equal(moved.to, "skills/backup-check/references/checklist-v2.md");
+  assert.ok(await exists(path.join(app.root, "personal/skills/backup-check/references/checklist-v2.md")));
+  assert.equal(await exists(path.join(app.root, "personal/skills/backup-check/references/checklist.md")), false);
+  const reveal = await app.call("/api/desktop/files/reveal", {
+    bundle: "personal",
+    path: "knowledge/restore-laptop.md",
+  });
+  assert.deepEqual([reveal.status, reveal.body.code], [400, "REVEAL_FAILED"]);
+  assert.match(reveal.body.error, /AKM Desktop app/);
+  assert.equal(
+    (await app.call("/api/desktop/files/reveal", { bundle: "personal", path: "knowledge/none.md" })).status,
+    400,
+  );
+});

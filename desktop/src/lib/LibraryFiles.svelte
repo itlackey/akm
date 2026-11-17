@@ -708,6 +708,7 @@
                       class="quiet"
                       aria-haspopup="menu"
                       aria-label={`Actions for ${entry.name}`}
+                      title={`Actions for ${entry.name}`}
                       onclick={(event) =>
                         openMenu({ bundle: bundleName, ...entry }, null, event.currentTarget as HTMLElement)}
                       ><Icon name="more" size={16} /></button
@@ -739,6 +740,7 @@
   .files-workspace {
     display: grid;
     grid-template-columns: 236px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
     flex: 1;
     min-height: 0;
     min-width: 0;
@@ -792,6 +794,8 @@
     background: var(--surface);
   }
   .files-content {
+    /* Visually hidden text inside a long page is placed within the pane that scrolls it, not the document. */
+    position: relative;
     flex: 1;
     min-height: 0;
     overflow: auto;
