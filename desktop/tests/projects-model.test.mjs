@@ -5,6 +5,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  assetCounts,
   draftErrors,
   projectChange,
   projectDraft,
@@ -157,4 +158,16 @@ test("a project name is checked for the reserved words and for duplicates, and m
     filterLine({ filters: { a: "1", b: "2" }, prefer: { channel: ["w", "x"] } }),
     "2 filters · ranks channel = w +1 first",
   );
+});
+
+test("a project's asset counts are akm's; a bundle akm gave no count for makes them unknown, never zero", () => {
+  const counted = (total, eligible) => ({
+    total: { count: total, byType: {} },
+    eligible: { count: eligible, byType: {} },
+  });
+  assert.deepEqual(assetCounts([counted(10, 4), counted(5, 0)]), { total: 15, eligible: 4 });
+  // akm reports null counts when a bundle cannot be read or nothing is indexed in it.
+  assert.equal(assetCounts([counted(10, 4), { total: null, eligible: null }]), null);
+  assert.equal(assetCounts([{ total: null, eligible: null }]), null);
+  assert.equal(assetCounts([{ total: { count: 3, byType: {} }, eligible: null }]), null);
 });
