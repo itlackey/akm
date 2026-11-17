@@ -178,12 +178,8 @@ describe("the same checks apply to every type", () => {
     expect(fs.existsSync(path.join(storage.root, "outside"))).toBe(false);
   });
 
-  test("a bundle that is read-only, or of another adapter, is refused with the write path's sentence", async () => {
-    const config = loadConfig();
-
-    expect(await message(create("lessons", "x", "locked"))).toContain(
-      inspectWriteTarget(config, "locked").blocker as string,
-    );
+  test("a bundle that is read-only, or of another adapter, is refused with its sentence", async () => {
+    expect(await message(create("lessons", "x", "locked"))).toContain("Bundle locked is read-only");
     expect(await message(create("agents", "x", "claude"))).toContain("does not support AKM asset writes");
     expect(await message(create("lessons", "x", "missing"))).toContain("not configured");
   });
@@ -223,7 +219,7 @@ describe("a listing says what a new file in its folder would be", () => {
     expect(await verdict("stash", ".git")).toMatchObject({ allowed: false, reason: ".git/ is managed by akm." });
     expect(await verdict("locked", "")).toMatchObject({
       allowed: false,
-      reason: inspectWriteTarget(loadConfig(), "locked").blocker,
+      reason: expect.stringContaining("read-only"),
     });
   });
 });

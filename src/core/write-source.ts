@@ -415,11 +415,16 @@ export async function writeAssetToSource(
   };
 }
 
-/** The gates every write passes: the source takes writes, is a kind akm writes, and its adapter takes AKM asset writes. */
+/** The gates an asset write passes: {@link assertPlainWritable}, and an adapter that takes AKM asset writes. */
 export function assertWritableSource(source: WriteTargetSource, config: SourceConfigEntry): void {
+  assertPlainWritable(source, config);
+  assertAkmAssetWrite(source);
+}
+
+/** The gates of a plain file write: the source takes writes and is a kind akm writes, whatever its adapter. */
+export function assertPlainWritable(source: WriteTargetSource, config: SourceConfigEntry): void {
   ensureWritable(source, config);
   assertSupportedKind(source);
-  assertAkmAssetWrite(source);
 }
 
 /**

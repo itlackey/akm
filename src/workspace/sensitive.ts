@@ -23,7 +23,7 @@ import {
   withEnvSecretWrite,
 } from "../core/env-secret-ref";
 import { UsageError } from "../core/errors";
-import { protectedTypeOf } from "./bundle-files";
+import { protectedTypeOf } from "../indexer/walk/place-rules";
 import { interactive } from "./lease";
 
 /** The file: its ref, or its bundle-relative path in a named bundle. */

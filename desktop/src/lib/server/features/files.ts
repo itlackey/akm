@@ -86,7 +86,6 @@ async function selection(input: Selector, action: "read" | "edit") {
     indexable: path.join(root, inside),
     root,
     writable: found.writable === true,
-    akm: found.components.some((component) => component.adapter === "akm"),
   };
 }
 
@@ -139,8 +138,8 @@ export async function saveFile(body: unknown) {
   } finally {
     fs.rmSync(temporary, { force: true });
   }
-  const indexed =
-    !chosen.akm || (await indexWrittenAssets(chosen.root, [chosen.indexable], { bundleId: chosen.bundle }));
+  // The bundle's own adapter recognizes the file; `indexed` is what akm reports, for any adapter.
+  const indexed = await indexWrittenAssets(chosen.root, [chosen.indexable], { bundleId: chosen.bundle });
   return {
     ref: chosen.ref,
     bundle: chosen.bundle,

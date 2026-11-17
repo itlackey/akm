@@ -12,6 +12,8 @@ import fs from "node:fs";
 import path from "node:path";
 import type { AkmConfig } from "../core/config/config";
 import { inspectWriteTarget } from "../core/write-source";
+import { resolveSourceEntries } from "../indexer/search/search-source";
+import { isProtectedPlace, managedFolderOf } from "../indexer/walk/place-rules";
 
 export type FileAction = "read" | "edit" | "move" | "copy" | "retire" | "delete";
 /** Whether akm accepts the action, and the sentence why not when it does not. */
@@ -76,27 +78,45 @@ export interface EntryFacts {
   assets: ReadonlyArray<{ ref: string; type: string }>;
 }
 
-/** The write checks of a bundle, run once: its blocker sentence, or null when akm accepts a write to it. */
-export function bundleWriteBlocker(config: AkmConfig, bundle: string): string | null {
-  return inspectWriteTarget(config, bundle).blocker;
+/**
+ * The two write questions about a bundle, each from its owner. `plain` is whether a person may change the bundle's files
+ * as files (the bundle is not read-only: `writable`, the rule `isEditable` applies); the same sentence refuses a plain
+ * create. `asset` is whether akm's writer accepts an asset write to it (`inspectWriteTarget`: also refuses an adapter that
+ * takes no AKM asset writes). Each is null when accepted.
+ */
+export interface WriteBlockers {
+  plain: string | null;
+  asset: string | null;
+}
+
+export function plainWriteBlocker(config: AkmConfig, bundle: string): string | null {
+  const source = resolveSourceEntries(undefined, config).find((entry) => entry.registryId === bundle);
+  // A bundle that does not resolve is the caller's error to name, not a read-only bundle.
+  return source === undefined || source.writable === true
+    ? null
+    : `Bundle ${bundle} is read-only: akm does not write to it, and an update would replace the edit.`;
+}
+
+export function bundleWriteBlockers(config: AkmConfig, bundle: string): WriteBlockers {
+  return { plain: plainWriteBlocker(config, bundle), asset: inspectWriteTarget(config, bundle).blocker };
 }
 
 function managedReason(relative: string): string | null {
-  const managed = relative.split("/").find((segment) => segment === ".git" || segment === ".akm");
+  const managed = managedFolderOf(relative);
   return managed === undefined ? null : `${managed}/ is managed by akm.`;
 }
 
 /** Why nothing is created, moved into or taken out of this folder whatever the bundle allows: a protected or managed place. */
 export function folderBlocker(relative: string): string | null {
-  const protectedPlace = relative.split("/").some((segment) => segment === "env" || segment === "secrets");
-  return protectedPlace ? PROTECTED_REASON : managedReason(relative);
+  return isProtectedPlace(relative) ? PROTECTED_REASON : managedReason(relative);
 }
 
 /**
- * The verdicts for one entry. `writeBlocker` is the bundle's own answer ({@link bundleWriteBlocker}), computed once for
- * a listing; copying and reading leave a bundle as it is, so they do not consult it.
+ * The verdicts for one entry. `blockers` are the bundle's own answers ({@link bundleWriteBlockers}), computed once for a
+ * listing. Reading, editing, moving and deleting a file or folder are plain file operations and need only `plain`; retiring
+ * an asset is an akm asset write and needs `asset` too. Copying and reading leave a bundle as it is.
  */
-export function fileActions(entry: EntryFacts, writeBlocker: string | null): FileActions {
+export function fileActions(entry: EntryFacts, blockers: WriteBlockers): FileActions {
   // What the entry is rules out an action whatever the bundle allows. A file is protected by akm's typing of it.
   const nature =
     (entry.kind === "file"
@@ -122,22 +142,24 @@ export function fileActions(entry: EntryFacts, writeBlocker: string | null): Fil
     entry.assets.some((asset) => asset.type === "skill") && path.posix.basename(entry.relative) === "SKILL.md";
   const retire = entry.assets.map((asset) => retireBlocker(asset.type)).find((reason) => reason !== undefined);
 
-  const needsWrite = (verdict: () => FileVerdict): FileVerdict =>
-    nature !== undefined ? refuse(nature) : writeBlocker !== null ? refuse(writeBlocker) : verdict();
+  const needsWrite = (verdict: () => FileVerdict, blocker: string | null = blockers.plain): FileVerdict =>
+    nature !== undefined ? refuse(nature) : blocker !== null ? refuse(blocker) : verdict();
 
   return {
     read: nature !== undefined ? refuse(nature) : textVerdict,
     edit: needsWrite(() => textVerdict),
     move: needsWrite(() => (skillManifest ? refuse("A skill moves as its folder.") : allowed)),
     copy: nature !== undefined ? refuse(nature) : typeof probed === "object" ? textVerdict : allowed,
-    retire: needsWrite(() =>
-      entry.kind !== "file"
-        ? refuse("Retire applies to an asset; a folder is deleted when it is empty.")
-        : entry.assets.length === 0
-          ? refuse("This file is not an indexed asset, so there is nothing to retire; delete it instead.")
-          : retire !== undefined
-            ? refuse(retire)
-            : allowed,
+    retire: needsWrite(
+      () =>
+        entry.kind !== "file"
+          ? refuse("Retire applies to an asset; a folder is deleted when it is empty.")
+          : entry.assets.length === 0
+            ? refuse("This file is not an indexed asset, so there is nothing to retire; delete it instead.")
+            : retire !== undefined
+              ? refuse(retire)
+              : allowed,
+      blockers.plain ?? blockers.asset,
     ),
     delete: needsWrite(() =>
       entry.assets.length > 0

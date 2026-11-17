@@ -8,11 +8,10 @@ import { isWithin, relativeToRoot, safeRealpath } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { NotFoundError, UsageError } from "../core/errors";
 import { findSourceForPath, resolveSourceEntries } from "../indexer/search/search-source";
-import { buildFileContext } from "../indexer/walk/file-context";
-import { declaredTypeForPath } from "../indexer/walk/matchers";
+import { protectedTypeOf } from "../indexer/walk/place-rules";
 import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
 import { getAssetRefsForFiles } from "../storage/repositories/index-entries-repository";
-import { bundleWriteBlocker, fileActions } from "./file-actions";
+import { bundleWriteBlockers, fileActions } from "./file-actions";
 import { newFileVerdict } from "./new-file";
 
 export interface BundleFileLocation {
@@ -22,12 +21,6 @@ export interface BundleFileLocation {
 }
 
 const portable = (value: string) => value.split(path.sep).join("/");
-
-/** akm's own directory rules on a bundle-relative path: `env` or `secret` when any env/ or secrets/ ancestor makes it a protected file. */
-export function protectedTypeOf(relative: string): "env" | "secret" | undefined {
-  const type = declaredTypeForPath(buildFileContext("/", path.posix.join("/", relative)));
-  return type === "env" || type === "secret" ? type : undefined;
-}
 
 /** Source roots and identities come from the same resolver as search, never from a ref's spelling. */
 export function bundleFileLocation(filePath: string): BundleFileLocation | null {
@@ -116,14 +109,14 @@ export function listBundleFiles(bundle: string, relative = "", showHidden = fals
     /* Files remain browsable when the derived index needs repair. */
   }
   const current = portable(path.relative(source.path, target));
-  const writeBlocker = bundleWriteBlocker(loadConfig(), bundle);
+  const writeBlockers = bundleWriteBlockers(loadConfig(), bundle);
   return {
     bundle,
     path: current,
     parent: current ? portable(path.dirname(current)).replace(/^\.$/, "") : null,
     indexAvailable,
     // Whether a new file may be made in this folder, and the type its place gives it (null: none).
-    newFile: newFileVerdict(current, writeBlocker),
+    newFile: newFileVerdict(current, writeBlockers),
     entries: rows.map(({ absolute, ...row }) => {
       const assets = refs.get(absolute) ?? [];
       const isProtected =
@@ -142,7 +135,7 @@ export function listBundleFiles(bundle: string, relative = "", showHidden = fals
             protected: isProtected,
             assets,
           },
-          writeBlocker,
+          writeBlockers,
         ),
       };
     }),

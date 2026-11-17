@@ -23,11 +23,12 @@ import type { ScopeFilters } from "../indexer/passes/metadata";
 import { resolveReadSources } from "../indexer/read-preflight";
 import { countBrowseEntries } from "../indexer/search/db-search";
 import { findSourceForPath, resolveSourceEntries } from "../indexer/search/search-source";
+import { protectedTypeOf } from "../indexer/walk/place-rules";
 import { getEntryIdByFilePath, getItemRefById } from "../storage/repositories/index-entries-repository";
 import { countFeedbackBySignal, listFeedbackEventRows } from "../storage/repositories/metrics-repository";
 import { assetImprove } from "./asset-improve";
-import { bundleFileLocation, listBundleFiles, protectedTypeOf } from "./bundle-files";
-import { bundleWriteBlocker, fileActions } from "./file-actions";
+import { bundleFileLocation, listBundleFiles } from "./bundle-files";
+import { bundleWriteBlockers, fileActions } from "./file-actions";
 import { readFileRevision, readRecentCommits } from "./git-read";
 import { capSide, clampLimit, DIFF_SIDE_MAX_CHARS, durableRefForPath, withReadonlyStateDb } from "./readers";
 
@@ -221,7 +222,7 @@ export async function show(input: { ref: string }) {
               protected: protectedTypeOf(location.path) !== undefined,
               assets: durableRef ? [{ ref: durableRef, type: shown.type }] : [],
             },
-            bundleWriteBlocker(loadConfig(), location.bundle),
+            bundleWriteBlockers(loadConfig(), location.bundle),
           )
         : null,
     feedback: feedbackFor(durableRef),

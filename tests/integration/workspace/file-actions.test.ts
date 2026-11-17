@@ -10,8 +10,8 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { loadConfig, resetConfigCache } from "../../../src/core/config/config";
-import { inspectWriteTarget } from "../../../src/core/write-source";
+import { resetConfigCache } from "../../../src/core/config/config";
+import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { assets, documents } from "../../../src/workspace";
 import type { FileActions } from "../../../src/workspace/file-actions";
@@ -183,28 +183,50 @@ describe("a file of a writable akm bundle", () => {
 });
 
 describe("a bundle akm does not write", () => {
-  test("a read-only bundle can be read and copied from, and every write says the write path's own sentence", async () => {
+  test("a read-only bundle can be read and copied from, and every change says it is read-only", async () => {
     put(locked, "knowledge/ref.md", "---\ndescription: Ref\n---\n\n# Ref\n");
     await akmIndex({ stashDir: storage.stashDir });
 
     const file = (await entries("locked", "knowledge"))["ref.md"] as FileActions;
-    const blocker = inspectWriteTarget(loadConfig(), "locked").blocker;
 
-    expect(blocker).toBeTruthy();
     expect(file.read.allowed && file.copy.allowed).toBe(true);
     for (const action of ["edit", "move", "retire", "delete"] as const)
-      expect(refusal(file, action)).toBe(blocker as string);
+      expect(refusal(file, action)).toBe(
+        "Bundle locked is read-only: akm does not write to it, and an update would replace the edit.",
+      );
   });
 
-  test("a bundle of another adapter refuses akm's writes with the adapter sentence", async () => {
+  test("a writable bundle of another adapter takes plain file operations; asset writes are refused with the adapter sentence", async () => {
     put(claude, "agents/helper.md", "---\ndescription: Helper\n---\n\n# Helper\n");
+    put(claude, "notes/todo.txt", "one\n");
+    await akmIndex({ stashDir: storage.stashDir });
 
-    const file = (await entries("claude", "agents"))["helper.md"] as FileActions;
+    const agent = (await entries("claude", "agents"))["helper.md"] as FileActions;
+    const note = (await entries("claude", "notes"))["todo.txt"] as FileActions;
+    const adapter = 'Bundle "claude" uses adapter "claude", which does not support AKM asset writes.';
 
-    expect(refusal(file, "edit")).toBe(
-      'Bundle "claude" uses adapter "claude", which does not support AKM asset writes.',
-    );
-    expect(file.read.allowed && file.copy.allowed).toBe(true);
+    for (const verdicts of [agent, note])
+      expect(verdicts.read.allowed && verdicts.edit.allowed && verdicts.move.allowed && verdicts.copy.allowed).toBe(
+        true,
+      );
+    expect(note.delete.allowed).toBe(true);
+    expect(refusal(agent, "retire")).toBe(adapter);
+    expect(refusal(agent, "delete")).toContain("retired, not deleted");
+    await expect(documents.createFile({ bundle: "claude", folder: "agents", name: "new" })).rejects.toThrow(adapter);
+    const plain = await documents.createFile({ bundle: "claude", folder: "notes", name: "more.txt" });
+    expect(plain).toMatchObject({ file: "notes/more.txt", type: null });
+  });
+
+  test("after a plain edit the index is refreshed through the bundle's own adapter", async () => {
+    const file = path.join(claude, "agents/helper.md");
+    put(claude, "agents/helper.md", "---\ndescription: Helper\n---\n\n# Helper\n");
+    await akmIndex({ stashDir: storage.stashDir });
+    fs.writeFileSync(file, "---\ndescription: Zirconmarker helper\n---\n\n# Helper\n");
+
+    expect(await indexWrittenAssets(claude, [file], { bundleId: "claude" })).toBe(true);
+
+    const found = (await assets.search({ q: "zirconmarker" })) as { hits: Array<{ ref?: string; path?: string }> };
+    expect(found.hits.length).toBeGreaterThan(0);
   });
 });
 

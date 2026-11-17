@@ -22,6 +22,7 @@ import { UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
 import { resolveBundleWriteTarget } from "../core/mutation-target";
 import {
+  assertPlainWritable,
   assertWritableSource,
   commitWriteTargetBoundary,
   prepareWriteTargetForMutation,
@@ -31,7 +32,7 @@ import { indexWrittenAssets } from "../indexer/index-written-assets";
 import { buildFileContext } from "../indexer/walk/file-context";
 import { declaredTypeForPath } from "../indexer/walk/matchers";
 import { buildWorkflowTemplate } from "../workflows/authoring/authoring";
-import { type FileVerdict, folderBlocker } from "./file-actions";
+import { type FileVerdict, folderBlocker, plainWriteBlocker, type WriteBlockers } from "./file-actions";
 import { interactive } from "./lease";
 
 /** The extensions a new file may take, in the order a folder's type is tried when the name gives none. */
@@ -56,9 +57,10 @@ export function planNewFile(folder: string, name?: string): { type: string | nul
 }
 
 /** Whether a new file may be made in `folder` of the bundle, and the type it would have. Listings report it for the folder shown. */
-export function newFileVerdict(folder: string, writeBlocker: string | null): FileVerdict & { type: string | null } {
-  const blocker = folderBlocker(folder) ?? writeBlocker;
+export function newFileVerdict(folder: string, blockers: WriteBlockers): FileVerdict & { type: string | null } {
   const { type } = planNewFile(folder);
+  // A typed asset goes through akm's writer; a file of no type is a plain file.
+  const blocker = folderBlocker(folder) ?? blockers.plain ?? (type === null ? null : blockers.asset);
   if (blocker !== null) return { allowed: false, reason: blocker, type: null };
   return type === "skill"
     ? { allowed: false, reason: "A skill is a folder with a SKILL.md: create the folder first.", type }
@@ -106,11 +108,17 @@ export async function createFile(input: CreateFileInput) {
   if (typeof input.content !== "string" && input.content !== undefined) throw new UsageError("content must be text.");
   return interactive("ui-file-create", async () => {
     const config = loadConfig();
-    const target = prepareWriteTargetForMutation(resolveBundleWriteTarget(config, bundle, { requireWritable: true }));
-    assertWritableSource(target.source, target.config);
-    const blocker = folderBlocker(folder);
+    const blocker = folderBlocker(folder) ?? plainWriteBlocker(config, bundle);
     if (blocker !== null) throw new UsageError(blocker);
     const { type, fileName } = planNewFile(folder, name);
+    // A file of no type is a plain file; a typed asset goes through akm's writer, which takes akm bundles only.
+    const resolved = resolveBundleWriteTarget(config, bundle, { requireWritable: true });
+    const target = prepareWriteTargetForMutation(
+      resolved,
+      type === null ? { allowedAdapters: [resolved.source.adapterId ?? "akm"] } : undefined,
+    );
+    if (type === null) assertPlainWritable(target.source, target.config);
+    else assertWritableSource(target.source, target.config);
     if (type === "skill" && fileName !== "SKILL.md")
       throw new UsageError("A skill is a folder with a SKILL.md: create the folder first.");
     const root = target.source.path;

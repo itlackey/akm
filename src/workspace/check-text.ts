@@ -25,7 +25,7 @@ import { UsageError } from "../core/errors";
 import { drainDirDocuments } from "../indexer/scan/drain-dir";
 import { resolveSourceEntries } from "../indexer/search/search-source";
 import { buildFileContext } from "../indexer/walk/file-context";
-import { protectedTypeOf } from "./bundle-files";
+import { protectedTypeOf } from "../indexer/walk/place-rules";
 import { folderBlocker } from "./file-actions";
 
 /** The line of a frontmatter YAML error in the file (the block starts on line 2), when the YAML parser gives one. */
