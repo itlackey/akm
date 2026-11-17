@@ -215,6 +215,21 @@ they actually work:
   holds files but no `SKILL.md` anywhere within three levels is flagged. A
   package's own resource dirs (`pdf-processing/reference/`) are part of the
   item, not candidate packages, and are never considered.
+- **The base checks have one implementation.** `unquoted-colon`,
+  `missing-updated`, `stale-path`, `missing-ref` and `redacted-content` are
+  `runBaseChecks` (`src/commands/lint/base-linter.ts`), and `ruleApplies`
+  (`src/core/asset/lint-text.ts`) decides whether a rule applies to a file
+  (the skill and LLM Wiki exemptions, the bundle's `lint.skip`, an adapter's
+  own exclusions). The `akm lint` sweep and every adapter's `validate` call
+  them; `createBaseChecker` (`adapters/shared.ts`) is the adapter's way in. It
+  reads refs from disk, the other bundles from `ValidateContext.sources` and the
+  settings from `ValidateContext.config` (the run's own; it reads the config
+  itself only when the context carries none), so a pending change in the context
+  does not satisfy a ref, and it never writes. The per-type checks are one table,
+  `perTypeChecks` (`adapters/akm-lint.ts`), keyed by akm type and read by the
+  sweep and by `validate`; the one exception is the skill folder check, which
+  has a directory walk for the sweep and `skillDirectoryDiagnostics` for
+  `validate`. Add a rule or an exemption there, not in an adapter.
 - **`claude`/`opencode` share one codec** (`tool-dir-shared.ts`) and differ
   only in instruction filename and adapter/component ids. Both accept only
   the canonical plural tool directories.

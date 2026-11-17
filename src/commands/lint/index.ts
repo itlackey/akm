@@ -4,16 +4,13 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { classifyAkmFile, isInLlmWiki } from "../../core/adapter/adapters/akm-adapter";
+import { classifyAkmFile } from "../../core/adapter/adapters/akm-adapter";
 import {
-  factDiagnostics,
+  derivedSiblingPath,
   MAX_SKILL_GROUP_DEPTH,
   matchWorkflowPlaceholder,
-  memoryOrphanStubApplies,
-  nameOrTypeDiagnostics,
-  ORPHANED_STUB_DETAIL,
-  taskDiagnostics,
-  workflowFrontendDiagnostics,
+  perTypeChecks,
+  perTypeFrontend,
 } from "../../core/adapter/adapters/akm-lint";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { adapterForId } from "../../core/adapter/registry";
@@ -30,7 +27,6 @@ import {
 } from "../../core/asset/asset-placement";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { conceptIdForStashFile, displayRefForConceptId } from "../../core/asset/resolve-ref";
-import { stalePathRoots } from "../../core/asset/stale-path";
 import { deriveBundleIds } from "../../core/bundle-id";
 import { compareCodePoints, isAkmRegistryCachePath, resolveStashDir, safeRealpath, samePath } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
@@ -47,7 +43,8 @@ import { resolveWorkflowSourceDomains } from "../../workflows/source-files";
 import { runBaseChecks } from "./base-linter";
 import { bundleLintSkip } from "./bundle-skip";
 import { checkEnvForDangerousKeys } from "./env-key-rules";
-import { type MovedRefs, readMovedRefs } from "./moved-refs";
+import { type MovedRefs, type ReadMoves, readRecordedMoves } from "./moved-refs";
+import { lintScope } from "./scope";
 import { trackedSecretIssues } from "./tracked-secrets";
 import { isAdvisoryLintIssue, LINT_RULES, type LintContext, type LintIssue, type LintIssueType } from "./types";
 
@@ -99,6 +96,11 @@ export interface AkmLintOptions {
   rule?: string;
   /** Lint this one file instead of a whole bundle (`akm lint <file>`). */
   file?: string;
+  /**
+   * How the recorded moves are read, asked only when a ref did not resolve. A caller that holds its own connection to
+   * state.db (the improve dry run's snapshot) passes it; otherwise they are read through the ordinary read-only one.
+   */
+  readMoves?: ReadMoves;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -319,7 +321,12 @@ async function lintViaAdapter(
   const sourceIndex = sources.findIndex((s) => samePath(s.path, stashRoot));
   const componentId = sourceIndex >= 0 ? (ids[sourceIndex] as string) : stashRoot;
 
-  const ctx = createValidateContext({ root: stashRoot, extraRoots: extraStashRoots });
+  const ctx = createValidateContext({
+    root: stashRoot,
+    sources,
+    config: cfg,
+    readMoves: options.readMoves ?? readRecordedMoves,
+  });
   const diagnostics = await adapter.validate(
     { id: componentId, adapter: adapterId, root: stashRoot, writable: true },
     changes,
@@ -494,64 +501,23 @@ function containsSkillManifest(dir: string, depth: number): boolean {
     );
 }
 
-/** MemoryLinter's `orphaned-stub` check WITH its `--fix` delete (memory-linter.ts:19-65). */
-function appendMemoryStubIssue(ctx: LintContext, issues: LintIssue[]): void {
-  if (ctx.lintSkip?.includes("orphaned-stub") || !memoryOrphanStubApplies(ctx.data, ctx.body)) return;
-  const derivedPath = `${ctx.filePath.replace(/\.md$/i, "")}.derived.md`;
-  if (fs.existsSync(derivedPath)) return;
-  if (ctx.fix) {
-    try {
-      fs.unlinkSync(ctx.filePath);
-      issues.push({ file: ctx.relPath, issue: "orphaned-stub", detail: "deleted orphaned stub", fixed: true });
-    } catch (e) {
-      issues.push({
-        file: ctx.relPath,
-        issue: "orphaned-stub",
-        detail: `could not delete: ${e instanceof Error ? e.message : String(e)}`,
-        fixed: "failed",
-      });
-    }
-    return;
+/** Under `--fix`, a stub the per-type checks found is deleted; the finding then says so, or says why not. */
+function deleteStubWhenFixing(ctx: LintContext, found: Diagnostic): LintIssue {
+  const issue = found as LintIssue;
+  if (!ctx.fix || (issue.issue !== "orphaned-stub" && issue.issue !== "placeholder-stub")) return issue;
+  try {
+    fs.unlinkSync(ctx.filePath);
+    return {
+      ...issue,
+      detail:
+        issue.issue === "orphaned-stub"
+          ? "deleted orphaned stub"
+          : `deleted: found "${matchWorkflowPlaceholder(ctx.body)}"`,
+      fixed: true,
+    };
+  } catch (e) {
+    return { ...issue, detail: `could not delete: ${e instanceof Error ? e.message : String(e)}`, fixed: "failed" };
   }
-  issues.push({ file: ctx.relPath, issue: "orphaned-stub", detail: ORPHANED_STUB_DETAIL, fixed: false });
-}
-
-/**
- * WorkflowLinter's `placeholder-stub` check WITH its `--fix` delete
- * (workflow-linter.ts:22-79). Its sibling `invalid-workflow-structure` check is
- * deliberately NOT here: parse+compile is a single pass shared with the
- * advisory channel, so {@link lintAkmSweep} runs it once per file and routes
- * both halves.
- */
-function appendWorkflowStubIssue(ctx: LintContext, issues: LintIssue[]): void {
-  if (ctx.lintSkip?.includes("placeholder-stub")) return;
-  const placeholder = matchWorkflowPlaceholder(ctx.body);
-  if (!placeholder) return;
-  if (ctx.fix) {
-    try {
-      fs.unlinkSync(ctx.filePath);
-      issues.push({
-        file: ctx.relPath,
-        issue: "placeholder-stub",
-        detail: `deleted: found "${placeholder}"`,
-        fixed: true,
-      });
-    } catch (e) {
-      issues.push({
-        file: ctx.relPath,
-        issue: "placeholder-stub",
-        detail: `could not delete: ${e instanceof Error ? e.message : String(e)}`,
-        fixed: "failed",
-      });
-    }
-    return;
-  }
-  issues.push({
-    file: ctx.relPath,
-    issue: "placeholder-stub",
-    detail: `placeholder text: "${placeholder}"`,
-    fixed: false,
-  });
 }
 
 /**
@@ -566,30 +532,18 @@ function appendWorkflowStubIssue(ctx: LintContext, issues: LintIssue[]): void {
  */
 export function lintAssetFile(ctx: LintContext, subdir: string): LintIssue[] {
   const issues = runBaseChecks(ctx);
-  switch (subdir) {
-    case "agents":
-      if (!ctx.llmWiki)
-        issues.push(...(nameOrTypeDiagnostics(ctx.relPath, ctx.data, ctx.frontmatter, ["agent"]) as LintIssue[]));
-      break;
-    case "commands":
-      if (!ctx.llmWiki)
-        issues.push(...(nameOrTypeDiagnostics(ctx.relPath, ctx.data, ctx.frontmatter, ["command"]) as LintIssue[]));
-      break;
-    case "facts":
-      issues.push(...(factDiagnostics(ctx.relPath, ctx.data) as LintIssue[]));
-      break;
-    case "tasks":
-      issues.push(...(taskDiagnostics(ctx.relPath, ctx.raw) as LintIssue[]));
-      break;
-    case "memories":
-      appendMemoryStubIssue(ctx, issues);
-      break;
-    case "workflows":
-      appendWorkflowStubIssue(ctx, issues);
-      break;
-    // knowledge / lessons / skills: base checks only (skill directory-level
-    // `missing-skill-md` runs separately, per-subdir, in the sweep loop).
-  }
+  const found = perTypeChecks({
+    type: typeForStashDir(subdir),
+    relPath: ctx.relPath,
+    raw: ctx.raw,
+    data: ctx.data,
+    frontmatter: ctx.frontmatter,
+    body: ctx.body,
+    ext: path.extname(ctx.relPath).toLowerCase(),
+    rules: { relPath: ctx.relPath, llmWiki: ctx.llmWiki, skip: ctx.lintSkip },
+    derivedSiblingExists: fs.existsSync(derivedSiblingPath(ctx.filePath)),
+  });
+  issues.push(...found.map((finding) => deleteStubWhenFixing(ctx, finding)));
   return issues;
 }
 
@@ -609,26 +563,6 @@ interface SweepScope {
   stalePathRoots: string[];
   /** The bundle's `lint.skip` rules for a bundle-relative path. */
   bundleSkip?: (relPath: string) => string[];
-}
-
-/** The root of each configured bundle by its id, for the checks that look a qualified ref up in the bundle it names. */
-function bundleRootsOf(sources: readonly SearchSource[]): ReadonlyMap<string, string> {
-  return new Map(sources.flatMap((source) => (source.registryId ? [[source.registryId, source.path] as const] : [])));
-}
-
-/** Whether a bundle-relative file is inside an LLM Wiki of the bundle at `root`; each directory is probed once. */
-function llmWikiPredicate(root: string): (relPath: string) => boolean {
-  const byDir = new Map<string, boolean>();
-  return (relPath) => {
-    const dirs = relPath.split(/[\\/]/).slice(0, -1);
-    const key = dirs.join("/");
-    let inside = byDir.get(key);
-    if (inside === undefined) {
-      inside = isInLlmWiki(root, dirs);
-      byDir.set(key, inside);
-    }
-    return inside;
-  };
 }
 
 interface SweepSinks {
@@ -772,14 +706,15 @@ function lintDocument(
   // `--fail-on-flagged`.
   // The CLI passes the absolute filePath to the shared source-IR frontend,
   // whereas the adapter passes the change relPath.
-  if (subdir === "workflows") {
-    const frontend = workflowFrontendDiagnostics(relPath, raw, filePath);
-    for (const finding of [...frontend.errors, ...frontend.warnings]) {
-      if (isAdvisoryLintIssue(finding)) {
-        warnings.push(finding);
-      } else {
-        flagged.push(finding);
-      }
+  const frontend = perTypeFrontend(
+    { type: typeForStashDir(subdir), ext: path.extname(relPath).toLowerCase(), relPath, raw },
+    filePath,
+  );
+  for (const finding of [...frontend.errors, ...frontend.warnings]) {
+    if (isAdvisoryLintIssue(finding)) {
+      warnings.push(finding);
+    } else {
+      flagged.push(finding);
     }
   }
 }
@@ -811,9 +746,7 @@ function lintAkmSweep(
   const flagged: LintIssue[] = [];
   const warnings: LintIssue[] = [];
 
-  const bundleSkip = bundleLintSkip(cfg, stashRoot);
-  const roots = stalePathRoots(cfg, stashRoot);
-  const moves = readMovedRefs();
+  const scope = lintScope(stashRoot, cfg, sources, options.readMoves ?? readRecordedMoves);
   // Types left out of an untyped search are left out of the sweep unless `--type` names one.
   const leftOut = new Set(defaultExcludedTypes(cfg).map((type) => stashDirFor(type)));
   const dirsToScan = documentStashDirs().filter((d) =>
@@ -862,16 +795,10 @@ function lintAkmSweep(
         path.relative(stashRoot, filePath),
         subdir,
         {
-          stashRoot,
-          extraStashRoots,
+          ...scope,
           fix,
           fixMovedRefs: options.fixMovedRefs === true,
-          moves,
-          bundleRoots: bundleRootsOf(sources),
-          inLlmWiki: llmWikiPredicate(stashRoot),
           pruneDanglingEdges: options.pruneDanglingEdges === true,
-          stalePathRoots: roots,
-          bundleSkip,
         },
         { fixed, flagged, warnings },
       );
@@ -1023,20 +950,12 @@ async function lintFile(file: string, options: AkmLintOptions, cfg: AkmConfig): 
     realRoot ? path.relative(realRoot, absFile) : file,
     subdir,
     {
-      stashRoot: root ?? path.dirname(absFile),
-      extraStashRoots: root
-        ? resolveSourceEntries(root, cfg)
-            .map((s) => s.path)
-            .filter((p) => p !== root && fs.existsSync(p))
-        : [],
+      ...(root
+        ? lintScope(root, cfg, resolveSourceEntries(root, cfg), options.readMoves ?? readRecordedMoves)
+        : lintScope(path.dirname(absFile), cfg, [], options.readMoves ?? readRecordedMoves)),
       fix: options.fix === true,
       fixMovedRefs: options.fixMovedRefs === true,
-      moves: readMovedRefs(),
-      bundleRoots: bundleRootsOf(root ? resolveSourceEntries(root, cfg) : []),
-      inLlmWiki: llmWikiPredicate(root ?? path.dirname(absFile)),
       pruneDanglingEdges: false,
-      stalePathRoots: stalePathRoots(cfg, root ?? path.dirname(absFile)),
-      bundleSkip: root ? bundleLintSkip(cfg, root) : undefined,
       // Outside a bundle there are no other assets to resolve refs or a derived stub against.
       lintSkip: root ? undefined : ["missing-ref", "orphaned-stub"],
     },
@@ -1055,6 +974,7 @@ export function lintDocumentText(input: {
   subdir: string;
   content: string;
   config?: AkmConfig;
+  readMoves?: ReadMoves;
 }): Pick<AkmLintResult, "flagged" | "warnings"> {
   const cfg = input.config ?? loadConfig();
   const { root } = input;
@@ -1065,18 +985,10 @@ export function lintDocumentText(input: {
     input.relPath,
     input.subdir,
     {
-      stashRoot: root,
-      extraStashRoots: resolveSourceEntries(root, cfg)
-        .map((source) => source.path)
-        .filter((candidate) => candidate !== root && fs.existsSync(candidate)),
+      ...lintScope(root, cfg, resolveSourceEntries(root, cfg), input.readMoves ?? readRecordedMoves),
       fix: false,
       fixMovedRefs: false,
-      moves: readMovedRefs(),
-      bundleRoots: bundleRootsOf(resolveSourceEntries(root, cfg)),
-      inLlmWiki: llmWikiPredicate(root),
       pruneDanglingEdges: false,
-      stalePathRoots: stalePathRoots(cfg, root),
-      bundleSkip: bundleLintSkip(cfg, root),
     },
     sinks,
   );

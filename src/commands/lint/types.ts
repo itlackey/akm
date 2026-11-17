@@ -130,7 +130,7 @@ export interface LintContext {
   /** Additional stash roots (secondary sources) for cross-stash ref resolution. */
   extraStashRoots?: string[];
   /** Issue types to skip for this file: the bundle's `lint.skip` rules that match its path, plus the run's own. */
-  lintSkip?: string[];
+  lintSkip?: readonly string[];
   /** The refs the index recorded as moved; a `missing-ref` to one carries the new ref. */
   moves?: MovedRefs;
   /**
