@@ -6,7 +6,7 @@
 
 import { metricsWindow, readUsageRows } from "../commands/metrics/metrics-cli";
 import type { MetricsUsageRow } from "../commands/metrics/types";
-import { withReadonlyStateDb } from "./readers";
+import { stateDbUnavailable, withReadonlyStateDb } from "./readers";
 
 export interface Miss {
   query: string;
@@ -51,9 +51,11 @@ export function missesFromRows(rows: MetricsUsageRow[]): Miss[] {
 
 export function searchMisses(input: { since?: string } = {}) {
   const window = metricsWindow(input.since || "30d");
-  const rows = withReadonlyStateDb((db) => readUsageRows(db, window), []);
+  const rows = withReadonlyStateDb((db) => readUsageRows(db, window), null);
+  if (!rows) return stateDbUnavailable();
   const misses = missesFromRows(rows);
   return {
+    available: true as const,
     searches: rows.filter(isUserSearch).length,
     foundNothing: misses.reduce((sum, m) => sum + m.count, 0),
     misses,

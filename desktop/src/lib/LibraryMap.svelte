@@ -9,7 +9,7 @@
   // tag draws what it is joined to (declared links and near-duplicate content) and fills the side column with what that
   // group needs: how much of it is read, what is outdated, disliked or duplicated, what it connects to, which bundles
   // repeat it, what people searched for and did not find, and, for any asset, the content closest to it in meaning.
-  import { api } from "./client";
+  import { api, apiState } from "./client";
   import {
     buildOverview,
     firstProblem,
@@ -43,6 +43,8 @@
 
   let o = $state.raw<Overview | null>(null);
   let misses = $state.raw<Miss[]>([]);
+  /** Why the searches that found nothing could not be read, when they could not. */
+  let missesNote = $state("");
   let error = $state("");
   let notice = $state("");
   let view = $state<View>("contents");
@@ -85,9 +87,10 @@
       error = (cause as Error).message;
     }
     try {
-      misses = (await api<{ misses: Miss[] }>("/search/misses", { since: "90d" })).misses;
-    } catch {
+      misses = (await apiState<{ misses: Miss[] }>("/search/misses", { since: "90d" })).misses;
+    } catch (cause) {
       misses = [];
+      missesNote = (cause as Error).message;
     }
   }
   void load();
@@ -642,7 +645,9 @@
                       class="count">×{m.count}</span
                     >
                   </li>{/each}
-              </ul>{:else}<p class="muted small">
+              </ul>{:else if missesNote}<p class="muted small">
+                Searches that found nothing are unavailable. {missesNote}
+              </p>{:else}<p class="muted small">
                 No search {part?.tag ? `mentioning “${part.tag}” ` : ""}came back empty in the last 90 days.
               </p>{/if}
           </section>

@@ -30,10 +30,12 @@ async function reads() {
     await proposals.list({ status: "pending" }),
     await activity.pulse(),
     await assets.improvement({ ref: "stash//lessons/rg" }),
+    await assets.searchMisses(),
+    await activity.retrievalTrend(),
   ];
 }
 
-test("no state.db: proposals, pulse and asset improvement say it is absent", async () => {
+test("no state.db: proposals, pulse, asset improvement, search gaps and the retrieval trend say it is absent", async () => {
   expect(fs.existsSync(getStateDbPath())).toBe(false);
   for (const result of await reads()) expect(result).toEqual({ available: false, reason: "absent" });
 });

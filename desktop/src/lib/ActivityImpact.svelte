@@ -16,8 +16,15 @@
   let {
     impact,
     retrieval,
+    retrievalNote = "",
     selectedProcess = $bindable(""),
-  }: { impact: ActivityImpact; retrieval: ActivityRetrieval | null; selectedProcess?: string } = $props();
+  }: {
+    impact: ActivityImpact;
+    retrieval: ActivityRetrieval | null;
+    /** Why the retrieval series could not be read, when akm said. */
+    retrievalNote?: string;
+    selectedProcess?: string;
+  } = $props();
   let drillPanel = $state<HTMLElement>(),
     drillTrigger: HTMLElement | null = null;
   const availableProcesses = $derived((impact.outcomes ?? []).map((row) => row.source));
@@ -332,7 +339,7 @@
           <p>
             {retrieval
               ? "Too few searches to show a rolling trend. It needs at least five searches in a week."
-              : "Search measurements unavailable."}
+              : `Search measurements unavailable.${retrievalNote ? ` ${retrievalNote}` : ""}`}
           </p>
         </section>{/if}
     </section>

@@ -26,6 +26,9 @@
     retrieval = $state<Retrieval | null>(null),
     pulse = $state<Pulse | null>(null),
     pulseNote = $state(""),
+    /** Why the weekly retrieval series or the search gaps could not be read, when akm said. */
+    retrievalNote = $state(""),
+    missesNote = $state(""),
     impactProcess = $state("");
   // A latch, not a derivation: the process the address last named stays selected when a later address names none.
   $effect.pre(() => {
@@ -43,6 +46,14 @@
     foundNothing: number;
     misses: Array<{ query: string; count: number; days: number; lastAt: string }>;
   } | null>(null);
+  /** A read that needs akm's state database: the data, or null with the reason it could not be read. */
+  async function readState<T>(path: string, query: Record<string, string>): Promise<{ data: T | null; note: string }> {
+    try {
+      return { data: await apiState<T>(path, query), note: "" };
+    } catch (cause) {
+      return { data: null, note: (cause as Error).message };
+    }
+  }
   // Plain, not state: the key of the view that was last asked for.
   let loaded = "";
   let loading = $state(false),
@@ -136,30 +147,33 @@
             nextPulseNote = cause.message;
             return null;
           }),
-          api<Retrieval>("/retrieval", { since: view === "Usage & retrieval" ? window : "84d" }).catch(() => null),
+          readState<Retrieval>("/retrieval", { since: view === "Usage & retrieval" ? window : "84d" }),
         ]);
         if (request === generation) {
           overview = next;
           pulse = nextPulse;
           pulseNote = nextPulseNote;
-          retrieval = nextRetrieval;
+          retrieval = nextRetrieval.data;
+          retrievalNote = nextRetrieval.note;
           refreshedAt = new Date().toISOString();
           probedAt = "";
         }
         if (view === "Usage & retrieval") {
-          const nextMisses = await api<NonNullable<typeof misses>>("/search/misses", { since: window }).catch(
-            () => null,
-          );
-          if (request === generation) misses = nextMisses;
+          const nextMisses = await readState<NonNullable<typeof misses>>("/search/misses", { since: window });
+          if (request === generation) {
+            misses = nextMisses.data;
+            missesNote = nextMisses.note;
+          }
         }
       } else if (view === "Improve impact") {
         const [next, nextRetrieval] = await Promise.all([
           api<Impact>("/improve/impact", { since }),
-          api<Retrieval>("/retrieval", { since: "90d" }).catch(() => null),
+          readState<Retrieval>("/retrieval", { since: "90d" }),
         ]);
         if (request === generation) {
           impact = next;
-          retrieval = nextRetrieval;
+          retrieval = nextRetrieval.data;
+          retrievalNote = nextRetrieval.note;
         }
       } else if (view === "Replay") {
         // The replay reads its own data.
@@ -171,7 +185,7 @@
           historyOrigin = query.get("origin") ?? "";
         }
       } else {
-        const next = await api<NonNullable<typeof misses>>("/search/misses", { since: window });
+        const next = await apiState<NonNullable<typeof misses>>("/search/misses", { since: window });
         if (request === generation) misses = next;
       }
     } catch (cause) {
@@ -276,6 +290,7 @@
       {pulse}
       {pulseNote}
       {retrieval}
+      {retrievalNote}
       {probe}
       {refreshedAt}
       {probedAt}
@@ -287,6 +302,7 @@
 {:else if shown && view === "Improve impact"}{#if impact}<ActivityImpact
       {impact}
       {retrieval}
+      {retrievalNote}
       bind:selectedProcess={impactProcess}
     />{/if}
 {:else if view === "Replay"}<ActivityReplay />
@@ -359,7 +375,7 @@
             >
           </table>
         </div>{:else}<p>No search gaps recorded in this window.</p>{/if}{:else}<p class="muted">
-        Search-gap measurements are unavailable.
+        Search-gap measurements are unavailable.{missesNote ? ` ${missesNote}` : ""}
       </p>{/if}
   </section>{/if}
 

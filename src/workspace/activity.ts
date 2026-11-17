@@ -24,7 +24,7 @@ import { pkgVersion } from "../version";
 import { listWorkflowRunSummaries, readWorkflowStatus } from "../workflows/runtime/runs";
 import { pChart, weekOf, weekRange } from "./derive";
 import { filledActivity, retrievalSeries } from "./metrics";
-import { clampLimit, section, withReadonlyStateDb } from "./readers";
+import { clampLimit, section, stateDbUnavailable, withReadonlyStateDb } from "./readers";
 
 export { improveImpact } from "./impact";
 export { overviewPulse as pulse } from "./pulse";
@@ -163,6 +163,8 @@ export async function overview(input: { probe?: boolean; metricsSince?: string }
       null,
     ),
   );
+  if (stateReads === null && !errors.state)
+    errors.state = `The state database is ${stateDbUnavailable().reason === "absent" ? "absent" : "behind on migrations"}.`;
   return {
     health,
     metrics: metrics
@@ -225,10 +227,9 @@ export function taskHistory(input: { taskId?: string; since?: string; limit?: nu
 /** The per-day search series over a longer window than the Overview's, for the Improve impact trend. */
 export function retrievalTrend(input: { since?: string } = {}) {
   const window = metricsWindow(input.since || "90d");
-  const series = retrievalSeries(
-    withReadonlyStateDb((db) => readUsageRows(db, window), []),
-    window,
-  );
+  const rows = withReadonlyStateDb((db) => readUsageRows(db, window), null);
+  if (!rows) return stateDbUnavailable();
+  const series = retrievalSeries(rows, window);
   // The same days by ISO week, for a p-chart of the share that found nothing.
   const first = series.daily[0]?.date;
   const weeks = first ? weekRange(first, window.until.slice(0, 10)) : [];
@@ -241,7 +242,7 @@ export function retrievalTrend(input: { since?: string } = {}) {
     };
   });
   const chart = pChart(perWeek);
-  return { ...series, weekly: chart.points, centre: chart.centre };
+  return { available: true as const, ...series, weekly: chart.points, centre: chart.centre };
 }
 
 /** Most runs or events one window read returns; a longer window says it was cut. */

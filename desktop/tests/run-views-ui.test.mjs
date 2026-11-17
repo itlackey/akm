@@ -3,6 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { test } from "node:test";
 import { chromium, expect } from "@playwright/test";
 import { launchFixture, open, runViewIds } from "./support.mjs";
@@ -165,4 +167,31 @@ test("chart tooltips stay inside the window, over a strip chart and at a narrow 
     assert.ok(shown > 0, `a tooltip showed at ${viewport.width}px`);
     await page.close();
   }
+});
+
+// A state.db that does not exist is not an empty one: every figure read from it says so and gives akm's reason.
+test("with no state.db the Runs, Usage and search-gap views say it is absent, not that nothing was recorded", {
+  timeout: 240000,
+}, async (t) => {
+  const server = await launchFixture({
+    configureFixture: async (fixture) => fs.rm(path.join(fixture.env.AKM_DATA_DIR, "state.db"), { force: true }),
+  });
+  t.after(() => server.stop());
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
+  const absent = "state database";
+
+  await open(page, server, "/activity/overview?view=runs");
+  const summary = page.getByRole("region", { name: "How runs ended in this window" });
+  await expect(summary).toContainText(absent);
+  await expect(summary).not.toContainText("No runs recorded");
+  await expect(page.locator("#workflow-runs")).toContainText(absent);
+  await expect(page.locator("#workflow-runs")).not.toContainText("No workflow runs in this window");
+
+  await open(page, server, "/activity/overview?view=usage");
+  await expect(page.locator("#search-gaps")).toContainText(absent);
+  await expect(page.locator("#search-gaps")).not.toContainText("No search gaps recorded");
+  await expect(page.getByText("Usage and model measurements unavailable.")).toBeVisible();
+  await expect(page.getByLabel("Selected-window activity")).toHaveCount(0);
 });
