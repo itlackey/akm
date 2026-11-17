@@ -511,6 +511,43 @@ test("a nonzero upgrade keeps akm's redacted result and shows the version actual
   assert.ok(!shown.includes("TOKEN-SENTINEL") && !shown.includes("/home/secret"), "no raw payloads");
 });
 
+test("a nonzero upgrade with no failed step shows what akm reported as not done", async () => {
+  const f = await hostFixture({
+    upgradeResult: {
+      exit: true,
+      body: {
+        currentVersion: "0.10.261104",
+        newVersion: "0.10.261104",
+        upgraded: false,
+        message: "akm v0.10.261104 is already the latest version",
+        migration: { status: "current" },
+        plugins: [
+          { harness: "claude-code", outcome: "current", channel: "next" },
+          { harness: "opencode", outcome: "deferred", channel: "next", message: "OpenCode is running" },
+        ],
+      },
+    },
+  });
+  f.manager.start("upgrade-cli");
+  await f.manager.pending;
+  const snapshot = f.manager.snapshot();
+  assert.equal(
+    snapshot.error,
+    "AKM's upgrade exited with an error. akm reported: akm v0.10.261104 is already the latest version; " +
+      "the opencode plugin was deferred (OpenCode is running). The versions shown are what is installed now.",
+  );
+  assert.equal(snapshot.action.upgrade.plugins[1].outcome, "deferred");
+});
+
+test("a nonzero upgrade that reports nothing unfinished says akm gave no reason", async () => {
+  const f = await hostFixture({
+    upgradeResult: { exit: true, body: { currentVersion: "0.10.261104", upgraded: true, plugins: [] } },
+  });
+  f.manager.start("upgrade-cli");
+  await f.manager.pending;
+  assert.match(f.manager.snapshot().error, /exited with an error and reported no reason/);
+});
+
 test("deferred plugins keep their reasons, apart from the check that follows (#1609-7)", async () => {
   const f = await hostFixture({
     upgradeResult: {

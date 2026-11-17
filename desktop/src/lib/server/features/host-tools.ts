@@ -517,16 +517,18 @@ export class HostTools {
       );
     } catch (error) {
       let partial: UpgradeSummary | undefined;
+      let said: string | undefined;
       try {
         const value = JSON.parse((error as { stdout?: string }).stdout ?? "");
         partial = summarizeUpgrade(value?.data ?? value);
+        said = bounded((value?.data ?? value)?.message);
       } catch {
         /* no structured result: the generic message and Details stand */
       }
       if (!partial) throw error;
       this.state.upgrade = partial;
       this.state.action = { command: this.state.command as string, upgrade: partial };
-      throw new SoftwareError(upgradeFailure(partial) ?? "AKM's upgrade exited with an error.");
+      throw new SoftwareError(upgradeFailure(partial) ?? unfinished(partial, said));
     }
     const summary = summarizeUpgrade(result);
     const failure = upgradeFailure(summary);
@@ -722,6 +724,19 @@ function upgradeFailure(summary: UpgradeSummary): string | undefined {
   return parts.length
     ? `AKM's upgrade did not finish: ${parts.join(", ")}. The versions shown are what is installed now. Use akm upgrade in your terminal to review its diagnostics.`
     : undefined;
+}
+
+/** A nonzero exit with no failed step: what akm reported as not done, in its own words. */
+function unfinished(summary: UpgradeSummary, message: string | undefined): string {
+  const reported = [
+    summary.upgraded === false ? message : undefined,
+    ...(summary.plugins ?? [])
+      .filter((item) => item.outcome === "deferred" || item.outcome === "skipped")
+      .map((item) => `the ${item.harness} plugin was ${item.outcome}${item.reason ? ` (${item.reason})` : ""}`),
+  ].filter(Boolean);
+  return reported.length
+    ? `AKM's upgrade exited with an error. akm reported: ${reported.join("; ")}. The versions shown are what is installed now.`
+    : "AKM's upgrade exited with an error and reported no reason. Use akm upgrade in your terminal to review its diagnostics.";
 }
 
 export function summarizeUpgrade(result: Loose): UpgradeSummary {
