@@ -574,6 +574,18 @@ describe("reads", () => {
     ]);
   });
 
+  test("pulse asks for a model connection only when learning is on, runs on no harness and no connection exists", async () => {
+    await seed();
+    const needs = async (patch: Record<string, unknown>) => {
+      writeSandboxConfig({ ...loadConfig(), connections: undefined, ...patch });
+      resetConfigCache();
+      return (await out(activity.pulse())).attention.setup;
+    };
+    expect(await needs({})).toEqual({ needs: "a model connection" });
+    expect(await needs({ improve: { enabled: false } })).toBeNull();
+    expect(await needs({ harnesses: { default: { platform: "claude" } }, improve: { harness: "default" } })).toBeNull();
+  });
+
   test("proposals list and get", async () => {
     await seed();
     const created = createProposal(ctx.storage.stashDir, {

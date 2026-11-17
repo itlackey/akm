@@ -11,7 +11,8 @@
 import { metricsWindow, readLlmRows, readUsageRows } from "../commands/metrics/metrics-cli";
 import type { MetricsUsageRow } from "../commands/metrics/types";
 import { proposalWaitingSince } from "../commands/proposal/proposal-types";
-import { loadConfig } from "../core/config/config";
+import { defaultConnection, loadConfig } from "../core/config/config";
+import { learningStatus } from "../setup/learning";
 import { queryImproveRuns } from "../storage/repositories/improve-runs-repository";
 import { listStateProposals } from "../storage/repositories/proposals-repository";
 import { queryTaskHistory } from "../storage/repositories/task-history-repository";
@@ -111,13 +112,16 @@ export function overviewPulse() {
   const repeated = missesFromRows(current).filter((m) => m.repeated);
   const revertedThisWeek = state.proposals.filter((p) => p.status === "reverted" && p.updatedAt >= weekAgo).length;
   const failedImprove = state.runs.filter((run) => run.ok !== 1).length;
-  const connections = Object.keys(loadConfig().connections ?? {}).length;
+  // Improve needs a connection only when learning is on and runs on no harness: Setup reads the same two answers.
+  const config = loadConfig();
+  const learning = learningStatus(config);
+  const needsConnection = learning.on && learning.harness === null && !defaultConnection(config);
   const attention = {
     pending: { count: pending.length, oldest },
     misses: { queries: repeated.length },
     failedRuns: { improve: failedImprove, tasks: failedTasks.length },
     harm: { reverted: revertedThisWeek },
-    setup: connections === 0 ? { needs: "a model connection" } : null,
+    setup: needsConnection ? { needs: "a model connection" } : null,
   };
 
   return {
