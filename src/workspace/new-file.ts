@@ -56,8 +56,23 @@ export function planNewFile(folder: string, name?: string): { type: string | nul
   return { type: null, fileName: name };
 }
 
-/** Whether a new file may be made in `folder` of the bundle, and the type it would have. Listings report it for the folder shown. */
-export function newFileVerdict(folder: string, blockers: WriteBlockers): FileVerdict & { type: string | null } {
+/** The top-level folder akm's env and secret operations write to, and what a file made there is. */
+const PROTECTED_FOLDERS: Record<string, "env" | "secret"> = { env: "env", secrets: "secret" };
+
+/**
+ * Whether a new file may be made in `folder` of the bundle, and the type it would have. Listings report it for the folder shown.
+ * A file made in the top-level `env/` or `secrets/` is an environment file or a secret, made through the protected editor
+ * (`through`), not by `documents.createFile`.
+ */
+export function newFileVerdict(
+  folder: string,
+  blockers: WriteBlockers,
+): FileVerdict & { type: string | null; through?: "protected-editor" } {
+  const protectedType = PROTECTED_FOLDERS[folder];
+  if (protectedType !== undefined)
+    return blockers.plain === null
+      ? { allowed: true, type: protectedType, through: "protected-editor" }
+      : { allowed: false, reason: blockers.plain, type: protectedType };
   const { type } = planNewFile(folder);
   // A typed asset goes through akm's writer; a file of no type is a plain file.
   const blocker = folderBlocker(folder) ?? blockers.plain ?? (type === null ? null : blockers.asset);

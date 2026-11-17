@@ -6,7 +6,6 @@
 
 <script lang="ts">
   import { onDestroy, tick, untrack } from "svelte";
-  import { afterNavigate } from "$app/navigation";
   import { assetSource, title, toggleSelection, date, matchesAssetRef, type ApiError } from "./client";
   import { libraryRead, resultContext, searchHref, documentTitle } from "./library-model";
   import { filesHref, parentPath, parseFilesHref } from "./library-files-model";
@@ -78,11 +77,7 @@
     movedLinksError = $state(""),
     movedChecks = $state(0);
   let pendingResultFocus = "";
-  let newFiles = $state<HTMLElement>(),
-    writeWarnings = $state<string[]>([]);
-  afterNavigate(() => {
-    if (newFiles?.matches(":popover-open")) newFiles.hidePopover();
-  });
+  let writeWarnings = $state<string[]>([]);
   let misses = $state<{
     searches: number;
     foundNothing: number;
@@ -349,10 +344,6 @@
     if (filterDetails.contains(event.relatedTarget)) return;
     filterDetails.open = false;
     resetFilterInputs();
-  }
-  function leaveNewFiles(event: FocusEvent) {
-    if (!(event.relatedTarget instanceof Node) || newFiles?.contains(event.relatedTarget)) return;
-    if (newFiles?.matches(":popover-open")) newFiles.hidePopover();
   }
   function dismissFilters(event: MouseEvent | KeyboardEvent) {
     if (!filterDetails?.open) return;
@@ -632,6 +623,7 @@
     onNavigate={navigateFiles}
     onSelect={(chosen) => (selected = toggleSelection(selected, chosen, 2))}
     onSearch={(name) => navigate(searchHref(new URLSearchParams({ bundle: name })))}
+    onCreateProtected={(kind, bundle, folder) => navigate(createSensitiveHref(kind, bundle, folder))}
     onCreated={(created) =>
       navigate(
         "/library/edit?" +
@@ -660,24 +652,6 @@
         {#if reviewHref}<a href={reviewHref}>Back to review</a>{:else if readingHref && !editing}<a href={readingHref}
             >Back to reading</a
           >{/if}
-        {#if !editing && !newSensitive}<button
-            class="btn btn-secondary new-file-trigger"
-            popovertarget="new-file-types"
-            aria-haspopup="menu"><Icon name="plus" size={16} />New protected file</button
-          >
-          <div
-            id="new-file-types"
-            class="new-file-menu"
-            popover="auto"
-            role="group"
-            aria-label="Create protected file"
-            bind:this={newFiles}
-            onfocusout={leaveNewFiles}
-          >
-            <a href={createSensitiveHref("env", fileBundle, filePath)}>Environment file</a><a
-              href={createSensitiveHref("secret", fileBundle, filePath)}>Secret</a
-            >
-          </div>{/if}
       </div>{/snippet}
     {#snippet children({ selectedFile, loading: folderLoading, error: folderError })}<section
         class="inspector files-inspector"
@@ -938,37 +912,6 @@
 {/if}
 
 <style>
-  .new-file-trigger {
-    anchor-name: --new-file-types;
-    padding-inline: 10px;
-  }
-  .new-file-menu {
-    position: fixed;
-    position-anchor: --new-file-types;
-    position-area: bottom span-left;
-    position-try-fallbacks: flip-block, flip-inline;
-    inset: auto;
-    margin: 8px 0;
-    padding: 6px;
-    width: 220px;
-    max-width: calc(100vw - 24px);
-    background: var(--surface);
-    color: var(--text);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    box-shadow: 0 8px 24px rgb(0 0 0 / 0.12);
-  }
-  .new-file-menu a {
-    display: flex;
-    align-items: center;
-    min-height: 40px;
-    padding: 8px 12px;
-    color: var(--text);
-    border-radius: 4px;
-  }
-  .new-file-menu a:hover {
-    background: var(--surface-2);
-  }
   .inspector,
   .search-page > section {
     margin-block-start: 0;
@@ -1261,9 +1204,6 @@
     gap: 16px;
     margin-left: auto;
     font-size: 13px;
-  }
-  .files-actions .btn {
-    min-height: var(--control-height, 36px);
   }
   .asset-choices {
     padding-left: 20px;

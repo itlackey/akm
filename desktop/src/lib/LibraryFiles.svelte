@@ -7,7 +7,7 @@
 <script lang="ts">
   import { onDestroy, onMount, tick, untrack, type Snippet } from "svelte";
   import { api } from "./client";
-  import { ancestorPaths, directoryKey, followMove, parentPath, sizeText } from "./library-files-model";
+  import { ancestorPaths, directoryKey, followMove, newFileLabel, parentPath, sizeText } from "./library-files-model";
   import type {
     FileActions,
     FileEntry,
@@ -38,6 +38,7 @@
     onSearch,
     onChanged,
     onCreated,
+    onCreateProtected,
     actions,
     children,
   }: {
@@ -58,6 +59,8 @@
     onChanged?: (change?: { moved?: Record<string, unknown> }) => void;
     /** A new file was made: it opens in the editor. */
     onCreated?: (created: { bundle: string; folder: string; file: string; ref: string | null }) => void;
+    /** akm says the folder takes an environment file or a secret: it is made in the protected editor. */
+    onCreateProtected?: (kind: "env" | "secret", bundle: string, folder: string) => void;
     /** Links and buttons at the end of the location bar. */
     actions?: Snippet;
     /** The open document, with what the folder listing knows about its file. */
@@ -430,6 +433,11 @@
   }
   // New file and new folder: a name for what is made in the folder shown.
   function startCreate(kind: "new-file" | "new-folder", bundle: string, folder: string) {
+    const here = tree.listings.get(directoryKey(bundle, folder))?.newFile;
+    if (kind === "new-file" && here?.through === "protected-editor") {
+      onCreateProtected?.(here.type === "secret" ? "secret" : "env", bundle, folder);
+      return;
+    }
     creating = { kind, bundle, path: folder };
     createName = "";
     if (bundle !== bundleName || folder !== path) onNavigate?.({ bundle, path: folder });
@@ -617,7 +625,7 @@
               aria-disabled={newFile?.allowed ? undefined : "true"}
               aria-describedby={newFile?.allowed ? undefined : "new-file-reason"}
               onclick={() => newFile?.allowed && startCreate("new-file", bundleName, path)}
-              ><Icon name="plus" size={16} />{newFile?.type ? `New ${newFile.type}` : "New file"}</button
+              ><Icon name="plus" size={16} />{newFileLabel(newFile)}</button
             ><button
               class="btn btn-secondary"
               aria-disabled={newPlace?.allowed ? undefined : "true"}

@@ -369,7 +369,9 @@ after the click:
 
 The result also has `newFile`: `{ "allowed": true, "type": "lesson" }` for the folder shown, where `type` is the type
 akm's directory rules give a new file there (`null`: none, a plain file), or `{ "allowed": false, "reason", "type": null }`
-for a place akm refuses (a protected or managed folder, a bundle akm does not write, `skills/` itself). `place`
+for a place akm refuses (a nested protected folder, a managed folder, a bundle akm does not write, `skills/` itself). In the top-level
+`env/` and `secrets/` the new file is `{ "allowed": true, "type": "env" }` or `"secret"` with `"through": "protected-editor"`: it is
+made by `sensitive.save`, not `documents.createFile` (which refuses a protected place). `place`
 (`{ "allowed": true }` or `{ "allowed": false, "reason" }`) is whether a folder may be made in the folder shown, or a file or
 folder moved into it: plain file operations, which need only a bundle that is not read-only and a place that is neither
 protected nor managed (so `skills/` takes a folder though it takes no file of its own).

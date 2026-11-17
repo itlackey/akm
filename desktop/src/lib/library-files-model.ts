@@ -30,7 +30,7 @@ export interface FileListing {
   entries: FileEntry[];
   indexAvailable: boolean;
   /** A new file here: allowed with the type akm gives it (null: a plain file), or the reason not. */
-  newFile: Verdict & { type: string | null };
+  newFile: Verdict & { type: string | null; through?: "protected-editor" };
   /** A folder made here, or an entry moved or copied in. */
   place: Verdict;
 }
@@ -129,6 +129,7 @@ export function folderUnder(root: string, chosen: string): string | null {
 
 /** What akm's verdict for a new file here names on the button: the type akm gives the folder, or a plain file. */
 export function newFileLabel(newFile: FileListing["newFile"] | undefined): string {
+  if (newFile?.through === "protected-editor") return newFile.type === "secret" ? "New secret" : "New environment file";
   return newFile?.type ? `New ${newFile.type}` : "New file";
 }
 

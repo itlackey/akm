@@ -200,7 +200,7 @@ describe("a listing says what a new file in its folder would be", () => {
     ).newFile;
 
   test("the type of the folder, none for a loose folder, and why not for a place akm refuses", async () => {
-    for (const folder of ["reports", ".git", "workflows", "tasks", "env"])
+    for (const folder of ["reports", ".git", "workflows", "tasks", "env", "secrets"])
       fs.mkdirSync(path.join(storage.stashDir, folder));
     fs.mkdirSync(path.join(storage.stashDir, "skills"), { recursive: true });
     fs.mkdirSync(path.join(storage.stashDir, "skills/backup"), { recursive: true });
@@ -212,11 +212,11 @@ describe("a listing says what a new file in its folder would be", () => {
     expect(await verdict("stash", "reports")).toEqual({ allowed: true, type: null });
     expect(await verdict("stash", "skills/backup")).toEqual({ allowed: true, type: null });
     expect(await verdict("stash", "skills")).toMatchObject({ allowed: false, type: "skill" });
-    expect(await verdict("stash", "env")).toMatchObject({
-      allowed: false,
-      reason: expect.stringContaining("protected-file view"),
-    });
+    expect(await verdict("stash", "env")).toEqual({ allowed: true, type: "env", through: "protected-editor" });
+    expect(await verdict("stash", "secrets")).toEqual({ allowed: true, type: "secret", through: "protected-editor" });
     expect(await verdict("stash", ".git")).toMatchObject({ allowed: false, reason: ".git/ is managed by akm." });
+    fs.mkdirSync(path.join(locked, "env"));
+    expect(await verdict("locked", "env")).toMatchObject({ allowed: false, type: "env" });
     expect(await verdict("locked", "")).toMatchObject({
       allowed: false,
       reason: expect.stringContaining("read-only"),

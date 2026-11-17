@@ -310,7 +310,6 @@ test("where akm refuses a new file the button is disabled with its sentence; a f
     },
   });
   for (const [bundle, folder] of [
-    ["personal", "env"],
     ["vendor", "knowledge"],
     ["claude", "commands"],
     ["personal", "skills"],
@@ -430,4 +429,26 @@ test("when akm could not list the changes the count is unknown, never zero", asy
   const header = page.getByRole("region", { name: "Git for personal" });
   await expect(header).toContainText("unknown");
   await expect(header).not.toContainText("0 files");
+});
+
+test("in env/ and secrets/ the button names what akm says the folder takes and opens the protected editor; no other folder offers one", async (t) => {
+  const { app, page } = await session(t, {
+    configureFixture: async (fixture) => {
+      for (const folder of ["env", "secrets"]) await fs.mkdir(path.join(fixture.root, "personal", folder));
+    },
+  });
+  for (const [folder, label, kind] of [
+    ["env", "New environment file", "env"],
+    ["secrets", "New secret", "secret"],
+  ]) {
+    const verdict = (await folderOf(app, folder)).newFile;
+    assert.deepEqual([verdict.type, verdict.through], [kind, "protected-editor"]);
+    await go(page, `/library/files?${new URLSearchParams({ bundle: "personal", path: folder })}`);
+    await page.getByRole("button", { name: label, exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`new-sensitive\\?kind=${kind}`));
+    await expect(page.locator(".sensitive-editor form")).toBeVisible();
+  }
+  await go(page, "/library/files?bundle=personal&path=knowledge");
+  await expect(page.getByRole("button", { name: /protected/i })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: /Environment file|Secret/ })).toHaveCount(0);
 });
