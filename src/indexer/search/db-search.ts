@@ -16,6 +16,7 @@ import path from "node:path";
 import { displayRef } from "../../core/asset/resolve-ref";
 import { compareCodePoints } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
+import { defaultExcludedTypes } from "../../core/config/schema/search";
 import { withStateDbTelemetry } from "../../core/state-db";
 import { systemErrorCode } from "../../core/system-error";
 import { isoDay } from "../../core/time";
@@ -278,7 +279,7 @@ async function searchDatabase(
   // ['session'] is applied; an explicit empty list disables exclusion.
   const defaultExcludes =
     searchType === "any" && !input.includeExcludedTypes
-      ? (config.search?.defaultExcludeTypes ?? ["session"]).filter((type) => !input.includeTypes?.includes(type))
+      ? defaultExcludedTypes(config).filter((type) => !input.includeTypes?.includes(type))
       : [];
 
   // D4 — conceptId-prefix queries (`memories/projecta/`, `bundle//`,

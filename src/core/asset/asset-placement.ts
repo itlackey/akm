@@ -32,12 +32,19 @@ import { type KnownType, SCRIPT_EXTENSIONS, WORKFLOW_EXTENSIONS } from "../recog
 
 export interface AssetSpec {
   stashDir: string;
+  /**
+   * What the type's files are when they are plain text documents a command may
+   * read and parse: Markdown or YAML. Absent for scripts and for env/secret
+   * files, which are never parsed as documents.
+   */
+  documentFormat?: "markdown" | "yaml";
   isRelevantFile: (fileName: string) => boolean;
   toCanonicalName: (typeRoot: string, filePath: string) => string | undefined;
   toAssetPath: (typeRoot: string, name: string) => string;
 }
 
 const workflowSpec: Omit<AssetSpec, "stashDir"> = {
+  documentFormat: "markdown",
   isRelevantFile: (fileName) =>
     (WORKFLOW_EXTENSIONS as readonly string[]).includes(path.extname(fileName).toLowerCase()),
   toCanonicalName: (typeRoot, filePath) => {
@@ -64,6 +71,7 @@ const workflowSpec: Omit<AssetSpec, "stashDir"> = {
 };
 
 const markdownSpec: Omit<AssetSpec, "stashDir"> = {
+  documentFormat: "markdown",
   isRelevantFile: (fileName) => path.extname(fileName).toLowerCase() === ".md",
   toCanonicalName: (typeRoot, filePath) => {
     const rel = toPosix(path.relative(typeRoot, filePath));
@@ -86,6 +94,7 @@ const scriptSpec: Omit<AssetSpec, "stashDir"> = {
 const BUILTIN_PLACEMENT_SPECS = {
   skill: {
     stashDir: "skills",
+    documentFormat: "markdown",
     isRelevantFile: (fileName) => fileName === "SKILL.md",
     toCanonicalName: (typeRoot, filePath) => {
       const relDir = toPosix(path.dirname(path.relative(typeRoot, filePath)));
@@ -155,6 +164,7 @@ const BUILTIN_PLACEMENT_SPECS = {
   // <stash>/tasks/<id>.yml.
   task: {
     stashDir: "tasks",
+    documentFormat: "yaml",
     isRelevantFile: (fileName: string) => path.extname(fileName).toLowerCase() === ".yml",
     toCanonicalName: (typeRoot: string, filePath: string) => {
       const rel = toPosix(path.relative(typeRoot, filePath));
@@ -229,6 +239,34 @@ export function typeForStashDir(stashDir: string): string | undefined {
     if (spec.stashDir === stashDir) return type;
   }
   return undefined;
+}
+
+/** The document format of the files in a stash subdir, or `undefined` when no registered type places plain-text documents there. */
+export function documentFormatForStashDir(stashDir: string): "markdown" | "yaml" | undefined {
+  for (const spec of Object.values(PLACEMENT_SPECS)) {
+    if (spec.stashDir === stashDir) return spec.documentFormat;
+  }
+  return undefined;
+}
+
+/** The stash subdirs whose assets are plain-text documents (Markdown or YAML), in registry order. */
+export function documentStashDirs(): string[] {
+  return Object.values(PLACEMENT_SPECS)
+    .filter((spec) => spec.documentFormat !== undefined)
+    .map((spec) => spec.stashDir);
+}
+
+/** The registered types whose assets are plain-text documents, in registry order. */
+export function documentTypes(): string[] {
+  return Object.entries(PLACEMENT_SPECS)
+    .filter(([, spec]) => spec.documentFormat !== undefined)
+    .map(([type]) => type);
+}
+
+/** The document stash subdir a type name or a subdir name selects, or `undefined` when it selects none. */
+export function documentStashDirFor(typeOrDir: string): string | undefined {
+  const dir = documentFormatForStashDir(typeOrDir) !== undefined ? typeOrDir : stashDirFor(typeOrDir);
+  return dir !== undefined && documentFormatForStashDir(dir) !== undefined ? dir : undefined;
 }
 
 /** All stash subdir names across the registered types. */
