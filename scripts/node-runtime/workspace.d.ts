@@ -79,6 +79,8 @@ export namespace activity {
   function taskHistory(input: { taskId?: string; since?: string; limit?: number }): unknown;
   /** Every scheduled-task run that started in the window, for all tasks, newest first. */
   function taskRuns(input?: { since?: string }): unknown;
+  /** One task run's recorded output (`logs.db`), oldest line first; `available: false` when there is no `logs.db`. */
+  function taskRunLog(input: { taskId?: string; startedAt?: string }): unknown;
   /** One workflow run with its steps, units, each unit's attempts, and its child runs. */
   function workflowRun(input: { id: string }): unknown;
   /** The workflow runs created in the window, or still active, newest first. */

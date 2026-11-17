@@ -4,11 +4,15 @@
 
 /** Observability read models: the overview, the week's pulse, health, retrieval and impact trends, task history. */
 
+import fs from "node:fs";
 import os from "node:os";
 import { akmHealth, parseHealthSince } from "../commands/health";
 import { buildTasks } from "../commands/metrics/collect";
 import { akmMetrics, metricsWindow, readUsageRows } from "../commands/metrics/metrics-cli";
 import { NotFoundError, UsageError } from "../core/errors";
+import { buildTaskRunId, getLogsDbPath, queryTaskLogs } from "../core/logs-db";
+import { openDatabase } from "../storage/database";
+import { applyReadonlyPragmas } from "../storage/sqlite-pragmas";
 import {
   getImproveRunById,
   type ImproveRunRow,
@@ -215,6 +219,9 @@ export function taskHistory(input: { taskId?: string; since?: string; limit?: nu
           startedAt: row.started_at,
           durationMs: metadata?.durationMs ?? null,
           trigger: metadata?.trigger ?? null,
+          targetKind: row.target_kind ?? null,
+          targetRef: row.target_ref ?? null,
+          engine: metadata?.engine ?? null,
           detail: metadata?.detail ?? null,
           // A steps task (Experimental): each step without its stored result, which can be large.
           steps: metadata?.steps?.map(({ result: _result, ...step }) => step) ?? null,
@@ -224,6 +231,34 @@ export function taskHistory(input: { taskId?: string; since?: string; limit?: nu
     },
     { available: false, totalCount: 0, count: 0, runs: [] },
   );
+}
+
+/** Most log lines one run's output returns; a longer log says it was cut. */
+const LOG_LINES_MAX = 500;
+
+/**
+ * One task run's recorded output, as `logs.db` holds it (`taskId` and `startedAt` as `taskHistory` lists them), oldest
+ * line first. Read-only: a missing `logs.db` is `available: false`, and nothing is created or migrated.
+ */
+export function taskRunLog(input: { taskId?: string; startedAt?: string }) {
+  const taskId = (input.taskId ?? "").trim();
+  const startedAt = (input.startedAt ?? "").trim();
+  if (!taskId || !startedAt)
+    throw new UsageError("A taskId and the run's startedAt are required.", "MISSING_REQUIRED_ARGUMENT");
+  const dbPath = getLogsDbPath();
+  if (!fs.existsSync(dbPath)) return { available: false as const, reason: "absent" as const };
+  const db = openDatabase(dbPath, { readonly: true, create: false });
+  try {
+    applyReadonlyPragmas(db);
+    const rows = queryTaskLogs(db, { runId: buildTaskRunId(taskId, startedAt), limit: LOG_LINES_MAX + 1 });
+    return {
+      available: true as const,
+      truncated: rows.length > LOG_LINES_MAX,
+      lines: rows.slice(0, LOG_LINES_MAX).map(({ stream, level, line }) => ({ stream, level, line })),
+    };
+  } finally {
+    db.close();
+  }
 }
 
 /** The per-day search series over a longer window than the Overview's, for the Improve impact trend. */

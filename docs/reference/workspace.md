@@ -149,9 +149,18 @@ Requires `taskId`; optional `since` (default `30d`, same syntax as metrics) and 
 Returns `{ available, totalCount, count, runs }`, newest first. Each run has
 recorded `status`, `startedAt`, nullable `durationMs`, nullable `trigger` (`schedule` when the OS scheduler started
 it, `manual` otherwise; `null` on a run recorded before akm stored it, or one that failed before it was dispatched),
-and nullable decoded `detail` (`reason`, `error`, `exitCode`, `runId` when recorded). Invalid/missing historical detail stays
-unknown. No log paths are returned or files read; these are existing state.db records. `available: false` means
-state.db is absent or needs migration, not that this task has never failed.
+nullable `targetKind` (`command`, `workflow`, ...), `targetRef` (the workflow's ref) and `engine` (what ran a command or
+prompt task), and nullable decoded `detail` (`reason`, `error`, `exitCode`, `runId` when recorded). Invalid/missing
+historical detail stays unknown. No log paths are returned or files read; these are existing state.db records.
+`available: false` means state.db is absent or needs migration, not that this task has never failed. The run's output is
+[`activity.taskRunLog`](#activitytaskrunlog).
+
+## `activity.taskRunLog`
+
+Requires `taskId` and the run's `startedAt` as `activity.taskHistory` lists them. Returns the run's recorded output from
+`logs.db`, read-only: `{ available: true, truncated, lines: [{ stream, level, line }] }`, oldest line first, at most 500
+lines (`truncated` says there were more). Output is stored already redacted. `{ available: false, reason: "absent" }`
+when there is no `logs.db`; nothing is created or migrated.
 
 ## `activity.taskRuns`
 

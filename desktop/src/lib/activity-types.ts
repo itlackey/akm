@@ -185,6 +185,10 @@ export interface ActivityTaskHistory {
     startedAt: string;
     durationMs: number | null;
     trigger?: "schedule" | "manual" | null;
+    /** What the run executed, as akm recorded it: `command`, `workflow` (with `targetRef`) or null. */
+    targetKind: string | null;
+    targetRef: string | null;
+    engine: string | null;
     detail: Record<string, unknown> | null;
     /** The steps of a steps task run (Experimental); null for every other run. */
     steps?: Array<{
@@ -197,6 +201,12 @@ export interface ActivityTaskHistory {
       reason?: string;
     }> | null;
   }>;
+}
+export interface ActivityTaskLog {
+  available: boolean;
+  reason?: "absent";
+  truncated?: boolean;
+  lines?: Array<{ stream: string; level: string; line: string }>;
 }
 export interface ActivityTaskRun {
   taskId: string;

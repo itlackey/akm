@@ -115,10 +115,6 @@
     {#if run.errors.count > run.errors.shown.length}<p class="muted small">
         {run.errors.shown.length} of {run.errors.count} shown.
       </p>{/if}{:else if !run.terminated}<p class="muted small">This run recorded no failed action.</p>{/if}
-  <p class="muted small">
-    No record ties this run to the scheduled task run that started it, so none is shown here. A failed task run's error
-    detail is under its task in Task runs.
-  </p>
   {#each [{ name: "Before-run sync", value: run.preRunSync }, { name: "Sync result", value: run.sync }, { name: "Triage result", value: run.triage }] as detail}<details
     >
       <summary>{detail.name}</summary>

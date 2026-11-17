@@ -46,7 +46,6 @@ test("run views show outcomes, failures and error detail, and guess no link betw
     await expect(view).toContainText("Synthetic: model timed out");
     await expect(view).not.toContainText("cannot show the model");
     // A task run that started within minutes of it (the fixture has one) is not offered as its cause.
-    await expect(view).toContainText("No record ties this run to the scheduled task run that started it");
     await expect(view).not.toContainText("Matched by time");
     await expect(view).not.toContainText("Synthetic: the connection refused the request");
   });
@@ -55,7 +54,7 @@ test("run views show outcomes, failures and error detail, and guess no link betw
     await open(page, server, `${runs}&improve=${runViewIds.oldImprove}&anchor=improve-run`);
     const view = page.getByRole("region", { name: "Improve run details", exact: true });
     await expect(view).toContainText("No model calls are recorded for this run");
-    await expect(view).toContainText("No record ties this run to the scheduled task run that started it");
+    await expect(view).not.toContainText("scheduled task run");
   });
 
   await t.test("an improve run older than the latest ten opens by id and shows that it was terminated", async () => {
@@ -105,6 +104,10 @@ test("run views show outcomes, failures and error detail, and guess no link betw
     await expect(frequent).toContainText("Run started");
     await expect(frequent).not.toContainText("Matched by time");
     await expect(frequent.getByRole("link", { name: runViewIds.failedImprove })).toHaveCount(0);
+    // What the run executed comes from akm's history row, and its output from the task log (the fixture has none).
+    await expect(frequent).toContainText("Agent");
+    await frequent.getByText("Log output").click();
+    await expect(frequent).toContainText("no task log database");
   });
 
   await t.test("a failed workflow run lists its failed attempts in order and its tokens by target", async () => {
