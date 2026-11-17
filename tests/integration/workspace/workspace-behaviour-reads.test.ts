@@ -22,6 +22,8 @@ import { loadConfig, resetConfigCache } from "../../../src/core/config/config";
 import { getDbPath } from "../../../src/core/paths";
 import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import { recordImproveRun } from "../../../src/storage/repositories/improve-runs-repository";
+import { closeDatabase, openExistingDatabase } from "../../../src/storage/repositories/index-connection";
+import { upsertEmbedding } from "../../../src/storage/repositories/index-vec-repository";
 import { listStateProposals, upsertProposal } from "../../../src/storage/repositories/proposals-repository";
 import { upsertTaskHistory } from "../../../src/storage/repositories/task-history-repository";
 import { activity, assets, bundles, config, proposals } from "../../../src/workspace";
@@ -499,6 +501,20 @@ describe("reads", () => {
     expect(listed.index.entryCount).toBeGreaterThanOrEqual(2);
     expect(listed.index).toMatchObject({ hasEmbeddings: false, embeddingCount: 0 });
     expect(listed.index.lastBuiltAt).toBeTruthy();
+  });
+
+  test("bundles counts only the current model's vectors against the embeddable entries", async () => {
+    await seed();
+    const db = openExistingDatabase(getDbPath());
+    try {
+      const ids = (db.prepare("SELECT id FROM entries").all() as Array<{ id: number }>).map((row) => row.id);
+      for (const id of ids) upsertEmbedding(db, id, [1, 0, 0, 0], "an-earlier-model");
+    } finally {
+      closeDatabase(db);
+    }
+    const { index } = await out(bundles.list());
+    expect(index.embeddingCount).toBe(0);
+    expect(index.embeddingCoverage).toBe(0);
   });
 
   test("bundles reports ahead and behind against the remote-tracking branch without fetching", async () => {

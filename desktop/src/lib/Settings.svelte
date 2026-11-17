@@ -449,7 +449,7 @@
               <dd>
                 {listing.index.embeddingCount === null
                   ? "Not measured"
-                  : `${listing.index.embeddingCount} recorded`}{listing.index.embeddingCoverage === null
+                  : `${listing.index.embeddingCount} for the current model`}{listing.index.embeddingCoverage === null
                   ? ""
                   : ` · ${Math.round(listing.index.embeddingCoverage * 100)}% coverage`}
               </dd>
