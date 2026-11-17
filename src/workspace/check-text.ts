@@ -61,8 +61,8 @@ function unreadableReason(
   return { reason: drained.warnings[0] ?? "akm does not index a file here." };
 }
 
-/** The findings and readability for `content` as the text of `relative` in `bundle`. */
-export async function check(input: { bundle: string; path: string; content: string }) {
+/** The akm bundle named `bundle`, and `path` as a path inside it that akm checks (not a protected or managed place). */
+export function akmBundleFile(input: { bundle: string; path: string; content: string }) {
   const bundle = typeof input.bundle === "string" ? input.bundle.trim() : "";
   const relative = typeof input.path === "string" ? input.path.trim().replaceAll("\\", "/") : "";
   if (!bundle || !relative) throw new UsageError("Choose a bundle and a path inside it.", "MISSING_REQUIRED_ARGUMENT");
@@ -80,13 +80,36 @@ export async function check(input: { bundle: string; path: string; content: stri
     folderBlocker(path.posix.dirname(relative)) ??
     (protectedTypeOf(relative) ? "Env and secret files are checked in the protected-file view." : null);
   if (blocked !== null) throw new UsageError(blocked);
+  return { bundle, relative, source, config };
+}
 
+/** Run `fn` on a scratch copy of the file at `relative` holding `content`: the indexer's own recognition runs on a real file. */
+export function withScratchFile<T>(relative: string, content: string, fn: (root: string, file: string) => T): T {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "akm-check-"));
   try {
     const scratchFile = path.join(scratch, relative);
     if (!isWithin(scratchFile, scratch)) throw new UsageError("Use a path inside the bundle.");
     fs.mkdirSync(path.dirname(scratchFile), { recursive: true });
-    fs.writeFileSync(scratchFile, input.content);
+    fs.writeFileSync(scratchFile, content);
+    return fn(scratch, scratchFile);
+  } finally {
+    fs.rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+/** The type akm gives a file at `relative` holding `content`, or null when it is no asset. */
+export function typeOfText(relative: string, content: string): string | null {
+  return withScratchFile(
+    relative,
+    content,
+    (root, file) => classifyAkmFile(root, buildFileContext(root, file))?.match.type ?? null,
+  );
+}
+
+/** The findings and readability for `content` as the text of `relative` in `bundle`. */
+export async function check(input: { bundle: string; path: string; content: string }) {
+  const { bundle, relative, source, config } = akmBundleFile(input);
+  return withScratchFile(relative, input.content, (scratch, scratchFile) => {
     const type = classifyAkmFile(scratch, buildFileContext(scratch, scratchFile))?.match.type ?? null;
     const subdir = type === null ? undefined : documentStashDirFor(type);
     const found = subdir
@@ -103,7 +126,5 @@ export async function check(input: { bundle: string; path: string; content: stri
       readable: unreadable === null,
       ...(unreadable === null ? {} : { unreadable }),
     };
-  } finally {
-    fs.rmSync(scratch, { recursive: true, force: true });
-  }
+  });
 }

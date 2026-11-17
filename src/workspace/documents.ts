@@ -33,6 +33,7 @@ import { createFile } from "./new-file";
 import { redactUrlsInText } from "./redact";
 
 export { check } from "./check-text";
+export { applyFrontmatter, frontmatter } from "./frontmatter";
 export { createFile };
 
 /** An indexed asset file whose bundle accepts AKM writes, found the way the UI reads it. */

@@ -179,6 +179,34 @@ export namespace documents {
     readable: boolean;
     unreadable?: { reason: string; line?: number };
   }>;
+  /**
+   * A file's frontmatter for a form: its keys and values in file order as akm's YAML reads them (`error` when the block does
+   * not parse), and the keys akm knows for the file's type with the required ones marked. Parse nothing in the host.
+   */
+  function frontmatter(input: { bundle: string; path: string; content: string }): {
+    bundle: string;
+    path: string;
+    type: string | null;
+    present: boolean;
+    entries: Array<{ key: string; value: unknown; known: boolean }>;
+    error?: { reason: string; line?: number };
+    keys: Array<{
+      key: string;
+      required: boolean;
+      kind: "text" | "list" | "flag" | "map";
+      values?: readonly string[];
+      hint: string;
+      stamped?: boolean;
+    }>;
+  };
+  /**
+   * `content` with key changes applied to its frontmatter (a key set to a value, or removed): the body and every key not
+   * named stay as written. A change that cannot be made that way is refused.
+   */
+  function applyFrontmatter(input: {
+    content: string;
+    changes: Array<{ key: string; value?: unknown; remove?: true }>;
+  }): { content: string };
   /** A new file in a folder of a bundle, for any type: the folder's type decides the starting text; a folder with no type gets an empty file. */
   function createFile(input: { bundle: string; folder?: string; name: string; content?: string }): Promise<{
     bundle: string;
