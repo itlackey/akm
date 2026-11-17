@@ -132,9 +132,7 @@
       "Weekly finds and opens, last 90 days",
     ),
   );
-  const writable = $derived(
-    bundles.filter((b) => b.enabled && b.writable && b.components.some((c) => c.adapter === "akm")),
-  );
+  const writable = $derived(bundles.filter((b) => b.writeBlocker === null));
   const sameBundle = $derived(target === (data?.bundle ?? data?.asset?.origin));
   const copyNameInvalid = $derived(sameBundle && (!newName.trim() || newName.trim() === canonical.split("/").at(-1)));
   // A new reference is read before the page updates, so the asset before it is never drawn under the new address.
@@ -568,7 +566,9 @@
           <p class="muted">The original stays unchanged. Existing files are never overwritten.</p>
           <label
             >Destination bundle<select bind:this={copyDestination} bind:value={target}
-              >{#each writable as b}<option value={b.name}>{b.name}</option>{/each}</select
+              >{#each bundles as b}<option value={b.name} disabled={b.writeBlocker !== null}
+                  >{b.name}{b.writeBlocker === null ? "" : ": " + b.writeBlocker}</option
+                >{/each}</select
             ></label
           >
           <label

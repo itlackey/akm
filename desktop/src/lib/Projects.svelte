@@ -35,9 +35,7 @@
   const rows = $derived(projectRows(config?.config.projects, config?.localProjects ?? []));
   const row = $derived<ProjectRow | undefined>(rows.find((r) => r.name === name));
   const adding = $derived(!name && query.has("add"));
-  const bundleInfo = $derived(
-    workspace.bundles.map((b) => ({ name: b.name, enabled: b.enabled, writable: b.writable })),
-  );
+  const bundleInfo = $derived(workspace.bundles.map((b) => ({ name: b.name, writeBlocker: b.writeBlocker })));
   const view = $derived(adding ? "add" : !name ? "list" : !row ? "missing" : sub || "overview");
   const enc = encodeURIComponent;
 

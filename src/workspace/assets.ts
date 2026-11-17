@@ -17,7 +17,7 @@ import { resolveRefOwner } from "../core/env-secret-ref";
 import { UsageError } from "../core/errors";
 import { type IncludeSelectors, includedTypes, includesProposed } from "../core/include";
 import { projectView, resolveProject } from "../core/projects";
-import { resolveWriteTarget } from "../core/write-source";
+import { inspectWriteTarget } from "../core/write-source";
 import { readUsableIndex } from "../indexer/index-readiness";
 import type { ScopeFilters } from "../indexer/passes/metadata";
 import { resolveReadSources } from "../indexer/read-preflight";
@@ -117,24 +117,15 @@ export function projectOverview(input: { project: string }) {
           undefined,
         )
       : undefined;
-  // Where akm would write for this project; a write bundle that does not resolve is shown by the name it was given.
-  let writeName: string | null = project.write.bundle ?? null;
-  try {
-    writeName = resolveWriteTarget(config, project.write.bundle, { requireWritable: false }).source.name;
-  } catch {
-    /* No target resolves: the explicit name, or none. */
-  }
-  const writeSource = writeName === null ? undefined : local.find((source) => source.registryId === writeName);
+  // Where akm would write for this project, and the sentence its write path refuses with (null when it would accept a
+  // write); a write bundle that does not resolve is shown by the name it was given.
+  const write = inspectWriteTarget(config, project.write.bundle);
+  const writeName = write.name ?? project.write.bundle ?? null;
   return {
     project: { ...projectView(project), write: project.write },
     fromImplicit: project.from === undefined,
     preferImplicit: config.projects?.[name]?.prefer === undefined,
-    // `usable`: the bundle is enabled and accepts writes. Null when no write bundle resolves.
-    writeBundle: {
-      name: writeName,
-      implicit: project.write.bundle === undefined,
-      usable: writeName === null ? null : writeSource?.writable === true,
-    },
+    writeBundle: { name: writeName, implicit: project.write.bundle === undefined, writeBlocker: write.blocker },
     bundles: selected.map(({ name: bundle, source }) => {
       const entry = Object.hasOwn(config.bundles ?? {}, bundle) ? config.bundles?.[bundle] : undefined;
       const found = source ? counts?.[readable.indexOf(source)] : undefined;
