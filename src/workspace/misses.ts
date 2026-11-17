@@ -18,9 +18,12 @@ export interface Miss {
   repeated: boolean;
 }
 
+/** An event the person made themselves, not an agent's, improve's or a task's. */
+export const isUserEvent = (row: MetricsUsageRow): boolean => row.source === "user";
+
 /** A search the user ran themselves, not a lookup of one asset and not an agent's search. */
 export const isUserSearch = (row: MetricsUsageRow): boolean =>
-  row.eventType === "search" && row.ref === undefined && row.source === "user";
+  row.eventType === "search" && row.ref === undefined && isUserEvent(row);
 
 const normalize = (query: string): string => query.trim().replace(/\s+/g, " ").toLowerCase();
 

@@ -24,6 +24,7 @@ import { pkgVersion } from "../version";
 import { listWorkflowRunSummaries, readWorkflowStatus } from "../workflows/runtime/runs";
 import { pChart, weekOf, weekRange } from "./derive";
 import { filledActivity, retrievalSeries } from "./metrics";
+import { isUserEvent } from "./misses";
 import { clampLimit, section, stateDbUnavailable, withReadonlyStateDb } from "./readers";
 
 export { improveImpact } from "./impact";
@@ -399,7 +400,12 @@ export function events(input: { since?: string; until?: string } = {}) {
       // One row past the cap says "truncated"; the cut keeps the newest rows, listed oldest first.
       const rows = readUsageRows(db, window, { allSources: true, newest: WINDOW_ROWS_MAX + 1 });
       const kept = rows.length > WINDOW_ROWS_MAX ? rows.slice(1) : rows;
-      return { available: true, window, truncated: rows.length > WINDOW_ROWS_MAX, events: kept };
+      return {
+        available: true,
+        window,
+        truncated: rows.length > WINDOW_ROWS_MAX,
+        events: kept.map((row) => ({ ...row, byPerson: isUserEvent(row) })),
+      };
     },
     { available: false, window, truncated: false, events: [] },
   );

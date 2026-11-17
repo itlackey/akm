@@ -12,13 +12,17 @@ export interface UsageEventRow {
   query?: string;
   signal?: "positive" | "negative";
   source: string;
+  /** akm says whether the person made the event, as opposed to an agent, improve or a task. */
+  byPerson: boolean;
   resultCount?: number;
   agent?: { harness: string; session?: string };
 }
 
 export type ReplayStep = {
   t: number;
-  kind: "search" | "hit" | "show" | "feedback" | "other";
+  kind: "search" | "curate" | "hit" | "show" | "feedback" | "other";
+  /** Whether the person made the event; the others are an agent's, improve's or a task's. */
+  byPerson: boolean;
   /** The asset on the map, or -1 when the event names none or names one not on the map. */
   node: number;
   query?: string;
@@ -33,12 +37,12 @@ export function replaySteps(events: UsageEventRow[], index: Map<string, number>)
   return events
     .map((event): ReplayStep => {
       const node = event.ref ? (index.get(event.ref) ?? -1) : -1;
-      // A curate is a search: one row for the query and one per result, like a search and its hits.
+      // A search or a curate is one row for the query and one per result: the results are hits, part of it.
       const kind =
         event.eventType === "search" || event.eventType === "curate"
           ? event.ref
             ? "hit"
-            : "search"
+            : event.eventType
           : event.eventType === "show"
             ? "show"
             : event.eventType === "feedback"
@@ -48,6 +52,7 @@ export function replaySteps(events: UsageEventRow[], index: Map<string, number>)
         t: Date.parse(event.at),
         kind,
         node,
+        byPerson: event.byPerson,
         eventType: event.eventType,
         ...(event.query ? { query: event.query } : {}),
         ...(event.resultCount !== undefined ? { results: event.resultCount } : {}),
@@ -58,6 +63,9 @@ export function replaySteps(events: UsageEventRow[], index: Map<string, number>)
     .filter((step) => Number.isFinite(step.t))
     .sort((a, b) => a.t - b.t);
 }
+
+/** The steps the person made, or every step including agents', improve's and tasks'. */
+export const stepsOf = (steps: ReplayStep[], everyone: boolean) => (everyone ? steps : steps.filter((s) => s.byPerson));
 
 /** `activity.events` keeps the newest this many events of a period. */
 export const EVENT_LIMIT = 20_000;
@@ -73,6 +81,7 @@ export const KINDS = [
   { id: "read", label: "Reads", token: "--use-2" },
   { id: "search", label: "Searches", token: "--accent" },
   { id: "miss", label: "Searches that found nothing", token: "--fail" },
+  { id: "curate", label: "Curates", token: "--use-1" },
   { id: "feedback", label: "Feedback", token: "--ok" },
   { id: "other", label: "Other events", token: "--border-strong" },
 ] as const;
@@ -84,9 +93,11 @@ const kindOf = (step: ReplayStep): KindId | null =>
       ? foundNothing(step)
         ? "miss"
         : "search"
-      : step.kind === "feedback"
-        ? "feedback"
-        : step.kind === "other"
+      : step.kind === "curate"
+        ? "curate"
+        : step.kind === "feedback"
+          ? "feedback"
+          : step.kind === "other"
           ? "other"
           : null;
 
@@ -110,6 +121,7 @@ export function kindBins(steps: ReplayStep[], start: number, end: number, bins =
 export function totalsAt(steps: ReplayStep[], t: number) {
   const totals = {
     searches: 0,
+    curates: 0,
     foundNothing: 0,
     shows: 0,
     positive: 0,
@@ -128,12 +140,13 @@ export function totalsAt(steps: ReplayStep[], t: number) {
         const query = step.query ?? NO_QUERY;
         misses.set(query, (misses.get(query) ?? 0) + 1);
       }
-    } else if (step.kind === "show") totals.shows++;
+    } else if (step.kind === "curate") totals.curates++;
+    else if (step.kind === "show") totals.shows++;
     else if (step.kind === "feedback") step.signal === "negative" ? totals.negative++ : totals.positive++;
     else if (step.kind === "other") totals.others++;
     if (step.node >= 0 && counted(step)) totals.used.add(step.node);
   }
-  const events = totals.searches + totals.shows + totals.positive + totals.negative + totals.others;
+  const events = totals.searches + totals.curates + totals.shows + totals.positive + totals.negative + totals.others;
   return { ...totals, events, misses: [...misses].sort((a, b) => b[1] - a[1]) };
 }
 const NO_QUERY = "(no query recorded)";
@@ -154,9 +167,9 @@ export function usedList(steps: ReplayStep[], t: number, limit = 10) {
 /** What the ticker says for an event. */
 export function describe(step: ReplayStep): string {
   const quoted = step.query ? ` “${step.query}”` : "";
-  if (step.kind === "search") {
-    const verb = step.eventType === "curate" ? "curated" : "searched";
-    if (foundNothing(step)) return `${verb}${quoted}, found nothing`;
+  if (step.kind === "search" || step.kind === "curate") {
+    const verb = step.kind === "curate" ? "curated" : "searched";
+    if (step.results === 0) return `${verb}${quoted}, found nothing`;
     return `${verb}${quoted}${step.results === undefined ? "" : `, ${step.results} result${step.results === 1 ? "" : "s"}`}`;
   }
   if (step.kind === "show") return `read ${step.ref ?? "an asset"}`;

@@ -18,6 +18,7 @@ import {
   SPEEDS,
   scrubTime,
   stampText,
+  stepsOf,
   totalsAt,
   truncationNote,
   usedList,
@@ -33,10 +34,10 @@ test("asset types fold into families; a type akm does not list is Other, the las
 
 const replayAt = (minute) => new Date(Date.UTC(2026, 10, 11, 10, minute)).toISOString();
 const replayEvents = [
-  { id: 3, at: replayAt(2), eventType: "show", ref: "wiki//knowledge/a", source: "user", agent: { harness: "claude" } },
-  { id: 1, at: replayAt(0), eventType: "search", query: "deploy", source: "user", resultCount: 0 },
-  { id: 2, at: replayAt(1), eventType: "search", ref: "wiki//knowledge/a", source: "improve" },
-  { id: 4, at: replayAt(3), eventType: "feedback", ref: "wiki//gone", signal: "negative", source: "task" },
+  { id: 3, at: replayAt(2), eventType: "show", ref: "wiki//knowledge/a", source: "user", byPerson: true, agent: { harness: "claude" } },
+  { id: 1, at: replayAt(0), eventType: "search", query: "deploy", source: "user", byPerson: true, resultCount: 0 },
+  { id: 2, at: replayAt(1), eventType: "search", ref: "wiki//knowledge/a", source: "improve", byPerson: false },
+  { id: 4, at: replayAt(3), eventType: "feedback", ref: "wiki//gone", signal: "negative", source: "task", byPerson: false },
 ];
 const replayIndex = new Map([["wiki//knowledge/a", 0]]);
 
@@ -60,28 +61,29 @@ test("the replay: hits apart from searches, and totals at any moment", () => {
   assert.equal(totalsAt(steps, Date.parse(replayAt(9))).negative, 1);
   // A search that found nothing and recorded no query is still listed.
   const unnamed = replaySteps(
-    [{ id: 1, at: replayAt(0), eventType: "search", source: "user", resultCount: 0 }],
+    [{ id: 1, at: replayAt(0), eventType: "search", source: "user", byPerson: true, resultCount: 0 }],
     new Map(),
   );
   assert.deepEqual(totalsAt(unnamed, Date.parse(replayAt(9))).misses, [["(no query recorded)", 1]]);
 });
 
-test("replay: a curate is a search, and a curate row with a ref is a hit that is not counted", () => {
+test("replay: a curate is a curate, not a search, and a curate row with a ref is a hit that is not counted", () => {
   const events = [
-    { id: 1, at: replayAt(0), eventType: "curate", query: "release notes", source: "user" },
-    { id: 2, at: replayAt(0), eventType: "curate", ref: "wiki//knowledge/a", source: "user" },
+    { id: 1, at: replayAt(0), eventType: "curate", query: "release notes", source: "user", byPerson: true },
+    { id: 2, at: replayAt(0), eventType: "curate", ref: "wiki//knowledge/a", source: "user", byPerson: true },
   ];
   const steps = replaySteps(events, replayIndex);
   assert.deepEqual(
     steps.map((step) => [step.kind, step.node]),
     [
-      ["search", -1],
+      ["curate", -1],
       ["hit", 0],
     ],
   );
   assert.equal(describe(steps[0]), "curated “release notes”");
   const total = totalsAt(steps, Date.parse(replayAt(9)));
-  assert.equal(total.searches, 1);
+  assert.equal(total.searches, 0);
+  assert.equal(total.curates, 1);
   assert.equal(total.others, 0);
   assert.equal(total.events, 1);
   assert.equal(total.used.size, 0);
@@ -96,7 +98,7 @@ test("replay (5): the used list ranks assets by events so far, ignoring hits, an
     ["wiki//knowledge/a", 0],
     ["wiki//knowledge/b", 1],
   ]);
-  const ev = (id, minute, ref, eventType = "show") => ({ id, at: replayAt(minute), eventType, ref, source: "user" });
+  const ev = (id, minute, ref, eventType = "show") => ({ id, at: replayAt(minute), eventType, ref, source: "user", byPerson: true });
   const steps = replaySteps(
     [
       ev(1, 0, "wiki//knowledge/b"),
@@ -117,12 +119,12 @@ test("replay (5): the used list ranks assets by events so far, ignoring hits, an
   assert.equal(usedList(steps, Date.parse(replayAt(9)), 1).length, 1);
 });
 
-test("timeline bins stack events by kind: a search with no results is a miss, a curate is a search, hits are not counted, max is the tallest bin", () => {
+test("timeline bins stack events by kind: a search with no results is a miss, a curate is a curate, hits are not counted, max is the tallest bin", () => {
   assert.deepEqual(
     KINDS.map((k) => k.id),
-    ["read", "search", "miss", "feedback", "other"],
+    ["read", "search", "miss", "curate", "feedback", "other"],
   );
-  const ev = (id, minute, eventType, extra = {}) => ({ id, at: replayAt(minute), eventType, source: "user", ...extra });
+  const ev = (id, minute, eventType, extra = {}) => ({ id, at: replayAt(minute), eventType, source: "user", byPerson: true, ...extra });
   const steps = replaySteps(
     [
       ev(1, 0, "show", { ref: "wiki//knowledge/a" }),
@@ -138,15 +140,34 @@ test("timeline bins stack events by kind: a search with no results is a miss, a 
   );
   const bins = kindBins(steps, Date.parse(replayAt(0)), Date.parse(replayAt(4)), 4);
   assert.equal(bins.counts.length, 4);
-  assert.deepEqual(bins.counts[0], { read: 1, search: 1, miss: 1, feedback: 0, other: 0 });
-  assert.deepEqual(bins.counts[1], { read: 0, search: 0, miss: 0, feedback: 1, other: 0 });
-  assert.deepEqual(bins.counts[2], { read: 0, search: 0, miss: 0, feedback: 0, other: 0 });
-  assert.deepEqual(bins.counts[3], { read: 1, search: 1, miss: 0, feedback: 0, other: 0 });
+  assert.deepEqual(bins.counts[0], { read: 1, search: 1, miss: 1, curate: 0, feedback: 0, other: 0 });
+  assert.deepEqual(bins.counts[1], { read: 0, search: 0, miss: 0, curate: 0, feedback: 1, other: 0 });
+  assert.deepEqual(bins.counts[2], { read: 0, search: 0, miss: 0, curate: 0, feedback: 0, other: 0 });
+  assert.deepEqual(bins.counts[3], { read: 1, search: 0, miss: 0, curate: 1, feedback: 0, other: 0 });
   // The tallest stacked bin, not the tallest kind in it.
   assert.equal(bins.max, 3);
   assert.equal(bins.width, 60_000);
   // An empty window still has a scale.
   assert.equal(kindBins([], 0, 4, 4).max, 1);
+});
+
+test("replay: by default only the person's events count, so the figures are the Usage tab's; everyone adds agents' and tasks'", () => {
+  const person = (id) => ({ id, at: replayAt(0), eventType: "search", query: `q${id}`, source: "user", byPerson: true, resultCount: 1 });
+  const agent = (id, eventType) => ({ id, at: replayAt(1), eventType, query: `a${id}`, source: "improve", byPerson: false, resultCount: 0 });
+  const events = [
+    ...Array.from({ length: 6 }, (_, i) => person(i)),
+    ...Array.from({ length: 100 }, (_, i) => agent(100 + i, "curate")),
+    ...Array.from({ length: 100 }, (_, i) => agent(200 + i, "search")),
+  ];
+  const steps = replaySteps(events, replayIndex);
+  const mine = totalsAt(stepsOf(steps, false), Date.parse(replayAt(9)));
+  assert.equal(mine.searches, 6);
+  assert.equal(mine.curates, 0);
+  assert.equal(mine.foundNothing, 0);
+  const all = totalsAt(stepsOf(steps, true), Date.parse(replayAt(9)));
+  assert.equal(all.searches, 106);
+  assert.equal(all.curates, 100);
+  assert.equal(all.foundNothing, 100);
 });
 
 test("replay clock (7): the whole period plays in a minute whatever its length, at stated multiples", () => {
