@@ -597,6 +597,7 @@ interface SweepScope {
   fix: boolean;
   fixMovedRefs: boolean;
   moves: MovedRefs;
+  bundleRoots: ReadonlyMap<string, string>;
   pruneDanglingEdges: boolean;
   /** Rules to skip for this run, on top of the bundle's `lint.skip`. */
   lintSkip?: string[];
@@ -604,6 +605,11 @@ interface SweepScope {
   stalePathRoots: string[];
   /** The bundle's `lint.skip` rules for a bundle-relative path. */
   bundleSkip?: (relPath: string) => string[];
+}
+
+/** The root of each configured bundle by its id, for the checks that look a qualified ref up in the bundle it names. */
+function bundleRootsOf(sources: readonly SearchSource[]): ReadonlyMap<string, string> {
+  return new Map(sources.flatMap((source) => (source.registryId ? [[source.registryId, source.path] as const] : [])));
 }
 
 interface SweepSinks {
@@ -636,7 +642,8 @@ function lintDocument(
   scope: SweepScope,
   { fixed, flagged, warnings }: SweepSinks,
 ): void {
-  const { stashRoot, extraStashRoots, fix, fixMovedRefs, moves, pruneDanglingEdges, stalePathRoots } = scope;
+  const { stashRoot, extraStashRoots, fix, fixMovedRefs, moves, bundleRoots, pruneDanglingEdges, stalePathRoots } =
+    scope;
   const lintSkip = [...(scope.lintSkip ?? []), ...(scope.bundleSkip?.(relPath) ?? [])];
 
   let data: Record<string, unknown>;
@@ -686,6 +693,7 @@ function lintDocument(
           fix,
           fixMovedRefs,
           moves,
+          bundleRoots,
           pruneDanglingEdges,
           stashRoot,
           stalePathRoots,
@@ -830,6 +838,7 @@ function lintAkmSweep(
           fix,
           fixMovedRefs: options.fixMovedRefs === true,
           moves,
+          bundleRoots: bundleRootsOf(sources),
           pruneDanglingEdges: options.pruneDanglingEdges === true,
           stalePathRoots: roots,
           bundleSkip,
@@ -993,6 +1002,7 @@ async function lintFile(file: string, options: AkmLintOptions, cfg: AkmConfig): 
       fix: options.fix === true,
       fixMovedRefs: options.fixMovedRefs === true,
       moves: readMovedRefs(),
+      bundleRoots: bundleRootsOf(root ? resolveSourceEntries(root, cfg) : []),
       pruneDanglingEdges: false,
       stalePathRoots: stalePathRoots(cfg, root ?? path.dirname(absFile)),
       bundleSkip: root ? bundleLintSkip(cfg, root) : undefined,
@@ -1031,6 +1041,7 @@ export function lintDocumentText(input: {
       fix: false,
       fixMovedRefs: false,
       moves: readMovedRefs(),
+      bundleRoots: bundleRootsOf(resolveSourceEntries(root, cfg)),
       pruneDanglingEdges: false,
       stalePathRoots: stalePathRoots(cfg, root),
       bundleSkip: bundleLintSkip(cfg, root),

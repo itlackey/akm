@@ -158,6 +158,25 @@ describe("lint on a link to a moved asset", () => {
     expect(fs.readFileSync(file, "utf8")).toContain("  - stash//knowledge/archive/target\n");
   });
 
+  test("a qualified link to an asset moved to the same path in another bundle is reported and followed", async () => {
+    put(storage.stashDir, "knowledge/target.md", TARGET);
+    const file = put(
+      storage.stashDir,
+      "knowledge/linker.md",
+      linker("stash//knowledge/target", "stash//knowledge/target"),
+    );
+    await akmIndex({ stashDir: storage.stashDir });
+    rename(storage.stashDir, "knowledge/target.md", "knowledge/target.md", other);
+    await akmIndex({ stashDir: storage.stashDir });
+
+    expect((await missingRefs(storage.stashDir)).map((issue) => issue.movedTo)).toEqual([
+      "other//knowledge/target",
+      "other//knowledge/target",
+    ]);
+    await akmLint({ dir: storage.stashDir, fix: true });
+    expect(fs.readFileSync(file, "utf8")).toContain("  - other//knowledge/target\n");
+  });
+
   test("a link follows an asset moved to another bundle, bare links become qualified", async () => {
     put(storage.stashDir, "knowledge/target.md", TARGET);
     const file = put(storage.stashDir, "knowledge/linker.md", linker("knowledge/target", "stash//knowledge/target"));

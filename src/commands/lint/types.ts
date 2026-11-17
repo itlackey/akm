@@ -133,6 +133,8 @@ export interface LintContext {
   lintSkip?: string[];
   /** The refs the index recorded as moved; a `missing-ref` to one carries the new ref. */
   moves?: MovedRefs;
+  /** Bundle id to root, so a qualified ref is checked in the bundle it names. */
+  bundleRoots?: ReadonlyMap<string, string>;
   /** Rewrite the links to moved refs only (`fix` rewrites them too, with every other fix). */
   fixMovedRefs?: boolean;
 }

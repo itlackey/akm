@@ -342,6 +342,7 @@ function scanBundleRefs(
   scanBody: string,
   allRoots: string[],
   movedConcepts: ReadonlySet<string>,
+  bundleRoots: ReadonlyMap<string, string>,
 ): Array<{ ref: string; resolvedRelPath: string }> {
   const missing: Array<{ ref: string; resolvedRelPath: string }> = [];
   const re = new RegExp(BUNDLE_REF_RE.source, BUNDLE_REF_RE.flags);
@@ -352,13 +353,24 @@ function scanBundleRefs(
     if (token.includes("$(") || token.includes("${") || token.includes("::")) continue;
     const boundary = token.indexOf("//");
     if (boundary < 0) continue;
-    const found = classifyConceptRef(token.slice(boundary + 2), allRoots, movedConcepts);
+    const found = classifyConceptRef(
+      token.slice(boundary + 2),
+      rootsOfBundle(token.slice(0, boundary), allRoots, bundleRoots),
+      movedConcepts,
+    );
     if (found !== null) missing.push({ ref: token, resolvedRelPath: found });
   }
   return missing;
 }
 
 const NO_CONCEPTS: ReadonlySet<string> = new Set();
+const NO_BUNDLES: ReadonlyMap<string, string> = new Map();
+
+/** A qualified ref is checked in the bundle it names; a bundle the config does not name is checked as an unqualified ref is. */
+function rootsOfBundle(bundle: string, allRoots: string[], bundleRoots: ReadonlyMap<string, string>): string[] {
+  const root = bundleRoots.get(bundle);
+  return root === undefined ? allRoots : [root];
+}
 
 /**
  * Run the existence check for a bare conceptId. Returns the missing relPath, or
@@ -431,11 +443,12 @@ function checkMissingRefs(
   stashRoot: string,
   extraStashRoots: string[] = [],
   movedConcepts: ReadonlySet<string> = NO_CONCEPTS,
+  bundleRoots: ReadonlyMap<string, string> = NO_BUNDLES,
 ): Array<{ ref: string; resolvedRelPath: string }> {
   const allRoots = [stashRoot, ...extraStashRoots];
   // C1: Strip fenced code blocks so example refs inside ``` are not flagged.
   const scanBody = stripFencedBlocks(body);
-  return dedupeMissing(scanBundleRefs(scanBody, allRoots, movedConcepts));
+  return dedupeMissing(scanBundleRefs(scanBody, allRoots, movedConcepts, bundleRoots));
 }
 
 /**
@@ -453,6 +466,7 @@ function checkMissingRefsInList(
   stashRoot: string,
   extraStashRoots: string[] = [],
   movedConcepts: ReadonlySet<string> = NO_CONCEPTS,
+  bundleRoots: ReadonlyMap<string, string> = NO_BUNDLES,
 ): Array<{ ref: string; resolvedRelPath: string }> {
   const allRoots = [stashRoot, ...extraStashRoots];
   const missing: Array<{ ref: string; resolvedRelPath: string }> = [];
@@ -465,7 +479,11 @@ function checkMissingRefsInList(
       // legacy/remote `origin//type:name` — not the new grammar, so skip it.
       const tail = value.slice(boundary + 2);
       if (tail.includes(":")) continue;
-      const rel = classifyConceptRef(tail, allRoots, movedConcepts);
+      const rel = classifyConceptRef(
+        tail,
+        rootsOfBundle(value.slice(0, boundary), allRoots, bundleRoots),
+        movedConcepts,
+      );
       if (rel !== null) missing.push({ ref: value, resolvedRelPath: rel });
       continue;
     }
@@ -832,12 +850,21 @@ function runMissingRefChecks(
   if (!shouldRun("missing-ref")) return { issues, raw, modified };
   const allRoots = [ctx.stashRoot, ...(ctx.extraStashRoots ?? [])];
   const movedConcepts = ctx.moves?.concepts ?? NO_CONCEPTS;
+  const bundleRoots = ctx.bundleRoots ?? NO_BUNDLES;
   // Links to an asset the index recorded as moved: reported with the new ref, and rewritten under `--fix`.
   const movedLinks = new Map<string, string>();
   const movedFinding = (ref: string, where: string): LintIssue | undefined => {
     const moved = ctx.moves?.target(ref);
     const concept = moved?.to.slice(moved.to.indexOf("//") + 2);
-    if (!moved || concept === undefined || classifyConceptRef(concept, allRoots, new Set([concept])) !== null)
+    if (
+      !moved ||
+      concept === undefined ||
+      classifyConceptRef(
+        concept,
+        rootsOfBundle(moved.to.slice(0, moved.to.indexOf("//")), allRoots, bundleRoots),
+        new Set([concept]),
+      ) !== null
+    )
       return undefined;
     const issue: LintIssue = {
       file: ctx.relPath,
@@ -861,8 +888,8 @@ function runMissingRefChecks(
     // short conceptIds included); a bare body is PROSE (anchored refs only).
     const missingRefs =
       explicitRefs !== null
-        ? checkMissingRefsInList(explicitRefs, ctx.stashRoot, ctx.extraStashRoots, movedConcepts)
-        : checkMissingRefs(ctx.body, ctx.stashRoot, ctx.extraStashRoots, movedConcepts);
+        ? checkMissingRefsInList(explicitRefs, ctx.stashRoot, ctx.extraStashRoots, movedConcepts, bundleRoots)
+        : checkMissingRefs(ctx.body, ctx.stashRoot, ctx.extraStashRoots, movedConcepts, bundleRoots);
     for (const { ref, resolvedRelPath } of missingRefs) {
       issues.push(
         movedFinding(ref, "") ?? {
@@ -938,7 +965,13 @@ function runMissingRefChecks(
           }
         }
 
-        const allMissingXrefs = checkMissingRefsInList(values, ctx.stashRoot, ctx.extraStashRoots, movedConcepts);
+        const allMissingXrefs = checkMissingRefsInList(
+          values,
+          ctx.stashRoot,
+          ctx.extraStashRoots,
+          movedConcepts,
+          bundleRoots,
+        );
         // A moved ref is a link to update, never a dangling edge to drop.
         const movedXrefs = allMissingXrefs.flatMap(({ ref }) => movedFinding(ref, `frontmatter ${key}; `) ?? []);
         issues.push(...movedXrefs);
