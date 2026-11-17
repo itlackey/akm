@@ -87,7 +87,7 @@ test("a script reads as code and a task as YAML with its lines", async (t) => {
   assert.equal(text, task, "the YAML keeps its line breaks");
 });
 
-test("where akm cannot read properties it says why: another adapter's bundle, and a frontmatter that does not parse", async (t) => {
+test("another adapter's bundle shows its properties, and a frontmatter that does not parse says why", async (t) => {
   const { app, page } = await session(t, {
     configureFixture: async (fixture) => {
       await kinds(fixture);
@@ -100,9 +100,9 @@ test("where akm cannot read properties it says why: another adapter's bundle, an
   const read = async (bundle, file, content) =>
     await app.call("/api/documents/frontmatter", { bundle, path: file, content });
   await open(page, "claude", "commands", "review.md", "claude//commands/review");
-  const refused = (await read("claude", "commands/review.md", "x")).body.error;
-  assert.ok(refused);
-  await expect(page.getByText(`Properties are not shown: ${refused}`)).toBeVisible();
+  // Another adapter's bundle reads the same: akm reads the frontmatter and the page is Markdown.
+  await expect(page.getByRole("region", { name: "Properties" })).toContainText("Review a change");
+  await expect(page.locator(".document-body")).toContainText("Look at the diff.");
   await go(
     page,
     `/library/files?${new URLSearchParams({ bundle: "personal", path: "lessons", file: "lessons/broken.md", open: "1" })}`,

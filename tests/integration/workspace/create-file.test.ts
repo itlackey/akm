@@ -195,7 +195,7 @@ describe("a listing says what a new file in its folder would be", () => {
   const verdict = async (bundle: string, folder: string) =>
     (
       (await assets.bundleFiles({ bundle, path: folder, hidden: true })) as {
-        newFile: { allowed: boolean; type: string | null; reason?: string };
+        newFile: { allowed: boolean; type: string | null; reason?: string; through?: string };
       }
     ).newFile;
 

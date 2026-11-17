@@ -25,6 +25,8 @@ export interface FrontmatterChange {
 export interface FrontmatterReading {
   /** Whether the text starts with a frontmatter block. */
   present: boolean;
+  /** Where the body starts in the text: after the closing fence, or 0 when there is no block. */
+  bodyStart: number;
   /** The keys in file order with their values. Empty when the block is absent or does not parse. */
   entries: Array<{ key: string; value: unknown }>;
   /** Why the block does not parse, with its line in the file when the parser gives one. */
@@ -51,16 +53,19 @@ function strictMapping(block: string): Record<string, unknown> {
 /** The frontmatter of `content` as the strict YAML parser reads it, the way a write of the file would. */
 export function readFrontmatter(content: string): FrontmatterReading {
   const block = parseFrontmatterBlock(content);
-  if (!block) return { present: false, entries: [] };
+  if (!block) return { present: false, bodyStart: 0, entries: [] };
+  const bodyStart = content.length - block.content.length;
   try {
     return {
       present: true,
+      bodyStart,
       entries: Object.entries(strictMapping(block.frontmatter)).map(([key, value]) => ({ key, value })),
     };
   } catch (error) {
     const line = parseDocument(block.frontmatter).errors[0]?.linePos?.[0]?.line;
     return {
       present: true,
+      bodyStart,
       entries: [],
       error: {
         reason: error instanceof Error ? error.message : String(error),

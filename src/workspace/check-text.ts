@@ -64,7 +64,7 @@ function unreadableReason(
 }
 
 /** The akm bundle named `bundle`, and `path` as a path inside it that akm checks (not a protected or managed place). */
-export function akmBundleFile(input: { bundle: string; path: string; content: string }) {
+export function akmBundleFile(input: { bundle: string; path: string; content: string }, anyAdapter = false) {
   const bundle = typeof input.bundle === "string" ? input.bundle.trim() : "";
   const relative = typeof input.path === "string" ? input.path.trim().replaceAll("\\", "/") : "";
   if (!bundle || !relative) throw new UsageError("Choose a bundle and a path inside it.", "MISSING_REQUIRED_ARGUMENT");
@@ -76,13 +76,14 @@ export function akmBundleFile(input: { bundle: string; path: string; content: st
     (entry) => entry.registryId === bundle && !entry.unresolved,
   );
   if (!source) throw new UsageError(`Bundle "${bundle}" is disabled or unavailable.`);
-  if ((source.adapterId ?? detectAdapterId(source.path)) !== "akm")
+  const adapter = source.adapterId ?? detectAdapterId(source.path);
+  if (!anyAdapter && adapter !== "akm")
     throw new UsageError(`akm checks the files of akm bundles; "${bundle}" is not one.`);
   const blocked =
     folderBlocker(path.posix.dirname(relative)) ??
     (protectedTypeOf(relative) ? "Env and secret files are checked in the protected-file view." : null);
   if (blocked !== null) throw new UsageError(blocked);
-  return { bundle, relative, source, config };
+  return { bundle, relative, source, config, isAkm: adapter === "akm" };
 }
 
 /** Run `fn` on a scratch copy of the file at `relative` holding `content`: the indexer's own recognition runs on a real file. */

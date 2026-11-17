@@ -65,7 +65,6 @@ export interface Source {
   revision: string;
   content: string;
   type?: string;
-  markdown?: boolean;
   /** What akm accepts doing to the file: Edit is offered when `edit` is allowed, with akm's sentence when it is not. */
   actions: import("./library-files-model").FileActions;
 }
@@ -135,6 +134,10 @@ export interface Configuration {
 export interface FrontmatterRead {
   type: string | null;
   present: boolean;
+  /** A Markdown file, which akm reads frontmatter from. */
+  markdown: boolean;
+  /** Where the body starts in the text. */
+  bodyStart: number;
   entries: Array<{ key: string; value: Json; known: boolean }>;
   error?: { reason: string; line?: number };
   keys: Array<{

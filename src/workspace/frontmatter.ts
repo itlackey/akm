@@ -12,10 +12,13 @@ import { frontmatterKeysFor } from "../core/asset/type-keys";
 import { UsageError } from "../core/errors";
 import { akmBundleFile, typeOfText } from "./check-text";
 
+const MARKDOWN_PATH = /\.(?:md|markdown)$/i;
+
 /** The frontmatter of `content` as the text of `path` in `bundle`: entries in file order, and the keys akm knows for its type. */
 export function frontmatter(input: { bundle: string; path: string; content: string }) {
-  const { bundle, relative } = akmBundleFile(input);
-  const type = typeOfText(relative, input.content);
+  // The reading of a text's frontmatter is the same in any bundle; the type and its keys are an akm bundle's.
+  const { bundle, relative, isAkm } = akmBundleFile(input, true);
+  const type = isAkm ? typeOfText(relative, input.content) : null;
   const reading = readFrontmatter(input.content);
   const known = type === null ? [] : frontmatterKeysFor(type);
   return {
@@ -23,6 +26,9 @@ export function frontmatter(input: { bundle: string; path: string; content: stri
     path: relative,
     type,
     present: reading.present,
+    /** A Markdown file: akm reads frontmatter from it, and the body starts at `bodyStart` in the text. */
+    markdown: MARKDOWN_PATH.test(relative),
+    bodyStart: reading.bodyStart,
     entries: reading.entries.map((entry) => ({ ...entry, known: known.some((key) => key.key === entry.key) })),
     ...(reading.error ? { error: reading.error } : {}),
     keys: known,
@@ -33,5 +39,6 @@ export function frontmatter(input: { bundle: string; path: string; content: stri
 export function applyFrontmatter(input: { content: string; changes: FrontmatterChange[] }) {
   if (typeof input.content !== "string") throw new UsageError("content must be text.");
   if (!Array.isArray(input.changes)) throw new UsageError("changes must be a list.");
-  return { content: changeFrontmatter(input.content, input.changes) };
+  const content = changeFrontmatter(input.content, input.changes);
+  return { content, bodyStart: readFrontmatter(content).bodyStart };
 }

@@ -99,8 +99,33 @@ describe("reading a file's frontmatter", () => {
     expect(result.error).toEqual({ reason: "AKM Markdown has malformed YAML frontmatter.", line: expect.any(Number) });
   });
 
-  test("a bundle of another adapter is refused", async () => {
-    expect(() => read("agents/x.md", "x", "claude")).toThrow("akm checks the files of akm bundles");
+  test("a bundle of another adapter is read the same, with no type and no keys", async () => {
+    const result = await read("agents/x.md", "---\ndescription: ok\n---\nBody.\n", "claude");
+
+    expect(result).toMatchObject({ type: null, keys: [], present: true, markdown: true });
+    expect(result.entries.map((entry) => entry.key)).toEqual(["description"]);
+  });
+
+  test("it says where the body starts and whether the file is Markdown, with and without frontmatter", async () => {
+    const text = "---\ndescription: ok\n---\n\nBody.\n";
+    const lesson = await read("lessons/x.md", text);
+    const plain = await read("lessons/x.md", "Body only.\n");
+    const script = await read("scripts/x.sh", "#!/bin/sh\n");
+    const crlf = await read("lessons/x.md", "---\r\ndescription: ok\r\n---\r\nBody.\r\n");
+
+    expect(text.slice(lesson.bodyStart)).toBe("\nBody.\n");
+    expect([plain.bodyStart, plain.present]).toEqual([0, false]);
+    expect("---\r\ndescription: ok\r\n---\r\nBody.\r\n".slice(crlf.bodyStart)).toBe("Body.\r\n");
+    expect([lesson.markdown, script.markdown]).toEqual([true, false]);
+  });
+
+  test("a change reports where the body starts afterwards", () => {
+    const changed = documents.applyFrontmatter({
+      content: "---\ndescription: ok\n---\nBody.\n",
+      changes: [{ key: "tags", value: ["a"] }],
+    });
+
+    expect(changed.content.slice(changed.bodyStart)).toBe("Body.\n");
   });
 });
 

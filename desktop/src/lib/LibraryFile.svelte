@@ -71,8 +71,11 @@
         : ""}
     </p>{/if}
   <Properties {properties} failure={propertiesFailure} />
-  {#if source.markdown}<Markdown content={source.content} ref={source.ref ?? ""} />{:else}<pre
-      class="code">{source.content}</pre>{/if}
+  {#if properties?.markdown}<Markdown
+      content={source.content}
+      bodyStart={properties.bodyStart}
+      ref={source.ref ?? ""}
+    />{:else if properties || propertiesFailure}<pre class="code">{source.content}</pre>{/if}
 {:else}<p role="status">Opening file…</p>{/if}
 
 <style>

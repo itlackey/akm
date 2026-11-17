@@ -200,6 +200,10 @@ export namespace documents {
     path: string;
     type: string | null;
     present: boolean;
+    /** A Markdown file, which akm reads frontmatter from. */
+    markdown: boolean;
+    /** Where the body starts in `content`: after the closing fence, 0 when there is no frontmatter. */
+    bodyStart: number;
     entries: Array<{ key: string; value: unknown; known: boolean }>;
     error?: { reason: string; line?: number };
     keys: Array<{
@@ -218,7 +222,7 @@ export namespace documents {
   function applyFrontmatter(input: {
     content: string;
     changes: Array<{ key: string; value?: unknown; remove?: true }>;
-  }): { content: string };
+  }): { content: string; bodyStart: number };
   /** A new file in a folder of a bundle, for any type: the folder's type decides the starting text; a folder with no type gets an empty file. */
   function createFile(input: { bundle: string; folder?: string; name: string; content?: string }): Promise<{
     bundle: string;

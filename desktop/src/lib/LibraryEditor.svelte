@@ -6,7 +6,7 @@
 
 <script lang="ts">
   import { onMount, onDestroy, tick } from "svelte";
-  import { api, ApiError, bodyOf, pickFolder, saveContent } from "./client";
+  import { api, ApiError, pickFolder, saveContent } from "./client";
   import { libraryRead, documentTitle } from "./library-model";
   import { folderUnder } from "./library-files-model";
   import { clearDraft, draftKey, readDraft, setUnsaved, storeDraft } from "./drafts";
@@ -73,7 +73,8 @@
     analysisRun = 0;
   const creating = $derived(!ref && !file);
   const sourceParams = $derived<Record<string, string>>(file ? { bundle: file.bundle, file: file.path } : { ref });
-  const markdown = $derived(source?.markdown !== false);
+  // akm says whether this is a Markdown file (`documents.frontmatter`); a new document is one.
+  const markdown = $derived(creating || properties?.markdown === true);
   const documentHref = $derived(
     "/library/asset?ref=" + encodeURIComponent(ref) + "&returnTo=" + encodeURIComponent(returnTo),
   );
@@ -87,8 +88,7 @@
   const where = $derived(source?.bundle && source.file ? { bundle: source.bundle, path: source.file } : null);
   // The form edits the frontmatter through akm and the box holds the body; Text shows the whole file in the box.
   const formMode = $derived(markdown && !!properties && !properties.error && !textMode);
-  const shown = $derived(formMode ? bodyOf(draft) : draft);
-  const head = (text: string) => text.slice(0, text.length - bodyOf(text).length);
+  const shown = $derived(formMode && properties ? draft.slice(properties.bodyStart) : draft);
   const key = () => draftKey({ file, ref });
   function persist() {
     retained = true;
@@ -312,7 +312,7 @@
     area.scrollTop = scrollTop;
   }
   function setShown(value: string) {
-    draft = formMode ? head(draft) + value : value;
+    draft = formMode && properties ? draft.slice(0, properties.bodyStart) + value : value;
   }
   /** The text that would be written: what the check and the save are both given. */
   const toSave = (base: Source) => saveContent(base.content, draft);
@@ -320,9 +320,7 @@
     if (!where) return;
     const run = ++analysisRun;
     const [front, checked] = await Promise.allSettled([
-      markdown
-        ? api<FrontmatterRead>("/documents/frontmatter", {}, { ...where, content: draft })
-        : Promise.resolve(null),
+      api<FrontmatterRead>("/documents/frontmatter", {}, { ...where, content: draft }),
       api<TextCheck>("/documents/check", {}, { ...where, content: toSave(source!) }),
     ]);
     if (run !== analysisRun || !alive) return;
@@ -333,12 +331,13 @@
   }
   async function applyChange(change: { key: string; value?: Json; remove?: true }) {
     try {
-      const result = await api<{ content: string }>(
+      const result = await api<{ content: string; bodyStart: number }>(
         "/documents/apply-frontmatter",
         {},
         { content: draft, changes: [change] },
       );
       draft = result.content;
+      if (properties) properties = { ...properties, bodyStart: result.bodyStart };
       error = "";
       persist();
       await analyze();
@@ -517,7 +516,10 @@
             class="quiet"
             aria-pressed={!textMode}
             aria-disabled={!properties || properties.error ? "true" : undefined}
-            onclick={() => properties && !properties.error && (textMode = false)}>Fields</button
+            onclick={async () => {
+              await analyze();
+              if (properties && !properties.error) textMode = false;
+            }}>Fields</button
           ><button type="button" class="quiet" aria-pressed={textMode} onclick={() => (textMode = true)}>Text</button>
           {#if propertiesFailure}<span class="muted small">Fields are not available: {propertiesFailure}</span
             >{:else if properties?.error}<span class="muted small" role="status"
@@ -569,7 +571,8 @@
           >
         </div>
         <div hidden={!preview} role="tabpanel" id="editor-preview" aria-labelledby="editor-preview-tab">
-          {#if markdown}<Markdown content={draft} {ref} />{:else}<pre class="code">{draft}</pre>{/if}
+          {#if markdown}<Markdown content={draft} bodyStart={properties?.bodyStart} {ref} />{:else}<pre
+              class="code">{draft}</pre>{/if}
         </div>
         {#if !creating}<aside class="findings" aria-label="Checks">
             {#if checkFailure}<p class="muted small">akm could not check this text: {checkFailure}</p>

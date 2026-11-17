@@ -52,9 +52,6 @@ export function title(asset?: AssetSummary): string {
     ? explicit
     : asset?.name?.replace(/[-_]/g, " ") || asset?.ref?.split("/").pop()?.replace(/[-_]/g, " ") || "Untitled asset";
 }
-export function bodyOf(content: string): string {
-  return content.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "");
-}
 /** Match a search hit to a durable URL without conflating identical paths in different bundles. */
 export function matchesAssetRef(hit: AssetSummary, ref: string, defaultBundle: string): boolean {
   const qualify = (value: string, bundle: string) => (value.includes("//") || !bundle ? value : `${bundle}//${value}`);

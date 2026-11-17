@@ -7,7 +7,7 @@
 <script lang="ts">
   import { onDestroy, tick, untrack } from "svelte";
   import { afterNavigate } from "$app/navigation";
-  import { api, assetSource, date, bodyOf, stateUnavailableText, type StateUnavailable } from "./client";
+  import { api, assetSource, date, stateUnavailableText, type StateUnavailable } from "./client";
   import { documentTitle, libraryRead, typedLinks } from "./library-model";
   import type { AssetRead, Improvement, SearchHit } from "./library-model";
   import type { Bundle, FrontmatterRead, History, Retirement, Source, WriteResult } from "./types";
@@ -119,11 +119,9 @@
   );
   // The page shows the file itself; only an asset with no file in a bundle shows what akm's renderer returned.
   const source = $derived(file ? file.content : data?.location ? "" : assetSource(data?.asset));
-  const openingTitle = $derived(
-    bodyOf(source)
-      .match(/^#[ \t]+([^\n]+)(?:\n|$)/)?.[1]
-      ?.trim(),
-  );
+  const bodyStart = $derived(properties?.bodyStart);
+  const body = $derived(source.slice(bodyStart ?? 0));
+  const openingTitle = $derived(body.match(/^#[ \t]+([^\n]+)(?:\n|$)/)?.[1]?.trim());
   const titleAnchor = $derived(
     openingTitle === documentTitle(data?.asset) && data?.headings?.[0]?.text === openingTitle
       ? headingId(data.headings[0].slug)
@@ -530,9 +528,12 @@
             </details>{/if}
           <section class="document-body" aria-label="Content">
             {#if fileError}<p class="notice notice-warn" role="alert">The file could not be read: {fileError}</p>
-            {:else if file && file.markdown === false}<pre class="code file-code">{file.content}</pre>
-            {:else if bodyOf(source).trim()}<Markdown
+            {:else if file && !properties && !propertiesFailure}
+              <!-- akm has not yet said whether this is a Markdown file -->
+            {:else if file && !properties?.markdown}<pre class="code file-code">{file.content}</pre>
+            {:else if body.trim()}<Markdown
                 content={source}
+                {bodyStart}
                 omitHeading={documentTitle(data.asset)}
                 ref={canonical}
                 bundle={data.bundle ?? ""}

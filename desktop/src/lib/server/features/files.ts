@@ -100,7 +100,6 @@ export async function readFile(query: Selector) {
     content: text(bytes),
     revision: digest(bytes),
     actions: chosen.actions,
-    markdown: /\.(?:md|markdown)$/i.test(chosen.real) && !["script", "task"].includes(chosen.type ?? ""),
   };
 }
 
