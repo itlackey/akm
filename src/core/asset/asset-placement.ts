@@ -256,6 +256,19 @@ export function documentStashDirs(): string[] {
     .map((spec) => spec.stashDir);
 }
 
+/** The registered types whose assets are plain-text documents, in registry order. */
+export function documentTypes(): string[] {
+  return Object.entries(PLACEMENT_SPECS)
+    .filter(([, spec]) => spec.documentFormat !== undefined)
+    .map(([type]) => type);
+}
+
+/** The document stash subdir a type name or a subdir name selects, or `undefined` when it selects none. */
+export function documentStashDirFor(typeOrDir: string): string | undefined {
+  const dir = documentFormatForStashDir(typeOrDir) !== undefined ? typeOrDir : stashDirFor(typeOrDir);
+  return dir !== undefined && documentFormatForStashDir(dir) !== undefined ? dir : undefined;
+}
+
 /** All stash subdir names across the registered types. */
 export function stashDirNames(): string[] {
   return Object.values(PLACEMENT_SPECS).map((spec) => spec.stashDir);

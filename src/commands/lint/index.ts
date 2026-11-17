@@ -20,7 +20,9 @@ import type { Diagnostic } from "../../core/adapter/types";
 import { createValidateContext } from "../../core/adapter/validate-context";
 import {
   documentFormatForStashDir,
+  documentStashDirFor,
   documentStashDirs,
+  documentTypes,
   refForFile,
   stashDirFor,
   typeForStashDir,
@@ -33,6 +35,7 @@ import { compareCodePoints, isAkmRegistryCachePath, resolveStashDir, safeRealpat
 import type { AkmConfig } from "../../core/config/config";
 import { loadConfig, primaryBundlePath } from "../../core/config/config";
 import { bundleKeyForContentRoot } from "../../core/config/config-sources";
+import { defaultExcludedTypes } from "../../core/config/schema/search";
 import { UsageError } from "../../core/errors";
 import type { FileChange } from "../../core/file-change";
 import { warn } from "../../core/warn";
@@ -769,7 +772,11 @@ function lintAkmSweep(
 
   const bundleSkip = bundleLintSkip(cfg, stashRoot);
   const roots = stalePathRoots(cfg, stashRoot);
-  const dirsToScan = documentStashDirs().filter((d) => !options.typeFilter || d === options.typeFilter);
+  // Types left out of an untyped search are left out of the sweep unless `--type` names one.
+  const leftOut = new Set(defaultExcludedTypes(cfg).map((type) => stashDirFor(type)));
+  const dirsToScan = documentStashDirs().filter((d) =>
+    options.typeFilter ? d === options.typeFilter : !leftOut.has(d),
+  );
 
   for (const subdir of dirsToScan) {
     const dirPath = path.join(stashRoot, subdir);
@@ -895,7 +902,7 @@ async function lintFile(file: string, options: AkmLintOptions, cfg: AkmConfig): 
 
   // Symlink-resolved, so a file's bundle-relative path is right however either was spelled.
   const realRoot = root ? fs.realpathSync(root) : undefined;
-  const typeValues = documentStashDirs().join(", ");
+  const typeValues = documentTypes().join(", ");
   let subdir: string | undefined;
   if (root) {
     const sources = resolveSourceEntries(root, cfg);
@@ -1071,6 +1078,9 @@ export async function akmLint(options: AkmLintOptions = {}): Promise<AkmLintResu
   // cross-stash refs (e.g. referencing assets in dimm-city/agent-stash) are
   // not falsely flagged as missing-ref.
   const cfg = options.config ?? loadConfig();
+  // `--type` names a type or its folder; the sweep and the single-file path work on the folder.
+  if (options.typeFilter)
+    options = { ...options, typeFilter: documentStashDirFor(options.typeFilter) ?? options.typeFilter };
   if (options.file !== undefined) return lintFile(options.file, options, cfg);
   // The primary stash is the defaultBundle's path.
   const stashRoot = options.dir ?? primaryBundlePath(cfg) ?? resolveStashDir();
@@ -1090,8 +1100,8 @@ export async function akmLint(options: AkmLintOptions = {}): Promise<AkmLintResu
   // adapters keep their own type vocabularies (see lintViaAdapter).
   if (options.typeFilter && documentFormatForStashDir(options.typeFilter) === undefined) {
     warn(
-      `Warning: lint --type "${options.typeFilter}" is not a recognized akm stash subdirectory — ` +
-        `valid types: ${documentStashDirs().join(", ")}. The whole bundle was validated.`,
+      `Warning: lint --type "${options.typeFilter}" is not a recognized akm asset type — ` +
+        `valid types: ${documentTypes().join(", ")}. The whole bundle was validated.`,
     );
     options = { ...options, typeFilter: undefined };
   }

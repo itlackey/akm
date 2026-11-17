@@ -16,8 +16,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- `akm lint` sweeps and accepts files in `rules/`, `instructions/` and `sessions/`, which it had skipped: it now takes its folders from the asset registry instead of its own list. `akm lint rules/x.md` no longer fails with "not under a known asset directory". `--type` accepts `rules`, `instructions` and `sessions`; a file under `env/` or `secrets/` is refused, never read. The `bundlePolicy` migration strips `lint_skip` in the same folders.
-- Usage records `--type` values `task`, `session`, `fact`, `instruction`, `rule` and `any` instead of `[redacted]`. Shell completion and the output config accept the `--format` and `--detail` values the output module defines.
+- `akm lint` sweeps and accepts files in `rules/` and `instructions/`, which it had skipped: it now takes its folders from the asset registry instead of its own list. `akm lint rules/x.md` no longer fails with "not under a known asset directory". `--type` takes a type name (`rule`) or its folder name (`rules`), so every value shell completion offers is accepted. Types that search leaves out by default (`search.defaultExcludeTypes`, default `session`) are left out of the sweep unless `--type` names one; a single file is always linted. A file under `env/` or `secrets/` is refused, never read. The `bundlePolicy` migration strips `lint_skip` in the same folders.
+- Usage records `--type` values `task`, `session`, `fact`, `instruction`, `rule`, `any` and folder names such as `memories` instead of `[redacted]`. Shell completion and the output config accept the `--format` and `--detail` values the output module defines.
 
 ## [0.10.261129] - 2026-11-16
 

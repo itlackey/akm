@@ -14,7 +14,12 @@ import path from "node:path";
 import { describeUsage } from "../src/cli/usage";
 import { generateBashCompletions } from "../src/commands/completions";
 import { akmLint } from "../src/commands/lint/index";
-import { documentFormatForStashDir, documentStashDirs, stashDirFor } from "../src/core/asset/asset-placement";
+import {
+  documentFormatForStashDir,
+  documentStashDirFor,
+  documentStashDirs,
+  stashDirFor,
+} from "../src/core/asset/asset-placement";
 import { UsageError } from "../src/core/errors";
 import { KNOWN_TYPES } from "../src/core/recognition-util";
 import { buildFileContext } from "../src/indexer/walk/file-context";
@@ -80,6 +85,40 @@ describe("lint folders come from the placement registry", () => {
       expect((await lint({ typeFilter: "rules" })).flagged.map((i) => i.file)).toEqual(["rules/a.md"]);
     });
 
+    test("--type takes a type name or its folder name, with the same result", async () => {
+      write(storage.stashDir, "rules/a.md", NEEDS_UPDATED);
+      write(storage.stashDir, "memories/b.md", NEEDS_UPDATED);
+      for (const [name, folder, file] of [
+        ["rule", "rules", "rules/a.md"],
+        ["memory", "memories", "memories/b.md"],
+      ] as const) {
+        const byName = await lint({ typeFilter: name });
+        const byFolder = await lint({ typeFilter: folder });
+        expect(byName.flagged.map((i) => i.file)).toEqual([file]);
+        expect(byName.flagged).toEqual(byFolder.flagged);
+      }
+    });
+
+    test("every --type value completion offers for lint selects a folder", () => {
+      const script = generateBashCompletions({
+        meta: { name: "akm" },
+        subCommands: { lint: { meta: { name: "lint" }, args: { type: { type: "string" } } } },
+      });
+      const offered = script.match(/"akm lint"\)\s*COMPREPLY=\( \$\(compgen -W "([^"]*)"/)?.[1]?.split(" ") ?? [];
+      expect(offered.length).toBeGreaterThan(0);
+      for (const value of offered)
+        expect({ value, folder: documentStashDirFor(value) }).not.toEqual({ value, folder: undefined });
+    });
+
+    test("sessions are left out of the sweep unless named or the config stops excluding them", async () => {
+      write(storage.stashDir, "sessions/h/a.md", NEEDS_UPDATED);
+      const files = (r: Awaited<ReturnType<typeof lint>>) => r.flagged.map((i) => i.file);
+      expect(files(await lint())).toEqual([]);
+      expect(files(await lint({ typeFilter: "session" }))).toEqual(["sessions/h/a.md"]);
+      const config = { ...makeConfig(storage.stashDir), search: { defaultExcludeTypes: [] } };
+      expect(files(await lint({ config }))).toEqual(["sessions/h/a.md"]);
+    });
+
     test("a file under env/ or secrets/ is refused and not read", async () => {
       const secret = write(storage.stashDir, "secrets/token.md", NEEDS_UPDATED);
       const env = write(storage.stashDir, "env/prod.env", "KEY=value\n");
@@ -98,6 +137,14 @@ describe("CLI usage records every known type", () => {
 
   test("each known type, and any, is recorded as given", () => {
     for (const type of [...KNOWN_TYPES, "any"]) expect(recordedType(type)).toBe(type);
+  });
+
+  test("a folder name, as lint --type takes it, is recorded as given", () => {
+    const lintRoot = { subCommands: { lint: { args: { type: { type: "string" } } } } };
+    const value = describeUsage(lintRoot, ["lint", "--type", "memories"]).arguments.find(
+      (a) => a.name === "type",
+    )?.value;
+    expect(value).toBe("memories");
   });
 
   test("a value that is not a type is redacted", () => {
@@ -137,6 +184,9 @@ describe("--format, --detail and --type values come from their owners", () => {
     };
     expect(offered("--format")).toEqual([...OUTPUT_FORMATS]);
     expect(offered("--detail")).toEqual([...DETAIL_VALUES]);
-    for (const type of [...KNOWN_TYPES, "any"]) expect(offered("--type")).toContain(type);
+    const anyCommand = script
+      .slice(script.indexOf("\n    --type)"))
+      .match(/\*\)\s*COMPREPLY=\( \$\(compgen -W "([^"]*)"/)?.[1];
+    for (const type of [...KNOWN_TYPES, "any"]) expect(anyCommand?.split(" ")).toContain(type);
   });
 });

@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { placementTypes } from "../core/asset/asset-placement";
+import { documentTypes, placementTypes } from "../core/asset/asset-placement";
 import { DETAIL_VALUES, OUTPUT_FORMATS } from "../output/context";
 
 // biome-ignore lint/suspicious/noExplicitAny: citty command tree uses dynamic shapes
@@ -42,7 +42,7 @@ interface FlagValueRule {
 const FLAG_VALUES: Record<string, FlagValueRule[]> = {
   "--format": [{ values: [...OUTPUT_FORMATS] }],
   "--detail": [{ values: [...DETAIL_VALUES] }],
-  "--type": [{ values: () => [...placementTypes(), "any"] }],
+  "--type": [{ paths: ["akm lint"], values: () => documentTypes() }, { values: () => [...placementTypes(), "any"] }],
   "--shell": [{ values: ["bash"] }],
   "--from": [{ paths: ["akm search", "akm curate"], values: ["local", "registry", "all"] }],
 };

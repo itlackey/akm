@@ -71,7 +71,7 @@ describe("akm lint fails closed on a nonexistent --dir", () => {
     try {
       typoResult = await akmLint({
         dir: storage.stashDir,
-        typeFilter: "workflow", // singular — the classic typo for "workflows"
+        typeFilter: "workflo", // a typo for "workflow"
         config: makeConfig(storage.stashDir),
       });
     } finally {
@@ -81,7 +81,7 @@ describe("akm lint fails closed on a nonexistent --dir", () => {
 
     expect(typoResult.flagged.length).toBeGreaterThan(0);
     expect(typoResult.flagged.length).toBe(wholeBundleResult.flagged.length);
-    expect(warnings.some((w) => w.includes('"workflow"') && w.includes("workflows"))).toBe(true);
+    expect(warnings.some((w) => w.includes('"workflo"') && w.includes("workflow"))).toBe(true);
   });
 
   test("a valid --type still lints normally", async () => {

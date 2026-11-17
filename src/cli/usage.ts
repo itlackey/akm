@@ -5,6 +5,7 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { stashDirNames } from "../core/asset/asset-placement";
 import { peekConfigValue } from "../core/config/peek";
 import { getDataDir } from "../core/paths";
 import { isKnownType, KNOWN_TYPES } from "../core/recognition-util";
@@ -45,7 +46,7 @@ export interface InvocationUsage {
 const SAFE_VALUES: Record<string, readonly string[]> = {
   format: OUTPUT_FORMATS,
   detail: DETAIL_VALUES,
-  type: [...KNOWN_TYPES, "any"],
+  type: [...KNOWN_TYPES, "any", ...stashDirNames()],
 };
 
 /** Scan declared identities only. Unknown spellings can themselves contain secrets. */
