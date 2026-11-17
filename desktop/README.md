@@ -263,7 +263,12 @@ protected file, `.git/`, a skill's `SKILL.md`), so no control fails after the cl
   choose it. A read-only bundle is counted and not written, with AKM's reason.
 - **New** names what AKM says the folder holds (New lesson, New workflow, New
   file) and makes it in this folder of this bundle, started with the text its type
-  starts with, then opens the editor. New folder makes a folder.
+  starts with, then opens the editor. New folder makes a folder. **Write this up**
+  (a search that found nothing) is the same create, for knowledge, in AKM's write
+  target.
+- **Copy to…** is one operation, from the tree and from an asset's More menu: AKM's
+  `assets.copyEntry` copies a file or folder to the folder you choose, staged, indexed
+  and committed by the bundle's policy, and records an asset's origin in `sources`.
 - **Delete** removes an empty folder or a file that is no asset after one
   confirmation. An asset is retired, as below.
 - The list shows each entry's size and modified time. Git bundles show how many
@@ -294,7 +299,7 @@ retirements still require review. Skills cannot be retired piecemeal; a skill mo
 
 ### Environment files, secrets and bundle names
 
-In **Files**, choose **New protected file**, then **Environment file** or **Secret**. Choose a writable bundle, enter a filename and its text,
+In **Files**, open the top-level `env/` or `secrets/` folder and choose **New environment file** or **New secret** (AKM says those folders take them). Choose a writable bundle, enter a filename and its text,
 then create it. Open an existing file to **Edit** or **Delete** it, including
 files not yet indexed. Env files use `.env`; secrets are files under `secrets/`.
 Saving preserves existing newlines, uses private file permissions and follows
