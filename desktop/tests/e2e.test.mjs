@@ -26,7 +26,7 @@ test("built desktop UI: each section's happy path and one refusal", { timeout: 2
     page
       .getByRole("navigation", { name: "Primary navigation" })
       .getByRole("link", { name: new RegExp(`^${name}(?:\\s|$)`) });
-  const editor = () => page.getByRole("textbox", { name: "Markdown source, including optional frontmatter" });
+  const editor = () => page.getByRole("textbox", { name: /^Markdown (body|source, including optional frontmatter)$/ });
   const searchBox = page.getByRole("searchbox", { name: "Search library" });
   const search = async (query) => {
     await searchBox.fill(query);
@@ -102,39 +102,52 @@ test("built desktop UI: each section's happy path and one refusal", { timeout: 2
   await t.test("Library: create knowledge; copy a skill; a refused copy changes nothing", async () => {
     await nav("Library").click();
     await page.goto(`${server.origin}/library/files?bundle=personal&path=knowledge`);
-    await page.getByRole("link", { name: /New knowledge/ }).click();
-    await page.getByRole("textbox", { name: "File name", exact: true }).fill("desktop-created");
+    await page.getByRole("button", { name: "New knowledge", exact: true }).click();
+    await page.getByRole("textbox", { name: "Name of the new knowledge", exact: true }).fill("desktop-created");
+    await page.getByRole("button", { name: "Create", exact: true }).click();
     await editor().fill("# Desktop created\n\nA synthetic note written by the UI through AKM.\n");
-    await page.getByRole("button", { name: "Create knowledge", exact: true }).click();
+    await page.getByRole("button", { name: "Save changes", exact: true }).click();
     await expect(page.getByRole("status").filter({ hasText: "Changes saved." })).toBeVisible();
     assert.match(
       await readFile(path.join(server.root, "personal/knowledge/desktop-created.md"), "utf8"),
       /synthetic note written/,
     );
-    await page.goto(`${server.origin}/library/asset?ref=${encodeURIComponent(server.refs.skill)}`);
-    await page.getByRole("button", { name: "More", exact: true }).click();
-    await page.getByRole("button", { name: "Copy to bundle…", exact: true }).click();
-    await page.getByRole("combobox", { name: "Destination bundle", exact: true }).selectOption("shared");
-    await page.getByRole("button", { name: "Confirm copy", exact: true }).click();
-    await expect(page.getByRole("status").filter({ hasText: "Copy completed" })).toBeVisible();
-    assert.match(await readFile(path.join(server.root, "shared/skills/backup-check/SKILL.md"), "utf8"), /backup-check/);
-    // A second copy to the same place is refused by akm; the page shows why and leaves the first copy alone.
-    await page.getByRole("button", { name: "More", exact: true }).click();
-    await page.getByRole("button", { name: "Copy to bundle…", exact: true }).click();
-    await page.getByRole("combobox", { name: "Destination bundle", exact: true }).selectOption("shared");
-    await page.getByRole("button", { name: "Confirm copy", exact: true }).click();
-    await expect(page.getByRole("alert")).toBeVisible();
+    const copyToShared = async () => {
+      await page.getByRole("button", { name: "More", exact: true }).click();
+      await page.getByRole("button", { name: "Copy to…", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Copy restore-laptop.md" });
+      await dialog.getByRole("treeitem", { name: "shared", exact: true }).click();
+      await dialog.getByRole("button", { name: "Copy here", exact: true }).click();
+      return dialog;
+    };
+    await page.goto(`${server.origin}/library/asset?ref=${encodeURIComponent(server.refs.document)}`);
+    await copyToShared();
+    await expect(page.getByRole("status").filter({ hasText: "Copied restore-laptop.md to shared." })).toBeVisible();
+    assert.match(
+      await readFile(path.join(server.root, "shared/restore-laptop.md"), "utf8"),
+      /personal\/\/knowledge\/restore-laptop/,
+    );
+    // A second copy to the same place is refused by akm; the dialog shows why and leaves the first copy alone.
+    const again = await copyToShared();
+    await expect(again.getByRole("alert")).toBeVisible();
   });
 
-  await t.test("Library: a move copies, then retires the original", async () => {
-    await page.goto(`${server.origin}/library/files?${new URLSearchParams({ ref: server.refs.memory, open: "1" })}`);
-    await page.getByRole("button", { name: "More", exact: true }).click();
-    await page.getByRole("button", { name: "Rename or move…", exact: true }).click();
-    await page.getByRole("combobox", { name: "Bundle", exact: true }).selectOption("shared");
-    await page.getByRole("textbox", { name: "Name or folder/name", exact: true }).fill("moved-preference");
-    await page.getByRole("button", { name: "Move", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "Move completed", exact: true })).toBeVisible();
-    assert.match(await readFile(path.join(server.root, "shared/memories/moved-preference.md"), "utf8"), /offline copy/);
+  await t.test("Library: a move is a rename on disk; the asset is the same asset in its new bundle", async () => {
+    await page.goto(
+      `${server.origin}/library/files?${new URLSearchParams({ bundle: "personal", path: "memories", file: "memories/backup-preference.md", ref: server.refs.memory, open: "1" })}`,
+    );
+    await page
+      .getByRole("tree", { name: "Bundle files" })
+      .getByRole("treeitem", { name: "backup-preference.md" })
+      .focus();
+    await page.keyboard.press("ContextMenu");
+    await page.getByRole("menuitem", { name: /^Move to…/ }).click();
+    const dialog = page.getByRole("dialog", { name: "Move backup-preference.md" });
+    await dialog.getByRole("treeitem", { name: "shared", exact: true }).click();
+    await dialog.getByRole("button", { name: "Move here", exact: true }).click();
+    await expect(page).toHaveURL(/bundle=shared/);
+    await expect(page.locator(".document-body")).toContainText("offline copy");
+    assert.match(await readFile(path.join(server.root, "shared/backup-preference.md"), "utf8"), /offline copy/);
     await assert.rejects(stat(path.join(server.root, "personal/memories/backup-preference.md")), { code: "ENOENT" });
   });
 
@@ -459,53 +472,5 @@ test("new content goes where akm says: the working stash when no write target is
   await open(page, server, "/");
   const akmAnswer = (await server.call("/api/bundles")).body.data.writeTarget.name;
   assert.equal(akmAnswer, "personal", "AKM_BUNDLE_DIR is the working stash, not the default bundle");
-  await expect(page.getByRole("link", { name: "Create an asset" })).toHaveAttribute("href", /bundle=personal(&|$)/);
-});
-
-test("a bundle akm would refuse a write to is listed with akm's sentence, not offered", async (t) => {
-  const server = await launchFixture({
-    configureFixture: async (fixture) => {
-      const file = path.join(fixture.root, "config/config.json");
-      const config = JSON.parse(await readFile(file, "utf8"));
-      // Writable and enabled, but never materialised as a checkout: a save would be refused.
-      config.bundles.team = { git: "https://example.test/team/notes", writable: true };
-      await writeFile(file, JSON.stringify(config));
-    },
-  });
-  t.after(() => server.stop());
-  const blocker = (await server.call("/api/bundles")).body.data.bundles.find((b) => b.name === "team").writeBlocker;
-  assert.match(blocker, /not materialized as a Git checkout/);
-  const browser = await chromium.launch({ headless: true });
-  t.after(() => browser.close());
-  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-  await open(page, server, "/library/new");
-  const option = page.getByRole("combobox", { name: "Bundle" }).locator("option", { hasText: "team" });
-  await expect(option).toHaveJSProperty("disabled", true);
-  await expect(option).toHaveText(`team: ${blocker}`);
-});
-
-test("creating a file whose name is taken says so by akm's error code, not by the wording of its message", async (t) => {
-  const server = await launchFixture();
-  t.after(() => server.stop());
-  const browser = await chromium.launch({ headless: true });
-  t.after(() => browser.close());
-  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-  const answer = (code, error) => (route) =>
-    route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ ok: false, code, error }) });
-  const create = async () => {
-    await open(page, server, "/library/new");
-    await page.getByLabel("File name").fill("taken-name");
-    await page.locator('textarea[name="content"]').fill("# Taken\n");
-    await page.getByRole("button", { name: "Create knowledge" }).click();
-  };
-  // A reworded message with akm's code is still a name collision.
-  await page.route("**/api/knowledge/create", answer("RESOURCE_ALREADY_EXISTS", "Name in use."));
-  await create();
-  await expect(page.getByRole("alert")).toContainText("That file name is already used in this folder");
-  // Another error that happens to say "already exists" is shown as akm sent it.
-  await page.unroute("**/api/knowledge/create");
-  await page.route("**/api/knowledge/create", answer("INVALID_FLAG_VALUE", 'Bundle "x" already exists.'));
-  await create();
-  await expect(page.getByRole("alert")).toContainText('Bundle "x" already exists.');
-  await expect(page.getByRole("alert")).not.toContainText("existing asset has not been changed");
+  await expect(page.getByRole("link", { name: "Create in Files" })).toHaveAttribute("href", /bundle=personal(&|$)/);
 });

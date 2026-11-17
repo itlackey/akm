@@ -175,7 +175,7 @@ test("knowledge is saved like any other file", async (t) => {
   const app = await launchFixture();
   t.after(() => app.stop());
   const source = value(await read(app, { ref: app.refs.document }));
-  assert.equal(source.writable, true);
+  assert.deepEqual(source.actions.edit, { allowed: true });
   assert.equal(
     value(
       await save(app, { ref: app.refs.document, revision: source.revision, content: `${source.content}\nChecked.\n` }),
@@ -190,14 +190,14 @@ test("a bundle akm does not write to is readable, and a save into it is refused"
   t.after(() => app.stop());
   const before = await fs.readFile(app.vendorPath, "utf8");
   const source = value(await read(app, { ref: app.refs.vendor }));
-  assert.equal(source.writable, false);
+  assert.equal(source.actions.edit.allowed, false, "the read says Edit is not offered");
   const refused = await save(app, { ref: app.refs.vendor, revision: source.revision, content: "planted\n" });
   assert.equal(refused.status, 400);
-  assert.match(refused.body.error, /read-only/);
+  assert.equal(refused.body.error, source.actions.edit.reason, "the save is refused with the sentence the read gave");
   assert.equal(await fs.readFile(app.vendorPath, "utf8"), before);
 });
 
-test("a filesystem failure is a 500 that names its cause", {
+test("a file akm cannot open is refused with its cause", {
   skip: process.getuid?.() === 0 && "root reads any file",
 }, async (t) => {
   const app = await launchFixture();
@@ -207,9 +207,8 @@ test("a filesystem failure is a 500 that names its cause", {
   t.after(() => app.stop());
   await fs.chmod(file, 0o000);
   const failed = await read(app, { bundle: "personal", file: skillFile });
-  assert.equal(failed.status, 500);
-  assert.equal(failed.body.code, "INTERNAL_ERROR");
-  assert.match(failed.body.error, /EACCES/);
+  assert.equal(failed.status, 400);
+  assert.match(failed.body.error, /cannot be opened: .*EACCES/);
 });
 
 test("every status comes from one mapping, and the moved routes answer only under /api/desktop", async (t) => {
@@ -238,4 +237,35 @@ test("every status comes from one mapping, and the moved routes answer only unde
     404,
     "the new route exists and reports the missing file",
   );
+});
+
+test("the folders akm manages are not opened by the plain editor, hidden entries shown or not", async (t) => {
+  const app = await launchFixture({ git: true });
+  t.after(() => app.stop());
+  const listing = value(await app.call("/api/bundles/files?bundle=personal&hidden=1"));
+  const git = listing.entries.find((entry) => entry.name === ".git");
+  assert.equal(git.actions.read.allowed, false);
+  const config = await read(app, { bundle: "personal", file: ".git/config" });
+  assert.equal(config.status, 400);
+  const refused = await save(app, { bundle: "personal", file: ".git/config", revision: "x", content: "[core]\n" });
+  assert.equal(refused.status, 400);
+  const inside = value(await app.call("/api/bundles/files?bundle=personal&path=.git&hidden=1")).entries.find(
+    (entry) => entry.name === "config",
+  );
+  assert.equal(config.body.error, inside.actions.read.reason, "refused with the sentence akm reports for the file");
+});
+
+test("a file that is not text is listed with akm's reason for read and edit", async (t) => {
+  const app = await launchFixture({
+    configureFixture: async (fixture) => {
+      await fs.writeFile(path.join(fixture.root, "personal/pic.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 1, 2]));
+    },
+  });
+  t.after(() => app.stop());
+  const entry = value(await app.call("/api/bundles/files?bundle=personal")).entries.find((e) => e.name === "pic.png");
+  assert.equal(entry.actions.read.allowed, false);
+  assert.equal(entry.actions.edit.allowed, false);
+  const refused = await read(app, { bundle: "personal", file: "pic.png" });
+  assert.equal(refused.status, 400);
+  assert.equal(refused.body.error, entry.actions.read.reason);
 });

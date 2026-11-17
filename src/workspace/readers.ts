@@ -12,7 +12,9 @@ import { bundleKeyForContentRoot } from "../core/config/config-sources";
 import { UsageError } from "../core/errors";
 import { getStateDbPath } from "../core/state-db";
 import { resolveWorkingStashTarget } from "../core/write-source";
+import { readUsableIndex } from "../indexer/index-readiness";
 import { implicitStashDir } from "../indexer/search/search-source";
+import { getEntryIdByFilePath, getItemRefById } from "../storage/repositories/index-entries-repository";
 
 export { withReadonlyStateDb } from "../core/state-db";
 
@@ -114,4 +116,12 @@ export function automaticWriteTarget(config: AkmConfig) {
   } catch {
     return null; // No AKM_BUNDLE_DIR and no usable default bundle: writes need an explicit target.
   }
+}
+
+/** The durable `bundle//conceptId` of the indexed asset at `filePath`, the key feedback rows use. */
+export function durableRefForPath(filePath: string): string | null {
+  return readUsableIndex((db) => {
+    const id = getEntryIdByFilePath(db, filePath);
+    return id === undefined ? null : getItemRefById(db, id);
+  }, null);
 }

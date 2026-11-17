@@ -470,17 +470,26 @@ test("visualizations survive late responses, a changed library and a narrow wind
     await page.close();
   });
 
-  await t.test("Files editor: it uses the pane's width and scrolls in one place, its own text", async () => {
+  await t.test("Files editor: it uses the pane's width and scrolls in one place", async () => {
     const { page } = await fresh();
     await open(page, server, `/library/edit?${new URLSearchParams({ ref: server.refs.document })}`);
-    const editor = page.getByRole("textbox", { name: "Markdown source, including optional frontmatter" });
-    await editor.fill(Array.from({ length: 150 }, (_, n) => `Line ${n} of a long note`).join("\n"));
-    const scrollers = await innerScrollers(page, ".files-content");
+    const editor = page.getByRole("textbox", { name: /^Markdown (body|source, including optional frontmatter)$/ });
+    const long = Array.from({ length: 150 }, (_, n) => `Line ${n} of a long note`).join("\n");
+    // With the properties above the body, the body grows and the pane is the one place that scrolls.
+    await editor.fill(long);
     assert.deepEqual(
-      scrollers.map((s) => s.split(" ")[0]),
+      (await innerScrollers(page, ".files-content")).map((s) => s.split(" ")[0]),
+      ["div.files-content"],
+    );
+    // The editor and the findings beside it fill the pane.
+    assert.ok((await page.locator(".editor-columns").boundingBox()).width > 800, "the editor fills the pane");
+    // In Text the box takes the pane's height and scrolls its own text.
+    await page.getByRole("button", { name: "Text", exact: true }).click();
+    await editor.fill(long);
+    assert.deepEqual(
+      (await innerScrollers(page, ".files-content")).map((s) => s.split(" ")[0]),
       ["textarea.source-editor"],
     );
-    assert.ok((await editor.boundingBox()).width > 800, "the editor fills the pane");
     await page.close();
   });
 

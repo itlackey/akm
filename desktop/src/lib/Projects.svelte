@@ -188,7 +188,6 @@
         query={new URLSearchParams()}
         {returnTo}
         bundles={workspace.bundles}
-        defaultWriteTarget={workspace.defaultWriteTarget}
         mode="search"
         hideBack
         onLoaded={(read) => (assetTitle = documentTitle(read.asset))}

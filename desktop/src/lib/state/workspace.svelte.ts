@@ -21,6 +21,8 @@ export const workspace = $state({
   /** Pending proposals; null when the queue could not be read (not the same as zero). */
   pendingCount: null as number | null,
   theme: "system",
+  /** The app runs in the Electron shell, which can show a file in the system file manager. */
+  native: false,
   /**
    * A form with unsaved changes that is not a Library draft (Projects, Connections): while `dirty`, leaving by
    * navigation, Back/Forward or closing the window asks first. `what` is the sentence the dialog shows.

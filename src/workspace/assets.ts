@@ -9,6 +9,7 @@ import { akmRelated } from "../commands/read/related";
 import { akmSearch, narrowSourcesToName, normalizeScopeFilters, parseBeliefFilterMode } from "../commands/read/search";
 import { akmShowUnified } from "../commands/read/show";
 import { parseBundleRef } from "../core/asset/asset-ref";
+import { readFrontmatter } from "../core/asset/frontmatter-edit";
 import { parseMarkdownToc, uniqueHeadingSlugs } from "../core/asset/markdown";
 import { markdownLinkTargets } from "../core/asset/markdown-link-targets";
 import { loadConfig } from "../core/config/config";
@@ -23,15 +24,19 @@ import type { ScopeFilters } from "../indexer/passes/metadata";
 import { resolveReadSources } from "../indexer/read-preflight";
 import { countBrowseEntries } from "../indexer/search/db-search";
 import { findSourceForPath, resolveSourceEntries } from "../indexer/search/search-source";
+import { protectedTypeOf } from "../indexer/walk/place-rules";
 import { getEntryIdByFilePath, getItemRefById } from "../storage/repositories/index-entries-repository";
 import { countFeedbackBySignal, listFeedbackEventRows } from "../storage/repositories/metrics-repository";
 import { assetImprove } from "./asset-improve";
 import { bundleFileLocation, listBundleFiles } from "./bundle-files";
+import { bundleWriteBlockers, fileActions } from "./file-actions";
 import { readFileRevision, readRecentCommits } from "./git-read";
-import { capSide, clampLimit, DIFF_SIDE_MAX_CHARS, withReadonlyStateDb } from "./readers";
+import { capSide, clampLimit, DIFF_SIDE_MAX_CHARS, durableRefForPath, withReadonlyStateDb } from "./readers";
 
+export { copyEntry } from "./copy-entry";
 export { graph } from "./graph";
 export { searchMisses } from "./misses";
+export { movedLinks, updateMovedLinks } from "./moved-links";
 
 export interface SearchInput {
   q: string;
@@ -143,14 +148,6 @@ export function projectOverview(input: { project: string }) {
   };
 }
 
-/** The durable `bundle//conceptId` of the indexed asset at `filePath`, the key feedback rows use. */
-function durableRefForPath(filePath: string): string | null {
-  return readUsableIndex((db) => {
-    const id = getEntryIdByFilePath(db, filePath);
-    return id === undefined ? null : getItemRefById(db, id);
-  }, null);
-}
-
 function feedbackFor(durableRef: string | null) {
   const empty = { counts: {}, history: [] };
   if (!durableRef) return empty;
@@ -186,6 +183,8 @@ export async function show(input: { ref: string }) {
   const shown = await akmShowUnified({ ref, readOnly: true });
   const durableRef = shown.path ? durableRefForPath(shown.path) : null;
   const content = shown.content ?? "";
+  // Where the body starts in the text an asset is read from (content, a command's template, an agent's prompt).
+  const bodyStart = readFrontmatter(shown.content || shown.template || shown.prompt || "").bodyStart;
   const headings = parseMarkdownToc(content).headings;
   const slugs = uniqueHeadingSlugs(headings);
   const links: Record<string, string> = {};
@@ -208,12 +207,29 @@ export async function show(input: { ref: string }) {
       }
     }, undefined);
   }
+  const location = shown.path ? bundleFileLocation(shown.path) : null;
   return {
     redacted: false,
     durableRef,
     bundle: durableRef ? parseBundleRef(durableRef).bundle : null,
     asset: shown,
-    location: shown.path ? bundleFileLocation(shown.path) : null,
+    location,
+    bodyStart,
+    // What akm accepts doing to this asset's file, and why not: the verdicts the file listing gives the same entry.
+    actions:
+      location && shown.path
+        ? fileActions(
+            {
+              bundle: location.bundle,
+              relative: location.path,
+              kind: "file",
+              absolute: shown.path,
+              protected: protectedTypeOf(location.path) !== undefined,
+              assets: durableRef ? [{ ref: durableRef, type: shown.type }] : [],
+            },
+            bundleWriteBlockers(loadConfig(), location.bundle),
+          )
+        : null,
     feedback: feedbackFor(durableRef),
     feedbackRequireReason: loadConfig().feedback?.requireReason !== false,
     links,

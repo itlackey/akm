@@ -406,13 +406,42 @@ export async function writeAssetToSource(
   ref: AssetRef,
   content: string,
 ): Promise<{ path: string; ref: string }> {
+  assertWritableSource(source, config);
+  const filePath = resolveAssetFilePath(source, ref);
+  writeSourceFile(source, filePath, content, formatRefForMessage(ref), ref.type);
+  return {
+    path: filePath,
+    ref: displayRef({ conceptId: conceptIdFromTypeName(ref.type, ref.name), bundleId: ref.origin }),
+  };
+}
+
+/** The gates an asset write passes: {@link assertPlainWritable}, and an adapter that takes AKM asset writes. */
+export function assertWritableSource(source: WriteTargetSource, config: SourceConfigEntry): void {
+  assertPlainWritable(source, config);
+  assertAkmAssetWrite(source);
+}
+
+/** The gates of a plain file write: the source takes writes and is a kind akm writes, whatever its adapter. */
+export function assertPlainWritable(source: WriteTargetSource, config: SourceConfigEntry): void {
   ensureWritable(source, config);
   assertSupportedKind(source);
-  assertAkmAssetWrite(source);
+}
 
-  const filePath = resolveAssetFilePath(source, ref);
-  const authored = filePath.toLowerCase().endsWith(".md") ? normalizeAkmMarkdown(content, ref.type) : content;
-  const normalized = authored.endsWith("\n") ? authored : `${authored}\n`;
+/**
+ * Write a text file into `source` at `filePath` (already resolved inside it, after {@link assertWritableSource}), the
+ * atomic write every authored file goes through; `label` names it in warnings. Markdown of a known `type` is made a conformant document first; a file
+ * of no type (`type` undefined) is written as given; an empty file stays empty.
+ */
+export function writeSourceFile(
+  source: WriteTargetSource,
+  filePath: string,
+  content: string,
+  label: string,
+  type?: string,
+): void {
+  const authored =
+    type !== undefined && filePath.toLowerCase().endsWith(".md") ? normalizeAkmMarkdown(content, type) : content;
+  const normalized = authored === "" || authored.endsWith("\n") ? authored : `${authored}\n`;
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   // Atomic: sibling temp file, fdatasync, rename — a crash or a full disk never
   // leaves a half-written asset where a good one was.
@@ -425,14 +454,10 @@ export async function writeAssetToSource(
   const hostPaths = findAbsoluteHomePaths(normalized);
   if (hostPaths.length > 0) {
     warn(
-      `warning: asset "${formatRefForMessage(ref)}" embeds absolute host path(s): ${hostPaths.join(", ")}. ` +
+      `warning: asset "${label}" embeds absolute host path(s): ${hostPaths.join(", ")}. ` +
         "These make the stash non-portable and leak the local username — prefer $HOME or ~ relative references.",
     );
   }
-  return {
-    path: filePath,
-    ref: displayRef({ conceptId: conceptIdFromTypeName(ref.type, ref.name), bundleId: ref.origin }),
-  };
 }
 
 /** Delete the asset at `ref` from `source`. Same gates as {@link writeAssetToSource}, no commit. */
@@ -441,9 +466,7 @@ export async function deleteAssetFromSource(
   config: SourceConfigEntry,
   ref: AssetRef,
 ): Promise<{ path: string; ref: string }> {
-  ensureWritable(source, config);
-  assertSupportedKind(source);
-  assertAkmAssetWrite(source);
+  assertWritableSource(source, config);
 
   const filePath = resolveAssetFilePath(source, ref);
   if (!fs.existsSync(filePath)) {

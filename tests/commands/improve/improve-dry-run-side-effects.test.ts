@@ -21,6 +21,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { akmImprove } from "../../../src/commands/improve/improve";
+import { akmLint } from "../../../src/commands/lint";
 import { saveConfig } from "../../../src/core/config/config";
 import { getStashLocksDir } from "../../../src/core/paths";
 import { getStateDbPath } from "../../../src/core/state-db";
@@ -278,6 +279,74 @@ describe("akm improve --dry-run writes no AKM artifacts", () => {
         expect(result.dryRun).toBe(true);
 
         expectSandboxRootsUnchanged(before, stashDir);
+      });
+    },
+    TIMEOUT_MS,
+  );
+
+  test(
+    "a dry run whose lint meets an unresolved ref and a recorded move reads them from its snapshot and leaves everything identical",
+    async () => {
+      const stashDir = makeTempDir("akm-dryrun-moved-");
+      writeMemory(stashDir, "old", "Remember old details.");
+      fs.writeFileSync(
+        path.join(stashDir, "memories", "linker.md"),
+        "---\ndescription: linker\nupdated: 2026-11-01\nxrefs:\n  - memories/old\n---\n\nLinks.\n",
+      );
+      await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+        saveConfig(dryRunConfig);
+        await akmIndex({ stashDir, full: true });
+        fs.renameSync(path.join(stashDir, "memories", "old.md"), path.join(stashDir, "memories", "new.md"));
+        await akmIndex({ stashDir });
+        const before = snapshotSandboxRoots(stashDir);
+
+        const result = await akmImprove({
+          scope: "memory",
+          stashDir,
+          dryRun: true,
+          reindexFn: mock(async () => {
+            throw new Error("dry-run invoked the index");
+          }),
+        });
+
+        expect(result.ok).toBe(true);
+        expectSandboxRootsUnchanged(before, stashDir);
+      });
+    },
+    TIMEOUT_MS,
+  );
+
+  test(
+    "akm lint reads the recorded moves without leaving or changing any artifact",
+    async () => {
+      const stashDir = makeTempDir("akm-lint-stash-");
+      writeMemory(stashDir, "alpha", "Remember alpha details.");
+      await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+        saveConfig(dryRunConfig);
+        await akmIndex({ stashDir, full: true });
+        const before = snapshotSandboxRoots(stashDir);
+
+        await akmLint({ dir: stashDir });
+
+        expectSandboxRootsUnchanged(before, stashDir);
+      });
+    },
+    TIMEOUT_MS,
+  );
+
+  test(
+    "an index of an unchanged bundle leaves no state.db-wal or state.db-shm behind",
+    async () => {
+      const stashDir = makeTempDir("akm-reindex-stash-");
+      writeMemory(stashDir, "alpha", "Remember alpha details.");
+      await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+        saveConfig(dryRunConfig);
+        await akmIndex({ stashDir, full: true });
+        const filesBefore = [...snapshotSandboxRoots(stashDir).data!.keys()];
+
+        await akmIndex({ stashDir });
+
+        expect([...snapshotSandboxRoots(stashDir).data!.keys()]).toEqual(filesBefore);
       });
     },
     TIMEOUT_MS,

@@ -58,12 +58,13 @@ import { assertTaskScheduleCronValid, assertTaskScheduleInputsSatisfyContract } 
 import { parseTaskSource } from "../../../tasks/source/parse-task-source";
 import { taskSourceErrorDetail } from "../../../tasks/source-v3";
 import { checkWorkflowPlan, compileWorkflowSource } from "../../../workflows/compile";
+import { type RuleScope, ruleApplies } from "../../asset/lint-text";
 import { conceptIdForStashFile } from "../../asset/resolve-ref";
 import { isAkmRegistryCachePath, scanEnvKeyNames } from "../../common";
 import type { BundleComponent, Diagnostic, ValidateContext } from "../types";
 
 /** Recommended `category` values for facts — `commands/lint/fact-linter.ts:9`. */
-const KNOWN_CATEGORIES = new Set(["personal", "team", "project", "convention", "meta"]);
+export const KNOWN_CATEGORIES = new Set(["personal", "team", "project", "convention", "meta"]);
 
 /** Placeholder markers a workflow stub carries — `commands/lint/workflow-linter.ts:10`. */
 const PLACEHOLDER_STRINGS = ["Describe what this workflow accomplishes", "Example Workflow"];
@@ -236,50 +237,99 @@ export async function skillDirectoryDiagnostics(
   return [];
 }
 
-// ── per-type dispatch (mirrors getLinterForType) ─────────────────────────────
+// ── per-type checks ──────────────────────────────────────────────────────────
 
-export interface PerTypeCheckArgs {
+/** What a per-type check reads of one file; the `akm lint` sweep and an adapter's `validate` both build it. */
+export interface TypeCheckInput {
+  /** The type akm gives the file. */
   type: string | undefined;
   relPath: string;
   raw: string;
-  /** Parsed frontmatter data (or parsed YAML for `task`). */
+  /** Parsed frontmatter data (empty for `task`). */
   data: Record<string, unknown>;
   /** Frontmatter block text, or `null` (non-md / task). */
   frontmatter: string | null;
-  /** Frontmatter-stripped body (`parsed.content`) — MemoryLinter/WorkflowLinter's `ctx.body`. */
+  /** Frontmatter-stripped body — MemoryLinter/WorkflowLinter's `ctx.body`. */
   body: string;
   /** File extension incl. dot, lower-cased (`.md`, `.yaml`, …). */
   ext: string;
-  ctx: ValidateContext;
+  /** What decides whether a rule applies to the file (see `ruleApplies`). */
+  rules: RuleScope;
+  /** Whether the memory's `<name>.derived.md` sibling exists; each entry point reads it its own way. */
+  derivedSiblingExists: boolean;
+}
+
+/** The path of the `<name>.derived.md` sibling of a memory at `memoryPath`. */
+export function derivedSiblingPath(memoryPath: string): string {
+  return `${memoryPath.replace(/\.md$/i, "")}.derived.md`;
+}
+
+type TypeCheck = (input: TypeCheckInput) => Diagnostic[];
+
+const nameOrType =
+  (allowed: string): TypeCheck =>
+  (i) =>
+    ruleApplies("missing-name-or-type", i.rules)
+      ? nameOrTypeDiagnostics(i.relPath, i.data, i.frontmatter, [allowed])
+      : [];
+
+const envKeys: TypeCheck = (i) => dangerousEnvKeyDiagnostics(i.type, i.relPath, i.raw);
+
+/**
+ * The one table from an akm type to its own checks (what the base checks do not cover). It is read-only: the
+ * `orphaned-stub` and `placeholder-stub` findings are reported as not fixed, and the caller that may delete the
+ * file (`akm lint --fix`) does so. Types with no entry (knowledge, lesson, script, skill, wiki, session) have the base
+ * checks only; a skill's directory check is `skillDirectoryDiagnostics`.
+ */
+const TYPE_CHECKS: ReadonlyMap<string, TypeCheck> = new Map<string, TypeCheck>([
+  ["command", nameOrType("command")],
+  ["agent", nameOrType("agent")],
+  ["fact", (i) => (ruleApplies("missing-category", i.rules) ? factDiagnostics(i.relPath, i.data) : [])],
+  ["task", (i) => (ruleApplies("invalid-task-yaml", i.rules) ? taskDiagnostics(i.relPath, i.raw) : [])],
+  [
+    "workflow",
+    (i) => {
+      const placeholder =
+        i.ext === ".md" && ruleApplies("placeholder-stub", i.rules) ? matchWorkflowPlaceholder(i.body) : null;
+      return placeholder === null
+        ? []
+        : [{ file: i.relPath, issue: "placeholder-stub", detail: `placeholder text: "${placeholder}"`, fixed: false }];
+    },
+  ],
+  [
+    "memory",
+    (i) =>
+      ruleApplies("orphaned-stub", i.rules) && memoryOrphanStubApplies(i.data, i.body) && !i.derivedSiblingExists
+        ? [{ file: i.relPath, issue: "orphaned-stub", detail: ORPHANED_STUB_DETAIL, fixed: false }]
+        : [],
+  ],
+  ["env", envKeys],
+  ["secret", envKeys],
+]);
+
+/** The checks of the file's own type. */
+export function perTypeChecks(input: TypeCheckInput): Diagnostic[] {
+  return (input.type === undefined ? undefined : TYPE_CHECKS.get(input.type))?.(input) ?? [];
+}
+
+/** Everything an adapter's `validate` reports of the file's own type: its checks, then its frontend's findings and advisories. */
+export function perTypeDiagnostics(input: TypeCheckInput, parsePath: string): Diagnostic[] {
+  const frontend = perTypeFrontend(input, parsePath);
+  return [...perTypeChecks(input), ...frontend.errors, ...frontend.warnings];
 }
 
 /**
- * The winning `type`'s per-type EXTRA validate checks (base checks run
- * separately in `akm-adapter.ts`). Async: memory's orphaned-stub sibling probe
- * routes through `ctx`.
+ * The parse+compile of a file whose type has a workflow frontend (a Markdown workflow): fatal findings, and the
+ * advisories that are routed apart from them. Other types have none. `parsePath` is the source identity handed to the
+ * compiler (the adapter passes the bundle-relative path; the CLI passes the absolute path).
  */
-export async function perTypeValidateChecks(args: PerTypeCheckArgs): Promise<Diagnostic[]> {
-  const { type, relPath, raw, data, frontmatter, body, ext, ctx } = args;
-  switch (type) {
-    case "command":
-      return nameOrTypeDiagnostics(relPath, data, frontmatter, ["command"]);
-    case "agent":
-      return nameOrTypeDiagnostics(relPath, data, frontmatter, ["agent"]);
-    case "fact":
-      return factDiagnostics(relPath, data);
-    case "task":
-      return taskDiagnostics(relPath, raw);
-    case "workflow":
-      return ext === ".md" ? workflowDiagnostics(relPath, raw, body) : [];
-    case "memory":
-      return memoryDiagnostics(relPath, data, body, ctx);
-    case "env":
-    case "secret":
-      return dangerousEnvKeyDiagnostics(type, relPath, raw);
-    default:
-      // knowledge / lesson / script / wiki / session → DefaultLinter (base only).
-      return [];
-  }
+export function perTypeFrontend(
+  input: Pick<TypeCheckInput, "type" | "ext" | "relPath" | "raw">,
+  parsePath: string,
+): WorkflowFrontendDiagnostics {
+  return input.type === "workflow" && input.ext === ".md"
+    ? workflowFrontendDiagnostics(input.relPath, input.raw, parsePath)
+    : { errors: [], warnings: [] };
 }
 
 /** FactLinter extra check (`fact-linter.ts:23-44`). */
@@ -464,27 +514,6 @@ export function workflowFrontendDiagnostics(
   return { errors, warnings };
 }
 
-/**
- * WorkflowLinter extra checks (`workflow-linter.ts:22-79`), READ-ONLY:
- * `placeholder-stub` is NEVER deleted here (validate MUST NOT write) — emitted
- * as a non-fixable Diagnostic. `invalid-workflow-structure` parses and compiles
- * the whole `raw` through the unified workflow frontend.
- */
-function workflowDiagnostics(relPath: string, raw: string, body: string): Diagnostic[] {
-  const diagnostics: Diagnostic[] = [];
-  const placeholderMatch = matchWorkflowPlaceholder(body);
-  if (placeholderMatch) {
-    diagnostics.push({
-      file: relPath,
-      issue: "placeholder-stub",
-      detail: `placeholder text: "${placeholderMatch}"`,
-      fixed: false,
-    });
-  }
-  diagnostics.push(...workflowStructureDiagnostics(relPath, raw, relPath));
-  return diagnostics;
-}
-
 /** The non-fixable orphaned-stub finding detail (`memory-linter.ts` no-fix branch). Shared with the live linter. */
 export const ORPHANED_STUB_DETAIL = "inferenceProcessed stub with no derived sibling";
 
@@ -498,25 +527,6 @@ export const ORPHANED_STUB_DETAIL = "inferenceProcessed stub with no derived sib
  */
 export function memoryOrphanStubApplies(data: Record<string, unknown>, body: string): boolean {
   return data.inferenceProcessed === true && body.trim().length < 100;
-}
-
-/**
- * MemoryLinter extra check (`memory-linter.ts:19-65`), READ-ONLY: the
- * `orphaned-stub` DELETE fix is dropped (validate MUST NOT write) — emitted as
- * a non-fixable Diagnostic. The `<name>.derived.md` sibling probe routes
- * through `ctx.readFile` (overlay), not `fs.existsSync`.
- */
-async function memoryDiagnostics(
-  relPath: string,
-  data: Record<string, unknown>,
-  body: string,
-  ctx: ValidateContext,
-): Promise<Diagnostic[]> {
-  if (!memoryOrphanStubApplies(data, body)) return [];
-  const derivedPath = `${relPath.replace(/\.md$/, "")}.derived.md`;
-  const sibling = await ctx.readFile(derivedPath);
-  if (sibling !== null) return [];
-  return [{ file: relPath, issue: "orphaned-stub", detail: ORPHANED_STUB_DETAIL, fixed: false }];
 }
 
 // Re-export the component type so `akm-adapter.ts` can share it without a

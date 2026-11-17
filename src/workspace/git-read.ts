@@ -15,6 +15,7 @@
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { pathsSyncWouldCommit } from "../sources/providers/git-stash";
 
 const GIT_TIMEOUT_MS = 10_000;
 /** `git log` output for a large accept can be big; cap what we buffer. */
@@ -80,8 +81,8 @@ export interface BundleGitStatus {
   ahead: number | null;
   /** Commits only on the upstream (as of the last fetch); `null` without an upstream. */
   behind: number | null;
-  /** Paths with uncommitted changes. */
-  dirtyPaths: number;
+  /** The files `akm sync` would commit now, from the function that selects them; `null` when git could not list the changes. */
+  uncommitted: number | null;
   lastCommit: GitCommitSummary | null;
 }
 
@@ -107,13 +108,14 @@ export async function readBundleGitStatus(repoDir: string): Promise<BundleGitSta
     }
   }
   const [sha, time, subject] = (last.ok ? last.out : "").trim().split("\x1f");
+  const syncing = pathsSyncWouldCommit(repoDir);
   return {
     error,
     branch: (branch.ok && branch.out.trim()) || null,
     upstream: (upstream.ok && upstream.out.trim()) || null,
     ahead,
     behind,
-    dirtyPaths: status.ok ? status.out.split("\n").filter((line) => line.trim() !== "").length : 0,
+    uncommitted: syncing.ok ? syncing.paths.length : null,
     lastCommit: sha && time ? { sha, time, subject: subject ?? "" } : null,
   };
 }

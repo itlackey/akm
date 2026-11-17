@@ -15,8 +15,10 @@ import {
   proposals,
   sensitive,
   setup,
+  UsageError,
 } from "akm-cli/workspace";
 import { compareVersions } from "../engine-skew.js";
+import { copyEntry, deleteEntry, makeFolder, moveEntry, revealEntry } from "./features/file-operations.js";
 import { readFile, saveFile } from "./features/files.js";
 import {
   preferencesView,
@@ -91,6 +93,7 @@ export const routes: Route[] = [
   // Desktop's own.
   get("/api/desktop", () => ({
     hostname: os.hostname(),
+    native: process.env.AKM_DESKTOP_NATIVE === "1",
     version: process.env.AKM_DESKTOP_VERSION ?? "development",
     akmVersion: akmPackage.version,
     commit: process.env.AKM_DESKTOP_COMMIT,
@@ -188,6 +191,23 @@ export const routes: Route[] = [
   }),
   get("/api/desktop/file", (query) => readFile(Object.fromEntries(query)), true),
   post("/api/desktop/file/save", (value) => saveFile(value), { limit: "document" }),
+  post("/api/desktop/files/move", (value) => moveEntry(value)),
+  post("/api/desktop/files/copy", (value) => copyEntry(value)),
+  post("/api/desktop/files/reveal", async (value) => {
+    try {
+      return await revealEntry(value);
+    } catch (error) {
+      throw error instanceof UsageError
+        ? error
+        : new HttpFailure(
+            400,
+            "REVEAL_FAILED",
+            error instanceof Error ? error.message : "The file could not be shown.",
+          );
+    }
+  }),
+  post("/api/desktop/files/folder", (value) => makeFolder(value)),
+  post("/api/desktop/files/delete", (value) => deleteEntry(value)),
   get("/api/desktop/sensitive", (query) => sensitive.describe(Object.fromEntries(query))),
   post("/api/desktop/sensitive/reveal", (value) => reveal(value), { literal: true }),
   post(
@@ -253,6 +273,7 @@ export const routes: Route[] = [
   get("/api/asset/improve", (query) => assets.improvement(refOf(query))),
   get("/api/asset/source", (query) => documents.readSource({ ref: text(query, "ref") })),
   get("/api/bundles", () => bundles.list()),
+  get("/api/assets/moved-links", () => assets.movedLinks()),
   get("/api/bundles/files", (query) =>
     assets.bundleFiles({ bundle: text(query, "bundle"), path: text(query, "path"), hidden: flag(query, "hidden") }),
   ),
@@ -301,13 +322,29 @@ export const routes: Route[] = [
   post("/api/config/connections/save", body(config.saveConnection, ["name", "entry"], "connection save")),
   post("/api/config/connections/remove", body(config.removeConnection, ["name"], "connection remove")),
   post(
-    "/api/knowledge/create",
-    body(documents.createKnowledge, ["bundle", "name", "path", "content"], "knowledge create"),
-    { limit: "document" },
+    "/api/documents/create-file",
+    body(documents.createFile, ["bundle", "folder", "type", "name", "content"], "file create"),
+    {
+      limit: "document",
+    },
   ),
+  post("/api/documents/check", body(documents.check, ["bundle", "path", "content"], "document check"), {
+    limit: "document",
+  }),
+  post("/api/documents/frontmatter", body(documents.frontmatter, ["bundle", "path", "content"], "frontmatter"), {
+    limit: "document",
+  }),
+  post(
+    "/api/documents/apply-frontmatter",
+    body(documents.applyFrontmatter, ["content", "changes"], "frontmatter change"),
+    {
+      limit: "document",
+    },
+  ),
+  post("/api/bundles/commit", body(bundles.commit, ["bundle", "message", "push"], "bundle commit")),
+  post("/api/assets/update-moved-links", body(assets.updateMovedLinks, ["bundle"], "moved links")),
   post("/api/asset/save", body(documents.save, ["ref", "content", "revision"], "document save"), { limit: "document" }),
   post("/api/asset/retire", body(documents.retire, ["ref", "revision"], "document retire")),
-  post("/api/asset/copy", body(documents.copy, ["sourceRef", "target", "newName"], "copy")),
   post("/api/proposals/accept", body(proposals.acceptMany, ["ids"], "accept")),
   post("/api/proposals/reject", body(proposals.rejectMany, ["ids", "reason"], "reject")),
   post("/api/proposals/:id/accept", (_value, params) => proposals.accept({ id: params.id! })),

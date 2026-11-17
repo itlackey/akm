@@ -21,7 +21,7 @@ test("pages are addressable; history, unsaved drafts and appearance survive navi
     page
       .getByRole("navigation", { name: "Primary navigation" })
       .getByRole("link", { name: new RegExp(`^${name}(?:\\s|$)`) });
-  const editor = page.getByRole("textbox", { name: "Markdown source, including optional frontmatter" });
+  const editor = page.getByRole("textbox", { name: /^Markdown (body|source, including optional frontmatter)$/ });
   const leave = page.getByRole("dialog", { name: "Leave this draft?" });
 
   await t.test("a deep link opens its page on a fresh load, and Back/Forward keep their pages", async () => {

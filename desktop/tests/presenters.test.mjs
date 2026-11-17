@@ -136,7 +136,6 @@ test("every view has a document title of its own, most specific part first", () 
     title("/library/edit?ref=personal%2F%2Fknowledge%2Frestore-laptop"),
     "Edit restore laptop · Library · AKM Desktop",
   );
-  assert.equal(title("/library/new"), "New knowledge · Library · AKM Desktop");
   assert.equal(title("/library/new-sensitive?kind=secret"), "New secret · Library · AKM Desktop");
   assert.equal(title("/review"), "Pending · Review · AKM Desktop");
   assert.equal(title("/review?status=recent"), "Recent decisions · Review · AKM Desktop");

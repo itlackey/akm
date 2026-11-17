@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { assets, bundles, indexWrittenAssets, UsageError } from "akm-cli/workspace";
 import { fields } from "../input.js";
+import { entryAt } from "./bundle-path.js";
 
 /**
  * Plain file editing for the human owner: any text file inside a configured bundle (an asset, a skill's support
@@ -28,7 +29,8 @@ type Bundle = {
 };
 type Selector = { ref?: string; bundle?: string; file?: string };
 
-async function selection(input: Selector) {
+/** `action` is what the route is about to do: akm's verdict for it on the file decides, and gives the reason. */
+async function selection(input: Selector, action: "read" | "edit") {
   const listing = (await bundles.list()) as { bundles: Bundle[] };
   let bundle = input.bundle,
     file = input.file,
@@ -65,15 +67,9 @@ async function selection(input: Selector) {
   if (!fs.statSync(real).isFile()) throw new UsageError("Choose a file, not a folder.");
   // akm's own answer for the real path, so neither `knowledge/../env/x.env` nor a link into an env/ or secrets/ folder
   // at any depth gets past it.
-  const folder = (await assets.bundleFiles({
-    bundle,
-    path: path.dirname(inside).replace(/^\.$/, ""),
-    hidden: true,
-  })) as { entries: Array<{ name: string; protected: boolean }> };
-  const listed = folder.entries.find((entry) => entry.name === path.basename(inside));
-  // No answer about the file is not permission to open it.
-  if (!listed) throw new UsageError("This file is unavailable. Check its location and filesystem permissions.");
-  if (listed.protected) throw new UsageError("Protected files are shown and edited from the protected-file view.");
+  const listed = await entryAt(bundle, inside.split(path.sep).join("/"));
+  const verdict = listed.actions[action];
+  if (!verdict.allowed) throw new UsageError(verdict.reason);
   return {
     bundle,
     file,
@@ -82,8 +78,7 @@ async function selection(input: Selector) {
     real,
     indexable: path.join(root, inside),
     root,
-    writable: found.writable === true,
-    akm: found.components.some((component) => component.adapter === "akm"),
+    actions: listed.actions,
   };
 }
 
@@ -95,7 +90,7 @@ function text(bytes: Buffer) {
 }
 
 export async function readFile(query: Selector) {
-  const chosen = await selection(query);
+  const chosen = await selection(query, "read");
   const bytes = fs.readFileSync(chosen.real);
   return {
     ref: chosen.ref,
@@ -104,8 +99,7 @@ export async function readFile(query: Selector) {
     file: chosen.file,
     content: text(bytes),
     revision: digest(bytes),
-    writable: chosen.writable,
-    markdown: /\.(?:md|markdown)$/i.test(chosen.real) && !["script", "task"].includes(chosen.type ?? ""),
+    actions: chosen.actions,
   };
 }
 
@@ -118,11 +112,7 @@ export async function saveFile(body: unknown) {
     !(typeof value.ref === "string" || (typeof value.bundle === "string" && typeof value.file === "string"))
   )
     throw new UsageError("Provide the file, revision and text.");
-  const chosen = await selection(value as Selector);
-  if (!chosen.writable)
-    throw new UsageError(
-      `Bundle ${chosen.bundle} is read-only: akm does not write to it, and an update would replace the edit.`,
-    );
+  const chosen = await selection(value as Selector, "edit");
   // From this read to the rename everything is synchronous, so no other Desktop request can interleave. Another
   // process could still write in that instant; akm's lease is not taken here, as an external editor would not take it.
   const live = fs.readFileSync(chosen.real);
@@ -140,8 +130,8 @@ export async function saveFile(body: unknown) {
   } finally {
     fs.rmSync(temporary, { force: true });
   }
-  const indexed =
-    !chosen.akm || (await indexWrittenAssets(chosen.root, [chosen.indexable], { bundleId: chosen.bundle }));
+  // The bundle's own adapter recognizes the file; `indexed` is what akm reports, for any adapter.
+  const indexed = await indexWrittenAssets(chosen.root, [chosen.indexable], { bundleId: chosen.bundle });
   return {
     ref: chosen.ref,
     bundle: chosen.bundle,

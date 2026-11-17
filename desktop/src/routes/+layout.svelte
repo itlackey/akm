@@ -33,7 +33,7 @@
     { name: "Activity", prefix: "activity" },
     { name: "Settings", prefix: "settings" },
   ] as const;
-  type Metadata = { hostname: string; akmVersion: string; version: string; commit?: string };
+  type Metadata = { hostname: string; native: boolean; akmVersion: string; version: string; commit?: string };
 
   let ready = $state(false);
   let error = $state("");
@@ -50,10 +50,9 @@
   // First-run setup is reached from Home and Settings, not from the bar, so no section is current there.
   const current = $derived(prefix === "setup" ? undefined : section);
   const view = $derived(page.url.pathname.split("/")[2] ?? "");
-  const editing = $derived(prefix === "library" && ["edit", "new"].includes(view));
+  const editing = $derived(prefix === "library" && ["edit"].includes(view));
   const workspaceActive = $derived(
-    prefix === "review" ||
-      (prefix === "library" && ["files", "edit", "new", "new-sensitive", "compare"].includes(view)),
+    prefix === "review" || (prefix === "library" && ["files", "edit", "new-sensitive", "compare"].includes(view)),
   );
 
   beforeNavigate((navigation) => {
@@ -119,7 +118,10 @@
   async function load() {
     error = "";
     const outcomes = await Promise.allSettled([
-      api<Metadata>("/desktop").then((value) => (metadata = value)),
+      api<Metadata>("/desktop").then((value) => {
+        metadata = value;
+        workspace.native = value.native;
+      }),
       refreshBundles(),
     ]);
     error = outcomes

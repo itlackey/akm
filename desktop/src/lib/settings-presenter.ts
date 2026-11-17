@@ -12,7 +12,8 @@ export interface SettingsGit {
   upstream: string | null;
   ahead: number;
   behind: number;
-  dirtyPaths: number;
+  /** The files a commit would take; null when akm could not list the changes. */
+  uncommitted: number | null;
   /** Why git could not be read: the other fields then say nothing about the repository. */
   error: string | null;
   lastCommit: { sha: string; subject: string; time: string } | null;

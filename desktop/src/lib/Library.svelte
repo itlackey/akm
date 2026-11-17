@@ -6,11 +6,10 @@
 
 <script lang="ts">
   import { onDestroy, tick, untrack } from "svelte";
-  import { afterNavigate } from "$app/navigation";
-  import { assetSource, title, toggleSelection, date, matchesAssetRef, type ApiError } from "./client";
+  import { api, assetSource, title, toggleSelection, date, matchesAssetRef, type ApiError } from "./client";
   import { libraryRead, resultContext, searchHref, documentTitle } from "./library-model";
-  import { filesHref, parseFilesHref } from "./library-files-model";
-  import type { FileLocation, FilesViewState } from "./library-files-model";
+  import { filesHref, parentPath, parseFilesHref } from "./library-files-model";
+  import type { FileListing, FileLocation, FilesViewState, MovedLinksReport } from "./library-files-model";
   import type { SearchResult, AssetRead } from "./library-model";
   import type { Bundle } from "./types";
   import LibraryAsset from "./LibraryAsset.svelte";
@@ -19,6 +18,7 @@
   import SensitiveAsset from "./SensitiveAsset.svelte";
   import SensitiveEditor from "./SensitiveEditor.svelte";
   import LibraryFiles from "./LibraryFiles.svelte";
+  import MovedLinks from "./MovedLinks.svelte";
   import Diff from "./Diff.svelte";
   import Icon from "./Icon.svelte";
   import { navigate } from "./navigation";
@@ -73,12 +73,11 @@
     searchWindowScroll = 0,
     searchContainer = $state<HTMLElement>();
   const filesViewState: FilesViewState = {};
+  let movedLinks = $state<MovedLinksReport | null>(null),
+    movedLinksError = $state(""),
+    movedChecks = $state(0);
   let pendingResultFocus = "";
-  let newFiles = $state<HTMLElement>(),
-    writeWarnings = $state<string[]>([]);
-  afterNavigate(() => {
-    if (newFiles?.matches(":popover-open")) newFiles.hidePopover();
-  });
+  let writeWarnings = $state<string[]>([]);
   let misses = $state<{
     searches: number;
     foundNothing: number;
@@ -96,7 +95,7 @@
   );
   const defaultBundle = $derived(bundles.find((b) => b.default)?.name ?? "");
   const normalizedRoute = $derived(route.replace(/^#?\//, ""));
-  const editing = $derived(normalizedRoute === "edit" || normalizedRoute === "new");
+  const editing = $derived(normalizedRoute === "edit");
   const newSensitive = $derived(normalizedRoute === "new-sensitive");
   const inFiles = $derived(normalizedRoute === "files" || editing || newSensitive);
   const ref = $derived(query.get("ref") ?? "");
@@ -112,11 +111,9 @@
   const readingHref = $derived(query.get("readingFrom") || fileQuery.get("readingFrom") || "");
   const reviewHref = $derived(query.get("reviewFrom") || fileQuery.get("reviewFrom") || "");
   const returnTo = $derived(
-    normalizedRoute === "new" && query.get("returnTo") === "/"
-      ? "/"
-      : inFiles
-        ? filesHref({ bundle: fileBundle, path: filePath, file: selectedFilePath, ref, open: !!ref }, readingHref)
-        : searchHref(resultContext(query)),
+    inFiles
+      ? filesHref({ bundle: fileBundle, path: filePath, file: selectedFilePath, ref, open: !!ref }, readingHref)
+      : searchHref(resultContext(query)),
   );
   const currentHref = $derived("/library/" + normalizedRoute + (query.size ? "?" + query : ""));
   const activeLocation = $derived(locatedRef === ref ? loadedAsset?.location : null);
@@ -217,6 +214,16 @@
     if (comparison && comparison !== compareKey && compareRefs.length === 2) {
       compareKey = comparison;
       void compare(compareRefs);
+    }
+  }
+  /** After a move akm lists the links that still name the old place; a failed read is said, never shown as none. */
+  async function checkMovedLinks() {
+    try {
+      movedLinks = await libraryRead<MovedLinksReport>("/assets/moved-links", {});
+      movedLinksError = "";
+    } catch (cause) {
+      movedLinks = null;
+      movedLinksError = `Could not check for links to the old place: ${(cause as Error).message}`;
     }
   }
   async function resolveLocation(edit: boolean) {
@@ -336,10 +343,6 @@
     filterDetails.open = false;
     resetFilterInputs();
   }
-  function leaveNewFiles(event: FocusEvent) {
-    if (!(event.relatedTarget instanceof Node) || newFiles?.contains(event.relatedTarget)) return;
-    if (newFiles?.matches(":popover-open")) newFiles.hidePopover();
-  }
   function dismissFilters(event: MouseEvent | KeyboardEvent) {
     if (!filterDetails?.open) return;
     if (event instanceof KeyboardEvent) {
@@ -452,43 +455,75 @@
   function navigateFiles(location: FileLocation) {
     void navigate(withReview(filesHref(location, readingHref)));
   }
-  async function savedAsset(savedRef: string, unchanged: boolean) {
+  /** A file was made: it opens in the editor, and Back returns to its folder. */
+  function openCreated(created: { bundle: string; folder: string; file: string; ref: string | null }) {
+    return navigate(
+      "/library/edit?" +
+        new URLSearchParams({
+          ...(created.ref ? { ref: created.ref } : { bundle: created.bundle, file: created.file }),
+          returnTo: filesHref(
+            {
+              bundle: created.bundle,
+              path: created.folder,
+              file: created.file,
+              ...(created.ref ? { ref: created.ref, open: true } : { open: true }),
+            },
+            readingHref,
+          ),
+        }),
+    );
+  }
+  /** The same create as the Files New button: a knowledge file in the folder akm keeps knowledge in, in akm's write target. */
+  async function writeThisUp(topic: string) {
+    error = "";
+    errorCode = "";
+    try {
+      const created = await api<{ bundle: string; file: string; ref: string | null }>(
+        "/documents/create-file",
+        {},
+        {
+          bundle: defaultWriteTarget,
+          type: "knowledge",
+          name: topic
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(/^-|-$/g, ""),
+        },
+      );
+      await openCreated({ ...created, folder: parentPath(created.file) });
+    } catch (cause) {
+      fail(cause);
+    }
+  }
+  async function savedAsset(savedRef: string, unchanged: boolean, saved?: { bundle: string; file: string }) {
     if (query.get("file")) {
       const params = new URLSearchParams((query.get("returnTo") ?? "").split("?")[1]);
       params.set("saved", unchanged ? "unchanged" : "1");
       await navigate("/library/files?" + params);
       return;
     }
-    const read = await libraryRead<AssetRead>("/asset", { ref: savedRef });
-    const location = read.location;
-    const href = location
-      ? filesHref(
-          {
-            bundle: location.bundle,
-            path: location.parent,
-            file: location.path,
-            ref: read.durableRef || savedRef,
-            open: true,
-          },
-          readingHref,
-        )
-      : filesHref({ bundle: fileBundle, path: filePath, ref: savedRef, open: true }, readingHref);
+    // The saved file opens where it is. When akm indexes it as an asset it opens as that asset; a file akm could not
+    // read as one (it dropped out of the index) opens as a file, which says why.
+    let href: string;
+    if (saved) {
+      const folder = parentPath(saved.file);
+      const entry = (
+        await libraryRead<FileListing>("/bundles/files", { bundle: saved.bundle, path: folder })
+      ).entries.find((listed) => listed.path === saved.file);
+      href = filesHref(
+        {
+          bundle: saved.bundle,
+          path: folder,
+          file: saved.file,
+          ...(entry?.assets.length === 1 ? { ref: entry.assets[0].ref } : {}),
+          open: true,
+        },
+        readingHref,
+      );
+    } else href = filesHref({ bundle: fileBundle, path: filePath, ref: savedRef, open: true }, readingHref);
     const params = new URLSearchParams(href.split("?")[1]);
     params.set("saved", unchanged ? "unchanged" : "1");
     await navigate(withReview("/library/files?" + params));
-  }
-  function createHref(bundle: string, path: string, readingFrom: string, reviewFrom: string) {
-    const location = new URLSearchParams(filesHref({ bundle, path }, readingFrom).split("?")[1]);
-    if (reviewFrom) location.set("reviewFrom", reviewFrom);
-    return (
-      "/library/new?" +
-      new URLSearchParams({
-        bundle,
-        path,
-        returnTo: "/library/files?" + location,
-        ...(readingFrom ? { readingFrom } : {}),
-      })
-    );
   }
   function createSensitiveHref(kind: string, bundle: string, path: string) {
     return "/library/new-sensitive?" + new URLSearchParams({ kind, bundle, returnTo: filesHref({ bundle, path }) });
@@ -542,6 +577,14 @@
         >Retry</button
       >{/if}
   </p>{/if}
+{#if movedLinksError}<p class="notice notice-warn" role="alert">{movedLinksError}</p>{/if}
+{#if movedLinks}{#key movedChecks}<MovedLinks
+      report={movedLinks}
+      onUpdated={() => {
+        mutationRevision++;
+        void checkMovedLinks();
+      }}
+    />{/key}{/if}
 {#if comparisonMode && compareRefs.length !== 2}<div class="comparison-selection">
     <div>
       <strong
@@ -618,34 +661,20 @@
     onNavigate={navigateFiles}
     onSelect={(chosen) => (selected = toggleSelection(selected, chosen, 2))}
     onSearch={(name) => navigate(searchHref(new URLSearchParams({ bundle: name })))}
+    onCreateProtected={(kind, bundle, folder) => navigate(createSensitiveHref(kind, bundle, folder))}
+    onCreated={openCreated}
+    onChanged={(change) => {
+      mutationRevision++;
+      if (change?.moved) {
+        movedChecks++;
+        void checkMovedLinks();
+      }
+    }}
   >
     {#snippet actions()}<div class="files-actions">
         {#if reviewHref}<a href={reviewHref}>Back to review</a>{:else if readingHref && !editing}<a href={readingHref}
             >Back to reading</a
           >{/if}
-        {#if !editing && !newSensitive}<div class="new-file-actions">
-            <a class="btn btn-secondary" href={createHref(fileBundle, filePath, readingHref, reviewHref)}
-              ><Icon name="plus" size={16} />New knowledge</a
-            ><button
-              class="btn-secondary new-file-trigger"
-              popovertarget="new-file-types"
-              aria-label="Other file types"
-              title="Other file types"><Icon name="chevron-down" size={16} /></button
-            >
-          </div>
-          <div
-            id="new-file-types"
-            class="new-file-menu"
-            popover="auto"
-            role="group"
-            aria-label="Create file"
-            bind:this={newFiles}
-            onfocusout={leaveNewFiles}
-          >
-            <a href={createSensitiveHref("env", fileBundle, filePath)}>Environment file</a><a
-              href={createSensitiveHref("secret", fileBundle, filePath)}>Secret</a
-            >
-          </div>{/if}
       </div>{/snippet}
     {#snippet children({ selectedFile, loading: folderLoading, error: folderError })}<section
         class="inspector files-inspector"
@@ -663,13 +692,12 @@
             />{/key}
         {:else if editing}
           {#key normalizedRoute + ":" + ref + ":" + query.get("file")}<LibraryEditor
-              ref={normalizedRoute === "new" ? "" : ref}
+              {ref}
               file={normalizedRoute === "edit" && !ref && query.get("file")
                 ? { bundle: fileBundle, path: query.get("file")! }
                 : undefined}
               {query}
               {bundles}
-              {defaultWriteTarget}
               returnTo={withReview(returnTo)}
               cancelHref={query.get("file") ? query.get("returnTo")! : withReview(returnTo)}
               {readingHref}
@@ -687,7 +715,6 @@
               {query}
               returnTo={withReview(filesHref({ bundle: fileBundle, path: filePath }, readingHref))}
               {bundles}
-              {defaultWriteTarget}
               mode="files"
               filesHref={folderHref}
               {editHref}
@@ -748,7 +775,6 @@
       {query}
       {returnTo}
       {bundles}
-      {defaultWriteTarget}
       mode="search"
       filesHref={folderHref}
       {editHref}
@@ -774,12 +800,7 @@
             <thead><tr><th>Query</th><th>Times</th><th>Days</th><th>Last seen</th><th>Next step</th></tr></thead><tbody
               >{#each misses.misses as miss}<tr
                   ><td>{miss.query}</td><td>{miss.count}</td><td>{miss.days}</td><td>{date(miss.lastAt)}</td><td
-                    ><a
-                      href={"/library/new?q=" +
-                        encodeURIComponent(miss.query) +
-                        "&returnTo=" +
-                        encodeURIComponent(returnTo)}>Write this up</a
-                    ></td
+                    ><button class="text-action" onclick={() => writeThisUp(miss.query)}>Write this up</button></td
                   ></tr
                 >{/each}</tbody
             >
@@ -874,9 +895,7 @@
       {#if result && !result.hits.length}<div class="list-empty">
           <h2>No matching assets</h2>
           <p>{result.tip ?? "Try a shorter query or another bundle."}</p>
-          {#if q}<a href={"/library/new?q=" + encodeURIComponent(q) + "&returnTo=" + encodeURIComponent(returnTo)}
-              >Write this up</a
-            >{/if}
+          {#if q}<button class="text-action" onclick={() => writeThisUp(q)}>Write this up</button>{/if}
           <p><a href="/library/search">Clear filters</a></p>
         </div>{/if}
       <ul class="search-results">
@@ -906,41 +925,6 @@
 {/if}
 
 <style>
-  .new-file-actions {
-    display: flex;
-    gap: 4px;
-  }
-  .new-file-trigger {
-    anchor-name: --new-file-types;
-    padding-inline: 10px;
-  }
-  .new-file-menu {
-    position: fixed;
-    position-anchor: --new-file-types;
-    position-area: bottom span-left;
-    position-try-fallbacks: flip-block, flip-inline;
-    inset: auto;
-    margin: 8px 0;
-    padding: 6px;
-    width: 220px;
-    max-width: calc(100vw - 24px);
-    background: var(--surface);
-    color: var(--text);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    box-shadow: 0 8px 24px rgb(0 0 0 / 0.12);
-  }
-  .new-file-menu a {
-    display: flex;
-    align-items: center;
-    min-height: 40px;
-    padding: 8px 12px;
-    color: var(--text);
-    border-radius: 4px;
-  }
-  .new-file-menu a:hover {
-    background: var(--surface-2);
-  }
   .inspector,
   .search-page > section {
     margin-block-start: 0;
@@ -1233,9 +1217,6 @@
     gap: 16px;
     margin-left: auto;
     font-size: 13px;
-  }
-  .files-actions .btn {
-    min-height: var(--control-height, 36px);
   }
   .asset-choices {
     padding-left: 20px;

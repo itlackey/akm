@@ -128,24 +128,31 @@
           onclick={() => (content === null ? show() : hide())}
           >{busy ? "Opening…" : content === null ? "Show" : "Hide"}</button
         >
-        {#if info.writable}<button
-            class="btn-secondary"
-            disabled={busy}
-            onclick={() => {
-              hide();
-              editing = true;
-              notice = "";
-            }}><Icon name="edit" size={16} />Edit</button
-          ><button
-            class="btn-secondary"
-            disabled={busy}
-            onclick={() => {
-              hide();
-              deleting = true;
-            }}>Delete…</button
-          >{/if}
+        <button
+          class="btn-secondary"
+          disabled={busy}
+          aria-disabled={info.actions.edit.allowed ? undefined : "true"}
+          aria-describedby={info.actions.edit.allowed ? undefined : "protected-reason"}
+          onclick={() => {
+            if (!info?.actions.edit.allowed) return;
+            hide();
+            editing = true;
+            notice = "";
+          }}><Icon name="edit" size={16} />Edit</button
+        ><button
+          class="btn-secondary"
+          disabled={busy}
+          aria-disabled={info.actions.delete.allowed ? undefined : "true"}
+          aria-describedby={info.actions.delete.allowed ? undefined : "protected-reason"}
+          onclick={() => {
+            if (!info?.actions.delete.allowed) return;
+            hide();
+            deleting = true;
+          }}>Delete…</button
+        >
       </div>
     </header>
+    {#if !info.actions.edit.allowed}<p class="muted small" id="protected-reason">{info.actions.edit.reason}</p>{/if}
     {#if deleting}<section class="notice" aria-label="Delete file">
         <h3>Delete this file?</h3>
         <p class="mono wrap">{info.path}</p>

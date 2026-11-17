@@ -350,8 +350,8 @@ akm index --skip-if-locked  # for scheduled/opportunistic runs: skip (exit 0) in
 ```
 
 Returns stats: `totalEntries`, `generatedMetadata`, `directoriesScanned`,
-`directoriesSkipped`, `verification`, optional `warnings`, and `timing`
-breakdown in milliseconds. Use `--verbose` to print the indexing mode,
+`directoriesSkipped`, `verification`, optional `warnings`, optional `moves`, and
+`timing` breakdown in milliseconds. Use `--verbose` to print the indexing mode,
 semantic-search settings, and phase-by-phase progress to stderr while the
 index is being built. Malformed workflow assets are skipped with file-path
 warnings instead of aborting the full run. `verification.embeddingRuntime` is
@@ -369,6 +369,25 @@ growth); JSON stdout output is unaffected either way. The high-frequency
 per-batch `Embedded N/M entries.` line stays out of non-verbose stderr (it
 fires after every committed batch) — pass `--verbose` for that level of
 detail.
+
+**A file renamed or moved on disk is the same asset.** Move or rename a file or a
+folder with `mv`, `git mv` or a file manager; there is no move command. When the
+index next runs (full or incremental), an entry whose file is gone while a new file
+in the same bundle or another indexed bundle has the same content is paired with
+it: its row is re-keyed in place, so its vector, links and utility stay, and the
+state.db rows keyed by its old ref (usage, feedback, proposals, events, improve
+ledger, salience, outcome, task and workflow history) and its cached model results
+move to the new ref. Search utility is unchanged by the move and nothing is
+embedded again. When several vanished or new files share a content hash, the ones
+whose file names match one to one are paired; anything still ambiguous is not
+paired and is indexed as new (its history stays with the old ref), and a warning
+names the old refs. A file that was also edited is a new asset. The result's
+`moves` is `{ moved: [{ from, to }], unpaired }` (the refs as `bundle//conceptId`),
+present only when a file was paired or could not be; each move is recorded as a
+`moved` event on the new ref with `{ from }`, which `akm lint` reads to report
+links to the old ref (the events table keeps 90 days). A failure to carry the
+history over is a warning in the result, not silence. Links to the old ref in other
+assets are not rewritten here: see [lint](#lint).
 
 **`--clean` flag:** After indexing completes, verifies every indexed entry's source
 file still exists on disk. Removes any entries whose file is missing (for local
@@ -3366,7 +3385,7 @@ child's exact status when one exists.
 
 ### lint
 
-Scan bundle markdown files for structural issues: unquoted colons, missing
+Scan the Markdown assets of a bundle for structural issues: unquoted colons, missing
 `updated` field, orphaned stubs, placeholder stubs, missing `name`/`type`,
 stale paths, and broken refs — in body text and in
 `refs`/`xrefs`/`supersededBy`/`contradictedBy` frontmatter. A belief edge
@@ -3378,6 +3397,40 @@ tombstone under `.akm/memory-cleanup/archive/` and is not reported (#884). Also 
 and compiles Markdown workflows; errors surface as
 `invalid-workflow-structure` findings (0.9.0: this is the only
 structural-validation surface now that `akm workflow validate` is gone).
+
+In an akm bundle the files are the ones the indexer would index and each file's type
+is the type the indexer gives it, so a file under a wiki folder, a loose folder or the
+bundle root is linted with its type's checks, not only the files under the type
+folders. The walk is the indexer's: dot-directories, `node_modules`, git-ignored files
+and a root `.scratch/` are not linted. Nothing under `env/` or `secrets/` is read. A file inside an LLM Wiki
+(a folder with `schema.md` and `pages/`, the llm-wiki adapter's own probe) is written by the wiki's own process, not
+authored as an akm asset, so `missing-updated` and `missing-name-or-type` do not apply to it; every other check does.
+Types that search leaves out by default stay out unless `--type` names them, and the
+bundle's `lint.skip` globs apply.
+
+A bundle of another adapter is checked through that adapter's `validate`, and the
+checks every file gets (`unquoted-colon`, `missing-updated`, `stale-path`,
+`missing-ref`, `redacted-content`) are the same ones, with the same exemptions
+(skills, LLM Wikis, `lint.skip`), as in an akm bundle. An adapter can leave a rule out
+for its own files: `okf` and `website-snapshot` do not apply `missing-updated`. The
+checks of a type that has its own (a command's and an agent's `name` and `type`, a
+fact's `category`, a task's source, a memory stub, a workflow stub) are one table both
+routes read.
+
+A ref an asset declares in frontmatter (`xrefs`, `supersededBy`, `contradictedBy`,
+`currentBeliefRefs`, `sources`, and `refs`) is checked whatever folder it points
+into, read as the index reads it: a wiki page's `raw/x.md` and `wiki:<name>/pages/x`
+are relative to its wiki. A word in prose is a ref only when it looks like one
+(`bundle//concept`), as before.
+
+A link to a ref that `akm index` recorded as moved (see [index](#index)) is a
+`missing-ref` finding that carries `movedFrom` (the link as written) and `movedTo`
+(the ref the asset has now, as `bundle//conceptId`). `--fix` rewrites that link in
+frontmatter and prose, outside code fences, keeping its spelling (a bare link stays
+bare unless the asset moved to another bundle); a second run changes nothing. A
+`missing-ref` with no recorded move is reported as before and never rewritten. A qualified ref
+(`bundle//concept`) is looked up in the bundle it names, so one whose concept exists only in another bundle is a
+`missing-ref`; an unqualified ref is looked up in every bundle.
 
 ```sh
 akm lint                        # Report findings; exits 0 regardless
@@ -3394,7 +3447,7 @@ akm lint --rule stale-path      # List one rule's findings, grouped by asset
 | Argument or flag | Description |
 | --- | --- |
 | `<file>` | Optional. Lint just this file with the rules the bundle lint applies to it, and return the same result with the counts for that file only (first in 0.10.261122). A file inside a bundle (a configured one, or the root given with `--dir`) gets its type from where it sits, as the bundle lint decides it. A file outside every bundle needs `--type` (`agents`, `commands`, `memories`, `skills`, `workflows`, `lessons`, `tasks`, `knowledge`, `facts`, `instructions`, `rules`, `sessions`), as a type name (`rule`) or its folder name (`rules`). Checks that need other files, such as broken refs and orphaned stubs, run only for a file inside a bundle; outside one only the file's own rules run. A `--type` that disagrees with the file's location, a missing path, a directory (use `--dir`) and `--prune-dangling-edges` are usage errors (exit 2). `--fix` changes only this file. |
-| `--fix` (alias `--auto-fix`) | Apply auto-fixes in place. Refused with a usage error when the target bundle is configured `writable: false`. |
+| `--fix` (alias `--auto-fix`) | Apply auto-fixes in place, including the rewrite of links to moved refs. Refused with a usage error when the target bundle is configured `writable: false`. |
 | `--dir` | Override the bundle root directory (default: from config) |
 | `--type` | Only lint assets of this type, by type name or folder name (e.g. `workflow` or `workflows`, `task`, `memory` or `memories`); a bundle lint leaves out the types search leaves out by default (`search.defaultExcludeTypes`, default `session`) unless `--type` names one. **akm bundles only** — every other adapter validates the whole bundle and warns on stderr that the flag had no effect. |
 | `--rule` | List this rule's findings grouped by asset: the asset ref and file, then each finding with its line, path, reason, nearest existing directory and line text. Combines with `--type`. A listing: it cannot combine with `--fix` or `--prune-dangling-edges`. An unknown rule name warns and shows every rule. |

@@ -380,7 +380,7 @@ function slugName(conceptId: string): string {
  * byte stays as written. A file whose frontmatter cannot be edited that way
  * (and still parse back to exactly the intended mapping) is left untouched.
  */
-function stampCloneOrigin(filePath: string, originRef: string | undefined): void {
+export function stampCloneOrigin(filePath: string, originRef: string | undefined): void {
   if (!originRef) return;
   const raw = fs.readFileSync(filePath, "utf8");
   const parsed = parseFrontmatter(raw);
@@ -408,7 +408,7 @@ function lstatIfExists(filePath: string): fs.Stats | undefined {
   }
 }
 
-function assertNoDestinationSymlinkParent(root: string, destination: string): void {
+export function assertNoDestinationSymlinkParent(root: string, destination: string): void {
   const resolvedRoot = path.resolve(root);
   const parentDir = path.dirname(path.resolve(destination));
   const relativeParent = path.relative(resolvedRoot, parentDir);
@@ -426,7 +426,7 @@ function assertNoDestinationSymlinkParent(root: string, destination: string): vo
 }
 
 /** Replace each file symlink under `root` with a regular file holding its target's bytes. Directory links are left as links. */
-function materializeFileLinks(root: string): void {
+export function materializeFileLinks(root: string): void {
   for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
     const entryPath = path.join(root, entry.name);
     if (entry.isDirectory()) {
@@ -440,7 +440,7 @@ function materializeFileLinks(root: string): void {
   }
 }
 
-function listTreeFiles(root: string): string[] {
+export function listTreeFiles(root: string): string[] {
   const files: string[] = [];
   for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
     const entryPath = path.join(root, entry.name);
