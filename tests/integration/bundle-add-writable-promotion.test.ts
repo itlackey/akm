@@ -273,7 +273,10 @@ describe("bundle add --writable on an existing read-only Git bundle (#1296)", ()
     expect(git(["-C", root, "rev-list", "--left-right", "--count", "HEAD...@{upstream}"]).trim()).toBe("1\t0");
   }, 60_000);
 
-  test("bundle update preserves a concurrent live upstream tracking change", async () => {
+  test.each([
+    "staging",
+    "publication",
+  ])("bundle update preserves a live upstream tracking change during %s", async (phase) => {
     await promote();
     const root = installed().lock?.localRoot as string;
     const head = git(["-C", root, "rev-parse", "HEAD"]).trim();
@@ -297,11 +300,13 @@ describe("bundle add --writable on an existing read-only Git bundle (#1296)", ()
     const wrapperDir = path.join(path.dirname(originDir), "git-tracking-wrapper");
     fs.mkdirSync(wrapperDir, { recursive: true });
     const wrapper = path.join(wrapperDir, "git");
+    const trigger =
+      phase === "staging" ? '*".akm-update-stage-"*"fetch --prune --tags"*' : `*"-C ${root} fetch --no-tags"*`;
     fs.writeFileSync(
       wrapper,
       `#!/bin/sh
 case "$*" in
-  *"-C ${root} fetch --no-tags"*) ${JSON.stringify(realGit)} -C ${JSON.stringify(root)} update-ref refs/remotes/origin/main ${concurrentTip} ;;
+  ${trigger}) ${JSON.stringify(realGit)} -C ${JSON.stringify(root)} update-ref refs/remotes/origin/main ${concurrentTip} ;;
 esac
 exec ${JSON.stringify(realGit)} "$@"
 `,
