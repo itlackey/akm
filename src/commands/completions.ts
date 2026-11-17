@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { placementTypes } from "../core/asset/asset-placement";
+import { DETAIL_VALUES, OUTPUT_FORMATS } from "../output/context";
 
 // biome-ignore lint/suspicious/noExplicitAny: citty command tree uses dynamic shapes
 type AnyCmd = Record<string, any>;
@@ -39,8 +40,8 @@ interface FlagValueRule {
 }
 
 const FLAG_VALUES: Record<string, FlagValueRule[]> = {
-  "--format": [{ values: ["json", "jsonl", "yaml", "text", "md"] }],
-  "--detail": [{ values: ["brief", "normal", "full", "agent"] }],
+  "--format": [{ values: [...OUTPUT_FORMATS] }],
+  "--detail": [{ values: [...DETAIL_VALUES] }],
   "--type": [{ values: () => [...placementTypes(), "any"] }],
   "--shell": [{ values: ["bash"] }],
   "--from": [{ paths: ["akm search", "akm curate"], values: ["local", "registry", "all"] }],

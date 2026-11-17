@@ -12,12 +12,14 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { describeUsage } from "../src/cli/usage";
+import { generateBashCompletions } from "../src/commands/completions";
 import { akmLint } from "../src/commands/lint/index";
 import { documentFormatForStashDir, documentStashDirs, stashDirFor } from "../src/core/asset/asset-placement";
 import { UsageError } from "../src/core/errors";
 import { KNOWN_TYPES } from "../src/core/recognition-util";
 import { buildFileContext } from "../src/indexer/walk/file-context";
 import { declaredTypeForPath } from "../src/indexer/walk/matchers";
+import { DETAIL_VALUES, OUTPUT_FORMATS } from "../src/output/context";
 import { makeConfig } from "./_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
 
@@ -100,5 +102,41 @@ describe("CLI usage records every known type", () => {
 
   test("a value that is not a type is redacted", () => {
     expect(recordedType("PRIVATE_VALUE")).toBe("[redacted]");
+  });
+});
+
+describe("--format, --detail and --type values come from their owners", () => {
+  const usageRoot = {
+    subCommands: { show: { args: { format: { type: "string" }, detail: { type: "string" } } } },
+  };
+  test("usage records every output format and detail value", () => {
+    for (const [flag, values] of [
+      ["format", OUTPUT_FORMATS],
+      ["detail", DETAIL_VALUES],
+    ] as const) {
+      for (const value of values) {
+        const recorded = describeUsage(usageRoot, ["show", `--${flag}`, value]).arguments.find((a) => a.name === flag);
+        expect(recorded?.value).toBe(value);
+      }
+    }
+  });
+
+  test("completions offer every format, detail value and known type", () => {
+    const script = generateBashCompletions({
+      meta: { name: "akm" },
+      subCommands: {
+        show: {
+          meta: { name: "show" },
+          args: { format: { type: "string" }, detail: { type: "string" }, type: { type: "string" } },
+        },
+      },
+    });
+    const offered = (flag: string): string[] => {
+      const at = script.indexOf(`\n    ${flag})`);
+      return (script.slice(at).match(/compgen -W "([^"]*)"/)?.[1] ?? "").split(" ");
+    };
+    expect(offered("--format")).toEqual([...OUTPUT_FORMATS]);
+    expect(offered("--detail")).toEqual([...DETAIL_VALUES]);
+    for (const type of [...KNOWN_TYPES, "any"]) expect(offered("--type")).toContain(type);
   });
 });

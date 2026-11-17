@@ -18,9 +18,12 @@
 
 import { UsageError } from "../core/errors";
 
-export type OutputFormat = "json" | "yaml" | "text" | "jsonl" | "md";
+/** Every `--format` value, and every value `output.format` accepts as a default. */
+export const OUTPUT_FORMATS = ["json", "yaml", "text", "jsonl", "md"] as const;
+export type OutputFormat = (typeof OUTPUT_FORMATS)[number];
 /** Verbosity axis. */
-export type DetailLevel = "brief" | "normal" | "full";
+export const DETAIL_LEVELS = ["brief", "normal", "full"] as const;
+export type DetailLevel = (typeof DETAIL_LEVELS)[number];
 /**
  * Output projection. `human` is the default; `--detail agent` selects `agent`
  * (the token-lean action view, honoured by search/curate/show).
@@ -43,14 +46,13 @@ export interface OutputDefaults {
   detail?: DetailLevel | "brief" | "normal" | "full";
 }
 
-const OUTPUT_FORMATS: OutputFormat[] = ["json", "yaml", "text", "jsonl", "md"];
 /** What `--detail` accepts: a verbosity level, or `agent` for the agent projection. */
-export type DetailValue = DetailLevel | "agent";
-const DETAIL_VALUES: DetailValue[] = ["brief", "normal", "full", "agent"];
+export const DETAIL_VALUES = [...DETAIL_LEVELS, "agent"] as const;
+export type DetailValue = (typeof DETAIL_VALUES)[number];
 
 function parseOutputFormat(value: string | undefined): OutputFormat | undefined {
   if (!value) return undefined;
-  if ((OUTPUT_FORMATS as string[]).includes(value)) return value as OutputFormat;
+  if ((OUTPUT_FORMATS as readonly string[]).includes(value)) return value as OutputFormat;
   if (value === "html") {
     throw new UsageError(
       "--format html is no longer supported: HTML reports moved to AKM Desktop. Use --format md for a report as text.",
@@ -65,7 +67,7 @@ function parseOutputFormat(value: string | undefined): OutputFormat | undefined 
 
 export function parseDetailLevel(value: string | undefined): DetailValue | undefined {
   if (!value) return undefined;
-  if ((DETAIL_VALUES as string[]).includes(value)) return value as DetailValue;
+  if ((DETAIL_VALUES as readonly string[]).includes(value)) return value as DetailValue;
   throw new UsageError(
     `Invalid value for --detail: ${value}. Expected one of: ${DETAIL_VALUES.join("|")}`,
     "INVALID_DETAIL_VALUE",

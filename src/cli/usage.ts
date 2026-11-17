@@ -9,6 +9,7 @@ import { peekConfigValue } from "../core/config/peek";
 import { getDataDir } from "../core/paths";
 import { isKnownType, KNOWN_TYPES } from "../core/recognition-util";
 import { hasSignalOwner, observeSignal } from "../core/signal-observers";
+import { DETAIL_VALUES, OUTPUT_FORMATS } from "../output/context";
 import { type Database, openDatabase } from "../storage/database";
 import { applyStandardPragmas } from "../storage/sqlite-pragmas";
 import { resolveAgentIdentity } from "../workflows/runtime/agent-identity";
@@ -42,8 +43,8 @@ export interface InvocationUsage {
 // Enum-like string flags are not enums in citty. Keep this finite allowlist
 // independent of user data and never infer safety from the supplied value.
 const SAFE_VALUES: Record<string, readonly string[]> = {
-  format: ["json", "jsonl", "yaml", "text", "md"],
-  detail: ["agent", "brief", "normal", "full"],
+  format: OUTPUT_FORMATS,
+  detail: DETAIL_VALUES,
   type: [...KNOWN_TYPES, "any"],
 };
 
