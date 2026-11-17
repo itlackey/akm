@@ -44,7 +44,10 @@ test("a task that ran a command: its history names the target and its log lines 
     taskId: "improve-nightly",
     runId: buildTaskRunId("improve-nightly", startedAt),
     ts: startedAt,
-    lines: [{ line: "[akm task] task=improve-nightly kind=command" }, { stream: "stderr", level: "error", line: "warn" }],
+    lines: [
+      { line: "[akm task] task=improve-nightly kind=command" },
+      { stream: "stderr", level: "error", line: "warn" },
+    ],
   });
   logs.close();
 

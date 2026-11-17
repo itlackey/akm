@@ -220,7 +220,9 @@ export const routes: Route[] = [
   get("/api/tasks/history", (query) =>
     activity.taskHistory({ taskId: text(query, "taskId"), since: text(query, "since"), limit: count(query, "limit") }),
   ),
-  get("/api/tasks/log", (query) => activity.taskRunLog({ taskId: text(query, "taskId"), startedAt: text(query, "startedAt") })),
+  get("/api/tasks/log", (query) =>
+    activity.taskRunLog({ taskId: text(query, "taskId"), startedAt: text(query, "startedAt") }),
+  ),
   get("/api/meta", () => activity.meta()),
   get("/api/tasks/runs", (query) => activity.taskRuns({ since: text(query, "since") })),
   get("/api/improve/run", (query) => activity.improveRun({ id: text(query, "id") })),

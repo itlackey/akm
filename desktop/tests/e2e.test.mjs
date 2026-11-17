@@ -431,7 +431,10 @@ test("an asset whose improvement read fails says why, not only that the context 
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   await page.route("**/api/asset/improve*", (route) =>
-    route.fulfill({ status: 500, json: { ok: false, code: "INTERNAL_ERROR", error: "Synthetic improve read failure." } }),
+    route.fulfill({
+      status: 500,
+      json: { ok: false, code: "INTERNAL_ERROR", error: "Synthetic improve read failure." },
+    }),
   );
   await open(page, server, `/library/search?ref=${encodeURIComponent(server.refs.document)}`);
   await page.getByRole("button", { name: "More", exact: true }).click();

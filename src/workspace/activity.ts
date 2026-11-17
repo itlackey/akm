@@ -12,7 +12,6 @@ import { akmMetrics, metricsWindow, readUsageRows } from "../commands/metrics/me
 import { NotFoundError, UsageError } from "../core/errors";
 import { buildTaskRunId, getLogsDbPath, queryTaskLogs } from "../core/logs-db";
 import { openDatabase } from "../storage/database";
-import { applyReadonlyPragmas } from "../storage/sqlite-pragmas";
 import {
   getImproveRunById,
   type ImproveRunRow,
@@ -24,6 +23,7 @@ import {
   type TaskHistoryRow,
 } from "../storage/repositories/task-history-repository";
 import { WorkflowRunsRepository } from "../storage/repositories/workflow-runs-repository";
+import { applyReadonlyPragmas } from "../storage/sqlite-pragmas";
 import { pkgVersion } from "../version";
 import { listWorkflowRunSummaries, readWorkflowStatus } from "../workflows/runtime/runs";
 import { pChart, weekRange } from "./derive";

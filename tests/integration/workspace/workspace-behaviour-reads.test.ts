@@ -816,12 +816,11 @@ describe("reads", () => {
     expect(detail.diff.unified).toContain("xxxx");
   });
 
-  test("recentChanges: recent commits of the write-target stash, classified by origin", async () => {
+  test("recentChanges: recent commits of the write-target stash, each with its own subject and author", async () => {
     await seed();
     const changes = await out(proposals.recentChanges({ limit: 10 }));
     expect(changes).toMatchObject({ bundle: "stash", git: true });
-    const origins = changes.commits.map((c: { origin: string }) => c.origin);
-    expect(origins.slice(0, 3)).toEqual(["sync", "accept", "improve-sync"]);
+    expect(changes.commits[0]).not.toHaveProperty("origin");
     expect(changes.commits[0]).toMatchObject({ subject: expect.stringContaining("akm save"), author: "akm-test" });
     expect(changes.commits[0].paths).toEqual(["knowledge/more.md"]);
     expect((await out(proposals.recentChanges({ limit: 1 }))).commits).toHaveLength(1);
