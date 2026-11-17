@@ -43,8 +43,10 @@ where.
 - **`akm doctor`**, unless you pass `--no-probe`, sends a reachability probe to
   each connection's endpoint, runs each harness's `--version`, calls
   `api.github.com` to compare your version with the latest release, and runs
-  `git ls-remote --symref` against the remote of an installed Claude plugin
-  marketplace clone.
+  a blobless, no-checkout `git clone` of the channel's branch of the
+  Claude and Codex plugin marketplace source the harness registered, to read the
+  catalog and plugin manifest (`akm upgrade --check` makes the same read); a
+  marketplace pinned to a tag is not read.
 - **`akm sync`** and the syncs `akm improve` runs before and after a run fetch
   from and push bundle content to the git remote you configured.
 - **`akm improve` dead-link checks** send `HEAD` requests to the URLs found in
