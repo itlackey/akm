@@ -15,12 +15,12 @@ import {
   learnReceipt,
   pluginChannel,
   pluginLine,
-  pluginMatches,
+  pluginNeedsUpdate,
   pluginPlan,
   searchCount,
 } from "../src/lib/setup-model.ts";
 
-test("plugins follow Desktop's release stage and match on akm's major and minor", () => {
+test("plugins follow Desktop's release stage", () => {
   assert.equal(pluginChannel("0.10.261105"), "latest");
   assert.equal(pluginChannel("0.10.261105-beta"), "next");
   assert.equal(pluginChannel(undefined), "latest");
@@ -31,10 +31,17 @@ test("plugins follow Desktop's release stage and match on akm's major and minor"
   assert.equal(pluginChannel("0.10.261105", undefined, "next"), "next");
   assert.equal(pluginChannel("0.10.261105-beta", undefined, "latest"), "latest");
   assert.equal(pluginChannel("0.10.261105", "latest", "next"), "latest");
-  assert.equal(pluginMatches("0.10.261105", "0.10.261020"), true);
-  assert.equal(pluginMatches("0.10.261105-beta", "0.10.261020"), true);
-  assert.equal(pluginMatches("0.10.261105", "0.9.15"), false);
-  assert.equal(pluginMatches("0.10.261105", undefined), null);
+});
+
+test("a plugin asks something of the person only when akm's own check says an update, deferral or failure; its version prefix says nothing", () => {
+  assert.equal(pluginNeedsUpdate({ outcome: "pending" }), true);
+  assert.equal(pluginNeedsUpdate({ outcome: "deferred" }), true);
+  assert.equal(pluginNeedsUpdate({ outcome: "failed" }), true);
+  // Up to date by akm's check, whatever its version looks like next to the engine's.
+  assert.equal(pluginNeedsUpdate({ outcome: "current" }), false);
+  assert.equal(pluginNeedsUpdate({ outcome: "unknown" }), false);
+  // No check yet: nothing is claimed.
+  assert.equal(pluginNeedsUpdate(undefined), false);
 });
 
 test("nothing is configured only when there is no bundle and no working library", () => {
@@ -72,7 +79,6 @@ test("one card per harness found, with the plugin's version, the Bun gate and ak
       { id: "codex", installed: true, runnable: true, plugin: { state: "installed", version: "0.9.1" } },
       { id: "opencode", installed: true, runnable: true, plugin: { state: "configured", spec: "akm-opencode@next" } },
     ]),
-    "0.10.261105",
     {
       stashDir: "/x",
       harnesses: [
@@ -111,8 +117,8 @@ test("one card per harness found, with the plugin's version, the Bun gate and ak
       ],
     ],
   );
-  assert.deepEqual(cards[1].plugin, { text: "AKM plugin 0.9.1", mismatch: true });
-  assert.deepEqual(cards[2].plugin, { text: "AKM plugin akm-opencode@next", mismatch: false });
+  assert.deepEqual(cards[1].plugin, { text: "AKM plugin 0.9.1" });
+  assert.deepEqual(cards[2].plugin, { text: "AKM plugin akm-opencode@next" });
   assert.deepEqual(
     cards.map((card) => card.name),
     ["Claude Code", "Codex", "OpenCode"],
@@ -180,7 +186,6 @@ test("a plugin that is turned off, or that the harness cannot report, is not off
       { id: "claude", installed: true, runnable: true, plugin: { state: "unknown" } },
       { id: "codex", installed: true, runnable: true, plugin: { state: "disabled", version: "0.10.1" } },
     ]),
-    "0.10.261105",
     { ...detected(), harnesses: [] },
   );
   assert.deepEqual(

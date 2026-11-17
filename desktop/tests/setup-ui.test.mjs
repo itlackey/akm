@@ -235,7 +235,8 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
   await page.getByRole("button", { name: "Install 1 selected" }).click();
   await expect(page.getByText(/Background learning is on and runs on Claude Code: harness "claude"/)).toBeVisible();
   await expect(page.getByRole("radio", { name: "Claude Code" })).toBeChecked();
-  await expect(page.getByText(`✓ AKM plugin ${PLUGIN}`)).toBeVisible();
+  // No `akm upgrade --check` has run, so the plugin is named but not ticked as up to date.
+  await expect(page.getByText(`AKM plugin ${PLUGIN}`, { exact: true })).toBeVisible();
   await expect(page.getByText("Restart Claude Code")).toBeVisible();
   // The restart note belongs to its card: it is the card's description.
   await expect(claudeCard).toHaveAccessibleDescription(/Restart Claude Code, or run \/reload-plugins/);
@@ -346,7 +347,8 @@ test("run again on an existing machine shows live state, offers the CLI update o
   await page.getByRole("link", { name: "Run setup again" }).click();
   await expect(page.getByText("✓ Ready")).toBeVisible();
   await expect(page.getByText("✓ 1 connected")).toBeVisible();
-  await expect(page.getByText(`✓ AKM plugin ${PLUGIN}`)).toBeVisible();
+  await expect(page.getByText(`AKM plugin ${PLUGIN}`, { exact: true })).toBeVisible();
+  await expect(page.getByText(`✓ AKM plugin ${PLUGIN}`)).toHaveCount(0);
   // The host akm is one build behind the engine: said once, with the update offered.
   await expect(page.getByText(/This akm is older than the engine built into this app/)).toBeVisible();
   await page.screenshot({ path: path.join(screenshots, "existing-machine-setup.png"), fullPage: true });

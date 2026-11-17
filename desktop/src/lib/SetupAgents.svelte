@@ -9,7 +9,17 @@
   import { classifyEngineSkew, updateHeld } from "./engine-skew";
   import Icon from "./Icon.svelte";
   import SetupLearning from "./SetupLearning.svelte";
-  import { learnPlan, learnReceipt, learningRuns, pluginChannel, type AgentCard, type Detected } from "./setup-model";
+  import {
+    learnPlan,
+    learnReceipt,
+    learningRuns,
+    pluginChannel,
+    pluginNeedsUpdate,
+    pluginPlan,
+    type AgentCard,
+    type Detected,
+  } from "./setup-model";
+  import { planText } from "./upgrade-outcome";
   import { actSoftware, runSoftware, software, type Outcome } from "./state/software.svelte";
   import { workspace } from "./state/workspace.svelte";
 
@@ -43,6 +53,8 @@
   const host = $derived(software.data?.host),
     cli = $derived(host?.cli),
     channel = $derived(pluginChannel(engine, software.data?.preferences?.pluginChannel, host?.upgrade?.currentChannel)),
+    // akm's plan is for the channel it was asked about; after the choice changes it describes the other one until Check runs.
+    planned = $derived(host?.upgrade?.channel === channel),
     skew = $derived(classifyEngineSkew(engine, cli?.version)),
     desktopBehind = $derived(updateHeld(engine, host?.upgrade)),
     version = $derived(software.data?.desktop.version),
@@ -195,6 +207,9 @@
 
     {#each cards as card (card.id)}
       {@const restart = card.state === "connected" && installedNow.includes(card.id)}
+      {@const harness = host?.harnesses.find((found) => found.id === card.id)}
+      {@const plan = planned && harness ? pluginPlan(harness, host?.upgrade?.plugins) : undefined}
+      {@const needsUpdate = pluginNeedsUpdate(plan)}
       <div
         class="item"
         role="group"
@@ -204,9 +219,11 @@
         <h3 id="agent-{card.id}-name">
           {card.name}
           <span class="muted small">{card.version ?? ""}</span>
-          <!-- The tick is for a plugin that matches this akm; a mismatch is the warning below, not a ticked badge in another colour. -->
-          {#if card.state === "connected"}<span class="badge" data-tone={card.plugin?.mismatch ? "warn" : "ok"}
-              >{card.plugin?.mismatch ? "" : "✓ "}{card.plugin?.text}</span
+          <!-- The tick is akm's own "up to date" for this plugin; with no check yet, nothing is claimed. -->
+          {#if card.state === "connected"}<span
+              class="badge"
+              data-tone={needsUpdate ? "warn" : plan?.outcome === "current" ? "ok" : undefined}
+              >{plan?.outcome === "current" ? "✓ " : ""}{card.plugin?.text}</span
             >{/if}
         </h3>
         {#if card.state === "stopped"}
@@ -231,10 +248,9 @@
             />
             Install the akm plugin for {card.name} ({channel === "next" ? "prerelease" : "stable"} channel, for akm {builtFor})
           </label>
-        {:else if card.plugin?.mismatch}
-          <p class="notice notice-warn">
-            This plugin was built for a different akm than {engine}. Use Update CLI &amp; plugins in Settings →
-            Software.
+        {:else if plan && (needsUpdate || plan.reason)}
+          <p class={needsUpdate ? "notice notice-warn" : "muted small"}>
+            {planText(plan)}{needsUpdate ? " Use Update CLI & plugins in Settings → Software." : ""}
           </p>
         {/if}
         {#if card.needsBun}

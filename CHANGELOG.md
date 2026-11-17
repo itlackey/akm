@@ -34,6 +34,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - AKM Desktop's Library map says when akm could not report something instead of drawing it as zero: feedback it could not read is "unavailable" (it read "Disliked 0" and "Liked · disliked 0 · 0"), near-duplicates it has no layout for are "unavailable" (they read "Near-duplicates inside 0"), and an asset with no readable edit time is not classed as unread. `akm-cli/workspace` `assets.graph` adds to its `note` that groups and near-duplicates are not available when the last index stored no layout.
 - AKM Desktop's 3D Library map says how many assets it leaves out: an asset with no group by meaning (not embedded, or added since the last index build) is not a point, and the map now states the count instead of titling itself "every asset".
 - AKM Desktop's Project assets page and Project overview say "Counts unknown" when akm reports no count for a bundle (it cannot be read, or nothing is indexed). The assets page read "0 eligible of 0 indexed" and blamed the project's filters; one presenter now serves both pages.
+- AKM Desktop's setup no longer decides that a plugin "was built for a different akm" by comparing its version with the engine's major and minor. The agent cards show what `akm upgrade --check` reports for that plugin (a tick for `current`, akm's own text for a pending, deferred or failed update, with its engine-skew message), and claim nothing until a check has run.
 
 ## [0.10.261129] - 2026-11-16
 
