@@ -21,11 +21,12 @@
     groups,
     colourOf,
     lit,
-    lines,
+    lines = [],
     levels = [[], [], []],
-    picked,
-    selected,
-    related,
+    emphasis = [],
+    picked = -1,
+    selected = "",
+    related = [],
     onPick,
     onGroup,
     onStep,
@@ -40,17 +41,20 @@
     /** The assets drawn in full; the rest fade. Null: all in full. */
     lit: Set<number> | null;
     /** Lines from point to point, each a pair of places and a weight from 0 to 1. */
-    lines: Array<{ from: ArrayLike<number>; to: ArrayLike<number>; weight: number; level?: 1 | 2 | 3 }>;
+    lines?: Array<{ from: ArrayLike<number>; to: ArrayLike<number>; weight: number; level?: 1 | 2 | 3 }>;
     /** The assets one, two and three joins from the pick, each ringed to match its lines. */
     levels?: [number[], number[], number[]];
-    picked: number;
+    /** Assets ringed in a colour of their own, for a moment: what an event just touched. */
+    emphasis?: Array<{ i: number; token: string }>;
+    picked?: number;
     /** The chosen group's key, or "", and the keys of the groups joined to it. */
-    selected: string;
-    related: string[];
-    onPick: (i: number) => void;
-    onGroup: (key: string) => void;
+    selected?: string;
+    related?: string[];
+    /** Without these the map only shows: a point or a group's name is not chosen. */
+    onPick?: (i: number) => void;
+    onGroup?: (key: string) => void;
     /** The arrow keys on the focused map: -1 for the previous asset, 1 for the next. */
-    onStep: (direction: -1 | 1) => void;
+    onStep?: (direction: -1 | 1) => void;
     label: string;
     /** What the map's corner says: the key to what is drawn. */
     legend?: Snippet;
@@ -72,7 +76,7 @@
   /** Set once three.js has loaded and the scene is up; the effects below draw into it. */
   let ready = $state(false);
   /** The group name labels, by group key. */
-  const nameEls: Record<string, HTMLButtonElement> = $state({});
+  const nameEls: Record<string, HTMLElement> = $state({});
   /** The groups with no lit asset: their names fade like the points. */
   const dimmed = $derived(
     new Set(lit ? groups.filter((g) => !g.members.some((i) => lit.has(i))).map((g) => g.key) : []),
@@ -258,6 +262,10 @@
         const focus = mark(34, "--map-highlight");
         const rings = LEVEL_STYLES.map((style) => mark(style.ring, muted(style.mute)));
         const under = mark(28, "--text");
+        // Rings in a colour per point, over every other mark: what an event has just touched.
+        const pulses = mark(28, "--text");
+        pulses.material.vertexColors = true;
+        pulses.renderOrder = 3;
         // The lines of each level, strongest drawn last so it stays on top: its own width, colour and dash.
         const levelJoins = LEVEL_STYLES.map((style, k) => {
           const lines = new LineSegments2(
@@ -302,6 +310,7 @@
           under,
           focusHalo,
           underHalo,
+          pulses,
           order: [] as number[],
           flight: null,
         };
@@ -347,7 +356,7 @@
         renderer.domElement.addEventListener("pointerup", (e: PointerEvent) => {
           if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4) return; // a drag, not a click
           const h = hit(e.clientX, e.clientY);
-          if (h) onPick(h.i);
+          if (h) onPick?.(h.i);
         });
         // Hover is worked out once a frame at most: a library of thousands of points is searched on each look.
         let moved: PointerEvent | null = null;
@@ -535,6 +544,16 @@
     );
   });
 
+  // What an event has just touched is ringed, each in its kind's colour.
+  $effect(() => {
+    if (!ready || !world) return;
+    const shown = emphasis.filter((e) => o.group[e.i]! >= 0);
+    const geometry = placesOf(shown.map((e) => e.i));
+    geometry.setAttribute("color", new THREE.BufferAttribute(Float32Array.from(shown.flatMap((e) => rgb(e.token))), 3));
+    world.pulses.geometry.dispose();
+    world.pulses.geometry = geometry;
+  });
+
   // A pick is ringed, and so is what it is joined to, a ring of a size and colour for each level; the group chosen is
   // told by the fade and the lines alone.
   $effect(() => {
@@ -597,22 +616,29 @@
   class="stage-3d"
   bind:this={host}
   role="group"
-  aria-label={`${label} Arrow keys step to the previous or next asset.`}
-  tabindex="0"
+  aria-label={onStep ? `${label} Arrow keys step to the previous or next asset.` : label}
+  tabindex={onStep ? 0 : undefined}
   onkeydown={(event) => {
-    if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+    if (!onStep || (event.key !== "ArrowRight" && event.key !== "ArrowLeft")) return;
     event.preventDefault();
     onStep(event.key === "ArrowRight" ? 1 : -1);
   }}
 >
   {#if failed}<p class="notice notice-warn">{failed}</p>{/if}
-  {#each groups as g (g.key)}<button
-      class="group-name"
-      class:chosen={selected === g.key}
-      bind:this={nameEls[g.key]}
-      style={`font-size:${13 + 4 * Math.sqrt(g.members.length / largest)}px`}
-      onclick={() => onGroup(g.key)}>{g.label}<span>{g.members.length.toLocaleString()}</span></button
-    >{/each}
+  {#snippet name(g: Group)}{g.label}<span>{g.members.length.toLocaleString()}</span>{/snippet}
+  {#each groups as g (g.key)}
+    {#if onGroup}<button
+        class="group-name"
+        class:chosen={selected === g.key}
+        bind:this={nameEls[g.key]}
+        style={`font-size:${13 + 4 * Math.sqrt(g.members.length / largest)}px`}
+        onclick={() => onGroup(g.key)}>{@render name(g)}</button
+      >{:else}<span
+        class="group-name"
+        bind:this={nameEls[g.key]}
+        style={`font-size:${13 + 4 * Math.sqrt(g.members.length / largest)}px`}>{@render name(g)}</span
+      >{/if}
+  {/each}
   {#if legend}<div class="stage-legend">{@render legend()}</div>{/if}
   {#if picked >= 0}<div class="pick-label" bind:this={pickEl}>{o.ref[picked]}</div>{/if}
   {#if tip}<div
@@ -696,7 +722,10 @@
     font-size: 0.85em;
     color: var(--muted);
   }
-  .group-name:hover,
+  span.group-name {
+    cursor: default;
+  }
+  button.group-name:hover,
   .group-name.chosen {
     border-color: var(--map-highlight);
     background: var(--surface);

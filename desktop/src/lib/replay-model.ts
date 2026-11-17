@@ -164,6 +164,57 @@ export function usedList(steps: ReplayStep[], t: number, limit = 10) {
   return [...counts.values()].sort((a, b) => b.count - a.count || (a.ref < b.ref ? -1 : 1)).slice(0, limit);
 }
 
+/** The colour tokens of Replay's pulses, one per event kind: a read, a search hit, positive and negative feedback. */
+export const PULSES = [
+  { id: "read", label: "Read", token: "--pulse-read" },
+  { id: "hit", label: "Returned by a search", token: "--pulse-hit" },
+  { id: "up", label: "Positive feedback", token: "--pulse-up" },
+  { id: "down", label: "Negative feedback", token: "--pulse-down" },
+] as const;
+export type PulseId = (typeof PULSES)[number]["id"];
+/** The pulse an event makes on its asset, or null for an event that has none (a curate or another kind of event). */
+const pulseOf = (step: ReplayStep): PulseId | null =>
+  step.kind === "show"
+    ? "read"
+    : step.kind === "hit" && step.eventType === "search"
+      ? "hit"
+      : step.kind === "feedback"
+        ? step.signal === "negative"
+          ? "down"
+          : "up"
+        : null;
+
+/**
+ * The assets events touched in the `windowMs` up to `t`, each with the pulse of its latest event there, for the
+ * moment the replay is at. An event that names no asset on the map, or has no pulse, adds none.
+ */
+export function pulsesAt(steps: ReplayStep[], t: number, windowMs: number): Array<{ node: number; pulse: PulseId }> {
+  const latest = new Map<number, PulseId>();
+  for (const step of steps) {
+    if (step.t > t) break;
+    if (step.t <= t - windowMs || step.node < 0) continue;
+    const pulse = pulseOf(step);
+    if (pulse) latest.set(step.node, pulse);
+  }
+  return [...latest].map(([node, pulse]) => ({ node, pulse }));
+}
+
+/**
+ * Events up to `t` that touched an asset with no place on the 3D map: one `onMap` says is not a point, and one akm no
+ * longer lists (its ref is not in the graph). A hit is part of its search and is not counted, as in the totals.
+ */
+export function unplacedEvents(steps: ReplayStep[], t: number, onMap: (node: number) => boolean) {
+  let notOnMap = 0;
+  let notListed = 0;
+  for (const step of steps) {
+    if (step.t > t) break;
+    if (!step.ref || !counted(step)) continue;
+    if (step.node < 0) notListed++;
+    else if (!onMap(step.node)) notOnMap++;
+  }
+  return { notOnMap, notListed };
+}
+
 /** What the ticker says for an event. */
 export function describe(step: ReplayStep): string {
   const quoted = step.query ? ` “${step.query}”` : "";

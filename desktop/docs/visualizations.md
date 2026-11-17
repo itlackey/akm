@@ -152,13 +152,21 @@ opens at the end of the period with every figure full, so the result is readable
 Play starts again from the beginning and plays any period in about a minute (faster speeds are 4
 and 16 times that). With reduced motion nothing flies or eases, and it stays paused at the end.
 
-On the map an asset used so far is ringed in its type colour and every other asset is the faintest
-mark; all points are one size. A pulse flies to an asset when it is read, returned by a search (a
-hit, which does not count as use) or given feedback, each in its own colour and size (the
-`--pulse-*` tokens, held apart from each other and from the type colours by
-`tests/map-palette.test.mjs`). A key under the map names every mark. An asset with no position in
-the arrangement is not drawn; its events still count, and the page says how many they were. Beside
-the map: the running totals (other kinds of event, such as curate, have a total of their own, so the
+The map is drawn in 2D, the default: the library mind map, with the number of events on each type and tag so far, or in 3D
+(the 2D / 3D switch under Play; the choice is kept until the app closes). Everything else on the page is the same in both:
+the controls, the figures, the lists beside the map and the timeline.
+
+In 3D the replay plays on the same 3D map as Library, Map (`src/lib/SimilarityMap.svelte`, one renderer): every asset
+with a group by meaning is a point, as there. An asset used so far is in its type's colour and every other asset is faint.
+An asset is ringed, for the next 0.75 seconds of playing at the speed chosen, when an event reads it, a search returns it
+(a hit, which does not count as use) or gives it feedback, each in its own colour (the `--pulse-*` tokens, held apart from
+each other and from the type colours by `tests/map-palette.test.mjs`); an asset the latest of several events touched in
+that moment takes the colour of the latest. A curate's results and other kinds of event light the asset as used without a
+ring. A key on the map names every mark. An asset with no group by meaning has no place on the 3D map; its events still
+count in the figures, and the page says how many events so far touched assets with no place, and how many touched assets
+the index no longer lists. Without stored embeddings the 3D map cannot be drawn, and the page says so.
+
+Beside the map: the running totals (other kinds of event, such as curate, have a total of their own, so the
 totals add up to the lanes), the assets used most so far, the latest events and the searches that
 found nothing.
 
@@ -175,4 +183,4 @@ It reads `assets.graph` once and `activity.events` for each period.
 | At most 20,000 events in a period | `activity.events` keeps the latest 20,000; the page says so and from when the replay therefore starts. |
 | Older events have no agent | akm records the harness and session on usage events from this release. |
 | "No agent recorded" mixes a person with an agent akm did not recognise | Both record source `user` and no harness. |
-| Every point is one size | A replay is about one period, so it marks use with the ring only. |
+| Pulses ring an asset for 0.75 seconds of playing | At 16 times speed a ring marks the events of about a fifth of the period at once. |

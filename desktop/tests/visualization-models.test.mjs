@@ -12,7 +12,9 @@ import {
   EVENT_LIMIT,
   KINDS,
   kindBins,
+  PULSES,
   playText,
+  pulsesAt,
   replaySteps,
   SCRUB_STEP,
   SPEEDS,
@@ -21,6 +23,7 @@ import {
   stepsOf,
   totalsAt,
   truncationNote,
+  unplacedEvents,
   usedList,
 } from "../src/lib/replay-model.ts";
 import { traceRows } from "../src/lib/workflow-trace-model.ts";
@@ -363,4 +366,76 @@ test("the scrubber reaches the end of a window that is not a whole number of ste
   assert.equal(scrubTime(last, start, end), end);
   assert.equal(scrubTime(start, start, end), start);
   assert.equal(scrubTime(last - SCRUB_STEP, start, end), last - SCRUB_STEP);
+});
+
+test("replay pulses: the assets events touched in the window up to the playhead, each with its latest event's pulse", () => {
+  const index = new Map([
+    ["wiki//knowledge/a", 0],
+    ["wiki//knowledge/b", 1],
+    ["wiki//knowledge/c", 2],
+  ]);
+  const ev = (id, minute, eventType, ref, extra = {}) => ({
+    id,
+    at: replayAt(minute),
+    eventType,
+    ref,
+    source: "user",
+    byPerson: true,
+    ...extra,
+  });
+  const steps = replaySteps(
+    [
+      ev(1, 0, "show", "wiki//knowledge/a"),
+      ev(2, 1, "search", "wiki//knowledge/a"),
+      ev(3, 2, "feedback", "wiki//knowledge/b", { signal: "negative" }),
+      ev(4, 3, "feedback", "wiki//knowledge/b", { signal: "positive" }),
+      ev(5, 4, "curate", "wiki//knowledge/c"),
+      ev(6, 5, "show", "wiki//gone"),
+      ev(7, 6, "search", undefined, { query: "x", resultCount: 0 }),
+    ],
+    index,
+  );
+  const at = (minute, window) => pulsesAt(steps, Date.parse(replayAt(minute)), window * 60_000);
+  // The latest event on an asset in the window decides its pulse: a search hit after a read.
+  assert.deepEqual(at(1, 5), [{ node: 0, pulse: "hit" }]);
+  // Only events inside the window: the read at minute 0 is out of a one-minute window ending at minute 2.
+  assert.deepEqual(at(2, 1), [{ node: 1, pulse: "down" }]);
+  assert.deepEqual(at(3, 2), [{ node: 1, pulse: "up" }]);
+  // A curate's hit, an asset akm no longer lists and a search with no asset have no pulse on the map.
+  assert.deepEqual(at(6, 2), []);
+  // Nothing after the playhead is played.
+  assert.deepEqual(at(0, 1), [{ node: 0, pulse: "read" }]);
+  assert.deepEqual(
+    PULSES.map((p) => p.token),
+    ["--pulse-read", "--pulse-hit", "--pulse-up", "--pulse-down"],
+  );
+});
+
+test("replay: events on assets with no place on the 3D map, or no longer listed, are counted and not dropped", () => {
+  const index = new Map([
+    ["wiki//knowledge/a", 0],
+    ["wiki//knowledge/b", 1],
+  ]);
+  const ev = (id, minute, ref, eventType = "show") => ({
+    id,
+    at: replayAt(minute),
+    eventType,
+    ref,
+    source: "user",
+    byPerson: true,
+  });
+  const steps = replaySteps(
+    [
+      ev(1, 0, "wiki//knowledge/a"),
+      ev(2, 1, "wiki//knowledge/b"),
+      ev(3, 2, "wiki//knowledge/b", "feedback"),
+      ev(4, 3, "wiki//gone"),
+      ev(5, 3, "wiki//knowledge/b", "search"),
+    ],
+    index,
+  );
+  const onMap = (node) => node === 0;
+  assert.deepEqual(unplacedEvents(steps, Date.parse(replayAt(9)), onMap), { notOnMap: 2, notListed: 1 });
+  // Only up to the playhead, and a search's hit is part of the search, not an event of its own.
+  assert.deepEqual(unplacedEvents(steps, Date.parse(replayAt(1)), onMap), { notOnMap: 1, notListed: 0 });
 });

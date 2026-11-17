@@ -4,15 +4,23 @@
   file, You can obtain one at https://mozilla.org/MPL/2.0/.
 -->
 
+<script module lang="ts">
+  /** The drawing chosen this session: the replay opens in it again, and in 2D until 3D is chosen. */
+  let remembered: "2d" | "3d" = "2d";
+</script>
+
 <script lang="ts">
   // A period of searches, reads and feedback, played back: a timeline of events by kind with a playhead, the library
-  // mind map lighting up the tags each event touches, and the events as a log. It opens at the end of the period with
+  // mind map lighting up the tags each event touches (or, in 3D, the library's assets as points on the same 3D map the
+  // Library uses, ringed as events touch them), and the events as a log. It opens at the end of the period with
   // every figure full; clicking or dragging the timeline moves the playhead.
   import { onDestroy } from "svelte";
   import { api } from "./client";
-  import { buildOverview, mindMap, type Overview, type OverviewPayload } from "./library-overview";
+  import { FAMILIES } from "./graph-model";
+  import { buildOverview, groupsOf, mindMap, type Overview, type OverviewPayload } from "./library-overview";
   import { searchHref } from "./library-model";
   import MindMap from "./MindMap.svelte";
+  import SimilarityMap from "./SimilarityMap.svelte";
   import {
     advance,
     axisLabels,
@@ -20,6 +28,9 @@
     KINDS,
     kindBins,
     playText,
+    PULSES,
+    pulsesAt,
+    REPLAY_SECONDS,
     replaySteps,
     type ReplayStep,
     SCRUB_STEP,
@@ -30,6 +41,7 @@
     totalsAt,
     truncationNote,
     type UsageEventRow,
+    unplacedEvents,
     usedList,
   } from "./replay-model";
 
@@ -50,6 +62,11 @@
   let playing = $state(false);
   let speed = $state(1);
   let selected = $state("");
+  /** The map drawn as the mind map (2D) or as points in 3D; the choice is kept for the session. */
+  let depth = $state<"2d" | "3d">(remembered);
+  const setDepth = (choice: "2d" | "3d") => {
+    depth = remembered = choice;
+  };
 
   const start = $derived(range ? Date.parse(range.since) : 0);
   const end = $derived(range ? Date.parse(range.until) : 0);
@@ -107,6 +124,38 @@
   const eventsText = (n: number) => (n ? `${n.toLocaleString()} event${n === 1 ? "" : "s"}` : "");
   const offMap = $derived(
     steps.filter((s) => s.t <= clock && s.kind !== "hit" && s.ref && (s.node < 0 || !keysOf.has(s.node))).length,
+  );
+
+  // ---- The 3D map: every asset with a group by meaning is a point; used so far in full colour, the rest faint ----
+  const everyAsset = $derived(o ? o.ref.map((_, i) => i) : []);
+  const groups = $derived(o ? groupsOf(o, everyAsset) : []);
+  /** The type colour of an asset: one of the map's eight families. */
+  const colourOf = (i: number) => `--map-${o!.family[i]! + 1}`;
+  /** The assets used so far, the same set while no new asset is used, so the points are redrawn only when one is. */
+  let usedSoFar: { steps: ReplayStep[]; set: Set<number> } = { steps: [], set: new Set() };
+  const lit = $derived.by(() => {
+    const used = totals.used;
+    if (usedSoFar.steps !== steps || usedSoFar.set.size !== used.size) usedSoFar = { steps, set: new Set(used) };
+    return usedSoFar.set;
+  });
+  /** A pulse stays on an asset for 0.75 seconds of playing, at the speed chosen. */
+  const pulseWindow = $derived((750 * speed * span) / (REPLAY_SECONDS * 1000));
+  const pulses = $derived(
+    depth === "3d"
+      ? pulsesAt(steps, clock, pulseWindow).map((p) => ({
+          i: p.node,
+          token: PULSES.find((k) => k.id === p.pulse)!.token,
+        }))
+      : [],
+  );
+  const unplaced = $derived(depth === "3d" && o ? unplacedEvents(steps, clock, (node) => o!.group[node]! >= 0) : null);
+  /** The families of the assets on the map, for its key. */
+  const familiesShown = $derived(
+    o
+      ? FAMILIES.map((family, k) => ({ ...family, k })).filter((f) =>
+          groups.some((g) => g.members.some((i) => o!.family[i] === f.k)),
+        )
+      : [],
   );
 
   /** The latest load: a response to an earlier one (an earlier Period) changes nothing. */
@@ -221,6 +270,16 @@
         ><option value={false}>You</option><option value={true}>Everyone: you, agents and automation</option></select
       ></label
     >
+    <div class="drawing">
+      <span class="muted">Map</span>
+      <div class="seg" role="group" aria-label="Map drawing">
+        {#each [["2d", "2D"], ["3d", "3D"]] as const as [id, name]}<button
+            class="btn-quiet"
+            aria-pressed={depth === id}
+            onclick={() => setDepth(id)}>{name}</button
+          >{/each}
+      </div>
+    </div>
     <span class="grow"></span>
     <p class="muted small">{playText(speed)}. Click or drag the timeline to move the playhead.</p>
   </div>
@@ -301,22 +360,62 @@
 
     <div class="replay-body">
       <div class="replay-map">
-        <h3>Where the events landed, by type and tag</h3>
-        <MindMap
-          {branches}
-          rootLabel="Library"
-          rootFigure={eventsText(branches.reduce((sum, b) => sum + (counts.get(b.key) ?? 0), 0))}
-          figure={(_, key) => eventsText(counts.get(key) ?? 0)}
-          bar={(_, key) => [{ n: counts.get(key) ?? 0, token: "--accent" }]}
-          scale={most}
-          {selected}
-          onSelect={(key) => (selected = selected === key ? "" : key)}
-          pulse={playing ? counts : null}
-          label="The library mind map: its asset types and the tags their assets carry most, each with the number of events on it so far. The log beside it lists the same events."
-        />
-        {#if offMap}<p class="muted small">
-            {offMap.toLocaleString()} events so far touched assets under none of the tags drawn, or no longer in the library.
-          </p>{/if}
+        {#if depth === "3d"}<h3>Where the events landed, by meaning</h3>
+          {#if groups.length}<SimilarityMap
+              {o}
+              scope={everyAsset}
+              {groups}
+              {colourOf}
+              {lit}
+              emphasis={pulses}
+              label="The library's assets as points in 3D, alike assets close together in groups by meaning. An asset used so far is in its type's colour, the rest are faint, and an asset an event has just touched is ringed. The log beside it lists the same events."
+            >
+              {#snippet legend()}
+                <ul class="key" aria-label="Key to the 3D map">
+                  <li><span class="dot"></span>Used so far, in its type's colour</li>
+                  <li><span class="dot faint"></span>Not used yet, faint</li>
+                  {#each PULSES as pulse}<li>
+                      <span class="ring" style={`border-color:var(${pulse.token})`}></span>{pulse.label}, just now
+                    </li>{/each}
+                  {#each familiesShown as family}<li>
+                      <span class="dot" style={`background:var(--map-${family.k + 1})`}></span>{family.label}
+                    </li>{/each}
+                </ul>
+              {/snippet}
+            </SimilarityMap>
+            <p class="muted small">
+              Each point is an asset, coloured by its type; alike assets sit close. An asset is ringed for a moment when
+              an event reads it, a search returns it or it is given feedback.
+            </p>
+            {#if unplaced && (unplaced.notOnMap || unplaced.notListed)}<p class="muted small" role="status">
+                {#if unplaced.notOnMap}{unplaced.notOnMap.toLocaleString()}
+                  {unplaced.notOnMap === 1 ? "event" : "events"} so far touched assets with no place on this map (no group
+                  by meaning: not embedded, or added since the last index build).{/if}
+                {#if unplaced.notListed}{unplaced.notListed.toLocaleString()}
+                  {unplaced.notListed === 1 ? "event" : "events"} so far touched assets the index no longer lists.{/if}
+              </p>{/if}{:else}<p class="notice">
+              No stored embeddings, so assets cannot be placed by meaning and the 3D map cannot be drawn: {steps
+                .filter((s) => s.t <= clock && s.kind !== "hit" && s.ref)
+                .length.toLocaleString()} events so far touched assets. Build the index with embeddings, or use 2D.
+            </p>{/if}
+        {:else}
+          <h3>Where the events landed, by type and tag</h3>
+          <MindMap
+            {branches}
+            rootLabel="Library"
+            rootFigure={eventsText(branches.reduce((sum, b) => sum + (counts.get(b.key) ?? 0), 0))}
+            figure={(_, key) => eventsText(counts.get(key) ?? 0)}
+            bar={(_, key) => [{ n: counts.get(key) ?? 0, token: "--accent" }]}
+            scale={most}
+            {selected}
+            onSelect={(key) => (selected = selected === key ? "" : key)}
+            pulse={playing ? counts : null}
+            label="The library mind map: its asset types and the tags their assets carry most, each with the number of events on it so far. The log beside it lists the same events."
+          />
+          {#if offMap}<p class="muted small">
+              {offMap.toLocaleString()} events so far touched assets under none of the tags drawn, or no longer in the library.
+            </p>{/if}
+        {/if}
       </div>
       <aside class="replay-side">
         <section>
@@ -377,6 +476,57 @@
   .now strong {
     font-size: 1.375rem;
     font-variant-numeric: tabular-nums;
+  }
+  .drawing {
+    display: grid;
+    gap: 4px;
+    font-size: 12px;
+  }
+  .seg {
+    display: flex;
+    gap: 4px;
+  }
+  .seg button {
+    min-block-size: 32px;
+    min-inline-size: 44px;
+  }
+  .seg button[aria-pressed="true"] {
+    color: var(--text);
+    background: var(--surface-2);
+    font-weight: 600;
+  }
+  .key {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 14px;
+    margin: 0;
+    padding: 6px 10px;
+    list-style: none;
+    font-size: var(--text-xs);
+  }
+  .key li {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+  .dot,
+  .ring {
+    flex: none;
+    inline-size: 10px;
+    block-size: 10px;
+    border-radius: 50%;
+  }
+  .dot {
+    background: var(--text);
+  }
+  .dot.faint {
+    opacity: 0.25;
+  }
+  .ring {
+    box-sizing: border-box;
+    border: 2px solid;
+    inline-size: 12px;
+    block-size: 12px;
   }
   .grow {
     flex: 1;

@@ -4,8 +4,9 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import AxeBuilder from "@axe-core/playwright";
 import { chromium, expect } from "@playwright/test";
-import { launchFixture, open } from "./support.mjs";
+import { go, launchFixture, open } from "./support.mjs";
 
 // The 3D library map: choosing a point, and what a choice shows.
 // Ten assets in two groups by meaning, joined in a line (0-1-2-3-4-5-6-7) with 8 and 9 apart: three levels from 0.
@@ -49,7 +50,8 @@ test("the 3D library map", { timeout: 150000 }, async (t) => {
   const browser = await chromium.launch({ headless: true });
   t.after(() => browser.close());
   const fresh = async (payload = chain) => {
-    const page = await browser.newPage({ viewport: { width: 1280, height: 860 } });
+    const context = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+    const page = await context.newPage();
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
     page.on("console", (message) => message.type() === "error" && errors.push(message.text()));
@@ -113,6 +115,15 @@ test("the 3D library map", { timeout: 150000 }, async (t) => {
     const from = Number((await page.locator(".stage-3d .pick-label").textContent()).match(/n(\d)$/)[1]);
     const levels = page.locator(".levels li");
     await expect(levels).toHaveCount(3);
+    // The map, its key and the new controls pass the same accessibility rules as the rest of the app.
+    const results = await new AxeBuilder({ page })
+      .include(".map-page")
+      .withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"])
+      .analyze();
+    assert.deepEqual(
+      results.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target).join(" ")}`),
+      [],
+    );
     for (const [k, name] of ["1st level", "2nd level", "3rd level"].entries()) {
       const n = inChain(from, k + 1);
       await expect(levels.nth(k)).toHaveText(`${name}: ${n} ${n === 1 ? "asset" : "assets"}`);
@@ -172,4 +183,83 @@ test("the 3D library map", { timeout: 150000 }, async (t) => {
     await page.close();
     assert.deepEqual(errors, []);
   });
+
+  await t.test(
+    "Replay: 2D is the default, 3D plays the same events on the 3D map, says what has no place, and is remembered",
+    async () => {
+      // Asset 9 has no group by meaning, so no place on the 3D map; "wiki//gone" is not in the index at all.
+      const noPlace = { ...chain, groups: { ...chain.groups, group: [0, 0, 0, 0, 0, 1, 1, 1, 1, -1] } };
+      const hours = (h) => new Date(Date.now() - h * 3_600_000).toISOString();
+      const event = (id, h, eventType, ref, extra = {}) => ({
+        id,
+        at: hours(h),
+        eventType,
+        ref,
+        source: "user",
+        byPerson: true,
+        ...extra,
+      });
+      const { page, errors } = await fresh(noPlace);
+      await page.route("**/api/events?since=24h", (route) =>
+        route.fulfill({
+          json: {
+            ok: true,
+            data: {
+              available: true,
+              truncated: false,
+              window: { since: hours(24), until: hours(0) },
+              events: [
+                event(1, 6, "show", "wiki//knowledge/chain/n0"),
+                event(2, 5, "search", "wiki//knowledge/chain/n1"),
+                event(3, 4, "feedback", "wiki//knowledge/chain/n2", { signal: "positive" }),
+                event(4, 3, "show", "wiki//knowledge/chain/n9"),
+                event(5, 2, "show", "wiki//gone"),
+              ],
+            },
+          },
+        }),
+      );
+      await open(page, server, "/activity/replay");
+      const replay = page.getByRole("region", { name: "Activity replay", exact: true });
+      const drawing = replay.getByRole("group", { name: "Map drawing" });
+      await expect(drawing.getByRole("button", { name: "2D" })).toHaveAttribute("aria-pressed", "true");
+      await expect(replay.locator(".mind-map")).toBeVisible();
+      await expect(replay.locator(".stage-3d")).toHaveCount(0);
+      await drawing.getByRole("button", { name: "3D" }).click();
+      await expect(drawing.getByRole("button", { name: "3D" })).toHaveAttribute("aria-pressed", "true");
+      await expect(replay.locator(".stage-3d canvas")).toBeVisible();
+      await expect(replay.locator(".mind-map")).toHaveCount(0);
+      // The same controls and figures as 2D.
+      await expect(replay.getByRole("combobox", { name: "Speed" })).toBeVisible();
+      await expect(replay.getByRole("combobox", { name: "Events by" })).toBeVisible();
+      await expect(replay.getByRole("slider", { name: "Playhead" })).toBeVisible();
+      await expect(replay.locator(".figures")).toContainText("4events");
+      const results = await new AxeBuilder({ page })
+        .include(".replay")
+        .withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"])
+        .analyze();
+      assert.deepEqual(
+        results.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target).join(" ")}`),
+        [],
+      );
+      // The key names every mark, and what has no place is counted, not dropped.
+      const key = replay.getByRole("list", { name: "Key to the 3D map" });
+      for (const name of ["Used so far", "Not used yet", "Read, just now", "Returned by a search, just now"])
+        await expect(key).toContainText(name);
+      await expect(replay).toContainText("1 event so far touched assets with no place on this map");
+      await expect(replay).toContainText("1 event so far touched assets the index no longer lists");
+      // Play runs in 3D, with no errors, and pauses.
+      await replay.getByRole("button", { name: /^Play/ }).click();
+      await expect(replay.getByRole("button", { name: "Pause" })).toBeVisible();
+      await replay.getByRole("button", { name: "Pause" }).click();
+      // The choice is kept for the session: leave the page and come back inside the app.
+      await go(page, "/activity");
+      await go(page, "/activity/replay");
+      await expect(replay.locator(".stage-3d canvas")).toBeVisible();
+      await drawing.getByRole("button", { name: "2D" }).click();
+      await expect(replay.locator(".mind-map")).toBeVisible();
+      assert.deepEqual(errors, []);
+      await page.close();
+    },
+  );
 });
