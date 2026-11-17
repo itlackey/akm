@@ -93,6 +93,19 @@ export namespace assets {
   function history(input: { ref: string; revision?: string; limit?: number }): Promise<unknown>;
   /** What improve proposed for one asset, how it was decided, and how the asset has been used since. */
   function improvement(input: { ref: string }): unknown;
+  /**
+   * Per akm bundle, the links that name the old ref of an asset renamed or moved on disk, with the ref it has now. A
+   * read-only bundle is listed too (`writable: false`, `writeBlocker`); nothing is written.
+   */
+  function movedLinks(input?: { bundle?: string }): Promise<{
+    bundles: Array<{
+      bundle: string;
+      writable: boolean;
+      writeBlocker: string | null;
+      links: Array<{ ref: string; file: string; from: string; to: string }>;
+    }>;
+    total: number;
+  }>;
   function related(input: { ref: string; scope?: "all" | "bundle" }): Promise<unknown>;
   function search(input: {
     q: string;
@@ -108,6 +121,8 @@ export namespace assets {
   function projectOverview(input: { project: string }): unknown;
   function searchMisses(input?: { since?: string }): unknown;
   function show(input: { ref: string }): Promise<unknown>;
+  /** Rewrite the links to moved refs in one bundle, and nothing else; a read-only bundle is refused. */
+  function updateMovedLinks(input: { bundle: string }): Promise<{ bundle: string; rewritten: number; files: string[] }>;
 }
 export namespace backups {
   /** `akm backups prune`: remove backups older than `olderThan` (default 30d), keeping the newest of each folder. A real run needs `confirm`; `dryRun` removes nothing. */

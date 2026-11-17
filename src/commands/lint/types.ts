@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import type { StalePathFields } from "../../core/asset/stale-path";
+import type { MovedRefs } from "./moved-refs";
 
 /** Every rule `akm lint` reports; a rule name in `lint.skip` or `--rule` is one of these. */
 export const LINT_RULES = [
@@ -92,6 +93,9 @@ export function isAdvisoryLintIssue(issue: { issue: string }): boolean {
 export interface LintIssue extends Partial<StalePathFields> {
   /** The asset ref `akm show` takes, when the finding is about one asset of the linted bundle. */
   ref?: string;
+  /** A `missing-ref` to an asset the index recorded as moved: the link as written, and the ref the asset has now. */
+  movedFrom?: string;
+  movedTo?: string;
   file: string;
   issue: LintIssueType;
   detail: string;
@@ -127,4 +131,8 @@ export interface LintContext {
   extraStashRoots?: string[];
   /** Issue types to skip for this file: the bundle's `lint.skip` rules that match its path, plus the run's own. */
   lintSkip?: string[];
+  /** The refs the index recorded as moved; a `missing-ref` to one carries the new ref. */
+  moves?: MovedRefs;
+  /** Rewrite the links to moved refs only (`fix` rewrites them too, with every other fix). */
+  fixMovedRefs?: boolean;
 }

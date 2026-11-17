@@ -45,6 +45,7 @@ import { resolveWorkflowSourceDomains } from "../../workflows/source-files";
 import { runBaseChecks } from "./base-linter";
 import { bundleLintSkip } from "./bundle-skip";
 import { checkEnvForDangerousKeys } from "./env-key-rules";
+import { type MovedRefs, readMovedRefs } from "./moved-refs";
 import { trackedSecretIssues } from "./tracked-secrets";
 import { isAdvisoryLintIssue, LINT_RULES, type LintContext, type LintIssue, type LintIssueType } from "./types";
 
@@ -84,6 +85,11 @@ export interface AkmLintOptions {
    * flag's rationale in `commands/agent/contribute-cli.ts`.
    */
   pruneDanglingEdges?: boolean;
+  /**
+   * Rewrite the links to refs the index recorded as moved, and nothing else (`fix` rewrites them too). Not a command
+   * flag: the workspace's "update links" is this.
+   */
+  fixMovedRefs?: boolean;
   dir?: string;
   config?: AkmConfig;
   typeFilter?: string;
@@ -606,6 +612,8 @@ interface SweepScope {
   stashRoot: string;
   extraStashRoots: string[];
   fix: boolean;
+  fixMovedRefs: boolean;
+  moves: MovedRefs;
   pruneDanglingEdges: boolean;
   /** Rules to skip for this run, on top of the bundle's `lint.skip`. */
   lintSkip?: string[];
@@ -629,7 +637,7 @@ function lintSweepFile(
   scope: SweepScope,
   { fixed, flagged, warnings }: SweepSinks,
 ): void {
-  const { stashRoot, extraStashRoots, fix, pruneDanglingEdges, stalePathRoots } = scope;
+  const { stashRoot, extraStashRoots, fix, fixMovedRefs, moves, pruneDanglingEdges, stalePathRoots } = scope;
   const lintSkip = [...(scope.lintSkip ?? []), ...(scope.bundleSkip?.(relPath) ?? [])];
   let raw: string;
   try {
@@ -683,6 +691,8 @@ function lintSweepFile(
           frontmatter,
           bodyStartLine,
           fix,
+          fixMovedRefs,
+          moves,
           pruneDanglingEdges,
           stashRoot,
           stalePathRoots,
@@ -765,13 +775,15 @@ function lintAkmSweep(
   const fix = options.fix === true;
   // #884: the dangling-edge repair writes too, so it clears the same
   // read-only gate `--fix` does.
-  if (fix || options.pruneDanglingEdges === true) assertFixTargetWritable(stashRoot, sources);
+  if (fix || options.pruneDanglingEdges === true || options.fixMovedRefs === true)
+    assertFixTargetWritable(stashRoot, sources);
   const fixed: LintIssue[] = [];
   const flagged: LintIssue[] = [];
   const warnings: LintIssue[] = [];
 
   const bundleSkip = bundleLintSkip(cfg, stashRoot);
   const roots = stalePathRoots(cfg, stashRoot);
+  const moves = readMovedRefs();
   // Types left out of an untyped search are left out of the sweep unless `--type` names one.
   const leftOut = new Set(defaultExcludedTypes(cfg).map((type) => stashDirFor(type)));
   const dirsToScan = documentStashDirs().filter((d) =>
@@ -829,6 +841,8 @@ function lintAkmSweep(
           stashRoot,
           extraStashRoots,
           fix,
+          fixMovedRefs: options.fixMovedRefs === true,
+          moves,
           pruneDanglingEdges: options.pruneDanglingEdges === true,
           stalePathRoots: roots,
           bundleSkip,
@@ -950,7 +964,7 @@ async function lintFile(file: string, options: AkmLintOptions, cfg: AkmConfig): 
         "Example: akm lint ./nightly.yml --type tasks",
       );
     }
-    if (options.fix) assertFixTargetWritable(root, sources);
+    if (options.fix || options.fixMovedRefs) assertFixTargetWritable(root, sources);
   } else {
     subdir = options.typeFilter;
     if (!subdir) {
@@ -990,6 +1004,8 @@ async function lintFile(file: string, options: AkmLintOptions, cfg: AkmConfig): 
             .filter((p) => p !== root && fs.existsSync(p))
         : [],
       fix: options.fix === true,
+      fixMovedRefs: options.fixMovedRefs === true,
+      moves: readMovedRefs(),
       pruneDanglingEdges: false,
       stalePathRoots: stalePathRoots(cfg, root ?? path.dirname(absFile)),
       bundleSkip: root ? bundleLintSkip(cfg, root) : undefined,
@@ -1062,7 +1078,7 @@ function finishLint(found: LintFindings, cfg: AkmConfig, options: AkmLintOptions
  * `commands/improve/preparation.ts`) or is a test that can `await` it.
  */
 export async function akmLint(options: AkmLintOptions = {}): Promise<AkmLintResult> {
-  if (options.rule !== undefined && (options.fix || options.pruneDanglingEdges)) {
+  if (options.rule !== undefined && (options.fix || options.pruneDanglingEdges || options.fixMovedRefs)) {
     throw new UsageError(
       "lint: --rule lists findings; run it without --fix or --prune-dangling-edges.",
       "INVALID_FLAG_VALUE",

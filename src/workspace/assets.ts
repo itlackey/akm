@@ -32,6 +32,7 @@ import { capSide, clampLimit, DIFF_SIDE_MAX_CHARS, withReadonlyStateDb } from ".
 
 export { graph } from "./graph";
 export { searchMisses } from "./misses";
+export { movedLinks, updateMovedLinks } from "./moved-links";
 
 export interface SearchInput {
   q: string;

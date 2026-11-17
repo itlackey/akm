@@ -58,6 +58,7 @@ import { localDateStamp } from "../../core/common";
 import { containsRedactedContent, REDACTED_CONTENT_MARKER } from "../../core/content-safety";
 import { DERIVED_SUFFIX } from "../../core/recognition-util";
 import { findFenceRegions } from "./markdown-insertion";
+import { rewriteMovedLinks } from "./moved-refs";
 import type { LintContext, LintIssue } from "./types";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -337,7 +338,11 @@ function localRefMissingRelPath(refType: string, refName: string, allRoots: stri
  * is checked on disk by {@link classifyConceptRef}; a conceptId whose leading
  * segment names no known stash-subdir is not a local asset ref and is skipped (foreign-adapter / cross-bundle prose).
  */
-function scanBundleRefs(scanBody: string, allRoots: string[]): Array<{ ref: string; resolvedRelPath: string }> {
+function scanBundleRefs(
+  scanBody: string,
+  allRoots: string[],
+  movedConcepts: ReadonlySet<string>,
+): Array<{ ref: string; resolvedRelPath: string }> {
   const missing: Array<{ ref: string; resolvedRelPath: string }> = [];
   const re = new RegExp(BUNDLE_REF_RE.source, BUNDLE_REF_RE.flags);
   let match: RegExpExecArray | null;
@@ -347,11 +352,13 @@ function scanBundleRefs(scanBody: string, allRoots: string[]): Array<{ ref: stri
     if (token.includes("$(") || token.includes("${") || token.includes("::")) continue;
     const boundary = token.indexOf("//");
     if (boundary < 0) continue;
-    const found = classifyConceptRef(token.slice(boundary + 2), allRoots);
+    const found = classifyConceptRef(token.slice(boundary + 2), allRoots, movedConcepts);
     if (found !== null) missing.push({ ref: token, resolvedRelPath: found });
   }
   return missing;
 }
+
+const NO_CONCEPTS: ReadonlySet<string> = new Set();
 
 /**
  * Run the existence check for a bare conceptId. Returns the missing relPath, or
@@ -362,12 +369,21 @@ function scanBundleRefs(scanBody: string, allRoots: string[]): Array<{ ref: stri
  * stash folder is foreign-adapter / cross-bundle prose and is skipped. Drops a
  * trailing `#fragment` (export selector) before mapping.
  */
-function classifyConceptRef(rawConceptId: string, allRoots: string[]): string | null {
+function classifyConceptRef(
+  rawConceptId: string,
+  allRoots: string[],
+  movedConcepts: ReadonlySet<string> = NO_CONCEPTS,
+): string | null {
   const conceptId = rawConceptId.split("#", 1)[0]!;
   const legacy = legacyTypeSlugParts(conceptId);
   if (legacy !== undefined) return localRefMissingRelPath(legacy.type, legacy.name, allRoots);
   const slash = conceptId.indexOf("/");
-  if (slash <= 0 || !stashDirNames().includes(conceptId.slice(0, slash))) return null;
+  if (slash <= 0 || !stashDirNames().includes(conceptId.slice(0, slash))) {
+    // A path ref outside the type folders is checked only when the index recorded a move away from it.
+    const gone =
+      movedConcepts.has(conceptId) && !allRoots.some((root) => fs.existsSync(path.join(root, `${conceptId}.md`)));
+    return gone ? `${conceptId}.md` : null;
+  }
   if (isNonRefName(conceptId.slice(slash + 1))) return null;
   const spellings = [conceptId, conceptId.slice(slash + 1)];
   // A memory's `<name>.derived.md` child also reaches an edge to its parent (#882).
@@ -414,11 +430,12 @@ function checkMissingRefs(
   body: string,
   stashRoot: string,
   extraStashRoots: string[] = [],
+  movedConcepts: ReadonlySet<string> = NO_CONCEPTS,
 ): Array<{ ref: string; resolvedRelPath: string }> {
   const allRoots = [stashRoot, ...extraStashRoots];
   // C1: Strip fenced code blocks so example refs inside ``` are not flagged.
   const scanBody = stripFencedBlocks(body);
-  return dedupeMissing(scanBundleRefs(scanBody, allRoots));
+  return dedupeMissing(scanBundleRefs(scanBody, allRoots, movedConcepts));
 }
 
 /**
@@ -435,6 +452,7 @@ function checkMissingRefsInList(
   values: string[],
   stashRoot: string,
   extraStashRoots: string[] = [],
+  movedConcepts: ReadonlySet<string> = NO_CONCEPTS,
 ): Array<{ ref: string; resolvedRelPath: string }> {
   const allRoots = [stashRoot, ...extraStashRoots];
   const missing: Array<{ ref: string; resolvedRelPath: string }> = [];
@@ -447,14 +465,14 @@ function checkMissingRefsInList(
       // legacy/remote `origin//type:name` — not the new grammar, so skip it.
       const tail = value.slice(boundary + 2);
       if (tail.includes(":")) continue;
-      const rel = classifyConceptRef(tail, allRoots);
+      const rel = classifyConceptRef(tail, allRoots, movedConcepts);
       if (rel !== null) missing.push({ ref: value, resolvedRelPath: rel });
       continue;
     }
     // Un-prefixed: a 0.9.0 short `conceptId`. (Post-Chunk-8 the durable
     // frontmatter xref channel is conceptId-spelled — the legacy `type:name`
     // ref-list arm is retired.)
-    const rel = classifyConceptRef(value, allRoots);
+    const rel = classifyConceptRef(value, allRoots, movedConcepts);
     if (rel !== null) missing.push({ ref: value, resolvedRelPath: rel });
   }
   return dedupeMissing(missing);
@@ -812,21 +830,48 @@ function runMissingRefChecks(
   // refs that were valid at capture time but later removed from the
   // stash.
   if (!shouldRun("missing-ref")) return { issues, raw, modified };
+  const allRoots = [ctx.stashRoot, ...(ctx.extraStashRoots ?? [])];
+  const movedConcepts = ctx.moves?.concepts ?? NO_CONCEPTS;
+  // Links to an asset the index recorded as moved: reported with the new ref, and rewritten under `--fix`.
+  const movedLinks = new Map<string, string>();
+  const movedFinding = (ref: string, where: string): LintIssue | undefined => {
+    const moved = ctx.moves?.target(ref);
+    const concept = moved?.to.slice(moved.to.indexOf("//") + 2);
+    if (!moved || concept === undefined || classifyConceptRef(concept, allRoots, new Set([concept])) !== null)
+      return undefined;
+    const issue: LintIssue = {
+      file: ctx.relPath,
+      issue: "missing-ref",
+      detail: `missing ref: ${ref} (${where}moved to ${moved.to})`,
+      fixed: false,
+      movedFrom: ref,
+      movedTo: moved.to,
+    };
+    if (ctx.fix || ctx.fixMovedRefs) {
+      movedLinks.set(ref.split("#", 1)[0] as string, moved.spelled);
+      issue.fixed = true;
+      issue.detail = `moved ref updated: ${ref} -> ${moved.spelled}`;
+      pendingFixes.push(issue);
+    }
+    return issue;
+  };
   {
     const explicitRefs = extractFrontmatterRefs(ctx.data, ctx.body);
     // An explicit `refs:` array is a REF LIST (each value is a whole ref —
     // short conceptIds included); a bare body is PROSE (anchored refs only).
     const missingRefs =
       explicitRefs !== null
-        ? checkMissingRefsInList(explicitRefs, ctx.stashRoot, ctx.extraStashRoots)
-        : checkMissingRefs(ctx.body, ctx.stashRoot, ctx.extraStashRoots);
+        ? checkMissingRefsInList(explicitRefs, ctx.stashRoot, ctx.extraStashRoots, movedConcepts)
+        : checkMissingRefs(ctx.body, ctx.stashRoot, ctx.extraStashRoots, movedConcepts);
     for (const { ref, resolvedRelPath } of missingRefs) {
-      issues.push({
-        file: ctx.relPath,
-        issue: "missing-ref",
-        detail: `missing ref: ${ref} (resolved to ${resolvedRelPath})`,
-        fixed: false,
-      });
+      issues.push(
+        movedFinding(ref, "") ?? {
+          file: ctx.relPath,
+          issue: "missing-ref",
+          detail: `missing ref: ${ref} (resolved to ${resolvedRelPath})`,
+          fixed: false,
+        },
+      );
     }
 
     // Frontmatter xref channels (xrefs / supersededBy / contradictedBy).
@@ -893,7 +938,11 @@ function runMissingRefChecks(
           }
         }
 
-        const missingXrefs = checkMissingRefsInList(values, ctx.stashRoot, ctx.extraStashRoots);
+        const allMissingXrefs = checkMissingRefsInList(values, ctx.stashRoot, ctx.extraStashRoots, movedConcepts);
+        // A moved ref is a link to update, never a dangling edge to drop.
+        const movedXrefs = allMissingXrefs.flatMap(({ ref }) => movedFinding(ref, `frontmatter ${key}; `) ?? []);
+        issues.push(...movedXrefs);
+        const missingXrefs = allMissingXrefs.filter(({ ref }) => !movedXrefs.some((issue) => issue.movedFrom === ref));
 
         // #884 opt-in repair. Scoped to the BELIEF channels only: an edge whose
         // target has neither a file nor a prune tombstone asserts a
@@ -931,6 +980,18 @@ function runMissingRefChecks(
             fixed: false,
           });
         }
+      }
+    }
+  }
+  if (movedLinks.size > 0) {
+    const rewritten = rewriteMovedLinks(currentRaw, movedLinks);
+    if (rewritten !== currentRaw) {
+      currentRaw = rewritten;
+      modified = true;
+    } else {
+      for (const issue of issues.filter((found) => found.movedTo !== undefined && found.fixed === true)) {
+        issue.fixed = "failed";
+        issue.detail = `${issue.detail} — could not find the link in the file to rewrite`;
       }
     }
   }
