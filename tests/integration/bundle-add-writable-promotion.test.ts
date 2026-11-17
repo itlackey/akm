@@ -363,6 +363,7 @@ exec ${JSON.stringify(realGit)} "$@"
     expect(result.stderr).toContain(root);
     expect(fs.readFileSync(note, "utf8")).toBe("RACED LOCAL EDIT\n");
     expect(git(["-C", root, "rev-parse", "HEAD"]).trim()).toBe(head);
+    expect(git(["-C", root, "rev-parse", "@{upstream}"]).trim()).toBe(head);
     expect(installed().lock?.resolvedRevision).toBe(lockedBefore);
   }, 60_000);
 

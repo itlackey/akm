@@ -173,7 +173,7 @@ export interface ProposalAcceptOptions {
 
 export interface ProposalAcceptResult {
   schemaVersion: 1;
-  /** Native scheduler cleanup that remains unverified. */
+  /** Native scheduler cleanup that remains unverified, and sync failures on other tasks in the bundle. */
   warnings?: string[];
   ok: true;
   id: string;

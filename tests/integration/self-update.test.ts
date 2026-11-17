@@ -15,6 +15,7 @@ import {
 } from "../../src/commands/sources/self-update";
 import { upgradeCommand } from "../../src/commands/sources/sources-cli";
 import { _resetWarnOnceForTests, _setWarnSinkForTests, setQuiet } from "../../src/core/warn";
+import { resolveNpmGlobalRoot } from "../../src/tasks/resolve-akm-bin";
 import { sandboxHome, withEnv } from "../_helpers/sandbox";
 
 // ── Fetch mocking helper ────────────────────────────────────────────────────
@@ -191,6 +192,20 @@ describe("detectInstallMethod", () => {
     expect(
       detectInstallMethod({ bunMain: undefined, importMetaDir: path.join(packageRoot, "dist"), hasAkmVersion: false }),
     ).toBe("package-local");
+  });
+
+  test("the npm on PATH proves the global root when no Node launcher names one", () => {
+    const dir = sandboxHome().dir;
+    const root = path.join(dir, "lib/node_modules");
+    fs.mkdirSync(path.join(dir, "bin"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "bin/npm"), `#!/bin/sh\necho ${JSON.stringify(root)}\n`, { mode: 0o755 });
+    const npmGlobalRoot = resolveNpmGlobalRoot(undefined, { PATH: `${path.join(dir, "bin")}:/usr/bin:/bin` });
+    expect(npmGlobalRoot).toBe(root);
+    const signals = { bunMain: undefined, hasAkmVersion: false, npmGlobalRoot };
+    expect(detectInstallMethod({ ...signals, importMetaDir: path.join(root, "akm-cli/dist") })).toBe("npm");
+    expect(detectInstallMethod({ ...signals, importMetaDir: "/plugins/akm/node_modules/akm-cli/dist" })).toBe(
+      "package-local",
+    );
   });
 
   test("a dependency nested inside another global package is package-local", () => {

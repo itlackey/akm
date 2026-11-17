@@ -1718,7 +1718,8 @@ A writable Git update is fetched into a staged copy of the checkout beside the
 live one, so a failed fetch leaves the live checkout, the lock and the index
 untouched. Publication refreshes the configured origin tracking ref to the tip
 Git fetched in staging, independently of any local-ahead HEAD. A concurrent
-change to that live tracking ref is reported rather than overwritten.
+change to that live tracking ref is reported rather than overwritten, and a
+refused fast-forward puts the tracking ref back.
 The live checkout is then fast-forwarded to exactly the staged
 commit (`git merge --ff-only`), which refuses, preserving local work, when local
 commits have diverged or the merge would overwrite local work. AKM holds its
@@ -1810,7 +1811,8 @@ That makes `akm upgrade` safe as a container entrypoint: on a current
 installation it is a no-op. An akm installed as a dependency of another
 package (`installMethod: "package-local"`) is never reinstalled — the parent
 package owns that copy — but its migrations still run. An npm global upgrade
-requires evidence that this copy is inside the npm global root; a package-local
+requires evidence that this copy is inside the npm global root, read from the npm
+beside the launching Node or else the `npm` on PATH; a package-local
 Bun invocation without that evidence also leaves installation to its owner. Standalone downloads
 use a temporary rollback copy only during atomic executable replacement.
 

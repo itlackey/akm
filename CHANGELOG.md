@@ -52,12 +52,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- Package-local plugin CLIs invoked directly with Bun no longer default to an npm-global upgrade when npm ownership is unproven (#1708).
-- Accepting an enabled task's retirement reconciles its host-local activation before archiving; failed cleanup is retryable, and reverting does not reactivate it (#1705).
+- Package-local plugin CLIs invoked directly with Bun no longer default to an npm-global upgrade when npm ownership is unproven; the `npm` on PATH proves a global install when no launching Node does (#1708).
+- Accepting an enabled task's retirement reconciles its host-local activation before archiving. A refused retirement leaves the task enabled as it was, another task's sync failure or an unreadable native scheduler is a warning, and reverting does not reactivate it (#1705).
 - Failed scheduled source resolution or preparation records a typed failure with an unknown target in task history, without dispatching the task body. Interactive preflight remains non-mutating (#1711).
 - Consolidation reports same-run retirement conflicts as deferrals, counts parsed verdicts accurately, and keeps deferred pairs eligible for later runs. Health separates deferrals from failures and reports unknown deferral totals for older records (#1706).
 - Stale-path lint treats fenced code as documentation examples. Current paths in prose and frontmatter remain checked, with bundle-level `lint.skip` suppression (#1707).
-- Writable Git bundle updates publish the fetched upstream tracking revision alongside the verified checkout update, preserving local work and concurrent tracking changes (#1709).
+- Writable Git bundle updates publish the fetched upstream tracking revision alongside the verified checkout update, preserving local work and concurrent tracking changes; a refused fast-forward restores the tracking revision (#1709).
 - Scheduler version advice recommends rebinding only when the scheduled CLI is older; a newer scheduled CLI directs the caller to update instead (#1710).
 
 - `akm upgrade --channel <channel>` no longer exits 1 when every installed plugin already follows that channel and one update is `deferred` (OpenCode is running) or `skipped`: the entry reports it, as in an upgrade with no `--channel`. It exited 1 on every such run, so AKM Desktop's Update, which always names the channel, failed whenever OpenCode was open. A plugin left on the other channel still makes the switch exit 1. When akm exits 1 without a failed step, AKM Desktop now shows what akm reported as not done (akm's message and each deferred or skipped plugin with its reason) instead of "AKM's upgrade exited with an error."

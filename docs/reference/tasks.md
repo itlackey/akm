@@ -533,13 +533,18 @@ for full before/after examples and recovery guidance.
 - `akm task enable <ref>` / `akm task disable <ref>` change only local
   scheduler config, then reconcile that bundle.
 - Accepting a task retirement disables its host-local ref and reconciles its
-  native bindings before archiving the source. A failed reconciliation refuses
-  retirement and leaves the source in place; retry it or sync after repairing
-  the backend. A ref absent from local activation still checks native bindings,
-  because a previous removal may have failed. If that inspection is unavailable,
-  an explicitly disabled task may archive with an incomplete-cleanup warning;
-  native bindings are unknown, never reported as absent. Reverting retirement
-  restores source bytes without enabling it.
+  native bindings before archiving the source. If the task's own bindings are
+  still installed afterwards, retirement is refused; a failure on another task
+  in the bundle is reported as a warning and does not block it. A refused
+  retirement leaves the source in place and the task enabled as it was; retry
+  it after repairing the backend. A ref absent from local activation still
+  checks native bindings, because a previous removal may have failed. If the
+  native scheduler cannot be read, the ref is removed from local activation and
+  the task archives with an incomplete-cleanup warning; native bindings are
+  unknown, never reported as absent. A host with no `scheduler.enabled` list and
+  no binding for the task is left unchanged. Accepting an accepted retirement
+  again does not touch the scheduler. Reverting retirement restores source
+  bytes without enabling it.
 - Delete the `.yml` source and sync to remove its derived binding(s).
 - `akm doctor scheduler sync` reads the installed rows once, compares each against what
   its source renders, and installs, rewrites, or removes rows one at a time.

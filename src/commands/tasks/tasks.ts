@@ -443,18 +443,22 @@ function resolveTaskActivation(
   };
 }
 
-/** Native state for one ref, using the same row ownership and identity as scheduler sync. */
+/**
+ * Native state for one ref, using the same row ownership and identity as scheduler sync.
+ * `unavailable`: the native scheduler could not be read at all. `unknown`: it
+ * was read, and a row names this ref without proving which bundle owns it.
+ */
 export async function inspectTaskSchedulerBindings(
   ref: string,
   deps: SchedulerDeps = {},
-): Promise<{ state: "installed" | "not-installed" } | { state: "unknown"; reason: string }> {
+): Promise<{ state: "installed" | "not-installed" } | { state: "unknown" | "unavailable"; reason: string }> {
   const resolved = resolveTaskActivation(ref, undefined, false);
   let installed: InstalledSchedulerBinding[];
   try {
     installed = await listInstalledRows(deps.backend ?? selectBackend());
   } catch (cause) {
     rethrowIfTestIsolationError(cause);
-    return { state: "unknown", reason: errorMessage(cause) };
+    return { state: "unavailable", reason: errorMessage(cause) };
   }
   let unknownOwnership: string | undefined;
   for (const row of installed) {

@@ -480,10 +480,14 @@ function gitOrThrow(repoDir: string, args: string[]): string {
 
 /** The current branch's upstream in the origin that the provider verified, when configured. */
 function originUpstream(repo: string): { ref: string; revision: string } | undefined {
-  const branch = gitOrThrow(repo, ["rev-parse", "--symbolic-full-name", "HEAD"]);
-  const [ref, remote] = gitOrThrow(repo, ["for-each-ref", "--format=%(upstream) %(upstream:remotename)", branch]).split(
-    " ",
-  );
+  // A detached HEAD names no branch, and an unborn one has no ref yet: neither has an upstream.
+  const branch = runGit(["-C", repo, "symbolic-ref", "-q", "HEAD"]);
+  if (branch.status !== 0) return undefined;
+  const [ref, remote] = gitOrThrow(repo, [
+    "for-each-ref",
+    "--format=%(upstream) %(upstream:remotename)",
+    branch.stdout.trim(),
+  ]).split(" ");
   return ref && remote === "origin" ? { ref, revision: gitOrThrow(repo, ["rev-parse", "--verify", ref]) } : undefined;
 }
 
@@ -509,6 +513,10 @@ function fastForwardCheckout(
     gitOrThrow(liveRepo, ["update-ref", upstream.ref, upstream.revision, expectedUpstream.revision]);
   }
   const merge = runGit(["-C", liveRepo, "merge", "--ff-only", "--no-overwrite-ignore", head], { timeout: 120_000 });
+  if (merge.status !== 0 && upstream && expectedUpstream) {
+    // A refused publish publishes nothing: put the tracking ref back, unless another writer has moved it since.
+    runGit(["-C", liveRepo, "update-ref", upstream.ref, expectedUpstream.revision, upstream.revision]);
+  }
   if (merge.status === null) {
     // Spawn failure, timeout or signal: git may have been interrupted mid-checkout.
     throw new UsageError(

@@ -116,17 +116,20 @@ export interface InstallSignals {
 
 /** Read live runtime signals. */
 export function getInstallSignals(): InstallSignals {
+  const importMetaDir = getDirname(import.meta.url);
   return {
     bunMain: mainPath,
-    importMetaDir: getDirname(import.meta.url),
+    importMetaDir,
     hasAkmVersion: typeof AKM_VERSION !== "undefined",
-    npmGlobalRoot: resolveNpmGlobalRootForThisProcess(),
+    // Only a copy inside a `node_modules` is ever compared against it.
+    npmGlobalRoot: normalizePathSeparators(importMetaDir).includes(NODE_MODULES_SEGMENT)
+      ? resolveNpmGlobalRootForThisProcess()
+      : undefined,
   };
 }
 
 function resolveNpmGlobalRootForThisProcess(): string | undefined {
   const nodePath = process.env.AKM_LAUNCHER_NODE?.trim() || (process.versions.bun ? undefined : process.execPath);
-  if (!nodePath) return undefined;
   try {
     return resolveNpmGlobalRoot(nodePath, process.env);
   } catch {
