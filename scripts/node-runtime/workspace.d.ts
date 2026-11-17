@@ -106,6 +106,18 @@ export namespace assets {
     }>;
     total: number;
   }>;
+  /**
+   * Copy a file or folder to a folder of a bundle (the same or another): a new file wherever the person puts it, staged and
+   * renamed into place, indexed, committed by the bundle's Git policy, with a Markdown asset recording its origin in `sources`.
+   * Nothing is overwritten; env and secret files and managed folders are refused.
+   */
+  function copyEntry(input: { bundle: string; from: string; toBundle?: string; folder?: string; name: string }): Promise<{
+    bundle: string;
+    from: string;
+    toBundle: string;
+    to: string;
+    indexed: boolean;
+  }>;
   function related(input: { ref: string; scope?: "all" | "bundle" }): Promise<unknown>;
   function search(input: {
     q: string;
