@@ -3412,7 +3412,16 @@ A bundle of another adapter is checked through that adapter's `validate`, and th
 checks every file gets (`unquoted-colon`, `missing-updated`, `stale-path`,
 `missing-ref`, `redacted-content`) are the same ones, with the same exemptions
 (skills, LLM Wikis, `lint.skip`), as in an akm bundle. An adapter can leave a rule out
-for its own files: `okf` and `website-snapshot` do not apply `missing-updated`.
+for its own files: `okf` and `website-snapshot` do not apply `missing-updated`. The
+checks of a type that has its own (a command's and an agent's `name` and `type`, a
+fact's `category`, a task's source, a memory stub, a workflow stub) are one table both
+routes read.
+
+A ref an asset declares in frontmatter (`xrefs`, `supersededBy`, `contradictedBy`,
+`currentBeliefRefs`, `sources`, and `refs`) is checked whatever folder it points
+into, read as the index reads it: a wiki page's `raw/x.md` and `wiki:<name>/pages/x`
+are relative to its wiki. A word in prose is a ref only when it looks like one
+(`bundle//concept`), as before.
 
 A link to a ref that `akm index` recorded as moved (see [index](#index)) is a
 `missing-ref` finding that carries `movedFrom` (the link as written) and `movedTo`
