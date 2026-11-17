@@ -495,6 +495,29 @@ afterEach(() => cleanup());
     ).toEqual(["user", "project", "local"]);
   });
 
+  test("a running OpenCode already on the channel defers its plugin and the upgrade succeeds", async () => {
+    await withEnv(env, () => runUpgrade({ ...opts, channel: "next" }, "0.10.1", deps()));
+    state({ versions: { latest: "0.10.2", next: "0.10.4-beta" }, openCodeRunning: true });
+    const run = await withEnv(env, () =>
+      runUpgrade({ ...opts, channel: "next" }, "0.10.3-beta", deps("0.10.3-beta", "0.10.4-beta")),
+    );
+    expect(run.result.plugins.find((p) => p.harness === "opencode")).toMatchObject({
+      outcome: "deferred",
+      channel: "next",
+    });
+    expect(run.mode === "upgrade" && run.failed).toBe(false);
+  });
+
+  test("a running OpenCode still on the other channel leaves the coordinated switch incomplete", async () => {
+    state({ openCodeRunning: true });
+    const run = await withEnv(env, () => runUpgrade({ ...opts, channel: "next" }, "0.10.1", deps()));
+    expect(run.result.plugins.find((p) => p.harness === "opencode")).toMatchObject({
+      outcome: "deferred",
+      channel: "latest",
+    });
+    expect(run.mode === "upgrade" && run.failed).toBe(true);
+  });
+
   test("an unavailable installed OpenCode makes the coordinated switch incomplete", async () => {
     fs.unlinkSync(file("bin/opencode"));
     const run = await withEnv(env, () => runUpgrade({ ...opts, channel: "next" }, "0.10.1", deps()));

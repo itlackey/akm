@@ -95,7 +95,9 @@ if (command === "git" && args[2] === "show") {
   const channel = args[1]!.endsWith("@next") ? "next" : "latest";
   output({ version: native(channel) });
 } else if (command === "pgrep") {
-  process.exit(1);
+  // A pid on this host stands in for a running OpenCode; pgrep exits 1 when nothing matched.
+  if (state.openCodeRunning) console.log(process.pid);
+  else process.exit(1);
 } else if (command === "opencode") {
   if (args[0] === "--version") console.log("1.5.0");
   else {

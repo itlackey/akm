@@ -1970,8 +1970,10 @@ writing settings or fetching Git marketplaces. The CLI's `currentChannel` is
 inferred from its version: prerelease means `next`, otherwise `latest`.
 A configured channel is distinct from a successful refresh: native update
 failures retain the configured target and backup paths but report `failed`.
-An installed plugin that cannot switch, including OpenCode awaiting shutdown,
-makes an explicit switch exit `1`; retry after resolving its reported cause.
+An installed plugin left on the other channel, including OpenCode awaiting
+shutdown, makes an explicit switch exit `1`; retry after resolving its reported
+cause. A plugin already on the channel whose update is `deferred` or `skipped`
+is reported in its entry and does not, as in an upgrade with no `--channel`.
 The switch is coordinated, not a transaction across independent harnesses.
 
 #### Containers

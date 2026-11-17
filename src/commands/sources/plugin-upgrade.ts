@@ -1142,16 +1142,12 @@ export async function runUpgrade(
   // blocked or could not run is not done, and neither is one whose plugin
   // step failed.
   const migrationFailed = upgraded.migration?.status === "blocked" || upgraded.migration?.status === "failed";
+  // A plugin left on the other channel is a switch that did not happen. A "current" entry there is one the switch
+  // left alone on purpose, and a deferred or skipped plugin already follows the channel asked for: its update waits
+  // for the harness to exit, as in an upgrade with no --channel, and is reported in its entry.
   const switchIncomplete =
     switchChannel !== undefined &&
-    plugins.some(
-      (p) =>
-        p.channel !== undefined &&
-        // A "current" entry still on the other channel is one the switch left alone on purpose.
-        ((p.channel !== switchChannel && p.outcome !== "current") ||
-          p.outcome === "deferred" ||
-          p.outcome === "skipped"),
-    );
+    plugins.some((p) => p.channel !== undefined && p.channel !== switchChannel && p.outcome !== "current");
   return {
     mode: "upgrade",
     result,
