@@ -43,21 +43,16 @@ test("nothing is configured only when there is no bundle and no working library"
   assert.equal(isUnconfigured({ bundles: [], workingStash: { path: "/x" } }), false);
 });
 
-test("the starter bundle is recognised by its source", () => {
-  const bundle = (name, locator) => ({ name, source: locator ? { kind: "git", locator } : undefined });
-  assert.equal(hasStarter([bundle("akm", undefined)]), false);
-  assert.equal(hasStarter([bundle("akm-stash", "https://github.com/itlackey/akm-stash")]), true);
-  for (const locator of [
-    "github:itlackey/akm-stash",
-    "https://github.com/itlackey/akm-stash.git",
-    "https://github.com/itlackey/akm-stash/",
-    "github:itlackey/akm-stash.git",
-  ])
-    assert.equal(hasStarter([bundle("anything", locator)]), true, locator);
-  // The name, or a fork or private repository whose text contains akm-stash, is not the starter.
-  assert.equal(hasStarter([bundle("my-akm-stash-notes", "https://example.test/me/notes.git")]), false);
-  assert.equal(hasStarter([bundle("akm-stash", "https://github.com/someone/akm-stash")]), false);
-  assert.equal(hasStarter([bundle("notes", "https://github.com/itlackey/akm-stash-private")]), false);
+test("the starter bundle is the one whose source identity akm reports as the starter's", () => {
+  const starter = { source: "https://github.com/itlackey/akm-stash", identity: "github:itlackey/akm-stash" };
+  const bundle = (name, identity) => ({ name, identity });
+  assert.equal(hasStarter([bundle("akm", null)], starter), false);
+  assert.equal(hasStarter([bundle("anything", "github:itlackey/akm-stash")], starter), true);
+  // A name or a fork that merely looks like the starter is not it; a folder has no identity.
+  assert.equal(hasStarter([bundle("akm-stash", "github:someone/akm-stash")], starter), false);
+  assert.equal(hasStarter([bundle("akm-stash", null)], starter), false);
+  // An identity akm could not report is unknown, never a match.
+  assert.equal(hasStarter([bundle("akm-stash", null)], { ...starter, identity: null }), false);
 });
 
 const detected = (over = {}) => ({

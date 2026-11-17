@@ -567,6 +567,26 @@ describe("reads", () => {
     }
   });
 
+  test("bundles reports one identity for a bundle's source and for the starter, however the address is written", async () => {
+    await seed();
+    const current = loadConfig();
+    writeSandboxConfig({
+      bundles: {
+        ...current.bundles,
+        mine: { git: "https://github.com/itlackey/akm-stash.git" },
+        fork: { git: "https://github.com/someone/akm-stash" },
+        "akm-stash": { path: fs.mkdtempSync(path.join(ctx.storage.root, "folder-")) },
+      },
+    });
+    resetConfigCache();
+    const listed = await out(bundles.list());
+    const identity = (name: string) => listed.bundles.find((b: Json) => b.name === name)?.identity;
+    expect(identity("mine")).toBe(listed.starter.identity);
+    expect(identity("fork")).not.toBe(listed.starter.identity);
+    // A folder has no source identity, whatever it is called.
+    expect(identity("akm-stash")).toBeNull();
+  });
+
   test("bundles counts only the current model's vectors against the embeddable entries", async () => {
     await seed();
     const db = openExistingDatabase(getDbPath());
