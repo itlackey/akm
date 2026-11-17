@@ -11,6 +11,7 @@
 
 import { randomUUID } from "node:crypto";
 import os from "node:os";
+import { loadConfig } from "../core/config/config";
 import { peekConfigValue } from "../core/config/peek";
 import { getDbPath } from "../core/paths";
 import { isKnownType } from "../core/recognition-util";
@@ -40,9 +41,17 @@ function underTestOrCi(env: NodeJS.ProcessEnv): boolean {
   return Boolean(env.CI) || env.NODE_ENV === "test" || env.BUN_TEST === "1";
 }
 
-/** Whether the report is on: `usage.report: false` in the config file turns it off; anything else, or no file, leaves it on. */
+/**
+ * Whether the report is on, from the effective config (`extends` layers included): off when any layer sets
+ * `usage.report: false` and no nearer layer overrides it. A config that cannot be loaded is "not enabled": akm
+ * cannot confirm the person has not opted out, so nothing is sent.
+ */
 export function usageReportEnabled(): boolean {
-  return peekConfigValue(["usage", "report"]) !== false;
+  try {
+    return loadConfig().usage?.report !== false;
+  } catch {
+    return false;
+  }
 }
 
 function day(at: Date): string {

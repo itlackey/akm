@@ -4,9 +4,11 @@
 
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 import { openUsage } from "../../src/cli/usage";
 import { reportUsageIfDue } from "../../src/cli/usage-report";
+import { resetConfigCache } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
 import { deriveEntryProvenance } from "../../src/indexer/installations";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
@@ -192,7 +194,9 @@ test("the cli event counts the complete UTC days since the last report, and carr
 test("payload limits: flat, string-or-number props, names within the server's bounds", async () => {
   const storage = sandbox();
   seed("2026-11-01", [{ day: "2026-11-19", command: ["a-".repeat(40)], source: "user", attempts: 1 }]);
-  writeSandboxConfig({ bundles: { one: { path: storage.stashDir }, two: { path: storage.stashDir, enabled: false } } });
+  const other = path.join(storage.root, "other-bundle");
+  fs.mkdirSync(other);
+  writeSandboxConfig({ bundles: { one: { path: storage.stashDir }, two: { path: other, enabled: false } } });
   const { fn, sent } = fakeFetch();
   await reportUsageIfDue({ surface: "cli" }, { ...NOW, fetch: fn });
   const body = sent[0]?.body as { eventName: string; sessionId: string; props: Record<string, unknown> };
@@ -261,13 +265,50 @@ test("usage.report: false sends nothing and claims nothing", async () => {
   expect(lastDay("cli")).toBeUndefined();
 });
 
-test("a value that is not false leaves the report on", async () => {
+function writeLayers(base: Record<string, unknown>, file: Record<string, unknown>) {
+  const storage = sandbox();
+  seed("2026-11-01");
+  const basePath = path.join(storage.root, "base.json");
+  fs.writeFileSync(basePath, JSON.stringify(base));
+  writeSandboxConfig({ extends: basePath, ...file });
+  resetConfigCache();
+}
+
+test("usage.report: false in an extended base turns the report off, and config.get() says so", async () => {
+  writeLayers({ usage: { report: false } }, {});
+  const { fn, sent } = fakeFetch();
+  expect(await reportUsageIfDue({ surface: "cli" }, { ...NOW, fetch: fn })).toBe(false);
+  expect(sent).toHaveLength(0);
+  expect(lastDay("cli")).toBeUndefined();
+  expect(workspace.config.get().config.usage).toMatchObject({ report: false });
+});
+
+test("a nearer layer's usage.report: true overrides false in the base", async () => {
+  writeLayers({ usage: { report: false } }, { usage: { report: true } });
+  const { fn, sent } = fakeFetch();
+  expect(await reportUsageIfDue({ surface: "cli" }, { ...NOW, fetch: fn })).toBe(true);
+  expect(sent).toHaveLength(1);
+});
+
+test("a config that cannot be parsed sends nothing, and the command still succeeds", () => {
+  sandbox();
+  seed("2026-11-01");
+  const configPath = path.join(process.env.XDG_CONFIG_HOME ?? "", "akm", "config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, "{ not json");
+  const { NODE_ENV: _n, BUN_TEST: _b, CI: _c, ...base } = process.env;
+  const result = spawnSync("bun", [CLI, "--version"], { encoding: "utf8", timeout: 30000, env: base });
+  expect(result.status).toBe(0);
+  expect(lastDay("cli")).toBeUndefined();
+});
+
+test("a usage.report value that is not a boolean makes the config unloadable, so nothing is sent", async () => {
   sandbox();
   seed("2026-11-01");
   writeSandboxConfig({ usage: { report: "no" } });
   const { fn, sent } = fakeFetch();
-  expect(await reportUsageIfDue({ surface: "cli" }, { ...NOW, fetch: fn })).toBe(true);
-  expect(sent).toHaveLength(1);
+  expect(await reportUsageIfDue({ surface: "cli" }, { ...NOW, fetch: fn })).toBe(false);
+  expect(sent).toHaveLength(0);
 });
 
 test("CI and test runs never reach the network, even with a due day", async () => {
