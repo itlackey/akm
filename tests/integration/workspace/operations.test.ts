@@ -117,6 +117,27 @@ test("env and secret writes check the revision with the bytes they replace or re
   expect(fs.existsSync(info.path)).toBe(false);
 });
 
+test("a protected file below the top level is named as one akm manages only at the top level, and nothing opens or changes it", async () => {
+  const nested = path.join(storage.stashDir, "projects", "x", "secrets", "token");
+  fs.mkdirSync(path.dirname(nested), { recursive: true });
+  fs.writeFileSync(nested, "synthetic-nested-value");
+  const selector = { bundle: "stash", file: "projects/x/secrets/token" };
+  const refusal = /protected secret file that akm manages only at the top level of a bundle/;
+  expect(() => sensitive.describe(selector)).toThrow(refusal);
+  expect(() => sensitive.readValue(selector)).toThrow(refusal);
+  await expect(
+    sensitive.save({ ...selector, content: "planted", revision: sha("synthetic-nested-value") }),
+  ).rejects.toThrow(refusal);
+  await expect(sensitive.remove({ ...selector, revision: sha("synthetic-nested-value") })).rejects.toThrow(refusal);
+  // The refusal carries no value, and the file is as it was.
+  expect(() => sensitive.describe(selector)).not.toThrow(/synthetic-nested-value/);
+  expect(fs.readFileSync(nested, "utf8")).toBe("synthetic-nested-value");
+  // A file that is no protected file keeps the plain answer.
+  expect(() => sensitive.describe({ bundle: "stash", file: "knowledge/note.md" })).toThrow(
+    "Choose an environment file or secret.",
+  );
+});
+
 test("createKnowledge writes, indexes and records the import as `akm import -` does, and refuses an existing name", async () => {
   const created = await documents.createKnowledge({
     bundle: "stash",

@@ -23,6 +23,7 @@ import {
   withEnvSecretWrite,
 } from "../core/env-secret-ref";
 import { UsageError } from "../core/errors";
+import { protectedTypeOf } from "./bundle-files";
 import { interactive } from "./lease";
 
 /** The file: its ref, or its bundle-relative path in a named bundle. */
@@ -61,7 +62,15 @@ function selection(input: SensitiveSelector): { type: Kind; ref: string } {
       : input.file?.startsWith("secrets/")
         ? "secret"
         : "";
-  if (!type) throw new UsageError("Choose an environment file or secret.");
+  if (!type) {
+    // akm's env and secret operations take only a file in the top-level env/ or secrets/ folder.
+    const nested = input.file === undefined ? undefined : protectedTypeOf(input.file);
+    if (nested)
+      throw new UsageError(
+        `This is a protected ${nested === "env" ? "environment" : "secret"} file that akm manages only at the top level of a bundle, in env/ or secrets/. Its value is not shown here.`,
+      );
+    throw new UsageError("Choose an environment file or secret.");
+  }
   if (input.ref) return { type, ref: input.ref };
   if (!input.bundle) throw new UsageError("Choose the bundle containing this file.");
   const dir = type === "env" ? "env" : "secrets";
