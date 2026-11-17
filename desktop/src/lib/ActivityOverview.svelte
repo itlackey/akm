@@ -50,6 +50,7 @@
     data,
     retrieval,
     pulse,
+    pulseNote = "",
     mode = "health",
     requestedTask = "",
     requestedRun = "",
@@ -62,6 +63,8 @@
     data: ActivityOverview;
     retrieval: ActivityRetrieval | null;
     pulse: ActivityPulse | null;
+    /** Why the weekly pulse could not be read, when akm said. */
+    pulseNote?: string;
     mode?: "health" | "runs" | "usage";
     requestedTask?: string;
     /** A workflow run whose trace the Runs view shows. */
@@ -396,7 +399,9 @@
               : `Usually ${number(pulse.tiles.negativeFeedback.usual.low)} to ${number(pulse.tiles.negativeFeedback.usual.high)} a week.`}</span
           >
         </p>
-      </div>{:else}<p class="muted">Weekly comparison unavailable; not a zero count.</p>{/if}
+      </div>{:else}<p class="muted">
+        Weekly comparison unavailable; not a zero count.{pulseNote ? ` ${pulseNote}` : ""}
+      </p>{/if}
   </section>
 
   {#if !metrics}<p class="notice">Usage and model measurements unavailable.</p>{:else}

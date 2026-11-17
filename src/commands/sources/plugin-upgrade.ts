@@ -106,15 +106,42 @@ function refreshed(harness: PluginUpgradeEntry["harness"], from: string | undefi
   return { harness, outcome: moved ? "updated" : "current", from, to } as PluginUpgradeEntry;
 }
 
-/** Unknown, in `--check`: knowing whether a newer build exists needs a marketplace fetch, which `--check` does not do. */
-function unknownRefresh(harness: PluginUpgradeEntry["harness"], from: string | undefined): PluginUpgradeEntry {
-  return {
-    harness,
-    outcome: "unknown",
-    from,
-    message:
-      "checking needs a fetch of the akm-plugins marketplace, which --check does not do; `akm upgrade` refreshes it",
-  };
+/**
+ * What `--check` says an update would do to a marketplace plugin, from the same read as the real switch
+ * ({@link marketplacePlan}): the build the channel's branch of the registered marketplace offers. A switch to a channel
+ * with nothing newer returns `keep`, the plugin the real switch leaves alone. A marketplace that cannot be read leaves
+ * the entry `unknown`, with the reason.
+ */
+function planEntry(
+  harness: "claude-code" | "codex",
+  installed: (string | undefined)[],
+  source: () => string,
+  ref: string | undefined,
+  channel: UpgradeChannel | undefined,
+  allowDowngrade: boolean,
+): { entry: PluginUpgradeEntry; keep?: Kept } {
+  const from = installed[0];
+  const followed = channel ?? refChannel(ref);
+  // A marketplace pinned to one tag never offers anything newer.
+  if (followed === "pinned") return { entry: refreshed(harness, from, from) };
+  const unknown = (reason: string) => ({
+    entry: {
+      harness,
+      outcome: "unknown" as const,
+      from,
+      message: `the ${followed} build could not be read (${reason}); \`akm upgrade\` refreshes it`,
+    },
+  });
+  let plan: ReturnType<typeof marketplacePlan>;
+  try {
+    plan = marketplacePlan(harness, source(), installed, followed, allowDowngrade);
+  } catch (error) {
+    return unknown(error instanceof Error ? error.message : String(error));
+  }
+  if (plan.target instanceof Error && !(channel && plan.keep)) return unknown(plan.target.message);
+  if (plan.keep) return { entry: refreshed(harness, from, from), keep: plan.keep };
+  const to = plan.target as string;
+  return { entry: to === from ? refreshed(harness, from, from) : { harness, outcome: "pending", from, to } };
 }
 
 // ── Claude Code ─────────────────────────────────────────────────────────────
@@ -201,10 +228,27 @@ function stays(
   };
 }
 
-function upgradeClaudeCode(dryRun: boolean, next: boolean, channel?: UpgradeChannel, keep?: Kept): PluginUpgradeEntry {
+function upgradeClaudeCode(
+  dryRun: boolean,
+  next: boolean,
+  channel?: UpgradeChannel,
+  keep?: Kept,
+  allowDowngrade = false,
+): PluginUpgradeEntry {
   const detected = detectClaudeCode(channel !== undefined);
   if ("entry" in detected) return detected.entry;
   const before = refChannel(detected.ref);
+  const planned = dryRun
+    ? planEntry(
+        "claude-code",
+        detected.installations.map((p) => p.version),
+        () => claudeMarketplaceSource(claudePluginsRoot()),
+        detected.ref,
+        channel,
+        allowDowngrade,
+      )
+    : undefined;
+  keep ??= planned?.keep;
   if (channel && keep !== undefined) return stays("claude-code", keep.installed, channel, before, keep.reason);
   let backups: string[] = [];
   if (channel && !dryRun) {
@@ -226,17 +270,12 @@ function upgradeClaudeCode(dryRun: boolean, next: boolean, channel?: UpgradeChan
       return channelWriteFailure("claude-code", error, before);
     }
   }
-  const entry = refreshClaudeCode(dryRun, detected.version, channel ? detected.installations : undefined);
+  const entry = planned?.entry ?? refreshClaudeCode(detected.version, channel ? detected.installations : undefined);
   const noted = next && !channel ? withChannelNote(entry, detected.ref) : entry;
   return channelResult(noted, before, channel, dryRun, backups);
 }
 
-function refreshClaudeCode(
-  dryRun: boolean,
-  from: string | undefined,
-  installations?: ClaudeInstallation[],
-): PluginUpgradeEntry {
-  if (dryRun) return unknownRefresh("claude-code", from);
+function refreshClaudeCode(from: string | undefined, installations?: ClaudeInstallation[]): PluginUpgradeEntry {
   const marketplace = runCommand("claude", ["plugin", "marketplace", "update", MARKETPLACE], REFRESH_TIMEOUT_MS);
   if (!marketplace.ok) return failed("claude-code", marketplace.error);
   for (const installation of installations ?? [{}]) {
@@ -275,7 +314,13 @@ export function codexMarketplaceRef(): string | undefined {
   }
 }
 
-function upgradeCodex(dryRun: boolean, next: boolean, channel?: UpgradeChannel, keep?: Kept): PluginUpgradeEntry {
+function upgradeCodex(
+  dryRun: boolean,
+  next: boolean,
+  channel?: UpgradeChannel,
+  keep?: Kept,
+  allowDowngrade = false,
+): PluginUpgradeEntry {
   const before = codexPluginVersion();
   if ("error" in before)
     return channel && (!before.error.missing || fs.existsSync(codexConfigFile()))
@@ -285,6 +330,10 @@ function upgradeCodex(dryRun: boolean, next: boolean, channel?: UpgradeChannel, 
     return skipped("codex", `the akm plugin is not installed from the ${MARKETPLACE} marketplace`);
   }
   const previous = refChannel(codexMarketplaceRef());
+  const planned = dryRun
+    ? planEntry("codex", [before.version], codexMarketplaceSource, codexMarketplaceRef(), channel, allowDowngrade)
+    : undefined;
+  keep ??= planned?.keep;
   if (channel && keep !== undefined) return stays("codex", keep.installed, channel, previous, keep.reason);
   const backups: string[] = [];
   if (channel && previous !== channel && !dryRun) {
@@ -294,7 +343,7 @@ function upgradeCodex(dryRun: boolean, next: boolean, channel?: UpgradeChannel, 
       return channelWriteFailure("codex", error, previous);
     }
   }
-  const entry = refreshCodex(dryRun, before.version);
+  const entry = planned?.entry ?? refreshCodex(before.version);
   return channelResult(
     next && !channel ? withChannelNote(entry, codexMarketplaceRef()) : entry,
     previous,
@@ -304,8 +353,7 @@ function upgradeCodex(dryRun: boolean, next: boolean, channel?: UpgradeChannel, 
   );
 }
 
-function refreshCodex(dryRun: boolean, from: string | undefined): PluginUpgradeEntry {
-  if (dryRun) return unknownRefresh("codex", from);
+function refreshCodex(from: string | undefined): PluginUpgradeEntry {
   // Also refreshes the installed plugin's cache, so no re-add is needed.
   const upgrade = runCommand("codex", ["plugin", "marketplace", "upgrade", MARKETPLACE], REFRESH_TIMEOUT_MS);
   if (!upgrade.ok) return failed("codex", upgrade.error);
@@ -639,10 +687,11 @@ export function upgradePlugins(opts: {
   currentChannel?: UpgradeChannel;
   /** Marketplace harnesses a channel switch leaves alone, with the installed version each stays at. */
   keep?: { claude?: Kept; codex?: Kept };
+  allowDowngrade?: boolean;
 }): PluginUpgradeEntry[] {
   return [
-    upgradeClaudeCode(opts.dryRun, opts.next, opts.channel, opts.keep?.claude),
-    upgradeCodex(opts.dryRun, opts.next, opts.channel, opts.keep?.codex),
+    upgradeClaudeCode(opts.dryRun, opts.next, opts.channel, opts.keep?.claude, opts.allowDowngrade),
+    upgradeCodex(opts.dryRun, opts.next, opts.channel, opts.keep?.codex, opts.allowDowngrade),
     ...opts.openCode.map((target) => {
       const entry = upgradeOpenCode(opts.dryRun, target);
       if (target.keepInstalled)
@@ -859,6 +908,64 @@ function marketplaceTargetVersion(source: string, channel: UpgradeChannel, harne
   }
 }
 
+function claudePluginsRoot(): string {
+  const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
+  return (
+    process.env.AKM_CLAUDE_PLUGINS_DIR ?? process.env.CLAUDE_CODE_PLUGIN_CACHE_DIR ?? path.join(configDir, "plugins")
+  );
+}
+
+/** The Git source Claude has registered for the akm-plugins marketplace. */
+function claudeMarketplaceSource(pluginsRoot: string): string {
+  const known = parseJson(fs.readFileSync(path.join(pluginsRoot, "known_marketplaces.json"), "utf8")) as Record<
+    string,
+    { source: { source: string; repo?: string; url?: string } }
+  >;
+  const source = known[MARKETPLACE]?.source;
+  const url = source?.source === "github" && source.repo ? `https://github.com/${source.repo}.git` : source?.url;
+  if (!url) throw new UsageError("Could not determine the Claude marketplace Git source; no channel was changed");
+  return url;
+}
+
+/** The Git source Codex has registered for the akm-plugins marketplace. */
+function codexMarketplaceSource(): string {
+  const source = codexMarketplace(codexConfigFile())?.source;
+  if (typeof source !== "string")
+    throw new UsageError("Could not determine the Codex marketplace Git source; no channel was changed");
+  return source;
+}
+
+/**
+ * What moving one marketplace plugin to `channel` does, read without changing anything: the build the channel's branch
+ * of the registered `source` offers (or why it could not be read), and, unless a downgrade is allowed, the installed
+ * version that switch leaves alone because the channel has nothing newer. The real switch and `--check` both decide
+ * from this.
+ */
+function marketplacePlan(
+  harness: "claude-code" | "codex",
+  source: string,
+  installed: (string | undefined)[],
+  channel: UpgradeChannel,
+  allowDowngrade: boolean,
+): { target: string | Error; keep?: Kept } {
+  let target: string | Error;
+  try {
+    target = marketplaceTargetVersion(source, channel, harness === "codex" ? "codex" : "claude");
+  } catch (error) {
+    target = error instanceof Error ? error : new Error(String(error));
+  }
+  let keep: Kept | undefined;
+  for (const version of installed) {
+    if (allowDowngrade || !version) continue;
+    // An unreadable channel build leaves this plugin where it is; it never blocks the rest of the upgrade.
+    if (target instanceof Error)
+      keep = { installed: version, reason: `could not read the ${channel} build's version (${target.message})` };
+    else if (semverOrder(target, version) <= 0 && (!keep || semverOrder(keep.installed, version) < 0))
+      keep = { installed: version };
+  }
+  return { target, ...(keep ? { keep } : {}) };
+}
+
 /**
  * Checks the marketplace channel switch can be made and returns the harnesses to leave alone: those whose
  * installed build is as new as, or newer than, the channel's.
@@ -868,59 +975,33 @@ function preflightMarketplaceChannels(
   allowDowngrade: boolean,
 ): { claude?: Kept; codex?: Kept } {
   const keep: { claude?: Kept; codex?: Kept } = {};
-  const versions = new Map<string, string | Error>();
-  const verify = (harness: "claude" | "codex", source: string, installed: string | undefined) => {
-    if (allowDowngrade || !installed) return;
-    const key = `${harness}:${source}`;
-    let target = versions.get(key);
-    if (target === undefined) {
-      try {
-        target = marketplaceTargetVersion(source, channel, harness);
-      } catch (error) {
-        target = error instanceof Error ? error : new Error(String(error));
-      }
-      versions.set(key, target);
-    }
-    // An unreadable channel version leaves this plugin where it is; it never blocks the rest of the upgrade.
-    if (target instanceof Error) {
-      keep[harness] = { installed, reason: `could not read the ${channel} build's version (${target.message})` };
-      return;
-    }
-    const kept = keep[harness];
-    if (semverOrder(target, installed) <= 0 && (!kept || semverOrder(kept.installed, installed) < 0))
-      keep[harness] = { installed };
-  };
   const claude = detectClaudeCode(true);
   if ("entry" in claude && claude.entry.outcome === "failed")
     throw new UsageError(`Could not inventory Claude before switching channels: ${claude.entry.message}`);
   if (!("entry" in claude)) {
-    const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
-    const pluginsRoot =
-      process.env.AKM_CLAUDE_PLUGINS_DIR ?? process.env.CLAUDE_CODE_PLUGIN_CACHE_DIR ?? path.join(configDir, "plugins");
+    const pluginsRoot = claudePluginsRoot();
     claudeChannelEdits(
-      configDir,
+      process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude"),
       pluginsRoot,
       channel,
       claude.installations.flatMap((p) => (p.projectPath ? [p.projectPath] : [])),
     );
-    const known = parseJson(fs.readFileSync(path.join(pluginsRoot, "known_marketplaces.json"), "utf8")) as Record<
-      string,
-      { source: { source: string; repo?: string; url?: string } }
-    >;
-    const source = known[MARKETPLACE]?.source;
-    const url = source?.source === "github" && source.repo ? `https://github.com/${source.repo}.git` : source?.url;
-    if (!url) throw new UsageError("Could not determine the Claude marketplace Git source; no channel was changed");
-    for (const installed of claude.installations) verify("claude", url, installed.version);
+    const plan = marketplacePlan(
+      "claude-code",
+      claudeMarketplaceSource(pluginsRoot),
+      claude.installations.map((p) => p.version),
+      channel,
+      allowDowngrade,
+    );
+    if (plan.keep) keep.claude = plan.keep;
   }
   const codex = codexPluginVersion();
   if ("error" in codex && (!codex.error.missing || fs.existsSync(codexConfigFile())))
     throw new UsageError(`Could not inventory Codex before switching channels: ${codex.error.error}`);
   if (!("error" in codex) && codex.version !== undefined) {
     codexChannelEdit(codexConfigFile(), channel);
-    const source = codexMarketplace(codexConfigFile())?.source;
-    if (typeof source !== "string")
-      throw new UsageError("Could not determine the Codex marketplace Git source; no channel was changed");
-    verify("codex", source, codex.version);
+    const plan = marketplacePlan("codex", codexMarketplaceSource(), [codex.version], channel, allowDowngrade);
+    if (plan.keep) keep.codex = plan.keep;
   }
   return keep;
 }
@@ -960,7 +1041,14 @@ export async function runUpgrade(
       result: {
         ...check,
         plugins: withEngineSkew(
-          upgradePlugins({ dryRun: true, next, openCode, channel: switchChannel, currentChannel }),
+          upgradePlugins({
+            dryRun: true,
+            next,
+            openCode,
+            channel: switchChannel,
+            currentChannel,
+            allowDowngrade: args.allowDowngrade,
+          }),
           currentVersion,
         ),
       },

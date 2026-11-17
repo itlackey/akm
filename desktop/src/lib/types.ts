@@ -80,6 +80,8 @@ export interface Commit {
 }
 export interface History {
   available: boolean;
+  /** Why git could not be read; `commits` is then empty because nothing was read. */
+  error?: string;
   commits: Commit[];
   diff?: TextDiff;
 }

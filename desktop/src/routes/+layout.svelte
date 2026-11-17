@@ -14,6 +14,7 @@
   import { pageTitle } from "../lib/page-title";
   import Toasts from "../lib/Toasts.svelte";
   import { applyTheme, refreshBundles, refreshPending, workspace } from "../lib/state/workspace.svelte";
+  import { showToast } from "../lib/state/toasts.svelte";
   import "../lib/ui/tokens.css";
   import "../lib/ui/base.css";
   import "../lib/ui/layout.css";
@@ -132,7 +133,14 @@
     applyTheme();
     themeError = "";
     try {
-      await api("/desktop/preferences", {}, { theme: workspace.theme });
+      const saved = await api<{ movedAside?: string }>("/desktop/preferences", {}, { theme: workspace.theme });
+      if (saved.movedAside)
+        showToast({
+          kind: "warning",
+          title: "Saved preferences were unreadable",
+          detail: `The old file was moved to ${saved.movedAside}. Desktop's update and plugin channels are back to their defaults.`,
+          key: "preferences-unreadable",
+        });
     } catch {
       themeError = "Appearance changed for this window, but could not be saved.";
     }
@@ -167,8 +175,15 @@
     applyTheme();
     void load();
     const initialTheme = workspace.theme;
-    void api<{ theme: string }>("/desktop/preferences")
+    void api<{ theme: string; unreadable?: { file: string; error: string } }>("/desktop/preferences")
       .then((saved) => {
+        if (saved.unreadable)
+          showToast({
+            kind: "warning",
+            title: "Saved preferences could not be read",
+            detail: `${saved.unreadable.error} Channels show their defaults until you save a choice, which moves that file aside.`,
+            key: "preferences-unreadable",
+          });
         if (workspace.theme === initialTheme) {
           workspace.theme = saved.theme;
           applyTheme();

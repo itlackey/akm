@@ -40,7 +40,7 @@ set -e
 #!${process.execPath}
 const args = process.argv.slice(2);
 if (args[0] === '--version') console.log(${JSON.stringify(ENGINE)});
-else console.log(JSON.stringify({ currentVersion: ${JSON.stringify(ENGINE)}, latestVersion: ${JSON.stringify(ENGINE)}, updateAvailable: false, plugins: [] }));
+else console.log(JSON.stringify({ currentVersion: ${JSON.stringify(ENGINE)}, latestVersion: ${JSON.stringify(ENGINE)}, updateAvailable: false, currentChannel: "latest", plugins: [] }));
 AKM
 /bin/chmod +x "$AKM_INSTALL_DIR/akm"
 `;
@@ -100,6 +100,18 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
       ? route.fulfill({ status: 502, json: { ok: false, code: "FETCH_FAILED", error: "Could not reach GitHub." } })
       : route.continue({ postData: JSON.stringify({ source: starter, name: "akm-stash" }) }),
   );
+
+  // The local folder stands in for the download, so the listing reports it with the starter's source.
+  await page.route("**/api/bundles", async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    // The page keeps refreshing while the test shuts the server down; a request that finds it gone is just dropped.
+    const response = await route.fetch().catch(() => null);
+    if (!response) return route.abort().catch(() => {});
+    const body = await response.json();
+    for (const bundle of body.data.bundles)
+      if (bundle.name === "akm-stash") bundle.source = { kind: "git", locator: "github:itlackey/akm-stash" };
+    await route.fulfill({ response, json: body });
+  });
 
   await page.goto(server.url);
   // Unconfigured Home offers setup instead of a red health failure.
@@ -309,7 +321,7 @@ async function withHostTools(fixture, { akmVersion = "0.10.261104" } = {}) {
   await writeFile(path.join(fixture.root, "claude.json"), JSON.stringify({ marketplace: true, installed: true }));
   await writeFile(
     path.join(bin, "akm"),
-    `#!${process.execPath}\nconst args = process.argv.slice(2);\nif (args[0] === '--version') console.log('${akmVersion}');\nelse console.log(JSON.stringify({ currentVersion: '${akmVersion}', latestVersion: '${akmVersion}', updateAvailable: false, plugins: [] }));\n`,
+    `#!${process.execPath}\nconst args = process.argv.slice(2);\nif (args[0] === '--version') console.log('${akmVersion}');\nelse console.log(JSON.stringify({ currentVersion: '${akmVersion}', latestVersion: '${akmVersion}', updateAvailable: false, currentChannel: "latest", plugins: [] }));\n`,
     { mode: 0o755 },
   );
   await writeFile(path.join(bin, "bun"), `#!${process.execPath}\nconsole.log('1.3.14');\n`, { mode: 0o755 });

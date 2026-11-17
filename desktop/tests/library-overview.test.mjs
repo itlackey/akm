@@ -70,10 +70,12 @@ test("use: read lately, read only earlier, unread but recently edited, unread an
     tally([3, 4, 5], (i) => o.use[i], ["recent", "earlier", "new", "unread"]),
     { recent: 1, earlier: 0, new: 1, unread: 1 },
   );
-  // No usage history: use is unknown, not "unread".
-  const none = buildOverview({ ...payload, note: "Use counts are zero: no usage history is available." }, now);
+  // akm could not read the usage store (`use: null`): use is unknown, not "unread", whatever the note says.
+  const none = buildOverview({ ...payload, use: null, note: "Usage is not available." }, now);
   assert.equal(none.useKnown, false);
   assert.ok(none.use.every((u) => u === null));
+  // The note is prose for the person: its wording never decides whether use is known.
+  assert.equal(buildOverview({ ...payload, note: "No usage history was lost." }, now).useKnown, true);
 });
 
 test("problems: outdated by belief or by the link it declares, more negative than positive feedback, near-duplicates", () => {

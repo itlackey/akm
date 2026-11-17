@@ -10,7 +10,10 @@ import { akmListSources } from "../commands/sources/installed-stashes";
 import { loadConfig, mutateConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
 import { getDbPath } from "../core/paths";
+import { deriveSemanticProviderFingerprint } from "../indexer/materialize-embeddings";
+import { effectiveEmbedding } from "../llm/embedders/connection";
 import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
+import { getEmbeddableEntryCount } from "../storage/repositories/index-entries-repository";
 import { getEmbeddingCount } from "../storage/repositories/index-vec-repository";
 import { runCli } from "./cli-child";
 import { readBundleGitStatus } from "./git-read";
@@ -50,11 +53,14 @@ export async function list() {
 
   const info = assembleInfo();
   let embeddingCount: number | null = null;
+  let embeddableCount = 0;
   try {
     const db = openReadonlyExistingDatabase(getDbPath());
     if (db) {
       try {
-        embeddingCount = getEmbeddingCount(db);
+        // The same two counts akm's own readiness test compares: the current model's vectors, the embeddable entries.
+        embeddingCount = getEmbeddingCount(db, deriveSemanticProviderFingerprint(effectiveEmbedding(config)));
+        embeddableCount = getEmbeddableEntryCount(db);
       } finally {
         closeDatabase(db);
       }
@@ -62,7 +68,7 @@ export async function list() {
   } catch {
     // An index without an embeddings table (older layout) has none.
   }
-  const entryCount = info.indexStats.entryCount;
+  const { entryCount } = info.indexStats;
   return {
     defaultBundle: config.defaultBundle ?? null,
     defaultWriteTarget: config.defaultWriteTarget ?? null,
@@ -74,7 +80,8 @@ export async function list() {
       lastBuiltAt: info.indexStats.lastBuiltAt,
       hasEmbeddings: info.indexStats.hasEmbeddings,
       embeddingCount,
-      embeddingCoverage: embeddingCount !== null && entryCount > 0 ? Math.min(1, embeddingCount / entryCount) : null,
+      embeddingCoverage:
+        embeddingCount !== null && embeddableCount > 0 ? Math.min(1, embeddingCount / embeddableCount) : null,
       semanticSearch: info.semanticSearch,
       ...(info.indexStats.unavailable ? { unavailable: info.indexStats.unavailable } : {}),
       ...(info.indexStats.unreadable ? { unreadable: info.indexStats.unreadable } : {}),

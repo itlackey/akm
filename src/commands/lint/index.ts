@@ -18,7 +18,15 @@ import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { adapterForId } from "../../core/adapter/registry";
 import type { Diagnostic } from "../../core/adapter/types";
 import { createValidateContext } from "../../core/adapter/validate-context";
-import { refForFile, stashDirFor, typeForStashDir } from "../../core/asset/asset-placement";
+import {
+  documentFormatForStashDir,
+  documentStashDirFor,
+  documentStashDirs,
+  documentTypes,
+  refForFile,
+  stashDirFor,
+  typeForStashDir,
+} from "../../core/asset/asset-placement";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { conceptIdForStashFile, displayRefForConceptId } from "../../core/asset/resolve-ref";
 import { stalePathRoots } from "../../core/asset/stale-path";
@@ -27,6 +35,7 @@ import { compareCodePoints, isAkmRegistryCachePath, resolveStashDir, safeRealpat
 import type { AkmConfig } from "../../core/config/config";
 import { loadConfig, primaryBundlePath } from "../../core/config/config";
 import { bundleKeyForContentRoot } from "../../core/config/config-sources";
+import { defaultExcludedTypes } from "../../core/config/schema/search";
 import { UsageError } from "../../core/errors";
 import type { FileChange } from "../../core/file-change";
 import { warn } from "../../core/warn";
@@ -83,20 +92,6 @@ export interface AkmLintOptions {
   /** Lint this one file instead of a whole bundle (`akm lint <file>`). */
   file?: string;
 }
-
-// ── Constants ─────────────────────────────────────────────────────────────────
-
-const STASH_SUBDIRS = [
-  "agents",
-  "commands",
-  "memories",
-  "skills",
-  "workflows",
-  "lessons",
-  "tasks",
-  "knowledge",
-  "facts",
-] as const;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -204,7 +199,7 @@ function resolveWorkflowLintOwnership(stashRoot: string, files: readonly string[
 // `lintOkfBundle` re-implementation this change deletes) and silently route
 // every OTHER non-akm bundle (llm-wiki, dotenv, claude, opencode,
 // agent-skills, website-snapshot, generic-files, akm-task, akm-workflow)
-// through the AKM-shaped STASH_SUBDIRS sweep — the wrong linter for the wrong
+// through the AKM-shaped akm sweep — the wrong linter for the wrong
 // format, and the reason those adapters' own `validate()` checks (OKF's
 // `missing-ref`; llm-wiki's `uncited-raw`/`missing-description`/`broken-xref`/
 // `broken-source`) were unreachable dead code. Every bundle is now linted by
@@ -350,7 +345,7 @@ async function lintViaAdapter(
   const warnings = mapped.filter(isAdvisoryLintIssue);
   const flagged = mapped.filter((issue) => !isAdvisoryLintIssue(issue));
   // The cross-bundle env dangerous-key sweep (see `runEnvDangerousKeyPass`'s
-  // doc comment) ran for every non-akm adapter via the STASH_SUBDIRS
+  // doc comment) ran for every non-akm adapter via the akm sweep
   // fallthrough this dispatch replaces — EXCEPT `okf`, which the old code
   // special-cased out before ever reaching that pass. Preserve both halves of
   // that history exactly: skip only for `okf`. Some adapters (`dotenv`) ALSO
@@ -397,7 +392,7 @@ function collectEnvFiles(dir: string): string[] {
  * there per the CRITICAL akm-path constraint, and reused here for the
  * non-akm dispatch path so a non-akm PRIMARY bundle keeps the exact
  * cross-bundle coverage it already had — the pass previously reached every
- * non-akm adapter's bundle via the accidental STASH_SUBDIRS fallthrough this
+ * non-akm adapter's bundle via the accidental akm-sweep fallthrough this
  * change replaces with real dispatch).
  */
 function runEnvDangerousKeyPass(
@@ -752,7 +747,7 @@ function lintSweepFile(
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 /**
- * The `akm`-adapter sweep: STASH_SUBDIRS walk + per-file `lintAssetFile` +
+ * The `akm`-adapter sweep: document-folder walk + per-file `lintAssetFile` +
  * the env dangerous-key pass. UNTOUCHED by the adapter-dispatch wiring above
  * (CRITICAL CONSTRAINT — the overwhelming majority of real bundles use `akm`,
  * and its findings / `--fix` behavior / exact `LintIssueType` codes are
@@ -777,7 +772,11 @@ function lintAkmSweep(
 
   const bundleSkip = bundleLintSkip(cfg, stashRoot);
   const roots = stalePathRoots(cfg, stashRoot);
-  const dirsToScan = options.typeFilter ? STASH_SUBDIRS.filter((d) => d === options.typeFilter) : STASH_SUBDIRS;
+  // Types left out of an untyped search are left out of the sweep unless `--type` names one.
+  const leftOut = new Set(defaultExcludedTypes(cfg).map((type) => stashDirFor(type)));
+  const dirsToScan = documentStashDirs().filter((d) =>
+    options.typeFilter ? d === options.typeFilter : !leftOut.has(d),
+  );
 
   for (const subdir of dirsToScan) {
     const dirPath = path.join(stashRoot, subdir);
@@ -903,7 +902,7 @@ async function lintFile(file: string, options: AkmLintOptions, cfg: AkmConfig): 
 
   // Symlink-resolved, so a file's bundle-relative path is right however either was spelled.
   const realRoot = root ? fs.realpathSync(root) : undefined;
-  const typeValues = STASH_SUBDIRS.join(", ");
+  const typeValues = documentTypes().join(", ");
   let subdir: string | undefined;
   if (root) {
     const sources = resolveSourceEntries(root, cfg);
@@ -929,7 +928,14 @@ async function lintFile(file: string, options: AkmLintOptions, cfg: AkmConfig): 
       );
     }
     // The type comes from where the file sits, as the bundle sweep decides it.
-    const located = STASH_SUBDIRS.find((d) => relPath.split(path.sep)[0] === d);
+    const located = documentStashDirs().find((d) => relPath.split(path.sep)[0] === d);
+    const firstSegment = relPath.split(path.sep)[0] ?? "";
+    if (!located && typeForStashDir(firstSegment) !== undefined) {
+      throw new UsageError(
+        `lint: "${relPath}" is a ${typeForStashDir(firstSegment)} asset, which lint does not read as a document.`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
     if (located && options.typeFilter && options.typeFilter !== located) {
       throw new UsageError(
         `lint: --type "${options.typeFilter}" does not match "${relPath}", which is a ${located} file in this bundle.`,
@@ -955,7 +961,7 @@ async function lintFile(file: string, options: AkmLintOptions, cfg: AkmConfig): 
       );
     }
   }
-  if (!(STASH_SUBDIRS as readonly string[]).includes(subdir)) {
+  if (documentFormatForStashDir(subdir) === undefined) {
     throw new UsageError(
       `lint: --type "${subdir}" is not recognized; valid types: ${typeValues}.`,
       "INVALID_FLAG_VALUE",
@@ -1072,6 +1078,9 @@ export async function akmLint(options: AkmLintOptions = {}): Promise<AkmLintResu
   // cross-stash refs (e.g. referencing assets in dimm-city/agent-stash) are
   // not falsely flagged as missing-ref.
   const cfg = options.config ?? loadConfig();
+  // `--type` names a type or its folder; the sweep and the single-file path work on the folder.
+  if (options.typeFilter)
+    options = { ...options, typeFilter: documentStashDirFor(options.typeFilter) ?? options.typeFilter };
   if (options.file !== undefined) return lintFile(options.file, options, cfg);
   // The primary stash is the defaultBundle's path.
   const stashRoot = options.dir ?? primaryBundlePath(cfg) ?? resolveStashDir();
@@ -1089,10 +1098,10 @@ export async function akmLint(options: AkmLintOptions = {}): Promise<AkmLintResu
   // to filter the walk to ZERO directories — a false-clean result on the
   // classic singular/plural typo ("workflow" for "workflows"). Non-akm
   // adapters keep their own type vocabularies (see lintViaAdapter).
-  if (options.typeFilter && !(STASH_SUBDIRS as readonly string[]).includes(options.typeFilter)) {
+  if (options.typeFilter && documentFormatForStashDir(options.typeFilter) === undefined) {
     warn(
-      `Warning: lint --type "${options.typeFilter}" is not a recognized akm stash subdirectory — ` +
-        `valid types: ${STASH_SUBDIRS.join(", ")}. The whole bundle was validated.`,
+      `Warning: lint --type "${options.typeFilter}" is not a recognized akm asset type — ` +
+        `valid types: ${documentTypes().join(", ")}. The whole bundle was validated.`,
     );
     options = { ...options, typeFilter: undefined };
   }

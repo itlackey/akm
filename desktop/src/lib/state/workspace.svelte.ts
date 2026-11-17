@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { api } from "../client";
+import { api, apiState } from "../client";
 import { renameBundle } from "../drafts";
 import { isUnconfigured } from "../setup-model";
 import type { Bundle } from "../types";
@@ -40,7 +40,7 @@ export const workspace = $state({
 export async function refreshPending() {
   try {
     workspace.pendingCount = (
-      await api<{ fullCount: number }>("/proposals", { status: "pending", limit: "1" })
+      await apiState<{ fullCount: number }>("/proposals", { status: "pending", limit: "1" })
     ).fullCount;
   } catch {
     workspace.pendingCount = null;
@@ -48,13 +48,12 @@ export async function refreshPending() {
 }
 
 export async function refreshBundles(onlyIfChanged = false) {
-  const data = await api<{
-    bundles: Bundle[];
-    workingStash: unknown | null;
-    defaultWriteTarget?: string;
-    defaultBundle?: string;
-  }>("/bundles");
-  const target = data.defaultWriteTarget ?? data.defaultBundle ?? "";
+  const [data, akm] = await Promise.all([
+    api<{ bundles: Bundle[]; workingStash: unknown | null }>("/bundles"),
+    api<{ config: { defaultWriteTarget?: string }; automaticWriteTarget?: { name: string } | null }>("/config"),
+  ]);
+  // Where akm sends new content: the configured write target, else the target it picks itself.
+  const target = akm.config.defaultWriteTarget || akm.automaticWriteTarget?.name || "";
   const changed =
     JSON.stringify(workspace.bundles) !== JSON.stringify(data.bundles) || workspace.defaultWriteTarget !== target;
   workspace.bundles = data.bundles;

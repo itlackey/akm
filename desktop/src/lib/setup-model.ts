@@ -51,11 +51,15 @@ export const harnessLabel = (harness: { id: string; major?: number }) =>
   harness.id === "opencode" && harness.major === 2 ? "OpenCode 2" : (harnessNames[harness.id] ?? harness.id);
 
 /**
- * The channel new plugins install from: the saved choice, else Desktop's own release stage, so its plugins follow the
- * same channel (see plugin-upgrade.ts).
+ * The one release channel for the host's CLI and plugins: the saved choice, else the channel akm reports the installed
+ * CLI follows, else (no host CLI yet, so setup installs the release that matches this app) Desktop's own release stage.
+ * Desktop never derives a channel from a host version.
  */
-export const pluginChannel = (engine: string | undefined, saved?: "latest" | "next"): "latest" | "next" =>
-  saved ?? (engine && /^\d+\.\d+\.\d+-/.test(engine) ? "next" : "latest");
+export const pluginChannel = (
+  engine: string | undefined,
+  saved?: "latest" | "next",
+  reported?: "latest" | "next",
+): "latest" | "next" => saved ?? reported ?? (engine && /^\d+\.\d+\.\d+-/.test(engine) ? "next" : "latest");
 
 /** What the harness says about the akm plugin, in words. */
 export function pluginLine(harness: HostHarness): string {
@@ -79,14 +83,13 @@ export function pluginLine(harness: HostHarness): string {
 }
 
 /**
- * The channel a present plugin follows, as `akm upgrade --check` read it from the harness's own configuration, as
- * words that finish the row's sentence ("…installed, on the stable channel"); nothing for a plugin that is not there,
- * or when the host CLI has not been checked or did not say.
+ * What `akm upgrade --check` reported for a present plugin: nothing for a plugin that is not there, or when the host
+ * CLI has not been checked or did not list it.
  */
-export function installedChannel(
+export function pluginPlan<T extends { harness: string }>(
   harness: HostHarness,
-  plugins: Array<{ harness: string; channel?: string }> | undefined,
-): string | undefined {
+  plugins: T[] | undefined,
+): T | undefined {
   if (!["installed", "configured", "disabled"].includes(harness.plugin?.state ?? "")) return undefined;
   const name =
     harness.id === "claude"
@@ -94,14 +97,7 @@ export function installedChannel(
       : harness.id === "opencode" && harness.major === 2
         ? "opencode-v2"
         : harness.id;
-  const channel = plugins?.find((plugin) => plugin.harness === name)?.channel;
-  return channel === "latest"
-    ? "on the stable channel"
-    : channel === "next"
-      ? "on the prerelease channel"
-      : channel === "pinned"
-        ? "pinned to one version"
-        : undefined;
+  return plugins?.find((plugin) => plugin.harness === name);
 }
 
 const majorMinor = (version: string | undefined) =>
@@ -123,8 +119,18 @@ export function pluginMatches(engine: string | undefined, plugin: string | undef
 export const isUnconfigured = (listing: { bundles: unknown[]; workingStash: unknown | null }) =>
   listing.bundles.length === 0 && !listing.workingStash;
 
+const STARTER_LOCATORS = [STARTER, "https://github.com/itlackey/akm-stash"];
+
+/** The starter is a bundle whose source is the starter's repository, whatever its name, with or without `.git` or a slash. */
 export const hasStarter = (bundles: Bundle[]) =>
-  bundles.some((bundle) => /akm-stash/.test(`${bundle.name} ${bundle.source?.locator ?? ""}`));
+  bundles.some((bundle) =>
+    STARTER_LOCATORS.includes(
+      (bundle.source?.locator ?? "")
+        .trim()
+        .replace(/\/+$/, "")
+        .replace(/\.git$/, ""),
+    ),
+  );
 
 export interface AgentCard {
   id: string;

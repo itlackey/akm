@@ -34,7 +34,7 @@ const args=process.argv.slice(2),name=${JSON.stringify(name)};
 fs.appendFileSync(${JSON.stringify(path.join(fixture.root, "commands.jsonl"))},JSON.stringify({name,args})+'\\n');
 const installed=${JSON.stringify(path.join(fixture.root, "plugin-installed"))};
 if(args[0]==='--version')console.log('0.10.261104');
-else if(name==='akm'){await new Promise((done)=>setTimeout(done,700));console.log(JSON.stringify({currentVersion:'0.10.261104',latestVersion:'0.10.261105',updateAvailable:true}));}
+else if(name==='akm'){await new Promise((done)=>setTimeout(done,700));const channel=args.includes('--channel')?args[args.indexOf('--channel')+1]:'latest';console.log(JSON.stringify({currentVersion:'0.10.261104',latestVersion:'0.10.261105',updateAvailable:true,channel,currentChannel:'latest',plugins:[{harness:'codex',outcome:'pending',channel:'latest',from:'0.10.261104',to:'0.10.261105'}]}));}
 else if(args[1]==='marketplace'&&args[2]==='list')console.log(JSON.stringify({marketplaces:[{name:'akm-plugins'}]}));
 else if(args[1]==='list')console.log(JSON.stringify({installed:fs.existsSync(installed)?[{pluginId:'akm@akm-plugins',version:'0.10.261105'}]:[]}));
 else if(args[1]==='add'){fs.writeFileSync(installed,'fixture');console.log('{}')}
@@ -54,7 +54,7 @@ else {process.exitCode=1}
   await page.getByRole("link", { name: "Software", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Software", exact: true })).toBeVisible();
   // The state is words: no middle dot standing in for "is".
-  await expect(page.getByText("Update available: 0.10.261105", { exact: true })).toBeVisible();
+  await expect(page.getByText("Update installs 0.10.261105", { exact: true })).toBeVisible();
   await expect(page.getByText("To update, download a newer AKM Desktop.", { exact: true })).toBeVisible();
   // The fixture's host CLI (0.10.261104) is older than the built-in engine: said once, with its remedy.
   await expect(
@@ -66,15 +66,18 @@ else {process.exitCode=1}
 
   // Keyboard and screen readers. Each select's hint is its description, not loose text beside it.
   const updates = page.getByLabel("Desktop updates");
-  const pluginChannel = page.getByLabel("New plugin channel");
+  const pluginChannel = page.getByLabel("Release channel for the CLI and plugins");
   await expect(updates).toHaveAccessibleDescription(/release line applies when the AKM Desktop app checks/);
-  await expect(pluginChannel).toHaveAccessibleDescription(/remembered and is also what setup installs/);
+  await expect(pluginChannel).toHaveAccessibleDescription(/The CLI and every installed plugin follow this channel/);
   // A change is saved and said in a live region, focus stays on the control, and a reload shows the saved value.
   await pluginChannel.focus();
   await pluginChannel.selectOption("next");
   await expect(
-    page.getByRole("status").filter({ hasText: "Saved. New plugins install from the prerelease channel." }),
+    page.getByRole("status").filter({ hasText: "Saved. Update brings the CLI and plugins to the prerelease channel." }),
   ).toBeVisible();
+  // The plan for the new choice is asked for at once, and focus stays on the control.
+  await expect(page.locator('section[aria-labelledby="host-cli"]')).toHaveAttribute("aria-busy", "false");
+  await expect(page.locator("dd", { hasText: "akm upgrade --check --channel next --format json" })).toHaveCount(1);
   await expect(pluginChannel).toBeFocused();
   await updates.focus();
   await updates.selectOption("prerelease");
@@ -84,6 +87,24 @@ else {process.exitCode=1}
   await expect(updates).toBeFocused();
   await page.reload();
   await expect(updates).toHaveValue("prerelease");
+  await expect(pluginChannel).toHaveValue("next");
+
+  // A saved file that cannot be read is said beside the choice, Check is refused with the reason, and choosing again
+  // moves the file aside and recovers.
+  await writeFile(path.join(server.root, "xdg-config", "akm-desktop", "preferences.json"), "{ not json");
+  await page.reload();
+  const unreadable = page.getByRole("alert").filter({ hasText: "The saved channel could not be read" });
+  await expect(unreadable).toBeVisible();
+  await page.getByRole("button", { name: "Check CLI & plugins" }).click();
+  await expect(
+    page
+      .getByRole("alert")
+      .filter({ hasText: /preferences\.json could not be read/ })
+      .first(),
+  ).toBeVisible();
+  await pluginChannel.selectOption("next");
+  await expect(unreadable).toHaveCount(0);
+  await expect(page.locator('section[aria-labelledby="host-cli"]')).toHaveAttribute("aria-busy", "false");
   await expect(pluginChannel).toHaveValue("next");
 
   // The harness rows are a list; each item starts with the harness and says its state in words.
@@ -125,6 +146,13 @@ else {process.exitCode=1}
   await expect(install).toHaveCount(0);
   await expect(page.getByRole("heading", { name: /^Codex/ })).toBeFocused();
   await expect(rows.filter({ hasText: "Codex" })).toHaveText(/AKM plugin 0\.10\.261105 installed/);
+  // akm's plan for the installed plugin shows under it once the CLI has been checked for the chosen channel.
+  await check.focus();
+  await page.keyboard.press("Enter");
+  await expect(rows.filter({ hasText: "Codex" })).toHaveText(
+    /on the stable channel[\s\S]*Update installs 0\.10\.261105/,
+  );
+  await expect(hostCli).toHaveAttribute("aria-busy", "false");
 
   const upgrade = page.getByRole("button", { name: "Update CLI & plugins", exact: true });
   await upgrade.focus();
@@ -147,9 +175,11 @@ else {process.exitCode=1}
     .trim()
     .split("\n")
     .map((line) => JSON.parse(line));
-  assert.ok(commands.some((item) => item.name === "akm" && item.args.join(" ") === "upgrade --format json"));
+  assert.ok(
+    commands.some((item) => item.name === "akm" && item.args.join(" ") === "upgrade --channel next --format json"),
+  );
   assert.ok(commands.some((item) => item.name === "codex" && item.args.join(" ") === "plugin add akm@akm-plugins"));
-  // Update follows the CLI's own channel (stable here); the prerelease choice only drives an explicit switch.
+  // Update runs akm's plan for the one chosen channel (prerelease here); no other flag depends on state.
   assert.ok(!commands.some((item) => item.name === "akm" && item.args.includes("--next")));
   assert.ok(!commands.some((item) => item.args.includes("trust") || item.args.includes("--allow-downgrade")));
 

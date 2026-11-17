@@ -52,12 +52,6 @@ export function classifyEngineSkew(engine: string | undefined, host: string | un
   return order === 0 ? "same" : order < 0 ? "host-older" : "host-newer";
 }
 
-/** True when a host upgrade would reach a release newer than Desktop's engine, which Desktop could then not read. */
-export function hostUpgradeOutrunsDesktop(engine: string | undefined, latest: string | undefined): boolean {
-  const order = compareVersions(latest, engine);
-  return order !== null && order > 0;
-}
-
 /** What Desktop's own `INDEX_SCHEMA_INCOMPATIBLE` means to its user: akm's text says "upgrade akm", and Desktop is akm. */
 export const NEWER_INDEX_MESSAGE =
   "This library was upgraded by a newer AKM than the one built into this app. Update AKM Desktop to the latest release.";
@@ -88,31 +82,33 @@ export function skewAdvice(
   };
 }
 
-/**
- * Why the CLI is not updated: its next release is newer than the engine in this app, which could not read a library the
- * CLI migrated. Says when Desktop's own channel will not offer that release, and that plugins update with the CLI because
- * akm has no plugins-only update.
- */
-export function holdReason(
-  engine: string | undefined,
-  latest: string | undefined,
-  desktopChannel: "stable" | "prerelease",
-): string | undefined {
-  if (!hostUpgradeOutrunsDesktop(engine, latest)) return undefined;
-  const notOffered = desktopChannel === "stable" && /-/.test(latest ?? "");
-  return `Version ${latest} is newer than the AKM built into this app${
-    notOffered ? ", and AKM Desktop follows stable releases only, so it will not be offered to Desktop" : ""
-  }. The CLI and its plugins are updated together (akm has no plugins-only update) and are held until AKM Desktop can read what they migrate.`;
+/** The CLI step of akm's plan, as `akm upgrade --check` reports it. */
+export interface CliPlan {
+  updateAvailable?: boolean;
+  latestVersion?: string;
 }
 
 /**
- * Whether a prerelease CLI can be switched to stable: akm refuses it as a downgrade when stable is older than the
- * installed version. `unknown` when no stable release is known to compare against.
+ * Whether Update is held: akm's plan moves the CLI itself to a release newer than the engine in this app, which could
+ * not then read a library the CLI migrated. A CLI that is already there, or stays, holds nothing.
  */
-export function stableSwitch(
-  installed: string | undefined,
-  stable: string | undefined,
-): "offer" | "downgrade" | "unknown" {
-  const order = compareVersions(stable && !/-/.test(stable) ? stable : undefined, installed);
-  return order === null ? "unknown" : order >= 0 ? "offer" : "downgrade";
+export function updateHeld(engine: string | undefined, plan: CliPlan | undefined): boolean {
+  const order = compareVersions(plan?.latestVersion, engine);
+  return plan?.updateAvailable === true && order !== null && order > 0;
+}
+
+/**
+ * Why Update is held, said as the rule. akm updates the CLI and its plugins together, so the plugins wait with it. Says
+ * when Desktop's own channel will not offer that release.
+ */
+export function holdReason(
+  engine: string | undefined,
+  plan: CliPlan | undefined,
+  desktopChannel: "stable" | "prerelease",
+): string | undefined {
+  if (!updateHeld(engine, plan)) return undefined;
+  const notOffered = desktopChannel === "stable" && /-/.test(plan?.latestVersion ?? "");
+  return `Update would move the CLI to ${plan?.latestVersion}, newer than the AKM built into this app (${engine})${
+    notOffered ? ", and AKM Desktop follows stable releases only, so it will not be offered to Desktop" : ""
+  }. The plugins update with the CLI, so Update is held until AKM Desktop can read what the CLI migrates.`;
 }

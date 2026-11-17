@@ -4,10 +4,17 @@
 
 /** Pure helpers behind the workspace operations: config redaction and commit origin. */
 
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
 import { redactUrlCredentials } from "../src/core/redaction";
-import { type ChangeOrigin, classifyCommitOrigin } from "../src/workspace/git-read";
+import {
+  type ChangeOrigin,
+  classifyCommitOrigin,
+  readBundleGitStatus,
+  readRecentCommits,
+} from "../src/workspace/git-read";
 import { isSecretEnvName, redactForUi, scrubUrlCredentials } from "../src/workspace/redact";
+import { git, makeGitRepo } from "./_helpers/git";
 
 // biome-ignore lint/suspicious/noExplicitAny: redacted trees are asserted field by field below
 type Json = Record<string, any>;
@@ -76,5 +83,35 @@ describe("classifyCommitOrigin", () => {
     ["retire 16 junk assets", "other"],
   ])("%s -> %s", (subject, origin) => {
     expect(classifyCommitOrigin(subject)).toBe(origin);
+  });
+});
+
+describe("a git read that fails is reported, not read as a pristine repository", () => {
+  const made: string[] = [];
+  afterEach(() => {
+    for (const dir of made.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+  });
+  const repo = () => makeGitRepo({ register: (dir) => made.push(dir) });
+
+  test("a .git that git cannot open carries git's own message, in status and in history", async () => {
+    const dir = repo();
+    fs.rmSync(`${dir}/.git`, { recursive: true });
+    fs.mkdirSync(`${dir}/.git`);
+    const status = await readBundleGitStatus(dir);
+    expect(status?.error).toContain("not a git repository");
+    expect((await readRecentCommits(dir, 5))?.error).toContain("not a git repository");
+    expect((await readRecentCommits(dir, 5))?.commits).toEqual([]);
+  });
+
+  test("a detached HEAD and a repository with no commits are answers, not failures", async () => {
+    const dir = repo();
+    git(dir, ["checkout", "-q", "--detach"]);
+    expect(await readBundleGitStatus(dir)).toMatchObject({ error: null, branch: null, dirtyPaths: 0 });
+    const empty = makeGitRepo({ register: (d) => made.push(d) });
+    git(empty, ["update-ref", "-d", "HEAD"]);
+    fs.rmSync(`${empty}/.git/refs/heads`, { recursive: true, force: true });
+    fs.mkdirSync(`${empty}/.git/refs/heads`);
+    expect(await readBundleGitStatus(empty)).toMatchObject({ error: null, lastCommit: null });
+    expect(await readRecentCommits(empty, 5)).toEqual({ commits: [], error: null });
   });
 });

@@ -15,6 +15,7 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { documentStashDirs } from "../../src/core/asset/asset-placement";
 import { mutateConfig, resetConfigCache, loadConfig } from "../../src/core/config/config";
 import { getDataDir } from "../../src/core/paths";
 import { walkStashFlat } from "../../src/indexer/walk/walker";
@@ -45,8 +46,6 @@ export interface BundlePolicyMigrationStatus {
   bundlePolicy: BundlePolicySummary;
 }
 
-const ASSET_DIRS = new Set(["agents", "commands", "memories", "skills", "workflows", "lessons", "tasks", "knowledge", "facts"]);
-
 const TRACK_SECRETS_MARKER = "# akm: intentionally track env and secrets";
 
 /** The text without its `lint_skip` key (the key line and the value lines under it), or null when it has none. */
@@ -70,10 +69,11 @@ function plan(): { files: FileReplacement[]; bundles: BundlePolicySummary["bundl
   const notes: string[] = [];
   for (const root of bundleRoots(config).filter((candidate) => candidate.writable)) {
     const edits: Array<{ filePath: string; after: string }> = [];
+    const assetDirs = new Set(documentStashDirs());
     if ((root.adapter ?? "akm") === "akm") {
       for (const file of walkStashFlat(root.root)) {
         const rel = path.relative(root.root, file.absPath).split(path.sep).join("/");
-        if (file.ext !== ".md" || !ASSET_DIRS.has(rel.split("/")[0]!) || !fs.lstatSync(file.absPath).isFile()) continue;
+        if (file.ext !== ".md" || !assetDirs.has(rel.split("/")[0]!) || !fs.lstatSync(file.absPath).isFile()) continue;
         const after = withoutLintSkip(fs.readFileSync(file.absPath, "utf8"));
         if (after !== null) edits.push({ filePath: file.absPath, after });
       }

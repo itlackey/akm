@@ -19,6 +19,7 @@ import {
 import { compareVersions } from "../engine-skew.js";
 import { readFile, saveFile } from "./features/files.js";
 import {
+  preferencesView,
   readPreferences,
   savePreferences,
   tryApply,
@@ -94,7 +95,7 @@ export const routes: Route[] = [
     akmVersion: akmPackage.version,
     commit: process.env.AKM_DESKTOP_COMMIT,
   })),
-  get("/api/desktop/preferences", () => readPreferences()),
+  get("/api/desktop/preferences", () => preferencesView()),
   post("/api/desktop/preferences", async (value) => {
     const { theme, updateChannel, pluginChannel } = fields<{
       theme?: unknown;
@@ -129,21 +130,20 @@ export const routes: Route[] = [
     host: hostTools.snapshot(),
     desktop: await desktopApp(),
     engine: akmPackage.version,
-    preferences: await readPreferences(),
+    preferences: await preferencesView(),
   })),
   post("/api/desktop/software", async (value) => {
-    const request = fields<{ action?: unknown; harness?: unknown; channel?: unknown; consent?: unknown }>(
+    const request = fields<{ action?: unknown; harness?: unknown; consent?: unknown }>(
       value,
-      ["action", "harness", "channel", "consent"],
+      ["action", "harness", "consent"],
       "software action",
     );
     if (
       typeof request.action !== "string" ||
       (request.harness !== undefined && typeof request.harness !== "string") ||
-      (request.channel !== undefined && typeof request.channel !== "string") ||
       (request.consent !== undefined && typeof request.consent !== "boolean")
     )
-      throw new HttpFailure(400, "INVALID_SOFTWARE_ACTION", "Invalid software action, harness or release channel.");
+      throw new HttpFailure(400, "INVALID_SOFTWARE_ACTION", "Invalid software action or harness.");
     try {
       // A host upgrade past Desktop's engine would leave Desktop unable to read an index the host migrated; HostTools
       // asks akm for the release it would install, right before it upgrades, and refuses one `within` cannot clear.
@@ -154,7 +154,8 @@ export const routes: Route[] = [
           : hostTools.start(
               request.action,
               request.harness as string | undefined,
-              request.channel as string | undefined,
+              // The saved release channel for the host's CLI and plugins; without one, HostTools asks akm.
+              (await readPreferences()).pluginChannel,
               {
                 consent: request.consent === true,
                 within: (version) => {

@@ -16,6 +16,7 @@ if (state.fail === command + " " + args.join(" ")) {
   process.exit(1);
 }
 if (command === "git") {
+  if (state.remote === "down") process.exit(128);
   const checkout = args.at(-1)!;
   const channel = args.includes("next") ? "next" : "latest";
   fs.mkdirSync(path.join(checkout, ".claude-plugin"), { recursive: true });

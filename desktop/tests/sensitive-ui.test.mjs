@@ -72,3 +72,21 @@ test("protected file UI masks, shows, hides and clears values on navigation with
   await page.getByRole("button", { name: "Hide", exact: true }).click();
   assert.deepEqual(errors, []);
 });
+
+test("a file in a nested secrets folder opens in the protected view, never as plain text", async (t) => {
+  const app = await fixture();
+  t.after(() => app.stop());
+  await fs.mkdir(path.join(app.root, "personal/projects/x/secrets"), { recursive: true });
+  await fs.writeFile(path.join(app.root, "personal/projects/x/secrets/token"), secret);
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1280, height: 860 } });
+  await page.goto(app.url);
+  await go(
+    page,
+    `/library/files?${new URLSearchParams({ bundle: "personal", path: "projects/x/secrets", file: "projects/x/secrets/token", open: "1" })}`,
+  );
+  await expect(page.getByRole("alert")).toContainText("Choose an environment file or secret");
+  assert.ok(!(await page.content()).includes("synthetic-password"));
+  await expect(page.getByRole("textbox")).toHaveCount(0);
+});

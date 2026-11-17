@@ -6,9 +6,9 @@
 
 <script lang="ts">
   import { onMount, tick } from "svelte";
-  import { classifyEngineSkew, holdReason, hostUpgradeOutrunsDesktop, skewAdvice, stableSwitch } from "./engine-skew";
+  import { classifyEngineSkew, holdReason, skewAdvice, updateHeld } from "./engine-skew";
   import Icon from "./Icon.svelte";
-  import { harnessLabel, installedChannel, pluginChannel, pluginLine } from "./setup-model";
+  import { harnessLabel, pluginChannel, pluginLine, pluginPlan } from "./setup-model";
   import {
     actSoftware as act,
     refreshSoftware,
@@ -17,29 +17,23 @@
     software,
     watchSoftware,
   } from "./state/software.svelte";
-  import { upgradeOutcomeText } from "./upgrade-outcome";
+  import { channelWords, planText, upgradeOutcomeText } from "./upgrade-outcome";
   const releases = "https://github.com/itlackey/akm/releases";
   const data = $derived(software.data),
     error = $derived(software.error),
     submitting = $derived(software.submitting);
-  // The channel new plugins install from: the saved choice, else Desktop's own release stage (the same rule as setup).
-  const channel = $derived(pluginChannel(data?.engine, data?.preferences?.pluginChannel));
+  // The one release channel for the host's CLI and plugins (the same rule as setup).
+  const channel = $derived(
+    pluginChannel(data?.engine, data?.preferences?.pluginChannel, data?.host.upgrade?.currentChannel),
+  );
   const hostBusy = $derived(submitting || Boolean(data && data.host.phase !== "idle"));
   const updateBusy = $derived(submitting || Boolean(data?.desktop.menu?.busy));
   const skew = $derived(classifyEngineSkew(data?.engine, data?.host.cli?.version));
-  const desktopBehind = $derived(hostUpgradeOutrunsDesktop(data?.engine, data?.host.upgrade?.latestVersion));
+  const upgrade = $derived(data?.host.upgrade);
+  // akm's plan is for the channel it was asked about; after the choice changes it describes the other one until Check runs.
+  const planned = $derived(upgrade?.channel === channel);
+  const held = $derived(planned && updateHeld(data?.engine, upgrade));
   const advice = $derived(skewAdvice(data?.engine, data?.host.cli?.version));
-  // The channel the installed CLI follows: akm's own report, else inferred from its version as akm does.
-  const cliChannel = $derived(
-    data?.host.upgrade?.currentChannel ?? (/^\d+\.\d+\.\d+-/.test(data?.host.cli?.version ?? "") ? "next" : "latest"),
-  );
-  // akm refuses a switch to stable that goes backwards without --allow-downgrade, so it is offered only when stable is
-  // known to be as new as the installed CLI. Without a known stable release it stays hidden and the hint says "may be".
-  const stable = $derived(
-    channel === "latest" && cliChannel === "next"
-      ? stableSwitch(data?.host.cli?.version, data?.host.upgrade?.latestVersion)
-      : "offer",
-  );
   const channelName = (value: string) => (value === "next" ? "prerelease" : "stable");
   const outcomes = $derived((data?.host.action?.upgrade?.plugins ?? []).filter((item) => item.outcome));
   // Desktop's own update state, from the main process (electron-updater).
@@ -62,7 +56,6 @@
     check: "Checking the CLI and plugins…",
     "install-cli": "Installing the AKM CLI…",
     "upgrade-cli": "Updating the CLI and plugins…",
-    "switch-channel": "Switching the CLI and plugins channel…",
     "install-plugin": "Installing the AKM plugin…",
   };
   // A saved choice is said in a live region beside its control; a failed save is the page's alert.
@@ -82,10 +75,14 @@
       unapplied = value;
       return;
     }
-    saved[key] =
-      key === "updateChannel"
-        ? `Saved. AKM Desktop follows ${value === "prerelease" ? "stable and prerelease releases" : "stable releases only"}.`
-        : `Saved. New plugins install from the ${value === "next" ? "prerelease" : "stable"} channel.`;
+    if (key === "updateChannel") {
+      saved[key] =
+        `Saved. AKM Desktop follows ${value === "prerelease" ? "stable and prerelease releases" : "stable releases only"}.`;
+      return;
+    }
+    // The choice changes what Update does, so the plan for it is asked for at once.
+    saved[key] = `Saved. Update brings the CLI and plugins to the ${channelName(value)} channel.`;
+    await run("check", {}, "host-cli");
   }
   /**
    * Run a host action from its button and wait for it. The button stays focusable while busy; if it is gone when the
@@ -216,6 +213,23 @@
       {/if}
     </section>
     <section aria-labelledby="host-cli" aria-busy={hostBusy}>
+      <label class="field channel-choice"
+        >Release channel for the CLI and plugins<select
+          value={channel}
+          aria-describedby="release-channel-hint"
+          onchange={(event) => choose("pluginChannel", event.currentTarget.value)}
+          ><option value="latest">Stable</option><option value="next">Prerelease</option></select
+        ></label
+      >
+      <p class="field-hint" id="release-channel-hint">
+        The CLI and every installed plugin follow this channel. Changing it changes nothing on this computer until you
+        use Update; it shows what Update would do. Setup and Install AKM plugin use it too.
+      </p>
+      {#if data.preferences?.unreadable}<p class="notice notice-warn" role="alert">
+          The saved channel could not be read ({data.preferences.unreadable.error}), so Check and Update are refused
+          until you choose the channel again. Choosing it moves that file aside and saves a new one.
+        </p>{/if}
+      <p class="field-hint saved" role="status">{saved.pluginChannel}</p>
       <div class="software-row">
         <div>
           <h3 id="host-cli" tabindex="-1">
@@ -230,24 +244,23 @@
                   ? "Not installed"
                   : !data.host.cli.runnable
                     ? `Installed at ${data.host.cli.path ?? "an unknown path"}, but it does not run`
-                    : data.host.upgrade?.updateAvailable
-                      ? `Update available: ${data.host.upgrade.latestVersion}`
-                      : data.host.upgrade
-                        ? "Checked by AKM"
-                        : "Installed"}
+                    : !upgrade
+                      ? "Installed"
+                      : !planned
+                        ? `Not checked for the ${channelName(channel)} channel`
+                        : upgrade.updateAvailable
+                          ? `Update installs ${upgrade.latestVersion}`
+                          : `Checked by AKM: no newer release on the ${channelName(channel)} channel`}
           </p>
-          {#if data.host.cli?.runnable}<p class="field-hint">
-              Follows the {channelName(cliChannel)} channel{data.host.upgrade?.installMethod
-                ? `, installed by ${data.host.upgrade.installMethod}`
+          {#if data.host.cli?.runnable && upgrade}<p class="field-hint">
+              Follows the {channelName(upgrade.currentChannel ?? "")} channel{upgrade.installMethod
+                ? `, installed by ${upgrade.installMethod}`
                 : ""}.
             </p>{/if}
         </div>
         <!-- Busy buttons stay focusable (aria-disabled, not disabled): a disabled button drops keyboard focus to the page. -->
         <div class="btn-row">
-          <button
-            class="btn-quiet icon-label"
-            aria-disabled={hostBusy}
-            onclick={() => run("check", { channel: cliChannel }, "host-cli")}
+          <button class="btn-quiet icon-label" aria-disabled={hostBusy} onclick={() => run("check", {}, "host-cli")}
             ><Icon name="refresh" />Check CLI & plugins</button
           >
           {#if data.host.cli && !data.host.cli.installed}<button
@@ -255,17 +268,10 @@
               onclick={() => run("install-cli", {}, "host-cli")}>Install AKM CLI</button
             >
           {:else if data.host.cli?.runnable}<button
-              aria-disabled={hostBusy || desktopBehind}
-              aria-describedby={desktopBehind ? "host-cli-behind" : undefined}
-              onclick={() => !desktopBehind && run("upgrade-cli", { channel: cliChannel }, "host-cli")}
-              >Update CLI & plugins</button
+              aria-disabled={hostBusy || held}
+              aria-describedby={held ? "host-cli-behind" : undefined}
+              onclick={() => !held && run("upgrade-cli", {}, "host-cli")}>Update CLI & plugins</button
             >
-            {#if cliChannel !== channel && stable === "offer"}<button
-                class="btn-secondary"
-                aria-disabled={hostBusy || desktopBehind}
-                onclick={() => !desktopBehind && run("switch-channel", { channel }, "host-cli")}
-                >Switch CLI & plugins to {channelName(channel)}</button
-              >{/if}
             {#if data.host.cliManaged && skew === "host-older"}<button
                 class="btn-secondary"
                 aria-disabled={hostBusy}
@@ -303,19 +309,17 @@
             This CLI belongs to another package, which owns its updates. Update it there.
           </p>{/if}
       </div>
-      {#if desktopBehind}<p class="notice notice-warn" role="status" id="host-cli-behind">
-          {holdReason(data.engine, data.host.upgrade?.latestVersion, updateChannel)} Update AKM Desktop (Check for updates
-          above){data.host.cliManaged && skew === "host-older" ? ", or use Match this app's version" : ""}.
+      {#if held}<p class="notice notice-warn" role="status" id="host-cli-behind">
+          {holdReason(data.engine, upgrade, updateChannel)} Update AKM Desktop (Check for updates above){data.host
+            .cliManaged && skew === "host-older"
+            ? ", or use Match this app's version"
+            : ""}.
         </p>
       {:else if advice.kind !== "none"}<p class="notice" role="status">{advice.text}</p>{/if}
-      {#if stable !== "offer"}<p class="field-hint">
-          This CLI follows the prerelease channel, so stable {stable === "unknown" ? "may be" : "is"} older than what is installed,
-          and akm will not switch back by itself. It moves to stable with the next stable release; to go back now, run
-          <code>akm upgrade --channel latest --allow-downgrade</code> yourself.
-        </p>{/if}
       <p class="field-hint">
-        Updates use <code>akm upgrade</code>, including its migration checks and installed plugins. The desktop’s
-        bundled engine updates with the app.
+        Check runs <code>akm upgrade --check --channel {channel}</code> and Update runs
+        <code>akm upgrade --channel {channel}</code>, including its migration checks and installed plugins. The
+        desktop’s bundled engine updates with the app.
       </p>
       <details>
         <summary>Installation details</summary>
@@ -331,30 +335,21 @@
     </section>
     <section aria-labelledby="harness-plugins" aria-busy={hostBusy}>
       <div class="plugin-heading">
-        <div>
-          <h3 id="harness-plugins">Harness plugins</h3>
-          <p class="muted">Add AKM to a harness you already use.</p>
-        </div>
-        <label class="field"
-          >New plugin channel<select
-            value={channel}
-            aria-describedby="plugin-channel-hint"
-            onchange={(event) => choose("pluginChannel", event.currentTarget.value)}
-            ><option value="latest">Stable</option><option value="next">Prerelease</option></select
-          ></label
-        >
+        <h3 id="harness-plugins">Harness plugins</h3>
+        <p class="muted">Add AKM to a harness you already use.</p>
       </div>
-      <p class="field-hint saved" role="status">{saved.pluginChannel}</p>
-      <!-- A list: each item is one harness, named first, then its plugin's state and channel in words. -->
+      <!-- A list: each item is one harness, named first, then its plugin's state and what akm's plan does with it. -->
       <ul class="plugin-list" aria-labelledby="harness-plugins">
         {#each data.host.harnesses as harness (harness.id)}
-          {@const followed = installedChannel(harness, data.host.upgrade?.plugins)}
+          {@const plan = pluginPlan(harness, upgrade?.plugins)}
+          {@const followed = channelWords(plan?.channel)}
           <li class="plugin-row">
             <div>
               <h4 id="plugin-{harness.id}" tabindex="-1">
                 {harnessLabel(harness)} <span class="muted small">{harness.version ?? ""}</span>
               </h4>
               <p class="muted small">{pluginLine(harness)}{followed ? `, ${followed}` : ""}.</p>
+              {#if plan && planned}<p class="field-hint">{planText(plan)}</p>{/if}
               {#if harness.plugin?.note}<p class="field-hint">{harness.plugin.note}</p>{/if}
               {#if harness.plugin?.detail}<details class="field-hint">
                   <summary>Details</summary>
@@ -364,23 +359,22 @@
             {#if harness.plugin?.state === "missing"}<button
                 class="btn-secondary"
                 aria-disabled={hostBusy}
-                onclick={() => run("install-plugin", { harness: harness.id, channel }, `plugin-${harness.id}`)}
+                onclick={() => run("install-plugin", { harness: harness.id }, `plugin-${harness.id}`)}
                 >Install AKM plugin for {harnessLabel(harness)}</button
               >{/if}
             {#if data.host.consent === harness.id}<button
                 class="btn-secondary"
                 aria-disabled={hostBusy}
-                onclick={() =>
-                  run("install-plugin", { harness: harness.id, channel, consent: true }, `plugin-${harness.id}`)}
+                onclick={() => run("install-plugin", { harness: harness.id, consent: true }, `plugin-${harness.id}`)}
                 >Install from the existing marketplace</button
               >{/if}
           </li>
         {/each}
       </ul>
-      <p class="field-hint" id="plugin-channel-hint">
-        The channel is remembered and is also what setup installs. Native installers preserve existing configuration and
-        marketplace channels; an installed plugin's channel is shown once the host CLI has been checked. Plugin
-        installation does not sign you in or approve hooks.
+      <p class="field-hint">
+        Native installers preserve existing configuration and marketplace channels; what Update would do with an
+        installed plugin is shown once the host CLI has been checked. Plugin installation does not sign you in or
+        approve hooks.
       </p>
     </section>
   {/if}
@@ -423,8 +417,7 @@
     margin-left: 8px;
   }
   .software-row,
-  .plugin-row,
-  .plugin-heading {
+  .plugin-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -477,9 +470,8 @@
   .plugin-heading p {
     margin: 8px 0;
   }
-  .plugin-heading label {
-    font-size: 12px;
-    min-width: 145px;
+  .channel-choice {
+    max-width: 320px;
   }
   .plugin-list {
     list-style: none;
@@ -512,7 +504,6 @@
   }
   @media (max-width: 700px) {
     .software-row,
-    .plugin-heading,
     .plugin-row {
       align-items: flex-start;
       flex-wrap: wrap;

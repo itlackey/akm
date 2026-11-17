@@ -1852,11 +1852,17 @@ marketplaces at every start.
 The result gains a `plugins` array, one entry per harness:
 `{ "harness": "claude-code" | "codex" | "opencode" | "opencode-v2", "outcome": ..., "from"?, "to"?, "message"? }`.
 `outcome` is `updated`, `current`, `skipped`, `deferred` or `failed`; under
-`--check` it can also be `pending` or `unknown`. `--check` does not fetch the
-Claude Code or Codex marketplaces, so for them it reports `unknown` (whether a
-newer build exists needs a fetch it does not do) rather than guessing; for
-OpenCode it compares the cached version with npm, so it reports `pending` when
-an update is due. A `failed` plugin makes `akm upgrade` exit `1` (not
+`--check` it can also be `pending` or `unknown`. `--check` writes nothing. For
+Claude Code and Codex it reads the akm build the channel in force offers, the same
+read the real switch makes: a shallow clone of the channel's branch of the
+marketplace the harness has registered, into a temporary folder. The channel is
+the `--channel` asked for, else the one the marketplace follows. It reports
+`pending`, with that build as `to`, when it is newer than the installed one, else
+`current`; with `--channel`, a plugin whose channel has nothing newer (or whose
+build cannot be read) is `current` and stays, as the switch itself leaves it. A
+plain check whose marketplace cannot be read reports `unknown`, with the reason in
+`message`. For OpenCode it compares the cached version with npm, so it reports
+`pending` when an update is due. A `failed` plugin makes `akm upgrade` exit `1` (not
 `--check`). On an up-to-date machine the text output prints nothing for
 plugins.
 
@@ -3381,10 +3387,10 @@ akm lint --rule stale-path      # List one rule's findings, grouped by asset
 
 | Argument or flag | Description |
 | --- | --- |
-| `<file>` | Optional. Lint just this file with the rules the bundle lint applies to it, and return the same result with the counts for that file only (first in 0.10.261122). A file inside a bundle (a configured one, or the root given with `--dir`) gets its type from where it sits, as the bundle lint decides it. A file outside every bundle needs `--type` (`agents`, `commands`, `memories`, `skills`, `workflows`, `lessons`, `tasks`, `knowledge`, `facts`). Checks that need other files, such as broken refs and orphaned stubs, run only for a file inside a bundle; outside one only the file's own rules run. A `--type` that disagrees with the file's location, a missing path, a directory (use `--dir`) and `--prune-dangling-edges` are usage errors (exit 2). `--fix` changes only this file. |
+| `<file>` | Optional. Lint just this file with the rules the bundle lint applies to it, and return the same result with the counts for that file only (first in 0.10.261122). A file inside a bundle (a configured one, or the root given with `--dir`) gets its type from where it sits, as the bundle lint decides it. A file outside every bundle needs `--type` (`agents`, `commands`, `memories`, `skills`, `workflows`, `lessons`, `tasks`, `knowledge`, `facts`, `instructions`, `rules`, `sessions`), as a type name (`rule`) or its folder name (`rules`). Checks that need other files, such as broken refs and orphaned stubs, run only for a file inside a bundle; outside one only the file's own rules run. A `--type` that disagrees with the file's location, a missing path, a directory (use `--dir`) and `--prune-dangling-edges` are usage errors (exit 2). `--fix` changes only this file. |
 | `--fix` (alias `--auto-fix`) | Apply auto-fixes in place. Refused with a usage error when the target bundle is configured `writable: false`. |
 | `--dir` | Override the bundle root directory (default: from config) |
-| `--type` | Only lint assets of this type (e.g. `workflows`, `tasks`, `memories`). **akm bundles only** — every other adapter validates the whole bundle and warns on stderr that the flag had no effect. |
+| `--type` | Only lint assets of this type, by type name or folder name (e.g. `workflow` or `workflows`, `task`, `memory` or `memories`); a bundle lint leaves out the types search leaves out by default (`search.defaultExcludeTypes`, default `session`) unless `--type` names one. **akm bundles only** — every other adapter validates the whole bundle and warns on stderr that the flag had no effect. |
 | `--rule` | List this rule's findings grouped by asset: the asset ref and file, then each finding with its line, path, reason, nearest existing directory and line text. Combines with `--type`. A listing: it cannot combine with `--fix` or `--prune-dangling-edges`. An unknown rule name warns and shows every rule. |
 | `--fail-on-flagged` | Exit non-zero when `summary.flagged > 0`. Default: exit 0 regardless of findings. |
 | `--prune-dangling-edges` | Opt-in repair (#884): drop `supersededBy`/`contradictedBy` entries whose target has neither a file nor a prune tombstone. **Not** implied by `--fix` — it edits well-formed files to delete a belief-graph claim, so review a plain `akm lint` report first. Clears the same `writable: false` gate `--fix` does. |

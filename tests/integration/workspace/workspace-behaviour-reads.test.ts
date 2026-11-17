@@ -22,6 +22,8 @@ import { loadConfig, resetConfigCache } from "../../../src/core/config/config";
 import { getDbPath } from "../../../src/core/paths";
 import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import { recordImproveRun } from "../../../src/storage/repositories/improve-runs-repository";
+import { closeDatabase, openExistingDatabase } from "../../../src/storage/repositories/index-connection";
+import { upsertEmbedding } from "../../../src/storage/repositories/index-vec-repository";
 import { listStateProposals, upsertProposal } from "../../../src/storage/repositories/proposals-repository";
 import { upsertTaskHistory } from "../../../src/storage/repositories/task-history-repository";
 import { activity, assets, bundles, config, proposals } from "../../../src/workspace";
@@ -501,6 +503,20 @@ describe("reads", () => {
     expect(listed.index.lastBuiltAt).toBeTruthy();
   });
 
+  test("bundles counts only the current model's vectors against the embeddable entries", async () => {
+    await seed();
+    const db = openExistingDatabase(getDbPath());
+    try {
+      const ids = (db.prepare("SELECT id FROM entries").all() as Array<{ id: number }>).map((row) => row.id);
+      for (const id of ids) upsertEmbedding(db, id, [1, 0, 0, 0], "an-earlier-model");
+    } finally {
+      closeDatabase(db);
+    }
+    const { index } = await out(bundles.list());
+    expect(index.embeddingCount).toBe(0);
+    expect(index.embeddingCoverage).toBe(0);
+  });
+
   test("bundles reports ahead and behind against the remote-tracking branch without fetching", async () => {
     await seed();
     const remote = fs.mkdtempSync(path.join(ctx.storage.root, "remote-"));
@@ -556,6 +572,18 @@ describe("reads", () => {
       { name: "codex" },
       { name: "claude-work", platform: "claude", bin: "/opt/claude-work/bin/claude" },
     ]);
+  });
+
+  test("pulse asks for a model connection only when learning is on, runs on no harness and no connection exists", async () => {
+    await seed();
+    const needs = async (patch: Record<string, unknown>) => {
+      writeSandboxConfig({ ...loadConfig(), connections: undefined, ...patch });
+      resetConfigCache();
+      return (await out(activity.pulse())).attention.setup;
+    };
+    expect(await needs({})).toEqual({ needs: "a model connection" });
+    expect(await needs({ improve: { enabled: false } })).toBeNull();
+    expect(await needs({ harnesses: { default: { platform: "claude" } }, improve: { harness: "default" } })).toBeNull();
   });
 
   test("proposals list and get", async () => {
@@ -794,7 +822,7 @@ describe("secrets and read-only guarantees", () => {
     // The remedy is one the person can take from the app, not only a CLI command (F8).
     expect(overview.health.hardChecks[0].message).toContain("Index the library");
     expect(overview.improveRuns).toEqual([]);
-    expect(await out(proposals.list())).toMatchObject({ totalCount: 0 });
+    expect(await out(proposals.list())).toEqual({ available: false, reason: "absent" });
     expect(fs.existsSync(getStateDbPath())).toBe(false);
   });
 });

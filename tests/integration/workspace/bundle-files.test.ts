@@ -49,6 +49,18 @@ test("lists real immediate entries with canonical indexed refs, never contents o
   expect(asset.location).toEqual(bundleFileLocation(path.join(dir, "guide.md")));
 });
 
+test("marks a file protected when akm types it env or secret, at any depth", () => {
+  fs.mkdirSync(path.join(storage.stashDir, "projects", "x", "secrets"), { recursive: true });
+  fs.mkdirSync(path.join(storage.stashDir, "projects", "x", "env"));
+  fs.writeFileSync(path.join(storage.stashDir, "projects", "x", "secrets", "token"), "synthetic");
+  fs.writeFileSync(path.join(storage.stashDir, "projects", "x", "env", "prod.env"), "A=1");
+  fs.writeFileSync(path.join(storage.stashDir, "knowledge", "note.md"), "# Note\n");
+  const flags = (dir: string) => listBundleFiles("stash", dir).entries.map((entry) => [entry.name, entry.protected]);
+  expect(flags("projects/x/secrets")).toEqual([["token", true]]);
+  expect(flags("projects/x/env")).toEqual([["prod.env", true]]);
+  expect(flags("knowledge")).toEqual([["note.md", false]]);
+});
+
 test("browsing without an index remains truthful and does not create one", () => {
   fs.writeFileSync(path.join(storage.stashDir, "knowledge", "new.md"), "# New\n");
   const result = listBundleFiles("stash", "knowledge");
