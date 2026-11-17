@@ -16,6 +16,7 @@ import { resolveRefOwner } from "../core/env-secret-ref";
 import { UsageError } from "../core/errors";
 import { type IncludeSelectors, includedTypes, includesProposed } from "../core/include";
 import { projectView, resolveProject } from "../core/projects";
+import { resolveWriteTarget } from "../core/write-source";
 import { readUsableIndex } from "../indexer/index-readiness";
 import type { ScopeFilters } from "../indexer/passes/metadata";
 import { resolveReadSources } from "../indexer/read-preflight";
@@ -26,7 +27,7 @@ import { countFeedbackBySignal, listFeedbackEventRows } from "../storage/reposit
 import { assetImprove } from "./asset-improve";
 import { bundleFileLocation, listBundleFiles } from "./bundle-files";
 import { readFileRevision, readRecentCommits } from "./git-read";
-import { automaticWriteTarget, capSide, clampLimit, DIFF_SIDE_MAX_CHARS, withReadonlyStateDb } from "./readers";
+import { capSide, clampLimit, DIFF_SIDE_MAX_CHARS, withReadonlyStateDb } from "./readers";
 
 export { graph } from "./graph";
 export { searchMisses } from "./misses";
@@ -117,7 +118,13 @@ export function projectOverview(input: { project: string }) {
           undefined,
         )
       : undefined;
-  const writeName = project.write.bundle ?? config.defaultWriteTarget ?? automaticWriteTarget(config)?.name ?? null;
+  // Where akm would write for this project; a write bundle that does not resolve is shown by the name it was given.
+  let writeName: string | null = project.write.bundle ?? null;
+  try {
+    writeName = resolveWriteTarget(config, project.write.bundle, { requireWritable: false }).source.name;
+  } catch {
+    /* No target resolves: the explicit name, or none. */
+  }
   const writeSource = writeName === null ? undefined : local.find((source) => source.registryId === writeName);
   return {
     project: { ...projectView(project), write: project.write },
@@ -231,7 +238,8 @@ export async function history(input: { ref: string; revision?: string; limit?: n
   if (!source) return { available: false, commits: [] };
   const file = path.relative(source.path, selected.asset.path).split(path.sep).join("/");
   if (file.startsWith("../") || path.isAbsolute(file)) throw new UsageError("Asset path is outside its bundle.");
-  const commits = await readRecentCommits(source.path, clampLimit(input.limit, 30), file);
+  const read = await readRecentCommits(source.path, clampLimit(input.limit, 30), file);
+  const commits = read?.commits ?? null;
   const revision = input.revision;
   if (revision && !commits?.some((commit) => commit.sha === revision))
     throw new UsageError("Choose a revision from this asset's history.");
@@ -241,6 +249,7 @@ export async function history(input: { ref: string; revision?: string; limit?: n
   return {
     available: commits !== null,
     commits: commits ?? [],
+    ...(read?.error ? { error: read.error } : {}),
     ...(diff
       ? {
           diff: {

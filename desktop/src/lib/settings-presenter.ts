@@ -13,6 +13,8 @@ export interface SettingsGit {
   ahead: number;
   behind: number;
   dirtyPaths: number;
+  /** Why git could not be read: the other fields then say nothing about the repository. */
+  error: string | null;
   lastCommit: { sha: string; subject: string; time: string } | null;
 }
 export interface SettingsBundle {

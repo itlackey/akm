@@ -6,7 +6,7 @@
 
 <script lang="ts">
   import { onDestroy, tick, untrack } from "svelte";
-  import { api, date } from "./client";
+  import { api, apiState, date } from "./client";
   import { navigate } from "./navigation";
   import ActivityOverview from "./ActivityOverview.svelte";
   import ActivityImpact from "./ActivityImpact.svelte";
@@ -25,6 +25,7 @@
     impact = $state<Impact | null>(null),
     retrieval = $state<Retrieval | null>(null),
     pulse = $state<Pulse | null>(null),
+    pulseNote = $state(""),
     impactProcess = $state("");
   // A latch, not a derivation: the process the address last named stays selected when a later address names none.
   $effect.pre(() => {
@@ -34,6 +35,7 @@
     bundle: string;
     path: string;
     git: boolean;
+    error?: string;
     commits: Array<Commit & { shortSha?: string }>;
   } | null>(null);
   let misses = $state<{
@@ -127,14 +129,19 @@
     refreshSaid = "";
     try {
       if (view === "Health" || view === "Runs" || view === "Usage & retrieval") {
+        let nextPulseNote = "";
         const [next, nextPulse, nextRetrieval] = await Promise.all([
           api<Overview>("/overview", { metricsSince: window }),
-          api<Pulse>("/overview/pulse").catch(() => null),
+          apiState<Pulse>("/overview/pulse").catch((cause: Error) => {
+            nextPulseNote = cause.message;
+            return null;
+          }),
           api<Retrieval>("/retrieval", { since: view === "Usage & retrieval" ? window : "84d" }).catch(() => null),
         ]);
         if (request === generation) {
           overview = next;
           pulse = nextPulse;
+          pulseNote = nextPulseNote;
           retrieval = nextRetrieval;
           refreshedAt = new Date().toISOString();
           probedAt = "";
@@ -267,6 +274,7 @@
       mode={view === "Health" ? "health" : view === "Runs" ? "runs" : "usage"}
       data={overview}
       {pulse}
+      {pulseNote}
       {retrieval}
       {probe}
       {refreshedAt}
@@ -286,6 +294,8 @@
   <p class="muted">{changes.bundle} · <span class="mono wrap">{changes.path}</span></p>
   {#if !changes.git}<p class="empty">
       This write target is not a Git repository. AKM does not retain general manual-edit undo for a non-Git bundle.
+    </p>{:else if changes.error}<p class="notice notice-warn" role="alert">
+      Git could not be read: {changes.error}
     </p>{:else}<form
       class="history-filter"
       role="search"

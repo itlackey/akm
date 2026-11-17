@@ -7,6 +7,8 @@ import path from "node:path";
 import { isWithin, relativeToRoot, safeRealpath } from "../core/common";
 import { NotFoundError, UsageError } from "../core/errors";
 import { findSourceForPath, resolveSourceEntries } from "../indexer/search/search-source";
+import { buildFileContext } from "../indexer/walk/file-context";
+import { declaredTypeForPath } from "../indexer/walk/matchers";
 import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
 import { getAssetRefsForFiles } from "../storage/repositories/index-entries-repository";
 
@@ -108,7 +110,11 @@ export function listBundleFiles(bundle: string, relative = "", showHidden = fals
     indexAvailable,
     entries: rows.map(({ absolute, ...row }) => {
       const assets = refs.get(absolute) ?? [];
-      return { ...row, assets };
+      // akm's own directory rules, on the real file: any env/ or secrets/ ancestor makes it a protected file.
+      const type = declaredTypeForPath(
+        buildFileContext("/", path.posix.join("/", portable(path.relative(source.path, absolute)))),
+      );
+      return { ...row, assets, protected: row.kind === "file" && (type === "env" || type === "secret") };
     }),
   };
 }

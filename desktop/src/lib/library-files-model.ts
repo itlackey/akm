@@ -8,6 +8,8 @@ export interface FileEntry {
   path: string;
   kind: "directory" | "file" | "other";
   assets: Array<{ ref: string; type: string }>;
+  /** akm types the file `env` or `secret`: its text opens only in the protected-file view. */
+  protected?: boolean;
   symlink?: true;
   unavailable?: string;
 }

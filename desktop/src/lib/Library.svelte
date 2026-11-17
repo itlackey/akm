@@ -700,7 +700,7 @@
                 if (!inFiles) void search();
               }}
             />{/key}
-        {:else if /^(env|secrets)\//.test(selectedFilePath)}
+        {:else if selectedFile?.protected}
           {#key fileBundle + ":" + selectedFilePath}<SensitiveAsset
               bundle={fileBundle}
               file={selectedFilePath}

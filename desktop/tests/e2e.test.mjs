@@ -394,3 +394,38 @@ test("Library: the link map draws an asset's recorded links, both ways, and foll
   await expect(map.getByRole("link", { name: "Cross-reference: knowledge/recovery-index", exact: true })).toBeVisible();
   assert.deepEqual(errors, []);
 });
+
+test("a Git bundle whose repository cannot be read says so instead of showing a clean one", async (t) => {
+  const server = await launchFixture({
+    configureFixture: async (fixture) => mkdir(path.join(fixture.root, "personal/.git")),
+  });
+  t.after(() => server.stop());
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  await open(page, server, "/settings/bundles");
+  await expect(page.getByText(/Git could not be read: .*not a git repository/).first()).toBeVisible();
+  await expect(page.getByText("Clean", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("No commits", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Detached HEAD", { exact: true })).toHaveCount(0);
+});
+
+test("new content goes where akm says: the working stash when no write target is configured", async (t) => {
+  const server = await launchFixture({
+    configureFixture: async (fixture) => {
+      const file = path.join(fixture.root, "config/config.json");
+      const config = JSON.parse(await readFile(file, "utf8"));
+      delete config.defaultWriteTarget;
+      config.defaultBundle = "shared";
+      await writeFile(file, JSON.stringify(config));
+    },
+  });
+  t.after(() => server.stop());
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  await open(page, server, "/");
+  const akmAnswer = (await server.call("/api/config")).body.data.automaticWriteTarget.name;
+  assert.equal(akmAnswer, "personal", "AKM_BUNDLE_DIR is the working stash, not the default bundle");
+  await expect(page.getByRole("link", { name: "Create an asset" })).toHaveAttribute("href", /bundle=personal(&|$)/);
+});

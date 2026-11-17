@@ -9,7 +9,7 @@
   import { refreshPending, workspace } from "./state/workspace.svelte";
   import { showToast } from "./state/toasts.svelte";
   import { onDestroy, tick, untrack } from "svelte";
-  import { api, date, title, toggleSelection } from "./client";
+  import { api, apiState, date, title, toggleSelection } from "./client";
   import Icon from "./Icon.svelte";
   import ReviewDetail from "./ReviewDetail.svelte";
   import ReviewFinished from "./ReviewFinished.svelte";
@@ -179,7 +179,7 @@
     }
   }
   async function fetchQueue(): Promise<ReviewQueue> {
-    return api<ReviewQueue>("/proposals", { status, source, age, week, class: outcome, limit: "200" });
+    return apiState<ReviewQueue>("/proposals", { status, source, age, week, class: outcome, limit: "200" });
   }
   async function load() {
     const generation = ++queueGeneration;

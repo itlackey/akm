@@ -148,7 +148,7 @@ export function buildOverview(payload: OverviewPayload, now = Date.now()): Overv
     return ref.includes("//") ? ref.slice(ref.indexOf("//") + 2) : ref;
   };
 
-  const useKnown = payload.use !== null && !payload.note.includes("no usage history");
+  const useKnown = payload.use !== null;
   const use = Array.from({ length: n }, (_, i) =>
     useKnown ? useClass(payload.nodes.lastShownAt?.[i] ?? null, payload.nodes.modifiedAt?.[i] ?? null, now) : null,
   );
