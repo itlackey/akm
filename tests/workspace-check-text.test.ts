@@ -123,6 +123,10 @@ describe("whether akm could still read the asset", () => {
 
     expect(broken.readable).toBe(false);
     expect(broken.unreadable?.reason).toMatch(/Workflow|workflow/);
+    // The reason names the file by its path in the bundle, never the scratch folder the check ran in.
+    expect(broken.unreadable?.reason).toContain("workflows/release.md");
+    expect(broken.unreadable?.reason).not.toContain("akm-check-");
+    expect(broken.unreadable?.reason).not.toContain(os.tmpdir());
     expect(
       broken.findings.some((finding) => finding.issue === "invalid-workflow-structure" && finding.line !== undefined),
     ).toBe(true);

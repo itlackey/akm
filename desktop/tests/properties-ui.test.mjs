@@ -269,7 +269,8 @@ test("a workflow that would not compile stops the save; saved anyway it drops ou
   await expect(box).toBeFocused();
   assert.equal(await box.evaluate((area) => area.value.slice(0, area.selectionStart).split("\n").length), lined.line);
   await page.getByRole("button", { name: "Save changes" }).click();
-  // akm's reason names a scratch folder that differs on each check; the rest of it is akm's account of the workflow.
+  // akm names the file by its path in the bundle, not the scratch folder the check ran in.
+  assert.doesNotMatch(verdict.unreadable.reason, /akm-check-/);
   const reason = verdict.unreadable.reason.split("\n").slice(1).join("\n").trim();
   assert.match(reason, /^Workflow has errors/);
   await expect(page.getByRole("alert").filter({ hasText: "Not saved." })).toContainText(reason.split("\n")[1]);

@@ -58,7 +58,9 @@ function unreadableReason(
   const adapter = adapterForId("akm");
   const drained = adapter ? drainDirDocuments(adapter, component, [file]) : undefined;
   if (drained === undefined || drained.entries.length > 0) return null;
-  return { reason: drained.warnings[0] ?? "akm does not index a file here." };
+  // The scratch folder is not the person's: a path in the reason is the bundle-relative one.
+  const reason = (drained.warnings[0] ?? "akm does not index a file here.").split(`${scratchRoot}${path.sep}`).join("");
+  return { reason };
 }
 
 /** The akm bundle named `bundle`, and `path` as a path inside it that akm checks (not a protected or managed place). */
