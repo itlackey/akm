@@ -70,7 +70,10 @@ async function selection(input: Selector) {
     path: path.dirname(inside).replace(/^\.$/, ""),
     hidden: true,
   })) as { entries: Array<{ name: string; protected: boolean }> };
-  if (folder.entries.find((entry) => entry.name === path.basename(inside))?.protected)
+  const listed = folder.entries.find((entry) => entry.name === path.basename(inside));
+  // No answer about the file is not permission to open it.
+  if (!listed) throw new UsageError("This file is unavailable. Check its location and filesystem permissions.");
+  if (listed.protected)
     throw new UsageError("Protected files are shown and edited from the protected-file view.");
   return {
     bundle,
