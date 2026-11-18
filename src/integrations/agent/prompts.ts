@@ -154,7 +154,7 @@ export const PROPOSAL_JSON_SCHEMA: ExecutionJsonObject = {
 export interface RejectedProposalContext {
   /** Asset ref the rejected proposal targeted. */
   ref: string;
-  /** Human-readable rejection reason supplied at review time. */
+  /** Rejection reason from a reviewer or a content guard. */
   reason: string;
   /**
    * Truncated preview of the rejected content (first 500 chars). Helps the
@@ -189,7 +189,7 @@ export interface ReflectPromptInput {
    */
   avoidPatterns?: string[];
   /**
-   * Last 1–3 archived rejected proposals for this ref. Injected as
+   * Last 1–3 content rejections for this ref. Injected as
    * Reflexion-style verbal-RL context so the agent does not regenerate
    * proposals that have already been reviewed and refused.
    */
@@ -403,8 +403,8 @@ export function buildReflectPrompt(input: ReflectPromptInput): ReflectPromptResu
   if (input.rejectedProposals && input.rejectedProposals.length > 0) {
     const lines: string[] = ["## Previously Rejected Proposals"];
     lines.push(
-      "The following proposals for this ref were already reviewed and rejected. " +
-        "Do not propose the same change again; if no other change is justified, return null for each field.",
+      "Previous attempts for this ref were refused for the reasons below. Avoid repeating the same mistake. " +
+        "Use the current asset and feedback when the evidence has changed. If no change is justified, return null for each field.",
     );
     for (const rp of input.rejectedProposals) {
       lines.push(`\nRef: ${rp.ref}`);
