@@ -149,7 +149,7 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | `akm env list` | Stable | Read-and-inject surface. |
 | `akm env path` | Stable | Read-and-inject surface. |
 | `akm env export` | Stable | Read-and-inject surface. |
-| `akm exec` | Evolving | First in 0.10.261130. Runs any command with repeatable `--env <ref>` and `--secret <ref>:<VAR>` injected; `akm run` takes the same two flags for an akm asset. Child-process passthrough, exempt from `--format`. |
+| `akm exec` | Experimental | First in 0.10.261130. Off until `experimental.exec` is `true` in config; otherwise it refuses with a config error (exit 78) and runs nothing. Runs any command with repeatable `--env <ref>` and `--secret <ref>:<VAR>` injected; `akm run` takes the same two flags for an akm asset. Child-process passthrough, exempt from `--format`. |
 | `akm env run` | Deprecated | Removed in 0.11: use `akm exec --env <ref> -- <command>`. Read-and-inject surface. `--allow-dangerous-env-keys` is Deprecated, no effect: accepted through 0.10 and a usage error in 0.11, so drop it; prints a notice since 0.10.261122. |
 | `akm env create` | Experimental | Write verb. |
 | `akm env remove` | Experimental | Write verb. |

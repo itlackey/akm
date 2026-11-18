@@ -1620,6 +1620,9 @@
         "improveAutonomy": {
           "type": "boolean"
         },
+        "exec": {
+          "type": "boolean"
+        },
         "learning": {
           "type": "object",
           "properties": {
@@ -3611,6 +3614,9 @@
           "type": "object",
           "properties": {
             "improveAutonomy": {
+              "type": "boolean"
+            },
+            "exec": {
               "type": "boolean"
             },
             "learning": {

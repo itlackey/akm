@@ -3283,6 +3283,16 @@ text through `--prompt` or `--prompt-stdin`.
 
 ### exec
 
+Experimental, and off by default. Turn it on with
+[`experimental.exec`](configuration.md#experimental):
+
+```sh
+akm config set experimental.exec true
+```
+
+While it is off, `akm exec` refuses with a config error (exit 78) that names the
+key, and runs nothing. `akm run --env` and `--secret` are not gated.
+
 Run any command with env assets and secrets injected into its environment:
 
 ```sh

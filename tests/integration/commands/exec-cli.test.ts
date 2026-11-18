@@ -3,12 +3,12 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 // Real subprocesses: `akm exec` hands its child the terminal, so only a process boundary can observe the child's output.
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { withoutBundleDirNotice } from "../../_helpers/bundle-dir-notice";
-import { makeStashDir, type SandboxedDir } from "../../_helpers/sandbox";
+import { makeStashDir, type SandboxedDir, writeSandboxConfig } from "../../_helpers/sandbox";
 
 const disposers: SandboxedDir[] = [];
 afterAll(() => {
@@ -40,6 +40,21 @@ function akm(stashDir: string, args: string[], extraEnv: Record<string, string> 
 const print = (...names: string[]) => ["sh", "-c", `printf '%s|' ${names.map((name) => `"$${name}"`).join(" ")}`];
 
 describe("akm exec", () => {
+  beforeEach(() => writeSandboxConfig({ experimental: { exec: true } }));
+
+  test.each([
+    {},
+    { exec: false },
+  ])("is off unless experimental.exec is true (%j): nothing runs and the refusal names the key", (experimental) => {
+    writeSandboxConfig({ experimental });
+    const stash = makeStash({ "env/prod.env": "A=1\n" });
+    const { stdout, stderr, status } = akm(stash, ["exec", "--env", "env/prod", "--", "sh", "-c", "echo ran"]);
+    expect(status).toBe(78);
+    expect(stdout).not.toContain("ran");
+    expect(stderr).toContain("experimental.exec");
+    expect(stderr).toContain("akm config set experimental.exec true");
+  });
+
   test("injects every env asset and secret given, later flags over earlier, secrets over env assets", () => {
     const stash = makeStash({
       // biome-ignore lint/suspicious/noTemplateCurlyInString: the literal `${ref}` token an env file holds

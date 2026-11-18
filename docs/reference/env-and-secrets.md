@@ -118,7 +118,8 @@ migrate apply` rewrites the file.
 
 ## Running commands
 
-`akm exec [--env <ref>]... [--secret <ref>:<VAR>]... -- <command>` spawns the
+`akm exec` is Experimental and off by default; `akm config set experimental.exec
+true` turns it on. `akm exec [--env <ref>]... [--secret <ref>:<VAR>]... -- <command>` spawns the
 command directly (no shell) with the values added to its environment. It exits
 with the command's status and is exempt from `--format`. `akm run <ref>` takes
 the same two flags and runs an agent, command, task or workflow with them (see
@@ -197,7 +198,7 @@ sources.
 ## Stability
 
 `env list`, `env path`, `env export` and `secret list` are Stable. `akm exec` is
-Evolving. `env run` and `secret run` are Deprecated. `env create`, `env remove`, `secret set` and `secret remove` are Experimental. See
+Experimental and off until `experimental.exec` is true. `env run` and `secret run` are Deprecated. `env create`, `env remove`, `secret set` and `secret remove` are Experimental. See
 [STABILITY.md](../../STABILITY.md).
 
 ## See also

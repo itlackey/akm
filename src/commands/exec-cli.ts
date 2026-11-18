@@ -4,16 +4,18 @@
 
 import { getParsedInvocation } from "../cli/invocation";
 import { defineJsonCommand } from "../cli/shared";
-import { UsageError } from "../core/errors";
+import { loadConfig } from "../core/config/config";
+import { EXEC_CONFIG_KEY, isExecEnabled } from "../core/config/experimental";
+import { ConfigError, UsageError } from "../core/errors";
 import { buildChildEnv } from "./env/child-env";
 import { INJECTION_ARGS, resolveInjections, runChild } from "./env/injection";
 
-/** `akm exec`: any program, with env assets and secrets injected. `akm run` is the same for an akm asset. */
+/** `akm exec`: any program, with env assets and secrets injected. Experimental and off by default. `akm run` is the same for an akm asset. */
 export const execCommand = defineJsonCommand({
   meta: {
     name: "exec",
     description:
-      "Run any command with env assets and secrets injected into its environment: `akm exec [--env <ref>]... [--secret <ref>:<VAR>]... -- <command>`. Use `-- $SHELL` for an interactive session. The command's own output is not scrubbed. Pass --clean to start it with a minimal inherited environment. To run an akm asset, use `akm run <ref>`.",
+      "Experimental, off until `experimental.exec` is true in config. Run any command with env assets and secrets injected into its environment: `akm exec [--env <ref>]... [--secret <ref>:<VAR>]... -- <command>`. Use `-- $SHELL` for an interactive session. The command's own output is not scrubbed. Pass --clean to start it with a minimal inherited environment. To run an akm asset, use `akm run <ref>`.",
   },
   args: {
     ...INJECTION_ARGS,
@@ -28,6 +30,13 @@ export const execCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
+    if (!isExecEnabled(loadConfig())) {
+      throw new ConfigError(
+        `akm exec is Experimental and is off. Set ${EXEC_CONFIG_KEY} to true to use it.`,
+        "INVALID_CONFIG_FILE",
+        `Run \`akm config set ${EXEC_CONFIG_KEY} true\`. To run an akm asset with env assets and secrets injected, use \`akm run <ref> --env <ref> --secret <ref>:<VAR>\`.`,
+      );
+    }
     const command = getParsedInvocation().passthroughArgs();
     if (command.length === 0) {
       throw new UsageError("Missing command. Usage: akm exec [--env <ref>]... [--secret <ref>:<VAR>]... -- <command>");

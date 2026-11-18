@@ -159,7 +159,7 @@ akm env create env/prod                           # Create an empty env file
 akm env create env/prod --from-file ./.env        # Ingest an existing .env
 akm env list                                  # List all env files across bundles with key names
 akm show env/prod                             # Inspect key names (never values or comments)
-akm exec --env env/prod -- ./deploy.sh        # Run a command with the whole .env injected (the safe path)
+akm exec --env env/prod -- ./deploy.sh        # Run a command with the whole .env injected (Experimental: needs experimental.exec true)
 akm exec --env env/prod -- $SHELL             # Open an interactive shell with values injected
 akm run <ref> --env env/prod                  # Run an akm asset with it injected (repeatable)
 akm env export env/prod --out ./env.sh        # Write a sourceable script to a file (mode 0600)
