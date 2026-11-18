@@ -106,7 +106,6 @@ const DEPRECATIONS: readonly Deprecation[] = [
   ...[
     ["bundle", "add"],
     ["bundle", "update"],
-    ["env", "run"],
   ].map((path) => ({
     path,
     flag: "--allow-dangerous-env-keys",

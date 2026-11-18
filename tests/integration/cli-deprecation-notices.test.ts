@@ -269,7 +269,11 @@ const FORMS: { args: string[]; mentions: string[] }[] = [
   { args: ["curate", "zzz", "--detail=agent"], mentions: ["--detail agent", "`--detail normal`"] },
   { args: ["bundle", "update", "--yes"], mentions: ["--yes", "no effect"] },
   { args: ["bundle", "add", "--allow-dangerous-env-keys"], mentions: ["--allow-dangerous-env-keys", "no effect"] },
-  { args: ["env", "run", "--allow-dangerous-env-keys"], mentions: ["--allow-dangerous-env-keys", "no effect"] },
+  { args: ["env", "run", "env/x"], mentions: ["akm env run", "`akm exec --env <ref> -- <command>`"] },
+  {
+    args: ["secret", "run", "secrets/x", "X"],
+    mentions: ["akm secret run", "`akm exec --secret <ref>:<VAR> -- <command>`"],
+  },
   {
     args: ["registry", "add", "http://x.example/i.json", "--options", "{}"],
     mentions: ["--options", "nothing reads it"],

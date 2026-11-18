@@ -88,7 +88,7 @@ describe("env path", () => {
     expect(status).toBe(0);
     expect(stdout.trim()).toBe(envPath);
     // The path is on stdout uncontaminated; the warning steers to `env run`.
-    expect(stderr).toContain("akm env run");
+    expect(stderr).toContain("akm exec --env");
   });
 
   // B3/B4 (W1-F): a first attempt at this fix routed `env path` through
@@ -176,7 +176,7 @@ describe("env run", () => {
     expect(status).toBe(2);
     const parsed = JSON.parse(stderr.trim());
     expect(parsed.ok).toBe(false);
-    expect(parsed.error).toContain("akm secret run");
+    expect(parsed.error).toContain("akm exec --secret");
   });
 
   test("--only and --except together is rejected", async () => {

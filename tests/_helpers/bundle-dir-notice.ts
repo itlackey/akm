@@ -4,11 +4,13 @@
 
 /**
  * The test sandbox points a spawned CLI at its bundle with `AKM_BUNDLE_DIR`, and since 0.10.261122 akm prints one
- * deprecation line for that variable. Tests that read a spawned CLI's stderr drop that line with this.
+ * deprecation line for that variable. Tests that read a spawned CLI's stderr drop that line with this, and the
+ * line `akm env run` and `akm secret run` print for themselves.
  */
 export function withoutBundleDirNotice(stderr: string): string {
   return stderr
     .split("\n")
     .filter((line) => !line.startsWith("[deprecated] AKM_BUNDLE_DIR is deprecated"))
+    .filter((line) => !/^\[deprecated\] akm (env|secret) run is deprecated/.test(line))
     .join("\n");
 }

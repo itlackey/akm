@@ -34,7 +34,13 @@ function akm(stashDir: string, args: string[], extraEnv: Record<string, string> 
     cwd: repoRoot,
     env: { ...process.env, AKM_BUNDLE_DIR: stashDir, ...extraEnv },
   });
-  return { stdout: result.stdout ?? "", stderr: withoutBundleDirNotice(result.stderr ?? ""), status: result.status };
+  const stderr = result.stderr ?? "";
+  return {
+    stdout: result.stdout ?? "",
+    stderr: withoutBundleDirNotice(stderr),
+    rawStderr: stderr,
+    status: result.status,
+  };
 }
 
 const print = (...names: string[]) => ["sh", "-c", `printf '%s|' ${names.map((name) => `"$${name}"`).join(" ")}`];
@@ -114,12 +120,12 @@ describe("akm exec", () => {
     const stash = makeStash({ "env/prod.env": "A=1\n", "secrets/token": "t" });
     const env = akm(stash, ["env", "run", "env/prod", "--", ...print("A")]);
     expect(env.stdout).toBe("1|");
-    expect(env.stderr).toContain(
+    expect(env.rawStderr).toContain(
       "akm env run is deprecated and is removed in 0.11: use `akm exec --env <ref> -- <command>`",
     );
     const secret = akm(stash, ["secret", "run", "secrets/token", "X", "--", ...print("X")]);
     expect(secret.stdout).toBe("t|");
-    expect(secret.stderr).toContain(
+    expect(secret.rawStderr).toContain(
       "akm secret run is deprecated and is removed in 0.11: use `akm exec --secret <ref>:<VAR> -- <command>`",
     );
   });
