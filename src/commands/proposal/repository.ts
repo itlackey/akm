@@ -19,7 +19,7 @@ import { isDeepStrictEqual } from "node:util";
 import { parse as parseYaml } from "yaml";
 import { ensureAkmMarkdownType } from "../../core/asset/akm-markdown";
 import { filesForRef, placementTypes, stashDirFor } from "../../core/asset/asset-placement";
-import { isBundleSlug, parseBundleRef } from "../../core/asset/asset-ref";
+import { isBundleSlug, makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { assembleAsset, serializeFrontmatter } from "../../core/asset/asset-serialize";
 import {
   carryForwardBookkeepingFrontmatter,
@@ -75,12 +75,15 @@ import {
   upsertProposal,
 } from "../../storage/repositories/proposals-repository";
 import { openSqliteReadSnapshot } from "../../storage/sqlite-read-snapshot";
+import { schedulerEnabledRefs, setSchedulerRefEnabled } from "../../tasks/activation-config";
+import { withSchedulerLock } from "../../tasks/scheduler-lock";
 import { pkgVersion } from "../../version";
 import { contentHash } from "../improve/content-hash";
 import { writeSupersededEdge } from "../improve/memory/memory-belief";
 import { archiveCleanupCandidate, derivedTwinPath } from "../improve/memory/memory-improve";
 import { runBaseChecks } from "../lint/base-linter";
 import type { LintIssue, LintIssueType } from "../lint/types";
+import { akmTasksDisable, akmTasksEnable, inspectTaskSchedulerBindings } from "../tasks/tasks";
 import { formatNewAssetDiff, formatRetireDiff, formatUnifiedDiff } from "./diff-format";
 import {
   ASSET_MISSING_GATE_REASON,
@@ -1173,6 +1176,8 @@ async function indexWrittenProposalAssets(target: ResolvedWriteTarget, assetPath
 
 export interface PromoteResult {
   proposal: Proposal;
+  /** Cleanup that could not be verified; never an assertion that native schedules are absent. */
+  warnings?: string[];
   assetPath: string;
   ref: string;
   /** What this accept's own commit came to. Absent when a collector holds the commit for its caller, or nothing was written. */
@@ -2014,6 +2019,7 @@ async function retireProposalWithLease(
 
   let working = proposal;
   let intent = proposal.retireAcceptIntent;
+  let scheduler: Awaited<ReturnType<typeof disableRetiredTask>>;
   if (!intent) {
     // Fresh accept — no recorded intent yet, so the target must still be there.
     if (!fs.existsSync(assetPath)) {
@@ -2044,6 +2050,7 @@ async function retireProposalWithLease(
     // the original.
     intent = { assetPath, backupContent: currentBytes.toString("utf8") };
     working = recordRetireAcceptIntent(stashDir, proposal.id, intent, ctx);
+    scheduler = await disableRetiredTask(ref, target.source.name);
     if (retirement?.judgeLabel === "supersedes") {
       try {
         writeSupersededEdge(assetPath, retirement.successorRef);
@@ -2055,6 +2062,7 @@ async function retireProposalWithLease(
     }
   } else {
     assertAkmAssetWrite(target.source);
+    assertRetiringTaskUnchanged(ref, intent, proposal);
     // Revalidate the survivor even after a partial archive. The recorded original
     // is the judged retired side when its file has already moved.
     if (working.retirement) {
@@ -2066,106 +2074,202 @@ async function retireProposalWithLease(
         fs.existsSync(intent.assetPath) ? fs.readFileSync(intent.assetPath) : Buffer.from(intent.backupContent),
       );
     }
+    scheduler = await disableRetiredTask(ref, target.source.name);
   }
 
-  // Phase 2: move, idempotently — a resumed call skips whichever file a
-  // tombstone under this proposal's own id already claims. A failure undoes this
-  // call's own moves, so a refused accept leaves no asset half-retired.
-  const mutationTarget = prepareWriteTargetForMutation(target);
-  assertWritePathsInsideSource(mutationTarget.source, [
-    intent.assetPath,
-    path.join(mutationTarget.source.path, MEMORY_ARCHIVE_REL, "archive-check"),
-  ]);
-  const already = findRetireArchiveDirsByProposalId(mutationTarget.source.path, proposal.id) ?? [];
-  const alreadyDone = alreadyArchivedOriginalPaths(mutationTarget.source.path, already);
-  const archiveDirs = [...already];
-  const paths: string[] = [];
-  const moved: Array<{ original: string; record: ReturnType<typeof archiveCleanupCandidate> }> = [];
-  const candidate: MemoryPruneCandidate = {
-    ref: proposal.ref,
-    reason: working.retirement?.reason ?? "manual",
-    proposalId: proposal.id,
-    ...(working.retirement?.successorRef ? { successorRefs: [working.retirement.successorRef] } : {}),
-  };
-  const moveToArchive = (original: string) => {
-    const record = archiveCleanupCandidate(mutationTarget.source.path, candidate, original);
-    moved.push({ original, record });
-    archiveDirs.push(path.dirname(record.auditPath));
-    paths.push(
-      original,
-      path.join(mutationTarget.source.path, record.archivedPath),
-      path.join(mutationTarget.source.path, record.auditPath),
-    );
-  };
   // The twin path is re-derived, not carried on the
   // intent — it is a pure function of assetPath and the ref's type, and the
-  // tombstone scan above (`alreadyDone`) already finds one archived earlier,
+  // tombstone scan below (`alreadyDone`) already finds one archived earlier,
   // so storing it was redundant persisted state.
   const twinPath = derivedTwinPath(intent.assetPath, ref.type);
+  let mutationTarget: ResolvedWriteTarget;
+  let commit: ReturnType<typeof commitAccept>;
+  let accepted: Proposal;
   try {
-    if (!alreadyDone.has(path.resolve(intent.assetPath)) && fs.existsSync(intent.assetPath))
-      moveToArchive(intent.assetPath);
-    if (
-      twinPath &&
-      !alreadyDone.has(path.resolve(twinPath)) &&
-      fs.existsSync(twinPath) &&
-      sameScope(
-        scopeFromFrontmatter(parseFrontmatter(fs.readFileSync(twinPath, "utf8")).data),
-        scopeFromFrontmatter(parseFrontmatter(intent.backupContent).data),
+    // Native reconciliation awaits external work; a direct file edit can happen outside AKM's mutation lease.
+    assertRetiringTaskUnchanged(ref, intent, proposal);
+
+    // Phase 2: move, idempotently — a resumed call skips whichever file a
+    // tombstone under this proposal's own id already claims. A failure undoes this
+    // call's own moves, so a refused accept leaves no asset half-retired.
+    mutationTarget = prepareWriteTargetForMutation(target);
+    assertWritePathsInsideSource(mutationTarget.source, [
+      intent.assetPath,
+      path.join(mutationTarget.source.path, MEMORY_ARCHIVE_REL, "archive-check"),
+    ]);
+    const already = findRetireArchiveDirsByProposalId(mutationTarget.source.path, proposal.id) ?? [];
+    const alreadyDone = alreadyArchivedOriginalPaths(mutationTarget.source.path, already);
+    const archiveDirs = [...already];
+    const paths: string[] = [];
+    const moved: Array<{ original: string; record: ReturnType<typeof archiveCleanupCandidate> }> = [];
+    const candidate: MemoryPruneCandidate = {
+      ref: proposal.ref,
+      reason: working.retirement?.reason ?? "manual",
+      proposalId: proposal.id,
+      ...(working.retirement?.successorRef ? { successorRefs: [working.retirement.successorRef] } : {}),
+    };
+    const moveToArchive = (original: string) => {
+      const record = archiveCleanupCandidate(mutationTarget.source.path, candidate, original);
+      moved.push({ original, record });
+      archiveDirs.push(path.dirname(record.auditPath));
+      paths.push(
+        original,
+        path.join(mutationTarget.source.path, record.archivedPath),
+        path.join(mutationTarget.source.path, record.auditPath),
+      );
+    };
+    try {
+      if (!alreadyDone.has(path.resolve(intent.assetPath)) && fs.existsSync(intent.assetPath))
+        moveToArchive(intent.assetPath);
+      if (
+        twinPath &&
+        !alreadyDone.has(path.resolve(twinPath)) &&
+        fs.existsSync(twinPath) &&
+        sameScope(
+          scopeFromFrontmatter(parseFrontmatter(fs.readFileSync(twinPath, "utf8")).data),
+          scopeFromFrontmatter(parseFrontmatter(intent.backupContent).data),
+        )
       )
-    )
-      moveToArchive(twinPath);
-  } catch (error) {
-    for (const { original, record } of moved.reverse()) {
-      // A failed undo must not hide the failure that caused it; the tombstone stays to explain the file.
-      try {
-        fs.renameSync(path.join(mutationTarget.source.path, record.archivedPath), original);
-        fs.rmSync(path.dirname(path.join(mutationTarget.source.path, record.auditPath)), {
-          recursive: true,
-          force: true,
-        });
-      } catch (undoError) {
-        warn(
-          `[retire] could not put ${original} back from ${record.archivedPath}: ${undoError instanceof Error ? undoError.message : String(undoError)}`,
-        );
+        moveToArchive(twinPath);
+    } catch (error) {
+      for (const { original, record } of moved.reverse()) {
+        // A failed undo must not hide the failure that caused it; the tombstone stays to explain the file.
+        try {
+          fs.renameSync(path.join(mutationTarget.source.path, record.archivedPath), original);
+          fs.rmSync(path.dirname(path.join(mutationTarget.source.path, record.auditPath)), {
+            recursive: true,
+            force: true,
+          });
+        } catch (undoError) {
+          warn(
+            `[retire] could not put ${original} back from ${record.archivedPath}: ${undoError instanceof Error ? undoError.message : String(undoError)}`,
+          );
+        }
       }
+      throw error;
     }
+    commit = paths.length > 0 ? commitAccept(options.commitCollector, mutationTarget, proposal, paths) : undefined;
+
+    if (archiveDirs.length === 0) {
+      // Recorded intent, but neither file is at its original location NOR
+      // archived under this proposal's id: something else removed the target
+      // between intent and move. Refuse cleanly rather than finalize on
+      // nothing.
+      throw new UsageError(
+        `Retire proposal ${proposal.id} target (${proposal.ref}) no longer exists and was not archived by this proposal — refusing to accept.`,
+        "PROPOSAL_STALE",
+      );
+    }
+
+    // Phase 3: finalize — always from the recorded intent's own backupContent,
+    // never a hash guessed from the archived copy.
+    accepted = persistRetireAcceptance(
+      stashDir,
+      working,
+      {
+        targetName: mutationTarget.source.name,
+        targetRoot: mutationTarget.source.path,
+        assetPath: intent.assetPath,
+        contentHash: contentHash(intent.backupContent),
+        archiveDirs,
+        backupContent: intent.backupContent,
+        ...(options.gateDecision ? { gateDecision: options.gateDecision } : {}),
+        ...(options.decidedBy ? { decidedBy: options.decidedBy } : {}),
+        ...(options.eventMetadata ? { eventMetadata: options.eventMetadata } : {}),
+      },
+      ctx,
+    );
+  } catch (error) {
+    // A retirement that does not go through leaves the task scheduled as it was.
+    await scheduler.restore();
     throw error;
   }
-  const commit = paths.length > 0 ? commitAccept(options.commitCollector, mutationTarget, proposal, paths) : undefined;
+  // The moved files left the index's view; drop their rows now, not at the next `akm index`.
+  await indexWrittenProposalAssets(mutationTarget, twinPath ? [intent.assetPath, twinPath] : [intent.assetPath]);
+  return {
+    proposal: accepted,
+    assetPath: intent.assetPath,
+    ref: accepted.ref,
+    ...(commit ? { commit } : {}),
+    ...(scheduler.warnings.length ? { warnings: scheduler.warnings } : {}),
+  };
+}
 
-  if (archiveDirs.length === 0) {
-    // Recorded intent, but neither file is at its original location NOR
-    // archived under this proposal's id: something else removed the target
-    // between intent and move. Refuse cleanly rather than finalize on
-    // nothing.
+function assertRetiringTaskUnchanged(ref: WriteAddress, intent: RetireAcceptIntent, proposal: Proposal): void {
+  // The intent holds the bytes this retirement was validated against; `beforeHash` is absent on some proposals.
+  if (
+    ref.type === "task" &&
+    fs.existsSync(intent.assetPath) &&
+    fs.readFileSync(intent.assetPath, "utf8") !== intent.backupContent
+  ) {
     throw new UsageError(
-      `Retire proposal ${proposal.id} target (${proposal.ref}) no longer exists and was not archived by this proposal — refusing to accept.`,
+      `Retire proposal ${proposal.id} target (${proposal.ref}) changed since retirement started.`,
       "PROPOSAL_STALE",
     );
   }
+}
 
-  // Phase 3: finalize — always from the recorded intent's own backupContent,
-  // never a hash guessed from the archived copy.
-  const accepted = persistRetireAcceptance(
-    stashDir,
-    working,
-    {
-      targetName: mutationTarget.source.name,
-      targetRoot: mutationTarget.source.path,
-      assetPath: intent.assetPath,
-      contentHash: contentHash(intent.backupContent),
-      archiveDirs,
-      backupContent: intent.backupContent,
-      ...(options.gateDecision ? { gateDecision: options.gateDecision } : {}),
-      ...(options.decidedBy ? { decidedBy: options.decidedBy } : {}),
-      ...(options.eventMetadata ? { eventMetadata: options.eventMetadata } : {}),
-    },
-    ctx,
-  );
-  // The moved files left the index's view; drop their rows now, not at the next `akm index`.
-  await indexWrittenProposalAssets(mutationTarget, twinPath ? [intent.assetPath, twinPath] : [intent.assetPath]);
-  return { proposal: accepted, assetPath: intent.assetPath, ref: accepted.ref, ...(commit ? { commit } : {}) };
+/**
+ * Stop scheduling a task that is being retired. Activation and reconciliation
+ * stay with the operation `task disable` uses. `restore` puts back the
+ * activation this call removed, for a retirement that does not go through.
+ */
+async function disableRetiredTask(
+  ref: WriteAddress,
+  bundle: string,
+): Promise<{ warnings: string[]; restore: () => Promise<void> }> {
+  if (ref.type !== "task") return { warnings: [], restore: async () => {} };
+  const qualifiedRef = makeBundleRef(bundle, ref.conceptId);
+  let disabled = false;
+  const restore = async () => {
+    if (!disabled) return;
+    disabled = false;
+    try {
+      await akmTasksEnable(qualifiedRef);
+    } catch (error) {
+      warn(
+        `[retire] could not re-enable ${qualifiedRef} after its retirement was refused: ${error instanceof Error ? error.message : String(error)}. Run akm task enable ${qualifiedRef}.`,
+      );
+    }
+  };
+  const unverified = (reason: string) => [
+    `Task ${qualifiedRef} is disabled in local config, but native scheduler cleanup is unverified: ${reason}. ` +
+      "Installed bindings may remain; repair the scheduler and run akm doctor scheduler sync.",
+  ];
+  try {
+    const warnings = await withSchedulerLock(async () => {
+      const before = await inspectTaskSchedulerBindings(qualifiedRef);
+      const enabledRefs = schedulerEnabledRefs(loadConfig());
+      const enabled = enabledRefs?.includes(qualifiedRef) === true;
+      if (before.state === "unavailable") {
+        // No native state can be read, so none can be reconciled: only this host's own list changes.
+        if (enabled) disabled = setSchedulerRefEnabled(qualifiedRef, false).changed;
+        return unverified(before.reason);
+      }
+      // Not on the host's list and not installed (a host with no list schedules exactly what is installed).
+      if (!enabled && before.state === "not-installed") return [];
+      if (!enabled && before.state === "unknown") return unverified(before.reason);
+      disabled = enabled || enabledRefs === undefined;
+      const { sync } = await akmTasksDisable(qualifiedRef);
+      const failures = sync.failures.map((failure) => `${failure.path}: ${failure.reason}`).join("; ");
+      const after = await inspectTaskSchedulerBindings(qualifiedRef);
+      if (after.state === "installed") {
+        throw new Error(
+          `Task ${qualifiedRef} remains installed in the native scheduler after cleanup${failures ? `: ${failures}` : ""}. ` +
+            "Retry retirement or run akm doctor scheduler sync.",
+        );
+      }
+      // The sync covers the whole bundle; only this task's own bindings decide its retirement.
+      return [
+        ...("reason" in after ? unverified(after.reason) : []),
+        ...(failures ? [`Scheduler sync of bundle ${bundle} also reported: ${failures}.`] : []),
+      ];
+    });
+    return { warnings, restore };
+  } catch (error) {
+    await restore();
+    throw error;
+  }
 }
 
 export interface RevertResult {

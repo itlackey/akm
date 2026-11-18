@@ -165,6 +165,7 @@ export function shapeProposalAcceptOutput(
     id: result.id,
     ref: result.ref,
     assetPath: result.assetPath,
+    ...(result.warnings !== undefined ? { warnings: result.warnings } : {}),
     proposal: shapeProposalEntry(proposal, detail === "brief" ? "normal" : detail),
   };
   if (detail === "full") {

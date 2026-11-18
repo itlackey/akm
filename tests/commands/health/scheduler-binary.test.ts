@@ -78,6 +78,57 @@ describe("collectSchedulerBinaryAdvisory (#953)", () => {
     expect(result.evidence).toMatchObject({ scheduledVersion: "0.9.14", cliVersion: "0.9.15" });
   });
 
+  test.each([
+    ["0.9.14", "0.9.15"],
+    ["0.10.0-beta.1", "0.10.0-beta.2"],
+    ["0.10.0-beta.2", "0.10.0"],
+  ])("an older caller %s never recommends rebinding a newer scheduled CLI %s", async (cliVersion, scheduledVersion) => {
+    const binding = ["/usr/bin/node", "/opt/newer-akm/dist/akm"];
+    const result = await collectSchedulerBinaryAdvisory(true, {
+      cliVersion,
+      backend: fakeBackend(binding),
+      spawnSync: (() => ({ status: 0, stdout: `${scheduledVersion}\n`, stderr: "" })) as never,
+    });
+    expect(result.status).toBe("warn");
+    expect(result.message).toContain("scheduled CLI is newer");
+    expect(result.message).toContain("Update the calling CLI or plugin");
+    expect(result.message).not.toContain("sync --rebind");
+    expect(result.evidence).toEqual({ binding, scheduledVersion, cliVersion });
+  });
+
+  test("a newer prerelease caller recommends rebinding an older prerelease", async () => {
+    const result = await collectSchedulerBinaryAdvisory(true, {
+      cliVersion: "0.10.0-beta.2",
+      backend: fakeBackend(["/opt/akm"]),
+      spawnSync: (() => ({ status: 0, stdout: "0.10.0-beta.1", stderr: "" })) as never,
+    });
+    expect(result.status).toBe("warn");
+    expect(result.message).toContain("sync --rebind");
+  });
+
+  test("different build metadata reports equivalent precedence without suggesting rebind", async () => {
+    const result = await collectSchedulerBinaryAdvisory(true, {
+      cliVersion: "0.10.0+caller",
+      backend: fakeBackend(["/opt/akm"]),
+      spawnSync: (() => ({ status: 0, stdout: "0.10.0+scheduled", stderr: "" })) as never,
+    });
+    expect(result.status).toBe("warn");
+    expect(result.message).toContain("equal semantic precedence");
+    expect(result.message).not.toContain("ordering is unknown");
+    expect(result.message).not.toContain("sync --rebind");
+  });
+
+  test("an unorderable version reports the mismatch without a rebind command", async () => {
+    const result = await collectSchedulerBinaryAdvisory(true, {
+      cliVersion: "0.10.0",
+      backend: fakeBackend(["/opt/akm"]),
+      spawnSync: (() => ({ status: 0, stdout: "development", stderr: "" })) as never,
+    });
+    expect(result.status).toBe("warn");
+    expect(result.message).toContain("version ordering is unknown");
+    expect(result.message).not.toContain("sync --rebind");
+  });
+
   test("the recorded binary cannot be executed: unknown", async () => {
     const result = await collectSchedulerBinaryAdvisory(true, {
       cliVersion: "0.9.15",

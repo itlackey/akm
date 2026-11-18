@@ -973,7 +973,14 @@ The `documents.retire` receipt is `{proposalId, ref, bundle, archiveDirs, warnin
 id: the archive moves back without overwriting an occupied path and its tombstone is removed. Like any accepted
 retirement, the archived bytes are purged after the grace period at the next `akm improve` (git-backed bundles only), and
 the row is listed in Review and Activity. If the accept is refused, the proposal is rejected and the operation fails.
-Task definitions do not change installed schedules until explicit `akm doctor scheduler sync`.
+Task retirement uses proposal acceptance's scheduler cleanup: it removes the host-local activation and reconciles the
+bundle before archiving. If the task's native bindings are still installed afterwards, retirement fails; a failure on
+another task in the bundle is a warning. A retirement that fails, at cleanup or any later step, leaves the source
+present and the task enabled as it was. A disabled ref still inspects native bindings: config exclusion does not prove
+native removal. If the native scheduler cannot be read, the source can archive, with an explicit incomplete-cleanup
+warning in both the proposal acceptance result and workspace receipt. Reverting retirement restores the source without
+enabling its schedules. Source bytes are rechecked after scheduler work, before the archive moves, so edits made during
+that work are preserved and retirement is refused.
 
 Configuration-affecting actions do not round-trip the redacted configuration. Existing mutation helpers retain
 unknown/unrelated fields, local overrides and supported `$VAR`/`${ref}` credential references. If the existing

@@ -1705,7 +1705,8 @@ original error; `akm index` or the next scheduled build indexes it.
 An update reindexes incrementally: only directories whose files changed are
 re-read, and `akm index --full` is the explicit full pass. A writable Git
 install whose live checkout is already at the fetched commit, and whose lock
-already records that revision, publishes nothing and builds no index (the
+already records that revision and the fetched upstream tip is unchanged,
+publishes nothing and builds no index (the
 result reports `changed.any: false`); `--force` skips that shortcut. Local edits
 in a writable checkout are not part of an update: they reach the index with the
 next `akm index` or scheduled build.
@@ -1715,8 +1716,12 @@ generation, and searchable index for that bundle.
 
 A writable Git update is fetched into a staged copy of the checkout beside the
 live one, so a failed fetch leaves the live checkout, the lock and the index
-untouched. The live checkout is then fast-forwarded to exactly the staged
-commit (`git merge --ff-only`), which refuses, and changes nothing, when local
+untouched. Publication refreshes the configured origin tracking ref to the tip
+Git fetched in staging, independently of any local-ahead HEAD. A concurrent
+change to that live tracking ref is reported rather than overwritten, and a
+refused fast-forward puts the tracking ref back.
+The live checkout is then fast-forwarded to exactly the staged
+commit (`git merge --ff-only`), which refuses, preserving local work, when local
 commits have diverged or the merge would overwrite local work. AKM holds its
 source/index writer lease through that fast-forward and the index pass; all AKM
 writers cooperate with this lease, but a non-cooperating local process is not
@@ -1805,7 +1810,10 @@ Upgrade replaces the installed program when a newer release exists, then runs
 That makes `akm upgrade` safe as a container entrypoint: on a current
 installation it is a no-op. An akm installed as a dependency of another
 package (`installMethod: "package-local"`) is never reinstalled — the parent
-package owns that copy — but its migrations still run. Standalone downloads
+package owns that copy — but its migrations still run. An npm global upgrade
+requires evidence that this copy is inside the npm global root, read from the npm
+beside the launching Node or else the `npm` on PATH; a package-local
+Bun invocation without that evidence also leaves installation to its owner. Standalone downloads
 use a temporary rollback copy only during atomic executable replacement.
 
 Standalone downloads are streamed directly to the staged file while SHA-256 is
@@ -3476,13 +3484,17 @@ under the current user's home, under a configured bundle or project root
 another user's home are not checked unless they sit under a bundle or project
 root. A line that says it records the past or an example ("historically",
 "formerly", "for example", "e.g.") and a section under a History, Changelog,
-Archive or Examples heading are skipped, as are run-time filename templates
-(`<stamp>`, `{stamp}`, `YYYYMMDD`, globs). Each finding carries `ref`, `file`,
+Archive or Examples heading are skipped, as are fenced code blocks and
+run-time filename templates (`<stamp>`, `{stamp}`, `YYYYMMDD`, globs).
+Each finding carries `ref`, `file`,
 `line` (1-based, in the file), `path`, `lineText`, `nearestExisting` (the
 deepest existing directory above the path) and `reason`: `missing` for a path
 under the home, a bundle or a project, `ephemeral` for a `/tmp` path that no
 longer exists. To clear a finding, correct the path, or say on the line that it
 records the past or an example, or move it under a History or Examples heading.
+Fenced code can name generated outputs and sample inputs, so it makes no
+assertion that those literal files currently exist. State required current
+input paths in prose or frontmatter to have them checked.
 
 `tracked-secrets` flags each `env/` or `secrets/` file that git tracks in a
 bundle that has a remote (a push can leak it); `git rm --cached` the file.

@@ -15,6 +15,7 @@ import {
 } from "../../src/commands/sources/self-update";
 import { upgradeCommand } from "../../src/commands/sources/sources-cli";
 import { _resetWarnOnceForTests, _setWarnSinkForTests, setQuiet } from "../../src/core/warn";
+import { resolveNpmGlobalRoot } from "../../src/tasks/resolve-akm-bin";
 import { sandboxHome, withEnv } from "../_helpers/sandbox";
 
 // ── Fetch mocking helper ────────────────────────────────────────────────────
@@ -125,19 +126,20 @@ describe("detectInstallMethod", () => {
     expect(detectInstallMethod(signals)).toBe("pnpm");
   });
 
-  test("returns 'npm' when importMetaDir contains node_modules without bun/pnpm markers", () => {
+  test("returns 'package-local' without evidence of global npm ownership", () => {
     const signals: InstallSignals = {
       bunMain: "/usr/local/bin/bun",
       importMetaDir: "/usr/local/lib/node_modules/akm-cli/dist",
       hasAkmVersion: false,
     };
-    expect(detectInstallMethod(signals)).toBe("npm");
+    expect(detectInstallMethod(signals)).toBe("package-local");
   });
 
   test("package-manager detection takes priority over binary signals", () => {
     const signals: InstallSignals = {
       bunMain: "/$bunfs/root/src/cli.ts",
       importMetaDir: "/some/node_modules/akm",
+      npmGlobalRoot: "/some/node_modules",
       hasAkmVersion: true,
     };
     expect(detectInstallMethod(signals)).toBe("npm");
@@ -169,6 +171,52 @@ describe("detectInstallMethod", () => {
       npmGlobalRoot: "/usr/local/lib/node_modules",
     };
     expect(detectInstallMethod(signals)).toBe("package-local");
+  });
+
+  test.each([
+    "/home/user/.bun/install/global/node_modules/plugin/node_modules/akm-cli/dist",
+    "/home/user/.local/share/pnpm/global/5/node_modules/plugin/node_modules/akm-cli/dist",
+  ])("a dependency nested under global package %s is package-local", (importMetaDir) => {
+    expect(detectInstallMethod({ bunMain: undefined, importMetaDir, hasAkmVersion: false })).toBe("package-local");
+  });
+
+  test("a realpathed pnpm global store package retains global ownership", () => {
+    const fixture = path.join(sandboxHome().dir, "pnpm/global/5/node_modules");
+    const packageRoot = path.join(fixture, ".pnpm/akm-cli@0.10.0/node_modules/akm-cli");
+    fs.mkdirSync(path.join(packageRoot, "dist"), { recursive: true });
+    fs.symlinkSync(path.relative(fixture, packageRoot), path.join(fixture, "akm-cli"), "dir");
+    expect(
+      detectInstallMethod({ bunMain: undefined, importMetaDir: path.join(packageRoot, "dist"), hasAkmVersion: false }),
+    ).toBe("pnpm");
+    fs.unlinkSync(path.join(fixture, "akm-cli"));
+    expect(
+      detectInstallMethod({ bunMain: undefined, importMetaDir: path.join(packageRoot, "dist"), hasAkmVersion: false }),
+    ).toBe("package-local");
+  });
+
+  test("the npm on PATH proves the global root when no Node launcher names one", () => {
+    const dir = sandboxHome().dir;
+    const root = path.join(dir, "lib/node_modules");
+    fs.mkdirSync(path.join(dir, "bin"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "bin/npm"), `#!/bin/sh\necho ${JSON.stringify(root)}\n`, { mode: 0o755 });
+    const npmGlobalRoot = resolveNpmGlobalRoot(undefined, { PATH: `${path.join(dir, "bin")}:/usr/bin:/bin` });
+    expect(npmGlobalRoot).toBe(root);
+    const signals = { bunMain: undefined, hasAkmVersion: false, npmGlobalRoot };
+    expect(detectInstallMethod({ ...signals, importMetaDir: path.join(root, "akm-cli/dist") })).toBe("npm");
+    expect(detectInstallMethod({ ...signals, importMetaDir: "/plugins/akm/node_modules/akm-cli/dist" })).toBe(
+      "package-local",
+    );
+  });
+
+  test("a dependency nested inside another global package is package-local", () => {
+    expect(
+      detectInstallMethod({
+        bunMain: undefined,
+        importMetaDir: "/usr/local/lib/node_modules/plugin/node_modules/akm-cli/dist",
+        hasAkmVersion: false,
+        npmGlobalRoot: "/usr/local/lib/node_modules",
+      }),
+    ).toBe("package-local");
   });
 
   test("returns 'npm' for a node_modules install inside the proven npm global root", () => {
@@ -878,6 +926,28 @@ describe("performUpgrade", () => {
     expect(result.message).toContain("already the latest");
     expect(result.migration?.status).toBe("current");
     expect(spawnSyncSpy).not.toHaveBeenCalled();
+  });
+
+  test("a plugin-owned Bun invocation cannot authorize a global package-manager upgrade", async () => {
+    const signals: InstallSignals = {
+      bunMain: "/plugins/cache/akm/node_modules/akm-cli/dist/cli.js",
+      importMetaDir: "/plugins/cache/akm/node_modules/akm-cli/dist",
+      hasAkmVersion: false,
+      npmGlobalRoot: undefined,
+    };
+    const installMethod = detectInstallMethod(signals);
+    expect(installMethod).toBe("package-local");
+    expect(getPackageManagerUpgradeCommand(installMethod)).toBeUndefined();
+    const runMigrationTool = migrator({ status: "current" });
+    const result = await performUpgrade(
+      { currentVersion: "0.9.8", latestVersion: "0.10.0", updateAvailable: true, installMethod },
+      { force: true },
+      { runMigrationTool },
+    );
+    expect(result.upgraded).toBe(false);
+    expect(result.installMethod).toBe("package-local");
+    expect(result.message).toContain("upgrade that package");
+    expect(runMigrationTool).toHaveBeenCalledTimes(1);
   });
 
   test("a package-local install never runs a package manager: the parent package owns the binary", async () => {

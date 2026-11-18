@@ -173,6 +173,8 @@ export interface ProposalAcceptOptions {
 
 export interface ProposalAcceptResult {
   schemaVersion: 1;
+  /** Native scheduler cleanup that remains unverified, and sync failures on other tasks in the bundle. */
+  warnings?: string[];
   ok: true;
   id: string;
   ref: string;
@@ -209,6 +211,7 @@ export async function akmProposalAccept(options: ProposalAcceptOptions): Promise
     assetPath: result.assetPath,
     proposal: result.proposal,
     ...(result.commit ? { commit: result.commit } : {}),
+    ...(result.warnings ? { warnings: result.warnings } : {}),
   };
 }
 

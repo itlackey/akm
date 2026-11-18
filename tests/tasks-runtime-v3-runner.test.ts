@@ -107,18 +107,30 @@ describe("task runner mutation boundary", () => {
       'Harness "missing" is not configured',
     ],
   ] as const) {
-    test(`${label} source fails before any history or log mutation`, async () => {
+    test.each([false, true])(`${label} source fails before dispatch (scheduled=%p)`, async (scheduled) => {
       writeTask("blocked", yaml);
       let failure: unknown;
       try {
-        await runTask("blocked", { bundleDir: storage.stashDir, bundleName: "fixture", scheduled: true });
+        await runTask("blocked", { bundleDir: storage.stashDir, bundleName: "fixture", scheduled });
       } catch (error) {
         failure = error;
       }
       expect(failure).toBeInstanceOf(Error);
       expect((failure as Error).message).toContain(message);
-      expect(readTaskHistory({ id: "blocked" })).toEqual([]);
-      expect(logFiles()).toEqual([]);
+      if (scheduled) {
+        expect(readTaskHistory({ id: "blocked" })).toMatchObject([
+          {
+            status: "failed",
+            trigger: "schedule",
+            target: { kind: "unknown" },
+            detail: { reason: "task_load_failed" },
+          },
+        ]);
+        expect(logFiles().some((file) => file.endsWith(".log"))).toBe(true);
+      } else {
+        expect(readTaskHistory({ id: "blocked" })).toEqual([]);
+        expect(logFiles()).toEqual([]);
+      }
     });
   }
 

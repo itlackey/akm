@@ -478,15 +478,45 @@ function gitOrThrow(repoDir: string, args: string[]): string {
   return result.stdout.trim();
 }
 
+/** The current branch's upstream in the origin that the provider verified, when configured. */
+function originUpstream(repo: string): { ref: string; revision: string } | undefined {
+  // A detached HEAD names no branch, and an unborn one has no ref yet: neither has an upstream.
+  const branch = runGit(["-C", repo, "symbolic-ref", "-q", "HEAD"]);
+  if (branch.status !== 0) return undefined;
+  const [ref, remote] = gitOrThrow(repo, [
+    "for-each-ref",
+    "--format=%(upstream) %(upstream:remotename)",
+    branch.stdout.trim(),
+  ]).split(" ");
+  return ref && remote === "origin" ? { ref, revision: gitOrThrow(repo, ["rev-parse", "--verify", ref]) } : undefined;
+}
+
 /**
  * Publish a staged writable checkout: fast-forward the live checkout to
  * exactly the staged commit. Git refuses a non-fast-forward or a merge that
- * would overwrite local work, and changes nothing in that case.
+ * would overwrite local work, preserving those files in that case.
  */
-function fastForwardCheckout(liveRepo: string, stagedRepo: string): void {
+function fastForwardCheckout(
+  liveRepo: string,
+  stagedRepo: string,
+  expectedUpstream: ReturnType<typeof originUpstream>,
+): void {
   const head = gitOrThrow(stagedRepo, ["rev-parse", "HEAD"]);
-  gitOrThrow(liveRepo, ["fetch", "--no-tags", stagedRepo, head]);
+  const upstream = originUpstream(stagedRepo);
+  if (upstream?.ref !== expectedUpstream?.ref || originUpstream(liveRepo)?.ref !== expectedUpstream?.ref) {
+    throw new UsageError(`Writable Git install at ${liveRepo} changed its upstream while the update was prepared.`);
+  }
+  gitOrThrow(liveRepo, ["fetch", "--no-tags", stagedRepo, head, ...(upstream ? [upstream.ref] : [])]);
+  if (upstream && expectedUpstream) {
+    // Use the tip Git fetched, not HEAD: local commits or a moving remote can
+    // make them differ. The pre-staging value preserves a concurrent live fetch.
+    gitOrThrow(liveRepo, ["update-ref", upstream.ref, upstream.revision, expectedUpstream.revision]);
+  }
   const merge = runGit(["-C", liveRepo, "merge", "--ff-only", "--no-overwrite-ignore", head], { timeout: 120_000 });
+  if (merge.status !== 0 && upstream && expectedUpstream) {
+    // A refused publish publishes nothing: put the tracking ref back, unless another writer has moved it since.
+    runGit(["-C", liveRepo, "update-ref", upstream.ref, expectedUpstream.revision, upstream.revision]);
+  }
   if (merge.status === null) {
     // Spawn failure, timeout or signal: git may have been interrupted mid-checkout.
     throw new UsageError(
@@ -495,7 +525,7 @@ function fastForwardCheckout(liveRepo: string, stagedRepo: string): void {
   }
   if (merge.status !== 0) {
     throw new UsageError(
-      `Writable Git install at ${liveRepo} cannot fast-forward without overwriting local work; nothing was changed. ${merge.stderr.trim()}`,
+      `Writable Git install at ${liveRepo} cannot fast-forward without overwriting local work; local work was preserved. ${merge.stderr.trim()}`,
       "INVALID_FLAG_VALUE",
       UPDATE_REFUSAL_HINT,
     );
@@ -609,6 +639,7 @@ async function stageManagedUpdate(
       throw new UsageError(`Writable Git install at ${managed.localRoot} is not a checkout; refusing to update it.`);
     }
     const liveRepo = topLevel.stdout.trim();
+    const expectedUpstream = originUpstream(liveRepo);
     const stagingParent = createStagingParent(path.dirname(liveRepo));
     const stagedRepo = path.join(stagingParent, path.basename(liveRepo));
     try {
@@ -627,8 +658,11 @@ async function stageManagedUpdate(
       return {
         synced: { ...fetched, contentDir: managed.localRoot, cacheDir: liveRepo, extractedDir: liveRepo },
         staged: {
-          unchanged: gitOrThrow(liveRepo, ["rev-parse", "HEAD"]) === gitOrThrow(stagedRepo, ["rev-parse", "HEAD"]),
-          publish: () => fastForwardCheckout(liveRepo, stagedRepo),
+          unchanged:
+            gitOrThrow(liveRepo, ["rev-parse", "HEAD"]) === gitOrThrow(stagedRepo, ["rev-parse", "HEAD"]) &&
+            expectedUpstream?.revision === originUpstream(stagedRepo)?.revision &&
+            originUpstream(liveRepo)?.revision === expectedUpstream?.revision,
+          publish: () => fastForwardCheckout(liveRepo, stagedRepo, expectedUpstream),
           cleanup: () => cleanupDirectoryBestEffort(stagingParent, "bundle update"),
         },
       };
@@ -699,6 +733,7 @@ async function syncGitPlainSource(
     // A writable mirror may carry local commits: pull into a copy, then
     // fast-forward the live checkout to it.
     const liveCheckout = component.writable && fs.existsSync(livePaths.repoDir);
+    const expectedUpstream = liveCheckout ? originUpstream(livePaths.repoDir) : undefined;
     if (liveCheckout) fs.cpSync(livePaths.rootDir, stagedPaths.rootDir, { recursive: true, preserveTimestamps: true });
     await syncMirroredRepo(gitSource, {
       force: true,
@@ -709,7 +744,7 @@ async function syncGitPlainSource(
         : {}),
     });
     const index = await publishAndIndex(stashDir, lockMode, () => {
-      if (liveCheckout) fastForwardCheckout(livePaths.repoDir, stagedPaths.repoDir);
+      if (liveCheckout) fastForwardCheckout(livePaths.repoDir, stagedPaths.repoDir, expectedUpstream);
       else replaceDirectory(stagedPaths.rootDir, livePaths.rootDir);
     });
     return { item: { id, kind: "git", ref }, index };

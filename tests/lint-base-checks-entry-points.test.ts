@@ -139,6 +139,13 @@ const FIXTURE: Array<{ name: string; rel: string; content: string; expected: Fin
     expected: [["stale-path", "ephemeral path: /tmp/akm-5-gone/current.md"]],
   },
   {
+    name: "fenced generated output with a missing current prose input",
+    rel: "knowledge/fenced.md",
+    content:
+      "---\ndescription: Fenced\nupdated: 2026-01-01\n---\n\nRun the following command:\n\n```sh\nexample-tool render --shot=/tmp/example-generated-image.png\n```\nRead /tmp/akm-5-gone/current.md as current input.\n",
+    expected: [["stale-path", "ephemeral path: /tmp/akm-5-gone/current.md"]],
+  },
+  {
     name: "a stale path the bundle's lint.skip names",
     rel: "knowledge/skipped.md",
     content: "---\ndescription: Skipped\nupdated: 2026-01-01\n---\n\nWrite to /tmp/akm-5-gone/current.md.\n",

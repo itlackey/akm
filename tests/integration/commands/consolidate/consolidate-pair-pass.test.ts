@@ -764,6 +764,14 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     });
 
     expect(result.labelCounts.duplicate).toBe(3); // all three pairs were judged
+    expect(result.pairsJudged).toBe(3);
+    expect(result.failedJudgments).toBe(0);
+    expect(result.deferredJudgments).toBe(2);
+    expect(result.failureKinds).toBeUndefined();
+    expect(result.failures).toBeUndefined();
+    expect(result.deferrals).toHaveLength(2);
+    expect(result.deferrals!.every((pair) => pair.reason === "same_run_retirement")).toBe(true);
+    expect(warnings.join("\n")).toContain("2 retire decisions deferred");
     // Pair {A,B} (highest cosine, judged first) retires A, keeping B — and
     // spends B as a successor for this run. Pair {B,C} would retire B
     // (older of the two) into C, but B was already spent, so it is skipped.

@@ -79,4 +79,34 @@ describe("stale-path skips run-time filename templates (#927)", () => {
     );
     expect(issues.map((issue) => issue.detail)).toEqual(["ephemeral path: /tmp/akm-5-gone/current.md"]);
   });
+
+  test.each([
+    [
+      "generated output",
+      "Run the following command:\n\n```sh\nexample-tool render --shot=/tmp/example-generated-image.png\n```",
+    ],
+    ["ordinary fenced paths", "```sh\ncat /tmp/akm-5-gone/input.md\n```"],
+    ["tilde fence", "~~~sh\ncat /tmp/akm-5-gone/input.md\n~~~"],
+    ["long fence with nested short fence", "````markdown\n```sh\ncat /tmp/akm-5-gone/input.md\n```\n````"],
+    ["indented fence", "   ```sh\ncat /tmp/akm-5-gone/input.md\n   ```"],
+  ])("%s is documentation, not a current filesystem assertion", (_name, body) => {
+    storage = withIsolatedAkmStorage();
+    expect(staleIssues(storage, body)).toEqual([]);
+  });
+
+  test.each(["```", "~~~"])("%s fence contents do not change the following prose's section", (fence) => {
+    storage = withIsolatedAkmStorage();
+    const body = `${fence}markdown\n## History\nFor example /tmp/akm-5-gone/example.md\n${fence}\nRead /tmp/akm-5-gone/current.md as current input.`;
+    const issues = staleIssues(storage, body);
+    expect(issues.map((issue) => issue.detail)).toEqual(["ephemeral path: /tmp/akm-5-gone/current.md"]);
+    expect(issues[0]?.line).toBe(8);
+  });
+
+  test("mismatched delimiters and short or nonempty closers do not end a fence", () => {
+    storage = withIsolatedAkmStorage();
+    const body = "````sh\n~~~\n```\n```` trailing text\n/tmp/akm-5-gone/example.md\n````\n/tmp/akm-5-gone/current.md";
+    expect(staleIssues(storage, body).map((issue) => issue.detail)).toEqual([
+      "ephemeral path: /tmp/akm-5-gone/current.md",
+    ]);
+  });
 });

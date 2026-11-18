@@ -181,10 +181,10 @@ export async function retire(input: { ref: string; revision: string }) {
       target: { source: target.source.name, root: target.source.path },
       expectedRevision: revision,
     });
-    let accepted: Awaited<ReturnType<typeof akmProposalAccept>>["proposal"];
+    let result: Awaited<ReturnType<typeof akmProposalAccept>>;
     try {
       recordGateDecision(stashDir, minted.id, { outcome: "auto-accepted", reason: "manual-retire", gate: "workspace" });
-      accepted = (await akmProposalAccept({ stashDir, id: minted.id })).proposal;
+      result = await akmProposalAccept({ stashDir, id: minted.id });
     } catch (error) {
       try {
         rejectProposalDurably(stashDir, minted.id, `manual retire not applied: ${toErrorMessage(error)}`);
@@ -194,14 +194,11 @@ export async function retire(input: { ref: string; revision: string }) {
       throw error;
     }
     return {
-      proposalId: accepted.id,
+      proposalId: result.proposal.id,
       ref: canonical,
       bundle: target.source.name,
-      archiveDirs: accepted.retiredArchive?.dirs ?? [],
-      warnings:
-        type === "task"
-          ? ["Installed schedules are not changed. Run akm doctor scheduler sync to reconcile them."]
-          : [],
+      archiveDirs: result.proposal.retiredArchive?.dirs ?? [],
+      warnings: result.warnings ?? [],
     };
   });
 }
