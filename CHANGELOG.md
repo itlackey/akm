@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `akm run` takes repeatable `--env <env-ref>` and `--secret <secret-ref>:<VAR>`, which inject env assets and secrets into the agent, command, task or workflow it runs. The secrets injected this way are scrubbed from the output akm captures. The names are reserved: a task input or workflow parameter called `env` or `secret` cannot be passed through `akm run`.
+- `akm exec [--env <ref>]... [--secret <ref>:<VAR>]... -- <command>` runs any command with the same injection, with `--clean` and `--inherit`.
 - A file or folder renamed or moved on disk is the same asset. `akm index` (full or incremental) pairs an entry whose file is gone with the new file of the same content, in the same bundle or another, and carries its history to the new ref: the index row (vector, links and utility stay, nothing is embedded again), the `state.db` rows keyed by the old ref (usage, feedback, proposals, events, improve ledger, salience, outcome, task and workflow history) and cached model results. Files that share a content hash pair by file name one to one; anything ambiguous is indexed as new and named in a warning, and a file edited as well as moved is a new asset. The result's `moves` (`{ moved: [{ from, to }], unpaired }`) is present when a file was paired or could not be, and each move is recorded as a `moved` event. There is no move command: `mv` or a file manager is the move.
 - `akm lint` reports a link to a moved ref as a `missing-ref` carrying `movedFrom` and `movedTo`, and `--fix` rewrites it (frontmatter and prose, not code fences). A `missing-ref` with no recorded move is reported as before and never rewritten. `akm-cli/workspace`: `assets.movedLinks` lists, per akm bundle, the links that name an old ref, and `assets.updateMovedLinks` rewrites exactly those in one writable bundle (the same lint pass).
 - `akm-cli/workspace`: what may be done to a file or folder. `assets.bundleFiles` entries and `assets.show` carry `actions` (`read`, `edit`, `move` for rename or move, `copy`, `retire`, `delete`), each `{ allowed: true }` or `{ allowed: false, reason }`, computed from the checks the operations run: the read-only sentence for a bundle that is read-only (reading, editing, moving and deleting are plain file operations, so a writable bundle of any adapter still takes them), the write path's adapter sentence for retiring or making a typed asset in a bundle of another adapter, env and secret files, the managed `.git/` and `.akm/` folders, a skill that moves as its folder, a file that is not text (or cannot be opened, with the cause), the retire guard, and an asset that is retired rather than deleted. `assets.bundleFiles` also reports `newFile` for the folder shown.
@@ -49,6 +51,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Removed
 
 - AKM Desktop's Source history no longer shows a "Made by" badge or filter, and the commit entries of `akm-cli/workspace` `proposals.recentChanges` and `assets.history` no longer carry `origin`: it was judged from the commit subject, so a hand-written "Remember to rotate the key" read as akm's. Each commit shows its own author, date and subject; akm's commit messages are unchanged.
+
+### Deprecated
+
+- `akm env run` and `akm secret run`: use `akm exec`. Both still work, print a deprecation notice and are removed in 0.11. `env run --only` and `--except` have no `exec` form.
 
 ### Fixed
 

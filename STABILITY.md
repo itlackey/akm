@@ -149,11 +149,12 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | `akm env list` | Stable | Read-and-inject surface. |
 | `akm env path` | Stable | Read-and-inject surface. |
 | `akm env export` | Stable | Read-and-inject surface. |
-| `akm env run` | Stable | Read-and-inject surface. `--allow-dangerous-env-keys` is Deprecated, no effect: accepted through 0.10 and a usage error in 0.11, so drop it; prints a notice since 0.10.261122. |
+| `akm exec` | Evolving | First in 0.10.261130. Runs any command with repeatable `--env <ref>` and `--secret <ref>:<VAR>` injected; `akm run` takes the same two flags for an akm asset. Child-process passthrough, exempt from `--format`. |
+| `akm env run` | Deprecated | Removed in 0.11: use `akm exec --env <ref> -- <command>`. Read-and-inject surface. `--allow-dangerous-env-keys` is Deprecated, no effect: accepted through 0.10 and a usage error in 0.11, so drop it; prints a notice since 0.10.261122. |
 | `akm env create` | Experimental | Write verb. |
 | `akm env remove` | Experimental | Write verb. |
 | `akm secret list` | Stable | Read-and-inject surface. |
-| `akm secret run` | Stable | Read-and-inject surface. |
+| `akm secret run` | Deprecated | Removed in 0.11: use `akm exec --secret <ref>:<VAR> -- <command>`. Read-and-inject surface. |
 | `akm secret set` | Experimental | Write verb. |
 | `akm secret remove` | Experimental | Write verb; restored in 0.10 after its 0.9.0 removal. |
 
@@ -405,7 +406,7 @@ available as JSON), never on the format alone.
 `--detail` is `brief|normal|full` (verbosity) or `agent` (the projection of
 `search`, `curate` and `show`; see Agent-oriented output below). A small set of commands is **format-exempt** because their
 output is not a result envelope at all: `completions` (shell script source),
-child-process passthrough in `env run` / `secret run`, a bare-path payload
+child-process passthrough in `exec`, `env run` / `secret run`, a bare-path payload
 from `env path` and `config path`, and document payloads from `hints` and `help`
 (bare and `help migrate`). The set is declared in
 `src/output/format-exempt.ts`, and
@@ -793,8 +794,8 @@ not additional public support statuses.
 
 An `env` asset holds a whole `.env` group; a `secret` holds a single sensitive
 value. Env key names are discoverable. Values are never written to stdout, the index, or
-structured output; the safe injection path is `akm env run <name> --
-<command>` (or `akm secret run <name> <VAR> -- …`). The `env` / `secret`
+structured output; the safe injection path is `akm exec --env <ref> --
+<command>` (or `akm exec --secret <ref>:<VAR> -- …`). The `env` / `secret`
 **write** verbs (`env create`, `env remove`, `secret set`, `secret remove`) are Experimental; the
 `list` / `path` / `run` / `export` read-and-inject surface is Stable.
 

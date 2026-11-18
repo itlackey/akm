@@ -12,12 +12,14 @@ import { adapterForId } from "../core/adapter/registry";
 import { makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
 import { loadConfig } from "../core/config/config";
 import { NotFoundError, UsageError } from "../core/errors";
+import { registerInjectedSecretValues } from "../core/redaction";
 import { resolveConceptOwner } from "../indexer/lookup/adapter-concept-owner";
 import { resolveSourceEntries } from "../indexer/search/search-source";
 import { buildFileContext } from "../indexer/walk/file-context";
 import { resolveWorkflowRunTarget } from "../workflows/runtime/runs";
 import { agentCommand } from "./agent/contribute-cli";
 import { commandRunCommand } from "./command/command-cli";
+import { INJECTION_ARGS, resolveInjections, withoutInjectionFlags } from "./env/injection";
 import { tasksRunCommand } from "./tasks/tasks-cli";
 import { workflowRunCommand } from "./workflow-cli";
 
@@ -40,6 +42,8 @@ for (const executor of Object.values(EXECUTORS)) {
 }
 delete args.new;
 delete args.config;
+// `run`'s own: resolved here and taken off the line before the executor sees it.
+Object.assign(args, INJECTION_ARGS);
 args.ref = {
   type: "positional",
   description: "Agent, command, task or workflow ref; or an existing workflow run id",
@@ -51,7 +55,7 @@ export const runAssetCommand = defineJsonCommand({
   meta: {
     name: "run",
     description:
-      "Run an agent (--prompt/--prompt-stdin), command (--arguments), task (declared input flags), or workflow (declared parameter flags). Existing workflow run ids continue their frozen run. Other workflow lifecycle operations remain under akm workflow.",
+      "Run an agent (--prompt/--prompt-stdin), command (--arguments), task (declared input flags), or workflow (declared parameter flags). Repeatable --env <ref> and --secret <ref>:<VAR> inject env assets and secrets into the run. Existing workflow run ids continue their frozen run. Other workflow lifecycle operations remain under akm workflow. To run any other program, use `akm exec`.",
   },
   args,
   async run({ args: parsed, rawArgs }) {
@@ -105,9 +109,9 @@ export const runAssetCommand = defineJsonCommand({
     const executor = EXECUTORS[type as ExecutableType];
     // Preserve raw input spellings and values; replace only the positional ref
     // with its qualified owner so another bundle cannot retarget a task.
-    const forwarded = [...rawArgs];
-    const refIndex = findCittyTopLevelCommandIndex(rawArgs, args);
-    forwarded[refIndex] = target;
+    const positioned = [...rawArgs];
+    positioned[findCittyTopLevelCommandIndex(rawArgs, args)] = target;
+    const forwarded = withoutInjectionFlags(positioned);
     if (
       type === "workflow" &&
       rawArgs
@@ -131,6 +135,11 @@ export const runAssetCommand = defineJsonCommand({
         );
       }
     }
+    // Every process an executor starts inherits akm's environment, so the injected variables go there, and
+    // the secrets among them join what each executor scrubs from the output it captures.
+    const injected = resolveInjections();
+    Object.assign(process.env, injected.values);
+    registerInjectedSecretValues(injected.secretValues);
     await runCommand(executor.command as CommandDef, { rawArgs: forwarded });
   },
 });

@@ -15,7 +15,7 @@ describe("embedded exit-code hints", () => {
   }
 
   test("full hints name the passthrough and task/agent exit semantics", () => {
-    expect(EMBEDDED_HINTS_FULL).toContain("`env run`, `secret run`, and `migrate`");
+    expect(EMBEDDED_HINTS_FULL).toContain("`exec`, `env run`, `secret run`, and `migrate`");
     expect(EMBEDDED_HINTS_FULL).toContain("`akm run` on a task");
     expect(EMBEDDED_HINTS_FULL).toContain("`agent`");
   });

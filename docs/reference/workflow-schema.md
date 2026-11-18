@@ -888,10 +888,10 @@ env asset:
   of surrounding whitespace; any other asset ref (`${scripts/x.sh}`) gives the
   asset's absolute path. A `${...}` body that is not an akm ref (`${HOME}`) is
   left as text.
-- It is the same token `akm env run` resolves. `akm env export` does not
+- It is the same token `akm exec --env` resolves. `akm env export` does not
   resolve it; it writes the token verbatim.
 - Freezing records the env ref, never a value. At each dispatch the unit's env
-  assets are read live with `resolveEnvBinding`, the same function `akm env run`
+  assets are read live with `resolveEnvBinding`, the same function `akm exec --env`
   uses, so an edit to the env file, or to a secret, after the run started is
   picked up by the next dispatch; there is no key-set check against the frozen
   plan. A ref no bundle owns fails the step at dispatch ("frozen environment
