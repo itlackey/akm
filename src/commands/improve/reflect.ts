@@ -60,7 +60,7 @@ import { CHARS_PER_TOKEN, DEFAULT_CONTEXT_LENGTH_TOKENS } from "./consolidate/ch
 import { contentHash } from "./content-hash";
 import { findAssetFilePath } from "./eligibility";
 import { resolveImproveExecution } from "./execution";
-import { recordLedgerAttempt } from "./ledger";
+import { recordLedgerAttempt, stateKey } from "./ledger";
 import {
   bodyHasH1,
   classifyReflectChange,
@@ -859,7 +859,13 @@ function gatherReflectPromptSources(
       assetContent,
     ),
     schemaHints: buildSchemaHints(parsedRef?.type ?? "", assetContent),
-    rejectedProposals: rejectedProposalContext(stash, options.ref, options.ctx, options.eventsCtx),
+    rejectedProposals: rejectedProposalContext(
+      stash,
+      options.ref,
+      options.ctx,
+      options.eventsCtx,
+      options.ref ? { source: "reflect", ref: stateKey(options.ref, options.itemRef) } : undefined,
+    ),
     standardsContext: resolveStandardsContext(parsedRef?.type, stash),
   };
 }
@@ -978,7 +984,7 @@ async function finalizeReflectProposal(args: {
         { proposalsCtx: options.ctx, eventsCtx: options.eventsCtx },
         {
           stashDir: run.stash,
-          ref: options.itemRef ?? options.ref,
+          ref: stateKey(options.ref, options.itemRef),
           source: "reflect",
           outcome: "quality_rejected",
           detail,
