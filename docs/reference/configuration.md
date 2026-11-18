@@ -1046,11 +1046,15 @@ section, an absent key, and an explicit `false` all read identically as off.
 ```jsonc
 {
   "experimental": {
-    "improveAutonomy": false
+    "improveAutonomy": false,
+    "exec": false
   }
 }
 ```
 
+- **`experimental.exec`** — turns on [`akm exec`](cli.md#exec), which runs any
+  command with env assets and secrets injected. Off by default: `akm exec`
+  refuses and runs nothing. `akm run --env` and `--secret` are not gated.
 - **`experimental.improveAutonomy`** — gates only the autonomous
   `memoryInference`, `triagePromote` (a promote with triage judgment on; a
   deterministic-only promote runs without it), and `memoryCleanup` lanes. `akm improve`

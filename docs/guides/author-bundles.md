@@ -242,7 +242,7 @@ a variable name that changes how a process starts when the file is loaded with
 `GIT_CONFIG_*` prefixes. The finding is `dangerous-env-key`, a non-blocking
 warning. It is advice for you as the author, not a gate: installing a bundle is
 the user's trust decision, so `akm bundle add`, `akm bundle update`,
-`akm env run`, `akm secret run` and workflow `env:` bindings never scan, prompt
+`akm exec`, `akm run` and workflow `env:` bindings never scan, prompt
 for or block these keys, whichever bundle the file comes from. If your bundle
 needs one of these keys (for example, a `PATH` override for a hermetic
 toolchain), say why in your `README.md`, or leave its value out of the shipped

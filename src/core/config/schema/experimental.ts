@@ -32,6 +32,12 @@ export const ExperimentalConfigSchema = z
      */
     improveAutonomy: z.boolean().optional(),
     /**
+     * Allow `akm exec`: any command, run with env assets and secrets injected.
+     *
+     * OFF by default. `akm run --env/--secret`, which injects into an akm asset's run, is not gated.
+     */
+    exec: z.boolean().optional(),
+    /**
      * The research learning controls, under the paths `improve.*` has for them. `strategies` is
      * `improve.strategies` (custom strategies, process `enabled`, `allowedTypes`, quality-gate toggles, reflect
      * `defectFilter`, extract triage and session indexing, triage `applyMode` and `judgment`, the CLS knobs and the

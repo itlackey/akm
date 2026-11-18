@@ -126,6 +126,7 @@ import { closestMatch } from "./core/closest-match";
 import { trackStdioReaderGone } from "./core/stdio-reader-gone";
 import "./commands/health/renderers";
 import "./commands/metrics/md-report";
+import { execCommand } from "./commands/exec-cli";
 import type { WindowSpec } from "./commands/health/types";
 import { parseWindowSpec } from "./commands/health/windows";
 import { doctorPromptCommand, improveCommand } from "./commands/improve/improve-cli";
@@ -679,6 +680,7 @@ const commands = {
   show: showCommand,
   rules: rulesCommand,
   run: runAssetCommand,
+  exec: execCommand,
   workflow: workflowCommand,
   remember: rememberCommand,
   import: importKnowledgeCommand,
@@ -1031,7 +1033,7 @@ const HELP_SECTIONS: ReadonlyArray<{
     title: "ASSETS",
     commands: ["import", "clone", "bundle", "env", "secret", "sync", "proposal"],
   },
-  { title: "AUTOMATION", commands: ["improve", "judge", "agent", "command", "workflow", "task"] },
+  { title: "AUTOMATION", commands: ["run", "exec", "improve", "judge", "agent", "command", "workflow", "task"] },
   {
     title: "SYSTEM",
     commands: [

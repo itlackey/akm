@@ -196,10 +196,19 @@ export function isInferredSecretName(name: string): boolean {
   return KNOWN_SECRET_NAMES.has(name.toUpperCase()) || INFERRED_SECRET_NAME.test(name);
 }
 
+/** Values this process injected from `secrets/` refs (`akm run --secret`, a secret inside an `--env` asset). */
+const injectedSecretValues = new Set<string>();
+
+/** Record values akm itself placed in its environment as secrets, so every scrub below knows them whatever they are named. */
+export function registerInjectedSecretValues(values: Iterable<string>): void {
+  for (const value of values) if (value.length > 0) injectedSecretValues.add(value);
+}
+
 /**
  * The values in `env` whose variable NAME marks them as credentials ({@link isInferredSecretName}), at or above
  * {@link MIN_INFERRED_SECRET_LENGTH}. Every process akm starts inherits akm's environment, so a reply or a log that
  * echoes one of these must be scrubbed of it; this is the one place that rule lives (task logs and dispatch replies).
+ * The secrets akm injected itself ({@link registerInjectedSecretValues}) are inherited the same way and are included.
  */
 export function collectInferredSecretValues(env: NodeJS.ProcessEnv): string[] {
   const values: string[] = [];
@@ -207,6 +216,7 @@ export function collectInferredSecretValues(env: NodeJS.ProcessEnv): string[] {
     if (value === undefined || value.length < MIN_INFERRED_SECRET_LENGTH) continue;
     if (isInferredSecretName(name)) values.push(value);
   }
+  values.push(...injectedSecretValues);
   return values;
 }
 

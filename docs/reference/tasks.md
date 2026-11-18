@@ -252,7 +252,7 @@ steps:
   step name (`{}` for the first step). `AKM_INPUTS` is never set. A prompt step
   has no child environment on a direct-model connection, so it gets the same
   two values appended to its prompt as text. To load an env asset in a run
-  step, use `akm env run env/<name> -- <command>`.
+  step, use `akm exec --env env/<name> -- <command>`.
 - **Results.** A `run` step's result is its stdout; a prompt step's is the
   agent's reply; a `task` step has no result, and its callee gets no values.
   A text result is kept to 32 KiB, and the serialized `AKM_STEPS` may not

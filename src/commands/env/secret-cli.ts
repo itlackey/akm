@@ -158,7 +158,7 @@ const secretRunCommand = defineJsonCommand({
   meta: {
     name: "run",
     description:
-      "Run a command with a secret's value injected into an env var: `akm secret run <ref> <VAR> -- <command>`. The value is set as $VAR in the child process only. Pass --clean to start the child with a minimal inherited environment instead of the full parent environment.",
+      "Deprecated; use `akm exec --secret <ref>:<VAR> -- <command>`; removed in 0.11. Run a command with a secret's value injected into an env var: `akm secret run <ref> <VAR> -- <command>`. The value is set as $VAR in the child process only. Pass --clean to start the child with a minimal inherited environment instead of the full parent environment.",
   },
   args: {
     ref: { type: "positional", description: "Secret ref", required: true },
@@ -277,7 +277,7 @@ export const secretCommand = defineGroupCommand({
     name: "secret",
     description:
       "Manage secrets — one standalone sensitive value per file (an API token, a PEM private key, a TLS cert).\n\n" +
-      "Names are visible; the file contents are the value and never appear in structured output. For a group of related configuration loaded together, use `akm env`. A secret's file lives at `<bundle>/secrets/<name>` (`akm bundle list` shows bundle roots); consume its value without writing it anywhere via `akm secret run <ref> <VAR> -- <command>`.",
+      "Names are visible; the file contents are the value and never appear in structured output. For a group of related configuration loaded together, use `akm env`. A secret's file lives at `<bundle>/secrets/<name>` (`akm bundle list` shows bundle roots); consume its value without writing it anywhere via `akm exec --secret <ref>:<VAR> -- <command>`.",
   },
   subCommands: {
     list: secretListCommand,

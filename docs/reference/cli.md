@@ -116,7 +116,7 @@ a usage error (exit 2) that names Desktop and `--format md`, and `output.format:
 ignored (the default format applies).
 
 A small set of commands is **format-exempt** because their output is not a
-result envelope at all — `completions`, child-process passthrough (`env run`
+result envelope at all — `completions`, child-process passthrough (`exec`, `env run`
 and `secret run`), document payloads (`help`,
 `help migrate`), and `env path` and `config path` (a bare filesystem path is the payload, the
 documented shell-substitution primitive — wrapping it in an envelope would
@@ -180,7 +180,7 @@ sees the same field on both sides — success and failure — instead of
 graded outcome (e.g. `task run`'s exit-code mapping, `akm lint`, `akm proposal
 extract`) keeps that value, `false` included.
 
-`env run`, `secret run`, and `migrate` preserve the spawned process's exact
+`exec`, `env run`, `secret run`, and `migrate` preserve the spawned process's exact
 status and raw streams instead of replacing them with an akm failure envelope.
 `task run` maps completed, active, and disabled status to 0; blocked and failed
 status to 1; and configuration errors to 78. It retains a command child's exact
@@ -1588,8 +1588,8 @@ repo root, and takes effect on the next `bundle update` or `akm index`.
 Installing a bundle is the trust decision. `akm bundle add` and `akm bundle
 update` do not scan a bundle's `env/` files, never prompt, and never roll an
 install back over the keys an env file sets, so a bundle whose `env/*.env` sets
-`PATH` installs and refreshes unattended with no flag. `akm env run`, `akm
-secret run` and workflow `env:` bindings inject what the bundle defines.
+`PATH` installs and refreshes unattended with no flag. `akm exec`, `akm run`
+and workflow `env:` bindings inject what the bundle defines.
 
 `akm lint` still reports env keys that can hijack a process
 (`dangerous-env-key`, non-blocking), for bundle authors who want to review their
@@ -2893,7 +2893,7 @@ data:
 | **Purpose** | **configuration** — a group of related settings for an app/service | **authentication** — one sensitive value used on its own |
 | **Holds** | a `.env` file of **many** `KEY=value` pairs (URLs, flags, and any credentials it needs) | **one** value per file (an API token, PEM key, cert, service-account JSON) |
 | **Sensitivity** | values may or may not be sensitive — **all are protected anyway** | the value is always a credential |
-| **Injects** | many env vars at once (`env run`) | one env var (`secret run <ref> <VAR>`) |
+| **Injects** | many env vars at once (`--env <ref>`) | one env var (`--secret <ref>:<VAR>`) |
 | **Discoverable** | key *names* (not values) | name only (the whole file is the value) |
 
 **`env` is primarily for configuration — a group of related values you load
@@ -2915,7 +2915,7 @@ never appear in structured output (comments routinely contain commented-out
 credentials, so they are treated like values). akm does **not** manage
 individual entries — you edit the `.env` with your own editor (or ingest one
 with `--from-file`) and akm loads it wholesale. `list` and `show` surface key
-names only; `run` and `export` are the supported value-use paths.
+names only; `akm exec --env`, `akm run --env` and `export` are the supported value-use paths.
 
 ```sh
 akm env list
@@ -2923,9 +2923,8 @@ akm env create env/prod                      # creates env/prod.env (mode 0600)
 akm env create env/prod --from-file ./.env    # ingest an existing .env
 akm env create env/prod --path staging        # creates env/staging/prod.env
 $EDITOR "$(akm env path env/prod --quiet)"    # edit the file directly
-akm env run env/prod -- npm test              # run a command with the whole file injected
-akm env run env/prod -- $SHELL                # interactive shell with the env loaded
-akm env run env/prod --only DATABASE_URL -- ./migrate   # inject just one var
+akm exec --env env/prod -- npm test          # run a command with the whole file injected
+akm exec --env env/prod -- $SHELL            # interactive shell with the env loaded
 akm env remove env/prod --yes                 # remove the whole env file
 ```
 
@@ -2933,7 +2932,7 @@ akm does not manage individual keys — edit the `.env` file directly (`$EDITOR
 "$(akm env path <ref>)"`). `env remove <ref>` removes the whole file.
 
 Every `<ref>` is a full akm ref, `[bundle//]env/<name>`; there is no bare-name
-form (`akm env run prod` is a usage error naming `env/<name>`). A value in the
+form (`--env prod` is a usage error naming `env/<name>`). A value in the
 file can embed a `${ref}` token: `${secrets/name}` (or `${bundle//secrets/name}`)
 is replaced with the secret's value when the env is injected, and any other
 asset ref with its absolute path. A `${...}` body that is not an akm ref, such
@@ -2955,7 +2954,7 @@ Subcommands:
 | Subcommand | Description |
 | --- | --- |
 | `list` | List all env files across all bundles with key names only |
-| `run <ref> -- <command>` | Run a command with the env injected. `--only` / `--except` filter which keys are injected; `--clean` starts from a minimal inherited environment |
+| `run <ref> -- <command>` | Deprecated; use [`akm exec`](#exec). Run a command with the env injected. `--only` / `--except` filter which keys are injected; `--clean` starts from a minimal inherited environment |
 | `create <ref>` | Create an env file (a full ref such as `env/prod`). Empty by default; seed with `--from-file <path>` or `--from-stdin` |
 | `path <ref>` | Print the absolute env file path (Docker `_FILE` / `--env-file` / direct editing). `--quiet` suppresses the warning |
 | `export <ref> --out <file>` | Write a safe sourceable `export` script to a file (never to stdout) |
@@ -2964,7 +2963,11 @@ Subcommands:
 > **Removed in 0.9.0:** `akm env set`/`akm env unset`. akm does not manage
 > individual keys — edit the `.env` file directly.
 
-#### env run — the primary value path
+#### env run
+
+Deprecated; use [`akm exec --env <ref> -- <command>`](#exec); removed in 0.11.
+`--only` and `--except` have no `exec` form: keep the variables a command needs
+in an env asset of their own.
 
 ```sh
 akm env run env/prod -- <command>
@@ -2990,8 +2993,7 @@ such as `PATH` or `LD_PRELOAD`; it does not warn or block. `--allow-dangerous-en
 is a deprecated no-op, accepted through 0.10 so existing scripts keep working.
 
 > The single-key `run <ref>/KEY` form was removed. To inject one value, store it
-> as a [secret](#secret) and use `akm secret run secrets/<name> <VAR> -- …`, or
-> use `akm env run <ref> --only <KEY> -- …`.
+> as a [secret](#secret) and use `akm exec --secret secrets/<name>:<VAR> -- …`.
 
 > Values injected via `env run` live in the child process environment for its
 > entire lifetime and are visible to all subprocesses it spawns. Avoid
@@ -3067,7 +3069,7 @@ substitutions (e.g. `X=$(rm -rf ~)`) becomes a **literal string** — sourcing t
 generated file can never execute it. `export` **never prints values to stdout**
 (that would leak them into a captured/agent context) and so requires `--out`.
 
-> For most uses prefer `akm env run` (no file, no cleanup). `export` exists for
+> For most uses prefer `akm exec --env` (no file, no cleanup). `export` exists for
 > the case where a tool must `source` a file or you need a generated env script.
 
 ### secret
@@ -3085,7 +3087,7 @@ This mirrors Docker's secret model (one value per file, mounted at
 `/run/secrets/<name>`, read at runtime, never baked into the image or env at
 build time). The key security property: **secret values never appear in
 structured output** — not in the index, `akm search`, `akm curate`, or
-`akm show`. The supported value-use path is `secret run` (inject into a child
+`akm show`. The supported value-use path is `akm exec --secret` or `akm run --secret` (inject into a child
 env var).
 
 ```sh
@@ -3093,11 +3095,11 @@ akm secret list
 printf '%s' "$TOKEN" | akm secret set secrets/deploy-token
 akm secret set secrets/deploy-key --from-file ~/.ssh/id_ed25519   # byte-exact
 AKM_VALUE="$TOKEN" akm secret set secrets/api --from-env AKM_VALUE
-akm secret run secrets/deploy-token GITHUB_TOKEN -- gh release create v1.0.0
+akm exec --secret secrets/deploy-token:GITHUB_TOKEN -- gh release create v1.0.0
 ```
 
 Every `<ref>` is a full akm ref, `[bundle//]secrets/<name>`; a bare name
-(`akm secret run deploy-token ...`) is a usage error naming `secrets/<name>`. The
+(`--secret deploy-token:VAR`) is a usage error naming `secrets/<name>`. The
 value is read with surrounding whitespace trimmed.
 
 Subcommands:
@@ -3111,7 +3113,7 @@ Subcommands:
 
 > **Removed in 0.9.0: `secret path`.** It exits 2 with `Unknown command`. A ref's
 > file lives at `<bundle>/secrets/<name>` (run `akm bundle list` for bundle
-> roots); use `akm secret run` to consume the value without touching disk.
+> roots); use `akm exec --secret` to consume the value without touching disk.
 > `secret remove`, removed with it, is back as of 0.10. Like `akm env remove`,
 > it names its file through the write-target resolver only (`--bundle`, then
 > `defaultWriteTarget`, then the working bundle), so for a ref present in more
@@ -3143,6 +3145,8 @@ bundle. The chosen source must be writable (a non-writable target fails with a
 single boundary commit. Reads (`list`, `run`) still span all configured sources.
 
 #### secret run
+
+Deprecated; use [`akm exec --secret <ref>:<VAR> -- <command>`](#exec); removed in 0.11.
 
 ```sh
 akm secret run secrets/deploy-token GITHUB_TOKEN -- gh release create v1.0.0
@@ -3238,6 +3242,7 @@ akm run commands/review --arguments "src/cli.ts" --dry-run
 akm run team//tasks/nightly --region=us-east-1
 akm run workflows/release --version=1.2.3 --max-steps 1
 akm run <workflow-run-id>                 # Continue the frozen run
+akm run tasks/deploy --env env/prod --secret secrets/deploy-token:GITHUB_TOKEN
 ```
 
 | Resolved type | Inputs and controls | Result |
@@ -3246,6 +3251,19 @@ akm run <workflow-run-id>                 # Continue the frozen run
 | Command | Exact `--arguments` substitution, `--agent`, execution selection, `--timeout`, `--cwd`, `--dry-run` | Existing `agent-result` or `command-dry-run` |
 | Task | Exact-name declared input flags, including repeated array values; `--bundle` and `--scheduled` | Existing `task-run`, history/log writes, and task exit status |
 | Workflow | Exact-name declared parameter flags, `--max-steps`, `--max-retries`, `--timeout`, `--skip-if-locked` | Existing `workflow-run`, journal, gates and exit status |
+
+`--env <env-ref>` and `--secret <secret-ref>:<VAR>` apply to every type and
+repeat. They set the env asset's variables, and the secret's value as `VAR`, in
+akm's own environment for the run, which every process the run starts inherits;
+a task's or workflow unit's own `env:` bindings are set over them. Env assets
+apply in the order given, then secrets over them, and a later flag wins over an
+earlier one for the same variable. The secrets injected this way (a `--secret`,
+and a `${secrets/...}` token inside an `--env` asset) are scrubbed from the
+output akm captures: task logs and results, agent and command replies, and the
+workflow journal. A missing ref, or a `--secret` that is not `<ref>:<VAR>`,
+stops the run before it starts. The two names are reserved: a task input or
+workflow parameter called `env` or `secret` cannot be passed through `akm run`.
+To run a program that is not an akm asset, use [`akm exec`](#exec).
 
 Execution selection uses the same `--connection`, `--harness`, and `--model`
 settings as the original agent/command entry points. Global output controls work
@@ -3262,6 +3280,57 @@ Flags must apply to the selected executor or its declared inputs. Unsupported
 asset types (including scripts), fragments, extra positional values and `--`
 tails fail before execution. Supply command text through `--arguments` and agent
 text through `--prompt` or `--prompt-stdin`.
+
+### exec
+
+Experimental, and off by default. Turn it on with
+[`experimental.exec`](configuration.md#experimental):
+
+```sh
+akm config set experimental.exec true
+```
+
+While it is off, `akm exec` refuses with a config error (exit 78) that names the
+key, and runs nothing. `akm run --env` and `--secret` are not gated.
+
+Run any command with env assets and secrets injected into its environment:
+
+```sh
+akm exec [--env <env-ref>]... [--secret <secret-ref>:<VAR>]... [--clean [--inherit <names>]] -- <command>
+
+akm exec --env env/prod -- npm test
+akm exec --env env/prod -- $SHELL                     # interactive: a shell with the env loaded
+akm exec --env env/base --env team//env/prod -- ./deploy.sh
+akm exec --secret secrets/deploy-token:GITHUB_TOKEN -- gh release create v1.0.0
+akm exec --env env/prod --clean --inherit SSH_AUTH_SOCK -- ./migrate
+```
+
+| Flag | Description |
+| --- | --- |
+| `--env <env-ref>` | Inject every variable of the env asset (`[bundle//]env/<name>`). Repeatable. `${ref}` tokens in its values are replaced as described under [env](#env). |
+| `--secret <secret-ref>:<VAR>` | Inject the secret's value, trimmed, as `VAR`. Repeatable. |
+| `--clean` | Start the command with a minimal inherited environment (PATH/HOME/locale/terminal basics, and the names Windows needs to start a process) instead of the full parent environment. |
+| `--inherit <names>` | With `--clean`, also pass these parent variables through (comma-separated). |
+
+The command is spawned directly, never through a shell, on this terminal;
+`akm exec` exits with its status and is exempt from `--format`. Env assets apply
+in the order given, then secrets over them, and a later flag wins over an
+earlier one for the same variable. A missing ref, or a `--secret` that is not
+`<ref>:<VAR>`, is an error and nothing runs. Each use records an `env_access` or
+`secret_access` event with names only.
+
+Installing a bundle is the trust decision: `akm exec` injects what the bundle's
+files define, including keys such as `PATH` or `LD_PRELOAD`, and does not warn
+or block.
+
+> The command's output is its own and is not scrubbed: if it prints its
+> environment, those values appear in your terminal or agent transcript. The
+> values stay in its environment for its whole lifetime and are visible to the
+> subprocesses it starts. Prefer [`akm run`](#run) with the same flags for an
+> akm asset; akm scrubs the secrets it injected from what it captures there.
+
+`akm exec` replaces `akm env run` and `akm secret run`, which are Deprecated and
+removed in 0.11.
 
 ### command run
 

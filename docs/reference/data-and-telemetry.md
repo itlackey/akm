@@ -148,8 +148,8 @@ regenerable. akm also writes into it:
   decisions, improve and workflow activity, and LLM call usage (model, outcome,
   duration, token counts). Each event has a type, timestamp, optional asset ref
   and a small metadata payload; search events include the query text and the
-  refs returned. `akm env run`, a workflow unit's `env:` binding and
-  `akm secret run` record the names of the keys injected, not their values.
+  refs returned. `--env` and `--secret` (`akm exec`, `akm run`) and a workflow unit's `env:`
+  binding record the names of the keys injected, not their values.
 - **Usage records**: queries, search impressions, show/curate engagement, rule loads
   (`akm rules`: the refs and characters loaded) and
   feedback. They feed utility scores and `akm doctor metrics`, and the feedback recorded
