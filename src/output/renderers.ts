@@ -37,6 +37,7 @@ const INTERPRETER_MAP: Record<string, string> = {
   ".sh": "bash",
   ".ts": "bun",
   ".js": "bun",
+  ".mjs": "bun",
   ".py": "python",
   ".rb": "ruby",
   ".go": "go run",

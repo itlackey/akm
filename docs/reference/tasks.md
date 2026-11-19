@@ -108,7 +108,7 @@ Script refs use this closed table; any other extension fails before dispatch:
 | Extensions | Interpreter |
 |---|---|
 | `.sh` | `sh` |
-| `.ts`, `.js` | Bun; JavaScript and TypeScript script targets require Bun (the standalone binary uses its embedded Bun runtime) |
+| `.ts`, `.js`, `.mjs` | Bun; JavaScript and TypeScript script targets require Bun (the standalone binary uses its embedded Bun runtime) |
 | `.ps1` | `powershell -NoProfile -NonInteractive -File` |
 | `.cmd`, `.bat` | `cmd /d /s /c` |
 | `.py` | `python` |

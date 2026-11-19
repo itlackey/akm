@@ -21,6 +21,7 @@ export const SCRIPT_EXTENSIONS = new Set([
   ".sh",
   ".ts",
   ".js",
+  ".mjs",
   ".ps1",
   ".cmd",
   ".bat",

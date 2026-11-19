@@ -504,6 +504,7 @@ export const akmAdapter: BundleAdapter = {
     ".sh",
     ".ts",
     ".js",
+    ".mjs",
     ".ps1",
     ".cmd",
     ".bat",
