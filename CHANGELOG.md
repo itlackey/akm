@@ -58,6 +58,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- An agent run that exits 0 with no reply on standard output has failed (`parse_error`, `"<name>" returned no answer.`), on every harness and on akm's own runtime, as model work on a harness already did. OpenCode exits 0 when its turn ends on a permission request it auto-rejected (a read outside `--cwd`, say), and `akm run` reported that run `ok: true` with an empty reply; a task prompt step or a workflow prose step then passed the empty result to the next step. Now the run fails, the step fails (its `retries` or `retry.on: [parse_error]` apply), and the steps after it do not run.
 - Package-local plugin CLIs invoked directly with Bun no longer default to an npm-global upgrade when npm ownership is unproven; the `npm` on PATH proves a global install when no launching Node does (#1708).
 - Accepting an enabled task's retirement reconciles its host-local activation before archiving. A refused retirement leaves the task enabled as it was, another task's sync failure or an unreadable native scheduler is a warning, and reverting does not reactivate it (#1705).
 - Failed scheduled source resolution or preparation records a typed failure with an unknown target in task history, without dispatching the task body. Interactive preflight remains non-mutating (#1711).

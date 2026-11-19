@@ -305,7 +305,7 @@ describe("akmAgentDispatch engine capability", () => {
         configVersion: "0.9.0",
         semanticSearchMode: "auto",
         harnesses: {
-          "test-agent": { platform: "aider", bin: "/bin/true" },
+          "test-agent": { platform: "aider", bin: "/bin/echo" },
         },
       },
     });
@@ -315,7 +315,7 @@ describe("akmAgentDispatch engine capability", () => {
       shape: "agent-result",
       engine: "test-agent",
       exitCode: 0,
-      stdout: "",
+      stdout: "--yes-always --no-pretty --message=hello\n",
       stderr: "",
       durationMs: expect.any(Number),
     });
