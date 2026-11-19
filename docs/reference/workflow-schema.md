@@ -411,7 +411,8 @@ result in its `inputs:` gets nothing meaningful attached for it — akm
 surfaces this loudly rather than silently attaching an empty string. A unit
 that declares an `output` schema is unaffected — an empty response is not
 valid JSON, so it fails as a parse error and can never satisfy a schema as a
-silent `null`.
+silent `null`. A prose unit whose agent ends with no reply has not succeeded
+either: it fails with `parse_error`, which `retry.on:` can name.
 
 ### When a step declares no `output:` schema
 

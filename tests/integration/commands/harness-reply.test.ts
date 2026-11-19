@@ -27,6 +27,11 @@ const REPLY = "The review is done.\n\nTwo findings:\n- one\n- two";
 /** Looks like a harness's JSON event stream; it is the reply, so it must come back untouched. */
 const JSON_LOOKING_REPLY = '{"type":"result","result":"not an envelope","session_id":"s-1"}';
 const PROGRESS = "thinking...\nrunning tools...\n";
+/** What OpenCode 2.2.0's headless `run` prints on stderr when it refuses a read outside its directory (measured). */
+const REFUSED =
+  "! permission requested: external_directory (/elsewhere/*); auto-rejecting\n" +
+  "✗ Read /elsewhere/data.json failed\n" +
+  "Error: This non-interactive run cannot ask the user for permission, so the request was rejected. Continue without this action.\n";
 
 let storage: IsolatedAkmStorage;
 let bins: SandboxedDir;
@@ -45,6 +50,8 @@ beforeEach(async () => {
     path.join(storage.stashDir, "commands", "review.md"),
     "---\nname: review\ntype: command\nupdated: 2026-08-19\n---\nReview exactly: [$ARGUMENTS]\n",
   );
+  fs.mkdirSync(path.join(storage.stashDir, "agents"), { recursive: true });
+  fs.writeFileSync(path.join(storage.stashDir, "agents", "reader.md"), "---\ntype: agent\n---\nA careful reader.\n");
   await akmIndex({ stashDir: storage.stashDir, full: true });
 });
 
@@ -100,5 +107,35 @@ describe("a reply that looks like a harness's own JSON", () => {
     const envelope = JSON.parse(result.stdout) as Record<string, unknown>;
     expect(envelope.stdout).toBe(`${JSON_LOOKING_REPLY}\n`);
     expect(envelope).not.toHaveProperty("sessionId");
+  });
+});
+
+describe("an agent that ends with no reply", () => {
+  test("has failed though it exits 0: OpenCode refused the read outside --cwd and said nothing", async () => {
+    const bin = writeFakeHarness(bins.dir, "opencode", [""], { stderr: REFUSED });
+    writeSandboxConfig({ ...bundleConfig(storage.stashDir), harnesses: { opencode: { platform: "opencode", bin } } });
+    const work = makeSandboxDir("akm-harness-reply-work");
+    try {
+      const result = await runCliCapture([
+        "run",
+        "agents/reader",
+        "--prompt",
+        "Read /elsewhere/data.json and reply with its value.",
+        "--cwd",
+        work.dir,
+        "--format=json",
+      ]);
+
+      expect(result.code).not.toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        ok: false,
+        exitCode: 0,
+        reason: "parse_error",
+        error: '"opencode" returned no answer.',
+        stderr: REFUSED,
+      });
+    } finally {
+      work.cleanup();
+    }
   });
 });
