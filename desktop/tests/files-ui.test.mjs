@@ -35,6 +35,8 @@ test("Move to… on the open file asks for a folder in the tree, and the page fo
     configureFixture: async (fixture) => fs.mkdir(path.join(fixture.root, "personal/knowledge/archive")),
   });
   await go(page, opened(app.refs.document, "knowledge", "knowledge/restore-laptop.md"));
+  // An opened page moves focus to its heading once it has loaded; a key pressed before then goes to the heading.
+  await expect(page.getByRole("heading", { level: 1, name: "Restore a laptop" })).toBeFocused();
   const tree = page.getByRole("tree", { name: "Bundle files" });
   const item = tree.getByRole("treeitem", { name: "restore-laptop.md" });
   await item.focus();
