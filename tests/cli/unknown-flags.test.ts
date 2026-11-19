@@ -17,21 +17,24 @@
 
 import { describe, expect, test } from "bun:test";
 import { main } from "../../src/cli";
-import { assertKnownFlags, type FlagScanCommand } from "../../src/cli/unknown-flags";
+import { assertKnownFlags, assertNoStrayPositionals, type FlagScanCommand } from "../../src/cli/unknown-flags";
 import { UsageError } from "../../src/core/errors";
 
 const check = (args: string[]): void => assertKnownFlags(main as unknown as FlagScanCommand, args);
+const checkPositionals = (args: string[]): void => assertNoStrayPositionals(main as unknown as FlagScanCommand, args);
 
-/** The thrown UsageError, for asserting code/hint. */
-const errorFor = (args: string[]): UsageError => {
+/** The UsageError a gate throws, for asserting code/hint. */
+const thrownBy = (gate: (args: string[]) => void, args: string[]): UsageError => {
   try {
-    check(args);
+    gate(args);
   } catch (err) {
     if (err instanceof UsageError) return err;
     throw err;
   }
   throw new Error(`expected "${args.join(" ")}" to be rejected`);
 };
+const errorFor = (args: string[]): UsageError => thrownBy(check, args);
+const strayFor = (args: string[]): UsageError => thrownBy(checkPositionals, args);
 
 describe("rejects undeclared flags", () => {
   test("a typo'd CI gate flag fails instead of silently not gating", () => {
@@ -184,5 +187,70 @@ describe("improve --auto-accept (removed in 0.9, a hard error since 0.10)", () =
   test("is an unknown flag, with or without a value", () => {
     expect(errorFor(["improve", "--auto-accept"]).code).toBe("UNKNOWN_FLAG");
     expect(errorFor(["improve", "--auto-accept", "90"]).code).toBe("UNKNOWN_FLAG");
+  });
+});
+
+describe("a command that declares no positional takes none", () => {
+  test("`akm bundle create <path>` is refused, and the hint is the --dir spelling", () => {
+    // It used to ignore the path and initialize the default bundle.
+    const err = strayFor(["bundle", "create", "/some/folder"]);
+    expect(err.message).toBe('akm bundle create takes no positional arguments, but got "/some/folder".');
+    expect(err.hint()).toContain("akm bundle create --dir /some/folder");
+    expect(strayFor(["bundle", "create", "--set-default", "/some/folder"]).hint()).toContain("--dir /some/folder");
+  });
+
+  test("a token after `--` is a positional too", () => {
+    expect(strayFor(["bundle", "create", "--", "/some/folder"]).message).toContain('"/some/folder"');
+    expect(strayFor(["log", "--", "tail"]).message).toContain('"tail"');
+  });
+
+  test.each([
+    ["a command that writes", ["backups", "prune", "old"]],
+    ["a migration", ["migrate", "apply", "now"]],
+    ["a nested leaf", ["doctor", "metrics", "usage", "extra"]],
+    ["a leaf under a group that takes a positional", ["improve", "report", "extra"]],
+    ["a subcommand only `doctor metrics` has", ["metrics", "usage"]],
+    ["a retired subcommand", ["log", "tail"]],
+    ["a command with no flags of its own", ["config", "path", "extra"]],
+    ["a command that does not declare the global flags", ["hints", "extra"]],
+  ])("%s", (_label, args) => {
+    const err = strayFor(args as string[]);
+    expect(err.code).toBe("INVALID_FLAG_VALUE");
+    expect(err.message).toContain(`"${args.at(-1)}"`);
+    expect(err.hint()).toContain("--help");
+  });
+
+  test.each([
+    ["no positional at all", ["bundle", "create"]],
+    ["a flag's value", ["bundle", "create", "--dir", "/some/folder", "--set-default"]],
+    ["a flag's value, equals form", ["bundle", "create", "--dir=/some/folder"]],
+    ["a global flag before the command", ["--format", "json", "bundle", "create"]],
+    ["a global flag's value on a command that does not declare it", ["hints", "--format", "json"]],
+    ["a repeated value flag", ["health", "--windows", "name=a,since=1,until=2", "--windows", "name=b,since=2,until=3"]],
+    ["a short alias", ["index", "-q"]],
+    ["a declared positional", ["bundle", "show", "team"]],
+    ["an optional positional", ["bundle", "update", "npm:@scope/pkg"]],
+    ["a positional beside subcommands", ["improve", "skills"]],
+    ["more positionals than declared, which the command handles itself", ["proposal", "accept", "p-1", "p-2"]],
+    ["a child command after `--`", ["env", "run", "env/prod", "--", "tool", "arg"]],
+  ])("accepts %s", (_label, args) => {
+    expect(() => checkPositionals(args as string[])).not.toThrow();
+  });
+
+  test("`akm exec` keeps the command after `--`, and refuses a token before it", () => {
+    expect(() => checkPositionals(["exec", "--env", "env/prod", "--", "tool", "arg"])).not.toThrow();
+    expect(strayFor(["exec", "tool", "--", "arg"]).message).toBe(
+      'akm exec takes no positional arguments, but got "tool".',
+    );
+  });
+
+  test("`akm help <command> <subcommand>` still prints the command's help", () => {
+    expect(() => checkPositionals(["help", "bundle", "create"])).not.toThrow();
+  });
+
+  test("an unknown command is left to the unknown-command error", () => {
+    expect(() => checkPositionals(["distill", "abc"])).not.toThrow();
+    expect(() => checkPositionals(["bundle", "/some/folder"])).not.toThrow();
+    expect(() => checkPositionals(["doctor", "metrics", "bogus"])).not.toThrow();
   });
 });

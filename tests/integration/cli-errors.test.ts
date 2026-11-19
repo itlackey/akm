@@ -696,6 +696,38 @@ describe("R-032: citty CLIError family exits 2, not 1", () => {
   });
 });
 
+// A real process, like the block above: the refusal runs in `src/cli.ts`'s
+// startup block, which the in-process harness only mirrors.
+describe("a positional on a command that declares none", () => {
+  test("akm bundle create <path> exits 2, names --dir and creates no bundle", () => {
+    const home = makeSandboxDir("akm-cli-err-home");
+    const xdg = makeSandboxDir("akm-cli-err-xdg");
+    disposers.push(home, xdg);
+    const wanted = path.join(home.dir, "wanted");
+
+    const { status, stdout, stderr } = spawnCli(["bundle", "create", wanted], {
+      cwd: repoRoot,
+      env: {
+        HOME: home.dir,
+        XDG_CONFIG_HOME: path.join(xdg.dir, "config"),
+        XDG_DATA_HOME: path.join(xdg.dir, "data"),
+        XDG_CACHE_HOME: path.join(xdg.dir, "cache"),
+        XDG_STATE_HOME: path.join(xdg.dir, "state"),
+      },
+    });
+
+    expect(status, stderr).toBe(2);
+    expect(stdout).toBe("");
+    const parsed = JSON.parse(stderr.trim());
+    expect(parsed.error).toBe(`akm bundle create takes no positional arguments, but got "${wanted}".`);
+    expect(parsed.hint).toContain(`akm bundle create --dir ${wanted}`);
+    // It used to report `ok: true` and scaffold the default bundle, `$HOME/akm`.
+    expect(fs.existsSync(path.join(home.dir, "akm"))).toBe(false);
+    expect(fs.existsSync(wanted)).toBe(false);
+    expect(fs.existsSync(path.join(xdg.dir, "config", "akm", "config.json"))).toBe(false);
+  });
+});
+
 // S11 item 1/2: the sectioned root help groups top-level commands instead of
 // citty's flat alphabetical-by-declaration COMMANDS dump, and hides the
 // self-update-only `migrate` group from it (while it still executes).

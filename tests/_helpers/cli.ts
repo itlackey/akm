@@ -68,7 +68,7 @@ import {
 } from "../../src/cli";
 import { _resetParsedInvocationForTests } from "../../src/cli/invocation";
 import { emitJsonError } from "../../src/cli/shared";
-import { assertKnownFlags, type FlagScanCommand } from "../../src/cli/unknown-flags";
+import { assertKnownFlags, assertNoStrayPositionals, type FlagScanCommand } from "../../src/cli/unknown-flags";
 import { DEFAULT_CONFIG, loadConfig, resetConfigCache } from "../../src/core/config/config";
 import { AkmError } from "../../src/core/errors";
 import { clearLogFile, resetQuiet, resetVerbose } from "../../src/core/warn";
@@ -287,11 +287,13 @@ export async function runCliCapture(args: string[]): Promise<CliResult> {
         initFailed = true;
       }
       if (!initFailed) {
-        // Mirrors the real entry point (src/cli.ts), which rejects flags the
-        // resolved command does not declare before dispatching — citty/mri
-        // would otherwise ignore them silently. Part of the startup contract
-        // this harness replicates, like the --help / --version handling above.
+        // Mirrors the real entry point (src/cli.ts), which rejects flags and
+        // positionals the resolved command does not declare before dispatching
+        // — citty/mri would otherwise ignore them silently. Part of the startup
+        // contract this harness replicates, like the --help / --version
+        // handling above.
         assertKnownFlags(cmd as unknown as FlagScanCommand, rawArgs);
+        assertNoStrayPositionals(cmd as unknown as FlagScanCommand, rawArgs);
         await runCommand(cmd, { rawArgs });
       }
     }
