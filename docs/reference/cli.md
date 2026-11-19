@@ -43,10 +43,13 @@ command ignores it. (`--shape`, which carried `agent` and `summary` before 0.10,
 is gone: it is an unknown flag, exit 2. `--shape summary` had a projection only
 on `show`; use `--detail brief` there.)
 
-A command that takes no positional argument refuses one (a usage error, exit
-2) instead of ignoring it, before or after a literal `--`. Three exceptions:
-`akm help <command>` ignores any further words, `akm info` warns and
-continues, and `akm exec` takes its command after `--`.
+A command refuses a positional argument it does not declare (a usage error,
+exit 2) instead of ignoring it: any positional on a command that takes none,
+and any beyond the ones a command takes. `akm search deploy script` is
+refused; quote a value that contains spaces. A token after a literal `--` is
+a positional too, except the child command of `akm exec`, `akm env run` and
+`akm secret run`. Two exceptions: `akm help <command>` ignores any further
+words, and `akm info` warns and continues.
 
 ### Deprecation notices
 

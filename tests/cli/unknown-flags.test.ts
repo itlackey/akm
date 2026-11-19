@@ -190,13 +190,43 @@ describe("improve --auto-accept (removed in 0.9, a hard error since 0.10)", () =
   });
 });
 
-describe("a command that declares no positional takes none", () => {
+describe("a command takes only the positionals it declares", () => {
   test("`akm bundle create <path>` is refused, and the hint is the --dir spelling", () => {
     // It used to ignore the path and initialize the default bundle.
     const err = strayFor(["bundle", "create", "/some/folder"]);
     expect(err.message).toBe('akm bundle create takes no positional arguments, but got "/some/folder".');
     expect(err.hint()).toContain("akm bundle create --dir /some/folder");
     expect(strayFor(["bundle", "create", "--set-default", "/some/folder"]).hint()).toContain("--dir /some/folder");
+    expect(strayFor(["setup", "/some/folder", "--yes"]).hint()).toContain("akm setup --dir /some/folder");
+  });
+
+  test("one more than a command declares is refused, and the hint says to quote", () => {
+    // It used to search for "deploy" alone.
+    const err = strayFor(["search", "deploy", "script"]);
+    expect(err.code).toBe("INVALID_FLAG_VALUE");
+    expect(err.message).toBe('akm search takes 1 positional argument, but got 2: "deploy" "script".');
+    expect(err.hint()).toContain("Quote a value that contains spaces");
+    expect(err.hint()).toContain("akm search --help");
+  });
+
+  test.each([
+    [
+      "a second value",
+      ["config", "get", "output.format", "extra"],
+      'takes 1 positional argument, but got 2: "output.format" "extra"',
+    ],
+    ["a third value", ["bundle", "rename", "old", "new", "extra"], "takes 2 positional arguments, but got 3"],
+    ["one beside an optional positional", ["sync", "team", "extra"], "takes 1 positional argument, but got 2"],
+    ["one beside a positional that sits next to subcommands", ["improve", "skills", "extra"], "akm improve takes 1"],
+    [
+      "a second id where only one is read",
+      ["proposal", "reject", "p-1", "p-2", "--reason", "stale"],
+      'got 2: "p-1" "p-2"',
+    ],
+    ["one given after `--`", ["bundle", "remove", "--yes", "--", "team", "extra"], 'got 2: "team" "extra"'],
+    ["one before the child command", ["env", "run", "env/prod", "extra", "--", "tool"], 'got 2: "env/prod" "extra"'],
+  ])("refuses %s", (_label, args, message) => {
+    expect(strayFor(args as string[]).message).toContain(message as string);
   });
 
   test("a token after `--` is a positional too", () => {
@@ -231,8 +261,21 @@ describe("a command that declares no positional takes none", () => {
     ["a declared positional", ["bundle", "show", "team"]],
     ["an optional positional", ["bundle", "update", "npm:@scope/pkg"]],
     ["a positional beside subcommands", ["improve", "skills"]],
-    ["more positionals than declared, which the command handles itself", ["proposal", "accept", "p-1", "p-2"]],
+    ["every declared positional", ["config", "set", "output.format", "json"]],
+    ["a value flag between positionals", ["bundle", "rename", "old", "--format", "json", "new"]],
+    ["a short bundle whose last letter takes a value", ["sync", "team", "-qm", "release notes"]],
+    ["a bare `-` for stdin", ["import", "-"]],
+    ["positionals given after `--`", ["bundle", "rename", "--dry-run", "--", "old", "new"]],
+    ["a positional after `--` beside a flag before it", ["task", "enable", "--bundle=team", "--", "nightly"]],
+    ["any number of ids to accept, which the command reads itself", ["proposal", "accept", "p-1", "p-2"]],
+    ["any number of ids to reopen", ["proposal", "reopen", "p-1", "p-2"]],
+    ["a second token on show, which refuses it with its own message", ["show", "knowledge/a", "auth"]],
+    ["a second token on doctor prompt, likewise", ["doctor", "prompt", "lessons/a", "extra"]],
     ["a child command after `--`", ["env", "run", "env/prod", "--", "tool", "arg"]],
+    ["a child command after two positionals", ["secret", "run", "secrets/key", "TOKEN", "--", "tool", "arg"]],
+    ["a task input's value", ["task", "run", "nightly", "--scope", "all"]],
+    ["a workflow parameter's value", ["workflow", "run", "workflows/health", "--labels", "one"]],
+    ["an input's value through `akm run`", ["run", "tasks/nightly", "--scope", "all"]],
   ])("accepts %s", (_label, args) => {
     expect(() => checkPositionals(args as string[])).not.toThrow();
   });

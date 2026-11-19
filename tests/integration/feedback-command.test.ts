@@ -385,6 +385,7 @@ describe("akm feedback", () => {
     // Everything after `--` is passthrough/positional, never a flag akm should
     // interpret. Before the fix, `parseAllFlagValues`/`getAllFlagValues` scanned
     // straight through a literal `--` and still picked up `--tag leaked:yes`.
+    // As positionals they are more than `feedback` takes, so it refuses them.
     const result = await runCli([
       "feedback",
       "memories/deployment-notes",
@@ -394,10 +395,10 @@ describe("akm feedback", () => {
       "leaked:yes",
       "--format=json",
     ]);
-    expect(result.status).toBe(0);
-    const parsed = parseJsonOutput(result);
-    expect(parsed.ok).toBe(true);
-    expect(parsed.tags).toEqual([]);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain(
+      'takes 1 positional argument, but got 4: "memories/deployment-notes" "--tag" "leaked:yes" "--format=json"',
+    );
   });
 
   test("--tag values BEFORE `--` are still collected normally (R-033a control)", async () => {
