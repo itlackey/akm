@@ -107,7 +107,12 @@ import {
   runWithJsonErrors,
   withoutHelpHiddenArgs,
 } from "./cli/shared";
-import { assertKnownFlags, consumeConfigFileFlag, type FlagScanCommand } from "./cli/unknown-flags";
+import {
+  assertKnownFlags,
+  assertNoStrayPositionals,
+  consumeConfigFileFlag,
+  type FlagScanCommand,
+} from "./cli/unknown-flags";
 import { startUsage, type UsageCommand, usageCaptureOff } from "./cli/usage";
 import { reportUsageIfDue } from "./cli/usage-report";
 import { agentCommand, lintCommand } from "./commands/agent/contribute-cli";
@@ -1418,7 +1423,9 @@ async function runCliInvocation(): Promise<void> {
     // citty's parseArgs (strict: false) silently ignores undeclared flags, so
     // a typo would otherwise run the command with defaults and exit 0. Checked
     // here, after --help and --version, so those keep working on any command.
+    // An undeclared positional is ignored the same way.
     assertKnownFlags(main as FlagScanCommand, rawArgs);
+    assertNoStrayPositionals(main as FlagScanCommand, rawArgs);
     await runCommand(main, { rawArgs });
   } catch (error) {
     if (isCittyCliError(error)) {

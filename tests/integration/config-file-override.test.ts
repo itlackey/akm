@@ -115,9 +115,10 @@ describe("real CLI config file bootstrap", () => {
     const literal = cli(["task", "add", "example", "--prompt", "--config", "--help"], env, dir);
     expect(literal.status).toBe(0);
     expect(literal.stderr).not.toContain("--config requires");
+    // After `--` the pair is two positionals, which `config path` refuses; as a selector it would have been consumed.
     const pass = cli(["config", "path", "--", "--config", "other.json"], env, dir);
-    expect(pass.status).toBe(0);
-    expect(pass.stdout.trim()).toBe(path.join(env.AKM_CONFIG_DIR, "config.json"));
+    expect(pass.status).toBe(2);
+    expect(pass.stderr).toContain('takes no positional arguments, but got \\"--config\\" \\"other.json\\"');
   });
 
   test.each(["sample.json", true, "--config"])("task config input remains %p with a root selector", (value) => {

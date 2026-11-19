@@ -43,6 +43,14 @@ command ignores it. (`--shape`, which carried `agent` and `summary` before 0.10,
 is gone: it is an unknown flag, exit 2. `--shape summary` had a projection only
 on `show`; use `--detail brief` there.)
 
+A command refuses a positional argument it does not declare (a usage error,
+exit 2) instead of ignoring it: any positional on a command that takes none,
+and any beyond the ones a command takes. `akm search deploy script` is
+refused; quote a value that contains spaces. A token after a literal `--` is
+a positional too, except the child command of `akm exec`, `akm env run` and
+`akm secret run`. Two exceptions: `akm help <command>` ignores any further
+words, and `akm info` warns and continues.
+
 ### Deprecation notices
 
 When you use a command or flag that [STABILITY.md](../../STABILITY.md) marks
@@ -229,6 +237,10 @@ is given and a default already exists without `--set-default`, your default
 bundle pointer is left untouched and `bundle create` prints a note telling you
 so. This prevents `akm bundle create --dir /tmp/throwaway` from silently
 hijacking your real default bundle.
+
+The path is given only through `--dir`. A positional path
+(`akm bundle create ~/scratch-bundle`) is a usage error (exit 2) whose hint
+is the `--dir` spelling; nothing is created.
 
 ### setup
 
@@ -604,7 +616,8 @@ directory, or an index.db that's locked, newer, older, corrupt, missing, or
 empty each degrade the relevant field(s) above instead of failing the
 command. It also never waits more than about 1.5s on a locked index.db,
 regardless of the shared 30s lock-wait every write command otherwise uses,
-and warns rather than refusing on an unrecognized flag.
+and warns rather than refusing on an unrecognized flag or a positional
+argument.
 
 `semanticSearch.status` values:
 - `"ready-js"` — every entry has a vector; semantic search is active (the name is historical: `"ready-vec"`, the sqlite-vec variant, is gone)

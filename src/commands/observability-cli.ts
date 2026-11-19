@@ -32,24 +32,6 @@ import { UsageError } from "../core/errors";
 import { akmEventsList } from "./log";
 import { akmTasksHistory } from "./tasks/tasks";
 
-/**
- * `log` flattened from a group (`log list`/`log tail`) to a leaf in 0.9 (S3).
- * `log` declares no positional args, so citty leaves any leftover positional
- * token in `args._` uninterpreted rather than rejecting it — meaning
- * `akm log tail` and `akm log list` silently ran today's `log` surface
- * instead of failing like the other removed spellings (`log tail` is the
- * dangerous one: it used to stream/follow, so an unmigrated caller got a
- * silent one-shot snapshot instead of an error).
- */
-function rejectExtraLogPositionals(positionals: unknown): void {
-  const extra = Array.isArray(positionals) ? (positionals as unknown[]).map(String) : [];
-  if (extra.length === 0) return;
-  throw new UsageError(
-    `akm log takes no positional arguments, but got ${extra.map((token) => `"${token}"`).join(" ")}.`,
-    "INVALID_FLAG_VALUE",
-  );
-}
-
 // ── `akm log` ────────────────────────────────────────────────────────────────
 // Append-only events stream surface (#204). Reads state.db events with
 // optional --since/--type/--ref filters.
@@ -90,7 +72,6 @@ export const logCommand = defineJsonCommand({
     },
   },
   run({ args }) {
-    rejectExtraLogPositionals(args._);
     const excludeTags = parseAllFlagValues("--exclude-tags");
     const includeTags = parseAllFlagValues("--include-tags");
     const limit = parsePositiveIntFlag(args.limit);
@@ -130,7 +111,6 @@ export const doctorLogCommand = defineJsonCommand({
     if (task.trim() === "") {
       throw new UsageError("akm doctor log --task needs a task id: --task <id>.", "INVALID_FLAG_VALUE");
     }
-    rejectExtraLogPositionals(context.args._);
     const limit = parsePositiveIntFlag(context.args.limit as string | undefined);
     output(
       "task-history",
