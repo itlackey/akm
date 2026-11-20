@@ -32,7 +32,7 @@
  * un-mocked), so adding a smoke test here would only duplicate that.
  */
 
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -40,14 +40,21 @@ import {
   defaultProposalValidators,
   runProposalValidators,
 } from "../src/commands/proposal/validators/proposal-validators";
+import { importTaskFile } from "../src/commands/sources/import-task";
+import { akmTaskExplain } from "../src/commands/tasks/explain";
+import { akmTasksEnable } from "../src/commands/tasks/tasks";
 import { taskDiagnostics } from "../src/core/adapter/adapters/akm-lint";
 import { applyFoldedMetadata, foldRecognizedMetadata } from "../src/core/adapter/adapters/akm-metadata";
 import { akmTaskAdapter } from "../src/core/adapter/adapters/akm-task-adapter";
 import type { BundleComponent } from "../src/core/adapter/types";
 import { createValidateContext } from "../src/core/adapter/validate-context";
+import { resetConfigCache } from "../src/core/config/config";
 import type { IndexDocument } from "../src/indexer/passes/metadata";
 import { buildFileContext } from "../src/indexer/walk/file-context";
+import { loadPreparedTask } from "../src/tasks/run/load-task";
+import { compileSchedulerSources } from "../src/tasks/scheduler-sync";
 import { makeProposal, payloadChanges } from "./_helpers/factories";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "./_helpers/sandbox";
 
 function tmpDir(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -224,5 +231,152 @@ describe("the canonical task proposal validator consumes a version: 4 proposal b
     });
 
     expect(report.findings.map((f) => f.kind)).toEqual(["invalid-task-structure"]);
+  });
+});
+
+// ── version 5-beta.1: every call site reads it; the ones that would run it refuse ──
+
+const VALID_V5_TASK = [
+  "version: 5-beta.1",
+  "description: Nightly v5 review",
+  "when_to_use: Run every weeknight",
+  "tags: [contract, review]",
+  "schedule: '0 9 * * *'",
+  "steps:",
+  "  - name: look",
+  "    run: scripts/look.sh",
+  "  - name: ask",
+  "    prompt: Review ${look}",
+  "",
+].join("\n");
+const INVALID_V5_TASK = ["version: 5-beta.1", "run: scripts/x.sh", "exec: echo x", ""].join("\n");
+const RUNS_LATER = /running version 5 tasks arrives in a later build/;
+
+describe("a version: 5-beta.1 task through the read-only call sites", () => {
+  test("taskDiagnostics: a valid file is clean; a shape error, a schedule that fits no input and a cron the scheduler cannot read are each reported", () => {
+    expect(taskDiagnostics("tasks/nightly.yml", VALID_V5_TASK)).toEqual([]);
+    const shape = taskDiagnostics("tasks/nightly.yml", INVALID_V5_TASK);
+    expect(shape.map((d) => d.issue)).toEqual(["invalid-task-yaml"]);
+    expect(shape[0]?.detail).toMatch(/task source v5/);
+    expect(shape[0]?.detail).toMatch(/one command/);
+    const needsInput = [
+      "version: 5-beta.1",
+      "inputs:",
+      "  who: { required: true }",
+      "schedule: '@daily'",
+      "exec: echo hi",
+      "",
+    ].join("\n");
+    expect(taskDiagnostics("tasks/nightly.yml", needsInput).map((d) => d.issue)).toEqual(["invalid-task-yaml"]);
+    const badCron = ["version: 5-beta.1", "schedule: 'not a cron'", "exec: echo hi", ""].join("\n");
+    expect(taskDiagnostics("tasks/nightly.yml", badCron).map((d) => d.issue)).toEqual(["invalid-task-yaml"]);
+  });
+
+  test("another beta than this build's is refused naming the one it reads", () => {
+    const detail = taskDiagnostics("tasks/nightly.yml", VALID_V5_TASK.replace("5-beta.1", "5-beta.2"))[0]?.detail;
+    expect(detail).toMatch(/this build reads only 5-beta\.1/);
+  });
+
+  test("akmTaskAdapter.validate and looksLikeRoot accept it", async () => {
+    const root = tmpDir("akm-task-adapter-v5-");
+    writeFile(path.join(root, "nightly.yml"), VALID_V5_TASK);
+    expect(
+      await akmTaskAdapter.validate(
+        component(root, "akm-task"),
+        [{ path: "nightly.yml", op: "update" }],
+        createValidateContext({ root }),
+      ),
+    ).toEqual([]);
+    expect(akmTaskAdapter.looksLikeRoot?.(root)).toBe(true);
+    writeFile(path.join(root, "bad.yml"), INVALID_V5_TASK);
+    const diagnostics = await akmTaskAdapter.validate(
+      component(root, "akm-task"),
+      [{ path: "bad.yml", op: "update" }],
+      createValidateContext({ root }),
+    );
+    expect(diagnostics.map((d) => d.issue)).toEqual(["invalid-task-yaml"]);
+  });
+
+  test("the index fold takes description, tags, when_to_use, the schedule and what the steps run", () => {
+    const root = tmpDir("akm-metadata-v5-");
+    const filePath = path.join(root, "tasks", "nightly.yml");
+    writeFile(filePath, VALID_V5_TASK);
+    const entry: IndexDocument = { name: "nightly", type: "task" };
+    applyFoldedMetadata(entry, foldRecognizedMetadata("task-yaml", buildFileContext(root, filePath)));
+    expect(entry.description).toBe("Nightly v5 review");
+    expect(entry.tags).toEqual(expect.arrayContaining(["task", "scheduled", "contract", "review"]));
+    expect(entry.searchHints).toEqual(
+      expect.arrayContaining([
+        "schedule:0 9 * * *",
+        "run:scripts/look.sh",
+        "prompt:Review ${look}",
+        "when_to_use:Run every weeknight",
+      ]),
+    );
+  });
+
+  test("the task proposal validator accepts a valid body and reports an invalid one", () => {
+    const validator = defaultProposalValidators.find((v) => v.name === "canonical-asset-proposal-validator");
+    if (!validator) throw new Error("canonical-asset-proposal-validator must be registered");
+    const findings = (name: string, body: string) => {
+      const proposal = makeProposal(`tasks/${name}`);
+      proposal.changes = payloadChanges(body);
+      return runProposalValidators(proposal, [validator], { parsedRef: { type: "task", name } }).findings.map(
+        (f) => f.kind,
+      );
+    };
+    expect(findings("nightly", VALID_V5_TASK)).toEqual([]);
+    expect(findings("bad", INVALID_V5_TASK)).toEqual(["invalid-task-structure"]);
+  });
+});
+
+describe("a version: 5-beta.1 task through the sites that import, run and schedule", () => {
+  let storage: IsolatedAkmStorage;
+  beforeEach(() => {
+    storage = withIsolatedAkmStorage();
+    writeWorkflowTestConfig();
+    resetConfigCache();
+    writeFile(path.join(storage.stashDir, "tasks", "nightly.yml"), VALID_V5_TASK);
+  });
+  afterEach(() => {
+    resetConfigCache();
+    storage.cleanup();
+  });
+
+  test("akm import --type task takes it, and refuses another beta", async () => {
+    const source = path.join(storage.root, "imported.yml");
+    fs.writeFileSync(source, VALID_V5_TASK);
+    const imported = await importTaskFile({ source });
+    expect(fs.readFileSync(imported.path, "utf8")).toBe(VALID_V5_TASK);
+    fs.writeFileSync(source, VALID_V5_TASK.replace("5-beta.1", "5-beta.2"));
+    await expect(importTaskFile({ source, name: "other" })).rejects.toThrow("this build reads only 5-beta.1");
+  });
+
+  test("task run, task sync and task explain refuse it, saying running arrives in a later build; the other tasks of the bundle go on", async () => {
+    await expect(loadPreparedTask("nightly", { bundleDir: storage.stashDir, bundleName: "stash" })).rejects.toThrow(
+      RUNS_LATER,
+    );
+    await expect(akmTaskExplain("nightly")).rejects.toThrow(RUNS_LATER);
+    writeFile(
+      path.join(storage.stashDir, "tasks", "other.yml"),
+      ["version: 4", "run: echo hi", "schedule: '@daily'", ""].join("\n"),
+    );
+    const plan = await compileSchedulerSources({
+      sourceRoot: storage.stashDir,
+      adapterId: "akm",
+      bundleName: "stash",
+      backend: "cron",
+    });
+    expect(plan.failures.map((failure) => failure.ref)).toEqual(["stash//tasks/nightly"]);
+    expect(plan.failures[0]?.reason).toMatch(RUNS_LATER);
+    expect(plan.desired.map((binding) => binding.id)).toEqual(["other"]);
+  });
+
+  test("task enable asks the file for its schedule", async () => {
+    writeFile(
+      path.join(storage.stashDir, "tasks", "manual.yml"),
+      ["version: 5-beta.1", "exec: echo hi", ""].join("\n"),
+    );
+    await expect(akmTasksEnable("manual")).rejects.toThrow("has no schedule to enable");
   });
 });

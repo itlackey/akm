@@ -376,8 +376,9 @@ export function taskDiagnostics(relPath: string, raw: string): Diagnostic[] {
       filePath: relPath,
       yaml: raw,
     });
-    assertTaskScheduleInputsSatisfyContract(parsed.v4, relPath);
-    assertTaskScheduleCronValid(parsed.v4, backendNameForPlatform());
+    const source = parsed.version === 4 ? parsed.v4 : parsed.v5;
+    assertTaskScheduleInputsSatisfyContract(source, relPath);
+    assertTaskScheduleCronValid(source, backendNameForPlatform());
     return [];
   } catch (cause) {
     return [

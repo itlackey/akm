@@ -642,7 +642,7 @@ function parseInputDeclaration(name: string, raw: ExecutionJsonValue, ctx: Bound
   });
 }
 
-function parseInputDeclarations(value: ExecutionJsonValue, ctx: BoundedDocumentContext): InputContract {
+export function parseInputDeclarations(value: ExecutionJsonValue, ctx: BoundedDocumentContext): InputContract {
   const input = asRecord(value, ctx, ["inputs"]);
   const names = Object.keys(input);
   const result: Record<string, InputDeclaration> = {};
@@ -758,10 +758,11 @@ function parseScheduleEntry(
   index: number,
   contract: InputContract,
   ctx: BoundedDocumentContext,
+  entryKeys: readonly string[],
 ): TaskSourceV4ScheduleBinding {
   const entryPath = ["schedule", index];
   const entry = asRecord(entryRaw, ctx, entryPath);
-  checkKeys(entry, TASK_SOURCE_V4_SCHEDULE_KEYS, ctx, entryPath);
+  checkKeys(entry, entryKeys, ctx, entryPath);
   if (!own(entry, "cron")) sourceError(ctx, [...entryPath, "cron"], "is required.");
   const cron = stringField(entry.cron, ctx, [...entryPath, "cron"], { nonempty: true }) as string;
   noGithubExpression(cron, ctx, [...entryPath, "cron"]);
@@ -799,10 +800,12 @@ function parseScheduleEntry(
   return Object.freeze({ cron, inputs: inputsLiteral, source: `schedule[${index}].cron`, ordinal: index });
 }
 
-function parseSchedule(
+/** `entryKeys` is the closed key set of one list entry: task source v4's, or a later grammar's superset of it. */
+export function parseSchedule(
   input: ExecutionJsonObject,
   contract: InputContract,
   ctx: BoundedDocumentContext,
+  entryKeys: readonly string[] = TASK_SOURCE_V4_SCHEDULE_KEYS,
 ): readonly TaskSourceV4ScheduleBinding[] {
   if (!own(input, "schedule")) return Object.freeze([]);
   const raw = presentJsonValue(input.schedule, ctx, ["schedule"]);
@@ -824,7 +827,7 @@ function parseSchedule(
   if (raw.length > TASK_V3_MAX_SCHEDULES) {
     sourceError(ctx, ["schedule"], `accepts at most ${TASK_V3_MAX_SCHEDULES} entries.`);
   }
-  const bindings = raw.map((entryRaw, index) => parseScheduleEntry(entryRaw, index, contract, ctx));
+  const bindings = raw.map((entryRaw, index) => parseScheduleEntry(entryRaw, index, contract, ctx, entryKeys));
   return Object.freeze(bindings);
 }
 
