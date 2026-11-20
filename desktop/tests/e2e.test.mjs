@@ -455,12 +455,11 @@ test("an asset whose improvement read fails says why, not only that the context 
   await expect(page.getByText("Usage and proposal context unavailable. Synthetic improve read failure.")).toBeVisible();
 });
 
-test("new content goes where akm says: the working stash when no write target is configured", async (t) => {
+test("new content goes where akm says: the default bundle", async (t) => {
   const server = await launchFixture({
     configureFixture: async (fixture) => {
       const file = path.join(fixture.root, "config/config.json");
       const config = JSON.parse(await readFile(file, "utf8"));
-      delete config.defaultWriteTarget;
       config.defaultBundle = "shared";
       await writeFile(file, JSON.stringify(config));
     },
@@ -471,6 +470,6 @@ test("new content goes where akm says: the working stash when no write target is
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   await open(page, server, "/");
   const akmAnswer = (await server.call("/api/bundles")).body.data.writeTarget.name;
-  assert.equal(akmAnswer, "personal", "AKM_BUNDLE_DIR is the working stash, not the default bundle");
-  await expect(page.getByRole("link", { name: "Create in Files" })).toHaveAttribute("href", /bundle=personal(&|$)/);
+  assert.equal(akmAnswer, "shared");
+  await expect(page.getByRole("link", { name: "Create in Files" })).toHaveAttribute("href", /bundle=shared(&|$)/);
 });

@@ -168,7 +168,7 @@ test("Review: Refresh confirms politely and keeps focus; a toast clears the deci
 
 test("Review: a missing state database is unavailable with its reason, never 'All caught up'", async (t) => {
   const server = await launchFixture({
-    configureFixture: async (fixture) => fs.rm(path.join(fixture.env.AKM_DATA_DIR, "state.db"), { force: true }),
+    configureFixture: async (fixture) => fs.rm(path.join(fixture.root, "data", "state.db"), { force: true }),
   });
   t.after(() => server.stop());
   const browser = await chromium.launch({ headless: true });

@@ -177,7 +177,7 @@ test("with no state.db the Runs, Usage and search-gap views say it is absent, no
   timeout: 240000,
 }, async (t) => {
   const server = await launchFixture({
-    configureFixture: async (fixture) => fs.rm(path.join(fixture.env.AKM_DATA_DIR, "state.db"), { force: true }),
+    configureFixture: async (fixture) => fs.rm(path.join(fixture.root, "data", "state.db"), { force: true }),
   });
   t.after(() => server.stop());
   const browser = await chromium.launch({ headless: true });
