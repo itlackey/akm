@@ -42,7 +42,7 @@ import { deepMergeConfig, isPlainObject } from "../core/config/deep-merge";
 import { ConfigError, UsageError } from "../core/errors";
 import { getConfigPath, getDefaultStashDir, isTransientStashPath } from "../core/paths";
 import { warn, warnOnce } from "../core/warn";
-import { buildIndex } from "../indexer/index-build";
+import { buildIndex, isSkippedIndexBuild } from "../indexer/index-build";
 import { readLockfile } from "../integrations/lockfile";
 import { checkEmbeddingAvailability } from "../llm/embedder";
 import { effectiveEmbedding } from "../llm/embedders/connection";
@@ -394,7 +394,7 @@ async function prepareLocalEmbeddings(config: AkmConfig, noProbe: boolean | unde
 async function indexConfiguredLibrary(stashDir: string): Promise<void> {
   if (!fs.existsSync(stashDir)) return;
   try {
-    await buildIndex({ stashDir, persistDetectedAdapters: false }, "wait");
+    await buildIndex({ stashDir, persistDetectedAdapters: false });
   } catch (err) {
     warn(`[akm setup] The search index was not built (${toErrorMessage(err)}); run \`akm index\` to build it.`);
   }
@@ -733,15 +733,19 @@ export async function runSetupWizard(opts?: {
   const spin = p.spinner();
   spin.start("Building search index...");
   try {
-    const indexResult = await buildIndex({ stashDir }, "wait");
-    spin.stop(`Indexed ${indexResult.totalEntries} assets.`);
-    if (savedConfig.semanticSearchMode === "auto") {
-      if (indexResult.verification.ok) {
-        p.log.success(indexResult.verification.message);
-      } else {
-        p.log.warn(indexResult.verification.message);
-        if (indexResult.verification.guidance) {
-          p.log.info(indexResult.verification.guidance);
+    const indexResult = await buildIndex({ stashDir });
+    if (isSkippedIndexBuild(indexResult)) {
+      spin.stop("Another index build is running; run `akm index` afterwards to index this library.");
+    } else {
+      spin.stop(`Indexed ${indexResult.totalEntries} assets.`);
+      if (savedConfig.semanticSearchMode === "auto") {
+        if (indexResult.verification.ok) {
+          p.log.success(indexResult.verification.message);
+        } else {
+          p.log.warn(indexResult.verification.message);
+          if (indexResult.verification.guidance) {
+            p.log.info(indexResult.verification.guidance);
+          }
         }
       }
     }

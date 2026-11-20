@@ -18,7 +18,7 @@ import {
   resolveSecret,
 } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
-import { buildIndex } from "../../indexer/index-build";
+import { buildIndex, isSkippedIndexBuild, skippedIndexReport } from "../../indexer/index-build";
 import { deriveBundleId } from "../../indexer/installations";
 import { readLockfile, removeLockEntry, upsertLockEntry } from "../../integrations/lockfile";
 import { parseRegistryRef } from "../../registry/resolve";
@@ -123,7 +123,7 @@ async function addLocalSource(
     return { ...config, bundles: placeBundle(bundles, bundleKey, entry, position) };
   });
 
-  const index = await buildIndex({ stashDir }, "wait");
+  const index = await buildIndex({ stashDir });
   const updatedConfig = loadConfig();
 
   return {
@@ -140,13 +140,15 @@ async function addLocalSource(
     config: {
       sourceCount: getSources(updatedConfig).length,
     },
-    index: {
-      mode: index.mode,
-      totalEntries: index.totalEntries,
-      directoriesScanned: index.directoriesScanned,
-      directoriesSkipped: index.directoriesSkipped,
-      ...(index.warnings?.length ? { warnings: index.warnings } : {}),
-    },
+    index: isSkippedIndexBuild(index)
+      ? { skipped: skippedIndexReport(index) }
+      : {
+          mode: index.mode,
+          totalEntries: index.totalEntries,
+          directoriesScanned: index.directoriesScanned,
+          directoriesSkipped: index.directoriesSkipped,
+          ...(index.warnings?.length ? { warnings: index.warnings } : {}),
+        },
   };
 }
 
@@ -215,7 +217,7 @@ async function addWebsiteSource(
     resolveSecret: storeSecretResolver.resolveSecret,
     ...(allowPrivateHosts ? { allowPrivateHosts: true } : {}),
   });
-  const index = await buildIndex({ stashDir }, "wait");
+  const index = await buildIndex({ stashDir });
   const updatedConfig = loadConfig();
 
   return {
@@ -232,13 +234,15 @@ async function addWebsiteSource(
     config: {
       sourceCount: getSources(updatedConfig).length,
     },
-    index: {
-      mode: index.mode,
-      totalEntries: index.totalEntries,
-      directoriesScanned: index.directoriesScanned,
-      directoriesSkipped: index.directoriesSkipped,
-      ...(index.warnings?.length ? { warnings: index.warnings } : {}),
-    },
+    index: isSkippedIndexBuild(index)
+      ? { skipped: skippedIndexReport(index) }
+      : {
+          mode: index.mode,
+          totalEntries: index.totalEntries,
+          directoriesScanned: index.directoriesScanned,
+          directoriesSkipped: index.directoriesSkipped,
+          ...(index.warnings?.length ? { warnings: index.warnings } : {}),
+        },
   };
 }
 
@@ -340,7 +344,7 @@ async function addRegistryStash(
     }
   }
 
-  const index = await buildIndex({ stashDir }, "wait");
+  const index = await buildIndex({ stashDir });
 
   return {
     schemaVersion: 1,
@@ -363,13 +367,15 @@ async function addRegistryStash(
     config: {
       sourceCount: getSources(updatedConfig).length,
     },
-    index: {
-      mode: index.mode,
-      totalEntries: index.totalEntries,
-      directoriesScanned: index.directoriesScanned,
-      directoriesSkipped: index.directoriesSkipped,
-      ...(index.warnings?.length ? { warnings: index.warnings } : {}),
-    },
+    index: isSkippedIndexBuild(index)
+      ? { skipped: skippedIndexReport(index) }
+      : {
+          mode: index.mode,
+          totalEntries: index.totalEntries,
+          directoriesScanned: index.directoriesScanned,
+          directoriesSkipped: index.directoriesSkipped,
+          ...(index.warnings?.length ? { warnings: index.warnings } : {}),
+        },
   };
 }
 

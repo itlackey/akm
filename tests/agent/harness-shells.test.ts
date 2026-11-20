@@ -46,13 +46,9 @@ const SHELLS: Record<string, Shell> = {
     modelFlag: true,
   },
   codex: {
-    headless: {
-      argv: ["codex", "exec", "--skip-git-repo-check", "--", PROMPT],
-    },
+    headless: { argv: ["codex", "exec", "--skip-git-repo-check", "-"], stdin: PROMPT },
     interactive: { argv: ["codex"] },
-    model: {
-      argv: ["codex", "exec", "--skip-git-repo-check", "--model", "m-1", "--", PROMPT],
-    },
+    model: { argv: ["codex", "exec", "--skip-git-repo-check", "--model", "m-1", "-"], stdin: PROMPT },
     modelFlag: true,
   },
   pi: {
@@ -235,11 +231,11 @@ describe("model work", () => {
   });
 
   test("codex: a read-only sandbox, whatever the config pins", () => {
-    const argv = build("codex", { prompt: PROMPT, modelWork: true, model: "m-1" }, [
+    const built = build("codex", { prompt: PROMPT, modelWork: true, model: "m-1" }, [
       "--sandbox",
       "danger-full-access",
-    ]).argv;
-    expect(argv).toEqual([
+    ]);
+    expect(built.argv).toEqual([
       "codex",
       "exec",
       "--sandbox",
@@ -247,9 +243,9 @@ describe("model work", () => {
       "--skip-git-repo-check",
       "--model",
       "m-1",
-      "--",
-      PROMPT,
+      "-",
     ]);
+    expect(built.stdin).toBe(PROMPT);
   });
 
   test("opencode on OpenCode 1: limited to reading and searching like OpenCode 2, no warning; the config's args left out, their model kept", async () => {

@@ -10,6 +10,7 @@
  * entry module" guard, and the plan is printed -- and apply run -- twice.
  */
 
+import path from "node:path";
 import { EXIT_CODES } from "../../src/cli/shared";
 import { UsageError } from "../../src/core/errors";
 import helpText from "./help.txt" with { type: "text" };
@@ -40,9 +41,10 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
       return;
     }
     case "apply": {
-      const unknown = rest.find((arg) => arg !== "--dry-run");
+      const unknown = rest.find((arg) => arg.startsWith("-") && arg !== "--dry-run");
       if (unknown !== undefined) throw new UsageError(`\`apply\` does not accept ${unknown}.`, "INVALID_FLAG_VALUE");
-      printPlan(await runMigration({ apply: !rest.includes("--dry-run") }));
+      const taskFiles = rest.filter((arg) => arg !== "--dry-run").map((file) => path.resolve(file));
+      printPlan(await runMigration({ apply: !rest.includes("--dry-run"), taskFiles }));
       return;
     }
     default:

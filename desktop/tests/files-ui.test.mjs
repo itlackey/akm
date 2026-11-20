@@ -473,8 +473,13 @@ test("Settings counts a bundle's uncommitted files as the Files header does, fro
   await fs.writeFile(path.join(app.root, "personal/knowledge/two.md"), "# Two\n");
   assert.equal(await uncommitted(app, "personal"), 2);
   await go(page, "/settings/bundles");
-  await page.getByRole("link", { name: "Manage personal", exact: true }).click();
-  await expect(page.getByText("Uncommitted").locator("xpath=following-sibling::dd[1]")).toHaveText(/2 files/);
+  // The count is on the bundle's card in the list; the Manage page has no Git status.
+  await expect(
+    page
+      .getByRole("article", { name: "Bundle personal" })
+      .getByText("Uncommitted")
+      .locator("xpath=following-sibling::dd[1]"),
+  ).toHaveText(/2 files/);
 });
 
 test("Write this up makes a knowledge file in akm's write target through the same create as New, and opens the editor", async (t) => {
