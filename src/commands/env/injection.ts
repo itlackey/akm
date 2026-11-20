@@ -4,20 +4,23 @@
 
 /**
  * The repeatable `--env <ref>` and `--secret <ref>:<VAR>` flags of `akm run`
- * and `akm exec`: what they resolve to, and the one child spawn `akm exec`
- * makes. Env assets apply in the order given, then secrets over them; a later
+ * and `akm exec`: what they resolve to, and the one child run `akm exec`
+ * makes (`runProgram`). Env assets apply in the order given, then secrets over them; a later
  * flag wins over an earlier one for the same variable. Resolution keeps every
  * invariant of `resolveEnvBinding` (nothing is injected when a ref is missing;
  * audit events carry names only).
  */
 
-import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 import type { ArgsDef } from "citty";
 import { getParsedInvocation } from "../../cli/invocation";
 import { makeSecretRef, resolveSecretPath } from "../../core/env-secret-ref";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { readValue } from "../../core/secret-value";
+import { type ManagedSubprocessResult, runManagedSubprocess } from "../../core/subprocess";
+import { withRetries } from "../../execution/retry";
 import { resolveEnvBinding } from "./env-binding";
 
 export const INJECTION_ARGS = {
@@ -84,30 +87,65 @@ export function withoutInjectionFlags(rawArgs: readonly string[]): string[] {
   return kept;
 }
 
+/** Make `cwd` (and any parents) if missing and return it absolute; a relative one is from the folder akm was started in. */
+export function ensureWorkingFolder(cwd: string): string {
+  const folder = path.resolve(cwd);
+  fs.mkdirSync(folder, { recursive: true });
+  return folder;
+}
+
+export interface RunProgramOptions {
+  argv: readonly string[];
+  env: Record<string, string | undefined>;
+  cwd?: string;
+  timeoutMs?: number;
+  maxRetries?: number;
+  /** false: the child owns this terminal. true: its output comes back in the result. */
+  capture: boolean;
+  signal?: AbortSignal;
+}
+
 /**
- * Run `command` with `env`, on this terminal, and exit with its status. Never
- * through a shell; the child's own output is not akm's and is not scrubbed.
+ * Run `argv` with `env`, no shell: one program and its arguments. Each try gets the whole
+ * `timeoutMs`; a failed try (non-zero exit or timeout) is retried `maxRetries` times. A program
+ * that cannot be started is raised, never retried.
  */
-export function runChild(command: readonly string[], env: Record<string, string | undefined>): void {
-  const result = spawnSync(command[0] as string, command.slice(1), { stdio: "inherit", env });
-  if (result.error) {
-    const code = (result.error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") {
-      throw new NotFoundError(
-        `Command not found: ${command[0]}`,
-        "FILE_NOT_FOUND",
-        `Install '${command[0]}' or add its directory to PATH.`,
-      );
-    }
-    if (code === "EACCES") {
-      throw new ConfigError(
-        `Command not executable: ${command[0]}`,
-        "STASH_DIR_UNREADABLE",
-        `Add execute permission ('chmod +x ${command[0]}') or invoke via an interpreter.`,
-      );
-    }
-    throw result.error;
+export async function runProgram(options: RunProgramOptions): Promise<ManagedSubprocessResult> {
+  const { argv, env, maxRetries = 0 } = options;
+  const cwd = options.cwd === undefined ? undefined : ensureWorkingFolder(options.cwd);
+  const childEnv: Record<string, string> = {};
+  for (const [name, value] of Object.entries(env)) if (value !== undefined) childEnv[name] = value;
+  const result = await withRetries(
+    maxRetries,
+    () =>
+      runManagedSubprocess([...argv], {
+        capture: options.capture,
+        env: childEnv,
+        timeoutMs: options.timeoutMs ?? null,
+        ...(cwd !== undefined ? { cwd } : {}),
+        ...(options.signal ? { signal: options.signal } : {}),
+      }),
+    (r) => r.spawnError === undefined && (r.timedOut || r.aborted || r.exitCode !== 0),
+  );
+  if (result.spawnError) throw spawnFailure(argv[0] as string, result.spawnError);
+  return result;
+}
+
+function spawnFailure(program: string, error: Error): Error {
+  const code = (error as NodeJS.ErrnoException).code;
+  if (code === "ENOENT") {
+    return new NotFoundError(
+      `Command not found: ${program}`,
+      "FILE_NOT_FOUND",
+      `Install '${program}' or add its directory to PATH.`,
+    );
   }
-  // Not `process.exit`: the CLI's own cleanup still runs before the process ends with the child's status.
-  process.exitCode = result.status ?? 0;
+  if (code === "EACCES") {
+    return new ConfigError(
+      `Command not executable: ${program}`,
+      "STASH_DIR_UNREADABLE",
+      `Add execute permission ('chmod +x ${program}') or invoke via an interpreter.`,
+    );
+  }
+  return error;
 }

@@ -129,4 +129,73 @@ describe("akm exec", () => {
       "akm secret run is deprecated and is removed in 0.11: use `akm exec --secret <ref>:<VAR> -- <command>`",
     );
   });
+
+  test("one argument is a shell line; several are a program and arguments, unsplit", () => {
+    const stash = makeStash({});
+    expect(akm(stash, ["exec", "--", "echo one | tr a-z A-Z"]).stdout).toBe("ONE\n");
+    const many = akm(stash, ["exec", "--", "printf", "%s|", "a b", "$HOME", "c;d"]);
+    expect(many.stdout).toBe("a b|$HOME|c;d|");
+  });
+
+  test("the child's exit status is the command's", () => {
+    expect(akm(makeStash({}), ["exec", "--", "exit 7"]).status).toBe(7);
+  });
+
+  test("--cwd runs there; a missing nested folder is made and kept, relative from where akm started", () => {
+    const stash = makeStash({});
+    const base = fs.mkdtempSync(path.join(stash, "cwd-"));
+    const abs = path.join(base, "a", "b");
+    const first = akm(stash, ["exec", "--cwd", abs, "--", "pwd"]);
+    expect(fs.realpathSync(first.stdout.trim())).toBe(fs.realpathSync(abs));
+    expect(fs.existsSync(abs)).toBe(true);
+    const rel = path.relative(repoRoot, path.join(base, "r", "s"));
+    akm(stash, ["exec", "--cwd", rel, "--", "true"]);
+    expect(fs.existsSync(path.join(base, "r", "s"))).toBe(true);
+  });
+
+  test("--timeout stops the command at the limit and the status says so", () => {
+    const started = Date.now();
+    const { status, stderr } = akm(makeStash({}), ["exec", "--timeout", "500ms", "--", "sleep", "30"]);
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(status).toBe(124);
+    expect(stderr).toContain("timed out after 500ms");
+  });
+
+  test("--max-retries runs a failing command exactly N more times and stops on success", () => {
+    const stash = makeStash({});
+    const log = path.join(stash, "tries");
+    const failing = akm(stash, ["exec", "--max-retries", "2", "--", `echo x >> '${log}'; exit 3`]);
+    expect(failing.status).toBe(3);
+    expect(fs.readFileSync(log, "utf8").split("\n").filter(Boolean)).toHaveLength(3);
+    const flaky = path.join(stash, "flaky");
+    const once = akm(stash, [
+      "exec",
+      "--max-retries",
+      "5",
+      "--",
+      `test -e '${flaky}' || { touch '${flaky}'; exit 1; }`,
+    ]);
+    expect(once.status).toBe(0);
+  });
+
+  test("--inherit alone starts the child clean plus the named variables", () => {
+    const { stdout } = akm(makeStash({}), ["exec", "--inherit", "KEEP_ME", "--", ...print("KEEP_ME", "DROP_ME")], {
+      KEEP_ME: "kept",
+      DROP_ME: "dropped",
+    });
+    expect(stdout).toBe("kept||");
+  });
+
+  test("--clean keeps akm's location variables but not AKM_BUNDLE_DIR", () => {
+    const stash = makeStash({});
+    const { stdout } = akm(stash, [
+      "exec",
+      "--clean",
+      "--",
+      ...print("AKM_CONFIG_DIR", "AKM_DATA_DIR", "AKM_CACHE_DIR", "AKM_STATE_DIR", "AKM_BUNDLE_DIR"),
+    ]);
+    const [config, data, cache, state, bundle] = stdout.split("|");
+    expect([config, data, cache, state].every((v) => v && path.isAbsolute(v))).toBe(true);
+    expect(bundle).toBe("");
+  });
 });

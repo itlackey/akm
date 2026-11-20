@@ -2,6 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import { akmLocations } from "../../core/paths";
+
 /**
  * What `env run --clean` / `secret run --clean` keeps of the parent environment. The user typed
  * the flag to get a minimal one; without the last eight names Windows cannot create the process.
@@ -60,6 +62,9 @@ export function buildChildEnv(
     for (const key of CLEAN_ENV_ALLOWLIST) {
       if (parentEnv[key] !== undefined) base[key] = parentEnv[key];
     }
+    // The child that runs `akm` must find this installation; AKM_BUNDLE_DIR is a retired selector, not a location to keep.
+    const { AKM_BUNDLE_DIR: _bundleDir, ...locations } = akmLocations();
+    Object.assign(base, locations);
   }
 
   for (const key of options.inherit) {
