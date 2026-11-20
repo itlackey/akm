@@ -27,7 +27,7 @@ The command returns the entry count, per-phase timings, warnings, the `--clean` 
 - **Incremental** (default). A run is incremental when the index was built before for the same bundle directory. A directory is skipped when its file-set fingerprint, mtimes, and adapter variant (`<adapter id>@<version>`) match the stored `index_dir_state` row. In a drained directory a file whose content hash, path, and adapter are unchanged keeps its stored row, vector, and enrichment.
 - **Full** (`--full`, or the first run for a bundle directory). Drains every directory and upserts every entry. Upserts preserve `entries.id`, so vectors, utility scores, and usage links stay attached to unchanged entries.
 - `--reembed` discards every stored vector and re-embeds all entries.
-- `--skip-if-locked` exits 0 without indexing when another build holds the rebuild lock; without it `akm index` waits for that build, then builds.
+- `akm index` never waits for another build: when one holds the rebuild lock it prints that it skipped, reports `skipped` and exits 0. `--skip-if-locked` is accepted, warned once as deprecated, and ignored.
 
 ## Walking
 
@@ -65,18 +65,20 @@ search returns the indexed file.
 
 ## Who builds the index
 
-One function builds the live index: `buildIndex` (`src/indexer/index-build.ts`). It takes the rebuild lock, `$DATA/index.rebuild.lock` (`src/indexer/index-rebuild-lock.ts`, PID liveness only, a dead holder is reclaimed at once), runs `akmIndex`, and releases the lock. At most one build runs at a time on a host. It has two modes:
+One function builds the live index: `buildIndex` (`src/indexer/index-build.ts`). It takes the rebuild lock, `$DATA/index.rebuild.lock` (`src/indexer/index-rebuild-lock.ts`, PID liveness only, a dead holder is reclaimed at once), runs `akmIndex`, and releases the lock. At most one build runs at a time on a host. When a live process holds the lock, a build does not wait and does not fail: it warns, builds nothing and returns a skipped result naming the holder, and the caller carries on with the index as it is. The next build indexes whatever changed.
 
-| Mode | Callers | When a live process holds the lock |
-| --- | --- | --- |
-| `wait` | `akm index`, `akm setup` (the wizard, `--yes` and `--from`), `bundle add`, `bundle update`, `bundle remove`, `source add` | Prints a notice, polls every 100 ms, repeats the notice every 15 seconds, and builds when the lock frees. After 10 minutes (the asset mutation lease's bound) it fails with `INDEX_DB_CONTENDED` (exit 75). |
-| `try` | `akm index --skip-if-locked` (the shipped `index-refresh` task), `improve`'s pre-run index and its reindex after memory cleanup | Does not build. `akm index` exits 0 with `skipped`; `improve` plans on the entries the index has and adds a warning. |
+| Caller | When a live process holds the lock |
+| --- | --- |
+| `akm index` | Prints the skip, outputs `{ ok: true, skipped: { reason: "lock-held", pid, launcherPid, startedAt } }` and exits 0. |
+| `bundle add`, `bundle update`, `bundle remove`, `source add` | The change is kept; the response's `index` field is `{ skipped: ... }` and a warning says the bundle's index was not refreshed. |
+| `akm setup` | Says another build is running and names `akm index`; setup succeeds. |
+| `improve`'s pre-run index and its reindex after memory cleanup | Plans on the entries the index has and adds a warning. |
 
-`akm upgrade` spawns a plain `akm index`, which waits. Reads never build: see below.
+`akm upgrade` spawns a plain `akm index`, which skips the same way. Reads never build: see below.
 
 Non-interactive setup builds the index for the library it configured, when that directory exists; a failed build is a one-line warning naming `akm index`, never a failed setup.
 
-`bundle update` publishes a new revision and indexes it under the asset mutation lease. It takes the rebuild lock first (`withIndexBuildLock`, which hands the caller a `build` that runs under that lock) and holds it across publish and index, so lock order is always the rebuild lock, then the lease, and no path waits for the rebuild lock while holding the lease. If the index step fails after the publish, the update says the bundle was updated and its index not refreshed, then rethrows the original error; `akm index` or the next scheduled build indexes it.
+`bundle update` publishes a new revision and indexes it under the asset mutation lease. It takes the rebuild lock first (`withIndexBuildLock`, which hands the caller a `build` that runs under that lock) and holds it across publish and index, so lock order is always the rebuild lock, then the lease. When another process holds the rebuild lock, the update still publishes and its reindex is skipped. If the index step fails after the publish, the update says the bundle was updated and its index not refreshed, then rethrows the original error; `akm index` or the next scheduled build indexes it.
 
 ## Usable index
 

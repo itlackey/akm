@@ -132,6 +132,10 @@ failed. The result is added to the run's state under the step's name. A task's
 result is its last step's; `akm run` returns it as `result` in the `task-run`
 output.
 
+A failed step's reason ends with the last line its program wrote to standard
+error. The run's history and `akm doctor explain` name each step's kind by the
+key the step is written with: `run`, `exec` or `prompt`.
+
 **`${name}`.** `${name}` names an input or an earlier step. akm fills it in
 once, inside the text of `prompt:` or `arguments:`, or as a whole item of
 `args:`, which is then one argument whatever it holds. Text goes in as it is;

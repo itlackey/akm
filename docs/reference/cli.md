@@ -163,7 +163,7 @@ Every command exits with one of the following codes:
 | 2 | Usage / bad input | `UsageError` |
 | 4 | Health warning (`akm doctor`, or the Deprecated `akm health`) | — |
 | 70 | Internal / unclassified error | unexpected throw |
-| 75 | Transient — retry shortly (sysexits `EX_TEMPFAIL`); another akm process holds a lock or is writing `state.db` or `index.db` right now (`akm index` gives up after waiting 10 minutes for a running build), not a bad command line. `search`, `curate` and `show` do not exit 75 because the index is cold or being built: they never build and never wait | `TransientError` |
+| 75 | Transient — retry shortly (sysexits `EX_TEMPFAIL`); another akm process holds a lock or is writing `state.db` or `index.db` right now (the asset mutation lease, held by another writer, gives up after 10 minutes), not a bad command line. `search`, `curate` and `show` do not exit 75 because the index is cold or being built: they never build and never wait | `TransientError` |
 | 78 | Configuration error | `ConfigError` |
 
 Failures classified by akm emit a JSON error envelope on **stderr** before
@@ -1704,8 +1704,8 @@ or workflow may still be running from it) and removes older ones. A revision
 directory another bundle still references is kept.
 
 An update takes the index rebuild lock before it publishes and holds it across
-the publish and the reindex, so it waits for a running build before it touches
-anything. If the reindex fails after the bundle was published, the update warns
+the publish and the reindex. When another process already holds it, the update
+still publishes and skips the reindex, reporting `index.skipped`. If the reindex fails after the bundle was published, the update warns
 that the bundle was updated but its index was not refreshed, then fails with the
 original error; `akm index` or the next scheduled build indexes it.
 
