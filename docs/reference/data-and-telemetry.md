@@ -236,8 +236,9 @@ outside learning, feedback and ranking; the only thing sent from them is the
 ## Daily usage report
 
 On by default. Once a day each, the CLI and AKM Desktop send a report to a
-self-hosted [Aptabase](https://aptabase.com) at `https://reporting.fwdslsh.dev`.
-It shows which parts of akm are used, so the unused ones can be dropped.
+privately hosted service run by the akm maintainers. It holds no personal
+information. It shows which parts of akm are used, so the unused ones can be
+dropped.
 
 **What can be in it.** Apart from the system fields below, every value in a
 report is a number. Every name in it (an event's name, a count's name) is built
@@ -292,10 +293,9 @@ bundle's name or a file.
   install id as the session id, and the time the report was sent.
 - **Never sent:** queries, refs, paths, bundle names, argument values, secrets,
   the host or user name, or any asset content.
-- **What the server keeps:** Aptabase keeps the events and derives country,
-  region and city from the request's IP address. It does not store the IP
-  address; it stores a one-day user id hashed from it with a salt it changes
-  daily.
+- **What the service keeps:** the events, and the country, region and city it
+  derives from the request's IP address. It does not store the IP address; it
+  stores a one-day id hashed from it with a salt it changes daily.
 - **Seeing what happened:** `akm doctor metrics usage` shows, under `report`,
   each surface's last try (`last_day`), the last day whose counts the server
   accepted (`through`), and what the last try came to (`last_outcome`: `sent`,

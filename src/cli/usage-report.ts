@@ -3,9 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The daily usage report: at most once per surface (`cli`, `desktop`) per UTC day, to the owner's self-hosted
- * Aptabase. Each surface sends one `<surface>_daily` event (what is set up, how big the library is), and the CLI
- * one event per command that ran (`akm task run`) with its counts.
+ * The daily usage report: at most once per surface (`cli`, `desktop`) per UTC day, to akm's privately hosted
+ * reporting service. Each surface sends one `<surface>_daily` event (what is set up, how big the library is), and
+ * the CLI one event per command that ran (`akm task run`) with its counts.
  *
  * What may be sent is decided here and nowhere else. Every prop value is a number. Every event name and prop key is
  * built from akm's own definitions: its command tree, its declared flags and their closed value lists, its harness
@@ -27,13 +27,13 @@ import { getEntryCountByType } from "../storage/repositories/index-entries-repos
 import { pkgVersion } from "../version";
 import { CLI_USAGE_SOURCES, EXIT_CATEGORIES, openUsage, readUsage, type UsageCommand } from "./usage";
 
-// The Aptabase app key is write-only and public by design (it ships in every Aptabase SDK). The host is fixed:
-// no environment variable or config key can redirect it.
+// The app key is write-only and public by design. The host is fixed: no environment variable or config key can
+// redirect it.
 const ENDPOINT = "https://reporting.fwdslsh.dev/api/v0/events";
 const APP_KEY = "A-SH-4111202318";
 const SEND_TIMEOUT_MS = 1500;
 const DAY_MS = 86_400_000;
-// Aptabase refuses a request with more events, and drops an event that has a longer prop key.
+// The service refuses a request with more events, and drops an event that has a longer prop key.
 const BATCH_MAX = 25;
 const KEY_MAX = 40;
 
@@ -47,7 +47,7 @@ const NAMED_VALUES: Record<string, readonly string[]> = {
 };
 
 type Counts = Record<string, number>;
-/** Add to a count. A key over Aptabase's limit is left out, since the server would drop the whole event for it. */
+/** Add to a count. A key over the service's limit is left out, since it would drop the whole event for it. */
 function add(counts: Counts, key: string, n: number) {
   if (n && key.length <= KEY_MAX) counts[key] = (counts[key] ?? 0) + n;
 }
@@ -282,7 +282,7 @@ function systemProps(version: string) {
 }
 
 /**
- * POST the events, at most 25 a request, all inside one time limit. Aptabase answers a request it refuses with a
+ * POST the events, at most 25 a request, all inside one time limit. The service answers a request it refuses with a
  * 4xx, and an App-Key it does not know with a 200 whose body carries `error`: both are rejections. A report over 25
  * events goes in several requests; when only some arrive the report is not accepted, and the next one sends those
  * commands' counts again.

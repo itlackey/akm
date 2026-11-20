@@ -267,7 +267,8 @@ the migration guide tracks the data contract, retention, and verification.
 ### Daily usage report (Experimental)
 
 0.10.x also sends one anonymous report a day per surface (the CLI and AKM Desktop, through
-`akm-cli/workspace` `activity.reportUsage`) to a self-hosted Aptabase, under a random install id: counts
+`akm-cli/workspace` `activity.reportUsage`) to a privately hosted service, under a random install id and
+with no personal information: counts
 of the commands and flags used from the data above, what is set up, and library sizes, never argument
 values, refs, paths or names. It is on by default and
 `usage.report: false` in the config file turns it off; `--read-only`, `usage.capture: false`, CI and
