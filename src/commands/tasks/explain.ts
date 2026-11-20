@@ -97,7 +97,9 @@ import { parseTaskSource } from "../../tasks/source/parse-task-source";
 import { projectTaskSourceV4 } from "../../tasks/source/project-v4";
 import { TASK_INPUT_DIAGNOSTICS } from "../../tasks/source/task-input-diagnostics";
 import { validateTaskConceptId, validateTaskId } from "../../tasks/task-id";
-import { refuseRunningTaskV5 } from "../../tasks/v5/source";
+import { checkTaskV5 } from "../../tasks/v5/check";
+import type { TaskV5Start } from "../../tasks/v5/flags";
+import { type TASK_SOURCE_V5_VERSION, type TaskSourceV5Document, taskV5StepKey } from "../../tasks/v5/source";
 import { detectSecretShapedParams } from "../../workflows/exec/param-secrets";
 import { prepareCommandInvocation } from "../command/command-execution";
 import { parseTaskRef, resolveTaskReadBundle, taskIdForAdapter } from "./tasks";
@@ -105,6 +107,8 @@ import { parseTaskRef, resolveTaskReadBundle, taskIdForAdapter } from "./tasks";
 export interface TaskExplainOptions {
   readonly target?: string;
   readonly inputFlags?: readonly InputFlag[];
+  /** What a start of a version 5 task is given: its inputs and its `--env`, `--secret` and `--timeout`. Read only for one. */
+  readonly start?: () => TaskV5Start;
 }
 
 type SuppliedValueProvenance = "default" | "flag";
@@ -153,7 +157,7 @@ type TaskExplainTarget = Readonly<{
   steps?: readonly Readonly<{ name: string; kind: string; ref?: string }>[];
 }>;
 
-export interface TaskExplainEnvelope {
+export interface TaskExplainEnvelopeV4 {
   readonly ref: string;
   readonly taskId: string;
   readonly bundleName: string;
@@ -167,6 +171,28 @@ export interface TaskExplainEnvelope {
   readonly execution: ExecutionSettingsSection;
   readonly schedule: readonly ScheduleBindingRow[];
 }
+
+interface ScheduleBindingRowV5 extends ScheduleBindingRow {
+  readonly env?: readonly string[];
+  readonly secret?: readonly string[];
+  readonly timeout?: string | number;
+}
+
+/** A version 5 task that passed the check a start makes, for the inputs and flags given, with its steps. */
+export interface TaskExplainEnvelopeV5 {
+  readonly ref: string;
+  readonly taskId: string;
+  readonly bundleName: string;
+  readonly sourcePath: string;
+  readonly sourceVersion: typeof TASK_SOURCE_V5_VERSION;
+  readonly name?: string;
+  readonly description?: string;
+  readonly inputDeclarations: Readonly<Record<string, InputDeclarationRow>>;
+  readonly steps: readonly Readonly<{ name: string; kind: string; ref?: string }>[];
+  readonly schedule: readonly ScheduleBindingRowV5[];
+}
+
+export type TaskExplainEnvelope = TaskExplainEnvelopeV4 | TaskExplainEnvelopeV5;
 
 function isSecretShapedValue(name: string, value: unknown): boolean {
   return detectSecretShapedParams({ [name]: value }).length > 0;
@@ -184,6 +210,23 @@ function isSecretShapedValue(name: string, value: unknown): boolean {
 function redactIfSecretShaped(name: string, value: unknown): Readonly<{ value: unknown; redacted?: boolean }> {
   if (!isSecretShapedValue(name, value)) return { value };
   return { value: "<redacted>", redacted: true };
+}
+
+/** A schedule entry's `inputs` as rows, each value redacted when it is secret-shaped. */
+function scheduleInputRows(inputs: Readonly<Record<string, unknown>>): Record<string, ScheduleInputRow> {
+  return Object.fromEntries(
+    Object.entries(inputs).map(([name, value]) => {
+      const redaction = redactIfSecretShaped(name, value);
+      return [
+        name,
+        {
+          value: redaction.value,
+          provenance: "schedule-binding" as const,
+          ...(redaction.redacted ? { redacted: true } : {}),
+        },
+      ];
+    }),
+  );
 }
 
 function declarationType(schema: Readonly<Record<string, unknown>>): string | undefined {
@@ -391,7 +434,16 @@ export async function akmTaskExplain(ref: string, options: TaskExplainOptions = 
   const sourcePath = owner.path;
   const yaml = fs.readFileSync(sourcePath, "utf8");
   const parsed = parseTaskSource({ yaml, filePath: sourcePath });
-  if (parsed.version !== 4) refuseRunningTaskV5(sourcePath);
+  if (parsed.version !== 4) {
+    return explainV5(parsed.v5, {
+      ref,
+      taskId: id,
+      conceptId: taskConceptId,
+      bundle: { name: bundle.source.name, dir: bundle.source.path },
+      sourcePath,
+      start: options.start?.() ?? { flags: {}, resume: false, skipIfLocked: false, inputs: options.inputFlags ?? [] },
+    });
+  }
 
   const inputContract: InputContract = parsed.v4.inputs ?? {};
   // `akm task run`'s
@@ -422,19 +474,7 @@ export async function akmTaskExplain(ref: string, options: TaskExplainOptions = 
     cron: entry.cron,
     enabled,
     source: entry.source,
-    inputs: Object.fromEntries(
-      Object.entries(entry.inputs).map(([name, value]) => {
-        const redaction = redactIfSecretShaped(name, value);
-        return [
-          name,
-          {
-            value: redaction.value,
-            provenance: "schedule-binding" as const,
-            ...(redaction.redacted ? { redacted: true } : {}),
-          },
-        ];
-      }),
-    ),
+    inputs: scheduleInputRows(entry.inputs),
   }));
 
   return {
@@ -450,5 +490,51 @@ export async function akmTaskExplain(ref: string, options: TaskExplainOptions = 
     suppliedInputs: buildSuppliedInputs(defaultedInputs, materializedInputs),
     execution: await resolveExecutionSettings(document, bundle.source.name),
     schedule,
+  };
+}
+
+/** The check `akm run` makes before a start (`checkTaskV5`), with the inputs and flags given, and the steps it runs. */
+async function explainV5(
+  document: TaskSourceV5Document,
+  where: {
+    ref: string;
+    taskId: string;
+    conceptId: string;
+    bundle: { name: string; dir: string };
+    sourcePath: string;
+    start: TaskV5Start;
+  },
+): Promise<TaskExplainEnvelopeV5> {
+  await checkTaskV5({
+    ref: where.conceptId,
+    bundle: where.bundle,
+    inputs: where.start.inputs,
+    flags: where.start.flags,
+  });
+  const enabled = isSchedulerRefEnabled(loadConfig(), makeBundleRef(where.bundle.name, where.conceptId));
+  return {
+    ref: where.ref,
+    taskId: where.taskId,
+    bundleName: where.bundle.name,
+    sourcePath: where.sourcePath,
+    sourceVersion: document.version,
+    ...(document.name !== undefined ? { name: document.name } : {}),
+    ...(document.description !== undefined ? { description: document.description } : {}),
+    inputDeclarations: buildInputDeclarations(document.inputs ?? {}),
+    steps: document.steps.map((step) => ({
+      name: step.name,
+      kind: taskV5StepKey(step),
+      ...(step.run !== undefined ? { ref: step.run } : {}),
+    })),
+    schedule: document.schedule.map((entry) => ({
+      ordinal: entry.ordinal,
+      cron: entry.cron,
+      enabled,
+      source: entry.source,
+      inputs: scheduleInputRows(entry.inputs),
+      ...(entry.env !== undefined ? { env: entry.env as readonly string[] } : {}),
+      ...(entry.secret !== undefined ? { secret: entry.secret } : {}),
+      ...(entry.timeout !== undefined ? { timeout: entry.timeout } : {}),
+    })),
   };
 }

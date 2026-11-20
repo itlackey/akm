@@ -20,6 +20,7 @@ import path from "node:path";
 import { makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
 import { compareCodePoints, toPosix } from "../core/common";
 import type { AkmConfig } from "../core/config/config-types";
+import { UsageError } from "../core/errors";
 import { prepareTaskV3Execution } from "./prepare/prepare";
 import type { PrepareTaskV3ExecutionContext } from "./prepare/prepared-execution";
 import type { ScheduleBackend } from "./schedule";
@@ -29,13 +30,18 @@ import {
   type InstalledSchedulerBinding,
   type SchedulerBinding,
   type SchedulerInstallOptions,
+  type SchedulerSourceSchedule,
+  type SchedulerStartFlags,
   schedulerBindingNativeId,
+  schedulerInputFlags,
   schedulerNativeBindingId,
 } from "./scheduler-binding";
 import { parseTaskSource } from "./source/parse-task-source";
 import { projectTaskSourceV4 } from "./source/project-v4";
+import type { TaskSourceV4Document } from "./source/task-source-v4";
 import { taskSourceErrorDetail } from "./source-v3";
-import { refuseRunningTaskV5 } from "./v5/source";
+import { checkTaskV5 } from "./v5/check";
+import type { TaskSourceV5Document, TaskSourceV5ScheduleBinding } from "./v5/source";
 
 /** One task source, bundle, or installed row that could not be reconciled. */
 export interface SchedulerSourceFailure {
@@ -99,38 +105,86 @@ async function compileTaskSources(
       // A task with no `schedule:` is run by hand or by a workflow step; it
       // contributes no binding and is not sync's to validate.
       if (parsed.schedule.length === 0) continue;
-      if (parsed.version !== 4) refuseRunningTaskV5(file);
-      assertTaskScheduleInputsSatisfyContract(parsed.v4, ref);
-      assertTaskScheduleCronValid(parsed.v4, input.backend);
-      // Project so a target that cannot resolve (a missing workflow, an
-      // unconfigured engine) is reported here rather than at fire time.
-      // Bindings compile from the original document: the projection drops
-      // `schedule[i].inputs`, which are delivered through the invocation tail.
-      await prepareTaskV3Execution(projectTaskSourceV4(parsed.v4), {
-        taskId: id,
-        taskRef: ref,
-        bundleName: input.bundleName,
-        bundleRoot: input.sourceRoot,
-        config: input.config ?? SCHEDULER_PROJECTION_CONFIG,
-        ...(input.resolveAsset ? { resolveAsset: input.resolveAsset } : {}),
-      });
-      desired.push(
-        ...compileTaskSchedulerBindings({
-          id,
-          qualifiedRef: ref,
-          schedules: parsed.v4.schedule.map((schedule) => ({
-            cron: schedule.cron,
-            ordinal: schedule.ordinal,
-            source: `${relative}:${schedule.source}`,
-            inputs: schedule.inputs,
-          })),
-        }),
-      );
+      const schedules =
+        parsed.version === 4
+          ? await compileV4Schedules(parsed.v4, { ...input, id, ref, relative })
+          : await compileV5Schedules(parsed.v5, { ...input, ref, conceptId, relative });
+      desired.push(...compileTaskSchedulerBindings({ id, qualifiedRef: ref, schedules }));
     } catch (cause) {
       const detail = taskSourceErrorDetail(cause);
       failures.push({ path: file, ref, reason: detail === errorMessage(cause) ? `${file}: ${detail}` : detail });
     }
   }
+}
+
+interface ScheduleCompileInput extends CompileSchedulerSourcesInput {
+  readonly ref: string;
+  readonly relative: string;
+}
+
+async function compileV4Schedules(
+  parsed: TaskSourceV4Document,
+  input: ScheduleCompileInput & { readonly id: string },
+): Promise<SchedulerSourceSchedule[]> {
+  assertTaskScheduleInputsSatisfyContract(parsed, input.ref);
+  assertTaskScheduleCronValid(parsed, input.backend);
+  // Project so a target that cannot resolve (a missing workflow, an
+  // unconfigured engine) is reported here rather than at fire time.
+  // Bindings compile from the original document: the projection drops
+  // `schedule[i].inputs`, which are delivered through the invocation tail.
+  await prepareTaskV3Execution(projectTaskSourceV4(parsed), {
+    taskId: input.id,
+    taskRef: input.ref,
+    bundleName: input.bundleName,
+    bundleRoot: input.sourceRoot,
+    config: input.config ?? SCHEDULER_PROJECTION_CONFIG,
+    ...(input.resolveAsset ? { resolveAsset: input.resolveAsset } : {}),
+  });
+  return parsed.schedule.map((schedule) => ({
+    cron: schedule.cron,
+    ordinal: schedule.ordinal,
+    source: `${input.relative}:${schedule.source}`,
+    inputs: schedule.inputs,
+  }));
+}
+
+/**
+ * Each entry is checked by `checkTaskV5`, the check a start makes, with the inputs and flags its tail gives the
+ * start. An entry that fails fails the task, named by its position: the task's installed rows are left as they are.
+ */
+async function compileV5Schedules(
+  document: TaskSourceV5Document,
+  input: ScheduleCompileInput & { readonly conceptId: string },
+): Promise<SchedulerSourceSchedule[]> {
+  assertTaskScheduleCronValid(document, input.backend);
+  const bundle = { name: input.bundleName, dir: input.sourceRoot };
+  const schedules: SchedulerSourceSchedule[] = [];
+  for (const entry of document.schedule) {
+    const start = scheduleStartFlags(entry);
+    try {
+      await checkTaskV5({ ref: input.conceptId, bundle, inputs: schedulerInputFlags(entry.inputs), flags: start });
+    } catch (cause) {
+      throw new UsageError(`schedule[${entry.ordinal}]: ${errorMessage(cause)}`, "TASK_SOURCE_INVALID");
+    }
+    schedules.push({
+      cron: entry.cron,
+      ordinal: entry.ordinal,
+      source: `${input.relative}:${entry.source}`,
+      inputs: entry.inputs,
+      start,
+    });
+  }
+  return schedules;
+}
+
+/** What `--env`, `--secret` and `--timeout` carry for a schedule entry. The reader takes only env asset refs in its `env:`. */
+function scheduleStartFlags(entry: TaskSourceV5ScheduleBinding): SchedulerStartFlags {
+  const env = (entry.env ?? []) as readonly string[];
+  return {
+    ...(env.length > 0 ? { env } : {}),
+    ...(entry.secret !== undefined && entry.secret.length > 0 ? { secret: entry.secret } : {}),
+    ...(entry.timeout !== undefined ? { timeout: entry.timeout } : {}),
+  };
 }
 
 /** Task candidates: `tasks/*.yml` for the akm adapter, every `.yml` in the tree for `akm-task`. */

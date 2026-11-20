@@ -433,6 +433,7 @@ export async function runTaskExplain(
   const result = await akmTaskExplain(args.ref, {
     ...(args.bundle !== undefined ? { target: args.bundle } : {}),
     inputFlags,
+    start: () => readV5Start(rawArgs, args.ref),
   });
   output("task-explain", result);
 }

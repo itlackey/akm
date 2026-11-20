@@ -136,6 +136,9 @@ export interface ParsedScheduledInvocation {
 
 const SCHEDULER_CONTEXT_ARG = "--scheduler-context";
 
+/** The start flags of a version 5 schedule entry that may repeat in a tail: one `--env` ref or `--secret` spec each. */
+const REPEATABLE_START_FLAGS: ReadonlySet<string> = new Set(["env", "secret"]);
+
 /** The installed argv: the launcher, then one already-validated public scheduler tail. */
 export function buildScheduledInvocation(akmArgv: readonly string[], invocation: readonly string[]): string[] {
   const parsed = parsePublicSchedulerInvocation(invocation);
@@ -267,7 +270,7 @@ function parsePublicSchedulerInvocation(
  *     token (does not start with `-`) — the earlier shape.
  *
  * In both forms `<name>` matches {@link INPUT_NAME_PATTERN} and no name
- * repeats. A bare flag, a repeated name, a flag-shaped value in the pair
+ * repeats, except `--env` and `--secret`, which a version 5 entry gives once per ref. A bare flag, a repeated name, a flag-shaped value in the pair
  * form, or a malformed token are all refused. This validates SHAPE only;
  * the real materialization against the task's declared contract happens
  * through the same `parseTaskInputFlags` + `materializeInputFlags` path
@@ -291,7 +294,7 @@ function isValidSchedulerInputFlagTail(tail: readonly string[]): boolean {
       index += 1;
       continue;
     }
-    if (!INPUT_NAME_PATTERN.test(body) || seen.has(body)) return false;
+    if (!INPUT_NAME_PATTERN.test(body) || (seen.has(body) && !REPEATABLE_START_FLAGS.has(body))) return false;
     const value = tail[index + 1];
     if (value === undefined || value.startsWith("-")) return false;
     seen.add(body);

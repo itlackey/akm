@@ -522,10 +522,9 @@ describe("schedule entries", () => {
   test("an entry may have env:, secret: and timeout:, which are written as the flags are", async () => {
     const known = { secrets: { "secrets/x": "v" }, envAssets: { "env/ok": { REGION: "eu" } } };
     const entry = (extra: object) => ({ exec: "true", schedule: [{ cron: "0 6 * * *", ...extra }] });
-    expect(
-      await lint(entry({ env: ["env/ok", { LOG_LEVEL: "info" }], secret: ["secrets/x:TOKEN"], timeout: "10m" }), known),
-    ).toBe("no error");
+    expect(await lint(entry({ env: ["env/ok"], secret: ["secrets/x:TOKEN"], timeout: "10m" }), known)).toBe("no error");
     expect(await lint(entry({ env: "env/ok" }), known)).toBe(BAD_OPTION);
+    expect(await lint(entry({ env: [{ LOG_LEVEL: "info" }] }), known)).toBe(BAD_OPTION);
     expect(await lint(entry({ secret: ["secrets/x"] }), known)).toBe(BAD_OPTION);
     expect(await lint(entry({ timeout: "soon" }), known)).toBe(BAD_OPTION);
     expect(await lint(entry({ colour: "red" }), known)).toBe(BAD_OPTION);

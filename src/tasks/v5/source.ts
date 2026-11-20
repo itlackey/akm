@@ -76,6 +76,14 @@ const FAMILY_KIND = { tasks: "tasks", commands: "commands", scripts: "scripts", 
 
 export type TaskV5RefKind = (typeof FAMILY_KIND)[keyof typeof FAMILY_KIND];
 export type TaskV5CommandKind = TaskV5RefKind | "exec" | "prompt";
+/** The key a step is written with, which the run's history and `doctor explain` show: `run:`, `exec:` or `prompt:`. */
+export function taskV5StepKey(step: {
+  readonly run?: string;
+  readonly kind: TaskV5CommandKind;
+}): "run" | "exec" | "prompt" {
+  if (step.run !== undefined) return "run";
+  return step.kind === "exec" ? "exec" : "prompt";
+}
 /** An `env:` entry: an env asset's ref, as `--env` takes, or one variable and its value. */
 export type TaskV5EnvEntry = string | Readonly<Record<string, string | number | boolean>>;
 
@@ -354,6 +362,12 @@ export function parseTaskSourceV5Document(
   const rawSchedule = Array.isArray(root.schedule) ? (root.schedule as Record<string, unknown>[]) : [];
   const schedule = bindings.map((binding, index) => {
     const entry = rawSchedule[index];
+    // An entry's env: is what --env is to a typed start, and --env takes an env asset's ref.
+    if (entry !== undefined && Array.isArray(entry.env)) {
+      for (const [at, item] of entry.env.entries()) {
+        if (typeof item !== "string") fail(["schedule", index, "env", at], "is an env asset's ref, as --env takes.");
+      }
+    }
     const extras =
       entry === undefined
         ? {}

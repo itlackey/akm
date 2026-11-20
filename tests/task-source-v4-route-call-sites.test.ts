@@ -250,7 +250,6 @@ const VALID_V5_TASK = [
   "",
 ].join("\n");
 const INVALID_V5_TASK = ["version: 5-beta.1", "run: scripts/x.sh", "exec: echo x", ""].join("\n");
-const RUNS_LATER = /running version 5 tasks arrives in a later build/;
 
 describe("a version: 5-beta.1 task through the read-only call sites", () => {
   test("taskDiagnostics: a valid file is clean; a shape error, a schedule that fits no input and a cron the scheduler cannot read are each reported", () => {
@@ -352,26 +351,22 @@ describe("a version: 5-beta.1 task through the sites that import, run and schedu
     await expect(importTaskFile({ source, name: "other" })).rejects.toThrow("this build reads only 5-beta.1");
   });
 
-  test("task sync and task explain refuse it, saying running arrives in a later build, and task run loads it for the version 5 runner; the other tasks of the bundle go on", async () => {
+  test("task run loads it for the version 5 runner, and sync and explain read it", async () => {
     expect(await loadPreparedTask("nightly", { bundleDir: storage.stashDir, bundleName: "stash" })).toMatchObject({
       kind: "v5",
       taskId: "nightly",
       ref: "tasks/nightly",
     });
-    await expect(akmTaskExplain("nightly")).rejects.toThrow(RUNS_LATER);
-    writeFile(
-      path.join(storage.stashDir, "tasks", "other.yml"),
-      ["version: 4", "run: echo hi", "schedule: '@daily'", ""].join("\n"),
-    );
+    writeFile(path.join(storage.stashDir, "scripts", "look.sh"), "#!/bin/sh\necho hi\n");
+    expect(await akmTaskExplain("nightly")).toMatchObject({ sourceVersion: "5-beta.1", taskId: "nightly" });
     const plan = await compileSchedulerSources({
       sourceRoot: storage.stashDir,
       adapterId: "akm",
       bundleName: "stash",
       backend: "cron",
     });
-    expect(plan.failures.map((failure) => failure.ref)).toEqual(["stash//tasks/nightly"]);
-    expect(plan.failures[0]?.reason).toMatch(RUNS_LATER);
-    expect(plan.desired.map((binding) => binding.id)).toEqual(["other"]);
+    expect(plan.failures).toEqual([]);
+    expect(plan.desired.map((binding) => binding.id)).toEqual(["nightly"]);
   });
 
   test("task enable asks the file for its schedule", async () => {
