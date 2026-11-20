@@ -772,7 +772,7 @@ function environmentOf(
   document: TaskSourceV5Document,
   step: TaskSourceV5Step,
 ): Resolved {
-  const key = `${document.source.path}#${step.name}`;
+  const key = `${document.source.path}#${step.name}#${JSON.stringify(flags)}`;
   const cached = context.environments.get(key);
   if (cached) return cached;
   const inherit = [...(flags.inherit ?? []), ...(document.options.inherit ?? []), ...(step.options.inherit ?? [])];

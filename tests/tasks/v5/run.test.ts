@@ -229,6 +229,11 @@ describe("a run has one state", () => {
     expect([fs.existsSync(tampered), fs.existsSync(path.dirname(tampered))]).toEqual([false, false]);
   });
 
+  test("standard error is not a result", async () => {
+    const w = world({ tasks: { "tasks/t": { exec: "printf out; echo noise >&2" } } });
+    expect(await w.start("tasks/t")).toBe("out");
+  });
+
   test("${name} is filled in once: text a value brings in is not scanned again", async () => {
     let prompt = "";
     const w = world({
@@ -764,20 +769,29 @@ describe("every run has a working folder", () => {
   });
 
   test("akm makes a folder that cwd: or --cwd names if it is not there, and never removes it; lint makes nothing", async () => {
+    const made: boolean[] = [];
     const w = world({
+      commands: { "commands/c": "C $ARGUMENTS" },
       tasks: {
         "tasks/plain": { exec: "pwd" },
         "tasks/named": { cwd: at("made/by-task"), exec: "pwd" },
         "tasks/step": { steps: [{ name: "b", exec: "pwd", cwd: at("made/by-step") }] },
+        "tasks/prompt-asset": { steps: [{ name: "p", run: "commands/c", cwd: at("made/by-prompt-asset") }] },
         "tasks/lint-only": { cwd: at("made/by-lint"), exec: "pwd" },
+      },
+      agent: ({ cwd }) => {
+        made.push(fs.existsSync(cwd));
+        return "ok";
       },
     });
     const where = async (run: Promise<unknown>) => path.basename(((await run) as string).trim());
     expect(await where(w.start("tasks/plain", {}, { cwd: at("made/by-flag") }))).toBe("by-flag");
     expect(await where(w.start("tasks/named"))).toBe("by-task");
     expect(await where(w.start("tasks/step"))).toBe("by-step");
+    await w.start("tasks/prompt-asset");
+    expect(made).toEqual([true]);
     await w.lint("tasks/lint-only");
-    expect(fs.readdirSync(at("made")).sort()).toEqual(["by-flag", "by-step", "by-task"]);
+    expect(fs.readdirSync(at("made")).sort()).toEqual(["by-flag", "by-prompt-asset", "by-step", "by-task"]);
   });
 
   test("a run's own folder that cannot be made refuses the run; a step's own fails that step", async () => {
@@ -790,6 +804,7 @@ describe("every run has a working folder", () => {
     });
     await expect(w.start("tasks/run")).rejects.toThrow();
     expect(ran("run")).toBe(0);
+    expect(w.history()).toEqual([]); // refused: no run was recorded
     expect(await rule(w.start("tasks/step"))).toBe(RUN_FAILED);
     expect(ran("step")).toBe(0);
   });

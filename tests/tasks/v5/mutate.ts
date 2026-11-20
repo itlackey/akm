@@ -9,7 +9,7 @@
  * Words after it pick the breakages whose name holds one of them:  bun tests/tasks/v5/mutate.ts timeout retries
  *
  * The code is copied once to a temporary folder; each breakage is one exact-text replacement in that copy, tested with
- * `bun test tests/tasks/v5`, and undone. A snippet that does not match exactly once stops the run: the code moved and
+ * the checker's tests and then the runner's (`bun test`), and undone. A snippet that does not match exactly once stops the run: the code moved and
  * this table must follow it. A rule whose breakage no test notices prints NOT CAUGHT and the run exits 1.
  */
 
@@ -678,7 +678,7 @@ const MUTATIONS: readonly Mutation[] = [
     "filled text is scanned again",
     RUN,
     "(body in state ? asText(state[body]) : token)",
-    "(body in state ? fill(asText(state[body]), {}) : token)",
+    "(body in state ? fill(asText(state[body]), state) : token)",
   ),
   m(
     "a JSON value goes into a prompt as plain text",
@@ -1033,31 +1033,38 @@ fs.symlinkSync(path.join(ROOT, "node_modules"), path.join(work, "node_modules"))
 // scope, no swap) and a hard time limit; a run killed by either counts as caught.
 const MEMORY_MAX = "1G";
 const TIME_LIMIT_S = 90;
+// The checker's tests are quick and catch most breakages; the runner's tests run only when they pass.
+const TEST_FILES = ["tests/tasks/v5/model.test.ts", "tests/tasks/v5/run.test.ts"];
 const test = () => {
-  const run = spawnSync(
-    "systemd-run",
-    [
-      "--user",
-      "--scope",
-      "--quiet",
-      "-p",
-      `MemoryMax=${MEMORY_MAX}`,
-      "-p",
-      "MemorySwapMax=0",
-      "timeout",
-      "--kill-after=5",
-      String(TIME_LIMIT_S),
-      "bun",
-      "test",
-      "--timeout=20000",
-      "--bail",
-      "tests/tasks/v5",
-    ],
-    { cwd: work, encoding: "utf8" },
-  );
-  const text = `${run.stdout}${run.stderr}`;
-  const status = run.status === 124 || run.status === 137 ? "never finishes" : run.status;
-  return { status, failed: (text.match(/^\(fail\)/gm) ?? []).length };
+  let last = { status: 0 as number | string | null, failed: 0 };
+  for (const file of TEST_FILES) {
+    const run = spawnSync(
+      "systemd-run",
+      [
+        "--user",
+        "--scope",
+        "--quiet",
+        "-p",
+        `MemoryMax=${MEMORY_MAX}`,
+        "-p",
+        "MemorySwapMax=0",
+        "timeout",
+        "--kill-after=5",
+        String(TIME_LIMIT_S),
+        "bun",
+        "test",
+        "--timeout=20000",
+        "--bail",
+        file,
+      ],
+      { cwd: work, encoding: "utf8" },
+    );
+    const text = `${run.stdout}${run.stderr}`;
+    const status = run.status === 124 || run.status === 137 ? "never finishes" : run.status;
+    last = { status, failed: (text.match(/^\(fail\)/gm) ?? []).length };
+    if (last.status !== 0 || last.failed > 0) return last;
+  }
+  return last;
 };
 
 let missed = 0;
