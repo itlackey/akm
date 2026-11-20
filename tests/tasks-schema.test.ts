@@ -60,6 +60,7 @@ import {
   TASK_SOURCE_V4_VERSION,
 } from "../src/tasks/source/task-source-v4";
 import { TASK_RUN_RESERVED_FLAG_NAMES } from "../src/tasks/task-run-reserved-flags";
+import { parseTaskSourceV5Document, TASK_SOURCE_V5_VERSION } from "../src/tasks/v5/source";
 
 const root = path.resolve(import.meta.dir, "..");
 
@@ -74,15 +75,22 @@ function readTaskSchema(): JsonSchema {
   return JSON.parse(fs.readFileSync(path.join(root, "schemas", "akm-task.json"), "utf8")) as JsonSchema;
 }
 
+/** The version 4 shape, which the document root selects when `version` is not a string. */
+function v4Schema(schema: JsonSchema = readTaskSchema()): JsonSchema {
+  return schema.definitions.taskSourceV4 as JsonSchema;
+}
+
 test("published task schema pins the exact task source v4 top-level key set (D2-N7)", () => {
   const schema = readTaskSchema();
   const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 
-  expect(schema.properties.version?.const).toBe(TASK_SOURCE_V4_VERSION);
-  expect(schema.required).toEqual(["version"]);
-  expect(schema.additionalProperties).toBe(false);
-  expect(Object.keys(schema.properties).sort()).toEqual([...TASK_SOURCE_V4_TOP_LEVEL_KEYS].sort());
-  expect(schema.oneOf).toHaveLength(4);
+  const v4 = v4Schema(schema);
+
+  expect(v4.properties.version?.const).toBe(TASK_SOURCE_V4_VERSION);
+  expect(v4.required).toEqual(["version"]);
+  expect(v4.additionalProperties).toBe(false);
+  expect(Object.keys(v4.properties).sort()).toEqual([...TASK_SOURCE_V4_TOP_LEVEL_KEYS].sort());
+  expect(v4.oneOf).toHaveLength(4);
   expect(pkg.files).toContain("schemas");
   // D2-N7: the akm: bag and the on: trigger block are gone in v4 — the
   // published schema is single-arm now (P4 deleted the v3 arm), so this is
@@ -90,8 +98,8 @@ test("published task schema pins the exact task source v4 top-level key set (D2-
   // arm specifically."
   expect(TASK_SOURCE_V4_TOP_LEVEL_KEYS).not.toContain("akm");
   expect(TASK_SOURCE_V4_TOP_LEVEL_KEYS).not.toContain("on");
-  expect(Object.keys(schema.properties)).not.toContain("akm");
-  expect(Object.keys(schema.properties)).not.toContain("on");
+  expect(Object.keys(v4.properties)).not.toContain("akm");
+  expect(Object.keys(v4.properties)).not.toContain("on");
 });
 
 test("every published pattern is valid ECMAScript and the executable-ref pattern agrees with the production classifier", () => {
@@ -438,8 +446,9 @@ test("published task schema's definitions.jsonArray/jsonValue stay bounded at th
 
 test("published task schema's akm: options bag equivalents (timeout/redact) stay bounded at their parser limits", () => {
   const schema = readTaskSchema();
-  expect(schema.properties.redact?.maxItems).toBe(TASK_V3_MAX_REDACT_NAMES);
-  expect((schema.properties.timeout?.oneOf as JsonSchema[])[0]?.maximum).toBe(EXECUTION_MAX_TIMEOUT_MS);
+  const v4 = v4Schema(schema);
+  expect(v4.properties.redact?.maxItems).toBe(TASK_V3_MAX_REDACT_NAMES);
+  expect((v4.properties.timeout?.oneOf as JsonSchema[])[0]?.maximum).toBe(EXECUTION_MAX_TIMEOUT_MS);
 });
 
 test("published task schema's inputs: rejects every name akm task run reserves for its own flags (code-review finding)", () => {
@@ -465,4 +474,112 @@ test("published task schema's inputs: rejects every name akm task run reserves f
   expect(validate({ ...base, inputs: { ticket: { type: "string" } } }), JSON.stringify(validate.errors)).toBe(true);
   // `target` was reserved while `akm task run --target` existed; it is an ordinary input name now.
   expect(validate({ ...base, inputs: { target: { type: "string" } } }), JSON.stringify(validate.errors)).toBe(true);
+});
+
+// ── task source version 5 ───────────────────────────────────────────────────
+// The reader (`src/tasks/v5/source.ts`) is the authority: each document below is
+// checked against the published schema and against the reader, and both must give
+// the same verdict. What the reader leaves to `checkTaskV5` (that a ref exists,
+// that a step name is not an input's, two steps with one name) is not in the schema.
+
+const v5 = (rest: Record<string, unknown>) => ({ version: TASK_SOURCE_V5_VERSION, ...rest });
+
+function readsAsV5(document: unknown): boolean {
+  try {
+    parseTaskSourceV5Document(document, { filePath: "/b/tasks/x.yml" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const V5_VALID: Record<string, unknown> = {
+  "one exec line": v5({ exec: "echo hi" }),
+  "one prompt": v5({ prompt: "Summarize the repo", expect: ["summary"] }),
+  "an agent with its prompt": v5({ run: "agents/reviewer", prompt: "Review it", expect: ["verdict"] }),
+  "a prompt asset with arguments": v5({ run: "team//commands/review", arguments: "--fast" }),
+  "a script with args": v5({ run: "scripts/build", args: ["--target", 3, true] }),
+  "a task with input flags": v5({ run: "tasks/other", args: ["--scope", "all"] }),
+  "steps, options, inputs, lock and schedule": v5({
+    name: "nightly",
+    description: "d",
+    when_to_use: "w",
+    tags: ["a"],
+    lock: true,
+    inputs: { scope: { type: "string", default: "all" } },
+    env: ["env/ci", { MODE: "fast", RETRIES: 2, QUIET: true }],
+    secret: ["secrets/token:TOKEN"],
+    inherit: ["PATH"],
+    cwd: "/work",
+    timeout: "30m",
+    "max-retries": 2,
+    harness: "h",
+    connection: "c",
+    model: "m",
+    schedule: [
+      { cron: "0 4 * * *", inputs: { scope: "all" }, env: ["env/ci"], secret: ["secrets/t:T"], timeout: 60000 },
+    ],
+    steps: [
+      { name: "build", exec: "make", timeout: "5m" },
+      { name: "ask", prompt: "Look at ${build}", expect: ["ok"], model: "m2" },
+      { name: "sub", run: "tasks/other", args: ["--scope", "${scope}"] },
+    ],
+  }),
+  "a schedule given as one line": v5({ exec: "echo hi", schedule: "0 4 * * *" }),
+};
+
+const V5_INVALID: Record<string, unknown> = {
+  "a beta this build does not read": { version: "5-beta.2", exec: "echo hi" },
+  "no command": v5({}),
+  "steps with a top-level command": v5({ exec: "echo hi", steps: [{ name: "a", exec: "echo" }] }),
+  "empty steps": v5({ steps: [] }),
+  "a step without a name": v5({ steps: [{ exec: "echo" }] }),
+  "a step name with a space": v5({ steps: [{ name: "a b", exec: "echo" }] }),
+  "a step with two commands": v5({ steps: [{ name: "a", exec: "echo", prompt: "p" }] }),
+  "a step with run and exec": v5({ steps: [{ name: "a", run: "scripts/x", exec: "echo" }] }),
+  "run that is not a ref": v5({ run: "echo hi" }),
+  "run naming a workflow": v5({ run: "workflows/x" }),
+  "an agent without a prompt": v5({ run: "agents/reviewer" }),
+  "a script with a prompt": v5({ run: "scripts/build", prompt: "p" }),
+  "a prompt asset with args": v5({ run: "commands/review", args: ["x"] }),
+  "arguments on a script": v5({ run: "scripts/build", arguments: "x" }),
+  "args on exec": v5({ exec: "echo", args: ["x"] }),
+  "expect on exec": v5({ exec: "echo", expect: ["x"] }),
+  "expect on a script": v5({ run: "scripts/build", expect: ["x"] }),
+  "an args item that is a map": v5({ run: "scripts/build", args: [{ a: 1 }] }),
+  "an input named like a start flag": v5({ exec: "echo", inputs: { env: { type: "string" } } }),
+  "an input named like a reserved flag": v5({ exec: "echo", inputs: { format: { type: "string" } } }),
+  "lock that is not true or false": v5({ exec: "echo", lock: "yes" }),
+  "a timeout that is not a duration": v5({ exec: "echo", timeout: "soon" }),
+  "a zero timeout": v5({ exec: "echo", timeout: 0 }),
+  "max-retries below zero": v5({ exec: "echo", "max-retries": -1 }),
+  "inherit of a bad variable name": v5({ exec: "echo", inherit: ["1X"] }),
+  "a secret that is not <ref>:<VAR>": v5({ exec: "echo", secret: ["secrets/token"] }),
+  "env that is not a list": v5({ exec: "echo", env: "env/ci" }),
+  "a schedule env entry that is a map": v5({ exec: "echo", schedule: [{ cron: "0 4 * * *", env: [{ A: "b" }] }] }),
+  "a schedule entry with an unlisted key": v5({ exec: "echo", schedule: [{ cron: "0 4 * * *", cwd: "/x" }] }),
+  "a schedule input that is not a name": v5({ exec: "echo", schedule: [{ cron: "0 4 * * *", inputs: { "a b": 1 } }] }),
+};
+
+test("published task schema accepts what the version 5 reader accepts", () => {
+  const validate = new Ajv({ allErrors: true, strict: false }).compile(readTaskSchema());
+  for (const [label, document] of Object.entries(V5_VALID)) {
+    expect(readsAsV5(document), `reader: ${label}`).toBe(true);
+    expect(validate(document), `schema: ${label}: ${JSON.stringify(validate.errors)}`).toBe(true);
+  }
+});
+
+test("published task schema rejects what the version 5 reader rejects", () => {
+  const validate = new Ajv({ allErrors: true, strict: false }).compile(readTaskSchema());
+  for (const [label, document] of Object.entries(V5_INVALID)) {
+    expect(readsAsV5(document), `reader: ${label}`).toBe(false);
+    expect(validate(document), `schema: ${label}`).toBe(false);
+  }
+});
+
+test("published task schema keeps routing a version 4 document to the version 4 shape", () => {
+  const validate = new Ajv({ allErrors: true, strict: false }).compile(readTaskSchema());
+  expect(validate({ version: TASK_SOURCE_V4_VERSION, run: "echo hi" }), JSON.stringify(validate.errors)).toBe(true);
+  expect(validate({ version: TASK_SOURCE_V4_VERSION, exec: "echo hi" }), "a v5 key in a v4 file").toBe(false);
+  expect(validate({ version: TASK_SOURCE_V5_VERSION, uses: "commands/review" }), "a v4 key in a v5 file").toBe(false);
 });

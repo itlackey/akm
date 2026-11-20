@@ -163,7 +163,7 @@ Every command exits with one of the following codes:
 | 2 | Usage / bad input | `UsageError` |
 | 4 | Health warning (`akm doctor`, or the Deprecated `akm health`) | — |
 | 70 | Internal / unclassified error | unexpected throw |
-| 75 | Transient — retry shortly (sysexits `EX_TEMPFAIL`); another akm process holds a lock or is writing `state.db` or `index.db` right now (`akm index` gives up after waiting 10 minutes for a running build), not a bad command line. `search`, `curate` and `show` do not exit 75 because the index is cold or being built: they never build and never wait | `TransientError` |
+| 75 | Transient — retry shortly (sysexits `EX_TEMPFAIL`); another akm process holds a lock or is writing `state.db` or `index.db` right now (the asset mutation lease, held by another writer, gives up after 10 minutes), not a bad command line. `search`, `curate` and `show` do not exit 75 because the index is cold or being built: they never build and never wait | `TransientError` |
 | 78 | Configuration error | `ConfigError` |
 
 Failures classified by akm emit a JSON error envelope on **stderr** before
@@ -358,7 +358,6 @@ akm index --clean --dry-run # Report stale entries without deleting
 akm index --reembed  # Discard stored vectors and re-embed every entry
 akm index --export-vectors vectors.db  # Experimental: write the current model's vectors to a file (reads the index only)
 akm index --import-vectors vectors.db  # Experimental: index, storing vectors from the file instead of embedding matching entries
-akm index --skip-if-locked  # for scheduled/opportunistic runs: skip (exit 0) instead of waiting for a build already in progress
 ```
 
 Returns stats: `totalEntries`, `generatedMetadata`, `directoriesScanned`,
@@ -446,32 +445,24 @@ indexes normally; a single row of the wrong width is a silent miss. `--reembed` 
 does semantic search off; both warn. With both flags, the export runs and the
 import is ignored with a warning.
 
-**One build at a time, and `--skip-if-locked`:** Every build takes a
-PID-liveness-only rebuild lock and releases it on exit (see
+**One build at a time:** Every build takes a PID-liveness-only rebuild lock and
+releases it on exit (see
 [Indexing](https://github.com/itlackey/akm/blob/main/docs/architecture/internals/indexing.md#who-builds-the-index)).
-A plain `akm index` that finds a live build holding it prints a notice,
-waits (repeating the notice every 15 seconds), and builds when the lock
-frees; it never builds beside the running one. After 10 minutes it gives up
-with exit 75 (`TransientError`, code `INDEX_DB_CONTENDED`). If index.db is
-genuinely busy (SQLite `database is locked`) long enough to exhaust the
-driver's retry window, the run also fails with exit 75 and that code instead
-of the raw driver error at exit 70 — the same retry-shortly contract as
-`STATE_DB_CONTENDED`, so a scheduler can branch on it instead of alerting.
-The rebuild lock itself is registered through a brief internal barrier
-(`getMaintenanceBarrierPath()`) shared with every other akm lock/lease; two
-`akm index` runs launched close enough together to collide on that
-registration step retry briefly and then, if it is still busy, also exit 75
-(code `MAINTENANCE_BARRIER_BUSY`) — a busy registration barrier is ordinary
-contention between two legitimate runs, never a broken config file.
-`--skip-if-locked` changes the wait only for the invocation that passes it: if
-the lock is already held by a live process, it skips gracefully (exit 0,
+An `akm index` that finds a live build holding it does not wait and does not
+fail: it warns, builds nothing, prints
 `{ ok: true, skipped: { reason: "lock-held", pid, launcherPid, startedAt } }`
-— `launcherPid` is the holder's launcher pid when known, `null` otherwise,
-#956) instead of waiting. A hook, cron job, or scheduled task that invokes
-`akm index` directly should pass `--skip-if-locked` so it steps aside instead
-of piling up behind a longer rebuild (the shipped `index-refresh` task does
-this). `akm search`, `akm curate` and `akm show` never build or wait for a
-build, so they are safe to call frequently.
+(`launcherPid` is the holder's launcher pid when known, `null` otherwise) and
+exits 0. The next build indexes whatever changed. The other commands that build
+the index after their own change (`bundle add`, `bundle update`,
+`bundle remove`, `source add`, `improve`) skip the same way and carry on, and
+report the skipped build in their `index` field; their own change is kept. A task
+step that runs `akm index` therefore needs no wrapper. `--skip-if-locked` on
+`akm index` is accepted, warned about once as deprecated, and ignored. If
+index.db is genuinely busy (SQLite `database is locked`) long enough to exhaust
+the driver's retry window, the run fails with exit 75 and code
+`INDEX_DB_CONTENDED`, the same retry-shortly contract as `STATE_DB_CONTENDED`.
+`akm search`, `akm curate` and `akm show` never build or wait for a build, so
+they are safe to call frequently.
 
 `akm index` always rebuilds the search index and keeps metadata in the
 index, generated deterministically. In text mode, the default CLI UI shows a
@@ -539,7 +530,10 @@ orphan is a usage error and removes nothing).
 `akm doctor explain <ref>` takes a task ref or id (`--bundle` selects the
 bundle), or a workflow ref (`workflows/<name>`), and prints the same secret-free,
 read-only plan as `akm task explain` or `akm workflow plan`. It never runs
-anything.
+anything. For a [version 5 task](tasks.md#task-source-v5-experimental) it takes
+the input flags and `--env`, `--secret` and `--timeout` of a start, runs the check
+a start makes, and lists the steps and each schedule entry's `env`, `secret` and
+`timeout`.
 
 Bare `akm doctor` prints health's result with one more field, `scheduler`: the
 scheduler backend, paths and task state `akm task doctor` reports. Diagnosis
@@ -1710,8 +1704,8 @@ or workflow may still be running from it) and removes older ones. A revision
 directory another bundle still references is kept.
 
 An update takes the index rebuild lock before it publishes and holds it across
-the publish and the reindex, so it waits for a running build before it touches
-anything. If the reindex fails after the bundle was published, the update warns
+the publish and the reindex. When another process already holds it, the update
+still publishes and skips the reindex, reporting `index.skipped`. If the reindex fails after the bundle was published, the update warns
 that the bundle was updated but its index was not refreshed, then fails with the
 original error; `akm index` or the next scheduled build indexes it.
 
@@ -2700,7 +2694,14 @@ in order:
    retired `schedule[].enabled` key, rewritten as task source v4
    (`taskFiles`) under one backup directory per run, each emitted document
    re-parsed by the runtime v4 parser first; a file the planner cannot
-   convert unambiguously is reported `blocked` and left alone;
+   convert unambiguously is reported `blocked` and left alone. A task file
+   named on the command line (`akm migrate apply <task-file>...`) is converted
+   to [task source v5](tasks.md#converting-v4-to-v5) (`version: 5-beta.1`)
+   instead, after the same check a start makes of the result, under the same
+   backup directory. A named file must be a `.yml` file under the `tasks` folder
+   of an enabled bundle; no file that is not named is converted. What a v4 task
+   did that v5 does not is listed per file, in `notes`, to change by hand, and a
+   file with no v5 form is reported `blocked` and left as it is;
 4. the retired `engine:` key on commands, agents, workflows and task sources
    rewritten to `connection:` or `harness:` by what the name is now
    (`assetEngineKeys`), under one backup directory per run. The run that has
@@ -2734,6 +2735,7 @@ akm migrate status
 akm migrate status --read-only   # the same, and records no CLI usage, so nothing is written
 akm migrate apply --dry-run
 akm migrate apply
+akm migrate apply --dry-run tasks/nightly.yml   # preview converting one task file to version 5
 akm-migrate apply          # the same, without the akm wrapper
 ```
 
@@ -3260,9 +3262,10 @@ akm run tasks/deploy --env env/prod --secret secrets/deploy-token:GITHUB_TOKEN
 
 | Resolved type | Inputs and controls | Result |
 | --- | --- | --- |
-| Agent | `--prompt` or `--prompt-stdin`, execution selection, `--timeout`, `--cwd`; a persona requires a prompt | Existing `agent-result` and exit status |
-| Command | Exact `--arguments` substitution, `--agent`, execution selection, `--timeout`, `--cwd`, `--dry-run` | Existing `agent-result` or `command-dry-run` |
-| Task | Exact-name declared input flags, including repeated array values; `--bundle` and `--scheduled` | Existing `task-run`, history/log writes, and task exit status |
+| Agent | `--prompt` or `--prompt-stdin`, execution selection, `--timeout`, `--max-retries`, `--cwd`, `--clean`, `--inherit`; a persona requires a prompt | Existing `agent-result` and exit status |
+| Command | Exact `--arguments` substitution, `--agent`, execution selection, `--timeout`, `--max-retries`, `--cwd`, `--clean`, `--inherit`, `--dry-run` | Existing `agent-result` or `command-dry-run` |
+| Task | Exact-name declared input flags, including repeated array values; `--bundle` and `--scheduled`. A [version 5](tasks.md#task-source-v5-experimental) task also takes `--timeout`, `--max-retries`, `--cwd`, `--inherit`, `--resume` and `--skip-if-locked` | Existing `task-run`, history/log writes, and task exit status; a version 5 task also returns `result` |
+| Script | `--timeout`, `--max-retries`, `--cwd`, `--clean`, `--inherit` before the ref; everything after the ref goes to the script | The script's exit status |
 | Workflow | Exact-name declared parameter flags, `--max-steps`, `--max-retries`, `--timeout`, `--skip-if-locked` | Existing `workflow-run`, journal, gates and exit status |
 
 `--env <env-ref>` and `--secret <secret-ref>:<VAR>` apply to every type and
@@ -3276,6 +3279,9 @@ output akm captures: task logs and results, agent and command replies, and the
 workflow journal. A missing ref, or a `--secret` that is not `<ref>:<VAR>`,
 stops the run before it starts. The two names are reserved: a task input or
 workflow parameter called `env` or `secret` cannot be passed through `akm run`.
+For a version 5 task, `--env` and `--secret` reach every step of the run and of
+the tasks it runs, in each step's clean environment (see
+[Tasks](tasks.md#the-environment)).
 To run a program that is not an akm asset, use [`akm exec`](#exec).
 
 Execution selection uses the same `--connection`, `--harness`, and `--model`
@@ -3297,7 +3303,8 @@ interpreter its extension selects, and its exit status is akm's. akm's flags
 passed to the script unchanged. `--inherit <VAR,...>` starts the run clean with
 those variables; `--clean`, `--inherit`, `--max-retries` and `--cwd` also apply to
 agent and command runs, and a missing `--cwd` folder is made. A version 4 task
-keeps its own flag parsing.
+keeps its own flag parsing. A version 5 task reads its start flags itself: a
+held lock (`lock: true`) exits 75, or 0 with `--scheduled` or `--skip-if-locked`.
 
 Flags must apply to the selected executor or its declared inputs. Unsupported
 asset types, fragments, extra positional values and `--` tails (for an agent,
@@ -3319,24 +3326,36 @@ key, and runs nothing. `akm run --env` and `--secret` are not gated.
 Run any command with env assets and secrets injected into its environment:
 
 ```sh
-akm exec [--env <env-ref>]... [--secret <secret-ref>:<VAR>]... [--clean [--inherit <names>]] -- <command>
+akm exec [--env <env-ref>]... [--secret <secret-ref>:<VAR>]... [--clean] [--inherit <names>] [--cwd <dir>] [--timeout <duration>] [--max-retries <n>] -- <command>
+akm exec [--env <env-ref>]... [--secret <secret-ref>:<VAR>]... [--harness <name>] [--connection <name>] [--model <name>] --prompt <text>
 
 akm exec --env env/prod -- npm test
 akm exec --env env/prod -- $SHELL                     # interactive: a shell with the env loaded
 akm exec --env env/base --env team//env/prod -- ./deploy.sh
 akm exec --secret secrets/deploy-token:GITHUB_TOKEN -- gh release create v1.0.0
 akm exec --env env/prod --clean --inherit SSH_AUTH_SOCK -- ./migrate
+akm exec --timeout 2m --max-retries 1 -- "make build | tee build.log"   # one argument is a shell line
+akm exec --prompt "Summarize the failing tests" --harness claude
 ```
 
 | Flag | Description |
 | --- | --- |
 | `--env <env-ref>` | Inject every variable of the env asset (`[bundle//]env/<name>`). Repeatable. `${ref}` tokens in its values are replaced as described under [env](#env). |
 | `--secret <secret-ref>:<VAR>` | Inject the secret's value, trimmed, as `VAR`. Repeatable. |
-| `--clean` | Start the command with a minimal inherited environment (PATH/HOME/locale/terminal basics, and the names Windows needs to start a process) instead of the full parent environment. |
-| `--inherit <names>` | With `--clean`, also pass these parent variables through (comma-separated). |
+| `--clean` | Start the command with a minimal inherited environment (PATH/HOME/locale/terminal basics, the names Windows needs to start a process, and akm's own location variables) instead of the full parent environment. |
+| `--inherit <names>` | Also pass these parent variables through (comma-separated). Without `--clean` it starts the command clean with these variables. |
+| `--cwd <dir>` | Run in this folder, made if missing; a relative path is taken from the folder akm was started in. |
+| `--timeout <duration>` | Stop the command after this long: `30s`, `2m`, `1h`; a bare number is milliseconds. Exits 1 with a message. |
+| `--max-retries <n>` | Run the command again, up to `n` more times, when it fails or times out; each try has the whole `--timeout`. |
+| `--prompt <text>`, `--prompt-stdin` | Run a prompt on the default agent instead of a command, and print its reply. `--harness`, `--connection` and `--model` select the agent. Not with a command after `--`. |
 
-The command is spawned directly, never through a shell, on this terminal;
-`akm exec` exits with its status and is exempt from `--format`. Env assets apply
+One argument after `--` is a shell line, run by `sh -c` (`cmd /d /s /c` on
+Windows); several arguments are a program and its arguments, run directly. The
+command runs on this terminal and its output is not captured;
+`akm exec` exits with its status and is exempt from `--format`. A typed
+`--timeout` stops the command itself, not the processes it started; a step of a
+[version 5 task](tasks.md#task-source-v5-experimental) captures its output, and
+its timeout stops the whole process group. Env assets apply
 in the order given, then secrets over them, and a later flag wins over an
 earlier one for the same variable. A missing ref, or a `--secret` that is not
 `<ref>:<VAR>`, is an error and nothing runs. Each use records an `env_access` or
@@ -3354,6 +3373,9 @@ or block.
 
 `akm exec` replaces `akm env run` and `akm secret run`, which are Deprecated and
 removed in 0.11.
+
+A version 5 task's `exec:` and `prompt:` steps run the same way and do not need
+`experimental.exec`.
 
 ### command run
 
@@ -3555,6 +3577,11 @@ akm lint --rule stale-path      # List one rule's findings, grouped by asset
 | `--rule` | List this rule's findings grouped by asset: the asset ref and file, then each finding with its line, path, reason, nearest existing directory and line text. Combines with `--type`. A listing: it cannot combine with `--fix` or `--prune-dangling-edges`. An unknown rule name warns and shows every rule. |
 | `--fail-on-flagged` | Exit non-zero when `summary.flagged > 0`. Default: exit 0 regardless of findings. |
 | `--prune-dangling-edges` | Opt-in repair (#884): drop `supersededBy`/`contradictedBy` entries whose target has neither a file nor a prune tombstone. **Not** implied by `--fix` — it edits well-formed files to delete a belief-graph claim, so review a plain `akm lint` report first. Clears the same `writable: false` gate `--fix` does. |
+
+A version 5 task file is linted for what the file alone decides: its keys,
+steps, `${name}` use and schedule. That a `run:` ref, env asset or secret exists,
+and that tasks do not run each other in a loop, are checked by
+[`akm doctor explain`](tasks.md#operations) and by a start.
 
 Returns `fixed[]` and `flagged[]` arrays plus a `summary: { fixed, flagged }`
 count and `byRule: { <rule>: { findings, assets } }` for the flagged findings.

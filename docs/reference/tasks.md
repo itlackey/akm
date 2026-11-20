@@ -10,12 +10,269 @@ with `akm import <file> --type task`, run a task with `akm run
 prune | doctor | explain | history` commands are Deprecated, removed in 0.11;
 see the [migration guide](../migration/v0.10-to-v0.11.md#task-and-import-consolidation).
 
-> **Changing in 0.11.** 0.11.0 replaces task source v4 with a simpler format
-> that also takes over ordered steps from the Deprecated workflows, and
-> `akm migrate apply` converts v4 files. Task source v4 works unchanged through
-> 0.10.x. See [Workflows fold into tasks](../migration/v0.10-to-v0.11.md#workflows-fold-into-tasks).
+> **Changing in 0.11.** 0.11.0 replaces task source v4 with
+> [task source v5](#task-source-v5-experimental), which also takes over ordered
+> steps from the Deprecated workflows, and `akm migrate apply` converts v4
+> files. Task source v4 works unchanged through 0.10.x. See
+> [Workflows fold into tasks](../migration/v0.10-to-v0.11.md#workflows-fold-into-tasks).
 
-**Task source v4 (`version: 4`) is the only task source grammar akm reads.**
+## Task source v5 (Experimental)
+
+Task source v5 is Experimental through 0.10: a file says `version: 5-beta.1`,
+and a build reads only the beta it ships with (`5-beta.<n>`; `n` goes up only
+when the syntax changes). Any other `5-beta.*` is refused before anything runs,
+naming the one the build reads. 0.11 releases it as `version: 5` and refuses
+`version: 4`. A file with `version: 4` keeps the v4 syntax and behaviour
+described below until then. `akm migrate apply <task-file>...` converts named
+files; see [Converting v4 to v5](#converting-v4-to-v5).
+
+**A task is a list of akm commands, written down and run in order.** A step is
+one command: `run:` is `akm run`, `exec:` is `akm exec`, `prompt:` is
+`akm exec --prompt`. A step's other keys are that command's own options, with
+the same names and meaning. `run` runs only what a ref names, a known asset.
+`exec` runs anything on demand, a shell line or a prompt written in the task,
+without some of akm's protections.
+
+A task behaves the same whoever starts it: a schedule, a person, an agent, or a
+step of another task. A run shares nothing akm manages with any other run: not
+its state, results, environment, working folder or resume record. Any number of
+runs of a task can go at the same moment unless the task has `lock: true`.
+
+```yaml
+version: 5-beta.1
+
+inputs:
+  date: { type: string, required: true }
+
+env:                              # for every step
+  - LOG_LEVEL: info
+
+timeout: 10m                      # for every step: --timeout 10m
+
+steps:
+  - name: fetch
+    run: scripts/fetch.ts         # akm run scripts/fetch.ts --date <date>
+    args: [--date, "${date}"]
+    env: [env/service]            # --env env/service, for this step only
+    timeout: 2m                   # --timeout 2m, for this step instead
+    max-retries: 1                # --max-retries 1
+
+  - name: summarize
+    prompt: |                     # akm exec --prompt "..."
+      Summarize this report for ${date}:
+      ${fetch}
+
+  - name: count
+    exec: wc -l < report.md       # akm exec -- "wc -l < report.md"
+
+  - name: tell
+    run: tasks/post-message       # akm run tasks/post-message --message "..."
+    args: [--message, "${summarize}"]
+```
+
+### A step
+
+A step has a `name` (letters, digits, `_` and `-`; unique; not the name of an
+input) and is exactly one command:
+
+| Step | The command |
+| --- | --- |
+| `run: <ref>` | `akm run <ref>`. The ref names a task, a prompt asset (`commands/...`), a script (`scripts/...`) or an agent, in this bundle or another (`team//scripts/fetch.ts`). Only a ref: a script with no ref is run with `exec:`. An agent's ref needs `prompt:` beside it. |
+| `exec: <command>` | `akm exec -- <command>`: any program or shell line. |
+| `prompt: <text>` | `akm exec --prompt <text>`: prompt text sent to an agent. Beside `run: <agent ref>` it is that agent's prompt. |
+
+Its other keys are the command's options:
+
+| Key | Option | On |
+| --- | --- | --- |
+| `args:` | What follows the ref on the command line, as a list. Each item is one argument, passed as written, with no shell. For a task they are its input flags, `--<name> <value>` pairs | `run:` a task or a script |
+| `arguments:` | `--arguments` | `run:` a prompt asset |
+| `env:` | A list. An entry is an env asset's ref, as `--env <ref>` takes, or one variable and its value (`NAME: value`) | any step |
+| `secret:` | `--secret <ref>:<VAR>`, a list | any step |
+| `cwd:` | `--cwd` | any step |
+| `timeout:` | `--timeout`: `90s`, `15m`, `1h`; a bare number is milliseconds | any step |
+| `max-retries:` | `--max-retries`: a step that fails is run again, this many more times at most, whatever made it fail. Each try has the step's whole limit. A step that runs a task is tried again by resuming that task's run at the step that failed there | any step |
+| `harness:`, `connection:`, `model:` | the same flags | a step an agent runs; elsewhere warned about once and ignored |
+| `inherit:` | `--inherit`, a list of variable names | any step |
+
+An option at the top of the task file is the default for every step. `timeout:`
+at the top is each step's limit, not the whole run's; a step with neither has a
+limit of 30 minutes. The whole run is limited by `--timeout` when it is started
+or by the `timeout:` of the step that runs it. `--max-retries` and `--inherit`
+given when a run is started are the default for every step of the run and of the
+tasks it runs.
+
+Two keys are a step's own and have no flag: `name`, and `expect:`, a list of
+keys the agent's reply must hold as a JSON object. A reply that lacks one is
+asked for once more with what was missing, then fails the step with
+`reply_check_failed`. With `expect:`, the step's result is that JSON object.
+
+A value that contains `: ` is quoted or written as a block (`|`), as YAML
+requires. So is a `${name}` inside `[ ]`: `[--date, "${date}"]`.
+
+A failed step stops the run. A task that is one command has no `steps:`, just
+`run:`, `prompt:` or `exec:` and its options; that one step adds no entry to
+the state, and its result is the task's result. A key a command does not take
+is warned about once and ignored. A task file may also have `name`,
+`description`, `when_to_use` and `tags`, which the index reads.
+
+### Inputs, results and `${name}`
+
+**Inputs.** `inputs:` declares the task's own flags: each is a JSON schema,
+usually just a `type`, with a `default` or `required: true`; one with neither is
+optional, and its `${name}` is empty text when it is not given. Text given for a
+`number`, `integer` or `boolean` input is converted; a value that does not fit
+its input is refused before anything runs. An input may not be named like one of
+`akm run`'s own flags. Inputs are given by `akm run <task> --<name> <value>`, a
+schedule entry, or the `args:` of the step that runs the task.
+
+**Results and the state.** A step's result is what its command prints on
+standard output, or the agent's reply, as text. An agent that gives no reply has
+failed. The result is added to the run's state under the step's name. A task's
+result is its last step's; `akm run` returns it as `result` in the `task-run`
+output.
+
+A failed step's reason ends with the last line its program wrote to standard
+error. The run's history and `akm doctor explain` name each step's kind by the
+key the step is written with: `run`, `exec` or `prompt`.
+
+**`${name}`.** `${name}` names an input or an earlier step. akm fills it in
+once, inside the text of `prompt:` or `arguments:`, or as a whole item of
+`args:`, which is then one argument whatever it holds. Text goes in as it is;
+anything else goes to a script or a prompt as JSON, and to a task as the value
+itself. A script that takes options should expect such an argument to begin with
+`-`. akm fills it in nowhere else. A `${name}` that names an input or a step in
+an `exec:` command, an `env:` value or a `cwd:` is refused before anything runs,
+because a value put into a command could be run as one; the command reads the
+state file instead. Anything else in `${...}` in an `exec:` command is the
+shell's own and is left alone.
+
+**The state file.** A script or `exec:` command reads the whole state, the
+inputs and every earlier step's result under their names, as JSON from the file
+named by the environment variable `AKM_TASK_STATE`. The file has no size limit.
+It is a copy written fresh for each step and removed when the step ends. akm
+sets `AKM_TASK_STATE` for a step it runs as a process; akm does not read it.
+
+### The environment
+
+Every step starts with the environment `--clean` gives (`PATH`, `HOME`, the
+user, shell, temporary folder, locale, time zone and terminal, and what Windows
+needs), akm's own location variables (`AKM_CONFIG_DIR`, `AKM_CONFIG_FILE`,
+`AKM_DATA_DIR`, `AKM_CACHE_DIR`, `AKM_STATE_DIR`) and `AKM_EVENT_SOURCE`.
+Nothing else reaches a step unless it is given by name, and where it is given
+decides which steps have it. An agent step is a step like any other here.
+
+| Given | Which steps have it |
+| --- | --- |
+| `env:`, `secret:` or `inherit:` on a step | That step only |
+| `env:`, `secret:` or `inherit:` at the top of the task | Every step of that task, not the tasks it runs |
+| `--env` or `--secret` when the run is started | Every step of the run and of the tasks it runs |
+
+Where more than one sets the same variable, the run's `--env` and `--secret` win
+over the step's, which win over the task's. A task that another task runs is a
+run of its own, with its own state, options and working folder; the caller's
+`env:` does not pass to it. Secrets and their redaction are in
+[Environment & Secrets](env-and-secrets.md#secrets-in-a-version-5-task).
+`experimental.exec` does not gate a task's `exec:` and `prompt:` steps; it
+guards `akm exec` typed at a prompt.
+
+### The working folder
+
+akm makes an empty folder for each run at `$AKM_STATE_DIR/runs/<task>/<run>/`
+and every step of the run works in it, so steps share files there. akm removes
+it when the run succeeds and keeps it while a failed run can be resumed; when a
+later run of the task succeeds, the folders of its earlier failed runs go too
+and those runs cannot be resumed.
+
+`cwd:` on the task, or `--cwd` when the run is started, names another folder,
+which akm makes if it is missing and never removes; `--cwd` wins over the task's
+`cwd:`. A step's own `cwd:` is for that step only and wins over both. A `cwd:`
+that is not absolute is taken from the bundle root; a `--cwd` that is not
+absolute is taken from the folder akm was started in. A folder that cannot be
+made refuses the run, or fails the step it is the step's. What a step runs is
+found whatever the folder is, because it is named by ref. A script that writes
+somewhere else needs that folder named as the working folder for an agent step
+to read what it wrote.
+
+### Lock, schedules and resume
+
+**Lock.** `lock: true` gives a task one run at a time, whoever starts each. A
+start that finds the lock taken starts nothing and records nothing. `akm run`
+then exits 75, or 0 when it was started with `--scheduled` or
+`--skip-if-locked`. When the start came from a step of another task, that step
+fails like any other. A task without `lock:` is not locked.
+
+**Schedules.** A task file's `schedule:` entries say when it starts and give its
+`inputs:`, as in v4. An entry may also have `env:` (env asset refs), `secret:`
+and `timeout:`, which are what `--env`, `--secret` and `--timeout` are to a start
+that is typed; a whole scheduled run's limit is given there.
+
+**Resume.** `akm run <task> --resume` continues the most recent failed run at the
+step that failed; steps that finished are not run again. It uses the flags the
+run was first started with (`--env`, `--secret`, `--cwd`, `--timeout`, and the
+inputs); the limit counts again from the resume. It refuses when the task's
+steps changed since the failed run. If the step that failed was running a task,
+the resume continues inside that task's run, at the step that failed there. A
+run that a step started is resumed only by resuming its caller. A run
+whose akm was killed is a failed run at the step that was running.
+
+akm keeps what a failed run needs to resume beside its working folder, at
+`$AKM_STATE_DIR/runs/<task>/<run>.state.json`, and removes it with the folder.
+It is outside the folder the steps work in.
+
+### Runs of other tasks
+
+- Tasks may not run each other in a loop, directly or through other tasks.
+- A task cannot read the state of another run. It gets another task's result
+  only by running it from a step.
+- A v5 task does not run a v4 task, and a v4 task's `task:` step does not run a
+  v5 task; either is refused naming `akm migrate apply`.
+- An akm command never waits for akm's index, in a step or typed: it skips its
+  own build when another is running and goes on with the index as it stands. See
+  [`akm index`](cli.md#index).
+
+### Checked before anything runs
+
+akm reads the task, and every task it runs, all the way down, and refuses to
+start if any rule fails. `akm run <task>` and `akm doctor explain <ref>`, given
+the same inputs and flags (`--env`, `--secret`, `--timeout`), call the same
+check, as does `akm doctor scheduler sync` for each schedule entry. `akm lint`
+checks the one file, the rules that need nothing else. A task file that is not
+valid refuses only itself and the tasks that run it, not the other tasks of its
+bundle.
+
+- The file is not valid YAML, or a key has the wrong shape.
+- A required input was not supplied, an input was supplied that the task does
+  not declare, a value does not fit its input, or an input is named like one of
+  `akm run`'s flags.
+- A step is not exactly one command, or gives an option a value it does not take.
+- A `run:` value is not a ref, names nothing akm can run, or names an asset that
+  does not exist. A script's interpreter is found from its extension.
+- A step has no name or an invalid one, two steps share a name, or a step has the
+  name of an input.
+- A `${name}` in `prompt:`, `arguments:` or `args:` is neither an input nor an
+  earlier step; in `args:` it must be a whole item.
+- The `args:` of a step that runs a task are not `--<name> <value>` pairs.
+- A `${name}` that names an input or a step appears in an `exec:` command, an
+  `env:` value or a `cwd:`.
+- A secret is written anywhere but `secret:`: a `${secrets/...}` in a command, a
+  prompt, `args:` or an `env:` value.
+- An `env:` entry or a `secret:` names an env asset or a secret that does not
+  exist.
+- Tasks run each other in a loop.
+
+### Converting v4 to v5
+
+`akm migrate apply <task-file>...` converts the named v4 files to
+`version: 5-beta.1` after the same check a start makes of the result, keeping
+each file's comments with the key they were on. In 0.10 a file not named on the
+command line is not converted; 0.11 converts every v4 task file. The
+[migration guide](../migration/v0.10-to-v0.11.md#task-source-v5) has the
+conversion table and lists what does not convert.
+
+## Task source v4
+
+**Task source v4 (`version: 4`) is the task source grammar akm reads for every file that is not `version: 5-beta.1`.**
 A document with `version: 3` or `version: 2` fails to load with `UsageError`
 code `TASK_SCHEMA_VERSION_UNSUPPORTED`, naming `akm migrate apply`, which
 converts it. A `version: 4` document whose `schedule[]` carries a
@@ -212,8 +469,9 @@ create a fresh durable workflow freeze at fire time.
 
 First in 0.10.261121 ([#1096](https://github.com/itlackey/akm/issues/1096)):
 a v4 task may declare `steps:` instead of `uses` or `run` (exactly one of the
-three). Nothing changes for a task without `steps:`. The shape may change in
-0.11, where `akm migrate apply` converts it.
+three). Nothing changes for a task without `steps:`. 0.11 replaces it with
+[task source v5](#task-source-v5-experimental), where `akm migrate apply`
+converts it.
 
 ```yaml
 version: 4
@@ -505,12 +763,20 @@ for full before/after examples and recovery guidance.
 - `akm doctor explain <ref>` prints a task's declared inputs, resolved target,
   effective execution settings, and schedule bindings without running
   anything — see [`akm doctor explain`](#akm-task-explain) above.
+  For a version 5 task it runs the check a start makes (given the same input
+  flags, `--env`, `--secret` and `--timeout`), then lists the declared inputs,
+  the steps with the ref each runs, and each schedule entry with its `env`,
+  `secret` and `timeout`.
 - `akm lint <file> --type tasks` checks one draft task file, inside a bundle or not, without installing it; `akm lint --type tasks` checks every task in a bundle. Both report what `akm doctor scheduler sync` would refuse for a task
   file: a document that does not parse as task source v4, a version 2/3 file or
   a `version: 4` file still carrying a retired `schedule[].enabled` (the finding
   names `akm migrate apply`, which converts them), a cron the local scheduler
   backend cannot parse, and a schedule entry whose `inputs` leave a required
   input unsatisfied. It is read-only and needs no configured connection or harness.
+  For a version 5 file it reports what the file alone decides (its keys, steps,
+  `${name}` use, the schedule); what needs other files (that a `run:` ref, an env
+  asset or a secret exists, loops) is checked by `akm doctor explain` and by a
+  start.
 - `akm import <file> --type task` validates a task source v4 file and writes
   it into the bundle, disabled; it never installs, updates or removes native
   scheduler entries. `akm task enable <ref>` activates it.
