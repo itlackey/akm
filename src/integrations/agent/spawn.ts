@@ -82,8 +82,10 @@ export interface RunAgentOptions {
   stdio?: AgentStdioMode;
   /** Override the profile/global timeout (ms). null = no timeout (runs until the process exits). */
   timeoutMs?: number | null;
-  /** Extra env vars for the child, over the environment akm runs in. */
+  /** Extra env vars for the child, over {@link baseEnv}. */
   env?: Record<string, string>;
+  /** The environment the child starts from. Absent: the one akm runs in, with the directories this akm resolved. */
+  baseEnv?: Record<string, string>;
   /** Working directory for the child. */
   cwd?: string;
   /**
@@ -128,14 +130,14 @@ export interface AgentRunResult {
 }
 
 /**
- * The child's env, lowest precedence first: the environment akm runs in with the
+ * The child's env, lowest precedence first: the call's `baseEnv`, else the environment akm runs in with the
  * directories this akm resolved set over it, so a child that runs `akm` uses the
  * same installation ({@link childProcessEnv}); then the call's `env`. The one
  * environment policy for anything an agent run starts: a CLI harness's child, and
  * the shell of an embedded session.
  */
-export function buildChildEnv(options: Pick<RunAgentOptions, "env">): Record<string, string> {
-  return { ...childProcessEnv(), ...options.env };
+export function buildChildEnv(options: Pick<RunAgentOptions, "env" | "baseEnv">): Record<string, string> {
+  return { ...(options.baseEnv ?? childProcessEnv()), ...options.env };
 }
 
 /**

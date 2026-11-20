@@ -9,6 +9,7 @@ import { loadConfig } from "../../core/config/config";
 import { isVerbose, setVerbose, warn, warnVerbose } from "../../core/warn";
 import type { UnresolvedExecutionDefaults } from "../../execution/source";
 import { lookupBundleRefReadonly } from "../../indexer/indexer";
+import { ensureWorkingFolder } from "../env/injection";
 import {
   dispatchPreparedCommandInvocation,
   inspectPreparedCommandInvocation,
@@ -70,6 +71,7 @@ export const commandRunCommand = defineJsonCommand({
 
     const argumentInput = exactStringArg(args, "arguments");
     const dryRun = args["dry-run"] === true;
+    if (workspace !== undefined && !dryRun) ensureWorkingFolder(workspace);
     const prepared = await prepareCommandInvocation({
       action: {
         ref: args.ref,

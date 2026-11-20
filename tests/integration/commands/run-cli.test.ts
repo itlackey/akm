@@ -58,7 +58,6 @@ beforeEach(async () => {
   write("commands/review.md", "---\ntype: command\nharness: reviewer\n---\nReview: [$ARGUMENTS]\n");
   write("agents/reviewer.md", "---\ntype: agent\n---\nCareful reviewer.\n");
   write("knowledge/note.md", "---\ntype: knowledge\n---\nA note.\n");
-  write("scripts/never.sh", "exit 99\n");
   write(
     "tasks/check.yml",
     "version: 4\nrun: printf task-ok\nshell: sh\ninputs:\n  label: { type: string, required: true }\n",
@@ -285,7 +284,6 @@ describe("additive akm run", () => {
     ["workflows/check", "--", "extra"],
     ["tasks/check", "--", "extra"],
     ["knowledge/note"],
-    ["scripts/never.sh"],
     ["commands/review#section"],
   ]) {
     test(`rejects unsupported inputs without execution: ${flags.join(" ")}`, async () => {
@@ -296,4 +294,127 @@ describe("additive akm run", () => {
       expect((await listWorkflowRuns()).runs).toHaveLength(0);
     });
   }
+});
+
+describe("akm run scripts/<file>", () => {
+  let out: string;
+  const original = process.env.B5_OUT;
+  beforeEach(() => {
+    out = path.join(storage.root, "out.txt");
+    process.env.B5_OUT = out;
+    write("scripts/args.sh", 'for a in "$@"; do printf \'%s\\n\' "$a"; done > "$B5_OUT"\n');
+  });
+  afterEach(() => {
+    if (original === undefined) delete process.env.B5_OUT;
+    else process.env.B5_OUT = original;
+  });
+  const lines = () => fs.readFileSync(out, "utf8").split("\n").slice(0, -1);
+
+  test("everything after the ref reaches the script unchanged, including -x, akm's own flag names and --", async () => {
+    const result = await runCliCapture([
+      "run",
+      "scripts/args.sh",
+      "a",
+      "-x",
+      "--y=1",
+      "--timeout",
+      "5",
+      "--env",
+      "e",
+      "--",
+      "--z",
+    ]);
+    expect(result.code, result.stderr).toBe(0);
+    expect(lines()).toEqual(["a", "-x", "--y=1", "--timeout", "5", "--env", "e", "--", "--z"]);
+  });
+
+  test("flags before the ref are akm's: --env injects and --cwd is where the script runs", async () => {
+    write("env/vars.env", "B5_VAR=injected\n");
+    write("scripts/where.sh", 'printf \'%s|%s\' "$B5_VAR" "$(pwd)" > "$B5_OUT"\n');
+    const cwd = path.join(storage.root, "made", "nested");
+    const result = await runCliCapture(["run", "--env", "env/vars", "--cwd", cwd, "scripts/where.sh"]);
+    expect(result.code, result.stderr).toBe(0);
+    expect(fs.readFileSync(out, "utf8")).toBe(`injected|${fs.realpathSync(cwd)}`);
+  });
+
+  test("--clean starts without the parent's variables and --inherit keeps the named ones", async () => {
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: shell parameter expansion in the script
+    write("scripts/env.sh", 'printf \'%s|%s\' "${B5_OUT:-gone}" "${B5_KEEP:-gone}" > "$1"\n');
+    process.env.B5_KEEP = "kept";
+    try {
+      expect((await runCliCapture(["run", "--clean", "scripts/env.sh", out])).code).toBe(0);
+      expect(fs.readFileSync(out, "utf8")).toBe("gone|gone");
+      expect((await runCliCapture(["run", "--inherit", "B5_KEEP", "scripts/env.sh", out])).code).toBe(0);
+      expect(fs.readFileSync(out, "utf8")).toBe("gone|kept");
+    } finally {
+      delete process.env.B5_KEEP;
+    }
+  });
+
+  test("a script of another bundle runs by its qualified ref", async () => {
+    const other = path.join(storage.root, "other");
+    write("scripts/hello.sh", 'printf other > "$B5_OUT"\n', other);
+    writeSandboxConfig({
+      bundles: {
+        fixture: { path: storage.stashDir },
+        other: { path: other, components: { main: { root: ".", adapter: "akm" } } },
+      },
+    });
+    const result = await runCliCapture(["run", "other//scripts/hello.sh"]);
+    expect(result.code, result.stderr).toBe(0);
+    expect(fs.readFileSync(out, "utf8")).toBe("other");
+  });
+
+  test("a filesystem path is refused and nothing runs", async () => {
+    for (const target of [path.join(storage.stashDir, "scripts/args.sh"), "./scripts/args.sh"]) {
+      const result = await runCliCapture(["run", target, "a"]);
+      expect(result.code).not.toBe(0);
+    }
+    expect(fs.existsSync(out)).toBe(false);
+  });
+
+  test("the script's exit status is akm's", async () => {
+    write("scripts/seven.sh", "exit 7\n");
+    expect((await runCliCapture(["run", "scripts/seven.sh"])).code).toBe(7);
+  });
+
+  test("--timeout stops the script at the limit and the status says so", async () => {
+    write("scripts/slow.sh", "exec sleep 30\n");
+    const started = Date.now();
+    const result = await runCliCapture(["run", "--timeout", "500ms", "scripts/slow.sh"]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("timed out after 500ms");
+    expect(Date.now() - started).toBeLessThan(15_000);
+  });
+
+  test("--max-retries runs a failing script exactly N more times and stops on success", async () => {
+    write("scripts/fail.sh", 'echo x >> "$B5_OUT"; exit 3\n');
+    const failing = await runCliCapture(["run", "--max-retries", "2", "scripts/fail.sh"]);
+    expect(failing.code).toBe(3);
+    expect(lines()).toHaveLength(3);
+    fs.rmSync(out);
+    write("scripts/flaky.sh", 'echo x >> "$B5_OUT"; [ "$(wc -l < "$B5_OUT")" -ge 2 ]\n');
+    const flaky = await runCliCapture(["run", "--max-retries", "5", "scripts/flaky.sh"]);
+    expect(flaky.code, flaky.stderr).toBe(0);
+    expect(lines()).toHaveLength(2);
+  });
+
+  test("--max-retries and --cwd also apply to a command run", async () => {
+    const cwd = path.join(storage.root, "command", "work");
+    const result = await runCliCapture(["run", "commands/review", "--cwd", cwd, "--max-retries", "1"]);
+    expect(result.code, result.stderr).toBe(0);
+    expect(fs.statSync(cwd).isDirectory()).toBe(true);
+  });
+
+  test("a version 4 task keeps its own flag parsing: a required input named timeout is satisfied by --timeout", async () => {
+    write(
+      "tasks/echo.yml",
+      "version: 4\nshell: sh\nrun: printf ok\ninputs:\n  timeout: { type: string, required: true }\n",
+    );
+    const missing = await runCliCapture(["run", "tasks/echo"]);
+    expect(missing.code).not.toBe(0);
+    const given = await runCliCapture(["run", "tasks/echo", "--timeout=5s"]);
+    expect(given.code, given.stderr).toBe(0);
+    expect(JSON.parse(given.stdout)).toMatchObject({ shape: "task-run", result: { status: "completed" } });
+  });
 });
