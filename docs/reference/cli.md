@@ -3289,9 +3289,19 @@ continues that run's frozen plan; new parameters cannot be supplied to an existi
 run. `workflow resume`, `status`, `list`, and `abandon` retain their lifecycle
 roles. The deprecated no-op `--new` is not accepted by the new entry point.
 
+A script runs by its ref only (`akm run scripts/<file> [arguments]`, or
+`team//scripts/<file>`); a filesystem path is refused. It runs in place with the
+interpreter its extension selects, and its exit status is akm's. akm's flags
+(`--timeout`, `--max-retries`, `--cwd`, `--env`, `--secret`, `--clean`,
+`--inherit`) go before the ref; every token after the ref, `--` included, is
+passed to the script unchanged. `--inherit <VAR,...>` starts the run clean with
+those variables; `--clean`, `--inherit`, `--max-retries` and `--cwd` also apply to
+agent and command runs, and a missing `--cwd` folder is made. A version 4 task
+keeps its own flag parsing.
+
 Flags must apply to the selected executor or its declared inputs. Unsupported
-asset types (including scripts), fragments, extra positional values and `--`
-tails fail before execution. Supply command text through `--arguments` and agent
+asset types, fragments, extra positional values and `--` tails (for an agent,
+command, task or workflow) fail before execution. Supply command text through `--arguments` and agent
 text through `--prompt` or `--prompt-stdin`.
 
 ### exec

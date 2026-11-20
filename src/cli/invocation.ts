@@ -147,7 +147,8 @@ export interface ParsedInvocation {
   passthroughArgs(): string[];
 }
 
-function createParsedInvocation(argv: readonly string[]): ParsedInvocation {
+/** A {@link ParsedInvocation} over `argv` as given; `src/cli.ts` mints the process-wide one. */
+export function createParsedInvocation(argv: readonly string[]): ParsedInvocation {
   const snapshot: readonly string[] = Object.freeze([...argv]);
   const userArgs: readonly string[] = Object.freeze(snapshot.slice(2));
   return {

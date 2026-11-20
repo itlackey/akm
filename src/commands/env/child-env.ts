@@ -73,3 +73,12 @@ export function buildChildEnv(
 
   return base;
 }
+
+/** The child environment for `--clean` and `--inherit <VAR,...>`; `--inherit` alone starts clean. */
+export function childEnvFromFlags(
+  parentEnv: NodeJS.ProcessEnv,
+  flags: { clean: boolean; inherit: string | undefined },
+): Record<string, string | undefined> {
+  const inherit = (flags.inherit ?? "").split(/[,\s]+/).filter(Boolean);
+  return buildChildEnv(parentEnv, { clean: flags.clean || flags.inherit !== undefined, inherit });
+}

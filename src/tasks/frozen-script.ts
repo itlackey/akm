@@ -36,7 +36,19 @@ export function materializeFrozenScript(script: FrozenScriptSnapshot): Materiali
   return Object.freeze({ directory, file });
 }
 
-export function frozenScriptCommand(script: FrozenScriptSnapshot, materializedPath: string): string[] {
+/** The program and arguments that run the script at `materializedPath`, with `args` after it. */
+export function frozenScriptCommand(
+  script: Pick<FrozenScriptSnapshot, "interpreter" | "extension">,
+  materializedPath: string,
+  args: readonly string[] = [],
+): string[] {
+  return [...interpreterCommand(script, materializedPath), ...args];
+}
+
+function interpreterCommand(
+  script: Pick<FrozenScriptSnapshot, "interpreter" | "extension">,
+  materializedPath: string,
+): string[] {
   switch (script.interpreter) {
     case "bun":
       return [process.execPath, materializedPath];

@@ -14,7 +14,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { ArgsDef } from "citty";
-import { getParsedInvocation } from "../../cli/invocation";
+import { getParsedInvocation, type ParsedInvocation } from "../../cli/invocation";
 import { makeSecretRef, resolveSecretPath } from "../../core/env-secret-ref";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
@@ -43,9 +43,8 @@ export interface ResolvedInjections {
   secretValues: string[];
 }
 
-/** Resolve this invocation's `--env` and `--secret` flags. */
-export function resolveInjections(): ResolvedInjections {
-  const invocation = getParsedInvocation();
+/** Resolve the `--env` and `--secret` flags of `invocation` (this process's own by default). */
+export function resolveInjections(invocation: ParsedInvocation = getParsedInvocation()): ResolvedInjections {
   const values: Record<string, string> = {};
   const secretValues: string[] = [];
   // Parse every secret spec first, so a malformed one fails before any ref is read or audited.
@@ -75,16 +74,25 @@ export function resolveInjections(): ResolvedInjections {
   return { values, secretValues };
 }
 
-/** `rawArgs` without the injection flags and their values; a `--` tail is kept as it is. */
-export function withoutInjectionFlags(rawArgs: readonly string[]): string[] {
+/** `rawArgs` without the given flags and their values (`booleanFlags` take none); a `--` tail is kept as it is. */
+export function withoutFlags(
+  rawArgs: readonly string[],
+  valueFlags: readonly string[],
+  booleanFlags: readonly string[] = [],
+): string[] {
   const kept: string[] = [];
   for (let i = 0; i < rawArgs.length; i++) {
     const arg = rawArgs[i] as string;
     if (arg === "--") return [...kept, ...rawArgs.slice(i)];
-    if (INJECTION_FLAGS.includes(arg)) i++;
-    else if (!INJECTION_FLAGS.some((flag) => arg.startsWith(`${flag}=`))) kept.push(arg);
+    if (valueFlags.includes(arg)) i++;
+    else if (!booleanFlags.includes(arg) && !valueFlags.some((flag) => arg.startsWith(`${flag}=`))) kept.push(arg);
   }
   return kept;
+}
+
+/** `rawArgs` without the injection flags and their values; a `--` tail is kept as it is. */
+export function withoutInjectionFlags(rawArgs: readonly string[]): string[] {
+  return withoutFlags(rawArgs, INJECTION_FLAGS);
 }
 
 /** Make `cwd` (and any parents) if missing and return it absolute; a relative one is from the folder akm was started in. */
