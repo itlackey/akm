@@ -46,6 +46,10 @@ export interface RunExecutionOptions {
   readonly signal?: AbortSignal;
   /** Stamped into the child env as `AKM_EVENT_SOURCE` (usage-event provenance). */
   readonly eventSource?: string;
+  /** Variables set in the child over the request's own `env`. */
+  readonly env?: Readonly<Record<string, string>>;
+  /** The environment a harness child starts from, instead of akm's own ({@link RunAgentOptions.baseEnv}). */
+  readonly baseEnv?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -251,13 +255,15 @@ export async function runExecution(
   const confined = isConfinedAgentWork(execution);
   const opts: RunAgentOptions = { ...execution.options };
   if (options.signal) opts.signal = options.signal;
+  if (options.baseEnv) opts.baseEnv = { ...options.baseEnv };
+  if (options.env) opts.env = { ...execution.options.env, ...options.env };
   // Model work is akm's own traffic: its reads and its agents' commands are the improve pipeline's, never the
   // user's demand. A caller's source (a task, say) wins, as does one the unit's own `env:` binds.
   const eventSource =
     options.eventSource ??
     (execution.request.modelWork && execution.options.env?.AKM_EVENT_SOURCE === undefined ? "improve" : undefined);
   if (eventSource !== undefined) {
-    opts.env = { ...execution.options.env, AKM_EVENT_SOURCE: eventSource };
+    opts.env = { ...opts.env, AKM_EVENT_SOURCE: eventSource };
   }
   const chat = options.chat ?? chatCompletion;
   const llm: LlmCall | undefined =

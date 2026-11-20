@@ -294,9 +294,17 @@ const DYNAMIC_INPUT_COMMANDS: ReadonlySet<string> = new Set([
  */
 export function assertKnownFlags(root: FlagScanCommand, rawArgs: readonly string[]): void {
   const passthroughAt = rawArgs.indexOf("--");
-  const ownArgs = passthroughAt === -1 ? rawArgs : rawArgs.slice(0, passthroughAt);
+  let ownArgs = passthroughAt === -1 ? rawArgs : rawArgs.slice(0, passthroughAt);
   const known = collectKnownArgs(root, rawArgs);
   if (!known.resolved) return;
+  // After `run`'s ref the tokens are the executor's: `run` checks them against it once the asset's type is known.
+  if (known.path.join(" ") === "run") {
+    const ref = findCittyTopLevelCommandIndex(
+      known.commandArgs,
+      (known.command.args ?? {}) as CittyArgsDefinitionForScan,
+    );
+    if (ref >= 0) ownArgs = ownArgs.slice(0, rawArgs.length - known.commandArgs.length + ref + 1);
+  }
   const dynamicWorkflowParams = DYNAMIC_INPUT_COMMANDS.has(known.path.join(" "));
   const tolerant = TOLERANT_COMMANDS.has(known.path.join(" "));
 
