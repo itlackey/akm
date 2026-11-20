@@ -113,7 +113,7 @@ async function checkTask(
   trail: readonly Visited[],
   where: string,
 ): Promise<TaskSourceV5Document> {
-  const found = await locate(bundle, ref, "tasks", where);
+  const found = await locateTaskV5Asset(bundle, ref, "tasks", where);
   if (trail.some((visited) => visited.file === found.file)) {
     throw new UsageError(
       `Invalid task source v5 at ${found.file}: tasks run each other in a loop: ${[...trail.map((visited) => visited.ref), ref].join(" -> ")}.`,
@@ -144,7 +144,7 @@ async function checkTask(
       await checkTask(found.bundle, target, given, visited, at);
       continue;
     }
-    const asset = await locate(found.bundle, target, step.kind, at);
+    const asset = await locateTaskV5Asset(found.bundle, target, step.kind, at);
     if (step.kind === "scripts") {
       const extension = path.extname(asset.file).toLowerCase();
       scriptInterpreter(extension, target, extension === "" ? fs.readFileSync(asset.file) : undefined);
@@ -154,7 +154,7 @@ async function checkTask(
 }
 
 /** The file a ref names, in the bundle it is read from, and that bundle. A ref that names nothing is refused. */
-async function locate(
+export async function locateTaskV5Asset(
   bundle: TaskV5Bundle,
   ref: string,
   kind: TaskV5RefKind,

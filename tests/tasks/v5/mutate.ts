@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Break each rule of the version 5 checker in turn and confirm a test fails.
+ * Break each rule of the version 5 checker and runner in turn and confirm a test fails.
  *
  * Run by hand and before a beta, not in CI:  bun tests/tasks/v5/mutate.ts
  * Words after it pick the breakages whose name holds one of them:  bun tests/tasks/v5/mutate.ts timeout retries
@@ -25,6 +25,12 @@ const ROUTER = "src/tasks/source/parse-task-source.ts";
 const OWNER_V4 = "src/tasks/source/task-source-v4.ts";
 const OWNER_INPUTS = "src/execution/input-contract.ts";
 const OWNER_TIMEOUT = "src/cli/parse-args.ts";
+const RUN = "src/tasks/v5/run.ts";
+const OWNER_REDACTION = "src/core/redaction.ts";
+const OWNER_CLEAN_ENV = "src/commands/env/child-env.ts";
+const OWNER_RETRY = "src/execution/retry.ts";
+const OWNER_SUBPROCESS = "src/core/subprocess.ts";
+const LOADER = "src/tasks/run/load-task.ts";
 
 interface Mutation {
   readonly name: string;
@@ -151,26 +157,26 @@ const MUTATIONS: readonly Mutation[] = [
   m(
     "a missing prompt asset is accepted",
     CHECK,
-    "const asset = await locate(found.bundle, target, step.kind, at);",
-    'const asset = step.kind === "commands" ? { file: "" } : await locate(found.bundle, target, step.kind, at);',
+    "const asset = await locateTaskV5Asset(found.bundle, target, step.kind, at);",
+    'const asset = step.kind === "commands" ? { file: "" } : await locateTaskV5Asset(found.bundle, target, step.kind, at);',
   ),
   m(
     "a missing agent is accepted",
     CHECK,
-    "const asset = await locate(found.bundle, target, step.kind, at);",
-    'const asset = step.kind === "agents" ? { file: "" } : await locate(found.bundle, target, step.kind, at);',
+    "const asset = await locateTaskV5Asset(found.bundle, target, step.kind, at);",
+    'const asset = step.kind === "agents" ? { file: "" } : await locateTaskV5Asset(found.bundle, target, step.kind, at);',
   ),
   m(
     "a missing script is accepted",
     CHECK,
-    "const asset = await locate(found.bundle, target, step.kind, at);",
-    'const asset = step.kind === "scripts" ? { file: "x.sh" } : await locate(found.bundle, target, step.kind, at);',
+    "const asset = await locateTaskV5Asset(found.bundle, target, step.kind, at);",
+    'const asset = step.kind === "scripts" ? { file: "x.sh" } : await locateTaskV5Asset(found.bundle, target, step.kind, at);',
   ),
   m(
     "a missing task is accepted",
     CHECK,
-    'const found = await locate(bundle, ref, "tasks", where);',
-    'const found = await locate(bundle, ref, "tasks", where).catch(() => ({ file: "", bundle }));',
+    'const found = await locateTaskV5Asset(bundle, ref, "tasks", where);',
+    'const found = await locateTaskV5Asset(bundle, ref, "tasks", where).catch(() => ({ file: "", bundle }));',
   ),
   m(
     "another bundle's ref is read from this bundle",
@@ -187,8 +193,8 @@ const MUTATIONS: readonly Mutation[] = [
   m(
     "a task's assets are read from the caller's bundle",
     CHECK,
-    "const asset = await locate(found.bundle, target, step.kind, at);",
-    "const asset = await locate(bundle, target, step.kind, at);",
+    "const asset = await locateTaskV5Asset(found.bundle, target, step.kind, at);",
+    "const asset = await locateTaskV5Asset(bundle, target, step.kind, at);",
   ),
   m(
     "tasks that run each other in a loop are not checked",
@@ -517,6 +523,494 @@ const MUTATIONS: readonly Mutation[] = [
   ),
   // Versions
   m("another beta than this build's is accepted", ROUTER, "if (declared !== TASK_SOURCE_V5_VERSION) {", "if (false) {"),
+  // Running: the environment of a step
+  m(
+    "a step inherits the whole environment akm runs in",
+    RUN,
+    "buildChildEnv(context.host, { clean: true, inherit })",
+    "buildChildEnv(context.host, { clean: false, inherit })",
+  ),
+  m("clean drops akm's location variables", OWNER_CLEAN_ENV, "Object.assign(base, locations);", "void locations;"),
+  m(
+    "clean keeps AKM_BUNDLE_DIR",
+    OWNER_CLEAN_ENV,
+    "const { AKM_BUNDLE_DIR: _bundleDir, ...locations } = akmLocations();",
+    "const locations = akmLocations();",
+  ),
+  m(
+    "inherit: lets nothing through",
+    RUN,
+    "const inherit = [...(flags.inherit ?? []), ...(document.options.inherit ?? []), ...(step.options.inherit ?? [])];",
+    "const inherit: string[] = [];",
+  ),
+  m("inherit: on a step is ignored", RUN, ", ...(step.options.inherit ?? [])];", "];"),
+  m("inherit: at the top of a task is ignored", RUN, ", ...(document.options.inherit ?? [])", ""),
+  m("--inherit is ignored", RUN, "const inherit = [...(flags.inherit ?? []), ", "const inherit = ["),
+  m("a step has no AKM_EVENT_SOURCE", RUN, "env.AKM_EVENT_SOURCE = context.eventSource;", "void 0;"),
+  m(
+    "the task's env: wins over the step's",
+    RUN,
+    "[document.options, step.options, flags] as const",
+    "[step.options, document.options, flags] as const",
+  ),
+  m(
+    "a step's env: wins over `akm run --env`",
+    RUN,
+    "[document.options, step.options, flags] as const",
+    "[document.options, flags, step.options] as const",
+  ),
+  m(
+    "an env asset's variables are not loaded",
+    RUN,
+    'if (typeof entry === "string") apply(["--env", entry]);',
+    'if (typeof entry === "string") void 0;',
+  ),
+  m(
+    "a variable set inline is not set",
+    RUN,
+    "else for (const [name, value] of Object.entries(entry)) env[name] = String(value);",
+    "else void 0;",
+  ),
+  m("secret: gives the step nothing", RUN, "if (layer.secret?.length) apply(", "if (false) apply("),
+  m(
+    "`akm run --env` and `--secret` do not reach the tasks it runs",
+    RUN,
+    "record.flags,\n        stepInputs(child, step, record.state),",
+    "{ ...record.flags, env: [], secret: [] },\n        stepInputs(child, step, record.state),",
+  ),
+  m(
+    "the caller's env: passes to a task it runs",
+    RUN,
+    "record.flags,\n        stepInputs(child, step, record.state),",
+    "{ ...record.flags, env: [...(document.options.env ?? []), ...(record.flags.env ?? [])] },\n        stepInputs(child, step, record.state),",
+  ),
+  m(
+    "--max-retries does not reach the tasks it runs",
+    RUN,
+    "record.flags,\n        stepInputs(child, step, record.state),",
+    "{ ...record.flags, maxRetries: undefined },\n        stepInputs(child, step, record.state),",
+  ),
+  m(
+    "--inherit does not reach the tasks it runs",
+    RUN,
+    "record.flags,\n        stepInputs(child, step, record.state),",
+    "{ ...record.flags, inherit: [] },\n        stepInputs(child, step, record.state),",
+  ),
+  m(
+    "a value a calling step gives is not converted",
+    RUN,
+    "stepInputs(child, step, record.state),",
+    "Object.fromEntries((step.taskInputs ?? []).map(({ name, value }) => [name, argument(value, record.state)])),",
+  ),
+
+  // Running: secrets are never state
+  m(
+    "secrets are not removed from results",
+    RUN,
+    "context.secrets.size === 0 ? value : redactSensitiveValue(value, collectSensitiveValues(context.secrets))",
+    "value",
+  ),
+  m(
+    "a secret given with secret: or bound in an env asset is not removed",
+    RUN,
+    "secretValues.push(...injected.secretValues);",
+    "void 0;",
+  ),
+  m(
+    "credential-named values are not removed",
+    RUN,
+    "secretValues.push(...collectInferredSecretValues(env));",
+    "void 0;",
+  ),
+  m(
+    "short credential values are removed too",
+    OWNER_REDACTION,
+    "if (value === undefined || value.length < MIN_INFERRED_SECRET_LENGTH) continue;",
+    "if (value === undefined || value.length < 1) continue;",
+  ),
+  m("PAT is not a credential name", OWNER_REDACTION, "|PASS|PAT|CREDENTIALS?", "|PASS|CREDENTIALS?"),
+  m("a credential word inside a longer word counts", OWNER_REDACTION, "|AUTH)(?:_|$)/i;", "|AUTH)/i;"),
+  m(
+    "the secrets of the tasks a run runs are not known when it starts",
+    RUN,
+    'if (step.kind === "tasks") await collectSecrets(context, step.run as string, found.bundle, flags, seen);',
+    'if (step.kind === "tasks") void 0;',
+  ),
+  m(
+    "the secrets of a run are known only as its steps set them",
+    RUN,
+    "await collectSecrets(context, task.ref, task.bundle, flags, new Set());",
+    "void 0;",
+  ),
+  m(
+    "a secret on standard error is left in the log",
+    RUN,
+    "const stderr = scrub(context, result.stderr) as string;",
+    "const stderr = result.stderr;",
+  ),
+
+  // Running: the state
+  m(
+    "the state file is empty",
+    RUN,
+    "fs.writeFileSync(statePath, JSON.stringify(record.state, null, 2));",
+    'fs.writeFileSync(statePath, "{}");',
+  ),
+  m(
+    "the state copy is left behind after the step",
+    RUN,
+    "fs.rmSync(stateDir, { recursive: true, force: true });",
+    "void 0;",
+  ),
+  m(
+    "standard error is part of the result",
+    RUN,
+    "return { ok: true, value: stdout };",
+    "return { ok: true, value: stdout + stderr };",
+  ),
+  m(
+    "a prompt's ${name} is not filled in",
+    RUN,
+    "prompt: `${fill(step.prompt as string, record.state)}${extra}`,",
+    "prompt: `${step.prompt as string}${extra}`,",
+  ),
+  m(
+    "filled text is scanned again",
+    RUN,
+    "(body in state ? asText(state[body]) : token)",
+    "(body in state ? fill(asText(state[body]), {}) : token)",
+  ),
+  m(
+    "a JSON value goes into a prompt as plain text",
+    RUN,
+    'const asText = (value: unknown): string => (typeof value === "string" ? value : JSON.stringify(value));',
+    "const asText = (value: unknown): string => String(value);",
+  ),
+  m(
+    "a ${name} item of args: is not that state entry",
+    RUN,
+    "return body === undefined ? item : state[body];",
+    "return item;",
+  ),
+  m(
+    "the items of a script's args: are not passed",
+    RUN,
+    "(step.args ?? []).map((item) => asText(argument(item, record.state))),",
+    "[],",
+  ),
+  m(
+    "an exec: command is not run by a shell",
+    RUN,
+    'shellCommand({ command: step.exec as string, shell: process.platform === "win32" ? "cmd" : "sh" })',
+    "[step.exec as string]",
+  ),
+  m("expect: does not check the reply", RUN, "if (!step.expect) {", "if (true) {"),
+  m(
+    "a prompt asset is given no arguments",
+    RUN,
+    'action: { ref: step.run, ...(text === "" ? {} : { arguments: text }) },',
+    "action: { ref: step.run },",
+  ),
+  m(
+    "an input's default is ignored",
+    RUN,
+    "const defaulted = applyInputDefaults(contract, given);",
+    "const defaulted = given;",
+  ),
+  m(
+    "an optional input that is not given is null",
+    RUN,
+    'state[name] = name in defaulted ? defaulted[name] : "";',
+    "state[name] = name in defaulted ? defaulted[name] : null;",
+  ),
+  m(
+    "a value is not converted to its input's type when a run starts",
+    RUN,
+    "const given = { ...materializeInputFlags(contract, flags, TASK_INPUT_DIAGNOSTICS), ...literals };",
+    "const given = { ...Object.fromEntries(flags.map((flag) => [flag.name, flag.value])), ...literals };",
+  ),
+  m(
+    "a task that a step runs shares the caller's state",
+    RUN,
+    "stepInputs(child, step, record.state),",
+    "record.state,",
+  ),
+  m(
+    "runs of a task share one state",
+    RUN,
+    "flags, prepared.inputs ?? {}, prepared.values",
+    "flags, ((globalThis as Record<string, any>).__shared ??= { ...prepared.inputs }), prepared.values",
+  ),
+  m(
+    "a task's result is its first step's",
+    RUN,
+    'result = outcome.value ?? "";',
+    'result = result ?? outcome.value ?? "";',
+  ),
+  m(
+    "a step that runs a task has no result",
+    RUN,
+    "return { ok: true, value: result.result, startedAt: result.startedAt };",
+    'return { ok: true, value: "", startedAt: result.startedAt };',
+  ),
+
+  // Running: the working folder
+  m(
+    "a run works in the bundle root by default",
+    RUN,
+    "const dir = named === undefined ? path.join(runsFolder(taskId), runId) : ensureWorkingFolder(named);",
+    'const dir = named === undefined ? path.join(bundle.dir, "work") : ensureWorkingFolder(named);',
+  ),
+  m("the task's cwd: is ignored", RUN, ": path.resolve(bundle.dir, document.options.cwd);", ": undefined;"),
+  m(
+    "the task's cwd: wins over `akm run --cwd`",
+    RUN,
+    "parent === undefined && flags.cwd !== undefined",
+    "parent === undefined && flags.cwd !== undefined && document.options.cwd === undefined",
+  ),
+  m(
+    "--cwd reaches the tasks a run runs",
+    RUN,
+    "parent === undefined && flags.cwd !== undefined",
+    "flags.cwd !== undefined",
+  ),
+  m(
+    "a step's cwd: is ignored",
+    RUN,
+    ": ensureWorkingFolder(path.resolve(record.bundle.dir, step.options.cwd));",
+    ": record.dir;",
+  ),
+  m(
+    "a folder a step names is not made",
+    RUN,
+    "ensureWorkingFolder(path.resolve(record.bundle.dir, step.options.cwd))",
+    "path.resolve(record.bundle.dir, step.options.cwd)",
+  ),
+  m("a folder the task or --cwd names is not made", RUN, ": ensureWorkingFolder(named);", ": path.resolve(named);"),
+  m(
+    "a folder a command works in is not the run's",
+    RUN,
+    "      cwd: run.cwd,\n      timeoutMs: run.timeoutMs,",
+    "      cwd: os.tmpdir(),\n      timeoutMs: run.timeoutMs,",
+  ),
+  m(
+    "an agent works somewhere else than the run's commands",
+    RUN,
+    "              cwd: run.cwd,\n",
+    "              cwd: os.tmpdir(),\n",
+  ),
+  m(
+    "the working folder is left behind when the run succeeds",
+    RUN,
+    "if (record.madeDir) fs.rmSync(record.dir, { recursive: true, force: true });",
+    "void 0;",
+  ),
+  m("a folder cwd: names is removed with the run", RUN, "madeDir: named === undefined,", "madeDir: true,"),
+  m(
+    "the state is kept after a run succeeds",
+    RUN,
+    "fs.rmSync(recordPath(record.taskId, record.runId), { force: true });",
+    "void 0;",
+  ),
+  m(
+    "the folders of earlier failed runs are kept when a run succeeds",
+    RUN,
+    "for (const earlier of resumableRuns(record.taskId)) if (earlier.runId !== record.runId) discard(earlier);",
+    "void 0;",
+  ),
+  m("a failed run's state is dropped", RUN, "if (!failure) discard(record);", "discard(record);"),
+
+  // Running: resume
+  m("resume runs finished steps again", RUN, 'if (kept.status === "completed") {', "if (false) {"),
+  m(
+    "resume starts a task over instead of continuing inside it",
+    RUN,
+    "let run = kept === undefined ? undefined : readRecord(kept.task, kept.run);",
+    "let run: RunRecord | undefined;",
+  ),
+  m("a run that a step started can be resumed on its own", RUN, "if (!row.run || row.run.parent ||", "if (!row.run ||"),
+  m(
+    "resume takes the oldest failed run",
+    RUN,
+    "const [resume] = resumableRuns(task.taskId);",
+    "const resume = resumableRuns(task.taskId).at(-1);",
+  ),
+  m(
+    "resume forgets the flags of the first start",
+    RUN,
+    "const flags = prepared.resume?.flags ?? start.flags;",
+    "const flags = start.flags;",
+  ),
+
+  // Running: the lock
+  m(
+    "lock: true is ignored",
+    RUN,
+    "const lock = document.lock === true ? acquireLock(task.taskId) : undefined;",
+    "const lock = undefined;",
+  ),
+  m("a task without lock: is held back too", RUN, "const lock = document.lock === true ?", "const lock = true ?"),
+  m(
+    "one task's lock holds back another task",
+    RUN,
+    "tryAcquireRunLock(taskRunLockPath(taskId),",
+    'tryAcquireRunLock(taskRunLockPath("one"),',
+  ),
+  m(
+    "a finished run keeps the lock",
+    RUN,
+    'process.off("SIGINT", onSigint);\n    if (lock) releaseLock(lock.ownership);',
+    'process.off("SIGINT", onSigint);',
+  ),
+  m(
+    "a step ignores the lock of the task it runs",
+    RUN,
+    "const lock = child.lock === true ? acquireLock(taskId) : undefined;",
+    "const lock = undefined;",
+  ),
+  m(
+    "a step that finds the lock taken goes on",
+    RUN,
+    'if (lock?.state === "held") throw new Error(',
+    "if (false) throw new Error(",
+  ),
+  m(
+    "resume ignores the lock",
+    RUN,
+    "const lock = document.lock === true ? acquireLock(task.taskId) : undefined;",
+    "const lock = document.lock === true && prepared.resume === undefined ? acquireLock(task.taskId) : undefined;",
+  ),
+  m(
+    "a scheduled start that finds the lock taken has failed",
+    RUN,
+    'if (!(provenance.scheduled || start.skipIfLocked)) throw new TransientError(message, "RUN_LEASE_HELD");',
+    'throw new TransientError(message, "RUN_LEASE_HELD");',
+  ),
+  m(
+    "--skip-if-locked does nothing",
+    RUN,
+    "if (!(provenance.scheduled || start.skipIfLocked))",
+    "if (!provenance.scheduled)",
+  ),
+  m(
+    "a scheduled start is treated as a typed one",
+    RUN,
+    "if (!(provenance.scheduled || start.skipIfLocked))",
+    "if (!start.skipIfLocked)",
+  ),
+
+  // Running: timeout and max-retries
+  m(
+    "timeout: on a step is ignored",
+    RUN,
+    'const timeout = option(document, step, "timeout") ?? DEFAULT_STEP_TIMEOUT;',
+    "const timeout = document.options.timeout ?? DEFAULT_STEP_TIMEOUT;",
+  ),
+  m(
+    "a task's timeout: is not its steps' default",
+    RUN,
+    'const timeout = option(document, step, "timeout") ?? DEFAULT_STEP_TIMEOUT;',
+    "const timeout = step.options.timeout ?? DEFAULT_STEP_TIMEOUT;",
+  ),
+  m(
+    "the task's timeout: wins over a step's own",
+    RUN,
+    'const timeout = option(document, step, "timeout") ?? DEFAULT_STEP_TIMEOUT;',
+    "const timeout = document.options.timeout ?? step.options.timeout ?? DEFAULT_STEP_TIMEOUT;",
+  ),
+  m(
+    "the limit of a step with no timeout: is not 30 minutes",
+    RUN,
+    'const DEFAULT_STEP_TIMEOUT = "30m";',
+    'const DEFAULT_STEP_TIMEOUT = "100d";',
+  ),
+  m(
+    "a step's own timeout: lifts the run's limit",
+    RUN,
+    "return Math.min(until, Date.now() + parseTimeoutValue(String(timeout)));",
+    "return Date.now() + parseTimeoutValue(String(timeout));",
+  ),
+  m(
+    "--timeout is ignored",
+    RUN,
+    "flags.timeout === undefined ? Number.POSITIVE_INFINITY : Date.now() + parseTimeoutValue(String(flags.timeout))",
+    "Number.POSITIVE_INFINITY",
+  ),
+  m(
+    "a task's timeout: limits the whole run",
+    RUN,
+    "flags.timeout === undefined ? Number.POSITIVE_INFINITY : Date.now() + parseTimeoutValue(String(flags.timeout))",
+    "(flags.timeout ?? document.options.timeout) === undefined ? Number.POSITIVE_INFINITY : Date.now() + parseTimeoutValue(String(flags.timeout ?? document.options.timeout))",
+  ),
+  m(
+    "a step's timeout: does not limit the task it runs",
+    RUN,
+    "const limit = limitOf(until, document, step);",
+    "const limit = until;",
+  ),
+  m(
+    "the run's limit does not hold in a task it runs",
+    RUN,
+    "const limit = limitOf(until, document, step);",
+    "const limit = limitOf(Number.POSITIVE_INFINITY, document, step);",
+  ),
+  m(
+    "a command is left running at its limit",
+    RUN,
+    "      timeoutMs: run.timeoutMs,\n      capture: true,",
+    "      capture: true,",
+  ),
+  m(
+    "what a command started is left running at its limit",
+    OWNER_SUBPROCESS,
+    "process.kill(-proc.pid, signal);",
+    "process.kill(proc.pid, signal);",
+  ),
+  m(
+    "an agent step has no limit",
+    RUN,
+    "              timeoutMs: run.timeoutMs,\n              signal: context.abort.signal,",
+    "              signal: context.abort.signal,",
+  ),
+  m(
+    "max-retries: is ignored",
+    RUN,
+    'const retries = option(document, step, "max-retries") ?? record.flags.maxRetries ?? 0;',
+    "const retries = 0;",
+  ),
+  m("a step is run again once more than max-retries: says", OWNER_RETRY, "retry < maxRetries", "retry <= maxRetries"),
+  m(
+    "a step is run again without max-retries:",
+    RUN,
+    'const retries = option(document, step, "max-retries") ?? record.flags.maxRetries ?? 0;',
+    'const retries = option(document, step, "max-retries") ?? record.flags.maxRetries ?? 1;',
+  ),
+  m(
+    "a task's max-retries: is not its steps' default",
+    RUN,
+    'const retries = option(document, step, "max-retries") ?? record.flags.maxRetries ?? 0;',
+    'const retries = step.options["max-retries"] ?? record.flags.maxRetries ?? 0;',
+  ),
+  m(
+    "the task's max-retries: wins over the step's",
+    RUN,
+    'const retries = option(document, step, "max-retries") ?? record.flags.maxRetries ?? 0;',
+    'const retries = document.options["max-retries"] ?? step.options["max-retries"] ?? record.flags.maxRetries ?? 0;',
+  ),
+  m(
+    "--max-retries wins over the task's and the step's",
+    RUN,
+    'const retries = option(document, step, "max-retries") ?? record.flags.maxRetries ?? 0;',
+    'const retries = record.flags.maxRetries ?? option(document, step, "max-retries") ?? 0;',
+  ),
+  m(
+    "--max-retries is ignored",
+    RUN,
+    'const retries = option(document, step, "max-retries") ?? record.flags.maxRetries ?? 0;',
+    'const retries = option(document, step, "max-retries") ?? 0;',
+  ),
+  m("a version 5 task reaches the version 4 runner", LOADER, "if (parsed.version !== 4) {", "if (false) {"),
+
   m(
     "a 5-beta version is read as version 4",
     ROUTER,
@@ -538,7 +1032,7 @@ fs.symlinkSync(path.join(ROOT, "node_modules"), path.join(work, "node_modules"))
 // A broken guard can make the code loop or recurse without end, so each run gets a memory ceiling (its own systemd
 // scope, no swap) and a hard time limit; a run killed by either counts as caught.
 const MEMORY_MAX = "1G";
-const TIME_LIMIT_S = 30;
+const TIME_LIMIT_S = 90;
 const test = () => {
   const run = spawnSync(
     "systemd-run",
@@ -555,7 +1049,8 @@ const test = () => {
       String(TIME_LIMIT_S),
       "bun",
       "test",
-      "--timeout=10000",
+      "--timeout=20000",
+      "--bail",
       "tests/tasks/v5",
     ],
     { cwd: work, encoding: "utf8" },

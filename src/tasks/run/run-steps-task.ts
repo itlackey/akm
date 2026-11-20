@@ -61,7 +61,7 @@ function bound(text: string): string {
   return `${Buffer.from(text).subarray(0, STEP_RESULT_MAX_BYTES).toString("utf8")}\n[truncated ${bytes - STEP_RESULT_MAX_BYTES} bytes]`;
 }
 
-function summarize(text: string): string {
+export function summarize(text: string): string {
   const line = text.trim().split("\n")[0] ?? "";
   return line.length > SUMMARY_MAX_CHARS ? `${line.slice(0, SUMMARY_MAX_CHARS)}...` : line;
 }
@@ -126,6 +126,21 @@ function replyCheck(expect: readonly string[]): (raw: string) => Parsed<Record<s
     return missing.length === 0
       ? { ok: true, value: candidate }
       : { ok: false, errors: [`the reply lacks: ${missing.join(", ")}`], reason: "validation_error" };
+  });
+}
+
+/** An agent's reply held to `expect:`: asked once more, with what failed the check, when it does. */
+export function expectLoop(
+  expect: readonly string[],
+  dispatch: (correction?: Correction) => Promise<{ ok: true; raw: string } | { ok: false; failure: string }>,
+) {
+  return structuredLoop<Record<string, unknown>, { failure: string }>({
+    dispatch,
+    parse: replyCheck(expect),
+    attempts: 2,
+    correct: (refusal) =>
+      `Your previous reply failed the check: ${refusal.errors.join("; ")}. ` +
+      `Reply again with ONLY a JSON object containing the keys: ${expect.join(", ")}.`,
   });
 }
 
@@ -382,15 +397,7 @@ async function runPromptStep(step: Extract<PreparedTaskStep, { kind: "command" }
     return out;
   }
 
-  const expect = step.expect;
-  const loop = await structuredLoop<Record<string, unknown>, { failure: string }>({
-    dispatch,
-    parse: replyCheck(expect),
-    attempts: 2,
-    correct: (refusal) =>
-      `Your previous reply failed the check: ${refusal.errors.join("; ")}. ` +
-      `Reply again with ONLY a JSON object containing the keys: ${expect.join(", ")}.`,
-  });
+  const loop = await expectLoop(step.expect, dispatch);
   if (loop.ok) {
     out.ok = true;
     out.value = loop.value;

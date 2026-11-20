@@ -40,7 +40,7 @@ import { parseTaskSource } from "../source/parse-task-source";
 import { projectTaskSourceV4 } from "../source/project-v4";
 import { TASK_INPUT_DIAGNOSTICS } from "../source/task-input-diagnostics";
 import { validateTaskConceptId, validateTaskId } from "../task-id";
-import { refuseRunningTaskV5 } from "../v5/source";
+import type { PreparedTaskV5 } from "../v5/run";
 import type { RunTaskOptions } from "./task-result";
 
 /**
@@ -96,7 +96,10 @@ export function resolveBundleAsset(
 }
 
 /** Resolve, parse, and project one task-v3 asset into a frozen, executable projection. */
-export async function loadPreparedTask(id: string, options: RunTaskOptions): Promise<PreparedTaskV3Execution> {
+export async function loadPreparedTask(
+  id: string,
+  options: RunTaskOptions,
+): Promise<PreparedTaskV3Execution | PreparedTaskV5> {
   const bundleDir = options.bundleDir;
   const adapterId = options.adapterId ?? detectAdapterId(bundleDir);
   if (adapterId === "akm-task") validateTaskConceptId(id);
@@ -112,7 +115,17 @@ export async function loadPreparedTask(id: string, options: RunTaskOptions): Pro
   const filePath = owner.path;
   const yaml = fs.readFileSync(filePath, "utf8");
   const parsed = parseTaskSource({ yaml, filePath });
-  if (parsed.version !== 4) refuseRunningTaskV5(filePath);
+  if (parsed.version !== 4) {
+    return Object.freeze({
+      kind: "v5" as const,
+      taskId: id,
+      ref: taskConceptId,
+      bundle: Object.freeze({
+        name: options.bundleName ?? loadConfig().defaultBundle ?? DEFAULT_BUNDLE_NAME,
+        dir: bundleDir,
+      }),
+    });
+  }
   const source = projectTaskSourceV4(parsed.v4);
   const requiresCommandConfig =
     (source.target.kind === "uses" &&

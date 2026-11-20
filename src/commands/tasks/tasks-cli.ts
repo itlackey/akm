@@ -40,6 +40,7 @@ import {
 import { UsageError } from "../../core/errors";
 import type { InputFlag } from "../../execution/input-contract";
 import { TASK_RUN_BOOLEAN_FLAGS, TASK_RUN_VALUE_FLAGS } from "../../tasks/task-run-reserved-flags";
+import { parseStartFlags, type TaskV5Start } from "../../tasks/v5/flags";
 import { akmTaskExplain } from "./explain";
 import {
   akmTasksAdd,
@@ -51,6 +52,7 @@ import {
   akmTasksRun,
   akmTasksSync,
   akmTasksSyncPlan,
+  taskIsV5,
 } from "./tasks";
 
 /** Shared `--bundle <bundle>` arg wired onto every task subcommand. */
@@ -190,6 +192,12 @@ export function parseTaskInputFlags(rawArgs: readonly string[], id: string): Inp
   return flags;
 }
 
+/** What a start of a version 5 task gave: its start flags, and its input flags as a version 4 task's are read. */
+function readV5Start(rawArgs: readonly string[], id: string): TaskV5Start {
+  const { rest, ...start } = parseStartFlags(rawArgs);
+  return { ...start, inputs: parseTaskInputFlags(rest, id) };
+}
+
 const tasksAddCommand = defineJsonCommand({
   meta: { name: "add", description: "Register a new scheduled task and install it in the OS scheduler" },
   args: {
@@ -274,11 +282,11 @@ export const tasksRunCommand = defineCommand({
   },
   async run({ args, rawArgs }) {
     await runWithJsonErrors(async () => {
-      const inputFlags = parseTaskInputFlags(rawArgs, args.id);
+      const start = taskIsV5(args.id, args.bundle) ? readV5Start(rawArgs, args.id) : undefined;
       const envelope = await akmTasksRun(args.id, {
         scheduled: args.scheduled === true,
         ...(args.bundle !== undefined ? { target: args.bundle } : {}),
-        inputFlags,
+        ...(start ? { start } : { inputFlags: parseTaskInputFlags(rawArgs, args.id) }),
       });
       output("task-run", envelope);
       // F4: was `process.exit(envelope.exitCode)`, terminating synchronously

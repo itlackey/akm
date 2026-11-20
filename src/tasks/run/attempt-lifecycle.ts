@@ -20,10 +20,12 @@
  */
 
 import os from "node:os";
+import path from "node:path";
 import { AkmError, rethrowIfTestIsolationError } from "../../core/errors";
 import { processIdentity } from "../../core/file-lock";
+import { getStateDir } from "../../core/paths";
 import { withStateDb } from "../../core/state-db";
-import { reserveTaskHistoryAttempt } from "../../storage/repositories/task-history-repository";
+import { reserveTaskHistoryAttempt, type TaskHistoryRun } from "../../storage/repositories/task-history-repository";
 import { validateTaskConceptId } from "../task-id";
 import { appendHistory } from "./task-history";
 import { persistRunLog, resolveTaskLogPath } from "./task-log";
@@ -36,8 +38,31 @@ interface ReservedTaskAttempt {
   historyReserved: boolean;
 }
 
-/** Reserve a collision-free identity through state.db's existing unique index. */
-export function reserveTaskAttempt(taskId: string, requestedStartedAt: Date): ReservedTaskAttempt {
+/** The lock file of a task that runs one at a time. */
+export function taskRunLockPath(id: string): string {
+  return path.join(getStateDir(), "locks", `task-${encodeURIComponent(id)}.lock`);
+}
+
+/** A scheduled run that found the previous one alive: "active" maps to exit 0 and writes no history row. */
+export function skippedActiveRun(id: string, at: Date): TaskRunResult {
+  return {
+    id,
+    status: "active",
+    startedAt: at.toISOString(),
+    finishedAt: at.toISOString(),
+    durationMs: 0,
+    log: "",
+    target: { kind: "steps" },
+    detail: { reason: "previous_run_active" },
+  };
+}
+
+/** Reserve a collision-free identity through state.db's existing unique index. `run` is the version 5 run the attempt belongs to. */
+export function reserveTaskAttempt(
+  taskId: string,
+  requestedStartedAt: Date,
+  run?: TaskHistoryRun,
+): ReservedTaskAttempt {
   try {
     return withStateDb((db) => {
       for (let offsetMs = 0; ; offsetMs++) {
@@ -55,6 +80,7 @@ export function reserveTaskAttempt(taskId: string, requestedStartedAt: Date): Re
             metadataVersion: 2,
             durationMs: 0,
             detail: null,
+            ...(run ? { run } : {}),
             owner: { pid: process.pid, host: os.hostname(), ...processIdentity(process.pid) },
           }),
         });
