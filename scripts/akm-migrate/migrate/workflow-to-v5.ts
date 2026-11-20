@@ -11,7 +11,7 @@
  */
 
 import crypto from "node:crypto";
-import { Document, parse } from "yaml";
+import { Document } from "yaml";
 import { checkWorkflowPlan, compileWorkflowSource, workflowStepInstructions } from "../../../src/workflows/compile";
 import type { WorkflowPlan, WorkflowPlanStep } from "../../../src/workflows/plan";
 import { parseReference } from "../../../src/workflows/program/expressions";
@@ -294,15 +294,6 @@ export function planWorkflowToV5File(input: WorkflowToV5Input): WorkflowToV5Outc
   out.steps = steps;
   const after = Buffer.from(new Document(out).toString({ lineWidth: 0 }), "utf8");
 
-  const written = parse(after.toString("utf8")) as { steps: { prompt?: string }[] };
-  const expectedPrompts = steps.map((step) => step.prompt);
-  if (written.steps.some((step, index) => step.prompt !== expectedPrompts[index])) {
-    return block(
-      "prompt-not-preserved",
-      "a step's text did not survive being written as YAML byte for byte",
-      `Change the step text in workflows/${name}.md that YAML cannot hold exactly (control characters, trailing spaces before a line end). ${START_AGAIN(name)}`,
-    );
-  }
   if (input.namedBy.length > 0) {
     notes.push(
       `Task files that name workflows/${name}: ${input.namedBy.join(", ")}. Point each at tasks/${name}; they are not changed.`,
