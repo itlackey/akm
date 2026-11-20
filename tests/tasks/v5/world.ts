@@ -86,6 +86,8 @@ export interface World {
   lint(ref: string, values?: Record<string, string | number | boolean>, flags?: TaskV5StartFlags): Promise<unknown>;
   /** Starts the task and returns its result. A run that fails throws `RUN_FAILED`; a held lock throws `LOCKED`; a skipped start returns undefined. */
   start(ref: string, values?: Record<string, string | number | boolean>, flags?: StartWorldFlags): Promise<unknown>;
+  /** Starts the task as a caller of `runTask` that gives its inputs as flags and nothing else. */
+  startWithInputFlags(ref: string, inputs: readonly InputFlag[]): Promise<unknown>;
   /** `akm run <task> --resume`. */
   resume(ref: string): Promise<unknown>;
   /** Every run, oldest first. */
@@ -163,7 +165,8 @@ export function world(spec: WorldSpec = {}): World {
   for (const [ref, text] of Object.entries(spec.commands ?? {})) write(ref, text);
   for (const [ref, text] of Object.entries(spec.assets ?? {})) write(ref, text);
   const bundle = { name: "stash", dir: storage.stashDir };
-  const check: World["check"] = (ref, values, flags) => checkTaskV5({ ref, bundle, values, flags });
+  const check: World["check"] = (ref, values = {}, flags) =>
+    checkTaskV5({ ref, bundle, inputs: Object.entries(values).map(([name, value]) => inputFlag(name, value)), flags });
   // `run: commands/…` and `run: agents/…` find their asset through the index, as `akm run` does.
   const indexed =
     Object.keys(spec.commands ?? {}).length > 0 ||
@@ -179,7 +182,8 @@ export function world(spec: WorldSpec = {}): World {
       bundleName: "stash",
       adapterId: "akm",
       scheduled: start.scheduled === true,
-      start: start.start,
+      ...(start.start ? { start: start.start } : {}),
+      ...(start.inputFlags ? { inputFlags: start.inputFlags } : {}),
       hostEnv: spec.host ?? process.env,
       ...(spec.agent ? { runAgentImpl: standIn(spec.agent) } : {}),
     }).catch((error: unknown) => {
@@ -196,7 +200,7 @@ export function world(spec: WorldSpec = {}): World {
     start: (ref, values = {}, flags = {}) =>
       go(ref, {
         scheduled: flags.scheduled,
-        start: {
+        start: () => ({
           flags: {
             ...(flags.env ? { env: flags.env } : {}),
             ...(flags.secret ? { secret: flags.secret } : {}),
@@ -207,15 +211,11 @@ export function world(spec: WorldSpec = {}): World {
           },
           resume: false,
           skipIfLocked: flags.skipIfLocked === true,
-          inputs: Object.entries(values).map(
-            ([name, value]): InputFlag => ({
-              name,
-              value: typeof value === "boolean" ? value : String(value),
-            }),
-          ),
-        },
+          inputs: Object.entries(values).map(([name, value]) => inputFlag(name, value)),
+        }),
       }),
-    resume: (ref) => go(ref, { start: { flags: {}, resume: true, skipIfLocked: false, inputs: [] } }),
+    startWithInputFlags: (ref, inputs) => go(ref, { inputFlags: inputs }),
+    resume: (ref) => go(ref, { start: () => ({ flags: {}, resume: true, skipIfLocked: false, inputs: [] }) }),
     history: () => summarize(),
     get warnings() {
       return warnings;
@@ -224,9 +224,15 @@ export function world(spec: WorldSpec = {}): World {
   };
 }
 
+const inputFlag = (name: string, value: string | number | boolean): InputFlag => ({
+  name,
+  value: typeof value === "boolean" ? value : String(value),
+});
+
 interface StartedRun {
   scheduled?: boolean;
-  start: NonNullable<Parameters<typeof runTask>[1]["start"]>;
+  start?: NonNullable<Parameters<typeof runTask>[1]["start"]>;
+  inputFlags?: readonly InputFlag[];
 }
 
 /** A failed run or a held lock, as the reference program names them. */

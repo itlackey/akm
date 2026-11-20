@@ -18,6 +18,7 @@ import { getParsedInvocation, type ParsedInvocation } from "../../cli/invocation
 import { makeSecretRef, resolveSecretPath } from "../../core/env-secret-ref";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
+import { parseSecretSpec } from "../../core/ref-token";
 import { readValue } from "../../core/secret-value";
 import { type ManagedSubprocessResult, runManagedSubprocess } from "../../core/subprocess";
 import { withRetries } from "../../execution/retry";
@@ -45,31 +46,41 @@ export interface ResolvedInjections {
 
 /** Resolve the `--env` and `--secret` flags of `invocation` (this process's own by default). */
 export function resolveInjections(invocation: ParsedInvocation = getParsedInvocation()): ResolvedInjections {
+  return resolveInjectionRefs({
+    env: invocation.getAllFlagValues("--env"),
+    secret: invocation.getAllFlagValues("--secret"),
+  });
+}
+
+/** Resolve env asset refs, in order, then `<secret-ref>:<VAR>` specs over them. */
+export function resolveInjectionRefs(refs: {
+  env?: readonly string[];
+  secret?: readonly string[];
+}): ResolvedInjections {
   const values: Record<string, string> = {};
   const secretValues: string[] = [];
   // Parse every secret spec first, so a malformed one fails before any ref is read or audited.
-  const secrets = invocation.getAllFlagValues("--secret").map((spec) => {
-    const colon = spec.lastIndexOf(":");
-    const varName = spec.slice(colon + 1);
-    if (colon <= 0 || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(varName)) {
+  const secrets = (refs.secret ?? []).map((spec) => {
+    const parsed = parseSecretSpec(spec);
+    if (parsed === undefined) {
       throw new UsageError(
         `--secret takes <secret-ref>:<VAR>, for example secrets/deploy-token:GITHUB_TOKEN; got ${JSON.stringify(spec)}.`,
         "INVALID_FLAG_VALUE",
       );
     }
-    return { ref: spec.slice(0, colon), varName };
+    return parsed;
   });
-  for (const ref of invocation.getAllFlagValues("--env")) {
+  for (const ref of refs.env ?? []) {
     const binding = resolveEnvBinding(ref);
     Object.assign(values, binding.values);
     secretValues.push(...binding.secretValues);
   }
-  for (const { ref, varName } of secrets) {
+  for (const { ref, variable } of secrets) {
     const { conceptId, absPath, source } = resolveSecretPath(ref);
     const value = readValue(absPath);
-    values[varName] = value;
+    values[variable] = value;
     secretValues.push(value);
-    appendEvent({ eventType: "secret_access", ref: makeSecretRef(conceptId, source), metadata: { var: varName } });
+    appendEvent({ eventType: "secret_access", ref: makeSecretRef(conceptId, source), metadata: { var: variable } });
   }
   return { values, secretValues };
 }

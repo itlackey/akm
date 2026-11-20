@@ -28,7 +28,8 @@ import { type Correction, isRefused, jsonParser, structuredLoop } from "../../ll
 import type { TaskHistoryStep } from "../../storage/repositories/task-history-repository";
 import type { ExecutionProvenanceContext } from "../model/invocation";
 import type { PreparedTaskStep, PreparedTaskV3Steps } from "../prepare/prepared-execution";
-import { finishAttempt } from "./attempt-lifecycle";
+import { abortOnTermination, finishAttempt } from "./attempt-lifecycle";
+import { taskEventSource } from "./provenance";
 import { withUnattendedTimeout } from "./run-command-task";
 import { shellCommand } from "./run-native-task";
 import { DEFAULT_SCHEDULED_TASK_TIMEOUT_MS } from "./run-workflow-task";
@@ -171,13 +172,7 @@ export async function runStepsTask(input: {
     records.push({ ...step, status: "reused", durationMs: 0, attempts: 0 });
   }
 
-  // akm's own termination signal stops the running step's whole process group.
-  const abort = new AbortController();
-  const onSignal = (signal: NodeJS.Signals) => abort.abort(new Error(`task runner received ${signal}`));
-  const onSigterm = () => onSignal("SIGTERM");
-  const onSigint = () => onSignal("SIGINT");
-  process.once("SIGTERM", onSigterm);
-  process.once("SIGINT", onSigint);
+  const { abort, stop } = abortOnTermination();
 
   let failure: { name: string; reason: string } | undefined;
   try {
@@ -234,8 +229,7 @@ export async function runStepsTask(input: {
       records.push(record);
     }
   } finally {
-    process.off("SIGTERM", onSigterm);
-    process.off("SIGINT", onSigint);
+    stop();
   }
 
   const finishedAt = finishAttempt(startedAt, now());
@@ -308,7 +302,7 @@ async function runShellStep(step: Extract<PreparedTaskStep, { kind: "shell" }>, 
   const env: Record<string, string> = {
     ...childProcessEnv(),
     ...step.environment,
-    AKM_EVENT_SOURCE: process.env.AKM_EVENT_SOURCE ?? provenance.eventSource,
+    AKM_EVENT_SOURCE: taskEventSource(process.env, provenance),
     AKM_PARAMS: ctx.paramsJson,
     AKM_STEPS: ctx.stepsJson,
   };

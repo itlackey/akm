@@ -86,11 +86,6 @@ exec: 'printf "%s|%s|%s|%s|%s" "$REGION" "$DEPLOY" "$KEPT" "$(pwd)" "$(grep -c w
     expect(out(run).result.result).toBe("eu-west");
   });
 
-  test("exec: and prompt: steps run with experimental.exec unset", () => {
-    write("tasks/plain.yml", "version: 5-beta.1\nexec: printf ran\n");
-    expect(out(akm(["run", "tasks/plain"])).result.result).toBe("ran");
-  });
-
   test("a failed run exits 1 with the step that failed, and --resume continues at that step with the first start's flags", () => {
     const marker = path.join(storage.root, "fixed");
     write("env/lab.env", "REGION=eu-west\n");
@@ -114,6 +109,50 @@ steps:
     expect(result.steps.map((step: { status: string }) => step.status)).toEqual(["reused", "completed"]);
     expect(result.result).toBe("eu-west");
     expect(akm(["run", "tasks/flow", "--resume"]).status).toBe(2);
+  });
+
+  test("a task whose steps changed since the failed run is refused for --resume, and the failed run is left as it was", () => {
+    const marker = path.join(storage.root, "fixed");
+    const flow = (steps: string[]) =>
+      `version: 5-beta.1\nsteps:\n${steps.map((exec, index) => `  - name: s${index}\n    exec: ${exec}`).join("\n")}\n`;
+    const original = flow(["printf one", `test -f ${marker} && printf two`]);
+    write("tasks/flow.yml", original);
+    expect(akm(["run", "tasks/flow"]).status).toBe(1);
+    write("tasks/flow.yml", flow(["printf zero", "printf one", `test -f ${marker} && printf two`]));
+    const refused = akm(["run", "tasks/flow", "--resume"]);
+    expect(refused.status).toBe(2);
+    expect(refused.stderr + refused.stdout).toContain("changed its steps");
+    write("tasks/flow.yml", original);
+    fs.writeFileSync(marker, "");
+    const resumed = akm(["run", "tasks/flow", "--resume"]);
+    expect(resumed.status).toBe(0);
+    expect(out(resumed).result.steps.map((step: { status: string }) => step.status)).toEqual(["reused", "completed"]);
+  });
+
+  test("a run cut off while a step was running is resumed at that step", async () => {
+    const marker = path.join(storage.root, "fixed");
+    const started = path.join(storage.root, "started");
+    write(
+      "tasks/cut.yml",
+      `version: 5-beta.1
+steps:
+  - name: a
+    exec: printf one
+  - name: b
+    exec: 'test -f ${marker} || { touch ${started}; sleep 5; }; printf two'
+`,
+    );
+    const holder = spawn("bun", [CLI, "run", "tasks/cut", "--format", "json"], { env: environment(), stdio: "ignore" });
+    for (let tries = 0; tries < 100 && !fs.existsSync(started); tries++) await Bun.sleep(100);
+    expect(fs.existsSync(started)).toBe(true);
+    const gone = new Promise((resolve) => holder.once("exit", resolve));
+    holder.kill("SIGKILL");
+    await gone;
+    fs.writeFileSync(marker, "");
+    const resumed = akm(["run", "tasks/cut", "--resume"]);
+    expect(resumed.status).toBe(0);
+    expect(out(resumed).result.steps.map((step: { status: string }) => step.status)).toEqual(["reused", "completed"]);
+    expect(out(resumed).result.result).toBe("two");
   });
 
   test("--timeout limits the run, --max-retries runs a failing step again", () => {

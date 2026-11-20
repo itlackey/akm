@@ -202,7 +202,26 @@ describe("a run has one state", () => {
     expect(json(await w.start("tasks/t", { queue: "mail" }))).toEqual({ queue: "mail", limit: 10 });
   });
 
-  test("the state file is a copy with no size limit, gone when the step ends; standard error is not a result", async () => {
+  test("a caller of runTask that gives its inputs as flags keeps them, a list input repeating its flag", async () => {
+    const w = world({
+      tasks: {
+        "tasks/t": {
+          inputs: { who: { type: "string", required: true }, tags: { type: "array", items: { type: "string" } } },
+          exec: SHOW_STATE,
+        },
+      },
+    });
+    const state = json(
+      await w.startWithInputFlags("tasks/t", [
+        { name: "who", value: "me" },
+        { name: "tags", value: "a" },
+        { name: "tags", value: "b" },
+      ]),
+    );
+    expect(state).toEqual({ who: "me", tags: ["a", "b"] });
+  });
+
+  test("the state file is a copy with no size limit, gone when the step ends", async () => {
     const w = world({
       tasks: {
         "tasks/t": {
@@ -437,12 +456,10 @@ describe("a clean environment", () => {
     expect(agentEnv.AKM_TASK_STATE).toBeUndefined(); // an agent is not pointed at the state file
   });
 
-  test("a step's AKM_EVENT_SOURCE is the one akm sets for a task run, not the user's", async () => {
-    const w = world({
-      host: { ...host, AKM_EVENT_SOURCE: undefined },
-      tasks: { "tasks/t": { exec: 'printf "%s" "$AKM_EVENT_SOURCE"' } },
-    });
-    expect(await w.start("tasks/t")).toBe("task");
+  test("a step's AKM_EVENT_SOURCE is the one in akm's own environment, else the run's source", async () => {
+    const tasks = { "tasks/t": { exec: 'printf "%s" "$AKM_EVENT_SOURCE"' } };
+    expect(await world({ host: { ...host, AKM_EVENT_SOURCE: "improve" }, tasks }).start("tasks/t")).toBe("improve");
+    expect(await world({ host: { ...host, AKM_EVENT_SOURCE: undefined }, tasks }).start("tasks/t")).toBe("task");
   });
 
   test("inherit: lets a named variable through, for the task or for one step", async () => {
@@ -950,57 +967,14 @@ describe("every run is isolated", () => {
     expect(await rule(w.resume("tasks/t"))).toBe(NOTHING_TO_RESUME);
   });
 
-  test("a run cut off while a step was running is resumed at that step", async () => {
+  test("a failed run is not resumed by two starts at once", async () => {
     const w = world({
-      tasks: {
-        "tasks/t": {
-          steps: [
-            { name: "a", exec: "printf one" },
-            { name: "b", exec: `${count("b")}; printf two` },
-            { name: "look", exec: SHOW_STATE },
-          ],
-        },
-      },
+      tasks: { "tasks/t": { steps: [{ name: "work", exec: `${count("work")}; sleep 0.3; ${fixedOrFail("true")}` }] } },
     });
-    expect(await w.start("tasks/t")).toBeDefined();
-    // A run whose process is gone: its row is still `active`, its state kept with `a` finished.
-    const { reserveTaskAttempt } = await import("../../../src/tasks/run/attempt-lifecycle");
-    const { withStateDb } = await import("../../../src/core/state-db");
-    const { getStateDir } = await import("../../../src/core/paths");
-    const runId = "2026-01-01T00-00-00-000Z-cutoff";
-    const dir = path.join(getStateDir(), "runs", "t");
-    fs.mkdirSync(path.join(dir, runId), { recursive: true });
-    fs.writeFileSync(
-      path.join(dir, `${runId}.state.json`),
-      JSON.stringify({
-        ref: "tasks/t",
-        taskId: "t",
-        bundle: { name: "stash", dir: path.join(w.scratch, "stash") },
-        runId,
-        values: {},
-        state: { a: "one" },
-        steps: [
-          { name: "a", status: "completed" },
-          { name: "b", status: "pending" },
-          { name: "look", status: "pending" },
-        ],
-        children: {},
-        flags: {},
-        dir: path.join(dir, runId),
-        madeDir: true,
-      }),
-    );
-    const reserved = reserveTaskAttempt("t", new Date(Date.now() + 60_000), { id: runId });
-    expect(reserved.historyReserved).toBe(true);
-    withStateDb((db) =>
-      db
-        .prepare(
-          "UPDATE task_history SET metadata_json = json_set(metadata_json, '$.owner.pid', 999999999, '$.owner.bootId', 'gone') WHERE status = 'active'",
-        )
-        .run(),
-    );
-    expect(json(await w.resume("tasks/t"))).toEqual({ a: "one", b: "two" });
-    expect(ran("b")).toBe(2);
+    expect(await rule(w.start("tasks/t"))).toBe(RUN_FAILED);
+    fix();
+    expect(await Promise.all([rule(w.resume("tasks/t")), rule(w.resume("tasks/t"))])).toEqual(["no error", LOCKED]);
+    expect(ran("work")).toBe(2);
   });
 });
 

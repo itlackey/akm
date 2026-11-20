@@ -15,7 +15,7 @@
 import { parseTimeoutValue } from "../../cli/parse-args";
 import { bundleRefToString, parseBundleRef } from "../../core/asset/asset-ref";
 import { UsageError } from "../../core/errors";
-import { isSecretRefToken, REF_TOKEN_RE } from "../../core/ref-token";
+import { isSecretRefToken, parseSecretSpec, REF_TOKEN_RE } from "../../core/ref-token";
 import { warnOnce } from "../../core/warn";
 import type { InputContract } from "../../execution/input-contract";
 import type { ExecutionJsonObject, ExecutionJsonValue } from "../../execution/json";
@@ -148,14 +148,6 @@ export function refuseRunningTaskV5(filePath: string): never {
     `TASK_SCHEMA_VERSION_UNSUPPORTED: Task at ${filePath} is version ${TASK_SOURCE_V5_VERSION}; this build reads and checks it, and running version 5 tasks arrives in a later build.`,
     "TASK_SCHEMA_VERSION_UNSUPPORTED",
   );
-}
-
-/** `<secret ref>:<VAR>`, as `--secret` takes it. */
-export function parseSecretSpec(spec: string): { ref: string; variable: string } | undefined {
-  const colon = spec.lastIndexOf(":");
-  const variable = spec.slice(colon + 1);
-  if (colon <= 0 || !WORKFLOW_ENV_VAR_NAME_PATTERN.test(variable)) return undefined;
-  return { ref: spec.slice(0, colon), variable };
 }
 
 /** The kind of asset a `run:` value names, or undefined when it is no ref to a task, prompt asset, script or agent. */

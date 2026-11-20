@@ -17,7 +17,6 @@ import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createParsedInvocation } from "../../cli/invocation";
 import { parseTimeoutValue } from "../../cli/parse-args";
 import { selectionFromArgs } from "../../cli/selection";
 import { akmAgentDispatch } from "../../commands/agent/agent-dispatch";
@@ -27,18 +26,17 @@ import {
   prepareCommandInvocation,
 } from "../../commands/command/command-execution";
 import { buildChildEnv } from "../../commands/env/child-env";
-import { ensureWorkingFolder, resolveInjections, runProgram } from "../../commands/env/injection";
+import { ensureWorkingFolder, resolveInjectionRefs, runProgram } from "../../commands/env/injection";
 import { parseBundleRef } from "../../core/asset/asset-ref";
 import { loadConfig } from "../../core/config/config";
-import { TransientError, UsageError } from "../../core/errors";
-import { releaseLock } from "../../core/file-lock";
+import { rethrowIfTestIsolationError, TransientError, UsageError } from "../../core/errors";
+import { type LockOwnership, releaseLock } from "../../core/file-lock";
 import type { TaskLogLineInput } from "../../core/logs-db";
 import { getStateDir } from "../../core/paths";
 import { collectInferredSecretValues, collectSensitiveValues, redactSensitiveValue } from "../../core/redaction";
 import { REF_TOKEN_RE } from "../../core/ref-token";
 import { formatLockHolderPid, tryAcquireRunLock } from "../../core/run-lock";
 import { streamCaptureFailure } from "../../core/subprocess";
-import { warn } from "../../core/warn";
 import {
   applyInputDefaults,
   type InputFlag,
@@ -46,11 +44,11 @@ import {
   validateInputs,
 } from "../../execution/input-contract";
 import { withRetries } from "../../execution/retry";
-import { resolveUsageEventSource, type UsageEventSource } from "../../indexer/usage/usage-events";
 import type { TaskHistoryRun, TaskHistoryStep } from "../../storage/repositories/task-history-repository";
 import { scriptProgram } from "../frozen-script";
-import { reserveTaskAttempt, skippedActiveRun, taskRunLockPath } from "../run/attempt-lifecycle";
-import { resolveProvenanceContext } from "../run/provenance";
+import type { ExecutionProvenanceContext } from "../model/invocation";
+import { abortOnTermination, acquireTaskRunLock, reserveTaskAttempt, taskRunLockPath } from "../run/attempt-lifecycle";
+import { resolveProvenanceContext, taskEventSource } from "../run/provenance";
 import { reconcileAbandonedExecutionState } from "../run/reconcile-abandoned";
 import { shellCommand } from "../run/run-native-task";
 import { expectLoop, summarize } from "../run/run-steps-task";
@@ -76,10 +74,8 @@ export interface PreparedTaskV5 {
 /** The limit of a step that has no `timeout:` on it or at the top of its task. */
 const DEFAULT_STEP_TIMEOUT = "30m";
 const WHOLE_TOKEN = /^\$\{([^}\s]+)\}$/;
-const NO_START: TaskV5Start = { flags: {}, resume: false, skipIfLocked: false, inputs: [] };
 
 type StepStatus = "pending" | "completed";
-type Values = Record<string, string | number | boolean>;
 
 /** What is kept of a run while it can be resumed: written after every step, and gone when the run succeeds. */
 interface RunRecord {
@@ -88,8 +84,8 @@ interface RunRecord {
   bundle: TaskV5Bundle;
   runId: string;
   parent?: NonNullable<TaskHistoryRun["parent"]>;
-  /** The inputs the start gave, for the check a resume makes again. */
-  values: Values;
+  /** The input flags the start gave, for the check a resume makes again. */
+  inputs: readonly InputFlag[];
   /** The inputs as the run has them, and then each finished step's result under its name. */
   state: Record<string, unknown>;
   steps: { name: string; status: StepStatus }[];
@@ -111,7 +107,7 @@ interface Context {
   host: NodeJS.ProcessEnv;
   now: () => Date;
   scheduled: boolean;
-  eventSource: UsageEventSource;
+  provenance: ExecutionProvenanceContext;
   /** Every secret value the run can set, in its task and every task it runs, known from the start. */
   secrets: Set<string>;
   abort: AbortController;
@@ -221,15 +217,6 @@ function stepInputs(
   return resolveInputs(child, flags, literals);
 }
 
-function inputValues(flags: readonly InputFlag[]): Values {
-  const values: Values = {};
-  for (const flag of flags) {
-    if (flag.name in values) throw TASK_INPUT_DIAGNOSTICS.duplicateNonArray(flag.name);
-    values[flag.name] = flag.value;
-  }
-  return values;
-}
-
 function parseDocument(file: string): TaskSourceV5Document {
   const parsed = parseTaskSource({ yaml: fs.readFileSync(file, "utf8"), filePath: file });
   if (parsed.version === 4) {
@@ -257,7 +244,8 @@ export interface PreparedRunV5 {
   readonly resume?: RunRecord;
   /** The inputs of a new run, as its task has them. */
   readonly inputs?: Record<string, unknown>;
-  readonly values: Values;
+  /** The input flags the start gave. */
+  readonly flagged: readonly InputFlag[];
 }
 
 /**
@@ -265,31 +253,31 @@ export interface PreparedRunV5 {
  * (`checkTaskV5`), and, for a `--resume`, that there is a run to continue.
  */
 export async function prepareRunV5(task: PreparedTaskV5, options: RunTaskOptions): Promise<PreparedRunV5> {
-  const start = options.start ?? NO_START;
+  const start = options.start?.() ?? {
+    flags: {},
+    resume: false,
+    skipIfLocked: false,
+    inputs: options.inputFlags ?? [],
+  };
   try {
     reconcileAbandonedExecutionState();
-  } catch {
+  } catch (error) {
+    rethrowIfTestIsolationError(error);
     // Settling abandoned state is housekeeping; it never prevents a run.
   }
   if (start.resume) {
     const [resume] = resumableRuns(task.taskId);
-    if (!resume) {
-      throw new UsageError(
-        `Task ${JSON.stringify(task.taskId)} has no failed run to resume. Run it without --resume.`,
-        "INVALID_FLAG_VALUE",
-      );
-    }
+    if (!resume) throw noRunToResume(task.taskId);
     const document = await checkTaskV5({
       ref: task.ref,
       bundle: task.bundle,
-      values: resume.values,
+      inputs: resume.inputs,
       flags: resume.flags,
     });
-    return { task, start, document, resume, values: resume.values };
+    return { task, start, document, resume, flagged: resume.inputs };
   }
-  const values = inputValues(start.inputs);
-  const document = await checkTaskV5({ ref: task.ref, bundle: task.bundle, values, flags: start.flags });
-  return { task, start, document, inputs: resolveInputs(document, start.inputs), values };
+  const document = await checkTaskV5({ ref: task.ref, bundle: task.bundle, inputs: start.inputs, flags: start.flags });
+  return { task, start, document, inputs: resolveInputs(document, start.inputs), flagged: start.inputs };
 }
 
 /** Run a prepared start. A held lock is `RUN_LEASE_HELD` (exit 75), or a skipped start when `--scheduled` or `--skip-if-locked` says so. */
@@ -299,48 +287,74 @@ export async function runPreparedV5(prepared: PreparedRunV5, options: RunTaskOpt
   const now = options.now ?? (() => new Date());
   const host = options.hostEnv ?? process.env;
   const flags = prepared.resume?.flags ?? start.flags;
+  const lock =
+    document.lock === true
+      ? acquireTaskRunLock(task.taskId, { skip: provenance.scheduled || start.skipIfLocked, at: now() })
+      : undefined;
+  if (lock && "skipped" in lock) return lock.skipped;
+  const termination = abortOnTermination();
   const context: Context = {
     options,
     host,
     now,
     scheduled: provenance.scheduled,
-    eventSource: resolveUsageEventSource(host, provenance.eventSource as UsageEventSource),
+    provenance,
     secrets: new Set(),
-    abort: new AbortController(),
+    abort: termination.abort,
     environments: new Map(),
   };
-  const lock = document.lock === true ? acquireLock(task.taskId) : undefined;
-  if (lock?.state === "held") {
-    const message = `Task ${task.taskId} is still running (PID ${formatLockHolderPid(lock.holder)}, started ${lock.holder.startedAt}); not starting another run.`;
-    if (!(provenance.scheduled || start.skipIfLocked)) throw new TransientError(message, "RUN_LEASE_HELD");
-    warn(message);
-    return skippedActiveRun(task.taskId, now());
-  }
-  // akm's own termination signal stops the running step's whole process group.
-  const onSignal = (signal: NodeJS.Signals) => context.abort.abort(new Error(`task runner received ${signal}`));
-  const onSigterm = () => onSignal("SIGTERM");
-  const onSigint = () => onSignal("SIGINT");
-  process.once("SIGTERM", onSigterm);
-  process.once("SIGINT", onSigint);
+  let runLock: LockOwnership | undefined;
   try {
     await collectSecrets(context, task.ref, task.bundle, flags, new Set());
-    const record =
-      prepared.resume ??
-      newRecord(context, task.ref, task.taskId, task.bundle, document, flags, prepared.inputs ?? {}, prepared.values);
+    let record: RunRecord;
+    if (prepared.resume) {
+      runLock = lockRun(prepared.resume);
+      const kept = readRecord(task.taskId, prepared.resume.runId);
+      if (!kept) throw noRunToResume(task.taskId);
+      record = kept;
+    } else {
+      record = newRecord(
+        context,
+        task.ref,
+        task.taskId,
+        task.bundle,
+        document,
+        flags,
+        prepared.inputs ?? {},
+        prepared.flagged,
+      );
+    }
     const until =
       flags.timeout === undefined ? Number.POSITIVE_INFINITY : Date.now() + parseTimeoutValue(String(flags.timeout));
     const result = await runAttempt(context, record, document, until);
     if (result.status === "completed") discardEarlierFailedRuns(record);
     return result;
   } finally {
-    process.off("SIGTERM", onSigterm);
-    process.off("SIGINT", onSigint);
+    termination.stop();
+    if (runLock) releaseLock(runLock);
     if (lock) releaseLock(lock.ownership);
   }
 }
 
-function acquireLock(taskId: string): ReturnType<typeof tryAcquireRunLock> {
-  return tryAcquireRunLock(taskRunLockPath(taskId), { label: "task" });
+function noRunToResume(taskId: string): UsageError {
+  return new UsageError(
+    `Task ${JSON.stringify(taskId)} has no failed run to resume. Run it without --resume.`,
+    "INVALID_FLAG_VALUE",
+  );
+}
+
+/** One attempt at a run at a time: a run that is being resumed is not resumed again until that attempt ends. */
+function lockRun(record: RunRecord): LockOwnership {
+  const acquired = tryAcquireRunLock(path.join(runsFolder(record.taskId), `${record.runId}.lock`), {
+    label: "task run",
+  });
+  if (acquired.state === "held") {
+    throw new TransientError(
+      `Run ${record.runId} of task ${record.taskId} is still running (PID ${formatLockHolderPid(acquired.holder)}, started ${acquired.holder.startedAt}); not resuming it again.`,
+      "RUN_LEASE_HELD",
+    );
+  }
+  return acquired.ownership;
 }
 
 /** When a run of a task succeeds, the failed runs before it are not resumed: what is kept of them goes too. */
@@ -358,7 +372,7 @@ function newRecord(
   document: TaskSourceV5Document,
   flags: StartedWith,
   state: Record<string, unknown>,
-  values: Values,
+  inputs: readonly InputFlag[],
   parent?: RunRecord,
   stepName?: string,
 ): RunRecord {
@@ -378,7 +392,7 @@ function newRecord(
     bundle,
     runId,
     ...(parent ? { parent: { task: parent.taskId, run: parent.runId, step: stepName as string } } : {}),
-    values,
+    inputs,
     state,
     steps: document.steps.map((step) => ({ name: step.name, status: "pending" as StepStatus })),
     children: {},
@@ -392,6 +406,20 @@ function newRecord(
 
 // ── Running ─────────────────────────────────────────────────────────────────
 
+/** A run is resumed only when its task has the steps it had: what each recorded step finished belongs to that step. */
+function assertSameSteps(record: RunRecord, document: TaskSourceV5Document): void {
+  const recorded = record.steps.map((step) => step.name);
+  if (
+    recorded.length !== document.steps.length ||
+    document.steps.some((step, index) => step.name !== recorded[index])
+  ) {
+    throw new UsageError(
+      `Task ${JSON.stringify(record.taskId)} changed its steps since the failed run. Run it without --resume.`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+}
+
 /** One attempt at a run, from its first unfinished step: one history row, and the steps it ran. */
 async function runAttempt(
   context: Context,
@@ -399,6 +427,7 @@ async function runAttempt(
   document: TaskSourceV5Document,
   until: number,
 ): Promise<TaskRunResult> {
+  assertSameSteps(record, document);
   const attempt = reserveTaskAttempt(record.taskId, context.now(), {
     id: record.runId,
     ...(record.parent ? { parent: record.parent } : {}),
@@ -409,8 +438,8 @@ async function runAttempt(
   const steps: TaskHistoryStep[] = [];
   let failure: { name: string; reason: string } | undefined;
   let result: unknown;
-  for (const [index, step] of document.steps.entries()) {
-    const kept = record.steps[index] as { name: string; status: StepStatus };
+  for (const step of document.steps) {
+    const kept = record.steps.find((recorded) => recorded.name === step.name) as { name: string; status: StepStatus };
     const kind = historyKind(step);
     const name = stepLabel(step.name);
     if (kept.status === "completed") {
@@ -425,6 +454,7 @@ async function runAttempt(
     const begun = context.now();
     const outcome = await runStep(context, record, document, step, until);
     const durationMs = Math.max(0, context.now().getTime() - begun.getTime());
+    const reason = outcome.ok ? undefined : (scrub(context, outcome.reason ?? "failed") as string);
     const header = `[akm task] step=${name} kind=${kind} attempts=${outcome.attempts} ok=${outcome.ok}`;
     lines.push(header, ...outcome.lines);
     dbLines.push({ level: outcome.ok ? "info" : "error", line: header }, ...outcome.dbLines);
@@ -436,7 +466,7 @@ async function runAttempt(
       durationMs,
       attempts: outcome.attempts,
       ...(text ? { summary: summarize(text) } : {}),
-      ...(!outcome.ok && outcome.reason ? { reason: outcome.reason } : {}),
+      ...(reason ? { reason } : {}),
       ...(outcome.startedAt ? { startedAt: outcome.startedAt } : {}),
     });
     if (outcome.ok) {
@@ -445,7 +475,7 @@ async function runAttempt(
       if (step.name !== TASK_V5_SINGLE_STEP) record.state[step.name] = result;
       writeRecord(record);
     } else {
-      failure = { name, reason: outcome.reason ?? "failed" };
+      failure = { name, reason: reason as string };
     }
   }
   const finishedAt = context.now() < startedAt ? startedAt : context.now();
@@ -708,7 +738,7 @@ async function dispatchPromptAsset(
     ...(context.options.runAgentImpl ? { runAgent: context.options.runAgentImpl } : {}),
     baseEnv: run.env,
     signal: context.abort.signal,
-    eventSource: context.eventSource,
+    eventSource: context.provenance.eventSource,
   });
 }
 
@@ -726,7 +756,7 @@ async function runTaskStep(
   const child = parseDocument(found.file);
   const taskId = taskIdOf(ref);
   const limit = limitOf(until, document, step);
-  const lock = child.lock === true ? acquireLock(taskId) : undefined;
+  const lock = child.lock === true ? tryAcquireRunLock(taskRunLockPath(taskId), { label: "task" }) : undefined;
   if (lock?.state === "held") throw new Error(`task ${ref} is still running, and it runs one at a time`);
   try {
     const kept = record.children[step.name];
@@ -740,7 +770,7 @@ async function runTaskStep(
         child,
         record.flags,
         stepInputs(child, step, record.state),
-        {},
+        [],
         record,
         step.name,
       );
@@ -780,19 +810,19 @@ function environmentOf(
   for (const [name, value] of Object.entries(buildChildEnv(context.host, { clean: true, inherit }))) {
     if (value !== undefined) env[name] = value;
   }
-  env.AKM_EVENT_SOURCE = context.eventSource;
+  env.AKM_EVENT_SOURCE = taskEventSource(context.host, context.provenance);
   const secretValues: string[] = [];
-  const apply = (tokens: string[]): void => {
-    const injected = resolveInjections(createParsedInvocation(["", "", ...tokens]));
+  const apply = (refs: { env?: string[]; secret?: string[] }): void => {
+    const injected = resolveInjectionRefs(refs);
     Object.assign(env, injected.values);
     secretValues.push(...injected.secretValues);
   };
   for (const layer of [document.options, step.options, flags] as const) {
     for (const entry of layer.env ?? []) {
-      if (typeof entry === "string") apply(["--env", entry]);
+      if (typeof entry === "string") apply({ env: [entry] });
       else for (const [name, value] of Object.entries(entry)) env[name] = String(value);
     }
-    if (layer.secret?.length) apply(layer.secret.flatMap((spec) => ["--secret", spec]));
+    if (layer.secret?.length) apply({ secret: [...layer.secret] });
   }
   secretValues.push(...collectInferredSecretValues(env));
   const resolved = { env, secretValues };

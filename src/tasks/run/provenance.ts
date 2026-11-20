@@ -42,3 +42,8 @@ export function resolveProvenanceContext(
 ): ExecutionProvenanceContext {
   return explicit ?? createExecutionProvenanceContext(scheduled);
 }
+
+/** The `AKM_EVENT_SOURCE` a task's process gets: the one in akm's own environment when it is set, else the run's. */
+export function taskEventSource(host: NodeJS.ProcessEnv, provenance: ExecutionProvenanceContext): string {
+  return host.AKM_EVENT_SOURCE ?? provenance.eventSource;
+}

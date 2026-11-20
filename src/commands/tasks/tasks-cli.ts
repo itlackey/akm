@@ -52,7 +52,6 @@ import {
   akmTasksRun,
   akmTasksSync,
   akmTasksSyncPlan,
-  taskIsV5,
 } from "./tasks";
 
 /** Shared `--bundle <bundle>` arg wired onto every task subcommand. */
@@ -282,11 +281,11 @@ export const tasksRunCommand = defineCommand({
   },
   async run({ args, rawArgs }) {
     await runWithJsonErrors(async () => {
-      const start = taskIsV5(args.id, args.bundle) ? readV5Start(rawArgs, args.id) : undefined;
       const envelope = await akmTasksRun(args.id, {
         scheduled: args.scheduled === true,
         ...(args.bundle !== undefined ? { target: args.bundle } : {}),
-        ...(start ? { start } : { inputFlags: parseTaskInputFlags(rawArgs, args.id) }),
+        inputFlags: parseTaskInputFlags(rawArgs, args.id),
+        start: () => readV5Start(rawArgs, args.id),
       });
       output("task-run", envelope);
       // F4: was `process.exit(envelope.exitCode)`, terminating synchronously

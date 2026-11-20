@@ -50,7 +50,6 @@ import {
 } from "../../core/write-source";
 import type { InputFlag } from "../../execution/input-contract";
 import { deriveInstallations } from "../../indexer/installations";
-import { resolveAdapterConceptOwner } from "../../indexer/lookup/adapter-concept-owner";
 import { retiredEngineSelection } from "../../integrations/agent/resolution";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { resolveAssetPath } from "../../sources/resolve";
@@ -89,7 +88,7 @@ import {
   type SchedulerSyncPlan,
   scheduledInvocationBundle,
 } from "../../tasks/scheduler-sync";
-import { isTaskSourceV5, parseTaskSource } from "../../tasks/source/parse-task-source";
+import { parseTaskSource } from "../../tasks/source/parse-task-source";
 import { projectTaskSourceV4 } from "../../tasks/source/project-v4";
 import { parseTaskSourceV4 } from "../../tasks/source/task-source-v4";
 import type { TaskV3SourceDocument } from "../../tasks/source-v3";
@@ -312,30 +311,9 @@ export interface TasksRunResultEnvelope {
   exitCode: number;
 }
 
-/**
- * True when the task's file is version 5, whose start takes flags a version 4 task reads as inputs. A task that
- * cannot be found or read is not: starting it fails as it always has.
- */
-export function taskIsV5(id: string, target?: string): boolean {
-  try {
-    const parsed = parseTaskRef(id);
-    const bundle = resolveTaskReadBundle(parsed.bundle, target);
-    const adapterId = bundle.source.adapterId ?? detectAdapterId(bundle.source.path);
-    const taskId = taskIdForAdapter(parsed.id, adapterId);
-    const owner = resolveAdapterConceptOwner(
-      bundle.source.path,
-      adapterId,
-      adapterId === "akm" ? `tasks/${taskId}` : taskId,
-    );
-    return owner !== undefined && isTaskSourceV5({ yaml: fs.readFileSync(owner.path, "utf8"), filePath: owner.path });
-  } catch {
-    return false;
-  }
-}
-
 export async function akmTasksRun(
   id: string,
-  options: { scheduled?: boolean; target?: string; inputFlags?: readonly InputFlag[]; start?: TaskV5Start } = {},
+  options: { scheduled?: boolean; target?: string; inputFlags?: readonly InputFlag[]; start?: () => TaskV5Start } = {},
 ): Promise<TasksRunResultEnvelope> {
   const scheduled = options.scheduled === true;
   const startedAt = new Date();

@@ -136,8 +136,11 @@ export interface RunTaskOptions {
    * against the real constructed value rather than a bespoke side channel.
    */
   captureTaskInvocation?: (invocation: TaskInvocation) => void;
-  /** Version 5 tasks: what the start gave (flags, inputs, `--resume`, `--skip-if-locked`). Absent: a start with none. */
-  start?: TaskV5Start;
+  /**
+   * Version 5 tasks: reads what the start gave (flags, inputs, `--resume`, `--skip-if-locked`), called once the task
+   * is known to be version 5. Absent: the start has `inputFlags` as its inputs and no flags.
+   */
+  start?: () => TaskV5Start;
   /** Version 5 tasks (tests): the environment akm runs in, which clean steps take what they keep and `inherit:` from. Default: this process's. */
   hostEnv?: NodeJS.ProcessEnv;
   /**

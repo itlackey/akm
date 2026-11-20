@@ -31,6 +31,9 @@ const OWNER_CLEAN_ENV = "src/commands/env/child-env.ts";
 const OWNER_RETRY = "src/execution/retry.ts";
 const OWNER_SUBPROCESS = "src/core/subprocess.ts";
 const LOADER = "src/tasks/run/load-task.ts";
+const LIFECYCLE = "src/tasks/run/attempt-lifecycle.ts";
+const ENV_BINDING = "src/commands/env/env-binding.ts";
+const REF_TOKEN = "src/core/ref-token.ts";
 
 interface Mutation {
   readonly name: string;
@@ -187,8 +190,8 @@ const MUTATIONS: readonly Mutation[] = [
   m(
     "a task's refs are read from the caller's bundle",
     CHECK,
-    "await checkTask(found.bundle, target, given, visited, at);",
-    "await checkTask(bundle, target, given, visited, at);",
+    "await checkTask(found.bundle, target, given, known, visited, at);",
+    "await checkTask(bundle, target, given, known, visited, at);",
   ),
   m(
     "a task's assets are read from the caller's bundle",
@@ -225,14 +228,14 @@ const MUTATIONS: readonly Mutation[] = [
   m(
     "the values given are not converted at lint",
     CHECK,
-    'else flags.push({ name, value: typeof value === "boolean" ? value : String(value) });',
+    'else given.push({ name, value: typeof value === "boolean" ? value : String(value) });',
     "else void value;",
   ),
   m(
     "a literal in a calling step's args: is not checked at lint",
     CHECK,
-    'given[name] = typeof value === "string" && WHOLE_TOKEN.test(value) ? LATER : value;',
-    "given[name] = LATER;",
+    'if (typeof value === "string" && WHOLE_TOKEN.test(value)) known.add(name);',
+    "known.add(name);",
   ),
   m(
     "a number is taken as text",
@@ -394,8 +397,8 @@ const MUTATIONS: readonly Mutation[] = [
   ),
   m(
     "a secret's variable name is not checked",
-    SOURCE,
-    "if (colon <= 0 || !WORKFLOW_ENV_VAR_NAME_PATTERN.test(variable)) return undefined;",
+    REF_TOKEN,
+    "if (colon <= 0 || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(variable)) return undefined;",
     "if (colon <= 0) return undefined;",
   ),
   // Options
@@ -485,10 +488,15 @@ const MUTATIONS: readonly Mutation[] = [
   m(
     "an env asset that does not exist is accepted",
     CHECK,
-    "const { absPath } = resolveEnvPath(entry);",
-    'const absPath = "";',
+    "resolveEnvBinding(entry, { locateOnly: true });",
+    "void entry;",
   ),
-  m("an env asset may bind a secret that does not exist", CHECK, "if (missing.length > 0) {", "if (false) {"),
+  m(
+    "an env asset may bind a secret that does not exist",
+    ENV_BINDING,
+    "  if (missing.length > 0) {\n    throw new NotFoundError(",
+    "  if (false) {\n    throw new NotFoundError(",
+  ),
   m(
     "a secret that does not exist is accepted",
     CHECK,
@@ -546,7 +554,12 @@ const MUTATIONS: readonly Mutation[] = [
   m("inherit: on a step is ignored", RUN, ", ...(step.options.inherit ?? [])];", "];"),
   m("inherit: at the top of a task is ignored", RUN, ", ...(document.options.inherit ?? [])", ""),
   m("--inherit is ignored", RUN, "const inherit = [...(flags.inherit ?? []), ", "const inherit = ["),
-  m("a step has no AKM_EVENT_SOURCE", RUN, "env.AKM_EVENT_SOURCE = context.eventSource;", "void 0;"),
+  m(
+    "a step has no AKM_EVENT_SOURCE",
+    RUN,
+    "env.AKM_EVENT_SOURCE = taskEventSource(context.host, context.provenance);",
+    "void 0;",
+  ),
   m(
     "the task's env: wins over the step's",
     RUN,
@@ -562,7 +575,7 @@ const MUTATIONS: readonly Mutation[] = [
   m(
     "an env asset's variables are not loaded",
     RUN,
-    'if (typeof entry === "string") apply(["--env", entry]);',
+    'if (typeof entry === "string") apply({ env: [entry] });',
     'if (typeof entry === "string") void 0;',
   ),
   m(
@@ -738,8 +751,8 @@ const MUTATIONS: readonly Mutation[] = [
   m(
     "runs of a task share one state",
     RUN,
-    "flags, prepared.inputs ?? {}, prepared.values",
-    "flags, ((globalThis as Record<string, any>).__shared ??= { ...prepared.inputs }), prepared.values",
+    "        prepared.inputs ?? {},\n        prepared.flagged,",
+    "        ((globalThis as Record<string, any>).__shared ??= { ...prepared.inputs }),\n        prepared.flagged,",
   ),
   m(
     "a task's result is its first step's",
@@ -843,13 +856,8 @@ const MUTATIONS: readonly Mutation[] = [
   ),
 
   // Running: the lock
-  m(
-    "lock: true is ignored",
-    RUN,
-    "const lock = document.lock === true ? acquireLock(task.taskId) : undefined;",
-    "const lock = undefined;",
-  ),
-  m("a task without lock: is held back too", RUN, "const lock = document.lock === true ?", "const lock = true ?"),
+  m("lock: true is ignored", RUN, "    document.lock === true\n      ?", "    false\n      ?"),
+  m("a task without lock: is held back too", RUN, "    document.lock === true\n      ?", "    true\n      ?"),
   m(
     "one task's lock holds back another task",
     RUN,
@@ -859,13 +867,13 @@ const MUTATIONS: readonly Mutation[] = [
   m(
     "a finished run keeps the lock",
     RUN,
-    'process.off("SIGINT", onSigint);\n    if (lock) releaseLock(lock.ownership);',
-    'process.off("SIGINT", onSigint);',
+    "    if (runLock) releaseLock(runLock);\n    if (lock) releaseLock(lock.ownership);",
+    "    if (runLock) releaseLock(runLock);",
   ),
   m(
     "a step ignores the lock of the task it runs",
     RUN,
-    "const lock = child.lock === true ? acquireLock(taskId) : undefined;",
+    'const lock = child.lock === true ? tryAcquireRunLock(taskRunLockPath(taskId), { label: "task" }) : undefined;',
     "const lock = undefined;",
   ),
   m(
@@ -877,26 +885,27 @@ const MUTATIONS: readonly Mutation[] = [
   m(
     "resume ignores the lock",
     RUN,
-    "const lock = document.lock === true ? acquireLock(task.taskId) : undefined;",
-    "const lock = document.lock === true && prepared.resume === undefined ? acquireLock(task.taskId) : undefined;",
+    "    document.lock === true\n      ?",
+    "    document.lock === true && prepared.resume === undefined\n      ?",
   ),
+  m("a run can be resumed twice at once", RUN, "      runLock = lockRun(prepared.resume);", "      void lockRun;"),
   m(
     "a scheduled start that finds the lock taken has failed",
-    RUN,
-    'if (!(provenance.scheduled || start.skipIfLocked)) throw new TransientError(message, "RUN_LEASE_HELD");',
+    LIFECYCLE,
+    'if (!options.skip) throw new TransientError(message, "RUN_LEASE_HELD");',
     'throw new TransientError(message, "RUN_LEASE_HELD");',
   ),
   m(
     "--skip-if-locked does nothing",
     RUN,
-    "if (!(provenance.scheduled || start.skipIfLocked))",
-    "if (!provenance.scheduled)",
+    "skip: provenance.scheduled || start.skipIfLocked",
+    "skip: provenance.scheduled",
   ),
   m(
     "a scheduled start is treated as a typed one",
     RUN,
-    "if (!(provenance.scheduled || start.skipIfLocked))",
-    "if (!start.skipIfLocked)",
+    "skip: provenance.scheduled || start.skipIfLocked",
+    "skip: start.skipIfLocked",
   ),
 
   // Running: timeout and max-retries

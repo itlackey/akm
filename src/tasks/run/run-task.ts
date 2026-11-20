@@ -24,14 +24,12 @@
  * ONCE per call, and threads the result into every dispatch arm.
  */
 
-import { rethrowIfTestIsolationError, TransientError } from "../../core/errors";
-import { releaseLock } from "../../core/file-lock";
-import { formatLockHolderPid, tryAcquireRunLock } from "../../core/run-lock";
-import { warn } from "../../core/warn";
+import { rethrowIfTestIsolationError } from "../../core/errors";
+import { type LockOwnership, releaseLock } from "../../core/file-lock";
 import { runWorkflowSteps } from "../../workflows/exec/run-workflow";
 import { nameStepError } from "../prepare/prepare-steps";
 import { prepareRunV5, runPreparedV5 } from "../v5/run";
-import { recordTaskAttemptFailure, reserveTaskAttempt, skippedActiveRun, taskRunLockPath } from "./attempt-lifecycle";
+import { acquireTaskRunLock, recordTaskAttemptFailure, reserveTaskAttempt } from "./attempt-lifecycle";
 import { loadPreparedTask } from "./load-task";
 import { resolveProvenanceContext } from "./provenance";
 import { reconcileAbandonedExecutionState } from "./reconcile-abandoned";
@@ -87,15 +85,10 @@ export async function runTask(id: string, options: RunTaskOptions): Promise<Task
   // Experimental steps task: a run does not start while the previous one is alive, and `task:`
   // steps and `--resume` are settled before any attempt is reserved.
   let resume: ReturnType<typeof resolveResume> | undefined;
-  let lock: (ReturnType<typeof tryAcquireRunLock> & { state: "acquired" }) | undefined;
+  let lock: { ownership: LockOwnership } | undefined;
   if (task.kind === "steps") {
-    const acquired = tryAcquireRunLock(taskRunLockPath(id), { label: "task" });
-    if (acquired.state === "held") {
-      const message = `Task ${id} is still running (PID ${formatLockHolderPid(acquired.holder)}, started ${acquired.holder.startedAt}); not starting another run.`;
-      if (!options.scheduled) throw new TransientError(message, "RUN_LEASE_HELD");
-      warn(message);
-      return skippedActiveRun(id, requestedStartedAt);
-    }
+    const acquired = acquireTaskRunLock(id, { skip: options.scheduled === true, at: requestedStartedAt });
+    if ("skipped" in acquired) return acquired.skipped;
     lock = acquired;
     try {
       for (const step of task.steps) {
