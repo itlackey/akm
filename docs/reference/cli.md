@@ -2806,7 +2806,7 @@ Subcommands:
 
 | Subcommand | Description |
 | --- | --- |
-| `get <key>` | Read one config key (the effective, post-`extends` value). `--show-source` wraps it as `{ value, source }`, where `source` is `local`, `extends:<ref>`, or `default`. |
+| `get <key>` | Read one config key (the effective, post-`extends` value). `--show-source` wraps it as `{ value, source }`, where `source` is `local`, `extends:<ref>`, or `default`. With `--format text` a string, number or boolean prints as the bare value and an unset key prints an empty line. |
 | `list` | List current configuration |
 | `set <key> <value>` | Set one config key; prints the resulting config with `ok: true` |
 | `unset <key>` | Unset an optional key, or a whole `embedding`, connection or harness section; prints the resulting config with `ok: true` |
