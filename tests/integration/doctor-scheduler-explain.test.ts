@@ -154,7 +154,7 @@ describe.skipIf(process.platform !== "linux")("doctor scheduler and explain", ()
     expect(ok.status).toBe(0);
     const explained = JSON.parse(ok.stdout);
     expect(explained.sourceVersion).toBe("5-beta.1");
-    expect(explained.steps).toEqual([{ name: "look", kind: "scripts", ref: "scripts/look.sh" }]);
+    expect(explained.steps).toEqual([{ name: "look", kind: "run", ref: "scripts/look.sh" }]);
     expect(Object.keys(explained.inputDeclarations)).toEqual(["scope"]);
     const taskExplain = run(["task", "explain", "demo", "--scope", "b", "--env", "env/lab"]);
     expect(taskExplain.stdout).toBe(ok.stdout);

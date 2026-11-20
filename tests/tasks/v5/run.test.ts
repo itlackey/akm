@@ -693,7 +693,7 @@ describe("secrets are never state", () => {
         },
       },
     });
-    expect(await message(w.start("tasks/t"))).toBe("step fetch: exit code 1");
+    expect(await message(w.start("tasks/t"))).toBe("step fetch: exit code 1: [REDACTED]");
     const { readTaskHistory } = await import("../../../src/tasks/run/task-history");
     const [row] = readTaskHistory({ id: "t", limit: 1 });
     expect(JSON.stringify(row)).not.toContain("canary-in-history");
@@ -1459,7 +1459,7 @@ describe("the history of a run", () => {
       ["e", "exec", "completed"],
       ["s", "run", "completed"],
       ["p", "prompt", "completed"],
-      ["t", "task", "completed"],
+      ["t", "run", "completed"],
       ["boom", "exec", "failed"],
       ["never", "exec", "skipped"],
     ]);

@@ -76,6 +76,14 @@ const FAMILY_KIND = { tasks: "tasks", commands: "commands", scripts: "scripts", 
 
 export type TaskV5RefKind = (typeof FAMILY_KIND)[keyof typeof FAMILY_KIND];
 export type TaskV5CommandKind = TaskV5RefKind | "exec" | "prompt";
+/** The key a step is written with, which the run's history and `doctor explain` show: `run:`, `exec:` or `prompt:`. */
+export function taskV5StepKey(step: {
+  readonly run?: string;
+  readonly kind: TaskV5CommandKind;
+}): "run" | "exec" | "prompt" {
+  if (step.run !== undefined) return "run";
+  return step.kind === "exec" ? "exec" : "prompt";
+}
 /** An `env:` entry: an env asset's ref, as `--env` takes, or one variable and its value. */
 export type TaskV5EnvEntry = string | Readonly<Record<string, string | number | boolean>>;
 

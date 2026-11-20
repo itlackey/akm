@@ -99,7 +99,7 @@ import { TASK_INPUT_DIAGNOSTICS } from "../../tasks/source/task-input-diagnostic
 import { validateTaskConceptId, validateTaskId } from "../../tasks/task-id";
 import { checkTaskV5 } from "../../tasks/v5/check";
 import type { TaskV5Start } from "../../tasks/v5/flags";
-import type { TASK_SOURCE_V5_VERSION, TaskSourceV5Document } from "../../tasks/v5/source";
+import { type TASK_SOURCE_V5_VERSION, type TaskSourceV5Document, taskV5StepKey } from "../../tasks/v5/source";
 import { detectSecretShapedParams } from "../../workflows/exec/param-secrets";
 import { prepareCommandInvocation } from "../command/command-execution";
 import { parseTaskRef, resolveTaskReadBundle, taskIdForAdapter } from "./tasks";
@@ -523,7 +523,7 @@ async function explainV5(
     inputDeclarations: buildInputDeclarations(document.inputs ?? {}),
     steps: document.steps.map((step) => ({
       name: step.name,
-      kind: step.kind,
+      kind: taskV5StepKey(step),
       ...(step.run !== undefined ? { ref: step.run } : {}),
     })),
     schedule: document.schedule.map((entry) => ({
