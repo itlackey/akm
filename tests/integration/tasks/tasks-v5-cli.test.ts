@@ -11,7 +11,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../../_helpers/sandbox";
+import {
+  type IsolatedAkmStorage,
+  withIsolatedAkmStorage,
+  writeSandboxConfig,
+  writeWorkflowTestConfig,
+} from "../../_helpers/sandbox";
 
 const CLI = path.resolve(import.meta.dir, "../../../src/cli.ts");
 /** The environment akm runs in: the isolated storage this test set up, which is read when a command starts. */
@@ -109,6 +114,20 @@ steps:
     expect(result.steps.map((step: { status: string }) => step.status)).toEqual(["reused", "completed"]);
     expect(result.result).toBe("eu-west");
     expect(akm(["run", "tasks/flow", "--resume"]).status).toBe(2);
+  });
+
+  test("a failed step's reason ends with the last line its program wrote to standard error", () => {
+    const agent = path.join(storage.root, "agent");
+    fs.writeFileSync(agent, "#!/bin/sh\necho starting >&2\necho 'model endpoint unreachable' >&2\nexit 1\n", {
+      mode: 0o755,
+    });
+    writeSandboxConfig({ harnesses: { local: { platform: "claude", bin: agent, args: [] } } });
+    write("tasks/ask.yml", "version: 5-beta.1\nsteps:\n  - name: ask\n    prompt: Hi.\n");
+    write("tasks/fetch.yml", "version: 5-beta.1\nexec: echo 'no route to host' >&2; exit 7\n");
+    const asked = akm(["run", "tasks/ask"]);
+    expect(asked.status).toBe(1);
+    expect(out(asked).result.detail.error).toMatch(/^ask: .+: model endpoint unreachable$/);
+    expect(out(akm(["run", "tasks/fetch"])).result.detail.error).toBe("(only): exit code 7: no route to host");
   });
 
   test("a task whose steps changed since the failed run is refused for --resume, and the failed run is left as it was", () => {
