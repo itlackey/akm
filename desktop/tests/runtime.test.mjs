@@ -334,7 +334,7 @@ async function launchWith(t, args) {
       const req = http.request(
         {
           host: args.includes("--origin") ? "127.0.0.1" : new URL(ready.origin).hostname.replace(/[[\]]/g, ""),
-          port: bindPort(args),
+          port: new URL(ready.origin).port,
           path: route,
           method,
           headers: { Host: host, ...headers },
@@ -349,7 +349,6 @@ async function launchWith(t, args) {
     });
   return { ready, token, send };
 }
-const bindPort = (args) => Number(args[args.indexOf("--port") + 1]);
 
 test("a configured --origin and --host serve under that address, with every check still on", async (t) => {
   const port = await freePort();
@@ -424,10 +423,11 @@ test("an --origin without http(s) exits non-zero and names the flag", async () =
 });
 
 test("instances on different ports use different cookie names", async (t) => {
-  const [first, second] = [await freePort(), await freePort()];
+  // Port 0 lets each server take a free port itself. A port found free beforehand can be taken again before the
+  // server binds it: the server then exits 2 and the test fails with "Server exit 2".
   const names = [];
-  for (const port of [first, second]) {
-    const app = await launchWith(t, ["--port", String(port)]);
+  for (let i = 0; i < 2; i++) {
+    const app = await launchWith(t, ["--port", "0"]);
     names.push((await app.send(`/?desktop_session=${app.token}`)).headers["set-cookie"][0].split("=")[0]);
   }
   assert.notEqual(names[0], names[1]);
