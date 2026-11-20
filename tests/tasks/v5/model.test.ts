@@ -284,6 +284,10 @@ describe("every ${name} is checked before anything runs", () => {
     expect(await refusal([{ name: "p", run: "tasks/post", args: ["--message", "hi", "--colour", "red"] }])).toBe(
       UNKNOWN_INPUT,
     );
+    // an undeclared input is refused even when its value is only known when the step runs
+    expect(await refusal([{ name: "p", run: "tasks/post", args: ["--message", "hi", "--colour", "${summary}"] }])).toBe(
+      UNKNOWN_INPUT,
+    );
     expect(await refusal([{ name: "p", run: "tasks/post", args: ["hi"] }])).toBe(BAD_OPTION);
     expect(await refusal([{ name: "p", run: "tasks/post", args: ["--message"] }])).toBe(BAD_OPTION);
     expect(await refusal([{ name: "p", run: "tasks/post", args: ["--message", "hi", "more"] }])).toBe(BAD_OPTION);

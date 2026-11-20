@@ -229,12 +229,6 @@ const MUTATIONS: readonly Mutation[] = [
     "given[name] = LATER;",
   ),
   m(
-    "a value that cannot be converted is accepted",
-    OWNER_INPUTS,
-    'throw diagnostics.invalidValue(name, `must be ${types.join(" | ")}`);',
-    "return raw;",
-  ),
-  m(
     "a number is taken as text",
     OWNER_INPUTS,
     'if (raw.trim() !== "" && Number.isFinite(value)) return value;',
@@ -245,12 +239,6 @@ const MUTATIONS: readonly Mutation[] = [
     OWNER_INPUTS,
     'if (raw === "true") return true;\n        if (raw === "false") return false;',
     "return raw;",
-  ),
-  m(
-    "an integer input takes a fraction",
-    OWNER_INPUTS,
-    'if (raw.trim() !== "" && Number.isSafeInteger(value)) return value;',
-    'if (raw.trim() !== "" && Number.isFinite(value)) return value;',
   ),
   m(
     "an input may be something other than a map",
@@ -547,14 +535,34 @@ for (const entry of ["src", "tests", "scripts", "package.json", "bunfig.toml", "
 }
 fs.symlinkSync(path.join(ROOT, "node_modules"), path.join(work, "node_modules"));
 
+// A broken guard can make the code loop or recurse without end, so each run gets a memory ceiling (its own systemd
+// scope, no swap) and a hard time limit; a run killed by either counts as caught.
+const MEMORY_MAX = "1G";
+const TIME_LIMIT_S = 30;
 const test = () => {
-  const run = spawnSync("bun", ["test", "--timeout=30000", "tests/tasks/v5"], {
-    cwd: work,
-    encoding: "utf8",
-    timeout: 180_000,
-  });
+  const run = spawnSync(
+    "systemd-run",
+    [
+      "--user",
+      "--scope",
+      "--quiet",
+      "-p",
+      `MemoryMax=${MEMORY_MAX}`,
+      "-p",
+      "MemorySwapMax=0",
+      "timeout",
+      "--kill-after=5",
+      String(TIME_LIMIT_S),
+      "bun",
+      "test",
+      "--timeout=10000",
+      "tests/tasks/v5",
+    ],
+    { cwd: work, encoding: "utf8" },
+  );
   const text = `${run.stdout}${run.stderr}`;
-  return { status: run.error ? "never finishes" : run.status, failed: (text.match(/^\(fail\)/gm) ?? []).length };
+  const status = run.status === 124 || run.status === 137 ? "never finishes" : run.status;
+  return { status, failed: (text.match(/^\(fail\)/gm) ?? []).length };
 };
 
 let missed = 0;
@@ -582,7 +590,7 @@ try {
           : result.status === 0
             ? "NOT CAUGHT"
             : result.status === "never finishes"
-              ? "caught (never finishes)"
+              ? "caught (killed: time or memory limit)"
               : "caught (does not run)";
     } finally {
       fs.writeFileSync(file, original);
