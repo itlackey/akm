@@ -102,7 +102,7 @@ nothing else with 0.11's tables:
   (not an error) in its `metrics-db` health check
   (`src/commands/health/metrics-db-check.ts`) and in `withMetricsHistory`
   (`src/storage/repositories/metrics-rollup-repository.ts`).
-- **Content:** `cli_usage_meta` holds an opaque local instance UUID and the
+- **Content:** `cli_usage_meta` holds an opaque instance UUID and the
   collection start; `cli_usage_invocations` holds redacted schema-version-1
   attempt documents and completion fields; `cli_usage_aggregates` holds UTC
   daily dimensional counters. Start and completion update detail and aggregate
@@ -114,8 +114,10 @@ nothing else with 0.11's tables:
   unwritable, locked or corrupt file never changes a command's output or exit code.
 - **Off and read-only:** `usage.capture: false` and `--read-only` open and write
   nothing.
-- **Daily usage report:** the last UTC day each surface reported is a `report.<surface>.last_day` row in
-  `cli_usage_meta` (the claim that keeps it to one a day); a 0.11 that does not send the report leaves the rows alone.
+- **Daily usage report:** `report.<surface>.*` rows in `cli_usage_meta`: `last_day`, the UTC day the surface last
+  tried (the claim that keeps it to one a day); `through`, the last day whose counts the server accepted (CLI only);
+  `last_outcome` and `last_detail`, what the last try came to. The report sends the store's `instance` UUID as its
+  install id. A 0.11 that does not send the report leaves the rows alone.
 
 **What 0.11 must do to adopt it:** nothing to the file itself, but its readers must tolerate a `metrics.db` that holds only usage tables (see the known gap above). Its usage capture opens
 `metrics.db` in the data directory it resolves (after the location is known),

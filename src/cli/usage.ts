@@ -207,13 +207,28 @@ export function describeUsage(root: UsageCommand, raw: readonly string[]): Invoc
   return result;
 }
 
+/** What an outcome calls an exit code. Any other code is "failure", and a signal is "cancelled". */
+export const EXIT_CATEGORIES: Readonly<Record<number, string>> = {
+  0: "success",
+  1: "general",
+  2: "usage",
+  4: "health-warning",
+  70: "internal",
+  75: "transient",
+  78: "config",
+};
+
 export const CLI_USAGE_SOURCES: ReadonlySet<string> = new Set(["user", "agent", "task", "improve", "audit", "unknown"]);
 
-/** An explicit `AKM_EVENT_SOURCE` wins; otherwise a detected agent harness is "agent", else "unknown". */
-export function resolveCliUsageSource(env: NodeJS.ProcessEnv): string {
+/**
+ * An explicit `AKM_EVENT_SOURCE` wins; otherwise a detected agent harness is "agent", a terminal with no harness
+ * (`terminal`) is "user", and anything else (a pipe, a script, a harness akm does not know) is "unknown".
+ */
+export function resolveCliUsageSource(env: NodeJS.ProcessEnv, terminal = false): string {
   const explicit = env.AKM_EVENT_SOURCE ?? "";
   if (CLI_USAGE_SOURCES.has(explicit)) return explicit;
-  return resolveAgentIdentity(env).harness ? "agent" : "unknown";
+  if (resolveAgentIdentity(env).harness) return "agent";
+  return terminal ? "user" : "unknown";
 }
 
 const RETENTION_MS = 30 * 86400_000;
@@ -286,7 +301,7 @@ export function startUsage(root: UsageCommand, raw: readonly string[], version: 
   let selectedExecutor: UsageCommand | undefined;
   let dimensions: Record<string, unknown> = {};
   let data: Record<string, unknown> = {};
-  const source = resolveCliUsageSource(process.env);
+  const source = resolveCliUsageSource(process.env, Boolean(process.stdin.isTTY || process.stdout.isTTY));
   const harness = resolveAgentIdentity(process.env).harness;
   const harnessField = harness ? { harness } : {};
   try {
@@ -375,19 +390,7 @@ export function startUsage(root: UsageCommand, raw: readonly string[], version: 
     if (!stored) return;
     const duration = Math.max(0, Date.now() - started);
     const exitCode = signal ? (signal === "SIGINT" ? 130 : 143) : Number(process.exitCode ?? 0);
-    const category = signal
-      ? "cancelled"
-      : ((
-          {
-            0: "success",
-            1: "general",
-            2: "usage",
-            4: "health-warning",
-            70: "internal",
-            75: "transient",
-            78: "config",
-          } as Record<number, string>
-        )[exitCode] ?? "failure");
+    const category = signal ? "cancelled" : (EXIT_CATEGORIES[exitCode] ?? "failure");
     try {
       const db = openUsage(filename!);
       try {
@@ -483,6 +486,11 @@ export function readUsage(filter: UsageFilter = {}) {
     gaps,
     aggregates: [] as Record<string, unknown>[],
     details: [] as Record<string, unknown>[],
+    /**
+     * The daily usage report's own rows (src/cli/usage-report.ts), per surface: `last_day` (the day it last tried),
+     * `through` (the last day whose counts the server accepted), `last_outcome` and `last_detail`.
+     */
+    report: {} as Record<string, Record<string, string>>,
   };
   if (!fs.existsSync(usagePath())) {
     gaps.push("Usage storage is absent: this is unmeasured, not zero usage.");
@@ -511,18 +519,29 @@ export function readUsage(filter: UsageFilter = {}) {
           | { value: string }
           | undefined
       )?.value ?? null;
+    for (const { key, value } of db
+      .prepare("SELECT key,value FROM cli_usage_meta WHERE key LIKE 'report.%' ORDER BY key")
+      .all() as Array<{ key: string; value: string }>) {
+      const [, surface, field] = key.split(".");
+      if (!surface || !field) continue;
+      empty.report[surface] ??= {};
+      empty.report[surface][field] = value;
+    }
     const selected = (dimensions: Record<string, unknown>) =>
       (!filter.since || String(dimensions.day) >= filter.since.slice(0, 10)) &&
       (!filter.until || String(dimensions.day) <= filter.until.slice(0, 10)) &&
       (!filter.version || dimensions.version === filter.version) &&
       (!filter.source || dimensions.source === filter.source);
+    // The instance id leaves this store only as the daily usage report's install id (src/cli/usage-report.ts): no
+    // command prints it, so what is read here carries it nowhere: not in a row, and not in an aggregate's key.
     for (const row of db.prepare("SELECT * FROM cli_usage_aggregates ORDER BY key").all() as Array<
       Record<string, unknown>
     >) {
-      const dimensions = JSON.parse(String(row.dimensions)) as Record<string, unknown>;
+      const { instance: _instance, ...dimensions } = JSON.parse(String(row.dimensions)) as Record<string, unknown>;
       if (selected(dimensions))
         empty.aggregates.push({
           ...row,
+          key: JSON.stringify(dimensions),
           dimensions,
           outcomes: JSON.parse(String(row.outcomes)),
           unfinished: Number(row.attempts) - Number(row.completed),
@@ -532,7 +551,7 @@ export function readUsage(filter: UsageFilter = {}) {
       ? []
       : db.prepare("SELECT * FROM cli_usage_invocations ORDER BY ts,id").all();
     for (const row of detailRows as Array<Record<string, unknown>>) {
-      const data = JSON.parse(String(row.data)) as Record<string, unknown>;
+      const { instance: _instance, ...data } = JSON.parse(String(row.data)) as Record<string, unknown>;
       if (selected({ ...data, day: String(data.ts).slice(0, 10) }))
         empty.details.push({
           ...data,

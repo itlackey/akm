@@ -4706,7 +4706,9 @@ maxRetries: 1      # optional
 ### CLI invocation usage
 
 `akm doctor metrics usage` reports local command attempts, explicit argument counts,
-argument combinations, instance adoption, failures and duration summaries. Existing
+argument combinations, failures and duration summaries, and under
+`report` what the [daily usage report](data-and-telemetry.md#daily-usage-report) last
+did for each surface. Existing
 `akm metrics` (Deprecated) and bare `akm doctor metrics` keep their existing report.
 
 ```sh
@@ -4720,14 +4722,16 @@ retained details. JSON schema version 1 includes stable aggregate keys and invoc
 IDs. For overlapping exports, keep the newest `generatedAt` snapshot per aggregate
 key; never sum snapshots or add detail counts to aggregate counts. Detailed rows
 are a subset of the aggregates. A report includes its own unfinished attempt.
+No output carries the store's instance UUID, in a row or in an aggregate key, so
+exports of different installs cannot be told apart or combined by key.
 
 Collection is enabled at CLI entry, before the full configuration is read (only `usage.capture` is read, from the selected config file, and a missing or broken file leaves capture on), with no network
-transmission of its own and no sampling (the separate [daily usage report](data-and-telemetry.md#daily-usage-report) sends totals). `AKM_EVENT_SOURCE=user|agent|task|improve|audit` supplies
+transmission of its own and no sampling (the separate [daily usage report](data-and-telemetry.md#daily-usage-report) sends counts). `AKM_EVENT_SOURCE=user|agent|task|improve|audit` supplies
 known provenance and wins. Without it the source is `agent` when an agent harness
-is detected from the environment (the way usage events detect it), else `unknown`;
-nothing is inferred from a terminal. When a harness is detected, rows and aggregates
-also carry its name as an optional `harness` field (absent otherwise; no schema
-change). This store never feeds learning or ranking.
+is detected from the environment (the way usage events detect it), `user` when
+there is none and a terminal is attached to stdin or stdout, else `unknown`. When a
+harness is detected, rows and aggregates also carry its name as an optional `harness`
+field (absent otherwise; no schema change). This store never feeds learning or ranking.
 
 Only declared argument identities and recognized command spellings are retained.
 Free text, paths, URLs, refs, prompts, credentials and unknown flag/command names
@@ -4735,7 +4739,8 @@ are redacted. Booleans and declared enum choices are safe; string flags retain o
 finite allowlisted `format`, `detail` and asset `type` choices. Default values are
 marked separately from explicit input. Arguments after `--` retain only their count.
 No raw argv is stored. The resolved `run` asset type is recorded through a narrow
-hook when resolution reaches dispatch.
+hook when resolution reaches dispatch, and `show` records the type of the asset it
+showed the same way.
 
 The usage tables (`cli_usage_meta`, `cli_usage_invocations`,
 `cli_usage_aggregates`) live in `metrics.db` in the existing AKM data directory,
