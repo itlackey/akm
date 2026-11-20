@@ -34,6 +34,12 @@ describe("scriptInterpreter — Bun absent", () => {
     });
   });
 
+  test(".mjs falls back to node when Bun is unavailable", () => {
+    withoutBun(() => {
+      expect(scriptInterpreter(".mjs", "scripts/x")).toBe("node");
+    });
+  });
+
   test(".ts falls back to node only when this Node build strips types natively", () => {
     withoutBun(() => {
       withNodeTypeScriptSupport(true, () => {
@@ -55,6 +61,10 @@ describe("scriptInterpreter — Bun absent", () => {
 describe("scriptInterpreter — Bun present", () => {
   test(".js still resolves to bun, not node, when Bun is available", () => {
     expect(scriptInterpreter(".js", "scripts/x")).toBe("bun");
+  });
+
+  test(".mjs resolves to bun, like .js", () => {
+    expect(scriptInterpreter(".mjs", "scripts/x")).toBe("bun");
   });
 });
 

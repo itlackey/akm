@@ -68,7 +68,7 @@ describe("akm adapter — metadata (§7)", () => {
 
   test("extensions cover the matcher-accepted set (`.md`, `.yaml`/`.yml`, `.env`, script exts)", () => {
     const exts = new Set(akmAdapter.extensions);
-    for (const e of [".md", ".yaml", ".yml", ".env", ".sh", ".ts", ".py", ".kts"]) {
+    for (const e of [".md", ".yaml", ".yml", ".env", ".sh", ".ts", ".mjs", ".py", ".kts"]) {
       expect(exts.has(e), `extensions missing ${e}`).toBe(true);
     }
   });

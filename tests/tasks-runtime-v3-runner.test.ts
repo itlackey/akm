@@ -338,6 +338,27 @@ describe("task runner mutation boundary", () => {
     }
   });
 
+  test("a .mjs script target runs like a .js one, from a snapshot that keeps its extension", async () => {
+    const scripts = path.join(storage.stashDir, "scripts");
+    fs.mkdirSync(scripts, { recursive: true });
+    fs.writeFileSync(path.join(scripts, "report.mjs"), 'import os from "node:os";\nconsole.log(os.EOL.length);\n');
+    writeTask("module-js", 'version: 4\nuses: scripts/report.mjs\nschedule: "@daily"\n');
+    let command: string[] = [];
+
+    const result = await runTask("module-js", {
+      bundleDir: storage.stashDir,
+      bundleName: "fixture",
+      spawnFn: (cmd) => {
+        command = [...cmd];
+        return completedSpawn(0);
+      },
+    });
+
+    expect(result.status).toBe("completed");
+    expect(command[0]).toBe(process.execPath);
+    expect(path.basename(command.at(-1) as string)).toBe("snapshot.mjs");
+  });
+
   test.each([
     ["deleted", undefined],
     ["replaced", 'console.log("replacement")\n'],
