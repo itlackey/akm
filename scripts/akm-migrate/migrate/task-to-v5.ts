@@ -13,7 +13,7 @@
  */
 
 import crypto from "node:crypto";
-import { stringify as stringifyYaml } from "yaml";
+import { Document, isMap, isScalar, isSeq, type YAMLMap } from "yaml";
 import { parseTaskSourceV4, type TaskSourceV4Document, type TaskSourceV4Step } from "../../../src/tasks/source/task-source-v4";
 import { TASK_SOURCE_V5_VERSION, TASK_SOURCE_V5_VERSION_PATTERN } from "../../../src/tasks/v5/source";
 import { parseRawTaskYaml, type TaskToV4FileInput } from "./task-to-v4";
@@ -52,6 +52,21 @@ const UNCONVERTIBLE_KEYS = ["output", "agent", "engine", "inference", "tools", "
 /** The shells whose lines `exec:` runs the same way. */
 const EXEC_SHELLS = ["sh", "bash"];
 const AKM_EXEC_ENV = /^akm exec((?: --env \S+)+) -- (\S[\s\S]*)$/;
+/** The v5 names a v4 key's comments move to, in order of preference. */
+const TOP_LEVEL_NAMES: Readonly<Record<string, readonly string[]>> = {
+  run: ["exec"],
+  uses: ["run", "prompt"],
+  "working-directory": ["cwd"],
+  maxRetries: ["max-retries"],
+};
+const STEP_NAMES: Readonly<Record<string, readonly string[]>> = {
+  run: ["exec"],
+  task: ["run"],
+  prompt: ["prompt", "run"],
+  retries: ["max-retries"],
+};
+/** Top-level values v5 keeps as written: their nodes, comments inside them included, are copied. */
+const KEPT_AS_WRITTEN = new Set(["name", "description", "when_to_use", "tags", "inputs", "schedule"]);
 
 function base(input: TaskToV4FileInput): Omit<TaskToV5OutcomeBase, "reason"> {
   return {
@@ -105,6 +120,36 @@ function stepOut(step: TaskSourceV4Step): Record<string, unknown> {
   return out;
 }
 
+/**
+ * Move the v4 file's comments onto the v5 document: each key's comments go to the key it became, and a step's to the
+ * step at the same place. A comment on a key v5 drops is dropped with it.
+ */
+function carryComments(from: YAMLMap, to: YAMLMap, names: Readonly<Record<string, readonly string[]>>, top: boolean): void {
+  for (const pair of from.items) {
+    if (!isScalar(pair.key)) continue;
+    const key = String(pair.key.value);
+    const target = (names[key] ?? [key]).map((name) => to.items.find((p) => isScalar(p.key) && p.key.value === name)).find(Boolean);
+    if (!target || !isScalar(target.key)) continue;
+    target.key.commentBefore = pair.key.commentBefore;
+    target.key.spaceBefore = pair.key.spaceBefore;
+    if (top && KEPT_AS_WRITTEN.has(key)) {
+      target.value = pair.value;
+      continue;
+    }
+    const source = pair.value as { comment?: string | null; commentBefore?: string | null } | null;
+    const value = target.value as { comment?: string | null; commentBefore?: string | null } | null;
+    if (!source || !value) continue;
+    value.comment = source.comment;
+    value.commentBefore = source.commentBefore;
+    if (top && key === "steps" && isSeq(pair.value) && isSeq(target.value)) {
+      const steps = target.value.items;
+      pair.value.items.forEach((step, index) => {
+        if (isMap(step) && isMap(steps[index])) carryComments(step, steps[index] as YAMLMap, STEP_NAMES, false);
+      });
+    }
+  }
+}
+
 function stepsNotes(document: TaskSourceV4Document, steps: readonly TaskSourceV4Step[]): string[] {
   const notes: string[] = [];
   const shellSteps = steps.filter((step) => step.kind === "run").map((step) => step.name);
@@ -132,8 +177,9 @@ function stepsNotes(document: TaskSourceV4Document, steps: readonly TaskSourceV4
 export function planTaskToV5File(input: TaskToV4FileInput, v4Bytes: Buffer = input.bytes): TaskToV5Outcome {
   const source = v4Bytes.toString("utf8");
   let data: Record<string, unknown>;
+  let sourceDocument: ReturnType<typeof parseRawTaskYaml>["document"];
   try {
-    ({ data } = parseRawTaskYaml({ ...input, bytes: v4Bytes }));
+    ({ data, document: sourceDocument } = parseRawTaskYaml({ ...input, bytes: v4Bytes }));
   } catch (cause) {
     return blocked(input, "invalid-task-yaml", cause instanceof Error ? cause.message : String(cause));
   }
@@ -207,7 +253,13 @@ export function planTaskToV5File(input: TaskToV4FileInput, v4Bytes: Buffer = inp
     notes.push("`shell: bash` is dropped: a version 5 exec: line is run by sh. Change a line that needs bash by hand.");
   }
 
-  const after = Buffer.from(stringifyYaml(out, { lineWidth: 0 }), "utf8");
+  const converted = new Document(out);
+  if (isMap(sourceDocument.contents) && isMap(converted.contents)) {
+    carryComments(sourceDocument.contents, converted.contents, TOP_LEVEL_NAMES, true);
+  }
+  converted.commentBefore = sourceDocument.commentBefore;
+  converted.comment = sourceDocument.comment;
+  const after = Buffer.from(converted.toString({ lineWidth: 0 }), "utf8");
   return Object.freeze({
     status: "converted" as const,
     ...base(input),

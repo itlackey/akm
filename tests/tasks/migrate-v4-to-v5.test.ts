@@ -223,6 +223,95 @@ describe("lock", () => {
   });
 });
 
+describe("comments", () => {
+  function convertedText(text: string): string {
+    const outcome = planTaskToV5File({
+      filePath: path.join(storage.stashDir, "tasks", "t.yml"),
+      bytes: Buffer.from(text),
+      mode: 0o640,
+      writable: true,
+    });
+    if (outcome.status !== "converted") throw new Error(`not converted: ${outcome.reason}`);
+    return outcome.after.toString("utf8");
+  }
+
+  test("a comment stays on the key it was on, under that key's version 5 name, and inside values kept as written", () => {
+    const text = convertedText(
+      [
+        "# Nightly fetch.",
+        "",
+        "version: 4",
+        "description: Fetch it # why",
+        "inputs:",
+        "  # the day to fetch",
+        "  day: { type: string }",
+        "# where it runs",
+        "working-directory: w",
+        "maxRetries: 2 # twice is enough",
+        "run: ./fetch.sh",
+        "# end of file",
+        "",
+      ].join("\n"),
+    );
+    expect(text).toBe(
+      [
+        "# Nightly fetch.",
+        "",
+        `version: ${TASK_SOURCE_V5_VERSION}`,
+        "description: Fetch it # why",
+        "inputs:",
+        "  # the day to fetch",
+        "  day: { type: string }",
+        "# where it runs",
+        "cwd: w",
+        "max-retries: 2 # twice is enough",
+        "exec: ./fetch.sh",
+        "",
+        "# end of file",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  test("a step's comments stay on that step, under its keys' version 5 names", () => {
+    const text = convertedText(
+      [
+        "version: 4",
+        "# the steps",
+        "steps:",
+        "  # first, fetch",
+        "  - name: a",
+        "    run: ./fetch.sh # the fetcher",
+        "    retries: 1 # once more",
+        "  - name: b",
+        "    # the child does the rest",
+        "    task: tasks/child",
+        "",
+      ].join("\n"),
+    );
+    expect(text).toBe(
+      [
+        `version: ${TASK_SOURCE_V5_VERSION}`,
+        "lock: true",
+        "# the steps",
+        "steps:",
+        "  # first, fetch",
+        "  - name: a",
+        "    exec: ./fetch.sh # the fetcher",
+        "    max-retries: 1 # once more",
+        "  - name: b",
+        "    # the child does the rest",
+        "    run: tasks/child",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  test("a comment on a key version 5 drops goes with it", () => {
+    expect(convertedText("version: 4\nshell: bash # needs bash\nrun: ls\n")).not.toContain("needs bash");
+  });
+});
+
 describe("what to change by hand", () => {
   test("a steps: task's shell steps are reported as having received AKM_PARAMS and AKM_STEPS", () => {
     const { notes } = convert(

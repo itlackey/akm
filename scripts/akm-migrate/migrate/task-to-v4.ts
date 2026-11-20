@@ -289,7 +289,11 @@ function optionalString(value: unknown, label: string): string | undefined {
  * Which grammar applies to the result is entirely up to the caller, decided
  * after `data.version` is known.
  */
-export function parseRawTaskYaml(input: TaskToV4FileInput): { data: Record<string, unknown>; source: string } {
+export function parseRawTaskYaml(input: TaskToV4FileInput): {
+  data: Record<string, unknown>;
+  source: string;
+  document: ReturnType<typeof parseDocument>;
+} {
   let source: string;
   try {
     source = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(input.bytes);
@@ -312,7 +316,7 @@ export function parseRawTaskYaml(input: TaskToV4FileInput): { data: Record<strin
     sourceLabel: "task migration source",
     lineCounter,
   });
-  return { data: plainRecord(document.toJS({ maxAliasCount: 0 }), "task YAML"), source };
+  return { data: plainRecord(document.toJS({ maxAliasCount: 0 }), "task YAML"), source, document };
 }
 
 type ScheduleEntry = Readonly<{ cron: string }>;
