@@ -80,10 +80,11 @@ steps:
     expect(read("steps-1")).toBe("{}");
     expect(read("params-1")).toBe('{"site":"example.org"}');
     expect(read("steps-2")).toBe('{"first":"one"}|unset');
-    expect(result.steps?.map((s) => [s.name, s.status, s.summary])).toEqual([
-      ["first", "completed", "one"],
-      ["second", "completed", "two"],
+    expect(result.steps?.map((s) => [s.name, s.status])).toEqual([
+      ["first", "completed"],
+      ["second", "completed"],
     ]);
+    expect(result.steps?.every((s) => !("summary" in s))).toBe(true);
     expect(result.steps?.every((s) => s.result === undefined)).toBe(true);
     const [stored] = readTaskHistory({ id: "plan", limit: 1 });
     expect(stored?.target).toEqual({ kind: "steps" });

@@ -43,7 +43,6 @@ export const STEP_RESULT_MAX_BYTES = 32 * 1024;
 const STEP_CAPTURE_MAX_BYTES = 64 * 1024;
 /** The serialized `AKM_STEPS` handed to a step may not exceed this. */
 export const STEPS_CONTEXT_MAX_BYTES = 96 * 1024;
-const SUMMARY_MAX_CHARS = 200;
 
 type StepValue = string | Record<string, unknown>;
 
@@ -60,11 +59,6 @@ function bound(text: string): string {
   const bytes = Buffer.byteLength(text);
   if (bytes <= STEP_RESULT_MAX_BYTES) return text;
   return `${Buffer.from(text).subarray(0, STEP_RESULT_MAX_BYTES).toString("utf8")}\n[truncated ${bytes - STEP_RESULT_MAX_BYTES} bytes]`;
-}
-
-export function summarize(text: string): string {
-  const line = text.trim().split("\n")[0] ?? "";
-  return line.length > SUMMARY_MAX_CHARS ? `${line.slice(0, SUMMARY_MAX_CHARS)}...` : line;
 }
 
 function stepKind(step: PreparedTaskStep): TaskHistoryStep["kind"] {
@@ -216,7 +210,6 @@ export async function runStepsTask(input: {
         status: outcome.ok ? "completed" : "failed",
         durationMs,
         attempts,
-        ...(text ? { summary: scrubTaskOutput(task, summarize(text)) } : {}),
         ...(!outcome.ok && outcome.reason ? { reason: scrubTaskOutput(task, outcome.reason) } : {}),
         ...(outcome.startedAt ? { startedAt: outcome.startedAt } : {}),
       };

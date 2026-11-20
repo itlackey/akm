@@ -51,7 +51,7 @@ import { abortOnTermination, acquireTaskRunLock, reserveTaskAttempt, taskRunLock
 import { resolveProvenanceContext, taskEventSource } from "../run/provenance";
 import { reconcileAbandonedExecutionState } from "../run/reconcile-abandoned";
 import { shellCommand } from "../run/run-native-task";
-import { expectLoop, summarize } from "../run/run-steps-task";
+import { expectLoop } from "../run/run-steps-task";
 import { appendHistory, readTaskHistory } from "../run/task-history";
 import { persistRunLog, resolveTaskLogPath, streamLines } from "../run/task-log";
 import type { RunTaskOptions, TaskRunResult } from "../run/task-result";
@@ -464,14 +464,12 @@ async function runAttempt(
     const header = `[akm task] step=${name} kind=${kind} attempts=${outcome.attempts} ok=${outcome.ok}`;
     lines.push(header, ...outcome.lines);
     dbLines.push({ level: outcome.ok ? "info" : "error", line: header }, ...outcome.dbLines);
-    const text = outcome.value === undefined ? "" : asText(outcome.value);
     steps.push({
       name,
       kind,
       status: outcome.ok ? "completed" : "failed",
       durationMs,
       attempts: outcome.attempts,
-      ...(text ? { summary: summarize(text) } : {}),
       ...(reason ? { reason } : {}),
       ...(outcome.startedAt ? { startedAt: outcome.startedAt } : {}),
     });

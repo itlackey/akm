@@ -61,7 +61,7 @@
       {#each run.steps as step}<li>
           {step.name} ({step.kind}): {step.status}{step.attempts > 1 ? `, ${step.attempts} attempts` : ""}, {duration(
             step.durationMs,
-          )}{step.reason ? `. ${step.reason}` : step.summary ? `. ${step.summary}` : ""}
+          )}{step.reason ? `. ${step.reason}` : ""}
         </li>{/each}
     </ol>{/if}
   {#if run.status === "active"}<p>

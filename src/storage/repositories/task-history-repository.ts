@@ -35,8 +35,6 @@ export interface TaskHistoryStep {
   status: "completed" | "failed" | "skipped" | "reused";
   durationMs: number;
   attempts: number;
-  /** First line(s) of the result, scrubbed and clipped. */
-  summary?: string;
   /** Why the step failed. */
   reason?: string;
   /** The bounded result; kept only on a failed run, so `--resume` can reuse it. */
@@ -194,7 +192,6 @@ function decodeSteps(value: unknown): TaskHistoryStep[] | undefined {
       status: entry.status as TaskHistoryStep["status"],
       durationMs: typeof entry.durationMs === "number" ? entry.durationMs : 0,
       attempts: typeof entry.attempts === "number" ? entry.attempts : 1,
-      ...(typeof entry.summary === "string" ? { summary: entry.summary } : {}),
       ...(typeof entry.reason === "string" ? { reason: entry.reason } : {}),
       ...(typeof entry.result === "string" ? { result: entry.result } : {}),
       ...(typeof entry.startedAt === "string" ? { startedAt: entry.startedAt } : {}),

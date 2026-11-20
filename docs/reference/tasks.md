@@ -534,8 +534,8 @@ steps:
   without a history row. There is no flag.
 - **History.** One `task_history` row per run, as for any task, with
   `target_kind` `steps` and the steps in its metadata (name, kind, status
-  `completed|failed|skipped|reused`, duration, attempts, a scrubbed one-line
-  summary and, for a failed step, the reason). A failed run also keeps each
+  `completed|failed|skipped|reused`, duration, attempts and, for a failed
+  step, the reason). A failed run also keeps each
   completed step's bounded result for `--resume`; a successful run drops them.
 - **Scheduling.** Unchanged: `schedule:` and `akm task enable` / `disable`
   work as for any task, and `akm doctor explain <ref>` lists the steps.

@@ -37,6 +37,7 @@ function write(relative: string, content: string): void {
 describe.skipIf(process.platform !== "linux")("steps tasks through the CLI", () => {
   test("akm run runs the steps, a failure is resumed with --resume, and doctor explain lists the steps", () => {
     const marker = path.join(storage.stashDir, "marker");
+    const seen = path.join(storage.stashDir, "seen");
     write(
       "tasks/demo.yml",
       `version: 4
@@ -45,7 +46,7 @@ steps:
   - name: prepare
     run: printf 'ready'
   - name: gate
-    run: test -f ${marker} && printf '%s' "$AKM_STEPS"
+    run: test -f ${marker} && printf '%s' "$AKM_STEPS" > ${seen}
 `,
     );
     const first = akm(["run", "tasks/demo"]);
@@ -59,7 +60,7 @@ steps:
     expect(resumed.status).toBe(0);
     const result = JSON.parse(resumed.stdout).result;
     expect(result.steps.map((s: { status: string }) => s.status)).toEqual(["reused", "completed"]);
-    expect(result.steps[1].summary).toBe('{"prepare":"ready"}');
+    expect(fs.readFileSync(seen, "utf8")).toBe('{"prepare":"ready"}');
 
     const explained = akm(["doctor", "explain", "tasks/demo"]);
     expect(explained.status).toBe(0);
