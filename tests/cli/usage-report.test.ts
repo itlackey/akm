@@ -6,7 +6,7 @@ import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { openUsage } from "../../src/cli/usage";
+import { openUsage, readUsage } from "../../src/cli/usage";
 import { reportUsageIfDue } from "../../src/cli/usage-report";
 import { resetConfigCache } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
@@ -66,6 +66,15 @@ function seed(
     db.close();
   }
 }
+/** Set one `cli_usage_meta` row, as an earlier report would have left it. */
+function setRow(key: string, value: string) {
+  const db = openUsage();
+  try {
+    db.prepare("INSERT INTO cli_usage_meta VALUES (?, ?)").run(key, value);
+  } finally {
+    db.close();
+  }
+}
 const lastDay = (surface: string) => {
   const db = openUsage();
   try {
@@ -95,6 +104,8 @@ test("the first report is due once, claims the day, and the same day sends nothi
   expect(await reportUsageIfDue({ surface: "cli", version: "0.10.9" }, { ...NOW, fetch: fn })).toBe(false);
   expect(sent).toHaveLength(1);
   expect(lastDay("cli")).toBe("2026-11-20");
+  expect(sent[0]?.body.props).toMatchObject({ period_days: 0, commands: 0 });
+  expect(readUsage().report.cli).toMatchObject({ through: "2026-11-19", last_outcome: "sent", last_detail: "" });
   expect(sent[0]?.url).toBe("https://reporting.fwdslsh.dev/api/v0/event");
   expect(sent[0]?.init.method).toBe("POST");
   expect(sent[0]?.init.headers).toEqual({ "App-Key": "A-SH-4111202318", "Content-Type": "application/json" });
@@ -110,6 +121,9 @@ test("the cli and desktop surfaces claim their own day", async () => {
   expect(await reportUsageIfDue({ surface: "cli" }, { ...NOW, fetch: fn })).toBe(true);
   expect(await reportUsageIfDue({ surface: "desktop" }, { ...NOW, fetch: fn })).toBe(true);
   expect(sent.map((s) => s.body.eventName)).toEqual(["cli_daily", "desktop_daily"]);
+  const { desktop } = readUsage().report;
+  expect(desktop).toMatchObject({ last_day: "2026-11-20", last_outcome: "sent" });
+  expect(desktop?.through).toBeUndefined(); // Desktop sends a snapshot, not counts of past days
 });
 
 test("concurrent callers send once", async () => {
@@ -123,24 +137,41 @@ test("concurrent callers send once", async () => {
   expect(sent).toHaveLength(1);
 });
 
-test("a failed send is not retried that day", async () => {
+test("a failed send is not retried that day; the next day's report counts the days it missed", async () => {
   sandbox();
-  seed("2026-11-01");
+  seed("2026-11-01", [
+    { day: "2026-11-19", command: ["search"], source: "user", attempts: 2 },
+    { day: "2026-11-20", command: ["show"], source: "user", attempts: 3 },
+  ]);
+  setRow("report.cli.through", "2026-11-18");
   const failing = fakeFetch(() => new Response("nope", { status: 500 }));
   expect(await reportUsageIfDue({ surface: "cli" }, { ...NOW, fetch: failing.fn })).toBe(false);
+  expect(readUsage().report.cli).toEqual({
+    last_day: "2026-11-20",
+    through: "2026-11-18",
+    last_outcome: "rejected",
+    last_detail: "HTTP 500: nope",
+  });
+  const sameDay = fakeFetch();
+  expect(await reportUsageIfDue({ surface: "cli" }, { ...NOW, fetch: sameDay.fn })).toBe(false);
+  expect(sameDay.sent).toHaveLength(0);
   const next = fakeFetch();
-  expect(await reportUsageIfDue({ surface: "cli" }, { ...NOW, fetch: next.fn })).toBe(false);
-  expect(next.sent).toHaveLength(0);
+  const tomorrow = new Date("2026-11-21T08:00:00Z");
+  expect(await reportUsageIfDue({ surface: "cli" }, { ...NOW, now: tomorrow, fetch: next.fn })).toBe(true);
+  expect(next.sent[0]?.body.props).toMatchObject({ period_days: 2, commands: 5, cmd_search: 2, cmd_show: 3 });
+  expect(readUsage().report.cli).toMatchObject({ through: "2026-11-20", last_outcome: "sent" });
 });
 
-test("a 200 whose body carries an error is a rejection", async () => {
+test("a 200 whose body carries an error is a rejection: an App-Key the server does not know", async () => {
   sandbox();
   seed("2026-11-01");
-  const { fn } = fakeFetch(() => new Response(JSON.stringify({ error: "bad" }), { status: 200 }));
+  const error = "Application not found with given app key: X. Events are not being recorded.";
+  const { fn } = fakeFetch(() => new Response(JSON.stringify({ error }), { status: 200 }));
   expect(await reportUsageIfDue({ surface: "cli" }, { ...NOW, fetch: fn })).toBe(false);
+  expect(readUsage().report.cli).toEqual({ last_day: "2026-11-20", last_outcome: "rejected", last_detail: error });
 });
 
-test("the cli event counts the complete UTC days since the last report, and carries nothing identifying", async () => {
+test("the cli event counts the complete UTC days after the last accepted one, and carries nothing identifying", async () => {
   sandbox();
   seed("2026-11-01", [
     { day: "2026-11-17", command: ["search"], source: "user", attempts: 3, failures: 1 },
@@ -148,11 +179,9 @@ test("the cli event counts the complete UTC days since the last report, and carr
     { day: "2026-11-18", command: ["show"], source: "agent", attempts: 2 },
     { day: "2026-11-19", command: ["doctor", "metrics"], source: "task", attempts: 5 },
     { day: "2026-11-20", command: ["search"], source: "user", attempts: 99 }, // today: not complete
-    { day: "2026-11-15", command: ["add"], source: "user", attempts: 50 }, // in the last report, sent on 2026-11-16
+    { day: "2026-11-15", command: ["add"], source: "user", attempts: 50 }, // already accepted
   ]);
-  const db = openUsage();
-  db.prepare("INSERT INTO cli_usage_meta VALUES ('report.cli.last_day', '2026-11-16')").run();
-  db.close();
+  setRow("report.cli.through", "2026-11-15");
   const { fn, sent } = fakeFetch();
   expect(await reportUsageIfDue({ surface: "cli", version: "0.10.9" }, { ...NOW, fetch: fn })).toBe(true);
   const { props, systemProps, eventName, sessionId, timestamp } = sent[0]?.body as {
@@ -191,17 +220,16 @@ test("the cli event counts the complete UTC days since the last report, and carr
   expect(text).not.toContain("instance");
 });
 
-test("reported every day, each report counts the whole day the last one was sent on", async () => {
+test("reported every day, each report counts the day before it", async () => {
   sandbox();
   seed("2026-11-01", [
-    { day: "2026-11-18", command: ["show"], source: "user", attempts: 9 }, // in the report sent on 2026-11-19
+    { day: "2026-11-18", command: ["show"], source: "user", attempts: 9 }, // accepted in the report sent on 2026-11-19
     { day: "2026-11-19", command: ["search"], source: "agent", attempts: 4 },
     { day: "2026-11-19", command: ["improve"], source: "improve", attempts: 2 },
     { day: "2026-11-20", command: ["search"], source: "user", attempts: 99 }, // today: not complete
   ]);
-  const db = openUsage();
-  db.prepare("INSERT INTO cli_usage_meta VALUES ('report.cli.last_day', '2026-11-19')").run();
-  db.close();
+  setRow("report.cli.last_day", "2026-11-19");
+  setRow("report.cli.through", "2026-11-18");
   const { fn, sent } = fakeFetch();
   expect(await reportUsageIfDue({ surface: "cli" }, { ...NOW, fetch: fn })).toBe(true);
   const { props } = sent[0]?.body as { props: Record<string, number> };
@@ -360,6 +388,8 @@ test("a send that hangs is cut off at the timeout", async () => {
   const started = Date.now();
   expect(await reportUsageIfDue({ surface: "cli" }, { ...NOW, fetch: hanging, timeoutMs: 100 })).toBe(false);
   expect(Date.now() - started).toBeLessThan(1500);
+  expect(readUsage().report.cli).toMatchObject({ last_outcome: "failed", last_detail: "no answer within 100 ms" });
+  expect(readUsage().report.cli?.through).toBeUndefined();
 });
 
 // Spawned children can replace the environment, so the day claim is the proof that nothing would be sent.

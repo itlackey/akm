@@ -235,12 +235,16 @@ On by default. akm sends one event a day per surface, the CLI and AKM Desktop,
 to a self-hosted [Aptabase](https://aptabase.com) at `https://reporting.fwdslsh.dev`.
 It is sent after a command finishes (at most one command a day pays a request, with a
 1.5 second limit) or, for Desktop, in the background when its server starts. A failed send
-is not retried that day, and nothing is ever printed or changed in a command's result.
-A fresh data directory sends nothing until its next UTC day.
+is not retried that day, and nothing is ever printed or changed in a command's result;
+the next day's CLI report counts the days a failed one missed. `akm doctor metrics usage`
+shows, under `report`, each surface's last try (`last_day`), the last day whose counts the
+server accepted (`through`), and what the last try came to (`last_outcome`: `sent`,
+`rejected` or `failed`, with `last_detail`). A fresh data directory sends nothing until its
+next UTC day.
 
-- **CLI event (`cli_daily`):** `period_days` (the complete UTC days not yet
-  reported: from the day of the last report up to yesterday; `0` for the first
-  report), `commands`, `failures`,
+- **CLI event (`cli_daily`):** `period_days` (the complete UTC days after the
+  last one the server accepted, up to yesterday; `0` for the first report),
+  `commands`, `failures`,
   `src_user`, `src_agent`, `src_task`, `src_improve` (commands by who ran them),
   and `cmd_<command>` (the number of runs of each top-level command, only those
   run). It is built from the counts above, so it has no argument values.

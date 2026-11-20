@@ -62,40 +62,61 @@ function addDays(utcDay: string, days: number): string {
   return day(new Date(Date.parse(`${utcDay}T00:00:00Z`) + days * DAY_MS));
 }
 
+/** Set a meta row only forward: a day that is not later than the stored one changes nothing. */
+const SET_LATER =
+  "INSERT INTO cli_usage_meta(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE cli_usage_meta.value < excluded.value";
+
 /**
- * Take today for `surface`: true for exactly one caller per UTC day, across concurrent processes (one atomic
- * upsert). A store created today claims nothing, so a fresh install or sandbox reports from its next UTC day.
- * Returns the previously reported day (undefined before the first report).
+ * Take today's attempt for `surface` (`report.<surface>.last_day`): true for exactly one caller per UTC day, across
+ * concurrent processes (one atomic upsert). A store created today claims nothing, so a fresh install or sandbox
+ * reports from its next UTC day. Returns the last day whose counts the server accepted (`report.<surface>.through`;
+ * undefined before the first accepted report).
  */
-function claimDay(surface: ReportSurface, today: string): { last: string | undefined } | undefined {
+function claimDay(surface: ReportSurface, today: string): { through: string | undefined } | undefined {
   const db = openUsage();
   try {
-    const started = (
-      db.prepare("SELECT value FROM cli_usage_meta WHERE key='collectionStart'").get() as { value: string } | undefined
-    )?.value;
+    const meta = (key: string) =>
+      (db.prepare("SELECT value FROM cli_usage_meta WHERE key=?").get(key) as { value: string } | undefined)?.value;
+    const started = meta("collectionStart");
     if (started === undefined || started.slice(0, 10) >= today) return undefined;
     const key = `report.${surface}.last_day`;
-    const last = (db.prepare("SELECT value FROM cli_usage_meta WHERE key=?").get(key) as { value: string } | undefined)
-      ?.value;
-    // Already reported today (every command after the first): a read only, no write lock on the shared store.
+    const last = meta(key);
+    // Already tried today (every command after the first): a read only, no write lock on the shared store.
     if (last !== undefined && last >= today) return undefined;
-    const claimed = db
-      .prepare(
-        "INSERT INTO cli_usage_meta(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE cli_usage_meta.value < excluded.value",
-      )
-      .run(key, today).changes;
-    return claimed ? { last } : undefined;
+    const claimed = db.prepare(SET_LATER).run(key, today).changes;
+    return claimed ? { through: meta(`report.${surface}.through`) } : undefined;
+  } finally {
+    db.close();
+  }
+}
+
+type SendOutcome = { outcome: "sent" | "rejected" | "failed"; detail: string };
+
+/**
+ * Keep what this attempt came to, for `akm doctor metrics usage`, and on an accepted CLI report the last day its
+ * counts reach, so the next report starts after it. A failed send leaves that day where it was: the next day's
+ * report counts the days this one missed.
+ */
+function record(surface: ReportSurface, outcome: SendOutcome, through: string | undefined) {
+  const db = openUsage();
+  try {
+    const set = db.prepare(
+      "INSERT INTO cli_usage_meta(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+    );
+    set.run(`report.${surface}.last_outcome`, outcome.outcome);
+    set.run(`report.${surface}.last_detail`, outcome.detail);
+    if (through !== undefined) db.prepare(SET_LATER).run(`report.${surface}.through`, through);
   } finally {
     db.close();
   }
 }
 
 /**
- * Counts of the complete UTC days from `last` up to yesterday, from the durable aggregates. `last` is the day the
- * previous report was sent, which that report did not count: it counted up to the day before.
+ * Counts of the complete UTC days after `through` (the last day the server accepted) up to yesterday, from the
+ * durable aggregates. Before the first accepted report there is nothing to count: `period_days` is 0.
  */
-function cliCounts(last: string | undefined, today: string): Record<string, number> {
-  const since = last ?? today;
+function cliCounts(through: string | undefined, today: string): Record<string, number> {
+  const since = through === undefined ? today : addDays(through, 1);
   const until = addDays(today, -1);
   const props: Record<string, number> = { period_days: 0, commands: 0, failures: 0 };
   if (since > until) return props;
@@ -160,6 +181,42 @@ function systemProps(version: string) {
   };
 }
 
+/**
+ * POST one event. Aptabase answers an event it refuses with a 4xx, and an App-Key it does not know with a 200 whose
+ * body carries `error`: both are rejections.
+ */
+async function send(event: Record<string, unknown>, deps: ReportDeps): Promise<SendOutcome> {
+  const timeoutMs = deps.timeoutMs ?? SEND_TIMEOUT_MS;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await (deps.fetch ?? fetch)(ENDPOINT, {
+      method: "POST",
+      headers: { "App-Key": APP_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify(event),
+      signal: controller.signal,
+    });
+    const text = await response.text().catch(() => "");
+    if (!response.ok) return { outcome: "rejected", detail: `HTTP ${response.status}: ${text}`.slice(0, 300) };
+    let error: unknown;
+    try {
+      error = (JSON.parse(text) as { error?: unknown } | null)?.error;
+    } catch {
+      // A 200 with a body that is not JSON carries no error.
+    }
+    return error ? { outcome: "rejected", detail: String(error).slice(0, 300) } : { outcome: "sent", detail: "" };
+  } catch (error) {
+    const detail = controller.signal.aborted
+      ? `no answer within ${timeoutMs} ms`
+      : error instanceof Error
+        ? error.message
+        : String(error);
+    return { outcome: "failed", detail: detail.slice(0, 300) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Send the surface's daily event when it is due. Resolves true when the server accepted it; never throws. */
 export async function reportUsageIfDue(
   { surface, version = pkgVersion }: { surface: ReportSurface; version?: string },
@@ -173,30 +230,21 @@ export async function reportUsageIfDue(
     const claim = claimDay(surface, today);
     if (!claim) return false;
     const props = {
-      ...(surface === "cli" ? cliCounts(claim.last, today) : {}),
+      ...(surface === "cli" ? cliCounts(claim.through, today) : {}),
       ...librarySnapshot(),
     };
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), deps.timeoutMs ?? SEND_TIMEOUT_MS);
-    try {
-      const response = await (deps.fetch ?? fetch)(ENDPOINT, {
-        method: "POST",
-        headers: { "App-Key": APP_KEY, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          timestamp: now.toISOString(),
-          sessionId: randomUUID(),
-          eventName: `${surface}_daily`,
-          systemProps: systemProps(version),
-          props,
-        }),
-        signal: controller.signal,
-      });
-      if (!response.ok) return false;
-      const body = (await response.json().catch(() => ({}))) as { error?: unknown } | null;
-      return !body?.error;
-    } finally {
-      clearTimeout(timer);
-    }
+    const outcome = await send(
+      {
+        timestamp: now.toISOString(),
+        sessionId: randomUUID(),
+        eventName: `${surface}_daily`,
+        systemProps: systemProps(version),
+        props,
+      },
+      deps,
+    );
+    record(surface, outcome, outcome.outcome === "sent" && surface === "cli" ? addDays(today, -1) : undefined);
+    return outcome.outcome === "sent";
   } catch {
     return false;
   }

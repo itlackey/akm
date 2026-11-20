@@ -483,6 +483,11 @@ export function readUsage(filter: UsageFilter = {}) {
     gaps,
     aggregates: [] as Record<string, unknown>[],
     details: [] as Record<string, unknown>[],
+    /**
+     * The daily usage report's own rows (src/cli/usage-report.ts), per surface: `last_day` (the day it last tried),
+     * `through` (the last day whose counts the server accepted), `last_outcome` and `last_detail`.
+     */
+    report: {} as Record<string, Record<string, string>>,
   };
   if (!fs.existsSync(usagePath())) {
     gaps.push("Usage storage is absent: this is unmeasured, not zero usage.");
@@ -511,6 +516,14 @@ export function readUsage(filter: UsageFilter = {}) {
           | { value: string }
           | undefined
       )?.value ?? null;
+    for (const { key, value } of db
+      .prepare("SELECT key,value FROM cli_usage_meta WHERE key LIKE 'report.%' ORDER BY key")
+      .all() as Array<{ key: string; value: string }>) {
+      const [, surface, field] = key.split(".");
+      if (!surface || !field) continue;
+      empty.report[surface] ??= {};
+      empty.report[surface][field] = value;
+    }
     const selected = (dimensions: Record<string, unknown>) =>
       (!filter.since || String(dimensions.day) >= filter.since.slice(0, 10)) &&
       (!filter.until || String(dimensions.day) <= filter.until.slice(0, 10)) &&

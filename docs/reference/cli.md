@@ -4669,7 +4669,9 @@ maxRetries: 1      # optional
 ### CLI invocation usage
 
 `akm doctor metrics usage` reports local command attempts, explicit argument counts,
-argument combinations, instance adoption, failures and duration summaries. Existing
+argument combinations, instance adoption, failures and duration summaries, and under
+`report` what the [daily usage report](data-and-telemetry.md#daily-usage-report) last
+did for each surface. Existing
 `akm metrics` (Deprecated) and bare `akm doctor metrics` keep their existing report.
 
 ```sh
