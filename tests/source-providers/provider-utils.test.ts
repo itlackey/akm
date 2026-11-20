@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { copyIncludedPaths } from "../../src/sources/include";
 import { copyDirectoryContents, detectStashRoot } from "../../src/sources/providers/provider-utils";
 import { type Cleanup, makeSandboxDir, makeStashDir } from "../_helpers/sandbox";
 
@@ -34,89 +33,6 @@ describe("source provider copy safety", () => {
 
     expect(fs.readFileSync(path.join(dest.dir, "safe.md"), "utf8")).toBe("safe\n");
     expect(fs.existsSync(path.join(dest.dir, "escaped.md"))).toBe(false);
-  });
-
-  test("copyIncludedPaths follows a symlink include target that stays inside the package", () => {
-    const source = makeSandboxDir("akm-include-src");
-    const dest = makeSandboxDir("akm-include-dest");
-    cleanup = () => {
-      dest.cleanup();
-      source.cleanup();
-    };
-
-    fs.writeFileSync(path.join(source.dir, "real.md"), "inside\n", "utf8");
-    fs.symlinkSync(path.join(source.dir, "real.md"), path.join(source.dir, "leak.md"));
-
-    copyIncludedPaths(["leak.md"], source.dir, dest.dir);
-
-    expect(fs.lstatSync(path.join(dest.dir, "leak.md")).isSymbolicLink()).toBe(false);
-    expect(fs.readFileSync(path.join(dest.dir, "leak.md"), "utf8")).toBe("inside\n");
-  });
-
-  test("copyIncludedPaths skips (rather than follows) a nested symlink that escapes the package", () => {
-    const source = makeSandboxDir("akm-include-src");
-    const dest = makeSandboxDir("akm-include-dest");
-    cleanup = () => {
-      dest.cleanup();
-      source.cleanup();
-    };
-
-    fs.mkdirSync(path.join(source.dir, "docs"), { recursive: true });
-    fs.writeFileSync(path.join(source.dir, "docs", "safe.md"), "safe\n", "utf8");
-    const outside = path.join(dest.dir, "..", "outside-secret.txt");
-    fs.writeFileSync(outside, "secret\n", "utf8");
-    fs.symlinkSync(outside, path.join(source.dir, "docs", "leak.md"));
-
-    expect(() => copyIncludedPaths(["docs"], source.dir, dest.dir)).not.toThrow();
-    expect(fs.readFileSync(path.join(dest.dir, "docs", "safe.md"), "utf8")).toBe("safe\n");
-    expect(fs.existsSync(path.join(dest.dir, "docs", "leak.md"))).toBe(false);
-  });
-
-  test("copyIncludedPaths skips a missing entry with a warning instead of failing the whole install", () => {
-    const source = makeSandboxDir("akm-include-src");
-    const dest = makeSandboxDir("akm-include-dest");
-    cleanup = () => {
-      dest.cleanup();
-      source.cleanup();
-    };
-
-    fs.writeFileSync(path.join(source.dir, "present.md"), "here\n", "utf8");
-
-    expect(() => copyIncludedPaths(["missing.md", "present.md"], source.dir, dest.dir)).not.toThrow();
-    expect(fs.existsSync(path.join(dest.dir, "missing.md"))).toBe(false);
-    expect(fs.readFileSync(path.join(dest.dir, "present.md"), "utf8")).toBe("here\n");
-  });
-
-  test("copyIncludedPaths expands a simple glob entry", () => {
-    const source = makeSandboxDir("akm-include-src");
-    const dest = makeSandboxDir("akm-include-dest");
-    cleanup = () => {
-      dest.cleanup();
-      source.cleanup();
-    };
-
-    fs.mkdirSync(path.join(source.dir, "skills"), { recursive: true });
-    fs.writeFileSync(path.join(source.dir, "skills", "a.md"), "a\n", "utf8");
-    fs.writeFileSync(path.join(source.dir, "skills", "b.md"), "b\n", "utf8");
-    fs.mkdirSync(path.join(source.dir, "other"), { recursive: true });
-    fs.writeFileSync(path.join(source.dir, "other", "c.md"), "c\n", "utf8");
-
-    copyIncludedPaths(["skills/*"], source.dir, dest.dir);
-
-    expect(fs.readFileSync(path.join(dest.dir, "skills", "a.md"), "utf8")).toBe("a\n");
-    expect(fs.readFileSync(path.join(dest.dir, "skills", "b.md"), "utf8")).toBe("b\n");
-    expect(fs.existsSync(path.join(dest.dir, "other"))).toBe(false);
-  });
-
-  test("copyIncludedPaths still throws when a literal (non-pattern) entry escapes sourceDir", () => {
-    const source = makeSandboxDir("akm-include-src");
-    const dest = makeSandboxDir("akm-include-dest");
-    cleanup = () => {
-      dest.cleanup();
-      source.cleanup();
-    };
-
-    expect(() => copyIncludedPaths(["../outside"], source.dir, dest.dir)).toThrow("escapes the package root");
   });
 });
 

@@ -44,7 +44,6 @@ import {
   type RegistryIndex,
 } from "../src/registry/providers/static-index";
 import { writeResponseToFileCapped } from "../src/runtime";
-import { copyIncludedPaths, findNearestIncludeConfig } from "../src/sources/include";
 import { detectStashRoot } from "../src/sources/providers/provider-utils";
 import { extractTarGzSecure } from "../src/sources/providers/tar-utils";
 
@@ -328,9 +327,8 @@ async function inspectArchive(url: string, headers?: HeadersInit): Promise<Packa
     extractTarGzSecure(archivePath, extractDir);
 
     const stashRoot = detectStashRoot(extractDir);
-    const inspectionRoot = applyIncludeConfigForInspection(stashRoot, tempDir, extractDir) ?? stashRoot;
-    const metadata = await enumerateAssets(inspectionRoot);
-    const packageMetadata = readNearestPackageJson(extractDir, inspectionRoot);
+    const metadata = await enumerateAssets(stashRoot);
+    const packageMetadata = readNearestPackageJson(extractDir, stashRoot);
     const assets = metadata.map((entry) => ({
       type: entry.type,
       name: entry.name,
@@ -399,17 +397,6 @@ function attachFileSize(dirPath: string, entry: IndexDocument): IndexDocument {
   } catch {
     return entry;
   }
-}
-
-function applyIncludeConfigForInspection(stashRoot: string, tempDir: string, searchRoot: string): string | undefined {
-  const includeConfig = findNearestIncludeConfig(stashRoot, searchRoot);
-  if (!includeConfig) return undefined;
-
-  const selectedDir = path.join(tempDir, "selected");
-  fs.rmSync(selectedDir, { recursive: true, force: true });
-  fs.mkdirSync(selectedDir, { recursive: true });
-  copyIncludedPaths(includeConfig.include, includeConfig.baseDir, selectedDir);
-  return selectedDir;
 }
 
 async function loadManualEntries(manualEntriesPath: string): Promise<RegistryBundleEntry[]> {

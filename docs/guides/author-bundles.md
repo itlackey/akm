@@ -174,25 +174,34 @@ cover only what changes when you're the one publishing.
    `akm bundle add github:your-username/my-bundle#v1.0.0`. An unpinned add
    tracks the default branch; a `#ref` pins that tag, branch or commit.
 
+A bundle is a directory, and akm indexes everything it recognizes under it. If
+the repository also holds code, keep the bundle in its own directory: akm uses
+the repository root when it looks like a bundle, and otherwise the shallowest
+directory that has two or more of akm's type directories (`skills/`,
+`knowledge/`, …) or a `.stash` directory. A repository root that has a type
+directory of its own (a `scripts/` is the common one) is normally taken as the
+bundle, and the whole repository is indexed; your users can then
+[index only the subdirectory](bundles.md#akm-bundle-add) with
+`components.main.root`.
+
 ### Sharing on npm
 
 1. Add a `package.json` with `"akm-stash"` in `keywords`.
 2. If your repo contains files that shouldn't ship (source, tests, CI
-   config), use `akm.include` to declare which paths to publish:
+   config), use npm's `files` field to declare which paths to publish:
 
    ```json
    {
      "name": "@your-scope/my-bundle",
      "version": "1.0.0",
      "keywords": ["akm-stash"],
-     "akm": { "include": ["scripts", "skills", "knowledge", ".meta"] }
+     "files": ["scripts", "skills", "knowledge", ".meta"]
    }
    ```
 
-   Paths are relative to `package.json`; only listed directories/files are
-   copied into the install cache, and `.git` is always excluded. Include
-   `.meta` explicitly, since dot-directories are easy to leave out of a
-   published tarball.
+   akm installs what is in the published tarball and has no filter of its
+   own. Include `.meta` explicitly, since dot-directories are easy to leave
+   out of a published tarball.
 
 3. `npm publish --access public`.
 4. Others can now install it: `akm bundle add @your-scope/my-bundle`.
