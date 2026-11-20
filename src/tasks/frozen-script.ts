@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { assertNever } from "../core/assert";
 import type { TaskV3ScriptInterpreter } from "./prepare/prepared-execution";
+import { scriptInterpreter } from "./prepare/script-capture";
 import { STANDALONE_FROZEN_SCRIPT_ARG } from "./standalone-script-entry";
 
 export interface FrozenScriptSnapshot {
@@ -43,6 +44,13 @@ export function frozenScriptCommand(
   args: readonly string[] = [],
 ): string[] {
   return [...interpreterCommand(script, materializedPath), ...args];
+}
+
+/** The program and arguments that run the script asset `ref`, found at `file`, with `args` after it: what `akm run <ref>` runs. */
+export function scriptProgram(ref: string, file: string, args: readonly string[]): string[] {
+  const extension = path.extname(file);
+  const interpreter = scriptInterpreter(extension, ref, extension === "" ? fs.readFileSync(file) : undefined);
+  return frozenScriptCommand({ interpreter, extension }, file, args);
 }
 
 function interpreterCommand(

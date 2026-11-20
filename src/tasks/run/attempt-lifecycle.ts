@@ -20,10 +20,14 @@
  */
 
 import os from "node:os";
-import { AkmError, rethrowIfTestIsolationError } from "../../core/errors";
-import { processIdentity } from "../../core/file-lock";
+import path from "node:path";
+import { AkmError, rethrowIfTestIsolationError, TransientError } from "../../core/errors";
+import { type LockOwnership, processIdentity } from "../../core/file-lock";
+import { getStateDir } from "../../core/paths";
+import { formatLockHolderPid, tryAcquireRunLock } from "../../core/run-lock";
 import { withStateDb } from "../../core/state-db";
-import { reserveTaskHistoryAttempt } from "../../storage/repositories/task-history-repository";
+import { warn } from "../../core/warn";
+import { reserveTaskHistoryAttempt, type TaskHistoryRun } from "../../storage/repositories/task-history-repository";
 import { validateTaskConceptId } from "../task-id";
 import { appendHistory } from "./task-history";
 import { persistRunLog, resolveTaskLogPath } from "./task-log";
@@ -36,8 +40,64 @@ interface ReservedTaskAttempt {
   historyReserved: boolean;
 }
 
-/** Reserve a collision-free identity through state.db's existing unique index. */
-export function reserveTaskAttempt(taskId: string, requestedStartedAt: Date): ReservedTaskAttempt {
+/** The lock file of a task that runs one at a time. */
+export function taskRunLockPath(id: string): string {
+  return path.join(getStateDir(), "locks", `task-${encodeURIComponent(id)}.lock`);
+}
+
+/**
+ * Take the lock of a task that runs one at a time. A start that finds it held throws `RUN_LEASE_HELD`, or, when `skip`
+ * says so, warns and returns the skipped start.
+ */
+export function acquireTaskRunLock(
+  id: string,
+  options: { skip: boolean; at: Date },
+): { ownership: LockOwnership } | { skipped: TaskRunResult } {
+  const acquired = tryAcquireRunLock(taskRunLockPath(id), { label: "task" });
+  if (acquired.state === "acquired") return { ownership: acquired.ownership };
+  const message = `Task ${id} is still running (PID ${formatLockHolderPid(acquired.holder)}, started ${acquired.holder.startedAt}); not starting another run.`;
+  if (!options.skip) throw new TransientError(message, "RUN_LEASE_HELD");
+  warn(message);
+  return { skipped: skippedActiveRun(id, options.at) };
+}
+
+/** An abort controller that akm's own SIGTERM or SIGINT aborts, which stops the running step's whole process group. */
+export function abortOnTermination(): { abort: AbortController; stop: () => void } {
+  const abort = new AbortController();
+  const onSignal = (signal: NodeJS.Signals) => abort.abort(new Error(`task runner received ${signal}`));
+  const onSigterm = () => onSignal("SIGTERM");
+  const onSigint = () => onSignal("SIGINT");
+  process.once("SIGTERM", onSigterm);
+  process.once("SIGINT", onSigint);
+  return {
+    abort,
+    stop: () => {
+      process.off("SIGTERM", onSigterm);
+      process.off("SIGINT", onSigint);
+    },
+  };
+}
+
+/** A scheduled run that found the previous one alive: "active" maps to exit 0 and writes no history row. */
+export function skippedActiveRun(id: string, at: Date): TaskRunResult {
+  return {
+    id,
+    status: "active",
+    startedAt: at.toISOString(),
+    finishedAt: at.toISOString(),
+    durationMs: 0,
+    log: "",
+    target: { kind: "steps" },
+    detail: { reason: "previous_run_active" },
+  };
+}
+
+/** Reserve a collision-free identity through state.db's existing unique index. `run` is the version 5 run the attempt belongs to. */
+export function reserveTaskAttempt(
+  taskId: string,
+  requestedStartedAt: Date,
+  run?: TaskHistoryRun,
+): ReservedTaskAttempt {
   try {
     return withStateDb((db) => {
       for (let offsetMs = 0; ; offsetMs++) {
@@ -55,6 +115,7 @@ export function reserveTaskAttempt(taskId: string, requestedStartedAt: Date): Re
             metadataVersion: 2,
             durationMs: 0,
             detail: null,
+            ...(run ? { run } : {}),
             owner: { pid: process.pid, host: os.hostname(), ...processIdentity(process.pid) },
           }),
         });

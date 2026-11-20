@@ -58,6 +58,7 @@ export function appendHistory(result: TaskRunResult, historyReserved = false, sc
       detail: result.detail ?? null,
       ...(result.target.kind === "command" ? { engine: result.target.engine } : {}),
       ...(result.steps ? { steps: result.steps } : {}),
+      ...(result.run ? { run: result.run } : {}),
       ...(scheduled === undefined ? {} : { trigger: scheduled ? "schedule" : "manual" }),
     }),
   };
@@ -168,5 +169,6 @@ function taskHistoryRowToResult(row: TaskHistoryRow): TaskRunResult {
     ...(meta.detail ? { detail: meta.detail } : {}),
     ...(meta.steps ? { steps: meta.steps } : {}),
     ...(meta.trigger ? { trigger: meta.trigger } : {}),
+    ...(meta.run ? { run: meta.run } : {}),
   };
 }

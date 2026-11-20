@@ -15,12 +15,12 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { loadEnv } from "../../commands/env/env";
+import { resolveEnvBinding } from "../../commands/env/env-binding";
 import { parseBundleRef } from "../../core/asset/asset-ref";
 import { loadConfig } from "../../core/config/config";
-import { isInstalledBundle, resolveEnvPath, resolveRefOwner, resolveSecretPath } from "../../core/env-secret-ref";
+import { resolveSecretPath } from "../../core/env-secret-ref";
 import { NotFoundError, UsageError } from "../../core/errors";
-import { substituteRefTokens } from "../../core/ref-token";
+import { parseSecretSpec } from "../../core/ref-token";
 import {
   applyInputDefaults,
   type InputContract,
@@ -33,13 +33,7 @@ import { scriptInterpreter } from "../prepare/script-capture";
 import { resolveBundleAsset } from "../run/load-task";
 import { parseTaskSource } from "../source/parse-task-source";
 import { TASK_INPUT_DIAGNOSTICS } from "../source/task-input-diagnostics";
-import {
-  parseSecretSpec,
-  readTaskV5Options,
-  type TaskSourceV5Document,
-  type TaskV5Options,
-  type TaskV5RefKind,
-} from "./source";
+import { readTaskV5Options, type TaskSourceV5Document, type TaskV5Options, type TaskV5RefKind } from "./source";
 
 /** The flags of a start that are checked as the same options are in a task file. */
 export interface TaskV5StartFlags {
@@ -60,13 +54,11 @@ export interface TaskV5CheckInput {
   readonly ref: string;
   /** The bundle an unqualified ref is read from. */
   readonly bundle: TaskV5Bundle;
-  /** The inputs given, as the command line or a calling step gives them. */
-  readonly values?: Readonly<Record<string, string | number | boolean>>;
+  /** The inputs given, as the command line gives them: an array input repeats its flag. */
+  readonly inputs?: readonly InputFlag[];
   readonly flags?: TaskV5StartFlags;
 }
 
-/** An input whose value is only known when the step that gives it runs. */
-const LATER = Symbol("known when the step runs");
 const WHOLE_TOKEN = /^\$\{([^}\s]+)\}$/;
 const ASSET_TYPE: Readonly<Record<TaskV5RefKind, string>> = {
   tasks: "task",
@@ -84,7 +76,7 @@ interface Visited {
 export async function checkTaskV5(input: TaskV5CheckInput): Promise<TaskSourceV5Document> {
   const flags = input.flags ?? {};
   checkStartFlags(flags);
-  return checkTask(input.bundle, input.ref, input.values ?? {}, [], input.ref);
+  return checkTask(input.bundle, input.ref, input.inputs ?? [], new Set(), [], input.ref);
 }
 
 function checkStartFlags(flags: TaskV5StartFlags): void {
@@ -109,11 +101,12 @@ function checkStartFlags(flags: TaskV5StartFlags): void {
 async function checkTask(
   bundle: TaskV5Bundle,
   ref: string,
-  values: Readonly<Record<string, unknown>>,
+  inputs: readonly InputFlag[],
+  later: ReadonlySet<string>,
   trail: readonly Visited[],
   where: string,
 ): Promise<TaskSourceV5Document> {
-  const found = await locate(bundle, ref, "tasks", where);
+  const found = await locateTaskV5Asset(bundle, ref, "tasks", where);
   if (trail.some((visited) => visited.file === found.file)) {
     throw new UsageError(
       `Invalid task source v5 at ${found.file}: tasks run each other in a loop: ${[...trail.map((visited) => visited.ref), ref].join(" -> ")}.`,
@@ -128,7 +121,7 @@ async function checkTask(
     );
   }
   const document = parsed.v5;
-  checkSupplied(document.inputs ?? {}, values);
+  checkSupplied(document.inputs ?? {}, inputs, later);
   checkOptionRefs(document.options, ref);
   const visited = [...trail, { file: found.file, ref }];
   for (const step of document.steps) {
@@ -137,14 +130,16 @@ async function checkTask(
     if (step.kind === "exec" || step.kind === "prompt") continue;
     const target = step.run as string;
     if (step.kind === "tasks") {
-      const given: Record<string, unknown> = {};
+      const given: InputFlag[] = [];
+      const known = new Set<string>();
       for (const { name, value } of step.taskInputs ?? []) {
-        given[name] = typeof value === "string" && WHOLE_TOKEN.test(value) ? LATER : value;
+        if (typeof value === "string" && WHOLE_TOKEN.test(value)) known.add(name);
+        else given.push({ name, value: typeof value === "boolean" ? value : String(value) });
       }
-      await checkTask(found.bundle, target, given, visited, at);
+      await checkTask(found.bundle, target, given, known, visited, at);
       continue;
     }
-    const asset = await locate(found.bundle, target, step.kind, at);
+    const asset = await locateTaskV5Asset(found.bundle, target, step.kind, at);
     if (step.kind === "scripts") {
       const extension = path.extname(asset.file).toLowerCase();
       scriptInterpreter(extension, target, extension === "" ? fs.readFileSync(asset.file) : undefined);
@@ -154,7 +149,7 @@ async function checkTask(
 }
 
 /** The file a ref names, in the bundle it is read from, and that bundle. A ref that names nothing is refused. */
-async function locate(
+export async function locateTaskV5Asset(
   bundle: TaskV5Bundle,
   ref: string,
   kind: TaskV5RefKind,
@@ -177,14 +172,10 @@ async function locate(
  * The inputs given, as the task's declared inputs take them: converted to their types, defaults applied, each
  * required one present. One whose value is only known when the step runs counts as given.
  */
-function checkSupplied(contract: InputContract, values: Readonly<Record<string, unknown>>): void {
+function checkSupplied(contract: InputContract, flags: readonly InputFlag[], later: ReadonlySet<string>): void {
   const declared = Object.keys(contract);
-  const later = new Set<string>();
-  const flags: InputFlag[] = [];
-  for (const [name, value] of Object.entries(values)) {
+  for (const name of later) {
     if (!declared.includes(name)) throw TASK_INPUT_DIAGNOSTICS.unknownFlag(name, [...declared].sort());
-    if (value === LATER) later.add(name);
-    else flags.push({ name, value: typeof value === "boolean" ? value : String(value) });
   }
   const repeated = flags.find((flag) => later.has(flag.name));
   if (repeated) throw TASK_INPUT_DIAGNOSTICS.duplicateNonArray(repeated.name);
@@ -199,18 +190,7 @@ function checkOptionRefs(options: Pick<TaskV5Options, "env" | "secret">, where: 
   for (const entry of options.env ?? []) {
     if (typeof entry !== "string") continue;
     try {
-      const { absPath } = resolveEnvPath(entry);
-      const { missing } = substituteRefTokens(
-        loadEnv(absPath),
-        (ref) => (resolveRefOwner(ref) ? { kind: "path", path: "" } : undefined),
-        isInstalledBundle,
-      );
-      if (missing.length > 0) {
-        throw new NotFoundError(
-          `Env "${entry}" references asset(s) that no bundle owns: ${missing.join(", ")}.`,
-          "FILE_NOT_FOUND",
-        );
-      }
+      resolveEnvBinding(entry, { locateOnly: true });
     } catch (cause) {
       throw inContext(where, cause);
     }

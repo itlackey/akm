@@ -28,7 +28,8 @@ import { type Correction, isRefused, jsonParser, structuredLoop } from "../../ll
 import type { TaskHistoryStep } from "../../storage/repositories/task-history-repository";
 import type { ExecutionProvenanceContext } from "../model/invocation";
 import type { PreparedTaskStep, PreparedTaskV3Steps } from "../prepare/prepared-execution";
-import { finishAttempt } from "./attempt-lifecycle";
+import { abortOnTermination, finishAttempt } from "./attempt-lifecycle";
+import { taskEventSource } from "./provenance";
 import { withUnattendedTimeout } from "./run-command-task";
 import { shellCommand } from "./run-native-task";
 import { DEFAULT_SCHEDULED_TASK_TIMEOUT_MS } from "./run-workflow-task";
@@ -61,7 +62,7 @@ function bound(text: string): string {
   return `${Buffer.from(text).subarray(0, STEP_RESULT_MAX_BYTES).toString("utf8")}\n[truncated ${bytes - STEP_RESULT_MAX_BYTES} bytes]`;
 }
 
-function summarize(text: string): string {
+export function summarize(text: string): string {
   const line = text.trim().split("\n")[0] ?? "";
   return line.length > SUMMARY_MAX_CHARS ? `${line.slice(0, SUMMARY_MAX_CHARS)}...` : line;
 }
@@ -129,6 +130,21 @@ function replyCheck(expect: readonly string[]): (raw: string) => Parsed<Record<s
   });
 }
 
+/** An agent's reply held to `expect:`: asked once more, with what failed the check, when it does. */
+export function expectLoop(
+  expect: readonly string[],
+  dispatch: (correction?: Correction) => Promise<{ ok: true; raw: string } | { ok: false; failure: string }>,
+) {
+  return structuredLoop<Record<string, unknown>, { failure: string }>({
+    dispatch,
+    parse: replyCheck(expect),
+    attempts: 2,
+    correct: (refusal) =>
+      `Your previous reply failed the check: ${refusal.errors.join("; ")}. ` +
+      `Reply again with ONLY a JSON object containing the keys: ${expect.join(", ")}.`,
+  });
+}
+
 export async function runStepsTask(input: {
   task: PreparedTaskV3Steps;
   logPath: string;
@@ -156,13 +172,7 @@ export async function runStepsTask(input: {
     records.push({ ...step, status: "reused", durationMs: 0, attempts: 0 });
   }
 
-  // akm's own termination signal stops the running step's whole process group.
-  const abort = new AbortController();
-  const onSignal = (signal: NodeJS.Signals) => abort.abort(new Error(`task runner received ${signal}`));
-  const onSigterm = () => onSignal("SIGTERM");
-  const onSigint = () => onSignal("SIGINT");
-  process.once("SIGTERM", onSigterm);
-  process.once("SIGINT", onSigint);
+  const { abort, stop } = abortOnTermination();
 
   let failure: { name: string; reason: string } | undefined;
   try {
@@ -219,8 +229,7 @@ export async function runStepsTask(input: {
       records.push(record);
     }
   } finally {
-    process.off("SIGTERM", onSigterm);
-    process.off("SIGINT", onSigint);
+    stop();
   }
 
   const finishedAt = finishAttempt(startedAt, now());
@@ -293,7 +302,7 @@ async function runShellStep(step: Extract<PreparedTaskStep, { kind: "shell" }>, 
   const env: Record<string, string> = {
     ...childProcessEnv(),
     ...step.environment,
-    AKM_EVENT_SOURCE: process.env.AKM_EVENT_SOURCE ?? provenance.eventSource,
+    AKM_EVENT_SOURCE: taskEventSource(process.env, provenance),
     AKM_PARAMS: ctx.paramsJson,
     AKM_STEPS: ctx.stepsJson,
   };
@@ -382,15 +391,7 @@ async function runPromptStep(step: Extract<PreparedTaskStep, { kind: "command" }
     return out;
   }
 
-  const expect = step.expect;
-  const loop = await structuredLoop<Record<string, unknown>, { failure: string }>({
-    dispatch,
-    parse: replyCheck(expect),
-    attempts: 2,
-    correct: (refusal) =>
-      `Your previous reply failed the check: ${refusal.errors.join("; ")}. ` +
-      `Reply again with ONLY a JSON object containing the keys: ${expect.join(", ")}.`,
-  });
+  const loop = await expectLoop(step.expect, dispatch);
   if (loop.ok) {
     out.ok = true;
     out.value = loop.value;

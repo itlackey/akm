@@ -18,35 +18,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseTaskSource } from "../../../src/tasks/source/parse-task-source";
-import { useWorlds, type World, type WorldSpec, world } from "./world";
+import { rule, useWorlds, type World, type WorldSpec, world } from "./world";
 
 useWorlds();
 
-/** Message phrases that tell the one code `TASK_SOURCE_INVALID` apart: the rule the reference names. */
-const RULES: readonly [string, RegExp][] = [
-  ["LOOP", /tasks run each other in a loop/],
-  ["SHAPE", /is one command|names an agent/],
-  ["BAD_RUN", /takes a ref/],
-  ["DUPLICATE_STEP", /has two steps named/],
-  ["NAME_CLASH", /has the name of an input|collides with akm run/],
-  ["BAD_ENV_NAME", /is not a variable name/],
-  ["BAD_REFERENCE", /must be a whole item|does not take a state entry/],
-  ["UNKNOWN_REFERENCE", /is not an input or an earlier step/],
-  ["SECRET_IN_FILE", /holds a secret ref/],
-  ["VALUE_IN_EXEC", /does not put/],
-];
-const rule = async (attempt: Promise<unknown>): Promise<string> => {
-  try {
-    await attempt;
-  } catch (error) {
-    const { code, message } = error as { code?: string; message: string };
-    if (code === "TASK_SOURCE_INVALID")
-      return `${code}/${RULES.find(([, phrase]) => phrase.test(message))?.[0] ?? "BAD_OPTION"}`;
-    if (code === "INPUT_BINDING_INVALID") return `${code}/${/is required/.test(message) ? "missing" : "value"}`;
-    return code ?? `not an akm error: ${error}`;
-  }
-  return "no error";
-};
 const SHAPE = "TASK_SOURCE_INVALID/SHAPE";
 const BAD_RUN = "TASK_SOURCE_INVALID/BAD_RUN";
 const BAD_OPTION = "TASK_SOURCE_INVALID/BAD_OPTION";

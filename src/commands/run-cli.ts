@@ -3,7 +3,6 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import fs from "node:fs";
-import path from "node:path";
 import { type ArgsDef, type CommandDef, parseArgs, runCommand } from "citty";
 import { warnWorkflowUse } from "../cli/deprecations";
 import { createParsedInvocation, findCittyTopLevelCommandIndex } from "../cli/invocation";
@@ -20,8 +19,8 @@ import { withRetries } from "../execution/retry";
 import { resolveConceptOwner } from "../indexer/lookup/adapter-concept-owner";
 import { resolveSourceEntries } from "../indexer/search/search-source";
 import { buildFileContext } from "../indexer/walk/file-context";
-import { frozenScriptCommand } from "../tasks/frozen-script";
-import { scriptInterpreter } from "../tasks/prepare/script-capture";
+import { scriptProgram } from "../tasks/frozen-script";
+import { isTaskSourceV5 } from "../tasks/source/parse-task-source";
 import { resolveWorkflowRunTarget } from "../workflows/runtime/runs";
 import { agentCommand } from "./agent/contribute-cli";
 import { commandRunCommand } from "./command/command-cli";
@@ -142,9 +141,16 @@ export const runAssetCommand = defineJsonCommand({
     const positioned = [...rawArgs];
     positioned[findCittyTopLevelCommandIndex(rawArgs, args)] = target;
     const ownsRunFlags = type === "agent" || type === "command";
-    const forwarded = ownsRunFlags
-      ? withoutFlags(positioned, ["--env", "--secret", "--inherit", "--max-retries"], ["--clean"])
-      : withoutInjectionFlags(positioned);
+    // A version 5 task reads its own start flags (`--env`, `--secret`, `--inherit`, ...) and gives each step its own environment.
+    const versionFive =
+      type === "task" &&
+      scriptFile !== undefined &&
+      isTaskSourceV5({ yaml: fs.readFileSync(scriptFile, "utf8"), filePath: scriptFile });
+    const forwarded = versionFive
+      ? positioned
+      : ownsRunFlags
+        ? withoutFlags(positioned, ["--env", "--secret", "--inherit", "--max-retries"], ["--clean"])
+        : withoutInjectionFlags(positioned);
     if (
       type === "workflow" &&
       rawArgs
@@ -170,7 +176,7 @@ export const runAssetCommand = defineJsonCommand({
     }
     // Every process an executor starts inherits akm's environment, so the injected variables go there, and
     // the secrets among them join what each executor scrubs from the output it captures.
-    const injected = resolveInjections();
+    const injected = versionFive ? { values: {}, secretValues: [] } : resolveInjections();
     const maxRetries = ownsRunFlags ? (parsePositiveIntFlag(parsed["max-retries"], "--max-retries") ?? 0) : 0;
     if (ownsRunFlags && (parsed.clean === true || parsed.inherit !== undefined)) {
       const env = childEnvFromFlags(process.env, { clean: parsed.clean === true, inherit: parsed.inherit });
@@ -199,10 +205,8 @@ async function runScript(ref: string, file: string, rawArgs: readonly string[], 
   const injected = resolveInjections(createParsedInvocation(["", "", ...own]));
   const env = childEnvFromFlags(process.env, { clean: flags.clean === true, inherit: flags.inherit });
   Object.assign(env, injected.values);
-  const extension = path.extname(file);
-  const interpreter = scriptInterpreter(extension, ref, extension === "" ? fs.readFileSync(file) : undefined);
   const result = await runProgram({
-    argv: frozenScriptCommand({ interpreter, extension }, file, rawArgs.slice(refIndex + 1)),
+    argv: scriptProgram(ref, file, rawArgs.slice(refIndex + 1)),
     env,
     capture: false,
     maxRetries: parsePositiveIntFlag(flags["max-retries"], "--max-retries") ?? 0,

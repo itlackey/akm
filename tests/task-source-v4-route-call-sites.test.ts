@@ -352,10 +352,12 @@ describe("a version: 5-beta.1 task through the sites that import, run and schedu
     await expect(importTaskFile({ source, name: "other" })).rejects.toThrow("this build reads only 5-beta.1");
   });
 
-  test("task run, task sync and task explain refuse it, saying running arrives in a later build; the other tasks of the bundle go on", async () => {
-    await expect(loadPreparedTask("nightly", { bundleDir: storage.stashDir, bundleName: "stash" })).rejects.toThrow(
-      RUNS_LATER,
-    );
+  test("task sync and task explain refuse it, saying running arrives in a later build, and task run loads it for the version 5 runner; the other tasks of the bundle go on", async () => {
+    expect(await loadPreparedTask("nightly", { bundleDir: storage.stashDir, bundleName: "stash" })).toMatchObject({
+      kind: "v5",
+      taskId: "nightly",
+      ref: "tasks/nightly",
+    });
     await expect(akmTaskExplain("nightly")).rejects.toThrow(RUNS_LATER);
     writeFile(
       path.join(storage.stashDir, "tasks", "other.yml"),

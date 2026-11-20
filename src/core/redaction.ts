@@ -179,7 +179,7 @@ export const MIN_INFERRED_SECRET_LENGTH = 8;
  * matches `MONKEY` and `BYPASS`. Whole-word matching gets `GH_TOKEN`,
  * `NPM_AUTH_TOKEN`, `MY_API_KEY`, `DB_PASS` and `AWS_SECRET_ACCESS_KEY` right.
  */
-const INFERRED_SECRET_NAME = /(?:^|_)(?:API_?KEY|KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASS|CREDENTIALS?|AUTH)(?:_|$)/i;
+const INFERRED_SECRET_NAME = /(?:^|_)(?:API_?KEY|KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASS|PAT|CREDENTIALS?|AUTH)(?:_|$)/i;
 
 /**
  * Credential variables whose name is a single glued word, which no

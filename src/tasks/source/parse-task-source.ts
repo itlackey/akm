@@ -109,6 +109,16 @@ export function v4ScheduleHasRetiredEnabledKey(root: unknown): boolean {
   );
 }
 
+/** True when the file's `version:` is a `5-beta.<n>` string: the file is read as version 5, or refused as one. A file that does not read as YAML throws the error a run of it would. */
+export function isTaskSourceV5(input: ParseTaskSourceInput): boolean {
+  const { root } = readBoundedTaskSourceYaml(input, { sourceLabel: "task source" });
+  const declared =
+    root !== null && typeof root === "object" && !Array.isArray(root)
+      ? (root as Record<string, unknown>).version
+      : undefined;
+  return typeof declared === "string" && TASK_SOURCE_V5_VERSION_PATTERN.test(declared);
+}
+
 /** Parse task source YAML, routing per the table above. */
 export function parseTaskSource(input: ParseTaskSourceInput): ParsedTaskSource {
   const { root, lineAt } = readBoundedTaskSourceYaml(input, { sourceLabel: "task source" });
