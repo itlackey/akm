@@ -19,8 +19,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
 import { compareCodePoints, toPosix } from "../core/common";
-import { UsageError } from "../core/errors";
 import type { AkmConfig } from "../core/config/config-types";
+import { UsageError } from "../core/errors";
 import { prepareTaskV3Execution } from "./prepare/prepare";
 import type { PrepareTaskV3ExecutionContext } from "./prepare/prepared-execution";
 import type { ScheduleBackend } from "./schedule";
@@ -32,13 +32,13 @@ import {
   type SchedulerInstallOptions,
   type SchedulerSourceSchedule,
   type SchedulerStartFlags,
-  schedulerInputFlags,
   schedulerBindingNativeId,
+  schedulerInputFlags,
   schedulerNativeBindingId,
 } from "./scheduler-binding";
 import { parseTaskSource } from "./source/parse-task-source";
-import type { TaskSourceV4Document } from "./source/task-source-v4";
 import { projectTaskSourceV4 } from "./source/project-v4";
+import type { TaskSourceV4Document } from "./source/task-source-v4";
 import { taskSourceErrorDetail } from "./source-v3";
 import { checkTaskV5 } from "./v5/check";
 import type { TaskSourceV5Document, TaskSourceV5ScheduleBinding } from "./v5/source";
@@ -177,18 +177,9 @@ async function compileV5Schedules(
   return schedules;
 }
 
-/** What `--env`, `--secret` and `--timeout` carry for a schedule entry. A `NAME: value` entry has no `--env` form. */
+/** What `--env`, `--secret` and `--timeout` carry for a schedule entry. The reader takes only env asset refs in its `env:`. */
 function scheduleStartFlags(entry: TaskSourceV5ScheduleBinding): SchedulerStartFlags {
-  const env: string[] = [];
-  for (const item of entry.env ?? []) {
-    if (typeof item !== "string") {
-      throw new UsageError(
-        `schedule[${entry.ordinal}].env: a NAME: value entry cannot be given to a scheduled start, which takes only an env asset's ref, as --env does; put the variable in an env asset.`,
-        "TASK_SOURCE_INVALID",
-      );
-    }
-    env.push(item);
-  }
+  const env = (entry.env ?? []) as readonly string[];
   return {
     ...(env.length > 0 ? { env } : {}),
     ...(entry.secret !== undefined && entry.secret.length > 0 ? { secret: entry.secret } : {}),

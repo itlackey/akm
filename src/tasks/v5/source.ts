@@ -354,6 +354,12 @@ export function parseTaskSourceV5Document(
   const rawSchedule = Array.isArray(root.schedule) ? (root.schedule as Record<string, unknown>[]) : [];
   const schedule = bindings.map((binding, index) => {
     const entry = rawSchedule[index];
+    // An entry's env: is what --env is to a typed start, and --env takes an env asset's ref.
+    if (entry !== undefined && Array.isArray(entry.env)) {
+      for (const [at, item] of entry.env.entries()) {
+        if (typeof item !== "string") fail(["schedule", index, "env", at], "is an env asset's ref, as --env takes.");
+      }
+    }
     const extras =
       entry === undefined
         ? {}

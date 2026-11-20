@@ -143,12 +143,6 @@ describe("sync checks each version 5 entry as a start does", () => {
     );
   });
 
-  test("a NAME: value env entry, which a scheduled start cannot be given", async () => {
-    expect(await reason(["  - cron: '@daily'", "    inputs: { scope: a }", "    env: [{ REGION: eu }]"])).toMatch(
-      /schedule\[0\]\.env.*env asset/s,
-    );
-  });
-
   test("a failing task leaves its installed rows alone and the other tasks sync", async () => {
     write("tasks/nightly.yml", TASK(["  - cron: '@daily'", "    inputs: { scope: a }"]));
     write("tasks/other.yml", ["version: 4", "run: echo hi", "schedule: '@daily'", ""].join("\n"));

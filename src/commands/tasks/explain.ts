@@ -173,7 +173,7 @@ export interface TaskExplainEnvelopeV4 {
 }
 
 interface ScheduleBindingRowV5 extends ScheduleBindingRow {
-  readonly env?: readonly (string | Readonly<Record<string, "<redacted>">>)[];
+  readonly env?: readonly string[];
   readonly secret?: readonly string[];
   readonly timeout?: string | number;
 }
@@ -532,15 +532,7 @@ async function explainV5(
       enabled,
       source: entry.source,
       inputs: scheduleInputRows(entry.inputs),
-      ...(entry.env !== undefined
-        ? {
-            env: entry.env.map((item) =>
-              typeof item === "string"
-                ? item
-                : Object.fromEntries(Object.keys(item).map((name) => [name, "<redacted>" as const])),
-            ),
-          }
-        : {}),
+      ...(entry.env !== undefined ? { env: entry.env as readonly string[] } : {}),
       ...(entry.secret !== undefined ? { secret: entry.secret } : {}),
       ...(entry.timeout !== undefined ? { timeout: entry.timeout } : {}),
     })),
