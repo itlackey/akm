@@ -645,13 +645,19 @@ async function runProcessStep(
     }
     if (result.aborted) return { ok: false, reason: "aborted" };
     if (result.timedOut) return { ok: false, reason: "timeout" };
-    if (result.exitCode !== 0) return { ok: false, reason: `exit code ${result.exitCode}` };
+    if (result.exitCode !== 0) return { ok: false, reason: withLastErrorLine(`exit code ${result.exitCode}`, stderr) };
     const incomplete = streamCaptureFailure(result.stdoutRead, result.stderrRead);
     if (incomplete) return { ok: false, reason: incomplete };
     return { ok: true, value: stdout };
   } finally {
     fs.rmSync(stateDir, { recursive: true, force: true });
   }
+}
+
+/** A failed step's reason, with the last line its program wrote to standard error (already scrubbed), which says why. */
+function withLastErrorLine(reason: string, stderr: string): string {
+  const line = stderr.trimEnd().split("\n").at(-1)?.trim();
+  return line ? `${reason}: ${line.slice(0, 300)}` : reason;
 }
 
 /** A prompt, an agent or a prompt asset: the agent's reply is the result, held to `expect:` when the step has it. */
@@ -709,7 +715,12 @@ async function runAgentStep(
       sink.lines.push("--- agent stderr ---", stderr);
       sink.dbLines.push(...streamLines(stderr, "stderr", "error"));
     }
-    if (!reply.ok) return { ok: false, failure: reply.reason ?? reply.error ?? "dispatch failed" } as const;
+    if (!reply.ok) {
+      return {
+        ok: false,
+        failure: withLastErrorLine(reply.reason ?? reply.error ?? "dispatch failed", stderr),
+      } as const;
+    }
     return { ok: true, raw: reply.stdout } as const;
   };
   if (!step.expect) {
