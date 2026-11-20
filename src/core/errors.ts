@@ -298,8 +298,7 @@ const TRANSIENT_HINTS: Partial<Record<TransientErrorCode, string>> = {
   RUN_LEASE_HELD: "Wait for the akm process driving this run (the named pid) to finish, then retry.",
   STATE_DB_CONTENDED:
     "Another akm process is writing state.db right now. Wait a few seconds and retry; commands that support --skip-if-locked can skip instead of failing.",
-  INDEX_DB_CONTENDED:
-    "Another akm process is writing index.db; retry shortly, or pass --skip-if-locked on scheduled runs.",
+  INDEX_DB_CONTENDED: "Another akm process is writing index.db; retry shortly.",
   IMPROVE_LOCK_HELD:
     "Another akm improve run holds the whole-run lock right now. Wait for it to finish and retry, or pass --skip-if-locked on scheduled runs.",
   LOCKFILE_CONTENDED: "Another akm process is updating its bundle lockfile right now. Wait a few seconds and retry.",

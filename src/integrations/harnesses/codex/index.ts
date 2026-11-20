@@ -7,7 +7,8 @@
  * final message on stdout and its progress on stderr. Agent work runs with the
  * sandbox the user's Codex configuration sets (or the `--sandbox` their `args`
  * name); model work gets `read-only` whatever the config says.
- * `--skip-git-repo-check` lets it run outside a git repository.
+ * `--skip-git-repo-check` lets it run outside a git repository. The prompt goes on
+ * stdin (`-`), so its length is not limited by the OS's limit on one argument.
  */
 
 import type { SessionLogHarness } from "../../session-logs/types";
@@ -46,6 +47,6 @@ export class CodexHarness implements AkmHarness {
     const modelFlag = model ? ["--model", model] : [];
     if (req.prompt === undefined) return { argv: [bin, ...extra, ...modelFlag] };
     const sandbox = req.modelWork ? ["--sandbox", "read-only"] : [];
-    return { argv: [bin, "exec", ...extra, ...sandbox, "--skip-git-repo-check", ...modelFlag, "--", req.prompt] };
+    return { argv: [bin, "exec", ...extra, ...sandbox, "--skip-git-repo-check", ...modelFlag, "-"], stdin: req.prompt };
   }
 }
