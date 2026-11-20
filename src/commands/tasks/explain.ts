@@ -97,6 +97,7 @@ import { parseTaskSource } from "../../tasks/source/parse-task-source";
 import { projectTaskSourceV4 } from "../../tasks/source/project-v4";
 import { TASK_INPUT_DIAGNOSTICS } from "../../tasks/source/task-input-diagnostics";
 import { validateTaskConceptId, validateTaskId } from "../../tasks/task-id";
+import { refuseRunningTaskV5 } from "../../tasks/v5/source";
 import { detectSecretShapedParams } from "../../workflows/exec/param-secrets";
 import { prepareCommandInvocation } from "../command/command-execution";
 import { parseTaskRef, resolveTaskReadBundle, taskIdForAdapter } from "./tasks";
@@ -390,6 +391,7 @@ export async function akmTaskExplain(ref: string, options: TaskExplainOptions = 
   const sourcePath = owner.path;
   const yaml = fs.readFileSync(sourcePath, "utf8");
   const parsed = parseTaskSource({ yaml, filePath: sourcePath });
+  if (parsed.version !== 4) refuseRunningTaskV5(sourcePath);
 
   const inputContract: InputContract = parsed.v4.inputs ?? {};
   // `akm task run`'s

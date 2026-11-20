@@ -133,15 +133,14 @@ export function listSetupTaskDefinitions(): SetupTaskDefinition[] {
         yaml: fs.readFileSync(filePath, "utf8"),
         filePath,
       });
-      const document = parsed.v4;
-      if (document.schedule.length === 0) continue;
-      const schedules = document.schedule.map((entry) => entry.cron);
+      if (parsed.schedule.length === 0) continue;
+      const schedules = parsed.schedule.map((entry) => entry.cron);
       tasks.push({
         id,
         schedule: schedules[0]!,
         schedules: Object.freeze(schedules),
         enabled: enabledRefs.has(makeBundleRef(target.source.name, `tasks/${id}`)),
-        ...(document.description !== undefined ? { description: document.description } : {}),
+        ...(parsed.description !== undefined ? { description: parsed.description } : {}),
       });
     } catch (error) {
       throw new UsageError(
@@ -187,7 +186,7 @@ export async function prepareSetupTaskDefinitions(
     }
 
     const parsed = parseTaskSource({ yaml, filePath });
-    for (const schedule of parsed.v4.schedule) {
+    for (const schedule of parsed.schedule) {
       parseSchedule(schedule.cron, backendNameForPlatform());
     }
     return { filePath, original, yaml, ref: { type: "task" as const, name: plan.task.id } };

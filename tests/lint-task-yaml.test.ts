@@ -236,3 +236,28 @@ describe("akm-task adapter validate() — malformed task YAML (issue #760)", () 
     ]);
   });
 });
+
+describe("akm lint — a version: 5-beta.1 task", () => {
+  let storage: IsolatedAkmStorage;
+  afterEach(() => storage?.cleanup());
+
+  const lintTasks = async (files: Record<string, string>) => {
+    storage = withIsolatedAkmStorage();
+    for (const [name, content] of Object.entries(files)) writeTask(storage.stashDir, name, content);
+    const result = await akmLint({ dir: storage.stashDir, config: makeConfig(storage.stashDir) });
+    return result.flagged.filter((issue) => issue.issue === "invalid-task-yaml");
+  };
+
+  test("a valid file lints clean", async () => {
+    expect(await lintTasks({ "nightly.yml": "version: 5-beta.1\nschedule: '0 6 * * *'\nexec: echo hi\n" })).toEqual([]);
+  });
+
+  test("a file the version 5 reader refuses, and one with a cron the scheduler cannot read, are flagged", async () => {
+    const flagged = await lintTasks({
+      "shape.yml": "version: 5-beta.1\nrun: scripts/x.sh\nexec: echo hi\n",
+      "cron.yml": "version: 5-beta.1\nschedule: 'not a cron'\nexec: echo hi\n",
+      "beta.yml": "version: 5-beta.2\nexec: echo hi\n",
+    });
+    expect(flagged.map((issue) => path.basename(issue.file)).sort()).toEqual(["beta.yml", "cron.yml", "shape.yml"]);
+  });
+});

@@ -90,6 +90,7 @@ import {
 } from "../../tasks/scheduler-sync";
 import { parseTaskSource } from "../../tasks/source/parse-task-source";
 import { projectTaskSourceV4 } from "../../tasks/source/project-v4";
+import { parseTaskSourceV4 } from "../../tasks/source/task-source-v4";
 import type { TaskV3SourceDocument } from "../../tasks/source-v3";
 import { normaliseTaskConceptId, normaliseTaskId } from "../../tasks/task-id";
 import { applyAutonomyGate, configuredDirectAutonomyLanes, describeGatedLanes } from "../improve/autonomy-gate";
@@ -190,8 +191,8 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
     tags: input.tags,
   });
 
-  const parsedTask = parseTaskSource({ yaml, filePath: assetPath });
-  const task = projectTaskSourceV4(parsedTask.v4);
+  const parsedTask = parseTaskSourceV4({ yaml, filePath: assetPath });
+  const task = projectTaskSourceV4(parsedTask);
   const qualifiedRef = makeBundleRef(bundle.bundleName, `tasks/${id}`);
   await prepareTaskV3Execution(task, {
     taskId: id,
@@ -204,7 +205,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
   const bindings = compileTaskSchedulerBindings({
     id,
     qualifiedRef,
-    schedules: parsedTask.v4.schedule.map((schedule) => ({
+    schedules: parsedTask.schedule.map((schedule) => ({
       cron: schedule.cron,
       ordinal: schedule.ordinal,
       source: schedule.source,
@@ -431,7 +432,7 @@ function resolveTaskActivation(
       yaml: fs.readFileSync(sourcePath, "utf8"),
       filePath: sourcePath,
     });
-    if (parsedSource.v4.schedule.length === 0) {
+    if (parsedSource.schedule.length === 0) {
       throw new UsageError(`Task ${JSON.stringify(ref)} has no schedule to enable.`, "INVALID_FLAG_VALUE");
     }
   }

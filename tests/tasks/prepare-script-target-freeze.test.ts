@@ -36,9 +36,9 @@ import { makeBundleRef } from "../../src/core/asset/asset-ref";
 import type { AkmConfig } from "../../src/core/config/config-types";
 import { prepareTaskV3Execution } from "../../src/tasks/prepare/prepare";
 import type { PrepareTaskV3ExecutionContext } from "../../src/tasks/prepare/prepared-execution";
-import { parseTaskSource } from "../../src/tasks/source/parse-task-source";
 import { projectTaskSourceV4 } from "../../src/tasks/source/project-v4";
 import { makeSandboxDir, type SandboxedDir } from "../_helpers/sandbox";
+import { parseV4TaskSource } from "../_helpers/task-source";
 
 /** No `config.engines`/`defaults` needed — neither the script nor the shell arm reads them. */
 const config: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "off" };
@@ -74,7 +74,7 @@ describe("prepareTaskV3Execution's frozen script/run-target snapshot (ported fro
     const bytes = Buffer.from("#!/bin/sh\nprintf frozen\n", "utf8");
     fs.writeFileSync(scriptPath, bytes);
 
-    const parsed = parseTaskSource({
+    const parsed = parseV4TaskSource({
       yaml: "version: 4\nuses: scripts/nightly.sh\nschedule: '@daily'\n",
       filePath: path.join(root, "tasks", "nightly.yml"),
     });
@@ -103,7 +103,7 @@ describe("prepareTaskV3Execution's frozen script/run-target snapshot (ported fro
       fs.writeFileSync(path.join(outside, "shared.sh"), bytes);
       fs.symlinkSync(path.join(outside, "shared.sh"), path.join(root, "scripts", "nightly.sh"));
 
-      const parsed = parseTaskSource({
+      const parsed = parseV4TaskSource({
         yaml: "version: 4\nuses: scripts/nightly.sh\nschedule: '@daily'\n",
         filePath: path.join(root, "tasks", "nightly.yml"),
       });
@@ -120,7 +120,7 @@ describe("prepareTaskV3Execution's frozen script/run-target snapshot (ported fro
     const root = sandboxRoot();
     fs.mkdirSync(path.join(root, "work"));
 
-    const parsed = parseTaskSource({
+    const parsed = parseV4TaskSource({
       yaml: "version: 4\nrun: printf ok\nworking-directory: work\nschedule: '@daily'\n",
       filePath: path.join(root, "tasks", "nightly.yml"),
     });
@@ -136,7 +136,7 @@ describe("prepareTaskV3Execution's frozen script/run-target snapshot (ported fro
     const root = sandboxRoot();
     const elsewhere = sandboxRoot();
 
-    const parsed = parseTaskSource({
+    const parsed = parseV4TaskSource({
       yaml: `version: 4\nrun: printf ok\nworking-directory: ${JSON.stringify(elsewhere)}\nschedule: '@daily'\n`,
       filePath: path.join(root, "tasks", "nightly.yml"),
     });
@@ -154,7 +154,7 @@ describe("prepareTaskV3Execution's frozen script/run-target snapshot (ported fro
       const outside = sandboxRoot();
       fs.symlinkSync(outside, path.join(root, "link"), "dir");
 
-      const parsed = parseTaskSource({
+      const parsed = parseV4TaskSource({
         yaml: "version: 4\nrun: printf ok\nworking-directory: link\nschedule: '@daily'\n",
         filePath: path.join(root, "tasks", "nightly.yml"),
       });

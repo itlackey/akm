@@ -35,6 +35,7 @@ import {
 import { parseTaskSource } from "./source/parse-task-source";
 import { projectTaskSourceV4 } from "./source/project-v4";
 import { taskSourceErrorDetail } from "./source-v3";
+import { refuseRunningTaskV5 } from "./v5/source";
 
 /** One task source, bundle, or installed row that could not be reconciled. */
 export interface SchedulerSourceFailure {
@@ -97,7 +98,8 @@ async function compileTaskSources(
       });
       // A task with no `schedule:` is run by hand or by a workflow step; it
       // contributes no binding and is not sync's to validate.
-      if (parsed.v4.schedule.length === 0) continue;
+      if (parsed.schedule.length === 0) continue;
+      if (parsed.version !== 4) refuseRunningTaskV5(file);
       assertTaskScheduleInputsSatisfyContract(parsed.v4, ref);
       assertTaskScheduleCronValid(parsed.v4, input.backend);
       // Project so a target that cannot resolve (a missing workflow, an

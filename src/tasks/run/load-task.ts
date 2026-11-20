@@ -40,6 +40,7 @@ import { parseTaskSource } from "../source/parse-task-source";
 import { projectTaskSourceV4 } from "../source/project-v4";
 import { TASK_INPUT_DIAGNOSTICS } from "../source/task-input-diagnostics";
 import { validateTaskConceptId, validateTaskId } from "../task-id";
+import { refuseRunningTaskV5 } from "../v5/source";
 import type { RunTaskOptions } from "./task-result";
 
 /**
@@ -111,6 +112,7 @@ export async function loadPreparedTask(id: string, options: RunTaskOptions): Pro
   const filePath = owner.path;
   const yaml = fs.readFileSync(filePath, "utf8");
   const parsed = parseTaskSource({ yaml, filePath });
+  if (parsed.version !== 4) refuseRunningTaskV5(filePath);
   const source = projectTaskSourceV4(parsed.v4);
   const requiresCommandConfig =
     (source.target.kind === "uses" &&
