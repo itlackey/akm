@@ -50,4 +50,16 @@ describe("an opencode harness run with --cwd", () => {
     expect(fs.realpathSync(call?.cwd ?? "")).toBe(fs.realpathSync(work.dir));
     expect(call?.env.PWD).toBe(work.dir);
   });
+
+  test("a --cwd folder that does not exist is made, nested, and kept", async () => {
+    const bin = writeFakeHarness(bins.dir, "opencode", ["done"]);
+    writeSandboxConfig({ harnesses: { oc: { platform: "opencode", bin } } });
+    const nested = `${work.dir}/a/b`;
+
+    const result = await runCliCapture(["agent", "--prompt", "work", "--harness", "oc", "--cwd", nested]);
+
+    expect(result.code).toBe(0);
+    expect(fs.statSync(nested).isDirectory()).toBe(true);
+    expect(fs.realpathSync(harnessCalls(bin)[0]?.cwd ?? "")).toBe(fs.realpathSync(nested));
+  });
 });
