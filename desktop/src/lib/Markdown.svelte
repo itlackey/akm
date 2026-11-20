@@ -5,7 +5,7 @@
 -->
 
 <script lang="ts">
-  import { markdown, splitFrontmatter } from "./ui/markdown.js";
+  import { markdown } from "./ui/markdown.js";
   let {
     content = "",
     omitHeading = "",
@@ -13,6 +13,7 @@
     ref = "",
     bundle = "",
     headings = [],
+    bodyStart,
   }: {
     content?: string;
     // Reuse AKM's title suppression only when the body opens with the displayed title.
@@ -21,8 +22,13 @@
     ref?: string;
     bundle?: string;
     headings?: Array<{ line: number; slug: string; text?: string }>;
+    /** Where the body starts in `content`, as akm reports it. */
+    bodyStart: number;
   } = $props();
-  const source = $derived(splitFrontmatter(content));
+  const source = $derived({
+    body: content.slice(bodyStart).replace(/\r\n?/g, "\n"),
+    startLine: content.slice(0, bodyStart).split(/\r\n?|\n/).length,
+  });
   const skipTitle = $derived(
     source.body.match(/^#[ \t]+([^\n]+)(?:\n|$)/)?.[1]?.trim() === omitHeading ? omitHeading : undefined,
   );

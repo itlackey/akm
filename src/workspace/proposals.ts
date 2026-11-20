@@ -24,10 +24,10 @@ import { declaredTypeForPath } from "../indexer/walk/matchers";
 import { resolveWriteTarget } from "../sources/write-source";
 import { listStateProposals } from "../storage/repositories/proposals-repository";
 import { classifyOutcome, decidedAt, weekOf } from "./derive";
-import { type GitCommitSummary, readBundleGitStatus, readRecentCommits } from "./git-read";
+import { readRecentCommits } from "./git-read";
 import { interactive } from "./lease";
 import { PROPOSAL_AGE_BANDS, proposalAgeBand, proposalBacklog } from "./metrics";
-import { capSide, clampLimit, withReadonlyStateDb } from "./readers";
+import { capSide, clampLimit, stateDbUnavailable, withReadonlyStateDb } from "./readers";
 
 const MAX_REJECT_REASON = 2000;
 const MAX_BATCH_IDS = 200;
@@ -100,8 +100,8 @@ export function list(input: ListInput = {}) {
   if (outcome && !["judge", "you", "unknown", "rejected", "reverted"].includes(outcome))
     throw new UsageError("Invalid outcome class.", "INVALID_FLAG_VALUE");
   const now = Date.now();
-  return withReadonlyStateDb(
-    (db) => {
+  return (
+    withReadonlyStateDb((db) => {
       // A list shows summaries, so the proposed content is not read.
       const all = listStateProposals(db, { stashDir: defaultProposalStash(), withContent: false });
       const picked =
@@ -122,6 +122,7 @@ export function list(input: ListInput = {}) {
           (!outcome || classifyOutcome(p) === outcome),
       );
       return {
+        available: true as const,
         status,
         totalCount: filtered.length,
         fullCount: picked.length,
@@ -129,8 +130,7 @@ export function list(input: ListInput = {}) {
         backlog: proposalBacklog(picked, now),
         proposals: filtered.slice(0, limit).map(summary),
       };
-    },
-    { status, totalCount: 0, fullCount: 0, bySource: {}, backlog: [], proposals: [] },
+    }, null) ?? stateDbUnavailable()
   );
 }
 
@@ -206,39 +206,17 @@ export function get(input: { id: string }) {
 export async function recentChanges(input: { limit?: number } = {}) {
   const limit = clampLimit(input.limit);
   const target = resolveWriteTarget(loadConfig(), undefined, { requireWritable: false });
-  const commits = await readRecentCommits(target.source.path, limit);
+  const read = await readRecentCommits(target.source.path, limit);
   return {
     bundle: target.source.name,
     path: target.source.path,
-    git: commits !== null,
-    commits: commits ?? [],
+    git: read !== null,
+    commits: read?.commits ?? [],
+    ...(read?.error ? { error: read.error } : {}),
   };
 }
 
 // ── Decisions ────────────────────────────────────────────────────────────────
-
-type CommitSummary = GitCommitSummary & { repo: string };
-
-/**
- * The commit an accept just made, if any. The accept functions do not return it,
- * so read the head commit of each accepted proposal's repository and keep one
- * that carries akm's accept subject and is newer than the request. `null` for a
- * bundle that is not a git repository (nothing was committed).
- */
-async function acceptCommit(accepted: ProposalAcceptResult[], startedMs: number): Promise<CommitSummary | null> {
-  const roots = new Set<string>();
-  for (const result of accepted) {
-    const root = result.proposal.acceptedTarget?.root;
-    if (root) roots.add(root);
-  }
-  for (const root of roots) {
-    const last = (await readBundleGitStatus(root))?.lastCommit;
-    if (!last || !/^akm (?:proposal )?accept:/.test(last.subject)) continue;
-    if (Date.parse(last.time) < startedMs - 2000) continue;
-    return { ...last, repo: root };
-  }
-  return null;
-}
 
 function acceptedView(result: ProposalAcceptResult) {
   return { ...result, proposal: summary(result.proposal) };
@@ -267,13 +245,9 @@ function batchIds(ids: unknown): string[] {
   return [...new Set((ids as string[]).map((id) => id.trim()))];
 }
 
-/** Accept one proposal exactly as `akm proposal accept` does, and report the commit it made. */
+/** Accept one proposal exactly as `akm proposal accept` does; the result carries the commit it made, or why none. */
 export async function accept(input: { id: string }) {
-  return interactive("ui-proposal-accept", async () => {
-    const startedMs = Date.now();
-    const result = await akmProposalAccept({ id: input.id });
-    return { ...acceptedView(result), commit: await acceptCommit([result], startedMs) };
-  });
+  return interactive("ui-proposal-accept", async () => acceptedView(await akmProposalAccept({ id: input.id })));
 }
 
 export async function reject(input: { id: string; reason: string }) {
@@ -327,14 +301,12 @@ export async function rejectMany(input: { ids: string[]; reason: string }) {
 export async function acceptMany(input: { ids: string[] }) {
   const ids = batchIds(input.ids);
   return interactive("ui-proposal-accept", async () => {
-    const startedMs = Date.now();
     const results = await akmProposalAcceptMany({ ids });
     const accepted = results.filter((r): r is ProposalAcceptResult => r.ok);
     return {
       accepted: accepted.length,
       failed: results.length - accepted.length,
       results: results.map((r) => (r.ok ? acceptedView(r) : { ...r, code: r.code ?? "ACCEPT_FAILED" })),
-      commit: accepted.length > 0 ? await acceptCommit(accepted, startedMs) : null,
     };
   });
 }

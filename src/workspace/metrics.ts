@@ -60,5 +60,5 @@ export function proposalBacklog(proposals: Proposal[], now: number) {
 
 /** Activity per UTC day with the empty days inside the data's coverage filled in and partial days marked. */
 export function filledActivity(daily: MetricsDailyUsage[], window: { since: string; until: string }) {
-  return zeroFill(daily, (day) => ({ day, search: 0, show: 0, curate: 0, feedback: 0 }), window);
+  return zeroFill(daily, (day) => ({ day, search: 0, show: 0, curate: 0, feedback: 0, rules: 0 }), window);
 }

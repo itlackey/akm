@@ -78,6 +78,16 @@ describe("the step", () => {
     );
   });
 
+  test("strips lint_skip in every folder lint reads, rules/ and instructions/ included", async () => {
+    configure();
+    write("rules/proj/a.md", page("lint_skip: [stale-path]\n"));
+    write("instructions/b.md", page("lint_skip: [stale-path]\n"));
+    const applied = await runMigration({ apply: true });
+    expect(applied.bundlePolicy?.bundles).toEqual([{ bundleId: "primary", stripped: 2, skipTrackedSecrets: false }]);
+    expect(read("rules/proj/a.md")).toBe(page(""));
+    expect(read("instructions/b.md")).toBe(page(""));
+  });
+
   test("without the marker the config gains nothing", async () => {
     configure();
     write("knowledge/one.md", page("lint_skip: [stale-path]\n"));

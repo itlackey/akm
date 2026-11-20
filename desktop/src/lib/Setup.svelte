@@ -17,9 +17,7 @@
   let detected = $state<Detected | null>(null);
   let error = $state("");
 
-  const cards = $derived(
-    software.data && detected ? agentCards(software.data.host, software.data.engine, detected) : [],
-  );
+  const cards = $derived(software.data && detected ? agentCards(software.data.host, detected) : []);
   const connected = $derived(cards.filter((card) => card.state === "connected"));
 
   onMount(() => {

@@ -33,7 +33,9 @@
             >{OUTCOMES.filter((key) => row.counts[key])
               .map((key) => `${row.counts[key]} ${OUTCOME_LABEL[key].toLowerCase()}`)
               .join(" · ")}</span
-          >{:else}<span class="muted">No runs recorded</span>{/if}
+          >{:else if row.unknown}<span class="muted">{row.unknown}</span>{:else}<span class="muted"
+            >No runs recorded</span
+          >{/if}
         {#if row.failed?.length}<span class="outcome-failed"
             >{#each row.failed as task}<button class="btn-quiet" onclick={() => oninspect(task)}
                 >Inspect failed task {task}<Icon name="arrow-right" size={16} /></button

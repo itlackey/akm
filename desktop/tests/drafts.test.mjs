@@ -20,24 +20,20 @@ const storage = Object.create({
 });
 Object.defineProperty(globalThis, "sessionStorage", { value: storage, configurable: true });
 
-test("a bundle rename re-keys its file and ref drafts and retargets every draft that saves into it", () => {
-  const draft = (bundle) => ({ draft: "text", bundle, name: "note", folder: "knowledge" });
+test("a bundle rename re-keys its file and ref drafts and leaves the drafts of other bundles alone", () => {
+  const draft = (text) => ({ draft: text });
   const file = draftKey({ file: { bundle: "work", path: "knowledge/note.md" } });
   const ref = draftKey({ ref: "work//knowledge/note" });
-  const created = draftKey({});
   const other = draftKey({ ref: "work-archive//knowledge/note" });
-  storeDraft(file, draft("work"));
-  storeDraft(ref, draft("work"));
-  storeDraft(created, draft("work"));
-  storeDraft(other, draft("work-archive"));
+  storeDraft(file, draft("file text"));
+  storeDraft(ref, draft("ref text"));
+  storeDraft(other, draft("other text"));
 
   renameBundle("work", "team");
 
   assert.equal(readDraft(file), null);
   assert.equal(readDraft(ref), null);
-  assert.equal(readDraft(draftKey({ file: { bundle: "team", path: "knowledge/note.md" } }))?.bundle, "team");
-  assert.equal(readDraft(draftKey({ ref: "team//knowledge/note" }))?.bundle, "team");
-  // The new document keeps its key; it now saves into the renamed bundle.
-  assert.equal(readDraft(created)?.bundle, "team");
-  assert.equal(readDraft(other)?.bundle, "work-archive");
+  assert.equal(readDraft(draftKey({ file: { bundle: "team", path: "knowledge/note.md" } }))?.draft, "file text");
+  assert.equal(readDraft(draftKey({ ref: "team//knowledge/note" }))?.draft, "ref text");
+  assert.equal(readDraft(other)?.draft, "other text");
 });

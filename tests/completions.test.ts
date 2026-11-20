@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { DETAIL_LEVELS, OUTPUT_FORMATS } from "../src/output/context";
 import { runCliCapture } from "./_helpers/cli";
 import { makeSandboxDir, type SandboxedDir, withEnv } from "./_helpers/sandbox";
 
@@ -139,12 +140,12 @@ describe("completions command", () => {
 
   test("contains flag value completions for --format", () => {
     expect(script).toContain("--format)");
-    expect(script).toContain("json jsonl yaml text md");
+    expect(script).toContain([...OUTPUT_FORMATS].join(" "));
   });
 
   test("contains flag value completions for --detail", () => {
     expect(script).toContain("--detail)");
-    expect(script).toContain("brief normal full");
+    expect(script).toContain([...DETAIL_LEVELS].join(" "));
   });
 
   test("contains flag value completions for --type", () => {

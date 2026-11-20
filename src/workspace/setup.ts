@@ -36,7 +36,7 @@ const LEARNING_TASK = "improve";
 /**
  * What setup could use here, read from the file system, PATH and the config only: nothing is contacted and nothing is
  * written. `stashDir` is where the library is, or would be created; `harnesses` are the agent programs found on PATH
- * that akm can run work on, each with what its model calls could do (`modelWorkNote`, akm's own words);
+ * that akm can run work on, each with what its model calls could do (`modelWorkReadOnly`, and `modelWorkNote` in akm's own words);
  * `enabled` are the platforms the config already has; `modelCalls` is where akm's own model calls (improve, judging, extraction) run, as
  * `akm setup` says it, with the platform when they run on a harness; `connection` is the connection that takes them
  * when no agent does. `learning` is background learning: `on` is the host-wide switch alone (`improve.enabled`, not
@@ -52,6 +52,7 @@ export async function detect() {
     harnesses: found.harnesses.map(({ platform, path }) => ({
       platform,
       path,
+      modelWorkReadOnly: runsReadOnly(platform),
       modelWorkNote: runsReadOnly(platform)
         ? "model calls are limited to reading and searching"
         : unrestrictedModelWorkNote(platform),

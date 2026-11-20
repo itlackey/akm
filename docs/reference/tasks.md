@@ -100,7 +100,7 @@ Script refs use this closed table; any other extension fails before dispatch:
 | Extensions | Interpreter |
 |---|---|
 | `.sh` | `sh` |
-| `.ts`, `.js` | Bun; JavaScript and TypeScript script targets require Bun (the standalone binary uses its embedded Bun runtime) |
+| `.ts`, `.js`, `.mjs` | Bun; JavaScript and TypeScript script targets require Bun (the standalone binary uses its embedded Bun runtime) |
 | `.ps1` | `powershell -NoProfile -NonInteractive -File` |
 | `.cmd`, `.bat` | `cmd /d /s /c` |
 | `.py` | `python` |
@@ -241,7 +241,7 @@ steps:
   step name (`{}` for the first step). `AKM_INPUTS` is never set. A prompt step
   has no child environment on a direct-model connection, so it gets the same
   two values appended to its prompt as text. To load an env asset in a run
-  step, use `akm env run env/<name> -- <command>`.
+  step, use `akm exec --env env/<name> -- <command>`.
 - **Results.** A `run` step's result is its stdout; a prompt step's is the
   agent's reply; a `task` step has no result, and its callee gets no values.
   A text result is kept to 32 KiB, and the serialized `AKM_STEPS` may not
@@ -434,6 +434,10 @@ report only the violated constraint.
   leaves the ref out of the list. `--force` overwrites an existing task of
   the same id; without it add refuses.
 - `akm doctor log --task <id>` reads durable run history from `state.db`; the Deprecated `akm task history` reads the same.
+  Scheduled activations that cannot resolve, parse or prepare their source record
+  a failed row with `detail.reason: "task_load_failed"`, the typed error code,
+  timestamps and an unknown target. The task body did not run. Interactive
+  preparation errors and `task explain` remain non-mutating.
 - `akm task enable <ref>` / `akm task disable <ref>` change `scheduler.enabled`,
   then sync the OS entry; if the sync fails the change stays and the result warns
   (`akm doctor scheduler sync` then reports the error).

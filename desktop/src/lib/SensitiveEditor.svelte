@@ -42,7 +42,7 @@
     approved = "",
     dialog = $state<HTMLDialogElement>(),
     editor = $state<HTMLTextAreaElement>();
-  const writable = $derived(bundles.filter((item) => item.enabled && item.writable));
+  const writable = $derived(bundles.filter((item) => item.writeBlocker === null));
   const noun = $derived(type === "env" ? "environment file" : "secret");
   function changed() {
     dirty = true;
@@ -162,7 +162,9 @@
       {#if creating}<div class="form-grid">
           <label
             >Bundle<select bind:value={bundle} disabled={busy} onchange={changed}
-              >{#each writable as item}<option value={item.name}>{item.name}</option>{/each}</select
+              >{#each bundles as item}<option value={item.name} disabled={item.writeBlocker !== null}
+                  >{item.name}{item.writeBlocker === null ? "" : ": " + item.writeBlocker}</option
+                >{/each}</select
             ></label
           ><label
             >File name<input

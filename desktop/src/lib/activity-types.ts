@@ -2,12 +2,15 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-export interface ActivityCheck {
+/** A check's verdict, or `unknown` with the reason akm gives for having none: off, not probed, blocked or idle. */
+export type ActivityCheck = {
   name: string;
-  status: string;
   message: string;
   evidence?: Record<string, unknown>;
-}
+} & (
+  | { status: "pass" | "warn" | "fail"; reason?: undefined }
+  | { status: "unknown"; reason: "off" | "not-probed" | "blocked" | "idle" }
+);
 export interface ActivityHealth {
   status: string;
   hardChecks: ActivityCheck[];
@@ -93,11 +96,15 @@ export interface RetrievalWeek {
   lower: number | null;
   upper: number | null;
   signal: boolean;
+  /** akm has only part of this week's days: its rate is shown, with no range and no verdict. */
+  partial: boolean;
 }
 export interface ActivityRetrieval {
   daily: Array<{ date: string; searches: number; zeroResults: number; medianMs: number | null }>;
   weekly: RetrievalWeek[];
   centre: number | null;
+  /** Whether akm has enough whole weeks of searches to claim a usual range. */
+  enoughHistory: boolean;
 }
 export interface OutcomeCounts {
   judge: number;
@@ -109,6 +116,10 @@ export interface OutcomeCounts {
 export interface ActivityImpact {
   available: boolean;
   since: string;
+  /** Where the usage figures (flags, found and negative counts) start: usage older than akm keeps is gone. */
+  usageSince: string;
+  /** Whether the usage figures cover the whole window. */
+  usageComplete: boolean;
   weeks: string[];
   summary: {
     kept: number;
@@ -132,6 +143,8 @@ export interface ActivityImpact {
     before: { hits: number; negative: number };
     after: { hits: number; negative: number };
     complete: boolean;
+    /** False when the 28 days before the change start earlier than the usage akm kept. */
+    beforeComplete: boolean;
     afterDays: number;
   }>;
   errors?: Record<string, string>;
@@ -172,6 +185,10 @@ export interface ActivityTaskHistory {
     startedAt: string;
     durationMs: number | null;
     trigger?: "schedule" | "manual" | null;
+    /** What the run executed, as akm recorded it: `command`, `workflow` (with `targetRef`) or null. */
+    targetKind: string | null;
+    targetRef: string | null;
+    engine: string | null;
     detail: Record<string, unknown> | null;
     /** The steps of a steps task run (Experimental); null for every other run. */
     steps?: Array<{
@@ -184,6 +201,12 @@ export interface ActivityTaskHistory {
       reason?: string;
     }> | null;
   }>;
+}
+export interface ActivityTaskLog {
+  available: boolean;
+  reason?: "absent";
+  truncated?: boolean;
+  lines?: Array<{ stream: string; level: string; line: string }>;
 }
 export interface ActivityTaskRun {
   taskId: string;

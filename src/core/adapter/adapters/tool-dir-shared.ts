@@ -58,7 +58,7 @@ import type { BundleAdapter } from "../bundle-adapter";
 import { executionDefaultsFromFrontmatter, renderMarkdownExecutionSource } from "../execution-source";
 import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
 import { skillDirectoryDiagnostics } from "./akm-lint";
-import { hashContent, nonEmptyString, RESERVED_FILES, readTags, runBaseValidateChecks } from "./shared";
+import { createBaseChecker, hashContent, nonEmptyString, parseForValidate, RESERVED_FILES, readTags } from "./shared";
 
 /** The canonical (plural) subdir spellings writes normalize to (open-question-6). */
 const CANONICAL_COMMAND_DIR = "commands";
@@ -216,6 +216,7 @@ export async function validateToolDir(
 ): Promise<Diagnostic[]> {
   const diagnostics: Diagnostic[] = [];
   const seenSkillDirs = new Set<string>();
+  const { check } = createBaseChecker(c.root, ctx);
   for (const change of changes) {
     if (change.op === "delete") continue;
     const raw = change.after ?? (await ctx.readFile(change.path));
@@ -231,7 +232,7 @@ export async function validateToolDir(
     const cls = classify(change.path, layout);
     if (cls === null) continue;
     if (cls.type === "instruction") {
-      diagnostics.push(...(await runBaseValidateChecks(relPath, parseFrontmatter(raw), c.root, ctx)));
+      diagnostics.push(...check(relPath, parseForValidate(raw)));
     } else if (cls.type === "command" || cls.type === "agent") {
       const parsed = parseFrontmatter(raw);
       diagnostics.push(...nameOrSignalDiagnostics(cls.type, relPath, parsed.data, parsed.content));

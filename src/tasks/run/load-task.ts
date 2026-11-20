@@ -7,7 +7,7 @@
  * validation, adapter detection, owner resolution, source read, strict task
  * source parsing, config selection, bundle-name resolution, and the
  * `prepareTaskExecution` call. Everything here is non-mutating — run-task.ts
- * reserves a durable attempt only after this resolves.
+ * records a failed scheduled activation if this rejects, or reserves an execution after it resolves.
  */
 
 import fs from "node:fs";

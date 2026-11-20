@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { fork } from "node:child_process";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, dialog, session, shell } from "electron";
 import electronUpdater from "electron-updater";
@@ -10,7 +11,7 @@ import { DESKTOP_ID, DesktopMenu } from "./menu-install.mjs";
 import { createFolderPicker } from "./pick-folder.mjs";
 import { createUpdater } from "./updater.mjs";
 
-/** @typedef {{ type?: string, busy?: boolean, id?: string, action?: string, start?: string, channel?: unknown, url?: string, origin?: string }} ChildMessage */
+/** @typedef {{ type?: string, busy?: boolean, id?: string, action?: string, start?: string, path?: string, channel?: unknown, url?: string, origin?: string }} ChildMessage */
 /** @type {import("node:child_process").ChildProcess | undefined} */
 let child;
 /** @type {import("electron").BrowserWindow | undefined} */
@@ -125,7 +126,9 @@ else
         try {
           if (
             !message.action ||
-            !["status", "menu-install", "pick-folder", "update-channel", "update-check"].includes(message.action)
+            !["status", "menu-install", "pick-folder", "reveal", "update-channel", "update-check"].includes(
+              message.action,
+            )
           )
             throw new Error("Unknown software action.");
           if (message.action === "update-check") {
@@ -141,6 +144,13 @@ else
           if (message.action === "pick-folder") {
             const folder = await pickFolder(message.start);
             if (server.connected) server.send({ type: "desktop-response", id: message.id, data: folder });
+            return;
+          }
+          if (message.action === "reveal") {
+            if (typeof message.path !== "string" || !path.isAbsolute(message.path))
+              throw new Error("Choose a file to show.");
+            shell.showItemInFolder(message.path);
+            if (server.connected) server.send({ type: "desktop-response", id: message.id, data: true });
             return;
           }
           if (message.action === "menu-install") {

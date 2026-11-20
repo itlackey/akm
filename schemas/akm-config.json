@@ -614,6 +614,9 @@
       "properties": {
         "capture": {
           "type": "boolean"
+        },
+        "report": {
+          "type": "boolean"
         }
       },
       "additionalProperties": {}
@@ -1224,6 +1227,9 @@
       "type": "object",
       "properties": {
         "improveAutonomy": {
+          "type": "boolean"
+        },
+        "exec": {
           "type": "boolean"
         },
         "learning": {
@@ -2144,6 +2150,9 @@
           "properties": {
             "capture": {
               "type": "boolean"
+            },
+            "report": {
+              "type": "boolean"
             }
           },
           "additionalProperties": {}
@@ -2754,6 +2763,9 @@
           "type": "object",
           "properties": {
             "improveAutonomy": {
+              "type": "boolean"
+            },
+            "exec": {
               "type": "boolean"
             },
             "learning": {

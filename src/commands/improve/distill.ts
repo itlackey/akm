@@ -378,8 +378,8 @@ export function buildDistillPrompt(input: BuildPromptInput): string {
     lines.push(
       "",
       "Previously rejected proposals for this ref (Reflexion context):",
-      "The following proposals were already reviewed and rejected. " +
-        "Your new proposal MUST differ meaningfully in approach, framing, or evidence.",
+      "Previous attempts were refused for the reasons below. Avoid repeating the same mistake. " +
+        "If the evidence has changed, judge the lesson against the current source and feedback.",
     );
     for (const rp of input.rejectedProposals) {
       lines.push(`- Rejection reason: ${rp.reason}`);
@@ -1394,7 +1394,10 @@ async function buildDistillMessages(
   feedback: BuildPromptInput["feedback"],
   kind: DistillKind,
 ): Promise<{ system: string; prompt: string }> {
-  const rejectedProposals = rejectedProposalContext(run.stash, run.inputRef, run.options.ctx, run.options.eventsCtx);
+  const rejectedProposals = rejectedProposalContext(run.stash, run.inputRef, run.options.ctx, run.options.eventsCtx, {
+    source: "distill",
+    ref: run.ledgerRef,
+  });
   // CLS interleaving (default on): show the related lessons, knowledge notes and skills, so the writer neither repeats nor overwrites them.
   const cls = (getImproveProcessConfig("distill", run.profile)?.cls as { enabled?: boolean }) ?? {};
   let clsContext = "";

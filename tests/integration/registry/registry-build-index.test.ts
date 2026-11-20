@@ -291,7 +291,7 @@ describe("buildRegistryIndex", () => {
     expect(legacyStash as unknown as Record<string, unknown>).not.toHaveProperty("curated");
   });
 
-  test(".stash.json sidecars are INERT (#39 retirement) while akm.include still narrows enrichment", async () => {
+  test(".stash.json sidecars are INERT (#39 retirement) and a package.json akm.include does not narrow enrichment", async () => {
     const fixtureRoot = makeTempDir("akm-registry-build-include-");
     const npmPackageDir = path.join(fixtureRoot, "package");
 
@@ -303,7 +303,7 @@ describe("buildRegistryIndex", () => {
         akm: { include: ["skills", "docs"] },
       }),
     );
-    writeFile(path.join(npmPackageDir, "scripts", "ignored.sh"), "#!/usr/bin/env bash\n");
+    writeFile(path.join(npmPackageDir, "scripts", "unlisted.sh"), "#!/usr/bin/env bash\n");
     writeFile(path.join(npmPackageDir, "skills", "review", "SKILL.md"), "# Review\n");
     writeFile(
       path.join(npmPackageDir, "skills", "review", ".stash.json"),
@@ -339,9 +339,10 @@ describe("buildRegistryIndex", () => {
     });
 
     const npmStash = result.index.stashes.find((stash) => stash.id === "npm:agent-stash");
-    expect(npmStash?.assetTypes).toEqual(["knowledge", "skill"]);
+    expect(npmStash?.assetTypes).toEqual(["knowledge", "script", "skill"]);
     expect(npmStash?.assets?.map((asset) => `${asset.type}:${asset.name}`)).toEqual([
       "knowledge:docs/guide",
+      "script:unlisted.sh",
       "skill:review",
     ]);
 
@@ -353,7 +354,6 @@ describe("buildRegistryIndex", () => {
     expect(reviewAsset?.description).toBe("skill");
     expect(reviewAsset?.tags).toEqual(["skill"]);
     expect(reviewAsset?.estimatedTokens).toBeGreaterThan(0);
-    expect(npmStash?.assets?.some((asset) => asset.name === "ignored.sh")).toBe(false);
   });
 
   test("prefers generated file metadata over filename-less legacy stash metadata", async () => {

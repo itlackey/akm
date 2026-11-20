@@ -37,6 +37,7 @@ const INTERPRETER_MAP: Record<string, string> = {
   ".sh": "bash",
   ".ts": "bun",
   ".js": "bun",
+  ".mjs": "bun",
   ".py": "python",
   ".rb": "ruby",
   ".go": "go run",
@@ -409,7 +410,7 @@ const envFileRenderer: AssetRenderer = {
       name,
       path: ctx.absPath,
       action:
-        "Environment — key names only. Use `akm env run <ref> -- <command>` to run with the whole .env injected; prefer `--clean` to minimize inherited parent env. AKM itself does not print values, but child stdout/stderr is not redacted. `akm env export <ref> --out <file>` writes a sourceable script to a file. Never `source` the raw file. Values stay on disk and are never written to akm's stdout.",
+        "Environment — key names only. Use `akm exec --env <ref> -- <command>` to run with the whole .env injected; prefer `--clean` to minimize inherited parent env. AKM itself does not print values, but child stdout/stderr is not redacted. `akm env export <ref> --out <file>` writes a sourceable script to a file. Never `source` the raw file. Values stay on disk and are never written to akm's stdout.",
       keys,
     };
   },
@@ -437,7 +438,7 @@ const secretFileRenderer: AssetRenderer = {
       name,
       path: ctx.absPath,
       action:
-        "Secret — name only; the file contents are the value and are never written to akm's stdout. Use `akm secret run <ref> <VAR> -- <command>` to run with the value injected into $VAR.",
+        "Secret — name only; the file contents are the value and are never written to akm's stdout. Use `akm exec --secret <ref>:<VAR> -- <command>` to run with the value injected into $VAR.",
     };
   },
 };

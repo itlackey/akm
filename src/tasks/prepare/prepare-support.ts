@@ -33,7 +33,7 @@ export function environmentSnapshot(environment: TaskEnvironment | undefined): R
     const value = String(raw);
     if (isInferredSecretName(key) || detectSecretShapedParams({ [key]: value }).length > 0) {
       warn(
-        `Task env.${key} looks like a credential. Task source is durable and readable; keep the value in a secret or env file and inject it at run time with \`akm secret run\` or \`akm env run\` in the task's \`run:\`. (Heuristic warning; the value is used as written.)`,
+        `Task env.${key} looks like a credential. Task source is durable and readable; keep the value in a secret or env file and inject it at run time with \`akm exec --secret\` or \`akm exec --env\` in the task's \`run:\`. (Heuristic warning; the value is used as written.)`,
       );
     }
     Object.defineProperty(out, key, { value, enumerable: true, configurable: false, writable: false });

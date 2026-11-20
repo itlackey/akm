@@ -23,7 +23,7 @@ import { getEmbeddableEntryCount } from "../../storage/repositories/index-entrie
 import { hasCurrentEntriesTable } from "../../storage/repositories/index-entry-schema";
 import { getMeta } from "../../storage/repositories/index-meta-repository";
 import { getEmbeddingCount } from "../../storage/repositories/index-vec-repository";
-import type { HealthCheckResult } from "./types";
+import type { HealthCheckResult, HealthUnknownReason } from "./types";
 
 /** What the check reads: the config's mode and, when there is an index, its record and counts. */
 export interface SemanticSearchState {
@@ -65,18 +65,18 @@ export function readSemanticSearchState(mode: string | undefined): SemanticSearc
 }
 
 export function semanticSearchCheck(state: SemanticSearchState): HealthCheckResult {
-  const result = (
-    status: HealthCheckResult["status"],
-    message: string,
-    evidence?: Record<string, unknown>,
-  ): HealthCheckResult => ({
-    name: "semantic-search",
-    kind: "deterministic",
-    status,
-    confidence: "high",
-    message,
-    ...(evidence ? { evidence } : {}),
-  });
+  const base = (message: string, evidence?: Record<string, unknown>) =>
+    ({
+      name: "semantic-search",
+      kind: "deterministic",
+      confidence: "high",
+      message,
+      ...(evidence ? { evidence } : {}),
+    }) as const;
+  const result = (status: "pass" | "warn" | "fail", message: string, evidence?: Record<string, unknown>) =>
+    ({ ...base(message, evidence), status }) satisfies HealthCheckResult;
+  const unknown = (reason: HealthUnknownReason, message: string, evidence?: Record<string, unknown>) =>
+    ({ ...base(message, evidence), status: "unknown", reason }) satisfies HealthCheckResult;
 
   // Keyword search needs a readable index too, even when embeddings are off.
   if (state.error)
@@ -84,10 +84,10 @@ export function semanticSearchCheck(state: SemanticSearchState): HealthCheckResu
       "fail",
       `Could not read the index: ${state.error}. Run \`akm index\`; it rebuilds a damaged index.db.`,
     );
-  if (state.building) return result("unknown", "The search index is being built; check again when the build finishes.");
+  if (state.building) return unknown("idle", "The search index is being built; check again when the build finishes.");
   if (state.mode === "off") return result("pass", "Semantic search is off (semanticSearchMode: off).", { mode: "off" });
   const index = state.index;
-  if (!index?.record) return result("unknown", "No semantic-search state recorded yet; run `akm index`.");
+  if (!index?.record) return unknown("idle", "No semantic-search state recorded yet; run `akm index`.");
 
   const { record, builtAt, entryCount, embeddingCount } = index;
   const evidence = { ...record, ...(builtAt ? { builtAt } : {}), entryCount, embeddingCount };
@@ -126,8 +126,8 @@ export function semanticSearchCheck(state: SemanticSearchState): HealthCheckResu
         evidence,
       );
     case "disabled":
-      return result("unknown", `Semantic search was off${asOf}; run \`akm index\` to build it.`, evidence);
+      return unknown("off", `Semantic search was off${asOf}; run \`akm index\` to build it.`, evidence);
     default:
-      return result("unknown", `No entries were indexed${asOf}.`, evidence);
+      return unknown("idle", `No entries were indexed${asOf}.`, evidence);
   }
 }

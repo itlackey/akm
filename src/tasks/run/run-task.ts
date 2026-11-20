@@ -8,15 +8,14 @@
  *
  * The durable boundary is intentional: id/bundle resolution, source read,
  * strict task source parsing, target resolution, command lowering, workflow
- * projectability, and frozen script-byte
- * capture (load-task.ts) all finish before an attempt is reserved or a log is
- * created (attempt-lifecycle.ts). Once prepared, the runner dispatches the
- * immutable command, workflow, shell, or script projection to its own arm
+ * projectability, and frozen script-byte capture (load-task.ts) finish before
+ * dispatch. A failed scheduled activation records its preparation failure;
+ * interactive preparation stays non-mutating. Once prepared, the runner
+ * dispatches the immutable command, workflow, shell, or script projection to its own arm
  * module (run-command-task.ts, run-workflow-task.ts, run-native-task.ts) and
  * records that actual attempt. Task source v4 has no document-level disabled
  * state to skip at fire time — `akm task dispatch` only starts a task whose
- * ref is in `scheduler.enabled`, so every invocation that reaches `runTask`
- * dispatches.
+ * ref is in `scheduler.enabled`.
  *
  * Orchestration only.
  *
@@ -49,7 +48,27 @@ export async function runTask(id: string, options: RunTaskOptions): Promise<Task
   const requestedStartedAt = now();
   const provenance = resolveProvenanceContext(options.provenance, options.scheduled === true);
 
-  const task = await loadPreparedTask(id, options);
+  const recordPreparationFailure = (failure: unknown) => {
+    if (provenance.scheduled) {
+      recordTaskAttemptFailure({
+        taskId: id,
+        reason: "task_load_failed",
+        failure,
+        startedAt: requestedStartedAt,
+        finishedAt: now(),
+        logDir: options.logDir,
+        scheduled: true,
+      });
+    }
+  };
+
+  let task: Awaited<ReturnType<typeof loadPreparedTask>>;
+  try {
+    task = await loadPreparedTask(id, options);
+  } catch (failure) {
+    recordPreparationFailure(failure);
+    throw failure;
+  }
   try {
     reconcileAbandonedExecutionState();
   } catch {
@@ -79,15 +98,15 @@ export async function runTask(id: string, options: RunTaskOptions): Promise<Task
         }
       }
       if (task.resume) resume = resolveResume(task);
-    } catch (error) {
+    } catch (failure) {
       releaseLock(lock.ownership);
-      throw error;
+      recordPreparationFailure(failure);
+      throw failure;
     }
   }
 
-  // All validation, parsing, source resolution, command cascade preparation,
-  // and frozen-byte capture above is non-mutating. Only a fully projectable
-  // task may reserve durable history or create a log.
+  // A prepared task reserves its execution identity here. Scheduled preparation
+  // failures above have their own failed activation record and never dispatch.
   let attempt: ReturnType<typeof reserveTaskAttempt>;
   try {
     attempt = reserveTaskAttempt(id, requestedStartedAt);

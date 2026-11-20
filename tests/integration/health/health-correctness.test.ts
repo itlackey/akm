@@ -218,7 +218,16 @@ describe("health reporting correctness", () => {
     });
   });
 
-  test("a completed consolidation with failed pair judgments warns and counts them", async () => {
+  test.each([
+    { failed: 3, deferred: 0, judged: 2, legacy: false },
+    { failed: 0, deferred: 2, judged: 3, legacy: false },
+    { failed: 2, deferred: 0, judged: 1, legacy: true },
+  ])("pair processing failures ($failed) and same-run deferrals ($deferred) count separately", async ({
+    failed,
+    deferred,
+    judged,
+    legacy,
+  }) => {
     improve("failed", now - 120_000, {
       consolidation: {
         schemaVersion: 1,
@@ -237,20 +246,39 @@ describe("health reporting correctness", () => {
         pairPass: {
           initiators: 5,
           initiatorsBacklog: 0,
-          pairsJudged: 2,
-          labelCounts: { duplicate: 1, subsumed: 1, supersedes: 0, contradicts: 0, overlap: 0, unrelated: 0 },
+          pairsJudged: judged,
+          labelCounts: { duplicate: judged - 1, subsumed: 1, supersedes: 0, contradicts: 0, overlap: 0, unrelated: 0 },
           retired: [],
-          failedJudgments: 3,
+          failedJudgments: failed,
+          deferredJudgments: deferred,
         },
         warnings: [],
         durationMs: 10,
       },
     });
+    if (legacy) {
+      // Older releases did not distinguish guard deferrals from execution failures.
+      const db = openStateDatabase();
+      try {
+        db.run(
+          "UPDATE improve_runs SET result_json = json_remove(result_json, '$.consolidation.pairPass.deferredJudgments') WHERE id = ?",
+          "failed",
+        );
+      } finally {
+        db.close();
+      }
+      improve("before-legacy", now - 180_000);
+      improve("after-legacy", now - 60_000);
+    }
     const result = await health();
-    expect(result.improve.consolidation).toMatchObject({ pairsJudged: 2, failedPairs: 3 });
+    expect(result.improve.consolidation).toMatchObject({
+      pairsJudged: judged,
+      failedPairs: failed,
+      deferredPairs: legacy ? null : deferred,
+    });
     expect(result.advisories.find((c) => c.name === "improve-failures")).toMatchObject({
-      status: "warn",
-      evidence: { failedRuns: 1, runIds: ["failed"] },
+      status: failed ? "warn" : "pass",
+      evidence: { failedRuns: failed ? 1 : 0, runIds: failed ? ["failed"] : [] },
     });
   });
 
@@ -277,6 +305,7 @@ describe("health reporting correctness", () => {
     const result = await health();
     expect(result.advisories.find((c) => c.name === "improve-failures")).toMatchObject({
       status: "unknown",
+      reason: "blocked",
       evidence: { failedRuns: 0, interruptedRuns: 1, interruptedRunIds: ["interrupted"] },
     });
   });

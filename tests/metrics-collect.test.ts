@@ -163,9 +163,37 @@ describe("usage section", () => {
 
   test("daily buckets by UTC day, ascending", () => {
     expect(result.daily).toEqual([
-      { day: "2026-01-02", search: 1, show: 0, curate: 0, feedback: 0 },
-      { day: "2026-01-03", search: 2, show: 2, curate: 1, feedback: 0 },
+      { day: "2026-01-02", search: 1, show: 0, curate: 0, feedback: 0, rules: 0 },
+      { day: "2026-01-03", search: 2, show: 2, curate: 1, feedback: 0, rules: 0 },
     ]);
+  });
+
+  test("rules rows report loads, a daily count, means and loads per rule, and move no search count", () => {
+    const load = (at: string, refs: string[], chars: number) =>
+      usage({ event_type: "rules", created_at: at, metadata: JSON.stringify({ bundles: ["b"], refs, chars }) });
+    const withRules = buildMetricsResult(
+      input({
+        usage: [
+          load("2026-01-03 10:00:00", ["b//rules/a", "b//rules/shared"], 300),
+          load("2026-01-03 11:00:00", ["b//rules/shared"], 100),
+          load("2026-01-04 11:00:00", [], 0),
+        ],
+      }),
+    ).usage;
+    expect(withRules.rules).toEqual({
+      loads: 3,
+      meanRules: 1,
+      meanChars: 133.33,
+      byRule: [
+        { ref: "b//rules/shared", loads: 2 },
+        { ref: "b//rules/a", loads: 1 },
+      ],
+    });
+    expect(withRules.daily).toEqual([
+      { day: "2026-01-03", search: 0, show: 0, curate: 0, feedback: 0, rules: 2 },
+      { day: "2026-01-04", search: 0, show: 0, curate: 0, feedback: 0, rules: 1 },
+    ]);
+    expect(withRules.totals).toMatchObject({ searches: 0, shows: 0, curates: 0, distinctAssets: 0 });
   });
 
   test("assets, queries and zero-result queries rank by count then name", () => {
@@ -215,7 +243,7 @@ describe("daily feedback", () => {
         ],
       }),
     );
-    expect(result.usage.daily).toEqual([{ day: "2026-01-03", search: 0, show: 0, curate: 0, feedback: 2 }]);
+    expect(result.usage.daily).toEqual([{ day: "2026-01-03", search: 0, show: 0, curate: 0, feedback: 2, rules: 0 }]);
     expect(result.feedback.totals).toEqual({ positive: 1, negative: 1 });
   });
 });

@@ -106,15 +106,42 @@ function refreshed(harness: PluginUpgradeEntry["harness"], from: string | undefi
   return { harness, outcome: moved ? "updated" : "current", from, to } as PluginUpgradeEntry;
 }
 
-/** Unknown, in `--check`: knowing whether a newer build exists needs a marketplace fetch, which `--check` does not do. */
-function unknownRefresh(harness: PluginUpgradeEntry["harness"], from: string | undefined): PluginUpgradeEntry {
-  return {
-    harness,
-    outcome: "unknown",
-    from,
-    message:
-      "checking needs a fetch of the akm-plugins marketplace, which --check does not do; `akm upgrade` refreshes it",
-  };
+/**
+ * What `--check` says an update would do to a marketplace plugin, from the same read as the real switch
+ * ({@link marketplacePlan}): the build the channel's branch of the registered marketplace offers. A switch to a channel
+ * with nothing newer returns `keep`, the plugin the real switch leaves alone. A marketplace that cannot be read leaves
+ * the entry `unknown`, with the reason.
+ */
+function planEntry(
+  harness: "claude-code" | "codex",
+  installed: (string | undefined)[],
+  source: () => string,
+  ref: string | undefined,
+  channel: UpgradeChannel | undefined,
+  allowDowngrade: boolean,
+): { entry: PluginUpgradeEntry; keep?: Kept } {
+  const from = installed[0];
+  const followed = channel ?? refChannel(ref);
+  // A marketplace pinned to one tag never offers anything newer.
+  if (followed === "pinned") return { entry: refreshed(harness, from, from) };
+  const unknown = (reason: string) => ({
+    entry: {
+      harness,
+      outcome: "unknown" as const,
+      from,
+      message: `the ${followed} build could not be read (${reason}); \`akm upgrade\` refreshes it`,
+    },
+  });
+  let plan: ReturnType<typeof marketplacePlan>;
+  try {
+    plan = marketplacePlan(harness, source(), installed, followed, allowDowngrade);
+  } catch (error) {
+    return unknown(error instanceof Error ? error.message : String(error));
+  }
+  if (plan.target instanceof Error && !(channel && plan.keep)) return unknown(plan.target.message);
+  if (plan.keep) return { entry: refreshed(harness, from, from), keep: plan.keep };
+  const to = plan.target as string;
+  return { entry: to === from ? refreshed(harness, from, from) : { harness, outcome: "pending", from, to } };
 }
 
 // ── Claude Code ─────────────────────────────────────────────────────────────
@@ -200,10 +227,27 @@ function stays(
   };
 }
 
-function upgradeClaudeCode(dryRun: boolean, next: boolean, channel?: UpgradeChannel, keep?: Kept): PluginUpgradeEntry {
+function upgradeClaudeCode(
+  dryRun: boolean,
+  next: boolean,
+  channel?: UpgradeChannel,
+  keep?: Kept,
+  allowDowngrade = false,
+): PluginUpgradeEntry {
   const detected = detectClaudeCode(channel !== undefined);
   if ("entry" in detected) return detected.entry;
   const before = refChannel(detected.ref);
+  const planned = dryRun
+    ? planEntry(
+        "claude-code",
+        detected.installations.map((p) => p.version),
+        () => claudeMarketplace(claudePluginsRoot()).source,
+        detected.ref,
+        channel,
+        allowDowngrade,
+      )
+    : undefined;
+  keep ??= planned?.keep;
   if (channel && keep !== undefined) return stays("claude-code", keep.installed, channel, before, keep.reason);
   let backups: string[] = [];
   if (channel && !dryRun) {
@@ -222,17 +266,12 @@ function upgradeClaudeCode(dryRun: boolean, next: boolean, channel?: UpgradeChan
       return channelWriteFailure("claude-code", error, before);
     }
   }
-  const entry = refreshClaudeCode(dryRun, detected.version, channel ? detected.installations : undefined);
+  const entry = planned?.entry ?? refreshClaudeCode(detected.version, channel ? detected.installations : undefined);
   const noted = next && !channel ? withChannelNote(entry, detected.ref) : entry;
   return channelResult(noted, before, channel, dryRun, backups);
 }
 
-function refreshClaudeCode(
-  dryRun: boolean,
-  from: string | undefined,
-  installations?: ClaudeInstallation[],
-): PluginUpgradeEntry {
-  if (dryRun) return unknownRefresh("claude-code", from);
+function refreshClaudeCode(from: string | undefined, installations?: ClaudeInstallation[]): PluginUpgradeEntry {
   const marketplace = runCommand("claude", ["plugin", "marketplace", "update", MARKETPLACE], REFRESH_TIMEOUT_MS);
   if (!marketplace.ok) return failed("claude-code", marketplace.error);
   for (const installation of installations ?? [{}]) {
@@ -271,7 +310,13 @@ export function codexMarketplaceRef(): string | undefined {
   }
 }
 
-function upgradeCodex(dryRun: boolean, next: boolean, channel?: UpgradeChannel, keep?: Kept): PluginUpgradeEntry {
+function upgradeCodex(
+  dryRun: boolean,
+  next: boolean,
+  channel?: UpgradeChannel,
+  keep?: Kept,
+  allowDowngrade = false,
+): PluginUpgradeEntry {
   const before = codexPluginVersion();
   if ("error" in before)
     return channel && (!before.error.missing || fs.existsSync(codexConfigFile()))
@@ -281,6 +326,17 @@ function upgradeCodex(dryRun: boolean, next: boolean, channel?: UpgradeChannel, 
     return skipped("codex", `the akm plugin is not installed from the ${MARKETPLACE} marketplace`);
   }
   const previous = refChannel(codexMarketplaceRef());
+  const planned = dryRun
+    ? planEntry(
+        "codex",
+        [before.version],
+        () => codexMarketplaceRegistration().source,
+        codexMarketplaceRef(),
+        channel,
+        allowDowngrade,
+      )
+    : undefined;
+  keep ??= planned?.keep;
   if (channel && keep !== undefined) return stays("codex", keep.installed, channel, previous, keep.reason);
   const backups: string[] = [];
   if (channel && previous !== channel && !dryRun) {
@@ -290,7 +346,7 @@ function upgradeCodex(dryRun: boolean, next: boolean, channel?: UpgradeChannel, 
       return channelWriteFailure("codex", error, previous);
     }
   }
-  const entry = refreshCodex(dryRun, before.version);
+  const entry = planned?.entry ?? refreshCodex(before.version);
   return channelResult(
     next && !channel ? withChannelNote(entry, codexMarketplaceRef()) : entry,
     previous,
@@ -300,8 +356,7 @@ function upgradeCodex(dryRun: boolean, next: boolean, channel?: UpgradeChannel, 
   );
 }
 
-function refreshCodex(dryRun: boolean, from: string | undefined): PluginUpgradeEntry {
-  if (dryRun) return unknownRefresh("codex", from);
+function refreshCodex(from: string | undefined): PluginUpgradeEntry {
   // Also refreshes the installed plugin's cache, so no re-add is needed.
   const upgrade = runCommand("codex", ["plugin", "marketplace", "upgrade", MARKETPLACE], REFRESH_TIMEOUT_MS);
   if (!upgrade.ok) return failed("codex", upgrade.error);
@@ -573,7 +628,7 @@ function upgradeOpenCode(dryRun: boolean, target: OpenCodeTarget): PluginUpgrade
  * The note `--next` adds to a marketplace harness. The channel is the ref the marketplace follows (`next` is the
  * prerelease branch, the default branch is stable); only an explicit --channel switches it.
  */
-function refChannel(ref: string | undefined): UpgradeChannel | "pinned" {
+export function refChannel(ref: string | undefined): UpgradeChannel | "pinned" {
   return !ref || ref === "main" || ref === "master" ? "latest" : ref === "next" ? "next" : "pinned";
 }
 
@@ -635,10 +690,11 @@ export function upgradePlugins(opts: {
   currentChannel?: UpgradeChannel;
   /** Marketplace harnesses a channel switch leaves alone, with the installed version each stays at. */
   keep?: { claude?: Kept; codex?: Kept };
+  allowDowngrade?: boolean;
 }): PluginUpgradeEntry[] {
   return [
-    upgradeClaudeCode(opts.dryRun, opts.next, opts.channel, opts.keep?.claude),
-    upgradeCodex(opts.dryRun, opts.next, opts.channel, opts.keep?.codex),
+    upgradeClaudeCode(opts.dryRun, opts.next, opts.channel, opts.keep?.claude, opts.allowDowngrade),
+    upgradeCodex(opts.dryRun, opts.next, opts.channel, opts.keep?.codex, opts.allowDowngrade),
     ...opts.openCode.map((target) => {
       const entry = upgradeOpenCode(opts.dryRun, target);
       if (target.keepInstalled)
@@ -791,8 +847,12 @@ function resolveOpenCodeTargets(next: boolean, channel?: UpgradeChannel): OpenCo
   return targets;
 }
 
-/** Inspect the requested branch in a disposable clone before changing any installation. */
-function marketplaceTargetVersion(source: string, channel: UpgradeChannel, harness: "claude" | "codex"): string {
+/**
+ * The newest akm plugin build on `channel` of the marketplace at `source`: the version its catalog names. Only the
+ * catalog and the plugin manifest are read, from a blobless clone with nothing checked out, so the channel's other
+ * files are never downloaded. The real channel switch, `akm upgrade --check` and `akm health` all read it here.
+ */
+export function marketplaceTargetVersion(source: string, channel: UpgradeChannel, harness: "claude" | "codex"): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-channel-check-"));
   const checkout = path.join(root, "marketplace");
   try {
@@ -803,6 +863,8 @@ function marketplaceTargetVersion(source: string, channel: UpgradeChannel, harne
         "--depth",
         "1",
         "--single-branch",
+        "--filter=blob:none",
+        "--no-checkout",
         ...(channel === "next" ? ["--branch", "next"] : []),
         "--",
         source,
@@ -811,12 +873,12 @@ function marketplaceTargetVersion(source: string, channel: UpgradeChannel, harne
       REFRESH_TIMEOUT_MS,
     );
     if (!cloned.ok) throw new UsageError(`Could not check the target plugin version: ${cloned.error}`);
-    const catalog = parseJson(
-      fs.readFileSync(
-        path.join(checkout, ...(harness === "codex" ? [".agents", "plugins"] : [".claude-plugin"]), "marketplace.json"),
-        "utf8",
-      ),
-    ) as
+    const show = (file: string) => runCommand("git", ["-C", checkout, "show", `HEAD:${file}`], REFRESH_TIMEOUT_MS);
+    const manifestDir = harness === "codex" ? ".codex-plugin" : ".claude-plugin";
+    const catalogFile = harness === "codex" ? ".agents/plugins/marketplace.json" : ".claude-plugin/marketplace.json";
+    const catalogText = show(catalogFile);
+    if (!catalogText.ok) throw new UsageError(`Could not read the marketplace catalog: ${catalogText.error}`);
+    const catalog = parseJson(catalogText.stdout) as
       | {
           plugins?: Array<{
             name?: string;
@@ -827,7 +889,7 @@ function marketplaceTargetVersion(source: string, channel: UpgradeChannel, harne
       | undefined;
     const plugin = catalog?.plugins?.find((p) => p.name === "akm");
     const entry = typeof plugin?.source === "object" ? plugin.source : undefined;
-    // A `git-subdir` entry (Codex) names its build by tag; one in this same repo can also be read from the checkout.
+    // A `git-subdir` entry (Codex) names its build by tag; one in this same repo can also be read from the repository.
     const tagged = entry?.source === "git-subdir" ? entry.ref?.replace(/^v/, "") : undefined;
     const sameRepo = (url: string | undefined) =>
       url !== undefined && url.replace(/\.git$/, "").toLowerCase() === source.replace(/\.git$/, "").toLowerCase();
@@ -837,14 +899,17 @@ function marketplaceTargetVersion(source: string, channel: UpgradeChannel, harne
         : entry?.source === "local" || (entry?.source === "git-subdir" && sameRepo(entry.url))
           ? entry.path
           : undefined;
-    const local = relative ? path.resolve(checkout, relative) : undefined;
-    const contained = local === checkout || local?.startsWith(`${checkout}${path.sep}`);
-    const version =
-      plugin?.version ??
-      (tagged && isExactSemver(tagged) ? tagged : undefined) ??
-      (local && contained
-        ? readPackageVersion(path.join(local, harness === "codex" ? ".codex-plugin" : ".claude-plugin", "plugin.json"))
-        : undefined);
+    const dir = relative ? path.posix.normalize(relative) : undefined;
+    const contained = dir !== undefined && !path.posix.isAbsolute(dir) && dir !== ".." && !dir.startsWith("../");
+    let manifestVersion: string | undefined;
+    if (contained) {
+      const manifest = show(path.posix.join(dir, manifestDir, "plugin.json"));
+      const version = manifest.ok
+        ? (parseJson(manifest.stdout) as { version?: unknown } | undefined)?.version
+        : undefined;
+      manifestVersion = typeof version === "string" ? version : undefined;
+    }
+    const version = plugin?.version ?? (tagged && isExactSemver(tagged) ? tagged : undefined) ?? manifestVersion;
     if (!version || !isExactSemver(version))
       throw new UsageError(
         "Could not determine the requested marketplace's akm plugin version; no channel was changed",
@@ -853,6 +918,66 @@ function marketplaceTargetVersion(source: string, channel: UpgradeChannel, harne
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+}
+
+function claudePluginsRoot(): string {
+  const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
+  return process.env.CLAUDE_CODE_PLUGIN_CACHE_DIR ?? path.join(configDir, "plugins");
+}
+
+/** The Git source and ref Claude has registered for a marketplace. */
+export function claudeMarketplace(
+  pluginsRoot: string,
+  marketplace = MARKETPLACE,
+): { source: string; ref: string | undefined } {
+  const known = parseJson(fs.readFileSync(path.join(pluginsRoot, "known_marketplaces.json"), "utf8")) as Record<
+    string,
+    { source: { source: string; repo?: string; url?: string; ref?: string } }
+  >;
+  const registered = known[marketplace]?.source;
+  const url =
+    registered?.source === "github" && registered.repo ? `https://github.com/${registered.repo}.git` : registered?.url;
+  if (!url) throw new UsageError("Could not determine the Claude marketplace Git source; no channel was changed");
+  return { source: url, ref: typeof registered?.ref === "string" ? registered.ref : undefined };
+}
+
+/** The Git source and ref Codex has registered for the akm-plugins marketplace. */
+export function codexMarketplaceRegistration(): { source: string; ref: string | undefined } {
+  const source = codexMarketplace(codexConfigFile())?.source;
+  if (typeof source !== "string")
+    throw new UsageError("Could not determine the Codex marketplace Git source; no channel was changed");
+  return { source, ref: codexMarketplaceRef() };
+}
+
+/**
+ * What moving one marketplace plugin to `channel` does, read without changing anything: the build the channel's branch
+ * of the registered `source` offers (or why it could not be read), and, unless a downgrade is allowed, the installed
+ * version that switch leaves alone because the channel has nothing newer. The real switch and `--check` both decide
+ * from this.
+ */
+function marketplacePlan(
+  harness: "claude-code" | "codex",
+  source: string,
+  installed: (string | undefined)[],
+  channel: UpgradeChannel,
+  allowDowngrade: boolean,
+): { target: string | Error; keep?: Kept } {
+  let target: string | Error;
+  try {
+    target = marketplaceTargetVersion(source, channel, harness === "codex" ? "codex" : "claude");
+  } catch (error) {
+    target = error instanceof Error ? error : new Error(String(error));
+  }
+  let keep: Kept | undefined;
+  for (const version of installed) {
+    if (allowDowngrade || !version) continue;
+    // An unreadable channel build leaves this plugin where it is; it never blocks the rest of the upgrade.
+    if (target instanceof Error)
+      keep = { installed: version, reason: `could not read the ${channel} build's version (${target.message})` };
+    else if (semverOrder(target, version) <= 0 && (!keep || semverOrder(keep.installed, version) < 0))
+      keep = { installed: version };
+  }
+  return { target, ...(keep ? { keep } : {}) };
 }
 
 /**
@@ -864,58 +989,39 @@ function preflightMarketplaceChannels(
   allowDowngrade: boolean,
 ): { claude?: Kept; codex?: Kept } {
   const keep: { claude?: Kept; codex?: Kept } = {};
-  const versions = new Map<string, string | Error>();
-  const verify = (harness: "claude" | "codex", source: string, installed: string | undefined) => {
-    if (allowDowngrade || !installed) return;
-    const key = `${harness}:${source}`;
-    let target = versions.get(key);
-    if (target === undefined) {
-      try {
-        target = marketplaceTargetVersion(source, channel, harness);
-      } catch (error) {
-        target = error instanceof Error ? error : new Error(String(error));
-      }
-      versions.set(key, target);
-    }
-    // An unreadable channel version leaves this plugin where it is; it never blocks the rest of the upgrade.
-    if (target instanceof Error) {
-      keep[harness] = { installed, reason: `could not read the ${channel} build's version (${target.message})` };
-      return;
-    }
-    const kept = keep[harness];
-    if (semverOrder(target, installed) <= 0 && (!kept || semverOrder(kept.installed, installed) < 0))
-      keep[harness] = { installed };
-  };
   const claude = detectClaudeCode(true);
   if ("entry" in claude && claude.entry.outcome === "failed")
     throw new UsageError(`Could not inventory Claude before switching channels: ${claude.entry.message}`);
   if (!("entry" in claude)) {
-    const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
-    const pluginsRoot = process.env.CLAUDE_CODE_PLUGIN_CACHE_DIR ?? path.join(configDir, "plugins");
+    const pluginsRoot = claudePluginsRoot();
     claudeChannelEdits(
-      configDir,
+      process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude"),
       pluginsRoot,
       channel,
       claude.installations.flatMap((p) => (p.projectPath ? [p.projectPath] : [])),
     );
-    const known = parseJson(fs.readFileSync(path.join(pluginsRoot, "known_marketplaces.json"), "utf8")) as Record<
-      string,
-      { source: { source: string; repo?: string; url?: string } }
-    >;
-    const source = known[MARKETPLACE]?.source;
-    const url = source?.source === "github" && source.repo ? `https://github.com/${source.repo}.git` : source?.url;
-    if (!url) throw new UsageError("Could not determine the Claude marketplace Git source; no channel was changed");
-    for (const installed of claude.installations) verify("claude", url, installed.version);
+    const plan = marketplacePlan(
+      "claude-code",
+      claudeMarketplace(pluginsRoot).source,
+      claude.installations.map((p) => p.version),
+      channel,
+      allowDowngrade,
+    );
+    if (plan.keep) keep.claude = plan.keep;
   }
   const codex = codexPluginVersion();
   if ("error" in codex && (!codex.error.missing || fs.existsSync(codexConfigFile())))
     throw new UsageError(`Could not inventory Codex before switching channels: ${codex.error.error}`);
   if (!("error" in codex) && codex.version !== undefined) {
     codexChannelEdit(codexConfigFile(), channel);
-    const source = codexMarketplace(codexConfigFile())?.source;
-    if (typeof source !== "string")
-      throw new UsageError("Could not determine the Codex marketplace Git source; no channel was changed");
-    verify("codex", source, codex.version);
+    const plan = marketplacePlan(
+      "codex",
+      codexMarketplaceRegistration().source,
+      [codex.version],
+      channel,
+      allowDowngrade,
+    );
+    if (plan.keep) keep.codex = plan.keep;
   }
   return keep;
 }
@@ -955,7 +1061,14 @@ export async function runUpgrade(
       result: {
         ...check,
         plugins: withEngineSkew(
-          upgradePlugins({ dryRun: true, next, openCode, channel: switchChannel, currentChannel }),
+          upgradePlugins({
+            dryRun: true,
+            next,
+            openCode,
+            channel: switchChannel,
+            currentChannel,
+            allowDowngrade: args.allowDowngrade,
+          }),
           currentVersion,
         ),
       },
@@ -1023,16 +1136,12 @@ export async function runUpgrade(
   // blocked or could not run is not done, and neither is one whose plugin
   // step failed.
   const migrationFailed = upgraded.migration?.status === "blocked" || upgraded.migration?.status === "failed";
+  // A plugin left on the other channel is a switch that did not happen. A "current" entry there is one the switch
+  // left alone on purpose, and a deferred or skipped plugin already follows the channel asked for: its update waits
+  // for the harness to exit, as in an upgrade with no --channel, and is reported in its entry.
   const switchIncomplete =
     switchChannel !== undefined &&
-    plugins.some(
-      (p) =>
-        p.channel !== undefined &&
-        // A "current" entry still on the other channel is one the switch left alone on purpose.
-        ((p.channel !== switchChannel && p.outcome !== "current") ||
-          p.outcome === "deferred" ||
-          p.outcome === "skipped"),
-    );
+    plugins.some((p) => p.channel !== undefined && p.channel !== switchChannel && p.outcome !== "current");
   return {
     mode: "upgrade",
     result,

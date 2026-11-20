@@ -18,7 +18,12 @@ import { isScratchPath } from "../../core/asset/scratch";
 import { spawnSync } from "../../runtime";
 import { buildFileContext, type FileContext } from "./file-context";
 
-const ALWAYS_SKIP_DIRS = new Set([".git", "node_modules"]);
+/** Directories akm and Git manage inside a bundle: never content, whatever a person or an adapter lists. */
+export const GIT_DIR = ".git";
+export const AKM_DIR = ".akm";
+export const MANAGED_DIRS: readonly string[] = [GIT_DIR, AKM_DIR];
+
+const ALWAYS_SKIP_DIRS = new Set([GIT_DIR, "node_modules"]);
 const AKM_SKIP_DIRS = new Set(["bin", ".cache"]);
 /** Sidecar and git dot-files the walk never lists. */
 const SKIP_FILES = new Set([".stash.json", ".gitignore", ".gitattributes"]);

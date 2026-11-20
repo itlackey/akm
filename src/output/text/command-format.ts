@@ -93,7 +93,10 @@ export function formatInfoPlain(r: Record<string, unknown>): string {
   return lines.join("\n");
 }
 
-export function formatConfigPlain(r: Record<string, unknown>): string {
+export function formatConfigPlain(r: unknown): string {
+  // `config get` of a scalar key returns the bare value: print it alone, and nothing for an unset key.
+  if (r === null || r === undefined) return "";
+  if (typeof r !== "object") return String(r);
   // Recursive flattener: prints `key=value` lines, and nested objects as
   // `parent.child=value`. Arrays render as JSON for compactness.
   const lines: string[] = [];
@@ -113,7 +116,7 @@ export function formatConfigPlain(r: Record<string, unknown>): string {
       }
     }
   };
-  walk(r, "");
+  walk(r as Record<string, unknown>, "");
   if (lines.length === 0) return "(empty config)";
   return lines.join("\n");
 }

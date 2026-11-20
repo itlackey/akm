@@ -9,28 +9,39 @@ import {
   checkPrompt,
   harnessLabel,
   hasStarter,
-  installedChannel,
   isUnconfigured,
   learningRuns,
   learnPlan,
   learnReceipt,
   pluginChannel,
   pluginLine,
-  pluginMatches,
+  pluginNeedsUpdate,
+  pluginPlan,
   searchCount,
 } from "../src/lib/setup-model.ts";
 
-test("plugins follow Desktop's release stage and match on akm's major and minor", () => {
+test("plugins follow Desktop's release stage", () => {
   assert.equal(pluginChannel("0.10.261105"), "latest");
   assert.equal(pluginChannel("0.10.261105-beta"), "next");
   assert.equal(pluginChannel(undefined), "latest");
   // A saved choice wins over the stage (F14).
   assert.equal(pluginChannel("0.10.261105", "next"), "next");
   assert.equal(pluginChannel("0.10.261105-beta", "latest"), "latest");
-  assert.equal(pluginMatches("0.10.261105", "0.10.261020"), true);
-  assert.equal(pluginMatches("0.10.261105-beta", "0.10.261020"), true);
-  assert.equal(pluginMatches("0.10.261105", "0.9.15"), false);
-  assert.equal(pluginMatches("0.10.261105", undefined), null);
+  // With no saved choice, the channel akm reports the CLI follows comes before Desktop's own stage.
+  assert.equal(pluginChannel("0.10.261105", undefined, "next"), "next");
+  assert.equal(pluginChannel("0.10.261105-beta", undefined, "latest"), "latest");
+  assert.equal(pluginChannel("0.10.261105", "latest", "next"), "latest");
+});
+
+test("a plugin asks something of the person only when akm's own check says an update, deferral or failure; its version prefix says nothing", () => {
+  assert.equal(pluginNeedsUpdate({ outcome: "pending" }), true);
+  assert.equal(pluginNeedsUpdate({ outcome: "deferred" }), true);
+  assert.equal(pluginNeedsUpdate({ outcome: "failed" }), true);
+  // Up to date by akm's check, whatever its version looks like next to the engine's.
+  assert.equal(pluginNeedsUpdate({ outcome: "current" }), false);
+  assert.equal(pluginNeedsUpdate({ outcome: "unknown" }), false);
+  // No check yet: nothing is claimed.
+  assert.equal(pluginNeedsUpdate(undefined), false);
 });
 
 test("nothing is configured only when there is no bundle", () => {
@@ -38,10 +49,16 @@ test("nothing is configured only when there is no bundle", () => {
   assert.equal(isUnconfigured({ bundles: [{}] }), false);
 });
 
-test("the starter bundle is recognised by its source", () => {
-  const bundle = (name, locator) => ({ name, source: locator ? { kind: "git", locator } : undefined });
-  assert.equal(hasStarter([bundle("akm", undefined)]), false);
-  assert.equal(hasStarter([bundle("akm-stash", "https://github.com/itlackey/akm-stash")]), true);
+test("the starter bundle is the one whose source identity akm reports as the starter's", () => {
+  const starter = { source: "https://github.com/itlackey/akm-stash", identity: "github:itlackey/akm-stash" };
+  const bundle = (name, identity) => ({ name, identity });
+  assert.equal(hasStarter([bundle("akm", null)], starter), false);
+  assert.equal(hasStarter([bundle("anything", "github:itlackey/akm-stash")], starter), true);
+  // A name or a fork that merely looks like the starter is not it; a folder has no identity.
+  assert.equal(hasStarter([bundle("akm-stash", "github:someone/akm-stash")], starter), false);
+  assert.equal(hasStarter([bundle("akm-stash", null)], starter), false);
+  // An identity akm could not report is unknown, never a match.
+  assert.equal(hasStarter([bundle("akm-stash", null)], { ...starter, identity: null }), false);
 });
 
 const detected = (over = {}) => ({
@@ -61,14 +78,19 @@ test("one card per harness found, with the plugin's version, the Bun gate and ak
       { id: "codex", installed: true, runnable: true, plugin: { state: "installed", version: "0.9.1" } },
       { id: "opencode", installed: true, runnable: true, plugin: { state: "configured", spec: "akm-opencode@next" } },
     ]),
-    "0.10.261105",
     {
       stashDir: "/x",
       harnesses: [
-        { platform: "claude", path: "/bin/claude", modelWorkNote: "model calls are limited to reading and searching" },
+        {
+          platform: "claude",
+          path: "/bin/claude",
+          modelWorkReadOnly: true,
+          modelWorkNote: "model calls are limited to reading and searching",
+        },
         {
           platform: "opencode",
           path: "/bin/opencode",
+          modelWorkReadOnly: false,
           modelWorkNote: "Model work on opencode cannot be restricted: it can edit files and run commands.",
         },
       ],
@@ -85,9 +107,9 @@ test("one card per harness found, with the plugin's version, the Bun gate and ak
         "claude",
         "ready",
         true,
-        { available: true, enabled: false, note: "model calls are limited to reading and searching" },
+        { available: true, enabled: false, note: "model calls are limited to reading and searching", readOnly: true },
       ],
-      ["codex", "connected", true, { available: false, enabled: false, note: "" }],
+      ["codex", "connected", true, { available: false, enabled: false, note: "", readOnly: null }],
       [
         "opencode",
         "connected",
@@ -96,12 +118,13 @@ test("one card per harness found, with the plugin's version, the Bun gate and ak
           available: true,
           enabled: true,
           note: "Model work on opencode cannot be restricted: it can edit files and run commands.",
+          readOnly: false,
         },
       ],
     ],
   );
-  assert.deepEqual(cards[1].plugin, { text: "AKM plugin 0.9.1", mismatch: true });
-  assert.deepEqual(cards[2].plugin, { text: "AKM plugin akm-opencode@next", mismatch: false });
+  assert.deepEqual(cards[1].plugin, { text: "AKM plugin 0.9.1" });
+  assert.deepEqual(cards[2].plugin, { text: "AKM plugin akm-opencode@next" });
   assert.deepEqual(
     cards.map((card) => card.name),
     ["Claude Code", "Codex", "OpenCode"],
@@ -152,15 +175,15 @@ test("OpenCode 2 is the same program told apart by its major, and the plugin row
     { harness: "opencode", channel: "pinned" },
     { harness: "opencode-v2", channel: "unknown" },
   ];
-  // The channel finishes the row's sentence in words, and only for a plugin that is there.
+  // akm's entry for the harness, and only for a plugin that is there.
   const present = (id, state, major) => ({ id, installed: true, runnable: true, major, plugin: { state } });
-  assert.equal(installedChannel(present("claude", "installed"), plugins), "on the prerelease channel");
-  assert.equal(installedChannel(present("codex", "disabled"), plugins), "on the stable channel");
-  assert.equal(installedChannel(present("opencode", "configured", 1), plugins), "pinned to one version");
-  assert.equal(installedChannel(present("opencode", "configured", 2), plugins), undefined);
-  assert.equal(installedChannel(present("claude", "installed"), undefined), undefined);
-  assert.equal(installedChannel(present("claude", "missing"), plugins), undefined);
-  assert.equal(installedChannel(present("claude", "unknown"), plugins), undefined);
+  assert.equal(pluginPlan(present("claude", "installed"), plugins), plugins[0]);
+  assert.equal(pluginPlan(present("codex", "disabled"), plugins), plugins[1]);
+  assert.equal(pluginPlan(present("opencode", "configured", 1), plugins), plugins[2]);
+  assert.equal(pluginPlan(present("opencode", "configured", 2), plugins), plugins[3]);
+  assert.equal(pluginPlan(present("claude", "installed"), undefined), undefined);
+  assert.equal(pluginPlan(present("claude", "missing"), plugins), undefined);
+  assert.equal(pluginPlan(present("claude", "unknown"), plugins), undefined);
 });
 
 test("a plugin that is turned off, or that the harness cannot report, is not offered an install", () => {
@@ -169,7 +192,6 @@ test("a plugin that is turned off, or that the harness cannot report, is not off
       { id: "claude", installed: true, runnable: true, plugin: { state: "unknown" } },
       { id: "codex", installed: true, runnable: true, plugin: { state: "disabled", version: "0.10.1" } },
     ]),
-    "0.10.261105",
     { ...detected(), harnesses: [] },
   );
   assert.deepEqual(

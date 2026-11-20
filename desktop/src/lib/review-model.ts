@@ -61,10 +61,26 @@ export function proposalReason(p: ReviewProposal): string {
   const retirement = record(p.retirement);
   return p.reason || (p.retirement ? text(retirement.judgeReason, "") : "") || (p.gateDecision?.judgeReason ?? "");
 }
-/** What to tell a reviewer about the Git commit an accept made; empty when there is none to report. */
+const noCommitSaid: Record<string, string> = {
+  "not-git": "This bundle is not a Git repository, so nothing was saved to Git history.",
+  ignored: "Every written path is ignored by .gitignore, so nothing was saved to Git history.",
+  "nothing-to-commit": "There was nothing to commit, so nothing was saved to Git history.",
+};
+/** What to tell a reviewer about the Git commit an accept made, as akm reports it; empty when akm reported none. */
 export function commitOutcome(value: unknown): string {
   const commit = record(value);
-  return typeof commit.sha === "string" ? `Saved to Git history as ${commit.sha.slice(0, 8)}.` : "";
+  if (commit.committed === true && typeof commit.sha === "string")
+    return `Saved to Git history as ${commit.sha.slice(0, 8)}.`;
+  if (commit.committed !== false) return "";
+  if (commit.reason === "failed")
+    return `Not saved to Git history: the commit failed (${text(commit.error, "no error given")}).`;
+  return noCommitSaid[String(commit.reason)] ?? `Not saved to Git history (${text(commit.reason, "no reason given")}).`;
+}
+/** The distinct commit outcomes of a batch accept, one sentence each. */
+export function batchCommitOutcome(result: { results?: Array<{ ok: boolean; commit?: unknown }> }): string {
+  return [...new Set((result.results ?? []).filter((r) => r.ok).map((r) => commitOutcome(r.commit)))]
+    .filter(Boolean)
+    .join(" ");
 }
 /** "1 finding", "2 findings". */
 export function plural(count: number, one: string, many = `${one}s`): string {

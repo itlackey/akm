@@ -19,7 +19,7 @@ import {
 } from "../../registry/resolve";
 import type { ParsedGitRef } from "../../registry/types";
 import type { SourceLockData, SyncOptions } from "./install-types";
-import { applyAkmIncludeConfig, buildInstallCacheDir, detectStashRoot, isDirectory } from "./provider-utils";
+import { buildInstallCacheDir, detectStashRoot, isDirectory } from "./provider-utils";
 
 const DIRTY_PATHS_SHOWN = 5;
 export const UPDATE_REFUSAL_HINT =
@@ -202,7 +202,7 @@ export function replaceDirectory(stagedDir: string, destination: string): void {
 
 /**
  * Materialize a Git install ref (`akm bundle add github:owner/repo` or
- * `akm bundle add git:url`) through the clone, strip, and include-filter pipeline.
+ * `akm bundle add git:url`) through the clone and strip pipeline.
  */
 export async function syncGitRef(ref: string, options?: SyncOptions): Promise<SourceLockData> {
   const parsed = parseRegistryRef(ref);
@@ -253,15 +253,10 @@ async function doSyncGit(parsed: ParsedGitRef, options?: SyncOptions): Promise<S
   // can be committed; an older extracted snapshot is not eligible.
   if (isDirectory(extractedDir) && (!options?.writable || isDirectory(path.join(extractedDir, ".git")))) {
     if (options?.writable) {
-      const provisionalBundleRoot = detectStashRoot(extractedDir);
-      const installRoot = applyAkmIncludeConfig(provisionalBundleRoot, cacheDir, extractedDir) ?? provisionalBundleRoot;
-      if (installRoot !== provisionalBundleRoot) {
-        throw new UsageError("Writable Git installs do not support akm.include (package.json) filtered snapshots.");
-      }
       return syncExistingWritableCheckout(
         parsed,
         resolved,
-        detectStashRoot(installRoot),
+        detectStashRoot(extractedDir),
         syncedAt,
         options.writableRequiredRoots,
         options.credential,
@@ -272,9 +267,7 @@ async function doSyncGit(parsed: ParsedGitRef, options?: SyncOptions): Promise<S
       if (options?.force) {
         throw new Error("refresh read-only snapshot");
       }
-      const provisionalBundleRoot = detectStashRoot(extractedDir);
-      const installRoot = applyAkmIncludeConfig(provisionalBundleRoot, cacheDir, extractedDir) ?? provisionalBundleRoot;
-      const stashRoot = detectStashRoot(installRoot);
+      const stashRoot = detectStashRoot(extractedDir);
       if (stashRoot) {
         return {
           id: resolved.id,
@@ -299,8 +292,6 @@ async function doSyncGit(parsed: ParsedGitRef, options?: SyncOptions): Promise<S
   fs.mkdirSync(cacheDir, { recursive: true });
   fs.rmSync(cloneDir, { recursive: true, force: true });
 
-  let provisionalBundleRoot: string;
-  let installRoot: string;
   let stashRoot: string;
   try {
     // `git clone --branch` accepts only a branch or tag name, never a raw commit
@@ -346,10 +337,6 @@ async function doSyncGit(parsed: ParsedGitRef, options?: SyncOptions): Promise<S
       if (branch.status !== 0 || !branch.stdout.trim()) {
         throw new UsageError("Writable Git installs require a branch ref; tags and detached revisions are read-only.");
       }
-      const stagedRoot = detectStashRoot(cloneDir);
-      if (applyAkmIncludeConfig(stagedRoot, cacheDir, cloneDir)) {
-        throw new UsageError("Writable Git installs do not support akm.include (package.json) filtered snapshots.");
-      }
       replaceDirectory(cloneDir, extractedDir);
     } else {
       // Read-only installs are immutable snapshots and do not retain Git metadata.
@@ -357,12 +344,7 @@ async function doSyncGit(parsed: ParsedGitRef, options?: SyncOptions): Promise<S
       replaceDirectory(cloneDir, extractedDir);
     }
 
-    provisionalBundleRoot = detectStashRoot(extractedDir);
-    installRoot = applyAkmIncludeConfig(provisionalBundleRoot, cacheDir, extractedDir) ?? provisionalBundleRoot;
-    if (options?.writable && installRoot !== provisionalBundleRoot) {
-      throw new UsageError("Writable Git installs do not support akm.include (package.json) filtered snapshots.");
-    }
-    stashRoot = detectStashRoot(installRoot);
+    stashRoot = detectStashRoot(extractedDir);
   } catch (err) {
     fs.rmSync(cloneDir, { recursive: true, force: true });
     try {

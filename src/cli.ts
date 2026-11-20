@@ -109,8 +109,9 @@ import {
   runWithJsonErrors,
   withoutHelpHiddenArgs,
 } from "./cli/shared";
-import { assertKnownFlags, type FlagScanCommand } from "./cli/unknown-flags";
-import { startUsage, type UsageCommand } from "./cli/usage";
+import { assertKnownFlags, assertNoStrayPositionals, type FlagScanCommand } from "./cli/unknown-flags";
+import { startUsage, type UsageCommand, usageCaptureOff } from "./cli/usage";
+import { reportUsageIfDue } from "./cli/usage-report";
 import { agentCommand, lintCommand } from "./commands/agent/contribute-cli";
 import { backupsCommand } from "./commands/backups-cli";
 import { commandCommand } from "./commands/command/command-cli";
@@ -127,6 +128,7 @@ import { closestMatch } from "./core/closest-match";
 import { trackStdioReaderGone } from "./core/stdio-reader-gone";
 import "./commands/health/renderers";
 import "./commands/metrics/md-report";
+import { execCommand } from "./commands/exec-cli";
 import type { WindowSpec } from "./commands/health/types";
 import { parseWindowSpec } from "./commands/health/windows";
 import { doctorPromptCommand, improveCommand } from "./commands/improve/improve-cli";
@@ -137,6 +139,7 @@ import { modelsCommand } from "./commands/models-cli";
 import { doctorLogCommand, logCommand } from "./commands/observability-cli";
 import { proposalCommand } from "./commands/proposal/proposal-cli";
 import { rememberCommand } from "./commands/read/remember-cli";
+import { rulesCommand } from "./commands/read/rules";
 import { curateCommand, searchCommand, showCommand } from "./commands/read/search-cli";
 import { registryCommand } from "./commands/registry-cli";
 import { runAssetCommand } from "./commands/run-cli";
@@ -707,7 +710,9 @@ const commands = {
   search: searchCommand,
   curate: curateCommand,
   show: showCommand,
+  rules: rulesCommand,
   run: runAssetCommand,
+  exec: execCommand,
   workflow: workflowCommand,
   remember: rememberCommand,
   import: importKnowledgeCommand,
@@ -1048,13 +1053,13 @@ const HELP_SECTIONS: ReadonlyArray<{
 }> = [
   {
     title: "AGENT LOOP",
-    commands: ["curate", "search", "show", "feedback", "remember"],
+    commands: ["curate", "search", "show", "rules", "feedback", "remember"],
   },
   {
     title: "ASSETS",
     commands: ["import", "clone", "bundle", "env", "secret", "sync", "proposal"],
   },
-  { title: "AUTOMATION", commands: ["improve", "judge", "agent", "command", "workflow", "task"] },
+  { title: "AUTOMATION", commands: ["run", "exec", "improve", "judge", "agent", "command", "workflow", "task"] },
   {
     title: "SYSTEM",
     commands: [
@@ -1300,6 +1305,9 @@ export async function runCli(): Promise<void> {
     // Deliver catchable signals queued during synchronous child execution.
     await new Promise<void>((resolve) => setImmediate(resolve));
     finishUsage();
+    // After the command's own work; never changes output or exit code (see src/cli/usage-report.ts).
+    if (!usageCaptureOff(main as UsageCommand, originalArgs))
+      await reportUsageIfDue({ surface: "cli", version: pkgVersion });
   }
 }
 
@@ -1424,7 +1432,9 @@ async function runCliInvocation(): Promise<void> {
     // citty's parseArgs (strict: false) silently ignores undeclared flags, so
     // a typo would otherwise run the command with defaults and exit 0. Checked
     // here, after --help and --version, so those keep working on any command.
+    // An undeclared positional is ignored the same way.
     assertKnownFlags(main as FlagScanCommand, rawArgs);
+    assertNoStrayPositionals(main as FlagScanCommand, rawArgs);
     await runCommand(main, { rawArgs });
   } catch (error) {
     if (isCittyCliError(error)) {

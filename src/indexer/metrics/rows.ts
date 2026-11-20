@@ -66,6 +66,10 @@ export function toUsageRow(row: UsageEventRow): MetricsUsageRow {
   const tags = Array.isArray(metadata.tags)
     ? metadata.tags.filter((tag): tag is string => typeof tag === "string")
     : undefined;
+  const refs = Array.isArray(metadata.refs)
+    ? metadata.refs.filter((ref): ref is string => typeof ref === "string")
+    : undefined;
+  const chars = finiteNumber(metadata.chars);
   const agent = metadata.agent as { harness?: unknown; session?: unknown } | undefined;
   const harness = typeof agent?.harness === "string" && agent.harness ? agent.harness : undefined;
   const session = typeof agent?.session === "string" && agent.session ? agent.session : undefined;
@@ -81,6 +85,7 @@ export function toUsageRow(row: UsageEventRow): MetricsUsageRow {
     ...(totalMs !== undefined ? { totalMs } : {}),
     ...(reason !== undefined ? { reason } : {}),
     ...(tags && tags.length > 0 ? { tags } : {}),
+    ...(row.event_type === "rules" ? { rules: { refs: refs ?? [], chars: chars ?? 0 } } : {}),
     ...(harness ? { agent: { harness, ...(session ? { session } : {}) } } : {}),
   };
 }

@@ -76,7 +76,7 @@ const TYPE_HINTS: Record<string, string> = {
   workflow:
     "workflow assets are markdown describing a multi-step process. Include `# <Title>` and ordered `## Step N` sections.",
   script: "script assets are executable text files. Include a shebang and minimal usage comment.",
-  env: "env assets are `.env` files holding a group of related CONFIGURATION for an app/service (KEY=VALUE pairs, `#` comments) — URLs, flags, and any credentials it needs. Values may or may not be sensitive; all are protected (key names discoverable, values stay on disk). Inject with `akm env run env/<name> -- <cmd>`; prefer `--clean` in agent contexts so the child starts from a minimal inherited environment. AKM itself does not print values, but the child command can print its environment, so do not run `env`, `printenv`, shell tracing, or similar diagnostics when secrets are in scope. For a single sensitive value used on its own for authentication (token, key, cert) use a `secret` instead. Never echo values back to the user.",
+  env: "env assets are `.env` files holding a group of related CONFIGURATION for an app/service (KEY=VALUE pairs, `#` comments) — URLs, flags, and any credentials it needs. Values may or may not be sensitive; all are protected (key names discoverable, values stay on disk). Inject with `akm exec --env env/<name> -- <cmd>`; prefer `--clean` in agent contexts so the child starts from a minimal inherited environment. AKM itself does not print values, but the child command can print its environment, so do not run `env`, `printenv`, shell tracing, or similar diagnostics when secrets are in scope. For a single sensitive value used on its own for authentication (token, key, cert) use a `secret` instead. Never echo values back to the user.",
   wiki: "wiki assets are markdown reference pages with `# Title` and structured headings.",
   fact: "fact assets are durable stash-level facts (personal/team/project details, coding conventions, stash-meta). Frontmatter SHOULD include `description` and a `category` (personal|team|project|convention|meta); set `pinned: true` only for the small always-injected core. Keep each fact short, high-signal, and self-contained — it is durable context, not an episodic note.",
 };
@@ -153,7 +153,7 @@ export const PROPOSAL_JSON_SCHEMA: ExecutionJsonObject = {
 export interface RejectedProposalContext {
   /** Asset ref the rejected proposal targeted. */
   ref: string;
-  /** Human-readable rejection reason supplied at review time. */
+  /** Rejection reason from a reviewer or a content guard. */
   reason: string;
   /**
    * Truncated preview of the rejected content (first 500 chars). Helps the
@@ -188,7 +188,7 @@ export interface ReflectPromptInput {
    */
   avoidPatterns?: string[];
   /**
-   * Last 1–3 archived rejected proposals for this ref. Injected as
+   * Last 1–3 content rejections for this ref. Injected as
    * Reflexion-style verbal-RL context so the agent does not regenerate
    * proposals that have already been reviewed and refused.
    */
@@ -402,8 +402,8 @@ export function buildReflectPrompt(input: ReflectPromptInput): ReflectPromptResu
   if (input.rejectedProposals && input.rejectedProposals.length > 0) {
     const lines: string[] = ["## Previously Rejected Proposals"];
     lines.push(
-      "The following proposals for this ref were already reviewed and rejected. " +
-        "Do not propose the same change again; if no other change is justified, return null for each field.",
+      "Previous attempts for this ref were refused for the reasons below. Avoid repeating the same mistake. " +
+        "Use the current asset and feedback when the evidence has changed. If no change is justified, return null for each field.",
     );
     for (const rp of input.rejectedProposals) {
       lines.push(`\nRef: ${rp.ref}`);

@@ -8,6 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { readEvents } from "../../../src/core/events";
 import { akmIndex } from "../../../src/indexer/indexer";
+import { readTaskHistory } from "../../../src/tasks/run/task-history";
 import { getWorkflowStatus, listWorkflowRuns } from "../../../src/workflows/runtime/runs";
 import { runCliCapture } from "../../_helpers/cli";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
@@ -176,6 +177,48 @@ describe("additive akm run", () => {
     const status = await runCliCapture(["workflow", "status", id]);
     expect(status.code, status.stderr).toBe(0);
     expect(JSON.parse(status.stdout).run.status).toBe("completed");
+  });
+
+  test("--env and --secret reach a task and a workflow step, and the secret is scrubbed from what akm records", async () => {
+    write("env/prod.env", "INJECTED_REGION=eu-west\n");
+    write("secrets/deploy", "injected-secret-value\n");
+    const printBoth = 'printf "%s %s" "$INJECTED_REGION" "$INJECTED_PLAIN"';
+    write("tasks/env.yml", `version: 4\nrun: ${printBoth}\nshell: sh\n`);
+    write(
+      "workflows/env.md",
+      `---\ntype: workflow\nsteps:\n  - id: only\n    unit:\n      exec:\n        command: ${JSON.stringify(["sh", "-c", printBoth])}\n---\n## only\nPrint.\n`,
+    );
+    const flags = ["--env", "env/prod", "--secret=secrets/deploy:INJECTED_PLAIN"];
+    try {
+      const task = await runCliCapture(["run", "tasks/env", ...flags]);
+      expect(task.code, task.stderr).toBe(0);
+      expect(fs.readFileSync(JSON.parse(task.stdout).result.log, "utf8")).toContain("eu-west [REDACTED]");
+      expect(readEvents({ type: "secret_access" }).events.at(-1)).toMatchObject({
+        ref: "secrets/deploy",
+        metadata: { var: "INJECTED_PLAIN" },
+      });
+
+      const run = await runCliCapture(["run", "workflows/env", ...flags]);
+      expect(run.code, run.stderr).toBe(0);
+      const journal = JSON.stringify(await getWorkflowStatus(JSON.parse(run.stdout).run.id));
+      expect(journal).toContain("eu-west");
+      expect(journal).not.toContain("injected-secret-value");
+    } finally {
+      delete process.env.INJECTED_REGION;
+      delete process.env.INJECTED_PLAIN;
+    }
+  });
+
+  test("a malformed --secret or a missing env asset stops the run before it starts", async () => {
+    for (const flags of [
+      ["--secret", "secrets/deploy"],
+      ["--env", "env/absent"],
+    ]) {
+      const result = await runCliCapture(["run", "tasks/check", "--label", "x", ...flags]);
+      expect(result.code).not.toBe(0);
+      expect(result.stdout).not.toContain("task-ok");
+    }
+    expect(readTaskHistory({ id: "check" })).toEqual([]);
   });
 
   test("dispatch follows adapter type rather than a native-looking path prefix", async () => {

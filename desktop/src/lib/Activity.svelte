@@ -6,7 +6,7 @@
 
 <script lang="ts">
   import { onDestroy, tick, untrack } from "svelte";
-  import { api, date } from "./client";
+  import { api, apiState, date } from "./client";
   import { navigate } from "./navigation";
   import ActivityOverview from "./ActivityOverview.svelte";
   import ActivityImpact from "./ActivityImpact.svelte";
@@ -25,6 +25,10 @@
     impact = $state<Impact | null>(null),
     retrieval = $state<Retrieval | null>(null),
     pulse = $state<Pulse | null>(null),
+    pulseNote = $state(""),
+    /** Why the weekly retrieval series or the search gaps could not be read, when akm said. */
+    retrievalNote = $state(""),
+    missesNote = $state(""),
     impactProcess = $state("");
   // A latch, not a derivation: the process the address last named stays selected when a later address names none.
   $effect.pre(() => {
@@ -34,13 +38,22 @@
     bundle: string;
     path: string;
     git: boolean;
+    error?: string;
     commits: Array<Commit & { shortSha?: string }>;
   } | null>(null);
   let misses = $state<{
     searches: number;
     foundNothing: number;
-    misses: Array<{ query: string; count: number; days: number; lastAt: string }>;
+    misses: Array<{ query: string; count: number; days: number; lastAt: string; repeated: boolean }>;
   } | null>(null);
+  /** A read that needs akm's state database: the data, or null with the reason it could not be read. */
+  async function readState<T>(path: string, query: Record<string, string>): Promise<{ data: T | null; note: string }> {
+    try {
+      return { data: await apiState<T>(path, query), note: "" };
+    } catch (cause) {
+      return { data: null, note: (cause as Error).message };
+    }
+  }
   // Plain, not state: the key of the view that was last asked for.
   let loaded = "";
   let loading = $state(false),
@@ -49,7 +62,6 @@
     refreshedAt = $state(""),
     probedAt = $state(""),
     historyFilter = $state(""),
-    historyOrigin = $state(""),
     refreshButton = $state<HTMLButtonElement>(),
     // A refresh reloads the view that is on screen; `refreshSaid` is what the status line says once it is back.
     refreshing = $state(false),
@@ -89,16 +101,17 @@
     revealed = query;
     void revealAnchor(query.get("anchor"));
   });
+  /** The queries that found nothing on two or more days, as akm reports them: a gap, not a one-off. */
+  const repeatedMisses = $derived((misses?.misses ?? []).filter((miss) => miss.repeated));
   const filteredCommits = $derived(
     (changes?.commits ?? []).filter(
       (commit) =>
-        (!historyOrigin || commit.origin === historyOrigin) &&
-        (!historyFilter.trim() ||
-          [commit.subject, commit.author, commit.sha, commit.origin, ...(commit.paths ?? [])].some((value) =>
-            String(value ?? "")
-              .toLowerCase()
-              .includes(historyFilter.trim().toLowerCase()),
-          )),
+        !historyFilter.trim() ||
+        [commit.subject, commit.author, commit.sha, ...(commit.paths ?? [])].some((value) =>
+          String(value ?? "")
+            .toLowerCase()
+            .includes(historyFilter.trim().toLowerCase()),
+        ),
     ),
   );
   const views = [
@@ -127,32 +140,40 @@
     refreshSaid = "";
     try {
       if (view === "Health" || view === "Runs" || view === "Usage & retrieval") {
+        let nextPulseNote = "";
         const [next, nextPulse, nextRetrieval] = await Promise.all([
           api<Overview>("/overview", { metricsSince: window }),
-          api<Pulse>("/overview/pulse").catch(() => null),
-          api<Retrieval>("/retrieval", { since: view === "Usage & retrieval" ? window : "84d" }).catch(() => null),
+          apiState<Pulse>("/overview/pulse").catch((cause: Error) => {
+            nextPulseNote = cause.message;
+            return null;
+          }),
+          readState<Retrieval>("/retrieval", { since: view === "Usage & retrieval" ? window : "84d" }),
         ]);
         if (request === generation) {
           overview = next;
           pulse = nextPulse;
-          retrieval = nextRetrieval;
+          pulseNote = nextPulseNote;
+          retrieval = nextRetrieval.data;
+          retrievalNote = nextRetrieval.note;
           refreshedAt = new Date().toISOString();
           probedAt = "";
         }
         if (view === "Usage & retrieval") {
-          const nextMisses = await api<NonNullable<typeof misses>>("/search/misses", { since: window }).catch(
-            () => null,
-          );
-          if (request === generation) misses = nextMisses;
+          const nextMisses = await readState<NonNullable<typeof misses>>("/search/misses", { since: window });
+          if (request === generation) {
+            misses = nextMisses.data;
+            missesNote = nextMisses.note;
+          }
         }
       } else if (view === "Improve impact") {
         const [next, nextRetrieval] = await Promise.all([
           api<Impact>("/improve/impact", { since }),
-          api<Retrieval>("/retrieval", { since: "90d" }).catch(() => null),
+          readState<Retrieval>("/retrieval", { since: "90d" }),
         ]);
         if (request === generation) {
           impact = next;
-          retrieval = nextRetrieval;
+          retrieval = nextRetrieval.data;
+          retrievalNote = nextRetrieval.note;
         }
       } else if (view === "Replay") {
         // The replay reads its own data.
@@ -161,10 +182,9 @@
         if (request === generation) {
           changes = next;
           historyFilter = query.get("q") ?? "";
-          historyOrigin = query.get("origin") ?? "";
         }
       } else {
-        const next = await api<NonNullable<typeof misses>>("/search/misses", { since: window });
+        const next = await apiState<NonNullable<typeof misses>>("/search/misses", { since: window });
         if (request === generation) misses = next;
       }
     } catch (cause) {
@@ -203,7 +223,6 @@
   function filterHistory() {
     const params = new URLSearchParams();
     if (historyFilter) params.set("q", historyFilter);
-    if (historyOrigin) params.set("origin", historyOrigin);
     void navigate(`/activity/history${params.size ? `?${params}` : ""}`);
   }
   onDestroy(() => {
@@ -267,7 +286,9 @@
       mode={view === "Health" ? "health" : view === "Runs" ? "runs" : "usage"}
       data={overview}
       {pulse}
+      {pulseNote}
       {retrieval}
+      {retrievalNote}
       {probe}
       {refreshedAt}
       {probedAt}
@@ -279,6 +300,7 @@
 {:else if shown && view === "Improve impact"}{#if impact}<ActivityImpact
       {impact}
       {retrieval}
+      {retrievalNote}
       bind:selectedProcess={impactProcess}
     />{/if}
 {:else if view === "Replay"}<ActivityReplay />
@@ -286,6 +308,8 @@
   <p class="muted">{changes.bundle} · <span class="mono wrap">{changes.path}</span></p>
   {#if !changes.git}<p class="empty">
       This write target is not a Git repository. AKM does not retain general manual-edit undo for a non-Git bundle.
+    </p>{:else if changes.error}<p class="notice notice-warn" role="alert">
+      Git could not be read: {changes.error}
     </p>{:else}<form
       class="history-filter"
       role="search"
@@ -295,21 +319,14 @@
         filterHistory();
       }}
     >
-      <label>Subject, author or path<input type="search" bind:value={historyFilter} /></label><label
-        >Made by<select bind:value={historyOrigin}
-          ><option value="">Anything</option
-          >{#each [...new Set(changes.commits.map((commit) => commit.origin ?? "other"))].sort() as origin}<option
-              >{origin}</option
-            >{/each}</select
-        ></label
-      ><button>Filter history</button>
+      <label>Subject, author or path<input type="search" bind:value={historyFilter} /></label><button
+        >Filter history</button
+      >
     </form>
     <ol class="commits">
       {#each filteredCommits as commit}<li class="commit">
           <div class="commit-head">
-            <span>{date(commit.time)}</span><span class="badge">{commit.origin ?? "other"}</span><strong
-              >{commit.subject}</strong
-            >
+            <span>{date(commit.time)}</span><strong>{commit.subject}</strong>
           </div>
           <p class="muted small">
             <code>{commit.shortSha ?? commit.sha.slice(0, 8)}</code> by {commit.author ?? "Unknown author"}
@@ -335,12 +352,12 @@
         {misses.foundNothing} of {misses.searches} searches returned no results. Review the query and existing material before
         adding anything.
       </p>
-      {#if misses.misses.length}<div class="table-wrap">
+      {#if repeatedMisses.length}<div class="table-wrap">
           <table>
             <caption>Repeated search misses</caption><thead
               ><tr><th>Query</th><th>Times</th><th>Days</th><th>Last seen</th><th>Next step</th></tr></thead
             ><tbody
-              >{#each misses.misses as miss}<tr
+              >{#each repeatedMisses as miss}<tr
                   ><th>{miss.query}</th><td>{miss.count}</td><td>{miss.days}</td><td>{date(miss.lastAt)}</td><td
                     ><a href={`/library/search?tab=misses&q=${encodeURIComponent(miss.query)}`}>Review search gap</a
                     ></td
@@ -348,8 +365,8 @@
                 >{/each}</tbody
             >
           </table>
-        </div>{:else}<p>No search gaps recorded in this window.</p>{/if}{:else}<p class="muted">
-        Search-gap measurements are unavailable.
+        </div>{:else}<p>No query found nothing on more than one day in this window.</p>{/if}{:else}<p class="muted">
+        Search-gap measurements are unavailable.{missesNote ? ` ${missesNote}` : ""}
       </p>{/if}
   </section>{/if}
 

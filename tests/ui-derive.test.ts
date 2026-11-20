@@ -79,12 +79,13 @@ describe("pChart", () => {
       week,
       x: 30,
       n: 100,
+      partial: false,
     }));
     const { centre, points } = pChart([
       ...steady,
-      { week: "2026-10-12", x: 3, n: 10 },
-      { week: "2026-10-19", x: 0, n: 0 },
-      { week: "2026-10-26", x: 70, n: 100 },
+      { week: "2026-10-12", x: 3, n: 10, partial: false },
+      { week: "2026-10-19", x: 0, n: 0, partial: false },
+      { week: "2026-10-26", x: 70, n: 100, partial: false },
     ]);
     expect(centre).toBeCloseTo(223 / 610, 5);
     const [big, , , , , small, empty, outlier] = points;
@@ -92,6 +93,31 @@ describe("pChart", () => {
     expect(empty).toMatchObject({ rate: null, lower: null, upper: null, signal: false });
     expect(outlier?.signal).toBe(true);
     expect(big?.signal).toBe(false);
+  });
+
+  test("a partial week keeps its rate, has no limits and is not part of the centre", () => {
+    const whole = ["2026-09-07", "2026-09-14", "2026-09-21", "2026-09-28"].map((week) => ({
+      week,
+      x: 30,
+      n: 100,
+      partial: false,
+    }));
+    const { centre, enough, points } = pChart([...whole, { week: "2026-10-05", x: 9, n: 10, partial: true }]);
+    expect(enough).toBe(true);
+    expect(centre).toBeCloseTo(0.3, 5);
+    expect(points[4]).toMatchObject({ rate: 0.9, lower: null, upper: null, signal: false, partial: true });
+  });
+
+  test("fewer than four whole weeks with searches claim no usual range", () => {
+    const { centre, enough, points } = pChart([
+      { week: "2026-09-07", x: 30, n: 100, partial: false },
+      { week: "2026-09-14", x: 30, n: 100, partial: false },
+      { week: "2026-09-21", x: 30, n: 100, partial: false },
+      { week: "2026-09-28", x: 50, n: 100, partial: true },
+    ]);
+    expect(enough).toBe(false);
+    expect(centre).toBeNull();
+    for (const point of points) expect(point).toMatchObject({ lower: null, upper: null, signal: false });
   });
 });
 

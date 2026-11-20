@@ -15,7 +15,7 @@ import { createRetireProposal, recordGateDecision, rejectProposalDurably } from 
 import { writeMarkdownAsset } from "../commands/read/knowledge";
 import { akmShowUnified } from "../commands/read/show";
 import { akmClone, type CloneResponse } from "../commands/sources/source-clone";
-import { assertFlatAssetName } from "../core/asset/asset-create";
+import { assertFlatAssetName, normalizeCreateSubPath } from "../core/asset/asset-create";
 import { assetPathForName, stashDirFor } from "../core/asset/asset-placement";
 import { parseBundleRef } from "../core/asset/asset-ref";
 import { toErrorMessage } from "../core/common";
@@ -27,8 +27,14 @@ import { NO_INDEX_MESSAGE, readUsableIndex } from "../indexer/index-readiness";
 import { resolveBundleWriteTarget } from "../sources/mutation-target";
 import { assertAkmAssetWrite } from "../sources/write-source";
 import { getEntryIdByFilePath, getItemRefById } from "../storage/repositories/index-entries-repository";
+import { retireBlocker } from "./file-actions";
 import { interactive } from "./lease";
+import { createFile } from "./new-file";
 import { redactUrlsInText } from "./redact";
+
+export { check } from "./check-text";
+export { applyFrontmatter, frontmatter } from "./frontmatter";
+export { createFile };
 
 /** An indexed asset file whose bundle accepts AKM writes, found the way the UI reads it. */
 async function resolveWritableIndexedAsset(ref: string) {
@@ -139,20 +145,9 @@ function required(value: unknown, key: string): string {
 export async function createKnowledge(input: { bundle: string; name: string; path?: string; content: string }) {
   if (typeof input.content !== "string" || !input.content.trim()) throw new UsageError("Document content is required.");
   const name = required(input.name, "name");
-  const bundle = required(input.bundle, "bundle");
   assertFlatAssetName(name);
-  return interactive("ui-knowledge-create", async () => {
-    const result = await writeMarkdownAsset({
-      type: "knowledge",
-      content: input.content,
-      name,
-      fallbackPrefix: "knowledge",
-      target: bundle,
-      path: typeof input.path === "string" && input.path.trim() ? input.path.trim() : undefined,
-    });
-    appendEvent({ eventType: "import", ref: result.ref, metadata: { source: "-", path: result.path, force: false } });
-    return result;
-  });
+  const folder = path.posix.join("knowledge", normalizeCreateSubPath(input.path));
+  return createFile({ bundle: input.bundle, folder, name, content: input.content });
 }
 
 /** Copy an asset to a bundle. Overwriting an existing asset is never done here. */
@@ -177,8 +172,8 @@ export async function retire(input: { ref: string; revision: string }) {
   const revision = required(input.revision, "revision");
   return interactive("manual-retire", async () => {
     const { canonical, target, type } = await resolveWritableIndexedAsset(ref);
-    if (["skill", "env", "secret", "session"].includes(type))
-      throw new UsageError("Retire supports single-file assets, not skill packages or protected files.");
+    const blocker = retireBlocker(type);
+    if (blocker !== undefined) throw new UsageError(blocker);
     // The write target the asset resolved to owns the proposal queue.
     const stashDir = target.source.path;
     const minted = createRetireProposal(stashDir, {
@@ -187,10 +182,10 @@ export async function retire(input: { ref: string; revision: string }) {
       target: { source: target.source.name, root: target.source.path },
       expectedRevision: revision,
     });
-    let accepted: Awaited<ReturnType<typeof akmProposalAccept>>["proposal"];
+    let result: Awaited<ReturnType<typeof akmProposalAccept>>;
     try {
       recordGateDecision(stashDir, minted.id, { outcome: "auto-accepted", reason: "manual-retire", gate: "workspace" });
-      accepted = (await akmProposalAccept({ stashDir, id: minted.id })).proposal;
+      result = await akmProposalAccept({ stashDir, id: minted.id });
     } catch (error) {
       try {
         rejectProposalDurably(stashDir, minted.id, `manual retire not applied: ${toErrorMessage(error)}`);
@@ -200,10 +195,10 @@ export async function retire(input: { ref: string; revision: string }) {
       throw error;
     }
     return {
-      proposalId: accepted.id,
+      proposalId: result.proposal.id,
       ref: canonical,
       bundle: target.source.name,
-      archiveDirs: accepted.retiredArchive?.dirs ?? [],
+      archiveDirs: result.proposal.retiredArchive?.dirs ?? [],
       warnings:
         type === "task"
           ? [

@@ -6,7 +6,7 @@
 
 <script lang="ts">
   import { onDestroy, tick } from "svelte";
-  import { api, date } from "./client";
+  import { api, apiState, date } from "./client";
   import { navigate } from "./navigation";
   import ActivityChart from "./ActivityChart.svelte";
   import { verticalBars, lines, stepLine } from "./ui/chart-view.js";
@@ -16,8 +16,15 @@
   let {
     impact,
     retrieval,
+    retrievalNote = "",
     selectedProcess = $bindable(""),
-  }: { impact: ActivityImpact; retrieval: ActivityRetrieval | null; selectedProcess?: string } = $props();
+  }: {
+    impact: ActivityImpact;
+    retrieval: ActivityRetrieval | null;
+    /** Why the retrieval series could not be read, when akm said. */
+    retrievalNote?: string;
+    selectedProcess?: string;
+  } = $props();
   let drillPanel = $state<HTMLElement>(),
     drillTrigger: HTMLElement | null = null;
   const availableProcesses = $derived((impact.outcomes ?? []).map((row) => row.source));
@@ -111,7 +118,7 @@
     proposals = [];
     drillError = "";
     try {
-      const result = await api<{ proposals: Proposal[] }>("/proposals", {
+      const result = await apiState<{ proposals: Proposal[] }>("/proposals", {
         status: "recent",
         source,
         week,
@@ -145,6 +152,8 @@
     after a change · {number(impact.summary.tokens)} reported tokens. Token coverage: {percent(
       impact.summary.tokenCoverage,
     )}.
+    {#if !impact.usageComplete}Flags and the found and negative counts cover usage only from {date(impact.usageSince)}:
+      akm purges older usage, so earlier flags and counts are not recorded, not zero.{/if}
   </p>
   <p class="measurement-note">
     Weeks start Monday, UTC. Kept means accepted and not reverted. Flags are negative feedback within 14 days. These are
@@ -332,7 +341,7 @@
           <p>
             {retrieval
               ? "Too few searches to show a rolling trend. It needs at least five searches in a week."
-              : "Search measurements unavailable."}
+              : `Search measurements unavailable.${retrievalNote ? ` ${retrievalNote}` : ""}`}
           </p>
         </section>{/if}
     </section>
@@ -478,7 +487,8 @@
             >{#each impact.changedAssets ?? [] as item}<tr
                 ><th><a class="wrap" href={assetHref(item.ref)}>{item.ref}</a></th><td>{item.source}</td><td
                   >{date(item.decidedAt)}{item.outcome === "reverted" ? " · Reverted" : ""}</td
-                ><td>{item.before.hits} → {item.after.hits}</td><td>{item.before.negative} → {item.after.negative}</td
+                ><td>{item.beforeComplete ? item.before.hits : "Not recorded"} → {item.after.hits}</td><td
+                  >{item.beforeComplete ? item.before.negative : "Not recorded"} → {item.after.negative}</td
                 ><td>{item.complete ? "28 days" : `${item.afterDays} days so far (partial)`}</td></tr
               >{/each}</tbody
           >

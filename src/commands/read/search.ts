@@ -456,7 +456,7 @@ function logSearchEvent(
  * source entry's `name`, or an exact path). Throws INVALID_SOURCE_VALUE with
  * the known names before any stash access can fail differently.
  */
-function assertNamedSourceExists(config: AkmConfig, namedSourceName: string): void {
+export function assertNamedSourceExists(config: AkmConfig, namedSourceName: string): void {
   const configSources = getSources(config);
   const foundInConfig = configSources.find(
     (source) => source.name === namedSourceName || source.path === namedSourceName,

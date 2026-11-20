@@ -410,7 +410,8 @@ result in its `inputs:` gets nothing meaningful attached for it — akm
 surfaces this loudly rather than silently attaching an empty string. A unit
 that declares an `output` schema is unaffected — an empty response is not
 valid JSON, so it fails as a parse error and can never satisfy a schema as a
-silent `null`.
+silent `null`. A prose unit whose agent ends with no reply has not succeeded
+either: it fails with `parse_error`, which `retry.on:` can name.
 
 ### When a step declares no `output:` schema
 
@@ -886,10 +887,10 @@ env asset:
   of surrounding whitespace; any other asset ref (`${scripts/x.sh}`) gives the
   asset's absolute path. A `${...}` body that is not an akm ref (`${HOME}`) is
   left as text.
-- It is the same token `akm env run` resolves. `akm env export` does not
+- It is the same token `akm exec --env` resolves. `akm env export` does not
   resolve it; it writes the token verbatim.
 - Freezing records the env ref, never a value. At each dispatch the unit's env
-  assets are read live with `resolveEnvBinding`, the same function `akm env run`
+  assets are read live with `resolveEnvBinding`, the same function `akm exec --env`
   uses, so an edit to the env file, or to a secret, after the run started is
   picked up by the next dispatch; there is no key-set check against the frozen
   plan. A ref no bundle owns fails the step at dispatch ("frozen environment

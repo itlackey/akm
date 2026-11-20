@@ -284,7 +284,12 @@ export function pChartLine(labels, points, centre, { name, unit }) {
         symbolSize: 6,
         connectNulls: false,
         lineStyle: { width: 2.5 },
-        data: points.map((p) => ({ value: pct(p.rate), symbolSize: p.signal ? 12 : 6 })),
+        // A partial week is a hollow mark: its rate is real, its range and verdict are not claimed.
+        data: points.map((p) => ({
+          value: pct(p.rate),
+          symbol: p.partial ? "emptyCircle" : "circle",
+          symbolSize: p.signal ? 12 : 6,
+        })),
       },
       {
         type: "line",

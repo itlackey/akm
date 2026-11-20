@@ -5,10 +5,12 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { stashDirNames } from "../core/asset/asset-placement";
 import { peekConfigValue } from "../core/config/peek";
 import { getDataDir } from "../core/paths";
-import { isKnownType } from "../core/recognition-util";
+import { isKnownType, KNOWN_TYPES } from "../core/recognition-util";
 import { hasSignalOwner, observeSignal } from "../core/signal-observers";
+import { DETAIL_LEVELS, OUTPUT_FORMATS } from "../output/context";
 import { type Database, openDatabase } from "../storage/database";
 import { applyStandardPragmas } from "../storage/sqlite-pragmas";
 import { resolveAgentIdentity } from "../workflows/runtime/agent-identity";
@@ -42,9 +44,9 @@ export interface InvocationUsage {
 // Enum-like string flags are not enums in citty. Keep this finite allowlist
 // independent of user data and never infer safety from the supplied value.
 const SAFE_VALUES: Record<string, readonly string[]> = {
-  format: ["json", "jsonl", "yaml", "text", "md"],
-  detail: ["agent", "brief", "normal", "full"],
-  type: ["skill", "agent", "command", "script", "knowledge", "workflow", "env", "secret", "memory", "lesson"],
+  format: OUTPUT_FORMATS,
+  detail: DETAIL_LEVELS,
+  type: [...KNOWN_TYPES, "any", ...stashDirNames()],
 };
 
 /** Scan declared identities only. Unknown spellings can themselves contain secrets. */
@@ -221,7 +223,7 @@ function usagePath(): string {
 // `schema_migrations` ledger, so they use their own `cli_usage_` names and a
 // version in `cli_usage_meta` (never PRAGMA user_version or schema_migrations).
 const USAGE_SCHEMA = 1;
-function openUsage(filename: string): Database {
+export function openUsage(filename: string = usagePath()): Database {
   fs.mkdirSync(path.dirname(filename), { recursive: true });
   const db = openDatabase(filename);
   try {
@@ -258,6 +260,19 @@ function captureDisabledByConfig(): boolean {
   return peekConfigValue(["usage", "capture"]) === false;
 }
 
+function readOnlyRequested(usage: InvocationUsage): boolean {
+  return usage.arguments.some((a) => a.name === "read-only" && a.explicit && a.value === true);
+}
+
+/** Whether this invocation records no counts (`--read-only` or `usage.capture: false`), so there is nothing to report. */
+export function usageCaptureOff(root: UsageCommand, raw: readonly string[]): boolean {
+  try {
+    return readOnlyRequested(describeUsage(root, raw)) || captureDisabledByConfig();
+  } catch {
+    return true;
+  }
+}
+
 export function startUsage(root: UsageCommand, raw: readonly string[], version: string): () => void {
   const started = Date.now();
   const id = randomUUID();
@@ -277,7 +292,7 @@ export function startUsage(root: UsageCommand, raw: readonly string[], version: 
     const usage = describeUsage(root, raw);
     // `--read-only` promises no writes, and the config key turns capture off.
     // Either way nothing is opened, written or finalized.
-    if (usage.arguments.some((a) => a.name === "read-only" && a.explicit && a.value === true)) return () => {};
+    if (readOnlyRequested(usage)) return () => {};
     if (captureDisabledByConfig()) return () => {};
     filename = usagePath();
     const db = openUsage(filename);
@@ -447,6 +462,8 @@ export interface UsageFilter {
   until?: string;
   version?: string;
   source?: string;
+  /** Skip the retained per-invocation rows and read the durable aggregates only. */
+  aggregatesOnly?: boolean;
 }
 export function readUsage(filter: UsageFilter = {}) {
   const gaps = [
@@ -510,9 +527,10 @@ export function readUsage(filter: UsageFilter = {}) {
           unfinished: Number(row.attempts) - Number(row.completed),
         });
     }
-    for (const row of db.prepare("SELECT * FROM cli_usage_invocations ORDER BY ts,id").all() as Array<
-      Record<string, unknown>
-    >) {
+    const detailRows = filter.aggregatesOnly
+      ? []
+      : db.prepare("SELECT * FROM cli_usage_invocations ORDER BY ts,id").all();
+    for (const row of detailRows as Array<Record<string, unknown>>) {
       const data = JSON.parse(String(row.data)) as Record<string, unknown>;
       if (selected({ ...data, day: String(data.ts).slice(0, 10) }))
         empty.details.push({

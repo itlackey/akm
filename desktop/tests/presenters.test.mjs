@@ -27,28 +27,13 @@ test("activity/settings presentation keeps measured zero separate from missing o
   assert.equal(percent(null), "Not measured");
   assert.equal(tokens({ calls: 2, usageCalls: 0, totalTokens: 0 }), "Not reported");
   assert.equal(tokens({ calls: 0, usageCalls: 0, totalTokens: 0 }), "0");
-  const checks = [{ name: "connections-and-harnesses", status: "unknown", message: "No model configured" }];
-  assert.equal(healthGroup(checks[0], checks), "off");
-  assert.equal(healthGroup({ name: "cli-version", status: "unknown", message: "Not probed" }, checks), "unchecked");
-  // Not run, could not run, and run with nothing to report are three different things (F9, F17).
-  const unknown = (name, message) => healthGroup({ name, status: "unknown", message }, []);
-  assert.equal(
-    unknown("state-db-round-trip", "state.db append/read round-trip skipped: this run is read-only."),
-    "unchecked",
-  );
-  assert.equal(
-    unknown("scheduler-binary", "No scheduler is available on this host (crontab -l failed: …)."),
-    "unchecked",
-  );
-  assert.equal(
-    unknown("cli-version", "akm v1 is installed; the update check could not reach the release source."),
-    "blocked",
-  );
-  assert.equal(
-    unknown("plugin-version", "akm@akm-plugins: installed 1 — the newest release could not be read"),
-    "blocked",
-  );
-  assert.equal(unknown("session-extraction", "No extraction recorded in the last 7 days."), "idle");
+  // An unknown check lands where akm's reason says, whatever its message says.
+  const unknown = (reason, message = "") => healthGroup({ name: "x", status: "unknown", reason, message });
+  assert.equal(unknown("off"), "off");
+  assert.equal(unknown("not-probed"), "not-probed");
+  assert.equal(unknown("blocked", "Nothing to report yet."), "blocked");
+  assert.equal(unknown("idle", "The update check could not reach the release source."), "idle");
+  assert.equal(healthGroup({ name: "x", status: "warn", reason: "off", message: "" }), "warn");
   assert.deepEqual(
     configurationChanges(
       [
@@ -72,8 +57,13 @@ test("attention ranks real faults before review work and never treats unknown ru
     improveRuns: [{ ok: null }, { ok: false }],
   };
   const pulse = {
-    tiles: { runs: { failedTasks: [] } },
-    attention: { pending: { count: 3 }, misses: { queries: 1 }, harm: { reverted: 0 }, setup: null },
+    attention: {
+      pending: { count: 3 },
+      misses: { queries: 1 },
+      failedRuns: { improve: 0, tasks: 0 },
+      harm: { reverted: 0 },
+      setup: null,
+    },
   };
   const items = attentionItems(data, pulse);
   assert.deepEqual(
@@ -89,6 +79,21 @@ test("attention ranks real faults before review work and never treats unknown ru
   assert.equal(items[3].text, "3 proposals waiting for review");
   assert.equal(items[4].text, "1 query found nothing on multiple days");
   assert.equal(attentionItems({ health: null, improveRuns: [{ ok: null }] }, null).length, 0);
+});
+
+test("attention counts every failed task run akm reports, not the pulse's three-row preview", () => {
+  const pulse = {
+    tiles: { runs: { failedTasks: [{ taskId: "a" }, { taskId: "b" }, { taskId: "c" }] } },
+    attention: {
+      pending: { count: 0 },
+      misses: { queries: 0 },
+      failedRuns: { improve: 0, tasks: 25 },
+      harm: { reverted: 0 },
+      setup: null,
+    },
+  };
+  const [item] = attentionItems({ health: null, improveRuns: [] }, pulse);
+  assert.equal(item.text, "25 failed task runs this week");
 });
 
 test("rolling retrieval does not turn missing daily observations into measured zero", () => {
@@ -131,7 +136,6 @@ test("every view has a document title of its own, most specific part first", () 
     title("/library/edit?ref=personal%2F%2Fknowledge%2Frestore-laptop"),
     "Edit restore laptop · Library · AKM Desktop",
   );
-  assert.equal(title("/library/new"), "New knowledge · Library · AKM Desktop");
   assert.equal(title("/library/new-sensitive?kind=secret"), "New secret · Library · AKM Desktop");
   assert.equal(title("/review"), "Pending · Review · AKM Desktop");
   assert.equal(title("/review?status=recent"), "Recent decisions · Review · AKM Desktop");

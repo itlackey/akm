@@ -36,8 +36,9 @@ AKM version appear in the header. Nothing is copied from another machine.
 - **Library:** search and read like a website, or switch to Files to browse real
   bundle folders with a keyboard-operable tree and breadcrumbs. Edit supported
   Markdown with formatting buttons and preview, or other text as source.
-  Follow recorded connections, compare stored cosine similarity, rename/move
-  single-file assets (a copy, then a retirement of the original), copy whole
+  Follow recorded connections, compare stored cosine similarity, organise files
+  and folders in the tree like a file manager (rename, move, copy, delete, new
+  folder; a move is a rename on disk and the asset keeps its history), copy whole
   skills between bundles and edit their `SKILL.md`. Create, compare, copy,
   inspect history and record feedback. Diffs start inline.
   Environment files and secrets open masked; use **Show / Hide** to read them.
@@ -213,8 +214,7 @@ release; the app updates itself from those GitHub releases (see [Software](docs/
 See [Software](docs/software.md) for the application menu, host CLI
 installation and harness plugin management.
 
-No bulk retirement, skill-directory renaming,
-proposal amendment/rebase, or model-backed scheduling UI.
+No bulk retirement, proposal amendment/rebase, or model-backed scheduling UI.
 Secret/environment files have explicit masked viewing, create, edit and delete
 actions; generated sessions remain read-only. Large result lists expose their limit and can be narrowed
 with filters. This v1 is a foundation for human curation, not a claim that the
@@ -242,17 +242,51 @@ enabled bundles or just the current one. Browsing makes no model request.
 Scores describe indexed content, not a verdict that something is a duplicate.
 Compare opens the existing inline comparison.
 
-Use **More → Rename or move** for a single-file asset. It copies the asset to
-the chosen bundle and name (AKM's copy, which never overwrites and records the
-original in the copy's `sources`), then retires the original, so the original
-is recoverable from Review. Links and refs to the old name are not rewritten;
-`akm lint` reports them. Enabled tasks are not carried over: after moving a
-task, run `akm task disable` for the old ref and `akm task enable` for the new
-one. Existing usage/proposal history does not transfer to
-the new identity. Skills can be copied (**Copy to bundle**) but not moved.
-Edits and copies follow AKM's write, Git and indexing policy, including
-embedding-provider calls on changed content when configured. Desktop keeps no
-backup copies of its own.
+### Organising files
+
+In **Files**, every file and folder has the same menu: right-click it, press the
+menu key (or Shift+F10) on it in the tree, or use the **Actions for …** button on
+its row. It offers New file and New folder (on a folder), Rename, Move to…, Copy
+to…, Retire, Delete and, in the desktop app, Reveal in file manager. A control is
+offered when AKM says the action is allowed for that file, and shown disabled with
+AKM's sentence when it is not (a read-only bundle, a bundle of another adapter, a
+protected file, `.git/`, a skill's `SKILL.md`), so no control fails after the click.
+
+- **Rename** is inline (F2 in the tree). **Move to…** and **Copy to…** open a
+  folder picker that is the same tree; dragging a file or folder onto a folder is
+  the same move, and asks once, naming both. A move or rename is a plain rename on
+  disk followed by AKM's index (`bundles.index`), which pairs the file with the
+  asset it was: its usage, feedback and proposal history go with it, and the open
+  page follows the file to its new place. A copy is a new file.
+- Links in other assets that still name the old place are reported by AKM; a
+  notice counts them and **Update N links** rewrites exactly those, after you
+  choose it. A read-only bundle is counted and not written, with AKM's reason.
+- **New** names what AKM says the folder holds (New lesson, New workflow, New
+  file) and makes it in this folder of this bundle, started with the text its type
+  starts with, then opens the editor. New folder makes a folder. **Write this up**
+  (a search that found nothing) is the same create, for knowledge, in AKM's write
+  target.
+- **Copy to…** is one operation, from the tree and from an asset's More menu: AKM's
+  `assets.copyEntry` copies a file or folder to the folder you choose, staged, indexed
+  and committed by the bundle's policy, and records an asset's origin in `sources`.
+- **Delete** removes an empty folder or a file that is no asset after one
+  confirmation. An asset is retired, as below.
+- The list shows each entry's size and modified time. Git bundles show how many
+  files a commit would take (`akm sync`) above the files, with a **Commit** button;
+  nothing commits by itself.
+
+Reading and editing show a file's **Properties**: the frontmatter under the title
+for every kind, and in the editor as fields for the keys AKM knows for the type,
+a row for every other key, add and remove, with a **Text** switch for the whole
+file. Changes are applied by AKM (`documents.applyFrontmatter`), so unknown keys,
+quoting and the body stay as written. A script reads as code, a task as YAML, and
+**Source** is the whole file. Save asks AKM to check the text first: findings are
+listed beside the editor with their lines; text AKM could not read as the asset
+stops the save, with **Save anyway**, and the file is then shown as not indexed
+with AKM's reason. Enabled tasks are not carried over when a task moves or is
+retired: run `akm task disable` for the old ref and, after a move, `akm task
+enable` for the new one. Edits and copies follow AKM's write, Git and indexing
+policy. Desktop keeps no backup copies of its own.
 
 **More → Retire** immediately retires a single-file asset. It is recorded as an
 accepted retirement, so it appears in Review and Activity and follows the same
@@ -262,12 +296,11 @@ approval step. **Undo retirement** reverts that proposal, moving the exact files
 back without overwriting newer work; you can also revert it later from Review.
 Memory parents carry their derived twin. Existing links, pending proposals and
 installed schedules are not silently rewritten or approved. Agent-proposed
-retirements still require review. Skills cannot be retired piecemeal.
+retirements still require review. Skills cannot be retired piecemeal; a skill moves as its folder.
 
 ### Environment files, secrets and bundle names
 
-In **Files**, open the arrow beside **New knowledge** and choose **Environment
-file** or **Secret**. Choose a writable bundle, enter a filename and its text,
+In **Files**, open the top-level `env/` or `secrets/` folder and choose **New environment file** or **New secret** (AKM says those folders take them). Choose a writable bundle, enter a filename and its text,
 then create it. Open an existing file to **Edit** or **Delete** it, including
 files not yet indexed. Env files use `.env`; secrets are files under `secrets/`.
 Saving preserves existing newlines, uses private file permissions and follows

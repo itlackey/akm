@@ -577,21 +577,6 @@ describe("the model-work tool policy", () => {
     }
   });
 
-  test("an agent that ends with no answer has failed with parse_error; other work keeps its empty reply", async () => {
-    const runAgent = async () => ({ ok: true, exitCode: 0, stdout: "  \n", stderr: "", durationMs: 1 });
-    const run = (isModelWork: boolean) => {
-      const resolved = resolveExecution({ content: "x", config: modelWork, modelWork: isModelWork });
-      return runExecution(buildExecution(resolved.request, resolved.runner), { runAgent });
-    };
-
-    expect(await run(true)).toMatchObject({
-      ok: false,
-      reason: "parse_error",
-      error: '"claude" returned no answer.',
-    });
-    expect(await run(false)).toMatchObject({ ok: true, stdout: "  \n" });
-  });
-
   // The owner's harnesses name their model only in `args`, which model work otherwise leaves out.
   test("claude: a model named only in the harness's args reaches the model-work argv", async () => {
     const model = "claude-args-model";
@@ -607,5 +592,31 @@ describe("the model-work tool policy", () => {
     expect(argv[argv.indexOf("--model") + 1]).toBe(model);
     // The rest of the harness's args stay out of model work.
     expect(argv).not.toContain("--verbose");
+  });
+});
+
+describe("an agent's reply", () => {
+  const silent = async () => ({ ok: true, exitCode: 0, stdout: "  \n", stderr: "", durationMs: 1 });
+
+  test("an agent that exits 0 with no answer has failed with parse_error, model work or not", async () => {
+    const run = (modelWork: boolean) => {
+      const resolved = resolveExecution({ content: "x", config: config({ harnesses: { claude: {} } }), modelWork });
+      return runExecution(buildExecution(resolved.request, resolved.runner), { runAgent: silent });
+    };
+    const failed = { ok: false, exitCode: 0, reason: "parse_error", error: '"claude" returned no answer.' };
+
+    expect(await run(true)).toMatchObject(failed);
+    expect(await run(false)).toMatchObject(failed);
+  });
+
+  test("so has agent work on akm's own runtime", async () => {
+    const resolved = resolveExecution({ content: "x", config: config({ connections: { local: LAB } }) });
+    await withEnv({ AKM_PIPELINE_TEST_KEY: "sk-runtime" }, async () => {
+      expect(await runExecution(buildExecution(resolved.request, resolved.runner), { runSdk: silent })).toMatchObject({
+        ok: false,
+        reason: "parse_error",
+        error: '"local" returned no answer.',
+      });
+    });
   });
 });

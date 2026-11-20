@@ -716,7 +716,7 @@ esac`,
   });
 
   describe("--check", () => {
-    test("reports each harness (unknown where it needs a fetch) and changes nothing", async () => {
+    test("reports each harness (unknown where the marketplace cannot be read) and changes nothing", async () => {
       stubClaude({ from: "0.9.26", to: "0.9.27" });
       stubCodex({ from: "0.9.26", to: "0.9.27" });
       writeCachedOpenCode("0.9.26");
@@ -729,7 +729,7 @@ esac`,
         ["codex", "unknown"],
         ["opencode", "pending"],
       ]);
-      expect(entry(run, "claude-code").message).toContain("--check does not do");
+      expect(entry(run, "claude-code").message).toContain("build could not be read");
       expect(deps.upgradeCalls).toHaveLength(0);
       expect(mutations()).toEqual([]);
       expect(fs.existsSync(cacheDir())).toBe(true);

@@ -9,7 +9,7 @@
   import { duration } from "./activity-presenter";
   import type { WorkflowTrace } from "./activity-types";
   import { traceRows, type TraceRow } from "./workflow-trace-model";
-  import { statusOutcome } from "./run-model";
+  import { statusOutcome, workflowFacts } from "./run-model";
   import Outcome from "./Outcome.svelte";
   import RunFacts from "./RunFacts.svelte";
 
@@ -37,6 +37,7 @@
   });
 
   const layout = $derived(trace ? traceRows(trace) : null);
+  const facts = $derived(trace ? workflowFacts(trace) : null);
   const LEFT = 230;
   const ROW = 24;
   const x = (ms: number) =>
@@ -82,8 +83,9 @@
     </header>
     <p class="muted small">
       Started {date(trace.run.createdAt)}{trace.run.agentHarness ? ` by ${trace.run.agentHarness}` : ""}. {layout.done}
-      of {layout.units} units finished, {layout.tokens} tokens. A step has no start time of its own in akm: its span is its
-      units'.
+      of {layout.units} units finished, {facts && facts.tokens
+        ? `${facts.tokens.toLocaleString()} tokens reported${facts.unreported ? `, ${facts.unreported} attempts reported none` : ""}`
+        : "tokens not reported"}. A step has no start time of its own in akm: its span is its units'.
     </p>
     <RunFacts {trace} />
     <ol class="steps">
@@ -91,7 +93,9 @@
           <span class="muted small">Step {i + 1}</span>
           <strong>{step.title}</strong>
           <span class="small"
-            >{WORD[step.status] ?? step.status}{step.failed ? ` · ${step.failed} unit failed` : ""}</span
+            >{step.status ? (WORD[step.status] ?? step.status) : step.unitStatuses}{step.failed
+              ? ` · ${step.failed} unit failed`
+              : ""}</span
           >
           <span class="muted small"
             >{step.units} unit{step.units === 1 ? "" : "s"}{step.span === null ? "" : ` · ${mmss(step.span)}`}</span

@@ -22,7 +22,6 @@ import {
   workflowStructureDiagnostics,
 } from "../src/core/adapter/adapters/akm-lint";
 import { akmTaskAdapter } from "../src/core/adapter/adapters/akm-task-adapter";
-import { runBaseValidateChecks } from "../src/core/adapter/adapters/shared";
 import { detectAdapterId } from "../src/core/adapter/detect-adapter";
 import type { BundleComponent } from "../src/core/adapter/types";
 import { createValidateContext } from "../src/core/adapter/validate-context";
@@ -181,28 +180,33 @@ describe("stale-path skips run-time filename templates (#927)", () => {
     expect(issues.map((issue) => issue.detail)).toEqual(["ephemeral path: /tmp/akm-5-gone/current.md"]);
   });
 
-  test("the adapter validate path applies the same rules", async () => {
+  test.each([
+    [
+      "generated output",
+      "Run the following command:\n\n```sh\nexample-tool render --shot=/tmp/example-generated-image.png\n```",
+    ],
+    ["ordinary fenced paths", "```sh\ncat /tmp/akm-5-gone/input.md\n```"],
+    ["tilde fence", "~~~sh\ncat /tmp/akm-5-gone/input.md\n~~~"],
+    ["long fence with nested short fence", "````markdown\n```sh\ncat /tmp/akm-5-gone/input.md\n```\n````"],
+    ["indented fence", "   ```sh\ncat /tmp/akm-5-gone/input.md\n   ```"],
+  ])("%s is documentation, not a current filesystem assertion", (_name, body) => {
     storage = withIsolatedAkmStorage();
-    const body = [
-      "Historically wrote /tmp/akm-5-gone/old.md.",
-      "Write to /tmp/akm-5-gone/current.md.",
-      "Config at /home/akm-5-nobody/.config/x.json.",
-      "See core//tasks/akm-5-gone.",
-    ].join("\n");
-    const diagnostics = await runBaseValidateChecks(
-      "knowledge/n.md",
-      {
-        data: { name: "n", updated: "2026-01-01" },
-        content: body,
-        frontmatter: "name: n\nupdated: 2026-01-01",
-        bodyStartLine: 5,
-      },
-      storage.stashDir,
-      createValidateContext({ root: storage.stashDir }),
-    );
-    expect(diagnostics.map((d) => `${d.issue}: ${d.detail}`)).toEqual([
-      "stale-path: ephemeral path: /tmp/akm-5-gone/current.md",
-      "missing-ref: missing ref: core//tasks/akm-5-gone",
+    expect(staleIssues(storage, body)).toEqual([]);
+  });
+
+  test.each(["```", "~~~"])("%s fence contents do not change the following prose's section", (fence) => {
+    storage = withIsolatedAkmStorage();
+    const body = `${fence}markdown\n## History\nFor example /tmp/akm-5-gone/example.md\n${fence}\nRead /tmp/akm-5-gone/current.md as current input.`;
+    const issues = staleIssues(storage, body);
+    expect(issues.map((issue) => issue.detail)).toEqual(["ephemeral path: /tmp/akm-5-gone/current.md"]);
+    expect(issues[0]?.line).toBe(8);
+  });
+
+  test("mismatched delimiters and short or nonempty closers do not end a fence", () => {
+    storage = withIsolatedAkmStorage();
+    const body = "````sh\n~~~\n```\n```` trailing text\n/tmp/akm-5-gone/example.md\n````\n/tmp/akm-5-gone/current.md";
+    expect(staleIssues(storage, body).map((issue) => issue.detail)).toEqual([
+      "ephemeral path: /tmp/akm-5-gone/current.md",
     ]);
   });
 });
@@ -267,7 +271,7 @@ describe("akm lint fails closed on a nonexistent --dir", () => {
     try {
       typoResult = await akmLint({
         dir: storage.stashDir,
-        typeFilter: "workflow", // singular — the classic typo for "workflows"
+        typeFilter: "workflo", // a typo for "workflow"
         config: makeConfig(storage.stashDir),
       });
     } finally {
@@ -277,7 +281,7 @@ describe("akm lint fails closed on a nonexistent --dir", () => {
 
     expect(typoResult.flagged.length).toBeGreaterThan(0);
     expect(typoResult.flagged.length).toBe(wholeBundleResult.flagged.length);
-    expect(warnings.some((w) => w.includes('"workflow"') && w.includes("workflows"))).toBe(true);
+    expect(warnings.some((w) => w.includes('"workflo"') && w.includes("workflow"))).toBe(true);
   });
 
   test("a valid --type still lints normally", async () => {
@@ -1005,23 +1009,20 @@ describe("lint-cache-path-anchoring", () => {
       expect(structural).toHaveLength(1);
     });
 
-    test("a USER workflow subdirectory literally named '.cache' still gets lint findings (collectWorkflowFiles name-based exclusion)", async () => {
-      // Regression for the two remaining name-based exclusions
-      // (`entry.name === ".cache" || entry.name === "registry"`) in
-      // `collectWorkflowFiles` — distinct from the substring bug above.
-      // These skipped ANY directory named `.cache`/`registry` ANYWHERE in a
-      // bundle, including ordinary user content nested under such a name, not
-      // just akm's own resolved cache. `workflows/.cache/` here is user
-      // content, never akm's real cache dir.
-      const { dir: stashDir, cleanup } = makeSandboxDir("akm-lint-user-dotcache-dir");
+    test("a USER workflow subdirectory literally named 'registry' still gets lint findings (no name-based exclusion)", async () => {
+      // Regression for the name-based exclusion (`entry.name === "registry"`) that skipped ANY directory
+      // named `registry` ANYWHERE in a bundle, including ordinary user content nested under such a name, not just akm's
+      // own resolved cache. `workflows/registry/` here is user content, never akm's real cache dir. (A `.cache` directory
+      // is not user content to lint: the indexer's walk never lists one, and lint reads what the walk lists.)
+      const { dir: stashDir, cleanup } = makeSandboxDir("akm-lint-user-registry-workflows");
       cleanups.push(cleanup);
-      writeWorkflowFile(stashDir, path.join(".cache", "broken.md"), BROKEN_WORKFLOW);
+      writeWorkflowFile(stashDir, path.join("registry", "broken.md"), BROKEN_WORKFLOW);
 
       const result = await akmLint({ dir: stashDir, typeFilter: "workflows" });
 
       const structural = result.flagged.filter((i) => i.issue === "invalid-workflow-structure");
       expect(structural).toHaveLength(1);
-      expect(structural[0]?.file).toContain(path.join(".cache", "broken.md"));
+      expect(structural[0]?.file).toContain(path.join("registry", "broken.md"));
     });
 
     test("a USER 'raw/' source nested under a directory literally named 'registry' still trips uncited-raw (collectAdapterFiles name-based exclusion)", async () => {

@@ -6,7 +6,7 @@
 
 <script lang="ts">
   import { onDestroy, tick, untrack } from "svelte";
-  import { api, date } from "./client";
+  import { api, apiState, date } from "./client";
   import { navigate } from "./navigation";
   import ActivityChart from "./ActivityChart.svelte";
   import Icon from "./Icon.svelte";
@@ -49,7 +49,9 @@
   let {
     data,
     retrieval,
+    retrievalNote = "",
     pulse,
+    pulseNote = "",
     mode = "health",
     requestedTask = "",
     requestedRun = "",
@@ -61,7 +63,11 @@
   }: {
     data: ActivityOverview;
     retrieval: ActivityRetrieval | null;
+    /** Why the retrieval series could not be read, when akm said. */
+    retrievalNote?: string;
     pulse: ActivityPulse | null;
+    /** Why the weekly pulse could not be read, when akm said. */
+    pulseNote?: string;
     mode?: "health" | "runs" | "usage";
     requestedTask?: string;
     /** A workflow run whose trace the Runs view shows. */
@@ -153,7 +159,7 @@
     { key: "fail", label: "Failing", said: (n: number) => `${n} failing` },
     { key: "warn", label: "Warnings", said: (n: number) => `${n} ${n === 1 ? "warning" : "warnings"}` },
     { key: "off", label: "Turned off", said: (n: number) => `${n} turned off` },
-    { key: "unchecked", label: "Not checked", said: (n: number) => `${n} not checked` },
+    { key: "not-probed", label: "Not checked", said: (n: number) => `${n} not checked` },
     { key: "blocked", label: "Could not check", said: (n: number) => `${n} could not be checked` },
     { key: "idle", label: "No data yet", said: (n: number) => `${n} with no data yet` },
     { key: "pass", label: "Passing", said: (n: number) => `${n} passing` },
@@ -161,17 +167,19 @@
   // What the last "Run all checks" came to, for the status line; empty until one has run.
   let probeSaid = $state("");
   const checks = $derived([...(data.health?.hardChecks ?? []), ...(data.health?.advisories ?? [])]);
-  const classified = $derived(checks.map((check) => ({ check, group: healthGroup(check, checks) })));
+  const classified = $derived(checks.map((check) => ({ check, group: healthGroup(check) })));
   const grouped = (key: string) => classified.filter((item) => item.group === key).length;
   // What did not run, for the header.
   const notRun = $derived(
     groups
-      .filter((group) => ["off", "unchecked", "blocked"].includes(group.key) && grouped(group.key))
+      .filter((group) => ["off", "not-probed", "blocked"].includes(group.key) && grouped(group.key))
       .map((group) => group.said(grouped(group.key)))
       .join(", "),
   );
   const metrics = $derived(data.metrics);
   const weekly = $derived(retrieval?.weekly ?? []);
+  const weekLabel = (row: { week: string; partial: boolean }) =>
+    `${row.week.slice(5)}${row.partial ? " (partial)" : ""}`;
   const activity = $derived(metrics?.usage.daily ?? []);
   const processes = $derived(Object.entries(metrics?.llm.byProcess ?? {}).sort((a, b) => b[1].calls - a[1].calls));
   const tasks = $derived(metrics?.tasks.byTask ?? data.taskFailures ?? []);
@@ -179,24 +187,32 @@
   // The timeline reads every task run and workflow run of the window once, when Runs is shown.
   let taskRuns = $state<ActivityTaskRun[]>([]);
   let workflowRuns = $state<ActivityWorkflowRun[]>([]);
-  let runReadFailed = $state(false);
+  let runsReading = $state(true);
+  /** The reason akm gave for not returning task and workflow runs, or why the read failed. */
+  let runsFailure = $state("");
+  const runsUnknown = $derived(runsReading ? "Reading runs…" : runsFailure || null);
   let runsFor = 0;
   $effect(() => {
     if (mode !== "runs") return;
     const since = metrics?.window.since ?? "30d";
     const mine = ++runsFor;
+    runsReading = true;
+    runsFailure = "";
     void Promise.all([
-      api<{ runs: ActivityTaskRun[]; truncated: boolean }>("/tasks/runs", { since }),
-      api<{ runs: ActivityWorkflowRun[] }>("/workflows/runs", { since }),
+      apiState<{ runs: ActivityTaskRun[]; truncated: boolean }>("/tasks/runs", { since }),
+      apiState<{ runs: ActivityWorkflowRun[] }>("/workflows/runs", { since }),
     ]).then(
       ([tasks, workflows]) => {
         if (mine !== runsFor) return;
         taskRuns = tasks.runs;
         workflowRuns = workflows.runs;
-        runReadFailed = false;
+        runsReading = false;
+        runsFailure = "";
       },
-      () => {
-        if (mine === runsFor) runReadFailed = true;
+      (cause: Error) => {
+        if (mine !== runsFor) return;
+        runsReading = false;
+        runsFailure = cause.message;
       },
     );
   });
@@ -214,6 +230,7 @@
       label: "Improve",
       counts: outcomeCounts(kindOutcomes("improve")),
       note: "Latest 10 improve runs across all time, those inside the window.",
+      unknown: data.errors?.state,
     },
     {
       label: "Tasks",
@@ -225,8 +242,13 @@
             .map((row) => row.name),
         ),
       ],
+      unknown: runsUnknown ?? undefined,
     },
-    { label: "Workflows", counts: outcomeCounts(kindOutcomes("workflow")) },
+    {
+      label: "Workflows",
+      counts: outcomeCounts(kindOutcomes("workflow")),
+      unknown: runsUnknown ?? undefined,
+    },
   ]);
   const timelineSaid = (run: TimelineRun) =>
     run.durationMs === null ? run.said : `${run.said}, took ${duration(run.durationMs)}`;
@@ -364,12 +386,13 @@
         </section>{/if}{/each}{#if !data.health}<p>Health checks unavailable.</p>{/if}
   </section>
 {:else if mode === "usage"}
-  {#if metrics}<div class="metric-summary" aria-label="Selected-window activity">
+  {#if metrics && !data.errors?.state}<div class="metric-summary" aria-label="Selected-window activity">
       <span><strong>{number(metrics.usage.totals.searches)}</strong> searches</span><span
         ><strong>{number(metrics.usage.totals.shows)}</strong> asset opens</span
-      ><span><strong>{number(metrics.proposals.byStatus.pending)}</strong> pending proposals</span><span
-        >Median search time <strong>{duration(metrics.usage.searchMedianMs)}</strong></span
-      >
+      ><span
+        ><strong>{number(Object.values(metrics.proposals.byStatus).reduce((sum, count) => sum + count, 0))}</strong> proposals
+        updated in this window</span
+      ><span>Median search time <strong>{duration(metrics.usage.searchMedianMs)}</strong></span>
     </div>{/if}
   <section class="weekly-context" aria-labelledby="pulse-title">
     <h2 id="pulse-title">Last 7 days</h2>
@@ -396,10 +419,14 @@
               : `Usually ${number(pulse.tiles.negativeFeedback.usual.low)} to ${number(pulse.tiles.negativeFeedback.usual.high)} a week.`}</span
           >
         </p>
-      </div>{:else}<p class="muted">Weekly comparison unavailable; not a zero count.</p>{/if}
+      </div>{:else}<p class="muted">
+        Weekly comparison unavailable; not a zero count.{pulseNote ? ` ${pulseNote}` : ""}
+      </p>{/if}
   </section>
 
-  {#if !metrics}<p class="notice">Usage and model measurements unavailable.</p>{:else}
+  {#if !metrics || data.errors?.state}<p class="notice">
+      Usage and model measurements unavailable.{data.errors?.state ? ` ${data.errors.state}` : ""}
+    </p>{:else}
     <section id="activity-trends" aria-label="Search and model trends">
       <div class="chart-grid">
         {#if weekly.some((row) => row.n > 0)}<div class="chart-wide">
@@ -407,18 +434,20 @@
               id="activity-retrieval-rate"
               legend={[
                 { name: "Found nothing, by week", index: 0 },
-                { name: "Band: usual range", index: 0, band: true },
-                { name: "Centre", index: 5 },
+                ...(retrieval?.enoughHistory
+                  ? [
+                      { name: "Band: usual range", index: 0, band: true },
+                      { name: "Centre", index: 5 },
+                    ]
+                  : []),
               ]}
               heading="Is search finding what you need?"
-              description="Weekly share that found nothing, with the usual control range. Retrieval does not measure whether an answer was right."
+              description={`Weekly share that found nothing${retrieval?.enoughHistory ? ", with its usual range" : ". Too few whole weeks for a usual range"}. A hollow mark is a partial week. Not a measure of correct answers.`}
               option={() =>
-                pChartLine(
-                  weekly.map((row) => row.week.slice(5)),
-                  weekly,
-                  retrieval?.centre,
-                  { name: "Found nothing", unit: "Found nothing" },
-                )}
+                pChartLine(weekly.map(weekLabel), weekly, retrieval?.centre, {
+                  name: "Found nothing",
+                  unit: "Found nothing",
+                })}
             >
               <table>
                 <caption>Weekly retrieval and control bands</caption><thead
@@ -429,11 +458,23 @@
                   ></thead
                 ><tbody
                   >{#each weekly as row}<tr
-                      ><th>{row.week}</th><td>{row.n}</td><td>{row.x}</td><td>{percent(row.rate)}</td><td
+                      ><th>{row.week}{row.partial ? " (partial week)" : ""}</th><td>{row.n}</td><td>{row.x}</td><td
+                        >{percent(row.rate)}</td
+                      ><td
                         >{row.lower === null || row.upper === null
                           ? "Not measured"
                           : `${percent(row.lower)} to ${percent(row.upper)}`}</td
-                      ><td>{row.signal ? "Unusual" : row.n ? "Within range" : "No searches"}</td></tr
+                      ><td
+                        >{row.partial
+                          ? "Partial week"
+                          : row.signal
+                            ? "Unusual"
+                            : row.lower === null
+                              ? "Not measured"
+                              : row.n
+                                ? "Within range"
+                                : "No searches"}</td
+                      ></tr
                     >{/each}</tbody
                 >
               </table>
@@ -445,7 +486,7 @@
               height="strip"
               option={(token) =>
                 eventStrip(
-                  weekly.map((row) => row.week.slice(5)),
+                  weekly.map(weekLabel),
                   runs
                     .filter((run) => run.ok !== null)
                     .map((run) => ({
@@ -477,13 +518,15 @@
               height="short"
               option={() =>
                 verticalBars(
-                  weekly.map((row) => row.week.slice(5)),
+                  weekly.map(weekLabel),
                   [{ name: "Searches", data: weekly.map((row) => row.n) }],
                   "Searches",
                 )}
               ><table>
                 <caption>Weekly search volume</caption><thead><tr><th>Week</th><th>Searches</th></tr></thead><tbody
-                  >{#each weekly as row}<tr><th>{row.week}</th><td>{row.n}</td></tr>{/each}</tbody
+                  >{#each weekly as row}<tr
+                      ><th>{row.week}{row.partial ? " (partial week)" : ""}</th><td>{row.n}</td></tr
+                    >{/each}</tbody
                 >
               </table></ActivityChart
             >
@@ -511,7 +554,9 @@
           </div>{:else}<section class="chart-card chart-wide">
             <h2>Is search finding what you need?</h2>
             <p>
-              {retrieval ? "No searches recorded in this retrieval window." : "Retrieval measurements unavailable."}
+              {retrieval
+                ? "No searches recorded in this retrieval window."
+                : `Retrieval measurements unavailable.${retrievalNote ? ` ${retrievalNote}` : ""}`}
             </p>
           </section>{/if}
         <ActivityChart
@@ -669,7 +714,9 @@
         </p></ActivityChart
       >
     </section>{/if}
-  {#if runReadFailed}<p class="notice notice-warn">The run timeline could not read task and workflow runs.</p>{/if}
+  {#if runsFailure}<p class="notice notice-warn">
+      The run timeline could not read task and workflow runs. {runsFailure}
+    </p>{/if}
   {#if requestedRun}<WorkflowTraceView id={requestedRun} />{/if}
   <section id="workflow-runs" class="activity-section">
     <h2>Workflow runs</h2>
@@ -689,7 +736,9 @@
               >{/each}</tbody
           >
         </table>
-      </div>{:else}<p>No workflow runs in this window.</p>{/if}
+      </div>{:else if runsUnknown}<p class="muted">Workflow runs unknown. {runsUnknown}</p>{:else}<p>
+        No workflow runs in this window.
+      </p>{/if}
   </section>
   <section id="automation" class="activity-section">
     <h2>Scheduled tasks</h2>
@@ -766,7 +815,6 @@
           {#each history.runs.filter((run) => run.startedAt === openRun) as run}<TaskRunDetail
               {taskId}
               {run}
-              improveRuns={data.improveRuns}
             />{/each}{/if}
       </section>{/if}
   </section>

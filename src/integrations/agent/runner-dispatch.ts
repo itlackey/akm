@@ -215,17 +215,20 @@ function isConfinedAgentWork(execution: BuiltExecution): boolean {
   return execution.request.modelWork && execution.messages === undefined;
 }
 
-/** A model-work reply must end with an answer: an agent that stops with none (opencode at its step limit, for one) has failed. */
-function modelWorkAnswer(runner: RunnerSpec, result: AgentRunResult): AgentRunResult {
+/**
+ * An agent's reply is its stdout, and its exit code does not say whether it gave one: opencode exits 0 with none when
+ * its turn ends on a tool call it refused, or at its step limit. A run that ends with no answer has failed.
+ */
+function agentAnswer(runner: RunnerSpec, result: AgentRunResult): AgentRunResult {
   if (result.stdout.trim() !== "") return result;
   return { ...result, ok: false, reason: "parse_error", error: `"${runner.name}" returned no answer.` };
 }
 
 /**
  * Run a built execution. Credentials are read here, once per call, and never
- * returned. Model work on a harness runs confined: in a scratch working
- * directory, and it must end with an answer: an agent that stops with none
- * (opencode at its step limit, for one) has failed with `parse_error`.
+ * returned. Model work on a harness runs confined, in a scratch working
+ * directory. An agent run, on a harness or akm's own runtime, must end with an
+ * answer: one that stops with none has failed with `parse_error`.
  */
 export async function runExecution(
   execution: BuiltExecution,
@@ -281,7 +284,8 @@ export async function runExecution(
     options,
     llm,
   );
-  if (confined && result.ok) result = modelWorkAnswer(execution.runner, result);
+  // A direct chat is no agent: its callers judge its reply.
+  if (llm === undefined && result.ok) result = agentAnswer(execution.runner, result);
   // The LLM transport records each HTTP attempt itself.
   if (llm === undefined) recordDispatchUsage(execution, result);
   return result;

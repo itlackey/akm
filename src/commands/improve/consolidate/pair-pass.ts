@@ -42,6 +42,7 @@ import { UsageError } from "../../../core/errors";
 import type {
   ConsolidatePairJudgeLabel,
   ConsolidatePairPassResult,
+  PairDeferral,
   PairFailure,
   PairFailureKind,
 } from "../../../core/improve-types";
@@ -842,9 +843,10 @@ async function confirmNothingLost(ctx: PairPassContext, retired: PairSide, succe
   return claimList(parseEmbeddedJsonResponse<{ missing?: unknown }>(outcome.raw)?.missing)?.length === 0;
 }
 
-/** A judged pair's outcome: `failure` when it did not settle (so it is retried), with why. */
+/** A pair left unsettled by an execution failure or a deliberate deferral, with why. */
 interface PairJudgeResult {
   failure?: { kind: PairFailureKind; reason: string };
+  deferred?: PairDeferral["reason"];
 }
 
 const PAIR_FAILURES_REPORTED_MAX = 20;
@@ -938,13 +940,10 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
   // durable half).
   const retiredKey = stripBundle(retired.asset.ref);
   const successorKey = stripBundle(successor.asset.ref);
-  // A retire-worthy verdict the same-run
-  // chain guard drops is not a settled "no action" — a LATER run, once the
-  // conflicting retirement has been reviewed, may well mint it. Counted as
-  // failed so its initiator gets no row (real data: night 1 alone judged 177
-  // duplicate verdicts into only 59 proposals — 118 silently abandoned).
+  // The verdict is valid, but the conflicting proposal must resolve before
+  // this retirement can proceed. Leave its initiator eligible for a later run.
   if (ctx.retiredThisRun.has(retiredKey) || ctx.retiredThisRun.has(successorKey)) {
-    return failedPair("other", "a note in this pair was already retired earlier in this run");
+    return { deferred: "same_run_retirement" };
   }
   ctx.retiredThisRun.add(retiredKey);
   ctx.retiredThisRun.add(successorKey);
@@ -1036,7 +1035,7 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
       `Pair pass: could not mint a retire proposal for ${retired.asset.ref}: ${error instanceof Error ? error.message : String(error)}`,
     );
     // A mint failure is transient (a lock, a disk error, a
-    // validation hiccup) — treated the same as a same-run drop, so no row is
+    // validation hiccup) — no row is
     // written and the pair is retried next run instead of abandoned.
     return failedPair("other", error instanceof Error ? error.message : String(error));
   }
@@ -1074,6 +1073,7 @@ export async function runConsolidatePairPass(
     labelCounts: emptyLabelCounts(),
     retired: [],
     failedJudgments: 0,
+    deferredJudgments: 0,
   };
   const llmRunner = opts.llmRunner ?? undefined;
   if (!bundleId || !llmRunner) return empty;
@@ -1180,10 +1180,9 @@ export async function runConsolidatePairPass(
   };
 
   const failures: PairFailure[] = [];
-  // An initiator with any failed (or never-sent) judge call
-  // gets no ledger row — a failure attempted nothing conclusive, so writing
-  // one would mean the pair is never retried.
-  const failedInitiators = new Set<string>();
+  const deferrals: PairDeferral[] = [];
+  // Failed or deferred pairs get no ledger row: their work is still unsettled.
+  const unsettledInitiators = new Set<string>();
   if (judgeable.length > 0) {
     const results = await concurrentMap(
       judgeable,
@@ -1196,17 +1195,20 @@ export async function runConsolidatePairPass(
       // settle either, so it is counted as cancelled rather than as a clean "no action" verdict.
       const failure =
         r === undefined ? { kind: "cancelled" as const, reason: "not sent: the run was cancelled" } : r.failure;
-      if (!failure) return;
+      const deferred = r?.deferred;
+      if (!failure && !deferred) return;
       const candidate = judgeable[idx]!;
-      failedInitiators.add(candidate.initiator.ref);
-      failures.push({ initiator: candidate.initiator.ref, other: candidate.other.ref, ...failure });
+      unsettledInitiators.add(candidate.initiator.ref);
+      const pair = { initiator: candidate.initiator.ref, other: candidate.other.ref };
+      if (failure) failures.push({ ...pair, ...failure });
+      if (deferred) deferrals.push({ ...pair, reason: deferred });
     });
   }
 
   // S1: a ledger row is written for an initiator only once ALL of its OWN
   // candidates were admitted (whole-initiator admission above makes this a
   // simple membership check: judgeable either has every one of an
-  // initiator's candidates, or none of them) and none of them failed
+  // initiator's candidates, or none of them) and none failed or were deferred
   // — including an initiator with zero candidates, which
   // trivially satisfies both. One left out by the cap or a pending-proposal
   // collision gets no row at all, so the next run reconsiders it rather
@@ -1220,7 +1222,7 @@ export async function runConsolidatePairPass(
         const hasCandidates = byInitiator.has(i.ref);
         if (!hasCandidates) return true;
         if (!admittedRefs.has(i.ref)) return false;
-        return !failedInitiators.has(i.ref);
+        return !unsettledInitiators.has(i.ref);
       })
       .map((i) => ({
         stashDir,
@@ -1232,6 +1234,12 @@ export async function runConsolidatePairPass(
     recordLedgerAttempt({ proposalsCtx: opts.proposalsCtx }, ledgerInputs);
   }
 
+  const deferredJudgments = deferrals.length;
+  if (deferredJudgments > 0) {
+    warnings.push(
+      `Pair pass: ${deferredJudgments} retire decisions deferred because a note is already reserved for retirement in this run; these pairs remain eligible for later runs.`,
+    );
+  }
   const failedJudgments = failures.length;
   const failureKinds: Partial<Record<PairFailureKind, number>> = {};
   for (const { kind } of failures) failureKinds[kind] = (failureKinds[kind] ?? 0) + 1;
@@ -1248,12 +1256,13 @@ export async function runConsolidatePairPass(
     initiators: initiators.length,
     initiatorsBacklog,
     pairsConsidered: candidates.length,
-    // Parsed verdicts only — judgeable.length counted pairs that
-    // were admitted, not pairs a verdict actually came back for.
-    pairsJudged: judgeable.length - failedJudgments,
+    // Count the judge's parsed verdicts, including decisions deferred or failing after the verdict.
+    pairsJudged: Object.values(ctx.labelCounts).reduce((sum, count) => sum + count, 0),
     labelCounts: ctx.labelCounts,
     retired: ctx.retired,
     failedJudgments,
+    deferredJudgments,
+    ...(deferredJudgments > 0 ? { deferrals: deferrals.slice(0, PAIR_FAILURES_REPORTED_MAX) } : {}),
     ...(failedJudgments > 0 ? { failureKinds, failures: failures.slice(0, PAIR_FAILURES_REPORTED_MAX) } : {}),
   };
 }

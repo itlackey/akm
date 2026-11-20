@@ -226,6 +226,28 @@ steps:
     expect(result.steps?.[0]?.reason).toContain("reply_check_failed");
   });
 
+  test("a prompt step whose agent ends with no reply fails, and the next step gets nothing", async () => {
+    write(
+      "silent",
+      `version: 4
+harness: opencode
+steps:
+  - name: ask
+    prompt: Read the file and reply with its value.
+  - name: use
+    run: printf '%s' "$AKM_STEPS" > ${file("seen")}
+`,
+    );
+    const result = await run("silent", { runAgentImpl: async () => reply("") });
+    expect(result.status).toBe("failed");
+    expect(result.detail).toEqual({ reason: "step_failed", error: "ask: parse_error" });
+    expect(result.steps?.map((s) => [s.name, s.status])).toEqual([
+      ["ask", "failed"],
+      ["use", "skipped"],
+    ]);
+    expect(fs.existsSync(file("seen"))).toBe(false);
+  });
+
   test("earlier results reach a later prompt step", async () => {
     write(
       "chain",

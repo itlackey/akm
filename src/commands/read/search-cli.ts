@@ -32,7 +32,7 @@ import { parseIncludeFlags, projectContext, runCurate, stampedProject, withProje
 import { akmSearch, parseBeliefFilterMode, parseScopeFilterFlags } from "./search";
 import { akmShowUnified } from "./show";
 
-const scopeFilterArg = {
+export const scopeFilterArg = {
   type: "string",
   description:
     "Frontmatter key=value filter (repeatable); a repeated key matches any value, different keys must all match",
@@ -162,7 +162,7 @@ export const doctorMetricsAssetsCommand = defineJsonCommand({
 });
 
 /** `--from` is repeatable; citty keeps only the last value, so read every occurrence from argv. */
-function fromValues(parsed: unknown): string | string[] | undefined {
+export function fromValues(parsed: unknown): string | string[] | undefined {
   const all = parseAllFlagValues("--from");
   return all.length > 1 ? all : (parsed as string | undefined);
 }

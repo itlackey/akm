@@ -108,6 +108,7 @@ export function connectionsAndHarnessesCheck(
     return {
       ...base,
       status: "unknown",
+      reason: "off",
       message: "No connection or harness is configured: model features and agentic work are off. Run `akm setup`.",
     };
   }

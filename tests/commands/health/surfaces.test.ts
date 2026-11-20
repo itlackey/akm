@@ -4,8 +4,7 @@
 
 /**
  * 08 "surfaces" advisory group for `akm health` (egress-endpoints). Every collector is silent (`undefined`) when there is
- * nothing to report, mirroring the shipped `stash-git-exposure` advisory; only
- * `egress-endpoints` emits a pass-status informational entry whenever any
+ * nothing to report; only `egress-endpoints` emits a pass-status informational entry whenever any
  * remote endpoint is configured.
  */
 

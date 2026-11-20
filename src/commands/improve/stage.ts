@@ -26,6 +26,8 @@ import type { ChatCompletionConfig, ChatCompletionOptions, ChatMessage } from ".
 import { isRefused, type StructuredLoopOptions, type StructuredLoopResult, structuredLoop } from "../../llm/structured";
 import { type CallStructuredRequest, callStructured, type StructuredOutcome } from "../../llm/structured-call";
 import { currentLlmStage, withLlmStage } from "../../llm/usage-telemetry";
+import { getImproveLedgerRow } from "../../storage/repositories/improve-ledger-repository";
+import { getStateProposal } from "../../storage/repositories/proposals-repository";
 import type { RejectedProposalContext } from "../prompts";
 import { isProceduralRejection } from "../proposal/proposal-types";
 import {
@@ -40,6 +42,7 @@ import {
 } from "../proposal/repository";
 import { resolveImproveExecution } from "./execution";
 import type { ImproveProcessName, ResolvedImprovePlan } from "./improve-strategies";
+import { readLedgerDb } from "./ledger";
 
 /** Normalize an unknown thrown value to a message. */
 export function errMessage(e: unknown): string {
@@ -156,29 +159,57 @@ export function attributeStage<T>(
 export const MAX_REJECTED_PROPOSALS = 3;
 
 /**
- * Reflexion context: the newest reviewer rejections for `ref`. Procedural
- * refusals (expiry, stale target, missing asset) are not judgements on the
- * content and are left out. Reads never create state.db, and an improve run's
- * live connection (`eventsCtx.db`) is read through, not copied.
+ * The newest content rejections for this input. A guard can reject before
+ * minting, and a distill proposal targets its output, not its input; the
+ * exact input's last ledger attempt covers both. Procedural refusals do not
+ * judge content. Read through the live connection or open one read snapshot.
  */
 export function rejectedProposalContext(
   stash: string,
   ref: string | undefined,
   ctx?: ProposalsContext,
   eventsCtx?: EventsContext,
+  attempt?: { source: "reflect" | "distill"; ref: string },
 ): RejectedProposalContext[] {
   if (!ref) return [];
-  const proposalsCtx = eventsCtx?.db ? { ...ctx, db: eventsCtx.db } : ctx;
-  return listProposalsReadOnly(stash, { ref, status: "rejected", includeArchive: true }, proposalsCtx)
-    .filter((p) => !isProceduralRejection(p))
-    .sort((a, b) => new Date(b.updatedAt ?? 0).getTime() - new Date(a.updatedAt ?? 0).getTime())
-    .slice(0, MAX_REJECTED_PROPOSALS)
-    .map((p) => ({
-      ref: p.ref,
-      reason: p.review?.reason ?? "no reason given",
-      // `payload.content` is populated on every row, including legacy ones.
-      contentPreview: p.payload.content.slice(0, 500),
-    }));
+  const db = eventsCtx?.db ?? ctx?.db;
+  return (
+    readLedgerDb({ proposalsCtx: ctx, eventsCtx: db ? { ...eventsCtx, db } : eventsCtx, readOnly: true }, (db) => {
+      const proposals = listProposalsReadOnly(stash, { ref, status: "rejected", includeArchive: true }, { ...ctx, db });
+      const history: Array<{ at: string; entry: RejectedProposalContext }> = [];
+      try {
+        const latest = attempt ? getImproveLedgerRow(db, stash, attempt.ref, attempt.source) : undefined;
+        if (latest?.outcome === "quality_rejected" && latest.detail) {
+          history.push({ at: latest.lastAttemptAt, entry: { ref, reason: latest.detail } });
+        } else if (
+          latest?.outcome === "rejected" &&
+          latest.proposalId &&
+          !proposals.some((p) => p.id === latest.proposalId)
+        ) {
+          const linked = getStateProposal(db, latest.proposalId, stash);
+          if (linked?.status === "rejected") proposals.push(linked);
+        }
+      } catch (error) {
+        // A read-only preview may open a database that predates the ledger.
+        warn(`[improve] ledger read failed: ${errMessage(error)}`);
+      }
+      for (const proposal of proposals) {
+        if (isProceduralRejection(proposal)) continue;
+        history.push({
+          at: proposal.updatedAt,
+          entry: {
+            ref: proposal.ref,
+            reason: proposal.review?.reason ?? "no reason given",
+            contentPreview: proposal.payload.content.slice(0, 500),
+          },
+        });
+      }
+      return history
+        .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
+        .slice(0, MAX_REJECTED_PROPOSALS)
+        .map(({ entry }) => entry);
+    }) ?? []
+  );
 }
 
 // ── Mint ─────────────────────────────────────────────────────────────────────

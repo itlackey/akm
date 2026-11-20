@@ -53,7 +53,9 @@ In order, every run applies (or, under `status`, plans):
    bundles that still use the old spelling (`knowledge/WORK/x`, now
    `WORK/x`), in frontmatter and body, rewritten under one backup directory per
    run. An old spelling that is now another file's ref is listed in `shadowed`
-   and left as written. The same step re-keys the `state.db` rows (usage events,
+   and left as written. The ref scan and rewrite is `src/core/asset/ref-rewrite.ts`,
+   the same code `akm lint --fix` uses to rewrite links to a ref that `akm index`
+   recorded as moved. The same step re-keys the `state.db` rows (usage events,
    proposals, events, task history, improve ledger, asset salience and outcome)
    stored under an old spelling to the new one, `stateRows` of them; `index.db`
    is rebuilt by the next `akm index`.

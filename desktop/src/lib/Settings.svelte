@@ -97,12 +97,8 @@
     bundles: Bundle[],
   ): SettingsGroup[] {
     const names = listing?.bundles.map((bundle) => bundle.name) ?? bundles.map((bundle) => bundle.name);
-    const unavailableWrites = (listing?.bundles ?? bundles)
-      .filter(
-        (bundle) =>
-          !bundle.enabled || !bundle.writable || !bundle.components.some((component) => component.adapter === "akm"),
-      )
-      .map((bundle) => bundle.name);
+    const blockers = new Map((listing?.bundles ?? bundles).map((bundle) => [bundle.name, bundle.writeBlocker]));
+    const unavailableWrites = [...blockers].filter(([, blocker]) => blocker !== null).map(([name]) => name);
     const groups: SettingsGroup[] = [
       {
         id: "search-settings",
@@ -138,9 +134,9 @@
             label: "Default bundle",
             kind: "select",
             disabledOptions: unavailableWrites,
-            hint: unavailableWrites.includes(String(config?.config.defaultBundle ?? ""))
-              ? "The default bundle cannot accept writes. Choose an enabled writable bundle."
-              : "New content needs an enabled, writable AKM bundle.",
+            hint:
+              blockers.get(String(config?.config.defaultBundle ?? "")) ??
+              "New content needs a bundle that accepts writes.",
             options: [
               ["", "Automatic"],
               ...names.map(
@@ -158,6 +154,20 @@
             label: "Require a reason with negative feedback",
             kind: "boolean",
             hint: "When off, negative feedback without a reason only warns.",
+          },
+        ],
+      },
+      {
+        id: "usage-report-settings",
+        title: "Usage reports",
+        description:
+          "Whether AKM sends its daily usage report: command counts and library size, never content or names.",
+        fields: [
+          {
+            key: "usage.report",
+            label: "Send a daily usage report",
+            kind: "boolean",
+            hint: "At most once a day each from the CLI and Desktop. Applies to both.",
           },
         ],
       },
@@ -425,7 +435,7 @@
               <dd>
                 {listing.index.embeddingCount === null
                   ? "Not measured"
-                  : `${listing.index.embeddingCount} recorded`}{listing.index.embeddingCoverage === null
+                  : `${listing.index.embeddingCount} for the current model`}{listing.index.embeddingCoverage === null
                   ? ""
                   : ` · ${Math.round(listing.index.embeddingCoverage * 100)}% coverage`}
               </dd>

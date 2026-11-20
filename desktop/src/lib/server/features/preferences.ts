@@ -32,17 +32,43 @@ export function validUpdateChannel(value: unknown): value is UpdateChannel {
 export function validPluginChannel(value: unknown): value is PluginChannel {
   return value === "latest" || value === "next";
 }
+/** The saved file exists but cannot be used. `damaged` is a file that was read and is not a preferences object; otherwise it could not be read at all. */
+export class PreferencesUnreadable extends Error {
+  file = file;
+  damaged: boolean;
+  constructor(cause: unknown, damaged: boolean) {
+    super(`${file} could not be read: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
+    this.damaged = damaged;
+  }
+}
+/** The saved preferences, or `{ theme: "system" }` when none were saved yet. Throws {@link PreferencesUnreadable} for a file that is there but unusable. */
 export async function readPreferences(): Promise<Preferences> {
+  let text: string;
   try {
-    const value = JSON.parse(await readFile(file, "utf8"));
+    text = await readFile(file, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { theme: "system" };
+    throw new PreferencesUnreadable(error, false);
+  }
+  try {
+    const value = JSON.parse(text);
+    if (value === null || typeof value !== "object" || Array.isArray(value)) throw new TypeError("Not an object.");
     return {
       theme: validTheme(value?.theme) ? value.theme : "system",
       ...(validUpdateChannel(value?.updateChannel) ? { updateChannel: value.updateChannel } : {}),
       ...(validPluginChannel(value?.pluginChannel) ? { pluginChannel: value.pluginChannel } : {}),
     };
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT" || error instanceof SyntaxError) return { theme: "system" };
-    throw error;
+    throw new PreferencesUnreadable(error, true);
+  }
+}
+/** What the views show: the saved preferences, or the defaults with `unreadable` saying which file could not be read and why. */
+export async function preferencesView(): Promise<Preferences & { unreadable?: { file: string; error: string } }> {
+  try {
+    return await readPreferences();
+  } catch (error) {
+    if (!(error instanceof PreferencesUnreadable)) throw error;
+    return { theme: "system", unreadable: { file: error.file, error: error.message } };
   }
 }
 let saving: Promise<unknown> = Promise.resolve();
@@ -50,18 +76,32 @@ let saving: Promise<unknown> = Promise.resolve();
  * Merge `changes` into the saved preferences and write the file whole, atomically. Saves run one after another: the
  * rename keeps one file whole, but two overlapping read-merge-writes would drop one of their changes.
  */
-export function savePreferences(changes: Partial<Preferences>): Promise<Preferences> {
+export function savePreferences(changes: Partial<Preferences>): Promise<Preferences & { movedAside?: string }> {
   const result = saving.then(() => write(changes));
   saving = result.catch(() => undefined);
   return result;
 }
-async function write(changes: Partial<Preferences>): Promise<Preferences> {
-  const next = { ...(await readPreferences()), ...changes };
+/**
+ * A damaged file is moved aside once, under a name that says so, before the first save writes a new one; a file that
+ * cannot be read at all is left alone and the save fails with the reason.
+ */
+async function write(changes: Partial<Preferences>): Promise<Preferences & { movedAside?: string }> {
+  let current: Preferences;
+  let movedAside: string | undefined;
+  try {
+    current = await readPreferences();
+  } catch (error) {
+    if (!(error instanceof PreferencesUnreadable && error.damaged)) throw error;
+    movedAside = `${file}.unreadable-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+    await rename(file, movedAside);
+    current = { theme: "system" };
+  }
+  const next = { ...current, ...changes };
   await mkdir(path.dirname(file), { recursive: true });
   const temporary = `${file}.${randomUUID()}.tmp`;
   await writeFile(temporary, `${JSON.stringify(next)}\n`, { mode: 0o600 });
   await rename(temporary, file);
-  return next;
+  return movedAside ? { ...next, movedAside } : next;
 }
 /** Saving a choice and applying it to the running app are separate results: the file is written either way. */
 export async function tryApply(

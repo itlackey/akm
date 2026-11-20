@@ -71,6 +71,8 @@ export namespace activity {
   /** One improve run by id, however old, in the shape of an overview `improveRuns` entry. */
   function improveRun(input: { id: string }): unknown;
   function meta(): { version: string; hostname: string; runtime: string };
+  /** The daily usage report for Desktop: sent at most once a UTC day, opt out with `usage.report: false`. Never rejects; `true` when sent. */
+  function reportUsage(): Promise<boolean>;
   /** Every search, show, feedback and curate row of the window, from every source, oldest first. */
   function events(input?: { since?: string; until?: string }): unknown;
   function overview(input?: { probe?: boolean; metricsSince?: string }): Promise<unknown>;
@@ -79,6 +81,8 @@ export namespace activity {
   function taskHistory(input: { taskId?: string; since?: string; limit?: number }): unknown;
   /** Every scheduled-task run that started in the window, for all tasks, newest first. */
   function taskRuns(input?: { since?: string }): unknown;
+  /** One task run's recorded output (`logs.db`), oldest line first; `available: false` when there is no `logs.db`. */
+  function taskRunLog(input: { taskId?: string; startedAt?: string }): unknown;
   /** One workflow run with its steps, units, each unit's attempts, and its child runs. */
   function workflowRun(input: { id: string }): unknown;
   /** The workflow runs created in the window, or still active, newest first. */
@@ -91,6 +95,31 @@ export namespace assets {
   function history(input: { ref: string; revision?: string; limit?: number }): Promise<unknown>;
   /** What improve proposed for one asset, how it was decided, and how the asset has been used since. */
   function improvement(input: { ref: string }): unknown;
+  /**
+   * Per akm bundle, the links that name the old ref of an asset renamed or moved on disk, with the ref it has now. A
+   * read-only bundle is listed too (`writable: false`, `writeBlocker`); nothing is written.
+   */
+  function movedLinks(input?: { bundle?: string }): Promise<{
+    bundles: Array<{
+      bundle: string;
+      writable: boolean;
+      writeBlocker: string | null;
+      links: Array<{ ref: string; file: string; from: string; to: string }>;
+    }>;
+    total: number;
+  }>;
+  /**
+   * Copy a file or folder to a folder of a bundle (the same or another): a new file wherever the person puts it, staged and
+   * renamed into place, indexed, committed by the bundle's Git policy, with a Markdown asset recording its origin in `sources`.
+   * Nothing is overwritten; env and secret files and managed folders are refused.
+   */
+  function copyEntry(input: { bundle: string; from: string; toBundle?: string; folder?: string; name: string }): Promise<{
+    bundle: string;
+    from: string;
+    toBundle: string;
+    to: string;
+    indexed: boolean;
+  }>;
   function related(input: { ref: string; scope?: "all" | "bundle" }): Promise<unknown>;
   function search(input: {
     q: string;
@@ -106,13 +135,27 @@ export namespace assets {
   function projectOverview(input: { project: string }): unknown;
   function searchMisses(input?: { since?: string }): unknown;
   function show(input: { ref: string }): Promise<unknown>;
+  /** Rewrite the links to moved refs in one bundle, and nothing else; a read-only bundle is refused. */
+  function updateMovedLinks(input: { bundle: string }): Promise<{ bundle: string; rewritten: number; files: string[] }>;
 }
 export namespace backups {
   /** `akm backups prune`: remove backups older than `olderThan` (default 30d), keeping the newest of each folder. A real run needs `confirm`; `dryRun` removes nothing. */
   function prune(input?: { olderThan?: string; dryRun?: boolean; confirm?: boolean }): Promise<Record<string, unknown>>;
 }
 export namespace bundles {
+  /** `akm sync` for one bundle: commit every unignored change, and push when writable with a remote. Reports the commit and the push, or why nothing was committed (`output`, and `reason` when the push was skipped). */
+  function commit(input: { bundle: string; message?: string; push?: boolean }): Promise<{
+    bundle: string;
+    committed: boolean;
+    pushed: boolean;
+    skipped: boolean;
+    reason?: string;
+    output: string;
+    commit?: string;
+  }>;
   function add(input: { source: string; name?: string; writable?: boolean }): Promise<unknown>;
+  /** `akm index`: the incremental build. A file renamed or moved on disk is paired with the asset it was and keeps its history; the result's `moves` says which (`moved: [{from, to}]`, `unpaired`). */
+  function index(): Promise<{ totalEntries: number; mode: string; warnings?: string[]; moves?: { moved: Array<{ from: string; to: string }>; unpaired: number } }>;
   function list(): Promise<unknown>;
   function remove(input: { bundle: string; confirm: boolean }): Promise<unknown>;
   function rename(input: { bundle: string; name: string; dryRun?: boolean }): Promise<unknown>;
@@ -148,6 +191,61 @@ export namespace config {
   };
 }
 export namespace documents {
+  /**
+   * What akm says about text before it is saved at a path of an akm bundle: the findings `akm lint` reports for the file
+   * (with their lines where the check knows one), and whether akm could still read the asset. Nothing is written.
+   */
+  function check(input: { bundle: string; path: string; content: string }): Promise<{
+    bundle: string;
+    path: string;
+    type: string | null;
+    findings: Array<{ issue: string; file: string; detail: string; line?: number; ref?: string }>;
+    warnings: Array<{ issue: string; file: string; detail: string; line?: number; ref?: string }>;
+    readable: boolean;
+    unreadable?: { reason: string; line?: number };
+  }>;
+  /**
+   * A file's frontmatter for a form: its keys and values in file order as akm's YAML reads them (`error` when the block does
+   * not parse), and the keys akm knows for the file's type with the required ones marked. Parse nothing in the host.
+   */
+  function frontmatter(input: { bundle: string; path: string; content: string }): {
+    bundle: string;
+    path: string;
+    type: string | null;
+    present: boolean;
+    /** A Markdown file, which akm reads frontmatter from. */
+    markdown: boolean;
+    /** Where the body starts in `content`: after the closing fence, 0 when there is no frontmatter. */
+    bodyStart: number;
+    entries: Array<{ key: string; value: unknown; known: boolean }>;
+    error?: { reason: string; line?: number };
+    keys: Array<{
+      key: string;
+      required: boolean;
+      kind: "text" | "list" | "flag" | "map";
+      values?: readonly string[];
+      hint: string;
+      stamped?: boolean;
+    }>;
+  };
+  /**
+   * `content` with key changes applied to its frontmatter (a key set to a value, or removed): the body and every key not
+   * named stay as written. A change that cannot be made that way is refused.
+   */
+  function applyFrontmatter(input: {
+    content: string;
+    changes: Array<{ key: string; value?: unknown; remove?: true }>;
+  }): { content: string; bodyStart: number };
+  /** A new file in a folder of a bundle, for any type: the folder's type decides the starting text; a folder with no type gets an empty file. */
+  function createFile(input: { bundle: string; folder?: string; type?: string; name: string; content?: string }): Promise<{
+    bundle: string;
+    file: string;
+    type: string | null;
+    ref: string | null;
+    path: string;
+    stashDir: string;
+    indexed: boolean;
+  }>;
   function copy(input: { sourceRef: string; target?: string; newName?: string }): Promise<CloneResponse>;
   function createKnowledge(input: { bundle: string; name: string; path?: string; content: string }): Promise<unknown>;
   function readSource(input: {
@@ -197,7 +295,8 @@ export namespace sensitive {
     name: string;
     bundle: string;
     path: string;
-    writable: boolean;
+    /** What akm accepts doing to the file: allowed, or the sentence its write path refuses with. */
+    actions: Record<"edit" | "delete", { allowed: true } | { allowed: false; reason: string }>;
     revision: string;
     location: { bundle: string; path: string; parent: string };
   };

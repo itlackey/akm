@@ -289,6 +289,11 @@ describe("setup.apply", () => {
       expect(savedConfig().harnesses).toBeUndefined();
       expect(after.modelCalls.platform).toBeNull();
       expect(after.harnesses.map((item) => item.platform)).toContain("claude");
+      // akm says whether its model calls on the program can be limited to read-only, apart from the note's words.
+      expect(after.harnesses.find((item) => item.platform === "claude")).toMatchObject({
+        modelWorkReadOnly: expect.any(Boolean),
+        modelWorkNote: expect.any(String),
+      });
     } finally {
       restore();
     }

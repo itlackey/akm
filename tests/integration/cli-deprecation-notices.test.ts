@@ -149,6 +149,29 @@ test("improve --require-feedback-signal names the strategy setting; remember --a
   }
 });
 
+test("akm env run and akm secret run name akm exec", () => {
+  const messages: string[] = [];
+  const notice = (userArgs: string[], commandPath: string[]) => {
+    _resetWarnOnceForTests();
+    messages.length = 0;
+    _setWarnSinkForTests((_level, args) => messages.push(args.join(" ")));
+    const invocation = setParsedInvocation(["bun", "akm", ...userArgs]);
+    warnDeprecatedUse(commandPath, invocation, { ref: { type: "positional" } }, {});
+    return messages.join("\n");
+  };
+  try {
+    const env = notice(["env", "run", "env/x", "--", "true"], ["env", "run"]);
+    expect(env).toContain("[deprecated] akm env run is deprecated and is removed in 0.11");
+    expect(env).toContain("`akm exec --env <ref> -- <command>`");
+    const secret = notice(["secret", "run", "secrets/x", "X", "--", "true"], ["secret", "run"]);
+    expect(secret).toContain("[deprecated] akm secret run is deprecated and is removed in 0.11");
+    expect(secret).toContain("`akm exec --secret <ref>:<VAR> -- <command>`");
+  } finally {
+    _setWarnSinkForTests(undefined);
+    _resetParsedInvocationForTests();
+  }
+});
+
 test("every akm workflow command, a workflow ref run through akm run, and a task that runs a workflow say workflows go in 0.11", () => {
   const messages: string[] = [];
   const capture = (fn: () => void) => {

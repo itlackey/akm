@@ -84,7 +84,7 @@ describe("akm lint: per-rule summary, --rule listing and rule precision", () => 
     );
     const result = await akmLint({ dir: storage.stashDir, config, rule: "no-such-rule" });
     expect(result.rule).toBeUndefined();
-    expect(Object.keys(result.byRule)).toEqual(["stale-path", "missing-updated"]);
+    expect(Object.keys(result.byRule).sort()).toEqual(["missing-updated", "stale-path"]);
   });
 
   test("missing-updated does not apply to skills", async () => {
