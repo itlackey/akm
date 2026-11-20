@@ -119,8 +119,9 @@ migrate apply` rewrites the file.
 ## Running commands
 
 `akm exec` is Experimental and off by default; `akm config set experimental.exec
-true` turns it on. `akm exec [--env <ref>]... [--secret <ref>:<VAR>]... -- <command>` spawns the
-command directly (no shell) with the values added to its environment. It exits
+true` turns it on. `akm exec [--env <ref>]... [--secret <ref>:<VAR>]... -- <command>` runs the
+command with the values added to its environment: one argument is a shell line,
+several are a program and its arguments (see [CLI: exec](cli.md#exec)). It exits
 with the command's status and is exempt from `--format`. `akm run <ref>` takes
 the same two flags and runs an agent, command, task or workflow with them (see
 [CLI: run](cli.md#run)).
@@ -136,8 +137,11 @@ the same two flags and runs an agent, command, task or workflow with them (see
   `--except` have no `exec` form: keep the variables a command needs in an env
   asset of their own.
 - `--clean` starts the child with a minimal inherited environment (`PATH`,
-  `HOME`, locale and terminal basics) instead of the full parent environment;
-  `--inherit NAME,NAME` adds parent variables back (only with `--clean`).
+  `HOME`, locale and terminal basics, and akm's own location variables
+  `AKM_CONFIG_DIR`, `AKM_CONFIG_FILE`, `AKM_DATA_DIR`, `AKM_CACHE_DIR` and
+  `AKM_STATE_DIR`) instead of the full parent environment; `--inherit NAME,NAME`
+  adds parent variables back. `--inherit` alone starts the child clean with those
+  variables. `akm run` takes `--clean` and `--inherit` the same way.
 - A value in an env file may contain a `${ref}` token, which injection replaces
   (see [The `${ref}` token](#the-ref-token)).
 - Injected values stay in the child's environment for its whole lifetime, so its
@@ -151,6 +155,36 @@ the same two flags and runs an agent, command, task or workflow with them (see
   non-blocking) so an author can review their own files.
 - Each run records an `env_access` or `secret_access` event with the key or
   variable names.
+
+## Secrets in a version 5 task
+
+A [version 5 task](tasks.md#task-source-v5-experimental) starts every step in a
+clean environment, so a secret reaches only the steps it is given to:
+
+- A secret reaches a step through `secret:` or `--secret`, or through an env
+  asset that binds it to a variable. A task file names a secret only by its ref,
+  and only under `secret:`; a `${secrets/...}` in a command, a prompt, `args:` or
+  an `env:` value is refused before anything runs. A secret is not an input: a
+  task that needs one names it, and a caller cannot pass one in `args:`.
+- Before a step's result enters the run's state, and so before a later prompt can
+  contain it, akm replaces each secret value set for that run with `[REDACTED]`.
+  It does the same for logs and for a failed step's reason. A secret value is
+  what akm treats as one elsewhere: a secret's value, and the value, when it has
+  8 characters or more, of a variable whose name has `KEY`, `APIKEY`, `TOKEN`,
+  `SECRET`, `PASSWORD`, `PASSWD`, `PASS`, `PAT`, `CREDENTIAL`, `CREDENTIALS` or
+  `AUTH` as one of its `_`-separated parts, or is `PGPASSWORD` or `MYSQL_PWD`.
+- A credential kept under a plain name, such as a webhook address in
+  `NOTIFY_URL`, is not protected. Store it as a secret and give it with
+  `secret:`.
+- An agent that has a secret in its environment can print it with a command and
+  read it; akm cannot prevent that. Give a secret to the step that needs it, not
+  to the whole task or run.
+- akm removes secret values from results and logs, not from files. A script that
+  has a secret can write it into a file in the working folder, and an agent step
+  that reads the file sees it.
+- A bundle keeps its secrets and env assets as files. An agent that works in a
+  bundle can open them, and what it reads that way is not removed from its
+  reply. A run does not work in a bundle unless `cwd:` or `--cwd` names it.
 
 ## Files and storage
 
