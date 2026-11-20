@@ -4,11 +4,10 @@
 
 /**
  * What the single-run views say about a run, from records akm already returns. Nothing is derived beyond reading:
- * an outcome is only what the record says, a run with no recorded end is unknown (never succeeded), and a record
- * matched to a run by time is marked as such.
+ * an outcome is only what the record says, and a run with no recorded end is unknown (never succeeded).
  */
 
-import type { ActivityRun, ActivityTaskRun, WorkflowTrace } from "./activity-types";
+import type { ActivityRun, WorkflowTrace } from "./activity-types";
 
 /** `terminated` is a run stopped from outside, and only an improve run's record says so (a signal or an exception). */
 export type Outcome = "completed" | "failed" | "terminated" | "unknown";
@@ -21,7 +20,14 @@ export const OUTCOME_LABEL: Record<Outcome, string> = {
 };
 
 /** One kind of run and how its recorded runs ended, for the summary above the timeline. */
-export type OutcomeRow = { label: string; counts: Record<Outcome, number>; failed?: string[]; note?: string };
+export type OutcomeRow = {
+  label: string;
+  counts: Record<Outcome, number>;
+  failed?: string[];
+  note?: string;
+  /** Why the runs of this kind are not known (still being read, or the reason the read failed); the counts are then not shown. */
+  unknown?: string;
+};
 
 /** A task or workflow run's recorded status. `blocked`, `active` and `interrupted` have no end recorded, so they are unknown. */
 export function statusOutcome(status: string): Outcome {
@@ -31,27 +37,6 @@ export function statusOutcome(status: string): Outcome {
 export function improveOutcome(run: Pick<ActivityRun, "ok" | "terminated">): Outcome {
   if (run.terminated) return "terminated";
   return run.ok === true ? "completed" : run.ok === false ? "failed" : "unknown";
-}
-
-/** What akm's health report matches an improve run to: a scheduled task named `improve` or `akm-improve*`, ±5 min. */
-export const MATCH_WINDOW_MS = 5 * 60_000;
-const launchesImprove = (taskId: string) => taskId === "improve" || taskId.startsWith("akm-improve");
-
-/**
- * The scheduled task runs that started within five minutes of an improve run. No improve record carries a task run
- * id, so this is a match by time and the view says so; more than one match is shown as more than one.
- */
-export function tasksAroundImprove(run: Pick<ActivityRun, "startedAt">, taskRuns: ActivityTaskRun[]) {
-  const at = Date.parse(run.startedAt);
-  return taskRuns.filter(
-    (task) => launchesImprove(task.taskId) && Math.abs(Date.parse(task.startedAt) - at) <= MATCH_WINDOW_MS,
-  );
-}
-/** The improve runs a scheduled task run could have started: the same match, from the other side. */
-export function improveAroundTask(task: Pick<ActivityTaskRun, "taskId" | "startedAt">, runs: ActivityRun[]) {
-  if (!launchesImprove(task.taskId)) return [];
-  const at = Date.parse(task.startedAt);
-  return runs.filter((run) => Math.abs(Date.parse(run.startedAt) - at) <= MATCH_WINDOW_MS);
 }
 
 /** A failed attempt, in the order they happened. `at` is when it ended, or began when no end was recorded. */
@@ -112,6 +97,8 @@ export function workflowFacts(trace: WorkflowTrace) {
   return {
     failures,
     engines: [...engines.values()].sort((a, b) => b.tokens - a.tokens || a.engine.localeCompare(b.engine)),
+    tokens: [...engines.values()].reduce((sum, row) => sum + row.tokens, 0),
+    unreported: [...engines.values()].reduce((sum, row) => sum + row.unreported, 0),
     failedWithoutFailedUnit: trace.run.status === "failed" && failures.length === 0,
   };
 }

@@ -9,7 +9,7 @@
   import { refreshPending, workspace } from "./state/workspace.svelte";
   import { showToast } from "./state/toasts.svelte";
   import { onDestroy, tick, untrack } from "svelte";
-  import { api, date, title, toggleSelection } from "./client";
+  import { api, apiState, date, title, toggleSelection } from "./client";
   import Icon from "./Icon.svelte";
   import ReviewDetail from "./ReviewDetail.svelte";
   import ReviewFinished from "./ReviewFinished.svelte";
@@ -17,6 +17,7 @@
   import {
     ageBands,
     activityReturn,
+    batchCommitOutcome,
     batchOutcome,
     commitOutcome,
     conceptLocation,
@@ -179,7 +180,7 @@
     }
   }
   async function fetchQueue(): Promise<ReviewQueue> {
-    return api<ReviewQueue>("/proposals", { status, source, age, week, class: outcome, limit: "200" });
+    return apiState<ReviewQueue>("/proposals", { status, source, age, week, class: outcome, limit: "200" });
   }
   async function load() {
     const generation = ++queueGeneration;
@@ -416,11 +417,13 @@
     const ids = [...selected];
     const payload = action === "reject" ? { reason: rejectionReason(choice, reason) } : {};
     let outcomeOf: BatchOutcome | undefined;
+    let commitSaid = "";
     const result = await settleDecision(
       () => api<WriteResult>(`/proposals/${action}`, {}, { ids, ...payload }),
       async (receipt) => {
         const done = batchOutcome(ids, receipt);
         outcomeOf = done;
+        if (action === "accept") commitSaid = batchCommitOutcome(receipt);
         intent = "";
         reason = "";
         choice = "";
@@ -449,11 +452,12 @@
     if (done.failed.length) {
       report = { ...done, verb, total: ids.length };
       afterFocus = "report";
-    } else
+    }
+    if (!done.failed.length || commitSaid)
       showToast({
         key: "decision",
         title: `${decisionVerb(action)} ${done.done.length} proposals`,
-        detail: "Details are in Recent decisions.",
+        detail: [commitSaid, "Details are in Recent decisions."].filter(Boolean).join(" "),
         action: { label: "View", run: () => navigate(proposalHref("", new URLSearchParams({ status: "recent" }))) },
       });
     if (desiredId && done.done.includes(desiredId)) await open(desiredId);

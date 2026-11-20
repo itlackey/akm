@@ -17,6 +17,7 @@ const SCRIPT_INTERPRETERS: Readonly<Record<string, TaskScriptInterpreter>> = Obj
   ".sh": "sh",
   ".ts": "bun",
   ".js": "bun",
+  ".mjs": "bun",
   ".ps1": "powershell",
   ".cmd": "cmd",
   ".bat": "cmd",
@@ -73,7 +74,7 @@ export function scriptInterpreter(extension: string, ref: string, bytes?: Uint8A
   if (process.versions.bun) {
     return isBunStandaloneMain() ? "bun-standalone" : "bun";
   }
-  if (extension === ".js" || (extension === ".ts" && nodeStripsTypeScript())) {
+  if (extension === ".js" || extension === ".mjs" || (extension === ".ts" && nodeStripsTypeScript())) {
     return "node";
   }
   throw new UsageError(

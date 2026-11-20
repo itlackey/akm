@@ -29,13 +29,14 @@ import {
 } from "../../src/core/recognition-util";
 
 describe("recognition-util — relocated symbol values (behavior-preserving move)", () => {
-  test("SCRIPT_EXTENSIONS is the Set of 16 recognized script extensions", () => {
+  test("SCRIPT_EXTENSIONS is the Set of 17 recognized script extensions", () => {
     expect(SCRIPT_EXTENSIONS).toBeInstanceOf(Set);
-    expect(SCRIPT_EXTENSIONS.size).toBe(16);
+    expect(SCRIPT_EXTENSIONS.size).toBe(17);
     for (const ext of [
       ".sh",
       ".ts",
       ".js",
+      ".mjs",
       ".ps1",
       ".cmd",
       ".bat",

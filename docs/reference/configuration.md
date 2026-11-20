@@ -218,7 +218,7 @@ bindings.
 
 What asks for a harness decides how akm runs it.
 
-**Agent work** (`akm run` on an agent or command ref, `akm proposal new`, agent tasks and workflow agent steps) runs your program the way you would run it yourself. It gets your environment as it is, with nothing filtered out, and your configuration, plugins, settings and logins as they are. akm sets only its own variables for the run: the config file this akm resolved (`AKM_CONFIG_FILE`, which names the default bundle and, with the `AKM_*_DIR` variables a program inherits, the other locations), so a program that runs `akm` uses the same installation, and, when a task runs it, `AKM_EVENT_SOURCE` (unless already set), so the akm commands the program runs count as machine use, not yours. A workflow unit's or task's own `env:` bindings are set over them. A run given a directory (`--cwd`, a harness's `workspace`) starts there, and `PWD` names it too, as your shell sets it when you `cd` there; OpenCode takes its directory from `PWD`. On the command line, after your `args` as you wrote them, akm adds the model or agent the asset or flag names, the agent asset's persona where the program takes one there, and what the program needs to run without a person at the terminal: its print or exec mode and its approve-all switch where it asks before acting. Codex runs with the sandbox your Codex configuration sets, or the one your `args` name; model work runs it with `--sandbox read-only` (below). The prompt goes on standard input where the program reads it there and on the command line where it does not; standard output is the reply. `akm agent` with no `--prompt` starts the program interactively instead. What akm scrubs from the output it captures is in [Architecture: Connections and Harnesses](../architecture/architecture.md#connections-and-harnesses) and, for a workflow, [Workflow Schema](workflow-schema.md#the-childs-environment).
+**Agent work** (`akm run` on an agent or command ref, `akm proposal new`, agent tasks and workflow agent steps) runs your program the way you would run it yourself. It gets your environment as it is, with nothing filtered out, and your configuration, plugins, settings and logins as they are. akm sets only its own variables for the run: the config file this akm resolved (`AKM_CONFIG_FILE`, which names the default bundle and, with the `AKM_*_DIR` variables a program inherits, the other locations), so a program that runs `akm` uses the same installation, and, when a task runs it, `AKM_EVENT_SOURCE` (unless already set), so the akm commands the program runs count as machine use, not yours. A workflow unit's or task's own `env:` bindings are set over them. A run given a directory (`--cwd`, a harness's `workspace`) starts there, and `PWD` names it too, as your shell sets it when you `cd` there; OpenCode takes its directory from `PWD`. On the command line, after your `args` as you wrote them, akm adds the model or agent the asset or flag names, the agent asset's persona where the program takes one there, and what the program needs to run without a person at the terminal: its print or exec mode and its approve-all switch where it asks before acting. Codex runs with the sandbox your Codex configuration sets, or the one your `args` name; model work runs it with `--sandbox read-only` (below). The prompt goes on standard input where the program reads it there and on the command line where it does not; standard output is the reply. A run that exits 0 with nothing but whitespace there gave no reply, and fails with `parse_error`, as a run on akm's own runtime does. `akm agent` with no `--prompt` starts the program interactively instead. What akm scrubs from the output it captures is in [Architecture: Connections and Harnesses](../architecture/architecture.md#connections-and-harnesses) and, for a workflow, [Workflow Schema](workflow-schema.md#the-childs-environment).
 
 **Model work** (see [Where each process runs](#where-each-process-runs)) is akm's own process, so akm sets the call up as it needs it. The program has the same environment. akm runs it in a scratch directory that it creates for the call and removes after it, stamps the akm commands it runs `improve`, and runs no native agent of yours. Where the program can be restricted, akm also limits its tools. The "Restricted model work" column of the table says on which platforms:
 
@@ -243,7 +243,8 @@ Where model work is restricted, its tools cannot change the library, so what it 
 Nobody can answer an akm run. OpenCode's headless `run` cancels every question
 and rejects every permission request that would ask, and the model carries on
 without it; that holds for akm's own runtime and for the `opencode` harness
-alike.
+alike. A run whose turn then ends with no reply has failed (`parse_error`),
+though OpenCode exits 0.
 
 ### Without a harness
 
@@ -887,12 +888,13 @@ the key is ignored, and enables nothing; `akm migrate apply` drops it.
 
 ## Usage
 
-`usage` configures the local-only CLI usage counts (see
+`usage` configures the local-only CLI usage counts and the daily usage report (see
 [Data and Telemetry](data-and-telemetry.md#cli-usage-counts)):
 
 | Key | Purpose |
 | --- | --- |
 | `usage.capture` | Whether akm records counts of its own commands in `metrics.db`. **Defaults to `true`**; `false` turns the recording off. Read from the config file itself (the one `--config` or `AKM_CONFIG_FILE` selects) before the rest of the config loads, so a missing or broken file leaves it on. `--read-only` records nothing either way. |
+| `usage.report` | Whether akm sends its [daily usage report](data-and-telemetry.md#daily-usage-report) (the CLI's and AKM Desktop's). **Defaults to `true`**; `false` sends nothing. A config that cannot be loaded sends nothing. The CLI also sends nothing under `--read-only` or when `usage.capture` is `false`. |
 
 ## Bundles and write target
 
@@ -1035,11 +1037,15 @@ section, an absent key, and an explicit `false` all read identically as off.
 ```jsonc
 {
   "experimental": {
-    "improveAutonomy": false
+    "improveAutonomy": false,
+    "exec": false
   }
 }
 ```
 
+- **`experimental.exec`** — turns on [`akm exec`](cli.md#exec), which runs any
+  command with env assets and secrets injected. Off by default: `akm exec`
+  refuses and runs nothing. `akm run --env` and `--secret` are not gated.
 - **`experimental.improveAutonomy`** — gates only the autonomous
   `memoryInference`, `triagePromote` (a promote with triage judgment on; a
   deterministic-only promote runs without it), and `memoryCleanup` lanes. `akm improve`

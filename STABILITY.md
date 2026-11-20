@@ -44,6 +44,7 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | `akm search` | Stable | `--include-proposed` and `--include-sessions` are Deprecated, removed in 0.11: use `--include quality=proposed` and `--include type=<excluded-type>`; `type=` also takes a custom type listed in `search.defaultExcludeTypes` (read from the config file only, not from `extends` layers). `--by-usage` is Deprecated, removed in 0.11: use `akm doctor metrics assets` (first in 0.10.261120; same filters and result fields). |
 | `akm curate` | Stable | `--max-tokens` aliases the existing `--pack` budget and output. Both are opt-in; the unbudgeted default stays unchanged. Conflicting explicit budgets are rejected. `--pack` and the unpacked default are Deprecated, removed in 0.11 when curate returns bounded packed context by default (the 0.11 contract is in the [removal table](#remaining-scheduled-011-removals-and-breaking-changes)). |
 | `akm show` | Stable | `--outline` and `--lead` are additive aliases. `--max-tokens` bounds body fields (after any frontmatter) on whole/exact/lead reads and reports estimation/truncation; legacy unbudgeted output is unchanged. `--outline` with `--lead` or a budget, `--detail brief` with `--lead`, and `--detail brief` with `--max-tokens` and no lead context are usage errors; `--detail brief --context lead [--max-chars|--max-tokens]` keeps working as in 0.10.261118. `--context`, `--max-chars` and `--detail` are Deprecated, removed in 0.11 (exact reads become the default). |
+| `akm rules` | Experimental | First in 0.10.261130. Prints the rules that apply here, in full, read from the files of the project's bundles (`--from`, else the project's `from`, else the default bundle and the project's write bundle); `--project`, `--from` and `--filter` as in search. Records one `rules` usage event per call. The flags, the `{ project?, bundles, rules }` JSON shape and the `rules` metrics section may change in any release. |
 | `akm remember` | Stable | `--source`, `--description`, and `--expires` work independently of tags. Capture and enrichment processes are unchanged. `--auto`, `--enrich` and `--show-similar` are Deprecated, removed in 0.11 with no replacement flag; they print a notice since 0.10.261120. |
 | `akm import` | Stable | Additive `--asset-ref` and `--type task` modes, first in 0.10.261119; existing document inputs unchanged. `--type task` writes `scheduler.enabled` deliberately, to keep a stale scheduler row from activating the new task. |
 | `akm sync` | Stable | |
@@ -156,11 +157,12 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | `akm env list` | Stable | Read-and-inject surface. |
 | `akm env path` | Stable | Read-and-inject surface. |
 | `akm env export` | Stable | Read-and-inject surface. |
-| `akm env run` | Stable | Read-and-inject surface. |
+| `akm exec` | Experimental | First in 0.10.261130. Off until `experimental.exec` is `true` in config; otherwise it refuses with a config error (exit 78) and runs nothing. Runs any command with repeatable `--env <ref>` and `--secret <ref>:<VAR>` injected; `akm run` takes the same two flags for an akm asset. Child-process passthrough, exempt from `--format`. |
+| `akm env run` | Deprecated | Removed in 0.11: use `akm exec --env <ref> -- <command>`. Read-and-inject surface. |
 | `akm env create` | Experimental | Write verb. |
 | `akm env remove` | Experimental | Write verb. |
 | `akm secret list` | Stable | Read-and-inject surface. |
-| `akm secret run` | Stable | Read-and-inject surface. |
+| `akm secret run` | Deprecated | Removed in 0.11: use `akm exec --secret <ref>:<VAR> -- <command>`. Read-and-inject surface. |
 | `akm secret set` | Experimental | Write verb. |
 | `akm secret remove` | Experimental | Write verb; restored in 0.10 after its 0.9.0 removal. |
 
@@ -269,6 +271,16 @@ with no `PRAGMA user_version` or `schema_migrations` entry of its own. Preserve
 the collected baseline through the 0.11 storage migration, which keeps it in
 `metrics.db` in the resolved data directory;
 the migration guide tracks the data contract, retention, and verification.
+
+### Daily usage report (Experimental)
+
+0.10.x also sends one anonymous report a day per surface (the CLI and AKM Desktop, through
+`akm-cli/workspace` `activity.reportUsage`) to a self-hosted Aptabase: command counts from the
+data above and library sizes, never argument values, refs, paths or names. It is on by default and
+`usage.report: false` in the config file turns it off; `--read-only`, `usage.capture: false`, CI and
+test runs send nothing. The key, the event fields and `activity.reportUsage` are Experimental: the
+fields may change between releases, and every change is listed in
+[Data and Telemetry](docs/reference/data-and-telemetry.md#daily-usage-report).
 
 ### Remaining scheduled 0.11 removals and breaking changes
 
@@ -402,7 +414,7 @@ available as JSON), never on the format alone.
 `brief` by default. An unknown value warns once and uses `normal`. The `agent`
 value of 0.10 is removed in 0.11 (see Agent-oriented output below). A small set of commands is **format-exempt** because their
 output is not a result envelope at all: `completions` (shell script source),
-child-process passthrough in `env run` / `secret run`, a bare-path payload
+child-process passthrough in `exec`, `env run` / `secret run`, a bare-path payload
 from `env path` and `config path`, and document payloads from `hints` and `help`
 (bare and `help migrate`). The set is declared in
 `src/output/format-exempt.ts`, and
@@ -797,8 +809,8 @@ not additional public support statuses.
 
 An `env` asset holds a whole `.env` group; a `secret` holds a single sensitive
 value. Env key names are discoverable. Values are never written to stdout, the index, or
-structured output; the safe injection path is `akm env run <name> --
-<command>` (or `akm secret run <name> <VAR> -- …`). The `env` / `secret`
+structured output; the safe injection path is `akm exec --env <ref> --
+<command>` (or `akm exec --secret <ref>:<VAR> -- …`). The `env` / `secret`
 **write** verbs (`env create`, `env remove`, `secret set`, `secret remove`) are Experimental; the
 `list` / `path` / `run` / `export` read-and-inject surface is Stable.
 

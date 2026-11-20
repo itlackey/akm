@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   activityReturn,
+  batchCommitOutcome,
   batchOutcome,
   clip,
   commitOutcome,
@@ -32,8 +33,17 @@ test("review helpers preserve route filters and bound composed rejection reasons
   assert.equal(rejectionError("Stale", ""), "");
   assert.match(rejectionError("Other", ""), /required/);
   assert.match(rejectionError("Wrong", "a".repeat(2000)), /2000/);
+  // Printed as akm reports it: a commit, or none and why; a failed commit is shown as failed.
   assert.equal(commitOutcome(null), "");
-  assert.equal(commitOutcome({ sha: "1234567890", subject: "akm accept: x" }), "Saved to Git history as 12345678.");
+  assert.equal(commitOutcome({ committed: true, sha: "1234567890" }), "Saved to Git history as 12345678.");
+  assert.match(commitOutcome({ committed: false, reason: "not-git" }), /not a Git repository/);
+  assert.match(
+    commitOutcome({ committed: false, reason: "failed", error: "disk full" }),
+    /commit failed \(disk full\)/,
+  );
+  assert.match(commitOutcome({ committed: false, reason: "new-reason" }), /new-reason/);
+  const saved = { ok: true, commit: { committed: true, sha: "abcdefabcd" } };
+  assert.equal(batchCommitOutcome({ results: [saved, saved, { ok: false }] }), "Saved to Git history as abcdefab.");
   assert.equal(proposalReason({ id: "p", gateDecision: { outcome: "deferred", reason: "distill-review" } }), "");
   assert.equal(
     proposalReason({

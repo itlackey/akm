@@ -14,6 +14,7 @@
   import { pageTitle } from "../lib/page-title";
   import Toasts from "../lib/Toasts.svelte";
   import { applyTheme, refreshBundles, refreshPending, workspace } from "../lib/state/workspace.svelte";
+  import { showToast } from "../lib/state/toasts.svelte";
   import "../lib/ui/tokens.css";
   import "../lib/ui/base.css";
   import "../lib/ui/layout.css";
@@ -32,7 +33,7 @@
     { name: "Activity", prefix: "activity" },
     { name: "Settings", prefix: "settings" },
   ] as const;
-  type Metadata = { hostname: string; akmVersion: string; version: string; commit?: string };
+  type Metadata = { hostname: string; native: boolean; akmVersion: string; version: string; commit?: string };
 
   let ready = $state(false);
   let error = $state("");
@@ -49,10 +50,9 @@
   // First-run setup is reached from Home and Settings, not from the bar, so no section is current there.
   const current = $derived(prefix === "setup" ? undefined : section);
   const view = $derived(page.url.pathname.split("/")[2] ?? "");
-  const editing = $derived(prefix === "library" && ["edit", "new"].includes(view));
+  const editing = $derived(prefix === "library" && ["edit"].includes(view));
   const workspaceActive = $derived(
-    prefix === "review" ||
-      (prefix === "library" && ["files", "edit", "new", "new-sensitive", "compare"].includes(view)),
+    prefix === "review" || (prefix === "library" && ["files", "edit", "new-sensitive", "compare"].includes(view)),
   );
 
   beforeNavigate((navigation) => {
@@ -118,7 +118,10 @@
   async function load() {
     error = "";
     const outcomes = await Promise.allSettled([
-      api<Metadata>("/desktop").then((value) => (metadata = value)),
+      api<Metadata>("/desktop").then((value) => {
+        metadata = value;
+        workspace.native = value.native;
+      }),
       refreshBundles(),
     ]);
     error = outcomes
@@ -132,7 +135,14 @@
     applyTheme();
     themeError = "";
     try {
-      await api("/desktop/preferences", {}, { theme: workspace.theme });
+      const saved = await api<{ movedAside?: string }>("/desktop/preferences", {}, { theme: workspace.theme });
+      if (saved.movedAside)
+        showToast({
+          kind: "warning",
+          title: "Saved preferences were unreadable",
+          detail: `The old file was moved to ${saved.movedAside}. Desktop's update and plugin channels are back to their defaults.`,
+          key: "preferences-unreadable",
+        });
     } catch {
       themeError = "Appearance changed for this window, but could not be saved.";
     }
@@ -167,8 +177,15 @@
     applyTheme();
     void load();
     const initialTheme = workspace.theme;
-    void api<{ theme: string }>("/desktop/preferences")
+    void api<{ theme: string; unreadable?: { file: string; error: string } }>("/desktop/preferences")
       .then((saved) => {
+        if (saved.unreadable)
+          showToast({
+            kind: "warning",
+            title: "Saved preferences could not be read",
+            detail: `${saved.unreadable.error} Channels show their defaults until you save a choice, which moves that file aside.`,
+            key: "preferences-unreadable",
+          });
         if (workspace.theme === initialTheme) {
           workspace.theme = saved.theme;
           applyTheme();

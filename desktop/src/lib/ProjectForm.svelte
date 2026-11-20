@@ -30,7 +30,7 @@
   }: {
     /** The project being edited; null when adding. */
     original: ProjectRow | null;
-    bundles: Array<{ name: string; enabled: boolean; writable: boolean }>;
+    bundles: Array<{ name: string; writeBlocker: string | null }>;
     /** Names of every project, for the duplicate check. */
     existing: string[];
     /** The write bundle used when the project names none, for the select's first option. */
@@ -58,11 +58,11 @@
   const choices = $derived([...new Set([...known, ...base.from, ...draft.from])]);
   const note = (name: string) => {
     const bundle = bundles.find((b) => b.name === name);
-    return !bundle ? " (not registered)" : !bundle.enabled ? " (disabled)" : !bundle.writable ? " (read-only)" : "";
+    return !bundle ? " (not registered)" : bundle.writeBlocker === null ? "" : ` (${bundle.writeBlocker})`;
   };
   const unusableForWrites = (name: string) => {
     const bundle = bundles.find((b) => b.name === name);
-    return !!bundle && (!bundle.enabled || !bundle.writable);
+    return !!bundle && bundle.writeBlocker !== null;
   };
   const pathsProblem = $derived(
     draft.paths

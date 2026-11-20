@@ -10,7 +10,7 @@
  * Remote release checks remain optional under --no-probe.
  */
 
-import { type SpawnSyncReturns, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -22,13 +22,17 @@ import {
   readPackageVersion,
 } from "../../integrations/harnesses/opencode/plugin-layout";
 import { opencodeCacheDir } from "../../integrations/harnesses/opencode/roots";
-import { highestVersion, isExactSemver, isPrerelease } from "../../registry/semver";
+import { highestVersion, isExactSemver } from "../../registry/semver";
+import { semverOrder } from "../../runtime";
 import { codexMarketplace } from "../sources/plugin-channels";
 import {
+  claudeMarketplace,
   codexConfigFile,
   codexMarketplaceRef,
   codexPluginVersion,
+  marketplaceTargetVersion,
   openCodeConfigSpec,
+  refChannel,
 } from "../sources/plugin-upgrade";
 import type { HealthCheckResult } from "./types";
 
@@ -253,134 +257,55 @@ function readPinnedCli(pluginDir: string): string | undefined {
 }
 
 /**
- * Injectable seam for the one network read this module performs: the release versions the marketplace channel the
- * clone follows offers now. Real impl below; tests supply a fake.
+ * Injectable seam for the one network read this module performs: the newest akm plugin build on a channel of the
+ * marketplace at a source. The real read is the one `akm upgrade` plans from; tests supply a fake.
  */
-export type ListRemoteTagsFn = (marketplaceDir: string) => string[] | undefined;
+export type ReadChannelVersionFn = typeof marketplaceTargetVersion;
 
-const LS_REMOTE_TIMEOUT_MS = 5_000;
+/** What the marketplace a plugin follows offers: the newest build, a pin that offers nothing newer, or why it could not be read. */
+type Offered = { version: string } | { pinned: string } | { error: string };
 
-/**
- * `git ls-remote --symref origin` against the marketplace clone's configured remote (lists refs only, fetches no
- * objects, writes no local refs), read for the channel the clone follows:
- *
- * - **The remote's default branch** (stable): every stable release tag; the newest is the highest of them.
- * - **Any other branch** (a channel such as `next`): the release tags on that branch's head. A channel branch is
- *   reset to each build it publishes, so its head IS the newest build of the channel, whatever semver order says
- *   about other tags (retired build schemes can sort above current builds).
- * - **No branch** (a marketplace added at a tag ref, which Claude Code clones detached): the release tag the clone
- *   is pinned to. A pinned marketplace never offers anything newer, so `claude plugin update` could not act on a
- *   newer tag elsewhere. A detached clone at an untagged commit reads like the default branch.
- *
- * Returns `undefined` (never throws) when the directory is not a git checkout, has no `origin` remote, or the
- * command fails/times out (e.g. offline): all "cannot determine availability", not "up to date". A channel head
- * with no release tag returns `[]`, which reads the same way.
- */
-const splitRefs = (lsRemote: string): string[][] =>
-  lsRemote
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => line.split("\t"));
-
-/**
- * The release versions one channel offers, from `git ls-remote --symref` output: the tags at `branch`'s head when it
- * is not the remote's default branch, the tags at `pinnedSha` when given and tagged, else every stable tag.
- */
-function channelVersions(lsRemote: string, branch: string, pinnedSha: string | undefined): string[] {
-  const refs = splitRefs(lsRemote);
-  const defaultBranch = refs
-    .find(([value, name]) => name === "HEAD" && value?.startsWith("ref: refs/heads/"))?.[0]
-    ?.replace(/^ref: refs\/heads\//, "");
-  const tags = refs
-    .filter(([, name]) => typeof name === "string" && name.startsWith("refs/tags/"))
-    .map(([sha, name]) => ({
-      sha: sha as string,
-      version: (name as string)
-        .replace(/^refs\/tags\//, "")
-        .replace(/\^\{\}$/, "")
-        .replace(/^v/, ""),
-    }))
-    .filter((tag) => isExactSemver(tag.version));
-  const tagsAt = (sha: string | undefined) => [
-    ...new Set(tags.filter((tag) => tag.sha === sha).map((tag) => tag.version)),
-  ];
-  const onChannelBranch = branch !== "" && defaultBranch !== undefined && branch !== defaultBranch;
-  if (onChannelBranch) return tagsAt(refs.find(([, name]) => name === `refs/heads/${branch}`)?.[0]);
-  if (branch === "" && pinnedSha !== undefined) {
-    const pinned = tagsAt(pinnedSha);
-    if (pinned.length > 0) return pinned;
+function readOffered(
+  harness: "claude" | "codex",
+  registered: () => { source: string | undefined; ref: string | undefined },
+  readChannelVersion: ReadChannelVersionFn,
+): Offered {
+  try {
+    const { source, ref } = registered();
+    if (source === undefined) return { error: "the registered marketplace has no Git source" };
+    const channel = refChannel(ref);
+    // A marketplace pinned to one tag never offers anything newer.
+    if (channel === "pinned") return { pinned: ref as string };
+    return { version: readChannelVersion(source, channel, harness) };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
   }
-  return [...new Set(tags.map((tag) => tag.version).filter((version) => !isPrerelease(version)))];
 }
-
-const realListRemoteTags: ListRemoteTagsFn = (marketplaceDir) => {
-  let result: SpawnSyncReturns<string>;
-  let branch: string;
-  try {
-    branch =
-      spawnSync("git", ["-C", marketplaceDir, "branch", "--show-current"], {
-        encoding: "utf8",
-        timeout: LS_REMOTE_TIMEOUT_MS,
-      }).stdout?.trim() ?? "";
-    result = spawnSync("git", ["-C", marketplaceDir, "ls-remote", "--symref", "origin"], {
-      encoding: "utf8",
-      timeout: LS_REMOTE_TIMEOUT_MS,
-    });
-  } catch {
-    return undefined;
-  }
-  if (result.status !== 0 || !result.stdout) return undefined;
-  const pinnedSha =
-    branch === ""
-      ? spawnSync("git", ["-C", marketplaceDir, "rev-parse", "HEAD"], {
-          encoding: "utf8",
-          timeout: LS_REMOTE_TIMEOUT_MS,
-        }).stdout?.trim()
-      : undefined;
-  return channelVersions(result.stdout, branch, pinnedSha);
-};
-
-/**
- * The same read against a remote named by URL and the ref a marketplace entry follows (Codex keeps no clone akm
- * reads): a branch, a tag (that release alone), or none for the remote's default branch. `undefined` when the
- * remote cannot be read.
- */
-export type ListRemoteTagsAtFn = (remote: string, ref: string | undefined) => string[] | undefined;
-
-const realListRemoteTagsAt: ListRemoteTagsAtFn = (remote, ref) => {
-  let result: SpawnSyncReturns<string>;
-  try {
-    result = spawnSync("git", ["ls-remote", "--symref", remote], { encoding: "utf8", timeout: LS_REMOTE_TIMEOUT_MS });
-  } catch {
-    return undefined;
-  }
-  if (result.status !== 0 || !result.stdout) return undefined;
-  if (ref !== undefined && splitRefs(result.stdout).some(([, name]) => name === `refs/tags/${ref}`)) {
-    const version = ref.replace(/^v/, "");
-    return isExactSemver(version) ? [version] : [];
-  }
-  return channelVersions(result.stdout, ref ?? "", undefined);
-};
-
-/** The marketplace every akm Codex install registers (`codex plugin marketplace add itlackey/akm-plugins`). */
-const CODEX_MARKETPLACE_REMOTE = "https://github.com/itlackey/akm-plugins";
 
 /** What Codex's own config and listing say about the akm plugin; `undefined` when the marketplace is not registered. */
 export interface CodexPlugin {
   /** The marketplace entry's `ref`: a branch such as `next`, a tag, or none for the default (stable) branch. */
   ref: string | undefined;
+  /** The marketplace entry's Git `source`; `undefined` when the entry names none. */
+  source: string | undefined;
   listed: ReturnType<typeof codexPluginVersion>;
 }
 
 /** Codex is checked only when its config registers the akm-plugins marketplace, so a host without Codex runs nothing. */
 function readCodexPlugin(): CodexPlugin | undefined {
+  let source: unknown;
   try {
-    if (codexMarketplace(codexConfigFile()) === undefined) return undefined;
+    const marketplace = codexMarketplace(codexConfigFile());
+    if (marketplace === undefined) return undefined;
+    source = marketplace.source;
   } catch {
     return undefined;
   }
-  return { ref: codexMarketplaceRef(), listed: codexPluginVersion() };
+  return {
+    ref: codexMarketplaceRef(),
+    source: typeof source === "string" ? source : undefined,
+    listed: codexPluginVersion(),
+  };
 }
 
 /** One `codex-plugin-version` advisory, or none when the marketplace is registered but the plugin is not installed. */
@@ -388,13 +313,14 @@ function buildCodexAdvisory(
   codex: CodexPlugin,
   cliVersion: string,
   probe: boolean,
-  listRemoteTagsAt: ListRemoteTagsAtFn,
+  readChannelVersion: ReadChannelVersionFn,
 ): HealthCheckResult | undefined {
   const base = { name: "codex-plugin-version", kind: "deterministic", confidence: "high" } as const;
   if ("error" in codex.listed) {
     return {
       ...base,
       status: "unknown",
+      reason: "blocked",
       message: codex.listed.error.missing
         ? "Codex's config registers the akm-plugins marketplace, but `codex` is not on PATH, so its akm plugin was not checked."
         : `Codex's akm plugin could not be listed: ${codex.listed.error.error}`,
@@ -406,17 +332,9 @@ function buildCodexAdvisory(
   const { ref } = codex;
   const channel =
     ref === undefined || ref === "main" || ref === "master" ? "stable" : ref === "next" ? "next" : `pinned to ${ref}`;
-  let availableVersion: string | undefined;
-  let remoteUnavailable = false;
-  if (probe) {
-    const tags = listRemoteTagsAt(CODEX_MARKETPLACE_REMOTE, ref);
-    if (tags === undefined) remoteUnavailable = true;
-    else availableVersion = highestVersion(tags);
-  }
-  const stale =
-    availableVersion !== undefined &&
-    installed !== availableVersion &&
-    highestVersion([installed, availableVersion]) === availableVersion;
+  const offered = probe ? readOffered("codex", () => ({ source: codex.source, ref }), readChannelVersion) : undefined;
+  const availableVersion = offered && "version" in offered ? offered.version : undefined;
+  const stale = availableVersion !== undefined && semverOrder(availableVersion, installed) > 0;
   // The akm-cli Codex's plugin cache holds for the installed plugin version: read, never executed.
   const bundledCli = readPackageVersion(
     path.join(
@@ -433,16 +351,16 @@ function buildCodexAdvisory(
   );
   const cliMatches = bundledCli === undefined ? undefined : bundledCli === cliVersion;
   const messageParts = [`akm@akm-plugins (Codex): installed ${installed} (${channel} channel)`];
-  if (!probe) messageParts.push("newest tag was not probed");
-  else if (remoteUnavailable) messageParts.push(REMOTE_UNAVAILABLE_NOTE);
-  if (availableVersion !== undefined) {
-    messageParts.push(stale ? `available ${availableVersion} (STALE)` : `available ${availableVersion} (up to date)`);
-  }
+  messageParts.push(...offeredNotes(offered, stale));
   if (stale) messageParts.push("-> codex plugin marketplace upgrade akm-plugins");
   if (bundledCli !== undefined && cliMatches === false) messageParts.push(bundledCliNote(bundledCli, cliVersion));
   return {
     ...base,
-    status: stale || cliMatches === false ? "warn" : probe && availableVersion !== undefined ? "pass" : "unknown",
+    ...(stale || cliMatches === false
+      ? { status: "warn" }
+      : offered && !("error" in offered)
+        ? { status: "pass" }
+        : unreadOffer(offered)),
     message: messageParts.join(" — "),
     evidence: {
       harness: "codex",
@@ -450,7 +368,7 @@ function buildCodexAdvisory(
       ref: ref ?? null,
       availableVersion: availableVersion ?? null,
       ...(probe ? {} : { probed: false }),
-      ...(remoteUnavailable ? { remoteUnavailable: true } : {}),
+      ...(offered && "error" in offered ? { remoteUnavailable: true } : {}),
       stale,
       bundledCliVersion: bundledCli ?? null,
       cliVersion,
@@ -459,8 +377,18 @@ function buildCodexAdvisory(
   };
 }
 
-/** Said when a probe asked the marketplace remote and got no answer, so "unknown" is not mistaken for "no newer release". */
-const REMOTE_UNAVAILABLE_NOTE = "the newest release could not be read from the marketplace remote (offline?)";
+/** The `unknown` verdict of a check whose marketplace was not asked (`not-probed`) or could not be read (`blocked`). */
+function unreadOffer(offered: Offered | undefined) {
+  return { status: "unknown", reason: offered === undefined ? "not-probed" : "blocked" } as const;
+}
+
+/** What the read of the marketplace says in a message: that it was not made, why it failed, or what the channel offers. */
+function offeredNotes(offered: Offered | undefined, stale: boolean): string[] {
+  if (offered === undefined) return ["newest release was not probed"];
+  if ("error" in offered) return [`the newest release could not be read from the marketplace (${offered.error})`];
+  if ("pinned" in offered) return [`the marketplace is pinned to ${offered.pinned}, which offers nothing newer`];
+  return [stale ? `available ${offered.version} (STALE)` : `available ${offered.version} (up to date)`];
+}
 
 /** Options for {@link collectPluginStalenessAdvisories}. */
 export interface PluginStalenessOptions {
@@ -469,15 +397,13 @@ export interface PluginStalenessOptions {
   /** The running akm-cli version to check plugin compatibility against. */
   cliVersion: string;
   /**
-   * Whether check 2 may ask the remote for tags (`akm health --probe`, on by
+   * Whether check 2 may read the marketplace for the newest release (`akm health --probe`, on by
    * default; `--no-probe` passes `false`). Defaults to `true` here so callers
-   * that inject `listRemoteTags` need not repeat it; `health.ts` always passes it.
+   * that inject `readChannelVersion` need not repeat it; `health.ts` always passes it.
    */
   probe?: boolean;
-  /** Injectable remote-tag lister; defaults to the real `git ls-remote`. */
-  listRemoteTags?: ListRemoteTagsFn;
-  /** Injectable remote-tag lister by URL and ref, for Codex; defaults to the real `git ls-remote`. */
-  listRemoteTagsAt?: ListRemoteTagsAtFn;
+  /** Injectable channel reader; defaults to the one `akm upgrade` plans from. */
+  readChannelVersion?: ReadChannelVersionFn;
   /** Injectable Codex reader; defaults to Codex's config.toml and `codex plugin list`. */
   readCodex?: () => CodexPlugin | undefined;
   /** Root of OpenCode's package cache. Defaults to `opencodeCacheDir()` (`$XDG_CACHE_HOME/opencode`). */
@@ -493,13 +419,13 @@ export interface PluginStalenessOptions {
  */
 export function collectPluginStalenessAdvisories(options: PluginStalenessOptions): HealthCheckResult[] {
   const pluginsRoot = options.pluginsRoot ?? claudePluginsDir();
-  const listRemoteTags = options.listRemoteTags ?? realListRemoteTags;
+  const readChannelVersion = options.readChannelVersion ?? marketplaceTargetVersion;
   const plugins = detectInstalledPlugins(pluginsRoot);
 
   const probe = options.probe ?? true;
 
   const results = (plugins ?? []).map((plugin) =>
-    buildAdvisory(plugin, options.cliVersion, pluginsRoot, listRemoteTags, probe),
+    buildAdvisory(plugin, options.cliVersion, pluginsRoot, readChannelVersion, probe),
   );
 
   if (plugins === undefined && fs.existsSync(pluginsRoot)) {
@@ -507,6 +433,7 @@ export function collectPluginStalenessAdvisories(options: PluginStalenessOptions
       name: "plugin-version",
       kind: "deterministic",
       status: "unknown",
+      reason: "blocked",
       confidence: "high",
       message:
         "Claude plugin installation and enabled state could not be resolved with `claude plugin list --json`; cached versions do not establish the selected installation.",
@@ -516,12 +443,7 @@ export function collectPluginStalenessAdvisories(options: PluginStalenessOptions
 
   const codex = (options.readCodex ?? readCodexPlugin)();
   if (codex) {
-    const advisory = buildCodexAdvisory(
-      codex,
-      options.cliVersion,
-      probe,
-      options.listRemoteTagsAt ?? realListRemoteTagsAt,
-    );
+    const advisory = buildCodexAdvisory(codex, options.cliVersion, probe, readChannelVersion);
     if (advisory) results.push(advisory);
   }
 
@@ -546,28 +468,18 @@ function buildAdvisory(
   plugin: DetectedPlugin,
   cliVersion: string,
   pluginsRoot: string,
-  listRemoteTags: ListRemoteTagsFn,
+  readChannelVersion: ReadChannelVersionFn,
   probe: boolean,
 ): HealthCheckResult {
   const pluginRef = `${plugin.pluginName}@${plugin.marketplace}`;
 
-  // Point 2: newest available vs. installed, via the marketplace clone's remote.
-  const marketplaceDir = path.join(pluginsRoot, "marketplaces", plugin.marketplace);
-  const asked = probe && plugin.selectionKnown && plugin.enabled !== false && fs.existsSync(marketplaceDir);
-  let availableVersion: string | undefined;
-  let remoteUnavailable = false;
-  try {
-    const tags = asked ? listRemoteTags(marketplaceDir) : undefined;
-    remoteUnavailable = asked && tags === undefined;
-    availableVersion = tags && tags.length > 0 ? highestVersion(tags) : undefined;
-  } catch {
-    availableVersion = undefined;
-    remoteUnavailable = asked;
-  }
-  const stale =
-    availableVersion !== undefined &&
-    plugin.version !== availableVersion &&
-    highestVersion([plugin.version, availableVersion]) === availableVersion;
+  // Point 2: newest available vs. installed, from the channel of the marketplace Claude registered.
+  const asked = probe && plugin.selectionKnown && plugin.enabled !== false;
+  const offered = asked
+    ? readOffered("claude", () => claudeMarketplace(pluginsRoot, plugin.marketplace), readChannelVersion)
+    : undefined;
+  const availableVersion = offered && "version" in offered ? offered.version : undefined;
+  const stale = availableVersion !== undefined && semverOrder(availableVersion, plugin.version) > 0;
 
   // Point 3: does the akm-cli the plugin runs match the running CLI? Both read and write the same databases.
   const pinnedCliVersion = readPinnedCli(plugin.pluginDir);
@@ -581,11 +493,8 @@ function buildAdvisory(
   if (plugin.enabled === false) messageParts.push("disabled in Claude settings");
   else if (plugin.enabled === undefined) messageParts.push("enabled state unknown");
   if (cliMatches === undefined) messageParts.push("bundled akm-cli unknown (no exact akm-cli pin in package.json)");
-  if (!probe) messageParts.push("newest tag was not probed");
-  else if (remoteUnavailable) messageParts.push(REMOTE_UNAVAILABLE_NOTE);
-  if (availableVersion !== undefined) {
-    messageParts.push(stale ? `available ${availableVersion} (STALE)` : `available ${availableVersion} (up to date)`);
-  }
+  if (!probe) messageParts.push("newest release was not probed");
+  else if (offered) messageParts.push(...offeredNotes(offered, stale));
   if (stale) messageParts.push(`-> claude plugin update ${pluginRef}`);
   if (plugin.selectionKnown && plugin.enabled === true && cliMatches === false) {
     messageParts.push(
@@ -602,16 +511,17 @@ function buildAdvisory(
     kind: "deterministic",
     // Not probed => staleness is unknown, not "up to date"; only the local
     // pin comparison can still warn.
-    status:
-      plugin.enabled === false || !plugin.applicable
-        ? "pass"
-        : !plugin.selectionKnown || plugin.enabled === undefined
-          ? "unknown"
-          : stale || cliMatches === false
-            ? "warn"
-            : probe && availableVersion !== undefined && cliMatches !== undefined && plugin.enabled === true
-              ? "pass"
-              : "unknown",
+    ...(plugin.enabled === false || !plugin.applicable
+      ? { status: "pass" }
+      : !plugin.selectionKnown || plugin.enabled === undefined
+        ? ({ status: "unknown", reason: "blocked" } as const)
+        : stale || cliMatches === false
+          ? { status: "warn" }
+          : offered && !("error" in offered) && cliMatches !== undefined && plugin.enabled === true
+            ? { status: "pass" }
+            : cliMatches === undefined && offered !== undefined && !("error" in offered)
+              ? ({ status: "unknown", reason: "blocked" } as const)
+              : unreadOffer(offered)),
     confidence: "high",
     message: messageParts.join(" — "),
     evidence: {
@@ -627,7 +537,7 @@ function buildAdvisory(
       installPath: plugin.pluginDir,
       availableVersion: availableVersion ?? null,
       ...(probe ? {} : { probed: false }),
-      ...(remoteUnavailable ? { remoteUnavailable: true } : {}),
+      ...(offered && "error" in offered ? { remoteUnavailable: true } : {}),
       stale,
       pinnedCliVersion: pinnedCliVersion ?? null,
       cliVersion,

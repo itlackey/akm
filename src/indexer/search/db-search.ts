@@ -17,6 +17,7 @@ import { displayRef } from "../../core/asset/resolve-ref";
 import { closestMatch } from "../../core/closest-match";
 import { compareCodePoints } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
+import { defaultExcludedTypes } from "../../core/config/schema/search";
 import { KNOWN_TYPES } from "../../core/recognition-util";
 import { withStateDbTelemetry } from "../../core/state-db";
 import { systemErrorCode } from "../../core/system-error";
@@ -275,7 +276,7 @@ async function searchDatabase(
   // ['session'] is applied; an explicit empty list disables exclusion.
   const defaultExcludes =
     searchType === "any" && !input.includeExcludedTypes
-      ? (config.search?.defaultExcludeTypes ?? ["session"]).filter((type) => !input.includeTypes?.includes(type))
+      ? defaultExcludedTypes(config).filter((type) => !input.includeTypes?.includes(type))
       : [];
 
   // D4 — conceptId-prefix queries (`memories/projecta/`, `bundle//`,
@@ -672,7 +673,7 @@ export interface ProjectContext {
 }
 
 /** Whether an asset applies under the project: it names it or no project, unless the selection's filter decided. */
-function appliesUnder(entry: IndexDocument, project: ProjectContext): boolean {
+export function appliesUnder(entry: IndexDocument, project: ProjectContext): boolean {
   return project.byFilter === true || appliesToProject(entry, project.name);
 }
 

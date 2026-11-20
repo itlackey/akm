@@ -130,6 +130,7 @@ export function emptyImproveMetrics(): ImproveHealthMetrics {
       totalChunks: 0,
       pairsJudged: 0,
       failedPairs: 0,
+      deferredPairs: 0,
       durationMs: 0,
     },
     memoryInference: {
@@ -257,6 +258,9 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
     if (pairPass) {
       cons.pairsJudged += toFiniteNumber(pairPass.pairsJudged);
       cons.failedPairs += toFiniteNumber(pairPass.failedJudgments);
+      const deferred = pairPass.deferredJudgments;
+      cons.deferredPairs =
+        typeof deferred === "number" && Number.isSafeInteger(deferred) && deferred >= 0 ? deferred : null;
     }
   }
 
@@ -322,6 +326,10 @@ function mergeImproveMetrics(dst: ImproveHealthMetrics, src: ImproveHealthMetric
   dst.consolidation.totalChunks += src.consolidation.totalChunks;
   dst.consolidation.pairsJudged += src.consolidation.pairsJudged;
   dst.consolidation.failedPairs += src.consolidation.failedPairs;
+  dst.consolidation.deferredPairs =
+    dst.consolidation.deferredPairs === null || src.consolidation.deferredPairs === null
+      ? null
+      : dst.consolidation.deferredPairs + src.consolidation.deferredPairs;
   dst.consolidation.durationMs += src.consolidation.durationMs;
   dst.memoryInference.considered += src.memoryInference.considered;
   dst.memoryInference.freshAttempts += src.memoryInference.freshAttempts;

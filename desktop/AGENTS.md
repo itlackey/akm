@@ -36,6 +36,8 @@ from the packaged app. `akm-web` (`scripts/package-web.mjs`) is that web-process
 The owner may read and write any text file inside a configured bundle with plain file operations.
 Keep only real safety: stay inside the bundle root by real path, refuse a save over bytes that changed since they were
 read, and write atomically. Then ask AKM to refresh the index for that path (`indexWrittenAssets`).
+Moving, renaming, copying, making folders and deleting files are plain file operations of the same kind, offered and
+refused from AKM's `actions` and `place` verdicts, and followed by `bundles.index` so a moved file keeps its history.
 
 ## Rules
 

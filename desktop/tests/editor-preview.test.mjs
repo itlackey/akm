@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { formatMarkdown } from "../src/lib/editor-commands.mjs";
-import { inline, markdown, splitFrontmatter } from "../src/lib/ui/markdown.js";
+import { inline, markdown } from "../src/lib/ui/markdown.js";
 
 test("preview renders basic and nested emphasis without treating unmatched markers as markup", () => {
   for (const [source, expected] of [
@@ -69,16 +69,13 @@ test("preview does not mutate frontmatter or source bytes and retains indexed he
   const source =
     '---\r\ntitle: "Safe guide"\r\ncustom: [unchanged, metadata]\r\n---\r\n# Safe guide\r\n\r\n> *Read this*\r\n';
   const snapshot = source;
-  const split = splitFrontmatter(source);
-  const rendered = markdown(split.body, {
-    startLine: split.startLine,
+  // akm says where the body starts; the preview renders from there and numbers its lines from the file's.
+  const bodyStart = source.indexOf("# Safe guide");
+  const rendered = markdown(source.slice(bodyStart).replace(/\r\n?/g, "\n"), {
+    startLine: source.slice(0, bodyStart).split(/\r\n?|\n/).length,
     headings: [{ line: 5, slug: "safe-guide" }],
   }).text;
   assert.ok(rendered.includes('id="h-safe-guide"'));
   assert.ok(rendered.includes("<em>Read this</em>"));
   assert.equal(source, snapshot);
-  assert.deepEqual(split.fields, [
-    ["title", '"Safe guide"'],
-    ["custom", "[unchanged, metadata]"],
-  ]);
 });

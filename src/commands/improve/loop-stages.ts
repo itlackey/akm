@@ -236,8 +236,8 @@ async function runLoopReflectPass(planned: ImproveEligibleRef, env: ImproveLoopE
           : "reflect-failed",
     result,
   });
-  // A quality rejection recorded itself, and the judge's text is no lesson for
-  // the next prompt; skips revisit on the `unchanged` cadence. A transient
+  // A quality rejection recorded itself for that input, not the shared recent
+  // errors sent to other refs; skips revisit on the `unchanged` cadence. A transient
   // failure (transport, parse, timeout, budget abort, crash) is not a verdict
   // on the asset and writes no row, like distill: a `failed` row would advance
   // the ledger cursor and consume the feedback that planned the ref. Only a

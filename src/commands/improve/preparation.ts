@@ -603,7 +603,12 @@ export async function runImprovePreparationStage(args: ImprovePreparationStageAr
   let lintSummary: { fixed: number; flagged: number } | undefined;
   if (primaryStashDir) {
     try {
-      const lintResult = await akmLint({ fix: false, dir: primaryStashDir });
+      const lintResult = await akmLint({
+        fix: false,
+        dir: primaryStashDir,
+        // The moves are read through the run's own connection: a dry run's is its private snapshot of state.db.
+        readMoves: () => readEvents({ type: "moved" }, eventsCtx).events,
+      });
       lintSummary = { fixed: lintResult.summary.fixed, flagged: lintResult.summary.flagged };
     } catch {
       // lint never blocks improve

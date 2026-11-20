@@ -13,3 +13,8 @@ export const SearchConfigSchema = z
     defaultExcludeTypes: z.array(nonEmptyString).optional(),
   })
   .passthrough();
+
+/** Types left out of an untyped search unless asked for: the configured list, `["session"]` when the config sets none (an empty list leaves nothing out). */
+export function defaultExcludedTypes(config: { search?: { defaultExcludeTypes?: string[] } }): string[] {
+  return config.search?.defaultExcludeTypes ?? ["session"];
+}

@@ -11,11 +11,13 @@
 import { metricsWindow, readLlmRows, readUsageRows } from "../commands/metrics/metrics";
 import type { MetricsUsageRow } from "../commands/metrics/types";
 import { isRetireProposal, type Proposal } from "../commands/proposal/proposal-types";
+import { resolveStashDir } from "../core/common";
+import { USAGE_EVENT_RETENTION_DAYS } from "../indexer/usage/usage-events";
 import { readStateEvents } from "../storage/repositories/events-repository";
 import { listIndexCompletedEvents } from "../storage/repositories/metrics-repository";
 import { listStateProposals } from "../storage/repositories/proposals-repository";
 import { classifyOutcome, decidedAt, deciderOf, weekOf, weekRange } from "./derive";
-import { attempt, tryStashDir, withReadonlyStateDb } from "./readers";
+import { attempt, withReadonlyStateDb } from "./readers";
 
 const DAY = 86_400_000;
 const FLAG_DAYS = 14;
@@ -129,7 +131,7 @@ function harmLog(
 }
 
 /** Before and after counts of how an asset was found and rated, around the day improve changed it. */
-function changedAssets(proposals: Proposal[], usage: MetricsUsageRow[], now: number) {
+function changedAssets(proposals: Proposal[], usage: MetricsUsageRow[], now: number, usageSince: string) {
   const byRef = rowsByRef(usage);
   return proposals
     .filter((p) => (p.status === "accepted" || p.status === "reverted") && !isRetireProposal(p))
@@ -157,6 +159,8 @@ function changedAssets(proposals: Proposal[], usage: MetricsUsageRow[], now: num
         afterDays,
         // Fewer than four weeks since the change: the "after" side is still filling.
         complete: afterDays >= COMPARE_DAYS,
+        // The "before" side starts earlier than the usage rows read (the window or the retention): it is not recorded.
+        beforeComplete: at - COMPARE_DAYS * DAY >= Date.parse(usageSince),
       };
     });
 }
@@ -183,13 +187,12 @@ export function improveImpact(input: { since?: string } = {}) {
   const errors: Record<string, string> = {};
   // The store reads are what can fail (one malformed proposal row throws), so each degrades on its own; the
   // derivations below are pure functions of what was read.
-  const stashDir = tryStashDir();
   const state = withReadonlyStateDb(
     (db) => ({
       proposals: attempt(
         errors,
         "proposals",
-        () => (stashDir ? listStateProposals(db, { stashDir, withContent: false }) : []),
+        () => listStateProposals(db, { stashDir: resolveStashDir(), withContent: false }),
         [],
       ),
       reopened: attempt(
@@ -211,6 +214,9 @@ export function improveImpact(input: { since?: string } = {}) {
   );
   if (!state) return { available: false as const, since, errors };
   const { proposals, usage } = state;
+  // Usage rows older than their retention are purged on every index: the figures from them start no earlier.
+  const retainedFrom = new Date(now - USAGE_EVENT_RETENTION_DAYS * DAY).toISOString();
+  const usageSince = retainedFrom > window.since ? retainedFrom : window.since;
   const weeks = weekRange(window.since.slice(0, 10), new Date(now).toISOString().slice(0, 10));
 
   const lastPerWeek = new Map<string, number>();
@@ -250,6 +256,9 @@ export function improveImpact(input: { since?: string } = {}) {
   return {
     available: true as const,
     since,
+    /** Where the usage figures (flags, found and negative counts) start: the window, or later where retention cut them. */
+    usageSince,
+    usageComplete: retainedFrom <= window.since,
     weeks,
     summary: {
       kept: decided.filter((p) => p.status === "accepted").length,
@@ -264,7 +273,7 @@ export function improveImpact(input: { since?: string } = {}) {
     library,
     harm,
     cost,
-    changedAssets: changedAssets(proposals, usage, now),
+    changedAssets: changedAssets(proposals, usage, now, usageSince),
     judgeAndYou: judgeAndYou(proposals),
     ...(Object.keys(errors).length > 0 ? { errors } : {}),
   };

@@ -69,6 +69,7 @@ test("visualizations survive late responses, a changed library and a narrow wind
                   eventType: "search",
                   query: "stale period",
                   source: "user",
+                  byPerson: true,
                   resultCount: 0,
                 },
               ],
@@ -109,6 +110,7 @@ test("visualizations survive late responses, a changed library and a narrow wind
                   eventType: "search",
                   query: "last minute query",
                   source: "user",
+                  byPerson: true,
                   resultCount: 0,
                 },
               ],
@@ -468,17 +470,26 @@ test("visualizations survive late responses, a changed library and a narrow wind
     await page.close();
   });
 
-  await t.test("Files editor: it uses the pane's width and scrolls in one place, its own text", async () => {
+  await t.test("Files editor: it uses the pane's width and scrolls in one place", async () => {
     const { page } = await fresh();
     await open(page, server, `/library/edit?${new URLSearchParams({ ref: server.refs.document })}`);
-    const editor = page.getByRole("textbox", { name: "Markdown source, including optional frontmatter" });
-    await editor.fill(Array.from({ length: 150 }, (_, n) => `Line ${n} of a long note`).join("\n"));
-    const scrollers = await innerScrollers(page, ".files-content");
+    const editor = page.getByRole("textbox", { name: /^Markdown (body|source, including optional frontmatter)$/ });
+    const long = Array.from({ length: 150 }, (_, n) => `Line ${n} of a long note`).join("\n");
+    // With the properties above the body, the body grows and the pane is the one place that scrolls.
+    await editor.fill(long);
     assert.deepEqual(
-      scrollers.map((s) => s.split(" ")[0]),
+      (await innerScrollers(page, ".files-content")).map((s) => s.split(" ")[0]),
+      ["div.files-content"],
+    );
+    // The editor and the findings beside it fill the pane.
+    assert.ok((await page.locator(".editor-columns").boundingBox()).width > 800, "the editor fills the pane");
+    // In Text the box takes the pane's height and scrolls its own text.
+    await page.getByRole("button", { name: "Text", exact: true }).click();
+    await editor.fill(long);
+    assert.deepEqual(
+      (await innerScrollers(page, ".files-content")).map((s) => s.split(" ")[0]),
       ["textarea.source-editor"],
     );
-    assert.ok((await editor.boundingBox()).width > 800, "the editor fills the pane");
     await page.close();
   });
 
@@ -601,8 +612,22 @@ test("visualizations survive late responses, a changed library and a narrow wind
               truncated: false,
               window: { since: hours(24), until: hours(0) },
               events: [
-                { id: 1, at: hours(3), eventType: "show", ref: "notes//memories/auth/e", source: "user" },
-                { id: 2, at: hours(2), eventType: "show", ref: "notes//memories/auth/f", source: "user" },
+                {
+                  id: 1,
+                  at: hours(3),
+                  eventType: "show",
+                  ref: "notes//memories/auth/e",
+                  source: "user",
+                  byPerson: true,
+                },
+                {
+                  id: 2,
+                  at: hours(2),
+                  eventType: "show",
+                  ref: "notes//memories/auth/f",
+                  source: "user",
+                  byPerson: true,
+                },
                 {
                   id: 3,
                   at: hours(1.5),
@@ -610,8 +635,16 @@ test("visualizations survive late responses, a changed library and a narrow wind
                   ref: "wiki//knowledge/deploy/a",
                   query: "ship",
                   source: "user",
+                  byPerson: true,
                 },
-                { id: 4, at: hours(1), eventType: "show", ref: "wiki//knowledge/deploy/a", source: "user" },
+                {
+                  id: 4,
+                  at: hours(1),
+                  eventType: "show",
+                  ref: "wiki//knowledge/deploy/a",
+                  source: "user",
+                  byPerson: true,
+                },
               ],
             },
           },

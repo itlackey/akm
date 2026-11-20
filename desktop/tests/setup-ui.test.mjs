@@ -41,7 +41,7 @@ set -e
 #!${process.execPath}
 const args = process.argv.slice(2);
 if (args[0] === '--version') console.log(${JSON.stringify(ENGINE)});
-else console.log(JSON.stringify({ currentVersion: ${JSON.stringify(ENGINE)}, latestVersion: ${JSON.stringify(ENGINE)}, updateAvailable: false, plugins: [] }));
+else console.log(JSON.stringify({ currentVersion: ${JSON.stringify(ENGINE)}, latestVersion: ${JSON.stringify(ENGINE)}, updateAvailable: false, currentChannel: "latest", plugins: [] }));
 AKM
 /bin/chmod +x "$AKM_INSTALL_DIR/akm"
 `;
@@ -100,6 +100,18 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
       ? route.fulfill({ status: 502, json: { ok: false, code: "FETCH_FAILED", error: "Could not reach GitHub." } })
       : route.continue({ postData: JSON.stringify({ source: starter, name: "akm-stash" }) }),
   );
+
+  // The local folder stands in for the download, so the listing reports it with the starter's identity.
+  await page.route("**/api/bundles", async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    // The page keeps refreshing while the test shuts the server down; a request that finds it gone is just dropped.
+    const response = await route.fetch().catch(() => null);
+    if (!response) return route.abort().catch(() => {});
+    const body = await response.json();
+    for (const bundle of body.data.bundles)
+      if (bundle.name === "akm-stash") bundle.identity = body.data.starter.identity;
+    await route.fulfill({ response, json: body });
+  });
 
   await page.goto(server.url);
   // Unconfigured Home offers setup instead of a red health failure.
@@ -225,7 +237,8 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
   await page.getByRole("button", { name: "Install 1 selected" }).click();
   await expect(page.getByText(/Background learning is on and runs on Claude Code: harness "claude"/)).toBeVisible();
   await expect(page.getByRole("radio", { name: "Claude Code" })).toBeChecked();
-  await expect(page.getByText(`✓ AKM plugin ${PLUGIN}`)).toBeVisible();
+  // No `akm upgrade --check` has run, so the plugin is named but not ticked as up to date.
+  await expect(page.getByText(`AKM plugin ${PLUGIN}`, { exact: true })).toBeVisible();
   await expect(page.getByText("Restart Claude Code")).toBeVisible();
   // The restart note belongs to its card: it is the card's description.
   await expect(claudeCard).toHaveAccessibleDescription(/Restart Claude Code, or run \/reload-plugins/);
@@ -306,14 +319,14 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
 });
 
 /** An existing user: akm, Bun and Claude Code are installed, and the plugin is already there. */
-async function withHostTools(fixture, { akmVersion = "0.10.261104" } = {}) {
+async function withHostTools(fixture, { akmVersion = "0.10.261104", plugins = [] } = {}) {
   const bin = path.join(fixture.root, "bin");
   await mkdir(bin);
   await writeFile(path.join(bin, "claude"), harness(fixture.root, "claude"), { mode: 0o755 });
   await writeFile(path.join(fixture.root, "claude.json"), JSON.stringify({ marketplace: true, installed: true }));
   await writeFile(
     path.join(bin, "akm"),
-    `#!${process.execPath}\nconst args = process.argv.slice(2);\nif (args[0] === '--version') console.log('${akmVersion}');\nelse console.log(JSON.stringify({ currentVersion: '${akmVersion}', latestVersion: '${akmVersion}', updateAvailable: false, plugins: [] }));\n`,
+    `#!${process.execPath}\nconst args = process.argv.slice(2);\nif (args[0] === '--version') console.log('${akmVersion}');\nelse console.log(JSON.stringify({ currentVersion: '${akmVersion}', latestVersion: '${akmVersion}', updateAvailable: false, currentChannel: "latest", channel: "latest", plugins: ${JSON.stringify(plugins)} }));\n`,
     { mode: 0o755 },
   );
   await writeFile(path.join(bin, "bun"), `#!${process.execPath}\nconsole.log('1.3.14');\n`, { mode: 0o755 });
@@ -338,7 +351,8 @@ test("run again on an existing machine shows live state, offers the CLI update o
   await page.getByRole("link", { name: "Run setup again" }).click();
   await expect(page.getByText("✓ Ready")).toBeVisible();
   await expect(page.getByText("✓ 1 connected")).toBeVisible();
-  await expect(page.getByText(`✓ AKM plugin ${PLUGIN}`)).toBeVisible();
+  await expect(page.getByText(`AKM plugin ${PLUGIN}`, { exact: true })).toBeVisible();
+  await expect(page.getByText(`✓ AKM plugin ${PLUGIN}`)).toHaveCount(0);
   // The host akm is one build behind the engine: said once, with the update offered.
   await expect(page.getByText(/This akm is older than the engine built into this app/)).toBeVisible();
   await page.screenshot({ path: path.join(screenshots, "existing-machine-setup.png"), fullPage: true });
@@ -358,6 +372,25 @@ test("run again on an existing machine shows live state, offers the CLI update o
   await expect(page.getByText("No search has reached akm yet. Things to check:")).toBeVisible();
   await expect(page.getByText(/A search reached akm/)).toHaveCount(0);
 });
+
+// The tick on a plugin is akm's own "up to date" for it: a plugin akm reports as current has it, one akm did not check
+// (or did not list) has none.
+for (const [name, plugins, ticked] of [
+  ["a plugin akm reports as current shows the tick", [{ harness: "claude-code", outcome: "current" }], true],
+  ["a plugin akm did not check shows no tick", [], false],
+]) {
+  test(`Setup: ${name}`, { timeout: 120000 }, async (t) => {
+    const server = await launchFixture({ configureFixture: (fixture) => withHostTools(fixture, { plugins }) });
+    t.after(() => server.stop());
+    const browser = await chromium.launch({ headless: true });
+    t.after(() => browser.close());
+    const page = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
+    await page.goto(server.url);
+    await page.goto(`${server.origin}/setup`);
+    await expect(page.getByText(`AKM plugin ${PLUGIN}`)).toBeVisible();
+    await expect(page.getByText(`✓ AKM plugin ${PLUGIN}`)).toHaveCount(ticked ? 1 : 0);
+  });
+}
 
 test("a machine with the same akm as the app is not offered an update", { timeout: 120000 }, async (t) => {
   const server = await launchFixture({ configureFixture: (fixture) => withHostTools(fixture, { akmVersion: ENGINE }) });

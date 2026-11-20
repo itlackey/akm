@@ -121,7 +121,7 @@ export function retentionNotes(args: {
   eventRetentionDays: number;
 }): string[] {
   const stores = [
-    { store: "usage_events (search, show, curate and feedback rows)", days: args.usageRetentionDays },
+    { store: "usage_events (search, show, curate, feedback and rules rows)", days: args.usageRetentionDays },
     { store: "events (selects, LLM calls and index runs)", days: args.eventRetentionDays },
   ];
   const notes: string[] = [];
@@ -164,7 +164,7 @@ function buildUsage(input: MetricsInput, rows: MetricsUsageRow[]): AkmMetricsRes
 
   const days = new Map<string, MetricsDailyUsage>();
   const bumpDay = (day: string, field: keyof Omit<MetricsDailyUsage, "day">, n: number) => {
-    const entry = days.get(day) ?? { day, search: 0, show: 0, curate: 0, feedback: 0 };
+    const entry = days.get(day) ?? { day, search: 0, show: 0, curate: 0, feedback: 0, rules: 0 };
     entry[field] += n;
     days.set(day, entry);
   };
@@ -190,6 +190,16 @@ function buildUsage(input: MetricsInput, rows: MetricsUsageRow[]): AkmMetricsRes
   let zeroResultSearches = 0;
   let shows = 0;
   let curates = 0;
+  const ruleLoads = { loads: 0, rawLoads: 0, rules: 0, chars: 0, byRule: new Map<string, number>() };
+  // Which rules a load carried, and how long they were, is kept on the raw rows only (state.db's retention);
+  // metrics.db's rollups count the loads.
+  for (const row of rows) {
+    if (row.eventType !== "rules" || !row.rules) continue;
+    ruleLoads.rawLoads += 1;
+    for (const ref of row.rules.refs) ruleLoads.byRule.set(ref, (ruleLoads.byRule.get(ref) ?? 0) + 1);
+    ruleLoads.rules += row.rules.refs.length;
+    ruleLoads.chars += row.rules.chars;
+  }
 
   for (const r of usageRows) {
     bySource[r.source] = (bySource[r.source] ?? 0) + r.n;
@@ -218,6 +228,9 @@ function buildUsage(input: MetricsInput, rows: MetricsUsageRow[]): AkmMetricsRes
         entry.shows += r.n;
         touch(entry, r.last_at);
       }
+    } else if (r.event_type === "rules") {
+      ruleLoads.loads += r.n;
+      bumpDay(r.day, "rules", r.n);
     } else if (r.event_type === "feedback") {
       // Signed rows only, so the daily series and the totals count the same rows.
       const signed = r.positive + r.negative;
@@ -288,6 +301,15 @@ function buildUsage(input: MetricsInput, rows: MetricsUsageRow[]): AkmMetricsRes
       distinctQueries: queries.size,
     },
     selectsPerSearch: searchesWithHits > 0 ? selectCount / searchesWithHits : null,
+    rules: {
+      loads: ruleLoads.loads,
+      meanRules: meanOf(ruleLoads.rules, ruleLoads.rawLoads),
+      meanChars: meanOf(ruleLoads.chars, ruleLoads.rawLoads),
+      byRule: [...ruleLoads.byRule.entries()]
+        .map(([ref, loads]) => ({ ref, loads }))
+        .sort((a, b) => b.loads - a.loads || a.ref.localeCompare(b.ref))
+        .slice(0, input.top),
+    },
     // Exact over raw rows; over rollup days an estimate from the duration histograms.
     searchMedianMs: rollupLatency ? histogramMedian(searchHist) : median(searchMs),
     daily: [...days.values()].sort((a, b) => a.day.localeCompare(b.day)),

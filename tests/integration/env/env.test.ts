@@ -460,7 +460,7 @@ describe("env export / path (read-path safety)", () => {
     }
   });
 
-  test("env export without --out errors and points at env run", async () => {
+  test("env export without --out errors and points at akm exec", async () => {
     const stashDir = makeTempDir("akm-envcli-stash-");
     fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "API_KEY=secret\n", "utf8");
@@ -473,7 +473,7 @@ describe("env export / path (read-path safety)", () => {
     const json = JSON.parse(result.stderr) as { code?: string };
     expect(json.code).toBe("MISSING_REQUIRED_ARGUMENT");
     expect(result.stderr).toContain("--out");
-    expect(result.stderr).toContain("akm env run");
+    expect(result.stderr).toContain("akm exec --env");
     expect(result.stdout).not.toContain("secret");
   });
 
@@ -486,7 +486,7 @@ describe("env export / path (read-path safety)", () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout.trim().endsWith(path.join("env", "prod.env"))).toBe(true);
-    expect(result.stderr).toContain("akm env run");
+    expect(result.stderr).toContain("akm exec --env");
 
     // --quiet suppresses the warning (for the _FILE / --env-file convention).
     const quiet = await withBundle(stashDir, () => runCli(["env", "path", "env/prod", "--quiet"]));

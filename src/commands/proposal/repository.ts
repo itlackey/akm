@@ -48,6 +48,7 @@ import { canonicalBundleIdForTarget, resolveBundleWriteTarget } from "../../sour
 import {
   assertAkmAssetWrite,
   assertWritePathsInsideSource,
+  type CommitOutcome,
   commitAcceptedPaths,
   commitWriteTargetBoundary,
   prepareWriteTargetForMutation,
@@ -1173,6 +1174,8 @@ export interface PromoteResult {
   proposal: Proposal;
   assetPath: string;
   ref: string;
+  /** What this accept's own commit came to. Absent when a collector holds the commit for its caller, or nothing was written. */
+  commit?: CommitOutcome;
 }
 
 function resolveRecordedProposalTarget(
@@ -1558,18 +1561,23 @@ function commitAccept(
   target: ResolvedWriteTarget,
   proposal: Proposal,
   paths: string[],
-): void {
-  if (collector) collector.push({ target, proposal, paths });
-  else commitAcceptedPaths(target, acceptCommitMessage(proposal), paths);
+): CommitOutcome | undefined {
+  if (collector) {
+    collector.push({ target, proposal, paths });
+    return undefined;
+  }
+  return commitAcceptedPaths(target, acceptCommitMessage(proposal), paths);
 }
 
 /**
  * Commit everything `collector` holds, one commit per target repository: a lone
  * accept keeps its own subject; several get `<label>: N accepted (source count,
  * ...)` with one `<id8> <source> <ref>` body line per proposal. Empties the
- * collector. A failed commit only warns, as for a single accept.
+ * collector. A failed commit only warns, as for a single accept. Returns what
+ * each proposal's commit came to, by proposal id.
  */
-export function commitCollectedAccepts(collector: AcceptCommitCollector, label: string): void {
+export function commitCollectedAccepts(collector: AcceptCommitCollector, label: string): Map<string, CommitOutcome> {
+  const outcomes = new Map<string, CommitOutcome>();
   const byRepo = new Map<string, AcceptCommitCollector>();
   for (const entry of collector.splice(0)) {
     const key = path.resolve(entry.target.source.repoPath ?? entry.target.source.path);
@@ -1578,19 +1586,24 @@ export function commitCollectedAccepts(collector: AcceptCommitCollector, label: 
   for (const entries of byRepo.values()) {
     const first = entries[0] as AcceptCommitCollector[number];
     if (entries.length === 1) {
-      commitAcceptedPaths(first.target, acceptCommitMessage(first.proposal), first.paths);
+      outcomes.set(
+        first.proposal.id,
+        commitAcceptedPaths(first.target, acceptCommitMessage(first.proposal), first.paths),
+      );
       continue;
     }
     const counts = new Map<string, number>();
     for (const { proposal } of entries) counts.set(proposal.source, (counts.get(proposal.source) ?? 0) + 1);
     const bySource = [...counts].sort((a, b) => b[1] - a[1]).map(([source, count]) => `${source} ${count}`);
-    commitAcceptedPaths(
+    const outcome = commitAcceptedPaths(
       first.target,
       `${label}: ${entries.length} accepted (${bySource.join(", ")})`,
       entries.flatMap((entry) => entry.paths),
       entries.map(({ proposal }) => `${proposal.id.slice(0, 8)} ${proposal.source} ${proposal.ref}`),
     );
+    for (const { proposal } of entries) outcomes.set(proposal.id, outcome);
   }
+  return outcomes;
 }
 
 /**
@@ -1743,8 +1756,8 @@ async function promoteProposalWithLease(
   const paths = [assetPath];
   if (accepted.status === "accepted" && accepted.source === "consolidate")
     retirePromotionSource(mutationTarget, accepted, paths);
-  commitAccept(options.commitCollector, mutationTarget, accepted, paths);
-  return { proposal: accepted, assetPath, ref: accepted.ref };
+  const commit = commitAccept(options.commitCollector, mutationTarget, accepted, paths);
+  return { proposal: accepted, assetPath, ref: accepted.ref, ...(commit ? { commit } : {}) };
 }
 
 /**
@@ -2118,7 +2131,7 @@ async function retireProposalWithLease(
     }
     throw error;
   }
-  if (paths.length > 0) commitAccept(options.commitCollector, mutationTarget, proposal, paths);
+  const commit = paths.length > 0 ? commitAccept(options.commitCollector, mutationTarget, proposal, paths) : undefined;
 
   if (archiveDirs.length === 0) {
     // Recorded intent, but neither file is at its original location NOR
@@ -2151,7 +2164,7 @@ async function retireProposalWithLease(
   );
   // The moved files left the index's view; drop their rows now, not at the next `akm index`.
   await indexWrittenProposalAssets(mutationTarget, twinPath ? [intent.assetPath, twinPath] : [intent.assetPath]);
-  return { proposal: accepted, assetPath: intent.assetPath, ref: accepted.ref };
+  return { proposal: accepted, assetPath: intent.assetPath, ref: accepted.ref, ...(commit ? { commit } : {}) };
 }
 
 export interface RevertResult {

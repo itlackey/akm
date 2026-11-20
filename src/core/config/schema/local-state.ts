@@ -8,9 +8,13 @@
  */
 import { z } from "zod";
 
-/** `usage.capture`: record local-only CLI usage counts in `metrics.db`. Default `true`. */
+/**
+ * `usage.capture`: record local-only CLI usage counts in `metrics.db`. Default `true`.
+ * `usage.report`: send the daily usage report (docs/reference/data-and-telemetry.md). Default `true`.
+ */
 export const UsageConfigSchema = z
   .object({
     capture: z.boolean().optional(),
+    report: z.boolean().optional(),
   })
   .passthrough();

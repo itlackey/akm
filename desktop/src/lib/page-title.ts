@@ -30,7 +30,6 @@ export function viewTitle(url: Address): string {
   if (section === "library") {
     if (query.getAll("compare").length === 2) return "Compare assets";
     if (first === "edit") return `Edit ${ref ? named(ref) : fileName(query.get("file") ?? "")}`.trim();
-    if (first === "new") return "New knowledge";
     if (first === "new-sensitive") return query.get("kind") === "secret" ? "New secret" : "New environment file";
     if (first === "files") return ref ? named(ref) : fileName(query.get("file") ?? "") || "Files";
     if (first === "map") return "Map";

@@ -35,6 +35,13 @@ function makeStash(): string {
   return stash.dir;
 }
 
+// `akm env run` and `akm secret run` print one deprecation line naming `akm exec`; the tests here read the rest of stderr.
+const withoutRunDeprecation = (stderr: string): string =>
+  stderr
+    .split("\n")
+    .filter((line) => !/^\[deprecated\] akm (env|secret) run is deprecated/.test(line))
+    .join("\n");
+
 function spawnCli(
   args: string[],
   options: { stashDir?: string; env?: Record<string, string | undefined> } = {},
@@ -52,7 +59,7 @@ function spawnCli(
   );
   return {
     stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
+    stderr: withoutRunDeprecation(result.stderr ?? ""),
     status: result.status ?? 1,
   };
 }

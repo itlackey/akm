@@ -88,7 +88,7 @@ function mb(bytes: number): string {
 
 export function metricsDbCheck(state: MetricsDbState): HealthCheckResult {
   const result = (
-    status: HealthCheckResult["status"],
+    status: "pass" | "warn" | "fail",
     message: string,
     evidence?: Record<string, unknown>,
   ): HealthCheckResult => ({

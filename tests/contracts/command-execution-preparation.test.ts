@@ -94,7 +94,7 @@ function projectedWithoutStoredIdentity(value: string): Record<string, unknown> 
   return parsed;
 }
 
-const OK = { ok: true, exitCode: 0, stdout: "", stderr: "", durationMs: 0 } as const;
+const OK = { ok: true, exitCode: 0, stdout: "done", stderr: "", durationMs: 0 } as const;
 
 /** Dispatch through the `runAgent` seam and capture what the harness would receive. */
 async function captureAgent(prepared: Awaited<ReturnType<typeof prepareCommandInvocation>>) {

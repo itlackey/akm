@@ -6,6 +6,7 @@
 
 import fs from "node:fs";
 import { isDeepStrictEqual } from "node:util";
+import { usageReportEnabled } from "../cli/usage-report";
 import { assertUnsettable, listConfig, setConfigValue, unsetConfigValue } from "../commands/config";
 import { isRecord } from "../core/common";
 import { type AkmConfig, defaultConnection, loadConfig, mutateConfig, resetConfigCache } from "../core/config/config";
@@ -68,6 +69,8 @@ const redactEndpoint = (endpoint: string | undefined) =>
 export function get() {
   const live = loadConfig();
   const effective = redactForUi(listConfig(live)) as Record<string, unknown>;
+  // The report switch is read from the config file by the report itself; show that answer, not the loaded config's.
+  effective.usage = { ...(isRecord(effective.usage) ? effective.usage : {}), report: usageReportEnabled() };
   // Projects hold no credentials; redaction would turn a value such as `filters.env` into "[redacted]" and a save would write that back.
   if (live.projects) effective.projects = live.projects;
   const leaves: Array<{ path: string[]; value: unknown }> = [];

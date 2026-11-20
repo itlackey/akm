@@ -164,14 +164,14 @@ describe("buildReflectPrompt — a patch of three fields, and 'nothing to change
     );
   });
 
-  test("a rejected proposal is not to be proposed again, and null is the answer when nothing else is justified", () => {
+  test("rejection history discourages the same mistake without overriding current evidence", () => {
     const rendered = buildReflectPrompt({
       ...input,
       rejectedProposals: [{ ref: "knowledge/foo", reason: "not an improvement", contentPreview: "preview" }],
     }).prompt;
-    expect(rendered).toContain(
-      "Do not propose the same change again; if no other change is justified, return null for each field.",
-    );
+    expect(rendered).toContain("Avoid repeating the same mistake.");
+    expect(rendered).toContain("Use the current asset and feedback when the evidence has changed.");
+    expect(rendered).toContain("If no change is justified, return null for each field.");
   });
 
   test("akm names the problems it can see: a stray-period description, no when_to_use, no title", () => {

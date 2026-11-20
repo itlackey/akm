@@ -65,7 +65,8 @@ function embeddedInput(entry: IndexDocument, maxInputTokens: number): string {
  * The entry's vector is deleted when the text it is embedded from changes,
  * that is when the search text cut to `maxInputTokens` (the embedding cap,
  * `embedding.maxInputTokens`) differs from the cut of the stored document. A
- * change past the cut rewrites the keyword rows and keeps the vector.
+ * change past the cut rewrites the keyword rows and keeps the vector. A caller that knows the content is the
+ * same file (a moved file) passes `keepVector`: the vector stays whatever the search text now says.
  */
 export function upsertEntry(
   db: Database,
@@ -74,6 +75,7 @@ export function upsertEntry(
   provenance: EntryProvenance,
   contentHash?: string,
   maxInputTokens: number = DEFAULT_MAX_INPUT_TOKENS,
+  keepVector = false,
 ): number {
   // Hot path during indexing — cache prepared statements per database
   // connection so we don't pay the SQL parse/compile cost on every call.
@@ -108,7 +110,7 @@ export function upsertEntry(
     ) as { id: number } | undefined;
     if (!result) throw new Error("upsertEntry: item_ref not found after upsert");
 
-    if (previous?.id === result.id && vectorStale) deleteEntryVectors(db, result.id);
+    if (previous?.id === result.id && vectorStale && !keepVector) deleteEntryVectors(db, result.id);
     replaceFtsEntry(
       db,
       result.id,
@@ -442,6 +444,20 @@ function selectRowsInDirectory<T extends { file_path: string }>(
   }
   const rows = db.prepare(sql).all(...params) as T[];
   return rows.filter((row) => path.dirname(row.file_path) === resolvedDir);
+}
+
+/** The entries stored for the files directly in one directory of a bundle, with each file's content hash. */
+export function getStoredEntriesInDirectory(
+  db: Database,
+  dirPath: string,
+  bundleId: string,
+): Array<{ id: number; itemRef: string; filePath: string; contentHash: string | null }> {
+  return selectRowsInDirectory<{ id: number; item_ref: string; file_path: string; content_hash: string | null }>(
+    db,
+    dirPath,
+    "id, item_ref, file_path, content_hash",
+    bundleId,
+  ).map((row) => ({ id: row.id, itemRef: row.item_ref, filePath: row.file_path, contentHash: row.content_hash }));
 }
 
 function rowsInDirectory(db: Database, dirPath: string, bundleId?: string): Array<{ id: number; item_ref: string }> {

@@ -26,6 +26,7 @@ import {
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
+  writeSandboxConfig,
 } from "./_helpers/sandbox";
 
 const FORMATS = ["json", "jsonl", "yaml", "text", "md"] as const;
@@ -179,5 +180,29 @@ describe("jsonl per-line records are limited to the pack", () => {
     expect(result.code).toBe(0);
     expect(result.stdout.trim().split("\n")).toHaveLength(1);
     expect(Array.isArray(JSON.parse(result.stdout))).toBe(true);
+  });
+});
+
+describe("config get --format text prints the value itself", () => {
+  // A scalar used to be walked as an object: a string printed one `index=char`
+  // line per character, a boolean or number printed "(empty config)", and an
+  // unset key failed with exit 70.
+  test.each([
+    ["a string", "semanticSearchMode", "off\n"],
+    ["a boolean", "usage.capture", "false\n"],
+    ["a number", "archiveRetentionDays", "30\n"],
+    ["an unset key", "embedding.endpoint", "\n"],
+  ])("%s", async (_label, key, expected) => {
+    writeSandboxConfig({ semanticSearchMode: "off", usage: { capture: false }, archiveRetentionDays: 30 });
+    const result = await runCliCapture(["config", "get", key, "--format=text"]);
+    expect(result.code, result.stderr).toBe(0);
+    expect(result.stdout).toBe(expected);
+  });
+
+  test("an object value keeps its key=value lines", async () => {
+    writeSandboxConfig({ usage: { capture: false } });
+    const result = await runCliCapture(["config", "get", "usage", "--format=text"]);
+    expect(result.code, result.stderr).toBe(0);
+    expect(result.stdout).toContain("capture=false\n");
   });
 });

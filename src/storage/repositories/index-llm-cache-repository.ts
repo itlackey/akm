@@ -89,3 +89,8 @@ export function clearStaleCacheEntries(db: Database): void {
 export function computeBodyHash(body: string): string {
   return sha256Hex(body);
 }
+
+/** Move a file's cached results to its new path, so a moved file is not enriched again. */
+export function rekeyLlmCache(db: Database, oldPath: string, newPath: string): void {
+  db.prepare("UPDATE OR REPLACE llm_enrichment_cache SET asset_ref = ? WHERE asset_ref = ?").run(newPath, oldPath);
+}

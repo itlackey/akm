@@ -115,8 +115,8 @@ describe("real CLI config file bootstrap", () => {
   test("passthrough after -- does not select a config file", () => {
     const { dir, env } = fixture();
     const pass = cli(["config", "path", "--", "--config", "other.json"], env, dir);
-    expect(pass.status).toBe(0);
-    expect(pass.stdout.trim()).toBe(path.join(env.AKM_CONFIG_DIR, "config.json"));
+    expect(pass.status).toBe(2);
+    expect(pass.stderr).toContain('takes no positional arguments, but got \\"--config\\" \\"other.json\\"');
   });
 
   test("nested AKM in another cwd inherits the absolute selected file", () => {

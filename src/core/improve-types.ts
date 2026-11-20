@@ -456,13 +456,17 @@ export interface ConsolidatePairPassResult {
   initiatorsBacklog: number;
   /** Candidate pairs after neighbour lookup and threshold, before `MAX_PAIRS_PER_RUN`; 0 when no initiators. */
   pairsConsidered?: number;
-  /** Pairs actually sent to the judge (excludes pairs skipped for the run cap or an existing pending retire proposal). */
+  /** Pairs that returned a parsed verdict, including retire decisions deferred or failing during proposal creation. */
   pairsJudged: number;
   /** Contradictions stay human: `labelCounts.contradicts`, not a separate count, is what the brief's MEASURE step reports. */
   labelCounts: Record<ConsolidatePairJudgeLabel, number>;
   /** Retire proposal ids minted this run (or, in a dry run, `retiredRef -> successorRef` preview strings). */
   retired: string[];
-  /** Pairs that did not settle: transport error, unparseable verdict, cancellation or a failed mint. Retried next run; not a no-action verdict. */
+  /** Valid retire decisions deferred by the same-run guard; remain eligible for later runs. */
+  deferredJudgments: number;
+  /** The first deferred pairs (bounded), with their reason; present only when some were deferred. */
+  deferrals?: PairDeferral[];
+  /** Execution failures: transport error, unparseable verdict, cancellation or a failed mint. Retried next run. */
   failedJudgments: number;
   /** `failedJudgments` by kind; present only when some failed. */
   failureKinds?: Partial<Record<PairFailureKind, number>>;
@@ -476,6 +480,12 @@ export interface ConsolidatePairPassResult {
  * or never sent), `other` (a post-verdict step failed).
  */
 export type PairFailureKind = "transport" | "parse" | "cancelled" | "other";
+
+export interface PairDeferral {
+  initiator: string;
+  other: string;
+  reason: "same_run_retirement";
+}
 
 export interface PairFailure {
   initiator: string;

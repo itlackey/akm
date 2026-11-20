@@ -42,6 +42,8 @@ const EXEMPT_COMMANDS: ReadonlySet<string> = new Set([
   "help",
   // Embedded agent guide document (`src/output/cli-hints.ts`).
   "hints",
+  // Child-process passthrough.
+  "exec",
 ]);
 
 /**

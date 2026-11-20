@@ -44,12 +44,16 @@ export interface UpgradeSummary {
   channel?: string;
   currentChannel?: string;
   targetChannel?: string;
-  /** Each harness plugin akm found: the channel it follows (`latest`, `next`, `pinned`, `unknown`) and what the run did. */
+  /**
+   * Each harness plugin akm found: the channel it follows (`latest`, `next`, `pinned`, `unknown`), what it did or, under
+   * `--check`, would do (`outcome`, with the version it moves from and to), and its message.
+   */
   plugins?: Array<{
     harness: string;
     channel?: string;
-    channelMismatch?: boolean;
     outcome?: string;
+    from?: string;
+    to?: string;
     reason?: string;
   }>;
   /** The status of the migration the upgrade ran: `current`, `applied`, `blocked`, `failed`, and so on. */
@@ -166,12 +170,6 @@ function killTree(pid: number | undefined) {
     /* already gone */
   }
 }
-
-/**
- * `--next` is Deprecated in the CLI and prints one deprecation line on stderr. It is not the same as `--channel next`
- * (that switches the installed plugins too) and the host CLI may be older, so keep `--next` and silence the notice.
- */
-const quietNext = (flags: readonly string[]): string[] => (flags.includes("--next") ? ["--quiet"] : []);
 
 export const runHost: Run = (file, args, { env, home, timeout = 30_000 }) =>
   new Promise((resolve, reject) => {
@@ -415,11 +413,11 @@ export class HostTools {
    * `within` says whether a host release is one Desktop's own engine can still read: true when it is not newer, false
    * when it is, undefined when it is not a version. Without it no release is refused.
    */
-  start(action: string, harness?: string, channel = "latest", options: StartOptions = {}) {
+  start(action: string, harness?: string, chosen?: string, options: StartOptions = {}) {
     if (
-      !["check", "install-cli", "upgrade-cli", "switch-channel", "install-plugin"].includes(action) ||
+      !["check", "install-cli", "upgrade-cli", "install-plugin"].includes(action) ||
       (action === "install-plugin" && !harnessIds.includes(harness as string)) ||
-      !["latest", "next"].includes(channel)
+      (chosen !== undefined && !["latest", "next"].includes(chosen))
     )
       throw new Error("Invalid software action.");
     if (this.pending) throw new Error("A software operation is already running.");
@@ -435,49 +433,39 @@ export class HostTools {
     this.state.command = undefined;
     this.state.consent = undefined;
     this.state.action = undefined;
-    // `--next` selects the newest release, prereleases included, for a check and for the upgrade; a switch is explicit.
-    const flags = action === "switch-channel" ? ["--channel", channel] : channel === "next" ? ["--next"] : [];
+    // The one release channel: the saved choice, else the channel akm reports the host CLI follows.
+    let resolved = chosen as "latest" | "next" | undefined;
+    const channelOf = async (env: Env) => (resolved ??= await this.followedChannel(env));
     this.pending = Promise.resolve()
       .then(async () => {
         const env = await this.environment();
         await this.inventory(env);
         if (action === "install-cli") await this.installCli(env, options);
-        if (action === "upgrade-cli" || action === "switch-channel") {
+        if (action === "upgrade-cli") {
           if (!this.state.cli?.runnable || !this.state.cli.path)
             throw new SoftwareError("Install a working CLI first.");
+          const flags = ["--channel", await channelOf(env)];
           await this.verifyTarget(env, flags, options.within);
           this.state.command = ["akm upgrade", ...flags, "--format json"].join(" ");
           const upgraded = await this.upgrade(env, flags);
           // Summarize only lifecycle fields, not complete migration/file payloads.
           this.state.upgrade = upgraded;
           this.state.action = { command: this.state.command, upgrade: upgraded };
-          this.state.receipt =
-            action === "switch-channel"
-              ? `Native AKM switched the CLI and installed plugins to the ${channel === "next" ? "prerelease" : "stable"} channel.`
-              : "Native AKM upgrade completed. The bundled desktop engine is unchanged.";
+          this.state.receipt = "Native AKM upgrade completed. The bundled desktop engine is unchanged.";
         }
-        if (action === "install-plugin") await this.installPlugin(harness as string, channel, env, options);
+        if (action === "install-plugin")
+          await this.installPlugin(harness as string, await channelOf(env), env, options);
         await this.inventory(env);
         if (this.state.cli?.runnable && this.state.cli.path) {
           const acted = this.state.command;
-          // Look again the way the CLI is followed after this action: an explicit switch names its target channel, an
-          // upgrade or check keeps its own flag, and a plugin or CLI install changes no CLI channel.
-          const check =
-            action === "switch-channel"
-              ? channel === "next"
-                ? ["--next"]
-                : []
-              : action === "upgrade-cli" || action === "check"
-                ? flags
-                : [];
-          const checked = ["akm upgrade --check", ...check, "--format json"].join(" ");
-          this.state.command = checked;
           try {
+            const flags = ["--channel", await channelOf(env)];
+            this.state.command = ["akm upgrade --check", ...flags, "--format json"].join(" ");
             const summary = summarizeUpgrade(
               json(
                 await this.invoke(
                   this.state.cli.path,
-                  ["upgrade", "--check", ...check, ...quietNext(check), "--format", "json"],
+                  ["upgrade", "--check", ...flags, "--format", "json"],
                   env,
                   120_000,
                 ),
@@ -515,30 +503,38 @@ export class HostTools {
       });
     return this.snapshot();
   }
+  /** The channel with no saved choice: the one akm reports the installed CLI follows, from a check that names no channel. */
+  async followedChannel(env: Env): Promise<"latest" | "next"> {
+    const cli = this.state.cli;
+    if (!cli?.runnable || !cli.path) throw new SoftwareError("Install AKM and the harness first.");
+    const { currentChannel } = summarizeUpgrade(
+      json(await this.invoke(cli.path, ["upgrade", "--check", "--format", "json"], env, 120_000)),
+    );
+    if (currentChannel !== "latest" && currentChannel !== "next")
+      throw new SoftwareError("akm did not report which channel the CLI follows, so no channel was chosen.");
+    return currentChannel;
+  }
   /** Run `akm upgrade`; a nonzero exit still carries akm's own result, so its lifecycle fields are kept. */
   async upgrade(env: Env, flags: string[]): Promise<UpgradeSummary> {
     let result: Loose;
     try {
       result = json(
-        await this.invoke(
-          this.state.cli?.path as string,
-          ["upgrade", ...flags, ...quietNext(flags), "--format", "json"],
-          env,
-          30 * 60_000,
-        ),
+        await this.invoke(this.state.cli?.path as string, ["upgrade", ...flags, "--format", "json"], env, 30 * 60_000),
       );
     } catch (error) {
       let partial: UpgradeSummary | undefined;
+      let said: string | undefined;
       try {
         const value = JSON.parse((error as { stdout?: string }).stdout ?? "");
         partial = summarizeUpgrade(value?.data ?? value);
+        said = bounded((value?.data ?? value)?.message);
       } catch {
         /* no structured result: the generic message and Details stand */
       }
       if (!partial) throw error;
       this.state.upgrade = partial;
       this.state.action = { command: this.state.command as string, upgrade: partial };
-      throw new SoftwareError(upgradeFailure(partial) ?? "AKM's upgrade exited with an error.");
+      throw new SoftwareError(upgradeFailure(partial) ?? unfinished(partial, said));
     }
     const summary = summarizeUpgrade(result);
     const failure = upgradeFailure(summary);
@@ -560,12 +556,7 @@ export class HostTools {
     try {
       summary = summarizeUpgrade(
         json(
-          await this.invoke(
-            this.state.cli.path,
-            ["upgrade", "--check", ...flags, ...quietNext(flags), "--format", "json"],
-            env,
-            120_000,
-          ),
+          await this.invoke(this.state.cli.path, ["upgrade", "--check", ...flags, "--format", "json"], env, 120_000),
         ),
       );
     } catch {
@@ -741,6 +732,19 @@ function upgradeFailure(summary: UpgradeSummary): string | undefined {
     : undefined;
 }
 
+/** A nonzero exit with no failed step: what akm reported as not done, in its own words. */
+function unfinished(summary: UpgradeSummary, message: string | undefined): string {
+  const reported = [
+    summary.upgraded === false ? message : undefined,
+    ...(summary.plugins ?? [])
+      .filter((item) => item.outcome === "deferred" || item.outcome === "skipped")
+      .map((item) => `the ${item.harness} plugin was ${item.outcome}${item.reason ? ` (${item.reason})` : ""}`),
+  ].filter(Boolean);
+  return reported.length
+    ? `AKM's upgrade exited with an error. akm reported: ${reported.join("; ")}. The versions shown are what is installed now.`
+    : "AKM's upgrade exited with an error and reported no reason. Use akm upgrade in your terminal to review its diagnostics.";
+}
+
 export function summarizeUpgrade(result: Loose): UpgradeSummary {
   const summary: UpgradeSummary = Object.fromEntries(
     [
@@ -757,16 +761,17 @@ export function summarizeUpgrade(result: Loose): UpgradeSummary {
       .filter((key) => ["string", "boolean"].includes(typeof result?.[key]))
       .map((key) => [key, result[key]]),
   );
-  // Which plugin follows which channel and what the run did with it, plus the entry's message (why it was deferred,
-  // failed or skipped, and any engine skew): the entries' backups and file paths stay out of the snapshot.
+  // Which plugin follows which channel and what the run did or would do with it, plus the entry's message (why it was
+  // deferred, failed, skipped or not checked, and any engine skew): the entries' backups and file paths stay out of the snapshot.
   if (Array.isArray(result?.plugins)) {
     summary.plugins = result.plugins
       .filter((entry: Loose) => typeof entry?.harness === "string")
       .map((entry: Loose) => ({
         harness: entry.harness as string,
         ...(typeof entry.channel === "string" ? { channel: entry.channel as string } : {}),
-        ...(typeof entry.channelMismatch === "boolean" ? { channelMismatch: entry.channelMismatch as boolean } : {}),
         ...(typeof entry.outcome === "string" ? { outcome: entry.outcome as string } : {}),
+        ...(typeof entry.from === "string" ? { from: entry.from as string } : {}),
+        ...(typeof entry.to === "string" ? { to: entry.to as string } : {}),
         ...(typeof entry.outcome === "string" && bounded(entry.message) ? { reason: bounded(entry.message) } : {}),
       }));
   }

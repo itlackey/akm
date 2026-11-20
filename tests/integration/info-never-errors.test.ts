@@ -296,6 +296,13 @@ describe("akm info tolerates an unrecognized flag instead of refusing (a10-info)
     expect(parsed.ok).toBe(true);
     expect(typeof parsed.version).toBe("string");
   });
+
+  test("akm info <stray> warns and still exits 0 with a normal report", async () => {
+    const { code, stdout, stderr } = await runCliCapture(["info", "stray", "--format", "json"]);
+    expect(code, stderr).toBe(0);
+    expect(stderr).toContain('ignoring positional argument "stray"');
+    expect(JSON.parse(stdout).ok).toBe(true);
+  });
 });
 
 describe("akm info under real index.db lock contention (a10-info)", () => {

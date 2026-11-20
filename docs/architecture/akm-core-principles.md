@@ -71,6 +71,11 @@ Every agent harness registers once in `HARNESS_REGISTRY`
 a harness. Runtime-specific APIs (`bun:sqlite`, `Bun.*`) are reached only
 through `src/storage/database.ts` and `src/runtime.ts`.
 
+Report facts from the component that owns them. A valid decision deferred by a
+safety rule is not an execution failure, and an older record that did not
+capture a count cannot establish zero. Lifecycle cleanup calls the existing
+owner of the resource it releases.
+
 Why: a policy copied into three places drifts into three policies, and
 the drift is invisible until a user hits the one that differs.
 

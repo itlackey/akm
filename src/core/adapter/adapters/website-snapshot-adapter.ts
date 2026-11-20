@@ -35,7 +35,7 @@ import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
 import type { BundleAdapter } from "../bundle-adapter";
 import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
-import { hashContent, nonEmptyString, runBaseValidateChecks } from "./shared";
+import { createBaseChecker, hashContent, nonEmptyString, parseForValidate } from "./shared";
 
 /** A snapshot bundle is single-component; its one component is `main`. */
 const COMPONENT_ID = "main";
@@ -120,15 +120,15 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
 
 async function validate(c: BundleComponent, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
   const diagnostics: Diagnostic[] = [];
+  const { check } = createBaseChecker(c.root, ctx);
   for (const change of changes) {
     if (change.op === "delete") continue;
     const raw = change.after ?? (await ctx.readFile(change.path));
     if (typeof raw !== "string") continue;
     if (!isSnapshotPage(change.path)) continue;
-    const base = await runBaseValidateChecks(toPosix(change.path), parseFrontmatter(raw), c.root, ctx);
     // A read-only crawl mirror carries `fetchedAt` provenance, never an `updated`
-    // field — so `missing-updated` is not a defect on a snapshot page.
-    diagnostics.push(...base.filter((d) => d.issue !== "missing-updated"));
+    // field — so the `missing-updated` rule does not apply to a snapshot page.
+    diagnostics.push(...check(toPosix(change.path), parseForValidate(raw), ["missing-updated"]));
   }
   return diagnostics;
 }

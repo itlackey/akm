@@ -54,6 +54,7 @@ import { migrateFormatters } from "./text/migrate";
 import { proposalProducerFormatters } from "./text/proposal/producer";
 import { proposalFormatters } from "./text/proposal/proposal";
 import { getTextFormatterHandler, registerTextFormatters, type TextFormatterEntry } from "./text/registry";
+import { rulesFormatters } from "./text/rules";
 import { workflowFormatters } from "./text/workflow";
 
 const BUILT_IN_TEXT_FORMATTERS: TextFormatterEntry[] = [
@@ -70,6 +71,7 @@ const BUILT_IN_TEXT_FORMATTERS: TextFormatterEntry[] = [
     command: "curate",
     handler: (r, detail) => withProjectLine(formatCuratePlain(r, detail), r.project as ProjectView | undefined),
   },
+  ...rulesFormatters,
   ...workflowFormatters,
   { command: "list", handler: (r) => formatListPlain(r) },
   { command: "add", handler: (r) => formatAddPlain(r) },

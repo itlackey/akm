@@ -135,7 +135,7 @@ const envPathCommand = defineJsonCommand({
   meta: {
     name: "path",
     description:
-      "Print the absolute env file path (Docker `_FILE` convention / `--env-file`). To inject values, use `akm env run <ref> -- <cmd>` — do NOT `source` the raw file.",
+      "Print the absolute env file path (Docker `_FILE` convention / `--env-file`). To inject values, use `akm exec --env <ref> -- <cmd>` — do NOT `source` the raw file.",
   },
   args: {
     ref: { type: "positional", description: "Env ref", required: true },
@@ -149,7 +149,7 @@ const envPathCommand = defineJsonCommand({
     if (args.quiet !== true) {
       process.stderr.write(
         `warning: this is the raw file path. Do NOT \`source\` it (shell substitutions in the file would execute).\n` +
-          `         To inject values run: akm env run ${args.ref} -- <command>\n`,
+          `         To inject values run: akm exec --env ${args.ref} -- <command>\n`,
       );
     }
     // F3/B3: this stdout write IS the payload — a bare absolute path for
@@ -176,7 +176,7 @@ const envExportCommand = defineJsonCommand({
   meta: {
     name: "export",
     description:
-      "Write safe `export KEY='value'` lines to a file (mode 0600) for `source`-ing — requires --out <path>. Values are re-serialised single-quoted so a raw `.env` cannot execute on load, and are NEVER printed to stdout. To use values directly, prefer `akm env run <ref> -- <command>`.",
+      "Write safe `export KEY='value'` lines to a file (mode 0600) for `source`-ing — requires --out <path>. Values are re-serialised single-quoted so a raw `.env` cannot execute on load, and are NEVER printed to stdout. To use values directly, prefer `akm exec --env <ref> -- <command>`.",
   },
   args: {
     ref: { type: "positional", description: "Env ref", required: true },
@@ -187,7 +187,7 @@ const envExportCommand = defineJsonCommand({
     if (!outPath) {
       throw new UsageError(
         "`akm env export` writes to a file — pass --out <path>.\n" +
-          "       To use values directly, run `akm env run <ref> -- <command>` (or `-- $SHELL` for an interactive\n" +
+          "       To use values directly, run `akm exec --env <ref> -- <command>` (or `-- $SHELL` for an interactive\n" +
           "       session). export never prints values to stdout, to avoid leaking them into a captured context.",
         "MISSING_REQUIRED_ARGUMENT",
       );
@@ -232,7 +232,7 @@ async function runEnvInjected(
         if (baseExists) {
           throw new UsageError(
             `'akm env run' injects the whole file; the single-key '<ref>/${maybeKey}' form was removed.\n` +
-              `       For one value use a secret: \`akm secret run secrets/${maybeKey} ${maybeKey} -- <command>\`.`,
+              `       For one value use a secret: \`akm exec --secret secrets/${maybeKey}:${maybeKey} -- <command>\`.`,
             "INVALID_FLAG_VALUE",
           );
         }
@@ -309,7 +309,7 @@ const envRunCommand = defineJsonCommand({
     name: "run",
     description:
       // biome-ignore lint/suspicious/noTemplateCurlyInString: literal `${ref}` token syntax documented for users, not interpolation
-      "Run a command with the env file injected into its environment: `akm env run <ref> -- <command>`. Use `-- $SHELL` for an interactive session. Restrict which variables are injected with --only / --except. Values may embed `${ref}` tokens, replaced at run time: a `${secrets/NAME}` (or `${bundle//secrets/NAME}`) token with the secret's value, any other asset ref with its absolute path. Pass --clean to start the child with a minimal inherited environment instead of the full parent environment.",
+      "Deprecated; use `akm exec --env <ref> -- <command>`; removed in 0.11. Run a command with the env file injected into its environment: `akm env run <ref> -- <command>`. Use `-- $SHELL` for an interactive session. Restrict which variables are injected with --only / --except. Values may embed `${ref}` tokens, replaced at run time: a `${secrets/NAME}` (or `${bundle//secrets/NAME}`) token with the secret's value, any other asset ref with its absolute path. Pass --clean to start the child with a minimal inherited environment instead of the full parent environment.",
   },
   args: {
     target: { type: "positional", description: "Env ref", required: true },

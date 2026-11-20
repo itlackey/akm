@@ -24,7 +24,7 @@ const HIDDEN_TYPES = ["secret", "env", "session"];
  * Every asset of the enabled bundles and the declared links between them, in column form: node `i` is `nodes.ref[i]`,
  * and its type, bundle and belief state are indexes into `types`, `bundles` (largest first) and `beliefs` (-1: no state
  * recorded). `shows`, `lastShownAt` and the feedback counts `positive` and `negative` are read live from the
- * user-attributed usage events within retention (`use`); `modifiedAt` is the file's modification time. A link joins two
+ * user-attributed usage events within retention (`use` and `feedback` are `null` when the store could not be read, and the counts are then zeros, not measurements); `modifiedAt` is the file's modification time. A link joins two
  * nodes by index and names its kind by index into `kinds`. `nodes.tags[i]` indexes `tags`, the asset's own frontmatter
  * tags. `duplicates` pairs assets whose stored embeddings are nearly the same, and `groups` gives each asset its group by
  * meaning and a place in 3D where alike assets sit close, as the last `akm index` stored them (index-layout-repository.ts);
@@ -53,6 +53,8 @@ function emptyGraph() {
     beliefs: [] as string[],
     /** Use figures count events from `source` at or after `since`. */
     use: null as { since: string; source: "user" } | null,
+    /** Feedback counts cover the same window; `null` when the store could not be read, so zeros are not a measurement. */
+    feedback: null as { since: string; source: "user" } | null,
     kinds: [] as string[],
     /** Every tag the assets carry, lower case; `nodes.tags[i]` indexes it. */
     tags: [] as string[],
@@ -123,7 +125,8 @@ async function readGraph() {
         ),
       null,
     );
-    result.use = { since, source: "user" };
+    if (use) result.use = { since, source: "user" };
+    if (feedback) result.feedback = { since, source: "user" };
     for (const row of rows) {
       const counts = use?.get(row.itemRef);
       result.nodes.ref.push(row.itemRef);
@@ -185,6 +188,11 @@ async function readGraph() {
     }
     const noted = [`${rows.length} assets and ${result.links.from.length} links of the enabled bundles.`];
     if (!use) noted.push("Use counts are zero: no usage history is available.");
+    if (!feedback) noted.push("Feedback counts are zero: no feedback history is available.");
+    if (!result.groups)
+      noted.push(
+        "Groups by meaning and near-duplicates are not available: the last index stored no layout (it needs at least eight embedded assets).",
+      );
     return {
       available: true,
       note: noted.join(" "),

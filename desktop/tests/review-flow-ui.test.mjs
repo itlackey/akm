@@ -3,6 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { test } from "node:test";
 import { chromium, expect } from "@playwright/test";
 import { launchFixture, open } from "./support.mjs";
@@ -162,4 +164,18 @@ test("Review: Refresh confirms politely and keeps focus; a toast clears the deci
       { message: "the toast ends above the shelf", timeout: 10000 },
     )
     .toBe(true);
+});
+
+test("Review: a missing state database is unavailable with its reason, never 'All caught up'", async (t) => {
+  const server = await launchFixture({
+    configureFixture: async (fixture) => fs.rm(path.join(fixture.env.AKM_DATA_DIR, "state.db"), { force: true }),
+  });
+  t.after(() => server.stop());
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  await open(page, server, "/review");
+  await expect(page.getByRole("alert").filter({ hasText: "AKM has no state database yet." })).toBeVisible();
+  await expect(page.getByText("All caught up")).toHaveCount(0);
+  await expect(page.getByText("Nothing waiting for review")).toHaveCount(0);
 });

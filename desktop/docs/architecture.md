@@ -60,11 +60,20 @@ masked view. A save does not touch Git; `akm sync` commits it like any other
 edit. Asset-level operations (retire,
 copy, proposals, env/secret, related content, bundle operations) stay AKM's.
 
-A move is two AKM operations: copy (`akmClone`, which never overwrites and
-records the original in the copy's `sources`), then retire of the original.
-Links to the old name are not rewritten; `akm lint` reports them. A skill can be
-copied but not retired, so it cannot be moved. Because the retirement is a
-proposal, Undo restores the original and leaves the copy.
+Moving, renaming, making and deleting files and folders are Desktop's plain file
+operations (`features/file-operations.ts`, `POST /api/desktop/files/{move,copy,folder,delete,reveal}`),
+as in a file manager. AKM says what is allowed: each listing entry carries `actions` and each
+listing a `place` verdict (a folder may be made in it, an entry moved in) and a `newFile`
+verdict (what a new file there is); Desktop refuses what AKM refuses with AKM's sentence and
+decides no type, folder, adapter or protection rule of its own. It never replaces an existing
+file. A move or rename is a `rename` on disk, then `bundles.index`: the index pairs the vanished
+entry with the file at its new place and carries its history (usage, feedback, proposals,
+events) to the new ref, so the result's `moves` and the entries' `assets` are what the page
+follows. If the index fails the rename stands and the failure is returned with it. A copy is
+a plain recursive copy, indexed as a new file. Links to the old ref are listed by
+`assets.movedLinks` and rewritten, on request, by `assets.updateMovedLinks`. A new file is
+`documents.createFile`; a folder is made in a folder AKM's `place` allows. A file that is no
+asset or an empty folder is deleted; an asset is retired.
 
 Manual retirement is core's ordinary retire proposal, minted and accepted at
 once and guarded by the displayed source revision. It follows the same
@@ -103,6 +112,14 @@ and must report a partial outcome as data. `tests/integration-contract.test.mjs`
 checks the import rule for server code. Desktop-owned routes are under
 `/api/desktop/*`; every other `/api` path is AKM's.
 
+## What Desktop shows
+
+Desktop shows what akm reports. It never infers state from a string's shape (a version pattern, a name or address
+substring, the wording of a message), a clock window, a default for a missing field, or the absence of an error.
+Unknown is shown as unknown, and a failed read is shown with its reason, never as zero, empty or up to date. A check
+and the action it previews call one function with the same inputs. A fact akm does not report is added to akm, which
+owns it; Desktop does not rebuild it from other fields.
+
 ## Local application boundary
 
 By default the server binds an OS-selected port on `127.0.0.1`; `akm-web` with `--host` and `--origin` binds elsewhere
@@ -123,6 +140,14 @@ operator's existing AKM access; source policy remains enforced by AKM. Closing
 the app stops the child server. Navigation never resizes its window.
 
 ## UI behavior
+
+- Files: the tree and the list are one file manager. `FileTreeState` holds the folders read from
+  AKM (one directory per request); `FileTree` draws them for the Files view and for the folder
+  picker; `FileMenu` is the one menu (right-click, the menu key, the row's button), built from
+  AKM's verdicts; `FileDialog` asks once for a move, a copy, a drop or a delete. Drag has a
+  keyboard form in Move to…. A rename is inline. The properties block reads the file's frontmatter
+  through `documents.frontmatter`, the editor's fields apply changes through
+  `documents.applyFrontmatter`, and Save runs `documents.check` on the text it will write.
 
 - The compact top bar holds Home, Library, Review, Activity and Settings. Each is a page
   route, so a view is addressable and reloads where it was; the bar returns to where a

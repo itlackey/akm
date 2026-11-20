@@ -15,6 +15,7 @@ import { removeEnv, writeEnv } from "../commands/env/env";
 import { removeSecret, setSecret } from "../commands/env/secret";
 import { deriveCanonicalAssetName } from "../core/asset/asset-placement";
 import { UsageError } from "../core/errors";
+import { protectedTypeOf } from "../indexer/walk/place-rules";
 import {
   resolveEnvPath,
   resolveEnvWriteTarget,
@@ -61,7 +62,15 @@ function selection(input: SensitiveSelector): { type: Kind; ref: string } {
       : input.file?.startsWith("secrets/")
         ? "secret"
         : "";
-  if (!type) throw new UsageError("Choose an environment file or secret.");
+  if (!type) {
+    // akm's env and secret operations take only a file in the top-level env/ or secrets/ folder.
+    const nested = input.file === undefined ? undefined : protectedTypeOf(input.file);
+    if (nested)
+      throw new UsageError(
+        `This is a protected ${nested === "env" ? "environment" : "secret"} file that akm manages only at the top level of a bundle, in env/ or secrets/. Its value is not shown here.`,
+      );
+    throw new UsageError("Choose an environment file or secret.");
+  }
   if (input.ref) return { type, ref: input.ref };
   if (!input.bundle) throw new UsageError("Choose the bundle containing this file.");
   const dir = type === "env" ? "env" : "secrets";
@@ -101,12 +110,12 @@ function locate(input: SensitiveSelector) {
 
 export function describe(input: SensitiveSelector) {
   const found = locate(input);
-  let writable = false;
+  // What may be done to the file: allowed when akm would write it, else the sentence its write path refuses with.
+  let verdict: { allowed: true } | { allowed: false; reason: string } = { allowed: true };
   try {
     (found.type === "env" ? resolveEnvWriteTarget : resolveSecretWriteTarget)(found.ref, found.bundle);
-    writable = true;
-  } catch {
-    /* a readable bundle akm does not write to */
+  } catch (error) {
+    verdict = { allowed: false, reason: error instanceof Error ? error.message : String(error) };
   }
   const parent = path.posix.dirname(found.relative);
   return {
@@ -115,7 +124,7 @@ export function describe(input: SensitiveSelector) {
     name: path.basename(found.file),
     bundle: found.bundle,
     path: found.file,
-    writable,
+    actions: { edit: verdict, delete: verdict },
     revision: digest(fs.readFileSync(found.file)),
     location: { bundle: found.bundle, path: found.relative, parent },
   };

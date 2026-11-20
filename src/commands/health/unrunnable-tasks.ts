@@ -21,6 +21,7 @@ export function collectUnrunnableTasksAdvisory(): HealthCheckResult {
       name: "unrunnable-tasks",
       kind: "deterministic",
       status: "unknown",
+      reason: "blocked",
       confidence: "high",
       message: `Enabled tasks could not be checked: ${error instanceof Error ? error.message : String(error)}`,
     };
