@@ -365,10 +365,16 @@ const POSITIONAL_FLAG: Readonly<Record<string, string>> = { "bundle create": "--
 
 /**
  * Commands whose handler reads `args._` itself: `proposal accept` and
- * `proposal reopen` take any number of ids, and `show` and `doctor prompt`
+ * `proposal reopen` take any number of ids, `migrate apply` any number of task files, and `show` and `doctor prompt`
  * refuse an extra token with a message of their own.
  */
-const OWN_POSITIONALS: ReadonlySet<string> = new Set(["proposal accept", "proposal reopen", "show", "doctor prompt"]);
+const OWN_POSITIONALS: ReadonlySet<string> = new Set([
+  "proposal accept",
+  "proposal reopen",
+  "migrate apply",
+  "show",
+  "doctor prompt",
+]);
 
 /** Commands whose `--` tail is the child command to run, not positionals of their own. */
 const CHILD_COMMAND_TAIL: ReadonlySet<string> = new Set(["exec", "env run", "secret run"]);

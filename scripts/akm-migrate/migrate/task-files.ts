@@ -13,9 +13,12 @@
 
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { ConfigError } from "../../../src/core/errors";
 import { parseTaskSourceV4 } from "../../../src/tasks/source/task-source-v4";
+import { checkTaskV5 } from "../../../src/tasks/v5/check";
+import type { TaskToV5Converted } from "./task-to-v5";
 import {
   planTaskToV4File,
   type TaskToV4Changed,
@@ -285,4 +288,77 @@ export function applyTaskFilesPlan(
   }
   const { replaced, conflicts } = replaceFilesWithBackups(changes, options.backupRoot);
   return { changed: replaced, conflicts };
+}
+
+/** The task ref a file under a root's task directory has. */
+function taskRefOf(root: TaskFileRoot, filePath: string): string {
+  const tasksDir = root.layout === "akm-task" ? root.root : path.join(root.root, "tasks");
+  return `tasks/${path.relative(tasksDir, filePath).split(path.sep).join("/").replace(/\.yml$/, "")}`;
+}
+
+/** The root whose task directory holds `filePath`. */
+function rootOfTaskFile(roots: readonly TaskFileRoot[], filePath: string): TaskFileRoot | undefined {
+  return roots.find((root) => {
+    const tasksDir = root.layout === "akm-task" ? root.root : path.join(root.root, "tasks");
+    return contained(tasksDir, filePath) && filePath !== tasksDir;
+  });
+}
+
+/**
+ * A folder shaped like the root, for a check: its other folders are the root's own, and its tasks folder holds each
+ * task by a link to the file, except the ones in `replaced`, which hold the bytes they are to be given.
+ */
+function overlayOf(root: TaskFileRoot, overlay: string, replaced: ReadonlyMap<string, Buffer>): void {
+  const tasksDir = root.layout === "akm-task" ? root.root : path.join(root.root, "tasks");
+  for (const entry of fs.readdirSync(root.root)) {
+    if (root.layout !== "akm-task" && entry !== "tasks") fs.symlinkSync(path.join(root.root, entry), path.join(overlay, entry));
+  }
+  const copy = (from: string, to: string): void => {
+    fs.mkdirSync(to, { recursive: true });
+    for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
+      const source = path.join(from, entry.name);
+      if (entry.isDirectory()) copy(source, path.join(to, entry.name));
+      else if (replaced.has(source)) fs.writeFileSync(path.join(to, entry.name), replaced.get(source) as Buffer);
+      else fs.symlinkSync(source, path.join(to, entry.name));
+    }
+  };
+  copy(tasksDir, path.join(overlay, "tasks"));
+}
+
+/**
+ * The files whose conversion is not accepted, each with why: the same check a start makes of the task
+ * (`checkTaskV5`), run on a copy of its bundle that holds every file converted in the same run, so a task that runs
+ * another is checked against what that one will be. A file that fails is not converted, so the others are checked
+ * again without it until each remaining one holds.
+ */
+export async function checkConvertedTaskFiles(
+  roots: readonly TaskFileRoot[],
+  converted: readonly TaskToV5Converted[],
+): Promise<Map<string, string>> {
+  const failed = new Map<string, string>();
+  for (;;) {
+    const accepted = converted.filter((file) => !failed.has(file.filePath));
+    const before = failed.size;
+    for (const root of roots) {
+      const mine = accepted.filter((file) => rootOfTaskFile([root], file.filePath) !== undefined);
+      if (mine.length === 0) continue;
+      const overlay = fs.mkdtempSync(path.join(os.tmpdir(), "akm-migrate-v5-"));
+      try {
+        overlayOf(root, overlay, new Map(mine.map((file) => [file.filePath, file.after])));
+        for (const file of mine) {
+          try {
+            await checkTaskV5({
+              ref: taskRefOf(root, file.filePath),
+              bundle: { name: root.bundleId, dir: overlay },
+            });
+          } catch (cause) {
+            failed.set(file.filePath, cause instanceof Error ? cause.message : String(cause));
+          }
+        }
+      } finally {
+        fs.rmSync(overlay, { recursive: true, force: true });
+      }
+    }
+    if (failed.size === before) return failed;
+  }
 }
