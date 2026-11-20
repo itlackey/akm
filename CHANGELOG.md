@@ -50,6 +50,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 
+- `akm.include` in a bundle's `package.json` is no longer read. A bundle is the directory akm detects, whole: `akm bundle add` and `akm bundle update` install it as fetched, with no filtered `selected/` copy in the cache. An npm publisher lists what ships in npm's own `files` field; a repository that also holds code keeps the bundle in its own directory (see [Authoring Bundles](docs/guides/author-bundles.md#sharing-on-github)). A writable git install of a repository that declares `akm.include` was refused and is now accepted. A bundle already installed keeps the filtered copy it has until `akm bundle update` fetches a new revision; from then on everything akm recognizes in it is indexed. The registry index builder lists every asset of such a package too.
 - AKM Desktop's Source history no longer shows a "Made by" badge or filter, and the commit entries of `akm-cli/workspace` `proposals.recentChanges` and `assets.history` no longer carry `origin`: it was judged from the commit subject, so a hand-written "Remember to rotate the key" read as akm's. Each commit shows its own author, date and subject; akm's commit messages are unchanged.
 
 ### Deprecated
