@@ -14,7 +14,16 @@ import { ConfigError } from "../../src/core/errors";
 import { getDataDir } from "../../src/core/paths";
 import { type BundleRoot, bundleRoots } from "./bundle-roots";
 import type { TaskToV4MigrationPlan } from "./migrate/task-to-v4";
-import { applyTaskFilesPlan, inspectTaskFiles, planTaskFilesMigration, type TaskFileRoot } from "./migrate/task-files";
+import {
+  applyTaskFilesPlan,
+  checkConvertedTaskFiles,
+  inspectTaskFiles,
+  planTaskFilesMigration,
+  replaceFilesWithBackups,
+  type TaskFileRoot,
+} from "./migrate/task-files";
+import type { TaskToV4FileInput } from "./migrate/task-to-v4";
+import { planTaskToV5File, type TaskToV5Converted, type TaskToV5Outcome } from "./migrate/task-to-v5";
 
 export interface TaskFileSummary {
   filePath: string;
@@ -136,4 +145,137 @@ export function applyTaskFilesMigration(): TaskFilesMigrationStatus {
       ...(applied.conflicts.length > 0 ? { conflicts: [...applied.conflicts] } : {}),
     };
   });
+}
+
+/** One task file named for conversion to version 5, and what became of it. */
+export interface TaskFileV5Summary {
+  filePath: string;
+  status: "converted" | "skipped" | "blocked";
+  reason: string;
+  detail?: string;
+  /** What version 4 did that version 5 does not, to change by hand. */
+  notes?: readonly string[];
+}
+
+export interface TaskFilesV5MigrationStatus {
+  schemaVersion: 1;
+  status: "current" | "ready" | "blocked";
+  blockers: string[];
+  files: TaskFileV5Summary[];
+  backupPath?: string;
+  applied?: number;
+  /** Files that changed after they were planned and were left as they are. */
+  conflicts?: string[];
+}
+
+function realPath(filePath: string): string {
+  try {
+    return fs.realpathSync(filePath);
+  } catch {
+    return path.resolve(filePath);
+  }
+}
+
+function blockedV5(filePath: string, reason: string, detail: string): TaskToV5Outcome {
+  return { status: "blocked", filePath, before: Buffer.alloc(0), beforeHash: "", mode: 0, reason, detail };
+}
+
+/**
+ * Plan version 5 for the named files, and check each conversion as a start checks it. A file the version 4 step
+ * rewrites is converted from the bytes that step writes (`apply` has written them by now; a preview has not), so a
+ * preview and an apply convert the same file.
+ */
+async function planNamed(
+  named: readonly string[],
+): Promise<{ outcomes: TaskToV5Outcome[]; converted: TaskToV5Converted[] }> {
+  resetConfigCache();
+  const roots = taskRoots(loadConfig());
+  const inputs: TaskToV4FileInput[] = inspectTaskFiles(roots);
+  const v4 = planTaskFilesMigration(inputs);
+  const outcomes: TaskToV5Outcome[] = [];
+  const planned = new Map<string, TaskToV5Outcome>();
+  for (const name of new Set(named.map(realPath))) {
+    const input = inputs.find((candidate) => realPath(candidate.filePath) === name);
+    if (!input) {
+      outcomes.push(
+        blockedV5(name, "not-a-task-file", "it is not a .yml file under the tasks folder of an enabled bundle"),
+      );
+      continue;
+    }
+    const earlier = v4.files.find((file) => file.filePath === input.filePath);
+    if (earlier?.status === "blocked") {
+      outcomes.push(
+        blockedV5(
+          input.filePath,
+          "version-4-step-blocked",
+          `${earlier.reason}${earlier.detail ? ` (${earlier.detail})` : ""}`,
+        ),
+      );
+      continue;
+    }
+    planned.set(input.filePath, planTaskToV5File(input, earlier?.status === "changed" ? earlier.after : input.bytes));
+  }
+  const converted = [...planned.values()].filter(
+    (outcome): outcome is TaskToV5Converted => outcome.status === "converted",
+  );
+  const failures = await checkConvertedTaskFiles(roots, converted);
+  for (const [filePath, outcome] of planned) {
+    const failure = failures.get(filePath);
+    outcomes.push(failure === undefined ? outcome : blockedV5(filePath, "version-5-check-failed", failure));
+  }
+  return { outcomes, converted: converted.filter((file) => !failures.has(file.filePath)) };
+}
+
+function v5Status(
+  outcomes: readonly TaskToV5Outcome[],
+  pending: boolean,
+  conflicts: readonly string[] = [],
+): TaskFilesV5MigrationStatus {
+  const files = outcomes
+    .map((outcome): TaskFileV5Summary => {
+      if (outcome.status === "converted" && conflicts.includes(outcome.filePath)) {
+        return {
+          filePath: outcome.filePath,
+          status: "blocked",
+          reason: "changed-since-planned",
+          detail: "the file changed after it was planned and was left as it is; run again",
+        };
+      }
+      return {
+        filePath: outcome.filePath,
+        status: outcome.status,
+        reason: outcome.reason,
+        ...(outcome.detail ? { detail: outcome.detail } : {}),
+        ...(outcome.status === "converted" && outcome.notes.length > 0 ? { notes: outcome.notes } : {}),
+      };
+    })
+    .sort((left, right) => (left.filePath < right.filePath ? -1 : left.filePath > right.filePath ? 1 : 0));
+  const blockers = files
+    .filter((file) => file.status === "blocked")
+    .map((file) => `${file.filePath}: ${file.reason}${file.detail ? ` (${file.detail})` : ""}`);
+  return { schemaVersion: 1, status: blockers.length > 0 ? "blocked" : pending ? "ready" : "current", blockers, files };
+}
+
+/** Read-only: what `apply` would convert of the named files to version 5, and what it cannot. */
+export async function inspectTaskFilesV5Migration(named: readonly string[]): Promise<TaskFilesV5MigrationStatus> {
+  const { outcomes, converted } = await planNamed(named);
+  return v5Status(outcomes, converted.length > 0);
+}
+
+/**
+ * Convert the named task files to task source v5 under one backup directory for the run. A file that is not
+ * converted is left as it is and reported with why. Run after {@link applyTaskFilesMigration}, whose result a named
+ * version 2 or 3 file is converted from.
+ */
+export async function applyTaskFilesV5Migration(named: readonly string[]): Promise<TaskFilesV5MigrationStatus> {
+  const { outcomes, converted } = await planNamed(named);
+  if (converted.length === 0) return v5Status(outcomes, false);
+  const backupPath = path.join(getDataDir(), "backups", "tasks", `${Date.now()}-${randomUUID()}`);
+  const { replaced, conflicts } = withConfigLock(() => replaceFilesWithBackups(converted, backupPath));
+  return {
+    ...v5Status(outcomes, false, conflicts),
+    backupPath,
+    applied: replaced.length,
+    ...(conflicts.length > 0 ? { conflicts: [...conflicts] } : {}),
+  };
 }

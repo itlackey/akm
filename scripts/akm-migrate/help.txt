@@ -22,7 +22,13 @@ order, and print one combined JSON plan (exit 1 when any step is blocked):
      with a verified sibling safety copy (the only path that admits them)
   3. task files at version 2 or 3, and version 4 files still carrying the
      retired `schedule[].enabled` key, rewritten as task source v4 under
-     one backup directory per run
+     one backup directory per run. A task file named on the command line
+     is converted to task source v5 (`version: 5-beta.<n>`) instead, after
+     the same check a start makes of it; no file is converted that is not
+     named. What a version 4 task did that version 5 does not (values given
+     to steps as AKM_PARAMS/AKM_STEPS, values appended to prompts) is
+     listed per file, to change by hand, and a file with no version 5 form
+     is left as it is and reported
   4. the retired `engine:` key on commands, agents, workflows and task
      sources rewritten to `connection:` or `harness:` by what the name is
      now, under one backup directory per run
@@ -48,4 +54,6 @@ in its entrypoint (a current installation is a no-op).
 
 Commands:
   status               Inspect every pending migration without changing anything.
-  apply [--dry-run]    Back up and apply every pending migration.
+  apply [--dry-run] [<task-file>...]
+                       Back up and apply every pending migration, and convert the
+                       named task files to task source v5.

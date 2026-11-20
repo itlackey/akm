@@ -59,7 +59,8 @@ export const migrateCommand = defineGroupCommand({
     apply: defineJsonCommand({
       meta: {
         name: "apply",
-        description: "Back up and apply every pending migration (`akm upgrade` runs this after an install)",
+        description:
+          "Back up and apply every pending migration (`akm upgrade` runs this after an install); task files named after it are converted to version 5",
       },
       args: {
         "dry-run": {
@@ -69,7 +70,8 @@ export const migrateCommand = defineGroupCommand({
         },
       },
       run({ args }) {
-        return runMigrateSubcommand("migrate-apply", args.dryRun ? ["apply", "--dry-run"] : ["apply"]);
+        const files = args._.map(String);
+        return runMigrateSubcommand("migrate-apply", ["apply", ...(args.dryRun ? ["--dry-run"] : []), ...files]);
       },
     }),
   },
