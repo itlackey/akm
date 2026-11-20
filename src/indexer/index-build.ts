@@ -9,21 +9,18 @@
  * readers can tell a build is running. Reads never build (see
  * `index-readiness.ts`): they serve what is persisted and say so.
  *
- *  - `"wait"` — explicit and mutating commands. Waits for a running build, with a
- *    notice while waiting, then builds.
- *  - `"try"` — opportunistic callers (`--skip-if-locked`, improve's pre-run
- *    index). When a live process holds the lock they do not build and carry on
- *    with the index as it is.
+ *  When a live process holds the lock, a build does not wait and does not fail: it
+ *  warns, returns {@link SkippedIndexBuild}, and the caller carries on with the
+ *  index as it is. The next build indexes whatever changed.
  *
  * Not re-entrant: no build path calls another from inside its own build. A caller
  * that must hold the lock around more than the build (`bundle update` publishes
  * and indexes under the asset mutation lease) takes it with
  * {@link withIndexBuildLock}, which hands it a `build` that runs under the lock
- * it already holds. Lock order is always the rebuild lock first, then the asset
- * mutation lease, so nothing waits for the rebuild lock while holding the lease.
+ * it already holds, or skips when another process holds it. Lock order is always
+ * the rebuild lock first, then the asset mutation lease.
  */
 
-import { TransientError } from "../core/errors";
 import type { LockOwnership } from "../core/file-lock";
 import type { RunLockHolder } from "../core/run-lock";
 import { warn } from "../core/warn";
@@ -31,19 +28,7 @@ import { warnOnBundleRenameDrift } from "./bundle-identity-guard";
 import { describeLockHolder, releaseIndexRebuildLock, tryAcquireIndexRebuildLock } from "./index-rebuild-lock";
 import { akmIndex, type IndexOptions, type IndexResponse } from "./indexer";
 
-// Same shape as the asset mutation lease (`index-writer-lock.ts`): a 100 ms poll, a
-// notice every 15 s, and a 10 minute bound.
-const WAIT_POLL_MS = 100;
-const WAIT_NOTICE_INTERVAL_MS = 15_000;
-const DEFAULT_MAX_WAIT_MS = 10 * 60 * 1000;
-
-let waitTimingForTests: { maxWaitMs?: number; noticeIntervalMs?: number } | undefined;
-/** TEST-ONLY. Shrinks the wait bound and notice cadence so a test does not block for real minutes. */
-export function _setIndexBuildWaitTimingForTests(overrides?: { maxWaitMs?: number; noticeIntervalMs?: number }): void {
-  waitTimingForTests = overrides;
-}
-
-/** `"try"` found a live holder and did not build. */
+/** A live process held the rebuild lock, so no build ran. */
 export interface SkippedIndexBuild {
   skipped: RunLockHolder;
 }
@@ -53,17 +38,26 @@ export function isSkippedIndexBuild(result: unknown): result is SkippedIndexBuil
   return typeof result === "object" && result !== null && "skipped" in result;
 }
 
-export async function buildIndex(options: IndexOptions, mode: "wait"): Promise<IndexResponse>;
-export async function buildIndex(options: IndexOptions, mode: "try"): Promise<IndexResponse | SkippedIndexBuild>;
-export async function buildIndex(
-  options: IndexOptions,
-  mode: "wait" | "try",
-): Promise<IndexResponse | SkippedIndexBuild>;
-export async function buildIndex(
-  options: IndexOptions,
-  mode: "wait" | "try",
-): Promise<IndexResponse | SkippedIndexBuild> {
-  const lock = await acquireBuildLock(mode, options.signal);
+/** What a skipped build reports: why nothing was built and who held the lock. */
+export interface SkippedIndexReport {
+  reason: "lock-held";
+  pid: number | null;
+  /** The launcher pid is what process listings and task logs show, not the bun/node child's. */
+  launcherPid: number | null;
+  startedAt: string | null;
+}
+
+export function skippedIndexReport(result: SkippedIndexBuild): SkippedIndexReport {
+  return {
+    reason: "lock-held",
+    pid: result.skipped.pid,
+    launcherPid: result.skipped.launcherPid,
+    startedAt: result.skipped.startedAt,
+  };
+}
+
+export async function buildIndex(options: IndexOptions): Promise<IndexResponse | SkippedIndexBuild> {
+  const lock = acquireBuildLock();
   if ("skipped" in lock) return lock;
   try {
     return await buildUnderLock(options);
@@ -73,22 +67,15 @@ export async function buildIndex(
 }
 
 /**
- * Take the rebuild lock (waiting for a running build, as `"wait"`), then run `run` with a `build` that builds under
- * that lock; release it when `run` settles. A build cannot start without the lock, and `build` must not be called
- * after `run` returns. With `"try"` a live holder throws `INDEX_DB_CONTENDED` at once instead of being waited for.
+ * Take the rebuild lock, then run `run` with a `build` that builds under that lock; release it when `run` settles.
+ * `build` must not be called after `run` returns. When a live process holds the lock `run` still runs, and its
+ * `build` skips instead of building, so what `run` publishes is indexed by the next build.
  */
 export async function withIndexBuildLock<T>(
-  signal: AbortSignal | undefined,
-  run: (build: (options: IndexOptions) => Promise<IndexResponse>) => Promise<T>,
-  mode: "wait" | "try" = "wait",
+  run: (build: (options: IndexOptions) => Promise<IndexResponse | SkippedIndexBuild>) => Promise<T>,
 ): Promise<T> {
-  const lock = await acquireBuildLock(mode, signal);
-  if ("skipped" in lock) {
-    throw new TransientError(
-      `Another akm process is building the index (${describeLockHolder(lock.skipped)}); not building.`,
-      "INDEX_DB_CONTENDED",
-    );
-  }
+  const lock = acquireBuildLock();
+  if ("skipped" in lock) return run(async () => lock);
   try {
     return await run(buildUnderLock);
   } finally {
@@ -103,44 +90,11 @@ function buildUnderLock(options: IndexOptions): Promise<IndexResponse> {
   return akmIndex(options);
 }
 
-async function acquireBuildLock(mode: "wait", signal: AbortSignal | undefined): Promise<{ ownership: LockOwnership }>;
-async function acquireBuildLock(
-  mode: "wait" | "try",
-  signal: AbortSignal | undefined,
-): Promise<{ ownership: LockOwnership } | SkippedIndexBuild>;
-async function acquireBuildLock(
-  mode: "wait" | "try",
-  signal: AbortSignal | undefined,
-): Promise<{ ownership: LockOwnership } | SkippedIndexBuild> {
-  const startedAt = Date.now();
-  const maxWaitMs = waitTimingForTests?.maxWaitMs ?? DEFAULT_MAX_WAIT_MS;
-  const noticeIntervalMs = waitTimingForTests?.noticeIntervalMs ?? WAIT_NOTICE_INTERVAL_MS;
-  let lastNoticeMs: number | undefined;
-
-  let lock = tryAcquireIndexRebuildLock();
-  while (lock.state === "held") {
-    if (mode === "try") {
-      warn(`[index] another index run holds the lock (${describeLockHolder(lock.holder)}); not building.`);
-      return { skipped: lock.holder };
-    }
-    if (signal?.aborted) throw signal.reason ?? new Error("index interrupted");
-    const waitedMs = Date.now() - startedAt;
-    // Time out only after a real attempt at a free lock, so a bound of 0 still gets one try.
-    if (waitedMs >= maxWaitMs) {
-      throw new TransientError(
-        `Another akm process is still building the index (${describeLockHolder(lock.holder)}); gave up waiting after ` +
-          `${Math.round(waitedMs / 1000)}s. Retry shortly.`,
-        "INDEX_DB_CONTENDED",
-      );
-    }
-    if (lastNoticeMs === undefined || waitedMs - lastNoticeMs >= noticeIntervalMs) {
-      warn(
-        `[index] waiting for another index run (${describeLockHolder(lock.holder)}) — ${Math.round(waitedMs / 1000)}s`,
-      );
-      lastNoticeMs = waitedMs;
-    }
-    await new Promise((resolve) => setTimeout(resolve, WAIT_POLL_MS));
-    lock = tryAcquireIndexRebuildLock();
+function acquireBuildLock(): { ownership: LockOwnership } | SkippedIndexBuild {
+  const lock = tryAcquireIndexRebuildLock();
+  if (lock.state === "held") {
+    warn(`[index] another index run holds the lock (${describeLockHolder(lock.holder)}); not building.`);
+    return { skipped: lock.holder };
   }
   return { ownership: lock.ownership };
 }

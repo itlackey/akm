@@ -3,8 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Every `--skip-if-locked` command, run through the CLI while another live process holds its lock, returns promptly
- * with exit 0 and a skipped result instead of waiting for the holder.
+ * Every `--skip-if-locked` command, and every command that builds the index, run through the CLI while another live
+ * process holds its lock, returns promptly with exit 0 and a skipped result instead of waiting for the holder.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -67,16 +67,20 @@ describe("--skip-if-locked with a live holder", () => {
     expect(await skipped(["index"])).toMatchObject({ reason: "lock-held" });
   });
 
-  test("bundle update --all", async () => {
+  test.each([
+    ["--all", ["stash", "extra"]],
+    ["extra", ["extra"]],
+  ])("bundle update %s skips its index build, exit 0, nothing built", async (target, reported) => {
     addFilesystemBundle();
     plantLock(getIndexRebuildLockPath());
-    expect(await skipped(["bundle", "update", "--all"])).toMatchObject({ reason: "lock-held" });
-  });
-
-  test("bundle update <bundle>", async () => {
-    const name = addFilesystemBundle();
-    plantLock(getIndexRebuildLockPath());
-    expect(await skipped(["bundle", "update", name])).toMatchObject({ reason: "lock-held" });
+    const startedAt = Date.now();
+    const result = await runCliCapture(["bundle", "update", target, "--format=json"]);
+    expect(Date.now() - startedAt).toBeLessThan(WITHIN_MS);
+    expect(result.code).toBe(0);
+    expect(result.stderr).toMatch(/another index run holds the lock/);
+    const parsed = JSON.parse(result.stdout) as { index: Record<string, unknown>; skipped: Array<{ id: string }> };
+    expect(parsed.index).toMatchObject({ skipped: { reason: "lock-held" } });
+    expect(parsed.skipped.map((item) => item.id)).toEqual(reported);
   });
 
   test("improve", async () => {
