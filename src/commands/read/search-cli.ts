@@ -17,6 +17,7 @@
 import { getParsedInvocation } from "../../cli/invocation";
 import { getStringArg, PROJECT_ARG, parsePositiveIntFlag } from "../../cli/parse-args";
 import { defineJsonCommand, output, parseAllFlagValues } from "../../cli/shared";
+import { setResolvedUsageAssetType } from "../../cli/usage";
 import type { ScopeFilters } from "../../core/adapter/types";
 import { parseBundleRef } from "../../core/asset/asset-ref";
 import { parseMetaRef } from "../../core/asset/stash-meta";
@@ -476,6 +477,7 @@ export const showCommand = defineJsonCommand({
       eventSource: resolveUsageEventSource(),
       project: stampedProject(resolveProject(loadConfig(), { project: getStringArg(args, "project") })),
     });
+    setResolvedUsageAssetType(result.type);
     output("show", result);
   },
 });

@@ -1275,7 +1275,7 @@ export async function runCli(): Promise<void> {
     finishUsage();
     // After the command's own work; never changes output or exit code (see src/cli/usage-report.ts).
     if (!usageCaptureOff(main as UsageCommand, originalArgs))
-      await reportUsageIfDue({ surface: "cli", version: pkgVersion });
+      await reportUsageIfDue({ surface: "cli", version: pkgVersion, commands: main as UsageCommand });
   }
 }
 

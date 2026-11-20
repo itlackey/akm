@@ -4687,11 +4687,12 @@ key; never sum snapshots or add detail counts to aggregate counts. Detailed rows
 are a subset of the aggregates. A report includes its own unfinished attempt.
 
 Collection is enabled at CLI entry, before the full configuration is read (only `usage.capture` is read, from the selected config file, and a missing or broken file leaves capture on), with no network
-transmission of its own and no sampling (the separate [daily usage report](data-and-telemetry.md#daily-usage-report) sends totals). `AKM_EVENT_SOURCE=user|agent|task|improve|audit` supplies
+transmission of its own and no sampling (the separate [daily usage report](data-and-telemetry.md#daily-usage-report) sends counts). `AKM_EVENT_SOURCE=user|agent|task|improve|audit` supplies
 known provenance and wins. Without it the source is `agent` when an agent harness
 is detected from the environment (the way usage events detect it), else `unknown`;
 nothing is inferred from a terminal. When a harness is detected, rows and aggregates
-also carry its name as an optional `harness` field (absent otherwise; no schema
+also carry its name as an optional `harness` field, and when a terminal is attached
+to stdin or stdout an optional `terminal: true` (both absent otherwise; no schema
 change). This store never feeds learning or ranking.
 
 Only declared argument identities and recognized command spellings are retained.
@@ -4700,7 +4701,8 @@ are redacted. Booleans and declared enum choices are safe; string flags retain o
 finite allowlisted `format`, `detail` and asset `type` choices. Default values are
 marked separately from explicit input. Arguments after `--` retain only their count.
 No raw argv is stored. The resolved `run` asset type is recorded through a narrow
-hook when resolution reaches dispatch.
+hook when resolution reaches dispatch, and `show` records the type of the asset it
+showed the same way.
 
 The usage tables (`cli_usage_meta`, `cli_usage_invocations`,
 `cli_usage_aggregates`) live in `metrics.db` in the existing AKM data directory,

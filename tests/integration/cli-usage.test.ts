@@ -29,6 +29,22 @@ function report(args: string[] = [], env?: NodeJS.ProcessEnv) {
   return JSON.parse(result.stdout);
 }
 
+test("show records the type of the asset it showed, and nothing of its ref", () => {
+  const storage = sandbox();
+  writeSandboxConfig({
+    bundles: { fixture: { path: storage.stashDir, components: { main: { root: ".", adapter: "akm" } } } },
+  });
+  fs.mkdirSync(path.join(storage.stashDir, "knowledge"), { recursive: true });
+  fs.writeFileSync(path.join(storage.stashDir, "knowledge/private-guide.md"), "# Guide\n\nPRIVATE_CONTENT\n");
+  const shown = cli(["show", "fixture//knowledge/private-guide"]);
+  expect(shown.status, shown.stderr).toBe(0);
+  const result = report();
+  const shows = result.details.filter((row: { command: string[] }) => row.command[0] === "show");
+  expect(shows).toHaveLength(1);
+  expect(shows[0]).toMatchObject({ assetType: "knowledge", exitCode: 0, category: "success" });
+  expect(JSON.stringify(result)).not.toContain("private-guide");
+});
+
 test("run records one invocation with its resolved asset type and redacted asset inputs", () => {
   const storage = sandbox();
   writeSandboxConfig({

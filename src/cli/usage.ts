@@ -207,6 +207,17 @@ export function describeUsage(root: UsageCommand, raw: readonly string[]): Invoc
   return result;
 }
 
+/** What an outcome calls an exit code. Any other code is "failure", and a signal is "cancelled". */
+export const EXIT_CATEGORIES: Readonly<Record<number, string>> = {
+  0: "success",
+  1: "general",
+  2: "usage",
+  4: "health-warning",
+  70: "internal",
+  75: "transient",
+  78: "config",
+};
+
 export const CLI_USAGE_SOURCES: ReadonlySet<string> = new Set(["user", "agent", "task", "improve", "audit", "unknown"]);
 
 /** An explicit `AKM_EVENT_SOURCE` wins; otherwise a detected agent harness is "agent", else "unknown". */
@@ -289,6 +300,8 @@ export function startUsage(root: UsageCommand, raw: readonly string[], version: 
   const source = resolveCliUsageSource(process.env);
   const harness = resolveAgentIdentity(process.env).harness;
   const harnessField = harness ? { harness } : {};
+  // Whether a terminal was attached is recorded as a fact of its own: the source is never inferred from it.
+  const terminalField = process.stdin.isTTY || process.stdout.isTTY ? { terminal: true } : {};
   try {
     const usage = describeUsage(root, raw);
     // `--read-only` promises no writes, and the config key turns capture off.
@@ -302,8 +315,8 @@ export function startUsage(root: UsageCommand, raw: readonly string[], version: 
         .value;
       const ts = new Date(started).toISOString();
 
-      dimensions = { day: ts.slice(0, 10), version, source, ...harnessField, instance, ...usage };
-      data = { schemaVersion: 1, id, ts, version, source, ...harnessField, instance, ...usage };
+      dimensions = { day: ts.slice(0, 10), version, source, ...harnessField, ...terminalField, instance, ...usage };
+      data = { schemaVersion: 1, id, ts, version, source, ...harnessField, ...terminalField, instance, ...usage };
       key = JSON.stringify(dimensions);
       db.transaction(() => {
         db.prepare("INSERT INTO cli_usage_invocations(id,ts,aggregate_key,data) VALUES (?,?,?,?)").run(
@@ -375,19 +388,7 @@ export function startUsage(root: UsageCommand, raw: readonly string[], version: 
     if (!stored) return;
     const duration = Math.max(0, Date.now() - started);
     const exitCode = signal ? (signal === "SIGINT" ? 130 : 143) : Number(process.exitCode ?? 0);
-    const category = signal
-      ? "cancelled"
-      : ((
-          {
-            0: "success",
-            1: "general",
-            2: "usage",
-            4: "health-warning",
-            70: "internal",
-            75: "transient",
-            78: "config",
-          } as Record<number, string>
-        )[exitCode] ?? "failure");
+    const category = signal ? "cancelled" : (EXIT_CATEGORIES[exitCode] ?? "failure");
     try {
       const db = openUsage(filename!);
       try {
