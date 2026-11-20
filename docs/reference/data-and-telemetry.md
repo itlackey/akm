@@ -218,7 +218,8 @@ outside learning, feedback and ranking; the only thing sent from them is the
   `task`, `improve` or `audit` for akm's own runs, else `unknown`), the agent
   harness when one is detected, the type of the asset `akm show` or `akm run`
   resolved (when it is one of akm's own types), the outcome, exit code and
-  duration, a UTC day, and a random instance UUID created on first use.
+  duration, a UTC day, and a random instance UUID created on first use, which
+  no command prints.
 - **What is not recorded:** queries, notes, URLs, refs, paths, filter values,
   secret values, and the arguments passed to a child program. Boolean flags are
   stored as true or false; every other flag value is stored as `[redacted]`.
@@ -256,7 +257,8 @@ bundle's name or a file.
   [CLI usage counts](#cli-usage-counts)), sent as the session id of every event,
   so that the reports of one install count as one install. It is derived from
   nothing on the machine, and the CLI and Desktop of one data directory share
-  it. Deleting `metrics.db` makes a new one.
+  it. It goes to the report and nowhere else: no command prints it, including
+  `akm doctor metrics usage --export`. Deleting `metrics.db` makes a new one.
 - **Daily event (`cli_daily`, `desktop_daily`):**
   - What is set up, from the config, as counts and 0-or-1 switches: `bundles`
     (enabled bundles), `bundles_git`, `bundles_website`, `bundles_npm`,

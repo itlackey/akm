@@ -29,6 +29,23 @@ function report(args: string[] = [], env?: NodeJS.ProcessEnv) {
   return JSON.parse(result.stdout);
 }
 
+test("no command prints the store's instance id: not the usage report, and not its export", () => {
+  sandbox();
+  expect(cli(["--version"]).status).toBe(0);
+  const db = openDatabase(path.join(getDataDir(), "metrics.db"));
+  const { value: instance } = db.prepare("SELECT value FROM cli_usage_meta WHERE key='instance'").get() as {
+    value: string;
+  };
+  db.close();
+  expect(instance).toMatch(/^[0-9a-f-]{36}$/);
+  for (const format of ["json", "text", "yaml"]) {
+    const result = cli(["doctor", "metrics", "usage", "--export", "--format", format]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).not.toContain(instance);
+    expect(result.stdout).not.toContain("instance");
+  }
+});
+
 test("show records the type of the asset it showed, and nothing of its ref", () => {
   const storage = sandbox();
   writeSandboxConfig({
@@ -666,7 +683,7 @@ test("harness id is recorded in details and aggregates only when detected; old r
   const plain = aggs.find((row: { dimensions: { harness?: string } }) => !("harness" in row.dimensions));
   // The no-harness aggregate identity is exactly the pre-change shape (no harness key).
   expect(plain.key).not.toContain("harness");
-  expect(Object.keys(plain.dimensions).slice(0, 4)).toEqual(["day", "version", "source", "instance"]);
+  expect(Object.keys(plain.dimensions).slice(0, 3)).toEqual(["day", "version", "source"]);
 
   // A row written before this field existed (same shape, no harness) reads alongside new rows.
   const db = openDatabase(path.join(getDataDir(), "metrics.db"));

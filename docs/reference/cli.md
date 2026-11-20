@@ -4669,7 +4669,7 @@ maxRetries: 1      # optional
 ### CLI invocation usage
 
 `akm doctor metrics usage` reports local command attempts, explicit argument counts,
-argument combinations, instance adoption, failures and duration summaries, and under
+argument combinations, failures and duration summaries, and under
 `report` what the [daily usage report](data-and-telemetry.md#daily-usage-report) last
 did for each surface. Existing
 `akm metrics` (Deprecated) and bare `akm doctor metrics` keep their existing report.
@@ -4685,6 +4685,8 @@ retained details. JSON schema version 1 includes stable aggregate keys and invoc
 IDs. For overlapping exports, keep the newest `generatedAt` snapshot per aggregate
 key; never sum snapshots or add detail counts to aggregate counts. Detailed rows
 are a subset of the aggregates. A report includes its own unfinished attempt.
+No output carries the store's instance UUID, in a row or in an aggregate key, so
+exports of different installs cannot be told apart or combined by key.
 
 Collection is enabled at CLI entry, before the full configuration is read (only `usage.capture` is read, from the selected config file, and a missing or broken file leaves capture on), with no network
 transmission of its own and no sampling (the separate [daily usage report](data-and-telemetry.md#daily-usage-report) sends counts). `AKM_EVENT_SOURCE=user|agent|task|improve|audit` supplies

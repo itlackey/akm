@@ -532,13 +532,16 @@ export function readUsage(filter: UsageFilter = {}) {
       (!filter.until || String(dimensions.day) <= filter.until.slice(0, 10)) &&
       (!filter.version || dimensions.version === filter.version) &&
       (!filter.source || dimensions.source === filter.source);
+    // The instance id leaves this store only as the daily usage report's install id (src/cli/usage-report.ts): no
+    // command prints it, so what is read here carries it nowhere: not in a row, and not in an aggregate's key.
     for (const row of db.prepare("SELECT * FROM cli_usage_aggregates ORDER BY key").all() as Array<
       Record<string, unknown>
     >) {
-      const dimensions = JSON.parse(String(row.dimensions)) as Record<string, unknown>;
+      const { instance: _instance, ...dimensions } = JSON.parse(String(row.dimensions)) as Record<string, unknown>;
       if (selected(dimensions))
         empty.aggregates.push({
           ...row,
+          key: JSON.stringify(dimensions),
           dimensions,
           outcomes: JSON.parse(String(row.outcomes)),
           unfinished: Number(row.attempts) - Number(row.completed),
@@ -548,7 +551,7 @@ export function readUsage(filter: UsageFilter = {}) {
       ? []
       : db.prepare("SELECT * FROM cli_usage_invocations ORDER BY ts,id").all();
     for (const row of detailRows as Array<Record<string, unknown>>) {
-      const data = JSON.parse(String(row.data)) as Record<string, unknown>;
+      const { instance: _instance, ...data } = JSON.parse(String(row.data)) as Record<string, unknown>;
       if (selected({ ...data, day: String(data.ts).slice(0, 10) }))
         empty.details.push({
           ...data,

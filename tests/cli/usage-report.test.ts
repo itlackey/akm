@@ -177,6 +177,9 @@ test("the install id is the usage store's random instance id: the same on every 
   expect(install).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   expect(events(sent).map((each) => each.eventName)).toEqual(["cli_daily", "desktop_daily", "cli_daily", "akm search"]);
   expect(new Set(events(sent).map((each) => each.sessionId))).toEqual(new Set([install]));
+  // It is sent, and printed nowhere: what `akm doctor metrics usage` reads carries no instance id.
+  expect(JSON.stringify(readUsage())).not.toContain(install);
+  expect(JSON.stringify(readUsage())).not.toContain("1111");
 });
 
 test("concurrent callers send once", async () => {
