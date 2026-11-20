@@ -24,6 +24,7 @@ interface MigrationPlanResult {
     reconcile?: string[];
   };
   bundlePolicy?: { changed: number; notes?: string[] };
+  taskFilesV5?: { filePath: string; notes?: readonly string[]; guidance?: string }[];
   backupPath?: string;
   applied?: number;
 }
@@ -81,6 +82,15 @@ export function formatMigratePlain(result: unknown): string | null {
   if (plan.bundlePolicy?.notes?.length) {
     lines.push("", "bundle policy notes:", ...plan.bundlePolicy.notes.map((note) => `  - ${note}`));
   }
+
+  const v5Notes = plan.taskFilesV5?.flatMap((file) =>
+    (file.notes ?? []).map((note) => `  - ${file.filePath}: ${note}`),
+  );
+  if (v5Notes?.length) lines.push("", "version 5 notes (change by hand):", ...v5Notes);
+  const v5Guidance = plan.taskFilesV5?.flatMap((file) =>
+    file.guidance ? [`  - ${file.filePath}: ${file.guidance}`] : [],
+  );
+  if (v5Guidance?.length) lines.push("", "how to fix:", ...v5Guidance);
 
   if (plan.assetContentRefs?.shadowed?.length) {
     lines.push(

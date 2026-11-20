@@ -416,12 +416,20 @@ function commandKind(step: Record<string, unknown>, base: Path, fail: TaskV5Fail
   return fail(base, "is one command: run:, exec: or prompt:.");
 }
 
+/** The `${...}` tokens in `text` that are neither an input nor an earlier step, in order; a secret ref is refused on its own. */
+export function unknownReferences(text: string, known: (name: string) => boolean): string[] {
+  return [...text.matchAll(REF_TOKEN_RE)]
+    .map((match) => match[1] as string)
+    .filter((body) => !isSecretRef(body) && !known(body));
+}
+
 /** `prompt:` and `arguments:`: `${name}` is an input or an earlier step. A secret is never named here. */
 function checkText(text: string, known: (name: string) => boolean, at: Path, fail: TaskV5Fail): void {
   for (const [, body] of text.matchAll(REF_TOKEN_RE)) {
     if (isSecretRef(body as string)) fail(at, "holds a secret ref; a secret goes under secret:, never into a prompt.");
-    if (!known(body as string)) fail(at, `\${${body}} is not an input or an earlier step.`);
   }
+  const [unknown] = unknownReferences(text, known);
+  if (unknown !== undefined) fail(at, `\${${unknown}} is not an input or an earlier step.`);
 }
 
 /** An `args:` item is one argument: text or a number as written, or one state entry as the whole item. */

@@ -18,7 +18,6 @@ import path from "node:path";
 import { ConfigError } from "../../../src/core/errors";
 import { parseTaskSourceV4 } from "../../../src/tasks/source/task-source-v4";
 import { checkTaskV5 } from "../../../src/tasks/v5/check";
-import type { TaskToV5Converted } from "./task-to-v5";
 import {
   planTaskToV4File,
   type TaskToV4Changed,
@@ -270,6 +269,28 @@ export function replaceFilesWithBackups(
 }
 
 /**
+ * Create each file with its bytes, under its own name and never over a file: one that exists by the time it is
+ * written is a conflict, left as it is, and named.
+ */
+export function createFiles(files: readonly { readonly filePath: string; readonly after: Buffer; readonly mode: number }[]): {
+  readonly created: readonly string[];
+  readonly conflicts: readonly string[];
+} {
+  const created: string[] = [];
+  const conflicts: string[] = [];
+  for (const file of files) {
+    try {
+      writeDurable(file.filePath, file.after, file.mode, true);
+      created.push(file.filePath);
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code !== "EEXIST") throw cause;
+      conflicts.push(file.filePath);
+    }
+  }
+  return { created, conflicts };
+}
+
+/**
  * Write every `changed` file in its v4 shape. Each emitted document is
  * re-parsed by the runtime v4 parser first, so nothing the runtime cannot
  * read reaches disk; the replacement is {@link replaceFilesWithBackups}.
@@ -315,6 +336,7 @@ function overlayOf(root: TaskFileRoot, overlay: string, replaced: ReadonlyMap<st
   }
   const copy = (from: string, to: string): void => {
     fs.mkdirSync(to, { recursive: true });
+    if (!fs.existsSync(from)) return;
     for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
       const source = path.join(from, entry.name);
       if (entry.isDirectory()) copy(source, path.join(to, entry.name));
@@ -323,6 +345,12 @@ function overlayOf(root: TaskFileRoot, overlay: string, replaced: ReadonlyMap<st
     }
   };
   copy(tasksDir, path.join(overlay, "tasks"));
+  for (const [file, bytes] of replaced) {
+    const target = path.join(overlay, "tasks", path.relative(tasksDir, file));
+    if (fs.existsSync(target)) continue;
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, bytes);
+  }
 }
 
 /**
@@ -333,7 +361,7 @@ function overlayOf(root: TaskFileRoot, overlay: string, replaced: ReadonlyMap<st
  */
 export async function checkConvertedTaskFiles(
   roots: readonly TaskFileRoot[],
-  converted: readonly TaskToV5Converted[],
+  converted: readonly { readonly filePath: string; readonly after: Buffer }[],
 ): Promise<Map<string, string>> {
   const failed = new Map<string, string>();
   for (;;) {
