@@ -90,9 +90,12 @@ function claimDay(surface: ReportSurface, today: string): { last: string | undef
   }
 }
 
-/** Counts of the complete UTC days after `last` up to yesterday, from the durable aggregates. */
+/**
+ * Counts of the complete UTC days from `last` up to yesterday, from the durable aggregates. `last` is the day the
+ * previous report was sent, which that report did not count: it counted up to the day before.
+ */
 function cliCounts(last: string | undefined, today: string): Record<string, number> {
-  const since = last === undefined ? today : addDays(last, 1);
+  const since = last ?? today;
   const until = addDays(today, -1);
   const props: Record<string, number> = { period_days: 0, commands: 0, failures: 0 };
   if (since > until) return props;

@@ -148,7 +148,7 @@ test("the cli event counts the complete UTC days since the last report, and carr
     { day: "2026-11-18", command: ["show"], source: "agent", attempts: 2 },
     { day: "2026-11-19", command: ["doctor", "metrics"], source: "task", attempts: 5 },
     { day: "2026-11-20", command: ["search"], source: "user", attempts: 99 }, // today: not complete
-    { day: "2026-11-16", command: ["add"], source: "user", attempts: 50 }, // before the last report
+    { day: "2026-11-15", command: ["add"], source: "user", attempts: 50 }, // in the last report, sent on 2026-11-16
   ]);
   const db = openUsage();
   db.prepare("INSERT INTO cli_usage_meta VALUES ('report.cli.last_day', '2026-11-16')").run();
@@ -164,7 +164,7 @@ test("the cli event counts the complete UTC days since the last report, and carr
   };
   expect(eventName).toBe("cli_daily");
   expect(props).toMatchObject({
-    period_days: 3,
+    period_days: 4,
     commands: 14,
     failures: 1,
     src_user: 3,
@@ -189,6 +189,32 @@ test("the cli event counts the complete UTC days since the last report, and carr
   expect(text).not.toContain("1111");
   expect(text).not.toContain("query");
   expect(text).not.toContain("instance");
+});
+
+test("reported every day, each report counts the whole day the last one was sent on", async () => {
+  sandbox();
+  seed("2026-11-01", [
+    { day: "2026-11-18", command: ["show"], source: "user", attempts: 9 }, // in the report sent on 2026-11-19
+    { day: "2026-11-19", command: ["search"], source: "agent", attempts: 4 },
+    { day: "2026-11-19", command: ["improve"], source: "improve", attempts: 2 },
+    { day: "2026-11-20", command: ["search"], source: "user", attempts: 99 }, // today: not complete
+  ]);
+  const db = openUsage();
+  db.prepare("INSERT INTO cli_usage_meta VALUES ('report.cli.last_day', '2026-11-19')").run();
+  db.close();
+  const { fn, sent } = fakeFetch();
+  expect(await reportUsageIfDue({ surface: "cli" }, { ...NOW, fetch: fn })).toBe(true);
+  const { props } = sent[0]?.body as { props: Record<string, number> };
+  expect(props).toMatchObject({
+    period_days: 1,
+    commands: 6,
+    src_user: 0,
+    src_agent: 4,
+    src_improve: 2,
+    cmd_search: 4,
+    cmd_improve: 2,
+  });
+  expect(props.cmd_show).toBeUndefined();
 });
 
 test("payload limits: flat, string-or-number props, names within the server's bounds", async () => {

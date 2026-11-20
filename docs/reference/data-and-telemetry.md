@@ -238,8 +238,9 @@ It is sent after a command finishes (at most one command a day pays a request, w
 is not retried that day, and nothing is ever printed or changed in a command's result.
 A fresh data directory sends nothing until its next UTC day.
 
-- **CLI event (`cli_daily`):** `period_days` (complete UTC days since the last
-  report, up to yesterday; `0` for the first report), `commands`, `failures`,
+- **CLI event (`cli_daily`):** `period_days` (the complete UTC days not yet
+  reported: from the day of the last report up to yesterday; `0` for the first
+  report), `commands`, `failures`,
   `src_user`, `src_agent`, `src_task`, `src_improve` (commands by who ran them),
   and `cmd_<command>` (the number of runs of each top-level command, only those
   run). It is built from the counts above, so it has no argument values.
