@@ -7,6 +7,7 @@ import type { OkfProvenance } from "../core/adapter/types";
 import type { MarkdownTocEntry } from "../core/asset/markdown";
 import type { IncludeSelectors } from "../core/include";
 import type { ProjectView } from "../core/projects";
+import type { SkippedIndexReport } from "../indexer/index-build";
 import type { ScopeFilters } from "../indexer/passes/metadata";
 import type { SemanticSearchRuntimeStatus } from "../indexer/walk/index-context";
 import type { InstalledBundle, InstallKind } from "../registry/types";
@@ -302,13 +303,16 @@ export interface AddResponse {
   config: {
     sourceCount: number;
   };
-  index: {
-    mode: "full" | "incremental";
-    totalEntries: number;
-    directoriesScanned: number;
-    directoriesSkipped: number;
-    warnings?: string[];
-  };
+  /** The build's summary, or why no build ran (another build held the lock; the next build indexes this change). */
+  index:
+    | {
+        mode: "full" | "incremental";
+        totalEntries: number;
+        directoriesScanned: number;
+        directoriesSkipped: number;
+        warnings?: string[];
+      }
+    | { skipped: SkippedIndexReport };
 }
 
 export interface SourceInstallStatus extends InstalledBundle {
@@ -386,12 +390,15 @@ export interface RemoveResponse {
   config: {
     sourceCount: number;
   };
-  index: {
-    mode: "full" | "incremental";
-    totalEntries: number;
-    directoriesScanned: number;
-    directoriesSkipped: number;
-  };
+  /** The build's summary, or why no build ran (another build held the lock; the next build indexes this change). */
+  index:
+    | {
+        mode: "full" | "incremental";
+        totalEntries: number;
+        directoriesScanned: number;
+        directoriesSkipped: number;
+      }
+    | { skipped: SkippedIndexReport };
 }
 
 export interface UpdateResultItem {
@@ -453,24 +460,27 @@ export interface UpdateResponse {
   config: {
     sourceCount: number;
   };
-  index: {
-    mode: "full" | "incremental";
-    totalEntries: number;
-    directoriesScanned: number;
-    directoriesSkipped: number;
-    /** False when the run preserved LKG rows because at least one source scan was incomplete. */
-    scanComplete?: boolean;
-    /**
-     * Semantic-search state after this update's embedding pass (#954). A
-     * managed/plain-source update runs the embedding phase AFTER its atomic
-     * content/lock/index/state commit, on its own connection — a failing
-     * pass (provider down) still reports the update `processed`/successful,
-     * with this field the only sign semantic search fell behind
-     * (`"blocked"`), exactly like a plain `akm index` whose embedding phase
-     * failed.
-     */
-    semanticStatus?: "disabled" | SemanticSearchRuntimeStatus;
-  };
+  /** The build's summary, or why no build ran (another build held the lock; the next build indexes this change). */
+  index:
+    | {
+        mode: "full" | "incremental";
+        totalEntries: number;
+        directoriesScanned: number;
+        directoriesSkipped: number;
+        /** False when the run preserved LKG rows because at least one source scan was incomplete. */
+        scanComplete?: boolean;
+        /**
+         * Semantic-search state after this update's embedding pass (#954). A
+         * managed/plain-source update runs the embedding phase AFTER its atomic
+         * content/lock/index/state commit, on its own connection — a failing
+         * pass (provider down) still reports the update `processed`/successful,
+         * with this field the only sign semantic search fell behind
+         * (`"blocked"`), exactly like a plain `akm index` whose embedding phase
+         * failed.
+         */
+        semanticStatus?: "disabled" | SemanticSearchRuntimeStatus;
+      }
+    | { skipped: SkippedIndexReport };
 }
 
 /**

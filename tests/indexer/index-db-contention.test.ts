@@ -32,7 +32,7 @@ describe("reclassifyIndexDbContention", () => {
     expect((result as Error).cause).toBe(raw);
     // Falls back to the code-derived TRANSIENT_HINTS entry (no rebuild lock
     // held in this synthetic case, so the message carries no holder pid).
-    expect((result as TransientError).hint()).toContain("--skip-if-locked");
+    expect((result as TransientError).hint()).toBe("Another akm process is writing index.db; retry shortly.");
   });
 
   test("a non-contention error is rethrown exactly as raised, never reclassified", () => {

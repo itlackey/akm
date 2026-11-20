@@ -306,19 +306,17 @@ describe("every build path takes the rebuild lock", () => {
     expect(fs.existsSync(getIndexRebuildLockPath())).toBe(false);
   }, 60_000);
 
-  test("`akm bundle add` waits for a running build instead of building beside it", async () => {
-    const lockPath = holdLock();
+  test("`akm bundle add` adds the bundle without building beside a running build, and says the index was skipped", async () => {
+    holdLock();
     const extra = path.join(storage.root, "extra-bundle");
     fs.mkdirSync(path.join(extra, "knowledge"), { recursive: true });
     fs.writeFileSync(path.join(extra, "knowledge", "extra.md"), "# Extra\n");
     const spy = spyOn(indexerModule, "akmIndex");
     try {
-      const added = cli("bundle", "add", extra, "--name", "extra");
-      await new Promise((resolve) => setTimeout(resolve, 400));
+      const added = await cli("bundle", "add", extra, "--name", "extra", "--format=json");
+      expect(added.code).toBe(0);
       expect(spy).not.toHaveBeenCalled();
-      fs.rmSync(lockPath);
-      expect((await added).code).toBe(0);
-      expect(spy).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(added.stdout).index).toMatchObject({ skipped: { reason: "lock-held" } });
     } finally {
       spy.mockRestore();
     }
