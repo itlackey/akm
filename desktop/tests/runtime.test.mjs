@@ -423,8 +423,7 @@ test("an --origin without http(s) exits non-zero and names the flag", async () =
 });
 
 test("instances on different ports use different cookie names", async (t) => {
-  // Port 0 lets each server take a free port itself. A port found free beforehand can be taken again before the
-  // server binds it: the server then exits 2 and the test fails with "Server exit 2".
+  // Port 0: each server takes a free port itself, so no other process can take it between choosing and binding.
   const names = [];
   for (let i = 0; i < 2; i++) {
     const app = await launchWith(t, ["--port", "0"]);

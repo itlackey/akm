@@ -473,10 +473,12 @@ test("Settings counts a bundle's uncommitted files as the Files header does, fro
   await fs.writeFile(path.join(app.root, "personal/knowledge/two.md"), "# Two\n");
   assert.equal(await uncommitted(app, "personal"), 2);
   await go(page, "/settings/bundles");
-  // The count is on the bundle's card in the list. The Manage page has no Git status, so clicking Manage first made
-  // this read the list while it was still on screen and fail when the page had already changed.
+  // The count is on the bundle's card in the list; the Manage page has no Git status.
   await expect(
-    page.getByRole("article", { name: "Bundle personal" }).getByText("Uncommitted").locator("xpath=following-sibling::dd[1]"),
+    page
+      .getByRole("article", { name: "Bundle personal" })
+      .getByText("Uncommitted")
+      .locator("xpath=following-sibling::dd[1]"),
   ).toHaveText(/2 files/);
 });
 
