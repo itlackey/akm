@@ -66,6 +66,34 @@ describe("scheduled task invocation", () => {
     );
   });
 
+  test("a tail may repeat --env and --secret, one ref or spec each, and give --timeout once", () => {
+    const tail = [
+      "task",
+      "run",
+      "ping",
+      "--bundle",
+      "team",
+      "--scheduled",
+      "--who",
+      "me",
+      "--env",
+      "env/a",
+      "--env",
+      "env/b",
+      "--secret",
+      "secrets/x:X",
+      "--secret",
+      "secrets/y:Y",
+      "--timeout",
+      "5m",
+    ];
+    expect(parseScheduledInvocationArgv(["/opt/akm", ...tail])?.invocation).toEqual(tail);
+    for (const repeated of ["--who", "--timeout"]) {
+      expect(parseScheduledInvocationArgv(["/opt/akm", ...tail, repeated, "again"])).toBeUndefined();
+    }
+    expect(parseScheduledInvocationArgv(["/opt/akm", ...tail, "--env", "-env/c"])).toBeUndefined();
+  });
+
   test("builds and recognizes the public qualified workflow invocation", () => {
     const argv = buildScheduledInvocation(["/opt/akm"], ["workflow", "run", "team//workflows/release"]);
     expect(argv).toEqual(["/opt/akm", "workflow", "run", "team//workflows/release"]);

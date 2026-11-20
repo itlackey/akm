@@ -16,7 +16,7 @@
 import { createHash } from "node:crypto";
 import { bundleRefToString, parseBundleRef } from "../core/asset/asset-ref";
 import { UsageError } from "../core/errors";
-import { canonicalInputJson } from "../execution/input-contract";
+import { canonicalInputJson, type InputFlag } from "../execution/input-contract";
 import type { ScheduleBackend } from "./schedule";
 import type { ScheduledRowEnvironment } from "./scheduler-invocation";
 import { normaliseTaskConceptId } from "./task-id";
@@ -46,6 +46,15 @@ export interface SchedulerSourceSchedule {
   readonly ordinal: number;
   /** A v4 `schedule[i].inputs` literal override, compiled into a `--<name> <value>` tail after `--scheduled`. */
   readonly inputs?: Readonly<Record<string, unknown>>;
+  /** A v5 entry's `env:` refs, `secret:` specs and `timeout:`, compiled into `--env`, `--secret` and `--timeout` after the inputs. */
+  readonly start?: SchedulerStartFlags;
+}
+
+/** The start flags a schedule entry carries in its tail. Values only an env asset's ref, a secret spec or a duration: nothing secret. */
+export interface SchedulerStartFlags {
+  readonly env?: readonly string[];
+  readonly secret?: readonly string[];
+  readonly timeout?: string | number;
 }
 
 export interface CompileTaskSchedulerBindingsInput {
@@ -121,27 +130,54 @@ export function compileTaskSchedulerBindings(input: CompileTaskSchedulerBindings
         source: schedule.source,
         ordinal: schedule.ordinal,
         enabled: true,
-        invocation: ["task", "run", id, "--bundle", bundle, "--scheduled", ...schedulerInputFlagTail(schedule.inputs)],
+        invocation: [
+          "task",
+          "run",
+          id,
+          "--bundle",
+          bundle,
+          "--scheduled",
+          ...schedulerInputFlagTail(schedule.inputs),
+          ...schedulerStartFlagTail(schedule.start),
+        ],
       });
     }),
   );
 }
 
 /**
- * The canonically-sorted `--<name> <value>` flag tail for one schedule
- * entry's `inputs`. A value whose text starts with `-` uses the inline
- * `--<name>=<value>` form, the only spelling `parseTaskInputFlags` cannot
- * mistake for a flag.
+ * The canonically-sorted input flags of one schedule entry's `inputs`, each value as the text the tail carries. The
+ * check of a schedule entry reads these same flags, so it checks what the scheduled start is given.
+ */
+export function schedulerInputFlags(inputs: Readonly<Record<string, unknown>> | undefined): InputFlag[] {
+  if (!inputs) return [];
+  return Object.keys(inputs)
+    .sort()
+    .map((name) => ({ name, value: schedulerInputFlagValueText(inputs[name]) }));
+}
+
+/**
+ * The `--<name> <value>` flag tail for one schedule entry's `inputs`. A value whose text starts with `-` uses the
+ * inline `--<name>=<value>` form, the only spelling `parseTaskInputFlags` cannot mistake for a flag.
  */
 function schedulerInputFlagTail(inputs: Readonly<Record<string, unknown>> | undefined): readonly string[] {
-  if (!inputs) return [];
   const tail: string[] = [];
-  for (const name of Object.keys(inputs).sort()) {
-    const text = schedulerInputFlagValueText(inputs[name]);
+  for (const { name, value } of schedulerInputFlags(inputs)) {
+    const text = value as string;
     if (text.startsWith("-")) tail.push(`--${name}=${text}`);
     else tail.push(`--${name}`, text);
   }
   return tail;
+}
+
+/** `--env`, `--secret` and `--timeout`, in the order the entry wrote them: a later env ref wins over an earlier one. */
+function schedulerStartFlagTail(start: SchedulerStartFlags | undefined): readonly string[] {
+  if (!start) return [];
+  return [
+    ...(start.env ?? []).flatMap((ref) => ["--env", ref]),
+    ...(start.secret ?? []).flatMap((spec) => ["--secret", spec]),
+    ...(start.timeout !== undefined ? ["--timeout", String(start.timeout)] : []),
+  ];
 }
 
 function schedulerInputFlagValueText(value: unknown): string {
