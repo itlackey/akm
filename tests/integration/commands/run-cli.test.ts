@@ -49,11 +49,14 @@ Execute second.
 
 beforeEach(async () => {
   storage = withIsolatedAkmStorage();
+  // Codex takes its prompt on stdin: the stand-in prints its arguments, then what it was given.
+  const fakeCodex = path.join(storage.root, "fake-codex");
+  fs.writeFileSync(fakeCodex, '#!/bin/sh\nprintf "%s\\n" "$*"\ncat\n', { mode: 0o755 });
   writeSandboxConfig({
     semanticSearchMode: "off",
     defaultBundle: "fixture",
     bundles: { fixture: { path: storage.stashDir, components: { main: { root: ".", adapter: "akm" } } } },
-    harnesses: { reviewer: { platform: "codex", bin: "/bin/echo", args: [] } },
+    harnesses: { reviewer: { platform: "codex", bin: fakeCodex, args: [] } },
   });
   write("commands/review.md", "---\ntype: command\nharness: reviewer\n---\nReview: [$ARGUMENTS]\n");
   write("agents/reviewer.md", "---\ntype: agent\n---\nCareful reviewer.\n");
