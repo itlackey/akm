@@ -157,7 +157,7 @@ describe("akm exec", () => {
     const started = Date.now();
     const { status, stderr } = akm(makeStash({}), ["exec", "--timeout", "500ms", "--", "sleep", "30"]);
     expect(Date.now() - started).toBeLessThan(10_000);
-    expect(status).toBe(124);
+    expect(status).toBe(1);
     expect(stderr).toContain("timed out after 500ms");
   });
 

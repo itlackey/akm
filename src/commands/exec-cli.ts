@@ -74,7 +74,7 @@ export const execCommand = defineJsonCommand({
     });
     if (result.timedOut) {
       console.error(`akm exec: timed out after ${args.timeout}`);
-      process.exitCode = 124;
+      process.exitCode = 1;
       return;
     }
     // Not `process.exit`: the CLI's own cleanup still runs before the process ends with the child's status.

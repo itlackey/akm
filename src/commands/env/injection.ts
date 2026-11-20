@@ -108,7 +108,7 @@ export interface RunProgramOptions {
 /**
  * Run `argv` with `env`, no shell: one program and its arguments. Each try gets the whole
  * `timeoutMs`; a failed try (non-zero exit or timeout) is retried `maxRetries` times. A program
- * that cannot be started is raised, never retried.
+ * that cannot be started, or a run the caller aborted, is not retried.
  */
 export async function runProgram(options: RunProgramOptions): Promise<ManagedSubprocessResult> {
   const { argv, env, maxRetries = 0 } = options;
@@ -125,7 +125,7 @@ export async function runProgram(options: RunProgramOptions): Promise<ManagedSub
         ...(cwd !== undefined ? { cwd } : {}),
         ...(options.signal ? { signal: options.signal } : {}),
       }),
-    (r) => r.spawnError === undefined && (r.timedOut || r.aborted || r.exitCode !== 0),
+    (r) => r.spawnError === undefined && !r.aborted && (r.timedOut || r.exitCode !== 0),
   );
   if (result.spawnError) throw spawnFailure(argv[0] as string, result.spawnError);
   return result;
