@@ -66,7 +66,6 @@ type SeedRow = {
   invokedCommand?: string[];
   source: string;
   harness?: string;
-  terminal?: boolean;
   arguments?: Array<{ name: string; explicit: boolean; value: string | boolean }>;
   attempts: number;
   failures?: number;
@@ -84,7 +83,6 @@ function seed(started: string, rows: SeedRow[] = []) {
         version: "0.10.0",
         source: row.source,
         ...(row.harness ? { harness: row.harness } : {}),
-        ...(row.terminal ? { terminal: true } : {}),
         instance: "11111111-1111-1111-1111-111111111111",
         command: row.command,
         invokedCommand: row.invokedCommand ?? row.command,
@@ -167,7 +165,7 @@ test("the cli and desktop surfaces claim their own day", async () => {
   expect(desktop?.through).toBeUndefined(); // Desktop sends a snapshot, not counts of past days
 });
 
-test("the install id is a random UUID made for the report: the same on every event, day and surface", async () => {
+test("the install id is the usage store's random instance id: the same on every event, day and surface", async () => {
   sandbox();
   seed("2026-11-01", [{ day: "2026-11-20", command: ["search"], source: "user", attempts: 1 }]);
   const { fn, sent } = fakeFetch();
@@ -175,13 +173,10 @@ test("the install id is a random UUID made for the report: the same on every eve
   await reportUsageIfDue({ surface: "desktop" }, { ...NOW, fetch: fn });
   const tomorrow = new Date("2026-11-21T08:00:00Z");
   await reportUsageIfDue({ surface: "cli", commands: TREE }, { ...NOW, now: tomorrow, fetch: fn });
-  const install = metaRow("report.install") as string;
+  const install = metaRow("instance") as string;
   expect(install).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
-  expect(install).not.toBe(metaRow("instance"));
   expect(events(sent).map((each) => each.eventName)).toEqual(["cli_daily", "desktop_daily", "cli_daily", "akm search"]);
   expect(new Set(events(sent).map((each) => each.sessionId))).toEqual(new Set([install]));
-  // It is not part of what `akm doctor metrics usage` prints, which people paste into issues.
-  expect(JSON.stringify(readUsage())).not.toContain(install);
 });
 
 test("concurrent callers send once", async () => {
@@ -270,9 +265,8 @@ test("the cli report counts the complete UTC days after the last accepted one: t
       attempts: 1,
       arguments: [{ name: "mode", explicit: true, value: "dry" }],
     },
-    // No source and no harness, at a terminal: counted apart from the other unknowns, and not called `user`.
-    { day: "2026-11-19", command: ["task", "run"], source: "unknown", terminal: true, attempts: 2 },
-    { day: "2026-11-19", command: ["search"], source: "agent", harness: "claude", terminal: true, attempts: 1 },
+    { day: "2026-11-19", command: ["task", "run"], source: "user", attempts: 2 },
+    { day: "2026-11-19", command: ["search"], source: "agent", harness: "claude", attempts: 1 },
     { day: "2026-11-20", command: ["search"], source: "user", attempts: 99 }, // today: not complete
     { day: "2026-11-15", command: ["improve"], source: "user", attempts: 50 }, // already accepted
   ]);
@@ -290,13 +284,12 @@ test("the cli report counts the complete UTC days after the last accepted one: t
     period_days: 4,
     commands: 18,
     failures: 1,
-    src_user: 3,
+    src_user: 5,
     src_agent: 7,
     src_task: 5,
     src_improve: 0,
     src_audit: 0,
     src_unknown: 1,
-    src_terminal: 2,
     h_claude: 5,
     h_codex: 2,
   });
@@ -329,7 +322,7 @@ test("the cli report counts the complete UTC days after the last accepted one: t
   expect(event(sent, "akm task run")?.props).toMatchObject({
     count: 3,
     src_unknown: 1,
-    src_terminal: 2,
+    src_user: 2,
     flag_mode: 1,
     flag_mode_dry: 1,
   });
@@ -429,7 +422,7 @@ test("nothing a person or their library named is sent: only akm's own names, and
   // Within the server's bounds, and every prop a number under a name made of akm's own words.
   for (const each of events(sent)) {
     expect(each.eventName.length).toBeLessThanOrEqual(60);
-    expect(each.sessionId).toBe(metaRow("report.install") as string);
+    expect(each.sessionId).toBe(metaRow("instance") as string);
     for (const [key, value] of Object.entries(each.props)) {
       expect(key).toMatch(/^[a-z][a-z0-9_-]{0,39}$/);
       expect(typeof value).toBe("number");

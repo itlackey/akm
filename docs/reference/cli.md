@@ -4689,11 +4689,10 @@ are a subset of the aggregates. A report includes its own unfinished attempt.
 Collection is enabled at CLI entry, before the full configuration is read (only `usage.capture` is read, from the selected config file, and a missing or broken file leaves capture on), with no network
 transmission of its own and no sampling (the separate [daily usage report](data-and-telemetry.md#daily-usage-report) sends counts). `AKM_EVENT_SOURCE=user|agent|task|improve|audit` supplies
 known provenance and wins. Without it the source is `agent` when an agent harness
-is detected from the environment (the way usage events detect it), else `unknown`;
-nothing is inferred from a terminal. When a harness is detected, rows and aggregates
-also carry its name as an optional `harness` field, and when a terminal is attached
-to stdin or stdout an optional `terminal: true` (both absent otherwise; no schema
-change). This store never feeds learning or ranking.
+is detected from the environment (the way usage events detect it), `user` when
+there is none and a terminal is attached to stdin or stdout, else `unknown`. When a
+harness is detected, rows and aggregates also carry its name as an optional `harness`
+field (absent otherwise; no schema change). This store never feeds learning or ranking.
 
 Only declared argument identities and recognized command spellings are retained.
 Free text, paths, URLs, refs, prompts, credentials and unknown flag/command names

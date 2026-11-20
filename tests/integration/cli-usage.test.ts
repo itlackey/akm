@@ -624,8 +624,11 @@ test("usage tables coexist with 0.11's metrics.db: own names, no user_version, n
   expect(report().details.length).toBeGreaterThan(0);
 });
 
-test("usage source: an explicit AKM_EVENT_SOURCE wins, a detected harness is agent, otherwise unknown", () => {
+test("usage source: an explicit AKM_EVENT_SOURCE wins, a detected harness is agent, a terminal is user, otherwise unknown", () => {
   expect(resolveCliUsageSource({})).toBe("unknown");
+  expect(resolveCliUsageSource({}, true)).toBe("user");
+  expect(resolveCliUsageSource({ CLAUDE_CODE_SESSION_ID: "s1" }, true)).toBe("agent");
+  expect(resolveCliUsageSource({ AKM_EVENT_SOURCE: "unknown" }, true)).toBe("unknown");
   expect(resolveCliUsageSource({ CLAUDE_CODE_SESSION_ID: "s1" })).toBe("agent");
   expect(resolveCliUsageSource({ AKM_AGENT_HARNESS: "opencode" })).toBe("agent");
   expect(resolveCliUsageSource({ CLAUDE_CODE_SESSION_ID: "s1", AKM_EVENT_SOURCE: "task" })).toBe("task");

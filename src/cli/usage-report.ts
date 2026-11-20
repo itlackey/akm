@@ -11,12 +11,11 @@
  * built from akm's own definitions: its command tree, its declared flags and their closed value lists, its harness
  * ids, sources, outcome categories and asset types. A name akm did not define (an asset's input, a custom type or
  * harness) is counted as `other` or `[unknown]`, or left out; it is never spelled. Nothing is read from an argument
- * value, a ref, a path or a bundle. The one identifier is a random install id made for this report, sent as the
+ * value, a ref, a path or a bundle. The one identifier is the usage store's random instance id, sent as the
  * session id. The fields are listed in docs/reference/data-and-telemetry.md. Every failure is swallowed; the report
  * never changes a command's output or exit code.
  */
 
-import { randomUUID } from "node:crypto";
 import os from "node:os";
 import { loadConfig } from "../core/config/config";
 import { getDbPath } from "../core/paths";
@@ -96,8 +95,8 @@ const SET_LATER =
  * Take today's attempt for `surface` (`report.<surface>.last_day`): true for exactly one caller per UTC day, across
  * concurrent processes (one atomic upsert). A store created today claims nothing, so a fresh install or sandbox
  * reports from its next UTC day. Returns the last day whose counts the server accepted (`report.<surface>.through`;
- * undefined before the first accepted report) and the install id (`report.install`): a random UUID made on the
- * first claim, for the report alone. It is not the store's `instance` and is derived from nothing on the machine.
+ * undefined before the first accepted report) and the install id: the store's `instance`, a random UUID made with
+ * the store and derived from nothing on the machine.
  */
 function claimDay(surface: ReportSurface, today: string): { through: string | undefined; install: string } | undefined {
   const db = openUsage();
@@ -111,8 +110,7 @@ function claimDay(surface: ReportSurface, today: string): { through: string | un
     // Already tried today (every command after the first): a read only, no write lock on the shared store.
     if (last !== undefined && last >= today) return undefined;
     if (!db.prepare(SET_LATER).run(key, today).changes) return undefined;
-    db.prepare("INSERT OR IGNORE INTO cli_usage_meta(key,value) VALUES ('report.install', ?)").run(randomUUID());
-    return { through: meta(`report.${surface}.through`), install: meta("report.install") as string };
+    return { through: meta(`report.${surface}.through`), install: meta("instance") as string };
   } finally {
     db.close();
   }
@@ -172,7 +170,7 @@ function cliCounts(root: UsageCommand | undefined, through: string | undefined, 
   const since = through === undefined ? today : addDays(through, 1);
   const until = addDays(today, -1);
   const totals: Counts = { period_days: 0, commands: 0, failures: 0 };
-  for (const source of [...CLI_USAGE_SOURCES, "terminal"]) totals[`src_${source}`] = 0;
+  for (const source of CLI_USAGE_SOURCES) totals[`src_${source}`] = 0;
   const commands = new Map<string, Counts>();
   if (since > until) return { totals, commands };
   totals.period_days = (Date.parse(`${until}T00:00:00Z`) - Date.parse(`${since}T00:00:00Z`)) / DAY_MS + 1;
@@ -182,15 +180,12 @@ function cliCounts(root: UsageCommand | undefined, through: string | undefined, 
       invokedCommand?: string[];
       source?: string;
       harness?: string;
-      terminal?: boolean;
       arguments?: Array<{ name: string; explicit: boolean; value: string | boolean }>;
     };
     const attempts = Number(row.attempts);
     const failures = Number(row.failures);
     const counted: Counts = {};
-    // A run of unknown source with a terminal attached is counted apart: most likely a person typing.
-    const source = CLI_USAGE_SOURCES.has(dimensions.source ?? "") ? dimensions.source : "unknown";
-    add(counted, `src_${source === "unknown" && dimensions.terminal === true ? "terminal" : source}`, attempts);
+    add(counted, `src_${CLI_USAGE_SOURCES.has(dimensions.source ?? "") ? dimensions.source : "unknown"}`, attempts);
     if (dimensions.harness)
       add(counted, `h_${HARNESS_IDS.has(dimensions.harness) ? dimensions.harness : "other"}`, attempts);
     add(totals, "commands", attempts);

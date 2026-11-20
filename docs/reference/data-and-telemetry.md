@@ -214,11 +214,11 @@ outside learning, feedback and ranking; the only thing sent from them is the
   failed attempts: the command path, the flags that were used (their names and,
   for a few enumerated flags such as `--format` or `--detail`, a safe value),
   whether each flag was typed or a default, the akm version, the event source
-  (`user`, `agent`, `task`, `improve`, `audit` or `unknown`), the agent harness
-  when one is detected, whether a terminal was attached, the type of the asset
-  `akm show` or `akm run` resolved (when it is one of akm's own types), the
-  outcome, exit code and duration, a UTC day, and a random instance UUID created
-  on first use.
+  (`agent` inside a detected agent harness, `user` at a terminal with none,
+  `task`, `improve` or `audit` for akm's own runs, else `unknown`), the agent
+  harness when one is detected, the type of the asset `akm show` or `akm run`
+  resolved (when it is one of akm's own types), the outcome, exit code and
+  duration, a UTC day, and a random instance UUID created on first use.
 - **What is not recorded:** queries, notes, URLs, refs, paths, filter values,
   secret values, and the arguments passed to a child program. Boolean flags are
   stored as true or false; every other flag value is stored as `[redacted]`.
@@ -252,12 +252,11 @@ bundle's name or a file.
   Nothing is ever printed or changed in a command's result. A fresh data
   directory sends nothing until its next UTC day. A failed send is not retried
   that day; the next day's CLI report counts the days a failed one missed.
-- **Install id:** a random UUID, made the first time a report is due and kept
-  as `report.install` in `metrics.db`. It is sent as the session id of every
-  event, so that the reports of one install count as one install. It is derived
-  from nothing on the machine, it is not the local instance UUID, and the CLI
-  and Desktop of one data directory share it. Deleting `metrics.db` makes a new
-  one.
+- **Install id:** the random instance UUID of `metrics.db` (see
+  [CLI usage counts](#cli-usage-counts)), sent as the session id of every event,
+  so that the reports of one install count as one install. It is derived from
+  nothing on the machine, and the CLI and Desktop of one data directory share
+  it. Deleting `metrics.db` makes a new one.
 - **Daily event (`cli_daily`, `desktop_daily`):**
   - What is set up, from the config, as counts and 0-or-1 switches: `bundles`
     (enabled bundles), `bundles_git`, `bundles_website`, `bundles_npm`,
@@ -270,8 +269,7 @@ bundle's name or a file.
   - From the CLI only, totals for the period: `period_days` (the complete UTC
     days after the last one the server accepted, up to yesterday; `0` for the
     first report), `commands`, `failures`, `src_<source>` for each event source
-    (and `src_terminal`: runs of unknown source with a terminal attached) and
-    `h_<harness>` for each agent harness that ran akm.
+    and `h_<harness>` for each agent harness that ran akm.
 - **Command events (CLI only):** one for each command that ran in the period,
   named as it was typed: `akm search`, `akm task run`, `akm health`. A command
   that does not exist is `akm [unknown]`. Each carries `period_days`, `count`,
@@ -291,7 +289,7 @@ bundle's name or a file.
   (the akm version), `sdkVersion` (`akm@<version>`), `isDebug: false`, the
   install id as the session id, and the time the report was sent.
 - **Never sent:** queries, refs, paths, bundle names, argument values, secrets,
-  the local instance UUID, the host or user name, or any asset content.
+  the host or user name, or any asset content.
 - **What the server keeps:** Aptabase keeps the events and derives country,
   region and city from the request's IP address. It does not store the IP
   address; it stores a one-day user id hashed from it with a salt it changes
