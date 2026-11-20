@@ -40,6 +40,7 @@ import { validateTaskId } from "../../../src/tasks/task-id";
 import { assertBoundedTaskYamlDocument, TASK_V3_MAX_REDACT_NAMES } from "../../../src/tasks/source/bounded-document";
 import { classifyTaskV3Uses, parseTaskV3Yaml, type TaskV3UsesTarget } from "./task-source-v3-frozen";
 import { parseTaskSourceV4 } from "../../../src/tasks/source/task-source-v4";
+import { TASK_SOURCE_V5_VERSION_PATTERN } from "../../../src/tasks/v5/source";
 
 export interface TaskToV4FileInput {
   readonly filePath: string;
@@ -72,7 +73,7 @@ export interface TaskToV4Changed extends TaskToV4OutcomeBase {
 
 export interface TaskToV4Skipped extends TaskToV4OutcomeBase {
   readonly status: "skipped";
-  readonly reason: "already-v4";
+  readonly reason: "already-v4" | "already-v5";
 }
 
 export interface TaskToV4Blocked extends TaskToV4OutcomeBase {
@@ -288,7 +289,11 @@ function optionalString(value: unknown, label: string): string | undefined {
  * Which grammar applies to the result is entirely up to the caller, decided
  * after `data.version` is known.
  */
-function parseRawTaskYaml(input: TaskToV4FileInput): { data: Record<string, unknown>; source: string } {
+export function parseRawTaskYaml(input: TaskToV4FileInput): {
+  data: Record<string, unknown>;
+  source: string;
+  document: ReturnType<typeof parseDocument>;
+} {
   let source: string;
   try {
     source = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(input.bytes);
@@ -311,7 +316,7 @@ function parseRawTaskYaml(input: TaskToV4FileInput): { data: Record<string, unkn
     sourceLabel: "task migration source",
     lineCounter,
   });
-  return { data: plainRecord(document.toJS({ maxAliasCount: 0 }), "task YAML"), source };
+  return { data: plainRecord(document.toJS({ maxAliasCount: 0 }), "task YAML"), source, document };
 }
 
 type ScheduleEntry = Readonly<{ cron: string }>;
@@ -861,6 +866,10 @@ export function planTaskToV4File(input: TaskToV4FileInput): TaskToV4FileOutcome 
 
   if (data.version === 4) {
     return planV4Cleanup(input, source);
+  }
+
+  if (typeof data.version === "string" && TASK_SOURCE_V5_VERSION_PATTERN.test(data.version)) {
+    return Object.freeze({ status: "skipped" as const, ...base(input), reason: "already-v5" as const });
   }
 
   if (data.version === 3) {

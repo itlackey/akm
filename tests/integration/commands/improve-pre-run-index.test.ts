@@ -262,7 +262,7 @@ describe("akmImprove pre-run index (#339)", () => {
       stashDir,
       reindexFn: async (options) => {
         indexCalls += 1;
-        return buildIndex(options, "try");
+        return buildIndex(options);
       },
     });
 

@@ -3,8 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Concurrent plain `akm index` runs wait for each other, take the rebuild lock one at a time and
- * all exit 0, never 75 or 78 (field follow-up to #956, G1). Spawns TWO REAL CLI child processes (`bun src/cli.ts index
+ * Concurrent plain `akm index` runs take the rebuild lock one at a time; a run that finds it held skips and
+ * every run exits 0, never 75 or 78 (field follow-up to #956, G1). Spawns TWO REAL CLI child processes (`bun src/cli.ts index
  * --full --format=json`) launched back to back with no work between the two
  * `Bun.spawn` calls, so the index.db write contention `INDEX_DB_CONTENDED`
  * (F1) reclassifies is exercised exactly as a real scheduler/hook double-launch would hit it,
@@ -84,18 +84,25 @@ const FILES_PER_TRIAL = 5;
 // local runs — see the module doc.
 const CONCURRENT_TRIALS = 15;
 
-describe("akm index — two real concurrent runs wait for each other and never fail (field follow-up to #956, G1)", () => {
-  test("without --skip-if-locked: every run across many concurrent pairs exits 0, and the two builds do not overlap", async () => {
+describe("akm index — two real concurrent runs never fail (field follow-up to #956, G1)", () => {
+  test("every run across many concurrent pairs exits 0 with a completed index or a lock-held skip, and builds do not overlap", async () => {
     seedMemoryFiles(FILES_PER_TRIAL);
+    let completed = 0;
 
     for (let trial = 0; trial < CONCURRENT_TRIALS; trial += 1) {
-      // Launched back to back with no work in between: whichever process
-      // takes the rebuild lock builds first, the other waits and builds after it.
+      // Launched back to back with no work in between: whichever process takes the rebuild lock builds, the other
+      // skips.
       const results = await Promise.all([spawnIndexChild([]), spawnIndexChild([])]);
 
       for (const result of results) {
         expect(result.code).toBe(0);
-        expect(JSON.parse(result.stdout).totalEntries).toBeGreaterThanOrEqual(FILES_PER_TRIAL);
+        const parsed = JSON.parse(result.stdout);
+        if (parsed.skipped) {
+          expect(parsed.skipped.reason).toBe("lock-held");
+        } else {
+          expect(parsed.totalEntries).toBeGreaterThanOrEqual(FILES_PER_TRIAL);
+          completed += 1;
+        }
       }
     }
     // Each build records `index_completed` with its duration. Sorted by completion, a build must have started
@@ -103,23 +110,9 @@ describe("akm index — two real concurrent runs wait for each other and never f
     const completions = readEvents({ type: "index_completed" })
       .events.map((event) => ({ end: Date.parse(event.ts), totalMs: Number(event.metadata?.totalMs ?? 0) }))
       .sort((a, b) => a.end - b.end);
-    expect(completions).toHaveLength(CONCURRENT_TRIALS * 2);
+    expect(completions).toHaveLength(completed);
     for (let i = 1; i < completions.length; i += 1) {
       expect(completions[i]!.end - completions[i]!.totalMs).toBeGreaterThanOrEqual(completions[i - 1]!.end - 5);
-    }
-  }, 120_000);
-
-  test("--skip-if-locked: every run across many concurrent pairs exits 0 — either a completed index or a lock-held skip, never a failure", async () => {
-    seedMemoryFiles(FILES_PER_TRIAL);
-
-    for (let trial = 0; trial < CONCURRENT_TRIALS; trial += 1) {
-      const results = await Promise.all([spawnIndexChild(["--skip-if-locked"]), spawnIndexChild(["--skip-if-locked"])]);
-
-      for (const result of results) {
-        expect(result.code).toBe(0);
-        const parsed = JSON.parse(result.stdout);
-        expect(parsed.ok).toBe(true);
-      }
     }
   }, 120_000);
 });

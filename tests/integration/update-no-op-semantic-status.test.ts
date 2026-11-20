@@ -50,6 +50,7 @@ describe("akm bundle update: no-op fallback reports a real semanticStatus (#954)
     const result = await akmUpdate({ stashDir: storage.stashDir, all: true });
 
     expect(result.processed).toEqual([]);
+    if ("skipped" in result.index) throw new Error("index build was skipped");
     expect(result.index.totalEntries).toBe(0);
     // The fallback never ran a real embedding pass — it must not report a
     // verified status ("ready-js"/"blocked"), only "disabled".
@@ -62,6 +63,7 @@ describe("akm bundle update: no-op fallback reports a real semanticStatus (#954)
     const result = await akmUpdate({ stashDir: storage.stashDir, all: true });
 
     expect(result.processed).toEqual([]);
+    if ("skipped" in result.index) throw new Error("index build was skipped");
     expect(result.index.totalEntries).toBe(0);
     // "pending", not "ready-js" — nothing was actually verified
     // this run, so the fallback must not claim otherwise.
