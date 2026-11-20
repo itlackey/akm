@@ -13,7 +13,7 @@ import { withRetries } from "../execution/retry";
 import { shellCommand } from "../tasks/run/run-native-task";
 import { akmAgentDispatch } from "./agent/agent-dispatch";
 import { readPromptStdin } from "./agent/contribute-cli";
-import { buildChildEnv } from "./env/child-env";
+import { childEnvFromFlags } from "./env/child-env";
 import { INJECTION_ARGS, resolveInjections, runProgram } from "./env/injection";
 
 function definedEntries(env: Record<string, string | undefined>): Record<string, string> {
@@ -87,9 +87,8 @@ export const execCommand = defineJsonCommand({
         "Missing command. Usage: akm exec [--env <ref>]... [--secret <ref>:<VAR>]... -- <command>, or akm exec --prompt <text>",
       );
     }
-    const inherit = (args.inherit ?? "").split(/[,\s]+/).filter(Boolean);
     const clean = args.clean === true || args.inherit !== undefined;
-    const env = buildChildEnv(process.env, { clean, inherit });
+    const env = childEnvFromFlags(process.env, { clean: args.clean === true, inherit: args.inherit });
     const injected = resolveInjections().values;
     Object.assign(env, injected);
     const timeoutMs = args.timeout === undefined ? undefined : parseTimeoutValue(args.timeout);
