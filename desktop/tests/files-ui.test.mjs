@@ -211,6 +211,8 @@ test("after a move the page counts the links that still name the old place; one 
     },
   });
   await go(page, opened(app.refs.document, "knowledge", "knowledge/restore-laptop.md"));
+  // An opened page moves focus to its heading once it has loaded; a key pressed before then goes to the heading.
+  await expect(page.getByRole("heading", { level: 1, name: "Restore a laptop" })).toBeFocused();
   await expect(page.getByRole("button", { name: /^Update \d+ links?$/ })).toHaveCount(0);
   await page.getByRole("tree", { name: "Bundle files" }).getByRole("treeitem", { name: "restore-laptop.md" }).focus();
   await page.keyboard.press("ContextMenu");
