@@ -59,7 +59,13 @@ import { parseTaskSource } from "../source/parse-task-source";
 import { TASK_INPUT_DIAGNOSTICS } from "../source/task-input-diagnostics";
 import { checkTaskV5, locateTaskV5Asset, type TaskV5Bundle } from "./check";
 import type { StartedWith, TaskV5Start } from "./flags";
-import { TASK_V5_SINGLE_STEP, type TaskSourceV5Document, type TaskSourceV5Step, type TaskV5Options } from "./source";
+import {
+  TASK_V5_SINGLE_STEP,
+  type TaskSourceV5Document,
+  type TaskSourceV5Step,
+  type TaskV5Options,
+  taskV5StepKey,
+} from "./source";
 
 /** A version 5 task found by `loadPreparedTask`: what `runTask` needs to run it. */
 export interface PreparedTaskV5 {
@@ -440,7 +446,7 @@ async function runAttempt(
   let result: unknown;
   for (const step of document.steps) {
     const kept = record.steps.find((recorded) => recorded.name === step.name) as { name: string; status: StepStatus };
-    const kind = historyKind(step);
+    const kind = taskV5StepKey(step);
     const name = stepLabel(step.name);
     if (kept.status === "completed") {
       result = record.state[step.name];
@@ -503,19 +509,6 @@ async function runAttempt(
   appendHistory(outcome, attempt.historyReserved, context.scheduled);
   if (!failure) discard(record);
   return outcome;
-}
-
-function historyKind(step: TaskSourceV5Step): TaskHistoryStep["kind"] {
-  switch (step.kind) {
-    case "tasks":
-      return "task";
-    case "scripts":
-      return "run";
-    case "exec":
-      return "exec";
-    default:
-      return "prompt";
-  }
 }
 
 /** The limit of a step: its own `timeout:`, or its task's, or 30 minutes. The run's limit holds as well. */

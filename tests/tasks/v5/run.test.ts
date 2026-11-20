@@ -1459,7 +1459,7 @@ describe("the history of a run", () => {
       ["e", "exec", "completed"],
       ["s", "run", "completed"],
       ["p", "prompt", "completed"],
-      ["t", "task", "completed"],
+      ["t", "run", "completed"],
       ["boom", "exec", "failed"],
       ["never", "exec", "skipped"],
     ]);
