@@ -293,13 +293,10 @@ describe("checkForUpdate", () => {
     expect(result.latestVersion).toBe("0.0.14");
   });
 
-  test("handles missing tag_name gracefully", async () => {
+  test("a release response with no tag_name is a failed check, never up to date", async () => {
     mockFetch(() => Response.json({}));
 
-    const result = await checkForUpdate("0.0.13");
-
-    expect(result.latestVersion).toBe("");
-    expect(result.updateAvailable).toBe(false);
+    await expect(checkForUpdate("0.0.13")).rejects.toThrow("no tag_name");
   });
 
   describe("--next channel", () => {

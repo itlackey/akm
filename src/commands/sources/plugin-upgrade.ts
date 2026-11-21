@@ -25,7 +25,7 @@ import {
 } from "../../integrations/harnesses/opencode/plugin-layout";
 import { opencodeCacheDir, opencodeConfigDir } from "../../integrations/harnesses/opencode/roots";
 import { detectOpencodeMajor, OPENCODE_BIN, resolveOpencodeBin } from "../../integrations/harnesses/opencode/version";
-import { isExactSemver, isPrerelease } from "../../registry/semver";
+import { isExactSemver } from "../../registry/semver";
 import { semverOrder } from "../../runtime";
 import type { PluginUpgradeEntry, UpgradeChannel, UpgradeCheckResponse, UpgradeResponse } from "../../sources/types";
 import { collectPluginStalenessAdvisories } from "../health/plugin-staleness";
@@ -37,6 +37,7 @@ import {
   editChannelJson,
   writeChannelEdits,
 } from "./plugin-channels";
+import { installedChannel } from "./self-update";
 
 const MARKETPLACE = "akm-plugins";
 const PLUGIN_ID = `akm@${MARKETPLACE}`;
@@ -1052,8 +1053,8 @@ export async function runUpgrade(
   if (args.allowDowngrade && !args.channel) throw new UsageError("--allow-downgrade requires --channel latest or next");
   const switchChannel = args.channel as UpgradeChannel | undefined;
   const next = switchChannel ? switchChannel === "next" : args.next === true;
-  const currentChannel: UpgradeChannel = isPrerelease(currentVersion) ? "next" : "latest";
-  // With no channel asked for, the CLI stays on the one it is on (release.yml publishes every prerelease to next).
+  const currentChannel = installedChannel(currentVersion);
+  // With no channel asked for, the CLI stays on the one it is on.
   const channel: UpgradeChannel = switchChannel ?? (next ? "next" : currentChannel);
   const openCode = resolveOpenCodeTargets(next, switchChannel);
   const check = {
@@ -1083,7 +1084,7 @@ export async function runUpgrade(
   }
   let stayMessage: string | undefined;
   // A channel whose newest akm is older than the installed one leaves akm where it is; an explicit switch still switches.
-  if (!args.allowDowngrade && check.latestVersion !== "" && semverOrder(check.latestVersion, currentVersion) < 0) {
+  if (!args.allowDowngrade && semverOrder(check.latestVersion, currentVersion) < 0) {
     stayMessage = `akm stays at ${currentVersion}; ${channel} has nothing newer`;
     check.latestVersion = currentVersion;
     check.updateAvailable = false;
@@ -1130,7 +1131,7 @@ export async function runUpgrade(
       openCode,
       channel: switchChannel,
       keep,
-      currentChannel: upgraded.upgraded ? (isPrerelease(upgraded.newVersion) ? "next" : "latest") : currentChannel,
+      currentChannel: upgraded.upgraded ? installedChannel(upgraded.newVersion) : currentChannel,
     }),
     upgraded.upgraded ? upgraded.newVersion : currentVersion,
   );
