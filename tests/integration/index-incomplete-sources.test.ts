@@ -153,8 +153,14 @@ describe("the adapter-skip warning", () => {
 
     expect((await runCliCapture(["bundle", "remove", "notes", "--yes"])).code).toBe(0);
     await index("--full");
-    expect((await runCliCapture(["bundle", "add", dir, "--name", "notes"])).code).toBe(0);
-    narrowAdapter();
+    const config = loadConfig();
+    saveConfig({
+      ...config,
+      bundles: {
+        ...config.bundles,
+        notes: { path: dir, components: { main: { root: ".", adapter: "agent-skills", writable: false } } },
+      },
+    });
 
     expect((await index("--full")).stderr).toContain("adapter skipped");
   }, 60_000);
