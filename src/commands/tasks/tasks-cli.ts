@@ -78,8 +78,7 @@ const bundleArg = {
  * rejecter and the scanner can never disagree about what a token names.
  */
 function hasFlagNamed(name: string): boolean {
-  for (const token of getParsedInvocation().argv) {
-    if (token === "--") return false;
+  for (const token of getParsedInvocation().ownArgs) {
     if (!token.startsWith("--")) continue;
     const body = token.slice(2);
     const equalsAt = body.indexOf("=");
@@ -189,6 +188,26 @@ export function parseTaskInputFlags(rawArgs: readonly string[], id: string): Inp
     }
   }
   return flags;
+}
+
+/**
+ * Join each flag naming a declared value input to its value (`--who -x` becomes `--who=-x`), the one spelling
+ * {@link parseTaskInputFlags} cannot mistake for a flag. The unknown-flag scan and the binder both read the result,
+ * so neither takes `-x` for a flag of its own.
+ */
+export function inlineInputValues(tokens: readonly string[], valueInputs: ReadonlySet<string>): string[] {
+  const joined: string[] = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index] as string;
+    const next = tokens[index + 1];
+    if (token.startsWith("--") && valueInputs.has(token.slice(2)) && next !== undefined) {
+      joined.push(`${token}=${next}`);
+      index += 1;
+    } else {
+      joined.push(token);
+    }
+  }
+  return joined;
 }
 
 /** What a start of a version 5 task gave: its start flags, and its input flags as a version 4 task's are read. */

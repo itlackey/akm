@@ -1942,8 +1942,11 @@ engine skew `akm health` reports. The text output, AKM Desktop and the scheduled
 
   With that line in the global OpenCode config (`~/.config/opencode/opencode.json`
   or `.jsonc`, or the file named by `OPENCODE_CONFIG`), the cache refresh uses
-  `akm-opencode@next` instead of `@latest`. If `akm-opencode@next` is missing,
-  the OpenCode entry is `failed`; the CLI upgrade is unaffected.
+  `akm-opencode@next` instead of `@latest`, on a plain `akm upgrade` too: the
+  plugin follows the channel its own config names, as the Claude Code and Codex
+  plugins follow the channel their marketplace is registered on. If
+  `akm-opencode@next` is missing, the OpenCode entry is `failed`; the CLI upgrade
+  is unaffected.
 
   OpenCode 2's `akm-opencode-v2` follows the same rule with its own spec:
   `{ "plugins": ["akm-opencode-v2@next"] }`, cached under
@@ -2956,6 +2959,9 @@ akm env remove env/prod --yes                 # remove the whole env file
 akm does not manage individual keys — edit the `.env` file directly (`$EDITOR
 "$(akm env path <ref>)"`). `env remove <ref>` removes the whole file.
 
+In an unquoted value, `#` starts a comment only at the start of the value or after a space or tab, so
+`URL=http://x/y#frag` keeps its fragment and `A=v # note` is `v`. Quote a value to keep a `#` that follows a space.
+
 Every `<ref>` is a full akm ref, `[bundle//]env/<name>`; there is no bare-name
 form (`--env prod` is a usage error naming `env/<name>`). A value in the
 file can embed a `${ref}` token: `${secrets/name}` (or `${bundle//secrets/name}`)
@@ -3308,15 +3314,35 @@ run. `workflow resume`, `status`, `list`, and `abandon` retain their lifecycle
 roles. The deprecated no-op `--new` is not accepted by the new entry point.
 
 A script runs by its ref only (`akm run scripts/<file> [arguments]`, or
-`team//scripts/<file>`); a filesystem path is refused. It runs in place with the
-interpreter its extension selects, and its exit status is akm's. akm's flags
+`team//scripts/<file>`); a filesystem path is refused. It runs in place, and its exit status is akm's. A `#!` first line
+decides what runs it: the program the line names and its one argument
+(`#!/bin/bash -e`, `#!/usr/bin/env -S bash -eu`, `#!/usr/bin/env python3`), then
+the file. With no first line the extension selects the program (`.py` runs
+`python3`). Windows has no `#!` lines, so there the extension always decides. akm's flags
 (`--timeout`, `--max-retries`, `--cwd`, `--env`, `--secret`, `--clean`,
 `--inherit`) go before the ref; every token after the ref, `--` included, is
-passed to the script unchanged. `--inherit <VAR,...>` starts the run clean with
+passed to the script unchanged, and akm reads none of them (`--help`, `-h`, `-q`,
+`--verbose`, `--bundle` and `--format` among them). `--inherit <VAR,...>` starts the run clean with
 those variables; `--clean`, `--inherit`, `--max-retries` and `--cwd` also apply to
 agent and command runs, and a missing `--cwd` folder is made. A version 4 task
 keeps its own flag parsing. A version 5 task reads its start flags itself: a
 held lock (`lock: true`) exits 75, or 0 with `--scheduled` or `--skip-if-locked`.
+
+`--timeout` and a signal to akm stop what a script started, in one of two ways. With
+no controlling terminal (cron, systemd, CI, an agent's shell tool) the script runs
+in its own session and process group: a timeout, or SIGINT, SIGQUIT, SIGTERM or SIGHUP to
+akm, sends the group SIGINT, then SIGTERM when the script has exited or 5 seconds
+have passed, then SIGKILL 5 seconds later if anything is left, so nothing is
+orphaned and the output pipe is released. A script's INT trap runs; a TERM-only trap runs only if the
+script survives SIGINT. On a terminal the script stays in akm's process group, so
+Ctrl-C, Ctrl-Z and reads from `/dev/tty` work as when it is run directly. SIGTERM
+and SIGHUP to akm are forwarded to the script, which runs its TERM trap, and akm
+ends by that signal once the script has exited. SIGINT and SIGQUIT are the
+terminal's to deliver: akm ignores them while the script runs and exits with the
+script's status, so a script that handles Ctrl-C and carries on keeps running. A
+timeout runs the same ladder on the script alone, so a process the script started
+that outlives it is left running, as it is when the
+script runs directly. `akm exec`, `akm env run` and `akm secret run` behave the same.
 
 Flags must apply to the selected executor or its declared inputs. Unsupported
 asset types, fragments, extra positional values and `--` tails (for an agent,
@@ -3364,10 +3390,11 @@ akm exec --prompt "Summarize the failing tests" --harness claude
 One argument after `--` is a shell line, run by `sh -c` (`cmd /d /s /c` on
 Windows); several arguments are a program and its arguments, run directly. The
 command runs on this terminal and its output is not captured;
-`akm exec` exits with its status and is exempt from `--format`. A typed
-`--timeout` stops the command itself, not the processes it started; a step of a
-[version 5 task](tasks.md#task-source-v5-experimental) captures its output, and
-its timeout stops the whole process group. Env assets apply
+`akm exec` exits with its status and is exempt from `--format`. `--timeout` and a
+signal to akm reach the command as they reach a script run by
+[`akm run`](#run): without a controlling terminal the command runs in its own
+process group and the whole group is stopped; on a terminal it stays in akm's
+group and only the command itself is signalled. Env assets apply
 in the order given, then secrets over them, and a later flag wins over an
 earlier one for the same variable. A missing ref, or a `--secret` that is not
 `<ref>:<VAR>`, is an error and nothing runs. Each use records an `env_access` or

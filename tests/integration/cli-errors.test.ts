@@ -300,13 +300,11 @@ describe("CLI envelope coverage for P1a's diagnostic codes (COMPOSITION_INVALID,
 //     boundary. TARGET_REF_INVALID's `.code` is exercised only at the unit
 //     level (`tests/execution/target-ref.test.ts`).
 //   - TASK_TARGET_UNSUPPORTED: script-capture.ts's two live throw sites are
-//     both structurally unreachable in THIS runtime — `SCRIPT_EXTENSIONS`
-//     (src/core/recognition-util.ts) and `SCRIPT_INTERPRETERS`'s key set
-//     (script-capture.ts) are the identical 16 extensions, so no script
-//     asset can ever resolve (a prerequisite reached before
-//     `scriptInterpreter` runs) with an extension `scriptInterpreter` then
-//     rejects; and the Bun-required arm's guard (`!process.versions.bun`) is
-//     always false under `bun test`.
+//     structurally unreachable in THIS runtime — `SCRIPT_EXTENSIONS`
+//     (src/core/recognition-util.ts) names only extensions `scriptCommand`
+//     has a program for, so no script asset can resolve with an extension it
+//     then rejects; and the Bun-required arm's guard (`!process.versions.bun`)
+//     is always false under `bun test`.
 //
 // WORKFLOW_SOURCE_INVALID, TASK_SOURCE_INVALID, COMPOSITION_INVALID, and
 // INPUT_BINDING_INVALID all already have CLI-level coverage: the describe

@@ -64,7 +64,7 @@ describe("a symlinked script keeps its authored interpreter", () => {
           bundleRoot: bundle,
         }),
       });
-      expect(prepared).toMatchObject({ kind: "script", interpreter: "sh", extension: ".sh" });
+      expect(prepared).toMatchObject({ kind: "script", extension: ".sh" });
     });
 
     test(`cross bundle: shared//scripts/deploy.sh -> ${targetName}`, async () => {
@@ -84,7 +84,7 @@ describe("a symlinked script keeps its authored interpreter", () => {
         config,
         resolveAsset: async ({ bundle, type, name }) => resolveBundleAsset(config, { bundle, type, name }),
       });
-      expect(prepared).toMatchObject({ kind: "script", interpreter: "sh", extension: ".sh" });
+      expect(prepared).toMatchObject({ kind: "script", extension: ".sh" });
       expect(Buffer.from((prepared as { bytesBase64: string }).bytesBase64, "base64").toString()).toBe(
         "echo deployed\n",
       );

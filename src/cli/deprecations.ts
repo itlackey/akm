@@ -214,7 +214,7 @@ export function warnWorkflowUse(what: string, env: NodeJS.ProcessEnv = process.e
 
 function positionalsOf(invocation: ParsedInvocation, leafArgs: ArgsDef | undefined): string[] {
   try {
-    return parseArgs([...invocation.userArgs], leafArgs ?? {})._.map(String);
+    return parseArgs([...invocation.ownArgs], leafArgs ?? {})._.map(String);
   } catch {
     return [];
   }

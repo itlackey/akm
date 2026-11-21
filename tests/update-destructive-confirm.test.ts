@@ -37,6 +37,7 @@ import {
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
   sandboxXdgStateHome,
+  withTTY,
 } from "./_helpers/sandbox";
 import { overrideSeam } from "./_helpers/seams";
 
@@ -57,15 +58,6 @@ afterAll(() => {
     }
   }
 });
-
-// ── stdin.isTTY override (matches tests/confirm-destructive.test.ts) ──────────
-function withTTY<T>(isTTY: boolean, fn: () => Promise<T>): Promise<T> {
-  const original = process.stdin.isTTY;
-  Object.defineProperty(process.stdin, "isTTY", { value: isTTY, configurable: true });
-  return fn().finally(() => {
-    Object.defineProperty(process.stdin, "isTTY", { value: original, configurable: true });
-  });
-}
 
 // Env/temp-dir isolation goes through the sandbox helpers rather than raw
 // mkdtempSync + process.env writes — the helpers restore a previously

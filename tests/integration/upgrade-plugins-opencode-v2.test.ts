@@ -292,7 +292,7 @@ esac`,
     expect(mutations()).toEqual([]);
   });
 
-  test("@next is only refreshed under --next; a plain run leaves it alone (#1115 for V2)", async () => {
+  test("a config naming @next is refreshed from @next on a plain run (#1115 for V2)", async () => {
     writeConfig({ plugins: [`${V2}@next`] });
     writeV2Cache("0.9.28-alpha.1.202610081938", "next");
     stubWorld({
@@ -303,12 +303,7 @@ esac`,
         "akm-opencode-v2@next": ["0.9.28-alpha.2.202610091000", "0.9.28"],
       },
     });
-    const plain = await upgrade();
-    expect(entry(plain, "opencode-v2")).toMatchObject({ outcome: "skipped" });
-    expect(entry(plain, "opencode-v2").message).toContain("--channel next");
-    expect(mutations()).toEqual([]);
-
-    const run = await upgrade(NEXT, fakeDeps("0.9.28", "0.9.27"));
+    const run = await upgrade(UPGRADE, fakeDeps("0.9.28", "0.9.27"));
     expect(entry(run, "opencode-v2")).toMatchObject({ outcome: "updated", to: "0.9.28-alpha.2.202610091000" });
     expect(mutations()).toEqual([`opencode plugin update ${V2}@next`]);
   });

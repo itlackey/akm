@@ -282,6 +282,19 @@ function coerceFlagValue(
   throw diagnostics.invalidValue(name, `must be ${types.join(" | ")}`);
 }
 
+/**
+ * The declared inputs that take a value: those with a type and no `boolean` among them. A flag naming one takes the
+ * next token as its value whatever that token starts with, as `--name=<value>` does.
+ */
+export function valueInputNames(contract: InputContract): Set<string> {
+  const names = new Set<string>();
+  for (const [name, declaration] of Object.entries(contract)) {
+    const types = schemaTypes(declaration.schema);
+    if (types.length > 0 && !types.includes("boolean")) names.add(name);
+  }
+  return names;
+}
+
 function schemaTypes(schema: Readonly<Record<string, unknown>> | undefined): string[] {
   const declared = schema?.type;
   if (typeof declared === "string") return [declared];

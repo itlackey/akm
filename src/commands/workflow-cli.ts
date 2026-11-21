@@ -15,6 +15,7 @@ import { defineGroupCommand, defineJsonCommand, EXIT_CODES, output, outputWithEx
 import { armAbortDeadline } from "../core/abort-deadline";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../core/asset/asset-create";
 import { NotFoundError, TransientError, type TransientErrorCode, UsageError } from "../core/errors";
+import { stdout } from "../core/stdio";
 import { warn } from "../core/warn";
 import { assertWorkflowMarkdownName, createWorkflowAsset, getWorkflowTemplate } from "../workflows/authoring/authoring";
 import type { WorkflowParameterFlag } from "../workflows/ir/params";
@@ -151,7 +152,7 @@ const workflowCreateCommand = defineJsonCommand({
       // Raw document, not an envelope — the retired `workflow template` was
       // format-exempt for the same reason: `--print > starter.md` must yield
       // a usable starter file, not `{ok,template,kind}` JSON.
-      process.stdout.write(getWorkflowTemplate());
+      stdout().write(getWorkflowTemplate());
       return;
     }
     const result = createWorkflowAsset({

@@ -5,7 +5,7 @@
 const observers = new WeakSet<object>();
 
 /** Metrics observe cancellation; they do not own termination or child cleanup. */
-export function observeSignal(signal: "SIGINT" | "SIGTERM", observer: () => void): () => void {
+export function observeSignal(signal: "SIGINT" | "SIGTERM" | "SIGHUP", observer: () => void): () => void {
   observers.add(observer);
   // Observe before a genuine once-handler removes itself from the listener list.
   process.prependOnceListener(signal, observer);
@@ -16,6 +16,6 @@ export function observeSignal(signal: "SIGINT" | "SIGTERM", observer: () => void
 }
 
 /** listenerCount alone mistakes registered metrics observers for lifecycle owners. */
-export function hasSignalOwner(signal: "SIGINT" | "SIGTERM"): boolean {
+export function hasSignalOwner(signal: "SIGINT" | "SIGTERM" | "SIGHUP"): boolean {
   return process.listeners(signal).some((listener) => !observers.has(listener));
 }

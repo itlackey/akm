@@ -38,6 +38,7 @@ import {
   type CittyArgsDefinitionForScan,
   cittyComparableName,
   findCittyTopLevelCommandIndex,
+  type ParsedInvocation,
   toAliasArray,
 } from "./invocation";
 
@@ -156,11 +157,15 @@ function collectKnownArgs(root: FlagScanCommand, rawArgs: readonly string[]): Kn
   return known(true);
 }
 
-/** Consume the startup selector without interpreting another flag's value as an option. */
+/**
+ * Consume the startup selector from the invocation's own tokens without interpreting another flag's value as an
+ * option. `args` is the user tokens without it; the tokens after the boundary are returned as they are.
+ */
 export function consumeConfigFileFlag(
   root: FlagScanCommand,
-  rawArgs: readonly string[],
+  invocation: ParsedInvocation,
 ): { file: string | undefined; args: string[] } {
+  const rawArgs = invocation.ownArgs;
   const known = collectKnownArgs(root, rawArgs);
   // These legacy commands accept arbitrary named inputs, including `config`.
   // Only the prefix before the top-level command belongs to the global flag.
@@ -172,7 +177,6 @@ export function consumeConfigFileFlag(
   let index = 0;
   for (; index < end; index += 1) {
     const token = rawArgs[index] as string;
-    if (token === "--") break;
     if (token === "--config" || token.startsWith("--config=")) {
       const value = token === "--config" ? rawArgs[++index] : token.slice("--config=".length);
       if (value === undefined || !value.trim() || (token === "--config" && value.startsWith("-"))) {
@@ -204,7 +208,10 @@ export function consumeConfigFileFlag(
       }
     }
   }
-  return { file: selected, args: [...forwarded, ...rawArgs.slice(index)] };
+  return {
+    file: selected,
+    args: [...forwarded, ...rawArgs.slice(index), ...invocation.userArgs.slice(rawArgs.length)],
+  };
 }
 
 /**
@@ -293,8 +300,7 @@ const DYNAMIC_INPUT_COMMANDS: ReadonlySet<string> = new Set([
  * not declare. Returns silently when every flag is known.
  */
 export function assertKnownFlags(root: FlagScanCommand, rawArgs: readonly string[]): void {
-  const passthroughAt = rawArgs.indexOf("--");
-  let ownArgs = passthroughAt === -1 ? rawArgs : rawArgs.slice(0, passthroughAt);
+  let ownArgs = rawArgs;
   const known = collectKnownArgs(root, rawArgs);
   if (!known.resolved) return;
   // After `run`'s ref the tokens are the executor's: `run` checks them against it once the asset's type is known.
@@ -373,13 +379,15 @@ const POSITIONAL_FLAG: Readonly<Record<string, string>> = { "bundle create": "--
 
 /**
  * Commands whose handler reads `args._` itself: `proposal accept` and
- * `proposal reopen` take any number of ids, `migrate apply` any number of task files, and `show` and `doctor prompt`
+ * `proposal reopen` take any number of ids, `migrate apply` and `migrate status` any number of task and workflow
+ * files, and `show` and `doctor prompt`
  * refuse an extra token with a message of their own.
  */
 const OWN_POSITIONALS: ReadonlySet<string> = new Set([
   "proposal accept",
   "proposal reopen",
   "migrate apply",
+  "migrate status",
   "show",
   "doctor prompt",
 ]);

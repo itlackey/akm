@@ -12,8 +12,7 @@
  * globally-installed 0.9.15 running under Bun.
  *
  * ROOT CAUSE: on Bun, once `process.stdout` has been materialized as a
- * Node-compat stream — which the CLI does unconditionally (`--help` /
- * `hints` write through it, `src/output/context.ts` reads `isTTY`) —
+ * Node-compat stream — which writing a result through it does —
  * `console.log(bigString)` issues a SINGLE `write(2)` on a non-blocking fd 1
  * and silently discards whatever the kernel did not accept. A pipe accepts at
  * most one buffer's worth (65,536 bytes on Linux), so everything past that is

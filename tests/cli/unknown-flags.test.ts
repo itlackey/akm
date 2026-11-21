@@ -17,11 +17,15 @@
 
 import { describe, expect, test } from "bun:test";
 import { main } from "../../src/cli";
+import { createParsedInvocation } from "../../src/cli/invocation";
 import { assertKnownFlags, assertNoStrayPositionals, type FlagScanCommand } from "../../src/cli/unknown-flags";
 import { UsageError } from "../../src/core/errors";
 
-const check = (args: string[]): void => assertKnownFlags(main as unknown as FlagScanCommand, args);
-const checkPositionals = (args: string[]): void => assertNoStrayPositionals(main as unknown as FlagScanCommand, args);
+const invocationOf = (args: string[]) => createParsedInvocation(["bun", "cli.ts", ...args]);
+const check = (args: string[]): void =>
+  assertKnownFlags(main as unknown as FlagScanCommand, invocationOf(args).ownArgs);
+const checkPositionals = (args: string[]): void =>
+  assertNoStrayPositionals(main as unknown as FlagScanCommand, invocationOf(args).cittyArgs);
 
 /** The UsageError a gate throws, for asserting code/hint. */
 const thrownBy = (gate: (args: string[]) => void, args: string[]): UsageError => {
@@ -268,6 +272,8 @@ describe("a command takes only the positionals it declares", () => {
     ["a positional after `--` beside a flag before it", ["task", "enable", "--bundle=team", "--", "nightly"]],
     ["any number of ids to accept, which the command reads itself", ["proposal", "accept", "p-1", "p-2"]],
     ["any number of ids to reopen", ["proposal", "reopen", "p-1", "p-2"]],
+    ["any number of files to preview", ["migrate", "status", "tasks/a.yml", "workflows/b.md"]],
+    ["any number of files to convert", ["migrate", "apply", "tasks/a.yml", "workflows/b.md"]],
     ["a second token on show, which refuses it with its own message", ["show", "knowledge/a", "auth"]],
     ["a second token on doctor prompt, likewise", ["doctor", "prompt", "lessons/a", "extra"]],
     ["a child command after `--`", ["env", "run", "env/prod", "--", "tool", "arg"]],

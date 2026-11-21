@@ -2,6 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import { isTerminal } from "./stdio";
+
 /**
  * Terminal-glyph and color gating helpers (#486).
  *
@@ -26,7 +28,7 @@ export function shouldDecorate(): boolean {
   if (process.env.FORCE_COLOR !== undefined && process.env.FORCE_COLOR !== "" && process.env.FORCE_COLOR !== "0") {
     return true;
   }
-  return process.stderr.isTTY === true;
+  return isTerminal(2);
 }
 
 // Map known decorative emoji to plain ASCII fallbacks. Anything not listed

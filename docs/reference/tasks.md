@@ -188,8 +188,9 @@ and those runs cannot be resumed.
 which akm makes if it is missing and never removes; `--cwd` wins over the task's
 `cwd:`. A step's own `cwd:` is for that step only and wins over both. A `cwd:`
 that is not absolute is taken from the bundle root; a `--cwd` that is not
-absolute is taken from the folder akm was started in. A folder that cannot be
-made refuses the run, or fails the step it is the step's. What a step runs is
+absolute is taken from the folder akm was started in. A path that exists and is not a
+folder, or a folder that cannot be
+made, refuses the run, or fails the step it is the step's. What a step runs is
 found whatever the folder is, because it is named by ref. A script that writes
 somewhere else needs that folder named as the working folder for an agent step
 to read what it wrote.
@@ -247,7 +248,7 @@ bundle.
   `akm run`'s flags.
 - A step is not exactly one command, or gives an option a value it does not take.
 - A `run:` value is not a ref, names nothing akm can run, or names an asset that
-  does not exist. A script's interpreter is found from its extension.
+  does not exist. A script's program is found from its `#!` first line, or from its extension.
 - A step has no name or an invalid one, two steps share a name, or a step has the
   name of an input.
 - A `${name}` in `prompt:`, `arguments:` or `args:` is neither an input nor an
@@ -367,23 +368,30 @@ fields are not silently discarded.
 | `akm/command` | Required action object: exactly one of `ref` or `content`, plus optional portable `arguments` | Allowed and passed through the command resolver | Shared command authorization and lowering |
 | `commands/<name>` | No `with`; declare `inputs:` for typed parameters | Allowed and passed through the command resolver | Shared command authorization and lowering |
 | `workflows/<name>` | Declared `inputs:` become the child run's params | A nonempty task `env` is rejected because the durable workflow runtime cannot consume it | Fresh durable workflow start |
-| `scripts/<name>.<ext>` | No `with`; declare `inputs:` for typed parameters | Allowed for the child process | Closed extension-to-interpreter table below |
+| `scripts/<name>.<ext>` | No `with`; declare `inputs:` for typed parameters | Allowed for the child process | First line, then the closed extension table below |
 
-Script refs use this closed table; any other extension fails before dispatch:
+A script runs the way its `#!` first line says: the program the line names and its
+one argument (`#!/bin/bash -e`, `#!/usr/bin/env -S bash -eu`), then the file. akm
+ignores a carriage return that ends the line, searches a bare program name on
+`PATH`, and runs a first line that names `bun` on the Bun akm runs on (a
+standalone binary ignores the words after `bun`; a Node build runs the line as
+written). A script with no first line uses this closed table, and any other
+extension fails before dispatch, saying to add a first line. Windows has no `#!`
+lines, so there the table always decides:
 
-| Extensions | Interpreter |
+| Extensions | Program |
 |---|---|
 | `.sh` | `sh` |
 | `.ts`, `.js`, `.mjs` | Bun; JavaScript and TypeScript script targets require Bun (the standalone binary uses its embedded Bun runtime) |
 | `.ps1` | `powershell -NoProfile -NonInteractive -File` |
 | `.cmd`, `.bat` | `cmd /d /s /c` |
-| `.py` | `python` |
+| `.py` | `python3` (`python` on Windows) |
 | `.rb` | `ruby` |
 | `.go` | `go run` |
 | `.pl` | `perl` |
 | `.php` | `php` |
 | `.lua` | `lua` |
-| `.r` | `rscript` |
+| `.r` | `Rscript` |
 | `.swift` | `swift` |
 | `.kt`, `.kts` | Kotlin (`kotlin` for `.kt`, `kotlinc -script` for `.kts`) |
 
@@ -397,8 +405,8 @@ symlink that resolves outside the bundle works. The task runs in
 `<bundle root>/<working-directory>` (or the absolute path as written): akm does
 not capture the directory's identity or re-check it when the task runs. A
 `uses: scripts/<file>` target may itself be a symlink to a file outside the
-bundle; the task freezes that file's bytes, not its location. The interpreter
-comes from the name the script has in the bundle, not from the file the link
+bundle; the task freezes that file's bytes, not its location. With no first line, the
+program comes from the name the script has in the bundle, not from the file the link
 points to, so `scripts/deploy.sh` linked to `real-script.txt` runs under the
 shell.
 

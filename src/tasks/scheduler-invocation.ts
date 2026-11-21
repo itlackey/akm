@@ -33,6 +33,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { createParsedInvocation, type ParsedInvocation } from "../cli/invocation";
 import { bundleRefToString, parseBundleRef } from "../core/asset/asset-ref";
 import { resolveStashDir } from "../core/common";
 import { ConfigError } from "../core/errors";
@@ -203,9 +204,12 @@ export function readLegacySchedulerContext(file: string): Record<string, string>
  * Apply and remove a row's `--scheduler-context <descriptor>` before citty
  * parses argv. Only a row written by 0.9.0 – 0.9.17-alpha.6 passes it.
  */
-export function consumeSchedulerContextArg(argv: string[], env: NodeJS.ProcessEnv = process.env): string[] {
-  const separator = argv.indexOf("--");
-  const index = argv.slice(0, separator === -1 ? argv.length : separator).indexOf(SCHEDULER_CONTEXT_ARG);
+export function consumeSchedulerContextArg(
+  argv: string[],
+  env: NodeJS.ProcessEnv = process.env,
+  invocation: ParsedInvocation = createParsedInvocation(argv),
+): string[] {
+  const index = argv.slice(0, 2 + invocation.ownArgs.length).indexOf(SCHEDULER_CONTEXT_ARG);
   if (index === -1) return argv;
   const file = argv[index + 1];
   if (!file) {
