@@ -231,7 +231,6 @@ interface TaskHistoryPhase {
   probe: ReturnType<typeof probeStateDbRoundTrip>;
   stateDbIntegrity: ReturnType<typeof runStateDbIntegrityCheck>;
   stateDbFreelist: ReturnType<typeof getStateDbFreelistInfo>;
-  taskRowCount: number;
   stuckActiveRuns: number;
   stuckActiveTasks: { taskId: string; ageMs: number }[];
   unverifiedActiveTasks: { taskId: string; ageMs: number }[];
@@ -324,7 +323,6 @@ function gatherTaskHistoryPhase(
     probe,
     stateDbIntegrity,
     stateDbFreelist,
-    taskRowCount: taskRows.length,
     stuckActiveRuns: rates.stuckActiveRuns,
     stuckActiveTasks: dedupeStuckActiveTasks(rates.stuckActiveRows, now),
     unverifiedActiveTasks: dedupeStuckActiveTasks(rates.unverifiedActiveRows, now),
@@ -828,7 +826,6 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
       stateDbIntegrity: taskHistory.stateDbIntegrity,
       stateDbFreelist: taskHistory.stateDbFreelist,
       stateDbMigrations: { applied: opened.applied, ...(opened.backupPath ? { backupPath: opened.backupPath } : {}) },
-      taskRowCount: taskHistory.taskRowCount,
       taskFailRate: taskHistory.taskFailRate,
       stuckActiveRuns: taskHistory.stuckActiveRuns,
       stuckActiveTasks: taskHistory.stuckActiveTasks,

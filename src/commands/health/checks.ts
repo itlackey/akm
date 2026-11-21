@@ -41,8 +41,6 @@ export interface HealthCheckContext {
   stateDbFreelist: StateDbFreelistInfo;
   /** What this run's own state.db open applied (every open applies pending migrations). */
   stateDbMigrations: StateDatabaseMigrationReport;
-  /** Total task_history rows read in the window. */
-  taskRowCount: number;
   /** The window's runs by what started them, and how many tasks they belong to. */
   taskRuns: TaskRunCounts;
   /** Failed share of the window's runs; null when there were none. */
@@ -363,8 +361,8 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
       kind: "deterministic",
       status: "pass",
       confidence: "high",
-      message: `Read ${ctx.taskRowCount} task-history row(s) since ${ctx.since}.`,
-      evidence: { rows: ctx.taskRowCount, since: ctx.since },
+      message: `Read ${ctx.taskRuns.runs} task-history row(s) since ${ctx.since}.`,
+      evidence: { rows: ctx.taskRuns.runs, since: ctx.since },
     }),
   },
   {
@@ -490,7 +488,7 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
 
       const counted = describeTaskRuns(ctx.taskRuns);
       let message: string;
-      if (ctx.taskRowCount === 0) {
+      if (ctx.taskRuns.runs === 0) {
         message = `No task runs since ${ctx.since} — no task-fail-rate signal.`;
       } else if (warn) {
         const parts: string[] = [];
@@ -510,14 +508,14 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
         name: "task-fail-rate",
         kind: "deterministic",
         // No run in the window is no signal, not a pass.
-        ...(ctx.taskRowCount === 0
+        ...(ctx.taskRuns.runs === 0
           ? ({ status: "unknown", reason: "idle" } as const)
           : { status: warn ? ("warn" as const) : ("pass" as const) }),
         confidence: "high",
         message,
         evidence: {
           taskFailRate: ctx.taskFailRate,
-          taskRowCount: ctx.taskRowCount,
+          taskRowCount: ctx.taskRuns.runs,
           taskRuns: ctx.taskRuns,
           threshold: TASK_FAIL_RATE_WARN,
           worstTaskFailRate: worst,
