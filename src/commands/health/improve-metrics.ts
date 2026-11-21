@@ -20,6 +20,11 @@ export function roundRate(value: number): number {
   return Number(value.toFixed(4));
 }
 
+/** {@link roundRate}, keeping an unknown (null) rate unknown. */
+export function roundOrNull(value: number | null): number | null {
+  return value === null ? null : roundRate(value);
+}
+
 /** A history row with its metadata decoded; `metadata` is undefined when the row's `metadata_json` is corrupt. */
 export interface DecodedTaskRow {
   row: TaskHistoryRow;

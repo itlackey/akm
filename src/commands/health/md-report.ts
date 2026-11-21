@@ -124,7 +124,7 @@ export function renderWindowCompareMd(windows: WindowResult[], deltas: Record<st
     ...INTERESTING_DELTA_PATHS,
   ];
   for (const path of paths) {
-    const values = windows.map((w) => String(readNumericPath(w, path)));
+    const values = windows.map((w) => String(readNumericPath(w, path) ?? "unknown"));
     const delta = deltas?.[path];
     let deltaStr = "—";
     if (delta) {

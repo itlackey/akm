@@ -46,7 +46,8 @@ export interface HealthCheckContext {
   /** The window's runs by what started them, and how many tasks they belong to. */
   taskRuns: TaskRunCounts;
   /** Fraction of task_history rows in the window whose status is `failed` (0..1, raw). */
-  taskFailRate: number;
+  /** Failed share of the window's runs; null when there were none. */
+  taskFailRate: number | null;
   /** Active runs whose owner process is gone (`classifyAttempt`). */
   stuckActiveRuns: number;
   /** One entry per task with such a run: which task and how long ago it started. */
@@ -472,9 +473,9 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
     name: "task-fail-rate",
     channel: "advisory",
     run: (ctx) => {
-      const pctStr = `${(ctx.taskFailRate * 100).toFixed(1)}%`;
+      const pctStr = ctx.taskFailRate === null ? "unknown" : `${(ctx.taskFailRate * 100).toFixed(1)}%`;
       const thresholdPct = `${(TASK_FAIL_RATE_WARN * 100).toFixed(0)}%`;
-      const aggregateWarn = ctx.taskFailRate >= TASK_FAIL_RATE_WARN;
+      const aggregateWarn = ctx.taskFailRate !== null && ctx.taskFailRate >= TASK_FAIL_RATE_WARN;
       const worst = ctx.worstTaskFailRate;
       const worstWarn = worst !== null && worst.rate >= TASK_FAIL_RATE_WARN;
       const warn = aggregateWarn || worstWarn;

@@ -106,6 +106,17 @@ describe("agentFailureRate counts every agent dispatch (B10-10)", () => {
     expect(check(result, "task-fail-rate").evidence?.agentFailureReasonCounts).toEqual({ parse_error: 2 });
   });
 
+  test("with no agent dispatch the rate is unknown (null), not 0", async () => {
+    seed({ task: "script-only", status: "completed", kind: "shell", metadata: { trigger: "manual" } });
+    const result = await akmHealth({ since: "1h" });
+    expect(result.metrics.agentFailureRate).toBeNull();
+    expect(result.metrics.taskFailRate).toBe(0);
+  });
+
+  test("with no task run at all the task fail rate is unknown too", async () => {
+    expect((await akmHealth({ since: "1h" })).metrics.taskFailRate).toBeNull();
+  });
+
   test("a succeeded agent step is a dispatch that did not fail", async () => {
     seed({
       task: "v5-agent",
@@ -123,6 +134,32 @@ describe("agentFailureRate counts every agent dispatch (B10-10)", () => {
     });
     const result = await akmHealth({ since: "1h" });
     expect(result.metrics.agentFailureRate).toBe(0.5);
+  });
+});
+
+describe("a state.db that cannot be read (B10-36)", () => {
+  test("every metric and the improve summary are unknown (null), not zero", async () => {
+    const stateDb = path.join(storage.root, "unreadable-state.db");
+    fs.writeFileSync(stateDb, "this is not a sqlite database, only bytes ".repeat(40));
+    const result = await akmHealth({ since: "1h", stateDbPath: stateDb });
+    expect(result.status).toBe("fail");
+    expect(result.metrics).toEqual({
+      taskFailRate: null,
+      agentFailureRate: null,
+      agentFailureReasonCounts: null,
+      stuckActiveRuns: null,
+      llmUsage: null,
+    });
+    expect(result.improve).toBeNull();
+  });
+});
+
+describe("renderers show an unknown metric as unknown", () => {
+  test("text and md", async () => {
+    const text = (await runCliCapture(["doctor", "--no-probe", "--format", "text"])).stdout;
+    expect(text).toContain("metrics.agentFailureRate=unknown");
+    const md = (await runCliCapture(["doctor", "--no-probe", "--format", "md"])).stdout;
+    expect(md).toMatch(/### agentFailureRate\n\nunknown/);
   });
 });
 
@@ -202,7 +239,7 @@ describe("a corrupt improve run (B10-36)", () => {
     try {
       const result = await akmHealth({ since: "1h", groupBy: "run" });
       expect(result.runs?.map((run) => run.id)).toEqual(["bad-run"]);
-      expect(result.improve.resultRows?.skipped.invalid).toBe(1);
+      expect(result.improve?.resultRows?.skipped.invalid).toBe(1);
     } finally {
       console.warn = original;
     }

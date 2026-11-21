@@ -23,7 +23,7 @@
  * emitting an empty table.
  */
 
-import { ENVELOPE_META_KEYS, markdownSection } from "../../output/generic-render";
+import { ENVELOPE_META_KEYS, markdownSection, nullAsUnknown } from "../../output/generic-render";
 import { registerMdRenderer } from "../../output/render-registry";
 import { renderChecksMd, renderPendingProposalsMd, renderRunsDetailMd, renderWindowCompareMd } from "./md-report";
 import type { AkmHealthResult } from "./types-result";
@@ -54,7 +54,7 @@ registerMdRenderer("health", (result) => {
   const { pendingProposals: _queue, ...otherReport } = result.report ?? { pendingProposals: [] };
   for (const [key, value] of Object.entries(result)) {
     if (BESPOKE_FIELDS.has(key) || ENVELOPE_META_KEYS.has(key)) continue;
-    sections.push(...markdownSection(key, key === "report" ? otherReport : value));
+    sections.push(...markdownSection(key, nullAsUnknown(key === "report" ? otherReport : value)));
   }
   return `${sections
     .join("\n")

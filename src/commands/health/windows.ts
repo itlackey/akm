@@ -23,7 +23,7 @@ import {
   decodeTaskRows,
   type ImproveRunOutcomes,
   readImproveRows,
-  roundRate,
+  roundOrNull,
   summarizeImproveRuns,
   type TaskRunCounts,
 } from "./improve-metrics";
@@ -123,21 +123,28 @@ export const INTERESTING_DELTA_PATHS = [
   "metrics.llmUsage.failures",
 ] as const;
 
-export function readNumericPath(obj: unknown, path: string): number {
-  const parts = path.split(".");
+/** The number at `path`; `null` when the value, or a parent on the way to it, is unknown (null). A missing key is 0. */
+export function readNumericPath(obj: unknown, path: string): number | null {
   let cursor: unknown = obj;
-  for (const part of parts) {
-    if (typeof cursor !== "object" || cursor === null) return 0;
+  for (const part of path.split(".")) {
+    if (cursor === null) return null;
+    if (typeof cursor !== "object") return 0;
     cursor = (cursor as Record<string, unknown>)[part];
   }
+  if (cursor === null) return null;
   return typeof cursor === "number" && Number.isFinite(cursor) ? cursor : 0;
 }
 
+/** The change of each listed metric between two windows; a metric unknown in either window has an `unknown` change. */
 export function computeDeltas(first: WindowResult, last: WindowResult): Record<string, DeltaEntry> {
   const out: Record<string, DeltaEntry> = {};
   for (const path of INTERESTING_DELTA_PATHS) {
     const from = readNumericPath(first, path);
     const to = readNumericPath(last, path);
+    if (from === null || to === null) {
+      out[path] = { from, to, pctChange: "unknown" };
+      continue;
+    }
     if (from === 0 && to === 0) continue;
     let pctChange: number | string;
     if (from === 0) {
@@ -157,8 +164,10 @@ interface WindowMetricsBundle {
 }
 
 export interface TaskWindowRates {
-  taskFailRate: number;
-  agentFailureRate: number;
+  /** Failed share of the window's runs; null when there were none. */
+  taskFailRate: number | null;
+  /** Failed share of the window's agent dispatches; null when there were none. */
+  agentFailureRate: number | null;
   agentFailureReasonCounts: Record<string, number>;
   /** Active rows whose owner process is provably gone (`classifyAttempt`). */
   taskRuns: TaskRunCounts;
@@ -193,8 +202,8 @@ export function computeTaskWindowRates(
   const failedDispatches = dispatches.filter((dispatch) => dispatch.reason !== undefined);
   return {
     taskRuns: countTaskRuns(decoded),
-    taskFailRate: taskRows.length === 0 ? 0 : failedTaskRows.length / taskRows.length,
-    agentFailureRate: dispatches.length === 0 ? 0 : failedDispatches.length / dispatches.length,
+    taskFailRate: taskRows.length === 0 ? null : failedTaskRows.length / taskRows.length,
+    agentFailureRate: dispatches.length === 0 ? null : failedDispatches.length / dispatches.length,
     agentFailureReasonCounts: countAgentFailureReasons(dispatches),
     stuckActiveRuns: stuckActiveRows.length,
     stuckActiveRows,
@@ -263,8 +272,8 @@ export function buildWindowMetrics(
   const { improve, runCount } = buildImproveWindowSummary(db, stateDbPath, since, until, readOnly);
 
   const metrics: HealthMetrics = {
-    taskFailRate: roundRate(rates.taskFailRate),
-    agentFailureRate: roundRate(rates.agentFailureRate),
+    taskFailRate: roundOrNull(rates.taskFailRate),
+    agentFailureRate: roundOrNull(rates.agentFailureRate),
     agentFailureReasonCounts: rates.agentFailureReasonCounts,
     stuckActiveRuns: rates.stuckActiveRuns,
     llmUsage: readLlmUsageAggregate(stateDbPath, since, until, readOnly),

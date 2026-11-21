@@ -194,7 +194,7 @@ describe("health reporting correctness", () => {
     });
     const result = await health();
     expect(result.runs?.[0]?.ok).toBe(ok);
-    expect(result.improve.actions.reflect.failed).toBe(1);
+    expect(result.improve?.actions.reflect.failed).toBe(1);
     expect(result.advisories.find((c) => c.name === "improve-failures")).toMatchObject({
       status: "warn",
       evidence: { failedRuns: 1, runIds: ["failed"] },
@@ -208,8 +208,8 @@ describe("health reporting correctness", () => {
   ] as never[][])("a quality-rejected reflect candidate (%s) is counted but does not warn", async (mode, result) => {
     improve("rejected", now - 120_000, { actions: [{ mode, ref: "knowledge/fixture", result }] } as never);
     const health_ = await health();
-    expect(health_.improve.actions.reflect.rejected).toBe(1);
-    expect(health_.improve.actions.reflect.failed).toBe(0);
+    expect(health_.improve?.actions.reflect.rejected).toBe(1);
+    expect(health_.improve?.actions.reflect.failed).toBe(0);
     expect(health_.advisories.find((c) => c.name === "improve-failures")?.status).toBe("pass");
   });
 
@@ -255,7 +255,7 @@ describe("health reporting correctness", () => {
       },
     });
     const result = await health();
-    expect(result.improve.consolidation.failedChunks).toBe(1);
+    expect(result.improve?.consolidation.failedChunks).toBe(1);
     expect(result.advisories.find((c) => c.name === "improve-failures")).toMatchObject({
       status: "warn",
       evidence: { failedRuns: 1, runIds: ["failed"] },
@@ -315,7 +315,7 @@ describe("health reporting correctness", () => {
       improve("after-legacy", now - 60_000);
     }
     const result = await health();
-    expect(result.improve.consolidation).toMatchObject({
+    expect(result.improve?.consolidation).toMatchObject({
       pairsJudged: judged,
       failedPairs: failed,
       deferredPairs: legacy ? null : deferred,
@@ -439,7 +439,7 @@ describe("health reporting correctness", () => {
       db.close();
     }
     const result = await health();
-    expect(result.improve.resultRows).toMatchObject({ included: 0, skipped: { invalid: 1 } });
+    expect(result.improve?.resultRows).toMatchObject({ included: 0, skipped: { invalid: 1 } });
     expect(result.advisories.find((c) => c.name === "improve-failures")).toMatchObject({
       status: "warn",
       evidence: { failedRuns: 1, runIds: ["corrupt-failure"] },

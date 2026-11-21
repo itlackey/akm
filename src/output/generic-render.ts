@@ -114,6 +114,19 @@ function markdownValue(value: unknown, depth: number): string[] {
   return [displayScalar(value) === "" ? "_(empty)_" : displayScalar(value)];
 }
 
+/**
+ * `value` with every null replaced by "unknown", for results whose null means "not known" (`akm health`: a rate with
+ * nothing to measure, a metric of a state.db that could not be read), so a renderer never prints it as empty or "null".
+ */
+export function nullAsUnknown(value: unknown): unknown {
+  if (value === null) return "unknown";
+  if (Array.isArray(value)) return value.map(nullAsUnknown);
+  if (typeof value === "object" && value !== undefined) {
+    return Object.fromEntries(Object.entries(value).map(([key, nested]) => [key, nullAsUnknown(nested)]));
+  }
+  return value;
+}
+
 /** One top-level field of an envelope as a `## key` section; the lines `renderGenericMarkdown` prints for it. */
 export function markdownSection(key: string, value: unknown): string[] {
   return [`## ${key}`, "", ...markdownValue(value, 3), ""];

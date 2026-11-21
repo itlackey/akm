@@ -4,23 +4,27 @@
 
 /** Top-level `akm health` metrics + LLM usage aggregates. */
 
+/**
+ * `null` is "unknown": nothing was there to measure (no task run, no agent dispatch in the window), or state.db could
+ * not be read. Zero is a measurement.
+ */
 export interface HealthMetrics {
-  taskFailRate: number;
-  agentFailureRate: number;
+  taskFailRate: number | null;
+  agentFailureRate: number | null;
   /**
    * #943: reason-value breakdown behind {@link agentFailureRate} — how many
    * agent dispatches in the window carry each reason (a version 4 command row's `detail.reason`, a version 5 step's `agent.reason`)
    * (`timeout`, `non_zero_exit`, `parse_error`, …; see `AgentFailureReason`
    * in `src/integrations/agent/spawn.ts`).
    */
-  agentFailureReasonCounts: Record<string, number>;
-  stuckActiveRuns: number;
+  agentFailureReasonCounts: Record<string, number> | null;
+  stuckActiveRuns: number | null;
   /**
    * LLM usage aggregated from the window's `llm_usage` events (#576): real
    * token + wall-time accounting, attributed to the stage, process, and engine
    * that made each call. Calls outside any stage land under `unattributed`.
    */
-  llmUsage: LlmUsageAggregate;
+  llmUsage: LlmUsageAggregate | null;
 }
 
 /** Aggregated LLM usage over a window: a total plus per-dimension breakdowns. */

@@ -46,7 +46,8 @@ export interface AkmHealthResult {
   hardChecks: HealthCheckResult[];
   advisories: HealthCheckResult[];
   metrics: HealthMetrics;
-  improve: ImproveHealthMetrics;
+  /** `null` when state.db could not be read. */
+  improve: ImproveHealthMetrics | null;
   runs?: ImproveRunSummary[];
   windows?: WindowResult[];
   deltas?: Record<string, DeltaEntry>;

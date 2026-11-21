@@ -42,9 +42,9 @@ import { collectConfigSkewAdvisory } from "./health/config-skew";
 import { runConnectionsAndHarnessesCheck } from "./health/connections-and-harnesses-check";
 import { collectDataDirUsageAdvisory } from "./health/data-dir-usage";
 import { collectEgressAdvisory, type EgressConfigView } from "./health/egress";
-import { emptyImproveMetrics, roundRate, type TaskRunCounts } from "./health/improve-metrics";
+import { roundOrNull, type TaskRunCounts } from "./health/improve-metrics";
 import { collectIndexSourcesCheck } from "./health/index-sources";
-import { emptyLlmUsageAggregate, readLlmUsageAggregate } from "./health/llm-usage";
+import { readLlmUsageAggregate } from "./health/llm-usage";
 import { collectOpencodeMajorAdvisory } from "./health/opencode-major";
 import { collectPluginStalenessAdvisories } from "./health/plugin-staleness";
 import { collectSchedulerBinaryAdvisory } from "./health/scheduler-binary";
@@ -236,9 +236,9 @@ interface TaskHistoryPhase {
   stuckActiveTasks: { taskId: string; ageMs: number }[];
   unverifiedActiveTasks: { taskId: string; ageMs: number }[];
   taskRuns: TaskRunCounts;
-  taskFailRate: number;
+  taskFailRate: number | null;
   worstTaskFailRate: { taskId: string; rate: number; rows: number } | null;
-  agentFailureRate: number;
+  agentFailureRate: number | null;
   agentFailureReasonCounts: Record<string, number>;
 }
 
@@ -659,14 +659,15 @@ function degradedStateDbReport(hardCheck: HealthCheckResult, options: AkmHealthO
     since: parseHealthSince(options.since),
     hardChecks: [hardCheck],
     advisories: [],
+    // state.db could not be read: nothing was measured.
     metrics: {
-      taskFailRate: 0,
-      agentFailureRate: 0,
-      agentFailureReasonCounts: {},
-      stuckActiveRuns: 0,
-      llmUsage: emptyLlmUsageAggregate(),
+      taskFailRate: null,
+      agentFailureRate: null,
+      agentFailureReasonCounts: null,
+      stuckActiveRuns: null,
+      llmUsage: null,
     },
-    improve: emptyImproveMetrics(),
+    improve: null,
   };
 }
 
@@ -852,8 +853,8 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
     }
 
     const metrics: HealthMetrics = {
-      taskFailRate: roundRate(taskHistory.taskFailRate),
-      agentFailureRate: roundRate(taskHistory.agentFailureRate),
+      taskFailRate: roundOrNull(taskHistory.taskFailRate),
+      agentFailureRate: roundOrNull(taskHistory.agentFailureRate),
       agentFailureReasonCounts: taskHistory.agentFailureReasonCounts,
       stuckActiveRuns: taskHistory.stuckActiveRuns,
       llmUsage,
