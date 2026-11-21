@@ -343,9 +343,14 @@ test("visualizations survive late responses, a changed library and a narrow wind
       await expect(filters.locator("label:has(input:checked)")).toHaveText("Near-identical pairs1");
       await expect(figures(page).locator(".pairs li")).toContainText("98% alike");
       await expect(figures(page).getByRole("link", { name: "Compare" })).toHaveAttribute("href", /compare=.*compare=/);
+      // A second filter adds what it finds to the first; unticking the first leaves the second alone.
       await pick(page, "Outdated, unread");
+      await expect(figures(page).getByRole("heading", { level: 3 }).first()).toContainText(
+        "Near-identical pairs or Outdated, unread",
+      );
+      await pick(page, "Near-identical pairs");
       await expect(figures(page).locator(".read-row")).toHaveText(["knowledge/deploy/bsuperseded"]);
-      // Choosing the filter that is on turns it off, and the column goes with it.
+      // Unticking the last filter shows every asset again, and the column goes with it.
       await pick(page, "Outdated, unread");
       await expect(figures(page)).toHaveCount(0);
       assert.deepEqual(errors, []);
@@ -462,9 +467,7 @@ test("visualizations survive late responses, a changed library and a narrow wind
     await tab(page, "Use").click();
     await page.getByRole("group", { name: "Drawing" }).getByRole("button", { name: "Tags" }).click();
     const filter = page.getByRole("searchbox", { name: "Filter" });
-    const retire = page
-      .getByRole("group", { name: "Show on the map" })
-      .getByRole("button", { name: /^Not read, untouched/ });
+    const retire = page.locator(".show-menu label", { hasText: /^Not read, untouched/ });
     await expect(retire).toHaveText("Not read, untouched 6+ months3");
     await filter.fill("auth");
     await expect(page.getByText("3 of 7 assets")).toBeVisible();

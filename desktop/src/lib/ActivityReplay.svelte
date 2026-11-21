@@ -566,6 +566,9 @@
 </section>
 
 <style>
+  .replay {
+    margin-block-start: 0;
+  }
   /* The timeline is one strip: Play, the speed and the playhead's time beside the bars they act on. */
   .transport {
     display: flex;
@@ -749,7 +752,7 @@
     background: var(--surface);
     min-inline-size: 0;
     /* The timeline and the map fit one window together. */
-    --stage-size: max(260px, calc(100vh - 238px));
+    --stage-size: max(260px, calc(100vh - 250px));
   }
   /* The drawing switch and what is replayed sit on the map; over the tags, which have no spare corner, above them. */
   .stage-tools {

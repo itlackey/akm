@@ -118,15 +118,18 @@ faint and at one size.
 
 ### Filters
 
-Each question has its own filters, drawn on the map as buttons with how many assets (or pairs) each finds; one is on
-at a time, and choosing it again turns it off. Use and Problems open on their first filter that finds anything, which
+Each question has its own filters, in the Show menu on the map's one row of tools, each with a tick box and how many
+assets (or pairs) it finds; the row names what is ticked and how many assets that is. Any number can be ticked:
+ticked types show the assets of any of them, ticked conditions show what any of them finds, and types ticked with
+conditions show the assets of those types that meet one of the conditions ("Skills, Commands and scripts: Not linked
+to anything"). Show all assets clears them. Use and Problems open on their first filter that finds anything, which
 is the work the question is asked for; Contents opens with none. A filter akm has no figures for (use without usage
 history, feedback or near-duplicates when unavailable) is not offered. Without usage history Problems offers one
 Outdated filter, since whether an outdated asset is still read is not known. "Not read" means not read in the usage
-window akm reports. The chosen filter:
+window akm reports. What is ticked:
 
 - draws what it finds in full and fades the rest, which stay in place;
-- adds to each group's name how many of them it holds ("24 to retire");
+- adds to each group's name how many of them it holds ("24 to retire", or "6 shown" for several filters);
 - lists exactly those assets beside the map, each with the figure that decides it ("untouched 19 months",
   "superseded · 33 reads", "3 down, 0 up"), in the order its first line says, eight at a time with Show all;
 - lists under them where they are by group, the most first.
@@ -137,6 +140,9 @@ alike they are and a Compare link to the search page's comparison.
 Find by name or tag narrows every filter to the assets whose name and tags hold each word typed, and says how many
 match. Choosing a group (its name on the map, or in the list) narrows the filters to that group, flies to it, draws
 lines to the groups it is joined to and lists them; a dashed button beside the filters names the group and clears it.
+A group's name on the points is plain text with no box, and the pointer passes through it: a drag that starts on a
+name turns the map, a click on a point under a name chooses the point, and a click on a name over no point chooses
+the group. The keyboard reaches each name as a button.
 
 ### A chosen asset
 
@@ -187,8 +193,12 @@ Play starts again from the beginning and plays any period in about a minute (fas
 and 16 times that). With reduced motion nothing flies or eases, and it stays paused at the end.
 
 The map is drawn as Tags, the default, or as points in 2D or 3D (the switch on the map; the choice is kept until the
-app closes). The map, the lists beside it and the timeline under it fit one window; the timeline stays at the foot of
-the window, so the playhead is in view with the map whatever is scrolled.
+app closes). The page has no title row: the map starts under the Activity tabs and, with the lists beside it and
+the timeline under it, fits one window. The drawing switch, Period and Events by are on the map. The timeline is one
+strip that stays at the foot of the window: Play, the speed and the playhead's time, then the bars of events by kind
+(reads, searches, searches that found nothing, curates, feedback; a kind with no events in the period has no key
+entry) with the slider along their foot, and under them the period's start and end and the key. The lists stay
+beside the map down to a window 1,000 px wide, and go under it below that.
 
 - **Tags**: the library mind map, with the number of events on each type and tag so far. A type or tag appears, in its
   own place, once it has had an event.
@@ -203,7 +213,8 @@ use) or gives it feedback, each in its own colour (the `--pulse-*` tokens, held 
 type colours by `tests/map-palette.test.mjs`); an asset the latest of several events touched in that moment takes the
 colour of the latest. A curate's results and other kinds of event light the asset as used without a ring. A point's
 size is the number of events on its asset over the whole period, so it does not change as the replay plays. A key
-under the map names every mark. An asset with no group by meaning has no place on the points; its events still count
+in the map's corner names every mark: used so far, not used yet, the type colours, and the rings, which mark the
+asset the event at the playhead touched. An asset with no group by meaning has no place on the points; its events still count
 in the figures, and the page says how many events so far touched assets with no place, and how many touched assets
 the index no longer lists. Without stored embeddings the points cannot be drawn, and the page says so.
 
