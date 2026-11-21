@@ -27,25 +27,6 @@ import type { TaskV3HostShell, TaskV3SourceDocument } from "../source-v3";
  */
 export type PreparableTaskDocument = TaskV3SourceDocument;
 
-export type TaskV3ScriptInterpreter =
-  /** The program the script's own `#!` first line names, with that line's argument. */
-  | "shebang"
-  | "sh"
-  | "bun"
-  | "bun-standalone"
-  | "node"
-  | "powershell"
-  | "cmd"
-  | "python"
-  | "ruby"
-  | "go"
-  | "perl"
-  | "php"
-  | "lua"
-  | "rscript"
-  | "swift"
-  | "kotlin";
-
 export interface TaskV3PreparedBase {
   readonly taskId: string;
   readonly taskRef: string;
@@ -77,7 +58,6 @@ export interface PreparedTaskV3Shell extends TaskV3PreparedBase {
 export interface PreparedTaskV3Script extends TaskV3PreparedBase {
   readonly kind: "script";
   readonly sourceRef: string;
-  readonly interpreter: TaskV3ScriptInterpreter;
   readonly extension: string;
   /** Immutable base64 encoding of the exact source bytes. */
   readonly bytesBase64: string;

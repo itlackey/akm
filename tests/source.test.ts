@@ -83,8 +83,7 @@ describe("source commands and resolution", () => {
       const hit = result.hits.filter(isLocalHit)[0];
 
       expect(result.hits.length).toBe(1);
-      expect(hit!.run).toContain("bun");
-      expect(hit!.run).toContain("job.js");
+      expect(hit!.run).toBe("akm run scripts/group/nested/job.js");
     });
   });
 
@@ -100,8 +99,7 @@ describe("source commands and resolution", () => {
       const hit = result.hits.filter(isLocalHit)[0];
       expect(result.hits.length).toBe(1);
       // Search hits only expose run, not setup/cwd
-      expect(hit!.run).toContain("bun");
-      expect(hit!.run).toContain("job.js");
+      expect(hit!.run).toBe("akm run scripts/group/nested/job.js");
     });
   });
 
@@ -122,8 +120,7 @@ describe("source commands and resolution", () => {
       const searchPathHit = result.hits.filter(isLocalHit).find((hit) => hit.path.includes(searchPathDir));
 
       expect(searchPathHit).toBeDefined();
-      expect(searchPathHit?.run ?? "").toContain("bun");
-      expect(searchPathHit?.run ?? "").toContain("job.js");
+      expect(searchPathHit?.run).toBe("akm run extra//scripts/group/nested/job.js");
     });
   });
 
@@ -272,7 +269,12 @@ describe("source commands and resolution", () => {
     await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
       // Installing a bundle is the trust decision: the symlinked script is indexed and shown.
       const shown = await akmShow({ ref: "scripts/link.sh" });
-      expect(shown).toMatchObject({ type: "script", ref: "scripts/link.sh", path: symlinkFile, run: "bash link.sh" });
+      expect(shown).toMatchObject({
+        type: "script",
+        ref: "scripts/link.sh",
+        path: symlinkFile,
+        run: "akm run scripts/link.sh",
+      });
     });
   });
 
@@ -451,8 +453,7 @@ Creates a user.
 
       expect(result.type).toBe("script");
       expect(result.run).toBeTruthy();
-      expect(typeof result.run).toBe("string");
-      expect(result.run).toContain("bash");
+      expect(result.run).toBe("akm run scripts/deploy.sh");
     });
   });
 
@@ -534,8 +535,7 @@ Creates a user.
         const hit = result.hits.filter(isLocalHit)[0];
 
         expect(result.hits.length).toBe(1);
-        expect(hit!.run).toBeTruthy();
-        expect(hit!.run).toContain("bash");
+        expect(hit!.run).toBe("akm run scripts/deploy.sh");
       });
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true });
@@ -551,8 +551,7 @@ Creates a user.
         const result = await akmShow({ ref: "scripts/process.py" });
 
         expect(result.type).toBe("script");
-        expect(result.run).toBeDefined();
-        expect(result.run).toContain("python");
+        expect(result.run).toBe("akm run scripts/process.py");
       });
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true });
@@ -567,8 +566,7 @@ Creates a user.
       const result = await akmShow({ ref: "scripts/deploy.sh" });
 
       expect(result.type).toBe("script");
-      expect(result.run).toBeTruthy();
-      expect(result.run).toContain("bash");
+      expect(result.run).toBe("akm run scripts/deploy.sh");
     });
   });
 

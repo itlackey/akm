@@ -205,8 +205,10 @@ async function runScript(ref: string, file: string, rawArgs: readonly string[], 
   const injected = resolveInjections(createParsedInvocation(["", "", ...own]));
   const env = childEnvFromFlags(process.env, { clean: flags.clean === true, inherit: flags.inherit });
   Object.assign(env, injected.values);
+  const { argv, script } = scriptProgram(ref, file, rawArgs.slice(refIndex + 1));
   const result = await runProgram({
-    argv: scriptProgram(ref, file, rawArgs.slice(refIndex + 1)),
+    argv,
+    script,
     env,
     capture: false,
     maxRetries: parsePositiveIntFlag(flags["max-retries"], "--max-retries") ?? 0,

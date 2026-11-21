@@ -6,14 +6,10 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { assertNever } from "../core/assert";
-import type { TaskV3ScriptInterpreter } from "./prepare/prepared-execution";
-import { bunArguments, scriptFirstLine, scriptInterpreter } from "./prepare/script-capture";
-import { STANDALONE_FROZEN_SCRIPT_ARG } from "./standalone-script-entry";
+import { type ScriptOrigin, scriptCommand, scriptOrigin } from "./prepare/script-capture";
 
 export interface FrozenScriptSnapshot {
   readonly sourceRef: string;
-  readonly interpreter: TaskV3ScriptInterpreter;
   readonly extension: string;
   readonly bytesBase64: string;
   readonly byteLength: number;
@@ -39,65 +35,22 @@ export function materializeFrozenScript(script: FrozenScriptSnapshot): Materiali
 
 /** The program and arguments that run the frozen script at `materializedPath`, with `args` after it. */
 export function frozenScriptCommand(
-  script: Pick<FrozenScriptSnapshot, "interpreter" | "extension" | "bytesBase64">,
+  script: Pick<FrozenScriptSnapshot, "sourceRef" | "extension" | "bytesBase64">,
   materializedPath: string,
   args: readonly string[] = [],
 ): string[] {
-  return scriptCommand(script, Buffer.from(script.bytesBase64, "base64"), materializedPath, args);
+  const bytes = Buffer.from(script.bytesBase64, "base64");
+  return scriptCommand({ ref: script.sourceRef, bytes, extension: script.extension }, materializedPath, args);
 }
 
 /** The program and arguments that run the script asset `ref`, found at `file`, with `args` after it: what `akm run <ref>` runs. */
-export function scriptProgram(ref: string, file: string, args: readonly string[]): string[] {
-  const extension = path.extname(file).toLowerCase();
-  const bytes = fs.readFileSync(file);
-  return scriptCommand({ interpreter: scriptInterpreter(extension, ref, bytes), extension }, bytes, file, args);
-}
-
-/**
- * The one place a script becomes a command line. A `shebang` script is started the way the kernel starts it: the
- * program its first line names, that line's argument, then the file. A script for Bun runs on this process's own
- * runtime, with the words its first line put after `bun`.
- */
-function scriptCommand(
-  script: Pick<FrozenScriptSnapshot, "interpreter" | "extension">,
-  bytes: Uint8Array,
+export function scriptProgram(
+  ref: string,
   file: string,
   args: readonly string[],
-): string[] {
-  const first = scriptFirstLine(bytes);
-  switch (script.interpreter) {
-    case "shebang": {
-      if (!first) throw new Error(`Script ${file} was to run by its first line, and has none.`);
-      return [first.program, ...(first.argument ? [first.argument] : []), file, ...args];
-    }
-    case "bun":
-      return [process.execPath, ...(bunArguments(first) ?? []), file, ...args];
-    case "bun-standalone":
-      return [process.execPath, STANDALONE_FROZEN_SCRIPT_ARG, file, ...args];
-    case "node":
-      return ["node", file, ...args];
-    case "powershell":
-      return ["powershell", "-NoProfile", "-NonInteractive", "-File", file, ...args];
-    case "cmd":
-      return ["cmd", "/d", "/s", "/c", file, ...args];
-    case "go":
-      return ["go", "run", file, ...args];
-    case "kotlin":
-      return [...(script.extension === ".kts" ? ["kotlinc", "-script"] : ["kotlin"]), file, ...args];
-    case "python":
-      // PEP 394: `python3` is the name a POSIX system has; Windows installs `python`.
-      return [process.platform === "win32" ? "python" : "python3", file, ...args];
-    case "sh":
-    case "ruby":
-    case "perl":
-    case "php":
-    case "lua":
-    case "rscript":
-    case "swift":
-      return [script.interpreter, file, ...args];
-    default:
-      return assertNever(script.interpreter, "scriptCommand");
-  }
+): { argv: string[]; script: ScriptOrigin } {
+  const script = { ref, bytes: fs.readFileSync(file), extension: path.extname(file).toLowerCase() };
+  return { argv: scriptCommand(script, file, args), script: scriptOrigin(script) };
 }
 
 export function cleanupFrozenScript(materialized: MaterializedFrozenScript): void {
