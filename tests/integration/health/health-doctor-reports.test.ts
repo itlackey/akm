@@ -330,10 +330,12 @@ describe("the md report renders everything the result holds (B10-45)", () => {
     expect(out).toContain("knowledge/queued-note");
     for (const field of ["metrics", "improve", "scheduler", "report"]) expect(out).toContain(`## ${field}`);
     expect(out).toContain("acceptRateBySource");
+    expect(out).not.toMatch(/^## (shape|schemaVersion)$/m);
   });
 
   test("a plain doctor md keeps the status, metrics, improve and scheduler sections", async () => {
     const out = (await runCliCapture(["doctor", "--no-probe", "--format", "md"])).stdout;
     for (const field of ["status", "metrics", "improve", "scheduler"]) expect(out).toContain(`## ${field}`);
+    expect(out).not.toMatch(/^## (shape|schemaVersion)$/m);
   });
 });

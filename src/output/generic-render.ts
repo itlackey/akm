@@ -76,7 +76,7 @@ function displayScalar(value: unknown): string {
  * survive untouched — every renderer below applies this filter only to the
  * top-level `Object.entries` loop over the envelope, never recursively.
  */
-const ENVELOPE_META_KEYS = new Set(["shape", "schemaVersion"]);
+export const ENVELOPE_META_KEYS = new Set(["shape", "schemaVersion"]);
 
 // ── Markdown ─────────────────────────────────────────────────────────────────
 

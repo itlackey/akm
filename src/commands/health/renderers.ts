@@ -23,7 +23,7 @@
  * emitting an empty table.
  */
 
-import { markdownSection } from "../../output/generic-render";
+import { ENVELOPE_META_KEYS, markdownSection } from "../../output/generic-render";
 import { registerMdRenderer } from "../../output/render-registry";
 import { renderChecksMd, renderPendingProposalsMd, renderRunsDetailMd, renderWindowCompareMd } from "./md-report";
 import type { AkmHealthResult } from "./types-result";
@@ -33,7 +33,7 @@ function isHealthResult(value: unknown): value is AkmHealthResult {
 }
 
 /** The fields rendered as their own sections below; every other field is rendered as the generic renderer does. */
-const BESPOKE_FIELDS = new Set(["status", "hardChecks", "advisories", "windows", "deltas", "runs", "schemaVersion"]);
+const BESPOKE_FIELDS = new Set(["status", "hardChecks", "advisories", "windows", "deltas", "runs"]);
 
 /** Every part the result holds: the status first, the bespoke sections, then each remaining field as a generic section. */
 registerMdRenderer("health", (result) => {
@@ -53,7 +53,7 @@ registerMdRenderer("health", (result) => {
     sections.push("## Pending proposals", "", renderPendingProposalsMd(result.report.pendingProposals), "");
   const { pendingProposals: _queue, ...otherReport } = result.report ?? { pendingProposals: [] };
   for (const [key, value] of Object.entries(result)) {
-    if (BESPOKE_FIELDS.has(key)) continue;
+    if (BESPOKE_FIELDS.has(key) || ENVELOPE_META_KEYS.has(key)) continue;
     sections.push(...markdownSection(key, key === "report" ? otherReport : value));
   }
   return `${sections
