@@ -234,8 +234,9 @@ function isConfinedAgentWork(execution: BuiltExecution): boolean {
 }
 
 /**
- * An agent's reply is its stdout, and its exit code does not say whether it gave one: opencode exits 0 with none when
- * its turn ends on a tool call it refused, or at its step limit. A run that ends with no answer has failed.
+ * An agent's reply is its stdout, and its exit code does not say whether it gave one: opencode exits 0 with none at its
+ * step limit, and a harness can end a finished turn with an empty reply. A run that ends with no answer has failed.
+ * OpenCode 1's turn that ends unfinished, on a refused tool call, is reported by its harness (`runAgent`).
  */
 function agentAnswer(runner: RunnerSpec, result: AgentRunResult): AgentRunResult {
   if (result.stdout.trim() !== "") return result;

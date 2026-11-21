@@ -143,7 +143,16 @@ export async function akmAgentDispatch(
   rejectInvalidAgentRef(options.agentRef);
   if (options.cwd) ensureWorkingFolder(options.cwd);
 
-  if (options.prompt !== undefined) return delegateCanonicalCommand(options, seams, { content: options.prompt });
+  if (options.prompt !== undefined) {
+    if (options.prompt.trim() === "") {
+      throw new UsageError(
+        "The prompt is empty, so there is no turn to send.",
+        "MISSING_REQUIRED_ARGUMENT",
+        "Pass text with --prompt, or on stdin with --prompt-stdin. Without a prompt the harness is started for a person.",
+      );
+    }
+    return delegateCanonicalCommand(options, seams, { content: options.prompt });
+  }
 
   // No prompt: the harness is started for a person. Only where and which model ride along; the rest needs a task.
   const { connection, harness, engine, model, ...needsTask } = options.selection ?? {};
@@ -151,6 +160,7 @@ export async function akmAgentDispatch(
     throw new UsageError(
       "An agent persona, inference setting or output schema applies to a task: pass --prompt or --prompt-stdin. Without a prompt only the harness (and a model) is started.",
       "MISSING_REQUIRED_ARGUMENT",
+      "Pass --prompt or --prompt-stdin, or drop the agent ref and the other settings to start the harness interactively.",
     );
   }
 

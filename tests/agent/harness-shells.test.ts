@@ -12,13 +12,14 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 import { getHarness, HARNESS_REGISTRY } from "../../src/integrations/harnesses";
 import type { AgentDispatchRequest, BuiltCommand } from "../../src/integrations/harnesses/harness";
+import { readOpencode1Run } from "../../src/integrations/harnesses/opencode/run-events";
 import { fakeOpencodeMajor, withOpencodeOnPath } from "../_helpers/opencode-version";
 import { withEnvSync } from "../_helpers/sandbox";
 import { overrideSeam } from "../_helpers/seams";
 
 const PROMPT = "do work";
 
-// The opencode shell asks the binary's major only for model work, which flags it takes. OpenCode 1 is the baseline here,
+// The opencode shell asks the binary's major, which flags and which report it takes. OpenCode 1 is the baseline here,
 // so no test reaches a real `opencode`; the cases that depend on the major run through a fake `opencode` on PATH.
 beforeEach(() => fakeOpencodeMajor(1));
 
@@ -40,59 +41,78 @@ interface Shell {
 
 const SHELLS: Record<string, Shell> = {
   claude: {
-    headless: { argv: ["claude", "-p"], stdin: PROMPT },
+    headless: { argv: ["claude", "-p"], stdin: PROMPT, failureStream: "stdout" },
     interactive: { argv: ["claude"] },
-    model: { argv: ["claude", "--model", "m-1", "-p"], stdin: PROMPT },
+    model: { argv: ["claude", "--model", "m-1", "-p"], stdin: PROMPT, failureStream: "stdout" },
     modelFlag: true,
   },
   codex: {
-    headless: { argv: ["codex", "exec", "--skip-git-repo-check", "-"], stdin: PROMPT },
+    headless: { argv: ["codex", "exec", "--skip-git-repo-check", "-"], stdin: PROMPT, failureStream: "stderr" },
     interactive: { argv: ["codex"] },
-    model: { argv: ["codex", "exec", "--skip-git-repo-check", "--model", "m-1", "-"], stdin: PROMPT },
+    model: {
+      argv: ["codex", "exec", "--skip-git-repo-check", "--model", "m-1", "-"],
+      stdin: PROMPT,
+      failureStream: "stderr",
+    },
     modelFlag: true,
   },
   pi: {
-    headless: { argv: ["pi", "-p"], stdin: PROMPT },
+    headless: { argv: ["pi", "-p"], stdin: PROMPT, failureStream: "stderr" },
     interactive: { argv: ["pi"] },
-    model: { argv: ["pi", "--model", "m-1", "-p"], stdin: PROMPT },
+    model: { argv: ["pi", "--model", "m-1", "-p"], stdin: PROMPT, failureStream: "stderr" },
     modelFlag: true,
   },
   copilot: {
-    headless: { argv: ["copilot", "--allow-all-tools", "-p", PROMPT] },
+    headless: { argv: ["copilot", "--allow-all-tools", "-p", PROMPT], failureStream: "stderr" },
     interactive: { argv: ["copilot"] },
-    model: { argv: ["copilot", "--model", "m-1", "--allow-all-tools", "-p", PROMPT] },
+    model: { argv: ["copilot", "--model", "m-1", "--allow-all-tools", "-p", PROMPT], failureStream: "stderr" },
     modelFlag: true,
   },
   gemini: {
-    headless: { argv: ["gemini", "-p", PROMPT] },
+    headless: { argv: ["gemini", "-p", PROMPT], failureStream: "stderr" },
     interactive: { argv: ["gemini"] },
-    model: { argv: ["gemini", "--model", "m-1", "-p", PROMPT] },
+    model: { argv: ["gemini", "--model", "m-1", "-p", PROMPT], failureStream: "stderr" },
     modelFlag: true,
   },
   aider: {
-    headless: { argv: ["aider", "--yes-always", "--no-pretty", `--message=${PROMPT}`] },
+    headless: { argv: ["aider", "--yes-always", "--no-pretty", `--message=${PROMPT}`], failureStream: "stderr" },
     interactive: { argv: ["aider"] },
     model: {
       argv: ["aider", "--model", "m-1", "--yes-always", "--no-pretty", `--message=${PROMPT}`],
+      failureStream: "stderr",
     },
     modelFlag: true,
   },
   amazonq: {
-    headless: { argv: ["q", "chat", "--no-interactive", "--trust-all-tools", "--", PROMPT] },
+    headless: {
+      argv: ["q", "chat", "--no-interactive", "--trust-all-tools", "--", PROMPT],
+      failureStream: "stderr",
+    },
     interactive: { argv: ["q", "chat"] },
-    model: { argv: ["q", "chat", "--no-interactive", "--trust-all-tools", "--model", "m-1", "--", PROMPT] },
+    model: {
+      argv: ["q", "chat", "--no-interactive", "--trust-all-tools", "--model", "m-1", "--", PROMPT],
+      failureStream: "stderr",
+    },
     modelFlag: true,
   },
   openhands: {
-    headless: { argv: ["openhands", "--headless", `--task=${PROMPT}`] },
+    headless: { argv: ["openhands", "--headless", `--task=${PROMPT}`], failureStream: "stderr" },
     interactive: { argv: ["openhands"] },
-    model: { argv: ["openhands", "--headless", `--task=${PROMPT}`], env: { LLM_MODEL: "m-1" } },
+    model: {
+      argv: ["openhands", "--headless", `--task=${PROMPT}`],
+      env: { LLM_MODEL: "m-1" },
+      failureStream: "stderr",
+    },
   },
-  // Agent work adds nothing on either major; model work is under "opencode by major".
+  // OpenCode 1 (the baseline here) is read from its event stream; OpenCode 2 and model work are under "opencode by major".
   opencode: {
-    headless: { argv: ["opencode", "run"], stdin: PROMPT },
+    headless: { argv: ["opencode", "run", "--format", "json"], stdin: PROMPT, report: readOpencode1Run },
     interactive: { argv: ["opencode"] },
-    model: { argv: ["opencode", "run", "--model", "m-1"], stdin: PROMPT },
+    model: {
+      argv: ["opencode", "run", "--model", "m-1", "--format", "json"],
+      stdin: PROMPT,
+      report: readOpencode1Run,
+    },
     modelFlag: true,
   },
 };
@@ -161,7 +181,14 @@ describe("authored subcommands are not doubled", () => {
   });
 
   test("opencode: `run` is the headless subcommand, dropped for an interactive launch", () => {
-    expect(build("opencode", { prompt: PROMPT }, ["run"]).argv).toEqual(["opencode", "run"]);
+    expect(build("opencode", { prompt: PROMPT }, ["run"]).argv).toEqual(["opencode", "run", "--format", "json"]);
+    expect(build("opencode", { prompt: PROMPT }, ["--print-logs"]).argv).toEqual([
+      "opencode",
+      "run",
+      "--print-logs",
+      "--format",
+      "json",
+    ]);
     expect(build("opencode", {}, ["run"]).argv).toEqual(["opencode"]);
   });
 });
@@ -171,6 +198,7 @@ describe("what a request adds", () => {
     expect(build("claude", { prompt: PROMPT, agent: "reviewer", systemPrompt: "be terse", model: "m-1" })).toEqual({
       argv: ["claude", "--agent", "reviewer", "--append-system-prompt", "be terse", "--model", "m-1", "-p"],
       stdin: PROMPT,
+      failureStream: "stdout",
     });
   });
 
@@ -178,10 +206,11 @@ describe("what a request adds", () => {
     expect(build("pi", { prompt: PROMPT, systemPrompt: "be terse" })).toEqual({
       argv: ["pi", "--append-system-prompt", "be terse", "-p"],
       stdin: PROMPT,
+      failureStream: "stderr",
     });
     // As an argument these would be read as an option, an unknown flag and a file include.
     for (const prompt of ["- item one", "--word", "@file"]) {
-      expect(build("pi", { prompt })).toEqual({ argv: ["pi", "-p"], stdin: prompt });
+      expect(build("pi", { prompt })).toEqual({ argv: ["pi", "-p"], stdin: prompt, failureStream: "stderr" });
     }
   });
 
@@ -191,6 +220,8 @@ describe("what a request adds", () => {
       "run",
       "--agent",
       "Review-Team.Exact",
+      "--format",
+      "json",
     ]);
   });
 
@@ -263,6 +294,8 @@ describe("model work", () => {
       expect(built.argv).toEqual([
         "opencode",
         "run",
+        "--format",
+        "json",
         "--title",
         "akm",
         "--agent",
@@ -294,6 +327,8 @@ describe("model work", () => {
       expect(build("opencode", { prompt: PROMPT, modelWork: true, model: "m-1" }, authored).argv).toEqual([
         "opencode",
         "run",
+        "--format",
+        "json",
         "--title",
         "akm",
         "--agent",
@@ -323,27 +358,75 @@ describe("opencode by major", () => {
   // Through a fake `opencode` on PATH that reports the major, so the real version probe decides.
   const STANDALONE = ["--standalone", "--title", "akm"];
 
-  test("agent work adds nothing on either major: the authored args as written, the prompt on stdin, no environment", async () => {
+  test("OpenCode 2 agent work is `run`, the authored args as written, the prompt on stdin, no environment and no report", async () => {
+    await withOpencodeOnPath(2, async () => {
+      expect(build("opencode", { prompt: PROMPT })).toEqual({
+        argv: ["opencode", "run"],
+        stdin: PROMPT,
+        failureStream: "stderr",
+      });
+      const named = build("opencode", { prompt: PROMPT, agent: "reviewer", model: "p/m" }, ["run", "--model", "old"]);
+      expect(named).toEqual({
+        argv: ["opencode", "run", "--agent", "reviewer", "--model", "p/m"],
+        stdin: PROMPT,
+        failureStream: "stderr",
+      });
+      expect(build("opencode", { prompt: PROMPT }, ["--format", "json"]).argv).toEqual([
+        "opencode",
+        "run",
+        "--format",
+        "json",
+      ]);
+    });
+  });
+
+  test("OpenCode 1 agent and model work read the event stream: one --format json, an authored --format replaced", async () => {
+    await withOpencodeOnPath(1, async () => {
+      for (const authored of [["--format", "default"], ["--format=default"], ["run", "--format", "default"], []]) {
+        const built = build("opencode", { prompt: PROMPT }, authored);
+        expect(built.argv).toEqual(["opencode", "run", "--format", "json"]);
+        expect(built.report).toBe(readOpencode1Run);
+      }
+      const model = build("opencode", { prompt: PROMPT, modelWork: true }, ["--format", "default"]);
+      expect(model.argv.filter((arg) => arg === "--format")).toHaveLength(1);
+      expect(model.argv).toContain("json");
+      expect(model.report).toBe(readOpencode1Run);
+      expect(build("opencode", {}).report).toBeUndefined();
+      expect(build("opencode", {}, ["--format", "default"]).argv).toEqual(["opencode", "--format", "default"]);
+    });
+    await withOpencodeOnPath(2, async () => {
+      expect(build("opencode", { prompt: PROMPT, modelWork: true }).report).toBeUndefined();
+      expect(build("opencode", { prompt: PROMPT, modelWork: true }).argv).not.toContain("--format");
+    });
+  });
+
+  test("the harness writes `run` itself, so authored args that do not start with it still run headless", async () => {
     for (const major of [1, 2] as const) {
       await withOpencodeOnPath(major, async () => {
-        expect(build("opencode", { prompt: PROMPT })).toEqual({ argv: ["opencode", "run"], stdin: PROMPT });
-        const named = build("opencode", { prompt: PROMPT, agent: "reviewer", model: "p/m" }, ["run", "--model", "old"]);
-        expect(named).toEqual({
-          argv: ["opencode", "run", "--agent", "reviewer", "--model", "p/m"],
-          stdin: PROMPT,
-        });
+        const json = major === 1 ? ["--format", "json"] : [];
+        expect(build("opencode", { prompt: PROMPT }, ["--print-logs"]).argv).toEqual([
+          "opencode",
+          "run",
+          "--print-logs",
+          ...json,
+        ]);
+        expect(build("opencode", { prompt: PROMPT }, ["run", "--x"]).argv).toEqual(["opencode", "run", "--x", ...json]);
       });
     }
+    await withOpencodeOnPath(2, async () => {
+      expect(build("opencode", { prompt: PROMPT }, ["--standalone"]).argv).toEqual(["opencode", "run", "--standalone"]);
+    });
   });
 
   test("agent work passes an authored --server, --standalone or --title as written", async () => {
     const authored = ["run", "--server", "http://elsewhere", "--standalone", "--title=mine", "--print-logs"];
     for (const major of [1, 2] as const) {
       await withOpencodeOnPath(major, async () => {
-        expect(build("opencode", { prompt: PROMPT }, authored)).toEqual({
-          argv: ["opencode", ...authored],
-          stdin: PROMPT,
-        });
+        expect(build("opencode", { prompt: PROMPT }, authored).argv).toEqual([
+          "opencode",
+          ...authored,
+          ...(major === 1 ? ["--format", "json"] : []),
+        ]);
       });
     }
   });
@@ -552,7 +635,7 @@ describe("opencode by major", () => {
     });
   });
 
-  test("model work on a binary whose version cannot be read gets OpenCode 1's command, with one warning that says so", async () => {
+  test("a binary whose version cannot be read gets OpenCode 1's command for agent and model work, with one warning that says so", async () => {
     _resetWarnOnceForTests();
     const warnings: string[] = [];
     overrideSeam(_setWarnSinkForTests, (level, args) => {
@@ -561,13 +644,17 @@ describe("opencode by major", () => {
     await withOpencodeOnPath(
       "unreadable",
       async () => {
-        // Agent work and an interactive launch take no flag that depends on the version, so neither reads it.
-        expect(build("opencode", { prompt: PROMPT }).argv).toEqual(["opencode", "run"]);
+        // An interactive launch takes no flag that depends on the version, so it does not read it.
         build("opencode", {});
         expect(warnings.filter((line) => line.includes("Could not read the version"))).toHaveLength(0);
+        const agent = build("opencode", { prompt: PROMPT });
+        expect(agent.argv).toEqual(["opencode", "run", "--format", "json"]);
+        expect(agent.report).toBe(readOpencode1Run);
         expect(build("opencode", { prompt: PROMPT, modelWork: true }).argv).toEqual([
           "opencode",
           "run",
+          "--format",
+          "json",
           "--title",
           "akm",
           "--agent",
@@ -579,6 +666,7 @@ describe("opencode by major", () => {
     const unreadable = warnings.filter((line) => line.includes("Could not read the version of opencode"));
     expect(unreadable).toHaveLength(1);
     expect(unreadable[0]).toContain("OpenCode 1");
+    expect(unreadable[0]).toContain("agent and model work");
     expect(unreadable[0]).toContain("no --standalone");
     expect(unreadable[0]).toContain("`opencode --version`");
   });

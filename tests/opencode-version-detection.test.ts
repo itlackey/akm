@@ -74,15 +74,10 @@ describe("resolveOpencodeBin", () => {
 });
 
 describe("detectOpencodeMajor", () => {
-  test("OpenCode 1 warns once, naming version and path", async () => {
-    await withOpencodeOnPath(1, async (dir) => {
+  test("OpenCode 1 is reported with its version, without a warning: the run notice is the builder's", async () => {
+    await withOpencodeOnPath(1, async () => {
       expect(detectOpencodeMajor("opencode")).toMatchObject({ reportedMajor: 1, version: "1.18.34" });
-      detectOpencodeMajor("opencode");
-      expect(warnings).toHaveLength(1);
-      expect(warnings[0]).toContain("1.18.34");
-      expect(warnings[0]).toContain(path.join(dir, "opencode"));
-      expect(warnings[0]).toContain("OpenCode 1 support continues");
-      expect(warnings[0]).toContain("upgrading to OpenCode 2 is recommended");
+      expect(warnings).toEqual([]);
     });
   });
 

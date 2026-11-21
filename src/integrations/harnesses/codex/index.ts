@@ -47,6 +47,10 @@ export class CodexHarness implements AkmHarness {
     const modelFlag = model ? ["--model", model] : [];
     if (req.prompt === undefined) return { argv: [bin, ...extra, ...modelFlag] };
     const sandbox = req.modelWork ? ["--sandbox", "read-only"] : [];
-    return { argv: [bin, "exec", ...extra, ...sandbox, "--skip-git-repo-check", ...modelFlag, "-"], stdin: req.prompt };
+    return {
+      argv: [bin, "exec", ...extra, ...sandbox, "--skip-git-repo-check", ...modelFlag, "-"],
+      stdin: req.prompt,
+      failureStream: "stderr",
+    };
   }
 }

@@ -61,6 +61,18 @@ export interface LoweredAgentDispatch {
   readonly notices: readonly Readonly<LoweringNotice>[];
 }
 
+/** What a program reported about one run, read from its captured stdout by the harness that built the command. */
+export interface HarnessRunReport {
+  /** The reply, as the program prints it in its default format. */
+  readonly reply: string;
+  /** The program's own id for the session it ran, when it reported one. */
+  readonly sessionId?: string;
+  /** Why the turn did not finish, in the program's own terms; absent when it reported a finished turn. */
+  readonly unfinished?: string;
+  /** The errors the program reported for the run, in order. */
+  readonly errors: readonly string[];
+}
+
 /** Concrete command ready to hand to the spawn wrapper. */
 export interface BuiltCommand {
   /** Full argv: [bin, ...flags, prompt]. */
@@ -69,6 +81,10 @@ export interface BuiltCommand {
   readonly env?: Readonly<Record<string, string>>;
   /** Payload to write to stdin (honoured only in captured stdio mode). */
   readonly stdin?: string;
+  /** Reads the captured stdout of this command (it was built to report in a form akm reads). */
+  readonly report?: (stdout: string) => HarnessRunReport;
+  /** The stream this program writes the reason for a failed run to; a non-zero exit names its last line. Absent: the exit code only. */
+  readonly failureStream?: "stdout" | "stderr";
 }
 
 /** The program a harness runs. */
@@ -131,16 +147,21 @@ export function modelFromArgs(args: readonly string[]): string | undefined {
   return model;
 }
 
-/** `args` without any `--model X` or `--model=X`, for a builder that adds the request's model itself, so it is passed once. */
-export function withoutModelFlag(args: readonly string[]): string[] {
+/** `args` without any `flag X` or `flag=X`, for a builder that adds that flag itself, so it is passed once. */
+export function withoutFlag(args: readonly string[], flag: string): string[] {
   const kept: string[] = [];
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === undefined) continue;
-    if (arg === "--model") index += 1;
-    else if (!arg.startsWith("--model=")) kept.push(arg);
+    if (arg === flag) index += 1;
+    else if (!arg.startsWith(`${flag}=`)) kept.push(arg);
   }
   return kept;
+}
+
+/** `args` without any `--model X` or `--model=X`, for a builder that adds the request's model itself, so it is passed once. */
+export function withoutModelFlag(args: readonly string[]): string[] {
+  return withoutFlag(args, "--model");
 }
 
 /** `args` less a leading `subcommand` the builder writes itself, so an authored one is not doubled. */
