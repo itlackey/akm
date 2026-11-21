@@ -213,9 +213,8 @@ describe("a workflow that cannot convert", () => {
     expect(result.detail).toContain("step fetch");
     expect(result.detail).toContain("${XDG_CACHE_HOME:-$HOME/.cache}");
     expect(result.guidance).toContain("every ${...} in it names an input or an earlier step");
-    expect(result.guidance).toContain("shell or environment variables into a script asset under scripts/");
-    expect(result.guidance).toContain("a new step whose unit is an exec unit");
-    expect(result.guidance).toContain("$AKM_TASK_STATE");
+    expect(result.guidance).toContain("write it without braces");
+    expect(result.guidance).toContain("needs no new step or script");
     expect(result.guidance).toContain("akm migrate apply workflows/curate.md");
     expect(status.status).toBe("blocked");
     expect(fs.existsSync(taskFile("curate"))).toBe(false);
