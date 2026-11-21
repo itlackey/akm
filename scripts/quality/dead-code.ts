@@ -1,7 +1,7 @@
 // quality:dead-code — unused files, exports and types in src/ (knip).
 import fs from "node:fs";
 import path from "node:path";
-import { finish, pins, run, target } from "./lib";
+import { die, finish, pins, run, target } from "./lib";
 
 const { dir, out } = target("dead-code", process.argv.slice(2));
 // package.json "exports" plus tsconfig outDir make knip treat every src file as an entry, which hides all
@@ -36,8 +36,7 @@ let issues: { file: string; files: unknown[]; exports: unknown[]; types: unknown
 try {
   issues = (JSON.parse(r.out) as { issues: typeof issues }).issues;
 } catch {
-  console.error(r.err || r.out);
-  process.exit(1);
+  die(r);
 }
 const src = issues.filter((i) => i.file.startsWith("src/"));
 const files = src.filter((i) => i.files.length > 0);

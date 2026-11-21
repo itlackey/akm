@@ -28,14 +28,20 @@ export function target(tool: string, argv: string[]): { dir: string; out: string
   return { dir, out };
 }
 
-export function run(cmd: string[], cwd: string, env: Record<string, string> = {}, inherit = false) {
+export function run(cmd: string[], cwd: string, env: Record<string, string> = {}) {
   const r = Bun.spawnSync(cmd, {
     cwd,
     env: { ...process.env, ...env },
-    stdout: inherit ? "inherit" : "pipe",
-    stderr: inherit ? "inherit" : "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
   });
   return { code: r.exitCode, out: r.stdout?.toString() ?? "", err: r.stderr?.toString() ?? "" };
+}
+
+/** Print both streams of a failed tool run (some tools put the reason on stdout) and exit. */
+export function die(r: { out: string; err: string }, tail = 4000): never {
+  console.error(`${r.out}\n${r.err}`.trim().slice(-tail));
+  process.exit(1);
 }
 
 /** Write summary.txt and metrics.json (flat numbers the compare script diffs), and echo the summary. */

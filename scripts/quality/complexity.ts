@@ -1,13 +1,12 @@
 // quality:complexity — FTA (Fast TypeScript Analyzer) score, cyclomatic complexity and Halstead per src/ file.
 import fs from "node:fs";
 import path from "node:path";
-import { finish, pins, round, run, target } from "./lib";
+import { die, finish, pins, round, run, target } from "./lib";
 
 const { dir, out } = target("complexity", process.argv.slice(2));
 const r = run(["bunx", pins.fta, "src", "--json"], dir);
 if (r.code !== 0) {
-  console.error(r.err || r.out);
-  process.exit(1);
+  die(r);
 }
 fs.writeFileSync(path.join(out, "fta.json"), r.out);
 

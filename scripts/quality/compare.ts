@@ -48,7 +48,7 @@ function measure(side: string, ref: string): Metrics {
   const tools = ["complexity", "duplication", "dead-code", ...(withCoverage ? ["coverage"] : [])];
   if (withCoverage) {
     const i = run(["bun", "install", "--frozen-lockfile"], dir);
-    if (i.code !== 0) console.error(`${side}: bun install failed: ${i.err.slice(-500)}`);
+    if (i.code !== 0) console.error(`${side}: bun install failed: ${`${i.out}\n${i.err}`.trim().slice(-1500)}`);
   }
   const src = lineCount(dir, "src/");
   const tests = lineCount(dir, "tests/");
@@ -62,7 +62,7 @@ function measure(side: string, ref: string): Metrics {
     const r = run(["bun", path.join(import.meta.dir, `${tool}.ts`), "--dir", dir, "--out", out], repoRoot);
     const mp = path.join(out, "metrics.json");
     if (r.code !== 0 || !fs.existsSync(mp)) {
-      console.error(`${side}: ${tool} failed: ${(r.err || r.out).slice(-500)}`);
+      console.error(`${side}: ${tool} failed: ${`${r.out}\n${r.err}`.trim().slice(-1500)}`);
       continue;
     }
     for (const [k, v] of Object.entries(JSON.parse(fs.readFileSync(mp, "utf8")) as Metrics)) all[`${tool}: ${k}`] = v;

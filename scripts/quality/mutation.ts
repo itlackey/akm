@@ -4,7 +4,7 @@
 // Run it under a memory cap, e.g. `systemd-run --user --scope -p MemoryMax=8G -p MemorySwapMax=0 bun run quality:mutation -- ...`.
 import fs from "node:fs";
 import path from "node:path";
-import { finish, flag, pins, round, run, target } from "./lib";
+import { die, finish, flag, pins, round, run, target } from "./lib";
 
 const argv = process.argv.slice(2);
 const mutate = flag(argv, "mutate")?.split(",").filter(Boolean) ?? [];
@@ -37,8 +37,7 @@ fs.writeFileSync(
 const r = run(["bunx", "--bun", pins.stryker, "run", configPath], dir, { NODE_PATH: "node_modules" });
 const reportPath = path.join(out, "mutation.json");
 if (!fs.existsSync(reportPath)) {
-  console.error(r.err || r.out);
-  process.exit(1);
+  die(r);
 }
 const report = JSON.parse(fs.readFileSync(reportPath, "utf8")) as {
   files: Record<string, { mutants: { status: string }[] }>;
