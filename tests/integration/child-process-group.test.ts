@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { realNodeExecutable } from "../_helpers/node-runtime";
 import { type Cleanup, makeSandboxDir, sandboxStashDir, writeSandboxConfig } from "../_helpers/sandbox";
 
 const CLI = path.resolve(import.meta.dir, "../../src/cli.ts");
@@ -29,6 +30,8 @@ import os, pty, select, sys
 pid, master = pty.fork()
 if pid == 0:
     os.execvp(sys.argv[1], sys.argv[1:])
+if os.environ.get("PTY_PID_FILE"):
+    open(os.environ["PTY_PID_FILE"], "w").write(str(pid))
 reading = [0, master]
 while True:
     done, status = os.waitpid(pid, os.WNOHANG)
@@ -56,7 +59,7 @@ const started: ChildProcess[] = [];
 beforeEach(() => {
   const stash = sandboxStashDir();
   cleanups.push(stash.cleanup);
-  writeSandboxConfig({ semanticSearchMode: "off" });
+  writeSandboxConfig({ semanticSearchMode: "off", experimental: { exec: true } });
   const dir = makeSandboxDir("akm-group");
   cleanups.push(dir.cleanup);
   work = dir.dir;
@@ -67,6 +70,8 @@ beforeEach(() => {
     BG: path.join(work, "bg"),
     GROUPS_FILE: path.join(work, "groups"),
     TTY_IN: path.join(work, "tty-in"),
+    PTY_PID_FILE: path.join(work, "pty-pid"),
+    JOBS: path.join(work, "jobs"),
   };
   fs.mkdirSync(path.join(stash.dir, "scripts"), { recursive: true });
   // A background sleep and a foreground sleep: the background one ignores SIGINT, as a shell's jobs do.
@@ -97,6 +102,11 @@ beforeEach(() => {
       "exit 7",
       "",
     ].join("\n"),
+    { mode: 0o755 },
+  );
+  fs.writeFileSync(
+    path.join(stash.dir, "scripts", "tick.sh"),
+    ["#!/bin/bash", 'echo $$ > "$BG"', "while true; do sleep 0.2; done", ""].join("\n"),
     { mode: 0o755 },
   );
   fs.writeFileSync(
@@ -289,4 +299,101 @@ await Promise.all([own, shared]);
     await exited;
     expect(mark()).toBe("term");
   }, 30_000);
+});
+
+// The installed launcher (`dist/akm` from `bun run build`), started by real Node and by Bun. On Linux and macOS it
+// replaces itself with akm, so the terminal, the process group and every signal are akm's own.
+const LAUNCHER = path.resolve(import.meta.dir, "../../dist/akm");
+const runtimes: Array<[string, () => string]> = [
+  ["node", realNodeExecutable],
+  ["bun", () => "bun"],
+];
+
+describe.skipIf(!posix || !hasPython)("the installed launcher", () => {
+  for (const [runtimeName, runtime] of runtimes) {
+    const viaLauncher = (args: string[]): string[] => [runtime(), LAUNCHER, ...args];
+
+    describe(`under ${runtimeName}`, () => {
+      test("scripts keep the terminal and akm is the process the terminal started", async () => {
+        const { child, exited } = onTerminal(viaLauncher(["run", "scripts/tty.sh"]));
+        expect(await until(() => readPid("bg") !== undefined, 15_000)).toBe(true);
+        const [scriptGroup, akmGroup] = fs
+          .readFileSync(env.GROUPS_FILE as string, "utf8")
+          .trim()
+          .split(/\s+/);
+        expect(scriptGroup).toBe(akmGroup);
+        expect(readPid("akm-pid")).toBe(readPid("pty-pid"));
+        child.stdin?.write("hello\n");
+        expect(await until(() => fs.existsSync(env.TTY_IN as string), 5_000)).toBe(true);
+        child.stdin?.write("\x03");
+        await exited;
+      }, 30_000);
+
+      test("akm exec keeps an interactive shell alive through Ctrl-C", async () => {
+        const marker = path.join(work, "shell-alive");
+        const { child, exited } = onTerminal(viaLauncher(["exec", "--", "bash", "--norc", "-i"]));
+        await new Promise((r) => setTimeout(r, 2_000));
+        child.stdin?.write("\x03");
+        await new Promise((r) => setTimeout(r, 500));
+        child.stdin?.write(`echo alive > ${marker}\nexit\n`);
+        await exited;
+        expect(fs.existsSync(marker)).toBe(true);
+      }, 30_000);
+
+      test("Ctrl-Z stops the script and the shell's prompt returns", async () => {
+        const { child, exited } = onTerminal(["bash", "--norc", "-i"]);
+        child.stdin?.write(`${viaLauncher(["run", "scripts/tick.sh"]).join(" ")}\n`);
+        expect(await until(() => readPid("bg") !== undefined, 15_000)).toBe(true);
+        child.stdin?.write("\x1a");
+        await new Promise((r) => setTimeout(r, 1_000));
+        child.stdin?.write(`jobs > "$JOBS"\n`);
+        expect(
+          await until(
+            () => fs.existsSync(env.JOBS as string) && fs.readFileSync(env.JOBS as string, "utf8").includes("Stopped"),
+            5_000,
+          ),
+        ).toBe(true);
+        child.stdin?.write("kill -9 %1\n");
+        await new Promise((r) => setTimeout(r, 500));
+        child.stdin?.write("exit\nexit\n");
+        await exited;
+      }, 30_000);
+
+      test("kill -TERM <akm> runs the script's TERM trap", async () => {
+        const { exited } = onTerminal(viaLauncher(["run", "scripts/tty.sh"]));
+        expect(await until(() => readPid("bg") !== undefined, 15_000)).toBe(true);
+        process.kill(readPid("pty-pid") as number, "SIGTERM");
+        await exited;
+        expect(mark()).toBe("term");
+      }, 30_000);
+
+      test("off a terminal, kill -QUIT runs the ladder and leaves no orphan", async () => {
+        const child = spawn(runtime(), [LAUNCHER, "run", "scripts/slp.sh"], {
+          env,
+          detached: true,
+          stdio: ["ignore", "ignore", "ignore"],
+        });
+        started.push(child);
+        const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+        expect(await until(() => readPid("bg") !== undefined, 15_000)).toBe(true);
+        const bg = readPid("bg") as number;
+        expect(readPid("akm-pid")).toBe(child.pid as number);
+        process.kill(child.pid as number, "SIGQUIT");
+        await exited;
+        expect(mark()).toBe("int");
+        expect(await until(() => !alive(bg), 5_000)).toBe(true);
+      }, 30_000);
+
+      test("two Ctrl-C half a second apart orphan nothing", async () => {
+        const { child, exited } = onTerminal(viaLauncher(["run", "scripts/tty.sh"]));
+        expect(await until(() => readPid("bg") !== undefined, 15_000)).toBe(true);
+        const bg = readPid("bg") as number;
+        child.stdin?.write("\x03");
+        await new Promise((r) => setTimeout(r, 500));
+        child.stdin?.write("\x03");
+        await exited;
+        expect(await until(() => !alive(bg), 5_000)).toBe(true);
+      }, 30_000);
+    });
+  }
 });
