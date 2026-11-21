@@ -23,11 +23,11 @@
     o,
     place,
     flat = false,
-    depthNote,
+    depthKey = [],
     scope,
     groups,
     colourOf,
-    sizeOf,
+    size = null,
     lit,
     lines = [],
     levels = [[], [], []],
@@ -47,14 +47,14 @@
     place: Float32Array;
     /** Every point is in one plane: the view faces it and cannot be turned. */
     flat?: boolean;
-    /** What depth means now, said first in the map's corner. */
-    depthNote: string;
+    /** What is at the front, in the middle and at the back of each group, when depth stands for a figure. */
+    depthKey?: string[];
     scope: readonly number[];
     groups: Group[];
     /** The colour token of an asset in the view. */
     colourOf: (i: number) => string;
-    /** How many times its plain size an asset is drawn, from 1 up, when size stands for a figure. */
-    sizeOf?: (i: number) => number;
+    /** The figure a point's size stands for, per asset, with the largest in scope; null draws one size. */
+    size?: { label: string; values: ArrayLike<number>; largest: number } | null;
     /** The assets drawn in full; the rest fade. Null: all in full. */
     lit: Set<number> | null;
     /** Lines, each between two assets (by index) or two groups (by key), with a weight from 0 to 1. */
@@ -89,6 +89,11 @@
   /** How far one key press turns the view, in radians, and how much closer or farther it zooms. */
   const TURN = Math.PI / 12;
   const ZOOM = 0.8;
+  /** How many times its plain width a point is drawn for a share (0 to 1) of the largest figure: area grows with it. */
+  const grown = (share: number) => 1 + 1.5 * Math.sqrt(share);
+  const growOf = (i: number) => (size?.largest ? grown(size.values[i]! / size.largest) : 1);
+  /** The figures the size key shows: none, a quarter of the largest, and the largest. */
+  const sizeSteps = $derived(size?.largest ? [...new Set([0, Math.round(size.largest / 4), size.largest])] : []);
 
   let host = $state<HTMLDivElement>();
   let tip = $state<{ x: number; y: number; i: number } | null>(null);
@@ -345,7 +350,7 @@
         });
         // Each point's size is multiplied by its own `grow`, which the stock points shader has no place for.
         // biome-ignore lint/suspicious/noExplicitAny: see above.
-        const grown = (material: any) => {
+        const sized = (material: any) => {
           material.onBeforeCompile = (shader: { vertexShader: string }) => {
             shader.vertexShader = `attribute float grow;\n${shader.vertexShader.replace("gl_PointSize = size;", "gl_PointSize = size * grow;")}`;
           };
@@ -353,7 +358,7 @@
         };
         const points = new THREE.Points(
           new THREE.BufferGeometry(),
-          grown(
+          sized(
             new THREE.PointsMaterial({
               size: SIZE.faded,
               vertexColors: true,
@@ -367,7 +372,7 @@
         // The lit points again, larger, over the faded rest.
         const bright = new THREE.Points(
           new THREE.BufferGeometry(),
-          grown(
+          sized(
             new THREE.PointsMaterial({
               size: SIZE.lit,
               vertexColors: true,
@@ -495,7 +500,7 @@
             const sx = ((probe.x * p[0]!) / depth + 1) * (box.width / 2);
             const sy = (1 - (probe.y * p[5]!) / depth) * (box.height / 2);
             const faded = lit && !lit.has(world.order[k]);
-            const grow = sizeOf?.(world.order[k]) ?? 1;
+            const grow = faded ? 1 : growOf(world.order[k]);
             const radius = ((faded ? SIZE.faded : SIZE.lit) * grow * box.height) / 2 / depth / 2;
             const d = Math.hypot(sx - x, sy - y);
             if (d > Math.max(LEAST_REACH, radius + SLACK)) continue;
@@ -678,11 +683,7 @@
       const f = faded ? 0.8 : 0;
       for (let d = 0; d < 3; d++) colour[k * 3 + d] = c[d]! * (1 - f) + bg[d]! * f;
     });
-    const grow = (list: number[]) =>
-      new THREE.BufferAttribute(
-        Float32Array.from(list, (i) => sizeOf?.(i) ?? 1),
-        1,
-      );
+    const grow = (list: number[]) => new THREE.BufferAttribute(Float32Array.from(list, growOf), 1);
     const glow = placesOf(shining);
     glow.setAttribute("grow", grow(shining));
     glow.setAttribute(
@@ -692,7 +693,14 @@
     world.bright.geometry.dispose();
     world.bright.geometry = glow;
     const geometry = placesOf(order);
-    geometry.setAttribute("grow", grow(order));
+    // A faded point is drawn at the plain size: only what is shown carries a figure.
+    geometry.setAttribute(
+      "grow",
+      new THREE.BufferAttribute(
+        Float32Array.from(order, (i) => (lit && !lit.has(i) ? 1 : growOf(i))),
+        1,
+      ),
+    );
     geometry.setAttribute("color", new THREE.BufferAttribute(colour, 3));
     world.points.geometry.dispose();
     world.points.geometry = geometry;
@@ -824,9 +832,35 @@
         style={`font-size:${13 + 4 * Math.sqrt(g.members.length / largest)}px`}>{@render name(g)}</span
       >{/if}
   {/each}
-  <div class="stage-legend">
-    <p class="depth-note">{depthNote}</p>
-    {@render legend?.()}
+  {#if depthKey.length || sizeSteps.length || legend}<div class="stage-legend">
+      {#if depthKey.length}<div class="scale depth-key">
+          <span class="cap">Depth in each group</span>
+          <ol>
+            {#each depthKey as band, k}<li>
+                <i style={`inline-size:${11 - 3.5 * k}px;block-size:${11 - 3.5 * k}px`}></i>{band}{#if k === 0}<b
+                    >front</b
+                  >{:else if k === depthKey.length - 1}<b>back</b>{/if}
+              </li>{/each}
+          </ol>
+        </div>{/if}
+      {#if sizeSteps.length}<div class="scale size-key">
+          <span class="cap">Size: {size!.label}</span>
+          <ol>
+            {#each sizeSteps as step}<li>
+                <i
+                  style={`inline-size:${7 * grown(step / size!.largest)}px;block-size:${7 * grown(step / size!.largest)}px`}
+                ></i>{step.toLocaleString()}
+              </li>{/each}
+          </ol>
+        </div>{/if}
+      {@render legend?.()}
+    </div>{/if}
+  <div class="view-buttons">
+    <button title="Zoom in (+)" aria-label="Zoom in" onclick={() => world && orbit(0, 0, ZOOM)}>+</button>
+    <button title="Zoom out (−)" aria-label="Zoom out" onclick={() => world && orbit(0, 0, 1 / ZOOM)}>−</button>
+    {#if !flat}<button title="Turn the view to face the front; the zoom and the selection stay (0)" onclick={faceFront}
+        >Front view</button
+      >{/if}
   </div>
   {#snippet named(i: number)}<span class="ref">{o.ref[i]}</span>{#if describe?.(i)}<span class="value"
         >{` · ${describe(i)}`}</span
@@ -848,7 +882,7 @@
   .stage-3d {
     position: relative;
     inline-size: 100%;
-    block-size: min(74vh, 800px);
+    block-size: var(--stage-size, min(74vh, 800px));
     min-block-size: 420px;
     border-radius: 8px;
     overflow: hidden;
@@ -871,10 +905,72 @@
     border-radius: 6px;
     empty-cells: hide;
   }
-  .depth-note {
-    margin: 0;
+  .scale {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 12px;
+    align-items: center;
     padding: 6px 10px;
     font-size: var(--text-xs);
+  }
+  .scale .cap {
+    font-weight: 600;
+  }
+  .scale ol {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 12px;
+    align-items: center;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .depth-key ol {
+    display: grid;
+    flex-basis: 100%;
+  }
+  .scale li {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+  .scale i {
+    flex: none;
+    border-radius: 50%;
+    background: var(--muted);
+  }
+  .depth-key i {
+    margin-inline: calc((11px - 100%) / 2);
+  }
+  .scale b {
+    font-weight: 400;
+    color: var(--muted);
+  }
+  .scale b::before {
+    content: "· ";
+  }
+  .view-buttons {
+    position: absolute;
+    inset-block-end: 8px;
+    inset-inline-end: 8px;
+    z-index: 2;
+    display: flex;
+    gap: 4px;
+  }
+  .view-buttons button {
+    min-inline-size: 32px;
+    block-size: 32px;
+    padding: 0 8px;
+    font: inherit;
+    font-size: var(--text-xs);
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .view-buttons button:hover {
+    background: var(--surface-2);
   }
   .pick-label {
     position: absolute;
@@ -901,8 +997,8 @@
   }
   .depth-marker {
     position: absolute;
-    inset-block-end: 26px;
-    inset-inline-end: 44px;
+    inset-block-end: 66px;
+    inset-inline-end: 50px;
     z-index: 2;
     inline-size: 68px;
     block-size: 68px;

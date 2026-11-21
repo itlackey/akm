@@ -101,6 +101,10 @@ const kindOf = (step: ReplayStep): KindId | null =>
             ? "other"
             : null;
 
+/** The steps of the kinds chosen (all of them when none is); a search keeps its hits. */
+export const stepsOfKinds = (steps: ReplayStep[], kinds: readonly KindId[]) =>
+  kinds.length ? steps.filter((s) => kinds.includes(kindOf(s) ?? "search")) : steps;
+
 /** Events per kind in `bins` equal slices of the window, for the stacked timeline; `max` is the tallest slice. */
 export function kindBins(steps: ReplayStep[], start: number, end: number, bins = 96) {
   const width = Math.max(1, end - start) / bins;

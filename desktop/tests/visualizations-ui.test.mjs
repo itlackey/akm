@@ -384,7 +384,7 @@ test("visualizations survive late responses, a changed library and a narrow wind
     consoleErrors(page, errors);
     await open(page, server, "/library/map");
     const drawing = page.getByRole("group", { name: "Drawing" });
-    await expect(drawing.getByRole("button", { name: "Points" })).toHaveAttribute("aria-pressed", "true");
+    await expect(drawing.getByRole("button", { name: "3D" })).toHaveAttribute("aria-pressed", "true");
     const named = figures(page).locator("section", { hasText: "Groups by meaning" });
     await expect(named.getByRole("button")).toHaveText(["deploy · rollout", "auth"]);
     await named.getByRole("button", { name: "auth" }).click();

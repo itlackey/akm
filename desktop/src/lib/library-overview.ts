@@ -66,6 +66,8 @@ export interface Overview {
   bundles: string[];
   bundle: number[];
   shows: number[];
+  /** How many declared links each asset has, either way. */
+  degree: number[];
   /** When each asset was last read in the window (ISO), or null. */
   lastShown: Array<string | null>;
   /** When the overview was built: ages are measured from it. */
@@ -107,6 +109,99 @@ export function useClass(lastShownAt: string | null, modifiedAt: string | null, 
   return now - Date.parse(modifiedAt) <= OLD_DAYS * DAY ? "new" : "unread";
 }
 
+/** One recorded property of an asset that the map filters on. An asset is in one or more of its classes. */
+export interface Facet {
+  id: "type" | "links" | "use" | "feedback" | "problem" | "read";
+  label: string;
+  /** Why the facet cannot be used for this library, or "". */
+  unavailable: (o: Overview) => string;
+  /** Its classes in key order; `token` is the colour of the class in the view that colours by this facet. */
+  classes: (o: Overview) => Array<{ id: string; label: string; token?: string }>;
+  classesOf: (o: Overview, i: number) => string[];
+}
+/** The classes chosen per facet: an asset is kept when, for each facet with any chosen, it is in one of them. */
+export type Chosen = Partial<Record<Facet["id"], string[]>>;
+
+const NO_USE = "No usage history is available";
+export const FACETS: Facet[] = [
+  {
+    id: "type",
+    label: "Type",
+    unavailable: () => "",
+    classes: (o) =>
+      FAMILIES.map((family, k) => ({ id: `${k}`, label: family.label })).filter((c) => o.family.includes(Number(c.id))),
+    classesOf: (o, i) => [`${o.family[i]}`],
+  },
+  {
+    id: "links",
+    label: "Links",
+    unavailable: () => "",
+    classes: () => [
+      { id: "linked", label: "Linked" },
+      { id: "none", label: "No links" },
+    ],
+    classesOf: (o, i) => [o.degree[i] ? "linked" : "none"],
+  },
+  {
+    id: "use",
+    label: "Last read",
+    unavailable: (o) => (o.useKnown ? "" : NO_USE),
+    classes: (o) => [
+      ...USE_CLASSES,
+      ...(o.use.includes(null) ? [{ id: "unclassed", label: "Not read, edit time unknown", token: "--border" }] : []),
+    ],
+    classesOf: (o, i) => [o.use[i] ?? "unclassed"],
+  },
+  {
+    id: "feedback",
+    label: "Feedback",
+    unavailable: (o) => (o.feedbackKnown ? "" : "Feedback counts are unavailable"),
+    classes: () => [
+      { id: "positive", label: "More positive" },
+      { id: "negative", label: "More negative" },
+      { id: "none", label: "None or balanced" },
+    ],
+    classesOf: (o, i) => [(["negative", "none", "positive"] as const)[Math.sign(o.positive[i]! - o.negative[i]!) + 1]!],
+  },
+  {
+    id: "problem",
+    label: "Problem",
+    unavailable: () => "",
+    classes: () => [...PROBLEMS, { id: "none", label: "No problem recorded", token: "--border" }],
+    classesOf: (o, i) => (o.problems[i]!.length ? o.problems[i]! : ["none"]),
+  },
+  {
+    id: "read",
+    label: "Reads",
+    unavailable: (o) => (o.useKnown ? "" : NO_USE),
+    classes: () => [
+      { id: "read", label: "Still read" },
+      { id: "unread", label: "Not read" },
+    ],
+    classesOf: (o, i) => [o.shows[i] ? "read" : "unread"],
+  },
+];
+/** The filters each view offers, the one it colours by first: what its question needs to be narrowed by. */
+export const VIEW_FACETS: Record<View, Array<Facet["id"]>> = {
+  contents: ["type", "links"],
+  use: ["use", "feedback", "type"],
+  problems: ["problem", "read", "type"],
+};
+
+/** The assets of `scope` that every filter keeps. */
+export function filtered(o: Overview, scope: readonly number[], chosen: Chosen): number[] {
+  const active = FACETS.filter((f) => chosen[f.id]?.length);
+  return scope.filter((i) => active.every((f) => f.classesOf(o, i).some((c) => chosen[f.id]!.includes(c))));
+}
+
+/** How many assets each class of a facet would show, with every other filter applied: what its buttons say. */
+export function facetCounts(o: Overview, scope: readonly number[], chosen: Chosen, facet: Facet): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const i of filtered(o, scope, { ...chosen, [facet.id]: [] }))
+    for (const c of facet.classesOf(o, i)) counts.set(c, (counts.get(c) ?? 0) + 1);
+  return counts;
+}
+
 /** A rule for depth inside a group: what sits at the front, in the middle and at the back. */
 export interface Lens {
   id: "meaning" | "recency" | "frequency" | "feedback" | "lifecycle";
@@ -119,7 +214,6 @@ export interface Lens {
   depths: (o: Overview) => Array<number | null>;
 }
 
-const NO_USE = "No usage history is available";
 const USE_DEPTH: Record<UseClass, number> = { recent: 1, earlier: 0.4, new: -0.7, unread: -0.7 };
 
 /** Among the most read third of its group's read assets: +1; read less than those: 0; never read: -1. */
@@ -134,7 +228,7 @@ function depthByReads(o: Overview): number[] {
 
 /** The depth rules, the default first. Each reads one recorded variable; none is continuous. */
 export const LENSES: Lens[] = [
-  { id: "meaning", label: "Meaning", bands: [], unavailable: () => "", depths: (o) => o.ref.map(() => null) },
+  { id: "meaning", label: "Similarity", bands: [], unavailable: () => "", depths: (o) => o.ref.map(() => null) },
   {
     id: "recency",
     label: "Last read",
@@ -144,7 +238,7 @@ export const LENSES: Lens[] = [
   },
   {
     id: "frequency",
-    label: "How often read",
+    label: "Read count",
     bands: ["read most often", "read less often", "never read"],
     unavailable: (o) => (o.useKnown ? "" : NO_USE),
     depths: depthByReads,
@@ -158,7 +252,7 @@ export const LENSES: Lens[] = [
   },
   {
     id: "lifecycle",
-    label: "Lifecycle",
+    label: "Age and status",
     bands: [`edited in the last ${OLD_DAYS} days`, "edited longer ago", "superseded, contradicted or deprecated"],
     unavailable: () => "",
     depths: (o) =>
@@ -268,6 +362,9 @@ export function buildOverview(payload: OverviewPayload, now = Date.now()): Overv
     bundles: payload.bundles,
     bundle: payload.nodes.bundle,
     shows: payload.nodes.shows,
+    degree: payload.nodes.ref.map(
+      (_, i) => payload.links.from.filter((a) => a === i).length + payload.links.to.filter((b) => b === i).length,
+    ),
     lastShown: payload.nodes.lastShownAt ?? payload.nodes.ref.map(() => null),
     at: now,
     modified: payload.nodes.modifiedAt ?? payload.nodes.ref.map(() => null),

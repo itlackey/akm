@@ -25,6 +25,7 @@
     onSelect,
     pulse = null,
     related = [],
+    appeared,
     label,
   }: {
     branches: Branch[];
@@ -42,6 +43,8 @@
     pulse?: Map<string, number> | null;
     /** The groups joined to the selected one, drawn as lines to it; the others fade. */
     related?: Relation[];
+    /** Replay: whether a type or tag has had an event yet; one that has not keeps its place and is not drawn. */
+    appeared?: (key: string) => boolean;
     label: string;
   } = $props();
 
@@ -156,12 +159,12 @@
   aria-label={label}
 >
   {#each layout.placed as p (p.b.key)}
-    <path
-      class="branch-line"
-      d={curve(p.dir * (rootWidth / 2), layout.height / 2, p.dir * (p.r1 - p.pill / 2), p.y)}
-      style={`stroke:${colour(p.b.family)}`}
-    />
-    {#each p.leaves as l (l.leaf.key)}
+    {#if !appeared || appeared(p.b.key)}<path
+        class="branch-line"
+        d={curve(p.dir * (rootWidth / 2), layout.height / 2, p.dir * (p.r1 - p.pill / 2), p.y)}
+        style={`stroke:${colour(p.b.family)}`}
+      />{/if}
+    {#each p.leaves.filter((l) => !appeared || appeared(l.leaf.key)) as l (l.leaf.key)}
       <path
         class="leaf-line"
         class:dim={faded(l.leaf.key, p.b.key)}
@@ -187,7 +190,7 @@
     >
   </g>
 
-  {#each layout.placed as p (p.b.key)}
+  {#each layout.placed.filter((p) => !appeared || appeared(p.b.key)) as p (p.b.key)}
     {@const fig = figure(p.b.members, p.b.key)}
     <g
       class="branch"
@@ -212,7 +215,7 @@
         ><tspan class="name">{p.b.label}</tspan><tspan class="figure" x={p.dir * p.r1} dy="15">{fig}</tspan></text
       >
     </g>
-    {#each p.leaves as l (l.leaf.key)}
+    {#each p.leaves.filter((l) => !appeared || appeared(l.leaf.key)) as l (l.leaf.key)}
       {@const lfig = l.fig}
       {@const x = p.dir * (p.r2 + 10)}
       <g

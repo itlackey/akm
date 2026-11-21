@@ -5,8 +5,8 @@
 -->
 
 <script module lang="ts">
-  /** The drawing chosen this session: the replay opens in it again, and in 2D until 3D is chosen. */
-  let remembered: "2d" | "3d" = "2d";
+  /** The drawing chosen this session: the replay opens in it again, and as tags until points are chosen. */
+  let remembered: "tags" | "2d" | "3d" = "tags";
 </script>
 
 <script lang="ts">
@@ -36,6 +36,7 @@
     advance,
     axisLabels,
     describe,
+    type KindId,
     KINDS,
     kindBins,
     playText,
@@ -49,6 +50,7 @@
     scrubTime,
     stampText,
     stepsOf,
+    stepsOfKinds,
     totalsAt,
     truncationNote,
     type UsageEventRow,
@@ -61,7 +63,10 @@
   let allSteps = $state.raw<ReplayStep[]>([]);
   /** Whose events play: yours, as Usage counts them, or every source including agents, improve and tasks. */
   let everyone = $state(false);
-  const steps = $derived(stepsOf(allSteps, everyone));
+  /** The kinds of event that play (all of them when none is chosen): everything on the page counts only these. */
+  let kinds = $state<KindId[]>([]);
+  const bySource = $derived(stepsOf(allSteps, everyone));
+  const steps = $derived(stepsOfKinds(bySource, kinds));
   let range = $state<{ since: string; until: string } | null>(null);
   let truncated = $state(false);
   /** What the server said when it has nothing to replay: no index, or no usage history. */
@@ -73,11 +78,14 @@
   let playing = $state(false);
   let speed = $state(1);
   let selected = $state("");
-  /** The map drawn as the mind map (2D) or as points in 3D; the choice is kept for the session. */
-  let depth = $state<"2d" | "3d">(remembered);
-  const setDepth = (choice: "2d" | "3d") => {
-    depth = remembered = choice;
+  /** The map drawn as the mind map of types and tags, or as points by meaning in one plane or in 3D; the choice is
+   * kept for the session. */
+  let drawing = $state(remembered);
+  const draw = (choice: typeof remembered) => {
+    drawing = remembered = choice;
   };
+  const points = $derived(drawing !== "tags");
+  const flat = $derived(drawing === "2d");
 
   const start = $derived(range ? Date.parse(range.since) : 0);
   const end = $derived(range ? Date.parse(range.until) : 0);
@@ -141,31 +149,21 @@
   const everyAsset = $derived(o ? o.ref.map((_, i) => i) : []);
   const groups = $derived(o ? groupsOf(o, everyAsset) : []);
   /** What depth shows: akm's own place until a lens is chosen, as on the library map. */
-  let cloud = $state<ReturnType<typeof SimilarityMap>>();
   let chosenLens = $state<Lens["id"] | null>(null);
   let flip = $state(false);
-  let flat = $state(false);
   const lens = $derived(o ? lensFor(o, chosenLens, "meaning") : null);
   const place = $derived(o && lens ? placeBy(o, lens, flip, flat) : new Float32Array(0));
-  /** A point's size can stand for the events on its asset over the whole period, so it does not change as it plays. */
-  const SIZES = [
-    { id: "same", label: "One size" },
-    { id: "events", label: "Events in the period" },
-  ];
-  let size = $state("same");
-  const eventsOn = $derived.by(() => {
-    const counts = new Map<number, number>();
-    for (const s of steps) if (s.node >= 0 && s.kind !== "hit") counts.set(s.node, (counts.get(s.node) ?? 0) + 1);
-    return counts;
+  /** A point's size is the events on its asset over the whole period, so it does not change as the replay plays. */
+  const size = $derived.by(() => {
+    const values = new Float32Array(o?.count ?? 0);
+    for (const s of steps) if (s.node >= 0 && s.kind !== "hit") values[s.node]!++;
+    return { label: "events in the period", values, largest: Math.max(0, ...values) };
   });
-  const mostEvents = $derived(Math.max(0, ...eventsOn.values()));
-  const sizeOf = (i: number) =>
-    size === "events" && mostEvents ? 1 + 1.5 * Math.sqrt((eventsOn.get(i) ?? 0) / mostEvents) : 1;
-  const sizeText = $derived(
-    size === "events" && mostEvents
-      ? `Size: more events in the period, larger; the largest has ${mostEvents.toLocaleString()}.${flat ? "" : " A nearer point also draws larger."}`
-      : "",
-  );
+  /** How many events of each kind the period holds, whichever kinds play. */
+  const kindTotals = $derived.by(() => {
+    const bins = kindBins(bySource, start, end).counts;
+    return new Map(KINDS.map((k) => [k.id, bins.reduce((sum, bin) => sum + bin[k.id], 0)]));
+  });
   /** The type colour of an asset: one of the map's eight families. */
   const colourOf = (i: number) => `--map-${o!.family[i]! + 1}`;
   /** The assets used so far, the same set while no new asset is used, so the points are redrawn only when one is. */
@@ -175,17 +173,19 @@
     if (usedSoFar.steps !== steps || usedSoFar.set.size !== used.size) usedSoFar = { steps, set: new Set(used) };
     return usedSoFar.set;
   });
+  /** In 2D only what has been used so far is drawn, so assets and their groups appear as the replay reaches them. */
+  const usedSoFarList = $derived([...lit].sort((a, b) => a - b));
   /** A pulse stays on an asset for 0.75 seconds of playing, at the speed chosen. */
   const pulseWindow = $derived((750 * speed * span) / (REPLAY_SECONDS * 1000));
   const pulses = $derived(
-    depth === "3d"
+    points
       ? pulsesAt(steps, clock, pulseWindow).map((p) => ({
           i: p.node,
           token: PULSES.find((k) => k.id === p.pulse)!.token,
         }))
       : [],
   );
-  const unplaced = $derived(depth === "3d" && o ? unplacedEvents(steps, clock, (node) => o!.group[node]! >= 0) : null);
+  const unplaced = $derived(points && o ? unplacedEvents(steps, clock, (node) => o!.group[node]! >= 0) : null);
   /** The families of the assets on the map, for its key. */
   const familiesShown = $derived(
     o
@@ -310,10 +310,10 @@
     <div class="drawing">
       <span class="muted">Map</span>
       <div class="seg" role="group" aria-label="Map drawing">
-        {#each [["2d", "Tags"], ["3d", "Points"]] as const as [id, name]}<button
+        {#each [["tags", "Tags"], ["2d", "2D"], ["3d", "3D"]] as const as [id, name]}<button
             class="btn-quiet"
-            aria-pressed={depth === id}
-            onclick={() => setDepth(id)}>{name}</button
+            aria-pressed={drawing === id}
+            onclick={() => draw(id)}>{name}</button
           >{/each}
       </div>
     </div>
@@ -332,21 +332,21 @@
   {#if loading}<p class="muted" role="status">Loading activity…</p>{/if}
   {#if unavailable && !loading}<div class="notice" role="status">{unavailable}</div>{/if}
   {#if o && range && !unavailable}
-    <div class="figures">
-      <div><strong>{totals.events.toLocaleString()}</strong><span>events</span></div>
-      <div><strong>{totals.shows.toLocaleString()}</strong><span>reads</span></div>
-      <div><strong>{totals.searches.toLocaleString()}</strong><span>searches</span></div>
-      <div><strong>{totals.curates.toLocaleString()}</strong><span>curates</span></div>
-      <div class:bad={totals.foundNothing > 0}>
-        <strong>{totals.foundNothing.toLocaleString()}</strong><span>found nothing</span>
-      </div>
-      <div><strong>{totals.positive}/{totals.negative}</strong><span>feedback +/−</span></div>
-      <div><strong>{totals.used.size.toLocaleString()}</strong><span>assets used</span></div>
-    </div>
-
     <div class="timeline">
-      <ul class="kinds" aria-label="Timeline key">
-        {#each KINDS as k}<li><span class="swatch" style={`background:var(${k.token})`}></span>{k.label}</li>{/each}
+      <ul class="kinds" aria-label="Timeline key: choose kinds of event to play only those">
+        {#each KINDS as k}<li>
+            <button
+              class="chip"
+              aria-pressed={kinds.includes(k.id)}
+              disabled={!kinds.includes(k.id) && !kindTotals.get(k.id)}
+              title={kinds.includes(k.id) ? "Stop playing only these" : "Play only these"}
+              onclick={() => (kinds = kinds.includes(k.id) ? kinds.filter((id) => id !== k.id) : [...kinds, k.id])}
+              ><span class="swatch" style={`background:var(${k.token})`}></span>{k.label}<span class="chip-count"
+                >{(kindTotals.get(k.id) ?? 0).toLocaleString()}</span
+              ></button
+            >
+          </li>{/each}
+        {#if kinds.length}<li><button class="btn-quiet small" onclick={() => (kinds = [])}>All events</button></li>{/if}
       </ul>
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <svg
@@ -397,34 +397,29 @@
 
     <div class="replay-body">
       <div class="replay-map">
-        {#if depth === "3d"}<h3>Where the events landed, by meaning</h3>
-          {#if groups.length && lens}<MapOptions
-              {o}
-              {lens}
-              flip={flip && lens.bands.length > 0}
-              {flat}
-              onLens={(id) => {
-                chosenLens = id;
-                flip = false;
-              }}
-              onFlip={() => (flip = !flip)}
-              onFlat={() => (flat = !flat)}
-              onFront={() => cloud?.faceFront()}
-              sizes={SIZES}
-              {size}
-              onSize={(id) => (size = id)}
-            />
+        {#if points}<h3>Where the events landed, by meaning</h3>
+          {#if groups.length && lens}{#if !flat}<div class="stage-options">
+                <MapOptions
+                  {o}
+                  {lens}
+                  {flip}
+                  onLens={(id) => {
+                    chosenLens = id;
+                    flip = false;
+                  }}
+                  onFlip={() => (flip = !flip)}
+                />
+              </div>{/if}
             <SimilarityMap
-              bind:this={cloud}
               {o}
               {place}
               {flat}
-              depthNote={`${depthText(lens, flip, flat)} ${sizeText}`.trim()}
+              depthKey={flat ? [] : flip ? [...lens.bands].reverse() : lens.bands}
+              {size}
               describe={(i) =>
-                `${FAMILIES[o!.family[i]!]!.label}${lit.has(i) ? ", used so far" : ""}${size === "events" ? ` · ${eventsText(eventsOn.get(i) ?? 0) || "no events"} in the period` : ""}`}
-              {sizeOf}
-              scope={everyAsset}
-              {groups}
+                `${FAMILIES[o!.family[i]!]!.label}${lit.has(i) ? ", used so far" : ""} · ${eventsText(size.values[i]!) || "no events"} in the period`}
+              scope={flat ? usedSoFarList : everyAsset}
+              groups={flat ? groups.filter((g) => g.members.some((i) => lit.has(i))) : groups}
               {colourOf}
               {lit}
               emphasis={pulses}
@@ -433,7 +428,7 @@
               {#snippet legend()}
                 <ul class="key" aria-label="Key to the 3D map">
                   <li><span class="dot"></span>Used so far, in its type's colour</li>
-                  <li><span class="dot faint"></span>Not used yet, faint</li>
+                  {#if !flat}<li><span class="dot faint"></span>Not used yet, faint</li>{/if}
                   {#each PULSES as pulse}<li>
                       <span class="ring" style={`border-color:var(${pulse.token})`}></span>{pulse.label}, just now
                     </li>{/each}
@@ -444,12 +439,20 @@
               {/snippet}
             </SimilarityMap>
             <p class="muted small">
-              Each point is an asset, coloured by its type. Groups alike in meaning sit near each other; position inside
-              a group is approximate. An asset is ringed for a moment when an event reads it, a search returns it or it
-              is given feedback. {flat ? "Drag to move (turning is off while flattened)" : "Drag to turn"}, scroll to
-              zoom; with the map focused, {flat ? "" : "the arrow keys turn the view, "}+ and − zoom and 0 faces the
-              front.
+              Each point is an asset, coloured by its type; a larger point has more events in the period. An asset is
+              ringed for a moment when an event reads it, a search returns it or it is given feedback.
+              {flat ? "In 2D an asset and its group appear when it is first used." : ""}
             </p>
+            <details class="map-help">
+              <summary>How to read and move the map</summary>
+              <p class="muted small">
+                Groups alike in meaning sit near each other; position inside a group is approximate.
+                {flat ? "Drag to move" : "Drag to turn, right-drag to move"}, scroll to zoom, hover a point for its name
+                and figures. With the map focused: {flat ? "" : "the arrow keys turn the view, "}+ and − zoom{flat
+                  ? ""
+                  : ", 0 faces the front"}.
+              </p>
+            </details>
             {#if unplaced && (unplaced.notOnMap || unplaced.notListed)}<p class="muted small" role="status">
                 {#if unplaced.notOnMap}{unplaced.notOnMap.toLocaleString()}
                   {unplaced.notOnMap === 1 ? "event" : "events"} so far touched assets with no place on this map (no group
@@ -471,6 +474,7 @@
             bar={(_, key) => [{ n: counts.get(key) ?? 0, token: "--accent" }]}
             scale={most}
             {selected}
+            appeared={(key) => (counts.get(key) ?? 0) > 0}
             onSelect={(key) => (selected = selected === key ? "" : key)}
             pulse={playing ? counts : null}
             label="The library mind map: its asset types and the tags their assets carry most, each with the number of events on it so far. The log beside it lists the same events."
@@ -481,6 +485,17 @@
         {/if}
       </div>
       <aside class="replay-side">
+        <div class="figures">
+          <div><strong>{totals.events.toLocaleString()}</strong><span>events</span></div>
+          <div><strong>{totals.shows.toLocaleString()}</strong><span>reads</span></div>
+          <div><strong>{totals.searches.toLocaleString()}</strong><span>searches</span></div>
+          <div><strong>{totals.curates.toLocaleString()}</strong><span>curates</span></div>
+          <div class:bad={totals.foundNothing > 0}>
+            <strong>{totals.foundNothing.toLocaleString()}</strong><span>found nothing</span>
+          </div>
+          <div><strong>{totals.positive}/{totals.negative}</strong><span>feedback +/−</span></div>
+          <div><strong>{totals.used.size.toLocaleString()}</strong><span>assets used</span></div>
+        </div>
         <section>
           <h3>Latest events</h3>
           <ol class="log">
@@ -596,9 +611,8 @@
   }
   .figures {
     display: grid;
-    grid-template-columns: repeat(7, minmax(0, 1fr));
-    gap: 8px;
-    margin-bottom: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(6.5rem, 1fr));
+    gap: 6px;
   }
   .figures div {
     display: grid;
@@ -626,7 +640,7 @@
   .timeline svg {
     display: block;
     inline-size: 100%;
-    block-size: 120px;
+    block-size: 64px;
     cursor: ew-resize;
     touch-action: none;
   }
@@ -657,6 +671,43 @@
     gap: 6px;
     align-items: center;
   }
+  .chip {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    min-block-size: 28px;
+    padding: 2px 10px;
+    font: inherit;
+    font-size: 13px;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: 14px;
+    cursor: pointer;
+  }
+  .chip[aria-pressed="true"] {
+    font-weight: 600;
+    color: var(--bg);
+    background: var(--text);
+    border-color: var(--text);
+  }
+  .chip:disabled {
+    color: var(--muted);
+    border-color: var(--border);
+    cursor: default;
+  }
+  .chip-count {
+    font-weight: 400;
+    font-variant-numeric: tabular-nums;
+    opacity: 0.8;
+  }
+  .map-help {
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .map-help summary {
+    cursor: pointer;
+  }
   .swatch {
     inline-size: 10px;
     block-size: 10px;
@@ -682,10 +733,23 @@
     align-items: start;
   }
   .replay-map {
+    position: relative;
     border: 1px solid var(--border);
     background: var(--surface);
     padding: 8px;
     min-inline-size: 0;
+    /* The timeline and the map fit one window together. */
+    --stage-size: max(420px, calc(100vh - 330px));
+  }
+  .stage-options {
+    position: absolute;
+    inset-block-start: 40px;
+    inset-inline-end: 16px;
+    z-index: 3;
+    padding: 4px 8px;
+    background: color-mix(in srgb, var(--surface) 94%, transparent);
+    border: 1px solid var(--border);
+    border-radius: 6px;
   }
   h3 {
     font-size: 12px;
