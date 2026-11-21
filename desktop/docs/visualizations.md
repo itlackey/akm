@@ -213,8 +213,8 @@ use) or gives it feedback, each in its own colour (the `--pulse-*` tokens, held 
 type colours by `tests/map-palette.test.mjs`); an asset the latest of several events touched in that moment takes the
 colour of the latest. A curate's results and other kinds of event light the asset as used without a ring. A point's
 size is the number of events on its asset over the whole period, so it does not change as the replay plays. A key
-in the map's corner names every mark: used so far, not used yet, the type colours, and the rings, which mark the
-asset the event at the playhead touched. An asset with no group by meaning has no place on the points; its events still count
+in the map's corner names every mark: the colour of each type of used asset, the faint dot of one not used yet, and
+the rings, one colour per kind of event, which mark the asset of the event the playhead is on. An asset with no group by meaning has no place on the points; its events still count
 in the figures, and the page says how many events so far touched assets with no place, and how many touched assets
 the index no longer lists. Without stored embeddings the points cannot be drawn, and the page says so.
 

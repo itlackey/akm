@@ -278,7 +278,7 @@
     pause();
     seek(start + ((event.clientX - box.left) / box.width) * span);
   }
-  /** The rings in the key, in a word each: a ring marks the asset the event at the playhead touched. */
+  /** The rings in the key, in a word each: a ring marks the asset of the event the playhead is on. */
   const RING_NAMES = { read: "Read", hit: "Search result", up: "Liked", down: "Disliked" } as const;
   const playheadX = $derived(span ? ((clock - start) / span) * W : W);
 </script>
@@ -343,13 +343,13 @@
             >
               {#snippet legend()}
                 <ul class="key" aria-label="Key to the 3D map">
-                  <li><span class="dot"></span>Used so far</li>
-                  {#if !flat}<li><span class="dot faint"></span>Not used yet</li>{/if}
+                  <li class="muted">Used, by type:</li>
                   {#each familiesShown as family}<li>
                       <span class="dot" style={`background:var(--map-${family.k + 1})`}></span>{family.label}
                     </li>{/each}
+                  {#if !flat}<li><span class="dot faint"></span>Not used yet</li>{/if}
                   <li class="rings">
-                    Ring: touched at the playhead
+                    Ring = current event:
                     {#each PULSES as pulse}<span class="ring" style={`border-color:var(${pulse.token})`}
                       ></span>{RING_NAMES[pulse.id]}{/each}
                   </li>

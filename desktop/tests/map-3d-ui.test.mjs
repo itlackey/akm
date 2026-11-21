@@ -509,7 +509,7 @@ test("the 3D library map", { timeout: 150000 }, async (t) => {
       await drawing.getByRole("button", { name: "3D" }).click();
       // The key names every mark, and what has no place is counted, not dropped.
       const key = replay.getByRole("list", { name: "Key to the 3D map" });
-      for (const name of ["Used so far", "Not used yet", "Ring: touched at the playhead", "Read", "Search result"])
+      for (const name of ["Used, by type", "Not used yet", "Ring = current event", "Read", "Search result"])
         await expect(key).toContainText(name);
       await expect(replay).toContainText("1 event so far touched assets with no place on this map");
       await expect(replay).toContainText("1 event so far touched assets the index no longer lists");
