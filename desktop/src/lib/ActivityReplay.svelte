@@ -619,9 +619,11 @@
     font-size: var(--text-s);
     border-radius: 4px;
   }
+  /* Wide enough for "Play" and "Pause" alike, so the row does not shift; "Play from start" takes what it needs. */
   .transport :global(button) {
-    inline-size: 64px;
-    padding-inline: 0;
+    min-inline-size: 64px;
+    padding-inline: 12px;
+    white-space: nowrap;
   }
   .transport select {
     inline-size: 96px;
