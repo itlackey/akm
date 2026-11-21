@@ -5,8 +5,8 @@
 -->
 
 <script module lang="ts">
-  /** The drawing chosen this session: the replay opens in it again, and as tags until points are chosen. */
-  let remembered: "tags" | "2d" | "3d" = "tags";
+  /** The drawing chosen this session: the replay opens in it again, and in 2D until 3D is chosen. */
+  let remembered: "2d" | "3d" = "2d";
   /** Whether the panel beside the map is open, kept the same way. */
   let sideRemembered = true;
 </script>
@@ -20,7 +20,7 @@
   import { onDestroy } from "svelte";
   import { api } from "./client";
   import { FAMILIES } from "./graph-model";
-  import { buildOverview, flatPlace, groupsOf, mindMap, type Overview, type OverviewPayload } from "./library-overview";
+  import { buildOverview, groupsOf, mindMap, type Overview, type OverviewPayload } from "./library-overview";
   import { searchHref } from "./library-model";
   import MindMap from "./MindMap.svelte";
   import SimilarityMap from "./SimilarityMap.svelte";
@@ -74,16 +74,15 @@
   let playing = $state(false);
   let speed = $state(1);
   let selected = $state("");
-  /** The map drawn as the mind map of types and tags, or as points by meaning in one plane or in 3D; the choice is
-   * kept for the session. */
+  /** The map drawn in 2D, as the mind map of types and tags, or in 3D, as points by meaning; the choice is kept for
+   * the session. */
   let drawing = $state(remembered);
   /** The panel beside the map folds away, to give the map the whole window. */
   let sideOpen = $state(sideRemembered);
   const draw = (choice: typeof remembered) => {
     drawing = remembered = choice;
   };
-  const points = $derived(drawing !== "tags");
-  const flat = $derived(drawing === "2d");
+  const points = $derived(drawing === "3d");
 
   const start = $derived(range ? Date.parse(range.since) : 0);
   const end = $derived(range ? Date.parse(range.until) : 0);
@@ -146,7 +145,7 @@
   // ---- The 3D map: every asset with a group by meaning is a point; used so far in full colour, the rest faint ----
   const everyAsset = $derived(o ? o.ref.map((_, i) => i) : []);
   const groups = $derived(o ? groupsOf(o, everyAsset) : []);
-  const place = $derived(o ? (flat ? flatPlace(o) : o.place) : new Float32Array(0));
+  const place = $derived(o ? o.place : new Float32Array(0));
   /** A point's size is the events on its asset over the whole period, so it does not change as the replay plays. */
   const size = $derived.by(() => {
     const values = new Float32Array(o?.count ?? 0);
@@ -187,8 +186,6 @@
     if (usedSoFar.steps !== steps || usedSoFar.set.size !== used.size) usedSoFar = { steps, set: new Set(used) };
     return usedSoFar.set;
   });
-  /** In 2D only what has been used so far is drawn, so assets and their groups appear as the replay reaches them. */
-  const usedSoFarList = $derived([...lit].sort((a, b) => a - b));
   /** A pulse stays on an asset for 0.75 seconds of playing, at the speed chosen. */
   const pulseWindow = $derived((750 * speed * span) / (REPLAY_SECONDS * 1000));
   const pulses = $derived(
@@ -330,7 +327,7 @@
         >
         <div class="stage-tools">
           <div class="views" role="group" aria-label="Map drawing">
-            {#each [["tags", "Tags"], ["2d", "2D"], ["3d", "3D"]] as const as [id, name]}<button
+            {#each [["2d", "2D"], ["3d", "3D"]] as const as [id, name]}<button
                 class="btn-quiet"
                 aria-pressed={drawing === id}
                 onclick={() => draw(id)}>{name}</button
@@ -350,12 +347,11 @@
             <SimilarityMap
               {o}
               {place}
-              {flat}
               {size}
               describe={(i) =>
                 `${FAMILIES[o!.family[i]!]!.label}${lit.has(i) ? ", used so far" : ""} · ${eventsText(size.values[i]!) || "no events"} in the period`}
-              scope={flat ? usedSoFarList : everyAsset}
-              groups={flat ? groups.filter((g) => g.members.some((i) => lit.has(i))) : groups}
+              scope={everyAsset}
+              {groups}
               {colourOf}
               {lit}
               {picked}
@@ -374,7 +370,7 @@
                   {#each familiesShown as family}<li>
                       <span class="dot" style={`background:var(--map-${family.k + 1})`}></span>{family.label}
                     </li>{/each}
-                  {#if !flat}<li><span class="dot faint"></span>Not used yet</li>{/if}
+                  <li><span class="dot faint"></span>Not used yet</li>
                   <li class="cap">Ring = current event:</li>
                   {#each PULSES as pulse}<li>
                       <span class="ring" style={`border-color:var(${pulse.token})`}></span>{RING_NAMES[pulse.id]}
