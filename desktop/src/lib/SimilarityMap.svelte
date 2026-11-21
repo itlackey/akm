@@ -19,6 +19,7 @@
   // other keys turn and zoom the view. `place` is where each asset is drawn: when it changes (2D to 3D or back) every mark
   // moves there over 0.6 seconds, or at once under reduced motion. `flat` draws the points in one plane, which cannot
   // be turned.
+  import Icon from "./Icon.svelte";
   import { LEVEL_STYLES } from "./link-levels";
   import { untrack, type Snippet } from "svelte";
   import { prefersReducedMotion } from "svelte/motion";
@@ -632,8 +633,11 @@
             const el = nameEls[g.key];
             if (!el) continue;
             at.set(...(centres.get(g.key) ?? [0, 0, 0])).project(camera);
-            const x = ((at.x + 1) / 2) * w;
+            const middle = ((at.x + 1) / 2) * w;
             const y = ((1 - at.y) / 2) * h;
+            // A name whose group is in view is kept whole inside the map's edges.
+            const half = el.offsetWidth / 2 + 8;
+            const x = middle >= 0 && middle <= w ? Math.min(Math.max(middle, half), Math.max(half, w - half)) : middle;
             // A name that would lie over one already placed is tried just above and below its group's middle before
             // it is hidden, so a group goes unnamed only where there is no room at all.
             const height = el.offsetHeight + 4;
@@ -848,22 +852,28 @@
   {/each}
   {#if sizeSteps.length || legend}<details class="stage-legend" bind:open={key.open}>
       <summary>Key</summary>
-      {#if sizeSteps.length}<div class="scale size-key">
-          <span class="cap">Size: {size!.label}</span>
-          <ol>
-            {#each sizeSteps as step}<li>
-                <i
-                  style={`inline-size:${7 * grown(step / size!.largest)}px;block-size:${7 * grown(step / size!.largest)}px`}
-                ></i>{step.toLocaleString()}
-              </li>{/each}
-          </ol>
-        </div>{/if}
-      {@render legend?.()}
+      <div class="key-body">
+        {#if sizeSteps.length}<div class="scale size-key">
+            <span class="cap">Size: {size!.label}</span>
+            <ol>
+              {#each sizeSteps as step}<li>
+                  <i
+                    style={`inline-size:${7 * grown(step / size!.largest)}px;block-size:${7 * grown(step / size!.largest)}px`}
+                  ></i>{step.toLocaleString()}
+                </li>{/each}
+            </ol>
+          </div>{/if}
+        {@render legend?.()}
+      </div>
     </details>{/if}
   <div class="view-buttons">
-    <button title="Zoom in (+)" aria-label="Zoom in" onclick={() => world && orbit(0, 0, ZOOM)}>+</button>
-    <button title="Zoom out (−)" aria-label="Zoom out" onclick={() => world && orbit(0, 0, 1 / ZOOM)}>−</button>
-    <button title="The view back to where the map opens" onclick={reset}>Reset view</button>
+    <button title="Zoom out (−)" aria-label="Zoom out" onclick={() => world && orbit(0, 0, 1 / ZOOM)}
+      ><Icon name="minus" size={14} /></button
+    >
+    <button title="Zoom in (+)" aria-label="Zoom in" onclick={() => world && orbit(0, 0, ZOOM)}
+      ><Icon name="plus" size={14} /></button
+    >
+    <button class="reset" title="The view back to where the map opens" onclick={reset}>Reset view</button>
   </div>
   {#snippet named(i: number)}<span class="ref">{o.ref[i]}</span>{#if describe?.(i)}<span class="value"
         >{` · ${describe(i)}`}</span
@@ -897,37 +907,49 @@
     inset-block-end: 8px;
     inset-inline-start: 8px;
     z-index: 2;
-    max-inline-size: min(44rem, calc(100% - 17rem));
+    max-inline-size: min(360px, calc(100% - 168px));
     pointer-events: none;
+    font-size: var(--text-xs);
+    line-height: 18px;
     background: color-mix(in srgb, var(--surface) 94%, transparent);
     border: 1px solid var(--border);
     border-radius: 6px;
-    empty-cells: hide;
+  }
+  .stage-legend[open] {
+    inline-size: max-content;
   }
   /* The key folds to its name, to give its corner back to the map. */
   .stage-legend summary {
-    padding: 2px 10px;
-    font-size: var(--text-xs);
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    block-size: 28px;
+    min-block-size: 0;
+    margin: 0;
+    padding: 0 10px;
     font-weight: 600;
     cursor: pointer;
     pointer-events: auto;
   }
-  .scale {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 2px 12px;
-    align-items: center;
-    padding: 6px 10px;
-    font-size: var(--text-xs);
+  .key-body {
+    display: grid;
+    gap: 6px;
+    padding: 0 10px 8px;
+    line-height: 20px;
+  }
+  .stage-legend summary::before {
+    flex: none;
   }
   .scale .cap {
+    display: block;
+    block-size: 20px;
     font-weight: 600;
   }
   .scale ol {
     display: flex;
-    flex-wrap: wrap;
     gap: 2px 12px;
     align-items: center;
+    block-size: 20px;
     margin: 0;
     padding: 0;
     list-style: none;
@@ -942,28 +964,48 @@
     border-radius: 50%;
     background: var(--muted);
   }
+  /* Zoom and reset are one joined group in the map's other bottom corner. */
   .view-buttons {
     position: absolute;
     inset-block-end: 8px;
     inset-inline-end: 8px;
     z-index: 2;
     display: flex;
-    gap: 4px;
   }
   .view-buttons button {
-    min-inline-size: 32px;
-    block-size: 32px;
-    padding: 0 8px;
+    display: grid;
+    place-items: center;
+    inline-size: 28px;
+    block-size: 28px;
+    min-block-size: 28px;
+    padding: 0;
     font: inherit;
-    font-size: var(--text-xs);
+    font-size: var(--text-s);
     color: var(--text);
     background: var(--surface);
     border: 1px solid var(--border-strong);
-    border-radius: 6px;
+    border-radius: 0;
     cursor: pointer;
+  }
+  .view-buttons button + button {
+    margin-inline-start: -1px;
+  }
+  .view-buttons button:first-child {
+    border-start-start-radius: 4px;
+    border-end-start-radius: 4px;
+  }
+  .view-buttons .reset {
+    inline-size: auto;
+    padding: 0 10px;
+    border-start-end-radius: 4px;
+    border-end-end-radius: 4px;
   }
   .view-buttons button:hover {
     background: var(--surface-2);
+  }
+  .view-buttons button:focus-visible {
+    z-index: 1;
+    box-shadow: var(--focus-halo);
   }
   .pick-label {
     position: absolute;
@@ -1007,10 +1049,9 @@
     background: none;
     border: 0;
     border-radius: 3px;
-    text-shadow:
-      0 0 3px var(--bg),
-      0 0 3px var(--bg),
-      0 0 6px var(--bg);
+    -webkit-text-stroke: 3px var(--bg);
+    paint-order: stroke fill;
+    font-variant-numeric: tabular-nums;
     pointer-events: none;
     will-change: transform;
     transition: opacity 0.2s;

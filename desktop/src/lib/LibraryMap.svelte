@@ -27,6 +27,7 @@
   // Choosing a group scopes the filters to it; choosing an asset shows what is wrong with it, what it is joined to and
   // the content closest to it in meaning. Where the map was left is remembered while the app is open.
   import { api } from "./client";
+  import Icon from "./Icon.svelte";
   import { FAMILIES } from "./graph-model";
   import {
     buildOverview,
@@ -298,7 +299,7 @@
                 unit: "read but disliked",
                 hint: "Most read first. Open one to fix what readers found wrong.",
                 assets: top(f.disliked, (i) => o!.shows[i]!),
-                note: (i: number) => `${readsOf(i)} · ${o!.negative[i]} down, ${o!.positive[i]} up`,
+                note: (i: number) => `${readsOf(i)} · ${o!.negative[i]} negative, ${o!.positive[i]} positive`,
               },
             ]
           : []),
@@ -360,7 +361,7 @@
                 hint: `More negative feedback than positive${o.useKnown ? ", most read first" : ""}. Open one to fix it.`,
                 assets: mostReadFirst(f.disliked),
                 note: (i: number) =>
-                  `${o!.negative[i]} down, ${o!.positive[i]} up${readsOf(i) ? ` · ${readsOf(i)}` : ""}`,
+                  `${o!.negative[i]} negative, ${o!.positive[i]} positive${readsOf(i) ? ` · ${readsOf(i)}` : ""}`,
               },
             ]
           : []),
@@ -682,6 +683,13 @@
     {#if !bundleScope.length}<p class="notice" role="status">No assets in {scopeName}.</p>{/if}
     <div class="map-body" class:alone={!sideOpen || !(picked >= 0 || part || finding || (points && groups.length))}>
       <div class="map-stage">
+        {#if picked >= 0 || part || finding || (points && groups.length)}<button
+            class="panel-toggle"
+            aria-expanded={sideOpen}
+            aria-label={sideOpen ? "Hide panel" : "Show panel"}
+            title={sideOpen ? "Hide panel" : "Show panel"}
+            onclick={() => (sideOpen = !sideOpen)}><Icon name="panel-right" size={16} /></button
+          >{/if}
         <div class="stage-tools">
           <div class="views" role="group" aria-label="Drawing">
             {#each DRAWINGS as [id, name, title]}<button
@@ -703,13 +711,13 @@
               >{matching.size.toLocaleString()} of {plural(bundleScope.length, "asset")}</span
             >{/if}
           <details class="show" bind:this={showMenu}>
-            <summary title={finding?.hint}
-              ><span class="muted">Show</span>
+            <summary title={finding?.label ?? "Every asset is shown"} aria-haspopup="true"
+              ><span class="muted">Show:</span>
               <span class="shown"
                 >{finding
-                  ? `${finding.label} (${(finding.pairs ?? finding.assets).length.toLocaleString()})`
+                  ? `${chosenIds.length > 1 ? `${chosenIds.length} selected` : finding.label} (${(finding.pairs ?? finding.assets).length.toLocaleString()})`
                   : "All assets"}</span
-              ></summary
+              ><Icon name="chevron-down" size={14} /></summary
             >
             <div class="show-menu" role="group" aria-label="Show on the map">
               {#each findings as f (f.id)}<label class:none={!f.assets.length}
@@ -729,13 +737,9 @@
           </details>
           {#if part}<button
               class="scope"
+              aria-label={`Leave ${part.name}`}
               title="Counts are for this group only. Choose to go back to the whole bundle."
-              onclick={() => choose(selected)}>In {part.name} ✕</button
-            >{/if}
-          {#if picked >= 0 || part || finding || (points && groups.length)}<button
-              class="btn-quiet panel-toggle"
-              aria-expanded={sideOpen}
-              onclick={() => (sideOpen = !sideOpen)}>{sideOpen ? "Hide panel ›" : "‹ Show panel"}</button
+              onclick={() => choose(selected)}><span>In {part.name}</span><Icon name="close" size={12} /></button
             >{/if}
         </div>
         {#if points}{#if groups.length}<SimilarityMap
@@ -828,7 +832,7 @@
 
       {#if sideOpen && (picked >= 0 || part || finding || (points && groups.length))}<aside
           class="map-side"
-          aria-label="Figures"
+          aria-label="Details"
           aria-live="polite"
           bind:this={side}
         >
@@ -839,7 +843,9 @@
                 <h2>{short(o.ref[i]!)}</h2>
                 <p class="muted small">{o.types[o.type[i]!]} · {o.bundles[o.bundle[i]!]}</p>
               </div>
-              <button class="btn-quiet" onclick={() => (picked = -1)} aria-label="Close">✕</button>
+              <button class="icon-btn" onclick={() => (picked = -1)} aria-label="Close"
+                ><Icon name="close" size={14} /></button
+              >
             </header>
             <section>
               <div class="actions">
@@ -861,7 +867,7 @@
                     </li>{/if}
                   {#if o.problems[i]!.includes("negative")}<li>
                       <strong>Disliked:</strong>
-                      {o.negative[i]} down, {o.positive[i]} up. Open it to fix what readers found wrong.
+                      {o.negative[i]} negative, {o.positive[i]} positive. Open it to fix what readers found wrong.
                     </li>{/if}
                   {#each pairsOf(i) as d}{@const other = d.a === i ? d.b : d.a}
                     <li>
@@ -883,7 +889,7 @@
                     : "unknown"}
                 </dd>
                 {#if o.feedbackKnown && (o.positive[i] || o.negative[i])}<dt>Feedback</dt>
-                  <dd>{o.negative[i]} down, {o.positive[i]} up</dd>{/if}
+                  <dd>{o.negative[i]} negative, {o.positive[i]} positive</dd>{/if}
               </dl>
               {#if near?.ref === o.ref[i]}<div class="near">
                   {#if near.error}<p class="muted small">{near.error}</p>
@@ -899,7 +905,7 @@
                 </div>{/if}
             </section>
             {#if pickedJoins.length}<section>
-                <h3>Joined to</h3>
+                <h3>Linked to</h3>
                 <ul class="rows">
                   {#each pickedJoins.slice(0, 12) as j}<li>
                       <button class="link" onclick={() => pick(j.i)} title={o.ref[j.i]}>{short(o.ref[j.i]!)}</button
@@ -916,13 +922,28 @@
                     {plural(facts.count, "asset")}
                   </p>
                 </div>
-                <button class="btn-quiet" onclick={() => choose(selected)} aria-label="Close">✕</button>
+                <button class="icon-btn" onclick={() => choose(selected)} aria-label="Close"
+                  ><Icon name="close" size={14} /></button
+                >
+              </header>
+            {:else if finding}<header class="side-head">
+                <div>
+                  <h2>{finding.label}</h2>
+                  <p class="muted small">
+                    {finding.pairs
+                      ? plural(finding.pairs.length, "pair")
+                      : plural(finding.assets.length, "asset")}{finding.hint ? ` · ${finding.hint}` : ""}
+                  </p>
+                </div>
+              </header>
+            {:else}<header class="side-head">
+                <div>
+                  <h2>All assets</h2>
+                  <p class="muted small">{plural(bundleScope.length, "asset")} · {plural(groups.length, "group")}</p>
+                </div>
               </header>{/if}
             {#if finding}<section>
-                <h3>
-                  {finding.label}<span class="count">{(finding.pairs ?? finding.assets).length.toLocaleString()}</span>
-                </h3>
-                <p class="muted small">{finding.hint}</p>
+                {#if part}<h3>{finding.label}</h3>{/if}
                 {#if finding.pairs}{@render pairList(finding.pairs, 8)}{:else}{@render assetList(
                     finding.assets,
                     finding.note,
@@ -931,7 +952,9 @@
                   )}{/if}
               </section>
             {:else if part}<section>
-                <h3>Its assets{size ? `, most ${size.label} first` : ""}</h3>
+                <h3>
+                  Assets{#if size}<span>{size.label === "links" ? "Links" : "Reads"}</span>{/if}
+                </h3>
                 {@render assetList(
                   [...members].sort((a, b) => (size ? size.values[b]! - size.values[a]! : 0) || a - b),
                   (i) =>
@@ -955,7 +978,7 @@
                 </p>
               </section>{/if}
             {#if selected && joined.length}<section>
-                <h3>Linked to these {selected.startsWith("g:") ? "groups" : "types and tags"}</h3>
+                <h3>Linked {selected.startsWith("g:") ? "groups" : "types and tags"}</h3>
                 <ul class="rows">
                   {#each joined.slice(0, 8) as r}<li>
                       <button class="link" onclick={() => choose(r.key)}>{nameOf(r.key)}</button>
@@ -968,7 +991,7 @@
                 </ul>
               </section>{/if}
             {#if points && !part && groups.length}<section>
-                <h3>{finding ? "Where they are, by group" : "Groups by meaning"}</h3>
+                <h3>{finding ? "By group" : "Groups by meaning"}<span>{finding ? "Matching" : "Assets"}</span></h3>
                 <ul class="rows">
                   {#each [...groups]
                     .filter((g) => !finding || perGroup.get(g.key))
@@ -976,7 +999,7 @@
                       <button class="link" onclick={() => choose(g.key)}>{g.label}</button><span class="count"
                         >{finding
                           ? `${perGroup.get(g.key)!.toLocaleString()} of ${g.members.length.toLocaleString()}`
-                          : plural(g.members.length, "asset")}</span
+                          : g.members.length.toLocaleString()}</span
                       >
                     </li>{/each}
                 </ul>
@@ -1008,7 +1031,7 @@
     border-bottom: 2px solid transparent;
     color: var(--muted);
     text-decoration: none;
-    font-size: 13px;
+    font-size: var(--text-s);
   }
   .library-views a[aria-current] {
     color: var(--accent);
@@ -1024,6 +1047,11 @@
     gap: 4px;
     min-inline-size: 0;
   }
+  .views button[role="tab"] {
+    min-block-size: 28px;
+    padding: 0 10px;
+    font-size: var(--text-s);
+  }
   .views button[aria-selected="true"],
   .views button[aria-pressed="true"] {
     color: var(--text);
@@ -1034,7 +1062,7 @@
     display: flex;
     gap: 8px;
     align-items: center;
-    font-size: 13px;
+    font-size: var(--text-s);
     color: var(--muted);
   }
   .bundle-pick {
@@ -1042,7 +1070,7 @@
     gap: 8px;
     align-items: center;
     margin-inline-start: auto;
-    font-size: 13px;
+    font-size: var(--text-s);
     color: var(--muted);
   }
   .map-filter input {
@@ -1050,7 +1078,9 @@
   }
   .map-body {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 21rem;
+    grid-template-columns: minmax(0, 1fr) 20rem;
+    /* The map takes all the window has left under the app's header and the row above. */
+    --stage-size: max(360px, calc(100vh - 152px));
     gap: 8px;
     align-items: start;
   }
@@ -1065,47 +1095,112 @@
     background: var(--surface);
     padding: 0;
     min-inline-size: 0;
-    /* The map takes all the window has left under the app's header and the row above. */
-    --stage-size: max(360px, calc(100vh - 152px));
   }
-  /* The drawing and the finder sit on the map; over the tags, which have no spare corner, they sit above it. */
+  /* The drawing, the finder and the filters sit on the map in one row that never wraps: it leaves the corner to the
+     panel's button. Over the tags, which have no spare corner, the row sits above them. */
   .stage-tools {
     display: flex;
-    flex-wrap: wrap;
     gap: 8px;
     align-items: center;
-    margin-block-end: 8px;
+    padding: 4px 44px 4px 8px;
   }
   .map-stage:has(:global(.stage-3d)) .stage-tools {
     position: absolute;
     inset-block-start: 8px;
     inset-inline-start: 8px;
     z-index: 3;
-    margin: 0;
-    padding: 2px;
+    inline-size: fit-content;
+    max-inline-size: calc(100% - 52px);
+    padding: 3px;
     background: color-mix(in srgb, var(--surface) 94%, transparent);
     border: 1px solid var(--border);
     border-radius: 6px;
   }
-  /* What the view's question finds, each with how many: one is shown at a time, and the row stays one line. */
+  .stage-tools :global(button),
+  .stage-tools input,
+  .stage-tools summary {
+    block-size: 28px;
+    min-block-size: 28px;
+    padding-block: 0;
+    font-size: var(--text-s);
+    border-radius: 4px;
+  }
+  .stage-tools .views {
+    display: flex;
+    gap: 2px;
+  }
+  .stage-tools .views button {
+    min-inline-size: 40px;
+    padding: 0 10px;
+  }
+  .map-filter {
+    flex: 0 1 176px;
+    min-inline-size: 112px;
+  }
+  .map-filter input {
+    inline-size: 100%;
+    padding-inline: 8px;
+  }
+  /* The panel's button holds the map's top corner beside the panel, open or closed. */
+  .panel-toggle {
+    position: absolute;
+    inset-block-start: 8px;
+    inset-inline-end: 8px;
+    z-index: 3;
+    display: grid;
+    place-items: center;
+    inline-size: 28px;
+    block-size: 28px;
+    min-block-size: 28px;
+    padding: 0;
+    color: var(--muted);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .panel-toggle[aria-expanded="true"] {
+    color: var(--text);
+    background: var(--surface-2);
+  }
+  .panel-toggle:hover {
+    color: var(--text);
+    border-color: var(--border-strong);
+  }
+  .panel-toggle:focus-visible {
+    box-shadow: var(--focus-halo);
+  }
+  .panel-toggle:active {
+    background: var(--surface-sunk);
+  }
+  /* What the view's question finds, each with how many: any number can be ticked, and the row stays one line. */
   .show {
     position: relative;
-    font-size: 13px;
+    flex: 0 1 auto;
+    min-inline-size: 104px;
+    max-inline-size: 240px;
+    font-size: var(--text-s);
   }
   .show summary {
     display: flex;
     gap: 6px;
     align-items: center;
-    block-size: 28px;
-    padding: 0 10px;
+    margin: 0;
+    padding-inline: 10px 8px;
     border: 1px solid var(--border-strong);
-    border-radius: 4px;
     background: var(--surface);
     cursor: pointer;
     list-style: none;
   }
+  .show summary::before {
+    display: none;
+  }
+  .show summary .muted {
+    flex: none;
+  }
   .shown {
-    max-inline-size: 22rem;
+    flex: 1;
+    min-inline-size: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1116,19 +1211,24 @@
     inset-inline-start: 0;
     z-index: 5;
     display: grid;
-    min-inline-size: 17rem;
-    padding: 6px;
+    min-inline-size: 15rem;
+    padding: 4px;
     border: 1px solid var(--border-strong);
     border-radius: 6px;
     background: var(--surface);
-    box-shadow: 0 6px 20px rgb(0 0 0 / 0.25);
+    box-shadow: var(--shadow-float);
   }
   .show-menu label {
     display: flex;
     gap: 8px;
     align-items: center;
-    padding: 4px 6px;
+    block-size: 28px;
+    padding: 0 8px;
+    white-space: nowrap;
     cursor: pointer;
+  }
+  .show-menu input {
+    margin: 0;
   }
   .show-menu label.none {
     color: var(--muted);
@@ -1137,28 +1237,40 @@
   .show-menu .count {
     margin-inline-start: auto;
     padding-inline-start: 16px;
+    font-size: var(--text-xs);
     color: var(--muted);
     font-variant-numeric: tabular-nums;
   }
   .show-menu button {
-    justify-self: start;
+    justify-self: stretch;
     margin-block-start: 4px;
+    padding-inline: 8px;
+    text-align: start;
+    border-block-start: 1px solid var(--border);
+    border-radius: 0;
   }
   .scope {
-    border: 1px dashed var(--border-strong);
-    border-radius: 14px;
-    background: var(--surface);
+    flex: 0 1 auto;
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    max-inline-size: 160px;
+    padding-inline: 10px 6px;
     color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
     cursor: pointer;
   }
+  .scope span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .colour-key {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 2px 12px;
+    display: grid;
     margin: 0;
-    padding: 4px 10px;
+    padding: 0;
     list-style: none;
-    font-size: var(--text-xs);
   }
   .colour-key li {
     display: flex;
@@ -1167,16 +1279,7 @@
   }
   .map-note {
     margin: 0;
-    padding: 4px 8px;
-  }
-  .stage-tools :global(button) {
-    min-block-size: 28px;
-    padding: 2px 10px;
-    font-size: 13px;
-  }
-  .stage-tools input {
-    block-size: 28px;
-    font-size: 13px;
+    padding: 0;
   }
   /* What the view found, one fact a line; a line with a colour is also the key to that colour on the map. */
   .swatch {
@@ -1227,53 +1330,87 @@
     border-radius: 2px;
     flex: none;
   }
+  /* The panel beside the map: one bordered column with a header, then sections of one-line rows. */
+  /* It is as tall as the map at most, and scrolls inside that. */
   .map-side {
-    border: 1px solid var(--border);
-    background: var(--surface);
+    position: sticky;
+    inset-block-start: 8px;
+    max-block-size: calc(var(--stage-size) + 2px);
+    overflow-y: auto;
     min-inline-size: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
   }
   .map-side section {
     margin: 0;
-    padding: 8px 12px;
+    padding: var(--space-2) var(--space-3);
     border-top: 1px solid var(--border);
-  }
-  .map-side section > h3 {
-    margin: 0 0 4px;
   }
   .map-side p {
     margin: 0 0 4px;
   }
   .side-head {
     display: flex;
-    gap: 8px;
+    gap: var(--space-2);
     align-items: start;
-    padding: 8px 12px;
+    min-block-size: 44px;
+    padding: var(--space-2) var(--space-3);
   }
   .side-head div {
     flex: 1;
     min-inline-size: 0;
   }
   .side-head h2 {
-    font-size: 15px;
-    margin: 0 0 2px;
+    margin: 0;
+    font-size: var(--text-m);
+    font-weight: var(--weight-strong);
     overflow-wrap: anywhere;
   }
   .side-head p {
     margin: 0;
+    font-size: var(--text-xs);
+  }
+  .icon-btn {
+    flex: none;
+    display: grid;
+    place-items: center;
+    inline-size: 28px;
+    block-size: 28px;
+    min-block-size: 0;
+    padding: 0;
+    color: var(--muted);
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .icon-btn:hover {
+    color: var(--text);
+    background: var(--surface-2);
   }
   h3 {
-    font-size: 11px;
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-2);
+    margin: 0 0 var(--space-1);
+    font-size: var(--text-xs);
+    font-weight: var(--weight-strong);
+    letter-spacing: var(--tracking-caps);
     text-transform: uppercase;
-    letter-spacing: 0.06em;
     color: var(--muted);
-    margin: 0 0 8px;
+  }
+  h3 span {
+    font-weight: 400;
+    letter-spacing: 0;
+    text-transform: none;
   }
   .figures {
     display: grid;
     grid-template-columns: 1fr auto;
     gap: 4px 12px;
     margin: 0;
-    font-size: 13px;
+    font-size: var(--text-s);
   }
   .figures dd {
     margin: 0;
@@ -1286,14 +1423,14 @@
     white-space: nowrap;
     margin-inline-start: auto;
     color: var(--muted);
-    font-size: 12px;
+    font-size: var(--text-xs);
     font-variant-numeric: tabular-nums;
   }
   .rows li {
     display: flex;
     gap: 8px;
     align-items: baseline;
-    font-size: 13px;
+    font-size: var(--text-s);
     padding: 2px 0;
     min-inline-size: 0;
   }
@@ -1308,50 +1445,54 @@
   .pairs li {
     display: grid;
     gap: 2px;
-    padding: 6px 0;
-    border-bottom: 1px solid var(--border);
-    font-size: 13px;
-  }
-  .pairs li:last-child {
-    border-bottom: 0;
+    padding: 4px 0;
+    font-size: var(--text-s);
   }
   .pair-foot {
     display: flex;
     gap: 8px;
     align-items: baseline;
-    font-size: 12px;
+    font-size: var(--text-xs);
   }
   .pair-foot a:first-child {
     flex: 1;
-    font-size: 13px;
+    font-size: var(--text-s);
   }
   .more {
     margin: 4px 0 0;
-    font-size: 12px;
+    font-size: var(--text-xs);
     color: var(--muted);
   }
   .read li {
     padding: 2px 0;
   }
-  /* A name and its figure on one line; a figure too long for that goes under the name. */
+  /* A row is one line: the name, cut if it is long, then its figure at the end. */
   .read-row {
     display: flex;
-    flex-wrap: wrap;
-    gap: 0 8px;
+    gap: var(--space-2);
     align-items: baseline;
-    font-size: 13px;
+    font-size: var(--text-s);
     min-inline-size: 0;
   }
-  /* A name has its line to itself and its figure the next, so every row reads the same way. */
   .read-row a {
-    flex: 1 0 100%;
+    flex: 1 1 auto;
   }
-  .read-row .count {
-    flex: 0 1 auto;
-    min-inline-size: 0;
-    margin-inline-start: 0;
-    white-space: normal;
-    overflow-wrap: anywhere;
+  .pairs a,
+  .read a,
+  .near a {
+    color: var(--link);
+    text-decoration: none;
+  }
+  .pairs a:hover,
+  .read a:hover,
+  .near a:hover {
+    text-decoration: underline;
+  }
+  .actions :global(.btn),
+  .actions button {
+    min-block-size: 28px;
+    padding: 2px 12px;
+    font-size: var(--text-s);
   }
   .actions a {
     display: inline-flex;
@@ -1365,7 +1506,7 @@
     margin: 0 0 12px;
     padding: 8px 10px;
     list-style: none;
-    font-size: 13px;
+    font-size: var(--text-s);
     background: var(--warn-bg);
     border-radius: 6px;
   }
@@ -1378,10 +1519,10 @@
     display: flex;
     gap: 8px;
     align-items: baseline;
-    font-size: 12px;
+    font-size: var(--text-xs);
   }
   .small {
-    font-size: 12px;
+    font-size: var(--text-xs);
   }
   button.link {
     min-block-size: 0;

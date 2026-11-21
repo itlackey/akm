@@ -16,6 +16,7 @@
   // mind map lighting up the tags each event touches (or, in 3D, the library's assets as points on the same 3D map the
   // Library uses, ringed as events touch them), and the events as a log. It opens at the end of the period with
   // every figure full; clicking or dragging the timeline moves the playhead.
+  import Icon from "./Icon.svelte";
   import { onDestroy } from "svelte";
   import { api } from "./client";
   import { FAMILIES } from "./graph-model";
@@ -47,7 +48,16 @@
     usedList,
   } from "./replay-model";
 
-  let period = $state<"24h" | "7d">("24h");
+  /** The periods offered, each a duration `activity.events` takes as `since`. */
+  const PERIODS = [
+    ["1h", "Last hour"],
+    ["6h", "Last 6 hours"],
+    ["24h", "Last 24 hours"],
+    ["3d", "Last 3 days"],
+    ["7d", "Last 7 days"],
+    ["30d", "Last 30 days"],
+  ] as const;
+  let period = $state<(typeof PERIODS)[number][0]>("24h");
   let o = $state.raw<Overview | null>(null);
   let allSteps = $state.raw<ReplayStep[]>([]);
   /** Whose events play: yours, as Usage counts them, or every source including agents, improve and tasks. */
@@ -284,9 +294,18 @@
   }
   /** The rings in the key, in a word each: a ring marks the asset of the event the playhead is on. */
   const RING_NAMES = { read: "Read", hit: "Search result", up: "Liked", down: "Disliked" } as const;
+  /** A list in the panel shows its first few rows, so the panel ends above the timeline; Show all opens it. */
+  const SHORT = 4;
+  let opened = $state<Record<string, boolean>>({});
+  const capped = <T,>(list: readonly T[], id: string) => (opened[id] ? list : list.slice(0, SHORT));
   const playheadX = $derived(span ? ((clock - start) / span) * W : W);
 </script>
 
+{#snippet more(total: number, id: string)}{#if total > SHORT}<button
+      class="link"
+      onclick={() => (opened = { ...opened, [id]: !opened[id] })}
+      >{opened[id] ? "Show fewer" : `Show all ${total.toLocaleString()}`}</button
+    >{/if}{/snippet}
 <section class="replay" aria-label="Activity replay" aria-busy={loading}>
   {#if error}<div class="notice notice-warn" role="alert">
       {error}<button
@@ -302,29 +321,28 @@
   {#if o && range && !unavailable}
     <div class="replay-body" class:alone={!sideOpen}>
       <div class="replay-map">
+        <button
+          class="panel-toggle"
+          aria-expanded={sideOpen}
+          aria-label={sideOpen ? "Hide panel" : "Show panel"}
+          title={sideOpen ? "Hide panel" : "Show panel"}
+          onclick={() => (sideOpen = sideRemembered = !sideOpen)}><Icon name="panel-right" size={16} /></button
+        >
         <div class="stage-tools">
-          <div class="seg" role="group" aria-label="Map drawing">
+          <div class="views" role="group" aria-label="Map drawing">
             {#each [["tags", "Tags"], ["2d", "2D"], ["3d", "3D"]] as const as [id, name]}<button
                 class="btn-quiet"
                 aria-pressed={drawing === id}
                 onclick={() => draw(id)}>{name}</button
               >{/each}
           </div>
-          <label
-            >Period<select bind:value={period}
-              ><option value="24h">Last 24 hours</option><option value="7d">Last 7 days</option></select
-            ></label
+          <select class="period" aria-label="Period" bind:value={period}
+            >{#each PERIODS as [value, name]}<option {value}>{name}</option>{/each}</select
           >
-          <label
-            >Events by<select bind:value={everyone}
-              ><option value={false}>You</option><option value={true}>Everyone: you, agents and automation</option
-              ></select
-            ></label
-          >
-          <button
-            class="btn-quiet panel-toggle"
-            aria-expanded={sideOpen}
-            onclick={() => (sideOpen = sideRemembered = !sideOpen)}>{sideOpen ? "Hide panel ›" : "‹ Show panel"}</button
+          <select class="whose" aria-label="Events by" bind:value={everyone}
+            ><option value={false}>Your events</option><option value={true}
+              >Everyone's events (you, agents, automation)</option
+            ></select
           >
         </div>
         {#if points}
@@ -352,16 +370,15 @@
             >
               {#snippet legend()}
                 <ul class="key" aria-label="Key to the 3D map">
-                  <li class="muted">Used, by type:</li>
+                  <li class="cap">Used, by type:</li>
                   {#each familiesShown as family}<li>
                       <span class="dot" style={`background:var(--map-${family.k + 1})`}></span>{family.label}
                     </li>{/each}
                   {#if !flat}<li><span class="dot faint"></span>Not used yet</li>{/if}
-                  <li class="rings">
-                    Ring = current event:
-                    {#each PULSES as pulse}<span class="ring" style={`border-color:var(${pulse.token})`}
-                      ></span>{RING_NAMES[pulse.id]}{/each}
-                  </li>
+                  <li class="cap">Ring = current event:</li>
+                  {#each PULSES as pulse}<li>
+                      <span class="ring" style={`border-color:var(${pulse.token})`}></span>{RING_NAMES[pulse.id]}
+                    </li>{/each}
                 </ul>
               {/snippet}
             </SimilarityMap>
@@ -395,35 +412,35 @@
             </p>{/if}
         {/if}
       </div>
-      {#if sideOpen}<aside class="replay-side">
+      {#if sideOpen}<aside class="replay-side" aria-label="Details">
           {#if picked >= 0 || chosen}
             {@const count = eventsText(chosenEvents.filter((s) => s.kind !== "hit").length) || "no events"}
-            <header class="chosen-head">
+            <header class="panel-head">
               <div>
                 <h2>{picked >= 0 ? o.path(picked) : chosen!.name}</h2>
-                <p class="muted small">
+                <p>
                   {picked >= 0
-                    ? `${FAMILIES[o.family[picked]!]!.label} · ${count} so far`
-                    : `${chosen!.kind} · ${chosen!.members.length.toLocaleString()} assets · ${count} so far`}
+                    ? `${FAMILIES[o.family[picked]!]!.label} · ${count}`
+                    : `${chosen!.kind} · ${chosen!.members.length.toLocaleString()} assets · ${count}`}
                 </p>
               </div>
+              {#if picked >= 0}<a class="btn btn-secondary" href={searchHref(new URLSearchParams(), o.ref[picked]!)}
+                  >Open</a
+                >{/if}
               <button
-                class="btn-quiet"
+                class="icon-btn"
                 aria-label="Close"
+                title="Back to the lists"
                 onclick={() => {
                   picked = -1;
                   selected = "";
-                }}>✕</button
+                }}><Icon name="close" size={14} /></button
               >
             </header>
-            {#if picked >= 0}<a class="btn btn-secondary" href={searchHref(new URLSearchParams(), o.ref[picked]!)}
-                >Open</a
-              >{/if}
             <section>
-              <h3>Its events so far</h3>
-              <ol class="log">
-                {#each chosenEvents.slice(0, 20) as step}<li>
-                    <span class="when muted small">{stampText(step.t, span)}</span>
+              <h3>Events <span>When</span></h3>
+              <ol class="rows">
+                {#each capped(chosenEvents, "chosen") as step}<li>
                     <span class="what"
                       >{step.kind === "hit"
                         ? "returned by a search"
@@ -435,69 +452,78 @@
                           href={searchHref(new URLSearchParams(), o.ref[step.node]!)}>{o.path(step.node)}</a
                         >{/if}</span
                     >
-                  </li>{:else}<li class="muted">Nothing yet</li>{/each}
+                    <span class="fig">{stampText(step.t, span)}</span>
+                  </li>{:else}<li class="muted">None</li>{/each}
               </ol>
+              {@render more(chosenEvents.length, "chosen")}
             </section>
           {:else}
-            <div class="figures">
-              <div><strong>{totals.events.toLocaleString()}</strong><span>events</span></div>
-              <div><strong>{totals.shows.toLocaleString()}</strong><span>reads</span></div>
-              <div><strong>{totals.searches.toLocaleString()}</strong><span>searches</span></div>
-              <div><strong>{totals.curates.toLocaleString()}</strong><span>curates</span></div>
-              <div class:bad={totals.foundNothing > 0}>
-                <strong>{totals.foundNothing.toLocaleString()}</strong><span>found nothing</span>
-              </div>
+            {@const misses = totals.misses}
+            {@const feedback = [
+              ...feedbackSoFar.filter((s) => s.signal === "negative"),
+              ...feedbackSoFar.filter((s) => s.signal !== "negative"),
+            ]}
+            <header class="panel-head">
               <div>
-                <strong>{totals.positive}</strong><span>positive,</span><strong>{totals.negative}</strong><span
-                  >negative feedback</span
-                >
+                <h2>Up to {stampText(clock, span)}</h2>
+                <p>
+                  {PERIODS.find((p) => p[0] === period)![1]} · {everyone ? "Everyone" : "You"} · {eventsText(
+                    totals.events,
+                  ) || "no events"}
+                </p>
               </div>
-              <div><strong>{totals.used.size.toLocaleString()}</strong><span>assets used</span></div>
-            </div>
+            </header>
             <section>
-              <h3>Searched for, not found</h3>
-              <ul class="log">
-                {#each totals.misses.slice(0, 6) as [query, count]}<li>
-                    <span class="what">{query}</span><span class="muted small count">×{count}</span>
-                    <a class="small" href={`/library/search?${new URLSearchParams([["q", query]])}`}>Search again</a>
-                    <a class="small" href="/library/files">Create</a>
-                  </li>{:else}<li class="muted">None so far</li>{/each}
+              <h3>
+                Searches that found nothing
+                <span>{totals.foundNothing.toLocaleString()} of {totals.searches.toLocaleString()}</span>
+              </h3>
+              <ul class="rows">
+                {#each capped(misses, "misses") as [query, count]}<li>
+                    <span class="what" title={query}>{query}</span>
+                    <a href={`/library/search?${new URLSearchParams([["q", query]])}`}>Search again</a>
+                    <a href="/library/files">Create</a>
+                    <span class="fig">{count}×</span>
+                  </li>{:else}<li class="muted">None</li>{/each}
               </ul>
+              {@render more(misses.length, "misses")}
             </section>
             <section>
-              <h3>Most used so far</h3>
-              <ol class="log">
-                {#each mostUsed as row}<li>
-                    <a href={searchHref(new URLSearchParams(), row.ref)}>{o.path(row.node)}</a>
-                    <span class="muted small">×{row.count}</span>
-                  </li>{:else}<li class="muted">Nothing yet</li>{/each}
-              </ol>
-            </section>
-            <section>
-              <h3>Feedback given so far</h3>
-              <ol class="log">
-                {#each feedbackSoFar.slice(0, 12) as step}<li>
+              <h3>Feedback <span>{totals.negative} negative, {totals.positive} positive</span></h3>
+              <ol class="rows">
+                {#each capped(feedback, "feedback") as step}<li>
                     <span class="sign" data-signal={step.signal}>{step.signal === "negative" ? "−" : "+"}</span>
-                    {#if step.ref}<a href={searchHref(new URLSearchParams(), step.ref)}
+                    {#if step.ref}<a class="what" href={searchHref(new URLSearchParams(), step.ref)}
                         >{step.node >= 0 ? o.path(step.node) : step.ref}</a
-                      >{:else}<span>an asset</span>{/if}
-                    <span class="muted small">{stampText(step.t, span)}</span>
-                  </li>{:else}<li class="muted">None so far</li>{/each}
+                      >{:else}<span class="what">an asset</span>{/if}
+                    <span class="fig">{stampText(step.t, span)}</span>
+                  </li>{:else}<li class="muted">None</li>{/each}
+              </ol>
+              {@render more(feedback.length, "feedback")}
+            </section>
+            <section>
+              <h3>Most used <span>Events</span></h3>
+              <ol class="rows">
+                {#each mostUsed as row}<li>
+                    <a class="what" href={searchHref(new URLSearchParams(), row.ref)}>{o.path(row.node)}</a>
+                    <span class="fig">{row.count}</span>
+                  </li>{:else}<li class="muted">None</li>{/each}
               </ol>
             </section>
             <section>
-              <h3>Latest events</h3>
-              <ol class="log">
-                {#each recent as step}<li>
-                    <span class="when muted small">{stampText(step.t, span)}</span>
+              <h3>Latest events <span>When</span></h3>
+              <ol class="rows">
+                {#each capped(recent, "recent") as step}<li>
                     <span class="kind" data-kind={step.kind === "search" && step.results === 0 ? "miss" : step.kind}
                     ></span>
                     <span class="what" title={describe(step)}>{describe(step)}</span>
-                  </li>{:else}<li class="muted">Nothing yet</li>{/each}
+                    <span class="fig">{stampText(step.t, span)}</span>
+                  </li>{:else}<li class="muted">None</li>{/each}
               </ol>
+              {@render more(recent.length, "recent")}
             </section>
           {/if}
-          {#if cutNote}<p class="muted small">{cutNote}</p>{/if}
+          {#if cutNote}<p class="muted note">{cutNote}</p>{/if}
         </aside>{/if}
     </div>
     {#if !steps.length}<p>No searches, reads or feedback recorded in this period.</p>{/if}
@@ -513,7 +539,10 @@
       <select aria-label="Speed" bind:value={speed}
         >{#each SPEEDS as option}<option value={option.value}>{option.label}</option>{/each}</select
       >
-      <strong class="now">{range ? stampText(clock, span) : "–"}</strong>
+      <div class="now">
+        <strong>{range ? stampText(clock, span) : "–"}</strong>
+        {#if o && range && !unavailable}<span>Tallest bar = {timeline.max} events</span>{/if}
+      </div>
     </div>
     {#if o && range && !unavailable}
       <div class="track">
@@ -566,7 +595,6 @@
             {#each KINDS.filter((k) => timeline.counts.some((bin) => bin[k.id])) as k}<li>
                 <span class="swatch" style={`background:var(${k.token})`}></span>{k.label}
               </li>{/each}
-            <li class="muted">Tallest bar = {timeline.max} events</li>
           </ul>
           <span>{axis[2]}</span>
         </div>
@@ -583,58 +611,88 @@
   .transport {
     display: flex;
     gap: 8px;
-    align-items: center;
+    align-items: start;
   }
+  .transport :global(button),
   .transport select,
+  .stage-tools :global(button),
   .stage-tools select {
     block-size: 28px;
-    max-inline-size: 11rem;
+    min-block-size: 28px;
     padding-block: 0;
-    font-size: 13px;
+    font-size: var(--text-s);
+    border-radius: 4px;
   }
   .transport :global(button) {
-    min-block-size: 28px;
-    padding: 2px 14px;
+    inline-size: 64px;
+    padding-inline: 0;
+  }
+  .transport select {
+    inline-size: 96px;
+  }
+  .stage-tools select {
+    padding-inline-start: 8px;
+  }
+  .period {
+    inline-size: 140px;
+  }
+  .whose {
+    flex: 0 1 148px;
+    min-inline-size: 104px;
   }
   .now {
+    display: grid;
     min-inline-size: 5.5rem;
+    font-size: var(--text-s);
     font-variant-numeric: tabular-nums;
+  }
+  .now strong {
+    line-height: 28px;
+  }
+  .now span {
+    font-size: var(--text-xs);
+    color: var(--muted);
+    white-space: nowrap;
   }
   .track {
     position: relative;
     flex: 1;
     min-inline-size: 0;
   }
-  .seg {
+  .views {
     display: flex;
-    gap: 4px;
+    gap: 2px;
   }
-  .seg button {
-    min-block-size: 32px;
-    min-inline-size: 44px;
+  .views button {
+    min-inline-size: 40px;
+    padding: 0 10px;
   }
-  .seg button[aria-pressed="true"] {
+  .views button[aria-pressed="true"] {
     color: var(--text);
     background: var(--surface-2);
     font-weight: 600;
   }
   .key {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 2px 14px;
+    display: grid;
+    grid-template-columns: max-content max-content;
+    gap: 0 20px;
     margin: 0;
-    padding: 6px 10px;
+    padding: 0;
     list-style: none;
-    font-size: var(--text-xs);
-  }
-  .key .rings {
-    flex-basis: 100%;
-    color: var(--muted);
   }
   .key li {
     display: flex;
     gap: 6px;
     align-items: center;
+    block-size: 20px;
+    white-space: nowrap;
+  }
+  .key .cap {
+    grid-column: 1 / -1;
+    font-weight: 600;
+  }
+  .key .cap:not(:first-child) {
+    margin-block-start: 6px;
   }
   .dot,
   .ring {
@@ -652,45 +710,6 @@
   .ring {
     box-sizing: border-box;
     border: 2px solid;
-    inline-size: 12px;
-    block-size: 12px;
-  }
-  .figures {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 2px 14px;
-    font-size: 13px;
-  }
-  .figures div {
-    display: flex;
-    gap: 4px;
-    align-items: baseline;
-  }
-  .figures strong {
-    font-variant-numeric: tabular-nums;
-  }
-  .figures span {
-    color: var(--muted);
-  }
-  .chosen-head {
-    display: flex;
-    gap: 8px;
-    align-items: start;
-  }
-  .chosen-head div {
-    flex: 1;
-    min-inline-size: 0;
-  }
-  .chosen-head h2 {
-    margin: 0 0 2px;
-    font-size: 16px;
-    overflow-wrap: anywhere;
-  }
-  .chosen-head p {
-    margin: 0;
-  }
-  .figures .bad strong {
-    color: var(--fail);
   }
   /* The timeline stays at the foot of the window, so the playhead is in view with the map whatever is scrolled. */
   .timeline {
@@ -698,7 +717,7 @@
     inset-block-end: 0;
     z-index: 4;
     display: flex;
-    gap: 16px;
+    gap: 12px;
     align-items: start;
     padding: 6px 12px;
     border: 1px solid var(--border);
@@ -708,7 +727,7 @@
   .timeline svg {
     display: block;
     inline-size: 100%;
-    block-size: 30px;
+    block-size: 28px;
     cursor: ew-resize;
     touch-action: none;
   }
@@ -745,15 +764,19 @@
   }
   .ticks {
     display: flex;
+    flex-wrap: wrap;
     justify-content: space-between;
-    gap: 12px;
-    font-size: 12px;
+    gap: 0 8px;
+    min-block-size: 16px;
+    font-size: var(--text-xs);
     color: var(--muted);
   }
   .replay-body {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 22rem;
-    gap: 24px;
+    grid-template-columns: minmax(0, 1fr) 20rem;
+    gap: var(--space-2);
+    /* The timeline and the map fit one window together. */
+    --stage-size: max(260px, calc(100vh - 254px));
     align-items: start;
   }
   .replay-body.alone {
@@ -764,34 +787,58 @@
     border: 1px solid var(--border);
     background: var(--surface);
     min-inline-size: 0;
-    /* The timeline and the map fit one window together. */
-    --stage-size: max(260px, calc(100vh - 250px));
   }
-  /* The drawing switch and what is replayed sit on the map; over the tags, which have no spare corner, above them. */
+  /* The drawing switch and what is replayed sit on the map; over the tags, which have no spare corner, above them.
+     The row never wraps: it leaves the corner to the panel's button. */
   .stage-tools {
     display: flex;
-    flex-wrap: wrap;
-    gap: 6px 12px;
+    gap: 8px;
     align-items: center;
-    margin-block-end: 6px;
-  }
-  .stage-tools label {
-    display: flex;
-    gap: 6px;
-    align-items: center;
-    font-size: 12px;
-    color: var(--muted);
+    padding: 4px 44px 4px 8px;
   }
   .replay-map:has(:global(.stage-3d)) .stage-tools {
     position: absolute;
     inset-block-start: 8px;
     inset-inline-start: 8px;
     z-index: 3;
-    margin: 0;
-    padding: 2px 6px 2px 2px;
+    inline-size: fit-content;
+    max-inline-size: calc(100% - 52px);
+    padding: 3px;
     background: color-mix(in srgb, var(--surface) 94%, transparent);
     border: 1px solid var(--border);
     border-radius: 6px;
+  }
+  /* The panel's button holds the map's top corner beside the panel, open or closed. */
+  .panel-toggle {
+    position: absolute;
+    inset-block-start: 8px;
+    inset-inline-end: 8px;
+    z-index: 3;
+    display: grid;
+    place-items: center;
+    inline-size: 28px;
+    block-size: 28px;
+    min-block-size: 28px;
+    padding: 0;
+    color: var(--muted);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .panel-toggle[aria-expanded="true"] {
+    color: var(--text);
+    background: var(--surface-2);
+  }
+  .panel-toggle:hover {
+    color: var(--text);
+    border-color: var(--border-strong);
+  }
+  .panel-toggle:focus-visible {
+    box-shadow: var(--focus-halo);
+  }
+  .panel-toggle:active {
+    background: var(--surface-sunk);
   }
   .sign {
     flex: none;
@@ -804,53 +851,144 @@
     color: var(--fail);
   }
   h3 {
-    font-size: 12px;
+    font-size: var(--text-xs);
     color: var(--muted);
     margin: 0 0 6px;
   }
+  /* The panel beside the map: one bordered column with a header, then sections of one-line rows. */
+  /* It is as tall as the map at most, and scrolls inside that, so nothing of it lies under the timeline. */
   .replay-side {
-    display: grid;
-    align-content: start;
-    gap: 10px;
+    max-block-size: calc(var(--stage-size) + 2px);
+    overflow-y: auto;
     min-inline-size: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+  }
+  .panel-head {
+    display: flex;
+    gap: var(--space-2);
+    align-items: start;
+    min-block-size: 44px;
+    padding: var(--space-2) var(--space-3);
+  }
+  .panel-head div {
+    flex: 1;
+    min-inline-size: 0;
+  }
+  .panel-head h2 {
+    margin: 0;
+    font-size: var(--text-m);
+    font-weight: var(--weight-strong);
+    overflow-wrap: anywhere;
+  }
+  .panel-head p {
+    margin: 0;
+    font-size: var(--text-xs);
+    color: var(--muted);
+  }
+  .panel-head .btn {
+    min-block-size: 28px;
+    padding: 2px 10px;
+    font-size: var(--text-s);
+  }
+  .icon-btn {
+    flex: none;
+    display: grid;
+    place-items: center;
+    inline-size: 28px;
+    block-size: 28px;
+    min-block-size: 0;
+    padding: 0;
+    color: var(--muted);
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .icon-btn:hover {
+    color: var(--text);
+    background: var(--surface-2);
   }
   .replay-side section {
     margin: 0;
-    padding: 0;
+    padding: var(--space-2) var(--space-3);
+    border-block-start: 1px solid var(--border);
   }
-  .log {
+  .replay-side h3 {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-2);
+    margin: 0 0 var(--space-1);
+    font-size: var(--text-xs);
+    font-weight: var(--weight-strong);
+    letter-spacing: var(--tracking-caps);
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .replay-side h3 span {
+    font-weight: 400;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+  .rows {
     list-style: none;
     margin: 0;
     padding: 0;
-    font-size: 13px;
+    font-size: var(--text-s);
   }
-  .log li {
+  .rows li {
     display: flex;
-    gap: 8px;
+    gap: var(--space-2);
     align-items: baseline;
-    padding: 3px 0;
-    border-bottom: 1px solid var(--border);
+    padding: 2px 0;
+    line-height: 20px;
     min-inline-size: 0;
   }
-  .log a,
-  .what {
-    overflow-wrap: anywhere;
-    min-inline-size: 0;
-  }
-  /* A long curate query or ref takes two lines at most; the full text is its title. */
-  .what {
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    overflow: hidden;
-  }
-  .when {
+  .rows a {
     flex: none;
-    font-variant-numeric: tabular-nums;
+    color: var(--link);
+    text-decoration: none;
   }
-  .count {
+  .rows a:hover,
+  .rows a:focus-visible {
+    text-decoration: underline;
+  }
+  /* A row is one line: a long name or query is cut, and its title has the whole of it. */
+  .rows .what {
+    flex: 1 1 auto;
+    min-inline-size: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .fig {
+    flex: none;
     margin-inline-start: auto;
+    font-size: var(--text-xs);
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    text-align: end;
+  }
+  button.link {
+    min-block-size: 0;
+    margin-block-start: var(--space-1);
+    padding: 0;
+    font: inherit;
+    font-size: var(--text-xs);
+    color: var(--link);
+    background: none;
+    border: 0;
+    cursor: pointer;
+  }
+  button.link:hover {
+    text-decoration: underline;
+  }
+  .note {
+    margin: 0;
+    padding: var(--space-2) var(--space-3);
+    border-block-start: 1px solid var(--border);
+    font-size: var(--text-xs);
   }
   .kind {
     flex: none;
@@ -879,11 +1017,6 @@
   @media (max-width: 1000px) {
     .replay-body {
       grid-template-columns: 1fr;
-    }
-  }
-  @media (max-width: 1100px) {
-    .figures {
-      grid-template-columns: repeat(3, minmax(0, 1fr));
     }
   }
 </style>
