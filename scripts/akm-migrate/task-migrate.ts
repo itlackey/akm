@@ -337,8 +337,11 @@ function v5Status(
 
 /** The workflow files left in the writable roots a named workflow file is converted in (see {@link workflowOf}). */
 export function remainingWorkflowFiles(): WorkflowFilesOfBundle[] {
-  return taskRoots(loadConfig())
+  const config = loadConfig();
+  const first = (root: TaskFileRoot): number => Number(root.bundleId === config.defaultBundle);
+  return taskRoots(config)
     .filter((root) => root.writable && root.layout !== "akm-task")
+    .sort((a, b) => first(b) - first(a))
     .map((root) => ({ bundle: root.root, files: workflowFilesIn(root.root) }))
     .filter((entry) => entry.files.length > 0);
 }

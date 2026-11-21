@@ -299,6 +299,9 @@ export function planWorkflowToV5File(input: WorkflowToV5Input): WorkflowToV5Outc
   if (plan.tags !== undefined) out.tags = plan.tags;
   if (plan.paramSchemas !== undefined) out.inputs = plan.paramSchemas;
   out.lock = true;
+  // A workflow's steps ran at its bundle's root; a task's steps work in an empty folder made for the run unless it
+  // names one. A relative cwd: is taken from the bundle root.
+  out.cwd = ".";
   Object.assign(out, top.out);
   out.steps = steps;
   const after = Buffer.from(new Document(out).toString({ lineWidth: 0 }), "utf8");

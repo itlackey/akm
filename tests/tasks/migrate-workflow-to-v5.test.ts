@@ -120,6 +120,12 @@ describe("a prose workflow", () => {
     expect(fs.existsSync(taskFile("weekly"))).toBe(false);
   });
 
+  test("its steps work at the bundle root, as the workflow's did", async () => {
+    await convert(workflow("weekly", WEEKLY));
+    const document = await checkTaskV5({ ref: "tasks/weekly", bundle: { name: "stash", dir: storage.stashDir } });
+    expect(document.options.cwd).toBe(".");
+  });
+
   test("keeps its description, tags, lock, inputs, defaults, step options and expected keys", async () => {
     const { file } = await convert(workflow("weekly", WEEKLY));
     const task = parseYaml(read(taskFile("weekly")));
@@ -130,6 +136,7 @@ describe("a prose workflow", () => {
       when_to_use: "When a weekly report is due.",
       tags: ["report", "weekly"],
       lock: true,
+      cwd: ".",
       harness: "claude",
       timeout: "10m",
       inputs: {
