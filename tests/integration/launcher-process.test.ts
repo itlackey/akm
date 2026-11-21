@@ -12,7 +12,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { realNodeExecutable } from "../_helpers/node-runtime";
@@ -53,6 +53,16 @@ async function waitFor(predicate: () => boolean, timeoutMs = 5000): Promise<void
 
 const posix = process.platform === "linux" || process.platform === "darwin";
 
+/** Stops the launcher and the fixture child that announced itself in `readyFile`, so a failed assertion leaves nothing running. */
+function killFixture(proc: ChildProcess | undefined, readyFile: string): void {
+  try {
+    process.kill(Number(fs.readFileSync(readyFile, "utf8")), "SIGKILL");
+  } catch {
+    // never announced, or already gone
+  }
+  proc?.kill("SIGKILL");
+}
+
 function exited(proc: ReturnType<typeof spawn>) {
   return new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) =>
     proc.once("exit", (code, signal) => resolve({ code, signal })),
@@ -69,9 +79,10 @@ for (const [runtimeName, runtime] of runtimes)
   describe.skipIf(!posix)(`the launcher under ${runtimeName} is one process with akm`, () => {
     test("the child is the launcher's own process: same pid, no AKM_LAUNCHER_PID, SIGTERM reaches it once", async () => {
       const sandbox = makeSandboxDir("akm-launcher-execve-");
+      const fixture = launcherFixture(sandbox.dir);
+      let launcherProc: ChildProcess | undefined;
       try {
-        const fixture = launcherFixture(sandbox.dir);
-        const launcherProc = spawn(runtime(), [fixture.launcher, "sentinel"], {
+        launcherProc = spawn(runtime(), [fixture.launcher, "sentinel"], {
           stdio: ["ignore", "ignore", "ignore"],
           env: process.env,
         });
@@ -86,16 +97,18 @@ for (const [runtimeName, runtime] of runtimes)
         expect(received.signal).toBe("SIGTERM");
         expect(received.launcherPid).toBeUndefined();
       } finally {
+        killFixture(launcherProc, fixture.readyFile);
         sandbox.cleanup();
       }
     }, 15000);
 
     test("SIGINT to the whole process group reaches the child once, so its graceful shutdown completes", async () => {
       const sandbox = makeSandboxDir("akm-launcher-signal-group-");
+      const readyFile = path.join(sandbox.dir, "ready.txt");
+      let launcherProc: ChildProcess | undefined;
       try {
         const dist = path.join(sandbox.dir, "package", "dist");
         const launcher = path.join(dist, "akm");
-        const readyFile = path.join(sandbox.dir, "ready.txt");
         const doneFile = path.join(sandbox.dir, "done.txt");
         fs.mkdirSync(dist, { recursive: true });
         fs.copyFileSync(path.resolve("scripts/node-runtime/akm"), launcher);
@@ -110,7 +123,7 @@ for (const [runtimeName, runtime] of runtimes)
             "await new Promise(() => {});",
           ].join("\n"),
         );
-        const launcherProc = spawn(runtime(), [launcher, "sentinel"], {
+        launcherProc = spawn(runtime(), [launcher, "sentinel"], {
           stdio: ["ignore", "ignore", "ignore"],
           env: process.env,
           detached: true,
@@ -120,16 +133,18 @@ for (const [runtimeName, runtime] of runtimes)
         expect(await exited(launcherProc)).toEqual({ code: 0, signal: null });
         expect(fs.existsSync(doneFile)).toBe(true);
       } finally {
+        killFixture(launcherProc, readyFile);
         sandbox.cleanup();
       }
     }, 15000);
 
     test("a child with no handler dies of the signal itself", async () => {
       const sandbox = makeSandboxDir("akm-launcher-signal-nohandler-");
+      const readyFile = path.join(sandbox.dir, "ready.txt");
+      let launcherProc: ChildProcess | undefined;
       try {
         const dist = path.join(sandbox.dir, "package", "dist");
         const launcher = path.join(dist, "akm");
-        const readyFile = path.join(sandbox.dir, "ready.txt");
         fs.mkdirSync(dist, { recursive: true });
         fs.copyFileSync(path.resolve("scripts/node-runtime/akm"), launcher);
         fs.writeFileSync(
@@ -140,11 +155,12 @@ for (const [runtimeName, runtime] of runtimes)
             "await new Promise(() => {});",
           ].join("\n"),
         );
-        const launcherProc = spawn(runtime(), [launcher, "sentinel"], { stdio: ["ignore", "ignore", "ignore"] });
+        launcherProc = spawn(runtime(), [launcher, "sentinel"], { stdio: ["ignore", "ignore", "ignore"] });
         await waitFor(() => fs.existsSync(readyFile));
         launcherProc.kill("SIGTERM");
         expect((await exited(launcherProc)).signal).toBe("SIGTERM");
       } finally {
+        killFixture(launcherProc, readyFile);
         sandbox.cleanup();
       }
     }, 15000);
