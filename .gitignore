@@ -26,3 +26,6 @@ docs/reviews/akm-meta-review/findings/
 .akm/
 docs/.pending/
 
+
+# On-demand quality reports (scripts/quality)
+reports/quality/
