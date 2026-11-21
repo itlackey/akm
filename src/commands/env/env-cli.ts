@@ -176,7 +176,7 @@ const envExportCommand = defineJsonCommand({
   meta: {
     name: "export",
     description:
-      "Write safe `export KEY='value'` lines to a file (mode 0600) for `source`-ing — requires --out <path>. Values are re-serialised single-quoted so a raw `.env` cannot execute on load, and are NEVER printed to stdout. To use values directly, prefer `akm exec --env <ref> -- <command>`.",
+      "Write safe `export KEY='value'` lines to a file (mode 0600) for `source`-ing — requires --out <path>. Values are re-serialised single-quoted so a raw `.env` cannot execute on load, and are NEVER printed to stdout. To use values directly, put the command in a script asset and run it with `akm run --env <ref> scripts/<file>`.",
   },
   args: {
     ref: { type: "positional", description: "Env ref", required: true },
@@ -187,8 +187,8 @@ const envExportCommand = defineJsonCommand({
     if (!outPath) {
       throw new UsageError(
         "`akm env export` writes to a file — pass --out <path>.\n" +
-          "       To use values directly, run `akm exec --env <ref> -- <command>` (or `-- $SHELL` for an interactive\n" +
-          "       session). export never prints values to stdout, to avoid leaking them into a captured context.",
+          "       To use values directly, put the command in a script asset and run it with\n" +
+          "       `akm run --env <ref> scripts/<file>`. export never prints values to stdout, to avoid leaking them into a captured context.",
         "MISSING_REQUIRED_ARGUMENT",
       );
     }

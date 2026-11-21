@@ -62,7 +62,7 @@ const DEPRECATIONS: readonly Deprecation[] = [
   { path: ["env", "run"], use: "a script asset under scripts/, run with `akm run --env <ref> scripts/<file>`" },
   {
     path: ["secret", "run"],
-    use: "`akm exec --secret <ref>:<VAR> -- <command>` (Experimental: set `experimental.exec` to true)",
+    use: "a script asset under scripts/, run with `akm run --secret <ref>:<VAR> scripts/<file>`",
   },
   { path: ["agent"], needsRef: true, use: "`akm run <ref>`" },
   { path: ["command", "run"], use: "`akm run <ref>`" },

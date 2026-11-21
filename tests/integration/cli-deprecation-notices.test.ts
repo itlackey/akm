@@ -272,7 +272,7 @@ const FORMS: { args: string[]; mentions: string[] }[] = [
   { args: ["env", "run", "env/x"], mentions: ["akm env run", "`akm run --env <ref> scripts/<file>`"] },
   {
     args: ["secret", "run", "secrets/x", "X"],
-    mentions: ["akm secret run", "`akm exec --secret <ref>:<VAR> -- <command>`"],
+    mentions: ["akm secret run", "`akm run --secret <ref>:<VAR> scripts/<file>`"],
   },
   {
     args: ["registry", "add", "http://x.example/i.json", "--options", "{}"],

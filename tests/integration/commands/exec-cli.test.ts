@@ -128,7 +128,7 @@ describe("akm exec", () => {
     const secret = akm(stash, ["secret", "run", "secrets/token", "X", "--", ...print("X")]);
     expect(secret.stdout).toBe("t|");
     expect(secret.rawStderr).toContain(
-      "akm secret run is deprecated and is removed in 0.11: use `akm exec --secret <ref>:<VAR> -- <command>`",
+      "akm secret run is deprecated and is removed in 0.11: use a script asset under scripts/, run with `akm run --secret <ref>:<VAR> scripts/<file>`",
     );
   });
 

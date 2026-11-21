@@ -155,7 +155,7 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | `akm env create` | Experimental | Write verb. |
 | `akm env remove` | Experimental | Write verb. |
 | `akm secret list` | Stable | Read-and-inject surface. |
-| `akm secret run` | Deprecated | Removed in 0.11: use `akm exec --secret <ref>:<VAR> -- <command>`. Read-and-inject surface. |
+| `akm secret run` | Deprecated | Removed in 0.11: put the command in a script asset under scripts/, run with `akm run --secret <ref>:<VAR> scripts/<file>`. Read-and-inject surface. |
 | `akm secret set` | Experimental | Write verb. |
 | `akm secret remove` | Experimental | Write verb; restored in 0.10 after its 0.9.0 removal. |
 

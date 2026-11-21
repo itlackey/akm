@@ -3165,7 +3165,8 @@ single boundary commit. Reads (`list`, `run`) still span all configured sources.
 
 #### secret run
 
-Deprecated; use [`akm exec --secret <ref>:<VAR> -- <command>`](#exec); removed in 0.11.
+Deprecated; put the command in a script asset under `scripts/` and run it with
+`akm run --secret <ref>:<VAR> scripts/<file>`; removed in 0.11.
 
 ```sh
 akm secret run secrets/deploy-token GITHUB_TOKEN -- gh release create v1.0.0
