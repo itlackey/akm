@@ -133,7 +133,10 @@ describe("walkStash", () => {
 
 describe("walkStashFlat", () => {
   test("marks a missing root as an incomplete snapshot", () => {
-    expect(walkStashFlatWithStatus("/nonexistent/path")).toEqual({ files: [], complete: false });
+    const result = walkStashFlatWithStatus("/nonexistent/path");
+    expect(result.files).toEqual([]);
+    expect(result.complete).toBe(false);
+    expect(result.incompleteReason).toContain("ENOENT");
   });
 
   test("returns FileContext objects (not plain paths)", () => {

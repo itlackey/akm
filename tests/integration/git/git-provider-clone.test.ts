@@ -317,7 +317,7 @@ describe("writable Git checkout safety", () => {
     fs.writeFileSync(edited, "dirty work\n", "utf8");
     const revision = pushUpstream(fixture, { "lessons/up.md": "upstream\n" });
 
-    expect(() => update(fixture, revision)).toThrow(/local commits/);
+    expect(() => update(fixture, revision)).toThrow(/commits not on/);
     expect(git(["-C", fixture.checkout, "rev-parse", "HEAD"])).toBe(localHead);
     expect(git(["-C", fixture.checkout, "status", "--porcelain"])).toBe("M content/lessons/seed.md");
     expect(git(["--git-dir", fixture.remote, "rev-parse", "main"])).toBe(revision);
@@ -406,7 +406,7 @@ describe("writable Git checkout safety", () => {
         both.contentRoot,
         "2026-01-01T00:00:00.000Z",
       ),
-    ).toThrow(/local commits/);
+    ).toThrow(/commits not on/);
     expect(fs.existsSync(path.join(both.contentRoot, "lessons", "local.md"))).toBe(true);
   });
 
