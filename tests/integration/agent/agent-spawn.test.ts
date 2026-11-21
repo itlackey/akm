@@ -243,7 +243,8 @@ describe("runAgent — OpenCode agent work", () => {
         return probed(result.stdout);
       },
     );
-    expect(seen.argv).toEqual([]);
+    // The binary names no version, so it runs as OpenCode 1 and its event stream is read.
+    expect(seen.argv).toEqual(["run", "--format", "json"]);
     expect(seen.env.OPENCODE_CONFIG_CONTENT).toBe(inline);
     expect(seen.env.OPENCODE_DISABLE_FREE_MODELS).toBeUndefined();
     expect(seen.stdin).toBe("go");

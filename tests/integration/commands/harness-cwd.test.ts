@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import { runCliCapture } from "../../_helpers/cli";
 import { harnessCalls, writeFakeHarness } from "../../_helpers/engine-stubs";
+import { fakeOpencodeMajor } from "../../_helpers/opencode-version";
 import {
   type IsolatedAkmStorage,
   makeSandboxDir,
@@ -27,6 +28,8 @@ let bins: SandboxedDir;
 let work: SandboxedDir;
 
 beforeEach(() => {
+  // The fake prints plain text, which only an OpenCode 2 run takes as its reply.
+  fakeOpencodeMajor(2);
   storage = withIsolatedAkmStorage();
   bins = makeSandboxDir("akm-harness-cwd-bin");
   work = makeSandboxDir("akm-harness-cwd-work");

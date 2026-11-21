@@ -32,7 +32,8 @@ import { fakeOpencodeMajor } from "../../_helpers/opencode-version";
 import { makeSandboxDir, withEnv } from "../../_helpers/sandbox";
 import { overrideSeam } from "../../_helpers/seams";
 
-beforeEach(() => fakeOpencodeMajor(1));
+// The fake harness prints plain text, which an OpenCode 2 run takes as its reply.
+beforeEach(() => fakeOpencodeMajor(2));
 
 /** What the program a harness runner names was started with. */
 interface Spawned {

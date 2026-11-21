@@ -16,7 +16,7 @@ import { judgmentJudge } from "../commands/proposal/drain";
 import type { AkmConfig } from "../core/config/config";
 import { ConfigError, UsageError } from "../core/errors";
 import { validateJsonSchemaSubset } from "../core/json-schema";
-import type { NoticeSink } from "../execution/notices";
+import { type Notice, type NoticeSink, noticeSet } from "../execution/notices";
 import type { ConfiguredExecutionSettings } from "../execution/source";
 import type { RunnerSpec } from "../integrations/agent/runner";
 import type { ChatCompletionConfig, ChatCompletionOptions, ChatMessage } from "../llm/client";
@@ -93,6 +93,8 @@ export interface JudgeEnvelope {
   outcome: JudgeOutcome<unknown>["outcome"];
   verdict?: unknown;
   reason?: string;
+  /** What lowering the call for its runner reported (a harness akm cannot restrict, say). */
+  notices?: readonly Notice[];
 }
 
 /** One judge call from outside the pipeline: check the input, pick the runner, run, and wrap the result with the runner it ran on. */
@@ -115,7 +117,8 @@ export async function runJudge(
       "LLM_NOT_CONFIGURED",
     );
   }
-  const result = await judge.run(input, { ...call, runner });
+  const notices = noticeSet(call.onNotices);
+  const result = await judge.run(input, { ...call, runner, onNotices: notices.add });
   return {
     judge: name,
     schemaVersion: judge.schemaVersion,
@@ -127,6 +130,7 @@ export async function runJudge(
     },
     outcome: result.outcome,
     ...(result.outcome === "verdict" ? { verdict: result.verdict } : { reason: result.reason }),
+    ...notices.fields(),
   };
 }
 

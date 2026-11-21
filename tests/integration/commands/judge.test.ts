@@ -6,7 +6,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import path from "node:path";
 import { saveConfig } from "../../../src/core/config/config";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
+import { writeFakeHarness } from "../../_helpers/engine-stubs";
+import { type IsolatedAkmStorage, makeSandboxDir, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 const repoRoot = path.resolve(import.meta.dir, "../../..");
 
@@ -111,6 +112,21 @@ describe("akm judge", () => {
       expect(envelope).not.toHaveProperty("verdict");
     } finally {
       server.stop(true);
+    }
+  });
+
+  test("a judge on a harness akm cannot restrict says so in its envelope, for `judge` and `doctor judge`", async () => {
+    const bins = makeSandboxDir("akm-judge-notice-bin");
+    try {
+      const bin = writeFakeHarness(bins.dir, "gemini", ["not a verdict"]);
+      saveConfig({ semanticSearchMode: "off", harnesses: { gem: { platform: "gemini", bin } } });
+      for (const command of [["judge"], ["doctor", "judge"]]) {
+        const result = await akm([...command, "reflect.quality", "--harness", "gem"], JSON.stringify(INPUT));
+        const envelope = JSON.parse(result.stdout) as { notices?: { code: string }[] };
+        expect(envelope.notices?.map((notice) => notice.code)).toContain("model-work-unrestricted");
+      }
+    } finally {
+      bins.cleanup();
     }
   });
 

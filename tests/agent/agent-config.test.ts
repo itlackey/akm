@@ -46,7 +46,7 @@ describe("built-in agent harness profiles", () => {
       name: "opencode",
       platform: "opencode",
       bin: "opencode",
-      args: ["run"],
+      args: [],
     });
   });
 
