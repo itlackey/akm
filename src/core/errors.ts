@@ -45,6 +45,9 @@ export type ConfigErrorCode =
   // A connection or harness was named (a flag, an asset, a config key) that is not configured: never replaced by a default.
   | "SELECTION_NOT_CONFIGURED"
   | "INVALID_CONFIG_FILE"
+  // A git bundle's checkout holds uncommitted paths or commits that are not on its upstream, and the
+  // command would replace or delete the checkout. The work is the person's: akm names it and stops.
+  | "SOURCE_HAS_LOCAL_WORK"
   | "UNKNOWN_IMPROVE_STRATEGY"
   // Refused stashDir that would clobber a sensitive system path or the user's
   // home directory (#473). Triggered by `akm bundle create`/`akm setup` when the
@@ -192,6 +195,8 @@ export type TransientErrorCode =
 export type NotFoundErrorCode =
   | "ASSET_NOT_FOUND"
   | "SOURCE_NOT_FOUND"
+  // The program exists but the operating system refuses to execute it (no execute permission, or a folder).
+  | "COMMAND_NOT_EXECUTABLE"
   | "WORKFLOW_NOT_FOUND"
   | "PROPOSAL_NOT_FOUND"
   | "FILE_NOT_FOUND"

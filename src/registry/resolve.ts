@@ -101,6 +101,9 @@ export function parseRegistryRef(rawRef: string): ParsedRegistryRef {
   if (ref.startsWith("http://") || ref.startsWith("https://")) {
     return parseRemoteUrl(ref);
   }
+  if (ref.startsWith("git://") || ref.startsWith("ssh://")) {
+    return parseGitUrl(ref, ref);
+  }
   const localRef = tryParseLocalRef(ref, isPathLikeRef(ref));
   if (localRef) {
     return localRef;
@@ -144,6 +147,8 @@ export function buildInstallRef(
 const KNOWN_PREFIXES = ["npm:", "github:", "git+", "file:", "http://", "https://"];
 
 function detectRegistrySearchId(ref: string): string | undefined {
+  // A URL names its own transport; it is never a registry id.
+  if (ref.includes("://")) return undefined;
   const colonIdx = ref.indexOf(":");
   if (colonIdx < 1) return undefined;
 

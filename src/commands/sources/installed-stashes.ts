@@ -39,7 +39,7 @@ import { readLockfile, upsertLockEntry } from "../../integrations/lockfile";
 import { parseRegistryRef, resolveRegistryArtifact } from "../../registry/resolve";
 import type { InstalledBundle, InstallKind } from "../../registry/types";
 import { getCachePaths, parseGitRepoUrl, runGit, syncMirroredRepo } from "../../sources/providers/git";
-import { replaceDirectory, UPDATE_REFUSAL_HINT } from "../../sources/providers/git-install";
+import { assertNoLocalWork, replaceDirectory, UPDATE_REFUSAL_HINT } from "../../sources/providers/git-install";
 import type { SourceLockData } from "../../sources/providers/install-types";
 import { installRevisionDir, isDirectory } from "../../sources/providers/provider-utils";
 import { syncFromRef } from "../../sources/providers/sync-from-ref";
@@ -287,7 +287,24 @@ export async function akmListSources(input?: { stashDir?: string; kind?: SourceK
   };
 }
 
-export async function akmRemove(input: { target: string; stashDir?: string }): Promise<RemoveResponse> {
+/**
+ * Removing a git bundle deletes or abandons its checkout: refuse while the checkout holds work that exists
+ * nowhere else, unless the person decided to lose it (`--force`).
+ */
+function assertRemovableCheckout(repoDir: string | undefined, force: boolean): void {
+  if (force || !repoDir || !fs.existsSync(path.join(repoDir, ".git"))) return;
+  assertNoLocalWork(repoDir, `Git bundle checkout at ${repoDir}`);
+}
+
+/** The git checkout holding a managed install's content, when it is one (a read-only snapshot keeps no `.git`). */
+function managedCheckoutDir(managed: ManagedInstall): string | undefined {
+  if (!managed.localRoot || !isDirectory(managed.localRoot)) return undefined;
+  const top = runGit(["-C", managed.localRoot, "rev-parse", "--show-toplevel"]);
+  const repoDir = top.status === 0 ? top.stdout.trim() : "";
+  return repoDir && isWithin(repoDir, getRegistryCacheDir()) ? repoDir : undefined;
+}
+
+export async function akmRemove(input: { target: string; stashDir?: string; force?: boolean }): Promise<RemoveResponse> {
   const target = input.target.trim();
   if (!target)
     throw new UsageError(
@@ -300,6 +317,7 @@ export async function akmRemove(input: { target: string; stashDir?: string }): P
   // Registry-managed installs (lock-backed bundles) first.
   const managed = resolveManagedTarget(config, target);
   if (managed) {
+    assertRemovableCheckout(managedCheckoutDir(managed), input.force === true);
     const updatedConfig = await removeInstalledRegistryEntry(managed.installId);
     if (managed.source !== "local" && managed.localRoot) {
       cleanupDirectoryBestEffort(managed.localRoot, "remove");
@@ -332,6 +350,10 @@ export async function akmRemove(input: { target: string; stashDir?: string }): P
   }
 
   // Plain sources (filesystem/git/website bundles) via the bundle-map remover.
+  const plainGit = getSources(config).find((source) => source.url && (source.name === target || source.url === target));
+  if (plainGit?.url) {
+    assertRemovableCheckout(getCachePaths(parseGitRepoUrl(plainGit.url).canonicalUrl).repoDir, input.force === true);
+  }
   const stashResult = removeStash(target);
   if (!stashResult.removed || !stashResult.entry) {
     throw new NotFoundError(`No matching source for target: ${target}`, "SOURCE_NOT_FOUND");
@@ -547,9 +569,9 @@ function fastForwardCheckout(
     );
   }
   if (merge.status !== 0) {
-    throw new UsageError(
+    throw new ConfigError(
       `Writable Git install at ${liveRepo} cannot fast-forward without overwriting local work; local work was preserved. ${merge.stderr.trim()}`,
-      "INVALID_FLAG_VALUE",
+      "SOURCE_HAS_LOCAL_WORK",
       UPDATE_REFUSAL_HINT,
     );
   }
@@ -665,6 +687,7 @@ async function stageManagedUpdate(
         force,
         writable: true,
         writableRoot: stagedRoot,
+        displayRoot: managed.localRoot,
         allowLocalChanges: true,
         writableRequiredRoots: managed.requiredRoots.map((root) =>
           path.join(stagedRoot, path.relative(managed.localRoot, root)),
@@ -684,10 +707,6 @@ async function stageManagedUpdate(
       };
     } catch (error) {
       cleanupDirectoryBestEffort(stagingParent, "bundle update");
-      // Report the configured bundle path, not the throwaway staging copy.
-      if (error instanceof UsageError) {
-        error.message = error.message.replaceAll(stagedRepo, liveRepo);
-      }
       throw error;
     }
   }
@@ -700,6 +719,10 @@ async function stageManagedUpdate(
       staged: { publish() {}, cleanup() {} },
     };
   }
+
+  // A read-only update moves the install off a checkout that is not writable any more; the checkout is
+  // abandoned there, so it must hold no local work.
+  assertRemovableCheckout(managedCheckoutDir(managed), false);
 
   const cacheRoot = getRegistryCacheDir();
   const stagingParent = createStagingParent(cacheRoot);
@@ -742,6 +765,10 @@ async function syncGitPlainSource(
   const component = bundleComponent(config, id);
   const canonicalUrl = parseGitRepoUrl(gitSource.url).canonicalUrl;
   const livePaths = getCachePaths(canonicalUrl);
+  // A read-only refresh replaces the live directory; a checkout there is replaced only without local work.
+  if (!component.writable && fs.existsSync(path.join(livePaths.repoDir, ".git"))) {
+    assertNoLocalWork(livePaths.repoDir, `Git source checkout at ${livePaths.repoDir}`);
+  }
   const stagingParent = createStagingParent(path.dirname(livePaths.rootDir));
   try {
     const stagedPaths = getCachePaths(canonicalUrl, stagingParent);
@@ -754,6 +781,7 @@ async function syncGitPlainSource(
       force: true,
       writable: component.writable,
       cacheRootDir: stagingParent,
+      displayRoot: livePaths.repoDir,
       ...(gitSource.credential
         ? { credential: resolveSecret(gitSource.credential, storeSecretResolver.resolveSecret) }
         : {}),
