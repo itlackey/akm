@@ -14,8 +14,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { listKeys as listVaultKeys } from "../commands/env/env";
+import { refForFile } from "../core/asset/asset-placement";
 import { parseFrontmatter, readFrontmatterDate } from "../core/asset/frontmatter";
+import { displayRef } from "../core/asset/resolve-ref";
 import { asNonEmptyString, hasErrnoCode } from "../core/common";
+import { SCRIPT_EXTENSIONS } from "../core/recognition-util";
 import type { IndexDocument } from "../indexer/passes/metadata";
 import { extractCommentMetadata } from "../indexer/passes/metadata";
 import type { AssetRenderer, RenderContext } from "../indexer/walk/file-context";
@@ -30,28 +33,6 @@ export interface ExecHints {
   setup?: string;
   cwd?: string;
 }
-
-// ── Interpreter auto-detection map ───────────────────────────────────────────
-
-const INTERPRETER_MAP: Record<string, string> = {
-  ".sh": "bash",
-  ".ts": "bun",
-  ".js": "bun",
-  ".mjs": "bun",
-  ".py": "python",
-  ".rb": "ruby",
-  ".go": "go run",
-  ".ps1": "powershell -File",
-  ".cmd": "cmd /c",
-  ".bat": "cmd /c",
-  ".pl": "perl",
-  ".php": "php",
-  ".lua": "lua",
-  ".r": "Rscript",
-  ".swift": "swift",
-  ".kt": "kotlin",
-  ".kts": "kotlin",
-};
 
 // ── Setup signal map ─────────────────────────────────────────────────────────
 
@@ -82,22 +63,15 @@ export function extractCommentTags(filePath: string): ExecHints {
 // ── Auto-detection ───────────────────────────────────────────────────────────
 
 /**
- * Auto-detect execution hints from the file extension and nearby files.
+ * Auto-detect execution hints for the script asset `ref` at `filePath`.
  *
- * 1. Maps the file extension to an interpreter via INTERPRETER_MAP.
+ * 1. A recognized script is run with `akm run <ref>`, the one way akm runs a script.
  * 2. Scans the file's directory for dependency signal files (package.json,
  *    requirements.txt, etc.) to suggest a setup command.
  */
-export function detectExecHints(filePath: string): ExecHints {
-  const ext = path.extname(filePath).toLowerCase();
+export function detectExecHints(filePath: string, ref: string): ExecHints {
   const hints: ExecHints = {};
-
-  // Interpreter from extension — use basename so the run command is portable
-  // relative to the stash root (callers set cwd to the file's directory).
-  const interpreter = INTERPRETER_MAP[ext];
-  if (interpreter) {
-    hints.run = `${interpreter} ${path.basename(filePath)}`;
-  }
+  if (SCRIPT_EXTENSIONS.has(path.extname(filePath).toLowerCase())) hints.run = `akm run ${ref}`;
 
   // Setup from nearby dependency files
   const dir = path.dirname(filePath);
@@ -124,9 +98,9 @@ export function detectExecHints(filePath: string): ExecHints {
  * Resolution order (first non-empty value wins for each field):
  * 1. Indexed entry metadata (`run`/`setup`/`cwd`) when supplied by the caller
  * 2. Script file header comments (`@run`/`@setup`/`@cwd`)
- * 3. Auto-detection from extension + dependency files
+ * 3. Auto-detection: `akm run <ref>` and dependency files
  */
-export function resolveExecHints(stashEntry: IndexDocument | undefined, filePath: string): ExecHints {
+export function resolveExecHints(stashEntry: IndexDocument | undefined, filePath: string, ref: string): ExecHints {
   const stashHints: ExecHints = {
     run: stashEntry?.run,
     setup: stashEntry?.setup,
@@ -134,7 +108,7 @@ export function resolveExecHints(stashEntry: IndexDocument | undefined, filePath
   };
 
   const commentHints = extractCommentTags(filePath);
-  const autoHints = detectExecHints(filePath);
+  const autoHints = detectExecHints(filePath, ref);
 
   return {
     run: stashHints.run || commentHints.run || autoHints.run,
@@ -352,9 +326,14 @@ const scriptSourceRenderer: AssetRenderer = {
     const name = deriveName(ctx);
     const ext = path.extname(ctx.absPath).toLowerCase();
 
-    // For extensions with a known interpreter, show exec hints
-    if (INTERPRETER_MAP[ext]) {
-      const hints = resolveExecHints(undefined, ctx.absPath);
+    // A recognized script shows how to run it
+    if (SCRIPT_EXTENSIONS.has(ext)) {
+      const conceptId = refForFile("script", ctx.stashRoot, ctx.absPath) ?? name;
+      const hints = resolveExecHints(
+        undefined,
+        ctx.absPath,
+        displayRef({ conceptId, bundleId: ctx.origin }, ctx.defaultBundle),
+      );
 
       if (hints.run) {
         return {
@@ -381,10 +360,10 @@ const scriptSourceRenderer: AssetRenderer = {
 
   enrichSearchHit(hit: SourceSearchHit, _stashDir: string): void {
     const ext = path.extname(hit.path).toLowerCase();
-    if (!INTERPRETER_MAP[ext]) return;
+    if (!SCRIPT_EXTENSIONS.has(ext)) return;
 
     try {
-      const hints = resolveExecHints(undefined, hit.path);
+      const hints = resolveExecHints(undefined, hit.path, hit.ref);
       hit.run = hints.run;
     } catch (error: unknown) {
       if (!hasErrnoCode(error, "ENOENT")) throw error;
@@ -592,7 +571,6 @@ export {
   commandMdRenderer,
   envFileRenderer,
   factMdRenderer,
-  INTERPRETER_MAP,
   knowledgeMdRenderer,
   lessonMdRenderer,
   memoryMdRenderer,

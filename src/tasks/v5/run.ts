@@ -602,7 +602,7 @@ async function runProcessStep(
   run: { env: Record<string, string>; cwd: string; timeoutMs: number },
   sink: Sink,
 ): Promise<Done> {
-  const argv =
+  const { argv, script } =
     step.kind === "scripts"
       ? scriptProgram(
           step.run as string,
@@ -610,13 +610,17 @@ async function runProcessStep(
             .file,
           (step.args ?? []).map((item) => asText(argument(item, record.state))),
         )
-      : shellCommand({ command: step.exec as string, shell: process.platform === "win32" ? "cmd" : "sh" });
+      : {
+          argv: shellCommand({ command: step.exec as string, shell: process.platform === "win32" ? "cmd" : "sh" }),
+          script: undefined,
+        };
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-task-state-"));
   const statePath = path.join(stateDir, "state.json");
   fs.writeFileSync(statePath, JSON.stringify(record.state, null, 2));
   try {
     const result = await runProgram({
       argv,
+      ...(script ? { script } : {}),
       env: { ...run.env, AKM_TASK_STATE: statePath },
       cwd: run.cwd,
       timeoutMs: run.timeoutMs,

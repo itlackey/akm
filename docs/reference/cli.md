@@ -3311,8 +3311,11 @@ run. `workflow resume`, `status`, `list`, and `abandon` retain their lifecycle
 roles. The deprecated no-op `--new` is not accepted by the new entry point.
 
 A script runs by its ref only (`akm run scripts/<file> [arguments]`, or
-`team//scripts/<file>`); a filesystem path is refused. It runs in place with the
-interpreter its extension selects, and its exit status is akm's. akm's flags
+`team//scripts/<file>`); a filesystem path is refused. It runs in place, and its exit status is akm's. A `#!` first line
+decides what runs it: the program the line names and its one argument
+(`#!/bin/bash -e`, `#!/usr/bin/env -S bash -eu`, `#!/usr/bin/env python3`), then
+the file. With no first line the extension selects the program (`.py` runs
+`python3`). Windows has no `#!` lines, so there the extension always decides. akm's flags
 (`--timeout`, `--max-retries`, `--cwd`, `--env`, `--secret`, `--clean`,
 `--inherit`) go before the ref; every token after the ref, `--` included, is
 passed to the script unchanged. `--inherit <VAR,...>` starts the run clean with

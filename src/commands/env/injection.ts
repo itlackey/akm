@@ -22,6 +22,7 @@ import { parseSecretSpec } from "../../core/ref-token";
 import { readValue } from "../../core/secret-value";
 import { type ManagedSubprocessResult, runManagedSubprocess } from "../../core/subprocess";
 import { withRetries } from "../../execution/retry";
+import type { ScriptOrigin } from "../../tasks/prepare/script-capture";
 import { resolveEnvBinding } from "./env-binding";
 
 export const INJECTION_ARGS = {
@@ -122,6 +123,8 @@ export interface RunProgramOptions {
   /** false: the child owns this terminal. true: its output comes back in the result. */
   capture: boolean;
   signal?: AbortSignal;
+  /** The script `argv` runs, so a program that cannot be started is reported as that script's. */
+  script?: ScriptOrigin;
 }
 
 /**
@@ -146,12 +149,24 @@ export async function runProgram(options: RunProgramOptions): Promise<ManagedSub
       }),
     (r) => r.spawnError === undefined && !r.aborted && (r.timedOut || r.exitCode !== 0),
   );
-  if (result.spawnError) throw spawnFailure(argv[0] as string, result.spawnError);
+  if (result.spawnError) throw spawnFailure(argv[0] as string, result.spawnError, options.script);
   return result;
 }
 
-function spawnFailure(program: string, error: Error): Error {
+/** The error for a program that could not be started; `script` names the script whose command it was. */
+export function spawnFailure(program: string, error: Error, script?: ScriptOrigin): Error {
   const code = (error as NodeJS.ErrnoException).code;
+  if (code === "ENOENT" && script) {
+    return new NotFoundError(
+      script.firstLine
+        ? `${script.ref}: its first line ${script.firstLine} names ${program}, which was not found`
+        : `${script.ref}: ${program}, the program for its extension, was not found`,
+      "FILE_NOT_FOUND",
+      script.firstLine
+        ? `Install '${program}', or correct the script's first line.`
+        : `Install '${program}' or add its directory to PATH, or add a \`#!\` first line naming the program that runs the script.`,
+    );
+  }
   if (code === "ENOENT") {
     return new NotFoundError(
       `Command not found: ${program}`,

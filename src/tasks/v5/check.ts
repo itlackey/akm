@@ -29,7 +29,7 @@ import {
   validateInputs,
 } from "../../execution/input-contract";
 import { resolveAssetPath } from "../../sources/resolve";
-import { scriptInterpreter } from "../prepare/script-capture";
+import { scriptProgram } from "../frozen-script";
 import { resolveBundleAsset } from "../run/load-task";
 import { parseTaskSource } from "../source/parse-task-source";
 import { TASK_INPUT_DIAGNOSTICS } from "../source/task-input-diagnostics";
@@ -141,8 +141,7 @@ async function checkTask(
     }
     const asset = await locateTaskV5Asset(found.bundle, target, step.kind, at);
     if (step.kind === "scripts") {
-      const extension = path.extname(asset.file).toLowerCase();
-      scriptInterpreter(extension, target, fs.readFileSync(asset.file));
+      scriptProgram(target, asset.file, []);
     }
   }
   return document;
