@@ -741,7 +741,7 @@
     background: var(--surface);
     min-inline-size: 0;
     /* The timeline and the map fit one window together. */
-    --stage-size: max(260px, calc(100vh - 262px));
+    --stage-size: max(260px, calc(100vh - 238px));
   }
   /* The drawing switch and what is replayed sit on the map; over the tags, which have no spare corner, above them. */
   .stage-tools {

@@ -230,7 +230,12 @@
   });
 </script>
 
-<nav class="activity-tabs" aria-label="Activity views" data-sveltekit-reset="false">
+<nav
+  class="activity-tabs"
+  class:tight={view === "Replay"}
+  aria-label="Activity views"
+  data-sveltekit-reset="false"
+>
   {#each views as tab}<a
       class:active={view === tab.name}
       aria-current={view === tab.name ? "page" : undefined}
@@ -388,6 +393,10 @@
     gap: 0 1.75rem;
     border-bottom: 1px solid var(--border);
     margin-bottom: 2rem;
+  }
+  /* Replay's map takes the window: nothing stands between the tabs and it. */
+  .activity-tabs.tight {
+    margin-bottom: 0.5rem;
   }
   .activity-tabs a {
     flex: none;
