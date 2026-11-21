@@ -105,7 +105,7 @@ test("the 3D library map", { timeout: 150000 }, async (t) => {
   const inChain = (from, steps) =>
     from > 7 ? 0 : [...Array(8).keys()].filter((i) => Math.abs(i - from) === steps).length;
 
-  await t.test("a chosen asset's legend names three levels with the assets at each", async () => {
+  await t.test("a chosen asset's legend names the levels that reach anything, with the assets at each", async () => {
     const { page, errors } = await fresh();
     await open(page, server, "/library/map");
     await expect(page.locator(".stage-3d canvas")).toBeVisible();
@@ -114,7 +114,6 @@ test("the 3D library map", { timeout: 150000 }, async (t) => {
     await page.mouse.click(at.x, at.y);
     const from = Number((await page.locator(".stage-3d .pick-label .ref").textContent()).match(/n(\d)$/)[1]);
     const levels = page.locator(".levels li");
-    await expect(levels).toHaveCount(3);
     // The map, its key and the new controls pass the same accessibility rules as the rest of the app.
     const results = await new AxeBuilder({ page })
       .include(".map-page")
@@ -124,10 +123,13 @@ test("the 3D library map", { timeout: 150000 }, async (t) => {
       results.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target).join(" ")}`),
       [],
     );
-    for (const [k, name] of ["1st level", "2nd level", "3rd level"].entries()) {
-      const n = inChain(from, k + 1);
-      await expect(levels.nth(k)).toHaveText(`${name}: ${n} ${n === 1 ? "asset" : "assets"}`);
-    }
+    // A level that reaches nothing is not listed.
+    await expect(levels).toHaveText(
+      ["1st level", "2nd level", "3rd level"]
+        .map((name, k) => [name, inChain(from, k + 1)])
+        .filter(([, n]) => n)
+        .map(([name, n]) => `${name}: ${n} ${n === 1 ? "asset" : "assets"}`),
+    );
     // Nothing is cut or off the map here, so the legend says neither.
     await expect(page.locator(".levels")).not.toContainText("not shown");
     await expect(page.locator(".levels")).not.toContainText("not on this map");
@@ -179,7 +181,8 @@ test("the 3D library map", { timeout: 150000 }, async (t) => {
     await expect(page.locator(".levels li").nth(0)).toHaveText(
       "1st level: 300 assets, 5 more not shown (a level shows its 300 most joined assets)",
     );
-    await expect(page.locator(".levels li").nth(1)).toHaveText("2nd level: 0 assets");
+    // A level that reaches nothing is not listed.
+    await expect(page.locator(".levels li")).toHaveCount(1);
     await page.close();
     assert.deepEqual(errors, []);
   });
@@ -199,15 +202,16 @@ test("the 3D library map", { timeout: 150000 }, async (t) => {
       modifiedAt: new Array(N).fill(days(10)),
     },
   };
-  const depthPick = (page) => page.getByRole("combobox", { name: "Depth shows" });
-  const depthKey = (page) => page.locator(".stage-3d .depth-key");
-  const sizeKey = (page) => page.locator(".stage-3d .size-key");
+  const filters = (page) => page.getByRole("group", { name: "Show on the map" });
+  const side = (page) => page.getByRole("complementary", { name: "Figures" });
   const drawing = (page, name) =>
     page.getByRole("group", { name: "Drawing" }).getByRole("button", { name, exact: true });
-  const chip = (page, name) => page.getByRole("group", { name: "Filters" }).getByRole("button", { name });
-  const showing = (page) => page.getByRole("status").filter({ hasText: "Showing" });
-  /** How far the scene's front points at the viewer: 1 facing, -1 facing away. */
-  const toward = async (page) => Number(await page.locator(".stage-3d .depth-marker").getAttribute("data-toward"));
+  /** Where the last group's name is drawn: it moves when the view turns, zooms or resets. */
+  const nameAt = (page) =>
+    page
+      .locator(".stage-3d .group-name")
+      .last()
+      .evaluate((el) => el.style.transform);
   const ready = async (page) => {
     await open(page, server, "/library/map");
     await expect(page.locator(".stage-3d canvas")).toBeVisible();
@@ -224,225 +228,155 @@ test("the 3D library map", { timeout: 150000 }, async (t) => {
     );
   };
 
-  /** The filters offered, in order: the first is the view's answer, drawn as tiles with its question. */
-  const offered = (page) =>
-    page
-      .getByRole("group", { name: "Filters" })
-      .getByRole("group")
-      .evaluateAll((all) => all.map((el) => el.getAttribute("aria-label")));
-
-  await t.test("each view answers its question with counts that filter, and filters carry across views", async () => {
+  await t.test("a question's filter lights what it finds, counts it on each group and lists it", async () => {
     const { page, errors } = await fresh(used);
     await ready(page);
-    // Contents: what is in it and how it connects.
-    assert.deepEqual(await offered(page), ["Type", "Links"]);
-    await expect(page.locator(".tiles")).toContainText("What is in the library?");
-    await expect(chip(page, "Knowledge")).toHaveText("10Knowledge");
-    await expect(chip(page, "Linked")).toHaveText("Linked8");
-    await expect(showing(page)).toHaveCount(0);
-    await chip(page, "No links").click();
-    await expect(chip(page, "No links")).toHaveAttribute("aria-pressed", "true");
-    await expect(showing(page)).toHaveText("Showing 2 of 10 assets");
-    // Problems: what is wrong, and whether it is still read. The Links choice still applies and says so.
+    // Contents opens with no filter: the groups, and a filter per asset type and for what nothing links to.
+    assert.deepEqual(await filters(page).getByRole("button").allTextContents(), [
+      "Knowledge10",
+      "Not linked to anything2",
+    ]);
+    await expect(filters(page).getByRole("button", { pressed: true })).toHaveCount(0);
+    await expect(side(page).getByRole("heading", { level: 3 })).toHaveText("Groups by meaning");
+    await expect(side(page).locator(".rows li")).toHaveCount(2);
+    await filters(page).getByRole("button", { name: "Not linked to anything" }).click();
+    await expect(side(page).locator(".read-row")).toHaveText([
+      "knowledge/chain/n83 reads",
+      "knowledge/chain/n93 reads",
+    ]);
+    // Both are in the second group: its name says so, and it is the only group listed under them.
+    await expect(page.locator(".stage-3d .group-name", { hasText: "2 unlinked" })).toHaveCount(1);
+    await expect(page.locator(".stage-3d .group-name", { hasText: "0 unlinked" })).toHaveCount(1);
+    const where = side(page).locator("section", { hasText: "Where they are, by group" });
+    await expect(where.locator("li")).toHaveText([/2 of 5$/]);
+    // Problems opens on the outdated assets agents are still given; a filter akm has no figures for is not offered.
     await page.getByRole("tab", { name: "Problems" }).click();
-    assert.deepEqual(await offered(page), ["Problem", "Reads", "Type", null]);
-    const carried = chip(page, "Links: No links");
-    await expect(carried).toBeVisible();
-    // No unlinked asset is outdated, so that class cannot be chosen until Links is lifted.
-    await expect(chip(page, "Superseded")).toBeDisabled();
-    await carried.click();
-    await expect(showing(page)).toHaveCount(0);
-    await chip(page, "Superseded").click();
-    await chip(page, "Still read").click();
-    await expect(showing(page)).toHaveText("Showing 1 of 10 assets");
-    // What the filters show is listed beside the map, most read first.
-    const shown = page.locator(".map-side section").first();
-    await expect(shown).toContainText("Shown on the map, most reads first");
-    await expect(shown.getByRole("link")).toHaveText("knowledge/chain/n0");
+    assert.deepEqual(await filters(page).getByRole("button").allTextContents(), [
+      "Outdated, still read1",
+      "Disliked0",
+      "Outdated, unread0",
+    ]);
+    await expect(filters(page).getByRole("button", { pressed: true })).toHaveText("Outdated, still read1");
+    await expect(side(page).locator(".read-row")).toHaveText(["knowledge/chain/n0superseded · 3 reads"]);
     await axe(page);
-    // Use: when it was last read, and what people made of it.
+    // Use opens on what there is to act on: nothing is unread here, so the most read.
     await page.getByRole("tab", { name: "Use" }).click();
-    assert.deepEqual(await offered(page), ["Last read", "Feedback", "Type", null]);
-    await expect(chip(page, "Read in the last 30 days")).toHaveText("1Read in the last 30 days");
-    await page.getByRole("button", { name: "Clear filters" }).click();
-    await expect(showing(page)).toHaveCount(0);
-    await expect(chip(page, "Read in the last 30 days")).toHaveText("10Read in the last 30 days");
-    // Reset clears filters too.
-    await chip(page, "Knowledge").click();
-    await expect(showing(page)).toHaveText("Showing 10 of 10 assets");
-    await page.getByRole("button", { name: "Reset" }).click();
-    await expect(showing(page)).toHaveCount(0);
+    await expect(filters(page).getByRole("button", { pressed: true })).toHaveText("Most read10");
+    await expect(filters(page).getByRole("button", { name: /^Never read/ })).toBeDisabled();
     assert.deepEqual(errors, []);
     await page.close();
   });
 
-  await t.test("a filter akm has no figures for is not offered", async () => {
+  await t.test("without usage history Use offers no filter, and Problems only what it can tell", async () => {
     const { page, errors } = await fresh();
     await ready(page);
     await page.getByRole("tab", { name: "Use" }).click();
-    assert.deepEqual(await offered(page), ["Type"]);
+    await expect(filters(page).getByRole("button")).toHaveCount(0);
     await page.getByRole("tab", { name: "Problems" }).click();
-    assert.deepEqual(await offered(page), ["Problem", "Type"]);
+    assert.deepEqual(await filters(page).getByRole("button").allTextContents(), [
+      "Outdated, still read0",
+      "Outdated, unread0",
+    ]);
     assert.deepEqual(errors, []);
     await page.close();
   });
 
   await t.test(
-    "size is links in Contents and reads in Use and Problems, with a key; labels give the figure",
+    "a chosen group scopes the filters and says so; a chosen asset shows what is wrong with it",
     async () => {
       const { page, errors } = await fresh(used);
       await ready(page);
-      await expect(sizeKey(page)).toContainText("Size: links");
-      await expect(sizeKey(page).locator("li")).toHaveText(["0", "1", "2"]);
+      await side(page).getByRole("button").first().click();
+      await expect(side(page).getByRole("heading", { level: 2 })).toBeVisible();
+      await expect(side(page)).toContainText("Group by meaning · 5 assets");
+      const scope = filters(page).getByRole("button", { name: /^In / });
+      await expect(scope).toBeVisible();
+      await expect(filters(page).getByRole("button", { name: "Knowledge" })).toHaveText("Knowledge5");
+      await scope.click();
+      await expect(scope).toHaveCount(0);
+      await expect(filters(page).getByRole("button", { name: "Knowledge" })).toHaveText("Knowledge10");
+      // An asset: choosing it leaves the filters' scope alone and replaces the list with the asset.
+      await page.getByRole("tab", { name: "Problems" }).click();
       await page.locator(".stage-3d").focus();
       await page.keyboard.press("ArrowRight");
-      await expect(page.locator(".stage-3d .pick-label .value")).toContainText(/ · \d links?$/);
-      await page.keyboard.press("Escape");
-      await page.getByRole("tab", { name: "Use" }).click();
-      await expect(sizeKey(page)).toContainText("Size: reads");
-      await expect(sizeKey(page).locator("li")).toHaveText(["0", "1", "3"]);
-      await findPoint(page);
-      await expect(page.locator(".stage-3d .tip")).toContainText("read 3 times, last 2 days ago");
-      await page.getByRole("tab", { name: "Problems" }).click();
-      await expect(sizeKey(page)).toContainText("Size: reads");
+      await expect(page.locator(".stage-3d .pick-label .ref")).toHaveText("wiki//knowledge/chain/n0");
+      await expect(page.locator(".stage-3d .pick-label .value")).toContainText("read 3 times, last 2 days ago");
+      await expect(scope).toHaveCount(0);
+      await expect(side(page).getByRole("heading", { level: 2 })).toHaveText("knowledge/chain/n0");
+      await expect(side(page).locator(".wrong")).toContainText(
+        "Outdated: superseded. Open it to retire it or fix the link.",
+      );
+      await expect(side(page).getByRole("link", { name: "Open", exact: true })).toHaveAttribute(
+        "href",
+        /\/library\/search\?ref=/,
+      );
+      await expect(side(page).locator(".figures")).toContainText("read 3 times, last 2 days ago");
+      await expect(side(page).locator(".figures")).toContainText("10 days ago");
+      // No feedback was given, so none is shown.
+      await expect(side(page).locator(".figures")).not.toContainText("Feedback");
+      // Problems joins assets only by replacement, contradiction and near-identity, and this one has none of those.
+      await expect(side(page).locator("section", { hasText: "Joined to" })).toHaveCount(0);
+      await axe(page);
+      await side(page).getByRole("button", { name: "Close" }).click();
+      await expect(side(page).locator(".read-row")).toHaveText(["knowledge/chain/n0superseded · 3 reads"]);
       assert.deepEqual(errors, []);
       await page.close();
     },
   );
 
-  await t.test("depth is akm's own until a figure is chosen for it; a view never moves the points", async () => {
+  await t.test("size is links in Contents and reads in Use and Problems, with a key on the map", async () => {
     const { page, errors } = await fresh(used);
     await ready(page);
-    const reverse = page.getByRole("button", { name: "Reverse" });
-    await expect(depthPick(page)).toHaveValue("meaning");
-    await expect(depthKey(page)).toHaveCount(0);
-    await expect(reverse).toHaveCount(0);
+    const sizeKey = page.locator(".stage-3d .size-key");
+    await expect(sizeKey).toContainText("Size: links");
+    await expect(sizeKey.locator("li")).toHaveText(["0", "1", "2"]);
     for (const name of ["Use", "Problems"]) {
       await page.getByRole("tab", { name }).click();
-      await expect(depthPick(page)).toHaveValue("meaning");
+      await expect(sizeKey).toContainText("Size: reads");
+      await expect(sizeKey.locator("li")).toHaveText(["0", "1", "3"]);
     }
-    await depthPick(page).selectOption({ label: "Age and status" });
-    await expect(depthKey(page).locator("li")).toHaveText([
-      "edited in the last 180 daysfront",
-      "edited longer ago",
-      "superseded, contradicted or deprecatedback",
-    ]);
-    await reverse.click();
-    await expect(reverse).toHaveAttribute("aria-pressed", "true");
-    await expect(depthKey(page).locator("li").first()).toHaveText("superseded, contradicted or deprecatedfront");
-    // The choice stays when the view changes, and the labels add its figure.
-    await page.getByRole("tab", { name: "Use" }).click();
-    await expect(depthPick(page)).toHaveValue("lifecycle");
-    await page.locator(".stage-3d").focus();
-    await page.keyboard.press("ArrowRight");
-    await expect(page.locator(".stage-3d .pick-label .value")).toContainText("read 3 times, last 2 days ago · ");
-    await expect(page.locator(".stage-3d .pick-label .value")).toContainText("edited ");
-    await axe(page);
     assert.deepEqual(errors, []);
     await page.close();
   });
 
-  await t.test("a depth akm has no figures for cannot be chosen, and its option says why", async () => {
-    const { page, errors } = await fresh();
-    await ready(page);
-    const option = depthPick(page).locator("option", { hasText: "Last read" });
-    await expect(option).toHaveAttribute("disabled", "");
-    await expect(option).toHaveText("Last read (no usage history is available)");
-    assert.deepEqual(errors, []);
-    await page.close();
-  });
-
-  await t.test(
-    "the marker names the front from any angle; keys and the map's buttons turn, zoom and face front",
-    async () => {
-      const { page, errors } = await fresh(used);
-      await ready(page);
-      assert.ok((await toward(page)) > 0.9);
-      await expect(page.locator(".stage-3d .depth-marker")).toContainText("Front, facing you");
-      const stage = page.locator(".stage-3d");
-      await stage.focus();
-      // Twelve turns of a twelfth of a half circle: the back now faces the viewer.
-      for (let k = 0; k < 12; k++) await page.keyboard.press("Shift+ArrowRight");
-      await expect.poll(() => toward(page)).toBeLessThan(-0.9);
-      await expect(page.locator(".stage-3d .depth-marker")).toContainText("Back, facing you");
-      await page.keyboard.press("ArrowUp");
-      await page.keyboard.press("ArrowUp");
-      await expect.poll(() => toward(page)).toBeGreaterThan(-0.9);
-      // Zooming moves a name away from the middle of the view; the direction is kept.
-      const nameAt = () =>
-        page
-          .locator(".stage-3d .group-name")
-          .last()
-          .evaluate((el) => el.style.transform);
-      let before = await nameAt();
-      const turned = await toward(page);
-      await page.keyboard.press("+");
-      await expect.poll(nameAt).not.toBe(before);
-      before = await nameAt();
-      await page.getByRole("button", { name: "Zoom out" }).click();
-      await expect.poll(nameAt).not.toBe(before);
-      assert.ok(Math.abs((await toward(page)) - turned) < 0.05);
-      // Facing front keeps the choice, by key and by button.
-      await stage.focus();
-      await page.keyboard.press("ArrowRight");
-      await expect(page.locator(".stage-3d .pick-label")).toBeVisible();
-      await page.keyboard.press("0");
-      await expect.poll(() => toward(page)).toBeGreaterThan(0.99);
-      for (let k = 0; k < 4; k++) await page.keyboard.press("Shift+ArrowLeft");
-      await expect.poll(() => toward(page)).toBeLessThan(0.9);
-      await page.getByRole("button", { name: "Front view" }).click();
-      await expect.poll(() => toward(page)).toBeGreaterThan(0.99);
-      await expect(page.locator(".stage-3d .pick-label")).toBeVisible();
-      // The arrow keys alone still step through the group.
-      const label = page.locator(".stage-3d .pick-label .ref");
-      const first = await label.textContent();
-      await stage.focus();
-      await page.keyboard.press("ArrowRight");
-      await expect(label).not.toHaveText(first);
-      assert.deepEqual(errors, []);
-      await page.close();
-    },
-  );
-
-  await t.test("2D draws the same points in one plane: no turning, no depth, and the choices survive it", async () => {
+  await t.test("the map opens in 2D, which cannot be turned; 3D turns; keys and buttons zoom and reset", async () => {
     const { page, errors } = await fresh(used);
     await ready(page);
-    await page.getByRole("tab", { name: "Use" }).click();
-    await chip(page, "Read in the last 30 days").click();
-    const stage = page.locator(".stage-3d");
-    await stage.focus();
-    await page.keyboard.press("ArrowRight");
-    const picked = await page.locator(".stage-3d .pick-label .ref").textContent();
-    for (let k = 0; k < 4; k++) await page.keyboard.press("Shift+ArrowRight");
-    await expect.poll(() => toward(page)).toBeLessThan(0.9);
-    await drawing(page, "2D").click();
     await expect(drawing(page, "2D")).toHaveAttribute("aria-pressed", "true");
-    await expect(depthPick(page)).toHaveCount(0);
-    await expect(page.locator(".stage-3d .depth-marker")).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Front view" })).toHaveCount(0);
-    await expect(sizeKey(page)).toContainText("Size: reads");
-    // Neither a drag nor the turning keys turn it: back in 3D, the view still faces the front.
-    await page.waitForTimeout(900);
-    const box = await page.locator(".stage-3d canvas").boundingBox();
-    await page.mouse.move(box.x + 40, box.y + 40);
-    await page.mouse.down();
-    await page.mouse.move(box.x + 340, box.y + 140, { steps: 8 });
-    await page.mouse.up();
+    const stage = page.locator(".stage-3d");
+    const home = await nameAt(page);
+    // Neither the turning keys nor a drag turn the plane.
     await stage.focus();
     await page.keyboard.press("Shift+ArrowRight");
     await page.keyboard.press("ArrowUp");
+    await page.waitForTimeout(300);
+    assert.equal(await nameAt(page), home);
+    // Zoom by key and by button, and back to where the map opens.
+    await page.keyboard.press("+");
+    await expect.poll(() => nameAt(page)).not.toBe(home);
+    const zoomed = await nameAt(page);
+    await page.getByRole("button", { name: "Zoom out" }).click();
+    await expect.poll(() => nameAt(page)).not.toBe(zoomed);
+    await page.getByRole("button", { name: "Reset view" }).click();
+    await expect.poll(() => nameAt(page)).toBe(home);
+    // 3D: the same points with their depth, and the keys turn it.
     await drawing(page, "3D").click();
-    await expect(page.locator(".stage-3d .depth-marker")).toHaveCount(1);
-    assert.ok((await toward(page)) > 0.99);
-    // The pick, the view and the filter are as they were.
-    await expect(page.locator(".stage-3d .pick-label .ref")).toHaveText(picked);
-    await expect(page.getByRole("tab", { name: "Use" })).toHaveAttribute("aria-selected", "true");
-    await expect(chip(page, "Read in the last 30 days")).toHaveAttribute("aria-pressed", "true");
+    await page.waitForTimeout(900);
+    const before = await nameAt(page);
+    await stage.focus();
+    await page.keyboard.press("Shift+ArrowRight");
+    await expect.poll(() => nameAt(page)).not.toBe(before);
+    // The left and right keys alone still step through a group's assets.
+    await page.keyboard.press("ArrowRight");
+    const label = page.locator(".stage-3d .pick-label .ref");
+    const first = await label.textContent();
+    await page.keyboard.press("ArrowRight");
+    await expect(label).not.toHaveText(first);
     assert.deepEqual(errors, []);
     await page.close();
   });
 
-  await t.test("with reduced motion a pick, a change of depth and facing front are there at once", async () => {
+  await t.test("with reduced motion a pick and a change of drawing are there at once", async () => {
     const context = await browser.newContext({ viewport: { width: 1280, height: 860 }, reducedMotion: "reduce" });
     const page = await context.newPage();
     await page.route("**/api/graph", (route) => route.fulfill({ json: { ok: true, data: used } }));
@@ -467,14 +401,26 @@ test("the 3D library map", { timeout: 150000 }, async (t) => {
     await page.keyboard.press("ArrowRight");
     await expect(page.locator(".stage-3d .pick-label")).toBeVisible();
     await settled();
-    await depthPick(page).selectOption({ label: "Age and status" });
+    await drawing(page, "3D").click();
     await settled();
-    await page.locator(".stage-3d").focus();
-    for (let k = 0; k < 3; k++) await page.keyboard.press("Shift+ArrowRight");
-    await page.keyboard.press("0");
-    await frames(3);
-    assert.ok((await toward(page)) > 0.99);
     await context.close();
+  });
+
+  await t.test("opening an asset and coming back returns to the same question, filter and drawing", async () => {
+    const { page, errors } = await fresh(used);
+    await ready(page);
+    await page.getByRole("tab", { name: "Use" }).click();
+    await drawing(page, "3D").click();
+    await expect(filters(page).getByRole("button", { pressed: true })).toHaveText("Most read10");
+    await side(page).locator(".read-row a").first().click();
+    await expect(page).toHaveURL(/\/library\/search\?ref=/);
+    await page.goBack();
+    await expect(page.locator(".stage-3d canvas")).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Use" })).toHaveAttribute("aria-selected", "true");
+    await expect(drawing(page, "3D")).toHaveAttribute("aria-pressed", "true");
+    await expect(filters(page).getByRole("button", { pressed: true })).toHaveText("Most read10");
+    assert.deepEqual(errors, []);
+    await page.close();
   });
 
   await t.test(
@@ -535,15 +481,11 @@ test("the 3D library map", { timeout: 150000 }, async (t) => {
         results.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target).join(" ")}`),
         [],
       );
-      // Size is the events on an asset over the period; depth is akm's own until a figure is chosen; 2D has no depth.
+      // Size is the events on an asset over the period.
       await expect(replay.locator(".stage-3d .size-key")).toContainText("Size: events in the period");
-      await expect(replay.locator(".stage-3d .depth-key")).toHaveCount(0);
-      await replay.getByRole("combobox", { name: "Depth shows" }).selectOption({ label: "Age and status" });
-      await expect(replay.locator(".stage-3d .depth-key")).toContainText("front");
-      await drawing.getByRole("button", { name: "2D" }).click();
-      await expect(replay.locator(".stage-3d .depth-key")).toHaveCount(0);
-      await expect(replay.locator(".stage-3d canvas")).toBeVisible();
       // 2D draws only what has been used so far: a group is named once one of its assets is used, and not before.
+      await drawing.getByRole("button", { name: "2D" }).click();
+      await expect(replay.locator(".stage-3d canvas")).toBeVisible();
       const seek = (share) =>
         replay.getByRole("slider", { name: "Playhead" }).evaluate((el, part) => {
           el.value = String(Number(el.min) + (Number(el.max) - Number(el.min)) * part);
@@ -553,13 +495,16 @@ test("the 3D library map", { timeout: 150000 }, async (t) => {
       await seek(0);
       await expect(replay.locator(".stage-3d .group-name")).toHaveCount(0);
       await seek(1);
-      await expect(replay.locator(".stage-3d .group-name")).toHaveCount(1);
+      // Choosing the group lists its events so far, each a link to its asset; closing brings the lists back.
+      await replay.locator(".stage-3d .group-name").click();
+      const chosen = replay.locator(".replay-side");
+      await expect(chosen.getByRole("heading", { level: 2 })).toBeVisible();
+      await expect(chosen).toContainText("Group by meaning · 5 assets · 2 events so far");
+      await expect(chosen.locator(".log a").first()).toHaveAttribute("href", /\/library\/search\?ref=/);
+      await chosen.getByRole("button", { name: "Close" }).click();
+      await expect(replay.getByRole("heading", { name: "Feedback given so far" })).toBeVisible();
+      await expect(replay.locator(".replay-side")).toContainText("knowledge/chain/n2");
       await drawing.getByRole("button", { name: "3D" }).click();
-      // The timeline key plays only the kinds chosen, and everything on the page counts only those.
-      await replay.getByRole("button", { name: "Feedback" }).click();
-      await expect(replay.locator(".figures")).toContainText("1events");
-      await replay.getByRole("button", { name: "All events" }).click();
-      await expect(replay.locator(".figures")).toContainText("4events");
       // The key names every mark, and what has no place is counted, not dropped.
       const key = replay.getByRole("list", { name: "Key to the 3D map" });
       for (const name of ["Used so far", "Not used yet", "Read, just now", "Returned by a search, just now"])

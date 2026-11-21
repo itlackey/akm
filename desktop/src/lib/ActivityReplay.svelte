@@ -26,6 +26,7 @@
     axisLabels,
     describe,
     KINDS,
+    playText,
     kindBins,
     PULSES,
     pulsesAt,
@@ -288,6 +289,7 @@
     </div>
     {#if playing}<button class="btn-primary" onclick={pause}>Pause</button>{:else}<button
         class="btn-primary"
+        title={`${playText(speed)}. Click or drag the timeline to move the playhead.`}
         onclick={play}
         disabled={!steps.length || loading}>{clock >= end ? "Play from start" : "Play"}</button
       >{/if}
@@ -376,21 +378,19 @@
                 .length.toLocaleString()} events so far touched assets. Build the index with embeddings, or use Tags.
             </p>{/if}
         {:else}
-          <div class="tags-frame">
-            <MindMap
-              {branches}
-              rootLabel="Library"
-              rootFigure={eventsText(branches.reduce((sum, b) => sum + (counts.get(b.key) ?? 0), 0))}
-              figure={(_, key) => eventsText(counts.get(key) ?? 0)}
-              bar={(_, key) => [{ n: counts.get(key) ?? 0, token: "--accent" }]}
-              scale={most}
-              {selected}
-              appeared={(key) => (counts.get(key) ?? 0) > 0}
-              onSelect={choose}
-              pulse={playing ? counts : null}
-              label="The library mind map: its asset types and the tags their assets carry most, each with the number of events on it so far. The log beside it lists the same events."
-            />
-          </div>
+          <MindMap
+            {branches}
+            rootLabel="Library"
+            rootFigure={eventsText(branches.reduce((sum, b) => sum + (counts.get(b.key) ?? 0), 0))}
+            figure={(_, key) => eventsText(counts.get(key) ?? 0)}
+            bar={(_, key) => [{ n: counts.get(key) ?? 0, token: "--accent" }]}
+            scale={most}
+            {selected}
+            appeared={(key) => (counts.get(key) ?? 0) > 0}
+            onSelect={choose}
+            pulse={playing ? counts : null}
+            label="The library mind map: its asset types and the tags their assets carry most, each with the number of events on it so far. The log beside it lists the same events."
+          />
           {#if offMap}<p class="muted small">
               {offMap.toLocaleString()} events so far touched assets under none of the tags drawn, or no longer in the library.
             </p>{/if}
@@ -431,8 +431,8 @@
                         ? "read"
                         : step.kind === "feedback"
                           ? `${step.signal ?? ""} feedback`
-                          : step.eventType}{#if picked < 0 && step.node >= 0}
-                      · <a href={searchHref(new URLSearchParams(), o.ref[step.node]!)}>{o.path(step.node)}</a
+                          : step.eventType}{#if picked < 0 && step.node >= 0}{" · "}<a
+                        href={searchHref(new URLSearchParams(), o.ref[step.node]!)}>{o.path(step.node)}</a
                       >{/if}</span
                   >
                 </li>{:else}<li class="muted">Nothing yet</li>{/each}
@@ -442,18 +442,16 @@
           <div class="figures">
             <div><strong>{totals.events.toLocaleString()}</strong><span>events</span></div>
             <div><strong>{totals.shows.toLocaleString()}</strong><span>reads</span></div>
-            {#if totals.searches}<div>
-                <strong>{totals.searches.toLocaleString()}</strong><span>searches</span>
-              </div>{/if}
-            {#if totals.curates}<div><strong>{totals.curates.toLocaleString()}</strong><span>curates</span></div>{/if}
-            {#if totals.foundNothing}<div class="bad">
-                <strong>{totals.foundNothing.toLocaleString()}</strong><span>found nothing</span>
-              </div>{/if}
-            {#if totals.positive || totals.negative}<div>
-                <strong>{totals.positive}</strong><span>positive,</span><strong>{totals.negative}</strong><span
-                  >negative feedback</span
-                >
-              </div>{/if}
+            <div><strong>{totals.searches.toLocaleString()}</strong><span>searches</span></div>
+            <div><strong>{totals.curates.toLocaleString()}</strong><span>curates</span></div>
+            <div class:bad={totals.foundNothing > 0}>
+              <strong>{totals.foundNothing.toLocaleString()}</strong><span>found nothing</span>
+            </div>
+            <div>
+              <strong>{totals.positive}</strong><span>positive,</span><strong>{totals.negative}</strong><span
+                >negative feedback</span
+              >
+            </div>
             <div><strong>{totals.used.size.toLocaleString()}</strong><span>assets used</span></div>
           </div>
           <section>
@@ -508,6 +506,7 @@
         {#each KINDS.filter((k) => timeline.counts.some((bin) => bin[k.id])) as k}<li>
             <span class="swatch" style={`background:var(${k.token})`}></span>{k.label}
           </li>{/each}
+        <li class="scale-note muted">Tallest bar = {timeline.max} events</li>
       </ul>
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <svg
@@ -703,6 +702,10 @@
     gap: 6px;
     align-items: center;
   }
+  .scale-note {
+    margin-inline-start: auto;
+    font-size: 12px;
+  }
   .swatch {
     inline-size: 10px;
     block-size: 10px;
@@ -734,7 +737,7 @@
     padding: 8px;
     min-inline-size: 0;
     /* The timeline and the map fit one window together. */
-    --stage-size: max(280px, calc(100vh - 520px));
+    --stage-size: max(260px, calc(100vh - 610px));
   }
   /* The drawing switch sits on the map; over the tags, which have no spare corner, it sits above them. */
   .stage-tools {
@@ -770,18 +773,6 @@
   .replay-side section {
     margin: 0;
     padding: 0;
-  }
-  /* The tags are drawn in the frame the points have, so the timeline stays under them. */
-  .tags-frame {
-    max-block-size: calc(max(280px, 100vh - 520px) + 40px);
-    overflow: auto;
-  }
-  /* Beside the map the lists scroll on their own, so the page, the map and the timeline stay put. */
-  @media (min-width: 1401px) {
-    .replay-side {
-      max-block-size: calc(max(280px, 100vh - 520px) + 110px);
-      overflow-y: auto;
-    }
   }
   .log {
     list-style: none;

@@ -19,10 +19,12 @@
 </script>
 
 <script lang="ts">
-  // The library, or one bundle of it, as a mind map of asset types and the tags their assets carry. Choosing a type or a
-  // tag draws what it is joined to (declared links and near-duplicate content) and fills the side column with what that
-  // group needs: how much of it is read, what is outdated, disliked or duplicated, what it connects to, which bundles
-  // repeat it, what people searched for and did not find, and, for any asset, the content closest to it in meaning.
+  // The library, or one bundle of it, as a map with three questions (Contents, Use, Problems). The map is every asset
+  // as a point by meaning, in one plane or in 3D, or the mind map of asset types and the tags their assets carry. Each
+  // question has its own filters, drawn on the map with how many assets each finds; the one chosen lights those assets,
+  // counts them on each group's name, and lists exactly those beside the map with the figure that decides each one.
+  // Choosing a group scopes the filters to it; choosing an asset shows what is wrong with it, what it is joined to and
+  // the content closest to it in meaning. Where the map was left is remembered while the app is open.
   import { api } from "./client";
   import { FAMILIES } from "./graph-model";
   import {
@@ -39,8 +41,6 @@
     type OverviewPayload,
     type Pair,
     PROBLEMS,
-    OLD_DAYS,
-    RECENT_DAYS,
     relations,
     tally,
     unplaced,
@@ -96,7 +96,6 @@
       ["compare", a],
       ["compare", b],
     ])}`;
-  const pct = (part: number, whole: number) => (whole ? `${Math.round((100 * part) / whole)}%` : "–");
   const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
   const short = (ref: string) => ref.split("//").at(-1) ?? ref;
 
@@ -557,12 +556,16 @@
       >{:else}<p class="more">and {(list.length - limit).toLocaleString()} more</p>{/if}{/if}
 {/snippet}
 
-{#snippet stat(n: number | string, text: string, token = "")}
-  <li>
-    <span class="swatch" style={token ? `background:var(${token})` : ""}></span><strong
-      >{typeof n === "number" ? n.toLocaleString() : n}</strong
-    ><span>{text}</span>
-  </li>
+{#snippet colourKey(none: string)}
+  {#if view !== "contents"}<ul class="colour-key">
+      {#if view === "use"}{#each USE_CLASSES as u}<li>
+            <span class="swatch" style={`background:var(${u.token})`}></span>{u.label}
+          </li>{/each}
+      {:else}{#each PROBLEMS as p}<li>
+            <span class="swatch" style={`background:var(${p.token})`}></span>{p.label}
+          </li>{/each}
+        <li><span class="swatch" style={`background:var(${none})`}></span>No problem recorded</li>{/if}
+    </ul>{/if}
 {/snippet}
 
 {#snippet pairList(list: Pair[], limit = 8)}
@@ -620,7 +623,8 @@
           ? `Selected ${o.ref[picked]}. ${levelFigures.map((l, k) => `${LEVEL_STYLES[k]!.label}: ${plural(l.shown.length, "asset")}`).join(". ")}.`
           : ""}
       </p>{/if}
-    <div class="map-body">
+    {#if !bundleScope.length}<p class="notice" role="status">No assets in {scopeName}.</p>{/if}
+    <div class="map-body" class:alone={!(picked >= 0 || part || finding || (points && groups.length))}>
       <div class="map-stage">
         <div class="stage-tools">
           <div class="views" role="group" aria-label="Drawing">
@@ -682,15 +686,7 @@
               label={`${question} The ${plural(bundleScope.length - offMap, "asset")} of ${scopeName} that have a group by meaning, as points, in ${plural(groups.length, "group")} named by their tags, groups alike in meaning near each other.${offMap ? ` ${plural(offMap, "asset")} not shown.` : ""}`}
             >
               {#snippet legend()}
-                {#if view !== "contents"}<ul class="colour-key">
-                    {#if view === "use"}{#each USE_CLASSES as u}<li>
-                          <span class="swatch" style={`background:var(${u.token})`}></span>{u.label}
-                        </li>{/each}
-                    {:else}{#each PROBLEMS as p}<li>
-                          <span class="swatch" style={`background:var(${p.token})`}></span>{p.label}
-                        </li>{/each}
-                      <li><span class="swatch" style="background:var(--border)"></span>No problem recorded</li>{/if}
-                  </ul>{/if}
+                {@render colourKey("--border")}
                 {#if picked >= 0 && levelFigures?.some((l) => l.shown.length)}<div class="levels">
                     <p class="small">
                       <strong>{short(o!.ref[picked]!)}</strong> and what it is joined to, up to three steps out.
@@ -751,163 +747,164 @@
             onSelect={choose}
             label={mapLabel}
           />
-          {#if view !== "contents"}<ul class="colour-key">
-              {#if view === "use"}{#each USE_CLASSES as u}<li>
-                    <span class="swatch" style={`background:var(${u.token})`}></span>{u.label}
-                  </li>{/each}
-              {:else}{#each PROBLEMS as p}<li>
-                    <span class="swatch" style={`background:var(${p.token})`}></span>{p.label}
-                  </li>{/each}
-                <li><span class="swatch" style="background:var(--use-0)"></span>No problem recorded</li>{/if}
-            </ul>{/if}{/if}
+          {@render colourKey("--use-0")}{/if}
       </div>
 
-      <aside class="map-side" aria-label="Figures" aria-live="polite" bind:this={side}>
-        {#if picked >= 0}
-          {@const i = picked}
-          <header class="side-head">
-            <div>
-              <h2>{short(o.ref[i]!)}</h2>
-              <p class="muted small">{o.types[o.type[i]!]} · {o.bundles[o.bundle[i]!]}</p>
-            </div>
-            <button class="btn-quiet" onclick={() => (picked = -1)} aria-label="Close">✕</button>
-          </header>
-          <section>
-            <div class="actions">
-              <a class="btn btn-secondary" href={open(o.ref[i]!)}>Open</a>
-              <button
-                class="btn-secondary"
-                aria-expanded={near?.ref === o.ref[i]}
-                onclick={() => similar(o!.ref[i]!)}
-                title="The assets closest to this one in meaning, with their measured similarity">Most similar</button
-              >
-            </div>
-            {#if o.problems[i]!.length}<ul class="wrong">
-                {#if o.problems[i]!.includes("outdated")}<li>
-                    <strong>Outdated:</strong>
-                    {#each o.outdatedWhy[i]! as x, n}{n ? ", " : ""}{x.why}{#if x.by >= 0}{" by "}<a
-                          href={open(o.ref[x.by]!)}
-                          title={o.ref[x.by]}>{short(o.ref[x.by]!)}</a
-                        >{/if}{/each}. Open it to retire it or fix the link.
-                  </li>{/if}
-                {#if o.problems[i]!.includes("negative")}<li>
-                    <strong>Disliked:</strong>
-                    {o.negative[i]} down, {o.positive[i]} up. Open it to fix what readers found wrong.
-                  </li>{/if}
-                {#each pairsOf(i) as d}{@const other = d.a === i ? d.b : d.a}
-                  <li>
-                    <strong>Nearly the same as</strong>
-                    <button class="link" onclick={() => pick(other)} title={o.ref[other]}>{short(o.ref[other]!)}</button
-                    >
-                    ({Math.round(d.cosine * 100)}% alike).
-                    <a href={compare(o.ref[i]!, o.ref[other]!)}>Compare</a> and keep one.
-                  </li>{/each}
-              </ul>{/if}
-            <dl class="figures">
-              <dt>Reads</dt>
-              <dd>{reads(i)}</dd>
-              <dt>Last edited</dt>
-              <dd>
-                {o.modified[i]
-                  ? `${untouched(i).replace("untouched ", "")} ago (${new Date(o.modified[i]!).toLocaleDateString()})`
-                  : "unknown"}
-              </dd>
-              {#if o.feedbackKnown && (o.positive[i] || o.negative[i])}<dt>Feedback</dt>
-                <dd>{o.negative[i]} down, {o.positive[i]} up</dd>{/if}
-            </dl>
-            {#if near?.ref === o.ref[i]}<div class="near">
-                {#if near.error}<p class="muted small">{near.error}</p>
-                {:else if !near.matches}<p class="muted small">Finding the closest content…</p>
-                {:else if !near.matches.length}<p class="muted small">No embedded content to compare.</p>
-                {:else}<ul>
-                    {#each near.matches as m}<li>
-                        <a href={open(m.ref)} title={m.ref}>{short(m.ref)}</a><span class="muted small"
-                          >{Math.round(m.cosine * 100)}% alike</span
-                        ><a class="small" href={compare(o.ref[i]!, m.ref)}>Compare</a>
-                      </li>{/each}
-                  </ul>{/if}
-              </div>{/if}
-          </section>
-          {#if pickedJoins.length}<section>
-              <h3>Joined to</h3>
-              <ul class="rows">
-                {#each pickedJoins.slice(0, 12) as j}<li>
-                    <button class="link" onclick={() => pick(j.i)} title={o.ref[j.i]}>{short(o.ref[j.i]!)}</button><span
-                      class="count">{j.what}</span
-                    >
-                  </li>{/each}
-              </ul>
-            </section>{/if}
-        {:else}
-          {#if part}<header class="side-head">
+      {#if picked >= 0 || part || finding || (points && groups.length)}<aside
+          class="map-side"
+          aria-label="Figures"
+          aria-live="polite"
+          bind:this={side}
+        >
+          {#if picked >= 0}
+            {@const i = picked}
+            <header class="side-head">
               <div>
-                <h2>{part.name}</h2>
-                <p class="muted small">
-                  {part.group ? "Group by meaning" : part.type ? `Tag in ${part.type}` : "Asset type"} ·
-                  {plural(facts.count, "asset")}
-                </p>
+                <h2>{short(o.ref[i]!)}</h2>
+                <p class="muted small">{o.types[o.type[i]!]} · {o.bundles[o.bundle[i]!]}</p>
               </div>
-              <button class="btn-quiet" onclick={() => choose(selected)} aria-label="Close">✕</button>
-            </header>{/if}
-          {#if finding}<section>
-              <h3>
-                {finding.label}<span class="count">{(finding.pairs ?? finding.assets).length.toLocaleString()}</span>
-              </h3>
-              <p class="muted small">{finding.hint}</p>
-              {#if finding.pairs}{@render pairList(finding.pairs, 8)}{:else}{@render assetList(
-                  finding.assets,
-                  finding.note,
-                  8,
-                  `${view}:${finding.id}`,
-                )}{/if}
+              <button class="btn-quiet" onclick={() => (picked = -1)} aria-label="Close">✕</button>
+            </header>
+            <section>
+              <div class="actions">
+                <a class="btn btn-secondary" href={open(o.ref[i]!)}>Open</a>
+                <button
+                  class="btn-secondary"
+                  aria-expanded={near?.ref === o.ref[i]}
+                  onclick={() => similar(o!.ref[i]!)}
+                  title="The assets closest to this one in meaning, with their measured similarity">Most similar</button
+                >
+              </div>
+              {#if o.problems[i]!.length}<ul class="wrong">
+                  {#if o.problems[i]!.includes("outdated")}<li>
+                      <strong>Outdated:</strong>
+                      {#each o.outdatedWhy[i]! as x, n}{n ? ", " : ""}{x.why}{#if x.by >= 0}{" by "}<a
+                            href={open(o.ref[x.by]!)}
+                            title={o.ref[x.by]}>{short(o.ref[x.by]!)}</a
+                          >{/if}{/each}. Open it to retire it or fix the link.
+                    </li>{/if}
+                  {#if o.problems[i]!.includes("negative")}<li>
+                      <strong>Disliked:</strong>
+                      {o.negative[i]} down, {o.positive[i]} up. Open it to fix what readers found wrong.
+                    </li>{/if}
+                  {#each pairsOf(i) as d}{@const other = d.a === i ? d.b : d.a}
+                    <li>
+                      <strong>Nearly the same as</strong>
+                      <button class="link" onclick={() => pick(other)} title={o.ref[other]}
+                        >{short(o.ref[other]!)}</button
+                      >
+                      ({Math.round(d.cosine * 100)}% alike).
+                      <a href={compare(o.ref[i]!, o.ref[other]!)}>Compare</a> and keep one.
+                    </li>{/each}
+                </ul>{/if}
+              <dl class="figures">
+                <dt>Reads</dt>
+                <dd>{reads(i)}</dd>
+                <dt>Last edited</dt>
+                <dd>
+                  {o.modified[i]
+                    ? `${untouched(i).replace("untouched ", "")} ago (${new Date(o.modified[i]!).toLocaleDateString()})`
+                    : "unknown"}
+                </dd>
+                {#if o.feedbackKnown && (o.positive[i] || o.negative[i])}<dt>Feedback</dt>
+                  <dd>{o.negative[i]} down, {o.positive[i]} up</dd>{/if}
+              </dl>
+              {#if near?.ref === o.ref[i]}<div class="near">
+                  {#if near.error}<p class="muted small">{near.error}</p>
+                  {:else if !near.matches}<p class="muted small">Finding the closest content…</p>
+                  {:else if !near.matches.length}<p class="muted small">No embedded content to compare.</p>
+                  {:else}<ul>
+                      {#each near.matches as m}<li>
+                          <a href={open(m.ref)} title={m.ref}>{short(m.ref)}</a><span class="muted small"
+                            >{Math.round(m.cosine * 100)}% alike</span
+                          ><a class="small" href={compare(o.ref[i]!, m.ref)}>Compare</a>
+                        </li>{/each}
+                    </ul>{/if}
+                </div>{/if}
             </section>
-          {:else if part}<section>
-              <h3>Its assets{size ? `, most ${size.label} first` : ""}</h3>
-              {@render assetList(
-                [...members].sort((a, b) => (size ? size.values[b]! - size.values[a]! : 0) || a - b),
-                (i) =>
-                  view === "contents" ? plural(o!.degree[i]!, "link") : o!.useKnown ? plural(o!.shows[i]!, "read") : "",
-                14,
-                "members",
-              )}
-            </section>{/if}
-          {#if view === "use" && !o.useKnown}<section><p class="muted small">{o.note}</p></section>{/if}
-          {#if view === "problems" && (!o.feedbackKnown || !o.duplicatesKnown)}<section>
-              <p class="muted small">
-                {o.feedbackKnown ? "" : "Disliked assets cannot be shown. "}{o.duplicatesKnown
-                  ? ""
-                  : "Near-identical pairs cannot be shown. "}{o.note}
-              </p>
-            </section>{/if}
-          {#if selected && joined.length}<section>
-              <h3>Linked to these {selected.startsWith("g:") ? "groups" : "types and tags"}</h3>
-              <ul class="rows">
-                {#each joined.slice(0, 8) as r}<li>
-                    <button class="link" onclick={() => choose(r.key)}>{nameOf(r.key)}</button>
-                    <span class="count"
-                      >{r.links ? plural(r.links, "link") : ""}{r.links && r.duplicates ? " · " : ""}{r.duplicates
-                        ? plural(r.duplicates, "near-identical pair")
-                        : ""}</span
-                    >
-                  </li>{/each}
-              </ul>
-            </section>{/if}
-          {#if points && !part && groups.length}<section>
-              <h3>{finding ? "Where they are, by group" : "Groups by meaning"}</h3>
-              <ul class="rows">
-                {#each [...groups]
-                  .filter((g) => !finding || perGroup.get(g.key))
-                  .sort((a, b) => (finding ? perGroup.get(b.key)! - perGroup.get(a.key)! : 0)) as g (g.key)}<li>
-                    <button class="link" onclick={() => choose(g.key)}>{g.label}</button><span class="count"
-                      >{finding
-                        ? `${perGroup.get(g.key)!.toLocaleString()} of ${g.members.length.toLocaleString()}`
-                        : plural(g.members.length, "asset")}</span
-                    >
-                  </li>{/each}
-              </ul>
-            </section>{/if}
-        {/if}
-      </aside>
+            {#if pickedJoins.length}<section>
+                <h3>Joined to</h3>
+                <ul class="rows">
+                  {#each pickedJoins.slice(0, 12) as j}<li>
+                      <button class="link" onclick={() => pick(j.i)} title={o.ref[j.i]}>{short(o.ref[j.i]!)}</button
+                      ><span class="count">{j.what}</span>
+                    </li>{/each}
+                </ul>
+              </section>{/if}
+          {:else}
+            {#if part}<header class="side-head">
+                <div>
+                  <h2>{part.name}</h2>
+                  <p class="muted small">
+                    {part.group ? "Group by meaning" : part.type ? `Tag in ${part.type}` : "Asset type"} ·
+                    {plural(facts.count, "asset")}
+                  </p>
+                </div>
+                <button class="btn-quiet" onclick={() => choose(selected)} aria-label="Close">✕</button>
+              </header>{/if}
+            {#if finding}<section>
+                <h3>
+                  {finding.label}<span class="count">{(finding.pairs ?? finding.assets).length.toLocaleString()}</span>
+                </h3>
+                <p class="muted small">{finding.hint}</p>
+                {#if finding.pairs}{@render pairList(finding.pairs, 8)}{:else}{@render assetList(
+                    finding.assets,
+                    finding.note,
+                    8,
+                    `${view}:${finding.id}`,
+                  )}{/if}
+              </section>
+            {:else if part}<section>
+                <h3>Its assets{size ? `, most ${size.label} first` : ""}</h3>
+                {@render assetList(
+                  [...members].sort((a, b) => (size ? size.values[b]! - size.values[a]! : 0) || a - b),
+                  (i) =>
+                    view === "contents"
+                      ? plural(o!.degree[i]!, "link")
+                      : o!.useKnown
+                        ? plural(o!.shows[i]!, "read")
+                        : "",
+                  14,
+                  "members",
+                )}
+              </section>{/if}
+            {#if view === "use" && !o.useKnown}<section><p class="muted small">{o.note}</p></section>{/if}
+            {#if view === "problems" && (!o.feedbackKnown || !o.duplicatesKnown)}<section>
+                <p class="muted small">
+                  {o.feedbackKnown ? "" : "Disliked assets cannot be shown. "}{o.duplicatesKnown
+                    ? ""
+                    : "Near-identical pairs cannot be shown. "}{o.note}
+                </p>
+              </section>{/if}
+            {#if selected && joined.length}<section>
+                <h3>Linked to these {selected.startsWith("g:") ? "groups" : "types and tags"}</h3>
+                <ul class="rows">
+                  {#each joined.slice(0, 8) as r}<li>
+                      <button class="link" onclick={() => choose(r.key)}>{nameOf(r.key)}</button>
+                      <span class="count"
+                        >{r.links ? plural(r.links, "link") : ""}{r.links && r.duplicates ? " · " : ""}{r.duplicates
+                          ? plural(r.duplicates, "near-identical pair")
+                          : ""}</span
+                      >
+                    </li>{/each}
+                </ul>
+              </section>{/if}
+            {#if points && !part && groups.length}<section>
+                <h3>{finding ? "Where they are, by group" : "Groups by meaning"}</h3>
+                <ul class="rows">
+                  {#each [...groups]
+                    .filter((g) => !finding || perGroup.get(g.key))
+                    .sort((a, b) => (finding ? perGroup.get(b.key)! - perGroup.get(a.key)! : 0)) as g (g.key)}<li>
+                      <button class="link" onclick={() => choose(g.key)}>{g.label}</button><span class="count"
+                        >{finding
+                          ? `${perGroup.get(g.key)!.toLocaleString()} of ${g.members.length.toLocaleString()}`
+                          : plural(g.members.length, "asset")}</span
+                      >
+                    </li>{/each}
+                </ul>
+              </section>{/if}
+          {/if}
+        </aside>{/if}
     </div>
   {/if}
 </div>
@@ -979,8 +976,13 @@
     gap: 8px;
     align-items: start;
   }
+  .map-body.alone {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  /* The map stays in view while a long list beside it is scrolled with the page: one scroller, not two. */
   .map-stage {
-    position: relative;
+    position: sticky;
+    inset-block-start: 8px;
     border: 1px solid var(--border);
     background: var(--surface);
     padding: 0;
@@ -1288,13 +1290,6 @@
     text-decoration: underline;
   }
   /* The map needs about 1,000 px to be read at full size; below that the figures go under it. */
-  /* Beside the map the figures scroll on their own, so the map stays in view while they are read. */
-  @media (min-width: 1401px) {
-    .map-side {
-      max-block-size: calc(max(360px, 100vh - 152px) + 2px);
-      overflow-y: auto;
-    }
-  }
   @media (max-width: 1400px) {
     .map-body {
       grid-template-columns: 1fr;
