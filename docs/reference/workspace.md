@@ -110,7 +110,9 @@ Everything an overview needs in one call. Input:
 
 - `health` is what `akm doctor --report --group-by run` returns (`--no-probe` unless `probe` is set), minus the write: the
   `state-db-round-trip` check reports itself skipped. See [CLI: health](cli.md#health) for the check list. The window is the last 24 hours, compared with the 24
-  hours before it.
+  hours before it. A metric with nothing to measure is `null` (unknown), not `0`: `taskFailRate` when no task ran in the
+  window, `agentFailureRate` when no agent was dispatched. When `state.db` cannot be read, `metrics` and `improve` hold `null`
+  in every field. `0` means there were runs and none failed.
 - `metrics` is what `akm doctor metrics` returns (without `rows`); see [CLI: metrics](cli.md#metrics).
 - `improveRuns` are the last 10 real (non-dry-run) improve runs, newest first. `preRunSync`, `sync` and `triage` are `null`
   when the run did not record them; `modelCalls` is empty for runs from before the usage report existed.

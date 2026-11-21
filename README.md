@@ -33,7 +33,7 @@ Search and show only return content; running a workflow, task, script, or agent 
 
 ## Install
 
-**Option 1 — npm package (recommended; requires [Node.js](https://nodejs.org) >= 22):**
+**Option 1 — npm package (recommended; requires [Node.js](https://nodejs.org) >= 22.15):**
 
 ```sh
 npm install -g akm-cli

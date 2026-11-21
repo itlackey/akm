@@ -5,14 +5,16 @@ real task.
 
 ## Runtime Requirement
 
-The npm package requires Node.js >= 22 to bootstrap its command on every
+The npm package requires Node.js >= 22.15 to bootstrap its command on every
 platform. If a working Bun >= 1.0 is also on `PATH`, the package launcher
 prefers Bun for execution; old, unusable, or absent Bun installations fall back
-to Node.js. The standalone binaries are runtime-free.
+to Node.js. On Linux and macOS the launcher replaces itself with the runtime
+(`process.execve`), so akm is one process: the scripts it runs keep the terminal,
+and every signal reaches them once. The standalone binaries are runtime-free.
 
 ## 1. Install
 
-**Option 1 — npm package (recommended; requires [Node.js](https://nodejs.org) >= 22):**
+**Option 1 — npm package (recommended; requires [Node.js](https://nodejs.org) >= 22.15):**
 
 ```sh
 npm install -g akm-cli
