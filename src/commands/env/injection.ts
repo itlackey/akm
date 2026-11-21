@@ -23,6 +23,7 @@ import { readValue } from "../../core/secret-value";
 import { endBySignal } from "../../core/signal-observers";
 import { type ManagedSubprocessResult, runManagedSubprocess } from "../../core/subprocess";
 import { withRetries } from "../../execution/retry";
+import { isDirectory } from "../../sources/providers/provider-utils";
 import type { ScriptOrigin } from "../../tasks/prepare/script-capture";
 import { resolveEnvBinding } from "./env-binding";
 
@@ -185,14 +186,6 @@ export async function runProgram(options: RunProgramOptions): Promise<ManagedSub
   return result;
 }
 
-function isFolder(file: string): boolean {
-  try {
-    return fs.statSync(file).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
 /** The error for a program that could not be started; `script` names the script whose command it was. */
 export function spawnFailure(program: string, error: Error, script?: ScriptOrigin): Error {
   const code = (error as NodeJS.ErrnoException).code;
@@ -215,7 +208,7 @@ export function spawnFailure(program: string, error: Error, script?: ScriptOrigi
     );
   }
   if (code === "EACCES") {
-    if (isFolder(program)) {
+    if (isDirectory(program)) {
       return new NotFoundError(
         `Command not executable: ${program} is a folder, not a program`,
         "COMMAND_NOT_EXECUTABLE",

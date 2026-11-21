@@ -29,11 +29,7 @@ export interface TaskV5Start {
 }
 
 /** The flags a run was first started with: its tasks and steps get them, and a resume uses them again. */
-export interface StartedWith extends TaskV5StartFlags {
-  readonly env?: readonly string[];
-  readonly secret?: readonly string[];
-  readonly inherit?: readonly string[];
-}
+export type StartedWith = TaskV5StartFlags;
 
 /** The start flags in `rawArgs`, and the rest, which are the task id and its input flags. */
 export function parseStartFlags(rawArgs: readonly string[]): {

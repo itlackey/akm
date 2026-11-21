@@ -170,8 +170,7 @@ function pullRepo(repoDir: string, credential?: string, displayDir = repoDir): v
   const relation = inspectGitUpstream(repoDir, credential);
   if (relation.behind > 0 && relation.upstream) {
     // ahead > 0 guarantees commits the upstream does not hold, so this names them and refuses.
-    if (relation.ahead > 0) assertNoLocalWork(repoDir, subject, relation.upstream);
-    assertNoLocalWork(repoDir, subject, false);
+    assertNoLocalWork(repoDir, subject, relation.ahead > 0 ? relation.upstream : false);
     assertNoIgnoredPathOverwrite(repoDir, relation.upstream, displayDir);
     const merge = runGit(["-C", repoDir, "merge", "--ff-only", "--no-overwrite-ignore", relation.upstream], {
       timeout: 120_000,
