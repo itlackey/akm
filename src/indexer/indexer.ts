@@ -137,7 +137,7 @@ import { walkStashFlatWithStatus } from "./walk/walker";
 // ── Types ───────────────────────────────────────────────────────────────────
 
 /** `--clean` did not run: removing rows for files that cannot be listed would delete rows for files that exist. */
-export interface IndexCleanSkipped {
+interface IndexCleanSkipped {
   skipped: { reason: "incomplete-scan"; sources: IncompleteIndexSource[] };
 }
 

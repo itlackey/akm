@@ -16,7 +16,7 @@ import { type ImproveRunSummaryRow, queryImproveRuns } from "../../storage/repos
 import { decodeTaskHistoryMetadata, type TaskHistoryRow } from "../../storage/repositories/task-history-repository";
 import type { ImproveHealthMetrics, ImproveRunSummary } from "./types";
 
-export function roundRate(value: number): number {
+function roundRate(value: number): number {
   return Number(value.toFixed(4));
 }
 
@@ -26,7 +26,7 @@ export function roundOrNull(value: number | null): number | null {
 }
 
 /** A history row with its metadata decoded; `metadata` is undefined when the row's `metadata_json` is corrupt. */
-export interface DecodedTaskRow {
+interface DecodedTaskRow {
   row: TaskHistoryRow;
   metadata: ReturnType<typeof decodeTaskHistoryMetadata> | undefined;
 }

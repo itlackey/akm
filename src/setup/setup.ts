@@ -126,7 +126,7 @@ export interface SetupSummary {
   removedBundles: RemovedBundle[];
 }
 
-export interface RemovedBundle {
+interface RemovedBundle {
   id: string;
   /** The bundle's path, or its url or package for a bundle that has none. */
   path: string;

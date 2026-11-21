@@ -17,7 +17,7 @@ import {
 
 type IndexDb = NonNullable<ReturnType<typeof openReadonlyExistingDatabase>>;
 
-export type HealthIndexRead<T> = { value: T } | { noIndex: true } | { building: true } | { error: string };
+type HealthIndexRead<T> = { value: T } | { noIndex: true } | { building: true } | { error: string };
 
 export function readHealthIndex<T>(read: (db: IndexDb) => T): HealthIndexRead<T> {
   try {

@@ -12,7 +12,7 @@ import { getMeta } from "../../storage/repositories/index-meta-repository";
  * time. `ready-js` means every entry has a vector; the name is historical (the
  * sqlite-vec variant, `ready-vec`, is gone).
  */
-export type SemanticSearchRuntimeStatus = "pending" | "ready-js" | "blocked";
+type SemanticSearchRuntimeStatus = "pending" | "ready-js" | "blocked";
 
 /**
  * Verification of the post-index semantic-search state. Produced by the
