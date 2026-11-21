@@ -61,7 +61,7 @@ describe.skipIf(!posix)("a child that dies of a signal ends akm by that signal",
   setSecret(path.join(stashDir, "secrets", "s"), Buffer.from("v"));
 
   for (const name of ["TERM", "INT", "KILL"] as const) {
-    const signal = `SIG${name}`;
+    const signal = `SIG${name}` as NodeJS.Signals;
     test(`akm run: SIG${name}`, () => {
       const result = akm(stashDir, ["run", "scripts/sig.sh", name]);
       expect(result.signal).toBe(signal);
