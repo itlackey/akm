@@ -597,16 +597,25 @@
             at.set(...(centres.get(g.key) ?? [0, 0, 0])).project(camera);
             const x = ((at.x + 1) / 2) * w;
             const y = ((1 - at.y) / 2) * h;
-            const box: [number, number, number, number] = [
-              x - el.offsetWidth / 2,
-              y - el.offsetHeight / 2,
-              x + el.offsetWidth / 2,
-              y + el.offsetHeight / 2,
-            ];
-            const hidden =
-              at.z >= 1 ||
-              ((first(g) > 0 || (pickEl && picked >= 0)) &&
-                placed.some((p) => box[0] < p[2] && box[2] > p[0] && box[1] < p[3] && box[3] > p[1]));
+            // A name that would lie over one already placed is tried just above and below its group's middle before
+            // it is hidden, so a group goes unnamed only where there is no room at all.
+            const height = el.offsetHeight + 4;
+            let box: [number, number, number, number] = [0, 0, 0, 0];
+            let hidden = true;
+            for (const shift of [0, -1, 1, -2, 2]) {
+              box = [
+                x - el.offsetWidth / 2,
+                y - el.offsetHeight / 2 + shift * height,
+                x + el.offsetWidth / 2,
+                y + el.offsetHeight / 2 + shift * height,
+              ];
+              const free = box;
+              hidden =
+                at.z >= 1 ||
+                ((first(g) > 0 || !!(pickEl && picked >= 0)) &&
+                  placed.some((p) => free[0] < p[2] && free[2] > p[0] && free[1] < p[3] && free[3] > p[1]));
+              if (!hidden || at.z >= 1) break;
+            }
             el.style.visibility = hidden ? "hidden" : "visible";
             el.style.opacity = dimmed.has(g.key) ? "0.3" : selected && first(g) === 2 ? "0.45" : "1";
             el.style.transform = `translate(${box[0]}px, ${box[1]}px)`;
@@ -768,7 +777,7 @@
     );
     const { camera, controls } = world;
     const away = (flat ? new THREE.Vector3(0, 0, 1) : camera.position.clone().sub(controls.target)).setLength(
-      picked >= 0 ? Math.min(400, Math.max(170, 1.4 * reachOut)) : 60 + 12 * Math.cbrt(group!.members.length),
+      picked >= 0 ? Math.min(400, Math.max(170, 1.4 * reachOut)) : Math.max(170, 40 * Math.cbrt(group!.members.length)),
     );
     untrack(() => fly(target, away));
   });

@@ -272,7 +272,7 @@
   function groupNote(g: { members: number[] }): string {
     if (view === "use")
       return o!.useKnown
-        ? `${g.members.filter((i) => o!.use[i] === "unread").length.toLocaleString()} dead weight`
+        ? `${pct(g.members.filter((i) => o!.use[i] === "unread").length, g.members.length)} dead weight`
         : "";
     if (view === "problems") {
       const n = problemsOf(g.members);
@@ -366,7 +366,8 @@
       return (reached?.links ?? [])
         .filter((l) => drawn(l.a) && drawn(l.b))
         .map((l) => ({ from: l.a, to: l.b, weight: 1, level: l.level }));
-    if (!part?.group) return [];
+    // A chosen group's joins to other groups are drawn where the panel lists them: not in Use.
+    if (!part?.group || view === "use") return [];
     const strongest = Math.max(1, ...joined.map((r) => r.links + r.duplicates));
     return joined
       .slice(0, 12)
@@ -398,7 +399,12 @@
   const problem = (i: number) => PROBLEMS.find((p) => p.id === firstProblem(o!, i))?.label.toLowerCase();
   /** Why an outdated asset is outdated, and how much it is still read. */
   const outdatedNote = (i: number) =>
-    [o!.outdatedWhy[i]!.join(", "), o!.shows[i] ? reads(i) : ""].filter(Boolean).join(" · ");
+    [
+      [...new Set(o!.outdatedWhy[i]!.map((why) => why.split(" ")[0]))].join(", "),
+      o!.shows[i] ? plural(o!.shows[i]!, "read") : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
   /** The near-duplicate pairs an asset is in. */
   const pairsOf = (i: number) => o!.duplicates.filter((d) => d.a === i || d.b === i);
   function describe(i: number): string {
@@ -441,14 +447,9 @@
 {/snippet}
 
 {#snippet colourKey()}
-  {#if view === "use" ? o!.useKnown : view === "problems"}<ul class="colour-key">
-      {#if view === "use"}{#each USE_CLASSES as u}<li>
-            <span class="swatch" style={`background:var(${u.token})`}></span>{u.label}
-          </li>{/each}
-      {:else}{#each PROBLEMS as p}<li>
-            <span class="swatch" style={`background:var(${p.token})`}></span>{p.label}
-          </li>{/each}
-        <li><span class="swatch" style="background:var(--border)"></span>No problem recorded</li>{/if}
+  {#if view === "problems"}<ul class="colour-key">
+      {#each PROBLEMS as p}<li><span class="swatch" style={`background:var(${p.token})`}></span>{p.label}</li>{/each}
+      <li><span class="swatch" style="background:var(--border)"></span>No problem recorded</li>
     </ul>{/if}
 {/snippet}
 
@@ -591,7 +592,7 @@
               onStep={step}
               label={`${question} The ${plural(bundleScope.length - offMap, "asset")} of ${scopeName} that have a group by meaning, as points, in ${plural(groups.length, "group")} named by their tags, groups alike in meaning near each other.${offMap ? ` ${plural(offMap, "asset")} not shown.` : ""}`}
             >
-              {#snippet legend()}{#if view !== "contents"}{@render colourKey()}{/if}
+              {#snippet legend()}
                 {#if picked >= 0 && levelFigures?.some((l) => l.shown.length)}<div class="levels">
                     <p class="small">
                       <strong>{short(o!.ref[picked]!)}</strong> and what it is joined to, three steps out. A join is drawn
@@ -633,6 +634,7 @@
                     </ul>
                   </div>{/if}{/snippet}
             </SimilarityMap>
+            {@render colourKey()}
             <p class="muted small map-note">
               Choose a point or a group's name for its details. Position inside a group is approximate.
               {#if offMap}{plural(offMap, "asset")}
@@ -667,7 +669,7 @@
           </header>
           <section>
             <div class="actions">
-              <a class="btn-secondary" href={open(o.ref[i]!)}>Open</a>
+              <a class="btn btn-secondary" href={open(o.ref[i]!)}>Open</a>
               <button
                 class="btn-secondary"
                 aria-expanded={near?.ref === o.ref[i]}
@@ -758,7 +760,7 @@
               {#if unlinked.length}<p class="muted small">
                   Nothing points to these and they point to nothing. Open one to link it.
                 </p>
-                {@render assetList(unlinked, edited, 5, "unlinked")}{:else}<p class="muted small">
+                {@render assetList(unlinked, edited, 3, "unlinked")}{:else}<p class="muted small">
                   Every asset here has a link.
                 </p>{/if}
             </section>
@@ -771,9 +773,9 @@
               {#if acrossBundles.length}<p class="muted small">
                   Nearly the same content in two bundles: compare and keep one.
                 </p>
-                {@render pairList(acrossBundles, 3)}{:else if o.duplicatesKnown}<p class="muted small">
-                  No near-duplicate pair spans two bundles.
-                </p>{:else}<p class="muted small">{o.note}</p>{/if}
+                {@render pairList(acrossBundles, 3)}{:else if !o.duplicatesKnown}<p class="muted small">
+                  {o.note}
+                </p>{/if}
             </section>
             <section>
               <h3>Most connected</h3>
@@ -808,7 +810,7 @@
               <section>
                 <h3>Dead weight<span class="count">{deadWeight.length.toLocaleString()}</span></h3>
                 {#if deadWeight.length}<p class="muted small">Longest unchanged first. Open one to retire it.</p>
-                  {@render assetList(deadWeight, edited, 6, "dead")}{:else}<p class="muted small">
+                  {@render assetList(deadWeight, edited, 4, "dead")}{:else}<p class="muted small">
                     Nothing here is both unread and old.
                   </p>{/if}
               </section>
@@ -819,7 +821,7 @@
                   {@render assetList(
                     dislikedRead,
                     (i) => `${plural(o!.shows[i]!, "read")} · ${o!.negative[i]} negative, ${o!.positive[i]} positive`,
-                    4,
+                    3,
                     "dislikedRead",
                   )}{:else}<p class="muted small">Nothing read here has more negative feedback than positive.</p>{/if}
               </section>
@@ -828,7 +830,7 @@
                 {#if mostRead.length}{@render assetList(
                     mostRead,
                     (i) => plural(o!.shows[i]!, "read"),
-                    5,
+                    4,
                     "mostRead",
                   )}{:else}<p class="muted small">Nothing here has been read.</p>{/if}
                 {#if facts.useUnclassed}<p class="muted small">
@@ -852,8 +854,8 @@
             </section>
           {:else}
             <p class="answer">
-              To fix: <strong>{facts.outdated.length.toLocaleString()}</strong> outdated
-              {facts.outdated.length === 1 ? "asset" : "assets"} ·
+              To fix: <strong>{outdatedRead.length.toLocaleString()}</strong> outdated and still read ·
+              <strong>{outdatedUnread.length.toLocaleString()}</strong> outdated, not read ·
               <strong
                 >{o.duplicatesKnown
                   ? (facts.duplicatesInside.length + facts.duplicatesOutside.length).toLocaleString()

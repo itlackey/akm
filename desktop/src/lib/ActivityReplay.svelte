@@ -377,19 +377,21 @@
                 .length.toLocaleString()} events so far touched assets. Build the index with embeddings, or use Tags.
             </p>{/if}
         {:else}
-          <MindMap
-            {branches}
-            rootLabel="Library"
-            rootFigure={eventsText(branches.reduce((sum, b) => sum + (counts.get(b.key) ?? 0), 0))}
-            figure={(_, key) => eventsText(counts.get(key) ?? 0)}
-            bar={(_, key) => [{ n: counts.get(key) ?? 0, token: "--accent" }]}
-            scale={most}
-            {selected}
-            appeared={(key) => (counts.get(key) ?? 0) > 0}
-            onSelect={choose}
-            pulse={playing ? counts : null}
-            label="The library mind map: its asset types and the tags their assets carry most, each with the number of events on it so far. The log beside it lists the same events."
-          />
+          <div class="tags-frame">
+            <MindMap
+              {branches}
+              rootLabel="Library"
+              rootFigure={eventsText(branches.reduce((sum, b) => sum + (counts.get(b.key) ?? 0), 0))}
+              figure={(_, key) => eventsText(counts.get(key) ?? 0)}
+              bar={(_, key) => [{ n: counts.get(key) ?? 0, token: "--accent" }]}
+              scale={most}
+              {selected}
+              appeared={(key) => (counts.get(key) ?? 0) > 0}
+              onSelect={choose}
+              pulse={playing ? counts : null}
+              label="The library mind map: its asset types and the tags their assets carry most, each with the number of events on it so far. The log beside it lists the same events."
+            />
+          </div>
           {#if offMap}<p class="muted small">
               {offMap.toLocaleString()} events so far touched assets under none of the tags drawn, or no longer in the library.
             </p>{/if}
@@ -416,7 +418,7 @@
               }}>✕</button
             >
           </header>
-          {#if picked >= 0}<a class="btn-secondary" href={searchHref(new URLSearchParams(), o.ref[picked]!)}>Open</a
+          {#if picked >= 0}<a class="btn btn-secondary" href={searchHref(new URLSearchParams(), o.ref[picked]!)}>Open</a
             >{/if}
           <section>
             <h3>Its events so far</h3>
@@ -430,7 +432,9 @@
                         ? "read"
                         : step.kind === "feedback"
                           ? `${step.signal ?? ""} feedback`
-                          : step.eventType}{picked < 0 && step.node >= 0 ? ` · ${o.path(step.node)}` : ""}</span
+                          : step.eventType}{#if picked < 0 && step.node >= 0}
+                      · <a href={searchHref(new URLSearchParams(), o.ref[step.node]!)}>{o.path(step.node)}</a
+                      >{/if}</span
                   >
                 </li>{:else}<li class="muted">Nothing yet</li>{/each}
             </ol>
@@ -440,11 +444,11 @@
             <div><strong>{totals.events.toLocaleString()}</strong><span>events</span></div>
             <div><strong>{totals.shows.toLocaleString()}</strong><span>reads</span></div>
             <div><strong>{totals.searches.toLocaleString()}</strong><span>searches</span></div>
-            <div><strong>{totals.curates.toLocaleString()}</strong><span>curates</span></div>
+            {#if totals.curates}<div><strong>{totals.curates.toLocaleString()}</strong><span>curates</span></div>{/if}
             <div class:bad={totals.foundNothing > 0}>
               <strong>{totals.foundNothing.toLocaleString()}</strong><span>found nothing</span>
             </div>
-            <div><strong>{totals.positive}</strong><span>positive,</span></div>
+            <div><strong>{totals.positive}</strong><span>positive feedback</span></div>
             <div><strong>{totals.negative}</strong><span>negative feedback</span></div>
             <div><strong>{totals.used.size.toLocaleString()}</strong><span>assets used</span></div>
           </div>
@@ -475,7 +479,7 @@
                   {#if step.ref}<a href={searchHref(new URLSearchParams(), step.ref)}
                       >{step.node >= 0 ? o.path(step.node) : step.ref}</a
                     >{:else}<span>an asset</span>{/if}
-                  <span class="muted small">{step.signal ?? ""} · {stampText(step.t, span)}</span>
+                  <span class="muted small">{stampText(step.t, span)}</span>
                 </li>{:else}<li class="muted">None so far</li>{/each}
             </ol>
           </section>
@@ -763,6 +767,18 @@
     align-content: start;
     gap: 16px;
     min-inline-size: 0;
+  }
+  /* The tags are drawn in the frame the points have, so the timeline stays under them. */
+  .tags-frame {
+    max-block-size: calc(max(260px, 100vh - 575px) + 40px);
+    overflow: auto;
+  }
+  /* Beside the map the lists scroll on their own, so the page, the map and the timeline stay put. */
+  @media (min-width: 1401px) {
+    .replay-side {
+      max-block-size: calc(max(260px, 100vh - 575px) + 110px);
+      overflow-y: auto;
+    }
   }
   .log {
     list-style: none;
