@@ -5,12 +5,11 @@ import { akmTasksAdd, akmTasksDoctor, akmTasksSync } from "../../src/commands/ta
 import { bundleSourceId } from "../../src/core/config/config-sources";
 import type { AkmConfig } from "../../src/core/config/config-types";
 import type { SchedulerBackend, SchedulerInstallOptions } from "../../src/tasks/backends/types";
+import { sandboxRowEnvironment } from "../_helpers/row-environment";
 import { withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
-/** The row environment a sync from this sandbox writes: its working stash. */
-function rowEnvironment(stashDir: string) {
-  return { AKM_BUNDLE_DIR: path.resolve(stashDir) };
-}
+/** The row environment a sync from this sandbox writes. */
+const rowEnvironment = sandboxRowEnvironment;
 
 function completeSchedulerBackend(options: {
   binding: readonly string[];

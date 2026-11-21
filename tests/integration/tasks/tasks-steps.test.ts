@@ -143,7 +143,7 @@ steps:
     const [failed] = readTaskHistory({ id: "resumable", limit: 1 });
     expect(failed?.steps?.[0]?.result).toBe("big-result");
     fs.writeFileSync(file("ok"), "");
-    const resumed = await run("resumable", { inputFlags: [{ name: "resume", value: true }] });
+    const resumed = await run("resumable", { inputFlags: () => [{ name: "resume", value: true }] });
     expect(resumed.status).toBe("completed");
     expect(resumed.steps?.map((s) => s.status)).toEqual(["reused", "completed"]);
     expect(read("expensive").trim().split("\n")).toHaveLength(1);
@@ -152,22 +152,22 @@ steps:
 
   test("--resume refuses with nothing to resume or after the steps changed", async () => {
     write("fresh", "version: 4\nsteps:\n  - { name: a, run: 'true' }\n");
-    await expect(run("fresh", { inputFlags: [{ name: "resume", value: true }] })).rejects.toThrow(
+    await expect(run("fresh", { inputFlags: () => [{ name: "resume", value: true }] })).rejects.toThrow(
       "no failed steps run",
     );
     write("changes", "version: 4\nsteps:\n  - { name: a, run: 'false' }\n");
     expect((await run("changes")).status).toBe("failed");
     write("changes", "version: 4\nsteps:\n  - { name: b, run: 'false' }\n");
-    await expect(run("changes", { inputFlags: [{ name: "resume", value: true }] })).rejects.toThrow(
+    await expect(run("changes", { inputFlags: () => [{ name: "resume", value: true }] })).rejects.toThrow(
       "changed its steps",
     );
   });
 
   test("--resume stays an ordinary input flag for a task without steps", async () => {
     write("plain", "version: 4\nrun: 'true'\n");
-    await expect(run("plain", { inputFlags: [{ name: "resume", value: true }] })).rejects.toThrow(/resume/);
+    await expect(run("plain", { inputFlags: () => [{ name: "resume", value: true }] })).rejects.toThrow(/resume/);
     write("declared", "version: 4\ninputs:\n  resume: { type: boolean, default: false }\nrun: 'true'\n");
-    expect((await run("declared", { inputFlags: [{ name: "resume", value: true }] })).status).toBe("completed");
+    expect((await run("declared", { inputFlags: () => [{ name: "resume", value: true }] })).status).toBe("completed");
   });
 
   test("a step that exceeds its timeout fails with timeout", async () => {
@@ -315,7 +315,7 @@ describe("steps tasks: task steps, overlap, history", () => {
 
   test("a run does not start while the previous one is alive: manual errors, scheduled skips without a history row", async () => {
     write("busy", "version: 4\nsteps:\n  - { name: a, run: 'true' }\n");
-    const lockPath = path.join(stateDir, "locks", "task-busy.lock");
+    const lockPath = path.join(stateDir, "locks", `task-${encodeURIComponent("stash//tasks/busy")}.lock`);
     const held = tryAcquireRunLock(lockPath, { label: "task" });
     expect(held.state).toBe("acquired");
     try {

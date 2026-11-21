@@ -40,6 +40,8 @@ export const TASK_SOURCE_V5_VERSION_PATTERN = /^5-beta\.\d+$/;
 const SOURCE_LABEL = "task source v5";
 /** The name of the one step of a task that is one command: it adds no entry to the state. */
 export const TASK_V5_SINGLE_STEP = "";
+/** A step's name as a person reads it: a task that is one command has the one step "(only)". */
+export const taskV5StepLabel = (name: string): string => (name === TASK_V5_SINGLE_STEP ? "(only)" : name);
 /** The flags a start of a version 5 task takes, beside those in `TASK_RUN_RESERVED_FLAG_NAMES`, that can be an input's name: an input may not be named like one. */
 const START_FLAG_NAMES = ["env", "secret", "cwd", "timeout", "resume", "inherit"];
 const STEP_NAME = /^[A-Za-z0-9_-]+$/;

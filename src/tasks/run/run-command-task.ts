@@ -24,8 +24,8 @@ import type { ExecutionProvenanceContext } from "../model/invocation";
 import type { PreparedTaskV3Command } from "../prepare/prepared-execution";
 import { finishAttempt } from "./attempt-lifecycle";
 import { DEFAULT_SCHEDULED_TASK_TIMEOUT_MS } from "./run-workflow-task";
-import { appendHistory } from "./task-history";
-import { persistRunLog, scrubTaskOutput, streamLines } from "./task-log";
+import { appendHistory, taskBundle } from "./task-history";
+import { appendStreamLines, persistRunLog, scrubTaskOutput } from "./task-log";
 import type { TaskRunResult, TaskRunStatus } from "./task-result";
 
 /**
@@ -84,6 +84,7 @@ export async function runPreparedCommandTask(input: {
     durationMs: finishedAt.getTime() - startedAt.getTime(),
     log: logPath,
     target: { kind: "command", engine: engineName },
+    ...taskBundle(task.taskRef),
     detail: result.ok
       ? { exitCode: result.exitCode }
       : {
@@ -134,12 +135,12 @@ function renderPromptLog(input: {
   if (input.result.stdout) {
     lines.push("--- agent stdout ---");
     lines.push(input.result.stdout);
-    dbLines.push(...streamLines(input.result.stdout, "stdout", "info"));
+    appendStreamLines(dbLines, input.result.stdout, "stdout", "info");
   }
   if (input.result.stderr) {
     lines.push("--- agent stderr ---");
     lines.push(input.result.stderr);
-    dbLines.push(...streamLines(input.result.stderr, "stderr", "error"));
+    appendStreamLines(dbLines, input.result.stderr, "stderr", "error");
   }
   return { fileText: `${lines.join("\n")}\n`, dbLines };
 }

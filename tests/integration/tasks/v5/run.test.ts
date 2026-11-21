@@ -413,7 +413,7 @@ describe("a clean environment", () => {
       .split("\n")
       .map((line) => line.split("=")[0]);
 
-  test("a command and an agent see what --clean keeps, akm's locations and what they are given, and nothing else", async () => {
+  test("a command sees what --clean keeps, akm's locations and what it is given, and nothing else; an agent sees akm's environment as it is", async () => {
     let agentEnv: Record<string, string> = {};
     const w = world({
       host,
@@ -448,10 +448,11 @@ describe("a clean environment", () => {
     }
     for (const name of ["CUSTOM_PROFILE", "GITHUB_TOKEN", "OPENCODE_CONFIG_DIR", "AKM_BUNDLE_DIR"])
       expect(seen).not.toContain(name);
-    expect([agentEnv.LOG_LEVEL, agentEnv.GITHUB_TOKEN, agentEnv.CUSTOM_PROFILE]).toEqual([
+    expect([agentEnv.LOG_LEVEL, agentEnv.GITHUB_TOKEN, agentEnv.CUSTOM_PROFILE, agentEnv.OPENCODE_CONFIG_DIR]).toEqual([
       "info",
-      undefined,
-      undefined,
+      "canary-host-token",
+      "work",
+      "/etc/opencode",
     ]);
     expect(agentEnv.AKM_STATE_DIR).toBeDefined();
     expect(agentEnv.AKM_TASK_STATE).toBeUndefined(); // an agent is not pointed at the state file
@@ -713,7 +714,7 @@ describe("secrets are never state", () => {
         },
       },
     });
-    expect(await message(w.start("tasks/t"))).toBe("step fetch: exit code 1: [REDACTED]");
+    expect(await message(w.start("tasks/t"))).toBe("step fetch: non_zero_exit: exit code 1: [REDACTED]");
     const { readTaskHistory } = await import("../../../../src/tasks/run/task-history");
     const [row] = readTaskHistory({ id: "t", limit: 1 });
     expect(JSON.stringify(row)).not.toContain("canary-in-history");
@@ -831,7 +832,7 @@ describe("every run has a working folder", () => {
     expect(fs.readdirSync(at("made")).sort()).toEqual(["by-flag", "by-prompt-asset", "by-step", "by-task"]);
   });
 
-  test("a run's own folder that cannot be made refuses the run; a step's own fails that step", async () => {
+  test("a folder that cannot be made, named by the task or by a step, refuses the start", async () => {
     fs.writeFileSync(at("a-file"), "");
     const w = world({
       tasks: {
@@ -839,11 +840,9 @@ describe("every run has a working folder", () => {
         "tasks/step": { steps: [{ name: "a", exec: count("step"), cwd: path.join(at("a-file"), "under") }] },
       },
     });
-    await expect(w.start("tasks/run")).rejects.toThrow();
-    expect(ran("run")).toBe(0);
+    for (const ref of ["tasks/run", "tasks/step"]) expect(await rule(w.start(ref))).toBe("INVALID_FLAG_VALUE");
+    expect(ran("run") + ran("step")).toBe(0);
     expect(w.history()).toEqual([]); // refused: no run was recorded
-    expect(await rule(w.start("tasks/step"))).toBe(RUN_FAILED);
-    expect(ran("step")).toBe(0);
   });
 
   test("when a run of a task succeeds, the folders kept for its earlier failed runs are removed, and no folder cwd: or --cwd names", async () => {
@@ -1135,7 +1134,7 @@ describe("timeout: and max-retries:, as the flags", () => {
           ),
         ),
     });
-    expect(await message(w.start("tasks/t"))).toBe("step (only): timeout");
+    expect(await message(w.start("tasks/t"))).toBe("step (only): timeout: agent timed out");
     expect(told).toBe(true);
   });
 
@@ -1218,7 +1217,7 @@ describe("timeout: and max-retries:, as the flags", () => {
         "tasks/one": { "max-retries": 1, exec: flaky("one", 2) },
       },
     });
-    expect(await message(w.start("tasks/t"))).toBe("step c: exit code 1");
+    expect(await message(w.start("tasks/t"))).toBe("step c: non_zero_exit: exit code 1");
     expect([ran("a"), ran("b"), ran("c")]).toEqual([2, 2, 1]);
     expect(await w.start("tasks/one")).toBe("ok");
   });
@@ -1432,7 +1431,8 @@ describe("what a start gives, and what it checks before anything runs", () => {
     expect(json(await w.start("tasks/typed", { n: "10", on: "true", s: "x" }))).toEqual({ n: 10, on: true, s: "x" });
     expect(json(await w.start("tasks/typed", { n: "2.5", on: "false" }))).toEqual({ n: 2.5, on: false, s: "" });
     expect(json(await w.start("tasks/typed", { n: 4 })).n).toBe(4);
-    expect(json(await w.start("tasks/typed", { n: 4, s: true })).s).toBe("true");
+    // a flag given no value is not the text "true": a text input refuses it
+    expect(await rule(w.start("tasks/typed", { n: 4, s: true }))).toBe(BAD_VALUE);
     const refused = ran("typed");
     for (const values of [{ n: "ten" }, { n: "" }, { n: "1", on: "yes" }, { n: "1", on: "TRUE" }] as Record<
       string,
@@ -1472,7 +1472,7 @@ describe("the history of a run", () => {
       },
       agent: () => "ok",
     });
-    expect(await message(w.start("tasks/t"))).toBe("step boom: exit code 3");
+    expect(await message(w.start("tasks/t"))).toBe("step boom: non_zero_exit: exit code 3");
     const [outer] = readTaskHistory({ id: "t", limit: 1 });
     expect(outer?.status).toBe("failed");
     expect(outer?.steps?.map((step) => [step.name, step.kind, step.status])).toEqual([

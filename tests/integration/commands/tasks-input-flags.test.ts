@@ -218,7 +218,7 @@ describe("akm task run — exact-name input flags materialize literal bindings (
     // Stage 1's own argv-scanning, which the envelope tests below exercise
     // for real through the actual CLI.
     const options: RunTaskOptions = { bundleDir: storage.stashDir, bundleName: "fixture" };
-    options.inputFlags = [
+    options.inputFlags = () => [
       { name: "scope", value: "all" },
       { name: "strict", value: true },
     ];

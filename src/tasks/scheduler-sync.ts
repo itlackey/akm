@@ -162,7 +162,7 @@ async function compileV5Schedules(
   for (const entry of document.schedule) {
     const start = scheduleStartFlags(entry);
     try {
-      await checkTaskV5({ ref: input.conceptId, bundle, inputs: schedulerInputFlags(entry.inputs), flags: start });
+      await checkScheduleEntryV5(entry, input.conceptId, bundle);
     } catch (cause) {
       throw new UsageError(`schedule[${entry.ordinal}]: ${errorMessage(cause)}`, "TASK_SOURCE_INVALID");
     }
@@ -175,6 +175,20 @@ async function compileV5Schedules(
     });
   }
   return schedules;
+}
+
+/** The check a start makes (`checkTaskV5`), with the inputs and the `--env`, `--secret` and `--timeout` a schedule entry gives. Sync and `doctor explain` both call it. */
+export async function checkScheduleEntryV5(
+  entry: TaskSourceV5ScheduleBinding,
+  conceptId: string,
+  bundle: { name: string; dir: string },
+): Promise<void> {
+  await checkTaskV5({
+    ref: conceptId,
+    bundle,
+    inputs: schedulerInputFlags(entry.inputs),
+    flags: scheduleStartFlags(entry),
+  });
 }
 
 /** What `--env`, `--secret` and `--timeout` carry for a schedule entry. The reader takes only env asset refs in its `env:`. */

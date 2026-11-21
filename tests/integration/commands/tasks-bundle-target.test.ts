@@ -30,6 +30,7 @@ import { loadConfig, resetConfigCache, saveConfig } from "../../../src/core/conf
 import { schedulerEnabledRefs, setSchedulerRefEnabled } from "../../../src/tasks/activation-config";
 import { buildCronLine, CRON_BACKEND, type CronExec, type CronExecResult } from "../../../src/tasks/backends/cron";
 import type { SchedulerBinding } from "../../../src/tasks/scheduler-binding";
+import { sandboxRowEnvironment, sandboxRowEnvironmentInline } from "../../_helpers/row-environment";
 import {
   type IsolatedAkmStorage,
   makeSandboxDir,
@@ -302,9 +303,12 @@ describe("bundle-targeted tasks via --bundle", () => {
       invocation: ["task", "run", "baz", "--bundle", "stash", "--scheduled"],
     };
     // Every row carries the working stash it was synced from, as the old descriptor did.
-    const expectedLine = buildCronLine(task, ["/usr/local/bin/akm"], "/var/log/akm", {
-      AKM_BUNDLE_DIR: path.resolve(iso.stashDir),
-    });
+    const expectedLine = buildCronLine(
+      task,
+      ["/usr/local/bin/akm"],
+      "/var/log/akm",
+      sandboxRowEnvironment(iso.stashDir),
+    );
     expect(body).toBe(expectedLine);
 
     // Adding with --bundle stash (the DEFAULT bundle by name) is byte-identical.
@@ -321,7 +325,7 @@ describe("bundle-targeted tasks via --bundle", () => {
     await akmTasksAdd({ id: "implicit-owner", schedule: "@daily", command: "true" }, { backend: cron() });
     // No config names this stash: the row's AKM_BUNDLE_DIR is how `--bundle stash` finds it.
     expect(cronBody(exec.current(), "implicit-owner")).toContain(
-      `AKM_BUNDLE_DIR=${path.resolve(iso.stashDir)} /usr/local/bin/akm task run implicit-owner --bundle stash --scheduled`,
+      `${sandboxRowEnvironmentInline(iso.stashDir)} /usr/local/bin/akm task run implicit-owner --bundle stash --scheduled`,
     );
 
     const result = await akmTasksRun("implicit-owner", { target: "stash", scheduled: true });

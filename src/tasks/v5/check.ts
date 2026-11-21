@@ -16,6 +16,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { resolveEnvBinding } from "../../commands/env/env-binding";
+import { assertWorkingFolderCanBeMade } from "../../commands/env/injection";
 import { parseBundleRef } from "../../core/asset/asset-ref";
 import { loadConfig } from "../../core/config/config";
 import { resolveSecretPath } from "../../core/env-secret-ref";
@@ -32,7 +33,7 @@ import { resolveAssetPath } from "../../sources/resolve";
 import { scriptProgram } from "../frozen-script";
 import { resolveBundleAsset } from "../run/load-task";
 import { parseTaskSource } from "../source/parse-task-source";
-import { TASK_INPUT_DIAGNOSTICS } from "../source/task-input-diagnostics";
+import { TASK_V5_INPUT_DIAGNOSTICS } from "../source/task-input-diagnostics";
 import { readTaskV5Options, type TaskSourceV5Document, type TaskV5Options, type TaskV5RefKind } from "./source";
 
 /** The flags of a start that are checked as the same options are in a task file. */
@@ -42,6 +43,8 @@ export interface TaskV5StartFlags {
   readonly inherit?: readonly string[];
   readonly timeout?: string | number;
   readonly maxRetries?: number;
+  /** Absolute: a `--cwd` is taken from the folder akm was started in. */
+  readonly cwd?: string;
 }
 
 export interface TaskV5Bundle {
@@ -96,6 +99,7 @@ function checkStartFlags(flags: TaskV5StartFlags): void {
     },
   );
   checkOptionRefs(options, "akm run");
+  if (flags.cwd !== undefined) assertWorkingFolderCanBeMade(flags.cwd);
 }
 
 async function checkTask(
@@ -123,10 +127,12 @@ async function checkTask(
   const document = parsed.v5;
   checkSupplied(document.inputs ?? {}, inputs, later);
   checkOptionRefs(document.options, ref);
+  checkWorkingFolder(document.options, found.bundle, ref);
   const visited = [...trail, { file: found.file, ref }];
   for (const step of document.steps) {
     const at = step.name === "" ? ref : `${ref} step ${step.name}`;
     checkOptionRefs(step.options, at);
+    checkWorkingFolder(step.options, found.bundle, at);
     if (step.kind === "exec" || step.kind === "prompt") continue;
     const target = step.run as string;
     if (step.kind === "tasks") {
@@ -174,14 +180,14 @@ export async function locateTaskV5Asset(
 function checkSupplied(contract: InputContract, flags: readonly InputFlag[], later: ReadonlySet<string>): void {
   const declared = Object.keys(contract);
   for (const name of later) {
-    if (!declared.includes(name)) throw TASK_INPUT_DIAGNOSTICS.unknownFlag(name, [...declared].sort());
+    if (!declared.includes(name)) throw TASK_V5_INPUT_DIAGNOSTICS.unknownFlag(name, [...declared].sort());
   }
   const repeated = flags.find((flag) => later.has(flag.name));
-  if (repeated) throw TASK_INPUT_DIAGNOSTICS.duplicateNonArray(repeated.name);
+  if (repeated) throw TASK_V5_INPUT_DIAGNOSTICS.duplicateNonArray(repeated.name);
   const known = Object.fromEntries(Object.entries(contract).filter(([name]) => !later.has(name)));
-  const defaulted = applyInputDefaults(known, materializeInputFlags(known, flags, TASK_INPUT_DIAGNOSTICS));
+  const defaulted = applyInputDefaults(known, materializeInputFlags(known, flags, TASK_V5_INPUT_DIAGNOSTICS));
   const errors = validateInputs(known, defaulted);
-  if (errors.length > 0) throw TASK_INPUT_DIAGNOSTICS.contractViolation(errors);
+  if (errors.length > 0) throw TASK_V5_INPUT_DIAGNOSTICS.contractViolation(errors);
 }
 
 /** The env assets and secrets an `env:` or `secret:` names must exist, and an env asset's own bindings with them. */
@@ -200,6 +206,16 @@ function checkOptionRefs(options: Pick<TaskV5Options, "env" | "secret">, where: 
     } catch (cause) {
       throw inContext(where, cause);
     }
+  }
+}
+
+/** A `cwd:` names a folder that can be made, read from the bundle the task is in. */
+function checkWorkingFolder(options: Pick<TaskV5Options, "cwd">, bundle: TaskV5Bundle, where: string): void {
+  if (options.cwd === undefined) return;
+  try {
+    assertWorkingFolderCanBeMade(path.resolve(bundle.dir, options.cwd));
+  } catch (cause) {
+    throw inContext(where, cause);
   }
 }
 

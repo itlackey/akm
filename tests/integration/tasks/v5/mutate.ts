@@ -210,13 +210,13 @@ const MUTATIONS: readonly Mutation[] = [
   m(
     "an undeclared input is accepted",
     CHECK,
-    "if (!declared.includes(name)) throw TASK_INPUT_DIAGNOSTICS.unknownFlag(name, [...declared].sort());",
+    "if (!declared.includes(name)) throw TASK_V5_INPUT_DIAGNOSTICS.unknownFlag(name, [...declared].sort());",
     "void 0;",
   ),
   m(
     "a missing input is accepted",
     CHECK,
-    "if (errors.length > 0) throw TASK_INPUT_DIAGNOSTICS.contractViolation(errors);",
+    "if (errors.length > 0) throw TASK_V5_INPUT_DIAGNOSTICS.contractViolation(errors);",
     "void 0;",
   ),
   m(
@@ -406,8 +406,8 @@ const MUTATIONS: readonly Mutation[] = [
   m(
     "a timeout: of nothing is a duration",
     OWNER_TIMEOUT,
-    "if (!Number.isSafeInteger(parsed) || parsed <= 0) {",
-    "if (!Number.isSafeInteger(parsed) || parsed < 0) {",
+    "if (parsed === null || parsed <= 0) {",
+    "if (parsed === null || parsed < 0) {",
   ),
   m(
     "a max-retries: that is no count is accepted",
@@ -739,7 +739,7 @@ const MUTATIONS: readonly Mutation[] = [
   m(
     "a value is not converted to its input's type when a run starts",
     RUN,
-    "const given = { ...materializeInputFlags(contract, flags, TASK_INPUT_DIAGNOSTICS), ...literals };",
+    "const given = { ...materializeInputFlags(contract, flags, TASK_V5_INPUT_DIAGNOSTICS), ...literals };",
     "const given = { ...Object.fromEntries(flags.map((flag) => [flag.name, flag.value])), ...literals };",
   ),
   m(
@@ -822,13 +822,13 @@ const MUTATIONS: readonly Mutation[] = [
   m(
     "the state is kept after a run succeeds",
     RUN,
-    "fs.rmSync(recordPath(record.taskId, record.runId), { force: true });",
+    "fs.rmSync(runRecordPath(record.taskId, record.runId), { force: true });",
     "void 0;",
   ),
   m(
     "the folders of earlier failed runs are kept when a run succeeds",
     RUN,
-    "for (const earlier of resumableRuns(record.taskId)) if (earlier.runId !== record.runId) discard(earlier);",
+    "for (const earlier of resumableRuns({ taskId: record.taskId, ref: qualifiedRef(record.bundle, record.ref) }))\n    if (earlier.runId !== record.runId) discard(earlier);",
     "void 0;",
   ),
   m("a failed run's state is dropped", RUN, "if (!failure) discard(record);", "discard(record);"),
@@ -845,8 +845,8 @@ const MUTATIONS: readonly Mutation[] = [
   m(
     "resume takes the oldest failed run",
     RUN,
-    "const [resume] = resumableRuns(task.taskId);",
-    "const resume = resumableRuns(task.taskId).at(-1);",
+    "const [resume] = resumableRuns({ taskId: task.taskId, ref: qualifiedRef(task.bundle, task.ref) });",
+    "const resume = resumableRuns({ taskId: task.taskId, ref: qualifiedRef(task.bundle, task.ref) }).at(-1);",
   ),
   m(
     "resume forgets the flags of the first start",
@@ -861,7 +861,7 @@ const MUTATIONS: readonly Mutation[] = [
   m(
     "one task's lock holds back another task",
     RUN,
-    "tryAcquireRunLock(taskRunLockPath(taskId),",
+    "tryAcquireRunLock(taskRunLockPath(qualifiedRef(found.bundle, ref)),",
     'tryAcquireRunLock(taskRunLockPath("one"),',
   ),
   m(
@@ -873,7 +873,7 @@ const MUTATIONS: readonly Mutation[] = [
   m(
     "a step ignores the lock of the task it runs",
     RUN,
-    'const lock = child.lock === true ? tryAcquireRunLock(taskRunLockPath(taskId), { label: "task" }) : undefined;',
+    'const lock =\n    child.lock === true\n      ? tryAcquireRunLock(taskRunLockPath(qualifiedRef(found.bundle, ref)), { label: "task" })\n      : undefined;',
     "const lock = undefined;",
   ),
   m(

@@ -24,11 +24,18 @@
 
 import fs from "node:fs";
 import { defineCommand } from "citty";
-import { getStringArg, parsePositiveIntFlag, parseTimeoutFlags } from "../../cli/parse-args";
+import {
+  getExactStringArg,
+  getStringArg,
+  parseNonNegativeIntFlag,
+  parsePositiveIntFlag,
+  parseTimeoutFlags,
+} from "../../cli/parse-args";
 import { RETIRED_ENGINE_ARG, SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
 import { EXIT_CODES, GLOBAL_OUTPUT_ARGS, output, runWithJsonErrors } from "../../cli/shared";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
+import { withRetries } from "../../execution/retry";
 import { getHyphenatedBoolean } from "../../output/context";
 import { akmLint } from "../lint/index";
 import { akmAgentDispatch } from "./agent-dispatch";
@@ -69,6 +76,7 @@ export const agentCommand = defineCommand({
       description: "Timeout as a duration (30s, 2m) or milliseconds",
     },
     "timeout-ms": { type: "string", description: "Override the agent CLI timeout in milliseconds" },
+    "max-retries": { type: "string", hidden: true, description: "Run again up to N times when the agent fails" },
     cwd: {
       type: "string",
       description: "Working directory for the spawned agent (defaults to the current directory)",
@@ -84,7 +92,7 @@ export const agentCommand = defineCommand({
       // Preserve the selector; the common execution-source adapter resolves it.
       const agentRef = getStringArg(args, "agent-ref");
 
-      const promptText = getStringArg(args, "prompt");
+      const promptText = getExactStringArg(args, "prompt");
       const promptStdin = args["prompt-stdin"] === true;
       if (promptStdin && promptText !== undefined) {
         throw new UsageError("--prompt-stdin cannot be combined with --prompt.", "INVALID_FLAG_VALUE");
@@ -97,16 +105,24 @@ export const agentCommand = defineCommand({
 
       const stdinPrompt = promptStdin ? readPromptStdin() : undefined;
 
-      const result = await akmAgentDispatch({
-        prompt: stdinPrompt ?? promptText,
-        ...(agentRef === undefined ? {} : { agentRef }),
-        agentConfig,
-        ...(Object.keys(selection).length === 0 ? {} : { selection }),
-        ...(cwd ? { cwd } : {}),
-        ...(timeoutMs !== undefined && Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
-      });
+      let attempts = 0;
+      const result = await withRetries(
+        parseNonNegativeIntFlag(getExactStringArg(args, "max-retries"), "--max-retries") ?? 0,
+        () => {
+          attempts += 1;
+          return akmAgentDispatch({
+            prompt: stdinPrompt ?? promptText,
+            ...(agentRef === undefined ? {} : { agentRef }),
+            agentConfig,
+            ...(Object.keys(selection).length === 0 ? {} : { selection }),
+            ...(cwd ? { cwd } : {}),
+            ...(timeoutMs !== undefined && Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
+          });
+        },
+        (attempt) => !attempt.ok,
+      );
 
-      output("agent-result", result);
+      output("agent-result", attempts > 1 ? { ...result, attempts } : result);
 
       if (!result.ok) {
         // R-067-style fix: this used to call `process.exit(EXIT_GENERAL)`

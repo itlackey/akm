@@ -183,7 +183,7 @@ export function world(spec: WorldSpec = {}): World {
       adapterId: "akm",
       scheduled: start.scheduled === true,
       ...(start.start ? { start: start.start } : {}),
-      ...(start.inputFlags ? { inputFlags: start.inputFlags } : {}),
+      ...(start.inputFlags ? { inputFlags: () => start.inputFlags as readonly InputFlag[] } : {}),
       hostEnv: spec.host ?? process.env,
       ...(spec.agent ? { runAgentImpl: standIn(spec.agent) } : {}),
     }).catch((error: unknown) => {
@@ -267,7 +267,7 @@ function standIn(agent: NonNullable<WorldSpec["agent"]>) {
       stderr: "",
       durationMs: 0,
       reason,
-      error: reason,
+      error: `agent ${reason === "timeout" ? "timed out" : "was aborted"}`,
     });
     let timer: ReturnType<typeof setTimeout> | undefined;
     const limit = new Promise<ReturnType<typeof failed>>((resolve) => {

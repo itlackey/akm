@@ -6,6 +6,7 @@ import { setSchedulerRefEnabled } from "../../src/tasks/activation-config";
 import type { LaunchdExec, LaunchdFs } from "../../src/tasks/backends/launchd";
 import { buildPlistXml, extractPlistInvocation, LAUNCHD_BACKEND } from "../../src/tasks/backends/launchd";
 import type { SchedulerBinding } from "../../src/tasks/scheduler-binding";
+import { sandboxRowEnvironment } from "../_helpers/row-environment";
 import { sandboxStashDir } from "../_helpers/sandbox";
 import {
   type SchedulerBackendContractDriver,
@@ -570,7 +571,7 @@ describe("LAUNCHD_BACKEND drift signatures", () => {
       };
       // The sandbox stash is the env-selected working stash (AKM_BUNDLE_DIR,
       // no configured bundle), so its row carries the path in the plist.
-      const rowOptions = { environment: { AKM_BUNDLE_DIR: path.resolve(stash.dir) } };
+      const rowOptions = { environment: sandboxRowEnvironment(stash.dir) };
       const drifted = backend.list() as Array<{
         id: string;
         enabled?: boolean;
