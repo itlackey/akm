@@ -8,13 +8,15 @@
  * and reported with what to change. `akm doctor` lists the workflow files that remain.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
+import { main } from "../../scripts/akm-migrate/main";
 import { applyTaskFilesV5Migration, inspectTaskFilesV5Migration } from "../../scripts/akm-migrate/task-migrate";
 import { collectWorkflowFilesAdvisory } from "../../src/commands/health/workflow-files";
 import { resetConfigCache } from "../../src/core/config/config";
+import { getCachePaths, parseGitRepoUrl } from "../../src/sources/providers/git-provider";
 import { checkTaskV5 } from "../../src/tasks/v5/check";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
@@ -103,6 +105,27 @@ describe("a prose workflow", () => {
     expect(document.steps.map((step) => step.name)).toEqual(["collect", "write"]);
   });
 
+  test("`akm-migrate status <workflow>` reports the conversion and writes nothing", async () => {
+    const file = workflow("weekly", WEEKLY);
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await main(["status", file]);
+      const plan = JSON.parse(String(log.mock.calls[0]?.[0]));
+      expect(plan.taskFilesV5).toEqual([
+        expect.objectContaining({ filePath: file, status: "converted", taskFile: taskFile("weekly") }),
+      ]);
+    } finally {
+      log.mockRestore();
+    }
+    expect(fs.existsSync(taskFile("weekly"))).toBe(false);
+  });
+
+  test("its steps work at the bundle root, as the workflow's did", async () => {
+    await convert(workflow("weekly", WEEKLY));
+    const document = await checkTaskV5({ ref: "tasks/weekly", bundle: { name: "stash", dir: storage.stashDir } });
+    expect(document.options.cwd).toBe(".");
+  });
+
   test("keeps its description, tags, lock, inputs, defaults, step options and expected keys", async () => {
     const { file } = await convert(workflow("weekly", WEEKLY));
     const task = parseYaml(read(taskFile("weekly")));
@@ -113,6 +136,7 @@ describe("a prose workflow", () => {
       when_to_use: "When a weekly report is due.",
       tags: ["report", "weekly"],
       lock: true,
+      cwd: ".",
       harness: "claude",
       timeout: "10m",
       inputs: {
@@ -186,6 +210,56 @@ describe("a prose workflow", () => {
   });
 });
 
+describe("a writable git bundle with no lock entry", () => {
+  test("is a bundle migrate converts in, at the checkout the runtime reads", async () => {
+    const url = "https://example.com/akm/team.git";
+    const checkout = getCachePaths(parseGitRepoUrl(url).canonicalUrl).repoDir;
+    const file = path.join(checkout, "workflows", "weekly.md");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, WEEKLY);
+    writeSandboxConfig({
+      bundles: { stash: { path: storage.stashDir }, team: { git: url, writable: true } },
+      defaultBundle: "stash",
+    });
+    resetConfigCache();
+
+    const status = await inspectTaskFilesV5Migration([file]);
+    expect(status.files[0]).toMatchObject({
+      status: "converted",
+      taskFile: path.join(checkout, "tasks", "weekly.yml"),
+    });
+    expect(collectWorkflowFilesAdvisory()?.evidence).toMatchObject({ files: [file] });
+  });
+});
+
+describe("frontmatter a task has no key for", () => {
+  test("is named in the notes", async () => {
+    const { file } = await convert(
+      workflow(
+        "retired",
+        [
+          "---",
+          "description: Retired.",
+          "status: deprecated",
+          "updated: 2026-10-31",
+          "xrefs:",
+          "  - knowledge/x",
+          "steps:",
+          "  - id: a",
+          "---",
+          "",
+          "## a",
+          "",
+          "Say it is retired.",
+          "",
+        ].join("\n"),
+      ),
+    );
+    expect(file.status).toBe("converted");
+    expect(file.notes).toContain("Frontmatter not kept (status, updated, xrefs): a task file has no such keys.");
+  });
+});
+
 describe("a workflow that cannot convert", () => {
   const XDG = "Create the folder `${XDG_CACHE_HOME:-$HOME/.cache}/akm/work` if needed.";
 
@@ -197,8 +271,8 @@ describe("a workflow that cannot convert", () => {
     expect(result.detail).toContain("step fetch");
     expect(result.detail).toContain("${XDG_CACHE_HOME:-$HOME/.cache}");
     expect(result.guidance).toContain("every ${...} in it names an input or an earlier step");
-    expect(result.guidance).toContain("script asset under scripts/");
-    expect(result.guidance).toContain("$AKM_TASK_STATE");
+    expect(result.guidance).toContain("write it without braces");
+    expect(result.guidance).toContain("needs no new step or script");
     expect(result.guidance).toContain("akm migrate apply workflows/curate.md");
     expect(status.status).toBe("blocked");
     expect(fs.existsSync(taskFile("curate"))).toBe(false);
@@ -271,20 +345,44 @@ describe("a workflow that cannot convert", () => {
     );
     expect(file).toMatchObject({ status: "blocked", reason: "version-5-check-failed" });
     expect(file.detail).toContain("--env");
+    expect(file.detail).not.toContain("akm-migrate-v5-");
     expect(file.guidance).toContain("akm doctor explain tasks/bad-input");
     expect(fs.existsSync(taskFile("bad-input"))).toBe(false);
   });
 });
 
 describe("akm doctor", () => {
-  test("lists the workflow files left in a writable bundle, says they are removed in 0.11 and names the command", () => {
+  test("counts the workflow files left by bundle, says they are removed in 0.11 and what to do with each", () => {
     const file = workflow("weekly", WEEKLY);
     const advisory = collectWorkflowFilesAdvisory();
     expect(advisory).toMatchObject({ name: "workflow-files", status: "warn" });
-    expect(advisory?.message).toContain(file);
+    expect(advisory?.message).toContain(`1 workflow file(s) remain, in ${storage.stashDir} (1)`);
     expect(advisory?.message).toContain("removed in 0.11");
     expect(advisory?.message).toContain("akm migrate apply <path>");
-    expect(advisory?.evidence).toEqual({ files: [file] });
+    expect(advisory?.message).toContain("delete it once the task works");
+    expect(advisory?.evidence).toEqual({ bundles: [{ bundle: storage.stashDir, files: [file] }], files: [file] });
+  });
+
+  test("`akm-migrate status` reports the same files and stays current, since apply converts only a named file", async () => {
+    const file = workflow("weekly", WEEKLY);
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await main(["status"]);
+      const plan = JSON.parse(String(log.mock.calls[0]?.[0]));
+      expect(plan.status).toBe("current");
+      expect(plan.workflowFiles.bundles).toEqual([{ bundle: storage.stashDir, files: [file] }]);
+      expect(plan.workflowFiles.message).toBe(collectWorkflowFilesAdvisory()?.message);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  test("a workflow whose file is deleted after its task is made is no longer counted", async () => {
+    const file = workflow("weekly", WEEKLY);
+    await convert(file);
+    expect(collectWorkflowFilesAdvisory()?.evidence).toMatchObject({ files: [file] });
+    fs.rmSync(file);
+    expect(collectWorkflowFilesAdvisory()).toBeUndefined();
   });
 
   test("says nothing when no workflow file is left", () => {

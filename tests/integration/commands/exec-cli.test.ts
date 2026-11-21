@@ -118,17 +118,17 @@ describe("akm exec", () => {
     expect(stderr).toContain(message);
   });
 
-  test("env run and secret run still work and name akm exec as their replacement", () => {
+  test("env run and secret run still work and name their replacements", () => {
     const stash = makeStash({ "env/prod.env": "A=1\n", "secrets/token": "t" });
     const env = akm(stash, ["env", "run", "env/prod", "--", ...print("A")]);
     expect(env.stdout).toBe("1|");
     expect(env.rawStderr).toContain(
-      "akm env run is deprecated and is removed in 0.11: use `akm exec --env <ref> -- <command>`",
+      "akm env run is deprecated and is removed in 0.11: use a script asset under scripts/, run with `akm run --env <ref> scripts/<file>`",
     );
     const secret = akm(stash, ["secret", "run", "secrets/token", "X", "--", ...print("X")]);
     expect(secret.stdout).toBe("t|");
     expect(secret.rawStderr).toContain(
-      "akm secret run is deprecated and is removed in 0.11: use `akm exec --secret <ref>:<VAR> -- <command>`",
+      "akm secret run is deprecated and is removed in 0.11: use a script asset under scripts/, run with `akm run --secret <ref>:<VAR> scripts/<file>`",
     );
   });
 

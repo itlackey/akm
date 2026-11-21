@@ -151,11 +151,11 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | `akm env path` | Stable | Read-and-inject surface. |
 | `akm env export` | Experimental | Read-and-inject surface. |
 | `akm exec` | Experimental | First in 0.10.261130. Off until `experimental.exec` is `true` in config; otherwise it refuses with a config error (exit 78) and runs nothing. Runs any command with repeatable `--env <ref>` and `--secret <ref>:<VAR>` injected; `akm run` takes the same two flags for an akm asset. One argument after `--` is a shell line, several are a program and its arguments. `--prompt` (or `--prompt-stdin`, with `--harness`, `--connection`, `--model`) runs a prompt on an agent instead. `--cwd` (a missing folder is made), `--timeout`, `--max-retries`, `--clean`, and `--inherit` (alone it starts the command clean) apply to either form; `--clean` keeps akm's location variables. A typed `--timeout` stops the command, not the processes it started. Child-process passthrough, exempt from `--format`. Task steps do not need `experimental.exec`. |
-| `akm env run` | Deprecated | Removed in 0.11: use `akm exec --env <ref> -- <command>`. Read-and-inject surface. `--allow-dangerous-env-keys` is Deprecated, no effect: accepted through 0.10 and a usage error in 0.11, so drop it; prints a notice since 0.10.261122. |
+| `akm env run` | Deprecated | Removed in 0.11: put the command in a script asset under scripts/, run with `akm run --env <ref> scripts/<file>`. Read-and-inject surface. `--allow-dangerous-env-keys` is Deprecated, no effect: accepted through 0.10 and a usage error in 0.11, so drop it; prints a notice since 0.10.261122. |
 | `akm env create` | Experimental | Write verb. |
 | `akm env remove` | Experimental | Write verb. |
 | `akm secret list` | Stable | Read-and-inject surface. |
-| `akm secret run` | Deprecated | Removed in 0.11: use `akm exec --secret <ref>:<VAR> -- <command>`. Read-and-inject surface. |
+| `akm secret run` | Deprecated | Removed in 0.11: put the command in a script asset under scripts/, run with `akm run --secret <ref>:<VAR> scripts/<file>`. Read-and-inject surface. |
 | `akm secret set` | Experimental | Write verb. |
 | `akm secret remove` | Experimental | Write verb; restored in 0.10 after its 0.9.0 removal. |
 
@@ -800,8 +800,8 @@ not additional public support statuses.
 
 An `env` asset holds a whole `.env` group; a `secret` holds a single sensitive
 value. Env key names are discoverable. Values are never written to stdout, the index, or
-structured output; the safe injection path is `akm exec --env <ref> --
-<command>` (or `akm exec --secret <ref>:<VAR> -- …`). The `env` / `secret`
+structured output; the safe injection path is `akm run --env <ref> scripts/<file>`
+(or `akm run --secret <ref>:<VAR> scripts/<file>`). The `env` / `secret`
 **write** verbs (`env create`, `env remove`, `secret set`, `secret remove`) are Experimental; the
 `list` / `path` / `run` / `export` read-and-inject surface is Stable.
 

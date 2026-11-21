@@ -268,13 +268,15 @@ bundle.
 each file's comments with the key they were on. In 0.10 a file not named on the
 command line is not converted; 0.11 converts every v4 task file. The
 [migration guide](../migration/v0.10-to-v0.11.md#task-source-v5) has the
-conversion table and lists what does not convert.
+conversion table and lists what does not convert. `akm migrate status
+<file>...` reports what apply would do with the named files and changes nothing.
 
 `akm migrate apply workflows/<name>.md` makes `tasks/<name>.yml` from a named
 workflow file, which stays in place, after the same check; each prose step becomes
 a `prompt:` step and each plain exec step an `exec:` step. A workflow it cannot
-convert is reported `blocked` with `guidance`, and `akm doctor` lists the
-workflow files that remain. See
+convert is reported `blocked` with `guidance`. Delete a workflow file once its
+task works; `akm doctor` and `akm migrate status` count the workflow files that
+remain, by bundle. See
 [Converting a workflow](../migration/v0.10-to-v0.11.md#converting-a-workflow).
 
 ## Task source v4
@@ -517,7 +519,7 @@ steps:
   step name (`{}` for the first step). `AKM_INPUTS` is never set. A prompt step
   has no child environment on a direct-model connection, so it gets the same
   two values appended to its prompt as text. To load an env asset in a run
-  step, use `akm exec --env env/<name> -- <command>`.
+  step, run a script with `akm run --env env/<name> scripts/<file>`.
 - **Results.** A `run` step's result is its stdout; a prompt step's is the
   agent's reply; a `task` step has no result, and its callee gets no values.
   A text result is kept to 32 KiB, and the serialized `AKM_STEPS` may not
@@ -692,7 +694,7 @@ report only the violated constraint.
 
 ## Migrating to task source v4
 
-`akm migrate status` and `akm migrate apply [--dry-run]` run **both**
+`akm migrate status` and `akm migrate apply` run **both**
 migration generations against your task tree in one pass: task-v2 → task-v3
 first, then task-v3 → task source v4 against the resulting files. Each
 generation keeps its own lock, backup, prevalidation, and rollback — a file
@@ -700,7 +702,7 @@ blocked in the first generation does not stop the second generation from
 converting files that are already `version: 3`.
 
 ```sh
-akm migrate apply --dry-run
+akm migrate status
 akm migrate apply
 ```
 
@@ -756,7 +758,7 @@ Two cases produce one today:
   `schedule:`. The migrated document simply has no `schedule:` key.
 
 The migrator is also installed as its own executable, `akm-migrate`, with the
-same `status` / `apply [--dry-run]` surface; `akm migrate` wraps it, and
+same `status` / `apply` surface; `akm migrate` wraps it, and
 `akm upgrade` runs `apply` after installing a release. A tree that is already
 all `version: 3` simply reports the first generation as current.
 

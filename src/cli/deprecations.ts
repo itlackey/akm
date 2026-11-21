@@ -59,10 +59,10 @@ const DEPRECATIONS: readonly Deprecation[] = [
     path: ["workflow", sub],
     note: WORKFLOWS_NOTE,
   })),
-  { path: ["env", "run"], use: "`akm exec --env <ref> -- <command>` (Experimental: set `experimental.exec` to true)" },
+  { path: ["env", "run"], use: "a script asset under scripts/, run with `akm run --env <ref> scripts/<file>`" },
   {
     path: ["secret", "run"],
-    use: "`akm exec --secret <ref>:<VAR> -- <command>` (Experimental: set `experimental.exec` to true)",
+    use: "a script asset under scripts/, run with `akm run --secret <ref>:<VAR> scripts/<file>`",
   },
   { path: ["agent"], needsRef: true, use: "`akm run <ref>`" },
   { path: ["command", "run"], use: "`akm run <ref>`" },
@@ -83,7 +83,7 @@ const DEPRECATIONS: readonly Deprecation[] = [
   { path: ["show"], flag: "--context", value: "lead", use: "`--lead`" },
   { path: ["show"], flag: "--max-chars", use: "`--max-tokens`" },
   { path: ["lint"], flag: "--auto-fix", use: "`--fix`" },
-  { path: ["migrate", "apply"], flag: "--dry-run", use: "`akm migrate status`" },
+  { path: ["migrate", "apply"], flag: "--dry-run", use: "`akm migrate status [<file>...]`" },
   {
     path: ["hints"],
     flag: "--detail",
