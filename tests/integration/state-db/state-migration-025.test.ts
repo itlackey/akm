@@ -17,11 +17,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import {
-  getStateMigrationSafety,
-  STATE_MIGRATION_SAFETY_BY_ID,
-  STATE_MIGRATIONS,
-} from "../../../src/core/state/migrations";
+import { getStateMigrationSafety, STATE_MIGRATIONS } from "../../../src/core/state/migrations";
 import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import { openDatabase } from "../../../src/storage/database";
 import { runMigrations } from "../../../src/storage/sqlite-migrations";
@@ -75,10 +71,6 @@ describe("migration 025-task-history-vocabulary-backfill — registry position a
 
   test("is classified data-preserving-rebuild", () => {
     expect(getStateMigrationSafety(MIGRATION_ID)).toBe("data-preserving-rebuild");
-  });
-
-  test("the safety-classification registry key order matches the migration registry order exactly", () => {
-    expect(Object.keys(STATE_MIGRATION_SAFETY_BY_ID)).toEqual(STATE_MIGRATIONS.map((migration) => migration.id));
   });
 });
 

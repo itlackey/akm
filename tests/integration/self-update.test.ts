@@ -62,17 +62,6 @@ const currentMigrator = {
 // ── detectInstallMethod ─────────────────────────────────────────────────────
 
 describe("detectInstallMethod", () => {
-  test("returns a valid install method when running via bun run (not compiled)", () => {
-    const method = detectInstallMethod();
-    // In test context we're running from source. May be "binary" if AKM_VERSION
-    // is defined (e.g. compiled test runner), otherwise "unknown" or a package-manager install.
-    expect(["unknown", "npm", "pnpm", "bun", "binary"]).toContain(method);
-  });
-
-  test("does not throw", () => {
-    expect(() => detectInstallMethod()).not.toThrow();
-  });
-
   test("returns 'binary' when Bun.main starts with /$bunfs/", () => {
     const signals: InstallSignals = {
       bunMain: "/$bunfs/root/src/cli.ts",

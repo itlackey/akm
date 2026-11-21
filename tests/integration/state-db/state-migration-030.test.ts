@@ -39,15 +39,20 @@ function plan(db: ReturnType<typeof openDatabase>, sql: string, ...params: strin
 }
 
 describe("migration 030-usage-events-created-at-index", () => {
-  test("is the last registered migration and classified additive", () => {
-    expect(STATE_MIGRATIONS[STATE_MIGRATIONS.length - 1]?.id).toBe(MIGRATION_ID);
+  test("is classified additive", () => {
     expect(getStateMigrationSafety(MIGRATION_ID)).toBe("additive");
   });
 
   test("upgrades a pre-030 database, keeps its rows, and is idempotent", () => {
     const file = statePath();
     const seeded = openDatabase(file);
-    runMigrations(seeded, STATE_MIGRATIONS.slice(0, -1));
+    runMigrations(
+      seeded,
+      STATE_MIGRATIONS.slice(
+        0,
+        STATE_MIGRATIONS.findIndex((m) => m.id === MIGRATION_ID),
+      ),
+    );
     seeded.exec("INSERT INTO usage_events (event_type, created_at) VALUES ('search', '2026-11-01 10:00:00')");
     seeded.close();
 

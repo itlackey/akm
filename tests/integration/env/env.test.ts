@@ -479,7 +479,7 @@ describe("env export / path (read-path safety)", () => {
     const result = await runCli(["env", "path", "env/prod"], { AKM_BUNDLE_DIR: stashDir });
 
     expect(result.status).toBe(0);
-    expect(result.stdout.trim().endsWith(path.join("env", "prod.env"))).toBe(true);
+    expect(result.stdout.trim()).toBe(path.join(stashDir, "env", "prod.env"));
     expect(result.stderr).toContain("akm run --env");
 
     // --quiet suppresses the warning (for the _FILE / --env-file convention).

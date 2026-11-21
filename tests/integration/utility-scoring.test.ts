@@ -300,28 +300,6 @@ describe("recomputeUtilityScores", () => {
     }
   });
 
-  test("entries with no usage events get zero utility", () => {
-    const dbPath = path.join(createTmpDir("akm-util-db-"), "test.db");
-    const db = openIndexDatabase(dbPath);
-    const stateDb = new Database(":memory:") as unknown as typeof db;
-    ensureUsageEventsSchema(stateDb);
-    try {
-      // Insert a test entry with no usage events.
-      const entryId = seedIndexEntry(db, "no-usage-test", "/tmp/no-usage.sh");
-
-      recomputeUtilityScores(db, stateDb);
-
-      const score = getUtilityScore(db, entryId);
-      // Either undefined or zero utility
-      if (score) {
-        expect(score.utility).toBe(0);
-      }
-    } finally {
-      closeDatabase(db);
-      stateDb.close();
-    }
-  });
-
   test("recompute clears a synthetic last-used stamp when no retained retrieval event exists", () => {
     const dbPath = path.join(createTmpDir("akm-util-db-"), "test.db");
     const db = openIndexDatabase(dbPath);

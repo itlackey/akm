@@ -110,13 +110,6 @@ describe("migration 023-child-workflow-runs — registry position and safety cla
     expect(getStateMigrationSafety(MIGRATION_ID)).toBe("additive");
   });
 
-  test("the safety-classification registry key order matches the migration registry order exactly", () => {
-    // The module itself asserts this at load time (assertStateMigrationSafetyRegistry
-    // in src/core/state/migrations.ts) — a mismatch would already have thrown before
-    // this test could run. This is the explicit, itemized re-assertion §5.1 asks for.
-    expect(Object.keys(STATE_MIGRATION_SAFETY_BY_ID)).toEqual(STATE_MIGRATIONS.map((migration) => migration.id));
-  });
-
   test("the migration's SQL is additive only — no DROP or RENAME", () => {
     const migration = STATE_MIGRATIONS.find((candidate) => candidate.id === MIGRATION_ID);
     expect(migration).toBeDefined();

@@ -202,14 +202,6 @@ describe("shared adapter physical-owner authority", () => {
     }
   });
 
-  // QUARANTINED (2026-08-28): the ["start", "missing"] case is skipped below.
-  // It is shard-composition-dependent, not a product regression — see the
-  // skip's own comment. Tracked in itlackey/akm#785 (ISOLATION cluster).
-  //
-  // The element type deliberately keeps the FULL surface/state unions even
-  // though "start" is not currently exercised, so the `surface === "start"`
-  // arm below stays live for the typechecker and restoring the case is a
-  // one-line edit to this array.
   const looseOwnerCases: ReadonlyArray<
     readonly [surface: "load" | "start" | "run", state: "complete" | "missing" | "stale"]
   > = [
@@ -255,31 +247,6 @@ describe("shared adapter physical-owner authority", () => {
     expect((await listWorkflowRuns()).runs).toHaveLength(0);
     expect((await loadWorkflowAsset("later//commands/same")).path).toBe(laterPath);
   });
-
-  // QUARANTINED (2026-08-28) — NOT a product regression, and NOT verified as
-  // benign either. Restore by putting ["start", "missing"] back in the
-  // test.each array above and deleting this block.
-  //
-  // What happened: adding one file under tests/integration/ (migrate-
-  // orchestration.test.ts) shifted this file's index in the sorted list
-  // 427 -> 428, moving it from shard 3 to shard 0 under
-  // scripts/test-integration.sh's `i % N` round-robin. It then co-ran with
-  // 111 different files for the first time and this case failed in CI, while
-  // passing in isolation and in every local subset up to 40 co-running files.
-  // So the trigger is shard COMPOSITION, not the code under test — any future
-  // file added under tests/integration/ can re-trigger it somewhere else.
-  //
-  // The suspect assertion is the byte-identity check on the SQLite state file
-  // (`expect(fs.readFileSync(getStateDbPath())).toEqual(stateBefore)`): SQLite
-  // may write to a file (change counter, checkpoint) without any logical
-  // mutation, so raw bytes are a stricter contract than "before mutation"
-  // actually means. The line after it asserts the logical invariant already.
-  // That is a hypothesis, not a diagnosis — the CI failure was never
-  // reproduced locally, so it has NOT been ruled out as a genuine
-  // "start mutates state before rejecting" bug.
-  //
-  // Tracked in itlackey/akm#785 (ISOLATION cluster: order-dependent state).
-  test.skip("start rejects a loose AKM command owner with a missing row before mutation", () => {});
 
   test.each([
     ".md",
