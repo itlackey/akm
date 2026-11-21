@@ -33,7 +33,6 @@ import {
   withEnvSecretWrite,
 } from "../../core/env-secret-ref";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
-import { warn } from "../../core/warn";
 import { readStdin } from "../../runtime";
 import { buildChildEnv } from "./child-env";
 
@@ -49,7 +48,7 @@ const envCreateCommand = defineJsonCommand({
   meta: {
     name: "create",
     description:
-      "Create an env file (empty by default; seed an existing `.env` with --from-file or --from-stdin). No-op if it already exists and no source is given. Quote values that contain `#`, or everything from `#` on is dropped.",
+      "Create an env file (empty by default; seed an existing `.env` with --from-file or --from-stdin). No-op if it already exists and no source is given.",
   },
   args: {
     name: {
@@ -74,7 +73,7 @@ const envCreateCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
-    const { createEnv, writeEnv, keysWithUnquotedHash } = await import("./env.js");
+    const { createEnv, writeEnv } = await import("./env.js");
     // `create` always targets env/, never the frozen vaults/ copy. `--path` is
     // the subdirectory; `--bundle` selects the writable destination source.
     const { name, absPath, target, ref } = resolveEnvWriteTarget(args.name, args.bundle, {
@@ -115,11 +114,6 @@ const envCreateCommand = defineJsonCommand({
     withEnvSecretWrite(target, { type: "env", name }, "Update", written, () => {
       if (content !== undefined) {
         writeEnv(absPath, content);
-        for (const key of keysWithUnquotedHash(content)) {
-          warn(
-            `${key}: the unquoted value contains "#", so everything from "#" on is dropped. Quote the value to keep it.`,
-          );
-        }
       } else createEnv(absPath);
       if (args.sensitive) {
         if (!fs.existsSync(markerPath)) {
@@ -386,8 +380,7 @@ export const envCommand = defineGroupCommand({
     name: "env",
     description:
       "Manage `.env` files — configuration values an app loads together (URLs, flags, and any credentials it needs).\n\n" +
-      "Values may or may not be sensitive; akm protects them all the same way — key names are visible, values never appear in structured output. For a single sensitive value used on its own (an auth token, key, or cert), use `akm secret`.\n\n" +
-      "Quote values that contain `#`, or everything from `#` on is dropped.",
+      "Values may or may not be sensitive; akm protects them all the same way — key names are visible, values never appear in structured output. For a single sensitive value used on its own (an auth token, key, or cert), use `akm secret`.",
   },
   subCommands: {
     list: envListCommand,

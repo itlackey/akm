@@ -188,8 +188,9 @@ and those runs cannot be resumed.
 which akm makes if it is missing and never removes; `--cwd` wins over the task's
 `cwd:`. A step's own `cwd:` is for that step only and wins over both. A `cwd:`
 that is not absolute is taken from the bundle root; a `--cwd` that is not
-absolute is taken from the folder akm was started in. A folder that cannot be
-made refuses the run, or fails the step it is the step's. What a step runs is
+absolute is taken from the folder akm was started in. A path that exists and is not a
+folder, or a folder that cannot be
+made, refuses the run, or fails the step it is the step's. What a step runs is
 found whatever the folder is, because it is named by ref. A script that writes
 somewhere else needs that folder named as the working folder for an agent step
 to read what it wrote.

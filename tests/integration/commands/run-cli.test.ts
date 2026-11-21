@@ -11,6 +11,7 @@ import { akmIndex } from "../../../src/indexer/indexer";
 import { readTaskHistory } from "../../../src/tasks/run/task-history";
 import { getWorkflowStatus, listWorkflowRuns } from "../../../src/workflows/runtime/runs";
 import { runCliCapture } from "../../_helpers/cli";
+import { bashValue, ENV_HASH_CASES } from "../../_helpers/env-hash-cases";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 import { snapshotTree } from "../../_helpers/snapshot-tree";
 
@@ -338,6 +339,27 @@ describe("akm run scripts/<file>", () => {
     const result = await runCliCapture(["run", "--env", "env/vars", "--cwd", cwd, "scripts/where.sh"]);
     expect(result.code, result.stderr).toBe(0);
     expect(fs.readFileSync(out, "utf8")).toBe(`injected|${fs.realpathSync(cwd)}`);
+  });
+
+  for (const c of ENV_HASH_CASES) {
+    test(`--env reads a # in an env value as the file's author wrote it: ${c.name}`, async () => {
+      write("env/hash.env", c.text);
+      write("scripts/show.sh", `printf '%s' "$${c.key}" > "$B5_OUT"\n`);
+      const result = await runCliCapture(["run", "--env", "env/hash", "scripts/show.sh"]);
+      expect(result.code, result.stderr).toBe(0);
+      expect(fs.readFileSync(out, "utf8")).toBe(c.value);
+      if (c.bash) expect(bashValue(c.text, c.key)).toBe(c.value);
+    });
+  }
+
+  test("--cwd naming a file that exists is refused as not a folder", async () => {
+    write("scripts/x.sh", "true\n");
+    const file = path.join(storage.root, "afile");
+    fs.writeFileSync(file, "x");
+    const result = await runCliCapture(["run", "--cwd", file, "scripts/x.sh"]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("--cwd <path> is not a folder");
+    expect(fs.readFileSync(file, "utf8")).toBe("x");
   });
 
   test("--clean starts without the parent's variables and --inherit keeps the named ones", async () => {
