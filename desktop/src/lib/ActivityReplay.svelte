@@ -282,33 +282,6 @@
 </script>
 
 <section class="replay" aria-label="Activity replay" aria-busy={loading}>
-  <div class="replay-toolbar">
-    <div class="now">
-      <span class="muted small">Playhead</span>
-      <strong>{range ? stampText(clock, span) : "–"}</strong>
-    </div>
-    {#if playing}<button class="btn-primary" onclick={pause}>Pause</button>{:else}<button
-        class="btn-primary"
-        title={`${playText(speed)}. Click or drag the timeline to move the playhead.`}
-        onclick={play}
-        disabled={!steps.length || loading}>{clock >= end ? "Play from start" : "Play"}</button
-      >{/if}
-    <label
-      >Speed<select bind:value={speed}
-        >{#each SPEEDS as option}<option value={option.value}>{option.label}</option>{/each}</select
-      ></label
-    >
-    <label
-      >Period<select bind:value={period}
-        ><option value="24h">Last 24 hours</option><option value="7d">Last 7 days</option></select
-      ></label
-    >
-    <label
-      >Events by<select bind:value={everyone}
-        ><option value={false}>You</option><option value={true}>Everyone: you, agents and automation</option></select
-      ></label
-    >
-  </div>
   {#if error}<div class="notice notice-warn" role="alert">
       {error}<button
         class="btn-secondary"
@@ -331,7 +304,17 @@
                 onclick={() => draw(id)}>{name}</button
               >{/each}
           </div>
-          <h3>Where the events landed, by {points ? "meaning" : "type and tag"}</h3>
+          <label
+            >Period<select bind:value={period}
+              ><option value="24h">Last 24 hours</option><option value="7d">Last 7 days</option></select
+            ></label
+          >
+          <label
+            >Events by<select bind:value={everyone}
+              ><option value={false}>You</option><option value={true}>Everyone: you, agents and automation</option
+              ></select
+            ></label
+          >
         </div>
         {#if points}
           {#if groups.length}
@@ -355,17 +338,20 @@
               onGroup={choose}
               emphasis={pulses}
               label="The library's assets as points, in groups by meaning, groups alike in meaning near each other. An asset used so far is in its type's colour, the rest are faint, and an asset an event has just touched is ringed. The log beside it lists the same events."
-            ></SimilarityMap>
-            <ul class="key" aria-label="Key to the 3D map">
-              <li><span class="dot"></span>Used so far, in its type's colour</li>
-              {#if !flat}<li><span class="dot faint"></span>Not used yet, faint</li>{/if}
-              {#each PULSES as pulse}<li>
-                  <span class="ring" style={`border-color:var(${pulse.token})`}></span>{pulse.label}, just now
-                </li>{/each}
-              {#each familiesShown as family}<li>
-                  <span class="dot" style={`background:var(--map-${family.k + 1})`}></span>{family.label}
-                </li>{/each}
-            </ul>
+            >
+              {#snippet legend()}
+                <ul class="key" aria-label="Key to the 3D map">
+                  <li><span class="dot"></span>Used so far, in its type's colour</li>
+                  {#if !flat}<li><span class="dot faint"></span>Not used yet, faint</li>{/if}
+                  {#each PULSES as pulse}<li>
+                      <span class="ring" style={`border-color:var(${pulse.token})`}></span>{pulse.label}, just now
+                    </li>{/each}
+                  {#each familiesShown as family}<li>
+                      <span class="dot" style={`background:var(--map-${family.k + 1})`}></span>{family.label}
+                    </li>{/each}
+                </ul>
+              {/snippet}
+            </SimilarityMap>
             {#if unplaced && (unplaced.notOnMap || unplaced.notListed)}<p class="muted small" role="status">
                 {#if unplaced.notOnMap}{unplaced.notOnMap.toLocaleString()}
                   {unplaced.notOnMap === 1 ? "event" : "events"} so far touched assets with no place on this map (no group
@@ -501,82 +487,106 @@
       </aside>
     </div>
     {#if !steps.length}<p>No searches, reads or feedback recorded in this period.</p>{/if}
-    <div class="timeline">
-      <ul class="kinds" aria-label="Timeline key">
-        {#each KINDS.filter((k) => timeline.counts.some((bin) => bin[k.id])) as k}<li>
-            <span class="swatch" style={`background:var(${k.token})`}></span>{k.label}
-          </li>{/each}
-        <li class="scale-note muted">Tallest bar = {timeline.max} events</li>
-      </ul>
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <svg
-        viewBox={`0 0 ${W} ${H}`}
-        preserveAspectRatio="none"
-        aria-hidden="true"
-        onpointerdown={(e) => {
-          dragging = true;
-          (e.currentTarget as SVGSVGElement).setPointerCapture(e.pointerId);
-          seekAt(e);
-        }}
-        onpointermove={(e) => dragging && seekAt(e)}
-        onpointerup={() => (dragging = false)}
-      >
-        {#each timeline.counts as bin, b}
-          {@const x = (b / timeline.counts.length) * W}
-          {@const bw = W / timeline.counts.length - 1}
-          {@const played = start + (b + 1) * timeline.width <= clock}
-          {#each KINDS as k, n}
-            {@const below = KINDS.slice(0, n).reduce((s, q) => s + bin[q.id], 0)}
-            {#if bin[k.id]}<rect
-                {x}
-                y={H - ((below + bin[k.id]) / timeline.max) * (H - 4)}
-                width={bw}
-                height={(bin[k.id] / timeline.max) * (H - 4)}
-                style={`fill:var(${k.token});opacity:${played ? 1 : 0.35}`}
-              />{/if}
-          {/each}
-        {/each}
-        <line class="playhead" x1={playheadX} x2={playheadX} y1="0" y2={H} />
-      </svg>
-      <input
-        type="range"
-        min={start}
-        max={end}
-        step={SCRUB_STEP}
-        value={clock}
-        aria-label="Playhead"
-        aria-valuetext={stampText(clock, span)}
-        oninput={(event) => {
-          pause();
-          seek(scrubTime(Number(event.currentTarget.value), start, end));
-        }}
-      />
-      <div class="ticks"><span>{axis[0]}</span><span>{axis[1]}</span><span>{axis[2]}</span></div>
-    </div>
   {/if}
+  <div class="timeline">
+    <div class="transport">
+      {#if playing}<button class="btn-primary" onclick={pause}>Pause</button>{:else}<button
+          class="btn-primary"
+          title={`${playText(speed)}. Click or drag the timeline to move the playhead.`}
+          onclick={play}
+          disabled={!steps.length || loading}>{clock >= end ? "Play from start" : "Play"}</button
+        >{/if}
+      <select aria-label="Speed" bind:value={speed}
+        >{#each SPEEDS as option}<option value={option.value}>{option.label}</option>{/each}</select
+      >
+      <strong class="now">{range ? stampText(clock, span) : "–"}</strong>
+    </div>
+    {#if o && range && !unavailable}
+      <div class="track">
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <svg
+          viewBox={`0 0 ${W} ${H}`}
+          preserveAspectRatio="none"
+          aria-hidden="true"
+          onpointerdown={(e) => {
+            dragging = true;
+            (e.currentTarget as SVGSVGElement).setPointerCapture(e.pointerId);
+            seekAt(e);
+          }}
+          onpointermove={(e) => dragging && seekAt(e)}
+          onpointerup={() => (dragging = false)}
+        >
+          {#each timeline.counts as bin, b}
+            {@const x = (b / timeline.counts.length) * W}
+            {@const bw = W / timeline.counts.length - 1}
+            {@const played = start + (b + 1) * timeline.width <= clock}
+            {#each KINDS as k, n}
+              {@const below = KINDS.slice(0, n).reduce((s, q) => s + bin[q.id], 0)}
+              {#if bin[k.id]}<rect
+                  {x}
+                  y={H - ((below + bin[k.id]) / timeline.max) * (H - 4)}
+                  width={bw}
+                  height={(bin[k.id] / timeline.max) * (H - 4)}
+                  style={`fill:var(${k.token});opacity:${played ? 1 : 0.35}`}
+                />{/if}
+            {/each}
+          {/each}
+          <line class="playhead" x1={playheadX} x2={playheadX} y1="0" y2={H} />
+        </svg>
+        <input
+          type="range"
+          min={start}
+          max={end}
+          step={SCRUB_STEP}
+          value={clock}
+          aria-label="Playhead"
+          aria-valuetext={stampText(clock, span)}
+          oninput={(event) => {
+            pause();
+            seek(scrubTime(Number(event.currentTarget.value), start, end));
+          }}
+        />
+        <div class="ticks">
+          <span>{axis[0]}</span>
+          <ul class="kinds" aria-label="Timeline key">
+            {#each KINDS.filter((k) => timeline.counts.some((bin) => bin[k.id])) as k}<li>
+                <span class="swatch" style={`background:var(${k.token})`}></span>{k.label}
+              </li>{/each}
+            <li class="muted">Tallest bar = {timeline.max} events</li>
+          </ul>
+          <span>{axis[2]}</span>
+        </div>
+      </div>
+    {/if}
+  </div>
 </section>
 
 <style>
-  .replay-toolbar {
+  /* The timeline is one strip: Play, the speed and the playhead's time beside the bars they act on. */
+  .transport {
     display: flex;
-    flex-wrap: wrap;
-    gap: 12px 16px;
-    align-items: end;
-    margin-bottom: 8px;
+    gap: 8px;
+    align-items: center;
   }
-  .replay-toolbar label {
-    display: grid;
-    gap: 4px;
-    font-size: 12px;
-    color: var(--muted);
+  .transport select,
+  .stage-tools select {
+    block-size: 28px;
+    max-inline-size: 11rem;
+    padding-block: 0;
+    font-size: 13px;
+  }
+  .transport :global(button) {
+    min-block-size: 28px;
+    padding: 2px 14px;
   }
   .now {
-    display: grid;
-    min-inline-size: 11rem;
-  }
-  .now strong {
-    font-size: 1.375rem;
+    min-inline-size: 5.5rem;
     font-variant-numeric: tabular-nums;
+  }
+  .track {
+    position: relative;
+    flex: 1;
+    min-inline-size: 0;
   }
   .seg {
     display: flex;
@@ -666,15 +676,18 @@
     position: sticky;
     inset-block-end: 0;
     z-index: 4;
-    padding: 8px 12px;
+    display: flex;
+    gap: 16px;
+    align-items: start;
+    padding: 6px 12px;
     border: 1px solid var(--border);
     background: var(--surface);
-    margin-block-start: 12px;
+    margin-block-start: 8px;
   }
   .timeline svg {
     display: block;
     inline-size: 100%;
-    block-size: 48px;
+    block-size: 30px;
     cursor: ew-resize;
     touch-action: none;
   }
@@ -683,28 +696,25 @@
     stroke-width: 2;
     vector-effect: non-scaling-stroke;
   }
+  /* The slider lies along the foot of the bars it scrubs: the same playhead, for the keyboard. */
   .timeline input {
+    display: block;
     inline-size: 100%;
-    margin: 4px 0 0;
+    block-size: 12px;
+    margin: 0;
     accent-color: var(--accent);
   }
   .kinds {
     list-style: none;
-    margin: 0 0 8px;
+    margin: 0;
     padding: 0;
     display: flex;
-    flex-wrap: wrap;
-    gap: 4px 16px;
-    font-size: 13px;
+    gap: 4px 14px;
   }
   .kinds li {
     display: flex;
     gap: 6px;
     align-items: center;
-  }
-  .scale-note {
-    margin-inline-start: auto;
-    font-size: 12px;
   }
   .swatch {
     inline-size: 10px;
@@ -713,16 +723,11 @@
     flex: none;
   }
   .ticks {
-    display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
     font-size: 12px;
     color: var(--muted);
-  }
-  .ticks span:nth-child(2) {
-    text-align: center;
-  }
-  .ticks span:nth-child(3) {
-    text-align: end;
   }
   .replay-body {
     display: grid;
@@ -734,20 +739,35 @@
     position: relative;
     border: 1px solid var(--border);
     background: var(--surface);
-    padding: 8px;
     min-inline-size: 0;
     /* The timeline and the map fit one window together. */
-    --stage-size: max(260px, calc(100vh - 610px));
+    --stage-size: max(260px, calc(100vh - 262px));
   }
-  /* The drawing switch sits on the map; over the tags, which have no spare corner, it sits above them. */
+  /* The drawing switch and what is replayed sit on the map; over the tags, which have no spare corner, above them. */
   .stage-tools {
     display: flex;
-    gap: 12px;
+    flex-wrap: wrap;
+    gap: 6px 12px;
     align-items: center;
     margin-block-end: 6px;
   }
-  .stage-tools h3 {
+  .stage-tools label {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .replay-map:has(:global(.stage-3d)) .stage-tools {
+    position: absolute;
+    inset-block-start: 8px;
+    inset-inline-start: 8px;
+    z-index: 3;
     margin: 0;
+    padding: 2px 6px 2px 2px;
+    background: color-mix(in srgb, var(--surface) 94%, transparent);
+    border: 1px solid var(--border);
+    border-radius: 6px;
   }
   .sign {
     flex: none;
@@ -832,7 +852,7 @@
     background: var(--ok);
   }
   /* The map needs about 1,000 px to be read at full size; below that the lists go under it. */
-  @media (max-width: 1400px) {
+  @media (max-width: 1000px) {
     .replay-body {
       grid-template-columns: 1fr;
     }

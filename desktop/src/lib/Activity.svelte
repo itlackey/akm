@@ -237,7 +237,7 @@
       href={tab.path}>{tab.name}</a
     >{/each}
 </nav>
-<div class="page-header">
+<div class="page-header" class:sr-only={view === "Replay"}>
   <div>
     <h1>{view}</h1>
     {#if view === "Runs"}<p class="muted">

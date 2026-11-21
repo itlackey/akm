@@ -12,7 +12,7 @@
   const remembered: {
     view: View;
     bundle: number;
-    chosenFinding: Partial<Record<View, string>>;
+    chosenFinding: Partial<Record<View, string[]>>;
     drawing: "tags" | "2d" | "3d" | null;
     selected: string;
   } = { view: "contents", bundle: -1, chosenFinding: {}, drawing: null, selected: "" };
@@ -410,17 +410,43 @@
   }
   /** The filters as the buttons show them: over the group chosen, or the bundle. */
   const findings = $derived(findingsOf(members));
-  /** The filter chosen in each view ("" for none). Use and Problems open on their first filter that finds anything:
-   * the work their question is asked for. Contents opens with none: the whole library, by group. */
-  let chosenFinding = $state<Partial<Record<View, string>>>(remembered.chosenFinding);
-  const finding = $derived(
-    findings.find(
-      (f) => f.id === (chosenFinding[view] ?? (view === "contents" ? "" : findings.find((x) => x.assets.length)?.id)),
-    ) ?? null,
+  /** The filters chosen in each view. Use and Problems open on their first filter that finds anything: the work
+   * their question is asked for. Contents opens with none: the whole library, by group. */
+  let chosenFinding = $state<Partial<Record<View, string[]>>>(remembered.chosenFinding);
+  const chosenIds = $derived(
+    chosenFinding[view] ??
+      (view === "contents" ? [] : findings.filter((x) => x.assets.length).slice(0, 1)).map((f) => f.id),
   );
+  /** Several filters as one: an asset of any chosen type that also meets any chosen condition. Types alone, or
+   * conditions alone, show whatever any of them finds. */
+  function combine(all: Finding[], ids: readonly string[]): Finding | null {
+    const on = all.filter((f) => ids.includes(f.id));
+    if (on.length < 2) return on[0] ?? null;
+    const types = on.filter((f) => f.id.startsWith("type:"));
+    const rest = on.filter((f) => !f.id.startsWith("type:"));
+    const any = (list: Finding[]) => new Set(list.flatMap((f) => f.assets));
+    const first = any(types.length ? types : rest);
+    const also = types.length && rest.length ? any(rest) : null;
+    const noted = [...rest, ...types];
+    return {
+      id: on.map((f) => f.id).join("+"),
+      label: [types.map((f) => f.label).join(", "), rest.map((f) => f.label).join(" or ")].filter(Boolean).join(": "),
+      unit: "shown",
+      hint: "",
+      assets: [...first].filter((i) => !also || also.has(i)).sort((a, b) => o!.shows[b]! - o!.shows[a]! || a - b),
+      note: (i) => noted.find((f) => f.assets.includes(i))?.note(i) ?? "",
+    };
+  }
+  const finding = $derived(combine(findings, chosenIds));
+  const toggle = (id: string) =>
+    (chosenFinding = {
+      ...chosenFinding,
+      [view]: chosenIds.includes(id) ? chosenIds.filter((x) => x !== id) : [...chosenIds, id],
+    });
+  let showMenu = $state<HTMLDetailsElement>();
   /** How many of what the filter finds each group holds, over the whole bundle: where to start. */
   const perGroup = $derived.by(() => {
-    const found = new Set(finding ? (findingsOf(scope).find((f) => f.id === finding.id)?.assets ?? []) : []);
+    const found = new Set(combine(findingsOf(scope), chosenIds)?.assets ?? []);
     return new Map(groups.map((g) => [g.key, g.members.filter((i) => found.has(i)).length]));
   });
   /** What a group's name says on the map after its size: how many of what the filter finds are in it. */
@@ -604,7 +630,12 @@
   {#if list.length > limit}<p class="more">and {(list.length - limit).toLocaleString()} more</p>{/if}
 {/snippet}
 
-<svelte:window onkeydown={onKey} />
+<svelte:window
+  onkeydown={onKey}
+  onclick={(event) => {
+    if (showMenu?.open && !showMenu.contains(event.target as Node)) showMenu.open = false;
+  }}
+/>
 <div class="map-head">
   <nav class="library-views" aria-label="Library views" data-sveltekit-reset="false">
     <a href="/library/search">Search</a>
@@ -668,21 +699,36 @@
           {#if matching}<span class="muted small" role="status"
               >{matching.size.toLocaleString()} of {plural(bundleScope.length, "asset")}</span
             >{/if}
-          <div class="findings" role="group" aria-label="Show on the map">
-            {#if part}<button
-                class="finding scope"
-                title="The filters count this group only. Choose to go back to the whole bundle."
-                onclick={() => choose(selected)}>In {part.name} ✕</button
-              >{/if}
-            {#each findings as f (f.id)}<button
-                class="finding"
-                aria-pressed={finding?.id === f.id}
-                disabled={!f.assets.length}
-                title={f.hint}
-                onclick={() => (chosenFinding = { ...chosenFinding, [view]: finding?.id === f.id ? "" : f.id })}
-                >{f.label}<strong>{(f.pairs ?? f.assets).length.toLocaleString()}</strong></button
-              >{/each}
-          </div>
+          <details class="show" bind:this={showMenu}>
+            <summary title={finding?.hint}
+              ><span class="muted">Show</span>
+              <span class="shown"
+                >{finding
+                  ? `${finding.label} (${(finding.pairs ?? finding.assets).length.toLocaleString()})`
+                  : "All assets"}</span
+              ></summary
+            >
+            <div class="show-menu" role="group" aria-label="Show on the map">
+              {#each findings as f (f.id)}<label class:none={!f.assets.length}
+                  ><input
+                    type="checkbox"
+                    checked={chosenIds.includes(f.id)}
+                    disabled={!f.assets.length}
+                    onchange={() => toggle(f.id)}
+                  />{f.label}<span class="count">{(f.pairs ?? f.assets).length.toLocaleString()}</span></label
+                >{/each}
+              <button
+                class="btn-quiet"
+                disabled={!chosenIds.length}
+                onclick={() => (chosenFinding = { ...chosenFinding, [view]: [] })}>Show all assets</button
+              >
+            </div>
+          </details>
+          {#if part}<button
+              class="scope"
+              title="Counts are for this group only. Choose to go back to the whole bundle."
+              onclick={() => choose(selected)}>In {part.name} ✕</button
+            >{/if}
         </div>
         {#if points}{#if groups.length}<SimilarityMap
               {o}
@@ -1033,37 +1079,73 @@
     border: 1px solid var(--border);
     border-radius: 6px;
   }
-  /* The view's filters: what its question is asked to find, each with how many it finds. One is on at a time. */
-  .findings {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
+  /* What the view's question finds, each with how many: one is shown at a time, and the row stays one line. */
+  .show {
+    position: relative;
+    font-size: 13px;
   }
-  .finding {
+  .show summary {
     display: flex;
     gap: 6px;
-    align-items: baseline;
-    color: var(--text);
-    background: var(--surface);
+    align-items: center;
+    block-size: 28px;
+    padding: 0 10px;
     border: 1px solid var(--border-strong);
-    border-radius: 14px;
+    border-radius: 4px;
+    background: var(--surface);
+    cursor: pointer;
+    list-style: none;
+  }
+  .show summary::after {
+    content: "▾";
+    color: var(--muted);
+  }
+  .shown {
+    max-inline-size: 22rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .show-menu {
+    position: absolute;
+    inset-block-start: calc(100% + 4px);
+    inset-inline-start: 0;
+    z-index: 5;
+    display: grid;
+    min-inline-size: 17rem;
+    padding: 6px;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    background: var(--surface);
+    box-shadow: 0 6px 20px rgb(0 0 0 / 0.25);
+  }
+  .show-menu label {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 4px 6px;
     cursor: pointer;
   }
-  .finding strong {
-    font-variant-numeric: tabular-nums;
-  }
-  .finding[aria-pressed="true"] {
-    color: var(--bg);
-    background: var(--text);
-    border-color: var(--text);
-  }
-  .finding:disabled {
+  .show-menu label.none {
     color: var(--muted);
-    border-color: var(--border);
     cursor: default;
   }
-  .finding.scope {
-    border-style: dashed;
+  .show-menu .count {
+    margin-inline-start: auto;
+    padding-inline-start: 16px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .show-menu button {
+    justify-self: start;
+    margin-block-start: 4px;
+  }
+  .scope {
+    border: 1px dashed var(--border-strong);
+    border-radius: 14px;
+    background: var(--surface);
+    color: var(--text);
+    cursor: pointer;
   }
   .colour-key {
     display: flex;
@@ -1314,7 +1396,7 @@
     text-decoration: underline;
   }
   /* The map needs about 1,000 px to be read at full size; below that the figures go under it. */
-  @media (max-width: 1400px) {
+  @media (max-width: 1000px) {
     .map-body {
       grid-template-columns: 1fr;
     }

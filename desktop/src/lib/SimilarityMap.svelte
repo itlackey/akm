@@ -529,6 +529,15 @@
           }
           return best < 0 ? null : { k: best, i: world.order[best] as number };
         };
+        // A group's name lets the pointer through to the map, so a drag can start on it; a click that lands on a name
+        // and on no point chooses its group.
+        const nameAt = (clientX: number, clientY: number) =>
+          groups.find((g) => {
+            const el = nameEls[g.key];
+            if (!el || el.style.visibility === "hidden") return false;
+            const box = el.getBoundingClientRect();
+            return clientX >= box.left && clientX <= box.right && clientY >= box.top && clientY <= box.bottom;
+          })?.key;
         let down = { x: 0, y: 0 };
         renderer.domElement.addEventListener(
           "pointerdown",
@@ -538,6 +547,10 @@
           if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4) return; // a drag, not a click
           const h = hit(e.clientX, e.clientY);
           if (h) onPick?.(h.i);
+          else if (onGroup) {
+            const key = nameAt(e.clientX, e.clientY);
+            if (key) onGroup(key);
+          }
         });
         // Hover is worked out once a frame at most: a library of thousands of points is searched on each look.
         let moved: PointerEvent | null = null;
@@ -549,7 +562,7 @@
           const h = hit(e.clientX, e.clientY);
           const box = host!.getBoundingClientRect();
           tip = h ? { x: e.clientX - box.left, y: e.clientY - box.top + 12, i: h.i } : null;
-          renderer.domElement.style.cursor = h ? "pointer" : "grab";
+          renderer.domElement.style.cursor = h || (onGroup && nameAt(e.clientX, e.clientY)) ? "pointer" : "grab";
           for (const mark of [under, world.underHalo]) {
             mark.geometry.dispose();
             mark.geometry = placesOf(h ? [h.i] : []);
@@ -825,13 +838,8 @@
         class="group-name"
         class:chosen={selected === g.key}
         bind:this={nameEls[g.key]}
-        style={`font-size:${13 + 4 * Math.sqrt(g.members.length / largest)}px`}
         onclick={() => onGroup(g.key)}>{@render name(g)}</button
-      >{:else}<span
-        class="group-name"
-        bind:this={nameEls[g.key]}
-        style={`font-size:${13 + 4 * Math.sqrt(g.members.length / largest)}px`}>{@render name(g)}</span
-      >{/if}
+      >{:else}<span class="group-name" bind:this={nameEls[g.key]}>{@render name(g)}</span>{/if}
   {/each}
   {#if sizeSteps.length || legend}<div class="stage-legend">
       {#if sizeSteps.length}<div class="scale size-key">
@@ -966,28 +974,35 @@
     font-weight: 400;
     color: var(--muted);
   }
+  /* A group's name is plain text over its points, haloed in the background colour so it reads without a box that
+     would hide them. The pointer passes through it to the map; the keyboard still reaches it. */
   .group-name {
     position: absolute;
     inset-block-start: 0;
     inset-inline-start: 0;
     display: flex;
-    gap: 6px;
+    gap: 5px;
     align-items: baseline;
-    padding: 2px 8px;
+    padding: 0 2px;
+    font: inherit;
+    font-size: 12px;
     font-weight: 600;
     line-height: 1.3;
     white-space: nowrap;
     color: var(--text);
-    background: color-mix(in srgb, var(--surface) 92%, transparent);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    cursor: pointer;
+    background: none;
+    border: 0;
+    border-radius: 3px;
+    text-shadow:
+      0 0 3px var(--bg),
+      0 0 3px var(--bg),
+      0 0 6px var(--bg);
+    pointer-events: none;
     will-change: transform;
     transition: opacity 0.2s;
   }
   .group-name span {
     font-weight: 400;
-    font-size: 0.85em;
     color: var(--muted);
   }
   .group-name .note {
@@ -997,16 +1012,15 @@
     content: "· ";
     color: var(--muted);
   }
-  span.group-name {
-    cursor: default;
-  }
-  button.group-name:hover,
   .group-name.chosen {
-    border-color: var(--map-highlight);
-    background: var(--surface);
+    text-decoration: underline;
+    text-decoration-color: var(--map-highlight);
+    text-decoration-thickness: 2px;
+    text-underline-offset: 3px;
   }
-  .group-name.chosen {
-    box-shadow: 0 0 0 1px var(--map-highlight);
+  .group-name:focus-visible {
+    outline: 2px solid var(--map-highlight);
+    outline-offset: 1px;
   }
   .tip {
     position: absolute;
