@@ -537,7 +537,6 @@
       >
       <div class="now">
         <strong>{range ? stampText(clock, span) : "–"}</strong>
-        {#if o && range && !unavailable}<span>Tallest bar = {timeline.max} events</span>{/if}
       </div>
     </div>
     {#if o && range && !unavailable}
@@ -591,6 +590,7 @@
             {#each KINDS.filter((k) => timeline.counts.some((bin) => bin[k.id])) as k}<li>
                 <span class="swatch" style={`background:var(${k.token})`}></span>{k.label}
               </li>{/each}
+            <li class="muted">Tallest bar = {timeline.max} events</li>
           </ul>
           <span>{axis[2]}</span>
         </div>
@@ -639,23 +639,14 @@
     min-inline-size: 104px;
   }
   .now {
-    display: grid;
     min-inline-size: 5.5rem;
     font-size: var(--text-s);
     font-variant-numeric: tabular-nums;
-  }
-  .now strong {
     line-height: 28px;
   }
-  .now span {
-    font-size: var(--text-xs);
-    color: var(--muted);
-    white-space: nowrap;
-  }
+  /* The bars stand beside the buttons; the slider and the dates run the strip's whole width under both. */
   .track {
-    position: relative;
-    flex: 1;
-    min-inline-size: 0;
+    display: contents;
   }
   .views {
     display: flex;
@@ -714,9 +705,10 @@
     position: sticky;
     inset-block-end: 0;
     z-index: 4;
-    display: flex;
-    gap: 12px;
-    align-items: start;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 4px 12px;
+    align-items: center;
     padding: 6px 12px;
     border: 1px solid var(--border);
     background: var(--surface);
@@ -735,6 +727,10 @@
     vector-effect: non-scaling-stroke;
   }
   /* The slider lies along the foot of the bars it scrubs: the same playhead, for the keyboard. */
+  .timeline input,
+  .ticks {
+    grid-column: 1 / -1;
+  }
   .timeline input {
     display: block;
     inline-size: 100%;
@@ -774,7 +770,7 @@
     grid-template-columns: minmax(0, 1fr) 20rem;
     gap: var(--space-2);
     /* The timeline and the map fit one window together. */
-    --stage-size: max(260px, calc(100vh - 254px));
+    --stage-size: max(260px, calc(100vh - 240px));
     align-items: start;
   }
   .replay-body.alone {
@@ -785,6 +781,13 @@
     border: 1px solid var(--border);
     background: var(--surface);
     min-inline-size: 0;
+    min-block-size: calc(var(--stage-size) + 2px);
+    display: flex;
+    flex-direction: column;
+  }
+  /* The mind map stands in the middle of the room the points would fill. */
+  .replay-map > :global(.mind-map) {
+    margin-block: auto;
   }
   /* The drawing switch and what is replayed sit on the map; over the tags, which have no spare corner, above them.
      The row never wraps: it leaves the corner to the panel's button. */
