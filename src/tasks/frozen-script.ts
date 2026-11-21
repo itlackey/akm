@@ -49,7 +49,7 @@ export function frozenScriptCommand(
 /** The program and arguments that run the script asset `ref`, found at `file`, with `args` after it: what `akm run <ref>` runs. */
 export function scriptProgram(ref: string, file: string, args: readonly string[]): string[] {
   const extension = path.extname(file);
-  const interpreter = scriptInterpreter(extension, ref, extension === "" ? fs.readFileSync(file) : undefined);
+  const interpreter = scriptInterpreter(extension, ref, fs.readFileSync(file));
   return frozenScriptCommand({ interpreter, extension }, file, args);
 }
 
@@ -73,6 +73,10 @@ function interpreterCommand(
     case "kotlin":
       return script.extension === ".kts" ? ["kotlinc", "-script", materializedPath] : ["kotlin", materializedPath];
     case "sh":
+    case "bash":
+    case "zsh":
+    case "ksh":
+    case "dash":
     case "python":
     case "ruby":
     case "perl":

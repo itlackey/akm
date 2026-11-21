@@ -68,10 +68,30 @@ describe("scriptInterpreter — Bun present", () => {
   });
 });
 
+describe("scriptInterpreter: a .sh script runs under the shell its first line names", () => {
+  const of = (content: string) => scriptInterpreter(".sh", "scripts/x.sh", new TextEncoder().encode(content));
+
+  test("bash, zsh, ksh and dash are run as named, so a script that needs bash is not handed to sh", () => {
+    expect(of("#!/usr/bin/env bash\ndeclare -a list=()\n")).toBe("bash");
+    expect(of("#!/bin/bash\necho hi\n")).toBe("bash");
+    expect(of("#!/usr/bin/env zsh\necho hi\n")).toBe("zsh");
+    expect(of("#!/bin/ksh\necho hi\n")).toBe("ksh");
+    expect(of("#!/bin/dash\necho hi\n")).toBe("dash");
+  });
+
+  test("sh, no first line, or a first line that names no shell runs under sh", () => {
+    expect(of("#!/bin/sh\necho hi\n")).toBe("sh");
+    expect(of("echo hi\n")).toBe("sh");
+    expect(of("#!/usr/bin/env python3\nprint('hi')\n")).toBe("sh");
+    expect(scriptInterpreter(".sh", "scripts/x.sh")).toBe("sh");
+  });
+});
+
 describe("scriptInterpreter — extensionless scripts honour a #! shebang", () => {
   test("recognizes #!/usr/bin/env NAME and #!/path/to/NAME forms", () => {
     const cases: Array<[string, string]> = [
-      ["#!/usr/bin/env bash\necho hi\n", "sh"],
+      ["#!/usr/bin/env bash\necho hi\n", "bash"],
+      ["#!/bin/zsh\necho hi\n", "zsh"],
       ["#!/bin/sh\necho hi\n", "sh"],
       ["#!/usr/bin/env python3\nprint('hi')\n", "python"],
       ["#!/usr/bin/env ruby\nputs 'hi'\n", "ruby"],
@@ -105,7 +125,7 @@ describe("captureScriptTarget threads bytes through for shebang detection", () =
       const file = path.join(sandbox.dir, "run-me");
       fs.writeFileSync(file, "#!/usr/bin/env bash\necho hi\n");
       const captured = captureScriptTarget("scripts/run-me", file, sandbox.dir, (f) => fs.readFileSync(f));
-      expect(captured.interpreter).toBe("sh");
+      expect(captured.interpreter).toBe("bash");
       expect(captured.extension).toBe("");
     } finally {
       sandbox.cleanup();

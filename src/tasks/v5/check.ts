@@ -142,7 +142,7 @@ async function checkTask(
     const asset = await locateTaskV5Asset(found.bundle, target, step.kind, at);
     if (step.kind === "scripts") {
       const extension = path.extname(asset.file).toLowerCase();
-      scriptInterpreter(extension, target, extension === "" ? fs.readFileSync(asset.file) : undefined);
+      scriptInterpreter(extension, target, fs.readFileSync(asset.file));
     }
   }
   return document;

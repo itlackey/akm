@@ -3312,7 +3312,8 @@ roles. The deprecated no-op `--new` is not accepted by the new entry point.
 
 A script runs by its ref only (`akm run scripts/<file> [arguments]`, or
 `team//scripts/<file>`); a filesystem path is refused. It runs in place with the
-interpreter its extension selects, and its exit status is akm's. akm's flags
+interpreter its extension selects (a `.sh` script under the shell its first line
+names, such as `bash`, and under `sh` when it names none), and its exit status is akm's. akm's flags
 (`--timeout`, `--max-retries`, `--cwd`, `--env`, `--secret`, `--clean`,
 `--inherit`) go before the ref; every token after the ref, `--` included, is
 passed to the script unchanged. `--inherit <VAR,...>` starts the run clean with
