@@ -459,16 +459,6 @@
               ...feedbackSoFar.filter((s) => s.signal === "negative"),
               ...feedbackSoFar.filter((s) => s.signal !== "negative"),
             ]}
-            <header class="panel-head">
-              <div>
-                <h2>Up to {stampText(clock, span)}</h2>
-                <p>
-                  {PERIODS.find((p) => p[0] === period)![1]} · {everyone ? "Everyone" : "You"} · {eventsText(
-                    totals.events,
-                  ) || "no events"}
-                </p>
-              </div>
-            </header>
             <section>
               <h3>
                 Searches that found nothing
@@ -541,49 +531,51 @@
     </div>
     {#if o && range && !unavailable}
       <div class="track">
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <svg
-          viewBox={`0 0 ${W} ${H}`}
-          preserveAspectRatio="none"
-          aria-hidden="true"
-          onpointerdown={(e) => {
-            dragging = true;
-            (e.currentTarget as SVGSVGElement).setPointerCapture(e.pointerId);
-            seekAt(e);
-          }}
-          onpointermove={(e) => dragging && seekAt(e)}
-          onpointerup={() => (dragging = false)}
-        >
-          {#each timeline.counts as bin, b}
-            {@const x = (b / timeline.counts.length) * W}
-            {@const bw = W / timeline.counts.length - 1}
-            {@const played = start + (b + 1) * timeline.width <= clock}
-            {#each KINDS as k, n}
-              {@const below = KINDS.slice(0, n).reduce((s, q) => s + bin[q.id], 0)}
-              {#if bin[k.id]}<rect
-                  {x}
-                  y={H - ((below + bin[k.id]) / timeline.max) * (H - 4)}
-                  width={bw}
-                  height={(bin[k.id] / timeline.max) * (H - 4)}
-                  style={`fill:var(${k.token});opacity:${played ? 1 : 0.35}`}
-                />{/if}
+        <div class="scrub">
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <svg
+            viewBox={`0 0 ${W} ${H}`}
+            preserveAspectRatio="none"
+            aria-hidden="true"
+            onpointerdown={(e) => {
+              dragging = true;
+              (e.currentTarget as SVGSVGElement).setPointerCapture(e.pointerId);
+              seekAt(e);
+            }}
+            onpointermove={(e) => dragging && seekAt(e)}
+            onpointerup={() => (dragging = false)}
+          >
+            {#each timeline.counts as bin, b}
+              {@const x = (b / timeline.counts.length) * W}
+              {@const bw = W / timeline.counts.length - 1}
+              {@const played = start + (b + 1) * timeline.width <= clock}
+              {#each KINDS as k, n}
+                {@const below = KINDS.slice(0, n).reduce((s, q) => s + bin[q.id], 0)}
+                {#if bin[k.id]}<rect
+                    {x}
+                    y={H - ((below + bin[k.id]) / timeline.max) * (H - 4)}
+                    width={bw}
+                    height={(bin[k.id] / timeline.max) * (H - 4)}
+                    style={`fill:var(${k.token});opacity:${played ? 1 : 0.35}`}
+                  />{/if}
+              {/each}
             {/each}
-          {/each}
-          <line class="playhead" x1={playheadX} x2={playheadX} y1="0" y2={H} />
-        </svg>
-        <input
-          type="range"
-          min={start}
-          max={end}
-          step={SCRUB_STEP}
-          value={clock}
-          aria-label="Playhead"
-          aria-valuetext={stampText(clock, span)}
-          oninput={(event) => {
-            pause();
-            seek(scrubTime(Number(event.currentTarget.value), start, end));
-          }}
-        />
+            <line class="playhead" x1={playheadX} x2={playheadX} y1="0" y2={H} />
+          </svg>
+          <input
+            type="range"
+            min={start}
+            max={end}
+            step={SCRUB_STEP}
+            value={clock}
+            aria-label="Playhead"
+            aria-valuetext={stampText(clock, span)}
+            oninput={(event) => {
+              pause();
+              seek(scrubTime(Number(event.currentTarget.value), start, end));
+            }}
+          />
+        </div>
         <div class="ticks">
           <span>{axis[0]}</span>
           <ul class="kinds" aria-label="Timeline key">
@@ -647,6 +639,9 @@
   /* The bars stand beside the buttons; the slider and the dates run the strip's whole width under both. */
   .track {
     display: contents;
+  }
+  .scrub {
+    min-inline-size: 0;
   }
   .views {
     display: flex;
@@ -727,7 +722,6 @@
     vector-effect: non-scaling-stroke;
   }
   /* The slider lies along the foot of the bars it scrubs: the same playhead, for the keyboard. */
-  .timeline input,
   .ticks {
     grid-column: 1 / -1;
   }
@@ -770,7 +764,7 @@
     grid-template-columns: minmax(0, 1fr) 20rem;
     gap: var(--space-2);
     /* The timeline and the map fit one window together. */
-    --stage-size: max(260px, calc(100vh - 240px));
+    --stage-size: max(260px, calc(100vh - 224px));
     align-items: start;
   }
   .replay-body.alone {
@@ -915,6 +909,9 @@
     margin: 0;
     padding: var(--space-2) var(--space-3);
     border-block-start: 1px solid var(--border);
+  }
+  .replay-side > section:first-child {
+    border-block-start: 0;
   }
   .replay-side h3 {
     display: flex;
