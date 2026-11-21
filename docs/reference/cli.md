@@ -1942,8 +1942,11 @@ engine skew `akm health` reports. The text output, AKM Desktop and the scheduled
 
   With that line in the global OpenCode config (`~/.config/opencode/opencode.json`
   or `.jsonc`, or the file named by `OPENCODE_CONFIG`), the cache refresh uses
-  `akm-opencode@next` instead of `@latest`. If `akm-opencode@next` is missing,
-  the OpenCode entry is `failed`; the CLI upgrade is unaffected.
+  `akm-opencode@next` instead of `@latest`, on a plain `akm upgrade` too: the
+  plugin follows the channel its own config names, as the Claude Code and Codex
+  plugins follow the channel their marketplace is registered on. If
+  `akm-opencode@next` is missing, the OpenCode entry is `failed`; the CLI upgrade
+  is unaffected.
 
   OpenCode 2's `akm-opencode-v2` follows the same rule with its own spec:
   `{ "plugins": ["akm-opencode-v2@next"] }`, cached under

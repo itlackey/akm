@@ -373,13 +373,15 @@ const POSITIONAL_FLAG: Readonly<Record<string, string>> = { "bundle create": "--
 
 /**
  * Commands whose handler reads `args._` itself: `proposal accept` and
- * `proposal reopen` take any number of ids, `migrate apply` any number of task files, and `show` and `doctor prompt`
+ * `proposal reopen` take any number of ids, `migrate apply` and `migrate status` any number of task and workflow
+ * files, and `show` and `doctor prompt`
  * refuse an extra token with a message of their own.
  */
 const OWN_POSITIONALS: ReadonlySet<string> = new Set([
   "proposal accept",
   "proposal reopen",
   "migrate apply",
+  "migrate status",
   "show",
   "doctor prompt",
 ]);

@@ -521,13 +521,9 @@ const notFollowingNext = (flavor: OpenCodeFlavor) =>
   `next channel: OpenCode resolves a bare "${flavor.pkg}" to @latest, so it is not updated to a prerelease; ` +
   `set "${flavor.configKeys[0]}": ["${nextSpec(flavor)}"] in your OpenCode config to follow prereleases`;
 
-/** Why a run leaves alone an OpenCode whose config names a spec this run does not refresh (#1115, #1117). */
+/** Why a run leaves alone an OpenCode whose config names a spec no run refreshes: an exact version or another tag (#1117). */
 function otherSpecNote(flavor: OpenCodeFlavor, spec: string): string {
-  const loads = `OpenCode loads "${spec}" (your OpenCode config), so this upgrade leaves it alone`;
-  const key = flavor.configKeys[0];
-  return spec === nextSpec(flavor)
-    ? `${loads}; run \`akm upgrade --channel next\` to update it, or set "${key}": ["${flavor.pkg}"] to follow stable releases`
-    : `${loads}; set "${key}": ["${flavor.pkg}"] to have \`akm upgrade\` keep it current`;
+  return `OpenCode loads "${spec}" (your OpenCode config), so this upgrade leaves it alone; set "${flavor.configKeys[0]}": ["${flavor.pkg}"] to have \`akm upgrade\` keep it current`;
 }
 
 function upgradeOpenCode(dryRun: boolean, target: OpenCodeTarget): PluginUpgradeEntry {
@@ -761,11 +757,11 @@ export type UpgradeRunResult =
   | { mode: "upgrade"; result: UpgradeResponse & { plugins: PluginUpgradeEntry[] }; failed: boolean };
 
 /**
- * Which build of one OpenCode plugin refreshes, and which cache.
- * Under `--next` that is `<pkg>@next`, but only when the user's OpenCode
- * config names that tag: a bare one keeps resolving `@latest` and the entry is
- * reported as skipped. A config naming any other spec (an exact version, or
- * `@next` on a plain run) is left alone.
+ * Which build of one OpenCode plugin refreshes, and which cache: the one the user's OpenCode config names, since
+ * that is the only cache OpenCode re-creates. A bare name or `@latest` refreshes `@latest`, and `<pkg>@next`
+ * refreshes `@next`, on a plain run too, as the marketplace plugins follow the channel their own registration names.
+ * Under `--next` a bare one keeps resolving `@latest` and is reported as skipped. A config naming any other spec
+ * (an exact version) is left alone.
  */
 function resolveOpenCodeTarget(
   next: boolean,
@@ -823,8 +819,8 @@ function resolveOpenCodeTarget(
     }
   }
   const followsLatest = spec === flavor.pkg || spec === `${flavor.pkg}@latest`;
-  const followNext = next && spec === nextSpec(flavor);
-  // Any other spec loads a cache this run does not refresh.
+  const followNext = spec === nextSpec(flavor);
+  // Any other spec loads a cache no run refreshes.
   if (!followsLatest && !followNext) return leftAlone(otherSpecNote(flavor, spec));
   const tag: UpgradeChannel = followNext ? "next" : "latest";
   const cache = detectOpenCodeCache(tag, flavor);
