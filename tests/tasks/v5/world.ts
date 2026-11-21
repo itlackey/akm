@@ -183,7 +183,7 @@ export function world(spec: WorldSpec = {}): World {
       adapterId: "akm",
       scheduled: start.scheduled === true,
       ...(start.start ? { start: start.start } : {}),
-      ...(start.inputFlags ? { inputFlags: start.inputFlags } : {}),
+      ...(start.inputFlags ? { inputFlags: () => start.inputFlags as readonly InputFlag[] } : {}),
       hostEnv: spec.host ?? process.env,
       ...(spec.agent ? { runAgentImpl: standIn(spec.agent) } : {}),
     }).catch((error: unknown) => {

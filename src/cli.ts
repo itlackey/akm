@@ -76,6 +76,7 @@ process.on("uncaughtException", (err) => {
 });
 
 import fs from "node:fs";
+import { stripVTControlCharacters } from "node:util";
 import {
   type ArgsDef,
   type CommandDef,
@@ -84,7 +85,6 @@ import {
   parseArgs,
   renderUsage,
   runCommand,
-  showUsage,
 } from "citty";
 import { warnDeprecatedUse } from "./cli/deprecations";
 import {
@@ -158,7 +158,7 @@ import { launcherPidFromEnv } from "./core/file-lock";
 import { startParentDeathWatchdog } from "./core/parent-watchdog";
 import { getConfigPath } from "./core/paths";
 import { DURATION_UNITS, parseDuration } from "./core/time";
-import { plainize } from "./core/tty";
+import { plainize, shouldDecorate } from "./core/tty";
 import { info, isQuiet, setQuiet, setVerbose, warn, warnOnce } from "./core/warn";
 import { installLlmUsagePersistenceIfAbsent } from "./llm/usage-persist";
 import { EMBEDDED_HINTS, EMBEDDED_HINTS_FULL } from "./output/cli-hints";
@@ -486,8 +486,11 @@ async function runHealth(args: ParsedArgs<typeof healthArgs>, scheduler: boolean
               .join(" → ")
           : undefined) ??
         "24h";
-      resultStatus = base.status;
-      const schedulerChecks = scheduler ? { scheduler: await akmTasksDoctor() } : {};
+      const schedulerReport = scheduler ? await akmTasksDoctor() : undefined;
+      const schedulerChecks = schedulerReport ? { scheduler: schedulerReport } : {};
+      // A strategy that cannot be resolved is named in the scheduler report, and the status is a warning at least.
+      const status = base.status === "pass" && schedulerReport?.improveStrategy ? ("warn" as const) : base.status;
+      resultStatus = status;
       // A degraded state-db result has no runs. Keep its native failure instead
       // of reopening the unavailable database to build the report's extra data.
       if (report && base.runs !== undefined) {
@@ -509,6 +512,7 @@ async function runHealth(args: ParsedArgs<typeof healthArgs>, scheduler: boolean
         );
         output("health", {
           ...base,
+          status,
           ...schedulerChecks,
           report: {
             window: args.since ?? "24h",
@@ -519,7 +523,7 @@ async function runHealth(args: ParsedArgs<typeof healthArgs>, scheduler: boolean
         });
         return;
       }
-      output("health", { ...base, ...schedulerChecks });
+      output("health", { ...base, status, ...schedulerChecks });
     });
     // `emitJsonError` (src/cli/shared.ts) does not force-exit on the error
     // path — it sets `process.exitCode` and returns, so a `--report`
@@ -603,11 +607,11 @@ const doctorCommand = defineCommand({
     }
     // Validate the child without health's parent flags, so unsupported options
     // cannot be silently accepted merely because bare doctor declares them.
-    assertKnownFlags({ subCommands: { doctor: { subCommands: doctorSubCommands } } } as FlagScanCommand, [
-      "doctor",
-      subcommand,
-      ...childArgs,
-    ]);
+    assertKnownFlags(
+      { subCommands: { doctor: { subCommands: doctorSubCommands } } } as FlagScanCommand,
+      ["doctor", subcommand, ...childArgs],
+      { untilTarget: true },
+    );
   },
 });
 
@@ -713,9 +717,16 @@ const commands = {
   hints: hintsCommand,
 };
 
+/** Help as every akm output is: citty colors it, and the color stays only where akm's one color rule (`shouldDecorate`) allows it. */
+function helpText(text: string): string {
+  return shouldDecorate() ? text : stripVTControlCharacters(text);
+}
+
 /** Leaf `--help`: usage without the hidden args and the shared global flags, then one pointer line. */
 async function showCommandUsage(command: AnyCittyCommand, path: readonly string[]): Promise<void> {
-  await showUsage(withoutHelpHiddenArgs(command) as CommandDef, buildUsageParentForPath(path) as CommandDef);
+  console.log(
+    `${helpText(await renderUsage(withoutHelpHiddenArgs(command) as CommandDef, buildUsageParentForPath(path) as CommandDef))}\n`,
+  );
   console.log("Global flags: --format, --detail, --output, -q/--quiet, --verbose (see `akm --help`)");
 }
 
@@ -777,7 +788,7 @@ const helpCommand = defineGroupCommand({
     }),
   },
   async defaultRun() {
-    stdout().write(`${await renderSectionedRootHelp()}\n`);
+    stdout().write(`${helpText(await renderSectionedRootHelp())}\n`);
   },
 });
 
@@ -1203,8 +1214,7 @@ function toUsageErrorFromCliError(error: Error, rawArgs: readonly string[]): Usa
   // citty colorizes error.message with ANSI escapes even when stdout/stderr
   // is not a TTY. Strip them so the JSON envelope's `error` field is plain
   // text instead of embedding raw escape sequences.
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional — strip ANSI escape codes
-  const message = error.message.replace(/\x1b\[[0-9;]*m/g, "");
+  const message = stripVTControlCharacters(error.message);
   return new UsageError(message, code, hint);
 }
 
@@ -1470,7 +1480,7 @@ async function runCliInvocation(invocation: ParsedInvocation): Promise<void> {
     // a typo would otherwise run the command with defaults and exit 0. Checked
     // here, after --help and --version, so those keep working on any command.
     // An undeclared positional is ignored the same way.
-    assertKnownFlags(main as FlagScanCommand, invocation.ownArgs);
+    assertKnownFlags(main as FlagScanCommand, invocation.ownArgs, { untilTarget: true });
     assertNoStrayPositionals(main as FlagScanCommand, rawArgs);
     await runCommand(main, { rawArgs: [...rawArgs] });
   } catch (error) {

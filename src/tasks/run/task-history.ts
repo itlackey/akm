@@ -35,6 +35,7 @@ import {
   type TaskHistoryRow,
   upsertTaskHistory,
 } from "../../storage/repositories/task-history-repository";
+import { classifyAttempt, hereNow } from "./attempt-liveness";
 import type { TaskRunResult, TaskRunStatus } from "./task-result";
 
 /** The `bundle` a task's history row records, from its qualified ref `bundle//tasks/<name>`. */
@@ -121,9 +122,16 @@ export function readTaskHistory(options: ReadHistoryOptions = {}): TaskRunResult
  */
 function decodeTaskHistoryRows(rows: TaskHistoryRow[]): TaskRunResult[] {
   const results: TaskRunResult[] = [];
+  const here = rows.some((row) => row.status === "active") ? hereNow() : undefined;
   for (const row of rows) {
     try {
-      results.push(taskHistoryRowToResult(row));
+      const result = taskHistoryRowToResult(row);
+      // An attempt whose owner is gone is shown as interrupted without waiting for a later start to write it.
+      results.push(
+        here && row.status === "active" && classifyAttempt(row, here) === "interrupted"
+          ? { ...result, status: "interrupted" }
+          : result,
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.warn(

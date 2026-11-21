@@ -11,7 +11,7 @@
 
 import path from "node:path";
 import { createParsedInvocation } from "../../cli/invocation";
-import { parsePositiveIntFlag } from "../../cli/parse-args";
+import { parseNonNegativeIntFlag } from "../../cli/parse-args";
 import { withoutFlags } from "../../commands/env/injection";
 import type { InputFlag } from "../../execution/input-contract";
 import type { TaskV5StartFlags } from "./check";
@@ -33,8 +33,6 @@ export interface StartedWith extends TaskV5StartFlags {
   readonly env?: readonly string[];
   readonly secret?: readonly string[];
   readonly inherit?: readonly string[];
-  /** Absolute: a `--cwd` is taken from the folder akm was started in. */
-  readonly cwd?: string;
 }
 
 /** The start flags in `rawArgs`, and the rest, which are the task id and its input flags. */
@@ -53,7 +51,7 @@ export function parseStartFlags(rawArgs: readonly string[]): {
     .filter(Boolean);
   const cwd = invocation.getFlagValue("--cwd");
   const timeout = invocation.getFlagValue("--timeout");
-  const maxRetries = parsePositiveIntFlag(invocation.getFlagValue("--max-retries"), "--max-retries");
+  const maxRetries = parseNonNegativeIntFlag(invocation.getFlagValue("--max-retries"), "--max-retries");
   return {
     flags: {
       ...(env.length > 0 ? { env } : {}),

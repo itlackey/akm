@@ -126,7 +126,9 @@ steps:
     write("tasks/fetch.yml", "version: 5-beta.1\nexec: echo 'no route to host' >&2; exit 7\n");
     const asked = akm(["run", "tasks/ask"]);
     expect(asked.status).toBe(1);
-    expect(out(asked).result.detail.error).toMatch(/^ask: non_zero_exit: .+ exited with code 1: model endpoint unreachable$/);
+    expect(out(asked).result.detail.error).toMatch(
+      /^ask: non_zero_exit: .+ exited with code 1: model endpoint unreachable$/,
+    );
     expect(out(akm(["run", "tasks/fetch"])).result.detail.error).toBe(
       "(only): non_zero_exit: exit code 7: no route to host",
     );

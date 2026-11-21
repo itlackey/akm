@@ -32,6 +32,7 @@
  */
 
 import { UsageError } from "../../core/errors";
+import { valueInputNames } from "../../execution/input-contract";
 import {
   parseTaskSourceV5Document,
   TASK_SOURCE_V5_VERSION,
@@ -144,4 +145,9 @@ export function parseTaskSource(input: ParseTaskSourceInput): ParsedTaskSource {
   }
   const v4 = parseTaskSourceV4Document(root, documentOptions);
   return Object.freeze({ version: 4 as const, v4, schedule: v4.schedule, description: v4.description });
+}
+
+/** The declared inputs of a task that take a value, which a flag names and the next token is the value of. */
+export function taskValueInputs(parsed: ParsedTaskSource): Set<string> {
+  return valueInputNames((parsed.version === 4 ? parsed.v4.inputs : parsed.v5.inputs) ?? {});
 }

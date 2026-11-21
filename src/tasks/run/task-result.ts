@@ -118,15 +118,15 @@ export interface RunTaskOptions {
   /** Runs after immutable preparation/history reservation and before native dispatch (tests). */
   beforeNativeDispatch?: (task: PreparedTaskV3Shell | PreparedTaskV3Script) => void;
   /**
-   * Raw, exact-name `akm task run` input flags captured by `tasks-cli.ts`'s Stage
-   * 1 (`parseTaskInputFlags`). `load-task.ts`'s Stage 2 materializes these
+   * Reads the raw, exact-name `akm task run` input flags, once the task's declared value inputs are known: Stage 1
+   * (`parseTaskInputFlags`, in `tasks-cli.ts`). `load-task.ts`'s Stage 2 materializes these
    * against the task's contract (task source v4: its `inputs:` declarations;
    * v3: the empty contract, so ANY flag on a v3 task is `UNKNOWN_FLAG`) and attaches
    * the result to the constructed `TaskInvocation.inputs`. Optional — a caller
    * that passes none is unaffected. Validation only: nothing
    * downstream of `loadPreparedTask` reads this back.
    */
-  inputFlags?: readonly InputFlag[];
+  inputFlags?: (valueInputs: ReadonlySet<string>) => readonly InputFlag[];
   /**
    * TEST-ONLY. Runs once, with the `TaskInvocation` Stage 2 constructs,
    * before dispatch — never read by production code. `TaskInvocation`
@@ -142,7 +142,7 @@ export interface RunTaskOptions {
    * Version 5 tasks: reads what the start gave (flags, inputs, `--resume`, `--skip-if-locked`), called once the task
    * is known to be version 5. Absent: the start has `inputFlags` as its inputs and no flags.
    */
-  start?: () => TaskV5Start;
+  start?: (valueInputs: ReadonlySet<string>) => TaskV5Start;
   /** Version 5 tasks (tests): the environment akm runs in, which clean steps take what they keep and `inherit:` from. Default: this process's. */
   hostEnv?: NodeJS.ProcessEnv;
   /**

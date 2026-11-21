@@ -16,9 +16,11 @@
  *     stash, `--bundle <name>` finds a stash no config names, and sync
  *     attributes the row to the installation that wrote it (#846).
  *   - `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR` and `AKM_STATE_DIR`
- *     only when the process that ran `akm task sync` set them explicitly. A
- *     default resolves at fire time exactly as it does for an interactive
- *     command. `AKM_CONFIG_FILE`, when selected, is carried as an absolute path.
+ *     only when the directory the process that ran `akm task sync` resolved
+ *     differs from the default one, whatever set it (an `AKM_*_DIR` variable
+ *     or an `XDG_*_HOME`). A default resolves at fire time exactly as it does
+ *     for an interactive command. `AKM_CONFIG_FILE`, when selected, is carried
+ *     as an absolute path.
  *
  * That is exactly what the `--scheduler-context` descriptor held.
  *
@@ -37,6 +39,7 @@ import { createParsedInvocation, type ParsedInvocation } from "../cli/invocation
 import { bundleRefToString, parseBundleRef } from "../core/asset/asset-ref";
 import { resolveStashDir } from "../core/common";
 import { ConfigError } from "../core/errors";
+import { getCacheDir, getConfigDir, getDataDir, getStateDir } from "../core/paths";
 import { INPUT_NAME_PATTERN } from "../execution/input-contract";
 import { normaliseTaskConceptId } from "./task-id";
 
@@ -55,20 +58,34 @@ type ScheduledTaskContextKey = (typeof SCHEDULED_TASK_CONTEXT_KEYS)[number];
 export type ScheduledRowEnvironment = Readonly<Partial<Record<ScheduledTaskContextKey, string>>>;
 
 /**
- * Directories a row carries ONLY when the process that ran `task sync` had
- * them set explicitly in its environment. They are never resolved from
- * defaults: a sync run from inside an app whose environment pointed `$STATE`
- * somewhere private (an OpenCode desktop session, 2026-08 → 2026-09) froze
- * that directory into eight cron rows, and the scheduled improve runs then
- * held their locks in a `locks/` directory no interactive command could see.
+ * The directories a row carries when the one the syncing process resolved is not the default one. The default is what
+ * the scheduler's own environment resolves, which names none of the variables below.
  */
-const EXPLICIT_CONTEXT_KEYS = [
+const RESOLVED_DIRECTORIES = [
+  ["AKM_CONFIG_DIR", getConfigDir],
+  ["AKM_DATA_DIR", getDataDir],
+  ["AKM_CACHE_DIR", getCacheDir],
+  ["AKM_STATE_DIR", getStateDir],
+] as const;
+const DIRECTORY_VARIABLES = [
   "AKM_CONFIG_DIR",
-  "AKM_CONFIG_FILE",
   "AKM_DATA_DIR",
   "AKM_CACHE_DIR",
   "AKM_STATE_DIR",
-] as const;
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "XDG_CACHE_HOME",
+  "XDG_STATE_HOME",
+];
+
+/** A directory as `resolve` gives it, or undefined when it cannot be resolved here. */
+function resolveOrUndefined(resolve: (env: NodeJS.ProcessEnv) => string, env: NodeJS.ProcessEnv): string | undefined {
+  try {
+    return resolve(env);
+  } catch {
+    return undefined;
+  }
+}
 
 /** The AKM directory context of the current process, so nested AKM commands stay in the same installation. */
 export function scheduledTaskContextEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
@@ -82,9 +99,10 @@ export function scheduledTaskContextEnv(env: NodeJS.ProcessEnv = process.env): R
 
 /**
  * The environment every row a sync writes sets inline: `AKM_BUNDLE_DIR`,
- * the syncing process's working stash, plus whichever `AKM_*_DIR` overrides
- * it set explicitly. With no working stash to resolve (no default bundle, no
- * `AKM_BUNDLE_DIR`), rows name their bundle by `--bundle` alone.
+ * the syncing process's working stash, plus each of its config, data, cache and
+ * state directories that differs from the default. With no working stash to
+ * resolve (no default bundle, no `AKM_BUNDLE_DIR`), rows name their bundle by
+ * `--bundle` alone.
  */
 export function scheduledRowEnvironment(env: NodeJS.ProcessEnv = process.env): ScheduledRowEnvironment {
   const out: Partial<Record<ScheduledTaskContextKey, string>> = {};
@@ -93,10 +111,14 @@ export function scheduledRowEnvironment(env: NodeJS.ProcessEnv = process.env): S
   } catch {
     // No working stash: there is no primary bundle to attribute rows to either.
   }
-  for (const key of EXPLICIT_CONTEXT_KEYS) {
-    const value = env[key]?.trim();
-    if (value) out[key] = path.resolve(value);
+  const defaults = { ...env };
+  for (const name of DIRECTORY_VARIABLES) delete defaults[name];
+  for (const [key, resolve] of RESOLVED_DIRECTORIES) {
+    const resolved = resolveOrUndefined(resolve, env);
+    if (resolved !== undefined && resolved !== resolveOrUndefined(resolve, defaults)) out[key] = path.resolve(resolved);
   }
+  const configFile = env.AKM_CONFIG_FILE?.trim();
+  if (configFile) out.AKM_CONFIG_FILE = path.resolve(configFile);
   return out;
 }
 

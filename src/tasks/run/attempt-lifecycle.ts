@@ -40,6 +40,14 @@ interface ReservedTaskAttempt {
   historyReserved: boolean;
 }
 
+/** Where a version 5 task keeps what it can resume: the state of each run, and the folder it works in. */
+export function runsFolder(taskId: string): string {
+  return path.join(getStateDir(), "runs", encodeURIComponent(taskId));
+}
+
+export const runRecordPath = (taskId: string, runId: string): string =>
+  path.join(runsFolder(taskId), `${runId}.state.json`);
+
 /** The lock file of a task that runs one at a time, by its qualified ref (`bundle//tasks/<name>`). */
 export function taskRunLockPath(ref: string): string {
   return path.join(getStateDir(), "locks", `task-${encodeURIComponent(ref)}.lock`);

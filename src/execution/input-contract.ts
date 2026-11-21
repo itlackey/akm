@@ -236,9 +236,9 @@ function coerceFlagValue(
   if (types.length === 0) return raw;
 
   if (typeof raw === "boolean") {
+    // A flag given no value binds only to an input that can be boolean.
     if (types.includes("boolean")) return raw;
-    if (types.includes("string")) return String(raw);
-    throw diagnostics.invalidValue(name, `requires a value of type ${types.join(" | ")}`);
+    throw diagnostics.invalidValue(name, "requires a value");
   }
 
   // A union that permits strings keeps the caller's exact text. This

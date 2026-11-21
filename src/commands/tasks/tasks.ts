@@ -313,7 +313,7 @@ export interface TasksRunResultEnvelope {
 
 export async function akmTasksRun(
   id: string,
-  options: { scheduled?: boolean; target?: string; inputFlags?: readonly InputFlag[]; start?: () => TaskV5Start } = {},
+  options: Pick<RunTaskOptions, "inputFlags" | "start"> & { scheduled?: boolean; target?: string } = {},
 ): Promise<TasksRunResultEnvelope> {
   const scheduled = options.scheduled === true;
   const startedAt = new Date();
@@ -908,7 +908,13 @@ export interface TasksDoctorResult {
   }>;
   remediation?: "akm doctor scheduler sync --rebind";
   logDir: string;
-  engine: { defaultEngine?: string; available: string[] };
+  /** What akm runs agent work on, and what is configured of each kind: a connection and a harness may share a name. */
+  engine: {
+    defaultEngine?: string | undefined;
+    defaultEngineKind?: "harness" | "connection" | undefined;
+    connections: string[];
+    harnesses: string[];
+  };
   scheduleSubset: string;
   warnings: string[];
   /**
@@ -929,6 +935,51 @@ export interface TasksDoctorResult {
     defaultStrategy: string;
     enabled: boolean;
     applyMode: string;
+  };
+  /** Present, with `improveAutonomy` and `improveTriage` left out, when the configured strategy cannot be resolved. */
+  improveStrategy?: { name: string; error: string; code: string };
+}
+
+/**
+ * The autonomy gate and triage settings of the configured improve strategy, or the error that names why the strategy
+ * cannot be resolved: the rest of the report does not depend on it.
+ */
+function improveStrategyReport(
+  config: AkmConfig,
+): Pick<TasksDoctorResult, "improveAutonomy" | "improveTriage" | "improveStrategy"> {
+  const improveStrategyName = config.improve?.strategy ?? "default";
+  let rawStrategy: ReturnType<typeof resolveImproveStrategy>["config"];
+  try {
+    rawStrategy = resolveImproveStrategy(config.improve?.strategy, config).config;
+  } catch (error) {
+    if (!(error instanceof ConfigError)) throw error;
+    return { improveStrategy: { name: improveStrategyName, error: error.message, code: error.code } };
+  }
+  // Report the EFFECTIVE strategy, not the raw one. Resolving the raw
+  // strategy here would report `applyMode: "promote"` for a promote strategy
+  // under a review-first config, while the run actually uses "queue" — a doctor
+  // command lying about the thing it exists to diagnose.
+  const { config: effectiveStrategy, gated } = applyAutonomyGate(rawStrategy, config);
+  const autonomyEnabled = isImproveAutonomyEnabled(config);
+  // Memory cleanup has no strategy flag to downgrade, so add that direct lane
+  // to the strategy-derived gate report.
+  const allGated = autonomyEnabled ? [] : [...gated, ...describeGatedLanes(configuredDirectAutonomyLanes())];
+  const triage = effectiveStrategy.processes?.triage;
+  return {
+    improveAutonomy: {
+      enabled: autonomyEnabled,
+      configKey: IMPROVE_AUTONOMY_CONFIG_KEY,
+      gatedLanes: allGated.map((entry) => ({ lane: entry.lane as string, reason: entry.reason })),
+    },
+    ...(triage
+      ? {
+          improveTriage: {
+            defaultStrategy: improveStrategyName,
+            enabled: triage.enabled === true,
+            applyMode: triage.applyMode ?? "queue",
+          },
+        }
+      : {}),
   };
 }
 
@@ -961,34 +1012,13 @@ export async function akmTasksDoctor(
   const bindings = groupInstalledBindings(installed);
   // Report the EFFECTIVE view — the default harness (else connection) agent work runs on, and what is configured.
   const config = loadConfig();
-  const defaultEngine = (defaultHarness(config) ?? defaultConnection(config))?.name;
-  const engines = [...Object.keys(config.connections ?? {}), ...Object.keys(config.harnesses ?? {})];
-
-  // Surface the effective triage settings for the default improve strategy.
-  const improveStrategyName = config.improve?.strategy ?? "default";
-  // Report the EFFECTIVE strategy, not the raw one. Resolving the raw
-  // strategy here would report `applyMode: "promote"` for a promote strategy
-  // under a review-first config, while the run actually uses "queue" — a doctor
-  // command lying about the thing it exists to diagnose.
-  const rawStrategy = resolveImproveStrategy(config.improve?.strategy, config).config;
-  const { config: effectiveStrategy, gated } = applyAutonomyGate(rawStrategy, config);
-  const autonomyEnabled = isImproveAutonomyEnabled(config);
-  // Memory cleanup has no strategy flag to downgrade, so add that direct lane
-  // to the strategy-derived gate report.
-  const allGated = autonomyEnabled ? [] : [...gated, ...describeGatedLanes(configuredDirectAutonomyLanes())];
-  const improveAutonomy = {
-    enabled: autonomyEnabled,
-    configKey: IMPROVE_AUTONOMY_CONFIG_KEY,
-    gatedLanes: allGated.map((entry) => ({ lane: entry.lane as string, reason: entry.reason })),
-  };
-  const triage = effectiveStrategy.processes?.triage;
-  const improveTriage = triage
-    ? {
-        defaultStrategy: improveStrategyName,
-        enabled: triage.enabled === true,
-        applyMode: triage.applyMode ?? "queue",
-      }
-    : undefined;
+  const harness = defaultHarness(config);
+  const defaultEngine = (harness ?? defaultConnection(config))?.name;
+  const defaultEngineKind = harness
+    ? ("harness" as const)
+    : defaultEngine === undefined
+      ? undefined
+      : ("connection" as const);
 
   return {
     backend,
@@ -999,11 +1029,15 @@ export async function akmTasksDoctor(
       ? { remediation: "akm doctor scheduler sync --rebind" as const }
       : {}),
     logDir: getTaskLogDir(),
-    engine: { defaultEngine, available: engines },
+    engine: {
+      defaultEngine,
+      defaultEngineKind,
+      connections: Object.keys(config.connections ?? {}),
+      harnesses: Object.keys(config.harnesses ?? {}),
+    },
     scheduleSubset: SCHEDULE_SUPPORTED_SUBSET_HINT,
     warnings,
-    improveAutonomy,
-    ...(improveTriage ? { improveTriage } : {}),
+    ...improveStrategyReport(config),
   };
 }
 
