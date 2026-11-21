@@ -97,10 +97,19 @@ function hostResidue(): DeadResidueEntry[] {
     // The registry was created next to the barrier lock, i.e. under $DATA
     // (one host measured 229,943 leaked entries, 927 MB, there); it is listed
     // under $STATE as well for layouts that kept the barrier there.
-    { absolutePath: path.join(data, "maintenance-activities"), reason: "per-process activity registry (removed in 0.9.17)" },
-    { absolutePath: path.join(state, "maintenance-activities"), reason: "per-process activity registry (removed in 0.9.17)" },
+    {
+      absolutePath: path.join(data, "maintenance-activities"),
+      reason: "per-process activity registry (removed in 0.9.17)",
+    },
+    {
+      absolutePath: path.join(state, "maintenance-activities"),
+      reason: "per-process activity registry (removed in 0.9.17)",
+    },
     { absolutePath: path.join(state, "version-reconcile.json"), reason: "startup reconcile stamp (removed in 0.9.17)" },
-    { absolutePath: path.join(state, "locks", "version-reconcile.lock"), reason: "startup reconcile lock (removed in 0.9.17)" },
+    {
+      absolutePath: path.join(state, "locks", "version-reconcile.lock"),
+      reason: "startup reconcile lock (removed in 0.9.17)",
+    },
   ];
   const found: DeadResidueEntry[] = [];
   const claimed = new Set<string>();

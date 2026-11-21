@@ -5,7 +5,7 @@
 /**
  * Parent-death watchdog (#956).
  *
- * The published launcher (`scripts/node-runtime/akm`) now forwards SIGTERM to
+ * The published launcher (`scripts/node-runtime/akm.mjs`) now forwards SIGTERM to
  * its child, so a `kill <launcher-pid>` no longer orphans it — but a launcher
  * that dies WITHOUT delivering a signal (SIGKILL, an out-of-memory kill, a
  * supervisor that force-removes the process) still reparents the child to

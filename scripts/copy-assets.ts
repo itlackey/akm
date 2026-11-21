@@ -51,18 +51,19 @@ for await (const entry of yamlTemplateGlob.scan(".")) {
 // 5. Copy the published launchers plus the core CLI's Node-runtime entry
 //    wrapper and text-import loader hook into dist/. Both launchers prefer Bun
 //    and fall back to Node.
-const runtimeFiles = [
-  "scripts/node-runtime/akm",
-  "scripts/node-runtime/akm-migrate",
-  "scripts/node-runtime/cli-node.mjs",
-  "scripts/node-runtime/text-import-hook.mjs",
-  "scripts/node-runtime/api-node.mjs",
-  "scripts/node-runtime/api.d.ts",
-  "scripts/node-runtime/workspace-node.mjs",
-  "scripts/node-runtime/workspace.d.ts",
+const runtimeFiles: [string, string][] = [
+  ["scripts/node-runtime/akm.mjs", "dist/akm"],
+  ["scripts/node-runtime/akm-migrate.mjs", "dist/akm-migrate"],
+  ...[
+    "scripts/node-runtime/cli-node.mjs",
+    "scripts/node-runtime/text-import-hook.mjs",
+    "scripts/node-runtime/api-node.mjs",
+    "scripts/node-runtime/api.d.ts",
+    "scripts/node-runtime/workspace-node.mjs",
+    "scripts/node-runtime/workspace.d.ts",
+  ].map((src): [string, string] => [src, src.replace(/^scripts\/node-runtime\//, "dist/")]),
 ];
-for (const src of runtimeFiles) {
-  const dest = src.replace(/^scripts\/node-runtime\//, "dist/");
+for (const [src, dest] of runtimeFiles) {
   await mkdir(dirname(dest), { recursive: true });
   await Bun.write(dest, Bun.file(src));
   chmodSync(dest, 0o755);
