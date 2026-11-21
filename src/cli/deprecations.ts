@@ -59,7 +59,7 @@ const DEPRECATIONS: readonly Deprecation[] = [
     path: ["workflow", sub],
     note: WORKFLOWS_NOTE,
   })),
-  { path: ["env", "run"], use: "`akm exec --env <ref> -- <command>` (Experimental: set `experimental.exec` to true)" },
+  { path: ["env", "run"], use: "a script asset under scripts/, run with `akm run --env <ref> scripts/<file>`" },
   {
     path: ["secret", "run"],
     use: "`akm exec --secret <ref>:<VAR> -- <command>` (Experimental: set `experimental.exec` to true)",

@@ -309,7 +309,7 @@ const envRunCommand = defineJsonCommand({
     name: "run",
     description:
       // biome-ignore lint/suspicious/noTemplateCurlyInString: literal `${ref}` token syntax documented for users, not interpolation
-      "Deprecated; use `akm exec --env <ref> -- <command>`; removed in 0.11. Run a command with the env file injected into its environment: `akm env run <ref> -- <command>`. Use `-- $SHELL` for an interactive session. Restrict which variables are injected with --only / --except. Values may embed `${ref}` tokens, replaced at run time: a `${secrets/NAME}` (or `${bundle//secrets/NAME}`) token with the secret's value, any other asset ref with its absolute path. Pass --clean to start the child with a minimal inherited environment instead of the full parent environment.",
+      "Deprecated; put the command in a script asset under scripts/, run with `akm run --env <ref> scripts/<file>`; removed in 0.11. Run a command with the env file injected into its environment: `akm env run <ref> -- <command>`. Use `-- $SHELL` for an interactive session. Restrict which variables are injected with --only / --except. Values may embed `${ref}` tokens, replaced at run time: a `${secrets/NAME}` (or `${bundle//secrets/NAME}`) token with the secret's value, any other asset ref with its absolute path. Pass --clean to start the child with a minimal inherited environment instead of the full parent environment.",
   },
   args: {
     target: { type: "positional", description: "Env ref", required: true },

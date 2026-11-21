@@ -2983,7 +2983,8 @@ Subcommands:
 
 #### env run
 
-Deprecated; use [`akm exec --env <ref> -- <command>`](#exec); removed in 0.11.
+Deprecated; put the command in a script asset under `scripts/` and run it with
+`akm run --env <ref> scripts/<file>`; removed in 0.11.
 `--only` and `--except` have no `exec` form: keep the variables a command needs
 in an env asset of their own.
 
