@@ -5,17 +5,16 @@ import { finish, pins, round, run, target } from "./lib";
 
 const { dir, out } = target("duplication", process.argv.slice(2));
 // --format typescript: without it md, json and sql files count too.
-const r = run(
-  ["bunx", pins.jscpd, "src", "--format", "typescript", "-r", "json", "-o", out, "--no-colors"],
-  dir,
-);
+const r = run(["bunx", pins.jscpd, "src", "--format", "typescript", "-r", "json", "-o", out, "--no-colors"], dir);
 const reportPath = path.join(out, "jscpd-report.json");
 if (!fs.existsSync(reportPath)) {
   console.error(r.err || r.out);
   process.exit(1);
 }
 const report = JSON.parse(fs.readFileSync(reportPath, "utf8")) as {
-  statistics: { total: { clones: number; duplicatedLines: number; lines: number; percentage: number; sources: number } };
+  statistics: {
+    total: { clones: number; duplicatedLines: number; lines: number; percentage: number; sources: number };
+  };
 };
 const t = report.statistics.total;
 

@@ -13,15 +13,7 @@ fs.mkdirSync(home, { recursive: true });
 // One process, so the lcov file is complete without merging. HOME is a scratch dir, as in scripts/test-unit.sh.
 const started = Date.now();
 const r = run(
-  [
-    "bun",
-    "test",
-    "--timeout=120000",
-    "--coverage",
-    "--coverage-reporter=lcov",
-    `--coverage-dir=${out}`,
-    ...files,
-  ],
+  ["bun", "test", "--timeout=120000", "--coverage", "--coverage-reporter=lcov", `--coverage-dir=${out}`, ...files],
   dir,
   { HOME: home },
 );
@@ -78,7 +70,11 @@ const perFileJson = Object.fromEntries(
 );
 fs.writeFileSync(
   path.join(out, "coverage.json"),
-  JSON.stringify({ total: { lines: pct(lh, lf), functions: pct(fnh, fnf), lf, lh, fnf, fnh }, files: perFileJson }, null, 2),
+  JSON.stringify(
+    { total: { lines: pct(lh, lf), functions: pct(fnh, fnf), lf, lh, fnf, fnh }, files: perFileJson },
+    null,
+    2,
+  ),
 );
 
 const summary = [

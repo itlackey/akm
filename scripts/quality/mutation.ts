@@ -10,7 +10,9 @@ const argv = process.argv.slice(2);
 const mutate = flag(argv, "mutate")?.split(",").filter(Boolean) ?? [];
 const tests = flag(argv, "tests")?.split(",").filter(Boolean) ?? [];
 if (mutate.length === 0 || tests.length === 0) {
-  console.error("usage: quality:mutation -- --mutate <src files, comma separated> --tests <test files, comma separated>");
+  console.error(
+    "usage: quality:mutation -- --mutate <src files, comma separated> --tests <test files, comma separated>",
+  );
   process.exit(2);
 }
 const { dir, out } = target("mutation", argv);
@@ -42,7 +44,8 @@ const report = JSON.parse(fs.readFileSync(reportPath, "utf8")) as {
   files: Record<string, { mutants: { status: string }[] }>;
 };
 const counts = new Map<string, number>();
-for (const f of Object.values(report.files)) for (const m of f.mutants) counts.set(m.status, (counts.get(m.status) ?? 0) + 1);
+for (const f of Object.values(report.files))
+  for (const m of f.mutants) counts.set(m.status, (counts.get(m.status) ?? 0) + 1);
 const n = (s: string) => counts.get(s) ?? 0;
 const killed = n("Killed") + n("Timeout");
 const valid = killed + n("Survived") + n("NoCoverage");
