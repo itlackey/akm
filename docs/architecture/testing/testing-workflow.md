@@ -46,8 +46,9 @@ Injected doubles (`mock()`, `spyOn`, seams, `withMockedFetch`, a spawn function 
 read-only reads of checked-in files are allowed in unit. There is no "single trivial temp file" exception, and a file
 moves whole if any one of its tests breaks the rule. The real OpenCode binary and the loopback fake model are
 integration resources. `tests/contracts/test-targets.test.ts` fails on a unit-target test that shows one of the
-unambiguous markers above. No `.test.ts` belongs under a `fixtures` or `_fixtures` path: those are data, not
-executable specs.
+unambiguous markers above. Files under `tests/fixtures/` are data, not executable specs: `scripts/test-unit.sh` skips them, and the one
+`.test.ts` there (`tests/fixtures/bundles/code-project/tests/oauth.test.ts`) is sample input that the code-project
+golden lists by path.
 
 **Green by default** ([principle 6](../akm-core-principles.md#6-the-suite-is-green-by-default-and-sandboxed-through-the-environment)).
 A test that must be disabled is `.skip`ped in the same change that links its

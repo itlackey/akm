@@ -19,10 +19,9 @@
  * `knowledge/`, `content/`, `workflows/`, `scripts/`, `workspace/` — none of
  * which the `agent-skills` adapter's own `recognize()` sees at all.
  *
- * This test lives alongside `conformance.test.ts` (not `tests/integration/`),
- * matching its existing precedent of calling `walkStashFlat`-adjacent
- * fixture-root probes directly (`detectAdapterId`/`looksLikeRoot` here do
- * only shallow `readdirSync` calls — no db, no network, no spawned process).
+ * This test lives alongside `conformance.test.ts`, matching its existing precedent of calling
+ * `walkStashFlat`-adjacent fixture-root probes directly (`detectAdapterId`/`looksLikeRoot` here do only shallow
+ * `readdirSync` calls).
  */
 
 import { describe, expect, test } from "bun:test";
