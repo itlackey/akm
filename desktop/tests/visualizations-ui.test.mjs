@@ -312,9 +312,9 @@ test("visualizations survive late responses, a changed library and a narrow wind
       // The one disliked asset is never read, so that filter finds nothing and cannot be chosen.
       await expect(filters.locator("label", { hasText: "Read but disliked" }).locator("input")).toBeDisabled();
       await expect(figures(page).locator(".read-row")).toHaveText([
-        "memories/misc/guntouched 2 years",
-        "memories/auth/euntouched 16 months",
-        "knowledge/deploy/buntouched 13 months",
+        "memories/misc/g2 years",
+        "memories/auth/e16 months",
+        "knowledge/deploy/b13 months",
       ]);
       await pick(page, "Most read");
       await expect(figures(page).locator(".read-row").first()).toHaveText("knowledge/deploy/a9 reads");
@@ -363,7 +363,7 @@ test("visualizations survive late responses, a changed library and a narrow wind
       await expect(figures(page).locator(".read-row")).toHaveText(["knowledge/auth/d1 link"]);
       // c links to d, and d nearly duplicates f: two groups, two lines.
       await expect(page.locator(".mind-map .relations path")).toHaveCount(2);
-      const joined = figures(page).locator("section", { hasText: "Linked to these types and tags" });
+      const joined = figures(page).locator("section", { hasText: "Linked types and tags" });
       await expect(joined).toContainText("auth · Memories and facts 1 near-identical pair");
       await expect(joined).toContainText("deploy · Memories and facts 1 link");
       // A joined group in the column is chosen in turn.
@@ -435,9 +435,18 @@ test("visualizations survive late responses, a changed library and a narrow wind
       }),
     );
     await open(page, server, "/library/map");
-    // A name clear of the tools drawn over the map's top edge, which are not the map.
-    const name = page.locator(".group-name").last();
-    await expect(name).toBeVisible();
+    // A name clear of the tools and the key drawn over the map's corners, which are not the map: one whose middle
+    // has the map's canvas under it.
+    await expect(page.locator(".group-name").first()).toBeVisible();
+    await page.waitForTimeout(800);
+    const clear = await page.locator(".group-name").evaluateAll((names) =>
+      names.findIndex((el) => {
+        const box = el.getBoundingClientRect();
+        return document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)?.tagName === "CANVAS";
+      }),
+    );
+    assert.ok(clear >= 0, "a group's name stands over the map");
+    const name = page.locator(".group-name").nth(clear);
     // The map fills the window, so the page is made taller than it: a wheel that leaked would then scroll it.
     await page.addStyleTag({ content: "body { min-block-size: 200vh; }" });
     const before = await page.evaluate(() => scrollY);
