@@ -4,12 +4,27 @@
   file, You can obtain one at https://mozilla.org/MPL/2.0/.
 -->
 
+<script module lang="ts">
+  import type { View } from "./library-overview";
+
+  /** Where the map was left this session: opening an asset and coming back returns to the same view, bundle, filter,
+   * drawing and group, so a long list can be worked down without finding the place again. */
+  const remembered: {
+    view: View;
+    bundle: number;
+    chosenFinding: Partial<Record<View, string>>;
+    drawing: "tags" | "2d" | "3d" | null;
+    selected: string;
+  } = { view: "contents", bundle: -1, chosenFinding: {}, drawing: null, selected: "" };
+</script>
+
 <script lang="ts">
   // The library, or one bundle of it, as a mind map of asset types and the tags their assets carry. Choosing a type or a
   // tag draws what it is joined to (declared links and near-duplicate content) and fills the side column with what that
   // group needs: how much of it is read, what is outdated, disliked or duplicated, what it connects to, which bundles
   // repeat it, what people searched for and did not find, and, for any asset, the content closest to it in meaning.
-  import { api, apiState } from "./client";
+  import { api } from "./client";
+  import { FAMILIES } from "./graph-model";
   import {
     buildOverview,
     DAY,
@@ -31,7 +46,6 @@
     unplaced,
     USE_CLASSES,
     VIEWS,
-    type View,
   } from "./library-overview";
   import { joinsOf, LEVEL_CAP, LEVEL_STYLES, reach } from "./link-levels";
   import { filesHref } from "./library-files-model";
@@ -43,18 +57,14 @@
   /** `?select=<ref>`: open the tag this asset is under. */
   let { select: wanted = "" }: { select?: string } = $props();
 
-  type Miss = { query: string; count: number; lastAt: string };
   type Similar = { ref: string; title: string; cosine: number };
 
   let o = $state.raw<Overview | null>(null);
-  let misses = $state.raw<Miss[]>([]);
-  /** Why the searches that found nothing could not be read, when they could not. */
-  let missesNote = $state("");
   let error = $state("");
   let notice = $state("");
-  let view = $state<View>("contents");
-  let bundle = $state(-1);
-  let selected = $state("");
+  let view = $state<View>(remembered.view);
+  let bundle = $state(remembered.bundle);
+  let selected = $state(remembered.selected);
   /** Words typed to narrow the map: an asset matches when its name and tags together contain every one. */
   let filter = $state("");
   /** The `?select=` asset already opened, so choosing anything else, or resetting, is not undone by it. */
@@ -62,7 +72,10 @@
   /** The drawing: the mind map of types and tags (SVG), or every asset as a point by meaning (three.js) in one plane
    * or in 3D; unchosen, the plane when the index has assets grouped by meaning: it is read faster than 3D, which is
    * one choice away. */
-  let chosenDrawing = $state<"tags" | "2d" | "3d" | null>(null);
+  let chosenDrawing = $state<"tags" | "2d" | "3d" | null>(remembered.drawing);
+  $effect(() => {
+    Object.assign(remembered, { view, bundle, chosenFinding, drawing: chosenDrawing, selected });
+  });
   const drawing = $derived(chosenDrawing ?? (o?.groupCount ? "2d" : "tags"));
   const points = $derived(drawing !== "tags");
   const flat = $derived(drawing === "2d");
@@ -98,12 +111,6 @@
       o = buildOverview(payload);
     } catch (cause) {
       error = (cause as Error).message;
-    }
-    try {
-      misses = (await apiState<{ misses: Miss[] }>("/search/misses", { since: "90d" })).misses;
-    } catch (cause) {
-      misses = [];
-      missesNote = (cause as Error).message;
     }
   }
   void load();
@@ -200,7 +207,6 @@
       choose(selected);
       return;
     }
-    selected = `g:${o!.group[i]}`;
     picked = i;
     near = null;
   }
@@ -243,66 +249,158 @@
   );
   const top = (list: readonly number[], by: (i: number) => number) =>
     list.filter((i) => by(i) > 0).sort((a, b) => by(b) - by(a) || a - b);
-  const mostRead = $derived(o ? top(members, (i) => o!.shows[i]!) : []);
-  const mostLinked = $derived(o ? top(members, (i) => o!.degree[i]!) : []);
-  /** Never read in the window, the longest unchanged first. */
-  const neverRead = $derived(
-    o
-      ? members
-          .filter((i) => o!.use[i] === "unread" || o!.use[i] === "new")
-          .sort((a, b) => (o!.modified[a] ?? "").localeCompare(o!.modified[b] ?? "") || a - b)
-      : [],
-  );
-  /** Dead weight: never read in the window and not edited for long, the longest unchanged first. */
-  const deadWeight = $derived(neverRead.filter((i) => o!.use[i] === "unread"));
-  /** More negative feedback than positive, and still being read: the most read first. */
-  const dislikedRead = $derived(o && facts ? top(facts.disliked, (i) => o!.shows[i]!) : []);
-  /** Outdated assets still being read, the most read first; and the rest of the outdated. */
-  const outdatedRead = $derived(o && facts ? top(facts.outdated, (i) => o!.shows[i]!) : []);
-  const outdatedUnread = $derived(o && facts ? facts.outdated.filter((i) => !o!.shows[i]) : []);
-  /** No declared link either way, the most read first: an asset agents use that nothing leads to. */
-  const unlinked = $derived(
-    o ? members.filter((i) => !o!.degree[i]).sort((a, b) => o!.shows[b]! - o!.shows[a]! || a - b) : [],
-  );
-  /** Near-duplicate pairs whose two assets are in different bundles. */
-  const acrossBundles = $derived(
-    o && facts
-      ? [...facts.duplicatesInside, ...facts.duplicatesOutside].filter((d) => o!.bundle[d.a] !== o!.bundle[d.b])
-      : [],
-  );
-  /** What a group's name says on the map: the view's figure for that group. */
-  function groupNote(g: { members: number[] }): string {
-    if (view === "use")
-      return o!.useKnown
-        ? `${pct(g.members.filter((i) => o!.use[i] === "unread" || o!.use[i] === "new").length, g.members.length)} never read`
-        : "";
-    if (view === "problems") {
-      const n = problemsOf(g.members);
-      return n ? `${n.toLocaleString()} to fix` : "nothing to fix";
+  /** One of a view's filters: the assets (or pairs of assets) its question is asked to find, and what to say of each. */
+  type Finding = {
+    id: string;
+    label: string;
+    /** What a group's name says after how many of them it holds. */
+    unit: string;
+    /** The order of the list, and what to do with what is on it. */
+    hint: string;
+    assets: number[];
+    note: (i: number) => string;
+    pairs?: Pair[];
+  };
+  /** The view's filters over `pool`: the bundle, or the group chosen. */
+  function findingsOf(pool: readonly number[]): Finding[] {
+    if (!o) return [];
+    const f = groupFacts(o, pool);
+    const readsOf = (i: number) => (o!.useKnown ? plural(o!.shows[i]!, "read") : "");
+    const mostReadFirst = (list: readonly number[]) => [...list].sort((a, b) => o!.shows[b]! - o!.shows[a]! || a - b);
+    const ofPairs = (pairs: Pair[]) => [...new Set(pairs.flatMap((d) => [d.a, d.b]))];
+    if (view === "use") {
+      if (!o.useKnown) return [];
+      return [
+        {
+          id: "retire",
+          label: "Never read, untouched 6+ months",
+          unit: "to retire",
+          hint: "Longest untouched first. Open one to retire it.",
+          assets: pool
+            .filter((i) => o!.use[i] === "unread")
+            .sort((a, b) => (o!.modified[a] ?? "").localeCompare(o!.modified[b] ?? "") || a - b),
+          note: untouched,
+        },
+        ...(o.feedbackKnown
+          ? [
+              {
+                id: "disliked",
+                label: "Read but disliked",
+                unit: "read but disliked",
+                hint: "Most read first. Open one to fix what readers found wrong.",
+                assets: top(f.disliked, (i) => o!.shows[i]!),
+                note: (i: number) => `${readsOf(i)} · ${o!.negative[i]} down, ${o!.positive[i]} up`,
+              },
+            ]
+          : []),
+        {
+          id: "most",
+          label: "Most read",
+          unit: "of the most read",
+          hint: "What agents are given most. Open one to check it is still right.",
+          assets: top(pool, (i) => o!.shows[i]!).slice(0, 30),
+          note: readsOf,
+        },
+      ];
     }
-    const types = new Map<string, number>();
-    for (const i of g.members) types.set(o!.types[o!.type[i]!]!, (types.get(o!.types[o!.type[i]!]!) ?? 0) + 1);
-    const [name, n] = [...types].sort((x, y) => y[1] - x[1])[0] ?? ["", 0];
-    return name ? `${pct(n, g.members.length)} ${name}` : "";
+    if (view === "problems") {
+      const pairs = [...f.duplicatesInside, ...f.duplicatesOutside];
+      return [
+        {
+          id: "outdatedRead",
+          label: "Outdated, still read",
+          unit: "outdated, still read",
+          hint: "Agents are still given these. Most read first. Open one to retire it or fix its link.",
+          assets: top(f.outdated, (i) => o!.shows[i]!),
+          note: outdatedNote,
+        },
+        ...(o.duplicatesKnown
+          ? [
+              {
+                id: "pairs",
+                label: "Near-identical pairs",
+                unit: "in near-identical pairs",
+                hint: "Compare each pair and keep one.",
+                assets: ofPairs(pairs),
+                note: () => "",
+                pairs,
+              },
+            ]
+          : []),
+        ...(o.feedbackKnown
+          ? [
+              {
+                id: "disliked",
+                label: "Disliked",
+                unit: "disliked",
+                hint: "More negative feedback than positive, most read first. Open one to fix it.",
+                assets: mostReadFirst(f.disliked),
+                note: (i: number) =>
+                  `${o!.negative[i]} down, ${o!.positive[i]} up${readsOf(i) ? ` · ${readsOf(i)}` : ""}`,
+              },
+            ]
+          : []),
+        {
+          id: "outdatedUnread",
+          label: "Outdated, unread",
+          unit: "outdated, unread",
+          hint: "Nobody is given these. Retire them when convenient.",
+          assets: f.outdated.filter((i) => !o!.shows[i]),
+          note: outdatedNote,
+        },
+      ];
+    }
+    const across = [...f.duplicatesInside, ...f.duplicatesOutside].filter((d) => o!.bundle[d.a] !== o!.bundle[d.b]);
+    return [
+      ...FAMILIES.map((family, k) => ({
+        id: `type:${k}`,
+        label: family.label,
+        unit: family.label.toLowerCase(),
+        hint: "Most read first.",
+        assets: mostReadFirst(pool.filter((i) => o!.family[i] === k)),
+        note: readsOf,
+      })).filter((x) => x.assets.length),
+      {
+        id: "unlinked",
+        label: "Not linked to anything",
+        unit: "unlinked",
+        hint: "Most read first. Open one to link it to what it belongs with.",
+        assets: mostReadFirst(pool.filter((i) => !o!.degree[i])),
+        note: readsOf,
+      },
+      ...(o.bundles.length > 1 && o.duplicatesKnown
+        ? [
+            {
+              id: "repeated",
+              label: "Repeated across bundles",
+              unit: "repeated in another bundle",
+              hint: "Nearly the same content in two bundles. Compare and keep one.",
+              assets: ofPairs(across),
+              note: () => "",
+              pairs: across,
+            },
+          ]
+        : []),
+    ];
   }
-  const liked = $derived(o ? members.filter((i) => o!.positive[i]! > o!.negative[i]!).length : 0);
-  /** What the group is made of: its bundles and its asset types, largest first. */
-  const madeOf = $derived.by(() => {
-    const count = (label: (i: number) => string) => {
-      const m = new Map<string, number>();
-      for (const i of members) m.set(label(i), (m.get(label(i)) ?? 0) + 1);
-      return [...m].sort((x, y) => y[1] - x[1] || (x[0] < y[0] ? -1 : 1));
-    };
-    return o
-      ? { bundles: count((i) => o!.bundles[o!.bundle[i]!]!), types: count((i) => o!.types[o!.type[i]!]!) }
-      : { bundles: [], types: [] };
+  /** The filters as the buttons show them: over the group chosen, or the bundle. */
+  const findings = $derived(findingsOf(members));
+  /** The filter chosen in each view ("" for none). Use and Problems open on their first filter that finds anything:
+   * the work their question is asked for. Contents opens with none: the whole library, by group. */
+  let chosenFinding = $state<Partial<Record<View, string>>>(remembered.chosenFinding);
+  const finding = $derived(
+    findings.find(
+      (f) => f.id === (chosenFinding[view] ?? (view === "contents" ? "" : findings.find((x) => x.assets.length)?.id)),
+    ) ?? null,
+  );
+  /** How many of what the filter finds each group holds, over the whole bundle: where to start. */
+  const perGroup = $derived.by(() => {
+    const found = new Set(finding ? (findingsOf(scope).find((f) => f.id === finding.id)?.assets ?? []) : []);
+    return new Map(groups.map((g) => [g.key, g.members.filter((i) => found.has(i)).length]));
   });
-  const edited = (i: number) => (o!.modified[i] ? `edited ${new Date(o!.modified[i]!).toLocaleDateString()}` : "");
-  /** Whether a query uses a tag as a whole word or phrase ("secret" does not mention "sec"). */
-  const mentions = (query: string, tag: string) =>
-    ` ${query.toLowerCase().replace(/[^a-z0-9]+/g, " ")} `.includes(` ${tag.replace(/[^a-z0-9]+/g, " ").trim()} `);
-  /** Searches that found nothing: for a tag, the ones that mention it. */
-  const gaps = $derived(part?.tag ? misses.filter((m) => mentions(m.query, part.tag)).slice(0, 6) : misses.slice(0, 6));
+  /** What a group's name says on the map after its size: how many of what the filter finds are in it. */
+  const groupNote = (g: { key: string }) =>
+    finding ? `${(perGroup.get(g.key) ?? 0).toLocaleString()} ${finding.unit}` : "";
   /** Assets in the bundle that are not points on the 3D map: akm's stored layout has no group for them. */
   const offMap = $derived(o ? unplaced(o, bundleScope) : 0);
   const scopeName = $derived(bundle < 0 ? "All bundles" : (o?.bundles[bundle] ?? ""));
@@ -355,12 +453,16 @@
       return { shown, off: l.nodes.length - shown.length, cut: l.cut };
     }) ?? null,
   );
+  /** What is drawn in full: the pick and what it is joined to; or what the filter finds, among what is typed and
+   * the group chosen; the rest fades and stays in place. */
   const lit = $derived(
     picked >= 0
       ? new Set([picked, ...(reached?.levels.flatMap((l) => l.nodes) ?? [])])
-      : part?.group
-        ? new Set(matching ? part.members.filter((i) => matching.has(i)) : part.members)
-        : matching,
+      : finding
+        ? new Set(finding.assets)
+        : part?.group
+          ? new Set(members)
+          : matching,
   );
   const lines = $derived.by(() => {
     if (!o) return [];
@@ -376,10 +478,10 @@
       .filter((r) => groups.some((g) => g.key === r.key))
       .map((r) => ({ from: selected, to: r.key, weight: (r.links + r.duplicates) / strongest }));
   });
-  /** What a point's size stands for: links in Contents, so a large point is a hub, and reads in Problems, so a large
-   * coloured point is a problem still in use. Use draws one size: what it looks for is what is not read. */
+  /** What a point's size stands for: links in Contents, so a large point is a hub, and reads in Use and Problems, so
+   * a large point is one agents are given often. Only what the filter finds is drawn to size. */
   const size = $derived.by(() => {
-    if (!o || view === "use" || (view === "problems" && !o.useKnown)) return null;
+    if (!o || (view !== "contents" && !o.useKnown)) return null;
     const values = view === "contents" ? o.degree : o.shows;
     return {
       label: view === "contents" ? "links" : "reads",
@@ -411,10 +513,7 @@
   const problem = (i: number) => PROBLEMS.find((p) => p.id === firstProblem(o!, i))?.label.toLowerCase();
   /** Why an outdated asset is outdated, and how much it is still read. */
   const outdatedNote = (i: number) =>
-    [
-      [...new Set(o!.outdatedWhy[i]!.map((why) => why.split(" ")[0]))].join(", "),
-      o!.shows[i] ? plural(o!.shows[i]!, "read") : "",
-    ]
+    [[...new Set(o!.outdatedWhy[i]!.map((x) => x.why))].join(", "), o!.shows[i] ? plural(o!.shows[i]!, "read") : ""]
       .filter(Boolean)
       .join(" · ");
   /** The near-duplicate pairs an asset is in. */
@@ -426,7 +525,7 @@
         : view === "problems"
           ? (problem(i) ?? "no problem recorded")
           : (parts.get(`g:${o!.group[i]}`)?.name ?? "");
-    const bySize = view === "contents" ? plural(o!.degree[i]!, "link") : view === "problems" ? reads(i) : "";
+    const bySize = view === "contents" ? plural(o!.degree[i]!, "link") : reads(i);
     return [...new Set([colour, bySize])].filter(Boolean).join(" · ");
   }
 
@@ -480,41 +579,6 @@
   {#if list.length > limit}<p class="more">and {(list.length - limit).toLocaleString()} more</p>{/if}
 {/snippet}
 
-{#snippet connects(what: string)}
-  <section>
-    <h3>How it connects</h3>
-    <dl class="figures">
-      <dt>Assets with links</dt>
-      <dd>{pct(facts!.linked, facts!.count)}</dd>
-      {#if part || bundle >= 0}<dt>Links to the rest of the library</dt>
-        <dd>{facts!.linksOut.toLocaleString()}</dd>{/if}
-    </dl>
-    {#if selected}<p class="muted small">{what}:</p>
-      {#if joined.length}<ul class="joined">
-          {#each joined.slice(0, 10) as r}<li>
-              <button class="link" onclick={() => choose(r.key)}>{nameOf(r.key)}</button>
-              <span class="muted small"
-                >{r.links ? plural(r.links, "link") : ""}{r.links && r.duplicates ? " · " : ""}{r.duplicates
-                  ? plural(r.duplicates, "duplicate")
-                  : ""}</span
-              >
-            </li>{/each}
-        </ul>{:else}<p class="muted small">Nothing on the map.</p>{/if}
-    {:else}<p class="muted small">Choose a type or tag on the map to see what it is joined to.</p>{/if}
-  </section>
-{/snippet}
-
-{#snippet overlap()}
-  {#if facts!.overlap.length}<section>
-      <h3>Repeated in other bundles</h3>
-      <ul class="rows">
-        {#each facts!.overlap.slice(0, 6) as row}<li>
-            {row.bundle}<span class="count">{plural(row.pairs, "near-duplicate pair")}</span>
-          </li>{/each}
-      </ul>
-    </section>{/if}
-{/snippet}
-
 <svelte:window onkeydown={onKey} />
 <div class="map-head">
   <nav class="library-views" aria-label="Library views" data-sveltekit-reset="false">
@@ -532,7 +596,7 @@
         onclick={() => (view = v.id)}>{v.label}</button
       >{/each}
   </div>
-  {#if o}<label class="bundle-pick"
+  {#if o && o.bundles.length > 1}<label class="bundle-pick"
       >Bundle <select
         bind:value={bundle}
         onchange={() => {
@@ -578,6 +642,21 @@
           {#if matching}<span class="muted small" role="status"
               >{matching.size.toLocaleString()} of {plural(bundleScope.length, "asset")}</span
             >{/if}
+          <div class="findings" role="group" aria-label="Show on the map">
+            {#if part}<button
+                class="finding scope"
+                title="The filters count this group only. Choose to go back to the whole bundle."
+                onclick={() => choose(selected)}>In {part.name} ✕</button
+              >{/if}
+            {#each findings as f (f.id)}<button
+                class="finding"
+                aria-pressed={finding?.id === f.id}
+                disabled={!f.assets.length}
+                title={f.hint}
+                onclick={() => (chosenFinding = { ...chosenFinding, [view]: finding?.id === f.id ? "" : f.id })}
+                >{f.label}<strong>{(f.pairs ?? f.assets).length.toLocaleString()}</strong></button
+              >{/each}
+          </div>
         </div>
         {#if points}{#if groups.length}<SimilarityMap
               {o}
@@ -603,43 +682,52 @@
               label={`${question} The ${plural(bundleScope.length - offMap, "asset")} of ${scopeName} that have a group by meaning, as points, in ${plural(groups.length, "group")} named by their tags, groups alike in meaning near each other.${offMap ? ` ${plural(offMap, "asset")} not shown.` : ""}`}
             >
               {#snippet legend()}
+                {#if view !== "contents"}<ul class="colour-key">
+                    {#if view === "use"}{#each USE_CLASSES as u}<li>
+                          <span class="swatch" style={`background:var(${u.token})`}></span>{u.label}
+                        </li>{/each}
+                    {:else}{#each PROBLEMS as p}<li>
+                          <span class="swatch" style={`background:var(${p.token})`}></span>{p.label}
+                        </li>{/each}
+                      <li><span class="swatch" style="background:var(--border)"></span>No problem recorded</li>{/if}
+                  </ul>{/if}
                 {#if picked >= 0 && levelFigures?.some((l) => l.shown.length)}<div class="levels">
                     <p class="small">
-                      <strong>{short(o!.ref[picked]!)}</strong> and what it is joined to, three steps out. A join is drawn
-                      once, at the nearest level it belongs to.
+                      <strong>{short(o!.ref[picked]!)}</strong> and what it is joined to, up to three steps out.
                     </p>
                     <ul>
                       {#each LEVEL_STYLES as style, k}
                         {@const f = levelFigures[k]!}
-                        {@const colour = `color-mix(in srgb, var(--map-highlight) ${Math.round(100 - 100 * style.mute)}%, var(--bg))`}
-                        <li>
-                          <svg class="level-key" width="46" height="26" viewBox="0 0 46 26" aria-hidden="true">
-                            <line
-                              x1="2"
-                              x2="30"
-                              y1="13"
-                              y2="13"
-                              style={`stroke:${colour}`}
-                              stroke-width={style.width}
-                              stroke-dasharray={style.dash ? "5 3" : undefined}
-                            />
-                            <circle
-                              cx="36"
-                              cy="13"
-                              r={style.ring / 2 - 1.5}
-                              fill="none"
-                              style={`stroke:${colour}`}
-                              stroke-width="2"
-                            />
-                          </svg>
-                          <span
-                            >{style.label}: {plural(f.shown.length, "asset")}{f.off
-                              ? `, ${f.off.toLocaleString()} not on this map`
-                              : ""}{f.cut
-                              ? `, ${f.cut.toLocaleString()} more not shown (a level shows its ${LEVEL_CAP} most joined assets)`
-                              : ""}</span
-                          >
-                        </li>
+                        {#if f.shown.length || f.off || f.cut}
+                          {@const colour = `color-mix(in srgb, var(--map-highlight) ${Math.round(100 - 100 * style.mute)}%, var(--bg))`}
+                          <li>
+                            <svg class="level-key" width="46" height="26" viewBox="0 0 46 26" aria-hidden="true">
+                              <line
+                                x1="2"
+                                x2="30"
+                                y1="13"
+                                y2="13"
+                                style={`stroke:${colour}`}
+                                stroke-width={style.width}
+                                stroke-dasharray={style.dash ? "5 3" : undefined}
+                              />
+                              <circle
+                                cx="36"
+                                cy="13"
+                                r={style.ring / 2 - 1.5}
+                                fill="none"
+                                style={`stroke:${colour}`}
+                                stroke-width="2"
+                              />
+                            </svg>
+                            <span
+                              >{style.label}: {plural(f.shown.length, "asset")}{f.off
+                                ? `, ${f.off.toLocaleString()} not on this map`
+                                : ""}{f.cut
+                                ? `, ${f.cut.toLocaleString()} more not shown (a level shows its ${LEVEL_CAP} most joined assets)`
+                                : ""}</span
+                            >
+                          </li>{/if}
                       {/each}
                     </ul>
                   </div>{/if}{/snippet}
@@ -662,7 +750,16 @@
             related={joined.slice(0, 12)}
             onSelect={choose}
             label={mapLabel}
-          />{/if}
+          />
+          {#if view !== "contents"}<ul class="colour-key">
+              {#if view === "use"}{#each USE_CLASSES as u}<li>
+                    <span class="swatch" style={`background:var(${u.token})`}></span>{u.label}
+                  </li>{/each}
+              {:else}{#each PROBLEMS as p}<li>
+                    <span class="swatch" style={`background:var(${p.token})`}></span>{p.label}
+                  </li>{/each}
+                <li><span class="swatch" style="background:var(--use-0)"></span>No problem recorded</li>{/if}
+            </ul>{/if}{/if}
       </div>
 
       <aside class="map-side" aria-label="Figures" aria-live="polite" bind:this={side}>
@@ -671,7 +768,7 @@
           <header class="side-head">
             <div>
               <h2>{short(o.ref[i]!)}</h2>
-              <p class="muted small">{o.types[o.type[i]!]} · {o.bundles[o.bundle[i]!]} · {nameOf(`g:${o.group[i]}`)}</p>
+              <p class="muted small">{o.types[o.type[i]!]} · {o.bundles[o.bundle[i]!]}</p>
             </div>
             <button class="btn-quiet" onclick={() => (picked = -1)} aria-label="Close">✕</button>
           </header>
@@ -688,7 +785,10 @@
             {#if o.problems[i]!.length}<ul class="wrong">
                 {#if o.problems[i]!.includes("outdated")}<li>
                     <strong>Outdated:</strong>
-                    {o.outdatedWhy[i]!.join(", ")}. Open it to retire it or fix the link.
+                    {#each o.outdatedWhy[i]! as x, n}{n ? ", " : ""}{x.why}{#if x.by >= 0}{" by "}<a
+                          href={open(o.ref[x.by]!)}
+                          title={o.ref[x.by]}>{short(o.ref[x.by]!)}</a
+                        >{/if}{/each}. Open it to retire it or fix the link.
                   </li>{/if}
                 {#if o.problems[i]!.includes("negative")}<li>
                     <strong>Disliked:</strong>
@@ -707,11 +807,13 @@
               <dt>Reads</dt>
               <dd>{reads(i)}</dd>
               <dt>Last edited</dt>
-              <dd>{o.modified[i] ? new Date(o.modified[i]!).toLocaleDateString() : "unknown"}</dd>
-              <dt>Feedback</dt>
-              <dd>{o.feedbackKnown ? `${o.positive[i]} positive · ${o.negative[i]} negative` : "unavailable"}</dd>
-              <dt>Links</dt>
-              <dd>{o.degree[i]!.toLocaleString()}</dd>
+              <dd>
+                {o.modified[i]
+                  ? `${untouched(i).replace("untouched ", "")} ago (${new Date(o.modified[i]!).toLocaleDateString()})`
+                  : "unknown"}
+              </dd>
+              {#if o.feedbackKnown && (o.positive[i] || o.negative[i])}<dt>Feedback</dt>
+                <dd>{o.negative[i]} down, {o.positive[i]} up</dd>{/if}
             </dl>
             {#if near?.ref === o.ref[i]}<div class="near">
                 {#if near.error}<p class="muted small">{near.error}</p>
@@ -720,7 +822,7 @@
                 {:else}<ul>
                     {#each near.matches as m}<li>
                         <a href={open(m.ref)} title={m.ref}>{short(m.ref)}</a><span class="muted small"
-                          >{m.cosine.toFixed(2)}</span
+                          >{Math.round(m.cosine * 100)}% alike</span
                         ><a class="small" href={compare(o.ref[i]!, m.ref)}>Compare</a>
                       </li>{/each}
                   </ul>{/if}
@@ -737,160 +839,69 @@
               </ul>
             </section>{/if}
         {:else}
-          <header class="side-head">
-            <div>
-              <h2>{part ? part.name : scopeName}</h2>
+          {#if part}<header class="side-head">
+              <div>
+                <h2>{part.name}</h2>
+                <p class="muted small">
+                  {part.group ? "Group by meaning" : part.type ? `Tag in ${part.type}` : "Asset type"} ·
+                  {plural(facts.count, "asset")}
+                </p>
+              </div>
+              <button class="btn-quiet" onclick={() => choose(selected)} aria-label="Close">✕</button>
+            </header>{/if}
+          {#if finding}<section>
+              <h3>
+                {finding.label}<span class="count">{(finding.pairs ?? finding.assets).length.toLocaleString()}</span>
+              </h3>
+              <p class="muted small">{finding.hint}</p>
+              {#if finding.pairs}{@render pairList(finding.pairs, 8)}{:else}{@render assetList(
+                  finding.assets,
+                  finding.note,
+                  8,
+                  `${view}:${finding.id}`,
+                )}{/if}
+            </section>
+          {:else if part}<section>
+              <h3>Its assets{size ? `, most ${size.label} first` : ""}</h3>
+              {@render assetList(
+                [...members].sort((a, b) => (size ? size.values[b]! - size.values[a]! : 0) || a - b),
+                (i) =>
+                  view === "contents" ? plural(o!.degree[i]!, "link") : o!.useKnown ? plural(o!.shows[i]!, "read") : "",
+                14,
+                "members",
+              )}
+            </section>{/if}
+          {#if view === "use" && !o.useKnown}<section><p class="muted small">{o.note}</p></section>{/if}
+          {#if view === "problems" && (!o.feedbackKnown || !o.duplicatesKnown)}<section>
               <p class="muted small">
-                {part
-                  ? `${part.group ? "Group by meaning · " : part.type ? `Tag in ${part.type} · ` : "Asset type · "}${scopeName}`
-                  : "The whole scope"} ·
-                {plural(facts.count, "asset")}
-              </p>
-            </div>
-            {#if part}<button class="btn-quiet" onclick={() => choose(selected)} aria-label="Close">✕</button>{/if}
-          </header>
-
-          {#if view === "contents"}
-            <ul class="stats">
-              {@render stat(facts.count, madeOf.types.map(([name, n]) => `${n.toLocaleString()} ${name}`).join(", "))}
-              {#if madeOf.bundles.length > 1}{@render stat(
-                  madeOf.bundles.length,
-                  `bundles: ${madeOf.bundles.map(([name, n]) => `${name} ${n.toLocaleString()}`).join(", ")}`,
-                )}{/if}
-              {@render stat(unlinked.length, "not linked to or from anything")}
-              {#if madeOf.bundles.length > 1 && o.duplicatesKnown}{@render stat(
-                  acrossBundles.length,
-                  "near-identical pairs in two different bundles",
-                )}{/if}
-            </ul>
-            <section>
-              <h3>Not linked to anything, most read first</h3>
-              {#if unlinked.length}{@render assetList(
-                  unlinked,
-                  (i) => (o!.useKnown ? plural(o!.shows[i]!, "read") : ""),
-                  5,
-                  "unlinked",
-                )}{:else}<p class="muted small">Every asset here has a link.</p>{/if}
-            </section>
-            {#if acrossBundles.length}<section>
-                <h3>The same content in two bundles</h3>
-                {@render pairList(acrossBundles, 3)}
-              </section>{/if}
-            <section>
-              <h3>Most linked</h3>
-              {#if mostLinked.length}{@render assetList(
-                  mostLinked,
-                  (i) => plural(o!.degree[i]!, "link"),
-                  5,
-                  "linked",
-                )}{:else}<p class="muted small">None of these assets has a declared link.</p>{/if}
-            </section>
-            {#if selected}{@render connects("Joined by links and near-duplicates")}{/if}
-          {:else if view === "use"}{#if o.useKnown}
-              <ul class="stats">
-                {@render stat(facts.use.recent, `read in the last ${RECENT_DAYS} days`, "--use-4")}
-                {@render stat(facts.use.earlier, `read earlier, not in the last ${RECENT_DAYS} days`, "--use-2")}
-                {@render stat(facts.use.new, "never read, edited in the last 6 months (may be new)", "--use-0")}
-                {@render stat(facts.use.unread, "never read, untouched 6+ months: retire candidates", "--warn")}
-                {#if o.feedbackKnown}{@render stat(dislikedRead.length, "read but disliked")}{/if}
-              </ul>
-              <p class="muted small scope-note">Reads counted over {windowText}.</p>
-              <section>
-                <h3>Retire candidates, longest untouched first</h3>
-                {#if deadWeight.length}{@render assetList(deadWeight, untouched, 5, "dead")}{:else}<p
-                    class="muted small"
-                  >
-                    Nothing here is both unread and old.
-                  </p>{/if}
-              </section>
-              {#if o.feedbackKnown && dislikedRead.length}<section>
-                  <h3>Read but disliked, most read first</h3>
-                  {@render assetList(
-                    dislikedRead,
-                    (i) => `${plural(o!.shows[i]!, "read")} · ${o!.negative[i]} down, ${o!.positive[i]} up`,
-                    3,
-                    "dislikedRead",
-                  )}
-                </section>{/if}
-              <section>
-                <h3>Most read</h3>
-                {#if mostRead.length}{@render assetList(
-                    mostRead,
-                    (i) => plural(o!.shows[i]!, "read"),
-                    5,
-                    "mostRead",
-                  )}{:else}<p class="muted small">Nothing here has been read.</p>{/if}
-                {#if facts.useUnclassed}<p class="muted small">
-                    {plural(facts.useUnclassed, "asset")} not read and with no edit time akm could read, so not counted above.
-                  </p>{/if}
-              </section>{:else}<section><p class="muted small">{o.note}</p></section>{/if}
-            <section>
-              <h3>Searched for in the last 90 days, nothing found</h3>
-              {#if gaps.length}<ul class="rows">
-                  {#each gaps as m}<li>
-                      <a href={`/library/search?${new URLSearchParams([["q", m.query]])}`}>{m.query}</a><span
-                        class="count">×{m.count}</span
-                      >
-                    </li>{/each}
-                </ul>{:else if missesNote}<p class="muted small">Unavailable. {missesNote}</p>{:else}<p
-                  class="muted small"
-                >
-                  None{part?.tag ? ` mentioning “${part.tag}”` : ""}.
-                </p>{/if}
-            </section>
-          {:else}
-            <ul class="stats">
-              {@render stat(outdatedRead.length, "outdated and still read by agents: fix first", "--map-highlight")}
-              {@render stat(outdatedUnread.length, "outdated, nobody reads them", "--map-highlight")}
-              {@render stat(
-                o.duplicatesKnown ? facts.duplicatesInside.length + facts.duplicatesOutside.length : "?",
-                "pairs of near-identical assets",
-                "--warn",
-              )}
-              {@render stat(
-                o.feedbackKnown ? facts.disliked.length : "?",
-                "with more negative feedback than positive",
-                "--fail",
-              )}
-            </ul>
-            {#if !o.feedbackKnown || !o.duplicatesKnown}<p class="muted small scope-note">
-                {o.feedbackKnown ? "" : "Feedback is unavailable. "}{o.duplicatesKnown
+                {o.feedbackKnown ? "" : "Disliked assets cannot be shown. "}{o.duplicatesKnown
                   ? ""
-                  : "Near-identical pairs are unavailable. "}{o.note}
-              </p>{/if}
-            {#if outdatedRead.length}<section>
-                <h3>Outdated and still read, most read first</h3>
-                {@render assetList(outdatedRead, outdatedNote, 4, "outdatedRead")}
-              </section>{/if}
-            {#if facts.duplicatesInside.length + facts.duplicatesOutside.length}<section>
-                <h3>Near-identical pairs: compare and keep one</h3>
-                {@render pairList([...facts.duplicatesInside, ...facts.duplicatesOutside], 3)}
-                {#if o.duplicatesTruncated}<p class="muted small">
-                    Only the {o.duplicates.length.toLocaleString()} most alike pairs in the library are counted.
-                  </p>{/if}
-              </section>{/if}
-            {#if o.feedbackKnown && facts.disliked.length}<section>
-                <h3>More negative feedback than positive</h3>
-                {@render assetList(
-                  facts.disliked,
-                  (i) => `${o!.negative[i]} down, ${o!.positive[i]} up`,
-                  3,
-                  "disliked",
-                )}
-              </section>{/if}
-            {#if outdatedUnread.length}<section>
-                <h3>Outdated, nobody reads them</h3>
-                {@render assetList(outdatedUnread, outdatedNote, 3, "outdatedUnread")}
-              </section>{/if}
-            {@render overlap()}
-          {/if}
-
-          {#if points && !part && groups.length}<section>
-              <h3>Groups by meaning</h3>
+                  : "Near-identical pairs cannot be shown. "}{o.note}
+              </p>
+            </section>{/if}
+          {#if selected && joined.length}<section>
+              <h3>Linked to these {selected.startsWith("g:") ? "groups" : "types and tags"}</h3>
               <ul class="rows">
-                {#each groups as g (g.key)}<li>
+                {#each joined.slice(0, 8) as r}<li>
+                    <button class="link" onclick={() => choose(r.key)}>{nameOf(r.key)}</button>
+                    <span class="count"
+                      >{r.links ? plural(r.links, "link") : ""}{r.links && r.duplicates ? " · " : ""}{r.duplicates
+                        ? plural(r.duplicates, "near-identical pair")
+                        : ""}</span
+                    >
+                  </li>{/each}
+              </ul>
+            </section>{/if}
+          {#if points && !part && groups.length}<section>
+              <h3>{finding ? "Where they are, by group" : "Groups by meaning"}</h3>
+              <ul class="rows">
+                {#each [...groups]
+                  .filter((g) => !finding || perGroup.get(g.key))
+                  .sort((a, b) => (finding ? perGroup.get(b.key)! - perGroup.get(a.key)! : 0)) as g (g.key)}<li>
                     <button class="link" onclick={() => choose(g.key)}>{g.label}</button><span class="count"
-                      >{groupNote(g) || figure(g.members)}</span
+                      >{finding
+                        ? `${perGroup.get(g.key)!.toLocaleString()} of ${g.members.length.toLocaleString()}`
+                        : plural(g.members.length, "asset")}</span
                     >
                   </li>{/each}
               </ul>
@@ -996,6 +1007,52 @@
     border: 1px solid var(--border);
     border-radius: 6px;
   }
+  /* The view's filters: what its question is asked to find, each with how many it finds. One is on at a time. */
+  .findings {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .finding {
+    display: flex;
+    gap: 6px;
+    align-items: baseline;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: 14px;
+    cursor: pointer;
+  }
+  .finding strong {
+    font-variant-numeric: tabular-nums;
+  }
+  .finding[aria-pressed="true"] {
+    color: var(--bg);
+    background: var(--text);
+    border-color: var(--text);
+  }
+  .finding:disabled {
+    color: var(--muted);
+    border-color: var(--border);
+    cursor: default;
+  }
+  .finding.scope {
+    border-style: dashed;
+  }
+  .colour-key {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 12px;
+    margin: 0;
+    padding: 4px 10px;
+    list-style: none;
+    font-size: var(--text-xs);
+  }
+  .colour-key li {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
   .map-note {
     margin: 0;
     padding: 4px 8px;
@@ -1010,31 +1067,6 @@
     font-size: 13px;
   }
   /* What the view found, one fact a line; a line with a colour is also the key to that colour on the map. */
-  .stats {
-    display: grid;
-    gap: 3px;
-    margin: 0;
-    padding: 0 12px 8px;
-    list-style: none;
-    font-size: 13px;
-  }
-  .stats li {
-    display: grid;
-    grid-template-columns: 10px 2.75rem 1fr;
-    gap: 6px;
-    align-items: baseline;
-  }
-  .stats .swatch {
-    align-self: center;
-  }
-  .stats strong {
-    text-align: end;
-    font-size: 15px;
-    font-variant-numeric: tabular-nums;
-  }
-  .scope-note {
-    padding: 0 12px 6px;
-  }
   .swatch {
     flex: none;
     inline-size: 10px;
@@ -1145,8 +1177,7 @@
     font-size: 12px;
     font-variant-numeric: tabular-nums;
   }
-  .rows li,
-  .joined li {
+  .rows li {
     display: flex;
     gap: 8px;
     align-items: baseline;
@@ -1154,7 +1185,6 @@
     padding: 2px 0;
     min-inline-size: 0;
   }
-  .rows a,
   .pairs a,
   .read a,
   .near a {
@@ -1188,9 +1218,6 @@
     font-size: 12px;
     color: var(--muted);
   }
-  .joined li {
-    justify-content: space-between;
-  }
   .read li {
     padding: 2px 0;
   }
@@ -1203,8 +1230,9 @@
     font-size: 13px;
     min-inline-size: 0;
   }
+  /* A name has its line to itself and its figure the next, so every row reads the same way. */
   .read-row a {
-    flex: 1 1 auto;
+    flex: 1 0 100%;
   }
   .read-row .count {
     flex: 0 1 auto;

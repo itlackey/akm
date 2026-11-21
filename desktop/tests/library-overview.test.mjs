@@ -331,8 +331,8 @@ test("the overview keeps akm's place for each asset, and the same places in one 
 test("an outdated asset says why, and names what replaced or contradicts it; every asset has its link count", () => {
   const o = buildOverview(payload, now);
   // b is recorded as superseded; e declares that f contradicts it.
-  assert.deepEqual(o.outdatedWhy[1], ["superseded"]);
-  assert.deepEqual(o.outdatedWhy[4], ["contradicted by memories/auth/f"]);
+  assert.deepEqual(o.outdatedWhy[1], [{ why: "superseded", by: -1 }]);
+  assert.deepEqual(o.outdatedWhy[4], [{ why: "contradicted", by: 5 }]);
   assert.deepEqual(o.outdatedWhy[0], []);
   // a→b, b→c, c→d, e→f; g has none.
   assert.deepEqual(o.degree, [1, 2, 2, 1, 1, 1, 0]);

@@ -364,7 +364,6 @@
                   <span class="dot" style={`background:var(--map-${family.k + 1})`}></span>{family.label}
                 </li>{/each}
             </ul>
-            {#if flat}<p class="muted small">An asset and its group appear when it is first used.</p>{/if}
             {#if unplaced && (unplaced.notOnMap || unplaced.notListed)}<p class="muted small" role="status">
                 {#if unplaced.notOnMap}{unplaced.notOnMap.toLocaleString()}
                   {unplaced.notOnMap === 1 ? "event" : "events"} so far touched assets with no place on this map (no group
@@ -443,13 +442,18 @@
           <div class="figures">
             <div><strong>{totals.events.toLocaleString()}</strong><span>events</span></div>
             <div><strong>{totals.shows.toLocaleString()}</strong><span>reads</span></div>
-            <div><strong>{totals.searches.toLocaleString()}</strong><span>searches</span></div>
+            {#if totals.searches}<div>
+                <strong>{totals.searches.toLocaleString()}</strong><span>searches</span>
+              </div>{/if}
             {#if totals.curates}<div><strong>{totals.curates.toLocaleString()}</strong><span>curates</span></div>{/if}
-            <div class:bad={totals.foundNothing > 0}>
-              <strong>{totals.foundNothing.toLocaleString()}</strong><span>found nothing</span>
-            </div>
-            <div><strong>{totals.positive}</strong><span>positive feedback</span></div>
-            <div><strong>{totals.negative}</strong><span>negative feedback</span></div>
+            {#if totals.foundNothing}<div class="bad">
+                <strong>{totals.foundNothing.toLocaleString()}</strong><span>found nothing</span>
+              </div>{/if}
+            {#if totals.positive || totals.negative}<div>
+                <strong>{totals.positive}</strong><span>positive,</span><strong>{totals.negative}</strong><span
+                  >negative feedback</span
+                >
+              </div>{/if}
             <div><strong>{totals.used.size.toLocaleString()}</strong><span>assets used</span></div>
           </div>
           <section>
@@ -504,7 +508,6 @@
         {#each KINDS.filter((k) => timeline.counts.some((bin) => bin[k.id])) as k}<li>
             <span class="swatch" style={`background:var(${k.token})`}></span>{k.label}
           </li>{/each}
-        <li class="scale-note muted">Faded bars are after the playhead.</li>
       </ul>
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <svg
@@ -699,10 +702,6 @@
     display: flex;
     gap: 6px;
     align-items: center;
-  }
-  .scale-note {
-    margin-inline-start: auto;
-    font-size: 12px;
   }
   .swatch {
     inline-size: 10px;
