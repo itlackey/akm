@@ -6,7 +6,7 @@ import fs from "node:fs";
 import { type ArgsDef, type CommandDef, parseArgs, runCommand } from "citty";
 import { warnWorkflowUse } from "../cli/deprecations";
 import { createParsedInvocation, findCittyTopLevelCommandIndex, getParsedInvocation } from "../cli/invocation";
-import { parsePositiveIntFlag, parseTimeoutValue } from "../cli/parse-args";
+import { parseNonNegativeIntFlag, parseTimeoutValue } from "../cli/parse-args";
 import { defineJsonCommand, GLOBAL_OUTPUT_ARGS, reportChildExit } from "../cli/shared";
 import { assertKnownFlags, type FlagScanCommand } from "../cli/unknown-flags";
 import { setResolvedUsageAssetType } from "../cli/usage";
@@ -15,8 +15,6 @@ import { makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
 import { loadConfig } from "../core/config/config";
 import { AkmError, NotFoundError, UsageError } from "../core/errors";
 import { registerInjectedSecretValues } from "../core/redaction";
-import { valueInputNames } from "../execution/input-contract";
-import { withRetries } from "../execution/retry";
 import { resolveConceptOwner } from "../indexer/lookup/adapter-concept-owner";
 import { resolveSourceEntries } from "../indexer/search/search-source";
 import { buildFileContext } from "../indexer/walk/file-context";
@@ -27,7 +25,7 @@ import { agentCommand } from "./agent/contribute-cli";
 import { commandRunCommand } from "./command/command-cli";
 import { childEnvFromFlags } from "./env/child-env";
 import { INJECTION_ARGS, resolveInjections, runProgram, withoutFlags, withoutInjectionFlags } from "./env/injection";
-import { inlineInputValues, tasksRunCommand } from "./tasks/tasks-cli";
+import { tasksRunCommand } from "./tasks/tasks-cli";
 import { workflowRunCommand } from "./workflow-cli";
 
 const EXECUTORS = {
@@ -68,6 +66,11 @@ const SCRIPT_ARGS: ArgsDef = {
   "max-retries": args["max-retries"] as ArgsDef[string],
 };
 delete SCRIPT_ARGS.config;
+args.resume = {
+  type: "boolean",
+  description: "Resume the failed run of a version 5 task, with the inputs and flags it was started with",
+  default: false,
+};
 args.ref = {
   type: "positional",
   description: "Script, agent, command, task or workflow ref; or an existing workflow run id",
@@ -205,24 +208,16 @@ export const runAssetCommand = defineJsonCommand({
     };
     const ownsRunFlags = type === "agent" || type === "command";
     // A version 5 task reads its own start flags (`--env`, `--secret`, `--inherit`, ...) and gives each step its own environment.
-    const task =
-      type === "task" && scriptFile !== undefined
-        ? parseTaskSource({ yaml: fs.readFileSync(scriptFile, "utf8"), filePath: scriptFile })
-        : undefined;
-    const versionFive = task?.version === "5-beta";
-    // A declared value input takes the next token as its value, which the scan and the executor then both read.
-    const valueInputs = valueInputNames((task?.version === 4 ? task.v4.inputs : task?.v5.inputs) ?? {});
-    const afterRef = (tokens: readonly string[]): string[] => [
-      ...tokens.slice(0, resolved.refIndex + 1),
-      ...inlineInputValues(tokens.slice(resolved.refIndex + 1), valueInputs),
-    ];
-    const ownTokens = afterRef(own);
-    const allTokens = [...ownTokens, ...rawArgs.slice(own.length)];
+    const versionFive =
+      type === "task" &&
+      scriptFile !== undefined &&
+      parseTaskSource({ yaml: fs.readFileSync(scriptFile, "utf8"), filePath: scriptFile }).version === "5-beta";
+    const allTokens = [...own, ...rawArgs.slice(own.length)];
     const withoutRunFlags = (tokens: readonly string[]): string[] =>
       versionFive
         ? [...tokens]
         : ownsRunFlags
-          ? withoutFlags(tokens, ["--env", "--secret", "--inherit", "--max-retries"], ["--clean"])
+          ? withoutFlags(tokens, ["--env", "--secret", "--inherit"], ["--clean"])
           : withoutInjectionFlags(tokens);
     const forwarded = withoutRunFlags(retarget(allTokens));
     if (type === "workflow" && own.some((token) => /^--(?:no-)?new(?:=|$)/.test(token))) {
@@ -230,7 +225,8 @@ export const runAssetCommand = defineJsonCommand({
     }
     let schema: FlagScanCommand = executor.command as FlagScanCommand;
     for (const part of [...executor.path].reverse()) schema = { subCommands: { [part]: schema } };
-    assertKnownFlags(schema, [...executor.path, ...withoutRunFlags(retarget(ownTokens))]);
+    // A task reads and checks the tokens after its ref itself, once it knows the inputs it declares.
+    if (type !== "task") assertKnownFlags(schema, [...executor.path, ...withoutRunFlags(retarget(own))]);
     if (type === "agent" || type === "command") {
       const selectedArgs = parseArgs(forwarded, executor.command.args as ArgsDef);
       if (selectedArgs.config !== undefined) {
@@ -246,7 +242,6 @@ export const runAssetCommand = defineJsonCommand({
     // Every process an executor starts inherits akm's environment, so the injected variables go there, and
     // the secrets among them join what each executor scrubs from the output it captures.
     const injected = versionFive ? { values: {}, secretValues: [] } : resolveInjections();
-    const maxRetries = ownsRunFlags ? (parsePositiveIntFlag(parsed["max-retries"], "--max-retries") ?? 0) : 0;
     if (ownsRunFlags && (parsed.clean === true || parsed.inherit !== undefined)) {
       const env = childEnvFromFlags(process.env, { clean: parsed.clean === true, inherit: parsed.inherit });
       for (const name of Object.keys(process.env)) delete process.env[name];
@@ -254,16 +249,9 @@ export const runAssetCommand = defineJsonCommand({
     }
     Object.assign(process.env, injected.values);
     registerInjectedSecretValues(injected.secretValues);
-    await withRetries(
-      maxRetries,
-      async () => {
-        // Bun ignores `process.exitCode = undefined`; 0 is the reset it honours.
-        process.exitCode = 0;
-        await runCommand(executor.command as CommandDef, { rawArgs: forwarded });
-        return process.exitCode;
-      },
-      (exitCode) => exitCode !== undefined && exitCode !== 0,
-    );
+    // Bun ignores `process.exitCode = undefined`; 0 is the reset it honours.
+    process.exitCode = 0;
+    await runCommand(executor.command as CommandDef, { rawArgs: forwarded });
   },
 });
 
@@ -284,7 +272,7 @@ async function runScript(
     script,
     env,
     capture: false,
-    maxRetries: parsePositiveIntFlag(flags["max-retries"], "--max-retries") ?? 0,
+    maxRetries: parseNonNegativeIntFlag(flags["max-retries"], "--max-retries") ?? 0,
     ...(flags.cwd !== undefined ? { cwd: flags.cwd } : {}),
     ...(flags.timeout !== undefined ? { timeoutMs: parseTimeoutValue(flags.timeout) } : {}),
   });

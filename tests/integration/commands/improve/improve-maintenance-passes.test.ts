@@ -249,6 +249,8 @@ describe("runRetentionPurgePass", () => {
     try {
       const oldTs = new Date(Date.now() - 200 * 86_400_000).toISOString();
       const bigMetadata = { blob: "x".repeat(2000) };
+      // One transaction: committing each of the 3,000 rows separately costs a disk sync apiece.
+      seedDb.exec("BEGIN");
       for (let i = 0; i < 3000; i++) {
         insertEventStrict(seedDb, {
           eventType: "reflect_invoked",
@@ -257,6 +259,7 @@ describe("runRetentionPurgePass", () => {
           metadata: bigMetadata,
         });
       }
+      seedDb.exec("COMMIT");
     } finally {
       seedDb.close();
     }

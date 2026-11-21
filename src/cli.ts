@@ -3,23 +3,25 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-// Runtime guard: the akm-cli npm package bootstraps with Node.js >= 22
+// Runtime guard: the akm-cli npm package bootstraps with Node.js >= 22.15
 // (#465, #560), then its launcher prefers a working Bun >= 1.0 when available.
 // The runtime boundary (src/runtime.ts, src/storage/database.ts) supports both.
 // Under Node the CLI must be launched via the
 // `dist/cli-node.mjs` wrapper, which registers the text-import loader hook
 // before this module graph loads; running `node dist/cli.js` directly still
 // works for code paths that touch no embedded text asset, but the wrapper is
-// the supported entry. The hard floor is Node 22 (Node 20 support dropped 2026-07; `@clack/core` imports
+// the supported entry. The hard floor is Node 22.15 (`process.execve`; Node 20 support dropped 2026-07; `@clack/core` imports
 // `node:util`'s `styleText` (added in Node 20.12) — Node 18 (EOL) throws at import.
 {
   const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
   if (!isBun) {
-    const [major = 0] = (process.versions.node ?? "0").split(".").map((part) => Number.parseInt(part, 10) || 0);
-    const nodeOk = major >= 22;
+    const [major = 0, minor = 0] = (process.versions.node ?? "0")
+      .split(".")
+      .map((part) => Number.parseInt(part, 10) || 0);
+    const nodeOk = major > 22 || (major === 22 && minor >= 15);
     if (!nodeOk) {
       console.error(
-        "\n  ERROR: the akm-cli npm package requires Node.js >= 22.\n" +
+        "\n  ERROR: the akm-cli npm package requires Node.js >= 22.15.\n" +
           `  Detected Node.js ${process.versions.node ?? "unknown"}.\n` +
           "  Bun >= 1.0 is optional for execution; it does not replace the Node.js bootstrap.\n" +
           "  Upgrade Node.js (https://nodejs.org), or install the runtime-free standalone binary:\n" +
@@ -76,6 +78,7 @@ process.on("uncaughtException", (err) => {
 });
 
 import fs from "node:fs";
+import { stripVTControlCharacters } from "node:util";
 import {
   type ArgsDef,
   type CommandDef,
@@ -84,7 +87,6 @@ import {
   parseArgs,
   renderUsage,
   runCommand,
-  showUsage,
 } from "citty";
 import { warnDeprecatedUse } from "./cli/deprecations";
 import {
@@ -154,11 +156,9 @@ import { taskCommand } from "./commands/tasks/tasks-cli";
 import { workflowCommand } from "./commands/workflow-cli";
 import { DEFAULT_CONFIG, loadConfig } from "./core/config/config";
 import { UsageError, type UsageErrorCode } from "./core/errors";
-import { launcherPidFromEnv } from "./core/file-lock";
-import { startParentDeathWatchdog } from "./core/parent-watchdog";
 import { getConfigPath } from "./core/paths";
 import { DURATION_UNITS, parseDuration } from "./core/time";
-import { plainize } from "./core/tty";
+import { plainize, shouldDecorate } from "./core/tty";
 import { info, isQuiet, setQuiet, setVerbose, warn, warnOnce } from "./core/warn";
 import { installLlmUsagePersistenceIfAbsent } from "./llm/usage-persist";
 import { EMBEDDED_HINTS, EMBEDDED_HINTS_FULL } from "./output/cli-hints";
@@ -486,8 +486,11 @@ async function runHealth(args: ParsedArgs<typeof healthArgs>, scheduler: boolean
               .join(" → ")
           : undefined) ??
         "24h";
-      resultStatus = base.status;
-      const schedulerChecks = scheduler ? { scheduler: await akmTasksDoctor() } : {};
+      const schedulerReport = scheduler ? await akmTasksDoctor() : undefined;
+      const schedulerChecks = schedulerReport ? { scheduler: schedulerReport } : {};
+      // A strategy that cannot be resolved is named in the scheduler report, and the status is a warning at least.
+      const status = base.status === "pass" && schedulerReport?.improveStrategy ? ("warn" as const) : base.status;
+      resultStatus = status;
       // A degraded state-db result has no runs. Keep its native failure instead
       // of reopening the unavailable database to build the report's extra data.
       if (report && base.runs !== undefined) {
@@ -509,6 +512,7 @@ async function runHealth(args: ParsedArgs<typeof healthArgs>, scheduler: boolean
         );
         output("health", {
           ...base,
+          status,
           ...schedulerChecks,
           report: {
             window: args.since ?? "24h",
@@ -519,7 +523,7 @@ async function runHealth(args: ParsedArgs<typeof healthArgs>, scheduler: boolean
         });
         return;
       }
-      output("health", { ...base, ...schedulerChecks });
+      output("health", { ...base, status, ...schedulerChecks });
     });
     // `emitJsonError` (src/cli/shared.ts) does not force-exit on the error
     // path — it sets `process.exitCode` and returns, so a `--report`
@@ -603,11 +607,11 @@ const doctorCommand = defineCommand({
     }
     // Validate the child without health's parent flags, so unsupported options
     // cannot be silently accepted merely because bare doctor declares them.
-    assertKnownFlags({ subCommands: { doctor: { subCommands: doctorSubCommands } } } as FlagScanCommand, [
-      "doctor",
-      subcommand,
-      ...childArgs,
-    ]);
+    assertKnownFlags(
+      { subCommands: { doctor: { subCommands: doctorSubCommands } } } as FlagScanCommand,
+      ["doctor", subcommand, ...childArgs],
+      { untilTarget: true },
+    );
   },
 });
 
@@ -713,9 +717,16 @@ const commands = {
   hints: hintsCommand,
 };
 
+/** Help as every akm output is: citty colors it, and the color stays only where akm's one color rule (`shouldDecorate`) allows it. */
+function helpText(text: string): string {
+  return shouldDecorate() ? text : stripVTControlCharacters(text);
+}
+
 /** Leaf `--help`: usage without the hidden args and the shared global flags, then one pointer line. */
 async function showCommandUsage(command: AnyCittyCommand, path: readonly string[]): Promise<void> {
-  await showUsage(withoutHelpHiddenArgs(command) as CommandDef, buildUsageParentForPath(path) as CommandDef);
+  console.log(
+    `${helpText(await renderUsage(withoutHelpHiddenArgs(command) as CommandDef, buildUsageParentForPath(path) as CommandDef))}\n`,
+  );
   console.log("Global flags: --format, --detail, --output, -q/--quiet, --verbose (see `akm --help`)");
 }
 
@@ -1105,7 +1116,7 @@ function renderCommandSections(): string {
  * USAGE line + global OPTIONS, then cuts the string before citty's own
  * "COMMANDS" heading (present because `main` has `subCommands`) and appends
  * the grouped sections plus a one-line bundle/ref-grammar tagline and the
- * `akm hints` pointer.
+ * `akm hints` pointer. Every root-help site prints this, in the color `helpText` allows.
  */
 async function renderSectionedRootHelp(): Promise<string> {
   const base = await renderUsage(main as CommandDef, undefined);
@@ -1124,7 +1135,7 @@ async function renderSectionedRootHelp(): Promise<string> {
     "Run `akm help <command>` or `akm <command> --help` for details on any command.",
     "Agents: run `akm hints` for the guide.",
   ].join("\n");
-  return [head, "", renderCommandSections(), "", epilogue].join("\n");
+  return helpText([head, "", renderCommandSections(), "", epilogue].join("\n"));
 }
 
 /**
@@ -1203,8 +1214,7 @@ function toUsageErrorFromCliError(error: Error, rawArgs: readonly string[]): Usa
   // citty colorizes error.message with ANSI escapes even when stdout/stderr
   // is not a TTY. Strip them so the JSON envelope's `error` field is plain
   // text instead of embedding raw escape sequences.
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional — strip ANSI escape codes
-  const message = error.message.replace(/\x1b\[[0-9;]*m/g, "");
+  const message = stripVTControlCharacters(error.message);
   return new UsageError(message, code, hint);
 }
 
@@ -1470,7 +1480,7 @@ async function runCliInvocation(invocation: ParsedInvocation): Promise<void> {
     // a typo would otherwise run the command with defaults and exit 0. Checked
     // here, after --help and --version, so those keep working on any command.
     // An undeclared positional is ignored the same way.
-    assertKnownFlags(main as FlagScanCommand, invocation.ownArgs);
+    assertKnownFlags(main as FlagScanCommand, invocation.ownArgs, { untilTarget: true });
     assertNoStrayPositionals(main as FlagScanCommand, rawArgs);
     await runCommand(main, { rawArgs: [...rawArgs] });
   } catch (error) {
@@ -1517,38 +1527,5 @@ async function runCliInvocation(invocation: ParsedInvocation): Promise<void> {
 // sets `AKM_STANDALONE_ENTRY=1` before importing this file. The test harness
 // sets neither, so importing cli.ts under Bun stays inert as before.
 if (import.meta.main || process.env.AKM_NODE_ENTRY === "1" || process.env.AKM_STANDALONE_ENTRY === "1") {
-  // #956: a launcher that dies WITHOUT delivering a signal
-  // (SIGKILL, an OOM kill, a supervisor that force-removes the process)
-  // still reparents this process to init with nothing to catch — the field
-  // evidence was 40 orphaned `bun …/dist/cli.js` processes in one day, some
-  // from a curate hook killing its own launcher on timeout. Active for
-  // EVERY command (not only `index`), since a hook-invoked `curate`/`search`
-  // child is orphaned the same way. Inert when there is no launcher
-  // (AKM_LAUNCHER_PID unset — a direct `bun src/cli.ts` run, or any test
-  // harness that imports this module without setting it): only a real
-  // launcher-managed run has a parent worth watching.
-  const parentWatchdog = launcherPidFromEnv()
-    ? startParentDeathWatchdog({
-        initialPpid: process.ppid,
-        onOrphaned: () => {
-          // Self-delivers the same signal a real SIGTERM would be. `akm
-          // index`'s own AbortController listens for it
-          // (commands/sources/stash-cli.ts) and gets a graceful, in-process
-          // shutdown. Every other command has no SIGTERM listener of its
-          // own, so this self-signal terminates it directly via the
-          // runtime's default disposition WITHOUT running `exit` handlers
-          // (lock release included) — it stops the orphaned process, which
-          // is the goal here, but any lock it held is left for the next
-          // acquirer's dead-pid stale-reclaim (file-lock.ts) to clear, not
-          // released in-process. No second, parallel abort path to keep in
-          // sync either way.
-          process.kill(process.pid, "SIGTERM");
-        },
-      })
-    : undefined;
-  try {
-    await runCli();
-  } finally {
-    parentWatchdog?.stop();
-  }
+  await runCli();
 }

@@ -7,10 +7,10 @@
  * function body calls is exported here.
  */
 
+import { timeoutMilliseconds } from "../../cli/parse-args";
 import type { PreparedCommandInvocation } from "../../commands/command/command-execution";
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { COMPOSITION_INVALID_MULTI_JOB_HINT, ConfigError, NotFoundError, UsageError } from "../../core/errors";
-import { DURATION_UNITS, parseDuration } from "../../core/time";
 import { warn } from "../../core/warn";
 import { isPortableExecutionAgentSelector, type UnresolvedExecutionDefaults } from "../../execution/source";
 import { buildExecution } from "../../integrations/agent/execution";
@@ -61,7 +61,7 @@ export function commandEnvironmentSnapshot(
 
 function normalizeTimeout(value: string | number | null | undefined): number | null | undefined {
   if (value === undefined || value === null || typeof value === "number") return value;
-  const parsed = parseDuration(value, DURATION_UNITS);
+  const parsed = timeoutMilliseconds(value);
   if (parsed === null) throw new UsageError(`Invalid task timeout ${JSON.stringify(value)}.`, "TASK_SOURCE_INVALID");
   return parsed;
 }

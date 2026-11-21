@@ -27,6 +27,7 @@ import {
 } from "../../core/logs-db";
 import { getRunLogDir, getTaskLogDir } from "../../core/paths";
 import { redactCredentialPatterns, redactSensitiveText } from "../../core/redaction";
+import { lastOutputLine } from "../../integrations/agent/spawn";
 import { collectTaskLogSensitiveValues } from "../log-redaction";
 import type { PreparedTaskV3Execution } from "../prepare/prepared-execution";
 
@@ -135,7 +136,7 @@ export function purgeOldRunLogFiles(retentionDays = 90): number {
 /**
  * Redact logs.db rows against the SAME contiguous text the file sink sees.
  *
- * The rows arrive already split on "\n" (see {@link streamLines}), but the
+ * The rows arrive already split on "\n" (see {@link appendStreamLines}), but the
  * redaction needles are whole env values — and a needle containing a newline
  * can never match inside a single line. Scrubbing row-by-row therefore left
  * multi-line secrets (PEM keys, multi-line service-account credentials) intact
@@ -167,18 +168,45 @@ export function scrubDbLines(
   return out;
 }
 
-/** Split captured pipe output into per-line logs.db rows (blank lines dropped). */
-export function streamLines(text: string, stream: TaskLogStream, level: TaskLogLevel): TaskLogLineInput[] {
-  return (
-    text
-      .split("\n")
-      // Windows child output is CRLF-terminated. Splitting on "\n" alone left a
-      // trailing "\r" on every row and turned blank CRLF lines into phantom
-      // rows containing just "\r" (length 1 passes the filter below).
-      .map((line) => (line.endsWith("\r") ? line.slice(0, -1) : line))
-      .filter((line) => line.length > 0)
-      .map((line) => ({ stream, level, line }))
-  );
+/**
+ * Append captured pipe output to `into` as per-line logs.db rows (blank lines dropped). A loop, not a spread:
+ * a step can print more lines than a call accepts as arguments.
+ */
+export function appendStreamLines(
+  into: TaskLogLineInput[],
+  text: string,
+  stream: TaskLogStream,
+  level: TaskLogLevel,
+): void {
+  for (const raw of text.split("\n")) {
+    // Windows child output is CRLF-terminated: a trailing "\r" is not part of the line.
+    const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+    if (line.length > 0) into.push({ stream, level, line });
+  }
+}
+
+/** Why a captured process failed: a reason code and one line of text, as every task kind records them. */
+export interface ProcessFailure {
+  reason: "timeout" | "aborted" | "spawn_error" | "non_zero_exit";
+  error: string;
+}
+
+/** The one place a captured process's failure becomes a reason and an error. `result` is a finished, failed run. */
+export function processFailure(result: {
+  exitCode: number | null;
+  timedOut?: boolean;
+  aborted?: boolean;
+  spawnError?: Error | undefined;
+  stderr: string;
+  timeoutMs?: number | null | undefined;
+}): ProcessFailure {
+  if (result.spawnError) return { reason: "spawn_error", error: result.spawnError.message };
+  if (result.timedOut) {
+    return { reason: "timeout", error: result.timeoutMs ? `timed out after ${result.timeoutMs} ms` : "timed out" };
+  }
+  if (result.aborted) return { reason: "aborted", error: "aborted" };
+  const line = lastOutputLine(result.stderr);
+  return { reason: "non_zero_exit", error: `exit code ${result.exitCode}${line ? `: ${line}` : ""}` };
 }
 
 /**

@@ -25,7 +25,7 @@ import type { runWorkflowSteps } from "../../workflows/exec/run-workflow";
 import type { ExecutionProvenanceContext } from "../model/invocation";
 import type { PreparedTaskV3Workflow } from "../prepare/prepared-execution";
 import { finishAttempt } from "./attempt-lifecycle";
-import { appendHistory } from "./task-history";
+import { appendHistory, taskBundle } from "./task-history";
 import { persistRunLog, scrubTaskOutput } from "./task-log";
 import type { TaskRunResult, TaskRunStatus } from "./task-result";
 
@@ -181,6 +181,7 @@ export async function runWorkflowTask(input: {
     finishedAt: finishedAt.toISOString(),
     durationMs: finishedAt.getTime() - startedAt.getTime(),
     log: logPath,
+    ...taskBundle(task.taskRef),
     target: { kind: "workflow", ref: task.ref },
     detail: {
       runId: detail?.id,

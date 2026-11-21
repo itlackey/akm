@@ -2,11 +2,18 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { getStringArg, parsePositiveIntFlag, parseTimeoutFlags } from "../../cli/parse-args";
+import {
+  getExactStringArg,
+  getStringArg,
+  parseNonNegativeIntFlag,
+  parsePositiveIntFlag,
+  parseTimeoutFlags,
+} from "../../cli/parse-args";
 import { RETIRED_ENGINE_ARG, SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
 import { defineGroupCommand, defineJsonCommand, EXIT_CODES, output } from "../../cli/shared";
 import { loadConfig } from "../../core/config/config";
 import { isVerbose, setVerbose, warn, warnVerbose } from "../../core/warn";
+import { withRetries } from "../../execution/retry";
 import type { UnresolvedExecutionDefaults } from "../../execution/source";
 import { lookupBundleRefReadonly } from "../../indexer/indexer";
 import { ensureWorkingFolder } from "../env/injection";
@@ -15,11 +22,6 @@ import {
   inspectPreparedCommandInvocation,
   prepareCommandInvocation,
 } from "./command-execution";
-
-function exactStringArg(args: unknown, key: string): string | undefined {
-  const value = (args as Record<string, unknown>)[key];
-  return typeof value === "string" ? value : undefined;
-}
 
 export const commandRunCommand = defineJsonCommand({
   meta: {
@@ -48,6 +50,7 @@ export const commandRunCommand = defineJsonCommand({
       description: "Timeout as a duration (30s, 2m) or milliseconds",
     },
     "timeout-ms": { type: "string", description: "Override the execution timeout in milliseconds" },
+    "max-retries": { type: "string", hidden: true, description: "Run again up to N times when the command fails" },
     cwd: { type: "string", description: "Override the execution workspace/current working directory" },
     "dry-run": {
       type: "boolean",
@@ -58,8 +61,8 @@ export const commandRunCommand = defineJsonCommand({
   async run({ args }) {
     if (args.verbose === true) setVerbose(true);
     const timeoutMs = parseTimeoutFlags(
-      exactStringArg(args, "timeout"),
-      parsePositiveIntFlag(exactStringArg(args, "timeout-ms"), "--timeout-ms"),
+      getExactStringArg(args, "timeout"),
+      parsePositiveIntFlag(getExactStringArg(args, "timeout-ms"), "--timeout-ms"),
     );
     const current: Record<string, unknown> = {};
     const agent = getStringArg(args, "agent");
@@ -69,7 +72,7 @@ export const commandRunCommand = defineJsonCommand({
     if (timeoutMs !== undefined) current.timeout = timeoutMs;
     if (workspace !== undefined) current.workspace = workspace;
 
-    const argumentInput = exactStringArg(args, "arguments");
+    const argumentInput = getExactStringArg(args, "arguments");
     const dryRun = args["dry-run"] === true;
     if (workspace !== undefined && !dryRun) ensureWorkingFolder(workspace);
     const prepared = await prepareCommandInvocation({
@@ -95,9 +98,17 @@ export const commandRunCommand = defineJsonCommand({
         })}`,
       );
     }
-    const result = await dispatchPreparedCommandInvocation(prepared);
+    let attempts = 0;
+    const result = await withRetries(
+      parseNonNegativeIntFlag(getExactStringArg(args, "max-retries"), "--max-retries") ?? 0,
+      () => {
+        attempts += 1;
+        return dispatchPreparedCommandInvocation(prepared);
+      },
+      (attempt) => !attempt.ok,
+    );
     for (const message of result.warnings ?? []) warn(message);
-    output("agent-result", result);
+    output("agent-result", attempts > 1 ? { ...result, attempts } : result);
     if (!result.ok) process.exitCode = EXIT_CODES.GENERAL;
   },
 });

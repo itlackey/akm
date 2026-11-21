@@ -141,14 +141,19 @@ describe("getStateDbFreelistInfo (R0)", () => {
       // A big-enough, later-deleted payload so the freed pages dominate the
       // fixed schema/index overhead of a fresh state.db.
       const bigMetadata = { blob: "x".repeat(2000) };
+      // One transaction for the rows and one for the deletes: a commit apiece costs a disk sync each.
+      db.exec("BEGIN");
       for (let i = 0; i < 3000; i++) {
         ids.push(
           insertEventStrict(db, { eventType: "reflect_invoked", ts, ref: `lessons/note-${i}`, metadata: bigMetadata }),
         );
       }
+      db.exec("COMMIT");
+      db.exec("BEGIN");
       for (const id of ids) {
         db.prepare("DELETE FROM events WHERE id = ?").run(id);
       }
+      db.exec("COMMIT");
     } finally {
       db.close();
     }
@@ -191,14 +196,19 @@ describe("vacuumIfReclaimable on state.db (R0)", () => {
       // A big-enough, later-deleted payload so the freed pages dominate the
       // fixed schema/index overhead of a fresh state.db.
       const bigMetadata = { blob: "x".repeat(2000) };
+      // One transaction for the rows and one for the deletes: a commit apiece costs a disk sync each.
+      db.exec("BEGIN");
       for (let i = 0; i < 3000; i++) {
         ids.push(
           insertEventStrict(db, { eventType: "reflect_invoked", ts, ref: `lessons/note-${i}`, metadata: bigMetadata }),
         );
       }
+      db.exec("COMMIT");
+      db.exec("BEGIN");
       for (const id of ids) {
         db.prepare("DELETE FROM events WHERE id = ?").run(id);
       }
+      db.exec("COMMIT");
       const before = getStateDbFreelistInfo(dbPath);
       expect(before.ratio).toBeGreaterThan(STATE_DB_FREELIST_WARN_RATIO);
 
@@ -231,14 +241,19 @@ describe("vacuumIfReclaimable on state.db (R0)", () => {
       const ts = new Date().toISOString();
       const ids: number[] = [];
       const bigMetadata = { blob: "x".repeat(2000) };
+      // One transaction for the rows and one for the deletes: a commit apiece costs a disk sync each.
+      db.exec("BEGIN");
       for (let i = 0; i < 3000; i++) {
         ids.push(
           insertEventStrict(db, { eventType: "reflect_invoked", ts, ref: `lessons/note-${i}`, metadata: bigMetadata }),
         );
       }
+      db.exec("COMMIT");
+      db.exec("BEGIN");
       for (const id of ids) {
         db.prepare("DELETE FROM events WHERE id = ?").run(id);
       }
+      db.exec("COMMIT");
       const before = getStateDbFreelistInfo(dbPath);
       expect(before.ratio).toBeGreaterThan(STATE_DB_FREELIST_WARN_RATIO);
 
@@ -261,14 +276,19 @@ describe("vacuumIfReclaimable on state.db (R0)", () => {
       const ts = new Date().toISOString();
       const ids: number[] = [];
       const bigMetadata = { blob: "x".repeat(2000) };
+      // One transaction for the rows and one for the deletes: a commit apiece costs a disk sync each.
+      db.exec("BEGIN");
       for (let i = 0; i < 3000; i++) {
         ids.push(
           insertEventStrict(db, { eventType: "reflect_invoked", ts, ref: `lessons/note-${i}`, metadata: bigMetadata }),
         );
       }
+      db.exec("COMMIT");
+      db.exec("BEGIN");
       for (const id of ids) {
         db.prepare("DELETE FROM events WHERE id = ?").run(id);
       }
+      db.exec("COMMIT");
       const before = getStateDbFreelistInfo(dbPath);
       expect(before.ratio).toBeGreaterThan(STATE_DB_FREELIST_WARN_RATIO);
 

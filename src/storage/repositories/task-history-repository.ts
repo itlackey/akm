@@ -41,6 +41,8 @@ export interface TaskHistoryStep {
   result?: string;
   /** When a `task:` step's own run started (its own history row). */
   startedAt?: string;
+  /** Set for a step that dispatched an agent: the engine that ran it, and why it failed when it did. Absent on a row written before it was recorded. */
+  agent?: { engine: string; reason?: string };
 }
 
 export interface TaskHistoryMetadata {
@@ -54,6 +56,8 @@ export interface TaskHistoryMetadata {
   trigger?: "schedule" | "manual";
   /** The version 5 run this row is an attempt of; absent for every other task. */
   run?: TaskHistoryRun;
+  /** The bundle the task was read from; absent on rows written before it was recorded. */
+  bundle?: string;
   /** The process that reserved the attempt; present only while the row is `active`. Absent on rows reserved before it was recorded. */
   owner?: TaskHistoryOwner;
 }
@@ -127,6 +131,7 @@ export function decodeTaskHistoryMetadata(input: string | unknown): TaskHistoryM
   validateDetail(detail);
   const steps = decodeSteps(parsed.steps);
   const run = decodeRun(parsed.run);
+  const bundle = typeof parsed.bundle === "string" ? parsed.bundle : undefined;
   const owner = decodeOwner(parsed.owner);
   const cleanDetail: TaskHistoryDetail | null = detail
     ? {
@@ -144,6 +149,7 @@ export function decodeTaskHistoryMetadata(input: string | unknown): TaskHistoryM
     ...(steps !== undefined ? { steps } : {}),
     ...(trigger !== undefined ? { trigger } : {}),
     ...(run !== undefined ? { run } : {}),
+    ...(bundle !== undefined ? { bundle } : {}),
     ...(owner !== undefined ? { owner } : {}),
   };
 }
@@ -195,6 +201,14 @@ function decodeSteps(value: unknown): TaskHistoryStep[] | undefined {
       ...(typeof entry.reason === "string" ? { reason: entry.reason } : {}),
       ...(typeof entry.result === "string" ? { result: entry.result } : {}),
       ...(typeof entry.startedAt === "string" ? { startedAt: entry.startedAt } : {}),
+      ...(isRecord(entry.agent) && typeof entry.agent.engine === "string"
+        ? {
+            agent: {
+              engine: entry.agent.engine,
+              ...(typeof entry.agent.reason === "string" ? { reason: entry.agent.reason } : {}),
+            },
+          }
+        : {}),
     });
   }
   return steps;
@@ -269,13 +283,23 @@ export function finalizeTaskHistoryAttempt(db: Database, row: TaskHistoryRow): b
   return Number(result.changes) === 1;
 }
 
-/** Mark a still-`active` attempt `interrupted`: its owner is provably gone and it never recorded a finish. */
-export function markTaskHistoryAttemptInterrupted(db: Database, id: number): boolean {
-  const result = db
-    .prepare(
-      "UPDATE task_history SET status = 'interrupted' WHERE id = ? AND status = 'active' AND completed_at IS NULL",
-    )
-    .run(id);
+/**
+ * Mark a still-`active` attempt `interrupted`: its owner is provably gone and it never recorded a finish.
+ * `metadata_json` replaces the row's when given: the step the run was at, and why it ended.
+ */
+export function markTaskHistoryAttemptInterrupted(db: Database, id: number, metadataJson?: string): boolean {
+  const result =
+    metadataJson === undefined
+      ? db
+          .prepare(
+            "UPDATE task_history SET status = 'interrupted' WHERE id = ? AND status = 'active' AND completed_at IS NULL",
+          )
+          .run(id)
+      : db
+          .prepare(
+            "UPDATE task_history SET status = 'interrupted', metadata_json = ? WHERE id = ? AND status = 'active' AND completed_at IS NULL",
+          )
+          .run(metadataJson, id);
   return Number(result.changes) === 1;
 }
 
@@ -350,6 +374,8 @@ export function queryTaskHistory(
   db: Database,
   options: {
     taskId?: string;
+    /** Only rows of this bundle: those that recorded it, and those that recorded none (rows written before it was recorded, whose bundle is not known). */
+    bundle?: string;
     since?: string;
     until?: string;
     status?: string;
@@ -363,6 +389,10 @@ export function queryTaskHistory(
   if (options.taskId) {
     conditions.push("task_id = ?");
     params.push(options.taskId);
+  }
+  if (options.bundle) {
+    conditions.push("(json_extract(metadata_json, '$.bundle') = ? OR json_extract(metadata_json, '$.bundle') IS NULL)");
+    params.push(options.bundle);
   }
   if (options.since) {
     conditions.push("started_at >= ?");

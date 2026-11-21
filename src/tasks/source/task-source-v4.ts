@@ -23,6 +23,7 @@
  * different, un-prefixed field path, not the same field path.
  */
 
+import { timeoutMilliseconds } from "../../cli/parse-args";
 import { type ParsedBuiltinCommandAction, parseBuiltinCommandAction } from "../../commands/command/builtin-action";
 import { UsageError } from "../../core/errors";
 import {
@@ -30,7 +31,6 @@ import {
   JSON_SCHEMA_SUBSET_SUPPORTED_KEYWORDS,
   validateJsonSchemaSubset,
 } from "../../core/json-schema";
-import { DURATION_UNITS, parseDuration } from "../../core/time";
 import { warn, warnOnce } from "../../core/warn";
 import {
   applyInputDefaults,
@@ -334,7 +334,7 @@ function parseTimeoutTopLevel(
   if (typeof value === "string" && value.trim() !== value) {
     sourceError(ctx, path, "must not contain surrounding whitespace.");
   }
-  const milliseconds = typeof value === "string" ? parseDuration(value, DURATION_UNITS) : value;
+  const milliseconds = typeof value === "string" ? timeoutMilliseconds(value) : value;
   if (
     milliseconds === null ||
     typeof milliseconds !== "number" ||
@@ -345,7 +345,7 @@ function parseTimeoutTopLevel(
     sourceError(
       ctx,
       path,
-      `must be null, 0 through ${EXECUTION_MAX_TIMEOUT_MS} milliseconds, or a common duration such as 20m.`,
+      `must be null, 0 through ${EXECUTION_MAX_TIMEOUT_MS} milliseconds, or a duration such as 20m or 30s.`,
     );
   }
   return value as string | number;

@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { getParsedInvocation } from "../cli/invocation";
-import { getStringArg, parsePositiveIntFlag, parseTimeoutValue } from "../cli/parse-args";
+import { getExactStringArg, parseNonNegativeIntFlag, parseTimeoutValue } from "../cli/parse-args";
 import { SELECTION_ARGS, selectionFromArgs } from "../cli/selection";
 import { defineJsonCommand, reportChildExit } from "../cli/shared";
 import { loadConfig } from "../core/config/config";
@@ -71,7 +71,7 @@ export const execCommand = defineJsonCommand({
       );
     }
     const command = getParsedInvocation().passthroughArgs();
-    const promptText = getStringArg(args, "prompt");
+    const promptText = getExactStringArg(args, "prompt");
     const promptStdin = args["prompt-stdin"] === true;
     if (promptText !== undefined && promptStdin) {
       throw new UsageError("--prompt-stdin cannot be combined with --prompt.", "INVALID_FLAG_VALUE");
@@ -93,7 +93,7 @@ export const execCommand = defineJsonCommand({
     const injected = resolveInjections().values;
     Object.assign(env, injected);
     const timeoutMs = args.timeout === undefined ? undefined : parseTimeoutValue(args.timeout);
-    const maxRetries = parsePositiveIntFlag(args["max-retries"], "--max-retries") ?? 0;
+    const maxRetries = parseNonNegativeIntFlag(args["max-retries"], "--max-retries") ?? 0;
     if (hasPrompt) {
       const prompt = promptText ?? readPromptStdin();
       const selection = selectionFromArgs(args);
