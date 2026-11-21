@@ -1338,7 +1338,7 @@ async function scanSourceDirs(
         reason,
       });
       warn(
-        `[index] source "${component.id}" was not scanned completely (${reason}); preserving its last-known-good rows.`,
+        `[index] source "${component.id}" was not scanned completely; preserving its last-known-good rows. ${reason}`,
       );
       continue;
     }
