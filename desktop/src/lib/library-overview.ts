@@ -240,8 +240,12 @@ export function clusterPlace(o: Overview, dims: 2 | 3): Float32Array {
   }
   return place;
 }
-/** The assets in one plane: `clusterPlace` there. */
-export const flatPlace = (o: Overview) => clusterPlace(o, 2);
+/** Each asset's place with its depth removed, three numbers per asset: the same points in one plane. */
+export function flatPlace(o: Overview): Float32Array {
+  const place = Float32Array.from(o.place);
+  for (let i = 0; i < o.count; i++) place[i * 3 + 2] = 0;
+  return place;
+}
 
 export function buildOverview(payload: OverviewPayload, now = Date.now()): Overview {
   const n = payload.nodes.ref.length;

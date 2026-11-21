@@ -20,14 +20,7 @@
   import { onDestroy } from "svelte";
   import { api } from "./client";
   import { FAMILIES } from "./graph-model";
-  import {
-    buildOverview,
-    clusterPlace,
-    groupsOf,
-    mindMap,
-    type Overview,
-    type OverviewPayload,
-  } from "./library-overview";
+  import { buildOverview, flatPlace, groupsOf, mindMap, type Overview, type OverviewPayload } from "./library-overview";
   import { searchHref } from "./library-model";
   import MindMap from "./MindMap.svelte";
   import SimilarityMap from "./SimilarityMap.svelte";
@@ -153,7 +146,7 @@
   // ---- The 3D map: every asset with a group by meaning is a point; used so far in full colour, the rest faint ----
   const everyAsset = $derived(o ? o.ref.map((_, i) => i) : []);
   const groups = $derived(o ? groupsOf(o, everyAsset) : []);
-  const place = $derived(o ? clusterPlace(o, flat ? 2 : 3) : new Float32Array(0));
+  const place = $derived(o ? (flat ? flatPlace(o) : o.place) : new Float32Array(0));
   /** A point's size is the events on its asset over the whole period, so it does not change as the replay plays. */
   const size = $derived.by(() => {
     const values = new Float32Array(o?.count ?? 0);

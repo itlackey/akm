@@ -92,6 +92,11 @@
   const LEAST_REACH = 10;
   /** The drawn size of a point, in world units: the lit ones are larger. */
   const SIZE = { faded: 8, lit: 12 };
+  /** How long, in seconds, a point new to the map takes to grow in. */
+  const ARRIVE = 0.45;
+  /** The renderer's clock, in seconds, which the points' shader reads; and when each asset arrived on the map. */
+  const clock = { value: 0 };
+  const arrived = new Map<number, number>();
   /** How far one key press turns the view, in radians, and how much closer or farther it zooms. */
   const TURN = Math.PI / 12;
   const ZOOM = 0.8;
@@ -376,8 +381,14 @@
         // Each point's size is multiplied by its own `grow`, which the stock points shader has no place for.
         // biome-ignore lint/suspicious/noExplicitAny: see above.
         const sized = (material: any) => {
-          material.onBeforeCompile = (shader: { vertexShader: string }) => {
-            shader.vertexShader = `attribute float grow;\n${shader.vertexShader.replace("gl_PointSize = size;", "gl_PointSize = size * grow;")}`;
+          material.onBeforeCompile = (shader: { vertexShader: string; uniforms: Record<string, unknown> }) => {
+            // A point new to the map grows in over `ARRIVE` seconds, a little past its size and back: `born` is when it
+            // arrived, on the clock `clock` holds.
+            shader.uniforms.clock = clock;
+            shader.vertexShader = `attribute float grow;\nattribute float born;\nuniform float clock;\n${shader.vertexShader.replace(
+              "gl_PointSize = size;",
+              `float age = clamp((clock - born) / ${ARRIVE.toFixed(2)}, 0.0, 1.0) - 1.0;\ngl_PointSize = size * grow * (1.0 + 2.70158 * age * age * age + 1.70158 * age * age);`,
+            )}`;
           };
           return material;
         };
@@ -600,6 +611,7 @@
         const at = new THREE.Vector3();
         const loop = () => {
           controls.update();
+          clock.value = performance.now() / 1000;
           renderer.render(scene, camera);
           // Each group's name stays the same size on screen, over its middle. The chosen group and those joined to it
           // are placed first, then the largest; a name that would overlap one already placed, or is behind the
@@ -702,8 +714,21 @@
       for (let d = 0; d < 3; d++) colour[k * 3 + d] = c[d]! * (1 - f) + bg[d]! * f;
     });
     const grow = (list: number[]) => new THREE.BufferAttribute(Float32Array.from(list, growOf), 1);
+    // An asset added to a map that is already drawn (a replay reaching its first use) arrives now; the map's first
+    // points, and every point with reduced motion, are simply there.
+    const moment = performance.now() / 1000;
+    const shown = new Set(order);
+    for (const i of arrived.keys()) if (!shown.has(i)) arrived.delete(i);
+    for (const i of order)
+      if (!arrived.has(i)) arrived.set(i, world.order.length && !prefersReducedMotion.current ? moment : -1e6);
+    const born = (list: number[]) =>
+      new THREE.BufferAttribute(
+        Float32Array.from(list, (i) => arrived.get(i)!),
+        1,
+      );
     const glow = placesOf(shining);
     glow.setAttribute("grow", grow(shining));
+    glow.setAttribute("born", born(shining));
     glow.setAttribute(
       "color",
       new THREE.BufferAttribute(Float32Array.from(shining.flatMap((i) => rgb(colourOf(i)))), 3),
@@ -719,6 +744,7 @@
         1,
       ),
     );
+    geometry.setAttribute("born", born(order));
     geometry.setAttribute("color", new THREE.BufferAttribute(colour, 3));
     world.points.geometry.dispose();
     world.points.geometry = geometry;
@@ -1061,6 +1087,17 @@
     pointer-events: none;
     will-change: transform;
     transition: opacity 0.2s;
+  }
+  /* A name fades in when its group first has something to show. */
+  @media (prefers-reduced-motion: no-preference) {
+    .group-name > :global(*) {
+      animation: name-in 0.45s ease-out;
+    }
+  }
+  @keyframes name-in {
+    from {
+      opacity: 0;
+    }
   }
   .group-name span {
     font-weight: 400;
