@@ -172,7 +172,9 @@ describe("a git bundle checkout with local work", () => {
     const root = await checkoutWithLocalWork();
     const readd = await bundleCli("add", `git+${GIT_URL}`, "--name", BUNDLE);
     const text = `${readd.stdout}${readd.stderr}`;
-    expect(readd.code, text).not.toBe(0);
+    expect(readd.code, text).toBe(78);
+    expect(text).toContain("SOURCE_HAS_LOCAL_WORK");
+    expect(text).toContain("uncommitted.md");
     expect(fs.readFileSync(path.join(root, "knowledge", "uncommitted.md"), "utf8")).toBe("# Uncommitted\n");
     expect(git(["-C", root, "log", "-1", "--format=%s"])).toBe("unpushed work");
   }, 90_000);
