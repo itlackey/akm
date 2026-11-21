@@ -19,8 +19,34 @@ import { type Cleanup, makeSandboxDir, sandboxStashDir, writeSandboxConfig } fro
 
 const CLI = path.resolve(import.meta.dir, "../../src/cli.ts");
 const posix = process.platform === "linux" || process.platform === "darwin";
-// `script` runs a command on a pseudo-terminal; its argument order differs between util-linux and BSD.
-const hasScript = posix && spawnSync("sh", ["-c", "command -v script"]).status === 0;
+const hasPython = posix && spawnSync("python3", ["--version"]).status === 0;
+
+// Runs a program on a new pseudo-terminal, as its controlling terminal, and feeds it this process's stdin;
+// exits with the program's status when the program exits. Not script(1): on macOS Bun gives the
+// child a socket for stdin, and BSD script refuses one.
+const ON_TERMINAL = `
+import os, pty, select, sys
+pid, master = pty.fork()
+if pid == 0:
+    os.execvp(sys.argv[1], sys.argv[1:])
+reading = [0, master]
+while True:
+    done, status = os.waitpid(pid, os.WNOHANG)
+    if done:
+        sys.exit(os.WEXITSTATUS(status) if os.WIFEXITED(status) else 128 + os.WTERMSIG(status))
+    for fd in select.select(reading, [], [], 0.05)[0]:
+        try:
+            data = os.read(fd, 65536)
+        except OSError:
+            data = b""
+        if fd == 0:
+            if data:
+                os.write(master, data)
+            else:
+                reading.remove(0)
+        elif not data:
+            reading.remove(master)
+`;
 
 let cleanups: Cleanup[] = [];
 let work = "";
@@ -179,13 +205,11 @@ describe.skipIf(!posix)("without a controlling terminal", () => {
 
 /** `bun cli.ts <args>` on a pseudo-terminal; `write` feeds the terminal. */
 function akmOnTerminal(args: string[]): { child: ChildProcess; exited: Promise<void> } {
-  return akmOnTerminalCommand(`bun ${CLI} ${args.join(" ")}`);
+  return onTerminal(["bun", CLI, ...args]);
 }
 
-function akmOnTerminalCommand(command: string): { child: ChildProcess; exited: Promise<void> } {
-  const scriptArgs =
-    process.platform === "linux" ? ["-qec", command, "/dev/null"] : ["-q", "/dev/null", "sh", "-c", command];
-  const child = spawn("script", scriptArgs, {
+function onTerminal(argv: string[]): { child: ChildProcess; exited: Promise<void> } {
+  const child = spawn("python3", ["-c", ON_TERMINAL, ...argv], {
     env,
     stdio: ["pipe", "ignore", "ignore"],
   });
@@ -193,8 +217,8 @@ function akmOnTerminalCommand(command: string): { child: ChildProcess; exited: P
   return { child, exited: new Promise<void>((resolve) => child.once("exit", () => resolve())) };
 }
 
-// Skipped only where `script` is missing.
-describe.skipIf(!hasScript)("on a terminal", () => {
+// Skipped only where python3 is missing.
+describe.skipIf(!hasPython)("on a terminal", () => {
   test("the script stays in akm's group and can read /dev/tty", async () => {
     const { child, exited } = akmOnTerminal(["run", "scripts/tty.sh"]);
     expect(await until(() => readPid("bg") !== undefined, 15_000)).toBe(true);
@@ -229,7 +253,7 @@ describe.skipIf(!hasScript)("on a terminal", () => {
     expect(await until(() => mark() === "caught", 5_000)).toBe(true);
     // akm did not die of the Ctrl-C while the script carried on.
     expect(alive(akmPid)).toBe(true);
-    // `script -e` reports the child's exit status as its own.
+    // The terminal driver exits with the script's status.
     expect(await status).toBe(7);
   }, 30_000);
 
@@ -248,7 +272,7 @@ await Promise.all([own, shared]);
 `,
     );
     env.SHARED_PID = path.join(work, "shared-pid");
-    const { exited } = akmOnTerminalCommand(`bun ${program}`);
+    const { exited } = onTerminal(["bun", program]);
     expect(await until(() => readPid("bg") !== undefined && readPid("shared-pid") !== undefined, 15_000)).toBe(true);
     const own = readPid("bg") as number;
     const shared = readPid("shared-pid") as number;
