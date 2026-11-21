@@ -20,8 +20,9 @@ export function makeLauncherDist(): { launcher: string; cleanup: () => void } {
   fs.writeFileSync(
     path.join(sandbox.dir, "cli.js"),
     [
-      "// Runs src/cli.ts the way the built cli.js does: opt in to the startup block.",
-      'process.env.AKM_NODE_ENTRY = "1";',
+      "// Stands in for the built cli.js: src/cli.ts starts when this file is the main module, or when the launcher",
+      "// that imported it has set AKM_NODE_ENTRY.",
+      'if (import.meta.main) process.env.AKM_NODE_ENTRY = "1";',
       `await import(${JSON.stringify(path.join(REPO_ROOT, "src", "cli.ts"))});`,
       "",
     ].join("\n"),

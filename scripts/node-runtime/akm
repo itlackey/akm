@@ -58,12 +58,14 @@ const cannotStart = (error) => {
 };
 const bunEntry = fileURLToPath(new URL("./cli.js", import.meta.url));
 
-if (process.platform === "win32") {
+if (!useBun && !process.versions.bun) {
+  // No Bun: the CLI runs in this process, on Node.
+  await import("./cli-node.mjs");
+} else if (process.platform === "win32") {
   // No process groups or controlling terminal of this kind here: run akm as a child and mirror its end.
   process.env.AKM_LAUNCHER_PID = String(process.pid);
-  const command = useBun ? (process.versions.bun ? process.execPath : "bun") : process.execPath;
-  const entry = useBun ? bunEntry : fileURLToPath(new URL("./cli-node.mjs", import.meta.url));
-  const child = spawn(command, [entry, ...process.argv.slice(2)], { stdio: "inherit", env: process.env });
+  const command = process.versions.bun ? process.execPath : "bun";
+  const child = spawn(command, [bunEntry, ...process.argv.slice(2)], { stdio: "inherit", env: process.env });
   for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) process.once(signal, () => child.kill(signal));
   child.once("error", cannotStart);
   child.once("exit", (code, signal) => {
@@ -77,7 +79,7 @@ if (process.platform === "win32") {
     // Already on Bun: the CLI runs in this process (cli.js gates its startup block on this variable).
     process.env.AKM_NODE_ENTRY = "1";
     await import("./cli.js");
-  } else if (useBun) {
+  } else {
     // Node starting Bun: replace this process with akm, so the terminal, process group, signals and exit status
     // are akm's own.
     const bunPath = bunOnPath();
@@ -86,8 +88,5 @@ if (process.platform === "win32") {
     } catch (error) {
       cannotStart(error);
     }
-  } else {
-    // No Bun: the CLI runs in this process, on Node.
-    await import("./cli-node.mjs");
   }
 }

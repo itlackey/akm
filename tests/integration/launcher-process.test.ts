@@ -223,3 +223,35 @@ describe("on Windows the launcher runs akm as a child and mirrors its end", () =
     }
   }, 15000);
 });
+
+describe("on Windows with no Bun the CLI runs in the launcher's own process", () => {
+  test("the CLI's pid is the launcher's pid and its exit status passes through", async () => {
+    const sandbox = makeSandboxDir("akm-launcher-win32-nobun-");
+    try {
+      const dist = path.join(sandbox.dir, "package", "dist");
+      fs.mkdirSync(dist, { recursive: true });
+      const launcher = path.join(dist, "akm");
+      fs.copyFileSync(path.resolve("scripts/node-runtime/akm"), launcher);
+      const out = path.join(sandbox.dir, "pid.txt");
+      fs.writeFileSync(
+        path.join(dist, "cli-node.mjs"),
+        `import fs from "node:fs"; fs.writeFileSync(${JSON.stringify(out)}, String(process.pid)); process.exit(6);\n`,
+      );
+      const noBun = path.join(sandbox.dir, "empty-path");
+      fs.mkdirSync(noBun);
+      const proc = spawn(
+        realNodeExecutable(),
+        [
+          "--input-type=module",
+          "-e",
+          `Object.defineProperty(process, "platform", { value: "win32" }); await import(${JSON.stringify(`file://${launcher}`)});`,
+        ],
+        { stdio: "ignore", env: { ...process.env, PATH: noBun } },
+      );
+      expect(await exited(proc)).toEqual({ code: 6, signal: null });
+      expect(fs.readFileSync(out, "utf8")).toBe(String(proc.pid));
+    } finally {
+      sandbox.cleanup();
+    }
+  }, 15000);
+});
