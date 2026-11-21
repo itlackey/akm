@@ -202,7 +202,7 @@ test("the 3D library map", { timeout: 150000 }, async (t) => {
       modifiedAt: new Array(N).fill(days(10)),
     },
   };
-  const filters = (page) => page.getByRole("group", { name: "Show on the map" });
+  const filters = (page) => page.locator(".show-menu");
   const side = (page) => page.getByRole("complementary", { name: "Figures" });
   const drawing = (page, name) =>
     page.getByRole("group", { name: "Drawing" }).getByRole("button", { name, exact: true });
@@ -498,7 +498,7 @@ test("the 3D library map", { timeout: 150000 }, async (t) => {
       await expect(replay.locator(".stage-3d .group-name")).toHaveCount(0);
       await seek(1);
       // Choosing the group lists its events so far, each a link to its asset; closing brings the lists back.
-      await replay.locator(".stage-3d .group-name").click({ force: true });
+      await replay.locator(".stage-3d .group-name").press("Enter");
       const chosen = replay.locator(".replay-side");
       await expect(chosen.getByRole("heading", { level: 2 })).toBeVisible();
       await expect(chosen).toContainText("Group by meaning · 5 assets · 2 events so far");
@@ -509,7 +509,7 @@ test("the 3D library map", { timeout: 150000 }, async (t) => {
       await drawing.getByRole("button", { name: "3D" }).click();
       // The key names every mark, and what has no place is counted, not dropped.
       const key = replay.getByRole("list", { name: "Key to the 3D map" });
-      for (const name of ["Used so far", "Not used yet", "Read, just now", "Returned by a search, just now"])
+      for (const name of ["Used so far", "Not used yet", "Ring: touched at the playhead", "Read", "Search result"])
         await expect(key).toContainText(name);
       await expect(replay).toContainText("1 event so far touched assets with no place on this map");
       await expect(replay).toContainText("1 event so far touched assets the index no longer lists");

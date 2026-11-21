@@ -280,7 +280,7 @@ test("visualizations survive late responses, a changed library and a narrow wind
     async () => {
       const { page, errors } = await fresh((page) => withGraph(page));
       await open(page, server, "/library/map");
-      const filters = page.getByRole("group", { name: "Show on the map" });
+      const filters = page.locator(".show-menu");
       const offered = () => filters.locator("label").allTextContents();
       // Contents: the largest tags; a filter per asset type, the unlinked, and what two bundles repeat. None is on.
       await expect(tab(page, "Contents")).toHaveAttribute("aria-selected", "true");
@@ -358,7 +358,7 @@ test("visualizations survive late responses, a changed library and a narrow wind
     async () => {
       const { page, errors } = await fresh((page) => withGraph(page));
       await open(page, server, "/library/map");
-      const filters = page.getByRole("group", { name: "Show on the map" });
+      const filters = page.locator(".show-menu");
       await mapButton(page, "auth (Knowledge): 1").click();
       await expect(mapButton(page, "auth (Knowledge): 1")).toHaveAttribute("aria-pressed", "true");
       await expect(sideHeading(page)).toHaveText("auth");

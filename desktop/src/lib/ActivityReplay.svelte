@@ -278,6 +278,8 @@
     pause();
     seek(start + ((event.clientX - box.left) / box.width) * span);
   }
+  /** The rings in the key, in a word each: a ring marks the asset the event at the playhead touched. */
+  const RING_NAMES = { read: "Read", hit: "Search result", up: "Liked", down: "Disliked" } as const;
   const playheadX = $derived(span ? ((clock - start) / span) * W : W);
 </script>
 
@@ -341,14 +343,16 @@
             >
               {#snippet legend()}
                 <ul class="key" aria-label="Key to the 3D map">
-                  <li><span class="dot"></span>Used so far, in its type's colour</li>
-                  {#if !flat}<li><span class="dot faint"></span>Not used yet, faint</li>{/if}
-                  {#each PULSES as pulse}<li>
-                      <span class="ring" style={`border-color:var(${pulse.token})`}></span>{pulse.label}, just now
-                    </li>{/each}
+                  <li><span class="dot"></span>Used so far</li>
+                  {#if !flat}<li><span class="dot faint"></span>Not used yet</li>{/if}
                   {#each familiesShown as family}<li>
                       <span class="dot" style={`background:var(--map-${family.k + 1})`}></span>{family.label}
                     </li>{/each}
+                  <li class="rings">
+                    Ring: touched at the playhead
+                    {#each PULSES as pulse}<span class="ring" style={`border-color:var(${pulse.token})`}
+                      ></span>{RING_NAMES[pulse.id]}{/each}
+                  </li>
                 </ul>
               {/snippet}
             </SimilarityMap>
@@ -609,6 +613,10 @@
     padding: 6px 10px;
     list-style: none;
     font-size: var(--text-xs);
+  }
+  .key .rings {
+    flex-basis: 100%;
+    color: var(--muted);
   }
   .key li {
     display: flex;

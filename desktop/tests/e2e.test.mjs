@@ -285,7 +285,7 @@ test("built desktop UI: each section's happy path and one refusal", { timeout: 2
       const map = page.locator(".mind-map");
       await expect(map).toBeVisible();
       const figures = page.getByRole("complementary", { name: "Figures" });
-      const filters = page.getByRole("group", { name: "Show on the map" });
+      const filters = page.locator(".show-menu");
       await expect(filters.locator("label", { hasText: /^Knowledge/ })).toBeVisible();
       // Env and secret files are never on the map.
       await expect(map.getByRole("button", { name: /^(env|secrets?)\b/i })).toHaveCount(0);

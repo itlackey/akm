@@ -230,12 +230,7 @@
   });
 </script>
 
-<nav
-  class="activity-tabs"
-  class:tight={view === "Replay"}
-  aria-label="Activity views"
-  data-sveltekit-reset="false"
->
+<nav class="activity-tabs" class:tight={view === "Replay"} aria-label="Activity views" data-sveltekit-reset="false">
   {#each views as tab}<a
       class:active={view === tab.name}
       aria-current={view === tab.name ? "page" : undefined}
