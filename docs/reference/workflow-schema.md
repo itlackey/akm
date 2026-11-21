@@ -649,7 +649,10 @@ before anything is spawned.
   akm gives the pipes a short grace, then stops what is left in the group
   (SIGINT, SIGTERM, SIGKILL) and the unit succeeds with the command's own result
   and the output read. Redirecting the child's output does not keep it alive; a
-  process that must outlive the unit starts its own session.
+  process that must outlive the unit starts its own session and redirects its
+  output (`setsid server >server.log 2>&1 &`). Either alone fails: without its own
+  session it is stopped, and without the redirect the capture fails
+  `exec_capture_incomplete`.
 
   Only **stdout** is fatal here. stderr never contributes to the artifact, so a
   stderr drain that did not finish leaves the unit's actual result — a completed

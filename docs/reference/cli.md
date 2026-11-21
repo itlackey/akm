@@ -90,9 +90,9 @@ built yet prints nothing, unless it is removed in 0.11 with no replacement (the
 Running OpenCode 1 prints the same kind of line (`[deprecated] OpenCode 1 (<bin>
 <version>) is deprecated and is removed in 0.11: install OpenCode 2, or set the
 harness's bin to an OpenCode 2 binary. See STABILITY.md.`), once per process, when an
-agent, command, task or workflow run or model work starts one. It is not printed for
-a scheduled, task or improve run, so `akm doctor`'s `opencode-major` advisory reports
-an OpenCode 1 harness for those.
+agent, command, task or workflow run or model work starts one. `--quiet` silences it, and
+it is not printed for a scheduled run or in an akm that a task, improve or audit started,
+so `akm doctor`'s `opencode-major` advisory reports an OpenCode 1 harness for those.
 
 The deprecated environment variables `AKM_UPGRADE_SKIP_CHECKSUM` (during
 `upgrade`), `AKM_SQLITE_JOURNAL_MODE`, `AKM_VERBOSE` and `AKM_DEBUG=1` print the
@@ -3445,7 +3445,7 @@ application embedding akm, a test runner), the child is still stopped on that si
 the host keeps its handler and decides the exit code. Where akm captures a program's
 output (a task step, a workflow `exec` unit, a harness run), a background process the
 program leaves in its own process group is stopped when the program exits; a process
-that must outlive the run starts its own session (`setsid`).
+that must outlive the run starts its own session and redirects its output (`setsid server >server.log 2>&1 &`); either alone fails.
 
 Flags must apply to the selected executor or its declared inputs. Unsupported
 asset types, fragments, extra positional values and `--` tails (for an agent,
