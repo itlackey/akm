@@ -891,7 +891,7 @@
     inset-block-end: 8px;
     inset-inline-start: 8px;
     z-index: 2;
-    max-inline-size: min(44rem, calc(100% - 16px));
+    max-inline-size: min(44rem, calc(100% - 17rem));
     pointer-events: none;
     background: color-mix(in srgb, var(--surface) 94%, transparent);
     border: 1px solid var(--border);
