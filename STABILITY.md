@@ -800,8 +800,8 @@ not additional public support statuses.
 
 An `env` asset holds a whole `.env` group; a `secret` holds a single sensitive
 value. Env key names are discoverable. Values are never written to stdout, the index, or
-structured output; the safe injection path is `akm exec --env <ref> --
-<command>` (or `akm exec --secret <ref>:<VAR> -- …`). The `env` / `secret`
+structured output; the safe injection path is `akm run --env <ref> scripts/<file>`
+(or `akm run --secret <ref>:<VAR> scripts/<file>`). The `env` / `secret`
 **write** verbs (`env create`, `env remove`, `secret set`, `secret remove`) are Experimental; the
 `list` / `path` / `run` / `export` read-and-inject surface is Stable.
 

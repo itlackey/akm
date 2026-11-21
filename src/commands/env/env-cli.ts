@@ -135,7 +135,7 @@ const envPathCommand = defineJsonCommand({
   meta: {
     name: "path",
     description:
-      "Print the absolute env file path (Docker `_FILE` convention / `--env-file`). To inject values, use `akm exec --env <ref> -- <cmd>` — do NOT `source` the raw file.",
+      "Print the absolute env file path (Docker `_FILE` convention / `--env-file`). To inject values, run a script with `akm run --env <ref> scripts/<file>` — do NOT `source` the raw file.",
   },
   args: {
     ref: { type: "positional", description: "Env ref", required: true },
@@ -149,7 +149,7 @@ const envPathCommand = defineJsonCommand({
     if (args.quiet !== true) {
       process.stderr.write(
         `warning: this is the raw file path. Do NOT \`source\` it (shell substitutions in the file would execute).\n` +
-          `         To inject values run: akm exec --env ${args.ref} -- <command>\n`,
+          `         To inject values run a script: akm run --env ${args.ref} scripts/<file>\n`,
       );
     }
     // F3/B3: this stdout write IS the payload — a bare absolute path for
@@ -232,7 +232,7 @@ async function runEnvInjected(
         if (baseExists) {
           throw new UsageError(
             `'akm env run' injects the whole file; the single-key '<ref>/${maybeKey}' form was removed.\n` +
-              `       For one value use a secret: \`akm exec --secret secrets/${maybeKey}:${maybeKey} -- <command>\`.`,
+              `       For one value use a secret: \`akm run --secret secrets/${maybeKey}:${maybeKey} scripts/<file>\`.`,
             "INVALID_FLAG_VALUE",
           );
         }

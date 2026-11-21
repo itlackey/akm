@@ -175,7 +175,7 @@ export function dangerousEnvKeyDiagnostics(type: string | undefined, relPath: st
     diagnostics.push({
       file: relPath,
       issue: "dangerous-env-key",
-      detail: `Env key \`${key}\` can be used to hijack process execution when injected via \`akm exec --env\`. Ref: ${ref}. Review this file before running \`akm exec --env\` commands against untrusted stashes. (suppress with: ${SUPPRESSION_COMMENT} on previous line)`,
+      detail: `Env key \`${key}\` can be used to hijack process execution when injected with \`--env\`. Ref: ${ref}. Review this file before running \`akm run --env\` against untrusted stashes. (suppress with: ${SUPPRESSION_COMMENT} on previous line)`,
       fixed: false,
     });
   }

@@ -172,7 +172,7 @@ describe("task runner mutation boundary", () => {
       _setWarnSinkForTests(undefined);
     }
     expect(warnings.some((message) => message.includes("env.API_TOKEN looks like a credential"))).toBe(true);
-    expect(warnings.some((message) => message.includes("akm exec --secret"))).toBe(true);
+    expect(warnings.some((message) => message.includes("akm run --secret"))).toBe(true);
     expect(warnings.join("\n")).not.toContain("github_pat_");
   });
 
