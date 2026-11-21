@@ -26,6 +26,8 @@ if (!process.versions.bun) {
 
 process.env.AKM_LAUNCHER_NODE = process.execPath;
 process.env.AKM_LAUNCHER_PATH = fileURLToPath(import.meta.url);
+// An inherited pid is not this akm's launcher; only the Windows path below, which has a launcher process, sets it.
+delete process.env.AKM_LAUNCHER_PID;
 
 const bunProbe = process.versions.bun
   ? { status: 0, stdout: process.versions.bun }
@@ -73,8 +75,6 @@ if (!useBun && !process.versions.bun) {
     else process.exitCode = code ?? 1;
   });
 } else {
-  // There is no launcher process to watch on Linux and macOS, so an inherited pid is not this akm's launcher.
-  delete process.env.AKM_LAUNCHER_PID;
   if (process.versions.bun) {
     // Already on Bun: the CLI runs in this process (cli.js gates its startup block on this variable).
     process.env.AKM_NODE_ENTRY = "1";

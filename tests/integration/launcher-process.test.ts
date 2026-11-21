@@ -255,3 +255,36 @@ describe("on Windows with no Bun the CLI runs in the launcher's own process", ()
     }
   }, 15000);
 });
+
+describe("with no Bun the CLI runs on Node and an inherited AKM_LAUNCHER_PID is dropped", () => {
+  for (const platform of [undefined, "win32"]) {
+    test(`platform ${platform ?? "native"}`, async () => {
+      const sandbox = makeSandboxDir("akm-launcher-nobun-env-");
+      try {
+        const dist = path.join(sandbox.dir, "package", "dist");
+        fs.mkdirSync(dist, { recursive: true });
+        const launcher = path.join(dist, "akm");
+        fs.copyFileSync(path.resolve("scripts/node-runtime/akm"), launcher);
+        const out = path.join(sandbox.dir, "env.json");
+        fs.writeFileSync(
+          path.join(dist, "cli-node.mjs"),
+          `import fs from "node:fs"; fs.writeFileSync(${JSON.stringify(out)}, JSON.stringify({ pid: process.env.AKM_LAUNCHER_PID ?? null }));\n`,
+        );
+        const noBun = path.join(sandbox.dir, "empty-path");
+        fs.mkdirSync(noBun);
+        const setPlatform = platform
+          ? `Object.defineProperty(process, "platform", { value: ${JSON.stringify(platform)} });`
+          : "";
+        const proc = spawn(
+          realNodeExecutable(),
+          ["--input-type=module", "-e", `${setPlatform} await import(${JSON.stringify(`file://${launcher}`)});`],
+          { stdio: "ignore", env: { ...process.env, PATH: noBun, AKM_LAUNCHER_PID: "999999" } },
+        );
+        expect(await exited(proc)).toEqual({ code: 0, signal: null });
+        expect(JSON.parse(fs.readFileSync(out, "utf8"))).toEqual({ pid: null });
+      } finally {
+        sandbox.cleanup();
+      }
+    }, 15000);
+  }
+});
