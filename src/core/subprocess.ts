@@ -699,10 +699,7 @@ export async function runManagedSubprocess(
   // What the leader left behind in its own process group is stopped once the drain has had its grace (see
   // below), so a daemon that holds the pipe cannot keep the run waiting. One that wants to outlive the run
   // starts its own session.
-  let drainStarted!: (drained: Promise<unknown>) => void;
-  const bothDrained = new Promise<unknown>((resolve) => {
-    drainStarted = resolve;
-  });
+  const { promise: bothDrained, resolve: drainStarted } = Promise.withResolvers<unknown>();
   const leftoversStopped = childSettled?.then(async () => {
     if (group !== "own") return;
     let graceTimer: ReturnType<typeof setTimeoutImpl> | undefined;

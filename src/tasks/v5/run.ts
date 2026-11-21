@@ -721,7 +721,8 @@ async function runAgentStep(
     model: option(document, step, "model"),
   });
   const runAgent = context.options.runAgentImpl;
-  let agent: Done["agent"];
+  // The agent fact of each dispatch, in order: the step records the last one.
+  const agents: NonNullable<Done["agent"]>[] = [];
   const dispatch = async (correction?: { text: string }) => {
     const extra = correction ? `\n\n${correction.text}` : "";
     const reply =
@@ -751,7 +752,7 @@ async function runAgentStep(
                 }
               : {},
           );
-    agent = { engine: reply.engine, ...(reply.ok || reply.reason === undefined ? {} : { reason: reply.reason }) };
+    agents.push({ engine: reply.engine, ...(reply.ok || reply.reason === undefined ? {} : { reason: reply.reason }) });
     sink.lines.push(`engine=${reply.engine} ok=${reply.ok} exit_code=${reply.exitCode ?? "null"}`);
     const stdout = scrub(context, reply.stdout) as string;
     const stderr = scrub(context, reply.stderr) as string;
@@ -771,7 +772,10 @@ async function runAgentStep(
     }
     return { ok: true, raw: reply.stdout } as const;
   };
-  const withAgent = (done: Done): Done => (agent ? { ...done, agent } : done);
+  const withAgent = (done: Done): Done => {
+    const agent = agents.at(-1);
+    return agent ? { ...done, agent } : done;
+  };
   if (!step.expect) {
     const reply = await dispatch();
     return withAgent(reply.ok ? { ok: true, value: scrub(context, reply.raw) } : { ok: false, reason: reply.failure });
