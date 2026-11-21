@@ -287,6 +287,7 @@ describe("a workflow that cannot convert", () => {
     );
     expect(file).toMatchObject({ status: "blocked", reason: "version-5-check-failed" });
     expect(file.detail).toContain("--env");
+    expect(file.detail).not.toContain("akm-migrate-v5-");
     expect(file.guidance).toContain("akm doctor explain tasks/bad-input");
     expect(fs.existsSync(taskFile("bad-input"))).toBe(false);
   });

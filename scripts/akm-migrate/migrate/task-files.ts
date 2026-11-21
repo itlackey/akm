@@ -329,7 +329,8 @@ function rootOfTaskFile(roots: readonly TaskFileRoot[], filePath: string): TaskF
  * A folder shaped like the root, for a check: its other folders are the root's own, and its tasks folder holds each
  * task by a link to the file, except the ones in `replaced`, which hold the bytes they are to be given.
  */
-function overlayOf(root: TaskFileRoot, overlay: string, replaced: ReadonlyMap<string, Buffer>): void {
+/** Build the overlay; returns the real tasks directory its `tasks/` stands for. */
+function overlayOf(root: TaskFileRoot, overlay: string, replaced: ReadonlyMap<string, Buffer>): string {
   const tasksDir = root.layout === "akm-task" ? root.root : path.join(root.root, "tasks");
   for (const entry of fs.readdirSync(root.root)) {
     if (root.layout !== "akm-task" && entry !== "tasks") fs.symlinkSync(path.join(root.root, entry), path.join(overlay, entry));
@@ -351,6 +352,7 @@ function overlayOf(root: TaskFileRoot, overlay: string, replaced: ReadonlyMap<st
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, bytes);
   }
+  return tasksDir;
 }
 
 /**
@@ -372,7 +374,10 @@ export async function checkConvertedTaskFiles(
       if (mine.length === 0) continue;
       const overlay = fs.mkdtempSync(path.join(os.tmpdir(), "akm-migrate-v5-"));
       try {
-        overlayOf(root, overlay, new Map(mine.map((file) => [file.filePath, file.after])));
+        const tasksDir = overlayOf(root, overlay, new Map(mine.map((file) => [file.filePath, file.after])));
+        // The check names files in the overlay; report the paths they stand for.
+        const real = (message: string): string =>
+          message.split(path.join(overlay, "tasks")).join(tasksDir).split(overlay).join(root.root);
         for (const file of mine) {
           try {
             await checkTaskV5({
@@ -380,7 +385,7 @@ export async function checkConvertedTaskFiles(
               bundle: { name: root.bundleId, dir: overlay },
             });
           } catch (cause) {
-            failed.set(file.filePath, cause instanceof Error ? cause.message : String(cause));
+            failed.set(file.filePath, real(cause instanceof Error ? cause.message : String(cause)));
           }
         }
       } finally {
