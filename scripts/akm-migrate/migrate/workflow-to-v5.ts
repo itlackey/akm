@@ -65,7 +65,7 @@ const START_AGAIN = (name: string): string => `Then run \`akm migrate apply work
 /** Why a file cannot convert, and what to do about it; one entry per reason. */
 const STEP_GUIDANCE = {
   "unknown-reference": (name: string) =>
-    `Rewrite that step's text in workflows/${name}.md so every \${...} in it names an input or an earlier step; version 5 refuses any other \${...} in a prompt and has no escape. Move shell lines that use shell or environment variables into a script asset under scripts/ and call it with a run: step; a script reads the task's inputs and earlier results from the JSON file named by $AKM_TASK_STATE. ${START_AGAIN(name)}`,
+    `Rewrite that step's text in workflows/${name}.md so every \${...} in it names an input or an earlier step; version 5 refuses any other \${...} in a prompt and has no escape. Move shell lines that use shell or environment variables into a script asset under scripts/, run it from a new step whose unit is an exec unit (it becomes an exec: step), and list that step in the `inputs:` of the steps that use its output; a script reads the task's inputs and earlier results from the JSON file named by $AKM_TASK_STATE, and what it prints is its result. ${START_AGAIN(name)}`,
   "fan-out": (name: string) =>
     `Version 5 has no fan-out. Replace the map step with one step that does the whole list (a prose step that works through every item, or a script under scripts/ that loops and is run with a run: step), or write tasks/${name}.yml by hand with one step per item. ${START_AGAIN(name)}`,
   "child-workflow": (name: string) =>
