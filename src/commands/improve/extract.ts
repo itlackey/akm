@@ -402,9 +402,9 @@ export function deriveExtractCandidateRef(
   if (candidate.type === "memory" || candidate.type === "lesson") {
     const folder = projectName ?? sourceRef.projectHint?.split(/[\\/]/).filter(Boolean).at(-1);
     const scope = folder ? canonicalSegment(folder) : "";
-    return `${candidate.type === "memory" ? "memories" : "lessons"}/${scope ? `${scope}/` : ""}${leaf}`;
+    return conceptIdFromTypeName(candidate.type, `${scope ? `${scope}/` : ""}${leaf}`);
   }
-  return `knowledge/${leaf}`;
+  return conceptIdFromTypeName("knowledge", leaf);
 }
 
 function resolveExtractStandards(stashDir: string): string {

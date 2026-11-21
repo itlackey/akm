@@ -12,7 +12,10 @@ export interface SettingsGit {
   upstream: string | null;
   ahead: number;
   behind: number;
-  dirtyPaths: number;
+  /** The files a commit would take; null when akm could not list the changes. */
+  uncommitted: number | null;
+  /** Why git could not be read: the other fields then say nothing about the repository. */
+  error: string | null;
   lastCommit: { sha: string; subject: string; time: string } | null;
 }
 export interface SettingsBundle {
@@ -22,6 +25,8 @@ export interface SettingsBundle {
   path: string | null;
   source: { kind: string; locator: string };
   writable: boolean;
+  /** The sentence akm's write path would refuse with, or null when a write to this bundle would be accepted. */
+  writeBlocker: string | null;
   enabled: boolean;
   writableSetting?: boolean;
   components: Array<{ name: string; adapter: string; root?: string; writable?: boolean; configured: boolean }>;

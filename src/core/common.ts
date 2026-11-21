@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { ConfigError } from "./errors";
 import { getConfigPath, getDefaultStashDir, getRegistryCacheDir, getRegistryIndexCacheDir } from "./paths";
+import { isTerminal } from "./stdio";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -658,7 +659,7 @@ export function abortableDelay(ms: number, signal?: AbortSignal | null, abortMes
  * when stdin is a TTY (no pipe) or when the piped content is empty.
  */
 export function tryReadStdinText(): string | undefined {
-  if (process.stdin.isTTY) return undefined;
+  if (isTerminal(0)) return undefined;
   const input = fs.readFileSync(0, "utf8");
   return input.length > 0 ? input : undefined;
 }

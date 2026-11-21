@@ -31,6 +31,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 import { ResponseTooLargeError, readChunkWithDeadline } from "./core/common";
+import { stdin } from "./core/stdio";
 
 /** True when running under the Bun runtime. Computed once at module load. */
 const isBun = !!process.versions?.bun;
@@ -94,6 +95,9 @@ export interface SpawnSyncResult {
 export interface SpawnSyncOptions {
   cwd?: string;
   env?: Record<string, string>;
+  stdin?: "inherit" | "pipe" | "ignore";
+  stdout?: "inherit" | "pipe" | "ignore";
+  stderr?: "inherit" | "pipe" | "ignore";
 }
 
 // ── Subprocess ──────────────────────────────────────────────────────────────
@@ -126,7 +130,14 @@ export function spawnSync(cmd: string[], options: SpawnSyncOptions = {}): SpawnS
     };
   }
   const [bin, ...args] = cmd;
-  const r = nodeSpawnSync(bin!, args, { cwd: options.cwd, env: options.env ?? process.env });
+  const r = nodeSpawnSync(bin!, args, {
+    cwd: options.cwd,
+    env: options.env ?? process.env,
+    stdio: [stdioFor(options.stdin), stdioFor(options.stdout), stdioFor(options.stderr)],
+    maxBuffer: Number.POSITIVE_INFINITY,
+  });
+  // Bun.spawnSync throws when the program cannot be started; both builds do.
+  if (r.error) throw r.error;
   const exitCode = r.status;
   return {
     success: r.error === undefined && exitCode === 0,
@@ -219,8 +230,8 @@ function stdinIterator(): AsyncIterable<Uint8Array> {
   if (isBun) {
     return bunGlobal().stdin.stream() as AsyncIterable<Uint8Array>;
   }
-  // process.stdin is an async iterable of Buffer on Node.
-  return process.stdin as AsyncIterable<Uint8Array>;
+  // The stdin stream is an async iterable of Buffer on Node.
+  return stdin() as AsyncIterable<Uint8Array>;
 }
 
 // ── File write ──────────────────────────────────────────────────────────────

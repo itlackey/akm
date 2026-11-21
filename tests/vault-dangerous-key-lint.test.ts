@@ -162,7 +162,7 @@ describe("checkVaultForDangerousKeys", () => {
     expect(findings[0]!.issue).toBe("dangerous-env-key");
     expect(findings[0]!.file).toBe("vaults/.env");
     expect(findings[0]!.detail).toContain("LD_PRELOAD");
-    expect(findings[0]!.detail).toContain("akm env run");
+    expect(findings[0]!.detail).toContain("akm run --env");
     expect(findings[0]!.fixed).toBe(false);
   });
 

@@ -80,10 +80,11 @@ steps:
     expect(read("steps-1")).toBe("{}");
     expect(read("params-1")).toBe('{"site":"example.org"}');
     expect(read("steps-2")).toBe('{"first":"one"}|unset');
-    expect(result.steps?.map((s) => [s.name, s.status, s.summary])).toEqual([
-      ["first", "completed", "one"],
-      ["second", "completed", "two"],
+    expect(result.steps?.map((s) => [s.name, s.status])).toEqual([
+      ["first", "completed"],
+      ["second", "completed"],
     ]);
+    expect(result.steps?.every((s) => !("summary" in s))).toBe(true);
     expect(result.steps?.every((s) => s.result === undefined)).toBe(true);
     const [stored] = readTaskHistory({ id: "plan", limit: 1 });
     expect(stored?.target).toEqual({ kind: "steps" });
@@ -224,6 +225,28 @@ steps:
     expect(calls).toBe(2);
     expect(result.status).toBe("failed");
     expect(result.steps?.[0]?.reason).toContain("reply_check_failed");
+  });
+
+  test("a prompt step whose agent ends with no reply fails, and the next step gets nothing", async () => {
+    write(
+      "silent",
+      `version: 4
+harness: opencode
+steps:
+  - name: ask
+    prompt: Read the file and reply with its value.
+  - name: use
+    run: printf '%s' "$AKM_STEPS" > ${file("seen")}
+`,
+    );
+    const result = await run("silent", { runAgentImpl: async () => reply("") });
+    expect(result.status).toBe("failed");
+    expect(result.detail).toEqual({ reason: "step_failed", error: "ask: parse_error" });
+    expect(result.steps?.map((s) => [s.name, s.status])).toEqual([
+      ["ask", "failed"],
+      ["use", "skipped"],
+    ]);
+    expect(fs.existsSync(file("seen"))).toBe(false);
   });
 
   test("earlier results reach a later prompt step", async () => {

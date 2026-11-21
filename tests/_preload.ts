@@ -53,6 +53,7 @@ import { _setAssetMutationLeaseSyncTimingForTests } from "../src/indexer/index-w
 import { agentRuntime } from "../src/integrations/agent/runtime";
 import { HARNESS_REGISTRY } from "../src/integrations/harnesses";
 import { _setOpencodeVersionProbeForTests } from "../src/integrations/harnesses/opencode/version";
+import { _resetEndpointSupportTrackersForTests } from "../src/llm/client";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
 import { resetAllSeams } from "./_helpers/seams";
 
@@ -358,6 +359,8 @@ function resetSingletons(): void {
   resetConfigCache();
   clearEmbeddingCache();
   resetLocalEmbedder();
+  // A test that warmed an endpoint to reject json_schema must not frame later tests' replies in this process.
+  _resetEndpointSupportTrackersForTests();
   _setAssetMutationLeaseSyncTimingForTests(undefined);
   _setOpencodeVersionProbeForTests(undefined);
   refuseRealOpencode();

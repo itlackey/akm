@@ -66,6 +66,7 @@ import {
   computeTaskWindowRates,
   resolveWindowCompare,
 } from "./health/windows";
+import { collectWorkflowFilesAdvisory } from "./health/workflow-files";
 
 export interface AkmHealthOptions {
   since?: string;
@@ -430,6 +431,9 @@ function gatherAncillaryAdvisories(
   } catch {
     // Non-fatal.
   }
+
+  const workflowFiles = collectWorkflowFilesAdvisory(options.stashDir);
+  if (workflowFiles) advisories.push(workflowFiles);
 
   // #896: report the data dir's total size and its largest top-level
   // subdirectory, so a disk-usage blowup (e.g. unpruned migration snapshot

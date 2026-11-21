@@ -2,12 +2,14 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-/** Pure helpers behind the workspace operations: config redaction and commit origin. */
+/** Pure helpers behind the workspace operations: config redaction and the git reads. */
 
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
 import { redactUrlCredentials } from "../src/core/redaction";
-import { type ChangeOrigin, classifyCommitOrigin } from "../src/workspace/git-read";
+import { readBundleGitStatus, readRecentCommits } from "../src/workspace/git-read";
 import { isSecretEnvName, redactForUi, scrubUrlCredentials } from "../src/workspace/redact";
+import { git, makeGitRepo } from "./_helpers/git";
 
 // biome-ignore lint/suspicious/noExplicitAny: redacted trees are asserted field by field below
 type Json = Record<string, any>;
@@ -64,17 +66,45 @@ describe("URL credentials", () => {
   });
 });
 
-describe("classifyCommitOrigin", () => {
-  test.each<[string, ChangeOrigin]>([
-    ["akm improve auto-sync", "improve-sync"],
-    ["akm improve pre-run sync", "improve-sync"],
-    ["akm accept: consolidate ee66bc2f akm//knowledge/x", "accept"],
-    ["akm proposal drain: 37 accepted (consolidate-pair 30, consolidate 7)", "accept"],
-    ["akm save 2026-10-16 14:54:50", "sync"],
-    ["akm sync: merge origin upstream", "sync"],
-    ["akm remember: vpn note", "remember"],
-    ["retire 16 junk assets", "other"],
-  ])("%s -> %s", (subject, origin) => {
-    expect(classifyCommitOrigin(subject)).toBe(origin);
+describe("a git read that fails is reported, not read as a pristine repository", () => {
+  const made: string[] = [];
+  afterEach(() => {
+    for (const dir of made.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+  });
+  const repo = () => makeGitRepo({ register: (dir) => made.push(dir) });
+
+  test("a .git that git cannot open carries git's own message, in status and in history", async () => {
+    const dir = repo();
+    fs.rmSync(`${dir}/.git`, { recursive: true });
+    fs.mkdirSync(`${dir}/.git`);
+    const status = await readBundleGitStatus(dir);
+    expect(status?.error).toContain("not a git repository");
+    expect((await readRecentCommits(dir, 5))?.error).toContain("not a git repository");
+    expect((await readRecentCommits(dir, 5))?.commits).toEqual([]);
+  });
+
+  test("history lists each commit's own sha, author, date and subject, and judges no origin from the subject", async () => {
+    const dir = repo();
+    fs.writeFileSync(`${dir}/note.md`, "x\n");
+    git(dir, ["add", "note.md"]);
+    git(dir, ["commit", "-q", "-m", "Remember to rotate the key"]);
+    const read = await readRecentCommits(dir, 1);
+    const commit = read?.commits[0];
+    expect(commit).toMatchObject({ subject: "Remember to rotate the key", paths: ["note.md"], pathCount: 1 });
+    expect(commit?.author).toBeTruthy();
+    expect(Date.parse(commit?.time ?? "")).not.toBeNaN();
+    expect(commit).not.toHaveProperty("origin");
+  });
+
+  test("a detached HEAD and a repository with no commits are answers, not failures", async () => {
+    const dir = repo();
+    git(dir, ["checkout", "-q", "--detach"]);
+    expect(await readBundleGitStatus(dir)).toMatchObject({ error: null, branch: null, uncommitted: 0 });
+    const empty = makeGitRepo({ register: (d) => made.push(d) });
+    git(empty, ["update-ref", "-d", "HEAD"]);
+    fs.rmSync(`${empty}/.git/refs/heads`, { recursive: true, force: true });
+    fs.mkdirSync(`${empty}/.git/refs/heads`);
+    expect(await readBundleGitStatus(empty)).toMatchObject({ error: null, lastCommit: null });
+    expect(await readRecentCommits(empty, 5)).toEqual({ commits: [], error: null });
   });
 });

@@ -371,22 +371,9 @@ export function saveGitStash(
   const managedRelativeRoot = managedContentRoot
     ? path.relative(repoDir, managedContentRoot).replaceAll(path.sep, "/")
     : "";
-  const changedPaths = listGitChangedPaths(repoDir);
   const requestedPaths = normalizeExactPaths(
     repoDir,
-    options?.paths ??
-      withoutIgnoredPaths(
-        repoDir,
-        withoutDirectories(
-          repoDir,
-          managedRelativeRoot && managedRelativeRoot !== ".." && !managedRelativeRoot.startsWith("../")
-            ? changedPaths.filter(
-                (changedPath) =>
-                  changedPath === managedRelativeRoot || changedPath.startsWith(`${managedRelativeRoot}/`),
-              )
-            : changedPaths,
-        ),
-      ),
+    options?.paths ?? pathsSyncWouldCommit(repoDir, managedRelativeRoot).paths,
   );
   if (requestedPaths.length === 0) {
     return report(nothingToCommit(repoDir, "nothing to commit", syncWithRemote, remoteEnv));
@@ -587,6 +574,22 @@ function integrateUpstream(repoDir: string, env?: NodeJS.ProcessEnv): { integrat
 }
 
 /** Git lists a nested repository as a bare directory; it is not a file sync can publish, so it is left out. */
+/**
+ * The paths an explicit sync of the bundle at `managedRelativeRoot` of the repository would commit: every changed path inside
+ * the bundle that is not a directory (a nested repository) or ignored. `ok` is false when git could not list the changes, and
+ * the paths are then not to be trusted.
+ */
+export function pathsSyncWouldCommit(repoDir: string, managedRelativeRoot = ""): { paths: string[]; ok: boolean } {
+  const changed = tryListGitChangedPaths(repoDir);
+  const inside =
+    managedRelativeRoot && managedRelativeRoot !== ".." && !managedRelativeRoot.startsWith("../")
+      ? changed.paths.filter(
+          (changedPath) => changedPath === managedRelativeRoot || changedPath.startsWith(`${managedRelativeRoot}/`),
+        )
+      : changed.paths;
+  return { paths: withoutIgnoredPaths(repoDir, withoutDirectories(repoDir, inside)), ok: changed.ok };
+}
+
 function withoutDirectories(repoDir: string, paths: string[]): string[] {
   return paths.filter((candidate) => {
     try {

@@ -17,12 +17,11 @@
  * `vault` type (removed in 0.9.0).
  */
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { getParsedInvocation } from "../../cli/invocation";
 import { getStringArg } from "../../cli/parse-args";
-import { defineGroupCommand, defineJsonCommand, output } from "../../cli/shared";
+import { defineGroupCommand, defineJsonCommand, output, reportChildExit } from "../../cli/shared";
 import { writeFileAtomic } from "../../core/common";
 import {
   listEnvsRecursive,
@@ -32,10 +31,11 @@ import {
   sensitiveMarkerPath,
   withEnvSecretWrite,
 } from "../../core/env-secret-ref";
-import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
-import { warn } from "../../core/warn";
+import { NotFoundError, UsageError } from "../../core/errors";
+import { stderr, stdout } from "../../core/stdio";
 import { readStdin } from "../../runtime";
 import { buildChildEnv } from "./child-env";
+import { runProgram } from "./injection";
 
 const envListCommand = defineJsonCommand({
   meta: { name: "list", description: "List all env files across all bundles with their key names (no values)" },
@@ -49,7 +49,7 @@ const envCreateCommand = defineJsonCommand({
   meta: {
     name: "create",
     description:
-      "Create an env file (empty by default; seed an existing `.env` with --from-file or --from-stdin). No-op if it already exists and no source is given. Quote values that contain `#`, or everything from `#` on is dropped.",
+      "Create an env file (empty by default; seed an existing `.env` with --from-file or --from-stdin). No-op if it already exists and no source is given.",
   },
   args: {
     name: {
@@ -74,7 +74,7 @@ const envCreateCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
-    const { createEnv, writeEnv, keysWithUnquotedHash } = await import("./env.js");
+    const { createEnv, writeEnv } = await import("./env.js");
     // `create` always targets env/, never the frozen vaults/ copy. `--path` is
     // the subdirectory; `--bundle` selects the writable destination source.
     const { name, absPath, target, ref } = resolveEnvWriteTarget(args.name, args.bundle, {
@@ -115,11 +115,6 @@ const envCreateCommand = defineJsonCommand({
     withEnvSecretWrite(target, { type: "env", name }, "Update", written, () => {
       if (content !== undefined) {
         writeEnv(absPath, content);
-        for (const key of keysWithUnquotedHash(content)) {
-          warn(
-            `${key}: the unquoted value contains "#", so everything from "#" on is dropped. Quote the value to keep it.`,
-          );
-        }
       } else createEnv(absPath);
       if (args.sensitive) {
         if (!fs.existsSync(markerPath)) {
@@ -135,7 +130,7 @@ const envPathCommand = defineJsonCommand({
   meta: {
     name: "path",
     description:
-      "Print the absolute env file path (Docker `_FILE` convention / `--env-file`). To inject values, use `akm env run <ref> -- <cmd>` — do NOT `source` the raw file.",
+      "Print the absolute env file path (Docker `_FILE` convention / `--env-file`). To inject values, run a script with `akm run --env <ref> scripts/<file>` — do NOT `source` the raw file.",
   },
   args: {
     ref: { type: "positional", description: "Env ref", required: true },
@@ -147,9 +142,9 @@ const envPathCommand = defineJsonCommand({
     // Warning goes to stderr (never contaminates the path on stdout) and is
     // suppressed with --quiet for the legitimate `_FILE` / `--env-file` use.
     if (args.quiet !== true) {
-      process.stderr.write(
+      stderr().write(
         `warning: this is the raw file path. Do NOT \`source\` it (shell substitutions in the file would execute).\n` +
-          `         To inject values run: akm env run ${args.ref} -- <command>\n`,
+          `         To inject values run a script: akm run --env ${args.ref} scripts/<file>\n`,
       );
     }
     // F3/B3: this stdout write IS the payload — a bare absolute path for
@@ -168,7 +163,7 @@ const envPathCommand = defineJsonCommand({
     // fix: it keeps this byte-identical to history and makes the
     // already-broken combination (`--format` + this command) loud instead
     // of silent, per STABILITY.md's promise for exempt commands.
-    process.stdout.write(`${absPath}\n`);
+    stdout().write(`${absPath}\n`);
   },
 });
 
@@ -176,7 +171,7 @@ const envExportCommand = defineJsonCommand({
   meta: {
     name: "export",
     description:
-      "Write safe `export KEY='value'` lines to a file (mode 0600) for `source`-ing — requires --out <path>. Values are re-serialised single-quoted so a raw `.env` cannot execute on load, and are NEVER printed to stdout. To use values directly, prefer `akm env run <ref> -- <command>`.",
+      "Write safe `export KEY='value'` lines to a file (mode 0600) for `source`-ing — requires --out <path>. Values are re-serialised single-quoted so a raw `.env` cannot execute on load, and are NEVER printed to stdout. To use values directly, put the command in a script asset and run it with `akm run --env <ref> scripts/<file>`.",
   },
   args: {
     ref: { type: "positional", description: "Env ref", required: true },
@@ -187,8 +182,8 @@ const envExportCommand = defineJsonCommand({
     if (!outPath) {
       throw new UsageError(
         "`akm env export` writes to a file — pass --out <path>.\n" +
-          "       To use values directly, run `akm env run <ref> -- <command>` (or `-- $SHELL` for an interactive\n" +
-          "       session). export never prints values to stdout, to avoid leaking them into a captured context.",
+          "       To use values directly, put the command in a script asset and run it with\n" +
+          "       `akm run --env <ref> scripts/<file>`. export never prints values to stdout, to avoid leaking them into a captured context.",
         "MISSING_REQUIRED_ARGUMENT",
       );
     }
@@ -232,7 +227,7 @@ async function runEnvInjected(
         if (baseExists) {
           throw new UsageError(
             `'akm env run' injects the whole file; the single-key '<ref>/${maybeKey}' form was removed.\n` +
-              `       For one value use a secret: \`akm secret run secrets/${maybeKey} ${maybeKey} -- <command>\`.`,
+              `       For one value use a secret: \`akm run --secret secrets/${maybeKey}:${maybeKey} scripts/<file>\`.`,
             "INVALID_FLAG_VALUE",
           );
         }
@@ -258,31 +253,7 @@ async function runEnvInjected(
     mergedEnv[envKey] = envValue;
   }
 
-  const result = spawnSync(command[0] as string, command.slice(1), {
-    stdio: "inherit",
-    env: mergedEnv,
-  });
-  if (result.error) {
-    // Classify spawn failures (#483). Raw ErrnoException leaks a bare
-    // "spawn ENOENT" with no hint — wrap it so consumers get a usable
-    // code + hint in the standard JSON envelope.
-    const err = result.error as NodeJS.ErrnoException;
-    if (err.code === "ENOENT") {
-      throw new NotFoundError(
-        `Command not found: ${command[0]}`,
-        "FILE_NOT_FOUND",
-        `Install '${command[0]}' or add its directory to PATH before invoking 'akm env run'.`,
-      );
-    }
-    if (err.code === "EACCES") {
-      throw new ConfigError(
-        `Command not executable: ${command[0]}`,
-        "STASH_DIR_UNREADABLE",
-        `Add execute permission ('chmod +x ${command[0]}') or invoke via an interpreter.`,
-      );
-    }
-    throw err;
-  }
+  const result = await runProgram({ argv: command, env: mergedEnv, capture: false });
   // R-067: was `process.exit(result.status ?? 0)`, which terminates the
   // process synchronously and skips the `finally { disposeLlmUsageSink(); }`
   // block in src/cli.ts's `runCommand` — even
@@ -290,7 +261,7 @@ async function runEnvInjected(
   // `process.exitCode` and returning lets cleanup run while still exiting
   // with the child's exact status once the event loop drains, matching the
   // pattern `emitJsonError` (src/cli/shared.ts) already established.
-  process.exitCode = result.status ?? 0;
+  reportChildExit(result.exitCode ?? 0);
   return;
 }
 
@@ -309,7 +280,7 @@ const envRunCommand = defineJsonCommand({
     name: "run",
     description:
       // biome-ignore lint/suspicious/noTemplateCurlyInString: literal `${ref}` token syntax documented for users, not interpolation
-      "Run a command with the env file injected into its environment: `akm env run <ref> -- <command>`. Use `-- $SHELL` for an interactive session. Restrict which variables are injected with --only / --except. Values may embed `${ref}` tokens, replaced at run time: a `${secrets/NAME}` (or `${bundle//secrets/NAME}`) token with the secret's value, any other asset ref with its absolute path. Pass --clean to start the child with a minimal inherited environment instead of the full parent environment.",
+      "Deprecated; put the command in a script asset under scripts/, run with `akm run --env <ref> scripts/<file>`; removed in 0.11. Run a command with the env file injected into its environment: `akm env run <ref> -- <command>`. Use `-- $SHELL` for an interactive session. Restrict which variables are injected with --only / --except. Values may embed `${ref}` tokens, replaced at run time: a `${secrets/NAME}` (or `${bundle//secrets/NAME}`) token with the secret's value, any other asset ref with its absolute path. Pass --clean to start the child with a minimal inherited environment instead of the full parent environment.",
   },
   args: {
     target: { type: "positional", description: "Env ref", required: true },
@@ -363,7 +334,7 @@ const envRemoveCommand = defineJsonCommand({
       yes: args.yes === true,
     });
     if (!confirmed) {
-      process.stderr.write("Aborted.\n");
+      stderr().write("Aborted.\n");
       return;
     }
     if (!fs.existsSync(absPath)) {
@@ -386,8 +357,7 @@ export const envCommand = defineGroupCommand({
     name: "env",
     description:
       "Manage `.env` files — configuration values an app loads together (URLs, flags, and any credentials it needs).\n\n" +
-      "Values may or may not be sensitive; akm protects them all the same way — key names are visible, values never appear in structured output. For a single sensitive value used on its own (an auth token, key, or cert), use `akm secret`.\n\n" +
-      "Quote values that contain `#`, or everything from `#` on is dropped.",
+      "Values may or may not be sensitive; akm protects them all the same way — key names are visible, values never appear in structured output. For a single sensitive value used on its own (an auth token, key, or cert), use `akm secret`.",
   },
   subCommands: {
     list: envListCommand,

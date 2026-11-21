@@ -16,7 +16,7 @@ beforeEach(() => {
   storage = withIsolatedAkmStorage();
   writeSandboxConfig({
     semanticSearchMode: "off",
-    harnesses: { audit: { platform: "aider", bin: "/bin/true" } },
+    harnesses: { audit: { platform: "aider", bin: "/bin/echo" } },
   });
   fs.writeFileSync(
     path.join(storage.stashDir, "knowledge", "deploy.md"),

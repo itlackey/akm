@@ -535,7 +535,7 @@ function resolveImproveRunSetup(options: AkmImproveOptions) {
     scope,
     reflectFn: options.reflectFn ?? akmReflect,
     distillFn: options.distillFn ?? akmDistill,
-    reindexFn: options.reindexFn ?? ((indexOptions) => buildIndex(indexOptions, "try")),
+    reindexFn: options.reindexFn ?? ((indexOptions) => buildIndex(indexOptions)),
     drainProposalsFn: options.drainProposalsFn ?? drainProposals,
     collectEligibleRefsImpl:
       options.collectEligibleRefsFn ?? (options.dryRun ? collectEligibleRefsReadOnly : collectEligibleRefs),

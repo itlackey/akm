@@ -4,38 +4,47 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { classifyAkmFile } from "../../core/adapter/adapters/akm-adapter";
 import {
-  factDiagnostics,
+  derivedSiblingPath,
   MAX_SKILL_GROUP_DEPTH,
   matchWorkflowPlaceholder,
-  memoryOrphanStubApplies,
-  nameOrTypeDiagnostics,
-  ORPHANED_STUB_DETAIL,
-  taskDiagnostics,
-  workflowFrontendDiagnostics,
+  perTypeChecks,
+  perTypeFrontend,
 } from "../../core/adapter/adapters/akm-lint";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { adapterForId } from "../../core/adapter/registry";
 import type { Diagnostic } from "../../core/adapter/types";
 import { createValidateContext } from "../../core/adapter/validate-context";
-import { refForFile, stashDirFor, typeForStashDir } from "../../core/asset/asset-placement";
+import {
+  documentFormatForStashDir,
+  documentStashDirFor,
+  documentStashDirs,
+  documentTypes,
+  refForFile,
+  stashDirFor,
+  typeForStashDir,
+} from "../../core/asset/asset-placement";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { conceptIdForStashFile, displayRefForConceptId } from "../../core/asset/resolve-ref";
-import { stalePathRoots } from "../../core/asset/stale-path";
 import { deriveBundleIds } from "../../core/bundle-id";
 import { compareCodePoints, isAkmRegistryCachePath, resolveStashDir, safeRealpath, samePath } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { loadConfig, primaryBundlePath } from "../../core/config/config";
 import { bundleKeyForContentRoot } from "../../core/config/config-sources";
+import { defaultExcludedTypes } from "../../core/config/schema/search";
 import { UsageError } from "../../core/errors";
 import type { FileChange } from "../../core/file-change";
 import { warn } from "../../core/warn";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
+import { walkStashFlat } from "../../indexer/walk/walker";
 import { TASK_EXTENSION, TASK_NEAR_MISS_EXTENSION, taskExtensionDetail } from "../../tasks/source-v3";
 import { resolveWorkflowSourceDomains } from "../../workflows/source-files";
 import { runBaseChecks } from "./base-linter";
 import { bundleLintSkip } from "./bundle-skip";
 import { checkEnvForDangerousKeys } from "./env-key-rules";
+import { type MovedRefs, type ReadMoves, readRecordedMoves } from "./moved-refs";
+import { lintScope } from "./scope";
 import { trackedSecretIssues } from "./tracked-secrets";
 import { isAdvisoryLintIssue, LINT_RULES, type LintContext, type LintIssue, type LintIssueType } from "./types";
 
@@ -75,6 +84,11 @@ export interface AkmLintOptions {
    * flag's rationale in `commands/agent/contribute-cli.ts`.
    */
   pruneDanglingEdges?: boolean;
+  /**
+   * Rewrite the links to refs the index recorded as moved, and nothing else (`fix` rewrites them too). Not a command
+   * flag: the workspace's "update links" is this.
+   */
+  fixMovedRefs?: boolean;
   dir?: string;
   config?: AkmConfig;
   typeFilter?: string;
@@ -82,21 +96,12 @@ export interface AkmLintOptions {
   rule?: string;
   /** Lint this one file instead of a whole bundle (`akm lint <file>`). */
   file?: string;
+  /**
+   * How the recorded moves are read, asked only when a ref did not resolve. A caller that holds its own connection to
+   * state.db (the improve dry run's snapshot) passes it; otherwise they are read through the ordinary read-only one.
+   */
+  readMoves?: ReadMoves;
 }
-
-// ── Constants ─────────────────────────────────────────────────────────────────
-
-const STASH_SUBDIRS = [
-  "agents",
-  "commands",
-  "memories",
-  "skills",
-  "workflows",
-  "lessons",
-  "tasks",
-  "knowledge",
-  "facts",
-] as const;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -129,40 +134,21 @@ function isNearMissTaskFileName(fileName: string): boolean {
   return fileName.toLowerCase().endsWith(TASK_NEAR_MISS_EXTENSION);
 }
 
-function collectMarkdownFiles(dir: string, caseInsensitive = false): string[] {
-  if (!fs.existsSync(dir)) return [];
-  const results: string[] = [];
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (entry.name === ".git" || entry.isSymbolicLink()) continue;
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      results.push(...collectMarkdownFiles(full, caseInsensitive));
-    } else if (entry.isFile() && (caseInsensitive ? entry.name.toLowerCase() : entry.name).endsWith(".md")) {
-      results.push(full);
-    }
+/**
+ * The Markdown assets of the bundle at `root` by the stash folder of their type: the files are the indexer's walk and
+ * each file's type is the akm adapter's classification, so lint reads what the index holds, wherever a file sits.
+ * Nothing under `env/` or `secrets/` is classified, because classifying a Markdown file reads it.
+ */
+function markdownAssetsByType(root: string): Map<string, string[]> {
+  const byDir = new Map<string, string[]>();
+  for (const file of walkStashFlat(root)) {
+    if (file.ext !== ".md" || file.ancestorDirs.some((dir) => dir === "env" || dir === "secrets")) continue;
+    const type = classifyAkmFile(root, file)?.match.type;
+    const dir = type === undefined ? undefined : documentStashDirFor(type);
+    if (dir === undefined || documentFormatForStashDir(dir) !== "markdown") continue;
+    byDir.set(dir, [...(byDir.get(dir) ?? []), file.absPath]);
   }
-  return results;
-}
-
-/** Workflow sources: Markdown only. */
-function collectWorkflowFiles(dir: string): string[] {
-  if (!fs.existsSync(dir)) return [];
-  const results: string[] = [];
-  for (const entry of fs
-    .readdirSync(dir, { withFileTypes: true })
-    .sort((left, right) => compareCodePoints(left.name, right.name))) {
-    if (entry.name === ".git") continue;
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (isAkmRegistryCachePath(full)) continue;
-      results.push(...collectWorkflowFiles(full));
-      continue;
-    }
-    if (!entry.isFile() && !entry.isSymbolicLink()) continue;
-    const extension = path.extname(entry.name).toLowerCase();
-    if (extension === ".md") results.push(full);
-  }
-  return results.sort(compareCodePoints);
+  return byDir;
 }
 
 interface WorkflowLintOwnership {
@@ -204,7 +190,7 @@ function resolveWorkflowLintOwnership(stashRoot: string, files: readonly string[
 // `lintOkfBundle` re-implementation this change deletes) and silently route
 // every OTHER non-akm bundle (llm-wiki, dotenv, claude, opencode,
 // agent-skills, website-snapshot, generic-files, akm-task, akm-workflow)
-// through the AKM-shaped STASH_SUBDIRS sweep — the wrong linter for the wrong
+// through the AKM-shaped akm sweep — the wrong linter for the wrong
 // format, and the reason those adapters' own `validate()` checks (OKF's
 // `missing-ref`; llm-wiki's `uncited-raw`/`missing-description`/`broken-xref`/
 // `broken-source`) were unreachable dead code. Every bundle is now linted by
@@ -335,7 +321,12 @@ async function lintViaAdapter(
   const sourceIndex = sources.findIndex((s) => samePath(s.path, stashRoot));
   const componentId = sourceIndex >= 0 ? (ids[sourceIndex] as string) : stashRoot;
 
-  const ctx = createValidateContext({ root: stashRoot, extraRoots: extraStashRoots });
+  const ctx = createValidateContext({
+    root: stashRoot,
+    sources,
+    config: cfg,
+    readMoves: options.readMoves ?? readRecordedMoves,
+  });
   const diagnostics = await adapter.validate(
     { id: componentId, adapter: adapterId, root: stashRoot, writable: true },
     changes,
@@ -350,7 +341,7 @@ async function lintViaAdapter(
   const warnings = mapped.filter(isAdvisoryLintIssue);
   const flagged = mapped.filter((issue) => !isAdvisoryLintIssue(issue));
   // The cross-bundle env dangerous-key sweep (see `runEnvDangerousKeyPass`'s
-  // doc comment) ran for every non-akm adapter via the STASH_SUBDIRS
+  // doc comment) ran for every non-akm adapter via the akm sweep
   // fallthrough this dispatch replaces — EXCEPT `okf`, which the old code
   // special-cased out before ever reaching that pass. Preserve both halves of
   // that history exactly: skip only for `okf`. Some adapters (`dotenv`) ALSO
@@ -397,7 +388,7 @@ function collectEnvFiles(dir: string): string[] {
  * there per the CRITICAL akm-path constraint, and reused here for the
  * non-akm dispatch path so a non-akm PRIMARY bundle keeps the exact
  * cross-bundle coverage it already had — the pass previously reached every
- * non-akm adapter's bundle via the accidental STASH_SUBDIRS fallthrough this
+ * non-akm adapter's bundle via the accidental akm-sweep fallthrough this
  * change replaces with real dispatch).
  */
 function runEnvDangerousKeyPass(
@@ -510,64 +501,23 @@ function containsSkillManifest(dir: string, depth: number): boolean {
     );
 }
 
-/** MemoryLinter's `orphaned-stub` check WITH its `--fix` delete (memory-linter.ts:19-65). */
-function appendMemoryStubIssue(ctx: LintContext, issues: LintIssue[]): void {
-  if (ctx.lintSkip?.includes("orphaned-stub") || !memoryOrphanStubApplies(ctx.data, ctx.body)) return;
-  const derivedPath = `${ctx.filePath.replace(/\.md$/i, "")}.derived.md`;
-  if (fs.existsSync(derivedPath)) return;
-  if (ctx.fix) {
-    try {
-      fs.unlinkSync(ctx.filePath);
-      issues.push({ file: ctx.relPath, issue: "orphaned-stub", detail: "deleted orphaned stub", fixed: true });
-    } catch (e) {
-      issues.push({
-        file: ctx.relPath,
-        issue: "orphaned-stub",
-        detail: `could not delete: ${e instanceof Error ? e.message : String(e)}`,
-        fixed: "failed",
-      });
-    }
-    return;
+/** Under `--fix`, a stub the per-type checks found is deleted; the finding then says so, or says why not. */
+function deleteStubWhenFixing(ctx: LintContext, found: Diagnostic): LintIssue {
+  const issue = found as LintIssue;
+  if (!ctx.fix || (issue.issue !== "orphaned-stub" && issue.issue !== "placeholder-stub")) return issue;
+  try {
+    fs.unlinkSync(ctx.filePath);
+    return {
+      ...issue,
+      detail:
+        issue.issue === "orphaned-stub"
+          ? "deleted orphaned stub"
+          : `deleted: found "${matchWorkflowPlaceholder(ctx.body)}"`,
+      fixed: true,
+    };
+  } catch (e) {
+    return { ...issue, detail: `could not delete: ${e instanceof Error ? e.message : String(e)}`, fixed: "failed" };
   }
-  issues.push({ file: ctx.relPath, issue: "orphaned-stub", detail: ORPHANED_STUB_DETAIL, fixed: false });
-}
-
-/**
- * WorkflowLinter's `placeholder-stub` check WITH its `--fix` delete
- * (workflow-linter.ts:22-79). Its sibling `invalid-workflow-structure` check is
- * deliberately NOT here: parse+compile is a single pass shared with the
- * advisory channel, so {@link lintAkmSweep} runs it once per file and routes
- * both halves.
- */
-function appendWorkflowStubIssue(ctx: LintContext, issues: LintIssue[]): void {
-  if (ctx.lintSkip?.includes("placeholder-stub")) return;
-  const placeholder = matchWorkflowPlaceholder(ctx.body);
-  if (!placeholder) return;
-  if (ctx.fix) {
-    try {
-      fs.unlinkSync(ctx.filePath);
-      issues.push({
-        file: ctx.relPath,
-        issue: "placeholder-stub",
-        detail: `deleted: found "${placeholder}"`,
-        fixed: true,
-      });
-    } catch (e) {
-      issues.push({
-        file: ctx.relPath,
-        issue: "placeholder-stub",
-        detail: `could not delete: ${e instanceof Error ? e.message : String(e)}`,
-        fixed: "failed",
-      });
-    }
-    return;
-  }
-  issues.push({
-    file: ctx.relPath,
-    issue: "placeholder-stub",
-    detail: `placeholder text: "${placeholder}"`,
-    fixed: false,
-  });
 }
 
 /**
@@ -582,28 +532,18 @@ function appendWorkflowStubIssue(ctx: LintContext, issues: LintIssue[]): void {
  */
 export function lintAssetFile(ctx: LintContext, subdir: string): LintIssue[] {
   const issues = runBaseChecks(ctx);
-  switch (subdir) {
-    case "agents":
-      issues.push(...(nameOrTypeDiagnostics(ctx.relPath, ctx.data, ctx.frontmatter, ["agent"]) as LintIssue[]));
-      break;
-    case "commands":
-      issues.push(...(nameOrTypeDiagnostics(ctx.relPath, ctx.data, ctx.frontmatter, ["command"]) as LintIssue[]));
-      break;
-    case "facts":
-      issues.push(...(factDiagnostics(ctx.relPath, ctx.data) as LintIssue[]));
-      break;
-    case "tasks":
-      issues.push(...(taskDiagnostics(ctx.relPath, ctx.raw) as LintIssue[]));
-      break;
-    case "memories":
-      appendMemoryStubIssue(ctx, issues);
-      break;
-    case "workflows":
-      appendWorkflowStubIssue(ctx, issues);
-      break;
-    // knowledge / lessons / skills: base checks only (skill directory-level
-    // `missing-skill-md` runs separately, per-subdir, in the sweep loop).
-  }
+  const found = perTypeChecks({
+    type: typeForStashDir(subdir),
+    relPath: ctx.relPath,
+    raw: ctx.raw,
+    data: ctx.data,
+    frontmatter: ctx.frontmatter,
+    body: ctx.body,
+    ext: path.extname(ctx.relPath).toLowerCase(),
+    rules: { relPath: ctx.relPath, llmWiki: ctx.llmWiki, skip: ctx.lintSkip },
+    derivedSiblingExists: fs.existsSync(derivedSiblingPath(ctx.filePath)),
+  });
+  issues.push(...found.map((finding) => deleteStubWhenFixing(ctx, finding)));
   return issues;
 }
 
@@ -611,6 +551,11 @@ interface SweepScope {
   stashRoot: string;
   extraStashRoots: string[];
   fix: boolean;
+  fixMovedRefs: boolean;
+  moves: MovedRefs;
+  bundleRoots: ReadonlyMap<string, string>;
+  /** Whether a bundle-relative file sits inside an LLM Wiki of the bundle. */
+  inLlmWiki: (relPath: string) => boolean;
   pruneDanglingEdges: boolean;
   /** Rules to skip for this run, on top of the bundle's `lint.skip`. */
   lintSkip?: string[];
@@ -627,21 +572,41 @@ interface SweepSinks {
 }
 
 /** Lint one asset file of `subdir` and file its findings into `sinks` (the sweep loop body, shared with {@link lintFile}). */
-function lintSweepFile(
-  filePath: string,
-  relPath: string,
-  subdir: string,
-  scope: SweepScope,
-  { fixed, flagged, warnings }: SweepSinks,
-): void {
-  const { stashRoot, extraStashRoots, fix, pruneDanglingEdges, stalePathRoots } = scope;
-  const lintSkip = [...(scope.lintSkip ?? []), ...(scope.bundleSkip?.(relPath) ?? [])];
+function lintSweepFile(filePath: string, relPath: string, subdir: string, scope: SweepScope, sinks: SweepSinks): void {
   let raw: string;
   try {
     raw = fs.readFileSync(filePath, "utf8");
   } catch {
     return;
   }
+  lintDocument(raw, filePath, relPath, subdir, scope, sinks);
+}
+
+/**
+ * The checks of one asset's text, as the sweep runs them on a file: the file's own rules, its type's rules and the
+ * workflow frontend. {@link lintSweepFile} reads the file and calls this; {@link lintDocumentText} calls it for text not
+ * yet saved, so what a save is checked against is what a sweep would then report.
+ */
+function lintDocument(
+  raw: string,
+  filePath: string,
+  relPath: string,
+  subdir: string,
+  scope: SweepScope,
+  { fixed, flagged, warnings }: SweepSinks,
+): void {
+  const {
+    stashRoot,
+    extraStashRoots,
+    fix,
+    fixMovedRefs,
+    moves,
+    bundleRoots,
+    inLlmWiki,
+    pruneDanglingEdges,
+    stalePathRoots,
+  } = scope;
+  const lintSkip = [...(scope.lintSkip ?? []), ...(scope.bundleSkip?.(relPath) ?? [])];
 
   let data: Record<string, unknown>;
   let body: string;
@@ -688,6 +653,10 @@ function lintSweepFile(
           frontmatter,
           bodyStartLine,
           fix,
+          fixMovedRefs,
+          moves,
+          bundleRoots,
+          llmWiki: inLlmWiki(relPath),
           pruneDanglingEdges,
           stashRoot,
           stalePathRoots,
@@ -737,14 +706,15 @@ function lintSweepFile(
   // `--fail-on-flagged`.
   // The CLI passes the absolute filePath to the shared source-IR frontend,
   // whereas the adapter passes the change relPath.
-  if (subdir === "workflows") {
-    const frontend = workflowFrontendDiagnostics(relPath, raw, filePath);
-    for (const finding of [...frontend.errors, ...frontend.warnings]) {
-      if (isAdvisoryLintIssue(finding)) {
-        warnings.push(finding);
-      } else {
-        flagged.push(finding);
-      }
+  const frontend = perTypeFrontend(
+    { type: typeForStashDir(subdir), ext: path.extname(relPath).toLowerCase(), relPath, raw },
+    filePath,
+  );
+  for (const finding of [...frontend.errors, ...frontend.warnings]) {
+    if (isAdvisoryLintIssue(finding)) {
+      warnings.push(finding);
+    } else {
+      flagged.push(finding);
     }
   }
 }
@@ -752,7 +722,7 @@ function lintSweepFile(
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 /**
- * The `akm`-adapter sweep: STASH_SUBDIRS walk + per-file `lintAssetFile` +
+ * The `akm`-adapter sweep: document-folder walk + per-file `lintAssetFile` +
  * the env dangerous-key pass. UNTOUCHED by the adapter-dispatch wiring above
  * (CRITICAL CONSTRAINT — the overwhelming majority of real bundles use `akm`,
  * and its findings / `--fix` behavior / exact `LintIssueType` codes are
@@ -770,27 +740,25 @@ function lintAkmSweep(
   const fix = options.fix === true;
   // #884: the dangling-edge repair writes too, so it clears the same
   // read-only gate `--fix` does.
-  if (fix || options.pruneDanglingEdges === true) assertFixTargetWritable(stashRoot, sources);
+  if (fix || options.pruneDanglingEdges === true || options.fixMovedRefs === true)
+    assertFixTargetWritable(stashRoot, sources);
   const fixed: LintIssue[] = [];
   const flagged: LintIssue[] = [];
   const warnings: LintIssue[] = [];
 
-  const bundleSkip = bundleLintSkip(cfg, stashRoot);
-  const roots = stalePathRoots(cfg, stashRoot);
-  const dirsToScan = options.typeFilter ? STASH_SUBDIRS.filter((d) => d === options.typeFilter) : STASH_SUBDIRS;
+  const scope = lintScope(stashRoot, cfg, sources, options.readMoves ?? readRecordedMoves);
+  // Types left out of an untyped search are left out of the sweep unless `--type` names one.
+  const leftOut = new Set(defaultExcludedTypes(cfg).map((type) => stashDirFor(type)));
+  const dirsToScan = documentStashDirs().filter((d) =>
+    options.typeFilter ? d === options.typeFilter : !leftOut.has(d),
+  );
 
+  const markdownAssets = markdownAssetsByType(stashRoot);
   for (const subdir of dirsToScan) {
     const dirPath = path.join(stashRoot, subdir);
-    // Tasks have their own `.yml` plus near-miss collector; every other AKM
-    // subdir is Markdown.
-    const files =
-      subdir === "tasks"
-        ? collectTaskFiles(dirPath)
-        : subdir === "workflows"
-          ? collectWorkflowFiles(dirPath)
-          : collectMarkdownFiles(dirPath, true);
-    let assetFiles =
-      subdir === "workflows" ? files.filter((file) => path.basename(file).toLowerCase() !== "readme.md") : files;
+    // Tasks have their own `.yml` plus near-miss collector; every other type is Markdown, wherever it sits.
+    const files = subdir === "tasks" ? collectTaskFiles(dirPath) : (markdownAssets.get(subdir) ?? []);
+    let assetFiles = files;
     if (subdir === "workflows") {
       assetFiles = assetFiles.filter((file) => !isAkmRegistryCachePath(file));
       const ownership = resolveWorkflowLintOwnership(stashRoot, assetFiles);
@@ -827,12 +795,10 @@ function lintAkmSweep(
         path.relative(stashRoot, filePath),
         subdir,
         {
-          stashRoot,
-          extraStashRoots,
+          ...scope,
           fix,
+          fixMovedRefs: options.fixMovedRefs === true,
           pruneDanglingEdges: options.pruneDanglingEdges === true,
-          stalePathRoots: roots,
-          bundleSkip,
         },
         { fixed, flagged, warnings },
       );
@@ -903,7 +869,7 @@ async function lintFile(file: string, options: AkmLintOptions, cfg: AkmConfig): 
 
   // Symlink-resolved, so a file's bundle-relative path is right however either was spelled.
   const realRoot = root ? fs.realpathSync(root) : undefined;
-  const typeValues = STASH_SUBDIRS.join(", ");
+  const typeValues = documentTypes().join(", ");
   let subdir: string | undefined;
   if (root) {
     const sources = resolveSourceEntries(root, cfg);
@@ -929,7 +895,14 @@ async function lintFile(file: string, options: AkmLintOptions, cfg: AkmConfig): 
       );
     }
     // The type comes from where the file sits, as the bundle sweep decides it.
-    const located = STASH_SUBDIRS.find((d) => relPath.split(path.sep)[0] === d);
+    const located = documentStashDirs().find((d) => relPath.split(path.sep)[0] === d);
+    const firstSegment = relPath.split(path.sep)[0] ?? "";
+    if (!located && typeForStashDir(firstSegment) !== undefined) {
+      throw new UsageError(
+        `lint: "${relPath}" is a ${typeForStashDir(firstSegment)} asset, which lint does not read as a document.`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
     if (located && options.typeFilter && options.typeFilter !== located) {
       throw new UsageError(
         `lint: --type "${options.typeFilter}" does not match "${relPath}", which is a ${located} file in this bundle.`,
@@ -944,7 +917,7 @@ async function lintFile(file: string, options: AkmLintOptions, cfg: AkmConfig): 
         "Example: akm lint ./nightly.yml --type tasks",
       );
     }
-    if (options.fix) assertFixTargetWritable(root, sources);
+    if (options.fix || options.fixMovedRefs) assertFixTargetWritable(root, sources);
   } else {
     subdir = options.typeFilter;
     if (!subdir) {
@@ -955,7 +928,7 @@ async function lintFile(file: string, options: AkmLintOptions, cfg: AkmConfig): 
       );
     }
   }
-  if (!(STASH_SUBDIRS as readonly string[]).includes(subdir)) {
+  if (documentFormatForStashDir(subdir) === undefined) {
     throw new UsageError(
       `lint: --type "${subdir}" is not recognized; valid types: ${typeValues}.`,
       "INVALID_FLAG_VALUE",
@@ -977,22 +950,50 @@ async function lintFile(file: string, options: AkmLintOptions, cfg: AkmConfig): 
     realRoot ? path.relative(realRoot, absFile) : file,
     subdir,
     {
-      stashRoot: root ?? path.dirname(absFile),
-      extraStashRoots: root
-        ? resolveSourceEntries(root, cfg)
-            .map((s) => s.path)
-            .filter((p) => p !== root && fs.existsSync(p))
-        : [],
+      ...(root
+        ? lintScope(root, cfg, resolveSourceEntries(root, cfg), options.readMoves ?? readRecordedMoves)
+        : lintScope(path.dirname(absFile), cfg, [], options.readMoves ?? readRecordedMoves)),
       fix: options.fix === true,
+      fixMovedRefs: options.fixMovedRefs === true,
       pruneDanglingEdges: false,
-      stalePathRoots: stalePathRoots(cfg, root ?? path.dirname(absFile)),
-      bundleSkip: root ? bundleLintSkip(cfg, root) : undefined,
       // Outside a bundle there are no other assets to resolve refs or a derived stub against.
       lintSkip: root ? undefined : ["missing-ref", "orphaned-stub"],
     },
     sinks,
   );
   return finishLint(sinks, cfg, options, root);
+}
+
+/**
+ * The findings for `content` as the text of the asset at `relPath` of the akm bundle at `root`, by the checks `akm lint`
+ * runs on that file. Nothing is read from or written to the file. `subdir` is the stash folder of the asset's type.
+ */
+export function lintDocumentText(input: {
+  root: string;
+  relPath: string;
+  subdir: string;
+  content: string;
+  config?: AkmConfig;
+  readMoves?: ReadMoves;
+}): Pick<AkmLintResult, "flagged" | "warnings"> {
+  const cfg = input.config ?? loadConfig();
+  const { root } = input;
+  const sinks: SweepSinks = { fixed: [], flagged: [], warnings: [] };
+  lintDocument(
+    input.content,
+    path.join(root, input.relPath),
+    input.relPath,
+    input.subdir,
+    {
+      ...lintScope(root, cfg, resolveSourceEntries(root, cfg), input.readMoves ?? readRecordedMoves),
+      fix: false,
+      fixMovedRefs: false,
+      pruneDanglingEdges: false,
+    },
+    sinks,
+  );
+  const { flagged, warnings } = finishLint(sinks, cfg, {}, root);
+  return { flagged, warnings };
 }
 
 /** The ref of an asset of the bundle at `root` by its bundle-relative `file`; undefined when `file` is not an asset path. */
@@ -1056,7 +1057,7 @@ function finishLint(found: LintFindings, cfg: AkmConfig, options: AkmLintOptions
  * `commands/improve/preparation.ts`) or is a test that can `await` it.
  */
 export async function akmLint(options: AkmLintOptions = {}): Promise<AkmLintResult> {
-  if (options.rule !== undefined && (options.fix || options.pruneDanglingEdges)) {
+  if (options.rule !== undefined && (options.fix || options.pruneDanglingEdges || options.fixMovedRefs)) {
     throw new UsageError(
       "lint: --rule lists findings; run it without --fix or --prune-dangling-edges.",
       "INVALID_FLAG_VALUE",
@@ -1072,6 +1073,9 @@ export async function akmLint(options: AkmLintOptions = {}): Promise<AkmLintResu
   // cross-stash refs (e.g. referencing assets in dimm-city/agent-stash) are
   // not falsely flagged as missing-ref.
   const cfg = options.config ?? loadConfig();
+  // `--type` names a type or its folder; the sweep and the single-file path work on the folder.
+  if (options.typeFilter)
+    options = { ...options, typeFilter: documentStashDirFor(options.typeFilter) ?? options.typeFilter };
   if (options.file !== undefined) return lintFile(options.file, options, cfg);
   // The primary stash is the defaultBundle's path.
   const stashRoot = options.dir ?? primaryBundlePath(cfg) ?? resolveStashDir();
@@ -1089,10 +1093,10 @@ export async function akmLint(options: AkmLintOptions = {}): Promise<AkmLintResu
   // to filter the walk to ZERO directories — a false-clean result on the
   // classic singular/plural typo ("workflow" for "workflows"). Non-akm
   // adapters keep their own type vocabularies (see lintViaAdapter).
-  if (options.typeFilter && !(STASH_SUBDIRS as readonly string[]).includes(options.typeFilter)) {
+  if (options.typeFilter && documentFormatForStashDir(options.typeFilter) === undefined) {
     warn(
-      `Warning: lint --type "${options.typeFilter}" is not a recognized akm stash subdirectory — ` +
-        `valid types: ${STASH_SUBDIRS.join(", ")}. The whole bundle was validated.`,
+      `Warning: lint --type "${options.typeFilter}" is not a recognized akm asset type — ` +
+        `valid types: ${documentTypes().join(", ")}. The whole bundle was validated.`,
     );
     options = { ...options, typeFilter: undefined };
   }

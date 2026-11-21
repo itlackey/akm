@@ -16,7 +16,8 @@ import {
 import { ConfigError } from "../../core/errors";
 import { isQuiet, warn } from "../../core/warn";
 import { githubHeaders } from "../../integrations/github";
-import { getDirname, mainPath, semverOrder } from "../../runtime";
+import { isPrerelease } from "../../registry/semver";
+import { getDirname, mainPath, semverOrder, spawnSync } from "../../runtime";
 import type { UpgradeChannel, UpgradeCheckResponse, UpgradeResponse } from "../../sources/types";
 import { resolveNpmGlobalRoot } from "../../tasks/resolve-akm-bin";
 import { runMigrationTool } from "../migration-tool";
@@ -24,7 +25,7 @@ import { runMigrationTool } from "../migration-tool";
 const REPO = "itlackey/akm";
 const DEFAULT_PACKAGE_NAME = "akm-cli";
 const NODE_MODULES_SEGMENT = "/node_modules/";
-const BUN_GLOBAL_INSTALL_PATTERN = /(^|\/)\.bun\/(?:[^/]+\/)+node_modules\//;
+const BUN_GLOBAL_INSTALL_PATTERN = /(^|\/)\.bun\/install\/global\/node_modules\//;
 const PNPM_GLOBAL_INSTALL_PATTERN = /(^|\/)(?:pnpm\/global|\.pnpm-global)(?:\/\d+)?\/node_modules\//;
 const MAX_BINARY_DOWNLOAD_BYTES = 256 * 1024 * 1024;
 const MAX_CHECKSUM_METADATA_BYTES = 1024 * 1024;
@@ -116,17 +117,20 @@ export interface InstallSignals {
 
 /** Read live runtime signals. */
 export function getInstallSignals(): InstallSignals {
+  const importMetaDir = getDirname(import.meta.url);
   return {
     bunMain: mainPath,
-    importMetaDir: getDirname(import.meta.url),
+    importMetaDir,
     hasAkmVersion: typeof AKM_VERSION !== "undefined",
-    npmGlobalRoot: resolveNpmGlobalRootForThisProcess(),
+    // Only a copy inside a `node_modules` is ever compared against it.
+    npmGlobalRoot: normalizePathSeparators(importMetaDir).includes(NODE_MODULES_SEGMENT)
+      ? resolveNpmGlobalRootForThisProcess()
+      : undefined,
   };
 }
 
 function resolveNpmGlobalRootForThisProcess(): string | undefined {
   const nodePath = process.env.AKM_LAUNCHER_NODE?.trim() || (process.versions.bun ? undefined : process.execPath);
-  if (!nodePath) return undefined;
   try {
     return resolveNpmGlobalRoot(nodePath, process.env);
   } catch {
@@ -134,7 +138,7 @@ function resolveNpmGlobalRootForThisProcess(): string | undefined {
   }
 }
 
-function isUnderDirectory(dir: string, root: string): boolean {
+function isSameDirectory(dir: string, root: string): boolean {
   const real = (value: string): string => {
     try {
       return fs.realpathSync(value);
@@ -142,14 +146,24 @@ function isUnderDirectory(dir: string, root: string): boolean {
       return path.resolve(value);
     }
   };
-  const relative = path.relative(real(root), real(dir));
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  return path.relative(real(root), real(dir)) === "";
 }
 
 /** The package that depends on this akm: the directory holding the `node_modules` it lives in. */
 function packageLocalRoot(importMetaDir: string): string {
   const index = normalizePathSeparators(importMetaDir).lastIndexOf(NODE_MODULES_SEGMENT);
   return index < 0 ? importMetaDir : importMetaDir.slice(0, index);
+}
+
+/** A global entry must own this package, including pnpm's realpathed store layout. */
+function isDirectGlobalPackage(importMetaDir: string, root: string): boolean {
+  const packageSuffix = importMetaDir.slice(
+    importMetaDir.lastIndexOf(NODE_MODULES_SEGMENT) + NODE_MODULES_SEGMENT.length,
+  );
+  const segments = packageSuffix.split("/");
+  const packageName = segments.slice(0, segments[0]?.startsWith("@") ? 2 : 1).join("/");
+  const packageRoot = importMetaDir.slice(0, importMetaDir.length - packageSuffix.length) + packageName;
+  return isSameDirectory(packageRoot, path.join(root, packageName));
 }
 
 // AKM_VERSION ambient type is declared in globals.d.ts
@@ -159,21 +173,23 @@ export function detectInstallMethod(signals?: InstallSignals): InstallMethod {
   const normalizedImportMetaDir = normalizePathSeparators(s.importMetaDir);
 
   if (normalizedImportMetaDir.includes(NODE_MODULES_SEGMENT)) {
-    if (BUN_GLOBAL_INSTALL_PATTERN.test(normalizedImportMetaDir)) {
-      return "bun";
-    }
-    if (PNPM_GLOBAL_INSTALL_PATTERN.test(normalizedImportMetaDir)) {
-      return "pnpm";
+    for (const [method, pattern] of [
+      ["bun", BUN_GLOBAL_INSTALL_PATTERN],
+      ["pnpm", PNPM_GLOBAL_INSTALL_PATTERN],
+    ] as const) {
+      const match = pattern.exec(normalizedImportMetaDir);
+      const root = match ? normalizedImportMetaDir.slice(0, match.index + match[0].length - 1) : undefined;
+      if (root && isDirectGlobalPackage(normalizedImportMetaDir, root)) return method;
     }
     // A node_modules install outside the npm global root is a DEPENDENCY of
     // some other package (an image's tools dir, a plugin's node_modules):
     // it moves when that package does, and an `npm install -g` here would
     // "succeed" while the parent kept executing its own copy. Only a proven
-    // global root can make that call; without one this stays "npm".
-    if (s.npmGlobalRoot && s.importMetaDir && !isUnderDirectory(s.importMetaDir, s.npmGlobalRoot)) {
-      return "package-local";
+    // global root can authorize a global package-manager upgrade.
+    if (s.npmGlobalRoot && isDirectGlobalPackage(normalizedImportMetaDir, s.npmGlobalRoot)) {
+      return "npm";
     }
-    return "npm";
+    return "package-local";
   }
 
   // Bun-compiled binaries: mainPath points to a virtual /$bunfs/
@@ -204,6 +220,11 @@ export function getAkmBinaryName(): string {
   if (platform === "win32" && arch === "x64") return "akm-windows-x64.exe";
 
   throw new ConfigError(`Unsupported platform for binary upgrade: ${platform}/${arch}`, "UNSUPPORTED_PLATFORM");
+}
+
+/** The channel the akm at `version` came from: release.yml publishes every prerelease to `next`, every stable release to `latest`. */
+export function installedChannel(version: string): UpgradeChannel {
+  return isPrerelease(version) ? "next" : "latest";
 }
 
 /** The `next` dist-tag of this package on the npm registry, or undefined when none is published. */
@@ -242,18 +263,18 @@ export async function checkForUpdate(
   const release = JSON.parse(await readBodyWithByteCap(response, MAX_CHECKSUM_METADATA_BYTES)) as {
     tag_name?: string;
   };
-  const latestTag = release.tag_name ?? "";
-  let latestVersion = latestTag.replace(/^v/, "");
+  if (!release.tag_name) throw new Error(`Failed to check for updates: the latest release at ${url} has no tag_name`);
+  let latestVersion = release.tag_name.replace(/^v/, "");
   if (channel === "next") {
     const next = await lookupNextVersion(fetchOptions);
     if (exactChannel && !next) throw new Error("No next prerelease is published; no channel was changed");
-    if (next && (exactChannel || latestVersion === "" || semverOrder(latestVersion, next) < 0)) latestVersion = next;
+    if (next && (exactChannel || semverOrder(latestVersion, next) < 0)) latestVersion = next;
   }
 
   return {
     currentVersion,
     latestVersion,
-    updateAvailable: latestVersion !== "" && semverOrder(currentVersion, latestVersion) < 0,
+    updateAvailable: semverOrder(currentVersion, latestVersion) < 0,
     installMethod,
   };
 }
@@ -517,24 +538,18 @@ function runPostUpgradeTasks(akmBin: string, opts: { skip: boolean }): NonNullab
     };
   }
   try {
-    const result = childProcess.spawnSync(akmBin, ["index", "--format", "json", ...(isQuiet() ? ["--quiet"] : [])], {
-      encoding: "utf8",
-      env: process.env,
-      stdio: ["pipe", "pipe", "inherit"],
+    const result = spawnSync([akmBin, "index", "--format", "json", ...(isQuiet() ? ["--quiet"] : [])], {
+      env: process.env as Record<string, string>,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "inherit",
     });
-    if (result.error) {
+    if (result.exitCode !== 0) {
+      const detail = result.stdout.toString("utf8").trim() || `exit code ${result.exitCode}`;
       return {
         ok: false,
         skipped: false,
-        message: `Upgrade completed. The index rebuild could not start: ${result.error.message}. Run \`akm index\` manually.`,
-      };
-    }
-    if (result.status !== 0) {
-      const detail = (result.stdout ?? "").trim() || `exit code ${result.status}`;
-      return {
-        ok: false,
-        skipped: false,
-        exitCode: result.status,
+        exitCode: result.exitCode,
         message: `Upgrade completed. Post-upgrade \`akm index\` failed (${detail}). Run \`akm index\` manually.`,
       };
     }

@@ -82,7 +82,7 @@ describe("akm lint <file>", () => {
     expect((await lint(bad, { typeFilter: "tasks" })).flagged[0]?.issue).toBe("invalid-task-yaml");
     const err = await usageError(() => lint(good));
     expect(err.message).toContain("--type");
-    expect(err.message).toContain("tasks");
+    expect(err.message).toContain("task");
   });
 
   test("a .yaml near miss gets the message the bundle lint gives it", async () => {

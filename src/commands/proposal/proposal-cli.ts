@@ -21,6 +21,7 @@ import { resolveStashDir } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { ConfigError, UsageError } from "../../core/errors";
+import { stderr } from "../../core/stdio";
 import { mergeNotices } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { installLlmUsagePersistenceIfAbsent } from "../../llm/usage-persist";
@@ -154,7 +155,7 @@ const proposalAcceptCommand = defineJsonCommand({
         { yes: args.yes === true || args["dry-run"] === true },
       );
       if (!confirmed) {
-        process.stderr.write("Aborted.\n");
+        stderr().write("Aborted.\n");
         return;
       }
       const { maxDiffLines, olderThanMs } = parseBulkFilterFlags(args);
@@ -463,7 +464,7 @@ const proposalDrainCommand = defineJsonCommand({
         { yes: args.yes === true },
       );
       if (!confirmed) {
-        process.stderr.write("Aborted.\n");
+        stderr().write("Aborted.\n");
         return;
       }
     }

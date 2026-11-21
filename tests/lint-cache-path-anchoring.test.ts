@@ -126,23 +126,20 @@ describe("lint cache-path anchoring (issue: unanchored /.cache/ /registry/ subst
     expect(structural).toHaveLength(1);
   });
 
-  test("a USER workflow subdirectory literally named '.cache' still gets lint findings (collectWorkflowFiles name-based exclusion)", async () => {
-    // Regression for the two remaining name-based exclusions
-    // (`entry.name === ".cache" || entry.name === "registry"`) in
-    // `collectWorkflowFiles` — distinct from the substring bug above.
-    // These skipped ANY directory named `.cache`/`registry` ANYWHERE in a
-    // bundle, including ordinary user content nested under such a name, not
-    // just akm's own resolved cache. `workflows/.cache/` here is user
-    // content, never akm's real cache dir.
-    const { dir: stashDir, cleanup } = makeSandboxDir("akm-lint-user-dotcache-dir");
+  test("a USER workflow subdirectory literally named 'registry' still gets lint findings (no name-based exclusion)", async () => {
+    // Regression for the name-based exclusion (`entry.name === "registry"`) that skipped ANY directory
+    // named `registry` ANYWHERE in a bundle, including ordinary user content nested under such a name, not just akm's
+    // own resolved cache. `workflows/registry/` here is user content, never akm's real cache dir. (A `.cache` directory
+    // is not user content to lint: the indexer's walk never lists one, and lint reads what the walk lists.)
+    const { dir: stashDir, cleanup } = makeSandboxDir("akm-lint-user-registry-workflows");
     cleanups.push(cleanup);
-    writeWorkflowFile(stashDir, path.join(".cache", "broken.md"), BROKEN_WORKFLOW);
+    writeWorkflowFile(stashDir, path.join("registry", "broken.md"), BROKEN_WORKFLOW);
 
     const result = await akmLint({ dir: stashDir, typeFilter: "workflows" });
 
     const structural = result.flagged.filter((i) => i.issue === "invalid-workflow-structure");
     expect(structural).toHaveLength(1);
-    expect(structural[0]?.file).toContain(path.join(".cache", "broken.md"));
+    expect(structural[0]?.file).toContain(path.join("registry", "broken.md"));
   });
 
   test("a USER 'raw/' source nested under a directory literally named 'registry' still trips uncited-raw (collectAdapterFiles name-based exclusion)", async () => {

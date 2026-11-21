@@ -288,7 +288,8 @@ const USAGE_HINTS: Partial<Record<UsageErrorCode, string>> = {
   // Points at the two verbs that inspect a workflow source without executing it.
   WORKFLOW_SOURCE_INVALID:
     "Run `akm lint` to see the failing source location, or `akm doctor explain <ref>` to compile it without writing.",
-  INPUT_BINDING_INVALID: "Check the step's with: keys against the target's declared inputs.",
+  INPUT_BINDING_INVALID:
+    "Check the values against the task's declared inputs (`akm show tasks/<name>` lists them); for a step's with: keys, check them against the target's declared inputs.",
   TASK_TARGET_UNSUPPORTED:
     "Task definitions support command, script, workflow, and shell (run:) targets; akm/command is layered by callers.",
 };
@@ -298,8 +299,7 @@ const TRANSIENT_HINTS: Partial<Record<TransientErrorCode, string>> = {
   RUN_LEASE_HELD: "Wait for the akm process driving this run (the named pid) to finish, then retry.",
   STATE_DB_CONTENDED:
     "Another akm process is writing state.db right now. Wait a few seconds and retry; commands that support --skip-if-locked can skip instead of failing.",
-  INDEX_DB_CONTENDED:
-    "Another akm process is writing index.db; retry shortly, or pass --skip-if-locked on scheduled runs.",
+  INDEX_DB_CONTENDED: "Another akm process is writing index.db; retry shortly.",
   IMPROVE_LOCK_HELD:
     "Another akm improve run holds the whole-run lock right now. Wait for it to finish and retry, or pass --skip-if-locked on scheduled runs.",
   LOCKFILE_CONTENDED: "Another akm process is updating its bundle lockfile right now. Wait a few seconds and retry.",

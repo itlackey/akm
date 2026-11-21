@@ -45,7 +45,7 @@ import { getRunLogDir } from "../../core/paths";
 import { clearLogFile, info, isVerbose, setLogFile, warn } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
 import { exportVectors } from "../../indexer/export-vectors";
-import { buildIndex, isSkippedIndexBuild } from "../../indexer/index-build";
+import { buildIndex, isSkippedIndexBuild, skippedIndexReport } from "../../indexer/index-build";
 import { getOutputMode } from "../../output/context";
 import { pkgVersion } from "../../version";
 import {
@@ -101,12 +101,14 @@ export const indexCommand = defineCommand({
     },
     "skip-if-locked": {
       type: "boolean",
-      description: "Skip (exit 0) instead of waiting if another `akm index` holds the rebuild lock",
+      description: "Deprecated, no effect: `akm index` always skips (exit 0) while another build holds the lock",
       default: false,
     },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
+      if (args["skip-if-locked"])
+        warn("--skip-if-locked is deprecated and has no effect: `akm index` always skips while another build runs.");
       const exportFile = args["export-vectors"];
       if (exportFile !== undefined) {
         if (!exportFile) {
@@ -125,6 +127,7 @@ export const indexCommand = defineCommand({
       process.once("SIGINT", abort);
       process.once("SIGTERM", abort);
       const verbose = isVerbose();
+      if (!verbose && outputMode.format === "text") await p.loadPrompts();
       const spin = !verbose && outputMode.format === "text" ? p.spinner() : null;
       // The log file and spinner start with the build, not while waiting for the lock: a skipped run leaves neither.
       let started = false;
@@ -137,45 +140,33 @@ export const indexCommand = defineCommand({
       let latestMessage = "";
       const stashDir = resolveStashDir();
       try {
-        // One build at a time: wait for a running build, or with --skip-if-locked step aside.
-        const result = await buildIndex(
-          {
-            stashDir,
-            full: args.full,
-            clean: args.clean,
-            dryRun: args["dry-run"],
-            reembed: args.reembed,
-            importVectors: importFile ? path.resolve(importFile) : undefined,
-            onProgress: ({ phase, message, processed, total }) => {
-              begin();
-              latestMessage = message;
-              const progressPrefix = processed !== undefined && total !== undefined ? `[${processed}/${total}] ` : "";
-              if (verbose) {
-                info(`[index:${phase}] ${progressPrefix}${message}`);
-              } else if (spin) {
-                spin.stop(`${progressPrefix}${message}`);
-                spin.start(`${progressPrefix}${message}`);
-              } else if (!EMBEDDED_BATCH_PROGRESS_PATTERN.test(message)) {
-                // Structured output modes still show phase starts and the embedding heartbeat on stderr (#954);
-                // the per-batch "Embedded N/M" line is excluded as spam.
-                info(`[index:${phase}] ${progressPrefix}${message}`);
-              }
-            },
-            signal: controller.signal,
+        // One build at a time: while another build runs, this one steps aside.
+        const result = await buildIndex({
+          stashDir,
+          full: args.full,
+          clean: args.clean,
+          dryRun: args["dry-run"],
+          reembed: args.reembed,
+          importVectors: importFile ? path.resolve(importFile) : undefined,
+          onProgress: ({ phase, message, processed, total }) => {
+            begin();
+            latestMessage = message;
+            const progressPrefix = processed !== undefined && total !== undefined ? `[${processed}/${total}] ` : "";
+            if (verbose) {
+              info(`[index:${phase}] ${progressPrefix}${message}`);
+            } else if (spin) {
+              spin.stop(`${progressPrefix}${message}`);
+              spin.start(`${progressPrefix}${message}`);
+            } else if (!EMBEDDED_BATCH_PROGRESS_PATTERN.test(message)) {
+              // Structured output modes still show phase starts and the embedding heartbeat on stderr (#954);
+              // the per-batch "Embedded N/M" line is excluded as spam.
+              info(`[index:${phase}] ${progressPrefix}${message}`);
+            }
           },
-          args["skip-if-locked"] ? "try" : "wait",
-        );
+          signal: controller.signal,
+        });
         if (isSkippedIndexBuild(result)) {
-          output("index", {
-            ok: true,
-            skipped: {
-              reason: "lock-held",
-              pid: result.skipped.pid,
-              // The launcher pid is what process listings and task logs show, not the bun/node child's.
-              launcherPid: result.skipped.launcherPid,
-              startedAt: result.skipped.startedAt,
-            },
-          });
+          output("index", { ok: true, skipped: skippedIndexReport(result) });
           return;
         }
         if (spin) {

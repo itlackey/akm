@@ -10,8 +10,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import os from "node:os";
 import { runBaseChecks } from "../src/commands/lint/base-linter";
-import { runBaseValidateChecks } from "../src/core/adapter/adapters/shared";
-import { createValidateContext } from "../src/core/adapter/validate-context";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
 
 function staleIssues(storage: IsolatedAkmStorage, body: string) {
@@ -82,28 +80,33 @@ describe("stale-path skips run-time filename templates (#927)", () => {
     expect(issues.map((issue) => issue.detail)).toEqual(["ephemeral path: /tmp/akm-5-gone/current.md"]);
   });
 
-  test("the adapter validate path applies the same rules", async () => {
+  test.each([
+    [
+      "generated output",
+      "Run the following command:\n\n```sh\nexample-tool render --shot=/tmp/example-generated-image.png\n```",
+    ],
+    ["ordinary fenced paths", "```sh\ncat /tmp/akm-5-gone/input.md\n```"],
+    ["tilde fence", "~~~sh\ncat /tmp/akm-5-gone/input.md\n~~~"],
+    ["long fence with nested short fence", "````markdown\n```sh\ncat /tmp/akm-5-gone/input.md\n```\n````"],
+    ["indented fence", "   ```sh\ncat /tmp/akm-5-gone/input.md\n   ```"],
+  ])("%s is documentation, not a current filesystem assertion", (_name, body) => {
     storage = withIsolatedAkmStorage();
-    const body = [
-      "Historically wrote /tmp/akm-5-gone/old.md.",
-      "Write to /tmp/akm-5-gone/current.md.",
-      "Config at /home/akm-5-nobody/.config/x.json.",
-      "See core//tasks/akm-5-gone.",
-    ].join("\n");
-    const diagnostics = await runBaseValidateChecks(
-      "knowledge/n.md",
-      {
-        data: { name: "n", updated: "2026-01-01" },
-        content: body,
-        frontmatter: "name: n\nupdated: 2026-01-01",
-        bodyStartLine: 5,
-      },
-      storage.stashDir,
-      createValidateContext({ root: storage.stashDir }),
-    );
-    expect(diagnostics.map((d) => `${d.issue}: ${d.detail}`)).toEqual([
-      "stale-path: ephemeral path: /tmp/akm-5-gone/current.md",
-      "missing-ref: missing ref: core//tasks/akm-5-gone",
+    expect(staleIssues(storage, body)).toEqual([]);
+  });
+
+  test.each(["```", "~~~"])("%s fence contents do not change the following prose's section", (fence) => {
+    storage = withIsolatedAkmStorage();
+    const body = `${fence}markdown\n## History\nFor example /tmp/akm-5-gone/example.md\n${fence}\nRead /tmp/akm-5-gone/current.md as current input.`;
+    const issues = staleIssues(storage, body);
+    expect(issues.map((issue) => issue.detail)).toEqual(["ephemeral path: /tmp/akm-5-gone/current.md"]);
+    expect(issues[0]?.line).toBe(8);
+  });
+
+  test("mismatched delimiters and short or nonempty closers do not end a fence", () => {
+    storage = withIsolatedAkmStorage();
+    const body = "````sh\n~~~\n```\n```` trailing text\n/tmp/akm-5-gone/example.md\n````\n/tmp/akm-5-gone/current.md";
+    expect(staleIssues(storage, body).map((issue) => issue.detail)).toEqual([
+      "ephemeral path: /tmp/akm-5-gone/current.md",
     ]);
   });
 });

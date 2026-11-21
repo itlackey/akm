@@ -4,20 +4,18 @@
 
 /**
  * Typed script-target preparer: given a script asset's own owned identity
- * (ref/file/bundleRoot — never a synthetic task ref), freezes the same byte/
- * interpreter shape prepareTaskV3Execution's script arm freezes for a real
+ * (ref/file/bundleRoot — never a synthetic task ref), freezes the same byte
+ * shape prepareTaskV3Execution's script arm freezes for a real
  * task-v3 script target — via the one shared captureScriptTarget()
  * implementation in ./script-capture. No task document is built or parsed
  * here (no synthetic task YAML is fabricated); this module imports nothing
  * from ../source-v3.
  */
 
-import type { TaskV3ScriptInterpreter } from "./prepared-execution";
 import { captureScriptTarget } from "./script-capture";
 
 export interface PreparedScriptTarget {
   readonly ref: string;
-  readonly interpreter: TaskV3ScriptInterpreter;
   readonly extension: string;
   /** Immutable base64 encoding of the exact source bytes. */
   readonly bytesBase64: string;

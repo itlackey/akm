@@ -16,6 +16,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { stderr } from "./stdio";
 
 let quiet = false;
 /** Calls inside {@link withQuiet}; counted so overlapping calls cannot leave the flag flipped. */
@@ -122,8 +123,8 @@ function appendToLogFile(level: "INFO" | "WARN" | "ERROR", args: unknown[]): voi
     fs.appendFileSync(logFilePath, `[${ts}] [${level}] ${msg}\n`);
   } catch (e) {
     // Log file write failed — emit directly to stderr so the message is not lost.
-    process.stderr.write(`[akm:warn] log-file write failed (${logFilePath}): ${e}\n`);
-    process.stderr.write(`[${ts}] [${level}] ${msg}\n`);
+    stderr().write(`[akm:warn] log-file write failed (${logFilePath}): ${e}\n`);
+    stderr().write(`[${ts}] [${level}] ${msg}\n`);
   }
 }
 

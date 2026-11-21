@@ -6,13 +6,16 @@
 
 import type { Bundle } from "./types";
 
-/** The official starter bundle: a git source, so adding it downloads from GitHub. */
-export const STARTER = "github:itlackey/akm-stash";
+/** The official starter bundle as akm reports it: the address `bundle add` takes (a git source, so adding it downloads from GitHub) and its identity. */
+export interface Starter {
+  source: string;
+  identity: string | null;
+}
 
 /** What `setup.detect` reports, and `setup.apply` returns once it has run. */
 export interface Detected {
   stashDir: string;
-  harnesses: Array<{ platform: string; path: string; modelWorkNote: string }>;
+  harnesses: Array<{ platform: string; path: string; modelWorkReadOnly: boolean; modelWorkNote: string }>;
   /** The platforms akm's config already enables. */
   enabled: string[];
   modelCalls: { platform: string | null; description: string };
@@ -51,11 +54,15 @@ export const harnessLabel = (harness: { id: string; major?: number }) =>
   harness.id === "opencode" && harness.major === 2 ? "OpenCode 2" : (harnessNames[harness.id] ?? harness.id);
 
 /**
- * The channel new plugins install from: the saved choice, else Desktop's own release stage, so its plugins follow the
- * same channel (see plugin-upgrade.ts).
+ * The one release channel for the host's CLI and plugins: the saved choice, else the channel akm reports the installed
+ * CLI follows, else (no host CLI yet, so setup installs the release that matches this app) Desktop's own release stage.
+ * Desktop never derives a channel from a host version.
  */
-export const pluginChannel = (engine: string | undefined, saved?: "latest" | "next"): "latest" | "next" =>
-  saved ?? (engine && /^\d+\.\d+\.\d+-/.test(engine) ? "next" : "latest");
+export const pluginChannel = (
+  engine: string | undefined,
+  saved?: "latest" | "next",
+  reported?: "latest" | "next",
+): "latest" | "next" => saved ?? reported ?? (engine && /^\d+\.\d+\.\d+-/.test(engine) ? "next" : "latest");
 
 /** What the harness says about the akm plugin, in words. */
 export function pluginLine(harness: HostHarness): string {
@@ -79,14 +86,13 @@ export function pluginLine(harness: HostHarness): string {
 }
 
 /**
- * The channel a present plugin follows, as `akm upgrade --check` read it from the harness's own configuration, as
- * words that finish the row's sentence ("…installed, on the stable channel"); nothing for a plugin that is not there,
- * or when the host CLI has not been checked or did not say.
+ * What `akm upgrade --check` reported for a present plugin: nothing for a plugin that is not there, or when the host
+ * CLI has not been checked or did not list it.
  */
-export function installedChannel(
+export function pluginPlan<T extends { harness: string }>(
   harness: HostHarness,
-  plugins: Array<{ harness: string; channel?: string }> | undefined,
-): string | undefined {
+  plugins: T[] | undefined,
+): T | undefined {
   if (!["installed", "configured", "disabled"].includes(harness.plugin?.state ?? "")) return undefined;
   const name =
     harness.id === "claude"
@@ -94,37 +100,20 @@ export function installedChannel(
       : harness.id === "opencode" && harness.major === 2
         ? "opencode-v2"
         : harness.id;
-  const channel = plugins?.find((plugin) => plugin.harness === name)?.channel;
-  return channel === "latest"
-    ? "on the stable channel"
-    : channel === "next"
-      ? "on the prerelease channel"
-      : channel === "pinned"
-        ? "pinned to one version"
-        : undefined;
+  return plugins?.find((plugin) => plugin.harness === name);
 }
 
-const majorMinor = (version: string | undefined) =>
-  version
-    ?.match(/^(\d+)\.(\d+)\./)
-    ?.slice(1, 3)
-    .join(".");
-
-/**
- * Plugins share akm's major.minor and number their builds on their own, so a plugin matches this Desktop when its
- * major.minor is the engine's. Null when either is unknown, as for an OpenCode plugin before OpenCode has loaded it.
- */
-export function pluginMatches(engine: string | undefined, plugin: string | undefined): boolean | null {
-  const [a, b] = [majorMinor(engine), majorMinor(plugin)];
-  return a && b ? a === b : null;
-}
+/** Whether akm's check for a plugin asks something of the person: an update to install, one deferred, or a failure. */
+export const pluginNeedsUpdate = (plan: { outcome?: string } | undefined): boolean =>
+  ["pending", "deferred", "failed"].includes(plan?.outcome ?? "");
 
 /** Nothing is configured: no bundle and no working library. Home shows setup instead of health failures then. */
 export const isUnconfigured = (listing: { bundles: unknown[]; workingStash: unknown | null }) =>
   listing.bundles.length === 0 && !listing.workingStash;
 
-export const hasStarter = (bundles: Bundle[]) =>
-  bundles.some((bundle) => /akm-stash/.test(`${bundle.name} ${bundle.source?.locator ?? ""}`));
+/** The starter is the bundle whose source has the starter's identity, whatever it is named. */
+export const hasStarter = (bundles: Bundle[], starter: Starter) =>
+  starter.identity !== null && bundles.some((bundle) => bundle.identity === starter.identity);
 
 export interface AgentCard {
   id: string;
@@ -136,21 +125,21 @@ export interface AgentCard {
    */
   state: "stopped" | "unverified" | "disabled" | "ready" | "connected";
   /** The plugin as the harness reports it, for the card's version line. */
-  plugin?: { text: string; mismatch: boolean };
+  plugin?: { text: string };
   /** The plugin cannot be installed until Bun is. */
   needsBun: boolean;
   /**
    * Whether akm can use this harness (it finds the program on its own PATH) and whether it is enabled in akm's config,
    * with akm's words for what its model calls could do there.
    */
-  learning: { available: boolean; enabled: boolean; note: string };
+  learning: { available: boolean; enabled: boolean; note: string; readOnly: boolean | null };
 }
 
 /**
  * One card per harness Desktop found. A harness that is not installed is not offered. `detected` is `setup.detect`:
  * the programs akm finds on its PATH and those its config enables.
  */
-export function agentCards(host: HostSnapshot, engine: string | undefined, detected: Detected): AgentCard[] {
+export function agentCards(host: HostSnapshot, detected: Detected): AgentCard[] {
   return host.harnesses
     .filter((harness) => harness.installed)
     .map((harness) => {
@@ -172,18 +161,14 @@ export function agentCards(host: HostSnapshot, engine: string | undefined, detec
         version: harness.version,
         state,
         ...(state === "connected"
-          ? {
-              plugin: {
-                text: version ? `AKM plugin ${version}` : `AKM plugin ${harness.plugin?.spec ?? ""}`.trim(),
-                mismatch: pluginMatches(engine, version) === false,
-              },
-            }
+          ? { plugin: { text: version ? `AKM plugin ${version}` : `AKM plugin ${harness.plugin?.spec ?? ""}`.trim() } }
           : {}),
         needsBun: ["claude", "codex"].includes(harness.id) && host.bun?.installed === false,
         learning: {
           available: seen !== undefined,
           enabled: detected.enabled.includes(platform),
           note: seen?.modelWorkNote ?? "",
+          readOnly: seen?.modelWorkReadOnly ?? null,
         },
       };
     });

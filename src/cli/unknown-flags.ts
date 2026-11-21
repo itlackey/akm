@@ -25,6 +25,10 @@
  * (stdin convention) and negative numbers are left alone. A subcommand invoked
  * by a `meta.name` alias rather than its key takes the stand-down path (no
  * validation) — conservative by design.
+ *
+ * A positional beyond the ones the command declares is the same silence:
+ * citty leaves it in `args._`, which no handler reads.
+ * {@link assertNoStrayPositionals} refuses it from the same command walk.
  */
 
 import { closestMatch } from "../core/closest-match";
@@ -34,17 +38,19 @@ import {
   type CittyArgsDefinitionForScan,
   cittyComparableName,
   findCittyTopLevelCommandIndex,
+  type ParsedInvocation,
   toAliasArray,
 } from "./invocation";
 
 /**
- * Commands that must never refuse on an unrecognized flag — `akm info` warns
- * and continues instead of exiting 2, the same tolerance a bare `akm help
- * --whatever` already gets for free from its group-command fallback (no
- * resolved subcommand, so this gate stands down entirely). `info` is a leaf
- * command, so it needs an explicit opt-in here instead.
+ * Commands that must never refuse on an unrecognized flag or a stray
+ * positional — `akm info` warns and continues instead of exiting 2, the same
+ * tolerance a bare `akm help --whatever` already gets for free from its
+ * group-command fallback (no resolved subcommand, so this gate stands down
+ * entirely). `info` is a leaf command, so it needs an explicit opt-in here
+ * instead.
  */
-const UNKNOWN_FLAG_TOLERANT_COMMANDS: ReadonlySet<string> = new Set(["info", "doctor info"]);
+const TOLERANT_COMMANDS: ReadonlySet<string> = new Set(["info", "doctor info"]);
 
 /** The structural subset of a citty command this module reads. */
 export interface FlagScanCommand {
@@ -69,6 +75,9 @@ interface KnownArgs {
   readonly displayNames: readonly string[];
   /** Resolved command path tokens (e.g. ["proposal", "accept"]). */
   readonly path: readonly string[];
+  /** The command the path resolves to, and the argv after its name. */
+  readonly command: FlagScanCommand;
+  readonly commandArgs: readonly string[];
   /**
    * False when the command path did not fully resolve — an unknown command
    * token, or a group with no subcommand given. citty's own UNKNOWN_COMMAND /
@@ -95,6 +104,16 @@ function collectKnownArgs(root: FlagScanCommand, rawArgs: readonly string[]): Kn
 
   let cmd: FlagScanCommand = root;
   let args: readonly string[] = rawArgs;
+  const known = (resolved: boolean): KnownArgs => ({
+    names,
+    valueFlags,
+    booleanFlags,
+    displayNames,
+    path,
+    command: cmd,
+    commandArgs: args,
+    resolved,
+  });
   for (;;) {
     Object.assign(inheritedArgs, cmd.args);
     for (const [key, def] of Object.entries(cmd.args ?? {})) {
@@ -125,24 +144,28 @@ function collectKnownArgs(root: FlagScanCommand, rawArgs: readonly string[]): Kn
     const takesPositional = Object.values(cmd.args ?? {}).some((def) => def.type === "positional");
     if (takesPositional && (token === undefined || !subCommands[token])) break;
     // A group with no subcommand token: citty reports "no command specified".
-    if (token === undefined) return { names, valueFlags, booleanFlags, displayNames, path, resolved: false };
+    if (token === undefined) return known(false);
     const sub = subCommands[token];
     // An unrecognized token: citty reports the unknown command, which is the
     // real problem — its flags are beside the point.
-    if (!sub) return { names, valueFlags, booleanFlags, displayNames, path, resolved: false };
+    if (!sub) return known(false);
     path.push(token);
     cmd = sub;
     args = args.slice(idx + 1);
   }
 
-  return { names, valueFlags, booleanFlags, displayNames, path, resolved: true };
+  return known(true);
 }
 
-/** Consume the startup selector without interpreting another flag's value as an option. */
+/**
+ * Consume the startup selector from the invocation's own tokens without interpreting another flag's value as an
+ * option. `args` is the user tokens without it; the tokens after the boundary are returned as they are.
+ */
 export function consumeConfigFileFlag(
   root: FlagScanCommand,
-  rawArgs: readonly string[],
+  invocation: ParsedInvocation,
 ): { file: string | undefined; args: string[] } {
+  const rawArgs = invocation.ownArgs;
   const known = collectKnownArgs(root, rawArgs);
   // These legacy commands accept arbitrary named inputs, including `config`.
   // Only the prefix before the top-level command belongs to the global flag.
@@ -154,7 +177,6 @@ export function consumeConfigFileFlag(
   let index = 0;
   for (; index < end; index += 1) {
     const token = rawArgs[index] as string;
-    if (token === "--") break;
     if (token === "--config" || token.startsWith("--config=")) {
       const value = token === "--config" ? rawArgs[++index] : token.slice("--config=".length);
       if (value === undefined || !value.trim() || (token === "--config" && value.startsWith("-"))) {
@@ -186,7 +208,10 @@ export function consumeConfigFileFlag(
       }
     }
   }
-  return { file: selected, args: [...forwarded, ...rawArgs.slice(index)] };
+  return {
+    file: selected,
+    args: [...forwarded, ...rawArgs.slice(index), ...invocation.userArgs.slice(rawArgs.length)],
+  };
 }
 
 /**
@@ -248,32 +273,46 @@ function throwUnknownFlag(shown: string, attempted: string, known: KnownArgs): n
   );
 }
 
-/** The {@link UNKNOWN_FLAG_TOLERANT_COMMANDS} counterpart to {@link throwUnknownFlag}: report, don't refuse. */
+/** The {@link TOLERANT_COMMANDS} counterpart to {@link throwUnknownFlag}: report, don't refuse. */
 function warnUnknownFlag(shown: string, known: KnownArgs): void {
   warn(`[akm ${known.path.join(" ")}] ignoring unknown flag "${shown}" — run with --help to see its accepted flags.`);
 }
+
+// `run` delegates flag validation to its selected executor.
+// `workflow run`, `task run`, and `task explain` each own one deliberately
+// dynamic namespace: long options become exact-name parameter/input flags
+// and are checked against the frozen plan / task source's own contract
+// before this gate would otherwise reject them (task run's
+// UNKNOWN_FLAG/INPUT_BINDING_INVALID must be raised from INSIDE the command
+// body, where runWithJsonErrors renders the JSON envelope, not from this
+// generic pre-dispatch gate; `task explain` reuses the identical
+// `parseTaskInputFlags` scanner, so it needs the identical exemption).
+const DYNAMIC_INPUT_COMMANDS: ReadonlySet<string> = new Set([
+  "workflow run",
+  "task run",
+  "task explain",
+  "doctor explain",
+  "run",
+]);
 
 /**
  * Throw a {@link UsageError} naming the first flag the resolved command does
  * not declare. Returns silently when every flag is known.
  */
 export function assertKnownFlags(root: FlagScanCommand, rawArgs: readonly string[]): void {
-  const passthroughAt = rawArgs.indexOf("--");
-  const ownArgs = passthroughAt === -1 ? rawArgs : rawArgs.slice(0, passthroughAt);
+  let ownArgs = rawArgs;
   const known = collectKnownArgs(root, rawArgs);
   if (!known.resolved) return;
-  // `run` delegates flag validation to its selected executor.
-  // `workflow run`, `task run`, and `task explain` each own one deliberately
-  // dynamic namespace: long options become exact-name parameter/input flags
-  // and are checked against the frozen plan / task source's own contract
-  // before this gate would otherwise reject them (task run's
-  // UNKNOWN_FLAG/INPUT_BINDING_INVALID must be raised from INSIDE the command
-  // body, where runWithJsonErrors renders the JSON envelope, not from this
-  // generic pre-dispatch gate; `task explain` reuses the identical
-  // `parseTaskInputFlags` scanner, so it needs the identical exemption).
-  const dynamicNamedFlagCommands = new Set(["workflow run", "task run", "task explain", "doctor explain", "run"]);
-  const dynamicWorkflowParams = dynamicNamedFlagCommands.has(known.path.join(" "));
-  const tolerant = UNKNOWN_FLAG_TOLERANT_COMMANDS.has(known.path.join(" "));
+  // After `run`'s ref the tokens are the executor's: `run` checks them against it once the asset's type is known.
+  if (known.path.join(" ") === "run") {
+    const ref = findCittyTopLevelCommandIndex(
+      known.commandArgs,
+      (known.command.args ?? {}) as CittyArgsDefinitionForScan,
+    );
+    if (ref >= 0) ownArgs = ownArgs.slice(0, rawArgs.length - known.commandArgs.length + ref + 1);
+  }
+  const dynamicWorkflowParams = DYNAMIC_INPUT_COMMANDS.has(known.path.join(" "));
+  const tolerant = TOLERANT_COMMANDS.has(known.path.join(" "));
 
   for (let i = 0; i < ownArgs.length; i += 1) {
     const token = ownArgs[i] as string;
@@ -333,4 +372,89 @@ export function assertKnownFlags(root: FlagScanCommand, rawArgs: readonly string
     // Skip a declared value flag's value so `--reason "--x"` is not scanned.
     if (!hasInlineValue && candidates.some((name) => known.valueFlags.has(name))) i += 1;
   }
+}
+
+/** The flag that takes the value, for a command where a positional is an easy mistake for it. */
+const POSITIONAL_FLAG: Readonly<Record<string, string>> = { "bundle create": "--dir", setup: "--dir" };
+
+/**
+ * Commands whose handler reads `args._` itself: `proposal accept` and
+ * `proposal reopen` take any number of ids, `migrate apply` and `migrate status` any number of task and workflow
+ * files, and `show` and `doctor prompt`
+ * refuse an extra token with a message of their own.
+ */
+const OWN_POSITIONALS: ReadonlySet<string> = new Set([
+  "proposal accept",
+  "proposal reopen",
+  "migrate apply",
+  "migrate status",
+  "show",
+  "doctor prompt",
+]);
+
+/** Commands whose `--` tail is the child command to run, not positionals of their own. */
+const CHILD_COMMAND_TAIL: ReadonlySet<string> = new Set(["exec", "env run", "secret run"]);
+
+/** The tokens citty collects as positionals: neither a flag nor the value of a declared value flag. */
+function positionalsIn(args: readonly string[], valueFlags: ReadonlySet<string>): string[] {
+  const found: string[] = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const token = args[i] as string;
+    if (!token.startsWith("-") || token === "-") {
+      found.push(token);
+      continue;
+    }
+    if (token.includes("=")) continue;
+    // `--name value`, `-n value`, or a short bundle whose last letter takes the value.
+    const letters = token.startsWith("--") ? [token.slice(2)] : [...token.slice(1)];
+    const taking = letters.findIndex((letter) => valueFlags.has(cittyComparableName(letter)));
+    if (taking !== -1 && taking === letters.length - 1) i += 1;
+  }
+  return found;
+}
+
+/**
+ * Throw a {@link UsageError} when argv carries more positionals than the
+ * resolved command declares: `akm bundle create /some/folder` ran as a bare
+ * `akm bundle create` and initialized the default bundle, and
+ * `akm search deploy script` searched for "deploy".
+ */
+export function assertNoStrayPositionals(root: FlagScanCommand, rawArgs: readonly string[]): void {
+  const known = collectKnownArgs(root, rawArgs);
+  if (!known.resolved) return;
+  // `akm help <command> <subcommand>` prints the command's help.
+  if (known.path[0] === "help") return;
+  const command = known.path.join(" ");
+  // A dynamic input's value (`--scope all`) is not a positional, and only the command knows its inputs.
+  if (DYNAMIC_INPUT_COMMANDS.has(command) || OWN_POSITIONALS.has(command)) return;
+
+  const declared = Object.values(known.command.args ?? {}).filter((def) => def.type === "positional").length;
+  const separator = known.commandArgs.indexOf("--");
+  const given = positionalsIn(
+    separator === -1 ? known.commandArgs : known.commandArgs.slice(0, separator),
+    known.valueFlags,
+  );
+  // After `--` every token is a positional, which citty assigns like any other (`akm bundle remove -- <name>`).
+  if (separator !== -1 && !CHILD_COMMAND_TAIL.has(command)) given.push(...known.commandArgs.slice(separator + 1));
+  if (given.length <= declared) return;
+
+  const got = given.map((token) => `"${token}"`).join(" ");
+  if (TOLERANT_COMMANDS.has(command)) {
+    warn(`[akm ${command}] ignoring positional argument ${got} — it takes none.`);
+    return;
+  }
+  const help = `Run \`akm ${command} --help\` to see what it accepts.`;
+  if (declared === 0) {
+    const flag = POSITIONAL_FLAG[command];
+    throw new UsageError(
+      `akm ${command} takes no positional arguments, but got ${got}.`,
+      "INVALID_FLAG_VALUE",
+      flag ? `Pass it with \`${flag}\`: \`akm ${command} ${flag} ${given[0]}\`.` : help,
+    );
+  }
+  throw new UsageError(
+    `akm ${command} takes ${declared} positional argument${declared === 1 ? "" : "s"}, but got ${given.length}: ${got}.`,
+    "INVALID_FLAG_VALUE",
+    `Quote a value that contains spaces. ${help}`,
+  );
 }

@@ -18,9 +18,12 @@
 
 import { UsageError } from "../core/errors";
 
-export type OutputFormat = "json" | "yaml" | "text" | "jsonl" | "md";
+/** Every `--format` value, and every value `output.format` accepts as a default. */
+export const OUTPUT_FORMATS = ["json", "yaml", "text", "jsonl", "md"] as const;
+export type OutputFormat = (typeof OUTPUT_FORMATS)[number];
 /** Verbosity axis. */
-export type DetailLevel = "brief" | "normal" | "full";
+export const DETAIL_LEVELS = ["brief", "normal", "full"] as const;
+export type DetailLevel = (typeof DETAIL_LEVELS)[number];
 /**
  * Output projection. `human` is the default; `--detail agent` selects `agent`
  * (the token-lean action view, honoured by search/curate/show).
@@ -43,14 +46,13 @@ export interface OutputDefaults {
   detail?: DetailLevel | "brief" | "normal" | "full";
 }
 
-const OUTPUT_FORMATS: OutputFormat[] = ["json", "yaml", "text", "jsonl", "md"];
 /** What `--detail` accepts: a verbosity level, or `agent` for the agent projection. */
-export type DetailValue = DetailLevel | "agent";
-const DETAIL_VALUES: DetailValue[] = ["brief", "normal", "full", "agent"];
+export const DETAIL_VALUES = [...DETAIL_LEVELS, "agent"] as const;
+export type DetailValue = (typeof DETAIL_VALUES)[number];
 
 function parseOutputFormat(value: string | undefined): OutputFormat | undefined {
   if (!value) return undefined;
-  if ((OUTPUT_FORMATS as string[]).includes(value)) return value as OutputFormat;
+  if ((OUTPUT_FORMATS as readonly string[]).includes(value)) return value as OutputFormat;
   if (value === "html") {
     throw new UsageError(
       "--format html is no longer supported: HTML reports moved to AKM Desktop. Use --format md for a report as text.",
@@ -65,14 +67,14 @@ function parseOutputFormat(value: string | undefined): OutputFormat | undefined 
 
 export function parseDetailLevel(value: string | undefined): DetailValue | undefined {
   if (!value) return undefined;
-  if ((DETAIL_VALUES as string[]).includes(value)) return value as DetailValue;
+  if ((DETAIL_VALUES as readonly string[]).includes(value)) return value as DetailValue;
   throw new UsageError(
     `Invalid value for --detail: ${value}. Expected one of: ${DETAIL_VALUES.join("|")}`,
     "INVALID_DETAIL_VALUE",
   );
 }
 
-export function parseFlagValue(argv: string[], flag: string): string | undefined {
+export function parseFlagValue(argv: readonly string[], flag: string): string | undefined {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
     if (arg === "--") break;
@@ -82,7 +84,7 @@ export function parseFlagValue(argv: string[], flag: string): string | undefined
   return undefined;
 }
 
-export function hasBooleanFlag(argv: string[], flag: string): boolean {
+export function hasBooleanFlag(argv: readonly string[], flag: string): boolean {
   for (const arg of argv) {
     if (arg === "--") return false;
     if (arg === flag || arg === `${flag}=true`) return true;
@@ -118,7 +120,7 @@ export function getHyphenatedBoolean(args: unknown, key: string): boolean {
  * Resolve output mode from a synthetic argv array and config defaults.
  * Pure function — no IO. Suitable for unit tests.
  */
-export function resolveOutputMode(argv: string[], defaults: OutputDefaults | undefined = {}): OutputMode {
+export function resolveOutputMode(argv: readonly string[], defaults: OutputDefaults | undefined = {}): OutputMode {
   const format =
     parseOutputFormat(parseFlagValue(argv, "--format")) ?? (defaults?.format as OutputFormat | undefined) ?? "json";
 
@@ -139,7 +141,7 @@ let _mode: OutputMode | undefined;
  * Initialize the process-level output mode. Must be called once at startup
  * before any code calls `getOutputMode()`. Subsequent calls overwrite.
  */
-export function initOutputMode(argv: string[], defaults: OutputDefaults | undefined = {}): OutputMode {
+export function initOutputMode(argv: readonly string[], defaults: OutputDefaults | undefined = {}): OutputMode {
   _mode = resolveOutputMode(argv, defaults);
   return _mode;
 }

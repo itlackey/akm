@@ -15,7 +15,7 @@ akm search "<query>" --limit 10               # Limit results
 akm search "<query>" --detail full            # Include scores, paths, timing
 akm search "memories/projectA/"               # Enumerate a subtree (conceptId prefix; trailing slash required)
 akm search "knowledge/"                       # List every knowledge item
-akm search "" --type rule --limit 200 --detail normal   # List the project's rules (read each with akm show)
+akm rules                                     # The rules that apply here, in full (project's first, then shared)
 akm doctor metrics assets --detail normal      # Assets shown most in the project
 akm search "team-catalog//"                   # List every item in one bundle
 ```
@@ -159,8 +159,9 @@ akm env create env/prod                           # Create an empty env file
 akm env create env/prod --from-file ./.env        # Ingest an existing .env
 akm env list                                  # List all env files across bundles with key names
 akm show env/prod                             # Inspect key names (never values or comments)
-akm env run env/prod -- ./deploy.sh           # Run a command with the whole .env injected (the safe path)
-akm env run env/prod -- $SHELL                # Open an interactive shell with values injected
+akm exec --env env/prod -- ./deploy.sh        # Run a command with the whole .env injected (Experimental: needs experimental.exec true)
+akm exec --env env/prod -- $SHELL             # Open an interactive shell with values injected
+akm run <ref> --env env/prod                  # Run an akm asset with it injected (repeatable)
 akm env export env/prod --out ./env.sh        # Write a sourceable script to a file (mode 0600)
 akm env path env/prod --quiet                 # Print the raw file path (for Docker `_FILE` / `--env-file`)
 akm env remove env/prod                       # Delete the env file
@@ -175,7 +176,8 @@ the value; only the name is ever surfaced.
 ```sh
 printf '%s' "$TOKEN" | akm secret set secrets/deploy-token  # Store a single value
 akm secret list                                             # List secrets (names only)
-akm secret run secrets/deploy-token GITHUB_TOKEN -- gh release create v1.0.0  # Inject into one env var
+akm exec --secret secrets/deploy-token:GITHUB_TOKEN -- gh release create v1.0.0  # Inject into one env var
+akm run <ref> --secret secrets/deploy-token:GITHUB_TOKEN   # The same for an akm asset; scrubbed from captured output
 ```
 
 ## Workflows (Deprecated)
@@ -480,7 +482,7 @@ envelope is the preferred signal for agents parsing output programmatically;
 the exit code is the preferred signal for shell scripts. Passthrough surfaces
 below preserve the child's own streams and status instead.
 
-`env run`, `secret run`, and `migrate` are process passthroughs and preserve
+`exec`, `env run`, `secret run`, and `migrate` are process passthroughs and preserve
 the spawned process's exact status. `akm run` on a task preserves configuration failures
 as exit 78; successful task results exit 0 and other failures exit 1, while a
 command child's exact status remains in `result.detail.exitCode`. `agent` maps

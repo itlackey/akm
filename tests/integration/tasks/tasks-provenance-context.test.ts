@@ -280,9 +280,9 @@ describe('CLI boundary (D5 "Construction", spec §5.2): `akm task run` builds { 
   // point (src/commands/tasks/tasks.ts's akmTasksRun) rather than a direct
   // runTask() call: `--scheduled` toggles `context.scheduled` only.
   // eventSource is "task" in BOTH cases — the R-07 fix is not conditioned on
-  // the flag. A fake no-op agent binary (mirroring
-  // tests/integration/usage-provenance-cli.test.ts) makes dispatch succeed
-  // without a real agent.
+  // the flag. `echo` as the agent (mirroring
+  // tests/integration/usage-provenance-cli.test.ts) replies with its arguments,
+  // so dispatch succeeds without a real agent.
   test.each([
     [],
     ["--scheduled"],
@@ -298,7 +298,7 @@ describe('CLI boundary (D5 "Construction", spec §5.2): `akm task run` builds { 
     } as AkmConfig;
     writeSandboxConfig({
       ...base,
-      harnesses: { "cli-audit": { platform: "aider", bin: "/bin/true" } },
+      harnesses: { "cli-audit": { platform: "aider", bin: "/bin/echo" } },
       scheduler: {
         enabled: [{ kind: "task", ref: `fixture//tasks/${id}`, sourceId: bundleSourceId(base, "fixture") }],
       },

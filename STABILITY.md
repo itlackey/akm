@@ -38,10 +38,11 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 
 | Command | Status | Contract or migration action |
 | --- | --- | --- |
-| `akm index` | Stable | `--export-vectors` and `--import-vectors` are Experimental for their first release; the vector file (`model`, `text_hash`, `embedding`) is their contract, the index file format stays internal. |
+| `akm index` | Stable | `--export-vectors` and `--import-vectors` are Experimental for their first release; the vector file (`model`, `text_hash`, `embedding`) is their contract, the index file format stays internal. A build never waits for another: it skips, prints `skipped` and exits 0 (since 0.10.261130). `--skip-if-locked` is Deprecated: accepted, warned about once, and ignored. |
 | `akm search` | Stable | `--include-proposed` and `--include-sessions` are Deprecated, removed in 0.11: use `--include quality=proposed` and `--include type=<excluded-type>`; `type=` also takes a custom type listed in `search.defaultExcludeTypes` (read from the config file only, not from `extends` layers). `--by-usage` is Deprecated, removed in 0.11: use `akm doctor metrics assets` (first in 0.10.261120; same filters and result fields). |
 | `akm curate` | Stable | `--max-tokens` aliases the existing `--pack` budget and output. Both are opt-in; the unbudgeted default stays unchanged. Conflicting explicit budgets are rejected. `--pack` and the unpacked default are Deprecated, removed in 0.11 when curate returns bounded packed context by default. |
 | `akm show` | Stable | `--outline` and `--lead` are additive aliases. `--max-tokens` bounds body fields (after any frontmatter) on whole/exact/lead reads and reports estimation/truncation; legacy unbudgeted output is unchanged. `--outline` with `--lead` or a budget, `--detail brief` with `--lead`, and `--detail brief` with `--max-tokens` and no lead context are usage errors; `--detail brief --context lead [--max-chars|--max-tokens]` keeps working as in 0.10.261118. `--context`, `--max-chars` and `--detail` are Deprecated, removed in 0.11 (exact reads become the default). |
+| `akm rules` | Experimental | First in 0.10.261130. Prints the rules that apply here, in full, read from the files of the project's bundles (`--from`, else the project's `from`, else the default bundle and the project's write bundle); `--project`, `--from` and `--filter` as in search. Records one `rules` usage event per call. The flags, the `{ project?, bundles, rules }` JSON shape and the `rules` metrics section may change in any release. |
 | `akm remember` | Stable | `--source`, `--description`, and `--expires` work independently of tags. Capture and enrichment processes are unchanged. `--auto`, `--enrich` and `--show-similar` are Deprecated, removed in 0.11 with no replacement flag; they print a notice since 0.10.261120. |
 | `akm import` | Stable | Additive `--asset-ref` and `--type task` modes, first in 0.10.261119; existing document inputs unchanged. `--type task` writes `scheduler.enabled` deliberately, to keep a stale scheduler row from activating the new task. |
 | `akm sync` | Stable | |
@@ -67,8 +68,9 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 
 | Command | Status | Contract or migration action |
 | --- | --- | --- |
-| `akm run` | Evolving | First in 0.10.261119. Dispatches agent, command, task and workflow refs through their existing executors; workflow run ids continue frozen runs. |
-| Task `steps:` (task source v4) | Experimental | First in 0.10.261121 ([#1096](https://github.com/itlackey/akm/issues/1096)). A v4 task may declare `steps:` instead of `uses`/`run`; nothing changes for other tasks. Each step has a `name` and one of `run:` (one shell line), `prompt:` (a `commands/` ref or inline text; `harness`, `connection`, `model`, `expect` select the runner and the reply check) or `task:` (another task without `steps:`), plus `env`, `timeout`, `retries`. Steps get `AKM_PARAMS` and `AKM_STEPS` (never `AKM_INPUTS`); a failed step stops the run; `akm run <task> --resume` restarts at it; a run does not start while the previous one is alive. Each step is recorded in the run's history. The shape may change in 0.11, where `akm migrate apply` converts it. The rest of the task contract is unchanged. |
+| `akm run` | Evolving | First in 0.10.261119. Dispatches agent, command, task and workflow refs through their existing executors; workflow run ids continue frozen runs. Since 0.10.261130 it runs a script by its ref (`akm run scripts/<file> [arguments]`, akm's flags before the ref), takes `--max-retries`, `--cwd` (a missing folder is made), `--clean` and a lone `--inherit` (it starts the run clean) for agent, command and script runs, and `--timeout`, `--max-retries`, `--cwd`, `--inherit`, `--resume` and `--skip-if-locked` for a version 5 task. |
+| Task source v5 (`version: 5-beta.<n>`) | Experimental | First in 0.10.261130; `5-beta.1` is the one beta that build reads. A task is a list of akm commands (`run:`, `exec:`, `prompt:`) run in order, with each step's options (`env`, `secret`, `cwd`, `timeout`, `max-retries`, `inherit`, and `harness`, `connection`, `model` for agent steps), `${name}` values, one state file (`AKM_TASK_STATE`), a clean environment and a working folder for each run, and `lock: true` when the task asks for one run at a time. Stable as `version: 5` in 0.11, which refuses `version: 4`. Task source v4 is unchanged in 0.10. `akm migrate apply <task-file>...` converts the named files; 0.11 converts all. See [Tasks](docs/reference/tasks.md#task-source-v5-experimental). |
+| Task `steps:` (task source v4) | Experimental | First in 0.10.261121 ([#1096](https://github.com/itlackey/akm/issues/1096)). A v4 task may declare `steps:` instead of `uses`/`run`; nothing changes for other tasks. Each step has a `name` and one of `run:` (one shell line), `prompt:` (a `commands/` ref or inline text; `harness`, `connection`, `model`, `expect` select the runner and the reply check) or `task:` (another task without `steps:`), plus `env`, `timeout`, `retries`. Steps get `AKM_PARAMS` and `AKM_STEPS` (never `AKM_INPUTS`); a failed step stops the run; `akm run <task> --resume` restarts at it; a run does not start while the previous one is alive. Each step is recorded in the run's history. 0.11 replaces it with task source v5, where `akm migrate apply` converts it. The rest of the task contract is unchanged. |
 | `akm workflow status` | Deprecated | Removed in 0.11 with workflows ([#1096](https://github.com/itlackey/akm/issues/1096)): task run history replaces it. `--all-scopes` added in 0.9.15 (#942); a deprecated no-op since 0.10 (#1239), accepted through 0.10. |
 | `akm workflow plan` | Deprecated | Removed in 0.11: use `akm doctor explain <ref>`, first in 0.10.261120. Preserve secret-free provenance output and no execution. |
 | `akm workflow list` | Deprecated | Removed in 0.11 with workflows ([#1096](https://github.com/itlackey/akm/issues/1096)): task run history replaces it. `--all-scopes` and a top-level `scopeKey` envelope field added in 0.9.15 (#942); since 0.10 (#1239) `--all-scopes` is a deprecated no-op, accepted through 0.10, and the `scopeKey` field is removed from the list result. |
@@ -114,7 +116,7 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | `akm proposal reject` | Evolving | Does not ask for confirmation; `--yes`/`-y` is Deprecated (ignored with a notice), removed in 0.11. |
 | `akm proposal reopen` | Evolving | Undoes a rejection. |
 | `akm proposal revert` | Evolving | |
-| `akm proposal drain` | Evolving | |
+| `akm proposal drain` | Experimental | |
 | `akm proposal extract` | Evolving | Former top-level `akm extract`. Promoted from Experimental in 0.10 (#1133); extraction evals remain its qualification gate. This migration preserves its process and effective defaults. `--type` is Deprecated, removed in 0.11: use `--sessions` (first in 0.10.261120). |
 | `akm proposal new` | Evolving | Former top-level `akm propose`. |
 
@@ -125,7 +127,7 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | `akm setup` | Stable | Answer flags (`--endpoint`, `--api-key-env`, `--name`, `--harness`, `--embedding`, ...) are new in 0.10. The old JSON-valued `setup --config` and `--probe` were removed; see [upgrade history](#connections-and-harnesses-in-010-1244). `--learning on\|off` and the `improve.enabled` key it writes are Experimental for their first release. |
 | `akm upgrade` | Stable | Includes the plugin step. `--next` is Deprecated in favor of coordinated `--channel` selection. Checksums are verified by default; `--skip-checksum` is the explicit recovery bypass, and the `AKM_UPGRADE_SKIP_CHECKSUM` variable it replaces is Deprecated for removal in 0.11. |
 | `akm migrate status` | Evolving | Forwards to the standalone `akm-migrate` tool and renders its result through the normal `--format` pipeline. |
-| `akm migrate apply` | Evolving | Forwards to the standalone `akm-migrate` tool and renders its result through the normal `--format` pipeline. `--dry-run` is Deprecated, removed in 0.11: use `akm migrate status`; prints a notice since 0.10.261122. |
+| `akm migrate apply` | Evolving | Forwards to the standalone `akm-migrate` tool and renders its result through the normal `--format` pipeline. Task files named after it are converted to task source v5 (Experimental). `--dry-run` is Deprecated, removed in 0.11: use `akm migrate status`; prints a notice since 0.10.261122. |
 | `akm-migrate status` / `akm-migrate apply` | Deprecated | Standalone executable removed in 0.11: use `akm migrate status` / `akm migrate apply`. |
 | `akm config path` | Stable | |
 | `akm config list` | Stable | |
@@ -147,12 +149,13 @@ check the [migration guide](docs/migration/v0.10-to-v0.11.md) for availability.
 | --- | --- | --- |
 | `akm env list` | Stable | Read-and-inject surface. |
 | `akm env path` | Stable | Read-and-inject surface. |
-| `akm env export` | Stable | Read-and-inject surface. |
-| `akm env run` | Stable | Read-and-inject surface. `--allow-dangerous-env-keys` is Deprecated, no effect: accepted through 0.10 and a usage error in 0.11, so drop it; prints a notice since 0.10.261122. |
+| `akm env export` | Experimental | Read-and-inject surface. |
+| `akm exec` | Experimental | First in 0.10.261130. Off until `experimental.exec` is `true` in config; otherwise it refuses with a config error (exit 78) and runs nothing. Runs any command with repeatable `--env <ref>` and `--secret <ref>:<VAR>` injected; `akm run` takes the same two flags for an akm asset. One argument after `--` is a shell line, several are a program and its arguments. `--prompt` (or `--prompt-stdin`, with `--harness`, `--connection`, `--model`) runs a prompt on an agent instead. `--cwd` (a missing folder is made), `--timeout`, `--max-retries`, `--clean`, and `--inherit` (alone it starts the command clean) apply to either form; `--clean` keeps akm's location variables. A typed `--timeout` stops the command, not the processes it started. Child-process passthrough, exempt from `--format`. Task steps do not need `experimental.exec`. |
+| `akm env run` | Deprecated | Removed in 0.11: put the command in a script asset under scripts/, run with `akm run --env <ref> scripts/<file>`. Read-and-inject surface. `--allow-dangerous-env-keys` is Deprecated, no effect: accepted through 0.10 and a usage error in 0.11, so drop it; prints a notice since 0.10.261122. |
 | `akm env create` | Experimental | Write verb. |
 | `akm env remove` | Experimental | Write verb. |
 | `akm secret list` | Stable | Read-and-inject surface. |
-| `akm secret run` | Stable | Read-and-inject surface. |
+| `akm secret run` | Deprecated | Removed in 0.11: put the command in a script asset under scripts/, run with `akm run --secret <ref>:<VAR> scripts/<file>`. Read-and-inject surface. |
 | `akm secret set` | Experimental | Write verb. |
 | `akm secret remove` | Experimental | Write verb; restored in 0.10 after its 0.9.0 removal. |
 
@@ -261,6 +264,18 @@ with no `PRAGMA user_version` or `schema_migrations` entry of its own. Preserve
 the collected baseline through the 0.11 storage migration, which keeps it in
 `metrics.db` in the resolved data directory;
 the migration guide tracks the data contract, retention, and verification.
+
+### Daily usage report (Experimental)
+
+0.10.x also sends one anonymous report a day per surface (the CLI and AKM Desktop, through
+`akm-cli/workspace` `activity.reportUsage`) to a privately hosted service, under a random install id and
+with no personal information: counts
+of the commands and flags used from the data above, what is set up, and library sizes, never argument
+values, refs, paths or names. It is on by default and
+`usage.report: false` in the config file turns it off; `--read-only`, `usage.capture: false`, CI and
+test runs send nothing. The key, the event fields and `activity.reportUsage` are Experimental: the
+fields may change between releases, and every change is listed in
+[Data and Telemetry](docs/reference/data-and-telemetry.md#daily-usage-report).
 
 ### Remaining scheduled 0.11 removals and breaking changes
 
@@ -394,7 +409,7 @@ available as JSON), never on the format alone.
 `--detail` is `brief|normal|full` (verbosity) or `agent` (the projection of
 `search`, `curate` and `show`; see Agent-oriented output below). A small set of commands is **format-exempt** because their
 output is not a result envelope at all: `completions` (shell script source),
-child-process passthrough in `env run` / `secret run`, a bare-path payload
+child-process passthrough in `exec`, `env run` / `secret run`, a bare-path payload
 from `env path` and `config path`, and document payloads from `hints` and `help`
 (bare and `help migrate`). The set is declared in
 `src/output/format-exempt.ts`, and
@@ -420,7 +435,7 @@ the result envelope.
 | `2` | Usage / bad input |
 | `4` | Health warning (`akm doctor` or `akm health`) |
 | `70` | Unexpected / unclassified |
-| `75` | Transient — retry shortly (`TransientError`, sysexits `EX_TEMPFAIL`); another akm process holds a lock or is writing `state.db` or `index.db` right now |
+| `75` | Transient — retry shortly (`TransientError`, sysexits `EX_TEMPFAIL`); another akm process holds a lock or is writing `state.db` or `index.db` right now. Another index build running is not one: that build is skipped, exit 0 |
 | `78` | Configuration error |
 
 ### Agent-oriented output (Experimental)
@@ -509,7 +524,8 @@ The 0.10 task commands are `add`, `enable`, `disable`, `run`, `explain`,
 `history`, `sync`, `prune`, and `doctor`; there is no group alias and no
 `list`, `remove`, `init`, or `validate`. Their individual deprecation statuses
 are in the command table. Task source v4 YAML, with typed `inputs:` and an
-optional `schedule:`, is the only accepted version. Task v3 and
+optional `schedule:`, is the accepted version; task source v5 (`version: 5-beta.1`)
+is Experimental beside it. Task v3 and
 task v2 sources are converted by `akm migrate apply`. Command tasks use
 a named connection or harness, and task history metadata is versioned. Schema
 additions can ship in patch releases; removals require a minor release. Bare `akm task` is a usage error
@@ -523,15 +539,16 @@ explain` instead **redacts** secret-shaped input values on a best-effort
 heuristic basis — a value that doesn't match the heuristic can still
 print unredacted.
 
-Tasks stay Evolving through 0.11: the new format ships for the first time in
-0.11.0, so it has had no field use before the stable release. 0.11.0 replaces
-task source v4 with a simpler format that also takes over ordered steps from
+Tasks stay Evolving through 0.11. Task source v5 is Experimental in 0.10
+(`version: 5-beta.1`, first in 0.10.261130) and stable as `version: 5` in 0.11.0,
+which replaces task source v4 with it and takes over ordered steps from
 workflows ([#1096](https://github.com/itlackey/akm/issues/1096)). The schedule
 that runs moves into each host's config; a task file's `schedule:` may stay as
-the default that enabling the task applies. That format is
-being finalized; the [migration guide](docs/migration/v0.10-to-v0.11.md#workflows-fold-into-tasks)
-tracks it. Task source v4 works unchanged through 0.10.x, and `akm migrate apply`
-converts it.
+the default that enabling the task applies. Task source v4 works unchanged
+through 0.10.x. `akm migrate apply <task-file>...` converts the named v4 files to
+v5; 0.11 converts all of them. The [migration
+guide](docs/migration/v0.10-to-v0.11.md#task-source-v5) lists what converts and
+what does not.
 
 ### Execution-plan inspection
 
@@ -770,6 +787,7 @@ The location overrides stay Stable in 0.11; `AKM_BUNDLE_DIR` is the retired one.
 | `AKM_NPM_REGISTRY` | Evolving | npm mirror base URL instead of `registry.npmjs.org`; documented changes require a CHANGELOG note. |
 | `AKM_SQLITE_JOURNAL_MODE` | Deprecated | SQLite journal mode override; keeps working in 0.10 and is removed in 0.11 with no replacement. akm uses WAL and falls back to DELETE on a detected network filesystem (NFS, SMB/CIFS, 9p, CephFS, FUSE such as sshfs or virtiofs; Linux detection only, so a network-filesystem data directory on macOS or Windows is unsupported). Ephemeral containers keep SQLite on local disk and use snapshots. |
 | `AKM_EVENT_SOURCE` | Evolving | Documented input: `user`, `agent`, `task`, `improve` or `audit` marks the provenance of the commands a process runs (usage events and CLI usage counts); akm sets it for the programs it runs for a task. Absent or other values mean `unknown`. |
+| `AKM_TASK_STATE` | Experimental | Path of the JSON file holding a version 5 task run's state (its inputs and each finished step's result), set by akm for a step it runs as a process; akm does not read it. First in 0.10.261130. |
 | `AKM_INSTALL_DIR` | Stable | Install-script prefix. |
 | `AKM_UPGRADE_SKIP_CHECKSUM` | Deprecated | Explicit recovery bypass for a broken checksum in 0.10; replaced by `akm upgrade --skip-checksum` and removed in 0.11. Normal upgrade verification remains mandatory. |
 
@@ -782,8 +800,8 @@ not additional public support statuses.
 
 An `env` asset holds a whole `.env` group; a `secret` holds a single sensitive
 value. Env key names are discoverable. Values are never written to stdout, the index, or
-structured output; the safe injection path is `akm env run <name> --
-<command>` (or `akm secret run <name> <VAR> -- …`). The `env` / `secret`
+structured output; the safe injection path is `akm run --env <ref> scripts/<file>`
+(or `akm run --secret <ref>:<VAR> scripts/<file>`). The `env` / `secret`
 **write** verbs (`env create`, `env remove`, `secret set`, `secret remove`) are Experimental; the
 `list` / `path` / `run` / `export` read-and-inject surface is Stable.
 

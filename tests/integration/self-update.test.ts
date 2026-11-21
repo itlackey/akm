@@ -15,6 +15,8 @@ import {
 } from "../../src/commands/sources/self-update";
 import { upgradeCommand } from "../../src/commands/sources/sources-cli";
 import { _resetWarnOnceForTests, _setWarnSinkForTests, setQuiet } from "../../src/core/warn";
+import * as runtime from "../../src/runtime";
+import { resolveNpmGlobalRoot } from "../../src/tasks/resolve-akm-bin";
 import { sandboxHome, withEnv } from "../_helpers/sandbox";
 
 // ── Fetch mocking helper ────────────────────────────────────────────────────
@@ -125,19 +127,20 @@ describe("detectInstallMethod", () => {
     expect(detectInstallMethod(signals)).toBe("pnpm");
   });
 
-  test("returns 'npm' when importMetaDir contains node_modules without bun/pnpm markers", () => {
+  test("returns 'package-local' without evidence of global npm ownership", () => {
     const signals: InstallSignals = {
       bunMain: "/usr/local/bin/bun",
       importMetaDir: "/usr/local/lib/node_modules/akm-cli/dist",
       hasAkmVersion: false,
     };
-    expect(detectInstallMethod(signals)).toBe("npm");
+    expect(detectInstallMethod(signals)).toBe("package-local");
   });
 
   test("package-manager detection takes priority over binary signals", () => {
     const signals: InstallSignals = {
       bunMain: "/$bunfs/root/src/cli.ts",
       importMetaDir: "/some/node_modules/akm",
+      npmGlobalRoot: "/some/node_modules",
       hasAkmVersion: true,
     };
     expect(detectInstallMethod(signals)).toBe("npm");
@@ -169,6 +172,52 @@ describe("detectInstallMethod", () => {
       npmGlobalRoot: "/usr/local/lib/node_modules",
     };
     expect(detectInstallMethod(signals)).toBe("package-local");
+  });
+
+  test.each([
+    "/home/user/.bun/install/global/node_modules/plugin/node_modules/akm-cli/dist",
+    "/home/user/.local/share/pnpm/global/5/node_modules/plugin/node_modules/akm-cli/dist",
+  ])("a dependency nested under global package %s is package-local", (importMetaDir) => {
+    expect(detectInstallMethod({ bunMain: undefined, importMetaDir, hasAkmVersion: false })).toBe("package-local");
+  });
+
+  test("a realpathed pnpm global store package retains global ownership", () => {
+    const fixture = path.join(sandboxHome().dir, "pnpm/global/5/node_modules");
+    const packageRoot = path.join(fixture, ".pnpm/akm-cli@0.10.0/node_modules/akm-cli");
+    fs.mkdirSync(path.join(packageRoot, "dist"), { recursive: true });
+    fs.symlinkSync(path.relative(fixture, packageRoot), path.join(fixture, "akm-cli"), "dir");
+    expect(
+      detectInstallMethod({ bunMain: undefined, importMetaDir: path.join(packageRoot, "dist"), hasAkmVersion: false }),
+    ).toBe("pnpm");
+    fs.unlinkSync(path.join(fixture, "akm-cli"));
+    expect(
+      detectInstallMethod({ bunMain: undefined, importMetaDir: path.join(packageRoot, "dist"), hasAkmVersion: false }),
+    ).toBe("package-local");
+  });
+
+  test("the npm on PATH proves the global root when no Node launcher names one", () => {
+    const dir = sandboxHome().dir;
+    const root = path.join(dir, "lib/node_modules");
+    fs.mkdirSync(path.join(dir, "bin"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "bin/npm"), `#!/bin/sh\necho ${JSON.stringify(root)}\n`, { mode: 0o755 });
+    const npmGlobalRoot = resolveNpmGlobalRoot(undefined, { PATH: `${path.join(dir, "bin")}:/usr/bin:/bin` });
+    expect(npmGlobalRoot).toBe(root);
+    const signals = { bunMain: undefined, hasAkmVersion: false, npmGlobalRoot };
+    expect(detectInstallMethod({ ...signals, importMetaDir: path.join(root, "akm-cli/dist") })).toBe("npm");
+    expect(detectInstallMethod({ ...signals, importMetaDir: "/plugins/akm/node_modules/akm-cli/dist" })).toBe(
+      "package-local",
+    );
+  });
+
+  test("a dependency nested inside another global package is package-local", () => {
+    expect(
+      detectInstallMethod({
+        bunMain: undefined,
+        importMetaDir: "/usr/local/lib/node_modules/plugin/node_modules/akm-cli/dist",
+        hasAkmVersion: false,
+        npmGlobalRoot: "/usr/local/lib/node_modules",
+      }),
+    ).toBe("package-local");
   });
 
   test("returns 'npm' for a node_modules install inside the proven npm global root", () => {
@@ -245,13 +294,10 @@ describe("checkForUpdate", () => {
     expect(result.latestVersion).toBe("0.0.14");
   });
 
-  test("handles missing tag_name gracefully", async () => {
+  test("a release response with no tag_name is a failed check, never up to date", async () => {
     mockFetch(() => Response.json({}));
 
-    const result = await checkForUpdate("0.0.13");
-
-    expect(result.latestVersion).toBe("");
-    expect(result.updateAvailable).toBe(false);
+    await expect(checkForUpdate("0.0.13")).rejects.toThrow("no tag_name");
   });
 
   describe("--next channel", () => {
@@ -699,6 +745,12 @@ describe("performUpgrade", () => {
       stdout: "",
       stderr: "",
     } as never);
+    const indexSpy = spyOn(runtime, "spawnSync").mockReturnValue({
+      success: true,
+      exitCode: 0,
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.alloc(0),
+    });
 
     const result = await performUpgrade(
       {
@@ -716,22 +768,27 @@ describe("performUpgrade", () => {
     expect(result.postUpgrade?.ok).toBe(true);
     expect(result.postUpgrade?.skipped).toBe(false);
     expect(result.postUpgrade?.exitCode).toBe(0);
-    // Install, version verification, then the post-upgrade `akm index`.
-    expect(spawnSyncSpy).toHaveBeenCalledTimes(3);
+    // Install and version verification, then the post-upgrade `akm index`.
+    expect(spawnSyncSpy).toHaveBeenCalledTimes(2);
     // stderr is not piped, so the index's progress lines reach the terminal while it runs.
-    expect(spawnSyncSpy).toHaveBeenLastCalledWith(
-      "akm",
-      ["index", "--format", "json"],
-      expect.objectContaining({ encoding: "utf8", stdio: ["pipe", "pipe", "inherit"] }),
+    expect(indexSpy).toHaveBeenCalledWith(
+      ["akm", "index", "--format", "json"],
+      expect.objectContaining({ stdin: "pipe", stdout: "pipe", stderr: "inherit" }),
     );
   });
 
   test("`akm upgrade --quiet` passes --quiet to the post-upgrade index", async () => {
-    const spawnSyncSpy = spyOn(childProcess, "spawnSync").mockReturnValue({
+    spyOn(childProcess, "spawnSync").mockReturnValue({
       status: 0,
       stdout: "",
       stderr: "",
     } as never);
+    const indexSpy = spyOn(runtime, "spawnSync").mockReturnValue({
+      success: true,
+      exitCode: 0,
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.alloc(0),
+    });
     setQuiet(true);
     await performUpgrade(
       { currentVersion: "0.0.13", latestVersion: "0.0.14", updateAvailable: true, installMethod: "npm" },
@@ -739,7 +796,7 @@ describe("performUpgrade", () => {
       currentMigrator,
     );
 
-    expect(spawnSyncSpy).toHaveBeenLastCalledWith("akm", ["index", "--format", "json", "--quiet"], expect.anything());
+    expect(indexSpy).toHaveBeenCalledWith(["akm", "index", "--format", "json", "--quiet"], expect.anything());
   });
 
   test.skipIf(process.platform === "win32")(
@@ -880,6 +937,28 @@ describe("performUpgrade", () => {
     expect(spawnSyncSpy).not.toHaveBeenCalled();
   });
 
+  test("a plugin-owned Bun invocation cannot authorize a global package-manager upgrade", async () => {
+    const signals: InstallSignals = {
+      bunMain: "/plugins/cache/akm/node_modules/akm-cli/dist/cli.js",
+      importMetaDir: "/plugins/cache/akm/node_modules/akm-cli/dist",
+      hasAkmVersion: false,
+      npmGlobalRoot: undefined,
+    };
+    const installMethod = detectInstallMethod(signals);
+    expect(installMethod).toBe("package-local");
+    expect(getPackageManagerUpgradeCommand(installMethod)).toBeUndefined();
+    const runMigrationTool = migrator({ status: "current" });
+    const result = await performUpgrade(
+      { currentVersion: "0.9.8", latestVersion: "0.10.0", updateAvailable: true, installMethod },
+      { force: true },
+      { runMigrationTool },
+    );
+    expect(result.upgraded).toBe(false);
+    expect(result.installMethod).toBe("package-local");
+    expect(result.message).toContain("upgrade that package");
+    expect(runMigrationTool).toHaveBeenCalledTimes(1);
+  });
+
   test("a package-local install never runs a package manager: the parent package owns the binary", async () => {
     // An `npm install -g` here reports success while the parent keeps
     // executing its own node_modules copy (the databasin report on #895).
@@ -955,16 +1034,19 @@ describe("performUpgrade", () => {
   });
 
   test("captures post-upgrade failure without failing the upgrade", async () => {
-    let call = 0;
-    const spawnSyncSpy = spyOn(childProcess, "spawnSync").mockImplementation((() => {
-      call++;
-      if (call < 3) {
-        // Package install and version verification succeed.
-        return { status: 0, stdout: "", stderr: "" } as never;
-      }
-      // The post-upgrade `akm index` fails; its stderr went to the terminal, so none is captured.
-      return { status: 1, stdout: "", stderr: null } as never;
-    }) as never);
+    // Package install and version verification succeed.
+    const spawnSyncSpy = spyOn(childProcess, "spawnSync").mockReturnValue({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    } as never);
+    // The post-upgrade `akm index` fails; its stderr went to the terminal, so none is captured.
+    spyOn(runtime, "spawnSync").mockReturnValue({
+      success: false,
+      exitCode: 1,
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.alloc(0),
+    });
 
     const result = await performUpgrade(
       {
@@ -981,7 +1063,7 @@ describe("performUpgrade", () => {
     expect(result.postUpgrade?.ok).toBe(false);
     expect(result.postUpgrade?.exitCode).toBe(1);
     expect(result.postUpgrade?.message).toContain("exit code 1");
-    expect(spawnSyncSpy).toHaveBeenCalledTimes(3);
+    expect(spawnSyncSpy).toHaveBeenCalledTimes(2);
   });
 
   test("throws when latestVersion is empty and force is used", async () => {

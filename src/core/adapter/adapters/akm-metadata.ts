@@ -238,10 +238,28 @@ export function foldRecognizedMetadata(rendererName: string, file: FileContext):
       out.tags = Array.from(new Set([...(out.tags ?? []), "task", "scheduled"]));
       try {
         const parsed = parseTaskSource({ yaml: file.content(), filePath: file.absPath });
+        const hints = new Set<string>();
+        for (const binding of parsed.schedule) hints.add(`schedule:${binding.cron}`);
+        if (parsed.version !== 4) {
+          const v5 = parsed.v5;
+          for (const step of v5.steps) {
+            if (step.run !== undefined) hints.add(`run:${step.run}`);
+            else if (step.exec !== undefined) hints.add(`exec:${step.exec}`);
+            else hints.add(`prompt:${step.prompt}`);
+          }
+          out.uses = v5.steps.flatMap((step) => (step.run !== undefined ? [step.run] : []));
+          if (v5.description && !out.description) {
+            out.description = v5.description;
+            out.source = "task-source";
+            out.confidence = 0.9;
+          }
+          if (v5.tags && v5.tags.length > 0) out.tags = Array.from(new Set([...(out.tags ?? []), ...v5.tags]));
+          if (v5.when_to_use) hints.add(`when_to_use:${v5.when_to_use}`);
+          finalizeHints(out, hints);
+          return out;
+        }
         const v4 = parsed.v4;
         const target = v4.target;
-        const hints = new Set<string>();
-        for (const binding of v4.schedule) hints.add(`schedule:${binding.cron}`);
         if (target.kind === "uses") {
           if (target.uses.kind === "workflow") hints.add(`workflow:${target.uses.ref}`);
           else if (target.uses.kind === "command") hints.add(`prompt:${target.uses.ref}`);

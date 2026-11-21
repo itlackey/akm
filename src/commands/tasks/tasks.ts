@@ -35,7 +35,7 @@ import {
 import { bundleKeyForContentRoot, resolveConfiguredSources } from "../../core/config/config-sources";
 import type { AkmConfig } from "../../core/config/config-types";
 import { IMPROVE_AUTONOMY_CONFIG_KEY, isImproveAutonomyEnabled } from "../../core/config/experimental";
-import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
+import { ConfigError, NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { getTaskLogDir } from "../../core/paths";
 import { warn } from "../../core/warn";
 import {
@@ -59,6 +59,7 @@ import type { InstalledSchedulerBinding, SchedulerBackend, SchedulerInstallOptio
 import { prepareTaskV3Execution } from "../../tasks/prepare/prepare";
 import type { PrepareTaskV3ExecutionContext } from "../../tasks/prepare/prepared-execution";
 import { isCheckoutInvocation, type ResolvedAkmInvocation, resolveAkmInvocation } from "../../tasks/resolve-akm-bin";
+import { recordTaskAttemptFailure } from "../../tasks/run/attempt-lifecycle";
 import { activeTaskSources, loadPreparedTask, resolveBundleAsset } from "../../tasks/run/load-task";
 import { createExecutionProvenanceContext } from "../../tasks/run/provenance";
 import { runTask } from "../../tasks/run/run-task";
@@ -76,6 +77,7 @@ import {
   compileSchedulerSources,
   installedRowNativeId,
   installedRowOwner,
+  installedRowRef,
   installedRowScope,
   planSchedulerSync,
   renderSchedulerPlanPreview,
@@ -88,8 +90,10 @@ import {
 } from "../../tasks/scheduler-sync";
 import { parseTaskSource } from "../../tasks/source/parse-task-source";
 import { projectTaskSourceV4 } from "../../tasks/source/project-v4";
+import { parseTaskSourceV4 } from "../../tasks/source/task-source-v4";
 import type { TaskV3SourceDocument } from "../../tasks/source-v3";
 import { normaliseTaskConceptId, normaliseTaskId } from "../../tasks/task-id";
+import type { TaskV5Start } from "../../tasks/v5/flags";
 import { applyAutonomyGate, configuredDirectAutonomyLanes, describeGatedLanes } from "../improve/autonomy-gate";
 import { resolveImproveStrategy } from "../improve/improve-strategies";
 
@@ -188,8 +192,8 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
     tags: input.tags,
   });
 
-  const parsedTask = parseTaskSource({ yaml, filePath: assetPath });
-  const task = projectTaskSourceV4(parsedTask.v4);
+  const parsedTask = parseTaskSourceV4({ yaml, filePath: assetPath });
+  const task = projectTaskSourceV4(parsedTask);
   const qualifiedRef = makeBundleRef(bundle.bundleName, `tasks/${id}`);
   await prepareTaskV3Execution(task, {
     taskId: id,
@@ -202,7 +206,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
   const bindings = compileTaskSchedulerBindings({
     id,
     qualifiedRef,
-    schedules: parsedTask.v4.schedule.map((schedule) => ({
+    schedules: parsedTask.schedule.map((schedule) => ({
       cron: schedule.cron,
       ordinal: schedule.ordinal,
       source: schedule.source,
@@ -309,13 +313,25 @@ export interface TasksRunResultEnvelope {
 
 export async function akmTasksRun(
   id: string,
-  options: { scheduled?: boolean; target?: string; inputFlags?: readonly InputFlag[] } = {},
+  options: { scheduled?: boolean; target?: string; inputFlags?: readonly InputFlag[]; start?: () => TaskV5Start } = {},
 ): Promise<TasksRunResultEnvelope> {
-  const parsed = parseTaskRef(id);
-  const bundle = resolveTaskReadBundle(parsed.bundle, options.target);
-  const adapterId = bundle.source.adapterId ?? detectAdapterId(bundle.source.path);
-  const resolvedId = taskIdForAdapter(parsed.id, adapterId);
   const scheduled = options.scheduled === true;
+  const startedAt = new Date();
+  let parsed: ReturnType<typeof parseTaskRef> | undefined;
+  let bundle: ReturnType<typeof resolveTaskReadBundle>;
+  let adapterId: string;
+  let resolvedId: string;
+  try {
+    parsed = parseTaskRef(id);
+    bundle = resolveTaskReadBundle(parsed.bundle, options.target);
+    adapterId = bundle.source.adapterId ?? detectAdapterId(bundle.source.path);
+    resolvedId = taskIdForAdapter(parsed.id, adapterId);
+  } catch (failure) {
+    if (scheduled) {
+      recordTaskAttemptFailure({ taskId: parsed?.id ?? id, reason: "task_load_failed", failure, startedAt, scheduled });
+    }
+    throw failure;
+  }
   // Built ONCE at this invocation boundary. eventSource is "task" whether or
   // not --scheduled was passed — scheduled stays a separate field carrying its
   // own meaning (activation policy, scheduler env), never selecting the event
@@ -339,10 +355,10 @@ export async function akmTasksRun(
     scheduled,
     provenance,
     inputFlags: options.inputFlags,
+    ...(options.start ? { start: options.start } : {}),
     taskStepRunner: stepTaskRunner(scheduled),
   };
-  // The runner owns the prepare-before-reserve boundary. Invalid source,
-  // projectability, and resolver failures therefore create no history row.
+  // The runner records scheduled preparation failures; interactive preflight stays non-mutating.
   const result = await runTask(resolvedId, runOptions);
   if (!scheduled && result.target.kind === "workflow") {
     warnWorkflowUse(`task ${parsed.id}, which runs workflow ${result.target.ref},`);
@@ -376,6 +392,12 @@ function stepTaskRunner(scheduled: boolean): NonNullable<RunTaskOptions["taskSte
         bundleName: bundle.source.name,
         adapterId,
       });
+      if (prepared.kind === "v5") {
+        throw new UsageError(
+          `Task ${ref} is version 5, and a version 4 task step does not run one. Run \`akm migrate apply\` to convert the task that runs it.`,
+          "TASK_SOURCE_INVALID",
+        );
+      }
       if (prepared.kind === "steps") {
         throw new UsageError(`Step task ${ref} declares steps:; a task step must not.`, "INVALID_FLAG_VALUE");
       }
@@ -399,6 +421,7 @@ function resolveTaskActivation(
   qualifiedRef: string;
   sourcePath: string;
   bundleName: string;
+  scope: SchedulerBundleScope;
 } {
   const parsed = parseTaskRef(ref);
   const bundle = resolveTaskReadBundle(parsed.bundle, target);
@@ -417,11 +440,46 @@ function resolveTaskActivation(
       yaml: fs.readFileSync(sourcePath, "utf8"),
       filePath: sourcePath,
     });
-    if (parsedSource.v4.schedule.length === 0) {
+    if (parsedSource.schedule.length === 0) {
       throw new UsageError(`Task ${JSON.stringify(ref)} has no schedule to enable.`, "INVALID_FLAG_VALUE");
     }
   }
-  return { qualifiedRef: makeBundleRef(bundle.source.name, conceptId), sourcePath, bundleName: bundle.source.name };
+  return {
+    qualifiedRef: makeBundleRef(bundle.source.name, conceptId),
+    sourcePath,
+    bundleName: bundle.source.name,
+    scope: { ...bundleScope(bundle.source.name, bundle.source.path), adapterId },
+  };
+}
+
+/**
+ * Native state for one ref, using the same row ownership and identity as scheduler sync.
+ * `unavailable`: the native scheduler could not be read at all. `unknown`: it
+ * was read, and a row names this ref without proving which bundle owns it.
+ */
+export async function inspectTaskSchedulerBindings(
+  ref: string,
+  deps: SchedulerDeps = {},
+): Promise<{ state: "installed" | "not-installed" } | { state: "unknown" | "unavailable"; reason: string }> {
+  const resolved = resolveTaskActivation(ref, undefined, false);
+  let installed: InstalledSchedulerBinding[];
+  try {
+    installed = await listInstalledRows(deps.backend ?? selectBackend());
+  } catch (cause) {
+    rethrowIfTestIsolationError(cause);
+    return { state: "unavailable", reason: errorMessage(cause) };
+  }
+  let unknownOwnership: string | undefined;
+  for (const row of installed) {
+    if (installedRowRef(row, resolved.scope) !== resolved.qualifiedRef) continue;
+    const scope = installedRowScope(row, [resolved.scope]);
+    if (scope !== undefined) return { state: "installed" };
+    const namedBundle = row.target ?? scheduledInvocationBundle(row.invocation);
+    if (namedBundle === resolved.scope.bundleName && row.ownerBundlePath === undefined) {
+      unknownOwnership = `Native binding ${installedRowNativeId(row)} names ${resolved.qualifiedRef}, but its owning bundle path could not be read.`;
+    }
+  }
+  return unknownOwnership === undefined ? { state: "not-installed" } : { state: "unknown", reason: unknownOwnership };
 }
 
 /**
@@ -1080,7 +1138,7 @@ function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
-interface RenderInput {
+export interface RenderInput {
   id: string;
   schedule: string;
   workflow?: string;
@@ -1127,7 +1185,7 @@ function renderInputsFromParams(params: Record<string, unknown>): Record<string,
   return inputs;
 }
 
-function renderTaskYaml(input: RenderInput): string {
+export function renderTaskYaml(input: RenderInput): string {
   const obj: Record<string, unknown> = { version: 4 };
   if (input.workflow) {
     obj.uses = input.workflow;

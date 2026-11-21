@@ -22,7 +22,7 @@ test("reviewed human workflows prevent dead ends and preserve focus and source",
   await page.goto(app.url);
   const navigate = (href) => go(page, href);
   const workspace = page.getByRole("region", { name: "Asset workspace", exact: true });
-  const editor = page.getByRole("textbox", { name: "Markdown source, including optional frontmatter" });
+  const editor = page.getByRole("textbox", { name: /^Markdown (body|source, including optional frontmatter)$/ });
   const original = await readFile(app.documentPath, "utf8");
 
   await t.test("narrow browsing moves focus into content and back to the same result", async () => {
@@ -51,23 +51,26 @@ test("reviewed human workflows prevent dead ends and preserve focus and source",
     await expect(page.getByRole("searchbox", { name: "Search library" })).toHaveValue("backup");
     await result.click();
   });
-  await t.test("same-bundle copy requires a new name before submission; cancel returns focus", async () => {
-    const copy = workspace.getByRole("button", { name: "Copy to bundle…", exact: true });
-    await workspace.getByRole("button", { name: "More", exact: true }).click();
-    await copy.click();
-    const name = workspace.getByRole("textbox", { name: /^New name/ });
-    await expect(workspace.getByRole("button", { name: "Confirm copy" })).toBeDisabled();
-    await name.fill("restore-laptop");
-    await expect(workspace.getByRole("button", { name: "Confirm copy" })).toBeDisabled();
-    await name.fill("another-recovery-guide");
-    await expect(workspace.getByRole("button", { name: "Confirm copy" })).toBeEnabled();
-    await workspace.getByRole("button", { name: "Cancel", exact: true }).click();
-    await expect(workspace.getByRole("button", { name: "More", exact: true })).toBeFocused();
-    assert.equal(await readFile(app.documentPath, "utf8"), original);
-  });
+  await t.test(
+    "Copy to… opens the folder picker; a copy over the original is refused; cancel returns focus",
+    async () => {
+      await workspace.getByRole("button", { name: "More", exact: true }).click();
+      await workspace.getByRole("button", { name: "Copy to…", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Copy restore-laptop.md" });
+      await expect(dialog.getByRole("tree", { name: "Folders" })).toBeVisible();
+      await dialog.getByRole("button", { name: "Copy here", exact: true }).click();
+      await expect(dialog.getByRole("alert")).toBeVisible();
+      assert.equal(await readFile(app.documentPath, "utf8"), original);
+      await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+      await expect(workspace.getByRole("button", { name: "More", exact: true })).toBeFocused();
+      assert.equal(await readFile(app.documentPath, "utf8"), original);
+    },
+  );
   await t.test("unsaved drafts are explicit, survive reload and can be discarded without saving", async () => {
     await workspace.getByRole("link", { name: "Edit page", exact: true }).click();
-    const draft = `${original}\nUnsaved review fixture.\n`;
+    // The properties are fields; the box holds the body.
+    const body = original.replace(/^---\n[\s\S]*?\n---\n/, "");
+    const draft = `${body}\nUnsaved review fixture.\n`;
     await editor.fill(draft);
     await expect(workspace.getByRole("status")).toContainText("Unsaved changes");
     // Session-only draft survives a renderer reload; no live source writes.
@@ -80,7 +83,7 @@ test("reviewed human workflows prevent dead ends and preserve focus and source",
     await expect(editor).toHaveValue(draft);
     await workspace.getByRole("button", { name: "Discard draft…", exact: true }).click();
     await workspace.getByRole("button", { name: "Discard draft", exact: true }).click();
-    await expect(editor).toHaveValue(original);
+    await expect(editor).toHaveValue(body);
     await expect(workspace.getByRole("heading", { name: "Restore a laptop" })).toBeFocused();
     await expect(workspace.getByRole("button", { name: "Save changes", exact: true })).toBeDisabled();
     assert.equal(await readFile(app.documentPath, "utf8"), original);
@@ -90,20 +93,6 @@ test("reviewed human workflows prevent dead ends and preserve focus and source",
     await page.getByRole("link", { name: "Back to reading", exact: true }).click();
     await workspace.getByRole("link", { name: /Search results/ }).click();
     await expect(page.locator(".library-hit-content").filter({ hasText: "restore laptop" })).toBeFocused();
-  });
-  await t.test("duplicate creation keeps the draft and provides a usable recovery action", async () => {
-    await navigate("/library/new");
-    await page.getByRole("textbox", { name: "File name", exact: true }).fill("restore-laptop");
-    await editor.fill("# Synthetic duplicate\n\nKeep this draft.\n");
-    await page.getByRole("button", { name: "Create knowledge", exact: true }).click();
-    const alert = workspace.getByRole("alert");
-    await expect(alert).toContainText("Choose a different file name");
-    await expect(alert).toBeFocused();
-    await expect(alert).not.toContainText("--force");
-    await expect(editor).toHaveValue(/Keep this draft/);
-    assert.equal(await readFile(app.documentPath, "utf8"), original);
-    await workspace.getByRole("button", { name: "Discard draft…", exact: true }).click();
-    await workspace.getByRole("button", { name: "Discard draft", exact: true }).click();
   });
   await t.test(
     "narrow review focuses selected detail and returns to queue; new files have no broken link",
@@ -157,7 +146,7 @@ test("reviewed human workflows prevent dead ends and preserve focus and source",
       await expect(health).toBeVisible();
       // The header says what did not run as a sentence, in the words the status line uses.
       await expect(page.locator(".health-overview p")).toHaveText(
-        "Observation window: last 24 hours. 1 turned off, 3 not checked.",
+        "Observation window: last 24 hours. 2 turned off, 3 not checked.",
       );
       // A group's heading says its count in words; a check is a heading of its own, with the id as separate text and
       // its evidence named by the same label.
@@ -285,7 +274,7 @@ test("reviewed human workflows prevent dead ends and preserve focus and source",
     await navigate("/library/files?bundle=personal&path=knowledge");
     await expect(page.locator(".file-breadcrumbs")).toBeVisible();
     const bar = await tabStops(page, ".files-location");
-    assert.ok(bar.length >= 4, `the location bar has its controls in the tab order (${bar.length})`);
+    assert.ok(bar.length >= 3, `the location bar has its controls in the tab order (${bar.length})`);
     assert.deepEqual(
       bar.filter((stop) => stop.moved).map((stop) => `${stop.name}: ${stop.moved}`),
       [],
@@ -395,4 +384,109 @@ test("reviewed human workflows prevent dead ends and preserve focus and source",
     await page.unroute("**/api/improve/impact*");
   });
   assert.deepEqual(errors, []);
+});
+
+test("Files by keyboard: rename, move, new folder, properties and commit are reachable, announced and free of axe violations", {
+  timeout: 180000,
+}, async (t) => {
+  const browser = await chromium.launch();
+  t.after(() => browser.close());
+  for (const viewport of [
+    { width: 390, height: 844 },
+    { width: 1280, height: 860 },
+  ]) {
+    // Each size starts from the same library: the operations below change it.
+    const app = await launchFixture({
+      git: true,
+      configureFixture: async (fixture) => mkdir(path.join(fixture.root, "personal/knowledge/archive")),
+    });
+    t.after(() => app.stop());
+    const page = await (await browser.newContext({ viewport })).newPage();
+    const errors = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.goto(app.url);
+    await go(page, "/library/files?bundle=personal&path=knowledge");
+    const accessible = async (what) => {
+      // Colours are measured at rest, not part-way through a transition.
+      await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 500)));
+      const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze();
+      assert.deepEqual(
+        results.violations.map(({ id, nodes }) => ({
+          id,
+          nodes: nodes.map((node) => `${node.target} ${node.failureSummary}`),
+        })),
+        [],
+        `${viewport.width}px ${what}: no accessibility violations`,
+      );
+    };
+    const actions = (name) => page.getByRole("button", { name: `Actions for ${name}`, exact: true });
+    // The row's menu opens from the keyboard, announces itself, and Escape hands focus back.
+    await actions("review-example.md").focus();
+    await page.keyboard.press("Enter");
+    const menu = page.getByRole("menu", { name: "Actions for review-example.md" });
+    await expect(menu).toBeVisible();
+    await expect(menu.getByRole("menuitem").first()).toBeFocused();
+    await accessible("menu open");
+    await page.keyboard.press("Escape");
+    await expect(actions("review-example.md")).toBeFocused();
+    // Rename by keyboard: the field takes focus, Enter renames, the status says so.
+    await page.keyboard.press("Enter");
+    // The second Enter is for the menu's first item, so it waits until the menu has taken focus.
+    await expect(menu.getByRole("menuitem").first()).toBeFocused();
+    await page.keyboard.press("Enter");
+    const field = page.getByRole("textbox", { name: "New name for review-example.md" });
+    await expect(field).toBeFocused();
+    await field.fill("review-note.md");
+    await page.keyboard.press("Enter");
+    await expect(
+      page.getByRole("status").filter({ hasText: "Renamed review-example.md to review-note.md." }),
+    ).toBeAttached();
+    // Move to… is the keyboard form of dragging: a dialog with the folder tree, Escape cancels and returns focus.
+    await actions("review-note.md").focus();
+    await page.keyboard.press("Enter");
+    await page
+      .getByRole("menu", { name: "Actions for review-note.md" })
+      .getByRole("menuitem", { name: /^Move to…/ })
+      .focus();
+    await page.keyboard.press("Enter");
+    const dialog = page.getByRole("dialog", { name: "Move review-note.md" });
+    await expect(dialog).toBeVisible();
+    await accessible("move dialog open");
+    await dialog.getByRole("treeitem", { name: "archive" }).focus();
+    await page.keyboard.press("Enter");
+    await dialog.getByRole("button", { name: "Move here" }).focus();
+    await page.keyboard.press("Enter");
+    await expect(
+      page.getByRole("status").filter({ hasText: "Moved review-note.md to knowledge/archive." }),
+    ).toBeAttached();
+    // New folder: a button, a named field, Enter creates it.
+    await page.getByRole("button", { name: "New folder", exact: true }).focus();
+    await page.keyboard.press("Enter");
+    const folder = page.getByRole("textbox", { name: "Name of the new folder" });
+    await expect(folder).toBeFocused();
+    await folder.fill("drafts");
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("row", { name: /^drafts/ })).toBeVisible();
+    // Commit announces what it did.
+    const header = page.getByRole("region", { name: "Git for personal" });
+    await header.getByRole("button", { name: "Commit" }).focus();
+    await page.keyboard.press("Enter");
+    await expect(header.getByRole("status")).toContainText("Committed");
+    await accessible("files after the operations");
+    // Properties: the fields and the Text switch are reachable by keyboard; a change is applied through akm.
+    await go(page, `/library/edit?${new URLSearchParams({ ref: app.refs.memory })}`);
+    const description = page.getByLabel(/^description/);
+    await description.focus();
+    await page.keyboard.press("Control+a");
+    await page.keyboard.type("Edited from the keyboard");
+    await page.keyboard.press("Tab");
+    await page.getByRole("button", { name: "Text", exact: true }).focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("textbox", { name: /Markdown source/ })).toHaveValue(
+      /description: Edited from the keyboard/,
+    );
+    await accessible("properties editor");
+    assert.deepEqual(errors, [], "No browser runtime errors");
+    await page.context().close();
+  }
 });

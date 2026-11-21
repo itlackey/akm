@@ -109,7 +109,7 @@ export function retentionNotes(args: {
   eventRetentionDays: number;
 }): string[] {
   const stores = [
-    { store: "usage_events (search, show, curate and feedback rows)", days: args.usageRetentionDays },
+    { store: "usage_events (search, show, curate, feedback and rules rows)", days: args.usageRetentionDays },
     { store: "events (selects, LLM calls and index runs)", days: args.eventRetentionDays },
   ];
   const notes: string[] = [];
@@ -159,6 +159,10 @@ export function toUsageRow(row: UsageEventRow): MetricsUsageRow {
   const tags = Array.isArray(metadata.tags)
     ? metadata.tags.filter((tag): tag is string => typeof tag === "string")
     : undefined;
+  const refs = Array.isArray(metadata.refs)
+    ? metadata.refs.filter((ref): ref is string => typeof ref === "string")
+    : undefined;
+  const chars = finiteNumber(metadata.chars);
   const agent = metadata.agent as { harness?: unknown; session?: unknown } | undefined;
   const harness = typeof agent?.harness === "string" && agent.harness ? agent.harness : undefined;
   const session = typeof agent?.session === "string" && agent.session ? agent.session : undefined;
@@ -174,6 +178,7 @@ export function toUsageRow(row: UsageEventRow): MetricsUsageRow {
     ...(totalMs !== undefined ? { totalMs } : {}),
     ...(reason !== undefined ? { reason } : {}),
     ...(tags && tags.length > 0 ? { tags } : {}),
+    ...(row.event_type === "rules" ? { rules: { refs: refs ?? [], chars: chars ?? 0 } } : {}),
     ...(harness ? { agent: { harness, ...(session ? { session } : {}) } } : {}),
   };
 }
@@ -261,7 +266,7 @@ function buildUsage(input: MetricsInput, rows: MetricsUsageRow[]): AkmMetricsRes
   const days = new Map<string, MetricsDailyUsage>();
   const bump = (at: string, field: keyof Omit<MetricsDailyUsage, "day">) => {
     const day = at.slice(0, 10);
-    const entry = days.get(day) ?? { day, search: 0, show: 0, curate: 0, feedback: 0 };
+    const entry = days.get(day) ?? { day, search: 0, show: 0, curate: 0, feedback: 0, rules: 0 };
     entry[field] += 1;
     days.set(day, entry);
   };
@@ -288,6 +293,7 @@ function buildUsage(input: MetricsInput, rows: MetricsUsageRow[]): AkmMetricsRes
   let zeroResultSearches = 0;
   let shows = 0;
   let curates = 0;
+  const ruleLoads = { loads: 0, rules: 0, chars: 0, byRule: new Map<string, number>() };
 
   for (const row of rows) {
     bySource[row.source] = (bySource[row.source] ?? 0) + 1;
@@ -330,6 +336,12 @@ function buildUsage(input: MetricsInput, rows: MetricsUsageRow[]): AkmMetricsRes
         entry.shows += 1;
         touch(entry, row.at);
       }
+    } else if (row.eventType === "rules") {
+      ruleLoads.loads += 1;
+      bump(row.at, "rules");
+      for (const ref of row.rules?.refs ?? []) ruleLoads.byRule.set(ref, (ruleLoads.byRule.get(ref) ?? 0) + 1);
+      ruleLoads.rules += row.rules?.refs.length ?? 0;
+      ruleLoads.chars += row.rules?.chars ?? 0;
     } else if (row.eventType === "feedback") {
       // Signed rows only, so the daily series and the totals count the same rows.
       if (row.signal === undefined) continue;
@@ -370,6 +382,15 @@ function buildUsage(input: MetricsInput, rows: MetricsUsageRow[]): AkmMetricsRes
       distinctQueries: queries.size,
     },
     selectsPerSearch: searchesWithHits > 0 ? input.selects.length / searchesWithHits : null,
+    rules: {
+      loads: ruleLoads.loads,
+      meanRules: mean(ruleLoads.loads > 0 ? [ruleLoads.rules / ruleLoads.loads] : []),
+      meanChars: mean(ruleLoads.loads > 0 ? [ruleLoads.chars / ruleLoads.loads] : []),
+      byRule: [...ruleLoads.byRule.entries()]
+        .map(([ref, loads]) => ({ ref, loads }))
+        .sort((a, b) => b.loads - a.loads || a.ref.localeCompare(b.ref))
+        .slice(0, input.top),
+    },
     searchMedianMs: median(searchMs),
     daily: [...days.values()].sort((a, b) => a.day.localeCompare(b.day)),
     topAssets: [...assets.values()]

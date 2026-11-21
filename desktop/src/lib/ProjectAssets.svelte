@@ -9,7 +9,7 @@
   import { api, title } from "./client";
   import { navigate } from "./navigation";
   import { plural } from "./review-model";
-  import { scopeText, type Overview, type ProjectRow } from "./projects-model";
+  import { assetCounts, COUNTS_UNKNOWN, scopeText, type Overview, type ProjectRow } from "./projects-model";
   import type { SearchResult } from "./library-model";
 
   let { row, query }: { row: ProjectRow; query: URLSearchParams } = $props();
@@ -84,8 +84,9 @@
   const here = $derived(`${base}/assets${query.size ? `?${query}` : ""}`);
   const readable = $derived((overview?.bundles ?? []).filter((b) => b.configured && b.enabled && b.readable));
   const selected = $derived(bundle ? readable.filter((b) => b.name === bundle) : readable);
-  const eligible = $derived(selected.reduce((sum, b) => sum + (b.eligible?.count ?? 0), 0));
-  const total = $derived(selected.reduce((sum, b) => sum + (b.total?.count ?? 0), 0));
+  const counts = $derived(assetCounts(selected));
+  /** Whether more assets than `shown` may exist: yes unless akm's eligible count says no. */
+  const maybeMore = (shown: number) => counts === null || shown < counts.eligible;
   const types = $derived([...new Set(selected.flatMap((b) => Object.keys(b.total?.byType ?? {})))].sort());
   const filtersText = $derived(
     scopeText(row.entry.filters)
@@ -113,7 +114,9 @@
 </nav>
 <div class="head" bind:this={root}>
   <h1 id="assets-title" tabindex="-1">Assets in {bundle || name}</h1>
-  {#if overview}<p class="count"><strong>{n(eligible)}</strong> eligible of <strong>{n(total)}</strong> indexed</p>{/if}
+  {#if overview}{#if counts}<p class="count">
+        <strong>{n(counts.eligible)}</strong> eligible of <strong>{n(counts.total)}</strong> indexed
+      </p>{:else}<p class="count">{COUNTS_UNKNOWN}</p>{/if}{/if}
 </div>
 <p class="muted small context">
   {filtersText ? `Filtered by ${filtersText}.` : "No filters."} Ranked by {preferText}.
@@ -161,9 +164,16 @@
       <h2>No matches</h2>
       <p>Try other words or clear the search.</p>
       <a class="btn" href={href({ q: "", type: "" })}>Clear search</a>
+    </div>{:else if !counts}<div class="state">
+      <h2>No assets to show</h2>
+      <p>{COUNTS_UNKNOWN}</p>
+      <a class="btn" href="/settings/bundles">Bundles & index</a>
     </div>{:else}<div class="state">
       <h2>No assets match this project</h2>
-      <p>The read {bundle ? "bundle has" : "bundles have"} {plural(total, "asset")}, but none match the filters.</p>
+      <p>
+        The read {bundle ? "bundle has" : "bundles have"}
+        {plural(counts.total, "asset")}, but none match the filters.
+      </p>
       <a class="btn" href={`${base}/edit`}>Edit project</a>
     </div>{/if}
 {:else}
@@ -186,14 +196,15 @@
       </li>{/each}
   </ul>
   {#if hits.length}<p class="muted small">
-      {#if searching}{plural(hits.length, "match", "matches")} from AKM.{:else}Showing {hits.length} of {n(
-          eligible,
-        )}.{/if}
-      {#if hits.length >= limit && limit < MAX && (searching || hits.length < eligible)}<button
+      {#if searching}{plural(hits.length, "match", "matches")} from AKM.{:else}Showing {hits.length}{counts
+          ? ` of ${n(counts.eligible)}`
+          : ""}.{/if}
+      {#if hits.length >= limit && limit < MAX && (searching || maybeMore(hits.length))}<button
           class="btn-secondary"
           onclick={() => (limit = Math.min(MAX, limit + PAGE))}>Show {PAGE} more</button
-        >{:else if hits.length >= MAX && (searching || eligible > MAX)}Showing the first {MAX} of {n(eligible)}. Narrow
-        with a bundle, type or search.{/if}
+        >{:else if hits.length >= MAX && (searching || !counts || counts.eligible > MAX)}Showing the first {MAX}{counts
+          ? ` of ${n(counts.eligible)}`
+          : ""}. Narrow with a bundle, type or search.{/if}
     </p>{/if}
 {/if}
 

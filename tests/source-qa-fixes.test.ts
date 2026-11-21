@@ -664,6 +664,7 @@ describe("R-015: akm bundle update --all with mixed plain and managed sources", 
     );
     const result = await akmUpdate({ target: "local-fs", stashDir: fsDir });
 
+    if ("skipped" in result.index) throw new Error("index build was skipped");
     expect(result.index.mode).toBe("incremental");
     expect(result.plainSynced).toContainEqual({ id: "local-fs", kind: "filesystem", ref: fsDir });
     // Search serves the library the update indexed (reads never build one for another primary stash).
@@ -803,6 +804,7 @@ describe("R-015: akm bundle update --all with mixed plain and managed sources", 
     expect(result.processed[0]?.id).toBe("left-pad");
     expect(result.processed[0]?.installed.resolvedVersion).toBe("1.3.0");
     // filesystem: reflects its files in place, reconciled by the final scan.
+    if ("skipped" in result.index) throw new Error("index build was skipped");
     expect(result.index.scanComplete).toBe(true);
     expect(result.plainSynced).toContainEqual({ id: "local-fs", kind: "filesystem", ref: fsDir });
     expect(result.skipped ?? []).toEqual([]);

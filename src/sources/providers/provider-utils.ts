@@ -11,7 +11,6 @@ import { isScratchPath } from "../../core/asset/scratch";
 import type { SourceSpec } from "../../core/config/config";
 import { fetchRegistry } from "../../registry/network";
 import { writeResponseToFileCapped } from "../../runtime";
-import { copyIncludedPaths, findNearestIncludeConfig } from "../include";
 
 const REGISTRY_STASH_DIR_NAMES = new Set<string>(stashDirNames());
 
@@ -97,27 +96,6 @@ export function installRevisionDir(cacheRootDir: string, contentDir: string): st
   if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) return undefined;
   const [slug, rev] = relative.split(path.sep);
   return slug && rev ? path.join(path.resolve(cacheRootDir), slug, rev) : undefined;
-}
-
-/**
- * Apply an `akm.include` config (a `package.json` `akm.include` array — NOT
- * a `.akm-include` dotfile) if any, by copying the selected paths into a
- * sibling `selected/` directory and returning that path. Returns undefined
- * when no include config is found.
- */
-export function applyAkmIncludeConfig(
-  sourceRoot: string,
-  cacheDir: string,
-  searchRoot: string = sourceRoot,
-): string | undefined {
-  const includeConfig = findNearestIncludeConfig(sourceRoot, searchRoot);
-  if (!includeConfig) return undefined;
-
-  const selectedDir = path.join(cacheDir, "selected");
-  fs.rmSync(selectedDir, { recursive: true, force: true });
-  fs.mkdirSync(selectedDir, { recursive: true });
-  copyIncludedPaths(includeConfig.include, includeConfig.baseDir, selectedDir);
-  return selectedDir;
 }
 
 /** Stream a remote archive to disk via the runtime boundary's response writer. */

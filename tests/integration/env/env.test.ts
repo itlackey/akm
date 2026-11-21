@@ -454,7 +454,7 @@ describe("env export / path (read-path safety)", () => {
     }
   });
 
-  test("env export without --out errors and points at env run", async () => {
+  test("env export without --out errors and points at akm run --env", async () => {
     const stashDir = makeTempDir("akm-envcli-stash-");
     fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "API_KEY=secret\n", "utf8");
@@ -467,7 +467,7 @@ describe("env export / path (read-path safety)", () => {
     const json = JSON.parse(result.stderr) as { code?: string };
     expect(json.code).toBe("MISSING_REQUIRED_ARGUMENT");
     expect(result.stderr).toContain("--out");
-    expect(result.stderr).toContain("akm env run");
+    expect(result.stderr).toContain("akm run --env");
     expect(result.stdout).not.toContain("secret");
   });
 
@@ -480,7 +480,7 @@ describe("env export / path (read-path safety)", () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout.trim().endsWith(path.join("env", "prod.env"))).toBe(true);
-    expect(result.stderr).toContain("akm env run");
+    expect(result.stderr).toContain("akm run --env");
 
     // --quiet suppresses the warning (for the _FILE / --env-file convention).
     const quiet = await runCli(["env", "path", "env/prod", "--quiet"], { AKM_BUNDLE_DIR: stashDir });
@@ -505,33 +505,17 @@ describe("env create --from-file / --from-stdin", () => {
     }
   });
 
-  test("--from-file warns once per key with an unquoted # (key only) and writes the file unchanged", async () => {
+  test("--from-file writes the file unchanged and says nothing about a # in an unquoted value", async () => {
     const stashDir = makeTempDir("akm-envcli-stash-");
     const srcFile = path.join(stashDir, "source.env");
-    const text = 'A=#sekrit1\nB=x #sekrit2\nC="#sekrit3"\nD=plain\n';
+    const text = 'A=#sekrit1\nB=x #sekrit2\nC="#sekrit3"\nD=u#v\n';
     fs.writeFileSync(srcFile, text, "utf8");
 
     const result = await runCli(["env", "create", "env/prod", "--from-file", srcFile], { AKM_BUNDLE_DIR: stashDir });
 
     expect(result.status).toBe(0);
-    expect(result.stderr.match(/^A: /gm)?.length).toBe(1);
-    expect(result.stderr.match(/^B: /gm)?.length).toBe(1);
-    expect(result.stderr).not.toMatch(/^C: /m);
-    expect(result.stderr).not.toMatch(/^D: /m);
-    expect(result.stderr).not.toContain("sekrit");
+    expect(result.stderr).toBe("");
     expect(fs.readFileSync(path.join(stashDir, "env", "prod.env"), "utf8")).toBe(text);
-  });
-
-  test("--from-file never reports text inside a multi-line quoted value as a key", async () => {
-    const stashDir = makeTempDir("akm-envcli-stash-");
-    const srcFile = path.join(stashDir, "source.env");
-    fs.writeFileSync(srcFile, "W=\"line1\nX=val#frag\nline3\"\nY='\nurl=http://h/#f\n'\nZ=a#b\n", "utf8");
-
-    const result = await runCli(["env", "create", "env/prod", "--from-file", srcFile], { AKM_BUNDLE_DIR: stashDir });
-
-    expect(result.status).toBe(0);
-    expect(result.stderr).toMatch(/^Z: /m);
-    expect(result.stderr).not.toMatch(/^(X|url|W|Y): /m);
   });
 
   test("--from-file refuses to clobber an existing env", async () => {

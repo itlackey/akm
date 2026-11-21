@@ -23,6 +23,8 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { isExactSemver } from "../../registry/semver";
+import { semverOrder } from "../../runtime";
 import { selectBackend } from "../../tasks/backends";
 import type { SchedulerBackend } from "../../tasks/backends/types";
 import { pkgVersion } from "../../version";
@@ -63,6 +65,7 @@ export async function collectSchedulerBinaryAdvisory(
       name: "scheduler-binary",
       kind: "deterministic",
       status: "unknown",
+      reason: "not-probed",
       confidence: "high",
       message: "Scheduler binary version drift was not probed.",
     };
@@ -73,13 +76,15 @@ export async function collectSchedulerBinaryAdvisory(
     installed = await (deps.backend ?? selectBackend()).list();
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
+    // A host without the scheduler's own binary (no crontab) runs no scheduled task: nothing is drifting there.
+    const noScheduler = /not found on PATH/.test(detail);
     return {
       name: "scheduler-binary",
       kind: "deterministic",
       status: "unknown",
+      reason: noScheduler ? "off" : "blocked",
       confidence: "high",
-      // A host without the scheduler's own binary (no crontab) runs no scheduled task: nothing is drifting there.
-      message: /not found on PATH/.test(detail)
+      message: noScheduler
         ? `No scheduler is available on this host (${detail}), so no scheduled task is installed or runs here.`
         : `Installed scheduled tasks could not be inspected: ${detail}`,
     };
@@ -94,6 +99,7 @@ export async function collectSchedulerBinaryAdvisory(
       name: "scheduler-binary",
       kind: "deterministic",
       status: "unknown",
+      reason: "off",
       confidence: "high",
       message: "No scheduled task is installed.",
     };
@@ -117,6 +123,7 @@ export async function collectSchedulerBinaryAdvisory(
       name: "scheduler-binary",
       kind: "deterministic",
       status: "unknown",
+      reason: "blocked",
       confidence: "high",
       message: "The scheduler's recorded akm binary could not be executed.",
       evidence: { binding },
@@ -134,12 +141,24 @@ export async function collectSchedulerBinaryAdvisory(
     };
   }
 
+  const order =
+    isExactSemver(scheduledVersion) && isExactSemver(cliVersion)
+      ? semverOrder(scheduledVersion, cliVersion)
+      : undefined;
+  const advice =
+    order === -1
+      ? " — run `akm doctor scheduler sync --rebind` to rebind the schedule."
+      : order === 1
+        ? "; the scheduled CLI is newer. Update the calling CLI or plugin, then run health again."
+        : order === 0
+          ? "; the versions have equal semantic precedence. Inspect both installations before deciding whether to rebind."
+          : "; version ordering is unknown. Inspect both installations before deciding whether to rebind.";
   return {
     name: "scheduler-binary",
     kind: "deterministic",
     status: "warn",
     confidence: "high",
-    message: `Scheduled tasks are bound to akm v${scheduledVersion}, but the running CLI is v${cliVersion} — run \`akm doctor scheduler sync --rebind\` to rebind the schedule.`,
+    message: `Scheduled tasks are bound to akm v${scheduledVersion}, but the running CLI is v${cliVersion}${advice}`,
     evidence: { binding, scheduledVersion, cliVersion },
   };
 }

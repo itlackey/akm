@@ -98,12 +98,19 @@ describe("semantic-search check", () => {
   });
 
   test("is unknown with no index, no record, a run with semantic search off, or no entries", () => {
-    expect(semanticSearchCheck({ mode: "auto" }).status).toBe("unknown");
+    expect(semanticSearchCheck({ mode: "auto" })).toMatchObject({ status: "unknown", reason: "idle" });
+    expect(semanticSearchCheck({ mode: "auto", building: true })).toMatchObject({ status: "unknown", reason: "idle" });
     expect(semanticSearchCheck({ mode: "auto", index: { entryCount: 2, embeddingCount: 0 } }).message).toContain(
       "run `akm index`",
     );
-    expect(semanticSearchCheck(indexed({ status: "disabled", provider: "local" })).status).toBe("unknown");
-    expect(semanticSearchCheck(indexed({ status: "pending", provider: "local" }, 0, 0)).status).toBe("unknown");
+    expect(semanticSearchCheck(indexed({ status: "disabled", provider: "local" }))).toMatchObject({
+      status: "unknown",
+      reason: "off",
+    });
+    expect(semanticSearchCheck(indexed({ status: "pending", provider: "local" }, 0, 0))).toMatchObject({
+      status: "unknown",
+      reason: "idle",
+    });
   });
 
   test.each(["auto", "off", undefined])("an unreadable index fails even with mode %s", (mode) => {

@@ -83,63 +83,172 @@ It reads the `links` of `assets.show`, which the page already has, and `assets.r
 
 ## Library map (Library, Map)
 
-The whole library, or one bundle (the bundle picker), as a mind map: the library in the middle, its asset types around
-it, and on each type the tags its assets carry, every label drawn, with a bar under each tag for its figure. Three
-views each answer one question, and each changes which tags are drawn, the lines between them and the lists beside the
-map. Choosing a type or tag (on the map or by keyboard) draws lines from it to every other type and tag its assets are
-joined to, fades the rest, and opens its answers in the column beside the map; Escape closes them.
-`/library/map?select=<ref>` opens with that asset's tag chosen.
+The whole library, or one bundle (the bundle picker, shown when there is more than one), under three questions:
+Contents, Use and Problems. The questions sit on the Library's own tab row, and the map takes the rest of the window.
+`/library/map?select=<ref>` opens with that asset's tag chosen. While the app is open the page remembers its question,
+filter, bundle, drawing and chosen group, so opening an asset and coming back returns to the same place.
 
-When the index holds groups by meaning (`assets.graph` `groups`, stored by `akm index`), the map opens in 3D (Flat
-switches back to the mind map): every embedded asset is a point, coloured by its group, at the place `akm index` gave
-it, with groups alike in meaning near each other and each named by the tags its assets carry far more than the rest of
-the library. The column lists the groups when nothing is chosen. Choosing a group or a point flies to it, draws its
-links and near-duplicates, and opens the group's answers in the column; a chosen point also lists the assets it is
-joined to. Depth inside a group follows use: assets read lately sit at the front, those read earlier just ahead of the
-middle, and never-read, superseded, contradicted or deprecated ones at the back. The 3D view needs WebGL (three.js,
-`src/lib/SimilarityMap.svelte`).
+### The drawing
 
-| View | Question | Tags drawn, ranked by | Lines from the chosen group | Beside the map |
-| --- | --- | --- | --- | --- |
-| Contents | What is in the library, and how does it connect? | assets | declared links and near-duplicates | what it is made of (bundles and types); how it connects; its most linked assets; other bundles that repeat it |
-| Use | What is used, and what is dead weight? | reads (a tag with no reads is not drawn) | declared links and near-duplicates | the share read and never read, liked and disliked; most read; never read, longest unchanged first; searches of the last 90 days that found nothing and name one of its tags (from `assets.searchMisses`); how it connects |
-| Problems | What is wrong or duplicated? | problems (a tag with none is not drawn) | `supersededBy`/`contradictedBy` links and near-duplicates | outdated assets (superseded, contradicted or deprecated); near-duplicates inside it and in other groups, with their cosine; disliked assets; how it connects; other bundles that repeat it |
+Three drawings of the same assets, switched on the map (Tags, 2D, 3D):
 
-A line's width is how many links and near-duplicate pairs join the two groups; its title gives both counts. An asset
-with none of the drawn tags is counted under its type. Every listed asset opens its page, and Closest lists the assets
-most alike in content (from `assets.related`), each with its cosine and a Compare link to the search page's comparison.
+- **2D**, the default when the index holds groups by meaning (`assets.graph` `groups`, stored by `akm index`): every
+  asset is a point, and each group is a disc of its points. No disc overlaps another, a disc's area is the number of
+  assets in it, and the discs stand as near where their groups stand in akm's layout as room allows. Inside a disc
+  the assets nearest the group's middle are at the disc's middle; a point's place there means nothing more.
+- **3D**: the same, with each group a ball of its points; drag turns it. A ball in front hides one behind it until
+  the view is turned. It needs WebGL (three.js, `src/lib/SimilarityMap.svelte`, which draws 2D too).
+- **Tags**: the mind map of asset types and the tags their assets carry most, each tag with a bar for the question's
+  figure (`src/lib/MindMap.svelte`). It is the only drawing when the index has no groups by meaning.
+
+**Group by**, on the map's row of tools in 2D and 3D, chooses what the points are gathered by:
+
+| Group by | A group is | Asks |
+| --- | --- | --- |
+| Meaning (the default) | one of akm's groups by meaning, named by the tags its assets carry far more than the rest of the library | What subject areas are there? |
+| Type | an asset type family (Knowledge, Skills, Memories and facts, …) | What kinds of thing are there? |
+| Bundle (with more than one) | a bundle | What comes from which source? |
+| Last edited | an age: the last 30 days, 1 to 6 months, 6 to 12 months, 1 to 2 years, over 2 years | What has gone stale? |
+| Use (with usage history) | when it was last read: in the last 30 days, earlier in the window, not read | What gets used? |
+| Problem | its worst problem, or none recorded | What is wrong, and how much of it? |
+
+Group by sets where a point is; the question sets its colour and size; Show sets which points are lit. So Group by
+Problem on Contents shows what types the outdated assets are, and Group by Use on Problems shows whether the
+problems are in what is read. Counts on names, the list of groups beside the map, the "In …" scope and the lines
+between groups all follow the grouping chosen. The layout is `clusterPlace`, and the grouping `regroup`, in
+`src/lib/library-overview.ts`.
+
+A change of drawing or grouping moves every mark to its new place over 0.6 seconds, and choosing a point or a group
+moves the view to it over 0.7; with reduced motion both happen at once. The map opens with its points filling the
+frame. Zoom out, zoom in and Reset view are one group of buttons in the map's corner. With the map focused, the left
+and right arrow keys step through the assets of the chosen point's group, and in 3D the up and down keys and Shift
+with left and right turn the view; + and − zoom, and 0 faces the front.
+
+| Question | Point colour | Point size | Filters |
+| --- | --- | --- | --- |
+| Contents: what is in the library? | its asset type | declared links | one per asset type; Not linked to anything; Repeated across bundles (with more than one bundle) |
+| Use: what is used, and what is dead weight? | when it was last read | reads | Not read, untouched 6+ months; Read but disliked; Most read |
+| Problems: what is wrong or duplicated? | its worst problem | reads | Outdated, still read; Near-identical pairs; Disliked; Outdated, unread |
+
+A key in the map's corner names the colours and the sizes; choosing its name, Key, folds it to that word and opens it
+again, on every map until the app closes. Only what Show finds is drawn to size; the rest is faint and at one size.
+
+Every control on the map is one height, in one row that never wraps: the drawing, Find, Group by, Show and, with a
+group chosen, its "In …" scope. A button in the map's top corner beside the panel hides the panel, so the map takes
+the window's width, and shows it again from the same place; the page remembers which. The panel is as tall as the
+map at most and scrolls inside that. It has a heading (All assets, the filters ticked, or the group or asset
+chosen), then sections of one-line rows: a name, cut where it is long with the whole of it in its title, and its
+figure at the end of the row.
+
+### Filters
+
+Each question has its own filters, in the Show menu on the map's one row of tools, each with a tick box and how many
+assets (or pairs) it finds. The row says "Show: All assets", the one filter ticked with its count, or how many are
+ticked with the count of what they find together; the panel's heading spells those out. Any number can be ticked:
+ticked types show the assets of any of them, ticked conditions show what any of them finds, and types ticked with
+conditions show the assets of those types that meet one of the conditions ("Skills, Commands and scripts: Not linked
+to anything"). Show all assets clears them. Use and Problems open on their first filter that finds anything, which
+is the work the question is asked for; Contents opens with none. A filter akm has no figures for (use without usage
+history, feedback or near-duplicates when unavailable) is not offered. Without usage history Problems offers one
+Outdated filter, since whether an outdated asset is still read is not known. "Not read" means not read in the usage
+window akm reports. What is ticked:
+
+- draws what it finds in full and fades the rest, which stay in place;
+- adds to each group's name how many of them it holds ("24 to retire", or "6 shown" for several filters);
+- lists exactly those assets beside the map, each with the figure that decides it ("19 months" untouched,
+  "superseded · 33 reads", "3 negative, 0 positive"), in the order the heading says, eight at a time with Show all;
+- lists under them where they are by group, the most first.
+
+Each listed asset opens its page, where it is edited or retired. Near-identical pairs are listed as pairs with how
+alike they are and a Compare link to the search page's comparison.
+
+Find by name or tag narrows every filter to the assets whose name and tags hold each word typed, and says how many
+match. Choosing a group (its name on the map, or in the list) narrows the filters to that group, flies to it, draws
+lines to the groups it is joined to and lists them; a button beside Show names the group ("In …") and leaves it.
+A group's name on the points is plain text with no box, and the pointer passes through it: a drag that starts on a
+name turns the map, a click on a point under a name chooses the point, and a click on a name over no point chooses
+the group. The keyboard reaches each name as a button.
+
+### A chosen asset
+
+Choosing a point (from anywhere over its disc, the one in front where several overlap; the point under the pointer is
+ringed and named with its figures) replaces the list with that asset: its type and bundle, Open, Most similar (the
+nearest content by embedding from `assets.related`, each with how alike and a Compare link), what is wrong with it
+(outdated, with a link to the asset that replaced or contradicts it; disliked, with its feedback; nearly the same as
+another, with Compare), its reads, when it was last edited, and what it is joined to. On the map it is ringed with a
+halo and named by a label that stays over every other mark, the rest fades, and what it is joined to is drawn up to
+three steps out, each level in its own width and colour with its assets ringed to match:
+
+| Level | Reaches | Drawn |
+| --- | --- | --- |
+| 1st | the assets joined to the chosen one | widest line, the highlight colour, largest ring |
+| 2nd | the assets joined to those | thinner line, more muted, smaller ring |
+| 3rd | the assets joined to those | thinnest line, most muted, dashed, smallest ring |
+
+The joins are the ones `assets.graph` reports (declared links and near-duplicate pairs; in Problems only replacement
+and contradiction links and near-duplicates), either way round. Each join is drawn once, at the nearest level it
+belongs to. A level shows at most 300 assets, the most joined first; the key on the map lists the levels that reach
+anything and says what a level left out. The walk is `reach` in `src/lib/link-levels.ts`; each level's colour is held
+at 3:1 against the background in both themes by `tests/map-palette.test.mjs`. Escape clears the choice.
 
 Use is reads by people and their agents inside the usage retention window (`use.since`), as `assets.graph` reports
-them: scheduled tasks and Improve are not counted. When no usage history is available, the Use view says so instead of
-calling every asset unread.
+them: scheduled tasks and Improve are not counted.
 
-It reads `assets.graph`, `assets.searchMisses` and, on Closest, `assets.related`. The view model is
-`src/lib/library-overview.ts`; the flat drawing is SVG (`src/lib/MindMap.svelte`), and the page is `src/lib/LibraryMap.svelte`.
+It reads `assets.graph` and, on Most similar, `assets.related`. The view model is `src/lib/library-overview.ts`, and
+the page, with each question's filters, is `src/lib/LibraryMap.svelte`.
 
 | Limit | Why |
 | --- | --- |
-| About 44 tags in all, at most 10 per type | More labels cannot all be drawn and read; a type gets tags in proportion to the square root of its size, and a tag carried by one asset is left out of a type with ten or more assets. |
-| Near-duplicates are pairs at a cosine of 0.96 or more, at most 2,000, and need stored embeddings | `assets.graph` compares only assets alike in meaning, to avoid comparing every pair; the threshold is set for akm's local embedding model. The page says when the list was cut. |
-| Closest needs stored embeddings | Without them `assets.related` says so, and the page shows its note. |
-| Old is the file's modification time | akm records no edit date; in a Git checkout the time is when the file was last written there. |
+| About 44 tags in all on Tags, at most 10 per type | More labels cannot all be drawn and read; a type gets tags in proportion to the square root of its size, and a tag carried by one asset is left out of a type with ten or more assets. |
+| A level shows at most 300 assets | Three steps from a well-joined asset can reach most of the library; the key says what a level left out. |
+| Near-duplicates are pairs at a cosine of 0.96 or more, at most 2,000, and need stored embeddings | `assets.graph` compares only assets alike in meaning, to avoid comparing every pair; the threshold is set for akm's local embedding model. |
+| Most similar needs stored embeddings | Without them `assets.related` says so, and the page shows its note. |
+| A point's place inside its group says little | A disc or ball is filled evenly from its middle; the most typical assets of a group by meaning are at the middle, and nothing else is read from a place inside it. Most similar gives the measured similarity. |
+| 3D with many groups needs turning | A ball in front hides the ones behind it; 2D shows every group at once. |
+| Size is read roughly | Area is compared less exactly than position, and in 3D a nearer point also draws larger; the lists and labels give the figure. |
+| "Untouched" is the file's modification time | akm records no edit date; in a Git checkout the time is when the file was last written there. |
 | Use covers the retention window only | Usage events older than the window are deleted, so an asset last read before it reads as not read. |
+| Retiring is done on the asset's page | The map lists what to retire and opens it; the retire action, with its checks, lives there. |
 
 ## Activity replay (Activity, Replay)
 
-The searches, reads and feedback of the last 24 hours or 7 days, played over the library map. It
-opens at the end of the period with every figure full, so the result is readable without playing;
-Play starts again from the beginning and plays any period in about a minute (faster speeds are 4
-and 16 times that). With reduced motion nothing flies or eases, and it stays paused at the end.
+The searches, reads and feedback of a period (the last hour, 6 hours, 24 hours, 3 days, 7 days or 30 days), played
+over the library map. It opens at the end of the period with every figure full, so the result is readable without
+playing; Play starts again from the beginning and plays any period in about a minute (faster speeds are 4 and 16
+times that). With reduced motion nothing flies, eases or grows in, and it stays paused at the end.
 
-On the map an asset used so far is ringed in its type colour and every other asset is the faintest
-mark; all points are one size. A pulse flies to an asset when it is read, returned by a search (a
-hit, which does not count as use) or given feedback, each in its own colour and size (the
-`--pulse-*` tokens, held apart from each other and from the type colours by
-`tests/map-palette.test.mjs`). A key under the map names every mark. An asset with no position in
-the arrangement is not drawn; its events still count, and the page says how many they were. Beside
-the map: the running totals (other kinds of event, such as curate, have a total of their own, so the
-totals add up to the lanes), the assets used most so far, the latest events and the searches that
-found nothing.
+The map is drawn in 2D, the default, or in 3D (the switch on the map; the choice is kept until the app closes):
+
+- **2D**: the library mind map, with the number of events on each type and tag so far. A type or tag is drawn, in
+  its own place, once it has had an event, and it and its line grow in over 0.45 seconds when it arrives.
+- **3D**: every asset with a group by meaning is a point at the place akm gave it; an asset used so far is in its
+  type's colour and the rest are faint.
+
+The page has no title row: the map starts under the Activity tabs and, with the panel beside it and the timeline
+under it, fits one window. The drawing switch, the period and whose events are replayed are one row on the map. The
+timeline is one strip at the foot of the window: Play, the speed and the playhead's time, said there and nowhere
+else; beside them the bars of events by kind (reads, searches, searches that found nothing, curates, feedback; a kind
+with no events in the period has no key entry) with the slider under them; and under both the period's start and end
+with the key between them. The panel stays beside the map down to a window 1,000 px wide, and goes under it below
+that; a button in the map's top corner hides and shows it.
+
+On the points (`src/lib/SimilarityMap.svelte`, the renderer Library, Map uses) an asset is ringed, for the next 0.75
+seconds of playing at the speed chosen, when an event reads it, a search returns it (a hit, which does not count as
+use) or gives it feedback, each in its own colour (the `--pulse-*` tokens, held apart from each other and from the
+type colours by `tests/map-palette.test.mjs`); an asset the latest of several events touched in that moment takes the
+colour of the latest. A curate's results and other kinds of event light the asset as used without a ring. A point's
+size is the number of events on its asset over the whole period, so it does not change as the replay plays. A key
+in the map's corner, which folds to its name, says what a size is, the colour of each type of used asset, the faint
+dot of one not used yet, and that a ring is the current event, one colour per kind. An asset with no group by
+meaning has no place on the points; its events still count, and the page says how many events so far touched assets
+with no place, and how many touched assets the index no longer lists. Without stored embeddings the points cannot be
+drawn, and the page says so.
+
+The panel beside the map lists what to act on first: the searches that found nothing (with how many of the period's
+searches that is), each with Search again and Create; the feedback, negative first, each with its asset and when;
+the assets used most; and the latest events. A list shows its first four rows, with Show all. Choosing a point, a
+group or a tag replaces these with what was chosen and its events, each linking to its asset. The panel is as tall
+as the map at most and scrolls inside that.
 
 Below, a lane per agent harness (or, where none was recorded, the event's source), with a lane for
 searches that found nothing. Lanes run from the most events to the fewest and share one scale, which
@@ -154,4 +263,4 @@ It reads `assets.graph` once and `activity.events` for each period.
 | At most 20,000 events in a period | `activity.events` keeps the latest 20,000; the page says so and from when the replay therefore starts. |
 | Older events have no agent | akm records the harness and session on usage events from this release. |
 | "No agent recorded" mixes a person with an agent akm did not recognise | Both record source `user` and no harness. |
-| Every point is one size | A replay is about one period, so it marks use with the ring only. |
+| Pulses ring an asset for 0.75 seconds of playing | At 16 times speed a ring marks the events of about a fifth of the period at once. |

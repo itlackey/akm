@@ -20,10 +20,13 @@ import { parseRegistryRef } from "../registry/resolve";
 
 // ── Default selections ──────────────────────────────────────────────────────
 
+/** The AKM starter bundle's Git address, as `bundle add` takes it: what setup offers, and what Desktop recognises by its `identity`. */
+export const STARTER_SOURCE = "https://github.com/itlackey/akm-stash";
+
 const AUTHENTICATED_DEFAULT_TARGETS: Readonly<Record<string, Pick<SetupBundleEntry, "installType" | "url">>> = {
   "itlackey/akm-stash": {
     installType: "git",
-    url: "https://github.com/itlackey/akm-stash",
+    url: STARTER_SOURCE,
   },
 };
 
@@ -58,7 +61,7 @@ const FALLBACK_STASHES: SetupBundleEntry[] = [
     id: "itlackey/akm-stash",
     name: "itlackey/akm-stash",
     description: "Official AKM onboarding bundle",
-    url: "https://github.com/itlackey/akm-stash",
+    url: STARTER_SOURCE,
     installType: "git",
     source: "fallback",
     defaultSelected: true,

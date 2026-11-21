@@ -17,7 +17,7 @@ import { resolveStashDir } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import { AkmError, NotFoundError } from "../../core/errors";
-import type { ResolvedWriteTarget } from "../../core/write-source";
+import type { CommitOutcome, ResolvedWriteTarget } from "../../core/write-source";
 import { resolveWriteTarget } from "../../core/write-source";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import {
@@ -173,11 +173,15 @@ export interface ProposalAcceptOptions {
 
 export interface ProposalAcceptResult {
   schemaVersion: 1;
+  /** Native scheduler cleanup that remains unverified, and sync failures on other tasks in the bundle. */
+  warnings?: string[];
   ok: true;
   id: string;
   ref: string;
   assetPath: string;
   proposal: Proposal;
+  /** The commit this accept made, or that it made none and why. Absent when a caller that passed a collector commits. */
+  commit?: CommitOutcome;
 }
 
 export async function akmProposalAccept(options: ProposalAcceptOptions): Promise<ProposalAcceptResult> {
@@ -206,6 +210,8 @@ export async function akmProposalAccept(options: ProposalAcceptOptions): Promise
     ref: result.ref,
     assetPath: result.assetPath,
     proposal: result.proposal,
+    ...(result.commit ? { commit: result.commit } : {}),
+    ...(result.warnings ? { warnings: result.warnings } : {}),
   };
 }
 
@@ -230,6 +236,7 @@ export async function akmProposalAcceptMany(
   const { ids, ...rest } = options;
   const commitCollector: AcceptCommitCollector = [];
   const results: Array<ProposalAcceptResult | ProposalAcceptFailure> = [];
+  let outcomes = new Map<string, CommitOutcome>();
   try {
     for (const id of ids) {
       try {
@@ -245,9 +252,12 @@ export async function akmProposalAcceptMany(
       }
     }
   } finally {
-    commitCollectedAccepts(commitCollector, "akm proposal accept");
+    outcomes = commitCollectedAccepts(commitCollector, "akm proposal accept");
   }
-  return results;
+  return results.map((result) => {
+    const commit = result.ok ? outcomes.get(result.id) : undefined;
+    return commit ? { ...result, commit } : result;
+  });
 }
 
 // ── reject ──────────────────────────────────────────────────────────────────

@@ -14,6 +14,7 @@
  */
 
 import { placementTypes, stashDirFor, stashDirNames } from "../../../src/core/asset/asset-placement";
+import { escapeRegExp, rewritePathTokens, SPELLING_BEFORE, splitRun } from "../../../src/core/asset/ref-rewrite";
 import { withoutTypeHead } from "../../../src/indexer/lookup/adapter-concept-owner";
 
 export interface ShadowedRef {
@@ -31,18 +32,6 @@ export interface ContentRefRewriter {
 }
 
 const WIKI_FOLDER = "knowledge/wikis";
-const SPELLING_BEFORE = String.raw`(?<![\w./~:-])`;
-
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-/** A matched run of path characters: without trailing dots (sentence punctuation), and with a `.md` told apart. */
-function splitRun(run: string): { readonly stem: string; readonly tail: string; readonly md: boolean } {
-  const stem = run.replace(/\.+$/, "");
-  const md = stem.endsWith(".md");
-  return { stem: md ? stem.slice(0, -".md".length) : stem, tail: run.slice(stem.length), md };
-}
 
 export function contentRefRewriter(bundles: ReadonlyMap<string, readonly string[]>): ContentRefRewriter {
   const live = new Map([...bundles].map(([bundleId, refs]) => [bundleId, new Set(refs)]));
@@ -65,10 +54,6 @@ export function contentRefRewriter(bundles: ReadonlyMap<string, readonly string[
   shadowed.sort((a, b) => a.bundleId.localeCompare(b.bundleId) || a.from.localeCompare(b.from));
 
   const folders = [...new Set(stashDirNames())];
-  const pathToken = new RegExp(
-    `${SPELLING_BEFORE}(?:([\\w.-]+)//)?((?:${folders.map(escapeRegExp).join("|")})/[\\w./-]*)`,
-    "g",
-  );
   const folderOf = (type: string): string | undefined => (type === "wiki" ? WIKI_FOLDER : stashDirFor(type));
   const typedToken = new RegExp(
     `${SPELLING_BEFORE}(wiki|${placementTypes().map(escapeRegExp).join("|")}):([\\w.][\\w./-]*)`,
@@ -78,22 +63,22 @@ export function contentRefRewriter(bundles: ReadonlyMap<string, readonly string[
   return {
     shadowed,
     rewrite(text) {
-      let count = 0;
-      const replaced = text
-        .replace(pathToken, (token, bundleId: string | undefined, run: string) => {
-          const { stem, tail, md } = splitRun(run);
+      const paths = rewritePathTokens(
+        text,
+        (bundleId, stem) => {
           const to = newRef(bundleId, stem);
-          if (to === undefined) return token;
-          count++;
-          return `${bundleId === undefined ? "" : `${bundleId}//`}${to}${md ? ".md" : ""}${tail}`;
-        })
-        .replace(typedToken, (token, type: string, run: string) => {
-          const { stem, tail, md } = splitRun(run);
-          const to = newRef(undefined, `${folderOf(type)}/${stem}`);
-          if (to === undefined) return token;
-          count++;
-          return `${to}${md ? ".md" : ""}${tail}`;
-        });
+          return to === undefined ? undefined : `${bundleId === undefined ? "" : `${bundleId}//`}${to}`;
+        },
+        { folders },
+      );
+      let count = paths.count;
+      const replaced = paths.text.replace(typedToken, (token, type: string, run: string) => {
+        const { stem, tail, md } = splitRun(run);
+        const to = newRef(undefined, `${folderOf(type)}/${stem}`);
+        if (to === undefined) return token;
+        count++;
+        return `${to}${md ? ".md" : ""}${tail}`;
+      });
       return { text: replaced, count };
     },
   };

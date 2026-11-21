@@ -525,18 +525,19 @@ esac`,
       expect(commands().some((c) => c.startsWith("npm view akm-opencode@next"))).toBe(false);
     });
 
-    test("a plain run with the config naming akm-opencode@next leaves both caches alone (#1115)", async () => {
+    test("a plain run with the config naming akm-opencode@next refreshes @next, the cache OpenCode re-creates, and leaves @latest alone (#1115)", async () => {
       writeConfig(["akm-opencode@next"]);
       writeCachedOpenCode("0.9.26");
       writeCachedOpenCode("0.9.27-rc.2", "next");
       stubNpm({ latest: ["0.9.27", "0.9.27"], next: ["0.9.28-rc.1", "0.9.28-rc.1"] });
       stubOpenCodeNext("0.9.28-rc.1");
-      const run = await withEnv(world.env, () => runUpgrade(UPGRADE, "0.9.27", fakeDeps("0.9.27", "0.9.27")));
-      expect(entry(run, "opencode").outcome).toBe("skipped");
-      expect(entry(run, "opencode").message).toContain("akm upgrade --channel next");
-      expect(mutations()).toEqual([]);
+      const run = await withEnv(world.env, () =>
+        runUpgrade(UPGRADE, "0.9.28-rc.1", fakeDeps("0.9.28-rc.1", "0.9.28-rc.1")),
+      );
+      expect(entry(run, "opencode")).toMatchObject({ outcome: "updated", from: "0.9.27-rc.2", to: "0.9.28-rc.1" });
+      expect(commands()).toContain(`trash-put ${cacheDir("next")}`);
+      expect(commands()).not.toContain(`trash-put ${cacheDir("latest")}`);
       expect(fs.existsSync(cacheDir("latest"))).toBe(true);
-      expect(fs.existsSync(cacheDir("next"))).toBe(true);
     });
 
     test("a config pinning an exact akm-opencode version is left alone on any run (#1117)", async () => {
@@ -713,10 +714,21 @@ esac`,
       });
       expect(text).toContain("run 'akm upgrade --channel next' to install");
     });
+
+    test("--check on a prerelease install says to run plain `akm upgrade`, which stays on next", () => {
+      const text = formatUpgradePlain({
+        currentVersion: "0.10.261130-beta.6",
+        latestVersion: "0.10.261130-beta.7",
+        updateAvailable: true,
+        channel: "next",
+        currentChannel: "next",
+      });
+      expect(text).toContain("run 'akm upgrade' to install");
+    });
   });
 
   describe("--check", () => {
-    test("reports each harness (unknown where it needs a fetch) and changes nothing", async () => {
+    test("reports each harness (unknown where the marketplace cannot be read) and changes nothing", async () => {
       stubClaude({ from: "0.9.26", to: "0.9.27" });
       stubCodex({ from: "0.9.26", to: "0.9.27" });
       writeCachedOpenCode("0.9.26");
@@ -729,7 +741,7 @@ esac`,
         ["codex", "unknown"],
         ["opencode", "pending"],
       ]);
-      expect(entry(run, "claude-code").message).toContain("--check does not do");
+      expect(entry(run, "claude-code").message).toContain("build could not be read");
       expect(deps.upgradeCalls).toHaveLength(0);
       expect(mutations()).toEqual([]);
       expect(fs.existsSync(cacheDir())).toBe(true);
@@ -778,17 +790,24 @@ posixOnly("mixed channels: stable CLI, plugins on next, OpenCode on another chan
     const engine = path.join(cacheDir("next"), "node_modules", "akm-cli");
     fs.mkdirSync(engine, { recursive: true });
     fs.writeFileSync(path.join(engine, "package.json"), JSON.stringify({ name: "akm-cli", version: "0.9.20" }));
+    // npm's next tag is the build already cached, so OpenCode is current within the channel its config names.
+    stub(
+      "npm",
+      `case "$2" in akm-opencode@next) printf '{"version":"0.9.27-rc.2","dependencies.akm-cli":"0.9.20"}\\n';; *) exit 2;; esac`,
+    );
+    stub("opencode", `case "$*" in "--version") echo 1.0.0;; *) exit 2;; esac`);
+    stub("pgrep", "exit 1");
     return withEnv(world.env, () => runUpgrade(args, "0.9.28", fakeDeps("0.9.28", "0.9.28")));
   }
 
-  test("each plugin says updated, current within its channel, or skipped with the reason; the channel stays as configured", async () => {
+  test("each plugin says updated or current within the channel it is configured for; the channel stays as configured", async () => {
     const run = await mixed();
     expect(run.result.plugins).toMatchObject([
       { harness: "claude-code", outcome: "current", channel: "next", channelMismatch: true },
       { harness: "codex", outcome: "updated", channel: "next", channelMismatch: true, from: "0.9.26", to: "0.9.27" },
-      { harness: "opencode", outcome: "skipped", channel: "next", channelMismatch: true },
+      { harness: "opencode", outcome: "current", channel: "next", channelMismatch: true },
     ]);
-    expect(entry(run, "opencode").message).toContain("akm upgrade --channel next");
+    expect(entry(run, "opencode").message).not.toContain("--channel next");
     expect(entry(run, "opencode").message).toContain(
       "engine skew: OpenCode's bundled akm-cli (akm-opencode@next) is v0.9.20, older than the running CLI v0.9.28",
     );
@@ -799,7 +818,7 @@ posixOnly("mixed channels: stable CLI, plugins on next, OpenCode on another chan
     expect(formatUpgradePlain(run.result as never)?.split("\n")).toEqual([
       "Claude Code plugin current within its configured channel [channel next; differs from CLI]",
       `Codex plugin updated v0.9.26 → v0.9.27 [channel next; differs from CLI] (${entry(run, "codex").message})`,
-      `OpenCode plugin skipped [channel next; differs from CLI] (${entry(run, "opencode").message})`,
+      `OpenCode plugin current within its configured channel [channel next; differs from CLI] (${entry(run, "opencode").message})`,
     ]);
   });
 });

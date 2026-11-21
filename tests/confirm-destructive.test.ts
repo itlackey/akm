@@ -1,16 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { confirmDestructive } from "../src/cli/confirm";
 import { UsageError } from "../src/core/errors";
-
-// ── Helper: override stdin.isTTY for test ───────────────────────────────────
-
-function withTTY(isTTY: boolean, fn: () => Promise<void>) {
-  const original = process.stdin.isTTY;
-  Object.defineProperty(process.stdin, "isTTY", { value: isTTY, configurable: true });
-  return fn().finally(() => {
-    Object.defineProperty(process.stdin, "isTTY", { value: original, configurable: true });
-  });
-}
+import { withTTY } from "./_helpers/sandbox";
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 

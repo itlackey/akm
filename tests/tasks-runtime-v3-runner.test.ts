@@ -107,18 +107,30 @@ describe("task runner mutation boundary", () => {
       'Harness "missing" is not configured',
     ],
   ] as const) {
-    test(`${label} source fails before any history or log mutation`, async () => {
+    test.each([false, true])(`${label} source fails before dispatch (scheduled=%p)`, async (scheduled) => {
       writeTask("blocked", yaml);
       let failure: unknown;
       try {
-        await runTask("blocked", { bundleDir: storage.stashDir, bundleName: "fixture", scheduled: true });
+        await runTask("blocked", { bundleDir: storage.stashDir, bundleName: "fixture", scheduled });
       } catch (error) {
         failure = error;
       }
       expect(failure).toBeInstanceOf(Error);
       expect((failure as Error).message).toContain(message);
-      expect(readTaskHistory({ id: "blocked" })).toEqual([]);
-      expect(logFiles()).toEqual([]);
+      if (scheduled) {
+        expect(readTaskHistory({ id: "blocked" })).toMatchObject([
+          {
+            status: "failed",
+            trigger: "schedule",
+            target: { kind: "unknown" },
+            detail: { reason: "task_load_failed" },
+          },
+        ]);
+        expect(logFiles().some((file) => file.endsWith(".log"))).toBe(true);
+      } else {
+        expect(readTaskHistory({ id: "blocked" })).toEqual([]);
+        expect(logFiles()).toEqual([]);
+      }
     });
   }
 
@@ -160,7 +172,7 @@ describe("task runner mutation boundary", () => {
       _setWarnSinkForTests(undefined);
     }
     expect(warnings.some((message) => message.includes("env.API_TOKEN looks like a credential"))).toBe(true);
-    expect(warnings.some((message) => message.includes("akm secret run"))).toBe(true);
+    expect(warnings.some((message) => message.includes("akm run --secret"))).toBe(true);
     expect(warnings.join("\n")).not.toContain("github_pat_");
   });
 
@@ -324,6 +336,27 @@ describe("task runner mutation boundary", () => {
     } finally {
       db.close();
     }
+  });
+
+  test("a .mjs script target runs like a .js one, from a snapshot that keeps its extension", async () => {
+    const scripts = path.join(storage.stashDir, "scripts");
+    fs.mkdirSync(scripts, { recursive: true });
+    fs.writeFileSync(path.join(scripts, "report.mjs"), 'import os from "node:os";\nconsole.log(os.EOL.length);\n');
+    writeTask("module-js", 'version: 4\nuses: scripts/report.mjs\nschedule: "@daily"\n');
+    let command: string[] = [];
+
+    const result = await runTask("module-js", {
+      bundleDir: storage.stashDir,
+      bundleName: "fixture",
+      spawnFn: (cmd) => {
+        command = [...cmd];
+        return completedSpawn(0);
+      },
+    });
+
+    expect(result.status).toBe("completed");
+    expect(command[0]).toBe(process.execPath);
+    expect(path.basename(command.at(-1) as string)).toBe("snapshot.mjs");
   });
 
   test.each([

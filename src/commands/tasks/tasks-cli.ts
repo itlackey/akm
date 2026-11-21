@@ -40,6 +40,7 @@ import {
 import { UsageError } from "../../core/errors";
 import type { InputFlag } from "../../execution/input-contract";
 import { TASK_RUN_BOOLEAN_FLAGS, TASK_RUN_VALUE_FLAGS } from "../../tasks/task-run-reserved-flags";
+import { parseStartFlags, type TaskV5Start } from "../../tasks/v5/flags";
 import { akmTaskExplain } from "./explain";
 import {
   akmTasksAdd,
@@ -77,8 +78,7 @@ const bundleArg = {
  * rejecter and the scanner can never disagree about what a token names.
  */
 function hasFlagNamed(name: string): boolean {
-  for (const token of getParsedInvocation().argv) {
-    if (token === "--") return false;
+  for (const token of getParsedInvocation().ownArgs) {
     if (!token.startsWith("--")) continue;
     const body = token.slice(2);
     const equalsAt = body.indexOf("=");
@@ -190,6 +190,32 @@ export function parseTaskInputFlags(rawArgs: readonly string[], id: string): Inp
   return flags;
 }
 
+/**
+ * Join each flag naming a declared value input to its value (`--who -x` becomes `--who=-x`), the one spelling
+ * {@link parseTaskInputFlags} cannot mistake for a flag. The unknown-flag scan and the binder both read the result,
+ * so neither takes `-x` for a flag of its own.
+ */
+export function inlineInputValues(tokens: readonly string[], valueInputs: ReadonlySet<string>): string[] {
+  const joined: string[] = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index] as string;
+    const next = tokens[index + 1];
+    if (token.startsWith("--") && valueInputs.has(token.slice(2)) && next !== undefined) {
+      joined.push(`${token}=${next}`);
+      index += 1;
+    } else {
+      joined.push(token);
+    }
+  }
+  return joined;
+}
+
+/** What a start of a version 5 task gave: its start flags, and its input flags as a version 4 task's are read. */
+function readV5Start(rawArgs: readonly string[], id: string): TaskV5Start {
+  const { rest, ...start } = parseStartFlags(rawArgs);
+  return { ...start, inputs: parseTaskInputFlags(rest, id) };
+}
+
 const tasksAddCommand = defineJsonCommand({
   meta: { name: "add", description: "Register a new scheduled task and install it in the OS scheduler" },
   args: {
@@ -274,11 +300,11 @@ export const tasksRunCommand = defineCommand({
   },
   async run({ args, rawArgs }) {
     await runWithJsonErrors(async () => {
-      const inputFlags = parseTaskInputFlags(rawArgs, args.id);
       const envelope = await akmTasksRun(args.id, {
         scheduled: args.scheduled === true,
         ...(args.bundle !== undefined ? { target: args.bundle } : {}),
-        inputFlags,
+        inputFlags: parseTaskInputFlags(rawArgs, args.id),
+        start: () => readV5Start(rawArgs, args.id),
       });
       output("task-run", envelope);
       // F4: was `process.exit(envelope.exitCode)`, terminating synchronously
@@ -426,6 +452,7 @@ export async function runTaskExplain(
   const result = await akmTaskExplain(args.ref, {
     ...(args.bundle !== undefined ? { target: args.bundle } : {}),
     inputFlags,
+    start: () => readV5Start(rawArgs, args.ref),
   });
   output("task-explain", result);
 }

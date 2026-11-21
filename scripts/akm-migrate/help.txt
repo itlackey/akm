@@ -22,7 +22,21 @@ order, and print one combined JSON plan (exit 1 when any step is blocked):
      with a verified sibling safety copy (the only path that admits them)
   3. task files at version 2 or 3, and version 4 files still carrying the
      retired `schedule[].enabled` key, rewritten as task source v4 under
-     one backup directory per run
+     one backup directory per run. A task file named on the command line
+     is converted to task source v5 (`version: 5-beta.<n>`) instead, after
+     the same check a start makes of it; no file is converted that is not
+     named. What a version 4 task did that version 5 does not (values given
+     to steps as AKM_PARAMS/AKM_STEPS, values appended to prompts) is
+     listed per file, to change by hand, and a file with no version 5 form
+     is left as it is and reported. A workflow file named on the command
+     line (`workflows/<name>.md`) is not changed: a new task file
+     `tasks/<name>.yml` is made from it, after the same check, when the
+     workflow compiler reads it and every step is a prose step or an
+     exec step of plain words. A workflow that cannot convert (a fan-out,
+     a child workflow, a `${...}` in a step that is not an input or an
+     earlier step, and the rest) is reported with `reason`, `detail` and
+     `guidance`: what to change in the workflow, then run again. An
+     existing task file is never overwritten. Workflows are removed in 0.11
   4. the retired `engine:` key on commands, agents, workflows and task
      sources rewritten to `connection:` or `harness:` by what the name is
      now, under one backup directory per run
@@ -47,5 +61,10 @@ order, and print one combined JSON plan (exit 1 when any step is blocked):
 in its entrypoint (a current installation is a no-op).
 
 Commands:
-  status               Inspect every pending migration without changing anything.
-  apply [--dry-run]    Back up and apply every pending migration.
+  status [<file>...]   Inspect every pending migration without changing anything,
+                       and report what apply would make of the named task and
+                       workflow files.
+  apply [--dry-run] [<file>...]
+                       Back up and apply every pending migration, and convert the
+                       named task files to task source v5 and the named workflow
+                       files to new v5 task files.

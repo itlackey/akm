@@ -25,15 +25,17 @@ process.on("message", (message: { type?: string; id?: string; error?: string; da
 const native = () => Boolean(process.send) && process.env.AKM_DESKTOP_NATIVE === "1";
 /**
  * Ask Electron's main process for the app's version and menu-entry state, to install the menu entry, to pick a folder,
- * or to follow a release line for its own updates.
+ * to show a file in the file manager, or to follow a release line for its own updates.
  */
 export function desktopApp(
   action = "status",
-  params: { start?: string; channel?: UpdateChannel | null } = {},
+  params: { start?: string; path?: string; channel?: UpdateChannel | null } = {},
 ): Promise<unknown> {
   if (!native()) {
     if (action === "menu-install")
       return Promise.reject(new Error("Menu installation is available in the Linux AppImage."));
+    if (action === "reveal")
+      return Promise.reject(new Error("Showing a file in the file manager is available in the AKM Desktop app."));
     if (action === "pick-folder")
       return Promise.reject(
         new Error("The folder dialog is available in the AKM Desktop app. Type the folder path instead."),

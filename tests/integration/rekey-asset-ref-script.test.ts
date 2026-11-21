@@ -222,21 +222,20 @@ test("refuses cross-type and cross-bundle re-keys, and a no-op self re-key", asy
   expect(() => rekeyAssetRef(OLD_REF, OLD_REF)).toThrow(/same — nothing to re-key/);
 });
 
-test("carries state.db signal even when `akm index` already re-minted the entry", async () => {
+test("`akm index` carries the state.db signal of a renamed file, leaving the script nothing to re-key", async () => {
   writeMemory(OLD_NAME);
   await seedSignalFor(OLD_ITEM_REF);
   fs.renameSync(memoryPath(OLD_NAME), memoryPath(NEW_NAME));
-  // The user indexed BEFORE re-keying: the old entries row is gone and a fresh
-  // one minted, so only the state.db signal is left to carry.
+  // The index pairs the renamed file with its entry and carries the history itself.
   await akmIndex({ stashDir, full: true });
   expect(indexRowIdFor(OLD_ITEM_REF)).toBeUndefined();
   expect(indexRowIdFor(NEW_ITEM_REF)).toBeNumber();
+  expect(readSignal(NEW_ITEM_REF).salience).toBe(1);
+  expect(readSignal(OLD_ITEM_REF)).toEqual({ salience: 0, outcome: 0, usage: 0 });
 
   const result = rekeyAssetRef(OLD_REF, NEW_REF);
   expect(result.changed.indexEntries).toBe(0);
-  expect(result.changed.asset_salience).toBe(1);
-  expect(result.changed.asset_outcome).toBe(1);
-  expect(result.warnings).toEqual([]);
+  expect(result.changed.asset_salience).toBe(0);
+  expect(result.changed.asset_outcome).toBe(0);
   expect(readSignal(NEW_ITEM_REF).salience).toBe(1);
-  expect(readSignal(OLD_ITEM_REF)).toEqual({ salience: 0, outcome: 0, usage: 0 });
 });

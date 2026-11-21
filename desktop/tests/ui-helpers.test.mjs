@@ -8,7 +8,6 @@ import {
   ApiError,
   api,
   assetSource,
-  bodyOf,
   countAxis,
   matchesAssetRef,
   saveContent,
@@ -53,10 +52,6 @@ test("human titles use actual title metadata, then readable name/ref fallback", 
   assert.equal(title({ ref: "knowledge/file", metadata: { title: "Restore your laptop" } }), "Restore your laptop");
   assert.equal(title({ ref: "knowledge/file", metadata: { title: { unsafe: true } } }), "file");
   assert.equal(title(), "Untitled asset");
-});
-test("Markdown frontmatter removed only at beginning", () => {
-  assert.equal(bodyOf("---\ntitle: Guide\n---\n# Content"), "# Content");
-  assert.equal(bodyOf("# Content\n---\n"), "# Content\n---\n");
 });
 test("save keeps untouched bytes and uniform CRLF; never changes mixed line endings incidentally", () => {
   assert.equal(saveContent("a\r\nb\r\n", "a\nb\n"), "a\r\nb\r\n");

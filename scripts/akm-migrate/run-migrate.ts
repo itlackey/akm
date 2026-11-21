@@ -21,6 +21,7 @@ import {
   resetConfigCache,
 } from "../../src/core/config/config";
 import { ConfigError } from "../../src/core/errors";
+import { describeRemainingWorkflowFiles, type WorkflowFilesOfBundle } from "../../src/commands/health/workflow-files";
 import { getConfigPath } from "../../src/core/paths";
 import { listPendingStateMigrations, upgradeHistoricalStateDatabase } from "../../src/core/state-db";
 import { resolveSecretFromStore } from "../../src/sources/snapshot-fetchers/secret-seam";
@@ -45,7 +46,15 @@ import {
   type BundlePolicyMigrationStatus,
   inspectBundlePolicyMigration,
 } from "./bundle-policy-migrate";
-import { applyTaskFilesMigration, inspectTaskFilesMigration, type TaskFilesMigrationStatus } from "./task-migrate";
+import {
+  applyTaskFilesMigration,
+  applyTaskFilesV5Migration,
+  inspectTaskFilesMigration,
+  inspectTaskFilesV5Migration,
+  remainingWorkflowFiles,
+  type TaskFilesMigrationStatus,
+  type TaskFilesV5MigrationStatus,
+} from "./task-migrate";
 
 export type MigrationStatus = "current" | "ready" | "blocked";
 
@@ -84,6 +93,11 @@ export interface CombinedMigrationPlan {
   assetContentRefs?: ContentRefsMigrationStatus["assetContentRefs"];
   /** Writable bundles' stale `lint_skip` frontmatter and track-secrets marker, with the config skip that replaces the marker. */
   bundlePolicy?: BundlePolicyMigrationStatus["bundlePolicy"];
+  /** Present when task files were named for conversion to version 5: each file's outcome, and what to change by hand. */
+  taskFilesV5?: TaskFilesV5MigrationStatus["files"];
+  taskFilesV5BackupPath?: string;
+  /** Present when workflow files remain in writable bundles: they are removed in 0.11 and convert only when named. */
+  workflowFiles?: { bundles: WorkflowFilesOfBundle[]; message: string };
   /** Present after a real apply that rewrote at least one task file: the run's backup directory. */
   backupPath?: string;
   applied?: number;
@@ -168,8 +182,13 @@ function stashDirIfConfigured(): string | undefined {
  * read-only (`status`, `apply --dry-run`); `apply: true` mutates, each step
  * under its own lock and backup.
  */
-export async function runMigration(options: { apply: boolean }): Promise<CombinedMigrationPlan> {
+export async function runMigration(options: {
+  apply: boolean;
+  /** Task files to convert to task source v5; no other file is converted. */
+  taskFiles?: readonly string[];
+}): Promise<CombinedMigrationPlan> {
   const { apply } = options;
+  const named = options.taskFiles ?? [];
   const configPath = getConfigPath();
   const failedSteps: FailedMigrationStep[] = [];
 
@@ -196,6 +215,16 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
     () => (apply ? applyTaskFilesMigration() : inspectTaskFilesMigration()),
     apply ? () => inspectTaskFilesMigration() : undefined,
   );
+  // After the version 4 step, so a named version 2 or 3 file is converted from the file that step leaves.
+  const taskFilesV5 =
+    named.length === 0
+      ? undefined
+      : await migrationStep(
+          failedSteps,
+          "taskFilesV5",
+          () => (apply ? applyTaskFilesV5Migration(named) : inspectTaskFilesV5Migration(named)),
+          apply ? () => inspectTaskFilesV5Migration(named) : undefined,
+        );
   // After the task files (a v2/v3 task file may still carry `engine:` until it is rewritten) and the
   // config (the names an engine had before its conversion come from that step's result).
   // A config the step could not read or write leaves the names unsettled, so the assets wait for a run that can.
@@ -233,6 +262,13 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
     apply ? () => ({ pending: findDeadResidueEntries(stashDir) }) : undefined,
   );
 
+  // After the named conversions, so a workflow file removed since is not counted. Not a migration step of its own:
+  // apply converts a workflow only when it is named, so what remains is reported, never changed.
+  const workflowFiles = await migrationStep(failedSteps, "workflowFiles", () => {
+    const bundles = remainingWorkflowFiles();
+    return bundles.length > 0 ? { bundles, message: describeRemainingWorkflowFiles(bundles) } : undefined;
+  });
+
   // A pending state migration reads as "ready" under status/--dry-run, so the
   // preview says what apply will do; after a real apply it has been applied.
   const stateStatus: MigrationStatus =
@@ -244,17 +280,20 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
   return {
     schemaVersion: 1,
     status: statusWithFailedSteps(
-      [stateStatus, configFileStatus, engineKeysStatus, contentRefsStatus, bundlePolicyStatus].reduce(
+      [stateStatus, configFileStatus, engineKeysStatus, contentRefsStatus, bundlePolicyStatus, taskFilesV5?.status ?? "current"].reduce(
         worstStatus,
         taskFiles?.status ?? "blocked",
       ),
       failedSteps,
     ),
-    blockers: [...(taskFiles?.blockers ?? []), ...failedStepBlockers(failedSteps)],
+    blockers: [...(taskFiles?.blockers ?? []), ...(taskFilesV5?.blockers ?? []), ...failedStepBlockers(failedSteps)],
     ...(failedSteps.length > 0 ? { failedSteps } : {}),
     ...(configFile !== undefined ? { configFile } : {}),
     ...(stateMigrations !== undefined ? { stateMigrations } : {}),
     ...(taskFiles !== undefined ? { taskFiles: taskFiles.taskFiles } : {}),
+    ...(taskFilesV5 !== undefined ? { taskFilesV5: taskFilesV5.files } : {}),
+    ...(taskFilesV5?.backupPath !== undefined ? { taskFilesV5BackupPath: taskFilesV5.backupPath } : {}),
+    ...(workflowFiles !== undefined ? { workflowFiles } : {}),
     ...(taskFiles?.backupPath !== undefined ? { backupPath: taskFiles.backupPath } : {}),
     ...(taskFiles?.applied !== undefined ? { applied: taskFiles.applied } : {}),
     ...(assetEngineKeys !== undefined ? { assetEngineKeys: assetEngineKeys.assetEngineKeys } : {}),

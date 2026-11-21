@@ -77,7 +77,7 @@ export interface AkmImproveOptions {
   extractCandidateCountFn?: (...args: Parameters<typeof countNewExtractCandidates>) => number | Promise<number>;
   /** Session-log harnesses for both the `minNewSessions` gate and the extract pass. */
   extractHarnesses?: SessionLogHarness[];
-  /** Builds the index. `Promise<unknown>` keeps test stubs simple; the default is `buildIndex(options, "try")`. */
+  /** Builds the index. `Promise<unknown>` keeps test stubs simple; the default is `buildIndex(options)`. */
   reindexFn?: ReindexFn;
   drainProposalsFn?: typeof drainProposals;
   saveGitStashFn?: typeof saveGitStash;

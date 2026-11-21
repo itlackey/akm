@@ -52,8 +52,8 @@
  *
  * ── validate ──
  *
- * Shared base checks (`validateChangesWithBaseChecks` — the ported
- * unquoted-colon / missing-updated / stale-path / missing-ref), then the
+ * The shared base checks (`createBaseChecker`: unquoted-colon / missing-updated /
+ * stale-path / missing-ref / redacted-content), then the
  * per-type linters (SkillLinter/WorkflowLinter/TaskLinter/…) in `akm-lint.ts`.
  *
  * ── Cycle-safety ──
@@ -82,7 +82,7 @@ import {
   hasMarkdownFragmentContent,
   setMarkdownFragmentContent,
 } from "../../../indexer/passes/metadata";
-import { buildFileContext, type FileContext } from "../../../indexer/walk/file-context";
+import { buildFileContext, type FileContext, type MatchResult } from "../../../indexer/walk/file-context";
 import { declaredTypeForPath } from "../../../indexer/walk/matchers";
 import {
   assetPathCandidatesForName,
@@ -93,16 +93,16 @@ import {
   typeForStashDir,
 } from "../../asset/asset-placement";
 import { parseFrontmatter } from "../../asset/frontmatter";
+import { looksLikeLlmWikiRoot } from "../../asset/llm-wiki-root";
 import type { FileChange } from "../../file-change";
 import { sensitiveMarkerPath } from "../../sensitive-marker-path";
 import type { BundleAdapter } from "../bundle-adapter";
 import { executionDefaultsFromFrontmatter, renderMarkdownExecutionSource } from "../execution-source";
 import { recognizeMatch } from "../recognize-match";
 import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
-import { perTypeValidateChecks, skillDirectoryDiagnostics } from "./akm-lint";
+import { derivedSiblingPath, perTypeDiagnostics, skillDirectoryDiagnostics, type TypeCheckInput } from "./akm-lint";
 import { applyFoldedMetadata, foldRecognizedMetadata } from "./akm-metadata";
-import { llmWikiAdapter } from "./llm-wiki-adapter";
-import { hashContent, type ParsedForValidate, RESERVED_FILES, runBaseValidateChecks } from "./shared";
+import { createBaseChecker, hashContent, type ParsedForValidate, parseForValidate, RESERVED_FILES } from "./shared";
 
 // `recognizeMatch` + the builtin matcher list moved to the cycle-free leaf
 // `../recognize-match` (Chunk 5 M-b) so both this adapter AND the indexer
@@ -277,14 +277,23 @@ function isWikiRaw(c: BundleComponent, file: FileContext): boolean {
   if (file.ext !== ".md") return false;
   const dirs = file.ancestorDirs;
   for (let i = 0; i < dirs.length; i++) {
-    if (dirs[i] === "raw" && llmWikiAdapter.looksLikeRoot?.(path.join(c.root, ...dirs.slice(0, i))) === true) {
+    if (dirs[i] === "raw" && looksLikeLlmWikiRoot(path.join(c.root, ...dirs.slice(0, i)))) {
       return true;
     }
   }
   return false;
 }
 
-function recognize(c: BundleComponent, file: FileContext): IndexDocument | null {
+/**
+ * The type the akm adapter gives a file of the bundle at `root`, with its ref and canonical name, or `null` when the
+ * file is not an asset (a reserved structural file, one the adapter abstains on, one no matcher claims, or one whose
+ * placement gives no ref). Path rules and matchers only: this is the one place that decides what an akm bundle holds,
+ * for the index (`recognize`) and for `akm lint`.
+ */
+export function classifyAkmFile(
+  root: string,
+  file: FileContext,
+): { match: MatchResult; conceptId: string; canonicalName: string } | null {
   // `index.md` / `log.md` are OKF reserved structural files at
   // every depth — never items. Excluded BEFORE classification so a directory
   // listing or update log never becomes a `knowledge` (or other) concept.
@@ -292,16 +301,23 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   // Adapter-owned filtering (owner ruling 2026-07-21): AKM-stash policy that used
   // to live in the indexer's `shouldIndexStashFile` pre-filter. Path/stat-based —
   // `file.content()` is never read to reach this abstention.
-  if (akmStashAbstains(c.root, file.absPath)) return null;
+  if (akmStashAbstains(root, file.absPath)) return null;
   const match = recognizeMatch(file);
   if (match === null) return null;
   // The ref is the file's bundle-relative path minus the type's own suffix;
   // `entry.name` below keeps the canonical name relative to the type folder
   // (identity != search text). Invalid placements are not projected onto a
   // different identity.
-  const conceptId = refForFile(match.type, c.root, file.absPath);
-  const canonicalName = deriveCanonicalAssetNameFromStashRoot(match.type, c.root, file.absPath);
+  const conceptId = refForFile(match.type, root, file.absPath);
+  const canonicalName = deriveCanonicalAssetNameFromStashRoot(match.type, root, file.absPath);
   if (conceptId === undefined || canonicalName === undefined) return null;
+  return { match, conceptId, canonicalName };
+}
+
+function recognize(c: BundleComponent, file: FileContext): IndexDocument | null {
+  const classified = classifyAkmFile(c.root, file);
+  if (classified === null) return null;
+  const { match, conceptId, canonicalName } = classified;
   const dirPath = path.dirname(file.absPath);
 
   // recognize carries the FULL index-time metadata surface,
@@ -428,6 +444,7 @@ function buildOverlayContext(root: string, relPathInput: string, raw: string): F
 async function validate(c: BundleComponent, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
   const diagnostics: Diagnostic[] = [];
   const seenSkillDirs = new Set<string>();
+  const { check, rulesFor } = createBaseChecker(c.root, ctx);
 
   for (const change of changes) {
     if (change.op === "delete") continue;
@@ -438,29 +455,24 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
     const match = recognizeMatch(overlay);
     const type = match?.type;
 
-    // Task parsing belongs to perTypeValidateChecks' canonical v3 parser. Base
+    // Task parsing belongs to perTypeChecks' canonical v3 parser. Base
     // checks need only a frontmatter-free placeholder here.
-    let parsed: ParsedForValidate;
-    if (type === "task") {
-      parsed = { data: {}, content: raw, frontmatter: null, bodyStartLine: 1 };
-    } else {
-      const p = parseFrontmatter(raw);
-      parsed = { data: p.data, content: p.content, frontmatter: p.frontmatter, bodyStartLine: p.bodyStartLine };
-    }
+    const parsed: ParsedForValidate =
+      type === "task" ? { raw, data: {}, content: raw, frontmatter: null, bodyStartLine: 1 } : parseForValidate(raw);
 
-    diagnostics.push(...(await runBaseValidateChecks(change.path, parsed, c.root, ctx)));
-    diagnostics.push(
-      ...(await perTypeValidateChecks({
-        type,
-        relPath: change.path,
-        raw,
-        data: parsed.data,
-        frontmatter: parsed.frontmatter,
-        body: parsed.content,
-        ext: overlay.ext,
-        ctx,
-      })),
-    );
+    diagnostics.push(...check(change.path, parsed));
+    const input: TypeCheckInput = {
+      type,
+      relPath: change.path,
+      raw,
+      data: parsed.data,
+      frontmatter: parsed.frontmatter,
+      body: parsed.content,
+      ext: overlay.ext,
+      rules: rulesFor(change.path),
+      derivedSiblingExists: (await ctx.readFile(derivedSiblingPath(change.path))) !== null,
+    };
+    diagnostics.push(...perTypeDiagnostics(input, change.path));
     diagnostics.push(...(await skillDirectoryDiagnostics(change.path, seenSkillDirs, ctx)));
   }
 
@@ -492,6 +504,7 @@ export const akmAdapter: BundleAdapter = {
     ".sh",
     ".ts",
     ".js",
+    ".mjs",
     ".ps1",
     ".cmd",
     ".bat",

@@ -97,13 +97,16 @@ test("loopback session bootstrap, authentication and strict write origin", async
     401,
   );
   assert.equal(
-    (await app.request("/knowledge/create", { name: "bad", content: "# bad" }, { Origin: "http://evil.example" }))
+    (await app.request("/documents/create-file", { name: "bad", content: "# bad" }, { Origin: "http://evil.example" }))
       .status,
     403,
   );
-  assert.equal((await app.request("/knowledge/create", { name: "bad", content: "# bad" }, { Origin: "" })).status, 403);
   assert.equal(
-    (await app.request("/knowledge/create", { name: "bad", content: "# bad" }, { "Content-Type": "text/plain" }))
+    (await app.request("/documents/create-file", { name: "bad", content: "# bad" }, { Origin: "" })).status,
+    403,
+  );
+  assert.equal(
+    (await app.request("/documents/create-file", { name: "bad", content: "# bad" }, { "Content-Type": "text/plain" }))
       .status,
     415,
   );
@@ -210,33 +213,26 @@ test("existing AKM reads, revision-safe editing, creation and non-overwriting co
   });
   assert.equal(conflict.status, 409);
   assert.equal((await conflict.json()).code, "ASSET_CONTENT_CHANGED");
-  const created = await app.request("/knowledge/create", {
+  const created = await app.request("/documents/create-file", {
     name: "created-in-test",
-    content: "# Created\n\nA synthetic new note.",
+    type: "knowledge",
     bundle: "personal",
   });
   assert.equal(created.status, 200, await created.text());
-  const copied = await app.request("/asset/copy", {
-    sourceRef: app.fixture.refs.vendor,
-    target: "personal",
-    newName: "vendor-copy",
+  const copyTo = (extra = {}) => ({
+    bundle: "vendor",
+    from: "knowledge/vendor-backup.md",
+    toBundle: "personal",
+    folder: "knowledge",
+    name: "vendor-copy.md",
+    ...extra,
   });
+  const copied = await app.request("/desktop/files/copy", copyTo());
   assert.equal(copied.status, 200, await copied.text());
-  const repeat = await app.request("/asset/copy", {
-    sourceRef: app.fixture.refs.vendor,
-    target: "personal",
-    newName: "vendor-copy",
-  });
+  const repeat = await app.request("/desktop/files/copy", copyTo());
   assert.notEqual(repeat.status, 200);
   assert.notEqual(
-    (
-      await app.request("/asset/copy", {
-        sourceRef: app.fixture.refs.vendor,
-        target: "personal",
-        newName: "vendor-copy",
-        force: true,
-      })
-    ).status,
+    (await app.request("/desktop/files/copy", copyTo({ force: true }))).status,
     200,
     "an unknown force field is ignored; a copy never overwrites",
   );
@@ -338,7 +334,7 @@ async function launchWith(t, args) {
       const req = http.request(
         {
           host: args.includes("--origin") ? "127.0.0.1" : new URL(ready.origin).hostname.replace(/[[\]]/g, ""),
-          port: bindPort(args),
+          port: new URL(ready.origin).port,
           path: route,
           method,
           headers: { Host: host, ...headers },
@@ -353,7 +349,6 @@ async function launchWith(t, args) {
     });
   return { ready, token, send };
 }
-const bindPort = (args) => Number(args[args.indexOf("--port") + 1]);
 
 test("a configured --origin and --host serve under that address, with every check still on", async (t) => {
   const port = await freePort();
@@ -428,10 +423,10 @@ test("an --origin without http(s) exits non-zero and names the flag", async () =
 });
 
 test("instances on different ports use different cookie names", async (t) => {
-  const [first, second] = [await freePort(), await freePort()];
+  // Port 0: each server takes a free port itself, so no other process can take it between choosing and binding.
   const names = [];
-  for (const port of [first, second]) {
-    const app = await launchWith(t, ["--port", String(port)]);
+  for (let i = 0; i < 2; i++) {
+    const app = await launchWith(t, ["--port", "0"]);
     names.push((await app.send(`/?desktop_session=${app.token}`)).headers["set-cookie"][0].split("=")[0]);
   }
   assert.notEqual(names[0], names[1]);

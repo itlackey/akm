@@ -6,10 +6,30 @@
 
 <script lang="ts">
   import { onDestroy, onMount, tick, untrack, type Snippet } from "svelte";
-  import { libraryRead } from "./library-model";
-  import { ancestorPaths, directoryKey, parentPath, treeNodes } from "./library-files-model";
-  import type { FileEntry, FileListing, FileLocation, FilesViewState, TreeNode } from "./library-files-model";
-  import type { Bundle } from "./types";
+  import { api } from "./client";
+  import {
+    ancestorPaths,
+    directoryKey,
+    followMove,
+    modifiedShort,
+    newFileLabel,
+    parentPath,
+    sizeText,
+  } from "./library-files-model";
+  import type {
+    FileActions,
+    FileEntry,
+    FileListing,
+    FileLocation,
+    FileRequest,
+    FilesViewState,
+  } from "./library-files-model";
+  import { FileTreeState } from "./file-tree-state.svelte";
+  import { refreshBundles, workspace } from "./state/workspace.svelte";
+  import type { Bundle, Retirement } from "./types";
+  import FileDialog from "./FileDialog.svelte";
+  import FileMenu from "./FileMenu.svelte";
+  import FileTree from "./FileTree.svelte";
   import Icon from "./Icon.svelte";
   let {
     bundles = [],
@@ -24,6 +44,9 @@
     onNavigate,
     onSelect,
     onSearch,
+    onChanged,
+    onCreated,
+    onCreateProtected,
     actions,
     children,
   }: {
@@ -40,6 +63,12 @@
     onNavigate?: (location: FileLocation) => void;
     onSelect?: (ref: string) => void;
     onSearch?: (bundle: string) => void;
+    /** A file operation finished; `moved` carries akm's answer to a move, a rename or a copy. */
+    onChanged?: (change?: { moved?: Record<string, unknown> }) => void;
+    /** A new file was made: it opens in the editor. */
+    onCreated?: (created: { bundle: string; folder: string; file: string; ref: string | null }) => void;
+    /** akm says the folder takes an environment file or a secret: it is made in the protected editor. */
+    onCreateProtected?: (kind: "env" | "secret", bundle: string, folder: string) => void;
     /** Links and buttons at the end of the location bar. */
     actions?: Snippet;
     /** The open document, with what the folder listing knows about its file. */
@@ -48,20 +77,15 @@
   // Read once, as this view starts: what the last Files view left behind, and the revision it starts from.
   const kept = untrack(() => viewState),
     startRevision = untrack(() => revision);
-  let listings = $state(
-      kept.revision === startRevision
-        ? (kept.listings ?? new Map<string, FileListing>())
-        : new Map<string, FileListing>(),
-    ),
-    expanded = $state(kept.expanded ?? new Set<string>()),
-    loading = $state(new Set<string>()),
-    errors = $state(new Map<string, string>());
-  let requests = new Map<string, Promise<void>>(),
-    controller = new AbortController(),
-    seen = "",
+  const tree = new FileTreeState({
+    listings: kept.revision === startRevision ? kept.listings : undefined,
+    expanded: kept.expanded,
+    showHidden: kept.showHidden,
+  });
+  let seen = "",
     seenRevision = startRevision;
   let focused = $state(kept.focused ?? ""),
-    tree = $state<HTMLElement>(),
+    fileTree = $state<ReturnType<typeof FileTree>>(),
     treePane = $state<HTMLElement>(),
     contentPane = $state<HTMLElement>(),
     foldersButton = $state<HTMLButtonElement>(),
@@ -69,13 +93,37 @@
     showTree = $state(false),
     showHidden = $state(kept.showHidden ?? false),
     notice = $state(""),
-    generation = 0;
+    failure = $state("");
+  let menu = $state<{
+      bundle: string;
+      path: string;
+      name: string;
+      actions?: FileActions;
+      folder?: FileListing;
+      at: { x: number; y: number } | null;
+      origin: HTMLElement;
+    } | null>(null),
+    request = $state<FileRequest | null>(null),
+    requestOrigin: HTMLElement | undefined,
+    renaming = $state<{ bundle: string; path: string; where: "tree" | "list" } | null>(null),
+    dragging = $state<{ bundle: string; path: string; name: string; actions: FileActions } | null>(null),
+    dropKey = $state("");
+  let committing = $state(false),
+    committed = $state<{
+      committed: boolean;
+      pushed: boolean;
+      commit?: string;
+      output: string;
+      reason?: string;
+    } | null>(null),
+    commitFailure = $state("");
+  let creating = $state<{ kind: "new-file" | "new-folder"; bundle: string; path: string } | null>(null),
+    createName = $state(""),
+    createBusy = $state(false);
   let restoreLocation = kept.location;
   const names = $derived(bundles.filter((b) => b.enabled).map((b) => b.name));
-  const nodes = $derived(treeNodes(names, listings, expanded));
-  const focusKey = $derived(nodes.some((node) => node.key === focused) ? focused : nodes[0]?.key);
   const key = $derived(directoryKey(bundleName, path));
-  const listing = $derived(listings.get(key));
+  const listing = $derived(tree.listings.get(key));
   const selectedKey = $derived(directoryKey(bundleName, file || path));
   const selectedFile = $derived(listing?.entries.find((entry) => entry.path === file));
   const locationError = $derived(
@@ -96,6 +144,12 @@
         entry.unavailable || (entry.kind !== "directory" && (!listing.indexAvailable || entry.assets.length !== 1)),
     ) ?? false,
   );
+  const git = $derived(bundles.find((entry) => entry.name === bundleName)?.git);
+  const newFile = $derived(listing?.newFile);
+  const newPlace = $derived(listing?.place);
+  const createLabel = $derived(
+    creating?.kind === "new-folder" ? "Name of the new folder" : `Name of the new ${listing?.newFile.type ?? "file"}`,
+  );
   // A new location is revealed in the tree, and the folder filter starts empty again.
   $effect(() => {
     const location = `${bundleName}\n${path}\n${file}`;
@@ -110,51 +164,21 @@
     seenRevision = revision;
     untrack(invalidate);
   });
-  async function load(bundle: string, directory: string, force = false) {
-    const id = directoryKey(bundle, directory);
-    if (requests.has(id)) return requests.get(id);
-    if (!force && listings.has(id)) return;
-    const requestGeneration = generation,
-      signal = controller.signal;
-    loading = new Set([...loading, id]);
-    errors.delete(id);
-    errors = new Map(errors);
-    const request = (async () => {
-      try {
-        const result = await libraryRead<FileListing>(
-          "/bundles/files",
-          { bundle, path: directory, ...(showHidden ? { hidden: "1" } : {}) },
-          signal,
-        );
-        if (signal.aborted || requestGeneration !== generation) return;
-        listings = new Map(listings).set(id, result);
-      } catch (cause) {
-        if (!signal.aborted && requestGeneration === generation) {
-          errors = new Map(errors).set(id, (cause as Error).message);
-          notice = `Could not open ${directory || bundle}: ${(cause as Error).message}`;
-        }
-      } finally {
-        if (requestGeneration === generation) {
-          loading.delete(id);
-          loading = new Set(loading);
-          requests.delete(id);
-        }
-      }
-    })();
-    requests.set(id, request);
-    return request;
-  }
+  // A failed read of the folder shown is announced where the person is.
+  $effect(() => {
+    const message = tree.errors.get(key);
+    if (message) notice = `Could not open ${path || bundleName}: ${message}`;
+  });
   async function revealLocation() {
     if (!bundleName || !names.includes(bundleName)) return;
     const requested = seen;
     for (const ancestor of ancestorPaths(path)) {
-      expanded = new Set([...expanded, directoryKey(bundleName, ancestor)]);
-      await load(bundleName, ancestor);
+      await tree.open(directoryKey(bundleName, ancestor), bundleName, ancestor);
       if (requested !== seen) return;
     }
     focused = selectedKey;
     await tick();
-    const selected = [...(tree?.querySelectorAll<HTMLButtonElement>("[role=treeitem]") ?? [])].find(
+    const selected = [...(fileTree?.container()?.querySelectorAll<HTMLElement>("[role=treeitem]") ?? [])].find(
       (el) => el.dataset.key === focused,
     );
     selected?.scrollIntoView({ block: "nearest" });
@@ -167,38 +191,9 @@
     restoreLocation = undefined;
   }
   function invalidate() {
-    const visibleDirectories = [...listings.values()].filter((directory) =>
-      expanded.has(directoryKey(directory.bundle, directory.path)),
-    );
-    generation++;
-    controller.abort();
-    controller = new AbortController();
-    requests = new Map();
-    listings = new Map();
-    errors = new Map();
-    loading = new Set();
-    // Refresh only directories the user already opened. Keep their visible
-    // branches useful after a source save without enumerating new subtrees.
-    for (const directory of visibleDirectories) void load(directory.bundle, directory.path);
+    tree.showHidden = showHidden;
+    void tree.invalidate();
     void revealLocation();
-  }
-  async function toggle(node: TreeNode) {
-    if (node.kind !== "directory" || node.unavailable) return;
-    if (expanded.has(node.key)) expanded.delete(node.key);
-    else expanded.add(node.key);
-    expanded = new Set(expanded);
-    focused = node.key;
-    if (expanded.has(node.key)) await load(node.bundle, node.path);
-    await focus(node.key);
-  }
-  async function focus(id: string) {
-    focused = id;
-    await tick();
-    const item = [...(tree?.querySelectorAll<HTMLButtonElement>("[role=treeitem]") ?? [])].find(
-      (el) => el.dataset.key === id,
-    );
-    item?.focus({ preventScroll: true });
-    item?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }
   /** Close the folder drawer a phone shows in place of the page; focus goes back to the button that opened it. */
   async function closeTree() {
@@ -209,7 +204,7 @@
   function drawerKey(event: KeyboardEvent) {
     if (event.key === "Escape" && showTree && !event.defaultPrevented) void closeTree();
   }
-  function open(bundle: string, entry: FileEntry) {
+  function open(bundle: string, entry: Pick<FileEntry, "kind" | "path" | "unavailable" | "assets">) {
     showTree = false;
     onNavigate?.(
       entry.kind === "directory" && !entry.unavailable
@@ -233,43 +228,262 @@
         ? "Markdown"
         : "File";
   }
-  async function treeKey(event: KeyboardEvent, node: TreeNode) {
-    const index = nodes.findIndex((item) => item.key === node.key);
-    let target: TreeNode | undefined;
-    if (event.key === "ArrowDown") target = nodes[Math.min(nodes.length - 1, index + 1)];
-    else if (event.key === "ArrowUp") target = nodes[Math.max(0, index - 1)];
-    else if (event.key === "Home") target = nodes[0];
-    else if (event.key === "End") target = nodes.at(-1);
-    else if (event.key === "ArrowRight") {
-      event.preventDefault();
-      if (node.kind === "directory") {
-        if (!expanded.has(node.key)) await toggle(node);
-        else if (nodes[index + 1]?.parentKey === node.key) await focus(nodes[index + 1].key);
-      }
-      return;
-    } else if (event.key === "ArrowLeft") {
-      event.preventDefault();
-      if (node.kind === "directory" && expanded.has(node.key)) await toggle(node);
-      else if (node.parentKey) await focus(node.parentKey);
-      return;
-    } else if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      open(node.bundle, node);
+  function focusOnShow(input: HTMLInputElement) {
+    input.focus();
+  }
+  function focusName(input: HTMLInputElement) {
+    input.focus();
+    input.setSelectionRange(0, input.value.includes(".") ? input.value.lastIndexOf(".") : input.value.length);
+  }
+  function entryOf(node: { bundle: string; path: string }) {
+    return tree.listings
+      .get(directoryKey(node.bundle, parentPath(node.path)))
+      ?.entries.find((entry) => entry.path === node.path);
+  }
+  // The menu: akm's verdicts for the entry, and for a folder the verdicts for what could be made in it.
+  async function openMenu(
+    target: { bundle: string; path: string; name: string; kind: string; actions?: FileActions; root?: boolean },
+    at: { x: number; y: number } | null,
+    origin: HTMLElement,
+  ) {
+    const isFolder = target.kind === "directory";
+    if (isFolder) await tree.load(target.bundle, target.path);
+    menu = {
+      bundle: target.bundle,
+      path: target.path,
+      name: target.name,
+      actions: target.root ? undefined : target.actions,
+      folder: isFolder ? tree.listings.get(directoryKey(target.bundle, target.path)) : undefined,
+      at,
+      origin,
+    };
+  }
+  async function closeMenu(restore = true) {
+    const origin = menu?.origin;
+    menu = null;
+    await tick();
+    if (restore && origin?.isConnected) origin.focus();
+  }
+  async function choose(action: string) {
+    const target = menu;
+    if (!target) return;
+    requestOrigin = target.origin;
+    menu = null;
+    const allowed = target.actions;
+    if (action === "rename")
+      renaming = {
+        bundle: target.bundle,
+        path: target.path,
+        where: target.origin.closest("[role=tree]") ? "tree" : "list",
+      };
+    else if (action === "move" || action === "copy" || action === "delete") {
+      if (!allowed) return;
+      request = {
+        kind: action,
+        bundle: target.bundle,
+        path: target.path,
+        name: target.name,
+        actions: allowed,
+        destination: { bundle: target.bundle, path: parentPath(target.path) },
+      };
+    } else if (action === "retire") await retire(target.bundle, target.path);
+    else if (action === "reveal") await reveal(target.bundle, target.path);
+    else if (action === "new-file" || action === "new-folder") startCreate(action, target.bundle, target.path);
+  }
+  async function renameTo(node: { bundle: string; path: string; name: string }, name: string) {
+    renaming = null;
+    if (!name || name === node.name) return;
+    failure = "";
+    try {
+      const result = await api<Record<string, unknown>>(
+        "/desktop/files/move",
+        {},
+        { bundle: node.bundle, from: node.path, folder: parentPath(node.path), name },
+      );
+      moved(node, result, `Renamed ${node.name} to ${name}.`);
+    } catch (cause) {
+      failure = (cause as Error).message;
+    }
+  }
+  /** A move, rename or copy happened: follow the open file to its new place and say what akm did. */
+  function moved(
+    node: { bundle: string; path: string; name: string },
+    result: Record<string, unknown>,
+    message: string,
+    follow = true,
+  ) {
+    notice = message;
+    if (result.indexError) failure = `The change was made, but akm could not index it: ${result.indexError}`;
+    else if (Array.isArray(result.warnings) && result.warnings.length) failure = result.warnings.join(" ");
+    const to = String(result.to ?? ""),
+      toBundle = String(result.toBundle ?? node.bundle);
+    const next = follow && bundleName === node.bundle ? followMove(file, node.path, to) : null;
+    onChanged?.({ moved: result });
+    if (next !== null && file) {
+      const assets = (result.assets as FileEntry["assets"] | undefined) ?? [];
+      onNavigate?.({
+        bundle: toBundle,
+        path: parentPath(next),
+        file: next,
+        open: true,
+        ...(assets.length === 1 && next === to ? { ref: assets[0].ref } : {}),
+      });
+    }
+  }
+  async function retire(bundle: string, filePath: string) {
+    failure = "";
+    const entry = entryOf({ bundle, path: filePath });
+    if (!entry) return;
+    if (entry.assets.length !== 1) {
+      failure = `${entry.name} holds ${entry.assets.length} assets: open one and retire it from its page.`;
       return;
     }
-    if (target) {
-      event.preventDefault();
-      await focus(target.key);
+    try {
+      const ref = entry.assets[0].ref;
+      const { revision: current } = await api<{ revision: string }>("/desktop/file", { ref });
+      const receipt = await api<Retirement>("/asset/retire", {}, { ref, revision: current });
+      notice = `Retired ${entry.name}. Restore it from Review (proposal ${receipt.proposalId}).`;
+      onChanged?.();
+      if (file === filePath) onNavigate?.({ bundle, path: parentPath(filePath) });
+    } catch (cause) {
+      failure = (cause as Error).message;
+    }
+  }
+  async function reveal(bundle: string, filePath: string) {
+    failure = "";
+    try {
+      await api("/desktop/files/reveal", {}, { bundle, path: filePath });
+    } catch (cause) {
+      failure = (cause as Error).message;
+    }
+  }
+  async function requestDone(
+    done: FileRequest,
+    result: Record<string, unknown>,
+    destination: { bundle: string; path: string },
+  ) {
+    request = null;
+    failure = "";
+    if (done.kind === "delete") {
+      notice = `Deleted ${done.name}.`;
+      onChanged?.();
+      if (followMove(file, done.path, "") !== null) onNavigate?.({ bundle: done.bundle, path: parentPath(done.path) });
+    } else {
+      const where = destination.path || destination.bundle;
+      moved(
+        done,
+        result,
+        done.kind === "copy" ? `Copied ${done.name} to ${where}.` : `Moved ${done.name} to ${where}.`,
+        done.kind !== "copy",
+      );
+    }
+    await tick();
+    if (requestOrigin?.isConnected) requestOrigin.focus();
+  }
+  async function cancelRequest() {
+    request = null;
+    await tick();
+    if (requestOrigin?.isConnected) requestOrigin.focus();
+  }
+  // Drag: a file or folder dropped on a folder asks once, naming both; "Move to…" is the same without a pointer.
+  const movable = (node: { actions?: FileActions }) => node.actions?.move.allowed === true;
+  function startDrag(node: { bundle: string; path: string; name: string; actions?: FileActions }, event: DragEvent) {
+    if (!node.actions) return;
+    dragging = { bundle: node.bundle, path: node.path, name: node.name, actions: node.actions };
+    event.dataTransfer?.setData("text/plain", node.name);
+    if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+  }
+  function dropOnto(target: { bundle: string; path: string; kind: string }, event: DragEvent, over: boolean) {
+    // A folder cannot go into itself, and dropping an entry on the folder it is in changes nothing.
+    if (!dragging || target.kind !== "directory") return;
+    if (
+      dragging.bundle === target.bundle &&
+      (followMove(target.path, dragging.path, "") !== null || parentPath(dragging.path) === target.path)
+    )
+      return;
+    event.preventDefault();
+    if (over) {
+      dropKey = directoryKey(target.bundle, target.path);
+      return;
+    }
+    const dropped = dragging;
+    dragging = null;
+    dropKey = "";
+    requestOrigin = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
+    request = {
+      kind: "drop",
+      bundle: dropped.bundle,
+      path: dropped.path,
+      name: dropped.name,
+      actions: dropped.actions,
+      destination: { bundle: target.bundle, path: target.path },
+    };
+  }
+  function endDrag() {
+    dragging = null;
+    dropKey = "";
+  }
+  /** Commit the bundle as `akm sync` does: nothing commits unless this is chosen. */
+  async function commitBundle() {
+    if (committing) return;
+    committing = true;
+    committed = null;
+    commitFailure = "";
+    try {
+      committed = await api("/bundles/commit", {}, { bundle: bundleName });
+      await refreshBundles();
+    } catch (cause) {
+      commitFailure = (cause as Error).message;
+    } finally {
+      committing = false;
+    }
+  }
+  // New file and new folder: a name for what is made in the folder shown.
+  function startCreate(kind: "new-file" | "new-folder", bundle: string, folder: string) {
+    const here = tree.listings.get(directoryKey(bundle, folder))?.newFile;
+    if (kind === "new-file" && here?.through === "protected-editor") {
+      onCreateProtected?.(here.type === "secret" ? "secret" : "env", bundle, folder);
+      return;
+    }
+    creating = { kind, bundle, path: folder };
+    createName = "";
+    if (bundle !== bundleName || folder !== path) onNavigate?.({ bundle, path: folder });
+  }
+  async function create() {
+    if (!creating || createBusy || !createName.trim()) return;
+    createBusy = true;
+    failure = "";
+    const made = creating;
+    try {
+      if (made.kind === "new-folder") {
+        await api("/desktop/files/folder", {}, { bundle: made.bundle, folder: made.path, name: createName.trim() });
+        notice = `Created folder ${createName.trim()}.`;
+        creating = null;
+        onChanged?.();
+      } else {
+        const result = await api<{ ref: string | null; file: string }>(
+          "/documents/create-file",
+          {},
+          { bundle: made.bundle, folder: made.path, name: createName.trim() },
+        );
+        creating = null;
+        onChanged?.();
+        onCreated?.({ bundle: made.bundle, folder: made.path, file: result.file, ref: result.ref });
+      }
+    } catch (cause) {
+      failure = (cause as Error).message;
+    } finally {
+      createBusy = false;
     }
   }
   onMount(() => {
     if (!focused) focused = names[0] ? directoryKey(names[0], "") : "";
   });
   onDestroy(() => {
-    controller.abort();
+    tree.abort();
     Object.assign(viewState, {
-      listings,
-      expanded,
+      listings: tree.listings,
+      expanded: tree.expanded,
       focused,
       showHidden,
       location: seen,
@@ -288,43 +502,28 @@
       >
     </div>
     <div class="tree-scroll" bind:this={treePane}>
-      <div role="tree" aria-label="Bundle files" bind:this={tree}>
-        {#each nodes as node (node.key)}
-          <button
-            role="treeitem"
-            data-key={node.key}
-            aria-level={node.level}
-            aria-posinset={node.position}
-            aria-setsize={node.size}
-            aria-selected={selectedKey === node.key}
-            aria-expanded={node.kind === "directory" ? expanded.has(node.key) : undefined}
-            aria-busy={loading.has(node.key) || undefined}
-            tabindex={focusKey === node.key ? 0 : -1}
-            style:padding-left={`${8 + (node.level - 1) * 14}px`}
-            onfocus={() => (focused = node.key)}
-            onkeydown={(event) => treeKey(event, node)}
-            onclick={(event) => {
-              if ((event.target as Element).closest("[data-expander]")) void toggle(node);
-              else open(node.bundle, node);
-            }}
-            title={node.unavailable || node.path || node.name}
-          >
-            <span class="twisty" data-expander aria-hidden="true"
-              >{#if node.kind === "directory"}<Icon
-                  name={expanded.has(node.key) ? "chevron-down" : "chevron-right"}
-                  size={14}
-                />{/if}</span
-            >
-            <Icon name={node.kind === "directory" ? "folder" : "file"} size={16} />
-            <span class="node-name">{node.name}</span>{#if node.unavailable}<span
-                class="unavailable-dot"
-                aria-label="Unavailable"
-              ></span>{/if}
-          </button>
-        {/each}
-      </div>
+      <FileTree
+        bind:this={fileTree}
+        bundles={names}
+        {tree}
+        label="Bundle files"
+        {selectedKey}
+        bind:focused
+        renaming={renaming?.where === "tree" ? renaming : null}
+        {dropKey}
+        onOpen={(node) => open(node.bundle, node)}
+        onMenu={(node, at, origin) => openMenu(node, at, origin)}
+        onBeginRename={(node) =>
+          node.actions?.move.allowed && (renaming = { bundle: node.bundle, path: node.path, where: "tree" })}
+        onRename={(node, name) => renameTo(node, name)}
+        onCancelRename={() => (renaming = null)}
+        canDrag={movable}
+        onDragStart={startDrag}
+        onDragEnd={endDrag}
+        onDragOver={(node, event) => dropOnto(node, event, true)}
+        onDrop={(node, event) => dropOnto(node, event, false)}
+      />
       {#if !names.length}<p class="muted small">No enabled bundles.</p>{/if}
-      <p class="sr-only" role="status">{notice}</p>
     </div>
     <label class="hidden-files"
       ><input type="checkbox" bind:checked={showHidden} onchange={invalidate} /> Show hidden entries</label
@@ -337,7 +536,7 @@
         bind:this={foldersButton}
         onclick={() => {
           showTree = true;
-          void focus(focused || selectedKey);
+          void fileTree?.focus(focused || selectedKey);
         }}><Icon name="folder" size={18} />Folders</button
       >
       <nav aria-label="File location" class="file-breadcrumbs">
@@ -362,6 +561,28 @@
       </nav>
       {@render actions?.()}
     </div>
+    <p class="sr-only" role="status">{notice}</p>
+    {#if git}<section class="bundle-git" aria-label={`Git for ${bundleName}`}>
+        {#if git.error}<span role="alert">Git could not be read: {git.error}</span>
+        {:else}<span
+            >{git.uncommitted === null || git.uncommitted === undefined
+              ? "Uncommitted files: unknown, akm could not list the changes."
+              : `${git.uncommitted} ${git.uncommitted === 1 ? "file" : "files"} uncommitted`}</span
+          ><button
+            class="btn btn-secondary"
+            aria-disabled={committing ? "true" : undefined}
+            aria-busy={committing || undefined}
+            onclick={commitBundle}>{committing ? "Committing…" : "Commit"}</button
+          >{/if}
+        {#if committed}<span role="status" class="muted small"
+            >{committed.committed
+              ? `Committed ${committed.commit ?? ""}${committed.pushed ? " and pushed." : "."}`
+              : `Nothing was committed${committed.reason ? `: ${committed.reason}` : "."}`}
+            <span class="mono wrap">{committed.output}</span></span
+          >{/if}
+        {#if commitFailure}<span role="alert">The commit failed: {commitFailure}</span>{/if}
+      </section>{/if}
+    {#if failure}<p class="notice notice-warn files-failure" role="alert">{failure}</p>{/if}
     <div class="files-content" bind:this={contentPane}>
       {#if locationError}<section class="folder-content">
           <h1>Files</h1>
@@ -376,19 +597,19 @@
       {:else if documentOpen}{@render children?.({
           selectedFile,
           indexAvailable: listing?.indexAvailable,
-          loading: loading.has(key) || (!listing && !errors.has(key)),
-          error: errors.get(key),
+          loading: tree.loading.has(key) || (!listing && !tree.errors.has(key)),
+          error: tree.errors.get(key),
         })}
       {:else if !bundleName}<section class="folder-content">
           <h1>Files</h1>
           <p>Select a bundle to browse its folders.</p>
         </section>
-      {:else if errors.has(key)}<section class="folder-content">
-          <p role="alert">{errors.get(key)}</p>
-          <button class="btn-secondary" onclick={() => load(bundleName, path, true)}>Retry folder</button>
+      {:else if tree.errors.has(key)}<section class="folder-content">
+          <p role="alert">{tree.errors.get(key)}</p>
+          <button class="btn-secondary" onclick={() => tree.load(bundleName, path, true)}>Retry folder</button>
         </section>
       {:else if !listing}<p class="folder-content" role="status">Loading folder…</p>
-      {:else}<section class="folder-content" aria-label="Folder contents" aria-busy={loading.has(key)}>
+      {:else}<section class="folder-content" aria-label="Folder contents" aria-busy={tree.loading.has(key)}>
           <div class="folder-heading">
             <div>
               <h1>{path.split("/").at(-1) || bundleName}</h1>
@@ -405,13 +626,65 @@
           {#if listing && !listing.indexAvailable}<p class="notice">
               The index is unavailable. Files are listed, but asset identities cannot be checked.
             </p>{/if}
+          <div class="folder-new">
+            <button
+              class="btn btn-secondary"
+              aria-disabled={newFile?.allowed ? undefined : "true"}
+              aria-describedby={newFile?.allowed ? undefined : "new-file-reason"}
+              onclick={() => newFile?.allowed && startCreate("new-file", bundleName, path)}
+              ><Icon name="plus" size={16} />{newFileLabel(newFile)}</button
+            ><button
+              class="btn btn-secondary"
+              aria-disabled={newPlace?.allowed ? undefined : "true"}
+              aria-describedby={newPlace?.allowed ? undefined : "new-folder-reason"}
+              onclick={() => newPlace?.allowed && startCreate("new-folder", bundleName, path)}>New folder</button
+            >
+            {#if newFile && !newFile.allowed}<p class="muted small" id="new-file-reason">{newFile.reason}</p>{/if}
+            {#if newPlace && !newPlace.allowed}<p class="muted small" id="new-folder-reason">{newPlace.reason}</p>{/if}
+          </div>
+          {#if creating && creating.bundle === bundleName && creating.path === path}
+            <form
+              class="create-form"
+              onsubmit={(event) => {
+                event.preventDefault();
+                void create();
+              }}
+            >
+              <label
+                >{createLabel}<input
+                  use:focusOnShow
+                  bind:value={createName}
+                  aria-busy={createBusy || undefined}
+                  onkeydown={(event) => event.key === "Escape" && (creating = null)}
+                /></label
+              ><button class="btn" aria-disabled={createBusy || !createName.trim() ? "true" : undefined}
+                >{createBusy ? "Creating…" : "Create"}</button
+              ><button type="button" class="btn-secondary" onclick={() => (creating = null)}>Cancel</button>
+            </form>
+          {/if}
           <table class="folder-table" class:with-status={showStatus}>
             <thead
               ><tr
-                ><th>Name</th><th>Kind</th>{#if showStatus}<th>Status</th>{/if}</tr
+                ><th>Name</th><th>Kind</th><th class="num">Size</th><th>Modified</th>{#if showStatus}<th>Status</th
+                  >{/if}<th class="row-actions"><span class="sr-only">Actions</span></th></tr
               ></thead
             ><tbody>
-              {#each visibleEntries as entry (entry.path)}<tr class:selected={entry.path === file}
+              {#each visibleEntries as entry (entry.path)}<tr
+                  class:selected={entry.path === file}
+                  class:drop-target={dropKey === directoryKey(bundleName, entry.path)}
+                  draggable={movable(entry) ? "true" : undefined}
+                  ondragstart={(event) => startDrag({ bundle: bundleName, ...entry }, event)}
+                  ondragend={endDrag}
+                  ondragover={(event) => dropOnto({ bundle: bundleName, ...entry }, event, true)}
+                  ondrop={(event) => dropOnto({ bundle: bundleName, ...entry }, event, false)}
+                  oncontextmenu={(event) => {
+                    event.preventDefault();
+                    void openMenu(
+                      { bundle: bundleName, ...entry },
+                      { x: event.clientX, y: event.clientY },
+                      event.currentTarget as HTMLElement,
+                    );
+                  }}
                   ><td
                     ><div class="entry-name">
                       {#if comparisonMode && entry.assets.length === 1}<input
@@ -421,17 +694,43 @@
                           disabled={selectedCompare.length === 2 && !selectedCompare.includes(entry.assets[0].ref)}
                           onchange={() => onSelect?.(entry.assets[0].ref)}
                         />{/if}
-                      <button class="file-link" onclick={() => open(bundleName, entry)}
-                        ><Icon name={entry.kind === "directory" ? "folder" : "file"} size={16} /><span
-                          >{entry.name}</span
-                        >{#if entry.symlink}<Icon name="external" size={14} />{/if}</button
-                      >
+                      {#if renaming?.where === "list" && renaming.bundle === bundleName && renaming.path === entry.path}<input
+                          class="row-rename"
+                          aria-label={`New name for ${entry.name}`}
+                          value={entry.name}
+                          use:focusName
+                          onkeydown={(event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              void renameTo({ bundle: bundleName, ...entry }, event.currentTarget.value);
+                            } else if (event.key === "Escape") renaming = null;
+                          }}
+                          onblur={() => (renaming = null)}
+                        />{:else}<button class="file-link" onclick={() => open(bundleName, entry)}
+                          ><Icon name={entry.kind === "directory" ? "folder" : "file"} size={16} /><span
+                            >{entry.name}</span
+                          >{#if entry.symlink}<Icon name="external" size={14} />{/if}</button
+                        >{/if}
                     </div>
-                  </td><td>{entryKind(entry)}</td>{#if showStatus}<td class="entry-status"
+                  </td><td>{entryKind(entry)}</td><td class="num">{sizeText(entry.size)}</td><td
+                    class="modified"
+                    title={entry.modified ? new Date(entry.modified).toLocaleString() : undefined}
+                    >{modifiedShort(entry.modified)}</td
+                  >{#if showStatus}<td class="entry-status"
                       >{#if entry.unavailable}Unavailable{:else if entry.kind !== "directory"}{#if !listing?.indexAvailable}Not
                           checked{:else if entry.assets.length > 1}{entry.assets.length} assets{:else if !entry.assets.length}Not
                           indexed{:else}<span class="sr-only">Indexed</span>{/if}{/if}</td
-                    >{/if}</tr
+                    >{/if}<td class="row-actions"
+                    ><button
+                      class="quiet"
+                      aria-haspopup="menu"
+                      aria-label={`Actions for ${entry.name}`}
+                      title={`Actions for ${entry.name}`}
+                      onclick={(event) =>
+                        openMenu({ bundle: bundleName, ...entry }, null, event.currentTarget as HTMLElement)}
+                      ><Icon name="more" size={16} /></button
+                    ></td
+                  ></tr
                 >{/each}
             </tbody>
           </table>
@@ -442,11 +741,23 @@
     </div>
   </div>
 </div>
+{#if menu}<FileMenu
+    name={menu.name}
+    actions={menu.actions}
+    folder={menu.folder}
+    at={menu.at}
+    origin={menu.origin}
+    native={workspace.native}
+    onChoose={choose}
+    onClose={() => closeMenu(false)}
+  />{/if}
+{#if request}<FileDialog {request} bundles={names} onDone={requestDone} onCancel={cancelRequest} />{/if}
 
 <style>
   .files-workspace {
     display: grid;
     grid-template-columns: 236px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
     flex: 1;
     min-height: 0;
     min-width: 0;
@@ -481,55 +792,6 @@
     font-weight: 600;
     color: var(--muted);
   }
-  [role="treeitem"] {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    width: 100%;
-    min-height: 34px;
-    padding: 5px 8px;
-    border: 0;
-    background: none;
-    color: var(--text);
-    text-align: left;
-    font-size: 12px;
-    font-weight: 400;
-    border-radius: 4px;
-  }
-  [role="treeitem"]:hover {
-    background: var(--surface);
-  }
-  [role="treeitem"][aria-selected="true"] {
-    background: var(--accent-bg);
-    color: var(--accent);
-  }
-  [role="treeitem"]:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: -2px;
-  }
-  .node-name {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .twisty {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 16px;
-    align-self: stretch;
-    flex: none;
-    color: var(--muted);
-  }
-  .unavailable-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--warn);
-    flex: none;
-  }
   .hidden-files {
     display: flex;
     align-items: center;
@@ -549,6 +811,8 @@
     background: var(--surface);
   }
   .files-content {
+    /* Visually hidden text inside a long page is placed within the pane that scrolls it, not the document. */
+    position: relative;
     flex: 1;
     min-height: 0;
     overflow: auto;
@@ -630,10 +894,65 @@
     table-layout: fixed;
   }
   .folder-table th:first-child {
-    width: 70%;
+    width: 40%;
   }
-  .folder-table.with-status th:first-child {
-    width: 60%;
+  .folder-table .modified {
+    white-space: nowrap;
+  }
+  .folder-table .num {
+    text-align: right;
+    white-space: nowrap;
+  }
+  .folder-table .row-actions {
+    width: 48px;
+    padding-inline: 0;
+    text-align: center;
+  }
+  .folder-table tr.drop-target {
+    outline: 2px dashed var(--accent);
+    outline-offset: -2px;
+  }
+  .folder-new {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+    margin-bottom: 16px;
+  }
+  .folder-new p {
+    flex-basis: 100%;
+    margin: 0;
+  }
+  .create-form {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: 8px 12px;
+    margin-bottom: 16px;
+  }
+  .create-form label {
+    display: grid;
+    gap: 4px;
+    font-size: 13px;
+    font-weight: 550;
+  }
+  .bundle-git {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+    padding: 8px 24px;
+    font-size: 13px;
+    border-bottom: 1px solid var(--border);
+  }
+  .files-failure {
+    margin: 8px 24px 0;
+  }
+  .row-rename {
+    flex: 1;
+    min-width: 0;
+    height: 32px;
+    font-size: 13px;
   }
   .folder-table th {
     font-size: 12px;
@@ -768,18 +1087,15 @@
       padding-block: 0;
     }
     .folder-table th:nth-child(2),
-    .folder-table td:nth-child(2) {
+    .folder-table td:nth-child(2),
+    .folder-table th:nth-child(3),
+    .folder-table td:nth-child(3),
+    .folder-table th:nth-child(4),
+    .folder-table td:nth-child(4) {
       display: none;
     }
     .folder-table th:first-child {
       width: 100%;
-    }
-    .folder-table.with-status th:first-child {
-      width: 72%;
-    }
-    [role="treeitem"] {
-      min-height: 44px;
-      font-size: 14px;
     }
   }
 </style>

@@ -14,6 +14,7 @@
  */
 
 import path from "node:path";
+import { spawnFailure } from "../../commands/env/injection";
 import { assertNever } from "../../core/assert";
 import type { TaskLogLineInput } from "../../core/logs-db";
 import { childProcessEnv } from "../../core/paths";
@@ -21,8 +22,10 @@ import { runManagedSubprocess, type SpawnFn, streamCaptureFailure } from "../../
 import { cleanupFrozenScript, frozenScriptCommand, materializeFrozenScript } from "../frozen-script";
 import type { ExecutionProvenanceContext } from "../model/invocation";
 import type { PreparedTaskV3Script, PreparedTaskV3Shell } from "../prepare/prepared-execution";
+import { type ScriptOrigin, scriptOrigin } from "../prepare/script-capture";
 import { resolveAkmInvocation } from "../resolve-akm-bin";
 import { finishAttempt } from "./attempt-lifecycle";
+import { taskEventSource } from "./provenance";
 import { DEFAULT_SCHEDULED_TASK_TIMEOUT_MS } from "./run-workflow-task";
 import { appendHistory } from "./task-history";
 import { persistRunLog, streamLines } from "./task-log";
@@ -171,6 +174,7 @@ export async function runNativeTask(input: {
   const dbLines: TaskLogLineInput[] = [{ line: header }];
 
   let exitCode: number | null = null;
+  let scriptSource: ScriptOrigin | undefined;
 
   // #956: the task runner's OWN process (`akm task run`, launched by cron /
   // launchd / schtasks, or forwarded a SIGTERM by the published launcher)
@@ -194,6 +198,7 @@ export async function runNativeTask(input: {
     if (task.kind === "script") {
       materialized = materializeFrozenScript(task);
       cmd = frozenScriptCommand(task, materialized.file);
+      scriptSource = scriptOrigin({ ref: task.sourceRef, bytes: Buffer.from(task.bytesBase64, "base64") });
     }
     // Managed spawn (src/core/subprocess.ts): process-GROUP kill so a timeout
     // reaps the whole command tree (no orphans), and a SIGINT→SIGTERM→SIGKILL
@@ -210,7 +215,7 @@ export async function runNativeTask(input: {
       env: {
         ...childProcessEnv(),
         ...task.environment,
-        AKM_EVENT_SOURCE: process.env.AKM_EVENT_SOURCE ?? provenance.eventSource,
+        AKM_EVENT_SOURCE: taskEventSource(process.env, provenance),
       },
       // cmd.exe's `/S /C` reads its tail as one hand-quoted command line, not
       // standard argv — shellCommand() already built and quoted it for that.
@@ -224,7 +229,8 @@ export async function runNativeTask(input: {
       ...(input.clearTimeoutFn ? { clearTimeoutFn: input.clearTimeoutFn } : {}),
     });
     // A synchronous spawn throw / exit rejection surfaces as spawn_error below.
-    if (result.spawnError) throw result.spawnError;
+    if (result.spawnError)
+      throw scriptSource ? spawnFailure(cmd[0] as string, result.spawnError, scriptSource) : result.spawnError;
 
     const { stdout, stderr, timedOut } = result;
     exitCode = result.exitCode ?? (timedOut ? 143 : 1);

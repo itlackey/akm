@@ -16,16 +16,13 @@ export function hasUnsaved() {
 
 export interface Draft {
   draft: string;
-  bundle: string;
-  name: string;
-  folder: string;
   baseRevision?: string;
   baseContent?: string;
 }
 
-/** A draft belongs to a bundle file, an asset ref, or the one new document. */
+/** A draft belongs to a bundle file or an asset ref. */
 export function draftKey(target: { file?: { bundle: string; path: string }; ref?: string }): string {
-  return PREFIX + (target.file ? `${target.file.bundle}/${target.file.path}` : target.ref || "new");
+  return PREFIX + (target.file ? `${target.file.bundle}/${target.file.path}` : (target.ref ?? ""));
 }
 
 /** Storage may be unavailable; the draft then stays in memory only. */
@@ -64,18 +61,16 @@ export function hasStoredDrafts(): boolean {
 }
 
 /**
- * Follow a renamed bundle: a draft that targets it (including the new document's) saves to the new name, and a draft
- * keyed by one of its files or refs is re-keyed, so it still opens the same document.
+ * Follow a renamed bundle: a draft keyed by one of its files or refs is re-keyed, so it still opens the same document.
  */
 export function renameBundle(oldName: string, name: string) {
   try {
     const from = `${PREFIX}${oldName}/`;
     for (const key of Object.keys(sessionStorage).filter((key) => key.startsWith(PREFIX))) {
-      const draft = JSON.parse(sessionStorage.getItem(key) ?? "null");
-      if (draft?.bundle === oldName) draft.bundle = name;
       const next = key.startsWith(from) ? `${PREFIX}${name}/${key.slice(from.length)}` : key;
-      sessionStorage.setItem(next, JSON.stringify(draft));
-      if (next !== key) sessionStorage.removeItem(key);
+      if (next === key) continue;
+      sessionStorage.setItem(next, sessionStorage.getItem(key) ?? "");
+      sessionStorage.removeItem(key);
     }
   } catch {
     /* existing drafts remain available */

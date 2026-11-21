@@ -97,6 +97,7 @@ export function listEmbeddedTasks(): EmbeddedTask[] {
       }
       // Setup defaults are trusted application metadata, not bundle-authored
       // task data. Task source can describe a schedule but cannot activate it.
+      if (parsed.version !== 4) continue;
       const task = parsed.v4;
       const [firstSchedule] = task.schedule;
       if (task.target.kind !== "run" || !firstSchedule) continue;

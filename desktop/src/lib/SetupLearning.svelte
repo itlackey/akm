@@ -82,7 +82,7 @@
           {card.name}
         </label>
         <p class="field-hint" id="learn-where-{card.id}-hint">
-          akm runs {card.name} for this: {card.learning.note}.{card.learning.note.includes("cannot be restricted")
+          akm runs {card.name} for this: {card.learning.note}.{card.learning.readOnly === false
             ? " Choose it only if you accept that."
             : ""}
         </p>

@@ -108,6 +108,8 @@ export interface DispatchPreparedCommandOptions {
   readonly runAgent?: RunExecutionOptions["runAgent"];
   readonly runSdk?: RunExecutionOptions["runSdk"];
   readonly signal?: RunExecutionOptions["signal"];
+  readonly env?: RunExecutionOptions["env"];
+  readonly baseEnv?: RunExecutionOptions["baseEnv"];
   readonly chat?: RunExecutionOptions["chat"];
   /**
    * Task-runner provenance. When present, it (a) becomes the FALLBACK

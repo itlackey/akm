@@ -261,7 +261,7 @@ const formNotices = notices;
 
 const FORMS: { args: string[]; mentions: string[] }[] = [
   { args: ["lint", "--auto-fix"], mentions: ["--auto-fix", "use `--fix`"] },
-  { args: ["migrate", "apply", "--dry-run"], mentions: ["--dry-run", "`akm migrate status`"] },
+  { args: ["migrate", "apply", "--dry-run"], mentions: ["--dry-run", "`akm migrate status [<file>...]`"] },
   { args: ["show", "skills/x", "--lead", "--max-chars", "50"], mentions: ["--max-chars", "`--max-tokens`"] },
   { args: ["config", "list", "--format", "yaml"], mentions: ["--format yaml", "`--format json`"] },
   { args: ["hints", "--detail", "full"], mentions: ["--detail full", "`akm hints`", "`akm help <command>`"] },
@@ -269,7 +269,11 @@ const FORMS: { args: string[]; mentions: string[] }[] = [
   { args: ["curate", "zzz", "--detail=agent"], mentions: ["--detail agent", "`--detail normal`"] },
   { args: ["bundle", "update", "--yes"], mentions: ["--yes", "no effect"] },
   { args: ["bundle", "add", "--allow-dangerous-env-keys"], mentions: ["--allow-dangerous-env-keys", "no effect"] },
-  { args: ["env", "run", "--allow-dangerous-env-keys"], mentions: ["--allow-dangerous-env-keys", "no effect"] },
+  { args: ["env", "run", "env/x"], mentions: ["akm env run", "`akm run --env <ref> scripts/<file>`"] },
+  {
+    args: ["secret", "run", "secrets/x", "X"],
+    mentions: ["akm secret run", "`akm run --secret <ref>:<VAR> scripts/<file>`"],
+  },
   {
     args: ["registry", "add", "http://x.example/i.json", "--options", "{}"],
     mentions: ["--options", "nothing reads it"],

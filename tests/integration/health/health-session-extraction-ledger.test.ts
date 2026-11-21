@@ -46,6 +46,7 @@ describe("session-extraction is derived from the extract_sessions_seen ledger (#
     const result = await akmHealth({ since: "7d" });
     const advisory = findAdvisory(result.advisories, "session-extraction");
     expect(advisory.status).toBe("unknown");
+    expect(advisory.reason).toBe("off");
     expect(advisory.kind).toBe("heuristic");
     expect(advisory.confidence).toBe("medium");
     expect(advisory.message).toBe("No extraction recorded in the last 7 days.");

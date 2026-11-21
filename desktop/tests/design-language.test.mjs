@@ -407,10 +407,7 @@ test("keyboard order, focus hand-back and names at the shortest windows", { time
     .evaluate((input) => [...input.labels].some((label) => label.getClientRects().length && label.textContent.trim()));
   assert.ok(filterLabelled, "Filter this folder has a visible label");
   await expect(page.getByRole("searchbox", { name: "Filter this folder", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Other file types", exact: true })).toHaveAttribute(
-    "title",
-    "Other file types",
-  );
+  await expect(page.getByRole("button", { name: /^Actions for / }).first()).toHaveAttribute("title", /^Actions for /);
 
   await open("/settings/bundles", "#configured-bundles");
   const card = await tabStops(page, "form.settings-card");

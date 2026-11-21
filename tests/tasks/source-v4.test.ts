@@ -635,7 +635,7 @@ describe("task source v4 — version router (spec §3.4, D2-N2's exact routing t
       const yaml = "version: 4\nuses: commands/review\nschedule:\n  - cron: '0 4 * * *'\n";
       const result = parseTaskSource({ yaml, filePath: "/bundle/tasks/z.yml" });
       expect(result.version).toBe(4);
-      expect(result.v4.schedule).toHaveLength(1);
+      expect(result.schedule).toHaveLength(1);
       expect(warnCalls).toHaveLength(0);
     });
   });

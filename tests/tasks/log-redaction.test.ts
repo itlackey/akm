@@ -14,7 +14,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { redactSensitiveText } from "../../src/core/redaction";
+import { collectInferredSecretValues, redactSensitiveText } from "../../src/core/redaction";
 import {
   collectTaskLogSensitiveValues,
   isInferredSecretName,
@@ -53,6 +53,18 @@ describe("secret-name inference (#755)", () => {
     ]) {
       expect(isInferredSecretName(name)).toBe(false);
     }
+  });
+
+  test("PAT is a credential word, whichever caller reads the name", () => {
+    for (const name of ["PAT", "AZURE_DEVOPS_PAT", "GITHUB_PAT_TOKEN", "pat"])
+      expect(isInferredSecretName(name)).toBe(true);
+    for (const name of ["PATH", "PATTERN", "COMPAT", "PATIENT", "UPDATE_PATHS"])
+      expect(isInferredSecretName(name)).toBe(false);
+    const env = { AZURE_DEVOPS_PAT: "canary-pat-value", PATH: "/usr/bin:/bin", SHORT_PAT: "short" };
+    expect(collectInferredSecretValues(env)).toContain("canary-pat-value");
+    expect(collectInferredSecretValues(env)).not.toContain("/usr/bin:/bin");
+    expect(collectInferredSecretValues(env)).not.toContain("short");
+    expect(collectTaskLogSensitiveValues({ env })).toContain("canary-pat-value");
   });
 
   test("glued credential names are enumerated, since no boundary rule can see them", () => {

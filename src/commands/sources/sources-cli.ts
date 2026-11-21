@@ -35,13 +35,11 @@ import {
   outputWithExitCode,
   runWithJsonErrors,
 } from "../../cli/shared";
-import { loadConfig } from "../../core/config/config";
-import { appendEvent } from "../../core/events";
-import { resolveWritableOverride, saveGitStash } from "../../sources/providers/git";
 import { pkgVersion } from "../../version";
 import { runUpgrade } from "./plugin-upgrade";
 import { checkForUpdate, performUpgrade } from "./self-update";
 import { akmClone } from "./source-clone";
+import { akmSync } from "./sync";
 
 export const upgradeCommand = defineJsonCommand({
   meta: {
@@ -104,30 +102,13 @@ export const upgradeCommand = defineJsonCommand({
   },
 });
 
-// `sync` body, standalone so the git-commit/push logic stays in one place.
+// `sync` body: the output wrapper around `akmSync`, which the workspace's bundle commit runs too.
 async function runSyncBody(args: { name?: string; message?: string; push?: boolean }): Promise<void> {
   await runWithJsonErrors(async () => {
     // The optional `name` positional is safe to trust: the global output flags
     // are declared on the command (GLOBAL_OUTPUT_ARGS), so `akm sync --format
     // json` parses `json` as the flag's value, never as a stash name.
-    const effectiveName = args.name;
-
-    let writable: boolean | undefined;
-    if (effectiveName === undefined) {
-      // Primary stash — honour the configured default bundle's writable flag.
-      writable = resolveWritableOverride(loadConfig());
-    }
-
-    const result = saveGitStash(effectiveName, args.message, writable, { push: args.push !== false });
-    appendEvent({
-      eventType: "sync",
-      metadata: {
-        name: effectiveName ?? null,
-        message: args.message ?? null,
-        ok: (result as { ok?: boolean }).ok !== false,
-      },
-    });
-    output("sync", result);
+    output("sync", akmSync(args));
   });
 }
 

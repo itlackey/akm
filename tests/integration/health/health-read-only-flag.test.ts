@@ -122,6 +122,7 @@ describe.each(["health", "doctor"])("akm %s --read-only", (command) => {
     expect(result.data.status).toBe("pass");
     expect(result.data.hardChecks.find((check) => check.name === "state-db-round-trip")).toMatchObject({
       status: "unknown",
+      reason: "not-probed",
     });
     expect(result.data.hardChecks.find((check) => check.name === "state-db-migrations")?.evidence?.applied).toEqual([]);
     if (report) {

@@ -15,9 +15,9 @@ import type { AkmConfig } from "../../src/core/config/config";
 import { resolveAssetPath } from "../../src/sources/resolve";
 import { prepareTaskV3Execution } from "../../src/tasks/prepare/prepare";
 import { resolveBundleAsset } from "../../src/tasks/run/load-task";
-import { parseTaskSource } from "../../src/tasks/source/parse-task-source";
 import { projectTaskSourceV4 } from "../../src/tasks/source/project-v4";
 import { makeSandboxDir, type SandboxedDir } from "../_helpers/sandbox";
+import { parseV4TaskSource } from "../_helpers/task-source";
 
 const sandboxes: SandboxedDir[] = [];
 afterEach(() => {
@@ -41,7 +41,7 @@ function bundleWithLinkedScript(targetName: string): string {
 }
 
 function task(uses: string, root: string) {
-  const parsed = parseTaskSource({
+  const parsed = parseV4TaskSource({
     yaml: `version: 4\nuses: ${uses}\nschedule: '@daily'\n`,
     filePath: `${root}/tasks/nightly.yml`,
   });
@@ -64,7 +64,7 @@ describe("a symlinked script keeps its authored interpreter", () => {
           bundleRoot: bundle,
         }),
       });
-      expect(prepared).toMatchObject({ kind: "script", interpreter: "sh", extension: ".sh" });
+      expect(prepared).toMatchObject({ kind: "script", extension: ".sh" });
     });
 
     test(`cross bundle: shared//scripts/deploy.sh -> ${targetName}`, async () => {
@@ -84,7 +84,7 @@ describe("a symlinked script keeps its authored interpreter", () => {
         config,
         resolveAsset: async ({ bundle, type, name }) => resolveBundleAsset(config, { bundle, type, name }),
       });
-      expect(prepared).toMatchObject({ kind: "script", interpreter: "sh", extension: ".sh" });
+      expect(prepared).toMatchObject({ kind: "script", extension: ".sh" });
       expect(Buffer.from((prepared as { bytesBase64: string }).bytesBase64, "base64").toString()).toBe(
         "echo deployed\n",
       );

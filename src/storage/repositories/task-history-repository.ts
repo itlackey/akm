@@ -22,15 +22,19 @@ export type TaskHistoryDetail = {
   exitCode?: number | null;
 };
 
+/** Which run of a version 5 task a row is an attempt of, and the step of another run that started it. */
+export interface TaskHistoryRun {
+  id: string;
+  parent?: { task: string; run: string; step: string };
+}
+
 /** Experimental: one step of a `steps:` task run, as recorded in `metadata_json`. */
 export interface TaskHistoryStep {
   name: string;
-  kind: "run" | "prompt" | "task";
+  kind: "run" | "prompt" | "task" | "exec";
   status: "completed" | "failed" | "skipped" | "reused";
   durationMs: number;
   attempts: number;
-  /** First line(s) of the result, scrubbed and clipped. */
-  summary?: string;
   /** Why the step failed. */
   reason?: string;
   /** The bounded result; kept only on a failed run, so `--resume` can reuse it. */
@@ -48,6 +52,8 @@ export interface TaskHistoryMetadata {
   steps?: TaskHistoryStep[];
   /** Whether the OS scheduler (`schedule`) or a person or script (`manual`) started the run; absent when not recorded. */
   trigger?: "schedule" | "manual";
+  /** The version 5 run this row is an attempt of; absent for every other task. */
+  run?: TaskHistoryRun;
   /** The process that reserved the attempt; present only while the row is `active`. Absent on rows reserved before it was recorded. */
   owner?: TaskHistoryOwner;
 }
@@ -120,6 +126,7 @@ export function decodeTaskHistoryMetadata(input: string | unknown): TaskHistoryM
   const trigger = parsed.trigger === "schedule" || parsed.trigger === "manual" ? parsed.trigger : undefined;
   validateDetail(detail);
   const steps = decodeSteps(parsed.steps);
+  const run = decodeRun(parsed.run);
   const owner = decodeOwner(parsed.owner);
   const cleanDetail: TaskHistoryDetail | null = detail
     ? {
@@ -136,7 +143,25 @@ export function decodeTaskHistoryMetadata(input: string | unknown): TaskHistoryM
     ...(engine !== undefined ? { engine } : {}),
     ...(steps !== undefined ? { steps } : {}),
     ...(trigger !== undefined ? { trigger } : {}),
+    ...(run !== undefined ? { run } : {}),
     ...(owner !== undefined ? { owner } : {}),
+  };
+}
+
+/** Tolerant: a malformed `run` is dropped, never a reason to reject the row. */
+function decodeRun(value: unknown): TaskHistoryRun | undefined {
+  if (!isRecord(value) || typeof value.id !== "string") return undefined;
+  const parent = value.parent;
+  const named =
+    isRecord(parent) &&
+    typeof parent.task === "string" &&
+    typeof parent.run === "string" &&
+    typeof parent.step === "string";
+  return {
+    id: value.id,
+    ...(named
+      ? { parent: { task: parent.task as string, run: parent.run as string, step: parent.step as string } }
+      : {}),
   };
 }
 
@@ -152,7 +177,7 @@ function decodeOwner(value: unknown): TaskHistoryOwner | undefined {
 }
 
 const STEP_STATUSES = new Set(["completed", "failed", "skipped", "reused"]);
-const STEP_KINDS = new Set(["run", "prompt", "task"]);
+const STEP_KINDS = new Set(["run", "prompt", "task", "exec"]);
 
 /** Tolerant: a malformed `steps` value is dropped, never a reason to reject the row. */
 function decodeSteps(value: unknown): TaskHistoryStep[] | undefined {
@@ -167,7 +192,6 @@ function decodeSteps(value: unknown): TaskHistoryStep[] | undefined {
       status: entry.status as TaskHistoryStep["status"],
       durationMs: typeof entry.durationMs === "number" ? entry.durationMs : 0,
       attempts: typeof entry.attempts === "number" ? entry.attempts : 1,
-      ...(typeof entry.summary === "string" ? { summary: entry.summary } : {}),
       ...(typeof entry.reason === "string" ? { reason: entry.reason } : {}),
       ...(typeof entry.result === "string" ? { result: entry.result } : {}),
       ...(typeof entry.startedAt === "string" ? { startedAt: entry.startedAt } : {}),

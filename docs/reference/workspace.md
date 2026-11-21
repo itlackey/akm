@@ -25,9 +25,13 @@ that.
   through the exported `scrubUrlCredentials` before showing it, which masks credentials inside any URL (userinfo,
   `token=`, `api_key=`, `sig=`, ...); Desktop does this on every response.
 - **Timestamps** are ISO 8601 UTC unless noted. Counts that cannot be computed are `null`, never `NaN`.
-- **Reads.** A read operation opens `state.db` and `index.db` read-only and never creates or migrates them: a missing or
-  behind-on-migrations `state.db` makes the sections that need it empty (and `health` report it as a failing check), not
-  an error. Searching and showing record no usage events and build no index. Reads write nothing to a bundle, config
+- **Reads.** A read operation opens `state.db` and `index.db` read-only and never creates or migrates them. A missing or
+  behind-on-migrations `state.db` is reported, never read as empty: the operations that need it return
+  `{ "available": false, "reason": "absent" | "needs-migration" }` (`proposals.list`, `activity.pulse`,
+  `assets.improvement`, `assets.searchMisses`, `activity.retrievalTrend`, `activity.improveImpact`, and `taskRuns`,
+  `workflowRuns` and `events` with their usual shape); `activity.overview` names it in `errors.state` and `health` reports
+  it as a failing check. `activity.pulse` and `assets.improvement` raise the error that names an unresolvable bundle
+  directory, and `activity.improveImpact` names it in `errors.proposals`, as `proposals.list` raises it. Searching and showing record no usage events and build no index. Reads write nothing to a bundle, config
   or database.
 
 A `limit` input is a positive integer capped at 200.
@@ -139,15 +143,31 @@ an `improveRuns` entry above. An unknown id throws `NotFoundError` (`IMPROVE_RUN
 
 The `health` part of `activity.overview` on its own, with the same `probe` parameter. A host calls it with `probe` set to run all checks.
 
+## `activity.reportUsage`
+
+No input. AKM Desktop's server calls it once at start. Sends the Desktop daily usage report when it is due (at most
+once per UTC day, not when `usage.report` is `false`) and returns `true` when the server accepted it. It never throws
+and never waits on the network for longer than a few seconds. What is sent is listed in
+[Data and Telemetry](data-and-telemetry.md#daily-usage-report).
+
 ## `activity.taskHistory`
 
 Requires `taskId`; optional `since` (default `30d`, same syntax as metrics) and `limit` (default 50, maximum 200).
 Returns `{ available, totalCount, count, runs }`, newest first. Each run has
 recorded `status`, `startedAt`, nullable `durationMs`, nullable `trigger` (`schedule` when the OS scheduler started
 it, `manual` otherwise; `null` on a run recorded before akm stored it, or one that failed before it was dispatched),
-and nullable decoded `detail` (`reason`, `error`, `exitCode`, `runId` when recorded). Invalid/missing historical detail stays
-unknown. No log paths are returned or files read; these are existing state.db records. `available: false` means
-state.db is absent or needs migration, not that this task has never failed.
+nullable `targetKind` (`command`, `workflow`, ...), `targetRef` (the workflow's ref) and `engine` (what ran a command or
+prompt task), and nullable decoded `detail` (`reason`, `error`, `exitCode`, `runId` when recorded). Invalid/missing
+historical detail stays unknown. No log paths are returned or files read; these are existing state.db records.
+`available: false` means state.db is absent or needs migration, not that this task has never failed. The run's output is
+[`activity.taskRunLog`](#activitytaskrunlog).
+
+## `activity.taskRunLog`
+
+Requires `taskId` and the run's `startedAt` as `activity.taskHistory` lists them. Returns the run's recorded output from
+`logs.db`, read-only: `{ available: true, truncated, lines: [{ stream, level, line }] }`, oldest line first, at most 500
+lines (`truncated` says there were more). Output is stored already redacted. `{ available: false, reason: "absent" }`
+when there is no `logs.db`; nothing is created or migrated.
 
 ## `activity.taskRuns`
 
@@ -179,7 +199,8 @@ migrated.
 
 Optional `since` (default `24h`) and `until` (default now). Every search, show, feedback and curate row of the window
 from every source, oldest first, as `akm doctor metrics --detail full` lists them (`rows.usage`):
-`{ available, window, truncated, events }`. A search writes one summary row (no `ref`, with `resultCount`) and one row
+`{ available, window, truncated, events }`. Each event carries `byPerson`: `true` for the person's own events (the ones
+`akm doctor metrics` and `assets.searchMisses` count), `false` for an agent's, improve's or a task's. A search writes one summary row (no `ref`, with `resultCount`) and one row
 per hit. An event carries `agent: { harness, session? }` when the agent harness that made it was recorded (from this
 release; older rows have none). At most 20,000 events; `truncated` says the window held more.
 
@@ -196,6 +217,7 @@ them, in column form, so 30,000 assets stay a few megabytes:
   "bundles": ["team-wiki"],
   "beliefs": ["superseded"],
   "use": { "since": "2026-08-15T08:00:00.000Z", "source": "user" },
+  "feedback": { "since": "2026-08-15T08:00:00.000Z", "source": "user" },
   "kinds": ["xref", "links_to"],
   "tags": ["deploy"],
   "nodes": { "ref": ["team-wiki//knowledge/a"], "type": [0], "bundle": [0], "belief": [-1], "shows": [12],
@@ -216,7 +238,8 @@ events when the operation is called: events of source `user` (people and their a
 Improve) at or after `use.since`, the start of the usage retention window. It is zero, and the note says so, when no
 usage history is available. `lastShownAt` is the latest of those shows (UTC), `null` when there is none in the window.
 `positive` and `negative` count feedback from people inside the retention window, as search ranks by it (a negative
-answered by an accepted fix does not count). `modifiedAt` is the file's modification time, `null` when it cannot be
+answered by an accepted fix does not count). `feedback` is `null`, and every count zero, when the state store could not
+be read: zeros then are not measurements, and a reader shows feedback as unavailable. `modifiedAt` is the file's modification time, `null` when it cannot be
 read; in a Git checkout it is when the file was last written there, not its last commit.
 
 `groups` and `duplicates` are computed by `akm index` at the end of each build whose vectors changed, over every
@@ -227,7 +250,7 @@ meaning lie near each other, and an asset sits inside its group's sphere. `dupli
 into `nodes`) whose stored embeddings have a cosine of at least `threshold` (0.96), most alike first, at most 2,000
 (`truncated` says there were more); only pairs inside a group are compared. Pairs and places of assets that are not
 returned (a bundle that is not enabled) are left out. Both are `null` without at least eight embedded assets, and until
-an `akm index` of this release has run. `available` is `false`, with a `note`, when there is no index.
+an `akm index` of this release has run, and the `note` says so; a reader shows near-duplicates as unavailable, not as none. `available` is `false`, with a `note`, when there is no index.
 
 ## `bundles.list`
 
@@ -240,6 +263,8 @@ fetched, so `ahead`/`behind` are measured against the remote-tracking branch as 
   "data": {
     "defaultBundle": "stash",
     "defaultWriteTarget": null,
+    "writeTarget": { "name": "stash", "blocker": null },
+    "starter": { "source": "https://github.com/itlackey/akm-stash", "identity": "github:itlackey/akm-stash" },
     "workingStash": null,
     "bundles": [
       {
@@ -247,8 +272,10 @@ fetched, so `ahead`/`behind` are measured against the remote-tracking branch as 
         "kind": "filesystem",
         "default": true,
         "source": { "kind": "path", "locator": "/home/me/akm" },
+        "identity": null,
         "path": "/home/me/akm",
         "writable": true,
+        "writeBlocker": null,
         "version": null,
         "exists": true,
         "itemCount": 14,
@@ -258,7 +285,7 @@ fetched, so `ahead`/`behind` are measured against the remote-tracking branch as 
           "upstream": "origin/main",
           "ahead": 1,
           "behind": 0,
-          "dirtyPaths": 0,
+          "uncommitted": 0,
           "lastCommit": { "sha": "7591a50789d4cddc", "time": "2026-10-16T10:46:41-05:00", "subject": "akm save 2026-10-16 10:00:00" }
         }
       }
@@ -278,13 +305,26 @@ fetched, so `ahead`/`behind` are measured against the remote-tracking branch as 
 
 - `kind` is `filesystem`, `git`, `npm` or `website`. `source` describes where the bundle comes from; `path` is its local
   root (`null` if it has none).
+- `writeBlocker` is `null` when akm would accept a write to the bundle now, and otherwise the sentence the write would
+  be refused with (disabled, not writable, an adapter that takes no AKM asset writes, a Git bundle that is not a
+  checkout or is detached). It runs the write path's own checks and changes nothing, so a card never disagrees with a
+  save.
+- `writeTarget` is where a write goes when no bundle is named, as akm's write path resolves it: `name` is that bundle
+  (`null` when none resolves) and `blocker` is the sentence a write would be refused with, or `null`. Clients show this
+  and do not combine `defaultWriteTarget` with anything.
+- `identity` names where a bundle comes from, parsed by the code `akm bundle add` uses, so the same repository or package
+  has the same identity however its address is written (`github:itlackey/akm-stash` for `github:itlackey/akm-stash`,
+  `https://github.com/itlackey/akm-stash.git` and its other spellings). It is `null` for a folder, a website, or an
+  address that does not parse. `starter` is the AKM starter bundle: `source` is what `bundle add` takes and `identity`
+  is compared for equality with a card's.
 - The default bundle's card comes first; the rest keep their configured order.
 - `workingStash` is `{ path, git }` for the directory akm reads besides the configured bundles (`AKM_BUNDLE_DIR`, or the
   platform stash when no `defaultBundle` is set). `git` has the same shape as a card's `git`. It is `null` when a
   configured bundle already covers that directory or it cannot be resolved.
 - `git` is `null` unless the bundle's root is itself a git repository. `upstream`, `ahead` and `behind` are `null` without an
-  upstream; `branch` is `null` on a detached HEAD; `lastCommit` is `null` for a repository with no commits. `dirtyPaths`
-  counts paths with uncommitted changes.
+  upstream; `branch` is `null` on a detached HEAD; `lastCommit` is `null` for a repository with no commits. `uncommitted` is the
+  number of files `bundles.commit` (`akm sync`) would commit now, from the selection the sync itself uses (ignored files,
+  nested repositories and work outside the bundle are left out); `null` when git could not list the changes.
 - `index` mirrors `akm doctor info`'s `indexStats` and `semanticSearch`. `embeddingCoverage` is embeddings over entries
   (`null` for an empty or missing index). `unavailable` and `unreadable` appear only when `akm doctor info` reports them.
 - Cards also include `enabled`, the raw `writableSetting`, `settingsSource` and existing source `components`
@@ -302,11 +342,45 @@ refused. Internal symbolic links can be traversed; unavailable links are labelle
 The result is `{bundle, path, parent, indexAvailable, entries}`.
 `parent` is null at the root. Each entry has `name`, bundle-relative `path`,
 `kind` (`directory`, `file`, or `other`), and `assets: [{ref, type}]`,
-with optional `symlink` and `unavailable`. Directories sort first, then names.
+with optional `symlink`, `unavailable`, `size` (a file's bytes) and `modified` (ISO time; both absent when the file cannot be read). Directories sort first, then names.
 Internal links retain their displayed path and their target's indexed assets.
 Assets come only from exact physical-file rows already in the index; absent
-indexes leave them empty. No content is read, recursive scan run, index written,
-or source refreshed. Listing does not imply editability.
+indexes leave them empty. No recursive scan is run, index written, or source
+refreshed, and no file's content is listed: the first bytes of a file that is
+neither protected nor managed are probed to tell text from binary, and a protected
+file is never opened.
+
+Each entry also carries `actions`, what akm accepts doing to it:
+`{ read, edit, move, copy, retire, delete }`, each `{ "allowed": true }` or
+`{ "allowed": false, "reason": "<sentence>" }`. `move` is rename or move. The
+verdicts run the checks the operations run, so a control shown from one never fails
+after the click:
+
+- Reading, editing, moving and deleting a file or folder, and making an untyped file, are plain file operations: they need
+  only a bundle that is not read-only, so a writable bundle of any adapter (claude, opencode, ...) can be edited and
+  reorganised. A read-only bundle refuses `edit`, `move`, `retire` and `delete` with "Bundle <name> is read-only: akm does
+  not write to it, and an update would replace the edit." `retire` (and making a typed asset) is an akm asset write and also
+  carries the write path's sentence (`bundles.list`'s `writeBlocker`), so a bundle of another adapter refuses it with
+  "Bundle "claude" uses adapter "claude", which does not support AKM asset writes." `read` and `copy` leave a bundle as it is.
+- A listing entry reports `read` and `edit` from probing the first bytes of the file (about 70 ms more than no probe for a
+  folder of 5,000 files).
+- An env or secret file, and a folder where akm's directory rules would type a file env or secret, refuse every action: they are shown and
+  edited from the protected-file view. `.git/` and `.akm/` refuse every action: "`.git/` is managed by akm."
+- `read` and `edit` need a text file: "This is not a text file." for binary, invalid UTF-8 or a file over 8 MiB, and
+  "This file cannot be opened: ..." with the cause when the probe failed. A folder has no text to open.
+- A skill's `SKILL.md` refuses `move` ("A skill moves as its folder."), and its `copy` verdict says `as` the folder it copies instead (`{ "allowed": true, "as": "skills/backup" }`, which `assets.copyEntry` does for the manifest); `retire` refuses a skill, env, secret and
+  session asset (the retire guard `documents.retire` applies) and a file that is not an indexed asset.
+- `delete` is for a file that is not an asset and for an empty folder; an asset is retired, not deleted.
+
+The result also has `newFile`: `{ "allowed": true, "type": "lesson" }` for the folder shown, where `type` is the type
+akm's directory rules give a new file there (`null`: none, a plain file), or `{ "allowed": false, "reason", "type": null }`
+for a place akm refuses (a nested protected folder, a managed folder, a bundle akm does not write, `skills/` itself). In the top-level
+`env/` and `secrets/` the new file is `{ "allowed": true, "type": "env" }` or `"secret"` with `"through": "protected-editor"`: it is
+made by `sensitive.save`, not `documents.createFile` (which refuses a protected place). `place`
+(`{ "allowed": true }` or `{ "allowed": false, "reason" }`) is whether a folder may be made in the folder shown, or a file or
+folder moved into it: plain file operations, which need only a bundle that is not read-only and a place that is neither
+protected nor managed (so `skills/` takes a folder though it takes no file of its own).
+The plain-file routes of a host must refuse what these verdicts refuse.
 
 ## `config.get`
 
@@ -514,15 +588,18 @@ Accept one pending proposal. `:id` is a proposal id or unambiguous prefix. The i
     "ref": "stash//lessons/rg",
     "assetPath": "/home/me/akm/lessons/rg.md",
     "proposal": { "id": "d6bb7f94-...", "status": "accepted", "ref": "stash//lessons/rg", "...": "summary fields as in proposals.list" },
-    "commit": { "sha": "9f1c...", "time": "2026-10-16T16:02:11-05:00", "subject": "akm accept: reflect d6bb7f94 stash//lessons/rg", "repo": "/home/me/akm" }
+    "commit": { "committed": true, "sha": "9f1c0a4e2b7d..." }
   }
 }
 ```
 
 - `data` is `akmProposalAccept`'s result, with `proposal` reduced to the list summary (the prior content kept for
-  `akm proposal revert` is never returned) and `commit` added.
-- `commit` is the commit the accept just made in the bundle's repository, or `null` when the bundle is not a git
-  repository (or the commit did not happen; a failed commit only warns, as in the CLI).
+  `akm proposal revert` is never returned).
+- `commit` is what akm reports the accept's own commit came to: `{ "committed": true, "sha" }`, or
+  `{ "committed": false, "reason", "error"? }` with `reason` `not-git` (the bundle is not a Git repository), `ignored`
+  (every written path is ignored by `.gitignore`), `nothing-to-commit` or `failed` (with the git `error`). The accept
+  stands in every case. Each entry of a batch `proposals.acceptMany` result carries the `commit` of the one commit the
+  batch made.
 
 ### `proposals.reject`
 
@@ -618,7 +695,6 @@ Recent commits of the write-target stash (`defaultWriteTarget`, else the default
         "time": "2026-10-16T10:46:41-05:00",
         "author": "akm-test",
         "subject": "akm save 2026-10-16 10:00:00",
-        "origin": "sync",
         "paths": ["knowledge/more.md"],
         "pathCount": 1
       }
@@ -628,16 +704,6 @@ Recent commits of the write-target stash (`defaultWriteTarget`, else the default
 ```
 
 - `git` is `false` and `commits` empty when the stash is not a git repository.
-- `origin` is derived from the subject, which is how akm names its own commits:
-
-  | `origin` | Subject |
-  | --- | --- |
-  | `improve-sync` | `akm improve ...` (the pre-run sync and the end-of-run auto-sync) |
-  | `accept` | `akm accept: ...`, `akm proposal ...` (including `akm proposal drain: N accepted ...`) |
-  | `remember` | contains `remember` |
-  | `sync` | `akm save ...`, `akm sync ...` |
-  | `other` | anything else, such as a hand-made commit |
-
 - `paths` lists at most 50 changed paths; `pathCount` is the real number. `time` is the commit's own committer date with
   its offset.
 
@@ -734,6 +800,7 @@ Recent commits of the write-target stash (`defaultWriteTarget`, else the default
   `{ "redacted": true, "type": "env", "ref": "env/prod", "note": "..." }`, with no `asset`, key names or values.
   Use `akm env list` for key names.
 
+`actions` (the verdicts above for the asset's file, `null` when it has no file in a bundle) is part of the response too.
 The response also supplies `location` (`{bundle, path, parent}` relative to the
 resolved bundle root, or null), `feedbackRequireReason`, the owning `bundle`, `headings` with existing AKM fragment
 selectors, and a `links` map for supported relative inline Markdown links. A relative `.md` target must already be
@@ -796,7 +863,11 @@ A proposal that was later reverted is dated by its accept (`acceptedAt`) in `out
 - `harm`: the log, newest first: `reverted`, `reopened`, `risky-retirement`, `flag-after-change`.
 - `cost`: per week, model `calls`, `tokens`, `usageCalls` and calls by process.
 - `changedAssets`: for each accepted change, how often the asset was found and rated in the 28 days before and after
-  (`complete` is `false` until 28 days have passed since the change).
+  (`complete` is `false` until 28 days have passed since the change; `beforeComplete` is `false` when the 28 days before it
+  start earlier than the usage rows read, so the before counts are not recorded).
+- `usageSince` and `usageComplete`: where the usage figures (`changedAssets` counts and the `flag-after-change` entries of
+  `harm`) start. Usage older than akm keeps (`akm doctor metrics` notes the retention) is purged, so a window longer than
+  that is `usageComplete: false` and its usage figures cover only from `usageSince`.
 - `judgeAndYou`: accepted, rejected and reverted counts by who decided.
 
 ## `activity.pulse`
@@ -823,21 +894,26 @@ zero. Missing result counts do not mean zero results. The queries behind `zeroRe
 
 `weekly` is the same data by ISO week as a p-chart: per week `week`, `x` (found nothing), `n` (searches), `rate`, and the
 control limits `lower` and `upper` (centre ± 3 standard errors at that week's own n); `signal` is `true` for a week
-outside its limits. A week with no searches has `null` for all three. `centre` is the pooled share.
+outside its limits. A week with no searches has `null` for all three. `partial` is `true` for a week akm has only some of
+the days of (the window opens or ends inside it, or the data starts inside it): it has its `rate`, no limits and no
+`signal`. `centre` is the pooled share of the whole weeks, and `enoughHistory` says whether there are four whole weeks
+with searches: without it `centre` and every limit are `null`. When the state database cannot be read the response is
+`{ "available": false, "reason" }`.
 
 ## `assets.searchMisses`
 
 User searches that found nothing, grouped by normalised query: `query`, `count`, `days` (distinct UTC days),
 `lastAt` and `repeated` (`true` when it came up on two or more days). `since` is `30d` by default. The response also carries
-`searches` (all user searches in the window) and `foundNothing`.
+`searches` (all user searches in the window) and `foundNothing`. When the state database cannot be read it is
+`{ "available": false, "reason" }`.
 
 ## `setup.detect`
 
 What first-run setup could use on this computer, read from the file system and `PATH` only: nothing is contacted and
 nothing is written. It returns `stashDir`, the library directory the config already names, else `~/akm` or another
 existing candidate, else the default (`AKM_BUNDLE_DIR`, else `~/akm`, or `Documents\akm` on Windows); `harnesses`, the agent
-programs found on `PATH` that akm can run work on, each `{platform, path, modelWorkNote}` (akm's words for whether its
-model calls on that program can be limited to reading and searching); `enabled`, the platforms the config already
+programs found on `PATH` that akm can run work on, each `{platform, path, modelWorkReadOnly, modelWorkNote}` (`modelWorkReadOnly`: whether akm's model calls on that
+program can be limited to reading and searching; `modelWorkNote`: akm's words for it, for display); `enabled`, the platforms the config already
 enables; `modelCalls`, where akm's own model calls
 (improve, judging, extraction) run: `description` in the words of `akm setup`'s summary, and `platform` when they run on
 a harness (else `null`); `connection`, the name of the connection that takes them when no agent does (`null` when there is
@@ -873,13 +949,23 @@ retry a failed write automatically.
 | `tasks.disable` | `{task}` → `akm task disable --bundle=<default bundle> -- <task>`: the reverse. |
 | `backups.prune` | `{olderThan?, dryRun?: true, confirm?: true}` → `akm backups prune [--dry-run \| --yes] [--older-than=<duration>]`. Removes entries under the data directory's `backups/` older than `olderThan` (default `30d`) and keeps the newest entry of each folder. A dry run reports `{dryRun, olderThan, cutoff, count, bytes, folders: [{folder, count, bytes, kept}]}` and removes nothing; a real run returns the same and needs `confirm: true`. |
 | `bundles.add` | `{source, name?, writable?}` → `akm bundle add`, including source validation. Existing provider restrictions apply; no insecure-transport bypass is exposed. |
+| `bundles.index` | `{}` → `akm index`, the incremental build. A file renamed or moved on disk (`mv`, `git mv`, a file manager, Desktop) is paired with the asset it was and keeps its history, which the write-path refresh of `documents.createFile` and Desktop's saves does not do. The result is `akm index`'s, with `moves` (`{moved: [{from, to}], unpaired}`) when a file was paired or could not be. |
 | `bundles.update` | `{bundle}` → `akm bundle update -- <bundle>`. Fetches/reindexes only on explicit submission. A rare update requiring destructive confirmation remains refused; `--yes` is never passed silently. |
 | `bundles.rename` | `{bundle, name, dryRun?: true}` → `akm bundle rename [--dry-run] -- <bundle> <name>`. The result is the CLI's rename plan (`applied` is `false` for a dry run). |
 | `bundles.remove` | `{bundle, confirm: true}` → `akm bundle remove --yes -- <bundle>`. Managed installs may be deleted; local filesystem source files remain on disk. |
 | `bundles.setSettings` | `{bundle?, enabled?, writable?, componentWritability?: {existingComponent: boolean}}` → existing schema-walking config setters inside `mutateConfig`. Only changed controls are submitted. Existing validation rejects disabled targets and writable npm/website sources. The default bundle and write target are edited through `config.change`. |
 | `config.change` | `{set?: {key: string}, unset?: string[]}` → `akm config set` / `unset` on each key, in one validated, atomic write. Values are strings, as on the command line, and are coerced and checked against the schema; literal API keys and `configVersion` are refused. An unset is refused with `TARGET_NOT_UPDATABLE` when the key is inherited from an `extends` base or sits inside a connection or harness entry akm ignores, and an unset with no config file writes nothing (`saved: false`), all as `akm config unset` does. |
 | `config.changeProjects` | `{set?: {name: project}, unset?: string[]}` → adds, replaces and removes `projects` entries in one validated, atomic write; a rename sets the new name and unsets the old. Each `set` value is a whole project (`paths`, `from`, `filters`, `prefer`, `write`), written exactly as sent (the reader takes a project whole by name, so an inherited project's unchanged fields are written too, and a malformed local entry is replaced), and checked by akm's config schema. `none`, `__proto__`, `constructor`, `prototype` and empty names are refused. An `unset` (so a rename) of a project `config.json` does not hold, inherited or ignored by akm, is refused with `TARGET_NOT_UPDATABLE`. A set is a no-op (`saved: false`, nothing written or backed up) only when `config.json` already holds exactly that entry; one with parts akm ignores is rewritten. Names are not dotted keys, so they may contain a dot, which `config.change` cannot address. Unrelated config and credential references are kept, as for `config.change`. |
-| `documents.createKnowledge` | `{bundle, name, path?, content}` → `akm import -` with Markdown on stdin. Uses the existing writable AKM target, name/path validation, frontmatter preservation, index/Git effects, and no `--force`. Existing files are never overwritten. Fails fast with `ASSET_MUTATION_LEASE_HELD` while another writer holds the asset-mutation lease. |
+| `documents.createFile` | `{bundle, folder?, type?, name, content?}` → a new file in `folder` of the bundle (the root when absent; or, with `type` instead of `folder`, the folder akm keeps that type in, `knowledge/` for `knowledge`), for any type, returning `{bundle, file, type, ref, path, stashDir, indexed}` (`type` and `ref` are `null` for a folder with no type). akm types the folder with the indexer's directory rules (`assets.bundleFiles`' `newFile` says the type) and, when `content` is absent, starts the file with the text its type starts with: the workflow template (`akm workflow create`'s), a task as `task add` renders it, the keys the type's validators require (a lesson's `description` and `when_to_use`, a command's `name`), nothing for a script. A folder with no type gets an empty file of the name given. A name with no extension takes the type's (`.md`, `.yml`, `.sh`); a skill is made as `SKILL.md` in its own folder. The write passes the same checks for every type: a writable akm bundle, the name and folder inside the bundle, malformed frontmatter refused, an existing file never overwritten (`RESOURCE_ALREADY_EXISTS`), env, secret and managed (`.git/`, `.akm/`) places refused, the asset-mutation lease (`ASSET_MUTATION_LEASE_HELD`), the Git boundary commit and the index refresh. |
+| `documents.createKnowledge` | `{bundle, name, path?, content}` → `documents.createFile` for the `knowledge/<path>` folder with Markdown content, recording the import as `akm import -` does. Uses the existing writable AKM target, name/path validation, frontmatter preservation, index/Git effects, and no `--force`. Existing files are never overwritten. Fails fast with `ASSET_MUTATION_LEASE_HELD` while another writer holds the asset-mutation lease. |
+| `documents.check` | `{bundle, path, content}` → `{bundle, path, type, findings, warnings, readable, unreadable?}` for text about to be saved at `path` of an akm bundle, without writing it. `findings` and `warnings` are the entries `akm lint` reports for that file (`issue`, `detail`, `line` where the check knows one, `ref`); the file-based lint calls the same function, so the same text in a file lints the same. `readable` says whether akm could still read the asset: `false` with `unreadable: {reason, line?}` for frontmatter that does not parse, a workflow that does not compile or a task that does not validate. `type` is the type the indexer gives the file (`null`: not an asset; nothing is checked). A bundle of another adapter, a path outside the bundle, and protected or managed places are refused. |
+| `documents.frontmatter` | `{bundle, path, content}` → `{bundle, path, type, present, markdown, bodyStart, entries, error?, keys}`: `markdown` says the path is a Markdown file (akm reads frontmatter from it), `bodyStart` the offset in `content` where the body starts (after the closing fence; 0 without frontmatter), the reading is the same in a bundle of any adapter (`type` and `keys` are an akm bundle's); `entries` are the file's frontmatter keys and values in file order as akm's strict YAML reads them (`known` marks a key akm knows for the type); `error` is `{reason, line?}` when the block does not parse (`entries` is then empty); `keys` are the keys akm knows for the type (`key`, `required`, `kind` `text`\|`list`\|`flag`\|`map`, `values` when akm checks a fixed set, `hint`, `stamped` when akm sets it on write). Required means absence is a finding of the check that owns the key: a lesson's `description` and `when_to_use`, a fact's `category`, a command's and an agent's `name` and `type`, a workflow's `steps`, and `updated` for Markdown. |
+| `documents.applyFrontmatter` | `{content, changes: [{key, value}\|{key, remove: true}]}` → `{content, bodyStart}`: the text with each key set or removed in its frontmatter and nothing else changed. A changed key keeps its place, a new key goes before the closing `---`, untouched keys keep their order, quoting, comments and line endings, and the body is not touched. A text with no frontmatter gains a block for the keys set. A change that cannot be made that way (a block that does not parse, a key that is not a plain field name) is refused, never approximated: the host offers the text instead. |
+| `assets.movedLinks` | `{bundle?}` → `{bundles: [{bundle, writable, writeBlocker, links: [{ref, file, from, to}]}], total}`: per akm bundle (a read-only one included), the links that name the old ref of an asset that `akm index` recorded as moved: the asset holding the link (`ref`, `file`), the link as written (`from`) and the ref the asset has now (`to`). It is `akm lint`'s `missing-ref` findings that carry a new ref. Writes nothing. |
+| `assets.copyEntry` | `{bundle, from, toBundle?, folder?, name}` → `{bundle, from, toBundle, to, indexed}`: copies a file or folder to a folder of a bundle (the same or another; the root when `folder` is absent) as a new file wherever the person puts it. Copying a skill's `SKILL.md` copies the skill's folder, with its support files and modes, and `name` names the folder. It adds to a bare copy what `akm clone` adds: the work is staged beside the destination and renamed into place, file links are copied by content, the asset-mutation lease and the Git boundary commit apply, the copy is indexed, and a Markdown asset (or a skill's `SKILL.md`) records the ref it came from in `sources`. Nothing is overwritten (`RESOURCE_ALREADY_EXISTS`); env and secret files and managed folders are refused, and so is a destination in a protected place or a bundle that is read-only. `akm clone` (`documents.copy`) is the CLI's: it places by type in the target's type folder and takes a ref, including a remote one. |
+| `assets.updateMovedLinks` | `{bundle}` → `{bundle, rewritten, files}`: rewrites exactly those links in one writable akm bundle (`akm lint --fix`'s rewrite, and no other fix), under the asset-mutation lease, and refreshes the index for the files it changed. A read-only bundle, or one that is not an akm bundle, is refused. A second call changes nothing. |
+| `bundles.commit` | `{bundle, message?, push?}` → `{bundle, committed, pushed, skipped, output, reason?, commit?}`: `akm sync` for one bundle (the CLI's own function): commits every unignored change inside it, and pushes when it is writable with a remote configured unless `push` is `false`. `commit` is the new commit; when nothing was committed `output` (and `reason`) say why. A bundle that is not a Git working tree is refused. |
+| `sensitive.describe` | `{ref}` or `{bundle, file}` → the env or secret file's `ref`, `type`, `name`, `bundle`, `path`, `revision`, `location` and `actions: {edit, delete}`, each `{ "allowed": true }` or `{ "allowed": false, "reason" }` with the sentence akm's write path refuses with (a read-only bundle, a bundle that takes no env or secret writes). No value is returned; `readValue` is the one result that has it. |
 | `documents.save` | `{ref, revision, content}` → the existing shared Markdown writer with `force` and the expected raw-content hash. Only indexed writable AKM knowledge/memory documents accepted by `documents.readSource` can be edited. The writer takes the asset-mutation lease and compares the live source with `revision` inside it, immediately before writing. While another writer holds the lease the save fails fast with `ASSET_MUTATION_LEASE_HELD` instead of waiting. A stale revision raises `ASSET_CONTENT_CHANGED` without writing; a source deleted after it was loaded is refused (`ASSET_NOT_FOUND`) rather than recreated. An identical save returns `unchanged: true` without rewriting, reindexing or recording an event. Changed saves retain normal writer validation, indexing and Git effects. |
 | `documents.retire` | `{ref, revision}` → retires an indexed writable AKM asset the way `akm feedback`'s typed fix applies a change: it mints a retire proposal (source `propose`, no judged pair) and accepts it at once, so the asset follows the ordinary proposal-retire lifecycle. Skill packages, env/secret files and sessions are excluded; memory retirement carries its derived twin. The current raw SHA-256 `revision` is required, and the accept is refused if the bytes changed since. |
 
@@ -887,7 +973,14 @@ The `documents.retire` receipt is `{proposalId, ref, bundle, archiveDirs, warnin
 id: the archive moves back without overwriting an occupied path and its tombstone is removed. Like any accepted
 retirement, the archived bytes are purged after the grace period at the next `akm improve` (git-backed bundles only), and
 the row is listed in Review and Activity. If the accept is refused, the proposal is rejected and the operation fails.
-Task definitions do not change installed schedules until explicit `akm doctor scheduler sync`.
+Task retirement uses proposal acceptance's scheduler cleanup: it removes the host-local activation and reconciles the
+bundle before archiving. If the task's native bindings are still installed afterwards, retirement fails; a failure on
+another task in the bundle is a warning. A retirement that fails, at cleanup or any later step, leaves the source
+present and the task enabled as it was. A disabled ref still inspects native bindings: config exclusion does not prove
+native removal. If the native scheduler cannot be read, the source can archive, with an explicit incomplete-cleanup
+warning in both the proposal acceptance result and workspace receipt. Reverting retirement restores the source without
+enabling its schedules. Source bytes are rechecked after scheduler work, before the archive moves, so edits made during
+that work are preserved and retirement is refused.
 
 Configuration-affecting actions do not round-trip the redacted configuration. Existing mutation helpers retain
 unknown/unrelated fields, local overrides and supported `$VAR`/`${ref}` credential references. If the existing

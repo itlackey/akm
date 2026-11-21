@@ -57,7 +57,10 @@ const NEW_CODE_HINTS: ReadonlyArray<readonly [UsageErrorCode, string]> = [
     "WORKFLOW_SOURCE_INVALID",
     "Run `akm lint` to see the failing source location, or `akm doctor explain <ref>` to compile it without writing.",
   ],
-  ["INPUT_BINDING_INVALID", "Check the step's with: keys against the target's declared inputs."],
+  [
+    "INPUT_BINDING_INVALID",
+    "Check the values against the task's declared inputs (`akm show tasks/<name>` lists them); for a step's with: keys, check them against the target's declared inputs.",
+  ],
 ];
 
 describe("D7 diagnostics — five new UsageErrorCode members + USAGE_HINTS (spec §2.1, B-24)", () => {

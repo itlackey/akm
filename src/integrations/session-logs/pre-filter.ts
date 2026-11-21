@@ -57,6 +57,7 @@ export const DEFAULT_AKM_READONLY_OPS: ReadonlySet<string> = new Set([
   "show",
   "search",
   "curate",
+  "rules",
   "history",
   "info",
   "hints",

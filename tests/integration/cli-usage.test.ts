@@ -29,6 +29,39 @@ function report(args: string[] = [], env?: NodeJS.ProcessEnv) {
   return JSON.parse(result.stdout);
 }
 
+test("no command prints the store's instance id: not the usage report, and not its export", () => {
+  sandbox();
+  expect(cli(["--version"]).status).toBe(0);
+  const db = openDatabase(path.join(getDataDir(), "metrics.db"));
+  const { value: instance } = db.prepare("SELECT value FROM cli_usage_meta WHERE key='instance'").get() as {
+    value: string;
+  };
+  db.close();
+  expect(instance).toMatch(/^[0-9a-f-]{36}$/);
+  for (const format of ["json", "text", "yaml"]) {
+    const result = cli(["doctor", "metrics", "usage", "--export", "--format", format]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).not.toContain(instance);
+    expect(result.stdout).not.toContain("instance");
+  }
+});
+
+test("show records the type of the asset it showed, and nothing of its ref", () => {
+  const storage = sandbox();
+  writeSandboxConfig({
+    bundles: { fixture: { path: storage.stashDir, components: { main: { root: ".", adapter: "akm" } } } },
+  });
+  fs.mkdirSync(path.join(storage.stashDir, "knowledge"), { recursive: true });
+  fs.writeFileSync(path.join(storage.stashDir, "knowledge/private-guide.md"), "# Guide\n\nPRIVATE_CONTENT\n");
+  const shown = cli(["show", "fixture//knowledge/private-guide"]);
+  expect(shown.status, shown.stderr).toBe(0);
+  const result = report();
+  const shows = result.details.filter((row: { command: string[] }) => row.command[0] === "show");
+  expect(shows).toHaveLength(1);
+  expect(shows[0]).toMatchObject({ assetType: "knowledge", exitCode: 0, category: "success" });
+  expect(JSON.stringify(result)).not.toContain("private-guide");
+});
+
 test("run records one invocation with its resolved asset type and redacted asset inputs", () => {
   const storage = sandbox();
   writeSandboxConfig({
@@ -608,8 +641,11 @@ test("usage tables coexist with 0.11's metrics.db: own names, no user_version, n
   expect(report().details.length).toBeGreaterThan(0);
 });
 
-test("usage source: an explicit AKM_EVENT_SOURCE wins, a detected harness is agent, otherwise unknown", () => {
+test("usage source: an explicit AKM_EVENT_SOURCE wins, a detected harness is agent, a terminal is user, otherwise unknown", () => {
   expect(resolveCliUsageSource({})).toBe("unknown");
+  expect(resolveCliUsageSource({}, true)).toBe("user");
+  expect(resolveCliUsageSource({ CLAUDE_CODE_SESSION_ID: "s1" }, true)).toBe("agent");
+  expect(resolveCliUsageSource({ AKM_EVENT_SOURCE: "unknown" }, true)).toBe("unknown");
   expect(resolveCliUsageSource({ CLAUDE_CODE_SESSION_ID: "s1" })).toBe("agent");
   expect(resolveCliUsageSource({ AKM_AGENT_HARNESS: "opencode" })).toBe("agent");
   expect(resolveCliUsageSource({ CLAUDE_CODE_SESSION_ID: "s1", AKM_EVENT_SOURCE: "task" })).toBe("task");
@@ -647,7 +683,7 @@ test("harness id is recorded in details and aggregates only when detected; old r
   const plain = aggs.find((row: { dimensions: { harness?: string } }) => !("harness" in row.dimensions));
   // The no-harness aggregate identity is exactly the pre-change shape (no harness key).
   expect(plain.key).not.toContain("harness");
-  expect(Object.keys(plain.dimensions).slice(0, 4)).toEqual(["day", "version", "source", "instance"]);
+  expect(Object.keys(plain.dimensions).slice(0, 3)).toEqual(["day", "version", "source"]);
 
   // A row written before this field existed (same shape, no harness) reads alongside new rows.
   const db = openDatabase(path.join(getDataDir(), "metrics.db"));

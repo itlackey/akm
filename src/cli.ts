@@ -39,10 +39,8 @@
 // A reader that closed early (`akm search … | head`) is not a failure of the work: the command keeps
 // running, its remaining output goes nowhere, and the process ends with the code the work earned.
 // Only our own stdio is forgiven: an EPIPE from a socket (an embedding or LLM call) is still a failure.
-const stdioStreams = [process.stdout, process.stderr];
-const stdioReaderGone = trackStdioReaderGone(stdioStreams);
 process.on("unhandledRejection", (reason) => {
-  if (stdioReaderGone.explains(reason)) return;
+  if (explainedByReaderGone(reason)) return;
   const err = reason instanceof Error ? reason : new Error(String(reason));
   console.error(
     JSON.stringify(
@@ -60,7 +58,7 @@ process.on("unhandledRejection", (reason) => {
   process.exit(EXIT_CODES.INTERNAL);
 });
 process.on("uncaughtException", (err) => {
-  if (stdioReaderGone.explains(err)) return;
+  if (explainedByReaderGone(err)) return;
   console.error(
     JSON.stringify(
       {
@@ -92,8 +90,10 @@ import { warnDeprecatedUse } from "./cli/deprecations";
 import {
   type CittyArgsDefinitionForScan,
   cittyComparableName,
+  createParsedInvocation,
   findCittyTopLevelCommandIndex,
   getParsedInvocation,
+  type ParsedInvocation,
   parseAllFlagValues,
   resolveHelpMigrateVersionArg,
   setParsedInvocation,
@@ -107,8 +107,14 @@ import {
   runWithJsonErrors,
   withoutHelpHiddenArgs,
 } from "./cli/shared";
-import { assertKnownFlags, consumeConfigFileFlag, type FlagScanCommand } from "./cli/unknown-flags";
-import { startUsage, type UsageCommand } from "./cli/usage";
+import {
+  assertKnownFlags,
+  assertNoStrayPositionals,
+  consumeConfigFileFlag,
+  type FlagScanCommand,
+} from "./cli/unknown-flags";
+import { startUsage, type UsageCommand, usageCaptureOff } from "./cli/usage";
+import { reportUsageIfDue } from "./cli/usage-report";
 import { agentCommand, lintCommand } from "./commands/agent/contribute-cli";
 import { backupsCommand } from "./commands/backups-cli";
 import { commandCommand } from "./commands/command/command-cli";
@@ -122,9 +128,10 @@ import { akmHealth } from "./commands/health";
 import { doctorMetricsCommand } from "./commands/metrics/usage-cli";
 import { akmTasksDoctor } from "./commands/tasks/tasks";
 import { closestMatch } from "./core/closest-match";
-import { trackStdioReaderGone } from "./core/stdio-reader-gone";
+import { explainedByReaderGone, isTerminal, stdout } from "./core/stdio";
 import "./commands/health/renderers";
 import "./commands/metrics/md-report";
+import { execCommand } from "./commands/exec-cli";
 import type { WindowSpec } from "./commands/health/types";
 import { parseWindowSpec } from "./commands/health/windows";
 import { doctorPromptCommand, improveCommand } from "./commands/improve/improve-cli";
@@ -135,9 +142,10 @@ import { modelsCommand } from "./commands/models-cli";
 import { doctorLogCommand, logCommand } from "./commands/observability-cli";
 import { proposalCommand } from "./commands/proposal/proposal-cli";
 import { rememberCommand } from "./commands/read/remember-cli";
+import { rulesCommand } from "./commands/read/rules";
 import { curateCommand, searchCommand, showCommand } from "./commands/read/search-cli";
 import { registryCommand } from "./commands/registry-cli";
-import { runAssetCommand } from "./commands/run-cli";
+import { resolveRunTarget, runAssetCommand, runPassthroughFrom, runRefIndex, setRunTarget } from "./commands/run-cli";
 import { bundleCommand } from "./commands/sources/bundle-cli";
 import { renderMigrationHelp } from "./commands/sources/migration-help";
 import { cloneCommand, syncCommand, upgradeCommand } from "./commands/sources/sources-cli";
@@ -159,13 +167,12 @@ import { isFormatExemptCommand } from "./output/format-exempt";
 import { consumeSchedulerContextArg } from "./tasks/scheduler-invocation";
 import { pkgVersion } from "./version";
 
-function applyEarlyStderrFlags(argv: string[]): void {
-  const separator = argv.indexOf("--");
-  const ownArgv = separator === -1 ? argv : argv.slice(0, separator);
-  if (ownArgv.includes("--quiet") || ownArgv.includes("-q")) {
+/** `--quiet` and `--verbose` among the invocation's own tokens. */
+export function applyEarlyStderrFlags(invocation: ParsedInvocation): void {
+  if (invocation.ownArgs.includes("--quiet") || invocation.ownArgs.includes("-q")) {
     setQuiet(true);
   }
-  if (ownArgv.includes("--verbose")) {
+  if (invocation.ownArgs.includes("--verbose")) {
     setVerbose(true);
   }
 }
@@ -186,7 +193,7 @@ function printSetupTtyHint(result: {
   configPath?: string;
   runs?: { modelCalls: string; agentWork: string; embeddings: string };
 }): void {
-  if (!process.stderr.isTTY) return;
+  if (!isTerminal(2)) return;
   const mode = getOutputMode();
   if (mode.format !== "json" && mode.format !== "jsonl") return;
   if (isQuiet()) return;
@@ -355,7 +362,7 @@ const setupCommand = defineCommand({
         // from stdin, so a piped/redirected/CI invocation would render the
         // first prompt and then block forever instead of failing — and `akm
         // setup` is the first command users automate.
-        if (process.stdin.isTTY !== true) {
+        if (!isTerminal(0)) {
           throw new UsageError(
             "Interactive setup requires a TTY. Pass --yes to take the detected defaults (flags such as --endpoint answer questions), or --from <file> to configure from a file.",
             "NON_INTERACTIVE_REQUIRES_YES",
@@ -559,14 +566,17 @@ const doctorCommand = defineCommand({
     const index = findCittyTopLevelCommandIndex(rawArgs, doctorScanArgs);
     const subcommand = index >= 0 ? rawArgs[index] : undefined;
     if (subcommand === undefined) {
-      assertKnownFlags({ subCommands: { doctor: healthCommand } } as FlagScanCommand, ["doctor", ...rawArgs]);
+      assertKnownFlags({ subCommands: { doctor: healthCommand } } as FlagScanCommand, [
+        "doctor",
+        ...getParsedInvocation().ownArgsOf(rawArgs),
+      ]);
       return;
     }
     if (!(subcommand in doctorSubCommands)) return;
     // Citty discards parent options when dispatching a child. Only global
     // options work before the child; they are already read from the invocation.
     try {
-      assertKnownFlags({ args: GLOBAL_OUTPUT_ARGS }, rawArgs.slice(0, index));
+      assertKnownFlags({ args: GLOBAL_OUTPUT_ARGS }, getParsedInvocation().ownArgsOf(rawArgs).slice(0, index));
     } catch (error) {
       if (!(error instanceof UsageError)) throw error;
       throw new UsageError(
@@ -575,12 +585,13 @@ const doctorCommand = defineCommand({
         `Use \`akm doctor ${subcommand} <options>\`; health options belong to bare \`akm doctor\`.`,
       );
     }
-    let childArgs = rawArgs.slice(index + 1);
+    let childArgs = getParsedInvocation()
+      .ownArgsOf(rawArgs)
+      .slice(index + 1);
     if (subcommand === "info") {
       // The root already warned about unknown info flags, except health flags
       // it treated as inherited. Warn about those once here, without refusing.
-      const separator = childArgs.indexOf("--");
-      childArgs = (separator < 0 ? childArgs : childArgs.slice(0, separator)).filter((token) => {
+      childArgs = childArgs.filter((token) => {
         if (!token.startsWith("--")) return false;
         const name = cittyComparableName(token.slice(2).split("=")[0]!);
         return Object.entries(healthArgs).some(([key, def]) => {
@@ -617,7 +628,7 @@ const hintsCommand = defineCommand({
   run({ args }) {
     return runWithJsonErrors(() => {
       const detail = parseDetailLevel(args.detail as string | undefined) ?? "brief";
-      process.stdout.write(detail === "brief" ? EMBEDDED_HINTS : EMBEDDED_HINTS_FULL);
+      stdout().write(detail === "brief" ? EMBEDDED_HINTS : EMBEDDED_HINTS_FULL);
     });
   },
 });
@@ -656,7 +667,7 @@ const completionsCommand = defineCommand({
         info(`Completions installed to ${dest}`);
         info(`Restart your shell or run:  source ${dest}`);
       } else {
-        process.stdout.write(script);
+        stdout().write(script);
       }
     });
   },
@@ -675,7 +686,9 @@ const commands = {
   search: searchCommand,
   curate: curateCommand,
   show: showCommand,
+  rules: rulesCommand,
   run: runAssetCommand,
+  exec: execCommand,
   workflow: workflowCommand,
   remember: rememberCommand,
   import: importKnowledgeCommand,
@@ -758,13 +771,13 @@ const helpCommand = defineGroupCommand({
               "Pass a version like `0.6.0`, `v0.6.0`, `0.6.0-rc1`, or `latest`.",
             );
           }
-          process.stdout.write(renderMigrationHelp(version));
+          stdout().write(renderMigrationHelp(version));
         });
       },
     }),
   },
   async defaultRun() {
-    process.stdout.write(`${await renderSectionedRootHelp()}\n`);
+    stdout().write(`${await renderSectionedRootHelp()}\n`);
   },
 });
 
@@ -838,10 +851,8 @@ export function isTaskRunWithId(argv: readonly string[]): boolean {
 }
 
 /** Recovery/setup surfaces must remain reachable when config.json is invalid. */
-export function shouldBypassConfigStartup(argv: readonly string[]): boolean {
-  const userArgs = argv.slice(2);
-  const separator = userArgs.indexOf("--");
-  const args = separator === -1 ? userArgs : userArgs.slice(0, separator);
+export function shouldBypassConfigStartup(invocation: ParsedInvocation): boolean {
+  const args = invocation.ownArgs;
   if (args.includes("--help") || args.includes("-h") || args.includes("--version") || args.includes("-v")) return true;
   // Bare `akm` (no subcommand at all) renders the same sectioned root-help
   // text as `akm help` — never touches config either.
@@ -857,7 +868,7 @@ export function shouldBypassConfigStartup(argv: readonly string[]): boolean {
   // `setup`/`migrate` do, or the recovery instructions are themselves
   // unreachable.
   if (command === "help" || command === "hints") return true;
-  if (isTaskRunWithId(argv)) return true;
+  if (isTaskRunWithId(invocation.argv)) return true;
   if (command !== "config") return false;
   const configIndex = args.indexOf("config");
   const subcommand = args.slice(configIndex + 1).find((arg) => !arg.startsWith("-"));
@@ -875,10 +886,8 @@ export function shouldBypassConfigStartup(argv: readonly string[]): boolean {
  * Every other command reads config exactly as before — a broken config
  * throws here and the command never runs.
  */
-export function isInfoCommand(argv: readonly string[]): boolean {
-  const userArgs = argv.slice(2);
-  const separator = userArgs.indexOf("--");
-  const args = separator === -1 ? userArgs : userArgs.slice(0, separator);
+export function isInfoCommand(invocation: ParsedInvocation): boolean {
+  const args = invocation.ownArgs;
   const commandIndex = findCittyTopLevelCommandIndex(args, MAIN_TOP_LEVEL_ARGS);
   const command = commandIndex >= 0 ? args[commandIndex] : undefined;
   if (command === "info") return true;
@@ -1022,13 +1031,13 @@ const HELP_SECTIONS: ReadonlyArray<{
 }> = [
   {
     title: "AGENT LOOP",
-    commands: ["curate", "search", "show", "feedback", "remember"],
+    commands: ["curate", "search", "show", "rules", "feedback", "remember"],
   },
   {
     title: "ASSETS",
     commands: ["import", "clone", "bundle", "env", "secret", "sync", "proposal"],
   },
-  { title: "AUTOMATION", commands: ["improve", "judge", "agent", "command", "workflow", "task"] },
+  { title: "AUTOMATION", commands: ["run", "exec", "improve", "judge", "agent", "command", "workflow", "task"] },
   {
     title: "SYSTEM",
     commands: [
@@ -1213,7 +1222,7 @@ const BARE_LISTS = new Set(["bundle", "config", "env", "proposal", "registry", "
  */
 export function insertBareListSubcommand(argv: string[]): string[] {
   const rawArgs = argv.slice(2);
-  if (rawArgs.some((a) => a === "--help" || a === "-h")) return argv;
+  if (requestsHelp(createParsedInvocation(argv))) return argv;
   const index = findCittyTopLevelCommandIndex(rawArgs, (main.args ?? {}) as CittyArgsDefinitionForScan);
   const group = index >= 0 ? rawArgs[index] : undefined;
   if (group === undefined || !BARE_LISTS.has(group)) return argv;
@@ -1235,7 +1244,7 @@ export async function runCli(): Promise<void> {
   const originalArgs = process.argv.slice(2);
   let schedulerError: unknown;
   try {
-    process.argv = consumeSchedulerContextArg(process.argv);
+    process.argv = consumeSchedulerContextArg(process.argv, process.env, provisionalInvocation(process.argv));
   } catch (error) {
     schedulerError = error;
   }
@@ -1243,12 +1252,25 @@ export async function runCli(): Promise<void> {
   // A selection error is reported below, after usage capture starts, as before.
   let selectionError: unknown;
   try {
-    applyEarlyStderrFlags(process.argv); // so --quiet silences the empty-AKM_CONFIG_FILE warning
+    // so --quiet silences the empty-AKM_CONFIG_FILE warning
+    applyEarlyStderrFlags(provisionalInvocation(process.argv));
     selectConfigFile();
   } catch (error) {
     selectionError = error;
   }
-  const finishUsage = startUsage(main as UsageCommand, originalArgs, pkgVersion);
+  let invocation: ParsedInvocation;
+  if (schedulerError === undefined && selectionError === undefined) {
+    process.argv = insertBareListSubcommand(process.argv);
+    invocation = await mintInvocation(process.argv);
+  } else {
+    invocation = provisionalInvocation(process.argv);
+  }
+  // Usage describes the line as typed, `--config` included, up to the same boundary as the invocation.
+  const usageArgs = originalArgs.slice(
+    0,
+    originalArgs.length - (invocation.userArgs.length - invocation.ownArgs.length),
+  );
+  const finishUsage = startUsage(main as UsageCommand, usageArgs, invocation.passthroughArgs().length, pkgVersion);
   try {
     if (schedulerError !== undefined) {
       emitJsonError(schedulerError);
@@ -1258,17 +1280,20 @@ export async function runCli(): Promise<void> {
       emitJsonError(selectionError);
       return;
     }
-    await runCliInvocation();
+    await runCliInvocation(invocation);
   } finally {
     // Deliver catchable signals queued during synchronous child execution.
     await new Promise<void>((resolve) => setImmediate(resolve));
     finishUsage();
+    // After the command's own work; never changes output or exit code (see src/cli/usage-report.ts).
+    if (!usageCaptureOff(main as UsageCommand, usageArgs))
+      await reportUsageIfDue({ surface: "cli", version: pkgVersion, commands: main as UsageCommand });
   }
 }
 
 /** Apply `--config <file>` (stripping it from argv) and normalise `AKM_CONFIG_FILE` to an absolute path. */
 function selectConfigFile(): void {
-  const configFile = consumeConfigFileFlag(main as FlagScanCommand, process.argv.slice(2));
+  const configFile = consumeConfigFileFlag(main as FlagScanCommand, provisionalInvocation(process.argv));
   if (configFile.file !== undefined) process.env.AKM_CONFIG_FILE = configFile.file;
   process.argv = [...process.argv.slice(0, 2), ...configFile.args];
   // An empty AKM_CONFIG_FILE is ignored (warned once by getConfigPath), not turned into the default path.
@@ -1279,21 +1304,59 @@ function selectConfigFile(): void {
   }
 }
 
-async function runCliInvocation(): Promise<void> {
-  process.argv = insertBareListSubcommand(process.argv);
-  // Mint the ParsedInvocation singleton from the (normalized) argv — the ONE
-  // place argv is parsed for the whole process.
-  // Every out-of-cli.ts command module reads argv state through
-  // `getParsedInvocation()` from here on instead of re-scanning process.argv.
-  setParsedInvocation(process.argv);
-  // Resolve output mode once at startup from the (normalized) argv and persisted
+/** Where a top-level `run`'s ref sits in `userArgs`; `undefined` for any other command. */
+function findRunCommand(userArgs: readonly string[]): { commandIndex: number; refIndex: number } | undefined {
+  const commandIndex = findCittyTopLevelCommandIndex(userArgs, MAIN_TOP_LEVEL_ARGS);
+  if (userArgs[commandIndex] !== "run") return undefined;
+  return { commandIndex, refIndex: runRefIndex(userArgs.slice(commandIndex + 1)) };
+}
+
+/**
+ * The invocation as far as it is known before a `run` ref resolves: the tokens after the ref are not akm's
+ * for every ref type but a script, so only those before it are read.
+ */
+function provisionalInvocation(argv: readonly string[]): ParsedInvocation {
+  const run = findRunCommand(argv.slice(2));
+  return setParsedInvocation(
+    argv,
+    run !== undefined && run.refIndex >= 0 ? { passthroughFrom: run.commandIndex + 1 + run.refIndex + 1 } : {},
+  );
+}
+
+/**
+ * Mint the process-wide {@link ParsedInvocation} for `argv`, the ONE place argv is parsed for the whole process.
+ * For `akm run` this resolves the ref once (kept for the `run` command) and so learns whether the tokens after it
+ * are akm's or a script's. Shared by `runCli` and the in-process test harness.
+ */
+export async function mintInvocation(argv: readonly string[]): Promise<ParsedInvocation> {
+  const provisional = provisionalInvocation(argv);
+  const run = findRunCommand(provisional.userArgs);
+  if (run === undefined) {
+    setRunTarget(undefined);
+    return provisional;
+  }
+  // Resolving loads the config, which warns: `--quiet` before the ref already holds.
+  applyEarlyStderrFlags(provisional);
+  const target = await resolveRunTarget(provisional.userArgs.slice(run.commandIndex + 1));
+  setRunTarget(target);
+  const from = runPassthroughFrom(target);
+  return setParsedInvocation(argv, from === undefined ? {} : { passthroughFrom: run.commandIndex + 1 + from });
+}
+
+/** Whether akm's own tokens ask for help. */
+export function requestsHelp(invocation: ParsedInvocation): boolean {
+  return HELP_FLAGS.some((flag) => invocation.ownArgs.includes(flag));
+}
+
+async function runCliInvocation(invocation: ParsedInvocation): Promise<void> {
+  // Resolve output mode once at startup from the invocation's own tokens and persisted
   // config. All subsequent output() calls read from this in-memory singleton.
   // `initOutputMode` can throw a UsageError when --format/--detail values are
   // invalid; surface it through the same JSON-error path the rest of the CLI uses
   // rather than letting the raw exception escape with a stack trace.
   try {
-    applyEarlyStderrFlags(process.argv);
-    const bypassConfig = shouldBypassConfigStartup(process.argv);
+    applyEarlyStderrFlags(invocation);
+    const bypassConfig = shouldBypassConfigStartup(invocation);
     // Off the bypass allowlist, every command reads config here exactly as
     // it always has: an invalid config.json throws, `emitJsonError` reports
     // it, and the command never runs — no side effect of its own body ever
@@ -1309,7 +1372,7 @@ async function runCliInvocation(): Promise<void> {
     // or making a network call).
     let outputDefaults = DEFAULT_CONFIG.output ?? {};
     if (!bypassConfig) {
-      if (isInfoCommand(process.argv)) {
+      if (isInfoCommand(invocation)) {
         try {
           outputDefaults = loadConfig().output ?? {};
         } catch {
@@ -1319,20 +1382,19 @@ async function runCliInvocation(): Promise<void> {
         outputDefaults = loadConfig().output ?? {};
       }
     }
-    initOutputMode(process.argv, outputDefaults);
+    initOutputMode(invocation.ownArgs, outputDefaults);
   } catch (error: unknown) {
     emitJsonError(error);
     return;
   }
 
-  const commandPath = resolveCittyCommandPath(main, process.argv.slice(2));
+  const commandPath = resolveCittyCommandPath(main, invocation.cittyArgs);
 
   // Every command that renders through output() honours all five --format
   // values. The declared exempt set (src/output/format-exempt.ts) does not
   // render an envelope at all, so warn rather than pretend: silently ignoring
   // the flag makes the behaviour hard to discover. A warning, not an error, because the flag is harmless here and scripts that
   // pass --format globally to a mixed batch of commands should still work.
-  const invocation = getParsedInvocation();
   if (
     (invocation.hasFlag("--format") || invocation.getFlagValue("--format") !== undefined) &&
     isFormatExemptCommand(commandPath)
@@ -1343,7 +1405,7 @@ async function runCliInvocation(): Promise<void> {
   warnDeprecatedUse(
     commandPath,
     invocation,
-    resolveDeepestCittyCommand(main as AnyCittyCommand, process.argv.slice(2)).args as ArgsDef | undefined,
+    resolveDeepestCittyCommand(main as AnyCittyCommand, invocation.cittyArgs).args as ArgsDef | undefined,
   );
 
   // First-time-user breadcrumb: when run with no subcommand AND no config
@@ -1353,11 +1415,10 @@ async function runCliInvocation(): Promise<void> {
   // and stays silent for any flag-only invocation citty would handle itself
   // (--help, --version).
   (function maybePrintFirstTimeBanner(): void {
-    const argv = process.argv.slice(2);
     // Fire only on completely bare `akm` invocation. Any explicit flag or
     // subcommand means the user knows what they want.
-    if (argv.length > 0) return;
-    if (!process.stderr.isTTY) return;
+    if (invocation.userArgs.length > 0) return;
+    if (!isTerminal(2)) return;
     try {
       if (fs.existsSync(getConfigPath())) return;
     } catch {
@@ -1371,47 +1432,47 @@ async function runCliInvocation(): Promise<void> {
     );
   })();
 
-  const rawArgs = process.argv.slice(2);
+  const rawArgs = invocation.cittyArgs;
   // Persist LLM usage for every command, not only `improve` and `proposal
   // drain`. A per-run sink installed inside a command layers over this one and
   // restores it on dispose.
   const disposeLlmUsageSink = installLlmUsagePersistenceIfAbsent();
   try {
-    if (rawArgs.length === 0) {
-      process.stdout.write(`${await renderSectionedRootHelp()}\n`);
+    if (invocation.userArgs.length === 0) {
+      stdout().write(`${await renderSectionedRootHelp()}\n`);
       return;
     }
     // Mirrors citty's own builtin-flag short-circuit in `runMain` (main's own
     // args never declare `help`/`h`/`version`/`v`, so both stay the fixed
     // defaults citty would have computed too).
     //
-    // Scan only akm's OWN arguments: everything after a literal `--` belongs to
-    // the child process (`akm env run <ref> -- tool --help`, `akm secret run
-    // <ref> -- tool -h`). Scanning the tail printed akm's usage and returned
+    // Scan only akm's OWN arguments: everything after the boundary belongs to
+    // the child process or script (`akm env run <ref> -- tool --help`, `akm run
+    // scripts/x --help`). Scanning the tail printed akm's usage and returned
     // without ever launching the requested command.
-    const passthroughAt = rawArgs.indexOf("--");
-    const ownArgs = passthroughAt === -1 ? rawArgs : rawArgs.slice(0, passthroughAt);
-    if (HELP_FLAGS.some((flag) => ownArgs.includes(flag))) {
+    if (requestsHelp(invocation)) {
       const resolved = resolveDeepestCittyCommand(main, rawArgs);
       if (resolved === (main as AnyCittyCommand)) {
         // Root `--help`: the sectioned overview, not citty's
         // flat COMMANDS dump.
-        process.stdout.write(`${await renderSectionedRootHelp()}\n`);
+        stdout().write(`${await renderSectionedRootHelp()}\n`);
       } else {
         const path = resolveCittyCommandPath(main, rawArgs);
         await showCommandUsage(resolved, path);
       }
       return;
     }
-    if (rawArgs.length === 1 && VERSION_FLAGS.includes(rawArgs[0] as string)) {
+    if (invocation.userArgs.length === 1 && VERSION_FLAGS.includes(invocation.userArgs[0] as string)) {
       console.log(pkgVersion);
       return;
     }
     // citty's parseArgs (strict: false) silently ignores undeclared flags, so
     // a typo would otherwise run the command with defaults and exit 0. Checked
     // here, after --help and --version, so those keep working on any command.
-    assertKnownFlags(main as FlagScanCommand, rawArgs);
-    await runCommand(main, { rawArgs });
+    // An undeclared positional is ignored the same way.
+    assertKnownFlags(main as FlagScanCommand, invocation.ownArgs);
+    assertNoStrayPositionals(main as FlagScanCommand, rawArgs);
+    await runCommand(main, { rawArgs: [...rawArgs] });
   } catch (error) {
     if (isCittyCliError(error)) {
       // Reclassify citty's own "unknown command" / "no command

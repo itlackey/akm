@@ -53,9 +53,9 @@ import { makeBundleRef } from "../../src/core/asset/asset-ref";
 import type { AkmConfig } from "../../src/core/config/config-types";
 import { prepareTaskV3Execution } from "../../src/tasks/prepare/prepare";
 import type { PrepareTaskV3ExecutionContext } from "../../src/tasks/prepare/prepared-execution";
-import { parseTaskSource } from "../../src/tasks/source/parse-task-source";
 import { projectTaskSourceV4 } from "../../src/tasks/source/project-v4";
 import { makeSandboxDir, type SandboxedDir } from "../_helpers/sandbox";
+import { parseV4TaskSource } from "../_helpers/task-source";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const RUNTIME_V3_FILE = path.join(ROOT, "src/tasks/runtime-v3.ts");
@@ -77,7 +77,7 @@ function sandboxRoot(): string {
 
 /** The minimal valid task source v4 shell document every shape mirror below shares. */
 function shellDocument(root: string) {
-  const parsed = parseTaskSource({
+  const parsed = parseV4TaskSource({
     yaml: "version: 4\nrun: printf ok\nschedule: '@daily'\n",
     filePath: `${root}/tasks/nightly.yml`,
   });

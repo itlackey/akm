@@ -10,7 +10,7 @@
 import type { AcceptRateEntry } from "../health/accept-rate";
 import type { LlmUsageAggregate } from "../health/types-metrics";
 
-/** One `usage_events` row in the window (search/show/curate/feedback). */
+/** One `usage_events` row in the window (search/show/curate/feedback/rules). */
 export interface MetricsUsageRow {
   id: number;
   /** ISO-8601 UTC, normalized from the table's `YYYY-MM-DD HH:MM:SS`. */
@@ -27,6 +27,8 @@ export interface MetricsUsageRow {
   totalMs?: number;
   reason?: string;
   tags?: string[];
+  /** A `rules` row: the durable refs it loaded and their total characters. */
+  rules?: { refs: string[]; chars: number };
   /** The agent harness, and its session when known, that made the event; absent on rows recorded without one. */
   agent?: { harness: string; session?: string };
 }
@@ -60,6 +62,8 @@ export interface MetricsDailyUsage {
   show: number;
   curate: number;
   feedback: number;
+  /** `akm rules` loads. */
+  rules: number;
 }
 
 export interface MetricsAssetUsage {
@@ -150,6 +154,13 @@ export interface AkmMetricsResult {
      * several selects. `null` when no search returned a hit.
      */
     selectsPerSearch: number | null;
+    /** `akm rules` loads: how many, the mean rules and characters per load, and loads per rule (most loaded first). */
+    rules: {
+      loads: number;
+      meanRules: number | null;
+      meanChars: number | null;
+      byRule: Array<{ ref: string; loads: number }>;
+    };
     /** Median persisted search `totalMs`; `null` when no row in the window carries one. */
     searchMedianMs: number | null;
     daily: MetricsDailyUsage[];

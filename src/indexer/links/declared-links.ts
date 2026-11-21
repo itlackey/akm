@@ -56,25 +56,37 @@ export interface DeclaredLinkOwner {
   conceptId: string;
 }
 
+interface Channel {
+  kind: DeclaredLinkKind;
+  read: (doc: IndexDocument) => unknown;
+  /** The frontmatter key that declares the channel's refs, when one key does. */
+  key?: string;
+}
+
 /** Channel order is the order links are stored and shown in. */
-const CHANNELS: ReadonlyArray<readonly [DeclaredLinkKind, (doc: IndexDocument) => unknown]> = [
-  ["xref", (doc) => doc.xrefs],
-  ["superseded_by", (doc) => doc.supersededBy],
-  ["contradicted_by", (doc) => doc.contradictedBy],
-  ["belief_peer", (doc) => doc.currentBeliefRefs],
-  ["derived_from", (doc) => doc.derivedFrom],
-  ["cites", (doc) => doc.sources],
-  ["links_to", (doc) => doc.links],
-  ["uses", (doc) => doc.uses],
+const CHANNELS: readonly Channel[] = [
+  { kind: "xref", read: (doc) => doc.xrefs, key: "xrefs" },
+  { kind: "superseded_by", read: (doc) => doc.supersededBy, key: "supersededBy" },
+  { kind: "contradicted_by", read: (doc) => doc.contradictedBy, key: "contradictedBy" },
+  { kind: "belief_peer", read: (doc) => doc.currentBeliefRefs, key: "currentBeliefRefs" },
+  { kind: "derived_from", read: (doc) => doc.derivedFrom },
+  { kind: "cites", read: (doc) => doc.sources, key: "sources" },
+  { kind: "links_to", read: (doc) => doc.links },
+  { kind: "uses", read: (doc) => doc.uses },
 ];
+
+/** The frontmatter keys whose entries are refs to assets: what an asset declares, whatever folder the target is in. */
+export const DECLARED_REF_FRONTMATTER_KEYS: readonly string[] = CHANNELS.flatMap((channel) =>
+  channel.key === undefined ? [] : [channel.key],
+);
 
 /** The links an indexed document declares, in channel then authored order; one per (kind, target). */
 export function declaredLinks(doc: IndexDocument, owner: DeclaredLinkOwner): DeclaredLink[] {
   const links: DeclaredLink[] = [];
   const seen = new Set<string>();
-  for (const [kind, read] of CHANNELS) {
+  for (const { kind, read } of CHANNELS) {
     for (const raw of stringValues(read(doc))) {
-      const target = linkTarget(raw, owner.conceptId);
+      const target = declaredLinkTarget(raw, owner.conceptId);
       if (!target) continue;
       const bundle = target.bundle ?? owner.bundleId;
       if (bundle === owner.bundleId && target.conceptId === owner.conceptId) continue;
@@ -99,7 +111,10 @@ function stringValues(value: unknown): string[] {
  * wikis, now knowledge under `wikis/`), a `.md` suffix, and a `#fragment`.
  * Inside a wiki page, `raw/…` and `pages/…` are relative to the wiki root.
  */
-function linkTarget(raw: string, ownerConceptId: string): { bundle?: string; conceptId: string } | undefined {
+export function declaredLinkTarget(
+  raw: string,
+  ownerConceptId: string,
+): { bundle?: string; conceptId: string } | undefined {
   const token = raw.trim();
   if (!token || /[\s<*]/.test(token) || token.includes("$(") || token.includes("${")) return;
   let bundle: string | undefined;

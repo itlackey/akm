@@ -5,6 +5,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { LEVEL_STYLES } from "../src/lib/link-levels.ts";
 
 // The map's colours, measured from tokens.css: the eight categorical slots and the highlight stay apart for normal
 // vision and under protan, deutan and tritan simulation, and every mark can be seen against the map background.
@@ -148,5 +149,19 @@ for (const scheme of ["light", "dark"]) {
         `pulse ${n}: ${contrast(pulse[scheme], bg[scheme]).toFixed(2)}`,
       );
     }
+  });
+}
+
+// The three levels of a chosen asset's joins: the highlight mixed toward the background by each level's `mute`, so each
+// level is more muted than the one before and every one stays visible (3:1) against the map background.
+for (const scheme of ["light", "dark"]) {
+  test(`${scheme}: each level of joins is at least 3:1 against the background, and each is quieter than the last`, () => {
+    const ratios = LEVEL_STYLES.map((style) => {
+      const colour = highlight[scheme].map((v, d) => v * (1 - style.mute) + bg[scheme][d] * style.mute);
+      return contrast(colour, bg[scheme]);
+    });
+    for (const [n, ratio] of ratios.entries()) assert.ok(ratio >= 3, `level ${n + 1}: ${ratio.toFixed(2)}:1`);
+    for (let n = 1; n < ratios.length; n++)
+      assert.ok(ratios[n] < ratios[n - 1], `level ${n + 1} is not quieter than level ${n}`);
   });
 }

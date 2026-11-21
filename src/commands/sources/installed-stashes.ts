@@ -21,11 +21,17 @@ import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { isWithin, resolveStashDir } from "../../core/common";
 import type { AkmConfig, BundleConfigEntry } from "../../core/config/config";
 import { bundleComponentConfig, getSources, loadConfig, resolveSecret } from "../../core/config/config";
-import { AkmError, ConfigError, NotFoundError, TransientError, UsageError } from "../../core/errors";
+import { AkmError, ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { isPathAbsent } from "../../core/path-access";
 import { getDbPath, getRegistryCacheDir } from "../../core/paths";
 import { warn } from "../../core/warn";
-import { buildIndex, withIndexBuildLock } from "../../indexer/index-build";
+import {
+  buildIndex,
+  isSkippedIndexBuild,
+  type SkippedIndexBuild,
+  skippedIndexReport,
+  withIndexBuildLock,
+} from "../../indexer/index-build";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import type { IndexOptions, IndexResponse } from "../../indexer/indexer";
 import type { LockfileEntry } from "../../integrations/lockfile";
@@ -298,7 +304,7 @@ export async function akmRemove(input: { target: string; stashDir?: string }): P
     if (managed.source !== "local" && managed.localRoot) {
       cleanupDirectoryBestEffort(managed.localRoot, "remove");
     }
-    const index = await buildIndex({ stashDir }, "wait");
+    const index = await buildIndex({ stashDir });
 
     return {
       schemaVersion: 1,
@@ -314,12 +320,14 @@ export async function akmRemove(input: { target: string; stashDir?: string }): P
       config: {
         sourceCount: getSources(updatedConfig).length,
       },
-      index: {
-        mode: index.mode,
-        totalEntries: index.totalEntries,
-        directoriesScanned: index.directoriesScanned,
-        directoriesSkipped: index.directoriesSkipped,
-      },
+      index: isSkippedIndexBuild(index)
+        ? { skipped: skippedIndexReport(index) }
+        : {
+            mode: index.mode,
+            totalEntries: index.totalEntries,
+            directoriesScanned: index.directoriesScanned,
+            directoriesSkipped: index.directoriesSkipped,
+          },
     };
   }
 
@@ -330,7 +338,7 @@ export async function akmRemove(input: { target: string; stashDir?: string }): P
   }
 
   const removedEntry = stashResult.entry;
-  const index = await buildIndex({ stashDir }, "wait");
+  const index = await buildIndex({ stashDir });
   const updatedConfig = loadConfig();
 
   return {
@@ -347,24 +355,28 @@ export async function akmRemove(input: { target: string; stashDir?: string }): P
     config: {
       sourceCount: getSources(updatedConfig).length,
     },
-    index: {
-      mode: index.mode,
-      totalEntries: index.totalEntries,
-      directoriesScanned: index.directoriesScanned,
-      directoriesSkipped: index.directoriesSkipped,
-    },
+    index: isSkippedIndexBuild(index)
+      ? { skipped: skippedIndexReport(index) }
+      : {
+          mode: index.mode,
+          totalEntries: index.totalEntries,
+          directoriesScanned: index.directoriesScanned,
+          directoriesSkipped: index.directoriesSkipped,
+        },
   };
 }
 
 // ── akmUpdate helpers ────────────────────────────────────────────────────────
 
-type IndexResult = IndexResponse;
+type IndexResult = IndexResponse | SkippedIndexBuild;
 type ConfiguredSource = ReturnType<typeof getSources>[number];
 
-type UpdateIndexSummary = Pick<IndexResult, "mode" | "totalEntries" | "directoriesScanned" | "directoriesSkipped"> & {
-  scanComplete?: boolean;
-  verification?: IndexResult["verification"];
-};
+type UpdateIndexSummary =
+  | (Pick<IndexResponse, "mode" | "totalEntries" | "directoriesScanned" | "directoriesSkipped"> & {
+      scanComplete?: boolean;
+      verification?: IndexResponse["verification"];
+    })
+  | SkippedIndexBuild;
 
 /**
  * Read the current index generation without creating or hydrating anything.
@@ -416,20 +428,31 @@ function buildUpdateResponse(
     config: {
       sourceCount: getSources(finalConfig).length,
     },
-    index: {
-      mode: index.mode,
-      totalEntries: index.totalEntries,
-      directoriesScanned: index.directoriesScanned,
-      directoriesSkipped: index.directoriesSkipped,
-      ...(index.scanComplete !== undefined ? { scanComplete: index.scanComplete } : {}),
-      // A real embedding pass (`akmIndex`/`runEmbeddingPass`) reports its own
-      // verified `semanticStatus`. When no pass ran this update (the
-      // no-op/nothing-configured fallback) the only two facts known without
-      // fabricating a verification are whether semantic search is off at all
-      // or, if not, that its state is simply unverified this run.
-      semanticStatus:
-        index.verification?.semanticStatus ?? (finalConfig.semanticSearchMode === "off" ? "disabled" : "pending"),
-    },
+    index: isSkippedIndexBuild(index)
+      ? { skipped: skippedIndexReport(index) }
+      : {
+          mode: index.mode,
+          totalEntries: index.totalEntries,
+          directoriesScanned: index.directoriesScanned,
+          directoriesSkipped: index.directoriesSkipped,
+          ...(index.scanComplete !== undefined ? { scanComplete: index.scanComplete } : {}),
+          // A real embedding pass (`akmIndex`/`runEmbeddingPass`) reports its own
+          // verified `semanticStatus`. When no pass ran this update (the
+          // no-op/nothing-configured fallback) the only two facts known without
+          // fabricating a verification are whether semantic search is off at all
+          // or, if not, that its state is simply unverified this run.
+          semanticStatus:
+            index.verification?.semanticStatus ?? (finalConfig.semanticSearchMode === "off" ? "disabled" : "pending"),
+        },
+  };
+}
+
+function skippedFilesystemOutcome(id: string): UpdateSkippedItem {
+  return {
+    id,
+    kind: "filesystem",
+    status: "skipped",
+    reason: `Another akm process is building the index; filesystem source "${id}" is reconciled by the next build.`,
   };
 }
 
@@ -478,15 +501,45 @@ function gitOrThrow(repoDir: string, args: string[]): string {
   return result.stdout.trim();
 }
 
+/** The current branch's upstream in the origin that the provider verified, when configured. */
+function originUpstream(repo: string): { ref: string; revision: string } | undefined {
+  // A detached HEAD names no branch, and an unborn one has no ref yet: neither has an upstream.
+  const branch = runGit(["-C", repo, "symbolic-ref", "-q", "HEAD"]);
+  if (branch.status !== 0) return undefined;
+  const [ref, remote] = gitOrThrow(repo, [
+    "for-each-ref",
+    "--format=%(upstream) %(upstream:remotename)",
+    branch.stdout.trim(),
+  ]).split(" ");
+  return ref && remote === "origin" ? { ref, revision: gitOrThrow(repo, ["rev-parse", "--verify", ref]) } : undefined;
+}
+
 /**
  * Publish a staged writable checkout: fast-forward the live checkout to
  * exactly the staged commit. Git refuses a non-fast-forward or a merge that
- * would overwrite local work, and changes nothing in that case.
+ * would overwrite local work, preserving those files in that case.
  */
-function fastForwardCheckout(liveRepo: string, stagedRepo: string): void {
+function fastForwardCheckout(
+  liveRepo: string,
+  stagedRepo: string,
+  expectedUpstream: ReturnType<typeof originUpstream>,
+): void {
   const head = gitOrThrow(stagedRepo, ["rev-parse", "HEAD"]);
-  gitOrThrow(liveRepo, ["fetch", "--no-tags", stagedRepo, head]);
+  const upstream = originUpstream(stagedRepo);
+  if (upstream?.ref !== expectedUpstream?.ref || originUpstream(liveRepo)?.ref !== expectedUpstream?.ref) {
+    throw new UsageError(`Writable Git install at ${liveRepo} changed its upstream while the update was prepared.`);
+  }
+  gitOrThrow(liveRepo, ["fetch", "--no-tags", stagedRepo, head, ...(upstream ? [upstream.ref] : [])]);
+  if (upstream && expectedUpstream) {
+    // Use the tip Git fetched, not HEAD: local commits or a moving remote can
+    // make them differ. The pre-staging value preserves a concurrent live fetch.
+    gitOrThrow(liveRepo, ["update-ref", upstream.ref, upstream.revision, expectedUpstream.revision]);
+  }
   const merge = runGit(["-C", liveRepo, "merge", "--ff-only", "--no-overwrite-ignore", head], { timeout: 120_000 });
+  if (merge.status !== 0 && upstream && expectedUpstream) {
+    // A refused publish publishes nothing: put the tracking ref back, unless another writer has moved it since.
+    runGit(["-C", liveRepo, "update-ref", upstream.ref, expectedUpstream.revision, upstream.revision]);
+  }
   if (merge.status === null) {
     // Spawn failure, timeout or signal: git may have been interrupted mid-checkout.
     throw new UsageError(
@@ -495,23 +548,20 @@ function fastForwardCheckout(liveRepo: string, stagedRepo: string): void {
   }
   if (merge.status !== 0) {
     throw new UsageError(
-      `Writable Git install at ${liveRepo} cannot fast-forward without overwriting local work; nothing was changed. ${merge.stderr.trim()}`,
+      `Writable Git install at ${liveRepo} cannot fast-forward without overwriting local work; local work was preserved. ${merge.stderr.trim()}`,
       "INVALID_FLAG_VALUE",
       UPDATE_REFUSAL_HINT,
     );
   }
 }
 
-/** `"try"` (`--skip-if-locked`): a live rebuild-lock holder makes the update throw `INDEX_DB_CONTENDED` instead of waiting. */
-type UpdateLockMode = "wait" | "try";
-
 /**
  * Reindex after an update. Sources are not re-fetched (the update just did
  * that) and detected adapters are not written to config.json — an update
  * leaves config alone; the next `akm index` records them.
  */
-function reindexAfterUpdate(stashDir: string, lockMode: UpdateLockMode): Promise<IndexResult> {
-  return withIndexBuildLock(undefined, (build) => build(updateIndexOptions(stashDir)), lockMode);
+function reindexAfterUpdate(stashDir: string): Promise<IndexResult> {
+  return withIndexBuildLock((build) => build(updateIndexOptions(stashDir)));
 }
 
 function updateIndexOptions(stashDir: string): IndexOptions {
@@ -520,30 +570,26 @@ function updateIndexOptions(stashDir: string): IndexOptions {
 
 /**
  * Publish, then reindex, holding the rebuild lock across both and the asset-mutation lease around them so no other
- * writer interleaves. The rebuild lock comes first, so waiting for another build never happens under the lease.
- * When the index step fails after the publish, the bundle is updated and only its index is stale: say so, then
- * rethrow the original error.
+ * writer interleaves. When another build holds the rebuild lock the publish still happens and the build is skipped.
+ * When the index step is skipped or fails after the publish, the bundle is updated and only its index is stale: say
+ * so (a failure is then rethrown).
  */
-function publishAndIndex(
-  stashDir: string,
-  lockMode: UpdateLockMode,
-  publish: () => Promise<void> | void,
-): Promise<IndexResult> {
-  return withIndexBuildLock(
-    undefined,
-    (build) =>
-      withAssetMutationLease("source-update", async () => {
-        await publish();
-        try {
-          return await build(updateIndexOptions(stashDir));
-        } catch (error) {
-          warn(
-            "The bundle was updated but its search index was not refreshed; `akm index` (or the next scheduled build) will index it.",
-          );
-          throw error;
-        }
-      }),
-    lockMode,
+const INDEX_NOT_REFRESHED =
+  "The bundle was updated but its search index was not refreshed; `akm index` (or the next scheduled build) will index it.";
+
+function publishAndIndex(stashDir: string, publish: () => Promise<void> | void): Promise<IndexResult> {
+  return withIndexBuildLock((build) =>
+    withAssetMutationLease("source-update", async () => {
+      await publish();
+      try {
+        const index = await build(updateIndexOptions(stashDir));
+        if (isSkippedIndexBuild(index)) warn(INDEX_NOT_REFRESHED);
+        return index;
+      } catch (error) {
+        warn(INDEX_NOT_REFRESHED);
+        throw error;
+      }
+    }),
   );
 }
 
@@ -609,6 +655,7 @@ async function stageManagedUpdate(
       throw new UsageError(`Writable Git install at ${managed.localRoot} is not a checkout; refusing to update it.`);
     }
     const liveRepo = topLevel.stdout.trim();
+    const expectedUpstream = originUpstream(liveRepo);
     const stagingParent = createStagingParent(path.dirname(liveRepo));
     const stagedRepo = path.join(stagingParent, path.basename(liveRepo));
     try {
@@ -627,8 +674,11 @@ async function stageManagedUpdate(
       return {
         synced: { ...fetched, contentDir: managed.localRoot, cacheDir: liveRepo, extractedDir: liveRepo },
         staged: {
-          unchanged: gitOrThrow(liveRepo, ["rev-parse", "HEAD"]) === gitOrThrow(stagedRepo, ["rev-parse", "HEAD"]),
-          publish: () => fastForwardCheckout(liveRepo, stagedRepo),
+          unchanged:
+            gitOrThrow(liveRepo, ["rev-parse", "HEAD"]) === gitOrThrow(stagedRepo, ["rev-parse", "HEAD"]) &&
+            expectedUpstream?.revision === originUpstream(stagedRepo)?.revision &&
+            originUpstream(liveRepo)?.revision === expectedUpstream?.revision,
+          publish: () => fastForwardCheckout(liveRepo, stagedRepo, expectedUpstream),
           cleanup: () => cleanupDirectoryBestEffort(stagingParent, "bundle update"),
         },
       };
@@ -685,7 +735,6 @@ async function syncGitPlainSource(
   config: AkmConfig,
   gitSource: ConfiguredSource,
   stashDir: string,
-  lockMode: UpdateLockMode,
 ): Promise<{ item: UpdatePlainSyncedItem; index: IndexResult }> {
   const id = gitSource.name ?? gitSource.url ?? "";
   const ref = gitSource.url ?? "";
@@ -699,6 +748,7 @@ async function syncGitPlainSource(
     // A writable mirror may carry local commits: pull into a copy, then
     // fast-forward the live checkout to it.
     const liveCheckout = component.writable && fs.existsSync(livePaths.repoDir);
+    const expectedUpstream = liveCheckout ? originUpstream(livePaths.repoDir) : undefined;
     if (liveCheckout) fs.cpSync(livePaths.rootDir, stagedPaths.rootDir, { recursive: true, preserveTimestamps: true });
     await syncMirroredRepo(gitSource, {
       force: true,
@@ -708,8 +758,8 @@ async function syncGitPlainSource(
         ? { credential: resolveSecret(gitSource.credential, storeSecretResolver.resolveSecret) }
         : {}),
     });
-    const index = await publishAndIndex(stashDir, lockMode, () => {
-      if (liveCheckout) fastForwardCheckout(livePaths.repoDir, stagedPaths.repoDir);
+    const index = await publishAndIndex(stashDir, () => {
+      if (liveCheckout) fastForwardCheckout(livePaths.repoDir, stagedPaths.repoDir, expectedUpstream);
       else replaceDirectory(stagedPaths.rootDir, livePaths.rootDir);
     });
     return { item: { id, kind: "git", ref }, index };
@@ -727,7 +777,6 @@ async function syncGitPlainSource(
 async function syncWebsitePlainSource(
   websiteSource: ConfiguredSource,
   stashDir: string,
-  lockMode: UpdateLockMode,
 ): Promise<{ item: UpdatePlainSyncedItem; index: IndexResult }> {
   const id = websiteSource.name ?? websiteSource.url ?? "";
   await createWebsiteProvider(websiteSource).sync({
@@ -735,7 +784,7 @@ async function syncWebsitePlainSource(
     secrets: storeSecretResolver,
     ensureWebsiteMirror,
   });
-  const index = await reindexAfterUpdate(stashDir, lockMode);
+  const index = await reindexAfterUpdate(stashDir);
   return { item: { id, kind: "website", ref: websiteSource.url ?? "" }, index };
 }
 
@@ -746,9 +795,8 @@ async function updateGitSource(
   target: string,
   all: boolean,
   gitSource: ConfiguredSource,
-  lockMode: UpdateLockMode,
 ): Promise<UpdateResponse> {
-  const synced = await syncGitPlainSource(config, gitSource, stashDir, lockMode);
+  const synced = await syncGitPlainSource(config, gitSource, stashDir);
   return buildUpdateResponse(stashDir, target, all, [], { plainSynced: [synced.item], index: synced.index });
 }
 
@@ -758,9 +806,8 @@ async function updateWebsiteSource(
   target: string,
   all: boolean,
   websiteSource: ConfiguredSource,
-  lockMode: UpdateLockMode,
 ): Promise<UpdateResponse> {
-  const synced = await syncWebsitePlainSource(websiteSource, stashDir, lockMode);
+  const synced = await syncWebsitePlainSource(websiteSource, stashDir);
   return buildUpdateResponse(stashDir, target, all, [], { plainSynced: [synced.item], index: synced.index });
 }
 
@@ -770,11 +817,13 @@ async function updateFilesystemSource(
   target: string,
   all: boolean,
   filesystemSource: ConfiguredSource,
-  lockMode: UpdateLockMode,
 ): Promise<UpdateResponse> {
   const id = filesystemSource.name ?? filesystemSource.path ?? target;
   const ref = filesystemSource.path ?? target;
-  const index = await withIndexBuildLock(undefined, (build) => build({ stashDir, hydrateSources: false }), lockMode);
+  const index = await withIndexBuildLock((build) => build({ stashDir, hydrateSources: false }));
+  if (isSkippedIndexBuild(index)) {
+    return buildUpdateResponse(stashDir, target, all, [], { skipped: [skippedFilesystemOutcome(id)], index });
+  }
   if (!index.scanComplete) {
     return buildUpdateResponse(stashDir, target, all, [], {
       skipped: [incompleteFilesystemOutcome(id)],
@@ -830,7 +879,6 @@ async function updateManagedInstall(
   managed: ManagedInstall,
   force: boolean,
   stashDir: string,
-  lockMode: UpdateLockMode,
 ): Promise<{ item: UpdateResultItem; index?: IndexResult }> {
   const unchanged = await unchangedManagedItem(managed, force);
   if (unchanged) return { item: unchanged };
@@ -867,7 +915,7 @@ async function updateManagedInstall(
       (managed.resolvedVersion ?? "") === (synced.resolvedVersion ?? "");
     const index = nothingNew
       ? undefined
-      : await publishAndIndex(stashDir, lockMode, async () => {
+      : await publishAndIndex(stashDir, async () => {
           staged.publish();
           await upsertLockEntry({
             id: managed.bundleKey,
@@ -964,14 +1012,11 @@ export async function akmUpdate(input?: {
   all?: boolean;
   force?: boolean;
   stashDir?: string;
-  /** `--skip-if-locked`: throw `INDEX_DB_CONTENDED` at once when another build holds the rebuild lock. */
-  skipIfLocked?: boolean;
 }): Promise<UpdateResponse> {
   const stashDir = input?.stashDir ?? resolveStashDir();
   const target = input?.target?.trim();
   const all = input?.all === true;
   const force = input?.force === true;
-  const lockMode: UpdateLockMode = input?.skipIfLocked ? "try" : "wait";
   const config = loadConfig();
   const managedInstalls = listManagedInstalls(config);
 
@@ -979,7 +1024,7 @@ export async function akmUpdate(input?: {
     // Registry-managed install (lock-backed) — re-download from its locator.
     const managed = resolveManagedTarget(config, target);
     if (managed) {
-      const updated = await updateManagedInstall(managed, force, stashDir, lockMode);
+      const updated = await updateManagedInstall(managed, force, stashDir);
       return buildUpdateResponse(stashDir, target, all, [updated.item], {
         index: updated.index ?? readCurrentIndexSummary(),
       });
@@ -1004,7 +1049,7 @@ export async function akmUpdate(input?: {
       }
       return false;
     });
-    if (gitMatch) return updateGitSource(config, stashDir, target, all, gitMatch, lockMode);
+    if (gitMatch) return updateGitSource(config, stashDir, target, all, gitMatch);
 
     const websiteMatch = stashes.find((s) => {
       if (s.type !== "website") return false;
@@ -1013,7 +1058,7 @@ export async function akmUpdate(input?: {
       if (resolvedPath && s.path && path.resolve(s.path) === resolvedPath) return true;
       return false;
     });
-    if (websiteMatch) return updateWebsiteSource(stashDir, target, all, websiteMatch, lockMode);
+    if (websiteMatch) return updateWebsiteSource(stashDir, target, all, websiteMatch);
 
     // Plain npm source (bundle without a lock) — sync via the registry
     // pipeline and promote to a managed install (see
@@ -1026,12 +1071,7 @@ export async function akmUpdate(input?: {
       return false;
     });
     if (npmMatch) {
-      const updated = await updateManagedInstall(
-        managedInstallViewOfPlainNpm(config, npmMatch),
-        force,
-        stashDir,
-        lockMode,
-      );
+      const updated = await updateManagedInstall(managedInstallViewOfPlainNpm(config, npmMatch), force, stashDir);
       return buildUpdateResponse(stashDir, target, all, [updated.item], {
         index: updated.index ?? readCurrentIndexSummary(),
       });
@@ -1042,7 +1082,7 @@ export async function akmUpdate(input?: {
       if (source.name === target) return true;
       return resolvedPath !== undefined && source.path !== undefined && path.resolve(source.path) === resolvedPath;
     });
-    if (filesystemMatch) return updateFilesystemSource(stashDir, target, all, filesystemMatch, lockMode);
+    if (filesystemMatch) return updateFilesystemSource(stashDir, target, all, filesystemMatch);
   }
 
   const enabledManagedInstalls = all
@@ -1055,12 +1095,11 @@ export async function akmUpdate(input?: {
   let latestIndex: IndexResult | undefined;
   for (const managed of selected) {
     try {
-      const updated = await updateManagedInstall(managed, force, stashDir, lockMode);
+      const updated = await updateManagedInstall(managed, force, stashDir);
       processed.push(updated.item);
       latestIndex = updated.index ?? latestIndex;
     } catch (error) {
       if (!all) throw error;
-      rethrowIfSkipped(error, lockMode);
       skipped.push(updateFailureOutcome(managed.installId, sourceKindForInstall(managed.source), error));
     }
   }
@@ -1082,27 +1121,21 @@ export async function akmUpdate(input?: {
       const id = plain.name ?? plain.path ?? plain.url ?? "";
       try {
         if (plain.type === "git") {
-          const updated = await syncGitPlainSource(config, plain, stashDir, lockMode);
+          const updated = await syncGitPlainSource(config, plain, stashDir);
           plainSynced.push(updated.item);
           latestIndex = updated.index;
         } else if (plain.type === "npm") {
-          const updated = await updateManagedInstall(
-            managedInstallViewOfPlainNpm(config, plain),
-            force,
-            stashDir,
-            lockMode,
-          );
+          const updated = await updateManagedInstall(managedInstallViewOfPlainNpm(config, plain), force, stashDir);
           processed.push(updated.item);
           latestIndex = updated.index ?? latestIndex;
         } else if (plain.type === "website") {
-          const updated = await syncWebsitePlainSource(plain, stashDir, lockMode);
+          const updated = await syncWebsitePlainSource(plain, stashDir);
           plainSynced.push(updated.item);
           latestIndex = updated.index;
         } else {
           filesystemSources.push(plain);
         }
       } catch (error) {
-        rethrowIfSkipped(error, lockMode);
         skipped.push(updateFailureOutcome(id, plain.type as SourceKind, error));
       }
     }
@@ -1113,13 +1146,13 @@ export async function akmUpdate(input?: {
         // for the final `--all` outcome. Retry once after every source update;
         // a genuinely missing filesystem root remains incomplete and is
         // reported below without claiming reconciliation.
-        if (!latestIndex?.scanComplete)
-          latestIndex = await withIndexBuildLock(
-            undefined,
-            (build) => build({ stashDir, hydrateSources: false }),
-            lockMode,
-          );
-        if (latestIndex.scanComplete) {
+        if (!latestIndex || isSkippedIndexBuild(latestIndex) || !latestIndex.scanComplete)
+          latestIndex = await withIndexBuildLock((build) => build({ stashDir, hydrateSources: false }));
+        if (isSkippedIndexBuild(latestIndex)) {
+          for (const source of filesystemSources) {
+            skipped.push(skippedFilesystemOutcome(source.name ?? source.path ?? ""));
+          }
+        } else if (latestIndex.scanComplete) {
           for (const source of filesystemSources) {
             plainSynced.push({
               id: source.name ?? source.path ?? "",
@@ -1133,7 +1166,6 @@ export async function akmUpdate(input?: {
           }
         }
       } catch (error) {
-        rethrowIfSkipped(error, lockMode);
         for (const source of filesystemSources) {
           skipped.push(updateFailureOutcome(source.name ?? source.path ?? "", "filesystem", error));
         }
@@ -1152,11 +1184,6 @@ function sourceKindForInstall(source: InstallKind): SourceKind {
   if (source === "local") return "filesystem";
   if (source === "github") return "git";
   return source;
-}
-
-/** Under `--skip-if-locked` a held rebuild lock skips the whole update; it is not one source's failure. */
-function rethrowIfSkipped(error: unknown, lockMode: UpdateLockMode): void {
-  if (lockMode === "try" && error instanceof TransientError && error.code === "INDEX_DB_CONTENDED") throw error;
 }
 
 function updateFailureOutcome(id: string, kind: SourceKind, error: unknown): UpdateSkippedItem {

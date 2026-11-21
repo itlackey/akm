@@ -47,7 +47,7 @@ written are in [Core Principles](akm-core-principles.md).
   `tests/resolve-ref.test.ts` and
   `tests/contracts/ref-resolver-contract.test.ts`.
 - **Execution happens only through named surfaces.** Workflow runs, tasks,
-  agent and command dispatch, `env run` and `secret run`, the improve and
+  agent and command dispatch, `akm exec`, the improve and
   proposal processes, index passes, and fetcher modules in the working
   bundle's `scripts/wiki-fetchers/` directory during website sync. `search`
   and `show` execute nothing; a script runs only as a task or workflow

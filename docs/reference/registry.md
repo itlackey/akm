@@ -137,16 +137,9 @@ What `bundle add` does:
    for authors who want to review their own bundle.
 3. Finds the bundle root: the package root when it looks like a bundle in any
    layout akm recognizes (see [Bundle types](bundle-types.md)), otherwise the
-   shallowest nested directory that does. If the package's `package.json` has
-   an `akm.include` array, only those paths are copied.
+   shallowest nested directory that does.
 4. Saves the source to `bundles` in `config.json`, records the resolved version
    and revision in `akm.lock` under the data directory, and re-indexes.
-
-```jsonc
-{ "akm": { "include": ["scripts", "skills", "commands"] } }   // package.json
-```
-
-`include` paths are relative to the package root.
 
 ### Managing installed bundles
 
@@ -246,7 +239,6 @@ registry/
     1.2.3/                 # resolved version, reused across installs
       artifact.tar.gz      # downloaded archive
       extracted/           # extracted contents
-      selected/            # subset from akm.include, if any
 ```
 
 The version directory is the resolved version for `npm` and `git` sources, or a

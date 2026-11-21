@@ -7,14 +7,14 @@
  * monolith — no behavior change.
  */
 import { z } from "zod";
+import { DETAIL_LEVELS, OUTPUT_FORMATS } from "../../../output/context";
 
 // ── Output ──────────────────────────────────────────────────────────────────
 
 export const OutputConfigSchema = z
   .object({
-    // D7 — every `--format` value is a valid default. Kept in step with OUTPUT_FORMATS
-    // (`src/output/context.ts`). The retired `html` is dropped with a warning before validation.
-    format: z.enum(["json", "yaml", "text", "jsonl", "md"]).optional(),
-    detail: z.enum(["brief", "normal", "full"]).optional(),
+    // D7 — every `--format` value is a valid default. The retired `html` is dropped with a warning before validation.
+    format: z.enum(OUTPUT_FORMATS).optional(),
+    detail: z.enum(DETAIL_LEVELS).optional(),
   })
   .passthrough();

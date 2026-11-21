@@ -27,6 +27,7 @@ import { defineGroupCommand, defineJsonCommand, output } from "../../cli/shared"
 import { renameBundle } from "../../core/bundle-rename";
 import { NotFoundError, TransientError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
+import { stderr } from "../../core/stdio";
 import { warn } from "../../core/warn";
 import type { SourceKind } from "../../sources/types";
 import { akmTasksSync } from "../tasks/tasks";
@@ -111,7 +112,7 @@ const removeCommand = defineJsonCommand({
       yes: args.yes === true,
     });
     if (!confirmed) {
-      process.stderr.write("Aborted.\n");
+      stderr().write("Aborted.\n");
       return;
     }
     const result = await akmRemove({ target: args.target });
@@ -167,7 +168,6 @@ const updateCommand = defineJsonCommand({
         target: args.target,
         all: args.all,
         force: args.force,
-        skipIfLocked: args["skip-if-locked"],
       });
     } catch (error) {
       const skippable = isSkippableBundleUpdateLock(error);

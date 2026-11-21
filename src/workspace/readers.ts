@@ -4,15 +4,26 @@
 
 /** Readers shared by the workspace operations: the read-only state database, the stash directory, per-section isolation and caps. */
 
+import fs from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import { resolveStashDir } from "../core/common";
 import { type AkmConfig, getConfigValueSource, loadConfig, sanitizeConfigForWrite } from "../core/config/config";
 import { bundleKeyForContentRoot } from "../core/config/config-sources";
 import { UsageError } from "../core/errors";
+import { getStateDbPath } from "../core/state-db";
 import { resolveWorkingStashTarget } from "../core/write-source";
+import { readUsableIndex } from "../indexer/index-readiness";
 import { implicitStashDir } from "../indexer/search/search-source";
+import { getEntryIdByFilePath, getItemRefById } from "../storage/repositories/index-entries-repository";
 
 export { withReadonlyStateDb } from "../core/state-db";
+
+/** Why `withReadonlyStateDb` could not read: there is no state.db yet, or akm has migrations to apply to it. */
+export type StateDbUnavailable = { available: false; reason: "absent" | "needs-migration" };
+
+export function stateDbUnavailable(): StateDbUnavailable {
+  return { available: false, reason: fs.existsSync(getStateDbPath()) ? "needs-migration" : "absent" };
+}
 
 export function tryStashDir(): string | null {
   try {
@@ -105,4 +116,12 @@ export function automaticWriteTarget(config: AkmConfig) {
   } catch {
     return null; // No AKM_BUNDLE_DIR and no usable default bundle: writes need an explicit target.
   }
+}
+
+/** The durable `bundle//conceptId` of the indexed asset at `filePath`, the key feedback rows use. */
+export function durableRefForPath(filePath: string): string | null {
+  return readUsableIndex((db) => {
+    const id = getEntryIdByFilePath(db, filePath);
+    return id === undefined ? null : getItemRefById(db, id);
+  }, null);
 }
