@@ -45,7 +45,6 @@ export interface HealthCheckContext {
   taskRowCount: number;
   /** The window's runs by what started them, and how many tasks they belong to. */
   taskRuns: TaskRunCounts;
-  /** Fraction of task_history rows in the window whose status is `failed` (0..1, raw). */
   /** Failed share of the window's runs; null when there were none. */
   taskFailRate: number | null;
   /** Active runs whose owner process is gone (`classifyAttempt`). */
