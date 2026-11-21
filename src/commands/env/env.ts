@@ -69,16 +69,57 @@ export function listKeys(envPath: string): { keys: string[] } {
 }
 
 /**
+ * One env-line shape, as dotenv reads it, except that the unquoted alternative takes the
+ * rest of the line so `unquotedValue` can decide where a comment starts.
+ */
+const ENV_ASSIGNMENT =
+  /^(\s*(?:export\s+)?[\w.-]+(?:\s*=\s*?|:\s+?))(\s*'(?:\\'|[^'])*'|\s*"(?:\\"|[^"])*"|\s*`(?:\\`|[^`])*`|[^\r\n]+)?\s*(?:#.*)?$/gm;
+
+/** The unquoted value on a line's remainder: a `#` starts a comment only at its start or after a space or tab. */
+function unquotedValue(rest: string): string {
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === "#" && (i === 0 || rest[i - 1] === " " || rest[i - 1] === "\t")) return rest.slice(0, i).trim();
+  }
+  return rest.trim();
+}
+
+/** `value` as one literal quoted dotenv value, or undefined when no quote form holds it unchanged. */
+function literalQuoted(value: string): string | undefined {
+  for (const quote of ["'", "`"]) if (!value.includes(quote)) return `${quote}${value}${quote}`;
+  if (!value.includes('"') && !/\\[nr]/.test(value)) return `"${value}"`;
+  return undefined;
+}
+
+/**
+ * Parse env file text into KEY/value pairs. This is the one parser every env-file read uses.
+ *
+ * In an unquoted value a `#` starts a comment only at the start of the value or after a space
+ * or tab (as bash `source` and docker compose read it), so `URL=http://x/y#frag` keeps its `#`.
+ * Only such values are rewritten into a literal quoted form; dotenv parses the rest (quoting,
+ * `export`, multi-line values, escapes).
+ */
+export function parseEnvText(content: string | Buffer): Record<string, string> {
+  const text = content.toString().replace(/\r\n?/g, "\n");
+  const rewritten = text.replace(ENV_ASSIGNMENT, (line, prefix: string, rest: string | undefined) => {
+    if (rest === undefined || /^\s*['"`]/.test(rest)) return line;
+    const value = unquotedValue(rest);
+    if (!value.includes("#")) return line;
+    const quoted = literalQuoted(value);
+    return quoted === undefined ? line : `${prefix}${quoted}`;
+  });
+  return dotenv.parse(rewritten);
+}
+
+/**
  * Read all KEY=value pairs from an env file. Intended for programmatic callers
  * that need to inject values into a process environment. Callers MUST NOT write
  * the returned values to stdout or any logged output.
  *
- * Value parsing (quoting, escapes, multi-line, etc.) is delegated to dotenv.
+ * Value parsing is `parseEnvText`.
  */
 export function loadEnv(envPath: string): Record<string, string> {
   if (!fs.existsSync(envPath)) return {};
-  const buf = fs.readFileSync(envPath);
-  return dotenv.parse(buf);
+  return parseEnvText(fs.readFileSync(envPath));
 }
 
 /**
@@ -110,21 +151,6 @@ export function buildShellExportScript(envPath: string): string {
     lines.push(`export ${key}='${escaped}'`);
   }
   return lines.length > 0 ? `${lines.join("\n")}\n` : "";
-}
-
-/**
- * Key names whose UNQUOTED value contains `#`. dotenv treats `#` there as a
- * comment start and drops the rest (`A=#x` parses to ""), so the caller warns.
- * Returns key names only — never any value text.
- */
-export function keysWithUnquotedHash(content: string): string[] {
-  const keys = new Set<string>();
-  for (const line of content.split(/\r?\n/)) {
-    const m = /^\s*(?:export\s+)?([\w.-]+)(?:\s*=|:\s)\s*([^'"`\s].*)$/.exec(line);
-    if (m?.[2]?.includes("#") && m[1]) keys.add(m[1]);
-  }
-  const parsed = dotenv.parse(content);
-  return [...keys].filter((k) => k in parsed);
 }
 
 /** Create an empty env file (does nothing if it already exists). */

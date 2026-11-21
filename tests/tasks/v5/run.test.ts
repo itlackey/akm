@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { bashValue, ENV_HASH_CASES } from "../../_helpers/env-hash-cases";
 import { rule, useWorlds, world } from "./world";
 
 useWorlds();
@@ -501,6 +502,25 @@ describe("a clean environment", () => {
     const state = json(await w.start("tasks/t"));
     expect([state.a, state.b]).toEqual(["eu-west|debug|/opt/tools", "eu-west|info"]);
   });
+
+  for (const c of ENV_HASH_CASES) {
+    test(`env: binding reads a # in an env value as the file's author wrote it: ${c.name}`, async () => {
+      const w = world({
+        assets: { "env/hash": c.text },
+        tasks: {
+          "tasks/t": {
+            env: ["env/hash"],
+            steps: [
+              { name: "a", exec: `printf '%s' "$${c.key}"` },
+              { name: "look", exec: SHOW_STATE },
+            ],
+          },
+        },
+      });
+      expect(json(await w.start("tasks/t")).a).toBe(c.value);
+      if (c.bash) expect(bashValue(c.text, c.key)).toBe(c.value);
+    });
+  }
 
   test("akm run --env and --secret reach every step of the run and of the tasks it runs, and win", async () => {
     const seen: { prompt: string; env: Record<string, string> }[] = [];

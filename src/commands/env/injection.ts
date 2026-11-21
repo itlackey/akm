@@ -107,9 +107,12 @@ export function withoutInjectionFlags(rawArgs: readonly string[]): string[] {
   return withoutFlags(rawArgs, INJECTION_FLAGS);
 }
 
-/** Make `cwd` (and any parents) if missing and return it absolute; a relative one is from the folder akm was started in. */
+/** Make `cwd` (and any parents) if missing and return it absolute; a path that exists and is not a folder is refused; a relative one is from the folder akm was started in. */
 export function ensureWorkingFolder(cwd: string): string {
   const folder = path.resolve(cwd);
+  if (fs.existsSync(folder) && !fs.statSync(folder).isDirectory()) {
+    throw new UsageError("--cwd <path> is not a folder", "INVALID_FLAG_VALUE");
+  }
   fs.mkdirSync(folder, { recursive: true });
   return folder;
 }
