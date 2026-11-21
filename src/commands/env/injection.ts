@@ -16,10 +16,11 @@ import path from "node:path";
 import type { ArgsDef } from "citty";
 import { getParsedInvocation, type ParsedInvocation } from "../../cli/invocation";
 import { makeSecretRef, resolveSecretPath } from "../../core/env-secret-ref";
-import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
+import { NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { parseSecretSpec } from "../../core/ref-token";
 import { readValue } from "../../core/secret-value";
+import { endBySignal } from "../../core/signal-observers";
 import { type ManagedSubprocessResult, runManagedSubprocess } from "../../core/subprocess";
 import { withRetries } from "../../execution/retry";
 import type { ScriptOrigin } from "../../tasks/prepare/script-capture";
@@ -107,13 +108,39 @@ export function withoutInjectionFlags(rawArgs: readonly string[]): string[] {
   return withoutFlags(rawArgs, INJECTION_FLAGS);
 }
 
-/** Make `cwd` (and any parents) if missing and return it absolute; a path that exists and is not a folder is refused; a relative one is from the folder akm was started in. */
-export function ensureWorkingFolder(cwd: string): string {
+function refuseWorkingFolder(folder: string, code: string | undefined, where: string): UsageError {
+  return new UsageError(`--cwd ${folder} cannot be made: ${code ?? "an error"} on ${where}`, "INVALID_FLAG_VALUE");
+}
+
+/**
+ * Refuse a working folder that cannot be made. An existing path must be a folder; otherwise the nearest
+ * existing ancestor must be a folder this process can write to and enter. Returns the folder, absolute.
+ */
+export function assertWorkingFolderCanBeMade(cwd: string): string {
   const folder = path.resolve(cwd);
-  if (fs.existsSync(folder) && !fs.statSync(folder).isDirectory()) {
-    throw new UsageError("--cwd <path> is not a folder", "INVALID_FLAG_VALUE");
+  if (fs.existsSync(folder)) {
+    if (!fs.statSync(folder).isDirectory()) throw new UsageError("--cwd <path> is not a folder", "INVALID_FLAG_VALUE");
+    return folder;
   }
-  fs.mkdirSync(folder, { recursive: true });
+  let ancestor = path.dirname(folder);
+  while (!fs.existsSync(ancestor)) ancestor = path.dirname(ancestor);
+  try {
+    if (!fs.statSync(ancestor).isDirectory()) throw Object.assign(new Error("not a folder"), { code: "ENOTDIR" });
+    fs.accessSync(ancestor, fs.constants.W_OK | fs.constants.X_OK);
+  } catch (error) {
+    throw refuseWorkingFolder(folder, (error as NodeJS.ErrnoException).code, ancestor);
+  }
+  return folder;
+}
+
+/** Make `cwd` (and any parents) if missing and return it absolute; a folder that cannot be made is refused ({@link assertWorkingFolderCanBeMade}); a relative one is from the folder akm was started in. */
+export function ensureWorkingFolder(cwd: string): string {
+  const folder = assertWorkingFolderCanBeMade(cwd);
+  try {
+    fs.mkdirSync(folder, { recursive: true });
+  } catch (error) {
+    throw refuseWorkingFolder(folder, (error as NodeJS.ErrnoException).code, path.dirname(folder));
+  }
   return folder;
 }
 
@@ -153,7 +180,17 @@ export async function runProgram(options: RunProgramOptions): Promise<ManagedSub
     (r) => r.spawnError === undefined && !r.aborted && (r.timedOut || r.exitCode !== 0),
   );
   if (result.spawnError) throw spawnFailure(argv[0] as string, result.spawnError, options.script);
+  // A passthrough child's status is akm's: one that died of a signal ends akm by the same signal.
+  if (!options.capture && result.signal && !result.timedOut && !result.aborted) endBySignal(result.signal);
   return result;
+}
+
+function isFolder(file: string): boolean {
+  try {
+    return fs.statSync(file).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 /** The error for a program that could not be started; `script` names the script whose command it was. */
@@ -178,11 +215,14 @@ export function spawnFailure(program: string, error: Error, script?: ScriptOrigi
     );
   }
   if (code === "EACCES") {
-    return new ConfigError(
-      `Command not executable: ${program}`,
-      "STASH_DIR_UNREADABLE",
-      `Add execute permission ('chmod +x ${program}') or invoke via an interpreter.`,
-    );
+    if (isFolder(program)) {
+      return new NotFoundError(
+        `Command not executable: ${program} is a folder, not a program`,
+        "COMMAND_NOT_EXECUTABLE",
+        "Name the program inside it.",
+      );
+    }
+    return new NotFoundError(`Command not executable: ${program}`, "COMMAND_NOT_EXECUTABLE");
   }
   return error;
 }

@@ -19,7 +19,6 @@ import { STANDALONE_FROZEN_SCRIPT_ARG } from "../standalone-script-entry";
 /** The program and leading arguments a script with no `#!` first line is started with, by extension. */
 const EXTENSION_PROGRAMS: Readonly<Record<string, readonly string[]>> = Object.freeze({
   ".sh": ["sh"],
-  ".ps1": ["powershell", "-NoProfile", "-NonInteractive", "-File"],
   ".cmd": ["cmd", "/d", "/s", "/c"],
   ".bat": ["cmd", "/d", "/s", "/c"],
   ".rb": ["ruby"],
@@ -145,6 +144,9 @@ export function scriptCommand(
     );
   }
   if (extension === ".py") return [platform === "win32" ? "python" : "python3", file, ...args];
+  // PowerShell 7 installs only `pwsh` on Linux and macOS.
+  if (extension === ".ps1")
+    return [platform === "win32" ? "powershell" : "pwsh", "-NoProfile", "-NonInteractive", "-File", file, ...args];
   const program = EXTENSION_PROGRAMS[extension];
   if (!program) {
     throw new UsageError(
