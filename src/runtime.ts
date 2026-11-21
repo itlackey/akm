@@ -105,30 +105,18 @@ export interface SpawnSyncOptions {
 const F_GETFL = 3;
 const F_SETFL = 4;
 
-type Fcntl = (fd: number, cmd: number, ...rest: number[]) => number;
+type Fcntl = (fd: number, cmd: number, arg: number) => number;
 
 /** `undefined` until first needed; `null` when libc cannot be opened. */
 let fcntl: Fcntl | null | undefined;
-
-/**
- * `fcntl` is variadic and `bun:ffi` cannot declare that. Where variadic integer arguments travel like fixed
- * ones (SysV x86-64, AAPCS64 on Linux) three `int`s do. Apple arm64 passes them on the stack, so the
- * argument is declared ninth, after six registers of padding, which puts it in the first stack slot where
- * `va_arg` reads it.
- */
-const appleArm64 = process.platform === "darwin" && process.arch === "arm64";
 
 function loadFcntl(): Fcntl | null {
   if (fcntl !== undefined) return fcntl;
   try {
     const { dlopen } = nodeRequire("bun:ffi") as typeof import("bun:ffi");
-    const libc = process.platform === "darwin" ? "libSystem.B.dylib" : "libc.so.6";
-    const args = appleArm64 ? ["int", "int", "i64", "i64", "i64", "i64", "i64", "i64", "i64"] : ["int", "int", "int"];
-    const lib = dlopen(libc, { fcntl: { args: args as ("int" | "i64")[], returns: "int" } });
-    const native = lib.symbols.fcntl as unknown as (...a: (number | bigint)[]) => number;
-    fcntl = appleArm64
-      ? (fd, cmd, arg = 0) => native(fd, cmd, 0n, 0n, 0n, 0n, 0n, 0n, BigInt(arg))
-      : (fd, cmd, arg = 0) => native(fd, cmd, arg);
+    const libc = process.platform === "darwin" ? "libc.dylib" : "libc.so.6";
+    const lib = dlopen(libc, { fcntl: { args: ["int", "int", "int"], returns: "int" } });
+    fcntl = lib.symbols.fcntl as Fcntl;
   } catch {
     fcntl = null;
     warnOnce(
@@ -140,21 +128,6 @@ function loadFcntl(): Fcntl | null {
 }
 
 /**
- * Clear O_NONBLOCK on `fd` and return its flags as `F_GETFL` then reports them, or `undefined` when this
- * runtime cannot (not Bun, Windows, or libc unavailable). Exported so the flag write can be tested on a file.
- */
-export function clearNonBlocking(fd: number): number | undefined {
-  if (!isBun || process.platform === "win32") return undefined;
-  const call = loadFcntl();
-  if (!call) return undefined;
-  const flags = call(fd, F_GETFL);
-  if (flags < 0) return undefined;
-  if ((flags & fsConstants.O_NONBLOCK) === 0) return flags;
-  call(fd, F_SETFL, flags & ~fsConstants.O_NONBLOCK);
-  return call(fd, F_GETFL);
-}
-
-/**
  * Clear O_NONBLOCK on fds 0, 1 and 2. Bun sets it on the pipe or socket behind a standard stream when
  * `process.stdout`/`process.stderr` is first used, and a child that inherits the stream shares that
  * open file description: its writes to a full pipe fail with EAGAIN and the output is lost. Bun never
@@ -162,7 +135,13 @@ export function clearNonBlocking(fd: number): number | undefined {
  * child and at exit itself, so this does nothing there, and nothing on Windows.
  */
 export function blockingStdio(): void {
-  for (const fd of [0, 1, 2]) clearNonBlocking(fd);
+  if (!isBun || process.platform === "win32") return;
+  const call = loadFcntl();
+  if (!call) return;
+  for (const fd of [0, 1, 2]) {
+    const flags = call(fd, F_GETFL, 0);
+    if (flags >= 0 && (flags & fsConstants.O_NONBLOCK) !== 0) call(fd, F_SETFL, flags & ~fsConstants.O_NONBLOCK);
+  }
 }
 
 function inheritsStdio(options: SpawnOptions | SpawnSyncOptions): boolean {

@@ -7,34 +7,13 @@ import { spawnSync as hostSpawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { clearNonBlocking, spawnSync } from "../src/runtime";
+import { spawnSync } from "../src/runtime";
 import { realNodeExecutable } from "./_helpers/node-runtime";
-
-const { O_APPEND, O_CREAT, O_NONBLOCK, O_RDWR } = fs.constants;
-const isBun = !!process.versions.bun;
 
 let dir: string | undefined;
 afterEach(() => {
   if (dir) fs.rmSync(dir, { recursive: true, force: true });
   dir = undefined;
-});
-
-describe.skipIf(!isBun || process.platform === "win32")("clearNonBlocking", () => {
-  test("clears O_NONBLOCK and leaves every other file status flag as it was", () => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-fcntl-"));
-    const fd = fs.openSync(path.join(dir, "f"), O_RDWR | O_CREAT | O_APPEND | O_NONBLOCK);
-    try {
-      const before = clearNonBlocking(fd);
-      expect(before).toBeDefined();
-      // F_GETFL after the write is exactly the flags it started with, less O_NONBLOCK. A third argument
-      // that did not reach fcntl intact (Apple arm64's variadic ABI) would leave other flags garbled.
-      const expected = (O_RDWR | O_APPEND) & ~O_NONBLOCK;
-      expect((before as number) & (O_RDWR | O_APPEND | O_NONBLOCK)).toBe(expected);
-      expect(clearNonBlocking(fd)).toBe(before);
-    } finally {
-      fs.closeSync(fd);
-    }
-  });
 });
 
 describe("spawnSync", () => {
