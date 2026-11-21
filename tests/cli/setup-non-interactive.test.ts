@@ -20,7 +20,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { main as cliMain } from "../../src/cli";
-import { consumeConfigFileFlag, type FlagScanCommand } from "../../src/cli/unknown-flags";
+import { createParsedInvocation } from "../../src/cli/invocation";
+import { consumeConfigFileFlag as consume, type FlagScanCommand } from "../../src/cli/unknown-flags";
 import { getConfigPath } from "../../src/core/paths";
 import { runCliCapture } from "../_helpers/cli";
 import {
@@ -87,17 +88,20 @@ describe("akm setup without a TTY", () => {
       ["setup", "--yes", "--config={}"],
       ["--config", '{"a":1}', "setup"],
     ]) {
-      expect(() => consumeConfigFileFlag(cliMain as FlagScanCommand, argv)).toThrow(/Unknown flag "--config"/);
+      expect(() => consume(cliMain as FlagScanCommand, createParsedInvocation(["bun", "cli.ts", ...argv]))).toThrow(
+        /Unknown flag "--config"/,
+      );
     }
     try {
-      consumeConfigFileFlag(cliMain as FlagScanCommand, ["setup", "--config", "{}"]);
+      consume(cliMain as FlagScanCommand, createParsedInvocation(["bun", "cli.ts", "setup", "--config", "{}"]));
     } catch (error) {
       expect((error as { hint(): string }).hint()).toContain("--endpoint <url> --yes");
     }
     // A real file path still selects a config file for setup.
-    expect(consumeConfigFileFlag(cliMain as FlagScanCommand, ["setup", "--config", "/tmp/x.json"]).file).toBe(
-      "/tmp/x.json",
-    );
+    expect(
+      consume(cliMain as FlagScanCommand, createParsedInvocation(["bun", "cli.ts", "setup", "--config", "/tmp/x.json"]))
+        .file,
+    ).toBe("/tmp/x.json");
   });
 });
 

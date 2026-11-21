@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { readEvents } from "../../../src/core/events";
+import { _resetWarnOnceForTests } from "../../../src/core/warn";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { readTaskHistory } from "../../../src/tasks/run/task-history";
 import { getWorkflowStatus, listWorkflowRuns } from "../../../src/workflows/runtime/runs";
@@ -332,6 +333,75 @@ describe("akm run scripts/<file>", () => {
     expect(lines()).toEqual(["a", "-x", "--y=1", "--timeout", "5", "--env", "e", "--", "--z"]);
   });
 
+  test("a script receives --help, -h, -q, --verbose, --bundle, --format, --config and -- as given", async () => {
+    const tail = [
+      "--help",
+      "-h",
+      "-q",
+      "--verbose",
+      "--bundle",
+      "other",
+      "--format",
+      "json",
+      "--config",
+      "f",
+      "--",
+      "x",
+    ];
+    const result = await runCliCapture(["run", "scripts/args.sh", ...tail]);
+    expect(result.code, result.stderr).toBe(0);
+    expect(lines()).toEqual(tail);
+  });
+
+  test("a script's tail changes nothing akm itself prints: -q after the ref does not hide a warning", async () => {
+    writeSandboxConfig({ improve: { stateGc: { collect: true } } });
+    const stderrOf = async (...tail: string[]) => {
+      _resetWarnOnceForTests();
+      return (await runCliCapture(["run", "scripts/args.sh", ...tail])).stderr;
+    };
+    const bare = await stderrOf();
+    expect(bare).toContain("Deprecated");
+    expect(await stderrOf("-q", "--verbose", "--help", "-h")).toBe(bare);
+    // Before the ref the same flag is akm's.
+    _resetWarnOnceForTests();
+    expect((await runCliCapture(["run", "-q", "scripts/args.sh"])).stderr).not.toContain("Deprecated");
+  });
+
+  test("a -- right after the ref is the script's argument, like every other token", async () => {
+    expect((await runCliCapture(["run", "scripts/args.sh", "--", "x"])).code).toBe(0);
+    expect(lines()).toEqual(["--", "x"]);
+    expect((await runCliCapture(["run", "scripts/args.sh", "--"])).code).toBe(0);
+    expect(lines()).toEqual(["--"]);
+  });
+
+  test("a broken config is reported for a script run, whose --help may be the script's own", async () => {
+    fs.writeFileSync(path.join(process.env.XDG_CONFIG_HOME as string, "akm", "config.json"), "{ not json");
+    const result = await runCliCapture(["run", "scripts/args.sh", "--help"]);
+    expect(result.code).toBe(78);
+    expect(result.stdout).not.toContain("USAGE");
+  });
+
+  test("--help after a ref that matches nothing is akm's", async () => {
+    const result = await runCliCapture(["run", "scripts/missing.sh", "--help"]);
+    expect(result.code, result.stderr).toBe(0);
+    expect(result.stdout).toContain("USAGE");
+  });
+
+  test("--bundle after a script ref is the script's, and before it is akm's", async () => {
+    const other = path.join(storage.root, "other");
+    write("scripts/args.sh", 'printf mine > "$B5_OUT"\n', other);
+    writeSandboxConfig({
+      bundles: {
+        fixture: { path: storage.stashDir, components: { main: { root: ".", adapter: "akm" } } },
+        other: { path: other, components: { main: { root: ".", adapter: "akm" } } },
+      },
+    });
+    expect((await runCliCapture(["run", "scripts/args.sh", "--bundle", "other"])).code).toBe(0);
+    expect(lines()).toEqual(["--bundle", "other"]);
+    expect((await runCliCapture(["run", "--bundle", "other", "scripts/args.sh"])).code).toBe(0);
+    expect(fs.readFileSync(out, "utf8")).toBe("mine");
+  });
+
   test("flags before the ref are akm's: --env injects and --cwd is where the script runs", async () => {
     write("env/vars.env", "B5_VAR=injected\n");
     write("scripts/where.sh", 'printf \'%s|%s\' "$B5_VAR" "$(pwd)" > "$B5_OUT"\n');
@@ -429,6 +499,33 @@ describe("akm run scripts/<file>", () => {
     const result = await runCliCapture(["run", "commands/review", "--cwd", cwd, "--max-retries", "1"]);
     expect(result.code, result.stderr).toBe(0);
     expect(fs.statSync(cwd).isDirectory()).toBe(true);
+  });
+
+  test("a task's flags after the ref are akm's: --format text still renders text", async () => {
+    const text = await runCliCapture(["run", "tasks/check", "--label=001", "--format", "text"]);
+    expect(text.code, text.stderr).toBe(0);
+    expect(() => JSON.parse(text.stdout)).toThrow();
+    expect(JSON.parse((await runCliCapture(["run", "tasks/check", "--label=001"])).stdout).shape).toBe("task-run");
+  });
+
+  test("a declared value input takes the next token as its value whatever it starts with", async () => {
+    write(
+      "tasks/who.yml",
+      'version: 4\nshell: sh\nrun: printf ok\ninputs:\n  who: { type: string, enum: ["-x"], required: true }\n',
+    );
+    const seen: string[] = [];
+    for (const flags of [["--who", "-x"], ["--who=-x"]]) {
+      const result = await runCliCapture(["run", "tasks/who", ...flags]);
+      expect(result.code, result.stderr).toBe(0);
+      seen.push(JSON.parse(result.stdout).result.status);
+    }
+    expect(seen).toEqual(["completed", "completed"]);
+  });
+
+  test("a task input error points at the task's declared inputs", async () => {
+    const result = await runCliCapture(["run", "tasks/check"]);
+    expect(result.code).toBe(2);
+    expect(JSON.parse(result.stderr || result.stdout).hint).toContain("akm show tasks/<name>");
   });
 
   test("a version 4 task keeps its own flag parsing: a required input named timeout is satisfied by --timeout", async () => {

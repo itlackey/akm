@@ -288,7 +288,8 @@ const USAGE_HINTS: Partial<Record<UsageErrorCode, string>> = {
   // Points at the two verbs that inspect a workflow source without executing it.
   WORKFLOW_SOURCE_INVALID:
     "Run `akm lint` to see the failing source location, or `akm doctor explain <ref>` to compile it without writing.",
-  INPUT_BINDING_INVALID: "Check the step's with: keys against the target's declared inputs.",
+  INPUT_BINDING_INVALID:
+    "Check the values against the task's declared inputs (`akm show tasks/<name>` lists them); for a step's with: keys, check them against the target's declared inputs.",
   TASK_TARGET_UNSUPPORTED:
     "Task definitions support command, script, workflow, and shell (run:) targets; akm/command is layered by callers.",
 };

@@ -8,6 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { shouldBypassConfigStartup } from "../../../src/cli";
+import { createParsedInvocation } from "../../../src/cli/invocation";
 import { computeTaskWindowRates } from "../../../src/commands/health/windows";
 import { buildTaskRunId, openLogsDatabase, queryTaskLogs } from "../../../src/core/logs-db";
 import { openStateDatabase } from "../../../src/core/state-db";
@@ -127,13 +128,17 @@ const successfulSpawn: SpawnFn = () => ({
 
 describe("tasks run attempt observability", () => {
   test("bypasses startup config only for task run with an id", () => {
-    expect(shouldBypassConfigStartup(["bun", "cli.ts", "task", "run", "nightly"])).toBe(true);
+    expect(shouldBypassConfigStartup(createParsedInvocation(["bun", "cli.ts", "task", "run", "nightly"]))).toBe(true);
     expect(
-      shouldBypassConfigStartup(["bun", "cli.ts", "--format", "json", "task", "run", "nightly", "--scheduled"]),
+      shouldBypassConfigStartup(
+        createParsedInvocation(["bun", "cli.ts", "--format", "json", "task", "run", "nightly", "--scheduled"]),
+      ),
     ).toBe(true);
-    expect(shouldBypassConfigStartup(["bun", "cli.ts", "task", "run", "--format", "md", "nightly"])).toBe(true);
-    expect(shouldBypassConfigStartup(["bun", "cli.ts", "task", "run"])).toBe(false);
-    expect(shouldBypassConfigStartup(["bun", "cli.ts", "task", "list"])).toBe(false);
+    expect(
+      shouldBypassConfigStartup(createParsedInvocation(["bun", "cli.ts", "task", "run", "--format", "md", "nightly"])),
+    ).toBe(true);
+    expect(shouldBypassConfigStartup(createParsedInvocation(["bun", "cli.ts", "task", "run"]))).toBe(false);
+    expect(shouldBypassConfigStartup(createParsedInvocation(["bun", "cli.ts", "task", "list"]))).toBe(false);
   });
 
   for (const [label, config, code] of [
