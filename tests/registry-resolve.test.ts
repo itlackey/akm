@@ -305,6 +305,23 @@ describe("parseRegistryRef — `owner/repo` GitHub shorthand (R-007)", () => {
 // override is honored end-to-end: metadata is fetched from the configured
 // mirror, not the public registry.
 
+describe("parseRegistryRef — a URL is never a registry id", () => {
+  test("git:// and ssh:// URLs are git sources", () => {
+    expect(parseRegistryRef("git://git.example.test:9418/team/repo.git")).toMatchObject({
+      source: "git",
+      url: "git://git.example.test:9418/team/repo.git",
+    });
+    expect(parseRegistryRef("ssh://git@git.example.test/team/repo.git")).toMatchObject({
+      source: "git",
+      url: "ssh://git@git.example.test/team/repo.git",
+    });
+  });
+
+  test("a registry search result id is still refused", () => {
+    expect(() => parseRegistryRef("skills-sh:org/skills/name")).toThrow(/registry search result ID/);
+  });
+});
+
 describe("resolveRegistryArtifact — npm metadata honors AKM_NPM_REGISTRY (R-035)", () => {
   const originalRegistry = process.env.AKM_NPM_REGISTRY;
 

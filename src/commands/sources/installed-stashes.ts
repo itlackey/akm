@@ -922,6 +922,8 @@ async function updateManagedInstall(
 
   const { synced, staged } = await stageManagedUpdate(managed, force);
   try {
+    // A check that moved nothing is not an install: the last real install time stays.
+    const installedAt = staged.unchanged && managed.installedAt ? managed.installedAt : synced.syncedAt;
     const installedEntry: InstalledBundle = {
       id: managed.installId,
       // Preserve the original source classification. syncFromRef() re-derives the
@@ -934,7 +936,7 @@ async function updateManagedInstall(
       resolvedRevision: synced.resolvedRevision,
       stashRoot: synced.contentDir,
       cacheDir: synced.cacheDir,
-      installedAt: synced.syncedAt,
+      installedAt,
       writable: synced.writable ?? managed.writable,
     };
     const movedRoot =
@@ -964,7 +966,7 @@ async function updateManagedInstall(
             resolvedRevision: synced.resolvedRevision,
             integrity: synced.integrity ?? (synced.source === "local" ? "local" : undefined),
             localRoot: synced.contentDir,
-            installedAt: synced.syncedAt,
+            installedAt,
           });
         });
 
