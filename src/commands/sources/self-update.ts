@@ -16,6 +16,7 @@ import {
 import { ConfigError } from "../../core/errors";
 import { isQuiet, warn } from "../../core/warn";
 import { githubHeaders } from "../../integrations/github";
+import { isPrerelease } from "../../registry/semver";
 import { getDirname, mainPath, semverOrder } from "../../runtime";
 import type { UpgradeChannel, UpgradeCheckResponse, UpgradeResponse } from "../../sources/types";
 import { resolveNpmGlobalRoot } from "../../tasks/resolve-akm-bin";
@@ -221,6 +222,11 @@ export function getAkmBinaryName(): string {
   throw new ConfigError(`Unsupported platform for binary upgrade: ${platform}/${arch}`, "UNSUPPORTED_PLATFORM");
 }
 
+/** The channel the akm at `version` came from: release.yml publishes every prerelease to `next`, every stable release to `latest`. */
+export function installedChannel(version: string): UpgradeChannel {
+  return isPrerelease(version) ? "next" : "latest";
+}
+
 /** The `next` dist-tag of this package on the npm registry, or undefined when none is published. */
 async function lookupNextVersion(fetchOptions?: { timeout?: number; retries?: number }): Promise<string | undefined> {
   const url = `https://registry.npmjs.org/-/package/${encodeURIComponent(getInstalledPackageName())}/dist-tags`;
@@ -257,18 +263,18 @@ export async function checkForUpdate(
   const release = JSON.parse(await readBodyWithByteCap(response, MAX_CHECKSUM_METADATA_BYTES)) as {
     tag_name?: string;
   };
-  const latestTag = release.tag_name ?? "";
-  let latestVersion = latestTag.replace(/^v/, "");
+  if (!release.tag_name) throw new Error(`Failed to check for updates: the latest release at ${url} has no tag_name`);
+  let latestVersion = release.tag_name.replace(/^v/, "");
   if (channel === "next") {
     const next = await lookupNextVersion(fetchOptions);
     if (exactChannel && !next) throw new Error("No next prerelease is published; no channel was changed");
-    if (next && (exactChannel || latestVersion === "" || semverOrder(latestVersion, next) < 0)) latestVersion = next;
+    if (next && (exactChannel || semverOrder(latestVersion, next) < 0)) latestVersion = next;
   }
 
   return {
     currentVersion,
     latestVersion,
-    updateAvailable: latestVersion !== "" && semverOrder(currentVersion, latestVersion) < 0,
+    updateAvailable: semverOrder(currentVersion, latestVersion) < 0,
     installMethod,
   };
 }

@@ -40,29 +40,44 @@ export async function runMigrateSubcommand(
 export const migrateCommand = defineGroupCommand({
   meta: {
     name: "migrate",
-    description: "Inspect or apply pending migrations: legacy config, state.db, and task-v2/v3 sources to v4",
+    description:
+      "Inspect or apply pending migrations: config, state.db, task files, and named task and workflow files to version 5",
   },
   subCommands: {
     status: defineJsonCommand({
-      meta: { name: "status", description: "Read-only check of every pending migration" },
+      meta: {
+        name: "status",
+        description:
+          "Read-only check of every pending migration; for task and workflow files named after it, what apply would convert to version 5",
+      },
       args: {
+        files: {
+          type: "positional",
+          required: false,
+          description: "Task files or workflow files (workflows/<name>.md) to check for conversion to version 5",
+        },
         "read-only": {
           type: "boolean",
           default: false,
           description: "Records no CLI usage, so the invocation writes nothing at all",
         },
       },
-      run() {
-        return runMigrateSubcommand("migrate-status", ["status"]);
+      run({ args }) {
+        return runMigrateSubcommand("migrate-status", ["status", ...args._.map(String)]);
       },
     }),
     apply: defineJsonCommand({
       meta: {
         name: "apply",
         description:
-          "Back up and apply every pending migration (`akm upgrade` runs this after an install); task files named after it are converted to version 5",
+          "Back up and apply every pending migration (`akm upgrade` runs this after an install); task files named after it are converted to version 5, and a workflow file named after it (workflows/<name>.md) becomes a new task file",
       },
       args: {
+        files: {
+          type: "positional",
+          required: false,
+          description: "Task files or workflow files (workflows/<name>.md) to convert to version 5",
+        },
         "dry-run": {
           type: "boolean",
           default: false,

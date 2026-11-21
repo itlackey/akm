@@ -52,14 +52,15 @@ $EDITOR "$(akm env path env/prod --quiet)"
 akm env list
 akm show env/prod                         # key names only (see "Indexing" below)
 
-# Inject the whole .env into a subprocess:
-akm exec --env env/prod -- ./deploy.sh
+# Inject the whole .env into a script asset's process:
+akm run --env env/prod scripts/deploy.sh
+akm run tasks/deploy --env env/prod       # the same, for a task
+# Any other program: akm exec (Experimental; off until experimental.exec is true)
 akm exec --env env/prod -- $SHELL         # interactive session with the env loaded
-akm run tasks/deploy --env env/prod       # the same, for an akm asset
 
 # Store a single credential as a secret:
 printf '%s' "$TOKEN" | akm secret set secrets/deploy-token
-akm exec --secret secrets/deploy-token:GITHUB_TOKEN -- gh release create v1.0.0
+akm run --secret secrets/deploy-token:GITHUB_TOKEN scripts/release.sh
 
 # Write into a specific source instead of the working bundle:
 akm secret set secrets/deploy-token --bundle team --from-file ./token

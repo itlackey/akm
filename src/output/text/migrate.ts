@@ -25,6 +25,7 @@ interface MigrationPlanResult {
   };
   bundlePolicy?: { changed: number; notes?: string[] };
   taskFilesV5?: { filePath: string; notes?: readonly string[]; guidance?: string }[];
+  workflowFiles?: { message: string };
   backupPath?: string;
   applied?: number;
 }
@@ -91,6 +92,8 @@ export function formatMigratePlain(result: unknown): string | null {
     file.guidance ? [`  - ${file.filePath}: ${file.guidance}`] : [],
   );
   if (v5Guidance?.length) lines.push("", "how to fix:", ...v5Guidance);
+
+  if (plan.workflowFiles) lines.push("", `workflow files: ${plan.workflowFiles.message}`);
 
   if (plan.assetContentRefs?.shadowed?.length) {
     lines.push(

@@ -114,13 +114,13 @@ export const TYPE_PRESENTATION: Record<KnownType, Presentation> = {
     label: "Env",
     renderer: "env-file",
     action: (ref) =>
-      `akm show ${ref} -> inspect key names; akm exec --env ${ref} -- <command> -> run with the whole .env injected (prefer --clean to minimize inherited parent env; child stdout is not redacted). akm env export ${ref} --out <file> writes a sourceable script (values to a file, not stdout).`,
+      `akm show ${ref} -> inspect key names; akm run --env ${ref} scripts/<file> -> run a script with the whole .env injected (prefer --clean to minimize inherited parent env; child stdout is not redacted). akm env export ${ref} --out <file> writes a sourceable script (values to a file, not stdout).`,
   },
   secret: {
     label: "Secret",
     renderer: "secret-file",
     action: (ref) =>
-      `akm show ${ref} -> name only (value never shown); akm exec --secret ${ref}:<VAR> -- <command> -> run with value injected into $VAR`,
+      `akm show ${ref} -> name only (value never shown); akm run --secret ${ref}:<VAR> scripts/<file> -> run a script with the value injected into $VAR`,
   },
   lesson: {
     label: "Lesson",

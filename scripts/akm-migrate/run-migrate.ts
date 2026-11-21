@@ -21,6 +21,7 @@ import {
   resetConfigCache,
 } from "../../src/core/config/config";
 import { ConfigError } from "../../src/core/errors";
+import { describeRemainingWorkflowFiles, type WorkflowFilesOfBundle } from "../../src/commands/health/workflow-files";
 import { getConfigPath } from "../../src/core/paths";
 import { listPendingStateMigrations, upgradeHistoricalStateDatabase } from "../../src/core/state-db";
 import { resolveSecretFromStore } from "../../src/sources/snapshot-fetchers/secret-seam";
@@ -50,6 +51,7 @@ import {
   applyTaskFilesV5Migration,
   inspectTaskFilesMigration,
   inspectTaskFilesV5Migration,
+  remainingWorkflowFiles,
   type TaskFilesMigrationStatus,
   type TaskFilesV5MigrationStatus,
 } from "./task-migrate";
@@ -94,6 +96,8 @@ export interface CombinedMigrationPlan {
   /** Present when task files were named for conversion to version 5: each file's outcome, and what to change by hand. */
   taskFilesV5?: TaskFilesV5MigrationStatus["files"];
   taskFilesV5BackupPath?: string;
+  /** Present when workflow files remain in writable bundles: they are removed in 0.11 and convert only when named. */
+  workflowFiles?: { bundles: WorkflowFilesOfBundle[]; message: string };
   /** Present after a real apply that rewrote at least one task file: the run's backup directory. */
   backupPath?: string;
   applied?: number;
@@ -258,6 +262,13 @@ export async function runMigration(options: {
     apply ? () => ({ pending: findDeadResidueEntries(stashDir) }) : undefined,
   );
 
+  // After the named conversions, so a workflow file removed since is not counted. Not a migration step of its own:
+  // apply converts a workflow only when it is named, so what remains is reported, never changed.
+  const workflowFiles = await migrationStep(failedSteps, "workflowFiles", () => {
+    const bundles = remainingWorkflowFiles();
+    return bundles.length > 0 ? { bundles, message: describeRemainingWorkflowFiles(bundles) } : undefined;
+  });
+
   // A pending state migration reads as "ready" under status/--dry-run, so the
   // preview says what apply will do; after a real apply it has been applied.
   const stateStatus: MigrationStatus =
@@ -282,6 +293,7 @@ export async function runMigration(options: {
     ...(taskFiles !== undefined ? { taskFiles: taskFiles.taskFiles } : {}),
     ...(taskFilesV5 !== undefined ? { taskFilesV5: taskFilesV5.files } : {}),
     ...(taskFilesV5?.backupPath !== undefined ? { taskFilesV5BackupPath: taskFilesV5.backupPath } : {}),
+    ...(workflowFiles !== undefined ? { workflowFiles } : {}),
     ...(taskFiles?.backupPath !== undefined ? { backupPath: taskFiles.backupPath } : {}),
     ...(taskFiles?.applied !== undefined ? { applied: taskFiles.applied } : {}),
     ...(assetEngineKeys !== undefined ? { assetEngineKeys: assetEngineKeys.assetEngineKeys } : {}),

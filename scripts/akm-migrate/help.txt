@@ -61,7 +61,9 @@ order, and print one combined JSON plan (exit 1 when any step is blocked):
 in its entrypoint (a current installation is a no-op).
 
 Commands:
-  status               Inspect every pending migration without changing anything.
+  status [<file>...]   Inspect every pending migration without changing anything,
+                       and report what apply would make of the named task and
+                       workflow files.
   apply [--dry-run] [<file>...]
                        Back up and apply every pending migration, and convert the
                        named task files to task source v5 and the named workflow

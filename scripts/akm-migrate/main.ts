@@ -35,9 +35,9 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
       console.log(helpText.trimEnd());
       return;
     case "status": {
-      const unknown = rest[0];
+      const unknown = rest.find((arg) => arg.startsWith("-"));
       if (unknown !== undefined) throw new UsageError(`\`status\` does not accept ${unknown}.`, "INVALID_FLAG_VALUE");
-      printPlan(await runMigration({ apply: false }));
+      printPlan(await runMigration({ apply: false, taskFiles: rest.map((file) => path.resolve(file)) }));
       return;
     }
     case "apply": {
@@ -48,6 +48,6 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
       return;
     }
     default:
-      throw new UsageError("Choose `status` or `apply [--dry-run]`.", "MISSING_REQUIRED_ARGUMENT");
+      throw new UsageError("Choose `status [<file>...]` or `apply [<file>...]`.", "MISSING_REQUIRED_ARGUMENT");
   }
 }

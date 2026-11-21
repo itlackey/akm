@@ -2704,7 +2704,13 @@ in order:
    backup directory. A named file must be a `.yml` file under the `tasks` folder
    of an enabled bundle; no file that is not named is converted. What a v4 task
    did that v5 does not is listed per file, in `notes`, to change by hand, and a
-   file with no v5 form is reported `blocked` and left as it is;
+   file with no v5 form is reported `blocked` and left as it is. A named workflow
+   file (`workflows/<name>.md`) is not changed: a new `tasks/<name>.yml` is made
+   from it, or it is reported `blocked` with `detail` and `guidance` saying what
+   to change (see [Converting a workflow](../migration/v0.10-to-v0.11.md#converting-a-workflow)).
+   Each named file's outcome is in `taskFilesV5`. The workflow files that remain
+   in writable bundles are counted by bundle in `workflowFiles`, as `akm doctor`
+   counts them; workflows are removed in 0.11;
 4. the retired `engine:` key on commands, agents, workflows and task sources
    rewritten to `connection:` or `harness:` by what the name is now
    (`assetEngineKeys`), under one backup directory per run. The run that has
@@ -2736,13 +2742,14 @@ in order:
 ```sh
 akm migrate status
 akm migrate status --read-only   # the same, and records no CLI usage, so nothing is written
-akm migrate apply --dry-run
 akm migrate apply
-akm migrate apply --dry-run tasks/nightly.yml   # preview converting one task file to version 5
+akm migrate status tasks/nightly.yml            # what apply would make of one task file (version 5)
+akm migrate status workflows/weekly.md          # the same for a workflow file
+akm migrate apply workflows/weekly.md           # make tasks/weekly.yml from it
 akm-migrate apply          # the same, without the akm wrapper
 ```
 
-`status` and `apply --dry-run` are read-only with respect to the migrated files. Without
+`status` is read-only with respect to the migrated files (`apply --dry-run`, deprecated, is the same run). Without
 `--read-only`, `status` records diagnostic usage in the `cli_usage_*` tables of `metrics.db` like
 other commands; with `--read-only` the invocation records no CLI usage and writes nothing at all.
 Apply skips blocked task
@@ -2983,7 +2990,8 @@ Subcommands:
 
 #### env run
 
-Deprecated; use [`akm exec --env <ref> -- <command>`](#exec); removed in 0.11.
+Deprecated; put the command in a script asset under `scripts/` and run it with
+`akm run --env <ref> scripts/<file>`; removed in 0.11.
 `--only` and `--except` have no `exec` form: keep the variables a command needs
 in an env asset of their own.
 
@@ -3164,7 +3172,8 @@ single boundary commit. Reads (`list`, `run`) still span all configured sources.
 
 #### secret run
 
-Deprecated; use [`akm exec --secret <ref>:<VAR> -- <command>`](#exec); removed in 0.11.
+Deprecated; put the command in a script asset under `scripts/` and run it with
+`akm run --secret <ref>:<VAR> scripts/<file>`; removed in 0.11.
 
 ```sh
 akm secret run secrets/deploy-token GITHUB_TOKEN -- gh release create v1.0.0
