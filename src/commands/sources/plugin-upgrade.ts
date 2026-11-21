@@ -120,6 +120,7 @@ function planEntry(
   ref: string | undefined,
   channel: UpgradeChannel | undefined,
   allowDowngrade: boolean,
+  planned?: MarketplacePlan,
 ): { entry: PluginUpgradeEntry; keep?: Kept } {
   const from = installed[0];
   const followed = channel ?? refChannel(ref);
@@ -133,9 +134,9 @@ function planEntry(
       message: `the ${followed} build could not be read (${reason}); \`akm upgrade\` refreshes it`,
     },
   });
-  let plan: ReturnType<typeof marketplacePlan>;
+  let plan: MarketplacePlan;
   try {
-    plan = marketplacePlan(harness, source(), installed, followed, allowDowngrade);
+    plan = planned ?? marketplacePlan(harness, source(), installed, followed, allowDowngrade);
   } catch (error) {
     return unknown(error instanceof Error ? error.message : String(error));
   }
@@ -228,7 +229,7 @@ function upgradeClaudeCode(
   dryRun: boolean,
   next: boolean,
   channel?: UpgradeChannel,
-  keep?: Kept,
+  plan?: MarketplacePlan,
   allowDowngrade = false,
 ): PluginUpgradeEntry {
   const detected = detectClaudeCode();
@@ -242,9 +243,10 @@ function upgradeClaudeCode(
         detected.ref,
         channel,
         allowDowngrade,
+        plan,
       )
     : undefined;
-  keep ??= planned?.keep;
+  const keep = plan?.keep ?? planned?.keep;
   if (channel && keep !== undefined) return stays("claude-code", keep.installed, channel, before, keep.reason);
   let backups: string[] = [];
   if (channel && !dryRun) {
@@ -312,41 +314,37 @@ export function codexMarketplaceEntry(): { entry: Record<string, unknown> | unde
   }
 }
 
-export function codexMarketplaceRef(): string | undefined {
-  const read = codexMarketplaceEntry();
-  const ref = "entry" in read ? read.entry?.ref : undefined;
-  return typeof ref === "string" ? ref : undefined;
-}
-
 function upgradeCodex(
   dryRun: boolean,
   next: boolean,
   channel?: UpgradeChannel,
-  keep?: Kept,
+  plan?: MarketplacePlan,
   allowDowngrade = false,
 ): PluginUpgradeEntry {
   const before = codexPluginVersion();
   if ("error" in before)
     return !before.error.missing || fs.existsSync(codexConfigFile())
       ? { ...failed("codex", before.error.error), channel: "unknown" }
-      : skipped("codex", before.error.missing ? "codex is not on PATH" : before.error.error);
+      : skipped("codex", "codex is not on PATH");
   if (before.version === undefined) {
     return skipped("codex", `the akm plugin is not installed from the ${MARKETPLACE} marketplace`);
   }
   const registered = codexMarketplaceEntry();
   if ("error" in registered) return { ...failed("codex", registered.error), channel: "unknown" };
-  const previous = refChannel(typeof registered.entry?.ref === "string" ? registered.entry.ref : undefined);
+  const ref = typeof registered.entry?.ref === "string" ? registered.entry.ref : undefined;
+  const previous = refChannel(ref);
   const planned = dryRun
     ? planEntry(
         "codex",
         [before.version],
         () => codexMarketplaceRegistration().source,
-        codexMarketplaceRef(),
+        ref,
         channel,
         allowDowngrade,
+        plan,
       )
     : undefined;
-  keep ??= planned?.keep;
+  const keep = plan?.keep ?? planned?.keep;
   if (channel && keep !== undefined) return stays("codex", keep.installed, channel, previous, keep.reason);
   const backups: string[] = [];
   if (channel && previous !== channel && !dryRun) {
@@ -357,13 +355,7 @@ function upgradeCodex(
     }
   }
   const entry = planned?.entry ?? refreshCodex(before.version);
-  return channelResult(
-    next && !channel ? withChannelNote(entry, codexMarketplaceRef()) : entry,
-    previous,
-    channel,
-    dryRun,
-    backups,
-  );
+  return channelResult(next && !channel ? withChannelNote(entry, ref) : entry, previous, channel, dryRun, backups);
 }
 
 function refreshCodex(from: string | undefined): PluginUpgradeEntry {
@@ -603,8 +595,8 @@ function upgradeOpenCode(dryRun: boolean, target: OpenCodeTarget): PluginUpgrade
   let backups: string[] = [];
   if (target.switchChannel) {
     const configured = openCodeConfigSpec(flavor);
-    if (!configured || "error" in configured)
-      return failed(harness, "the configured plugin entry disappeared before switching its channel");
+    if (configured && "error" in configured) return failed(harness, configured.error);
+    if (!configured) return failed(harness, "the configured plugin entry disappeared before switching its channel");
     try {
       backups = writeChannelEdits([editChannelJson(configured.file, configured.jsonPath, target.spec)]);
     } catch (error) {
@@ -716,12 +708,12 @@ export function upgradePlugins(opts: {
   channel?: UpgradeChannel;
   currentChannel?: UpgradeChannel;
   /** Marketplace harnesses a channel switch leaves alone, with the installed version each stays at. */
-  keep?: { claude?: Kept; codex?: Kept };
+  plans?: { claude?: MarketplacePlan; codex?: MarketplacePlan };
   allowDowngrade?: boolean;
 }): PluginUpgradeEntry[] {
   return [
-    upgradeClaudeCode(opts.dryRun, opts.next, opts.channel, opts.keep?.claude, opts.allowDowngrade),
-    upgradeCodex(opts.dryRun, opts.next, opts.channel, opts.keep?.codex, opts.allowDowngrade),
+    upgradeClaudeCode(opts.dryRun, opts.next, opts.channel, opts.plans?.claude, opts.allowDowngrade),
+    upgradeCodex(opts.dryRun, opts.next, opts.channel, opts.plans?.codex, opts.allowDowngrade),
     ...opts.openCode.map((target) => {
       const entry = upgradeOpenCode(opts.dryRun, target);
       if (target.keepInstalled)
@@ -997,7 +989,8 @@ export function codexMarketplaceRegistration(): { source: string; ref: string | 
   const source = registered.entry?.source;
   if (typeof source !== "string")
     throw new UsageError("Could not determine the Codex marketplace Git source; no channel was changed");
-  return { source, ref: codexMarketplaceRef() };
+  const ref = registered.entry?.ref;
+  return { source, ref: typeof ref === "string" ? ref : undefined };
 }
 
 /**
@@ -1006,13 +999,18 @@ export function codexMarketplaceRegistration(): { source: string; ref: string | 
  * version that switch leaves alone because the channel has nothing newer. The real switch and `--check` both decide
  * from this.
  */
+interface MarketplacePlan {
+  target: string | Error;
+  keep?: Kept;
+}
+
 function marketplacePlan(
   harness: "claude-code" | "codex",
   source: string,
   installed: (string | undefined)[],
   channel: UpgradeChannel,
   allowDowngrade: boolean,
-): { target: string | Error; keep?: Kept } {
+): MarketplacePlan {
   let target: string | Error;
   try {
     target = marketplaceTargetVersion(source, channel, harness === "codex" ? "codex" : "claude");
@@ -1032,14 +1030,14 @@ function marketplacePlan(
 }
 
 /**
- * Checks the marketplace channel switch can be made and returns the harnesses to leave alone: those whose
- * installed build is as new as, or newer than, the channel's.
+ * Checks the marketplace channel switch can be made and returns each harness's plan: the channel's build and, when
+ * the installed build is as new as or newer than it, the plugin to leave alone. The check and the run both use it.
  */
 function preflightMarketplaceChannels(
   channel: UpgradeChannel,
   allowDowngrade: boolean,
-): { claude?: Kept; codex?: Kept } {
-  const keep: { claude?: Kept; codex?: Kept } = {};
+): { claude?: MarketplacePlan; codex?: MarketplacePlan } {
+  const plans: { claude?: MarketplacePlan; codex?: MarketplacePlan } = {};
   const claude = detectClaudeCode();
   if ("entry" in claude && claude.entry.outcome === "failed")
     throw new UsageError(`Could not inventory Claude before switching channels: ${claude.entry.message}`);
@@ -1058,7 +1056,7 @@ function preflightMarketplaceChannels(
       channel,
       allowDowngrade,
     );
-    if (plan.keep) keep.claude = plan.keep;
+    plans.claude = plan;
   }
   const codex = codexPluginVersion();
   if ("error" in codex && (!codex.error.missing || fs.existsSync(codexConfigFile())))
@@ -1075,9 +1073,9 @@ function preflightMarketplaceChannels(
       channel,
       allowDowngrade,
     );
-    if (plan.keep) keep.codex = plan.keep;
+    plans.codex = plan;
   }
-  return keep;
+  return plans;
 }
 
 /** `akm upgrade`: the CLI step, then the plugins. */
@@ -1129,7 +1127,7 @@ export async function runUpgrade(
     }
   }
   if (switchChannel && args.allowDowngrade && check.latestVersion !== currentVersion) check.updateAvailable = true;
-  // A check plans each marketplace plugin itself (`planEntry`), so only the run needs the preflight.
+  const plans = switchChannel ? preflightMarketplaceChannels(switchChannel, args.allowDowngrade === true) : {};
   if (args.check) {
     return {
       mode: "check",
@@ -1141,6 +1139,7 @@ export async function runUpgrade(
             next,
             openCode,
             channel: switchChannel,
+            plans,
             currentChannel,
             allowDowngrade: args.allowDowngrade,
           }),
@@ -1149,7 +1148,6 @@ export async function runUpgrade(
       },
     };
   }
-  const keep = switchChannel ? preflightMarketplaceChannels(switchChannel, args.allowDowngrade === true) : {};
   const upgraded = await deps.performUpgrade(check, {
     force: args.force,
     skipPostUpgrade: args.skipPostUpgrade,
@@ -1178,7 +1176,7 @@ export async function runUpgrade(
       next,
       openCode,
       channel: switchChannel,
-      keep,
+      plans,
       currentChannel: upgraded.upgraded ? installedChannel(upgraded.newVersion) : currentChannel,
     }),
     upgraded.upgraded ? upgraded.newVersion : currentVersion,

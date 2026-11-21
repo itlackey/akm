@@ -565,12 +565,31 @@ afterEach(() => cleanup());
     expect(dependency.calls).toHaveLength(0);
     expect(read("claude/settings.json")).toBe(originalClaude);
     expect(read("codex/config.toml")).toBe(originalCodex);
-    const checked = await withEnv(env, () =>
-      runUpgrade({ ...opts, check: true, channel: "next" }, "0.10.1", dependency),
-    );
-    expect(checked.result.plugins.some((plugin) => plugin.outcome === "failed" && plugin.channel === "unknown")).toBe(
-      true,
-    );
+    // The check runs the same preflight, so it refuses with the same error and writes nothing.
+    await expect(
+      withEnv(env, () => runUpgrade({ ...opts, check: true, channel: "next" }, "0.10.1", dependency)),
+    ).rejects.toThrow("Could not inventory");
+    expect(read("claude/settings.json")).toBe(originalClaude);
+    expect(read("codex/config.toml")).toBe(originalCodex);
+  });
+});
+
+(process.platform === "win32" ? describe.skip : describe)("a channel edit that cannot be made", () => {
+  test("check and run refuse with the same message and change nothing", async () => {
+    write("codex/config.toml", '[marketplaces."akm-plugins"]\nsource = "https://example.test/plugins.git"\n');
+    const broken = read("codex/config.toml");
+    const dependency = deps();
+    const refused = async (check: boolean) =>
+      withEnv(env, () => runUpgrade({ ...opts, check, channel: "next" }, "0.10.1", dependency)).then(
+        () => undefined,
+        (error: Error) => error.message,
+      );
+    const checkMessage = await refused(true);
+    const runMessage = await refused(false);
+    expect(checkMessage).toContain("no Git source whose channel can be switched");
+    expect(checkMessage).toBe(runMessage);
+    expect(dependency.calls).toHaveLength(0);
+    expect(read("codex/config.toml")).toBe(broken);
   });
 });
 

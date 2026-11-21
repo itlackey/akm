@@ -82,7 +82,7 @@ export function listConfig(config: AkmConfig): Record<string, unknown> {
 
 /** A key whose string value is a credential: a name akm infers as secret, or an HTTP credential header. */
 function isCredentialKey(key: string): boolean {
-  return isInferredSecretName(key) || /^(?:proxy-)?authorization$/i.test(key);
+  return isInferredSecretName(key.replace(/-/g, "_")) || /^(?:proxy-)?authorization$/i.test(key);
 }
 
 /** A credential's value is never shown; an environment reference to it is (it names where the value lives). */

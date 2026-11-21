@@ -4,20 +4,6 @@ import type { AkmConfig } from "../src/core/config/config";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
 import { resolveTarget } from "../src/integrations/agent/resolution";
 
-function captureWarnings(fn: () => void): string[] {
-  const warnings: string[] = [];
-  _resetWarnOnceForTests();
-  _setWarnSinkForTests((level, args) => {
-    if (level === "warn") warnings.push(args.map(String).join(" "));
-  });
-  try {
-    fn();
-    return warnings;
-  } finally {
-    _setWarnSinkForTests(undefined);
-  }
-}
-
 describe("config CLI helpers", () => {
   test("listConfig omits unconfigured embedding, connections and harnesses", () => {
     const config = listConfig({ configVersion: "0.9.0", semanticSearchMode: "auto" });

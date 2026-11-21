@@ -24,6 +24,17 @@ function writeConfig(value: unknown): void {
   fs.writeFileSync(getConfigPath(), JSON.stringify(value));
 }
 
+test("akm migrate status prints an unknown key's warning once", () => {
+  cleanup = withIsolatedAkmStorage().cleanup;
+  // usage.report false returns before any network call; CI/NODE_ENV/BUN_TEST are removed so the report path is reached.
+  writeConfig({ configVersion: "0.9.0", usage: { report: false }, fooBar: 1 });
+  const env = { ...process.env };
+  for (const name of ["CI", "NODE_ENV", "BUN_TEST"]) delete env[name];
+  const result = spawnSync("bun", [CLI, "migrate", "status"], { encoding: "utf8", env, timeout: 60000 });
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stderr.split("\n").filter((line) => line.includes("Unknown config key"))).toHaveLength(1);
+});
+
 test("config set refuses an unknown key and leaves the file as it was; config unset removes a hand-written one", () => {
   cleanup = withIsolatedAkmStorage().cleanup;
   writeConfig({ configVersion: "0.9.0", semanticSearchMode: "off" });

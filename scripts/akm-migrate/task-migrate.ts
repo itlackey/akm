@@ -147,10 +147,13 @@ export function applyTaskFilesMigration(): TaskFilesMigrationStatus {
     if (before.result.taskFiles.changed === 0) return before.result;
     const backupPath = path.join(getDataDir(), "backups", "tasks", `${Date.now()}-${randomUUID()}`);
     const applied = applyTaskFilesPlan(before.plan, { backupRoot: backupPath });
-    // The files are those the run rewrote (with their hashes); status and blockers are what the files are now.
+    // The files are those the run rewrote (with their hashes); a file left as it was (a conflict) is not reported as
+    // changed. Status and blockers are what the files are now.
+    const rewritten = new Set(applied.changed);
+    const files = before.result.taskFiles.files.filter((file) => file.status !== "changed" || rewritten.has(file.filePath));
     return {
       ...inspectCurrent().result,
-      taskFiles: before.result.taskFiles,
+      taskFiles: { ...before.result.taskFiles, changed: applied.changed.length, files },
       backupPath,
       applied: applied.changed.length,
       ...(applied.conflicts.length > 0 ? { conflicts: [...applied.conflicts] } : {}),

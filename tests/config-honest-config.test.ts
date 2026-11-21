@@ -86,13 +86,18 @@ describe("config display redacts by the credential-name rule (B10-50)", () => {
     const secrets = {
       configVersion: "0.9.0",
       connections: {
-        lab: { endpoint: "https://lab.test/v1", token: "TOKEN-ONE", headers: { Authorization: "Bearer TOKEN999" } },
+        lab: {
+          endpoint: "https://lab.test/v1",
+          token: "TOKEN-ONE",
+          headers: { Authorization: "Bearer TOKEN999", "x-api-key": "K123" },
+        },
       },
     };
     writeConfig(secrets);
     const listed = JSON.stringify(listConfig(loadConfig()));
     expect(listed).not.toContain("TOKEN-ONE");
     expect(listed).not.toContain("TOKEN999");
+    expect(listed).not.toContain("K123");
     const other = writeConfig(
       {
         configVersion: "0.9.0",
@@ -103,7 +108,7 @@ describe("config display redacts by the credential-name rule (B10-50)", () => {
       path.join(path.dirname(getConfigPath()), "other.json"),
     );
     const diff = JSON.stringify(akmConfigDiff(other));
-    for (const value of ["TOKEN-ONE", "TOKEN-TWO", "TOKEN999", "TOKEN888"]) expect(diff).not.toContain(value);
+    for (const value of ["TOKEN-ONE", "TOKEN-TWO", "TOKEN999", "TOKEN888", "K123"]) expect(diff).not.toContain(value);
     expect(diff).toContain("other.test");
   });
 
@@ -122,6 +127,13 @@ describe("migrate drops a removed improve strategy with a note (B10-40, migrate 
     const applied = normalizeConfigFile(getConfigPath(), { apply: true });
     expect(applied.applied).toBe(true);
     expect(applied.notes?.some((note) => note.includes('"quick"') && note.includes("removed in 0.10"))).toBe(true);
+    expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).improve?.strategy).toBeUndefined();
+  });
+
+  test("improve.strategy: graph-refresh is dropped with the same note", () => {
+    writeConfig({ configVersion: "0.9.0", improve: { strategy: "graph-refresh" } });
+    const applied = normalizeConfigFile(getConfigPath(), { apply: true });
+    expect(applied.notes?.some((note) => note.includes('"graph-refresh"'))).toBe(true);
     expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).improve?.strategy).toBeUndefined();
   });
 

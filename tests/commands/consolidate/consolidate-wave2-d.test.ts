@@ -15,20 +15,6 @@ import type { AkmConfig } from "../../../src/core/config/config";
 import { ConfigError, NotFoundError, UsageError } from "../../../src/core/errors";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../../src/core/warn";
 
-function captureWarnings(fn: () => void): string[] {
-  const warnings: string[] = [];
-  _resetWarnOnceForTests();
-  _setWarnSinkForTests((level, args) => {
-    if (level === "warn") warnings.push(args.map(String).join(" "));
-  });
-  try {
-    fn();
-    return warnings;
-  } finally {
-    _setWarnSinkForTests(undefined);
-  }
-}
-
 // #13's "error class exit-code classification" describe block was DELETED
 // here (D2, Phase 2 triage): all 4 tests asserted only `err.name` and
 // `instanceof` — tautologies over JS class semantics ("a UsageError is an

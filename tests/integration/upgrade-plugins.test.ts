@@ -1033,5 +1033,11 @@ esac`,
     expect(opencode.message).toContain("has nothing newer");
     expect(opencode.backups).toBeUndefined();
     expect(fs.readFileSync(path.join(dir, "opencode.json"), "utf8")).toContain("akm-opencode@next");
+    // The real run reports the same for OpenCode, and edits nothing.
+    const real = await withEnv(world.env, () =>
+      runUpgrade({ ...UPGRADE, channel: "latest" }, "0.10.261130-beta", fakeDeps("0.10.261017", "0.10.261130-beta")),
+    );
+    expect(entry(real, "opencode")).toEqual(opencode);
+    expect(fs.readFileSync(path.join(dir, "opencode.json"), "utf8")).toContain("akm-opencode@next");
   });
 });

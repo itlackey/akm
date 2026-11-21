@@ -1338,8 +1338,9 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
     const removedStrategy = improveBody?.strategy;
     const dropsStrategy =
       typeof removedStrategy === "string" &&
-      (REMOVED_IMPROVE_STRATEGY_NAMES as readonly string[]).includes(removedStrategy) &&
-      !(strategies && Object.hasOwn(strategies, removedStrategy));
+      (removedStrategy === "graph-refresh" ||
+        ((REMOVED_IMPROVE_STRATEGY_NAMES as readonly string[]).includes(removedStrategy) &&
+          !(strategies && Object.hasOwn(strategies, removedStrategy))));
     if (dropsStrategy && improveBody) delete improveBody.strategy;
     // A key in the older flat form is filed only under an endpoint this file itself gives the block.
     const flat = fileFlatCredentials((slot) => documentEndpoint(plan.config, slot), false, plan.moves);
