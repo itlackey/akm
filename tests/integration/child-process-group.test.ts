@@ -18,8 +18,9 @@ import path from "node:path";
 import { type Cleanup, makeSandboxDir, sandboxStashDir, writeSandboxConfig } from "../_helpers/sandbox";
 
 const CLI = path.resolve(import.meta.dir, "../../src/cli.ts");
-const posix = process.platform === "linux";
-const hasScript = posix && spawnSync("script", ["--version"]).status === 0;
+const posix = process.platform === "linux" || process.platform === "darwin";
+// `script` runs a command on a pseudo-terminal; its argument order differs between util-linux and BSD.
+const hasScript = posix && spawnSync("sh", ["-c", "command -v script"]).status === 0;
 
 let cleanups: Cleanup[] = [];
 let work = "";
@@ -54,6 +55,20 @@ beforeEach(() => {
       "sleep 25 &",
       'echo $! > "$BG"',
       "sleep 25",
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  // Handles Ctrl-C and goes on, as a shell at its prompt does.
+  fs.writeFileSync(
+    path.join(stash.dir, "scripts", "carry-on.sh"),
+    [
+      "#!/bin/bash",
+      `trap 'echo caught > "$MARK"' INT`,
+      'echo $PPID > "$AKM_PID"',
+      "sleep 2",
+      "sleep 2",
+      "exit 7",
       "",
     ].join("\n"),
     { mode: 0o755 },
@@ -132,6 +147,7 @@ function akmWithoutTerminal(args: string[]): { child: ChildProcess; exited: Prom
   return { child, exited };
 }
 
+// Skipped on Windows, which has no process groups or controlling terminal.
 describe.skipIf(!posix)("without a controlling terminal", () => {
   test("--timeout stops the script and what it started, within the grace periods", async () => {
     const t0 = Date.now();
@@ -163,7 +179,13 @@ describe.skipIf(!posix)("without a controlling terminal", () => {
 
 /** `bun cli.ts <args>` on a pseudo-terminal; `write` feeds the terminal. */
 function akmOnTerminal(args: string[]): { child: ChildProcess; exited: Promise<void> } {
-  const child = spawn("script", ["-qec", `bun ${CLI} ${args.join(" ")}`, "/dev/null"], {
+  return akmOnTerminalCommand(`bun ${CLI} ${args.join(" ")}`);
+}
+
+function akmOnTerminalCommand(command: string): { child: ChildProcess; exited: Promise<void> } {
+  const scriptArgs =
+    process.platform === "linux" ? ["-qec", command, "/dev/null"] : ["-q", "/dev/null", "sh", "-c", command];
+  const child = spawn("script", scriptArgs, {
     env,
     stdio: ["pipe", "ignore", "ignore"],
   });
@@ -171,6 +193,7 @@ function akmOnTerminal(args: string[]): { child: ChildProcess; exited: Promise<v
   return { child, exited: new Promise<void>((resolve) => child.once("exit", () => resolve())) };
 }
 
+// Skipped only where `script` is missing.
 describe.skipIf(!hasScript)("on a terminal", () => {
   test("the script stays in akm's group and can read /dev/tty", async () => {
     const { child, exited } = akmOnTerminal(["run", "scripts/tty.sh"]);
@@ -195,6 +218,44 @@ describe.skipIf(!hasScript)("on a terminal", () => {
     await exited;
     expect(mark()).toBe("int");
     expect(await until(() => !alive(bg), 5_000)).toBe(true);
+  }, 30_000);
+
+  test("Ctrl-C that the script handles keeps akm waiting; akm exits with the script's status", async () => {
+    const { child } = akmOnTerminal(["run", "scripts/carry-on.sh"]);
+    const status = new Promise<number | null>((resolve) => child.once("exit", (code) => resolve(code)));
+    expect(await until(() => readPid("akm-pid") !== undefined, 15_000)).toBe(true);
+    const akmPid = readPid("akm-pid") as number;
+    child.stdin?.write("\x03");
+    expect(await until(() => mark() === "caught", 5_000)).toBe(true);
+    // akm did not die of the Ctrl-C while the script carried on.
+    expect(alive(akmPid)).toBe(true);
+    // `script -e` reports the child's exit status as its own.
+    expect(await status).toBe(7);
+  }, 30_000);
+
+  test("SIGTERM with an own-group and a shared child live reaches both", async () => {
+    // A captured child is always in its own group; an uncaptured one on a terminal shares akm's.
+    const program = path.join(work, "mixed.ts");
+    const subprocessModule = path.resolve(import.meta.dir, "../../src/core/subprocess");
+    fs.writeFileSync(
+      program,
+      `import fs from "node:fs";
+import { runManagedSubprocess } from ${JSON.stringify(subprocessModule)};
+fs.writeFileSync(${JSON.stringify(env.AKM_PID)}, String(process.pid));
+const own = runManagedSubprocess(["sh", "-c", 'echo $$ > "$BG"; exec sleep 25'], { capture: true, timeoutMs: null, graceMs: 500 });
+const shared = runManagedSubprocess(["sh", "-c", 'trap "echo term > \\"$MARK\\"; exit 0" TERM; echo $$ > "$SHARED_PID"; sleep 25 & wait'], { capture: false, timeoutMs: null, graceMs: 500 });
+await Promise.all([own, shared]);
+`,
+    );
+    env.SHARED_PID = path.join(work, "shared-pid");
+    const { exited } = akmOnTerminalCommand(`bun ${program}`);
+    expect(await until(() => readPid("bg") !== undefined && readPid("shared-pid") !== undefined, 15_000)).toBe(true);
+    const own = readPid("bg") as number;
+    const shared = readPid("shared-pid") as number;
+    process.kill(readPid("akm-pid") as number, "SIGTERM");
+    await exited;
+    expect(mark()).toBe("term");
+    expect(await until(() => !alive(own) && !alive(shared), 5_000)).toBe(true);
   }, 30_000);
 
   test("SIGTERM to akm reaches the script's TERM trap", async () => {

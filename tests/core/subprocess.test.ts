@@ -509,7 +509,7 @@ describe("runManagedSubprocess — termination-signal guard", () => {
     "is in force before a captured child is spawned and gone once it exits",
     async () => {
       // The guard stands aside when anything else handles the signals, and the test preload does; lift its listeners.
-      const signals = ["SIGTERM", "SIGINT", "SIGHUP"] as const;
+      const signals = ["SIGTERM", "SIGINT", "SIGHUP", "SIGQUIT"] as const;
       const saved = signals.map((signal) => [signal, process.listeners(signal)] as const);
       for (const signal of signals) process.removeAllListeners(signal);
       try {
@@ -523,8 +523,8 @@ describe("runManagedSubprocess — termination-signal guard", () => {
         ctl.closeStdout();
         ctl.exit(0);
         await run;
-        expect(atSpawn).toEqual([1, 1, 1]);
-        expect(signals.map((signal) => process.listenerCount(signal))).toEqual([0, 0, 0]);
+        expect(atSpawn).toEqual([1, 1, 1, 1]);
+        expect(signals.map((signal) => process.listenerCount(signal))).toEqual([0, 0, 0, 0]);
       } finally {
         for (const [signal, listeners] of saved) for (const listener of listeners) process.on(signal, listener);
       }

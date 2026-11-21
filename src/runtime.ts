@@ -184,6 +184,7 @@ export function spawnSync(cmd: string[], options: SpawnSyncOptions = {}): SpawnS
     cwd: options.cwd,
     env: options.env ?? process.env,
     stdio: [stdioFor(options.stdin), stdioFor(options.stdout), stdioFor(options.stderr)],
+    maxBuffer: Number.POSITIVE_INFINITY,
   });
   // Bun.spawnSync throws when the program cannot be started; both builds do.
   if (r.error) throw r.error;
