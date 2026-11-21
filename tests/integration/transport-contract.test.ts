@@ -52,7 +52,8 @@ import {
 import { fakeOpencodeMajor } from "../_helpers/opencode-version";
 import { makeSandboxDir, type SandboxedDir } from "../_helpers/sandbox";
 
-beforeEach(() => fakeOpencodeMajor(1));
+// The stand-in programs print plain text, which OpenCode 2 reads as its answer; OpenCode 1 is read from an event stream they do not write.
+beforeEach(() => fakeOpencodeMajor(2));
 
 const PROVIDER_MESSAGE = "provider exploded: model stub-model not found";
 const REPLY = '{"verdict":"ok"}';
