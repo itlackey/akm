@@ -1226,11 +1226,15 @@ describe("previous-release corpus — pre-`--scheduler-context` crontab row (#88
       expect(result.failures).toEqual([]);
       // The crontab now carries a current row for the same task, not a
       // second, colliding one: the sandbox stash is configured nowhere, so the
-      // row names it inline.
+      // row names it inline (with the sandbox's non-default directories after it).
       expect((exec.current().match(/# akm:task ping BEGIN/g) ?? []).length).toBe(1);
-      expect(exec.current()).toContain(
-        `AKM_BUNDLE_DIR=${path.resolve(stash.dir)} /usr/local/bin/akm task run ping --bundle ${defaultBundle} --scheduled`,
-      );
+      const row =
+        exec
+          .current()
+          .split("\n")
+          .find((line) => line.includes(" task run ping ")) ?? "";
+      expect(row.startsWith(`*/15 * * * * AKM_BUNDLE_DIR=${path.resolve(stash.dir)} `)).toBe(true);
+      expect(row).toContain(` /usr/local/bin/akm task run ping --bundle ${defaultBundle} --scheduled`);
       expect(exec.current()).not.toContain("--scheduler-context");
     } finally {
       stash.cleanup();
