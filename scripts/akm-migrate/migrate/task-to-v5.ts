@@ -14,7 +14,11 @@
 
 import crypto from "node:crypto";
 import { Document, isMap, isScalar, isSeq, type YAMLMap } from "yaml";
-import { parseTaskSourceV4, type TaskSourceV4Document, type TaskSourceV4Step } from "../../../src/tasks/source/task-source-v4";
+import {
+  parseTaskSourceV4,
+  type TaskSourceV4Document,
+  type TaskSourceV4Step,
+} from "../../../src/tasks/source/task-source-v4";
 import { TASK_SOURCE_V5_VERSION, TASK_SOURCE_V5_VERSION_PATTERN } from "../../../src/tasks/v5/source";
 import { parseRawTaskYaml, type TaskToV4FileInput } from "./task-to-v4";
 
@@ -92,7 +96,10 @@ function envList(map: Readonly<Record<string, string | number | boolean>> | unde
 function execLine(line: string): { exec: string; refs: string[] } {
   const match = AKM_EXEC_ENV.exec(line);
   if (!match) return { exec: line, refs: [] };
-  return { exec: match[2] as string, refs: [...(match[1] as string).matchAll(/--env (\S+)/g)].map((m) => m[1] as string) };
+  return {
+    exec: match[2] as string,
+    refs: [...(match[1] as string).matchAll(/--env (\S+)/g)].map((m) => m[1] as string),
+  };
 }
 
 function stepOut(step: TaskSourceV4Step): Record<string, unknown> {
@@ -124,11 +131,18 @@ function stepOut(step: TaskSourceV4Step): Record<string, unknown> {
  * Move the v4 file's comments onto the v5 document: each key's comments go to the key it became, and a step's to the
  * step at the same place. A comment on a key v5 drops is dropped with it.
  */
-function carryComments(from: YAMLMap, to: YAMLMap, names: Readonly<Record<string, readonly string[]>>, top: boolean): void {
+function carryComments(
+  from: YAMLMap,
+  to: YAMLMap,
+  names: Readonly<Record<string, readonly string[]>>,
+  top: boolean,
+): void {
   for (const pair of from.items) {
     if (!isScalar(pair.key)) continue;
     const key = String(pair.key.value);
-    const target = (names[key] ?? [key]).map((name) => to.items.find((p) => isScalar(p.key) && p.key.value === name)).find(Boolean);
+    const target = (names[key] ?? [key])
+      .map((name) => to.items.find((p) => isScalar(p.key) && p.key.value === name))
+      .find(Boolean);
     if (!target || !isScalar(target.key)) continue;
     target.key.commentBefore = pair.key.commentBefore;
     target.key.spaceBefore = pair.key.spaceBefore;
@@ -161,7 +175,10 @@ function stepsNotes(document: TaskSourceV4Document, steps: readonly TaskSourceV4
   const hasInputs = Object.keys(document.inputs ?? {}).length > 0;
   steps.forEach((step, index) => {
     if (step.kind !== "prompt") return;
-    const appended = [...(hasInputs ? ["the task's values"] : []), ...(index > 0 ? ["the earlier steps' results"] : [])];
+    const appended = [
+      ...(hasInputs ? ["the task's values"] : []),
+      ...(index > 0 ? ["the earlier steps' results"] : []),
+    ];
     if (appended.length === 0) return;
     notes.push(
       `Step ${step.name}: its prompt was sent with ${appended.join(" and ")} appended as text; a version 5 prompt is sent as written. Put \${name} where the prompt needs a value, by hand.`,
@@ -209,7 +226,11 @@ export function planTaskToV5File(input: TaskToV4FileInput, v4Bytes: Buffer = inp
   const shell = target.kind === "uses" ? undefined : target.shell;
   if (shell !== undefined && !EXEC_SHELLS.includes(shell)) stuck.push(`shell: ${shell}`);
   if (stuck.length > 0) {
-    return blocked(input, "no-version-5-form", `version 5 has no form for ${stuck.join(", ")}; the file is left at version 4`);
+    return blocked(
+      input,
+      "no-version-5-form",
+      `version 5 has no form for ${stuck.join(", ")}; the file is left at version 4`,
+    );
   }
 
   const out: Record<string, unknown> = { version: TASK_SOURCE_V5_VERSION };
@@ -241,7 +262,8 @@ export function planTaskToV5File(input: TaskToV4FileInput, v4Bytes: Buffer = inp
   const execution = document.execution;
   if (execution.timeout !== undefined) out.timeout = execution.timeout;
   if (execution.maxRetries !== undefined) out["max-retries"] = execution.maxRetries;
-  for (const key of ["harness", "connection", "model"] as const) if (execution[key] !== undefined) out[key] = execution[key];
+  for (const key of ["harness", "connection", "model"] as const)
+    if (execution[key] !== undefined) out[key] = execution[key];
   if (target.kind === "steps") {
     out.steps = target.steps.map(stepOut);
     notes.push(...stepsNotes(document, target.steps));

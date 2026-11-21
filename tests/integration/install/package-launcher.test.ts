@@ -88,8 +88,8 @@ beforeAll(async () => {
   fs.mkdirSync(consumerDir, { recursive: true });
   fs.mkdirSync(nodeOnlyPathDir, { recursive: true });
   fs.mkdirSync(path.join(packageDir, "scripts"), { recursive: true });
-  fs.copyFileSync(path.join(REPO_ROOT, "scripts", "node-runtime", "akm"), launcher);
-  fs.copyFileSync(path.join(REPO_ROOT, "scripts", "node-runtime", "akm-migrate"), migrateLauncher);
+  fs.copyFileSync(path.join(REPO_ROOT, "scripts", "node-runtime", "akm.mjs"), launcher);
+  fs.copyFileSync(path.join(REPO_ROOT, "scripts", "node-runtime", "akm-migrate.mjs"), migrateLauncher);
   fs.chmodSync(launcher, 0o755);
   fs.chmodSync(migrateLauncher, 0o755);
   fs.writeFileSync(

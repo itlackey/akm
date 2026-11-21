@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 // #956 round 3: install the signal-forwarding scaffolding before ANYTHING
 // else in this process — the Node-version check, the bun-version probe,
 // spawning the child — gets a chance to run. See the matching fix and
-// comment in scripts/node-runtime/akm: the three `process.once` listeners
+// comment in scripts/node-runtime/akm.mjs: the three `process.once` listeners
 // used to go up only after spawn() (below) returned; a scheduler preemption
 // right after that syscall was enough for a signal to arrive with no
 // listener yet, and the runtime's default (process-terminating) disposition
@@ -31,7 +31,7 @@ const forwardSignal = (signal) => {
     // Child exited in the race between the check above and here.
   }
 };
-// `.once`, not `.on`: see the matching comment in scripts/node-runtime/akm —
+// `.once`, not `.on`: see the matching comment in scripts/node-runtime/akm.mjs —
 // a persistent `.on` listener would still be registered when the
 // `process.kill(process.pid, result.signal)` re-raise below runs,
 // suppressing the OS default disposition and leaving this launcher exiting
@@ -42,8 +42,8 @@ for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
 
 if (!process.versions.bun) {
   const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
-  if (major < 22) {
-    console.error("The akm-cli npm package requires Node.js >= 22 to bootstrap.");
+  if (major < 22 || (major === 22 && minor < 15)) {
+    console.error("The akm-cli npm package requires Node.js >= 22.15 to bootstrap.");
     process.exit(1);
   }
 }
@@ -61,7 +61,7 @@ const bunEntry = fileURLToPath(new URL("./scripts/akm-migrate.js", import.meta.u
 const nodeEntry = fileURLToPath(new URL("./scripts/akm-migrate-node.js", import.meta.url));
 
 {
-  // #956: same shape as scripts/node-runtime/akm — the child names the
+  // #956: same shape as scripts/node-runtime/akm.mjs — the child names the
   // launcher pid, and a `kill <launcher-pid>` forwards to the child instead
   // of orphaning it.
   const env = { ...process.env, AKM_LAUNCHER_PID: String(process.pid) };

@@ -40,12 +40,14 @@
  * helpers for `src/`-side consumers, not part of reading a document).
  */
 
-import { type ParsedBuiltinCommandAction, parseBuiltinCommandAction } from "../../../src/commands/command/builtin-action";
+import {
+  type ParsedBuiltinCommandAction,
+  parseBuiltinCommandAction,
+} from "../../../src/commands/command/builtin-action";
 import { bundleRefToString, parseBundleRef } from "../../../src/core/asset/asset-ref";
 import { UsageError } from "../../../src/core/errors";
 import { checkJsonSchemaDefinition } from "../../../src/core/json-schema";
 import type { ExecutionJsonObject, ExecutionJsonValue } from "../../../src/execution/json";
-import { WORKFLOW_ENV_VAR_NAME_PATTERN } from "../../../src/workflows/resource-limits";
 import {
   asRecord,
   type BoundedDocumentContext,
@@ -63,6 +65,7 @@ import {
   TASK_V3_MAX_REDACT_NAMES,
   TASK_V3_MAX_SCHEDULES,
 } from "../../../src/tasks/source/bounded-document";
+import { WORKFLOW_ENV_VAR_NAME_PATTERN } from "../../../src/workflows/resource-limits";
 
 /** `akm.tools` — retired in task source v4; validated here as v3 did, then dropped by the migration. */
 function parseTools(

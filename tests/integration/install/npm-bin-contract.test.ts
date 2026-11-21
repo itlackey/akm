@@ -28,7 +28,7 @@ function runAsNodeVersion(version: string, program: string): ReturnType<typeof s
 function launcherFixture(bin: "akm" | "akm-migrate"): { launcher: string; cleanup: () => void } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-node-runtime-minimum-"));
   const launcher = path.join(root, bin);
-  fs.copyFileSync(path.join(REPO_ROOT, "scripts", "node-runtime", bin), launcher);
+  fs.copyFileSync(path.join(REPO_ROOT, "scripts", "node-runtime", `${bin}.mjs`), launcher);
   if (bin === "akm") {
     fs.writeFileSync(path.join(root, "cli-node.mjs"), 'console.log("NODE_22_LAUNCHER_RAN");\n');
   } else {
@@ -41,7 +41,7 @@ function launcherFixture(bin: "akm" | "akm-migrate"): { launcher: string; cleanu
 describe("npm bin contract", () => {
   test("uses Node as the single interpreter shared by npm's POSIX and Windows shims", () => {
     for (const bin of ["akm", "akm-migrate"]) {
-      const launcher = fs.readFileSync(path.join(REPO_ROOT, "scripts", "node-runtime", bin), "utf8");
+      const launcher = fs.readFileSync(path.join(REPO_ROOT, "scripts", "node-runtime", `${bin}.mjs`), "utf8");
 
       // POSIX executes this shebang and npm embeds the same interpreter in its
       // generated Windows shims. It cannot express a Bun-or-Node choice.
@@ -70,15 +70,15 @@ describe("npm bin contract", () => {
     expect(pkg.bin?.akm).toBe("dist/akm");
     expect(pkg.bin?.["akm-migrate"]).toBe("dist/akm-migrate");
 
-    const akmLauncher = fs.readFileSync(path.join(REPO_ROOT, "scripts", "node-runtime", "akm"), "utf8");
+    const akmLauncher = fs.readFileSync(path.join(REPO_ROOT, "scripts", "node-runtime", "akm.mjs"), "utf8");
     expect(akmLauncher.startsWith("#!/usr/bin/env node")).toBe(true);
     expect(akmLauncher).toContain("requires Node.js >= 22.15 to bootstrap");
     expect(akmLauncher).toContain('new URL("./cli.js", import.meta.url)');
     expect(akmLauncher).toContain('await import("./cli-node.mjs")');
 
-    const migrateLauncher = fs.readFileSync(path.join(REPO_ROOT, "scripts", "node-runtime", "akm-migrate"), "utf8");
+    const migrateLauncher = fs.readFileSync(path.join(REPO_ROOT, "scripts", "node-runtime", "akm-migrate.mjs"), "utf8");
     expect(migrateLauncher.startsWith("#!/usr/bin/env node")).toBe(true);
-    expect(migrateLauncher).toContain("requires Node.js >= 22 to bootstrap");
+    expect(migrateLauncher).toContain("requires Node.js >= 22.15 to bootstrap");
     expect(migrateLauncher).toContain('new URL("./scripts/akm-migrate.js", import.meta.url)');
     expect(migrateLauncher).toContain('new URL("./scripts/akm-migrate-node.js", import.meta.url)');
     expect(migrateLauncher).toContain('process.versions.bun ? process.execPath : useBun ? "bun" : process.execPath');
@@ -96,19 +96,27 @@ describe("npm bin contract", () => {
     }
   });
 
-  test("rejects Node 20 (below the floor) before either published launcher can execute its payload", () => {
+  test("both launchers refuse a Node below engines.node before running their payload, and accept the floor", () => {
+    const engines = (
+      JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8")) as { engines: { node: string } }
+    ).engines.node;
+    const floor = engines.replace(/^>=/, "");
+    const [floorMajor, floorMinor] = floor.split(".").map(Number) as [number, number];
+    const below = [`${floorMajor - 2}.0.0`, `${floorMajor}.${floorMinor - 1}.0`];
     for (const bin of ["akm", "akm-migrate"] as const) {
       const fixture = launcherFixture(bin);
+      const run = (version: string) =>
+        runAsNodeVersion(version, `await import(${JSON.stringify(pathToFileURL(fixture.launcher).href)});`);
       try {
-        const result = runAsNodeVersion(
-          "20.0.0",
-          `await import(${JSON.stringify(pathToFileURL(fixture.launcher).href)});`,
-        );
-        expect(result.status).toBe(1);
-        expect(result.stderr).toContain(
-          bin === "akm" ? "requires Node.js >= 22.15 to bootstrap" : "requires Node.js >= 22 to bootstrap",
-        );
-        expect(result.stdout).not.toContain("NODE_22_LAUNCHER_RAN");
+        for (const version of below) {
+          const result = run(version);
+          expect(result.status, `${bin} on ${version}`).toBe(1);
+          expect(result.stderr).toContain(`requires Node.js >= ${floor} to bootstrap`);
+          expect(result.stdout).not.toContain("NODE_22_LAUNCHER_RAN");
+        }
+        const accepted = run(`${floor}.0`);
+        expect(accepted.status, `${bin} on ${floor}`).toBe(0);
+        expect(accepted.stdout).toContain("NODE_22_LAUNCHER_RAN");
       } finally {
         fixture.cleanup();
       }

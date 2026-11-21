@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The published launcher (`scripts/node-runtime/akm`) on Linux and macOS replaces itself with akm (`process.execve`):
+ * The published launcher (`scripts/node-runtime/akm.mjs`) on Linux and macOS replaces itself with akm (`process.execve`):
  * one process, so the signals, the process group and the exit status are akm's own and nothing is forwarded. These
  * tests run the REAL launcher against a fake `cli.js` and signal the launcher's own pid. On Windows the launcher runs akm as a
  * child and mirrors its end; that path is exercised with the platform reported as `win32`.
@@ -24,7 +24,7 @@ function launcherFixture(root: string): { launcher: string; readyFile: string; s
   const readyFile = path.join(root, "ready.txt");
   const signalFile = path.join(root, "signal.json");
   fs.mkdirSync(dist, { recursive: true });
-  fs.copyFileSync(path.resolve("scripts/node-runtime/akm"), launcher);
+  fs.copyFileSync(path.resolve("scripts/node-runtime/akm.mjs"), launcher);
   // A fake child entry: registers its handler, then announces it is alive (readyFile), so the test
   // never signals a child with no handler yet. The handler records the signal and the child's view of
   // AKM_LAUNCHER_PID, then exits 0. Otherwise it stays alive until signaled or killed.
@@ -111,7 +111,7 @@ for (const [runtimeName, runtime] of runtimes)
         const launcher = path.join(dist, "akm");
         const doneFile = path.join(sandbox.dir, "done.txt");
         fs.mkdirSync(dist, { recursive: true });
-        fs.copyFileSync(path.resolve("scripts/node-runtime/akm"), launcher);
+        fs.copyFileSync(path.resolve("scripts/node-runtime/akm.mjs"), launcher);
         fs.writeFileSync(
           path.join(dist, "cli.js"),
           [
@@ -146,7 +146,7 @@ for (const [runtimeName, runtime] of runtimes)
         const dist = path.join(sandbox.dir, "package", "dist");
         const launcher = path.join(dist, "akm");
         fs.mkdirSync(dist, { recursive: true });
-        fs.copyFileSync(path.resolve("scripts/node-runtime/akm"), launcher);
+        fs.copyFileSync(path.resolve("scripts/node-runtime/akm.mjs"), launcher);
         fs.writeFileSync(
           path.join(dist, "cli.js"),
           [
@@ -170,7 +170,7 @@ for (const [runtimeName, runtime] of runtimes)
       try {
         const dist = path.join(sandbox.dir, "package", "dist");
         fs.mkdirSync(dist, { recursive: true });
-        fs.copyFileSync(path.resolve("scripts/node-runtime/akm"), path.join(dist, "akm"));
+        fs.copyFileSync(path.resolve("scripts/node-runtime/akm.mjs"), path.join(dist, "akm"));
         fs.writeFileSync(path.join(dist, "cli.js"), "process.exit(3);\n");
         const launcherProc = spawn(runtime(), [path.join(dist, "akm")], { stdio: "ignore" });
         expect(await exited(launcherProc)).toEqual({ code: 3, signal: null });
@@ -184,7 +184,7 @@ for (const [runtimeName, runtime] of runtimes)
       try {
         const dist = path.join(sandbox.dir, "package", "dist");
         fs.mkdirSync(dist, { recursive: true });
-        fs.copyFileSync(path.resolve("scripts/node-runtime/akm"), path.join(dist, "akm"));
+        fs.copyFileSync(path.resolve("scripts/node-runtime/akm.mjs"), path.join(dist, "akm"));
         const out = path.join(sandbox.dir, "env.json");
         fs.writeFileSync(
           path.join(dist, "cli.js"),
@@ -212,7 +212,7 @@ describe("on Windows the launcher runs akm as a child and mirrors its end", () =
       const dist = path.join(sandbox.dir, "package", "dist");
       fs.mkdirSync(dist, { recursive: true });
       const launcher = path.join(dist, "akm");
-      fs.copyFileSync(path.resolve("scripts/node-runtime/akm"), launcher);
+      fs.copyFileSync(path.resolve("scripts/node-runtime/akm.mjs"), launcher);
       const out = path.join(sandbox.dir, "pid.txt");
       fs.writeFileSync(
         path.join(dist, "cli.js"),
@@ -247,7 +247,7 @@ describe("on Windows with no Bun the CLI runs in the launcher's own process", ()
       const dist = path.join(sandbox.dir, "package", "dist");
       fs.mkdirSync(dist, { recursive: true });
       const launcher = path.join(dist, "akm");
-      fs.copyFileSync(path.resolve("scripts/node-runtime/akm"), launcher);
+      fs.copyFileSync(path.resolve("scripts/node-runtime/akm.mjs"), launcher);
       const out = path.join(sandbox.dir, "pid.txt");
       fs.writeFileSync(
         path.join(dist, "cli-node.mjs"),
@@ -280,7 +280,7 @@ describe("with no Bun the CLI runs on Node and an inherited AKM_LAUNCHER_PID is 
         const dist = path.join(sandbox.dir, "package", "dist");
         fs.mkdirSync(dist, { recursive: true });
         const launcher = path.join(dist, "akm");
-        fs.copyFileSync(path.resolve("scripts/node-runtime/akm"), launcher);
+        fs.copyFileSync(path.resolve("scripts/node-runtime/akm.mjs"), launcher);
         const out = path.join(sandbox.dir, "env.json");
         fs.writeFileSync(
           path.join(dist, "cli-node.mjs"),

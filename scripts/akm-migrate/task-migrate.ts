@@ -7,14 +7,13 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { detectAdapterId } from "../../src/core/adapter/detect-adapter";
 import { type WorkflowFilesOfBundle, workflowFilesIn } from "../../src/commands/health/workflow-files";
+import { detectAdapterId } from "../../src/core/adapter/detect-adapter";
 import { type AkmConfig, loadConfig, resetConfigCache } from "../../src/core/config/config";
 import { withConfigLock } from "../../src/core/config/config-io";
 import { ConfigError } from "../../src/core/errors";
 import { getDataDir } from "../../src/core/paths";
 import { type BundleRoot, bundleRoots } from "./bundle-roots";
-import type { TaskToV4MigrationPlan } from "./migrate/task-to-v4";
 import {
   applyTaskFilesPlan,
   checkConvertedTaskFiles,
@@ -24,7 +23,7 @@ import {
   replaceFilesWithBackups,
   type TaskFileRoot,
 } from "./migrate/task-files";
-import type { TaskToV4FileInput } from "./migrate/task-to-v4";
+import type { TaskToV4FileInput, TaskToV4MigrationPlan } from "./migrate/task-to-v4";
 import { planTaskToV5File, type TaskToV5Converted, type TaskToV5Outcome } from "./migrate/task-to-v5";
 import {
   checkFailureGuidance,
@@ -150,7 +149,9 @@ export function applyTaskFilesMigration(): TaskFilesMigrationStatus {
     // The files are those the run rewrote (with their hashes); a file left as it was (a conflict) is not reported as
     // changed. Status and blockers are what the files are now.
     const rewritten = new Set(applied.changed);
-    const files = before.result.taskFiles.files.filter((file) => file.status !== "changed" || rewritten.has(file.filePath));
+    const files = before.result.taskFiles.files.filter(
+      (file) => file.status !== "changed" || rewritten.has(file.filePath),
+    );
     return {
       ...inspectCurrent().result,
       taskFiles: { ...before.result.taskFiles, changed: applied.changed.length, files },
@@ -368,7 +369,9 @@ export async function applyTaskFilesV5Migration(named: readonly string[]): Promi
   const backupPath = path.join(getDataDir(), "backups", "tasks", `${Date.now()}-${randomUUID()}`);
   const { replaced, made, conflicts } = withConfigLock(() => {
     const replacing = replaceFilesWithBackups(converted, backupPath);
-    const making = createFiles(created.map((file) => ({ filePath: file.taskPath, after: file.after, mode: file.mode })));
+    const making = createFiles(
+      created.map((file) => ({ filePath: file.taskPath, after: file.after, mode: file.mode })),
+    );
     return {
       replaced: replacing.replaced,
       made: making.created,

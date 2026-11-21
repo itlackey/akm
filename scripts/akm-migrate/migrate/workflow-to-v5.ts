@@ -13,10 +13,10 @@
 import crypto from "node:crypto";
 import { Document } from "yaml";
 import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
+import { TASK_SOURCE_V5_VERSION, unknownReferences } from "../../../src/tasks/v5/source";
 import { checkWorkflowPlan, compileWorkflowSource, workflowStepInstructions } from "../../../src/workflows/compile";
 import type { WorkflowPlan, WorkflowPlanStep } from "../../../src/workflows/plan";
 import { parseReference } from "../../../src/workflows/program/expressions";
-import { TASK_SOURCE_V5_VERSION, unknownReferences } from "../../../src/tasks/v5/source";
 
 export interface WorkflowToV5Input {
   /** The workflow file. */
@@ -65,7 +65,16 @@ const START_AGAIN = (name: string): string => `Then run \`akm migrate apply work
 
 /** Why a file cannot convert, and what to do about it; one entry per reason. */
 /** The workflow frontmatter keys the conversion reads; any other key has no place in a task file. */
-const CONVERTED_FRONTMATTER = new Set(["type", "description", "when_to_use", "tags", "params", "defaults", "budget", "steps"]);
+const CONVERTED_FRONTMATTER = new Set([
+  "type",
+  "description",
+  "when_to_use",
+  "tags",
+  "params",
+  "defaults",
+  "budget",
+  "steps",
+]);
 
 const STEP_GUIDANCE = {
   "unknown-reference": (name: string) =>
@@ -119,7 +128,8 @@ function options(settings: Settings, defaults: WorkflowPlan["defaults"], step: s
     const value = settings?.[key] ?? (step === undefined ? defaults?.[key] : undefined);
     if (value !== undefined) out[key] = value;
   }
-  const timeout = settings?.timeoutMs !== undefined ? settings.timeoutMs : step === undefined ? defaults?.timeoutMs : undefined;
+  const timeout =
+    settings?.timeoutMs !== undefined ? settings.timeoutMs : step === undefined ? defaults?.timeoutMs : undefined;
   if (timeout === null) {
     notes.push(`${where} set no timeout; a version 5 step has a limit of 30 minutes unless it sets a timeout.`);
   } else if (timeout !== undefined) {
@@ -135,11 +145,19 @@ function options(settings: Settings, defaults: WorkflowPlan["defaults"], step: s
 function expectOf(schema: Record<string, unknown> | undefined, step: string): { expect?: string[]; notes: string[] } {
   if (schema === undefined) return { notes: [] };
   const required = schema.required;
-  if (schema.type === "object" && Array.isArray(required) && required.length > 0 && required.every((key) => typeof key === "string")) {
+  if (
+    schema.type === "object" &&
+    Array.isArray(required) &&
+    required.length > 0 &&
+    required.every((key) => typeof key === "string")
+  ) {
     const rest = Object.keys(schema).filter((key) => key !== "required" && key !== "type");
     return {
       expect: required as string[],
-      notes: rest.length > 0 ? [`Step ${step}: its output schema is not checked any more beyond the required keys, now expect:.`] : [],
+      notes:
+        rest.length > 0
+          ? [`Step ${step}: its output schema is not checked any more beyond the required keys, now expect:.`]
+          : [],
     };
   }
   return { notes: [`Step ${step}: its output schema is not checked any more.`] };
@@ -168,7 +186,8 @@ function promptOf(plan: WorkflowPlan, step: WorkflowPlanStep): { text: string; n
 /** Convert one workflow file to the text of a version 5 task. */
 export function planWorkflowToV5File(input: WorkflowToV5Input): WorkflowToV5Outcome {
   const { filePath, name } = input;
-  const block = (reason: string, detail: string, guidance: string) => workflowBlocked(filePath, reason, detail, guidance);
+  const block = (reason: string, detail: string, guidance: string) =>
+    workflowBlocked(filePath, reason, detail, guidance);
   if (!input.writable) {
     return block(
       "read-only-source",
@@ -211,7 +230,8 @@ export function planWorkflowToV5File(input: WorkflowToV5Input): WorkflowToV5Outc
   if (plan.defaults?.llm !== undefined) fail("llm-overrides", "the workflow's defaults set llm: inference settings");
   const top = options(undefined, plan.defaults, undefined);
   notes.push(...top.notes);
-  if (plan.budget !== undefined) notes.push("The workflow's budget is not kept: version 5 has no token or unit budget.");
+  if (plan.budget !== undefined)
+    notes.push("The workflow's budget is not kept: version 5 has no token or unit budget.");
   const unkept = Object.keys(parseFrontmatter(text).data).filter((key) => !CONVERTED_FRONTMATTER.has(key));
   if (unkept.length > 0) {
     notes.push(`Frontmatter not kept (${unkept.join(", ")}): a task file has no such keys.`);
@@ -240,7 +260,9 @@ export function planWorkflowToV5File(input: WorkflowToV5Input): WorkflowToV5Outc
     const settings = options(unit, plan.defaults, id);
     notes.push(...settings.notes);
     if (unit?.retry && unit.retry.on.length > 0) {
-      notes.push(`Step ${id}: retry.on (${unit.retry.on.join(", ")}) is not kept; a version 5 step is tried again on any failure.`);
+      notes.push(
+        `Step ${id}: retry.on (${unit.retry.on.join(", ")}) is not kept; a version 5 step is tried again on any failure.`,
+      );
     }
     if (step.gate.criteria.length > 0 || step.gate.maxLoops > 1) {
       notes.push(`Step ${id}: its \`### gate\` rubric is not checked any more; the step ends when its command does.`);
