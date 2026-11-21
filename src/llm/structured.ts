@@ -71,9 +71,9 @@ export type StructuredLoopResult<T, F extends object = StructuredFailure, S exte
   | ({ ok: false; attempts: number } & F);
 
 /** The reply was refused by the parser, as against the dispatch failing. */
-export function isRefused<R extends StructuredLoopResult<unknown, object, object>>(
-  result: R,
-): result is Extract<R, { errors: string[] }> {
+export function isRefused<T, F extends object>(
+  result: StructuredLoopResult<T, F>,
+): result is Extract<StructuredLoopResult<T, F>, { errors: string[] }> {
   return !result.ok && "errors" in result;
 }
 
