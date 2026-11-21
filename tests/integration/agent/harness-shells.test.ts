@@ -3,10 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * What each harness shell hands its program, one table for all of them: argv,
- * stdin and env for a prompt, an interactive launch, a model, a persona and model
- * work, and the authored args it tolerates. No real binary runs: `build` only turns
- * a request into a command.
+ * The command each harness shell builds where the command line is the contract with the program: its subcommands, a
+ * persona, a native agent, the read-only restriction of model work, and OpenCode's inline config and major. No real
+ * binary runs: `build` only turns a request into a command. What a program receives for a prompt, a model or an
+ * interactive launch is read from a stand-in program in `harness-stand-ins.test.ts`.
  */
 import { beforeEach, describe, expect, test } from "bun:test";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../../src/core/warn";
@@ -26,97 +26,6 @@ beforeEach(() => fakeOpencodeMajor(1));
 /** Set on opencode model work only: on agent work it would override the user's chosen free model. */
 const NO_FREE_MODELS = { OPENCODE_DISABLE_FREE_MODELS: "1" };
 
-interface Shell {
-  /** The command for `PROMPT`. */
-  headless: BuiltCommand;
-  /** The command with no prompt: the program started for a person to use. */
-  interactive: BuiltCommand;
-  /** The command for `PROMPT` with `model: "m-1"`. */
-  model: BuiltCommand;
-  /** The args that follow the program in its built-in profile. */
-  authored?: readonly string[];
-  /** The flag its authored `--model` is dropped for, when the model is not carried by env. */
-  modelFlag?: true;
-}
-
-const SHELLS: Record<string, Shell> = {
-  claude: {
-    headless: { argv: ["claude", "-p"], stdin: PROMPT, failureStream: "stdout" },
-    interactive: { argv: ["claude"] },
-    model: { argv: ["claude", "--model", "m-1", "-p"], stdin: PROMPT, failureStream: "stdout" },
-    modelFlag: true,
-  },
-  codex: {
-    headless: { argv: ["codex", "exec", "--skip-git-repo-check", "-"], stdin: PROMPT, failureStream: "stderr" },
-    interactive: { argv: ["codex"] },
-    model: {
-      argv: ["codex", "exec", "--skip-git-repo-check", "--model", "m-1", "-"],
-      stdin: PROMPT,
-      failureStream: "stderr",
-    },
-    modelFlag: true,
-  },
-  pi: {
-    headless: { argv: ["pi", "-p"], stdin: PROMPT, failureStream: "stderr" },
-    interactive: { argv: ["pi"] },
-    model: { argv: ["pi", "--model", "m-1", "-p"], stdin: PROMPT, failureStream: "stderr" },
-    modelFlag: true,
-  },
-  copilot: {
-    headless: { argv: ["copilot", "--allow-all-tools", "-p", PROMPT], failureStream: "stderr" },
-    interactive: { argv: ["copilot"] },
-    model: { argv: ["copilot", "--model", "m-1", "--allow-all-tools", "-p", PROMPT], failureStream: "stderr" },
-    modelFlag: true,
-  },
-  gemini: {
-    headless: { argv: ["gemini", "-p", PROMPT], failureStream: "stderr" },
-    interactive: { argv: ["gemini"] },
-    model: { argv: ["gemini", "--model", "m-1", "-p", PROMPT], failureStream: "stderr" },
-    modelFlag: true,
-  },
-  aider: {
-    headless: { argv: ["aider", "--yes-always", "--no-pretty", `--message=${PROMPT}`], failureStream: "stderr" },
-    interactive: { argv: ["aider"] },
-    model: {
-      argv: ["aider", "--model", "m-1", "--yes-always", "--no-pretty", `--message=${PROMPT}`],
-      failureStream: "stderr",
-    },
-    modelFlag: true,
-  },
-  amazonq: {
-    headless: {
-      argv: ["q", "chat", "--no-interactive", "--trust-all-tools", "--", PROMPT],
-      failureStream: "stderr",
-    },
-    interactive: { argv: ["q", "chat"] },
-    model: {
-      argv: ["q", "chat", "--no-interactive", "--trust-all-tools", "--model", "m-1", "--", PROMPT],
-      failureStream: "stderr",
-    },
-    modelFlag: true,
-  },
-  openhands: {
-    headless: { argv: ["openhands", "--headless", `--task=${PROMPT}`], failureStream: "stderr" },
-    interactive: { argv: ["openhands"] },
-    model: {
-      argv: ["openhands", "--headless", `--task=${PROMPT}`],
-      env: { LLM_MODEL: "m-1" },
-      failureStream: "stderr",
-    },
-  },
-  // OpenCode 1 (the baseline here) is read from its event stream; OpenCode 2 and model work are under "opencode by major".
-  opencode: {
-    headless: { argv: ["opencode", "run", "--format", "json"], stdin: PROMPT, report: readOpencode1Run },
-    interactive: { argv: ["opencode"] },
-    model: {
-      argv: ["opencode", "run", "--model", "m-1", "--format", "json"],
-      stdin: PROMPT,
-      report: readOpencode1Run,
-    },
-    modelFlag: true,
-  },
-};
-
 function build(id: string, request: AgentDispatchRequest, args?: readonly string[]): BuiltCommand {
   const harness = getHarness(id);
   if (!harness) throw new Error(`no harness "${id}"`);
@@ -125,49 +34,13 @@ function build(id: string, request: AgentDispatchRequest, args?: readonly string
   return harness.build({ bin, args: args ?? harness.profile.args }, request);
 }
 
-describe("every registered harness has a shell here", () => {
-  test("the table and the registry list the same harnesses", () => {
-    expect(Object.keys(SHELLS).sort()).toEqual(HARNESS_REGISTRY.map((h) => h.id as string).sort());
-  });
-});
-
-describe.each(Object.entries(SHELLS))("harness shell: %s", (id, shell) => {
-  test("a prompt builds the headless command", () => {
-    expect(build(id, { prompt: PROMPT })).toEqual(shell.headless);
-  });
-
-  test("no prompt builds the program started for a person: no prompt flag, no empty turn", () => {
-    expect(build(id, {})).toEqual(shell.interactive);
-  });
-
-  test("a model is passed once", () => {
-    expect(build(id, { prompt: PROMPT, model: "m-1" })).toEqual(shell.model);
-  });
-
-  if (shell.modelFlag) {
-    test("an authored --model is replaced by the request's, in either spelling", () => {
-      for (const authored of [["--model", "old"], ["--model=old"]]) {
-        const built = build(id, { prompt: PROMPT, model: "m-1" }, [
-          ...(getHarness(id)?.profile.args ?? []),
-          ...authored,
-        ]);
-        expect(built.argv.filter((arg) => arg === "--model")).toHaveLength(1);
-        expect(built.argv).not.toContain("old");
-        expect(built.argv).not.toContain("--model=old");
-        expect(built.argv).toContain("m-1");
-      }
-    });
-
-    test("an authored --model stays when the request names no model", () => {
-      const built = build(id, { prompt: PROMPT }, [...(getHarness(id)?.profile.args ?? []), "--model", "old"]);
-      expect(built.argv).toContain("old");
-    });
-  }
-});
-
 describe("authored subcommands are not doubled", () => {
   test("codex: a leading `exec`", () => {
-    expect(build("codex", { prompt: PROMPT }, ["exec"])).toEqual(SHELLS.codex?.headless as BuiltCommand);
+    expect(build("codex", { prompt: PROMPT }, ["exec"])).toEqual({
+      argv: ["codex", "exec", "--skip-git-repo-check", "-"],
+      stdin: PROMPT,
+      failureStream: "stderr",
+    });
     expect(build("codex", { prompt: PROMPT }, ["exec", "--profile", "work"]).argv.slice(0, 4)).toEqual([
       "codex",
       "exec",
@@ -177,7 +50,10 @@ describe("authored subcommands are not doubled", () => {
   });
 
   test("amazonq: a leading `chat`", () => {
-    expect(build("amazonq", { prompt: PROMPT }, ["chat"])).toEqual(SHELLS.amazonq?.headless as BuiltCommand);
+    expect(build("amazonq", { prompt: PROMPT }, ["chat"])).toEqual({
+      argv: ["q", "chat", "--no-interactive", "--trust-all-tools", "--", PROMPT],
+      failureStream: "stderr",
+    });
   });
 
   test("opencode: `run` is the headless subcommand, dropped for an interactive launch", () => {
