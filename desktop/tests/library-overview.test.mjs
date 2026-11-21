@@ -320,12 +320,27 @@ test("group joins: links and near-duplicates across groups, or only the given li
   assert.deepEqual(groupJoins(o, 1, OUTDATED_LINKS), []);
 });
 
-test("the overview keeps akm's place for each asset, and the same places in one plane", () => {
+test("the overview keeps akm's place for each asset; in one plane each group is a disc of its assets that overlaps no other", () => {
   const o = buildOverview(placed, now);
   assert.deepEqual([...o.place.subarray(9, 12)], [50, 0, 10]);
   const flat = flatPlace(o);
-  for (let i = 0; i < o.count; i++)
-    assert.deepEqual([...flat.subarray(i * 3, i * 3 + 3)], [o.place[i * 3], o.place[i * 3 + 1], 0]);
+  const at = (i) => [flat[i * 3], flat[i * 3 + 1]];
+  const far = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  const groups = new Map();
+  for (let i = 0; i < o.count; i++) {
+    assert.equal(flat[i * 3 + 2], 0);
+    if (o.group[i] >= 0) groups.set(o.group[i], [...(groups.get(o.group[i]) ?? []), i]);
+  }
+  // No two assets share a spot, and an asset is nearer every asset of its own group than any asset of another.
+  for (let a = 0; a < o.count; a++)
+    for (let b = a + 1; b < o.count; b++) if (o.group[a] >= 0 && o.group[b] >= 0) assert.ok(far(at(a), at(b)) > 1);
+  for (const [g, list] of groups) {
+    const reach = Math.max(...list.flatMap((a) => list.map((b) => far(at(a), at(b)))));
+    for (const [other, others] of groups)
+      if (other !== g) for (const a of list) for (const b of others) assert.ok(far(at(a), at(b)) > reach);
+  }
+  // The layout is the same every time.
+  assert.deepEqual([...flatPlace(o)], [...flat]);
 });
 
 test("an outdated asset says why, and names what replaced or contradicts it; every asset has its link count", () => {

@@ -112,12 +112,76 @@ export function useClass(lastShownAt: string | null, modifiedAt: string | null, 
   return now - Date.parse(modifiedAt) <= OLD_DAYS * DAY ? "new" : "unread";
 }
 
-/** Each asset's place with its depth removed, three numbers per asset: the same points in one plane. */
+/**
+ * The assets in one plane, laid out to be read there. Dropping the depth of akm's places would lay the groups that
+ * stand behind one another on top of each other, so each group by meaning is a disc of its assets instead: the discs
+ * do not overlap, stay as near their groups' places as room allows, and hold their assets a point's width apart, the
+ * ones nearest the group's middle at the disc's middle. An asset with no group keeps akm's place, flattened.
+ */
 export function flatPlace(o: Overview): Float32Array {
   const place = Float32Array.from(o.place);
   for (let i = 0; i < o.count; i++) place[i * 3 + 2] = 0;
+  const lists = Array.from({ length: o.groupCount }, () => [] as number[]);
+  for (let i = 0; i < o.count; i++) if (o.group[i]! >= 0) lists[o.group[i]!]!.push(i);
+  /** A disc's radius per root of its assets: its points then stand about `FLAT_STEP` apart. */
+  const spread = 0.6 * FLAT_STEP;
+  const discs = lists.map((list) => {
+    let x = 0;
+    let y = 0;
+    for (const i of list) {
+      x += o.place[i * 3]! / list.length;
+      y += o.place[i * 3 + 1]! / list.length;
+    }
+    return { x, y, r: spread * Math.sqrt(list.length) + FLAT_STEP, list };
+  });
+  // Start the discs where their groups are, spread out to about the room they need, then push apart any that touch.
+  const extent = Math.max(1, ...discs.map((d) => Math.hypot(d.x, d.y)));
+  const room = Math.sqrt(discs.reduce((sum, d) => sum + d.r * d.r, 0) / 0.6);
+  for (const d of discs) {
+    d.x *= room / extent;
+    d.y *= room / extent;
+  }
+  for (let pass = 0; pass < 300; pass++) {
+    let touching = false;
+    for (let a = 0; a < discs.length; a++)
+      for (let b = a + 1; b < discs.length; b++) {
+        const A = discs[a]!;
+        const B = discs[b]!;
+        const gap = Math.hypot(B.x - A.x, B.y - A.y);
+        if (gap >= A.r + B.r) continue;
+        touching = true;
+        // Two discs in the same spot part along a direction of their own, so the layout is the same every time.
+        const ux = gap ? (B.x - A.x) / gap : Math.cos(a * 2.4 + b);
+        const uy = gap ? (B.y - A.y) / gap : Math.sin(a * 2.4 + b);
+        const push = (A.r + B.r - gap) / 2 + 0.01;
+        A.x -= ux * push;
+        A.y -= uy * push;
+        B.x += ux * push;
+        B.y += uy * push;
+      }
+    if (!touching) break;
+  }
+  for (const d of discs) {
+    let mx = 0;
+    let my = 0;
+    for (const i of d.list) {
+      mx += o.place[i * 3]! / d.list.length;
+      my += o.place[i * 3 + 1]! / d.list.length;
+    }
+    const far = (i: number) => Math.hypot(o.place[i * 3]! - mx, o.place[i * 3 + 1]! - my);
+    [...d.list]
+      .sort((p, q) => far(p) - far(q) || p - q)
+      .forEach((i, k) => {
+        // A sunflower: each next asset a golden angle on and a little farther out, so the disc fills evenly.
+        const r = spread * Math.sqrt(k + 0.5);
+        place[i * 3] = d.x + r * Math.cos(k * 2.399963);
+        place[i * 3 + 1] = d.y + r * Math.sin(k * 2.399963);
+      });
+  }
   return place;
 }
+/** How far apart, in the map's units, neighbouring assets stand in the plane: about a point's drawn width. */
+export const FLAT_STEP = 5;
 
 export function buildOverview(payload: OverviewPayload, now = Date.now()): Overview {
   const n = payload.nodes.ref.length;

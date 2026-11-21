@@ -136,7 +136,9 @@
       const { camera, controls } = world;
       const reach = Math.tan((camera.fov * Math.PI) / 360);
       const away =
-        1.12 * Math.max((high[1]! - low[1]!) / 2 / reach, (high[0]! - low[0]!) / 2 / (reach * camera.aspect)) +
+        // In the plane nothing is behind anything, so the frame leaves room for the tools over the map's edges.
+        (flat ? 1.25 : 1.12) *
+          Math.max((high[1]! - low[1]!) / 2 / reach, (high[0]! - low[0]!) / 2 / (reach * camera.aspect)) +
         (high[2]! - low[2]!) / 2;
       controls.target.set((low[0]! + high[0]!) / 2, (low[1]! + high[1]!) / 2, (low[2]! + high[2]!) / 2);
       camera.position.copy(controls.target).add(new THREE.Vector3(0, flat ? 0 : away * 0.18, away));
@@ -337,13 +339,13 @@
         host.prepend(renderer.domElement);
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(...rgb("--bg"));
-        const camera = new THREE.PerspectiveCamera(50, host.clientWidth / host.clientHeight, 1, 5000);
+        const camera = new THREE.PerspectiveCamera(50, host.clientWidth / host.clientHeight, 1, 20000);
         camera.position.set(...HOME.position);
         const controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
         controls.zoomToCursor = true;
         controls.minDistance = 15;
-        controls.maxDistance = 1500;
+        controls.maxDistance = 8000;
         // A round dot for each point, and a ring for the marks drawn over it.
         const sprite = (draw: (ctx: CanvasRenderingContext2D) => void) => {
           const canvas = document.createElement("canvas");
