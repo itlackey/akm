@@ -3,23 +3,25 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-// Runtime guard: the akm-cli npm package bootstraps with Node.js >= 22
+// Runtime guard: the akm-cli npm package bootstraps with Node.js >= 22.15
 // (#465, #560), then its launcher prefers a working Bun >= 1.0 when available.
 // The runtime boundary (src/runtime.ts, src/storage/database.ts) supports both.
 // Under Node the CLI must be launched via the
 // `dist/cli-node.mjs` wrapper, which registers the text-import loader hook
 // before this module graph loads; running `node dist/cli.js` directly still
 // works for code paths that touch no embedded text asset, but the wrapper is
-// the supported entry. The hard floor is Node 22 (Node 20 support dropped 2026-07; `@clack/core` imports
+// the supported entry. The hard floor is Node 22.15 (`process.execve`; Node 20 support dropped 2026-07; `@clack/core` imports
 // `node:util`'s `styleText` (added in Node 20.12) — Node 18 (EOL) throws at import.
 {
   const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
   if (!isBun) {
-    const [major = 0] = (process.versions.node ?? "0").split(".").map((part) => Number.parseInt(part, 10) || 0);
-    const nodeOk = major >= 22;
+    const [major = 0, minor = 0] = (process.versions.node ?? "0")
+      .split(".")
+      .map((part) => Number.parseInt(part, 10) || 0);
+    const nodeOk = major > 22 || (major === 22 && minor >= 15);
     if (!nodeOk) {
       console.error(
-        "\n  ERROR: the akm-cli npm package requires Node.js >= 22.\n" +
+        "\n  ERROR: the akm-cli npm package requires Node.js >= 22.15.\n" +
           `  Detected Node.js ${process.versions.node ?? "unknown"}.\n` +
           "  Bun >= 1.0 is optional for execution; it does not replace the Node.js bootstrap.\n" +
           "  Upgrade Node.js (https://nodejs.org), or install the runtime-free standalone binary:\n" +
@@ -154,8 +156,6 @@ import { taskCommand } from "./commands/tasks/tasks-cli";
 import { workflowCommand } from "./commands/workflow-cli";
 import { DEFAULT_CONFIG, loadConfig } from "./core/config/config";
 import { UsageError, type UsageErrorCode } from "./core/errors";
-import { launcherPidFromEnv } from "./core/file-lock";
-import { startParentDeathWatchdog } from "./core/parent-watchdog";
 import { getConfigPath } from "./core/paths";
 import { DURATION_UNITS, parseDuration } from "./core/time";
 import { plainize, shouldDecorate } from "./core/tty";
@@ -1527,38 +1527,5 @@ async function runCliInvocation(invocation: ParsedInvocation): Promise<void> {
 // sets `AKM_STANDALONE_ENTRY=1` before importing this file. The test harness
 // sets neither, so importing cli.ts under Bun stays inert as before.
 if (import.meta.main || process.env.AKM_NODE_ENTRY === "1" || process.env.AKM_STANDALONE_ENTRY === "1") {
-  // #956: a launcher that dies WITHOUT delivering a signal
-  // (SIGKILL, an OOM kill, a supervisor that force-removes the process)
-  // still reparents this process to init with nothing to catch — the field
-  // evidence was 40 orphaned `bun …/dist/cli.js` processes in one day, some
-  // from a curate hook killing its own launcher on timeout. Active for
-  // EVERY command (not only `index`), since a hook-invoked `curate`/`search`
-  // child is orphaned the same way. Inert when there is no launcher
-  // (AKM_LAUNCHER_PID unset — a direct `bun src/cli.ts` run, or any test
-  // harness that imports this module without setting it): only a real
-  // launcher-managed run has a parent worth watching.
-  const parentWatchdog = launcherPidFromEnv()
-    ? startParentDeathWatchdog({
-        initialPpid: process.ppid,
-        onOrphaned: () => {
-          // Self-delivers the same signal a real SIGTERM would be. `akm
-          // index`'s own AbortController listens for it
-          // (commands/sources/stash-cli.ts) and gets a graceful, in-process
-          // shutdown. Every other command has no SIGTERM listener of its
-          // own, so this self-signal terminates it directly via the
-          // runtime's default disposition WITHOUT running `exit` handlers
-          // (lock release included) — it stops the orphaned process, which
-          // is the goal here, but any lock it held is left for the next
-          // acquirer's dead-pid stale-reclaim (file-lock.ts) to clear, not
-          // released in-process. No second, parallel abort path to keep in
-          // sync either way.
-          process.kill(process.pid, "SIGTERM");
-        },
-      })
-    : undefined;
-  try {
-    await runCli();
-  } finally {
-    parentWatchdog?.stop();
-  }
+  await runCli();
 }
