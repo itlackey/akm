@@ -81,6 +81,7 @@ describe("Node 22 runtime minimum contract", () => {
       "gated-ci.yml#docker-install",
       "gated-ci.yml#native-scheduler",
       "gated-ci.yml#semantic-search",
+      "quality.yml#quality",
       "release.yml#akm-web",
       "release.yml#desktop",
       "release.yml#release",
