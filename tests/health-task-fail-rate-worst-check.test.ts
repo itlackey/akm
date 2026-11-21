@@ -22,6 +22,7 @@ function run(
     taskRowCount,
     since: "2026-01-01T00:00:00.000Z",
     worstTaskFailRate,
+    taskRuns: { runs: taskRowCount, tasks: 1, scheduled: taskRowCount, manual: 0, unrecorded: 0 },
   } as unknown as HealthCheckContext);
 }
 
@@ -53,9 +54,10 @@ describe("task-fail-rate check worst-single-task signal (item 6)", () => {
     expect(r.message).toContain('task "flaky-task" fails 50.0%');
   });
 
-  test("no signal when no cron tasks ran, regardless of worstTaskFailRate", () => {
+  test("no signal when no task ran, regardless of worstTaskFailRate", () => {
     const r = run(0, 0, null);
-    expect(r.status).toBe("pass");
-    expect(r.message).toContain("No cron tasks ran");
+    expect(r.status).toBe("unknown");
+    expect(r.reason).toBe("idle");
+    expect(r.message).toContain("No task runs");
   });
 });

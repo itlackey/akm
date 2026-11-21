@@ -46,7 +46,8 @@ export interface AkmHealthResult {
   hardChecks: HealthCheckResult[];
   advisories: HealthCheckResult[];
   metrics: HealthMetrics;
-  improve: ImproveHealthMetrics;
+  /** `null` when state.db could not be read. */
+  improve: ImproveHealthMetrics | null;
   runs?: ImproveRunSummary[];
   windows?: WindowResult[];
   deltas?: Record<string, DeltaEntry>;
@@ -55,6 +56,3 @@ export interface AkmHealthResult {
 
 /** Event type recorded on each completed improve run. */
 export const IMPROVE_COMPLETED_EVENT = "improve_completed";
-
-/** An active task older than this (ms) is treated as stuck. */
-export const ACTIVE_RUN_WARN_MS = 15 * 60 * 1000;

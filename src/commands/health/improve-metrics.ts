@@ -20,51 +20,101 @@ export function roundRate(value: number): number {
   return Number(value.toFixed(4));
 }
 
+/** {@link roundRate}, keeping an unknown (null) rate unknown. */
+export function roundOrNull(value: number | null): number | null {
+  return value === null ? null : roundRate(value);
+}
+
+/** A history row with its metadata decoded; `metadata` is undefined when the row's `metadata_json` is corrupt. */
+export interface DecodedTaskRow {
+  row: TaskHistoryRow;
+  metadata: ReturnType<typeof decodeTaskHistoryMetadata> | undefined;
+}
+
 /**
- * `task_history.metadata_json`'s `detail` field, decoded and skip-and-warn on
- * corruption instead of throwing (mirrors `listStateProposals`).
- * `decodeTaskHistoryMetadata` already tolerates legacy/additive shapes; only
- * genuine corruption reaches this catch, and a corrupt row must degrade the
- * metric (excluded, not fatal) rather than abort the whole `akm health`
- * computation.
+ * Decode each row's `metadata_json` once, warning once per corrupt row (it degrades the metrics, never aborts
+ * `akm health`, mirrors `listStateProposals`). `decodeTaskHistoryMetadata` already tolerates legacy/additive shapes;
+ * only genuine corruption reaches the catch.
  */
-export function taskFailureDetail(row: TaskHistoryRow): Record<string, unknown> | undefined {
-  try {
-    return decodeTaskHistoryMetadata(row.metadata_json).detail ?? undefined;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.warn(
-      `[akm] Skipping unparseable task_history row in agent-failure-rate (task_id=${row.task_id}, started_at=${row.started_at}): ${message}`,
-    );
-    return undefined;
+export function decodeTaskRows(rows: readonly TaskHistoryRow[]): DecodedTaskRow[] {
+  return rows.map((row) => {
+    try {
+      return { row, metadata: decodeTaskHistoryMetadata(row.metadata_json) };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(
+        `[akm] Skipping unparseable task_history row in health metrics (task_id=${row.task_id}, started_at=${row.started_at}): ${message}`,
+      );
+      return { row, metadata: undefined };
+    }
+  });
+}
+
+/** The runs of `task-fail-rate`'s window, by what started them (`trigger` in the row's metadata). */
+export interface TaskRunCounts {
+  runs: number;
+  tasks: number;
+  scheduled: number;
+  manual: number;
+  /** Rows written before the trigger was recorded. */
+  unrecorded: number;
+  /** Rows whose metadata could not be read. */
+  unreadable: number;
+}
+
+/** The runs of `rows` by what started them, and how many distinct tasks they belong to. */
+export function countTaskRuns(rows: readonly DecodedTaskRow[]): TaskRunCounts {
+  const counts: TaskRunCounts = {
+    runs: rows.length,
+    tasks: new Set(rows.map(({ row }) => row.task_id)).size,
+    scheduled: 0,
+    manual: 0,
+    unrecorded: 0,
+    unreadable: 0,
+  };
+  for (const { metadata } of rows) {
+    if (!metadata) counts.unreadable += 1;
+    else if (metadata.trigger === "schedule") counts.scheduled += 1;
+    else if (metadata.trigger === "manual") counts.manual += 1;
+    else counts.unrecorded += 1;
   }
+  return counts;
+}
+
+/** One agent dispatch recorded in task history; `reason` is set when it failed. */
+export interface AgentDispatch {
+  reason?: string;
 }
 
 /**
- * `akm health`'s `agentFailureRate` predicate: true for a `task_history` row
- * that represents a prepared command (agent/LLM) result. `target_kind` is
- * read in the current (post-D8) vocabulary — the
- * `025-task-history-vocabulary-backfill` state migration rewrites every
- * legacy-vocabulary row before this ever runs against it, so a `"command"`
- * row here is unambiguously the agent/LLM arm.
+ * The agent dispatches `akm health` counts for `agentFailureRate`: every version 4 `command` row (the dispatch is the
+ * row; it failed when `detail.reason` is set) and every version 5 step that recorded an `agent` fact (it failed when
+ * `agent.reason` is set). A row written before the fact was recorded holds no dispatch: it is unknown, not a success.
  */
-export function isAgentTaskHistoryRow(row: TaskHistoryRow): boolean {
-  return row.target_kind === "command";
+export function agentDispatches(rows: readonly DecodedTaskRow[]): AgentDispatch[] {
+  const dispatches: AgentDispatch[] = [];
+  for (const { row, metadata } of rows) {
+    if (!metadata) continue;
+    if (row.target_kind === "command") {
+      const reason = metadata.detail?.reason;
+      dispatches.push(typeof reason === "string" && reason.length > 0 ? { reason } : {});
+    }
+    for (const step of metadata.steps ?? []) {
+      if (step.agent) dispatches.push(step.agent.reason ? { reason: step.agent.reason } : {});
+    }
+  }
+  return dispatches;
 }
 
 /**
- * #943: reason-value breakdown for a set of agent (command-kind) task
- * failure rows — how much of the observed failures are `timeout` vs
- * `non_zero_exit` vs `spawn_failed` etc., so `akm health`'s `task-fail-rate`
- * advisory can say "timeout-dominant" from data rather than log grep. A
- * reason-per-row read failure (already warned by {@link taskFailureDetail})
- * still counts under `"unknown"` rather than being dropped, so the total
- * always equals `agentFailures.length`.
+ * #943: reason-value breakdown for the failed agent dispatches — how many are `timeout` vs `non_zero_exit` vs
+ * `parse_error` etc., so `akm health`'s `task-fail-rate` advisory can say "timeout-dominant" from data rather than log
+ * grep. The total equals the number of failed dispatches the rate counts.
  */
-export function countAgentFailureReasons(agentFailures: readonly TaskHistoryRow[]): Record<string, number> {
+export function countAgentFailureReasons(dispatches: readonly AgentDispatch[]): Record<string, number> {
   const counts: Record<string, number> = {};
-  for (const row of agentFailures) {
-    const reason = String(taskFailureDetail(row)?.reason ?? "unknown");
+  for (const { reason } of dispatches) {
+    if (reason === undefined) continue;
     counts[reason] = (counts[reason] ?? 0) + 1;
   }
   return counts;
@@ -91,6 +141,17 @@ function decodeImproveResultRow(
     );
     return undefined;
   }
+}
+
+/** An `improve_runs` row with its envelope decoded; `result` is undefined when the envelope does not decode. */
+export interface DecodedImproveRow {
+  row: ImproveRunSummaryRow;
+  result: Record<string, unknown> | undefined;
+}
+
+/** The window's `improve_runs` rows, each decoded once (one warning per bad row) for every reader of the window. */
+export function readImproveRows(db: Database, since: string, until?: string): DecodedImproveRow[] {
+  return queryImproveRuns(db, since, until).map((row) => ({ row, result: decodeImproveResultRow(row) }));
 }
 
 /** A zeroed accumulator — also what health reports when it could not read state.db at all (#791). */
@@ -357,13 +418,12 @@ export interface ImproveRunOutcomes {
  * row in the window; rows whose envelope does not decode are counted under
  * `resultRows.skipped.invalid` and excluded from the result-derived metrics.
  */
-export function summarizeImproveRuns(
-  db: Database,
-  since: string,
-  until?: string,
-): { metrics: ImproveHealthMetrics; runCount: number; outcomes: ImproveRunOutcomes } {
+export function summarizeImproveRuns(rows: readonly DecodedImproveRow[]): {
+  metrics: ImproveHealthMetrics;
+  runCount: number;
+  outcomes: ImproveRunOutcomes;
+} {
   const accum = emptyImproveMetrics();
-  const rows = queryImproveRuns(db, since, until);
   const resultRows = { total: rows.length, included: 0, skipped: { invalid: 0 } };
   const outcomes: ImproveRunOutcomes = { failedRunIds: [], interruptedRunIds: [] };
 
@@ -371,8 +431,7 @@ export function summarizeImproveRuns(
   // newest complete run's snapshot (current state) — not a sum across runs.
   let latest: { row: ImproveRunSummaryRow; memorySummary: ImproveHealthMetrics["memorySummary"] } | undefined;
 
-  for (const row of rows) {
-    const result = decodeImproveResultRow(row);
+  for (const { row, result } of rows) {
     if (!result) {
       resultRows.skipped.invalid += 1;
       if (!row.ok) outcomes.failedRunIds.push(row.id);
@@ -415,11 +474,10 @@ export function summarizeImproveRuns(
 
 /** Project an improve_runs row + wall time + task attribution into one {@link ImproveRunSummary}. */
 export function projectImproveRunSummary(
-  row: ImproveRunSummaryRow,
+  { row, result: decoded }: DecodedImproveRow,
   wallTimeMs: number,
   taskId: string,
 ): ImproveRunSummary {
-  const decoded = decodeImproveResultRow(row);
   const result: Record<string, unknown> = decoded ?? {};
   const resultStatus: NonNullable<ImproveRunSummary["resultStatus"]> = decoded ? "valid" : "invalid";
   if (!decoded) {
