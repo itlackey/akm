@@ -134,9 +134,11 @@ the same two flags and runs an agent, command, task or workflow with them (see
   logs, agent replies, the workflow journal). `akm exec` hands the command the
   terminal, so its output is not scrubbed.
 - `akm env run <ref> -- <command>` and `akm secret run <ref> <VAR> -- <command>`
-  are Deprecated and removed in 0.11; use `akm exec`. `env run --only` and
-  `--except` have no `exec` form: keep the variables a command needs in an env
-  asset of their own.
+  are Deprecated and removed in 0.11: put the command in a script asset under
+  `scripts/` and run it with `akm run --env <ref> scripts/<file>` or
+  `akm run --secret <ref>:<VAR> scripts/<file>`. `env run --only` and `--except`
+  have no `run` form: keep the variables a command needs in an env asset of their
+  own.
 - `--clean` starts the child with a minimal inherited environment (`PATH`,
   `HOME`, locale and terminal basics, and akm's own location variables
   `AKM_CONFIG_DIR`, `AKM_CONFIG_FILE`, `AKM_DATA_DIR`, `AKM_CACHE_DIR` and
@@ -159,8 +161,11 @@ the same two flags and runs an agent, command, task or workflow with them (see
 
 ## Secrets in a version 5 task
 
-A [version 5 task](tasks.md#task-source-v5-experimental) starts every step in a
-clean environment, so a secret reaches only the steps it is given to:
+A [version 5 task](tasks.md#task-source-v5-experimental) starts each script and
+`exec:` step in a clean environment, so a secret reaches only the steps it is
+given to. An agent step runs your harness in akm's environment as it is, with
+what the task, step and run name set over it, so what akm's own environment holds
+is there too:
 
 - A secret reaches a step through `secret:` or `--secret`, or through an env
   asset that binds it to a variable. A task file names a secret only by its ref,

@@ -189,7 +189,7 @@ and imports the public namespace under genuine Node and Bun. Every fixture
 has isolated HOME/XDG/AKM paths before import; it exercises reads, subprocess
 creation, conditional save/conflict, feedback/proposal revert, configuration,
 env/secret writes, managed clone and manual retire/revert without a live bundle or model endpoint.
-Set `AKM_TEST_NODE_BIN` to a real Node >=22 executable if `node` on PATH is
+Set `AKM_TEST_NODE_BIN` to a real Node >=22.15 executable if `node` on PATH is
 a Bun compatibility shim. The test is skipped unless
 `AKM_WORKSPACE_PACKAGE_TESTS=1` (the target sets it); it fails on a missing
 build and runs after building in CI.

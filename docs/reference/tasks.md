@@ -90,7 +90,7 @@ Its other keys are the command's options:
 | `env:` | A list. An entry is an env asset's ref, as `--env <ref>` takes, or one variable and its value (`NAME: value`) | any step |
 | `secret:` | `--secret <ref>:<VAR>`, a list | any step |
 | `cwd:` | `--cwd` | any step |
-| `timeout:` | `--timeout`: `90s`, `15m`, `1h`; a bare number is milliseconds | any step |
+| `timeout:` | `--timeout`: `90s`, `15m`, `1h`, `7d`; a bare number is milliseconds; at most 24 days | any step |
 | `max-retries:` | `--max-retries`: a step that fails is run again, this many more times at most, whatever made it fail. Each try has the step's whole limit. A step that runs a task is tried again by resuming that task's run at the step that failed there | any step |
 | `harness:`, `connection:`, `model:` | the same flags | a step an agent runs; elsewhere warned about once and ignored |
 | `inherit:` | `--inherit`, a list of variable names | any step |
@@ -132,8 +132,13 @@ failed. The result is added to the run's state under the step's name. A task's
 result is its last step's; `akm run` returns it as `result` in the `task-run`
 output.
 
-A failed step's reason ends with the last line its program wrote to standard
-error. The run's history and `akm doctor explain` name each step's kind by the
+A failed script or `exec:` step's reason is `non_zero_exit: exit code N`, with
+the last line its program wrote to standard error after it when there is one;
+`timeout` and `aborted` stand alone. A failed agent step's reason is akm's reason
+code and the error as plain text, with no terminal escapes
+(`parse_error: "default" returned no answer.`; for a harness that exited with an
+error, `non_zero_exit: agent CLI "claude" exited with code 3: Error: boom`, ending
+with the harness's own last line). The run's history and `akm doctor explain` name each step's kind by the
 key the step is written with: `run`, `exec` or `prompt`.
 
 **`${name}`.** `${name}` names an input or an earlier step. akm fills it in
@@ -155,12 +160,18 @@ sets `AKM_TASK_STATE` for a step it runs as a process; akm does not read it.
 
 ### The environment
 
-Every step starts with the environment `--clean` gives (`PATH`, `HOME`, the
-user, shell, temporary folder, locale, time zone and terminal, and what Windows
-needs), akm's own location variables (`AKM_CONFIG_DIR`, `AKM_CONFIG_FILE`,
-`AKM_DATA_DIR`, `AKM_CACHE_DIR`, `AKM_STATE_DIR`) and `AKM_EVENT_SOURCE`.
-Nothing else reaches a step unless it is given by name, and where it is given
-decides which steps have it. An agent step is a step like any other here.
+A script step or an `exec:` step starts with the environment `--clean` gives
+(`PATH`, `HOME`, the user, shell, temporary folder, locale, time zone and
+terminal, and what Windows needs), akm's own location variables
+(`AKM_CONFIG_DIR`, `AKM_CONFIG_FILE`, `AKM_DATA_DIR`, `AKM_CACHE_DIR`,
+`AKM_STATE_DIR`) and `AKM_EVENT_SOURCE`. Nothing else reaches such a step unless
+it is given by name, and where it is given decides which steps have it.
+
+An agent step (`prompt:`, or `run:` of an agent or command) runs your harness as
+you would run it yourself: it starts with akm's environment as it is, with the
+directories this akm resolved and `AKM_EVENT_SOURCE` set over it, and the `env:`
+and `secret:` below are set over that. `inherit:` has nothing to add to an agent
+step.
 
 | Given | Which steps have it |
 | --- | --- |
@@ -211,11 +222,16 @@ that is typed; a whole scheduled run's limit is given there.
 **Resume.** `akm run <task> --resume` continues the most recent failed run at the
 step that failed; steps that finished are not run again. It uses the flags the
 run was first started with (`--env`, `--secret`, `--cwd`, `--timeout`, and the
-inputs); the limit counts again from the resume. It refuses when the task's
-steps changed since the failed run. If the step that failed was running a task,
+inputs); the limit counts again from the resume. `--resume` with any input or
+start flag other than `--skip-if-locked` and `--scheduled` is refused, naming
+each, because the run keeps the ones it started with. It also refuses when the
+task's steps changed since the failed run, or when a step the failed run had
+finished has a different definition now. If the step that failed was running a task,
 the resume continues inside that task's run, at the step that failed there. A
 run that a step started is resumed only by resuming its caller. A run
-whose akm was killed is a failed run at the step that was running.
+whose akm was killed is a failed run at the step that was running: history shows
+it as `interrupted` as soon as akm can see that its process is gone, naming the
+step.
 
 akm keeps what a failed run needs to resume beside its working folder, at
 `$AKM_STATE_DIR/runs/<task>/<run>.state.json`, and removes it with the folder.
@@ -383,7 +399,7 @@ lines, so there the table always decides:
 |---|---|
 | `.sh` | `sh` |
 | `.ts`, `.js`, `.mjs` | Bun; JavaScript and TypeScript script targets require Bun (the standalone binary uses its embedded Bun runtime) |
-| `.ps1` | `powershell -NoProfile -NonInteractive -File` |
+| `.ps1` | `pwsh -NoProfile -NonInteractive -File` (`powershell` on Windows) |
 | `.cmd`, `.bat` | `cmd /d /s /c` |
 | `.py` | `python3` (`python` on Windows) |
 | `.rb` | `ruby` |
@@ -418,7 +434,8 @@ ignored with a warning. Environment entries (`env`) are literal string,
 number, or boolean values. Keep credentials out of task source; `redact`
 contains environment variable names, never secret values.
 
-`timeout:` (milliseconds) means a different mechanism depending on the
+`timeout:` (milliseconds, or the `--timeout` grammar: `500ms`, `30s`, `5m`, `1h`,
+`7d`; at most 24 days) means a different mechanism depending on the
 target. For `run:` (native shell/script) and `workflows/<name>` targets it is
 an outer supervisory deadline: the runner stops the child process (SIGINT, then
 SIGTERM, then SIGKILL; see [How akm runs a
@@ -807,7 +824,9 @@ for full before/after examples and recovery guidance.
   installation. If the row itself cannot be installed, add fails and says so;
   the task stays written and enabled, and the next `akm doctor scheduler sync` retries it.
 - `akm doctor log --task <id> [--bundle <name>] [--limit <n>]` reads durable run
-  history from `state.db`. Each row carries `trigger` (`schedule` when the OS
+  history from `state.db`. A row records the `bundle` its task is in, and
+  `--bundle` shows that bundle's rows; rows written before the bundle was
+  recorded have none and show under every bundle filter. Each row carries `trigger` (`schedule` when the OS
   scheduler started the run, `manual` otherwise; absent when not recorded).
   Scheduled activations that cannot resolve, parse or prepare their source record
   a failed row with `detail.reason: "task_load_failed"`, the typed error code,
@@ -872,13 +891,15 @@ for full before/after examples and recovery guidance.
   the shell that ran the sync (its `AKM_BUNDLE_DIR`, or the default bundle),
   so the scheduled run uses the same working stash, `--bundle` finds a stash
   no config names, and sync tells rows of other installations sharing the
-  scheduler apart (#846). Rows synced from a shell that set
-  `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR` or `AKM_STATE_DIR`
-  explicitly set those too. Each backend does it its own way: a
+  scheduler apart (#846). A row also sets `AKM_CONFIG_DIR`, `AKM_DATA_DIR`,
+  `AKM_CACHE_DIR` and `AKM_STATE_DIR` for each directory that the shell that ran
+  the sync resolved to something other than the default, whatever set it (an
+  `AKM_*_DIR` variable or an `XDG_*_HOME` one); a directory that is the default is
+  not set. Each backend does it its own way: a
   `VAR=value` prefix in the crontab, an `EnvironmentVariables` entry in the
   plist, a `$env:VAR='value';` assignment ahead of the command in Task
-  Scheduler. Other defaults resolve at fire time, so a scheduled run uses
-  the same state, data and cache directories an interactive command does.
+  Scheduler. A default resolves at fire time, so a scheduled run uses the same
+  state, data and cache directories an interactive command does.
   Run the sync from a shell whose environment you would want scheduled.
 
   ```text
