@@ -24,14 +24,14 @@
 
 import { type ChildProcess, spawn as nodeSpawn, spawnSync as nodeSpawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createWriteStream, constants as fsConstants, statfsSync, type WriteStream } from "node:fs";
+import { createWriteStream, statfsSync, type WriteStream } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 import { ResponseTooLargeError, readChunkWithDeadline } from "./core/common";
-import { warnOnce } from "./core/warn";
+import { stdin } from "./core/stdio";
 
 /** True when running under the Bun runtime. Computed once at module load. */
 const isBun = !!process.versions?.bun;
@@ -100,54 +100,6 @@ export interface SpawnSyncOptions {
   stderr?: "inherit" | "pipe" | "ignore";
 }
 
-// ── Blocking stdio ──────────────────────────────────────────────────────────
-
-const F_GETFL = 3;
-const F_SETFL = 4;
-
-type Fcntl = (fd: number, cmd: number, arg: number) => number;
-
-/** `undefined` until first needed; `null` when libc cannot be opened. */
-let fcntl: Fcntl | null | undefined;
-
-function loadFcntl(): Fcntl | null {
-  if (fcntl !== undefined) return fcntl;
-  try {
-    const { dlopen } = nodeRequire("bun:ffi") as typeof import("bun:ffi");
-    const libc = process.platform === "darwin" ? "libc.dylib" : "libc.so.6";
-    const lib = dlopen(libc, { fcntl: { args: ["int", "int", "int"], returns: "int" } });
-    fcntl = lib.symbols.fcntl as Fcntl;
-  } catch {
-    fcntl = null;
-    warnOnce(
-      "blocking-stdio",
-      "akm could not open libc to make its standard streams blocking; a program akm runs may lose output written to a slow pipe.",
-    );
-  }
-  return fcntl;
-}
-
-/**
- * Clear O_NONBLOCK on fds 0, 1 and 2. Bun sets it on the pipe or socket behind a standard stream when
- * `process.stdout`/`process.stderr` is first used, and a child that inherits the stream shares that
- * open file description: its writes to a full pipe fail with EAGAIN and the output is lost. Bun never
- * restores the flag, so the caller's pipe stays non-blocking after akm exits. Node clears it for a
- * child and at exit itself, so this does nothing there, and nothing on Windows.
- */
-export function blockingStdio(): void {
-  if (!isBun || process.platform === "win32") return;
-  const call = loadFcntl();
-  if (!call) return;
-  for (const fd of [0, 1, 2]) {
-    const flags = call(fd, F_GETFL, 0);
-    if (flags >= 0 && (flags & fsConstants.O_NONBLOCK) !== 0) call(fd, F_SETFL, flags & ~fsConstants.O_NONBLOCK);
-  }
-}
-
-function inheritsStdio(options: SpawnOptions | SpawnSyncOptions): boolean {
-  return options.stdin === "inherit" || options.stdout === "inherit" || options.stderr === "inherit";
-}
-
 // ── Subprocess ──────────────────────────────────────────────────────────────
 
 /**
@@ -156,7 +108,6 @@ function inheritsStdio(options: SpawnOptions | SpawnSyncOptions): boolean {
  * on Node wraps `child_process.spawn` to expose the same Web-stream surface.
  */
 export function spawn(cmd: string[], options: SpawnOptions = {}): Subprocess {
-  if (inheritsStdio(options)) blockingStdio();
   if (isBun) {
     return bunGlobal().spawn(cmd, options) as unknown as Subprocess;
   }
@@ -169,7 +120,6 @@ export function spawn(cmd: string[], options: SpawnOptions = {}): Subprocess {
  * is normalised to that shape.
  */
 export function spawnSync(cmd: string[], options: SpawnSyncOptions = {}): SpawnSyncResult {
-  if (inheritsStdio(options)) blockingStdio();
   if (isBun) {
     const r = bunGlobal().spawnSync(cmd, options);
     return {
@@ -280,8 +230,8 @@ function stdinIterator(): AsyncIterable<Uint8Array> {
   if (isBun) {
     return bunGlobal().stdin.stream() as AsyncIterable<Uint8Array>;
   }
-  // process.stdin is an async iterable of Buffer on Node.
-  return process.stdin as AsyncIterable<Uint8Array>;
+  // The stdin stream is an async iterable of Buffer on Node.
+  return stdin() as AsyncIterable<Uint8Array>;
 }
 
 // ── File write ──────────────────────────────────────────────────────────────

@@ -39,6 +39,7 @@ import {
 } from "../../core/env-secret-ref";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
+import { isTerminal, stderr } from "../../core/stdio";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { isFileOrFileSymlink } from "../../indexer/walk/walker";
 import { readStdin } from "../../runtime";
@@ -139,8 +140,8 @@ const secretSetCommand = defineJsonCommand({
       }
       value = Buffer.from(envVal, "utf8");
     } else {
-      if (process.stdin.isTTY) {
-        process.stderr.write(`Enter value for secret "${name}" (Ctrl-D when done):\n`);
+      if (isTerminal(0)) {
+        stderr().write(`Enter value for secret "${name}" (Ctrl-D when done):\n`);
       }
       const stdinBuf = await readStdin();
       // Strip a single trailing newline so `echo "$TOKEN" | akm secret set`
@@ -233,7 +234,7 @@ const secretRemoveCommand = defineJsonCommand({
       yes: args.yes === true,
     });
     if (!confirmed) {
-      process.stderr.write("Aborted.\n");
+      stderr().write("Aborted.\n");
       return;
     }
     if (!fs.existsSync(absPath)) {

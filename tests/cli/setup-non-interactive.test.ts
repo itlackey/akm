@@ -23,6 +23,7 @@ import { main as cliMain } from "../../src/cli";
 import { createParsedInvocation } from "../../src/cli/invocation";
 import { consumeConfigFileFlag as consume, type FlagScanCommand } from "../../src/cli/unknown-flags";
 import { getConfigPath } from "../../src/core/paths";
+import { isTerminal } from "../../src/core/stdio";
 import { runCliCapture } from "../_helpers/cli";
 import {
   type Cleanup,
@@ -34,7 +35,7 @@ import {
 
 describe("akm setup without a TTY", () => {
   test("fails fast instead of hanging on the wizard prompt", async () => {
-    expect(process.stdin.isTTY).not.toBe(true);
+    expect(isTerminal(0)).toBe(false);
 
     const { code, stderr } = await runCliCapture(["setup"]);
 

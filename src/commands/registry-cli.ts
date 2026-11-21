@@ -12,6 +12,7 @@ import {
   hasRegistryUrlCredentials,
   registryEntryForOutput,
 } from "../core/registry-url";
+import { stderr } from "../core/stdio";
 import { warn } from "../core/warn";
 
 export const registryCommand = defineGroupCommand({
@@ -118,7 +119,7 @@ export const registryCommand = defineGroupCommand({
           yes: args.yes === true,
         });
         if (!confirmed) {
-          process.stderr.write("Aborted.\n");
+          stderr().write("Aborted.\n");
           return;
         }
         let removed: RegistryConfigEntry | undefined;

@@ -10,6 +10,7 @@ import { peekConfigValue } from "../core/config/peek";
 import { getDataDir } from "../core/paths";
 import { isKnownType, KNOWN_TYPES } from "../core/recognition-util";
 import { hasSignalOwner, observeSignal } from "../core/signal-observers";
+import { isTerminal } from "../core/stdio";
 import { DETAIL_VALUES, OUTPUT_FORMATS } from "../output/context";
 import { type Database, openDatabase } from "../storage/database";
 import { applyStandardPragmas } from "../storage/sqlite-pragmas";
@@ -300,7 +301,7 @@ export function startUsage(
   let selectedExecutor: UsageCommand | undefined;
   let dimensions: Record<string, unknown> = {};
   let data: Record<string, unknown> = {};
-  const source = resolveCliUsageSource(process.env, Boolean(process.stdin.isTTY || process.stdout.isTTY));
+  const source = resolveCliUsageSource(process.env, Boolean(isTerminal(0) || isTerminal(1)));
   const harness = resolveAgentIdentity(process.env).harness;
   const harnessField = harness ? { harness } : {};
   try {

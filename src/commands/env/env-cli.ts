@@ -32,6 +32,7 @@ import {
   withEnvSecretWrite,
 } from "../../core/env-secret-ref";
 import { NotFoundError, UsageError } from "../../core/errors";
+import { stderr, stdout } from "../../core/stdio";
 import { readStdin } from "../../runtime";
 import { buildChildEnv } from "./child-env";
 import { runProgram } from "./injection";
@@ -141,7 +142,7 @@ const envPathCommand = defineJsonCommand({
     // Warning goes to stderr (never contaminates the path on stdout) and is
     // suppressed with --quiet for the legitimate `_FILE` / `--env-file` use.
     if (args.quiet !== true) {
-      process.stderr.write(
+      stderr().write(
         `warning: this is the raw file path. Do NOT \`source\` it (shell substitutions in the file would execute).\n` +
           `         To inject values run a script: akm run --env ${args.ref} scripts/<file>\n`,
       );
@@ -162,7 +163,7 @@ const envPathCommand = defineJsonCommand({
     // fix: it keeps this byte-identical to history and makes the
     // already-broken combination (`--format` + this command) loud instead
     // of silent, per STABILITY.md's promise for exempt commands.
-    process.stdout.write(`${absPath}\n`);
+    stdout().write(`${absPath}\n`);
   },
 });
 
@@ -333,7 +334,7 @@ const envRemoveCommand = defineJsonCommand({
       yes: args.yes === true,
     });
     if (!confirmed) {
-      process.stderr.write("Aborted.\n");
+      stderr().write("Aborted.\n");
       return;
     }
     if (!fs.existsSync(absPath)) {

@@ -8,8 +8,9 @@
  *
  * Bun sets O_NONBLOCK on the pipe or socket behind fd 1 when `process.stdout` is first used. A child that
  * inherits it shares that open file description, so its writes to a full pipe fail with EAGAIN and output
- * is lost, and the flag stays set on the caller's pipe after akm exits. Real subprocess tests: the
- * in-process harness cannot show it.
+ * is lost, and the flag stays set on the caller's pipe after akm exits. akm touches its streams only when
+ * it writes, so any import-time or startup touch fails these tests. Real subprocess tests: the in-process
+ * harness cannot show it.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -100,6 +101,10 @@ describe.skipIf(!hasPython)("a slow reader of akm's stdout", () => {
 
     test(`gets every line of a command run after akm in the same ${kind}`, () => {
       expect(lineCount(kind, `${akm("--version")}; seq 1 ${LINES}`)).toBe(LINES + 1);
+    });
+
+    test(`gets every line of a command run after akm run in the same ${kind}`, () => {
+      expect(lineCount(kind, `${akm("run scripts/big.sh")}; seq 1 ${LINES}`)).toBe(2 * LINES);
     });
 
     test(`gets every line from akm exec and akm env run (${kind})`, () => {

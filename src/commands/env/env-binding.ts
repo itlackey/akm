@@ -22,6 +22,7 @@ import { NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { substituteRefTokens } from "../../core/ref-token";
 import { readValue } from "../../core/secret-value";
+import { stderr } from "../../core/stdio";
 import { warnOnce } from "../../core/warn";
 import { loadEnv } from "./env";
 
@@ -71,7 +72,7 @@ export interface ResolveEnvBindingOptions {
  * `env_access` audit event.
  */
 export function resolveEnvBinding(target: string, options: ResolveEnvBindingOptions = {}): ResolvedEnvBinding {
-  const warn = options.warn ?? ((message: string) => process.stderr.write(`warning: ${message}\n`));
+  const warn = options.warn ?? ((message: string) => stderr().write(`warning: ${message}\n`));
   const { conceptId, absPath, source, bundleId } = resolveEnvPath(target);
   const envRef = makeEnvRef(conceptId, source);
 

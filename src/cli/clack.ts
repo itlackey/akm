@@ -15,21 +15,8 @@
  * See docs/architecture/specs/di-seams-plan.md.
  */
 
+import { createRequire } from "node:module";
 import type * as clack from "@clack/prompts";
-import {
-  cancel as realCancel,
-  confirm as realConfirm,
-  intro as realIntro,
-  isCancel as realIsCancel,
-  log as realLog,
-  multiselect as realMultiselect,
-  note as realNote,
-  outro as realOutro,
-  password as realPassword,
-  select as realSelect,
-  spinner as realSpinner,
-  text as realText,
-} from "@clack/prompts";
 
 type Clack = typeof clack;
 
@@ -66,31 +53,29 @@ export function _setClackForTests(fake?: ClackFakeForTests): void {
   clackFake = fake;
 }
 
-const realFns = {
-  intro: realIntro,
-  outro: realOutro,
-  cancel: realCancel,
-  confirm: realConfirm,
-  select: realSelect,
-  multiselect: realMultiselect,
-  text: realText,
-  password: realPassword,
-  spinner: realSpinner,
-  note: realNote,
-  isCancel: realIsCancel,
-} as const;
+// `@clack/prompts` reads process.stdout and process.stderr when it is imported, which on Bun makes an
+// inherited pipe non-blocking. It loads on the first prompt call, so a command that never prompts never
+// touches them. The bare `require` is what lets `bun build --compile` bundle the package; Node's ESM
+// output has none and takes `createRequire`.
+const nodeRequire = createRequire(import.meta.url);
+let realClack: Clack | undefined;
+
+function loadClack(): Clack {
+  realClack ??= (typeof require === "function" ? require("@clack/prompts") : nodeRequire("@clack/prompts")) as Clack;
+  return realClack;
+}
 
 /** Delegator with the real export's exact type; reads the fake at call time. */
-function bind<K extends keyof typeof realFns>(name: K): Clack[K] {
+function bind<K extends keyof Clack & keyof ClackFakeForTests>(name: K): Clack[K] {
   return ((...args: unknown[]) => {
-    const impl = (clackFake?.[name] ?? realFns[name]) as (...a: unknown[]) => unknown;
+    const impl = (clackFake?.[name] ?? loadClack()[name]) as (...a: unknown[]) => unknown;
     return impl(...args);
   }) as Clack[K];
 }
 
 function bindLog<K extends keyof Clack["log"]>(name: K): Clack["log"][K] {
   return ((...args: unknown[]) => {
-    const impl = (clackFake?.log?.[name] ?? realLog[name]) as (...a: unknown[]) => unknown;
+    const impl = (clackFake?.log?.[name] ?? loadClack().log[name]) as (...a: unknown[]) => unknown;
     return impl(...args);
   }) as Clack["log"][K];
 }

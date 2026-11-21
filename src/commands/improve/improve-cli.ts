@@ -21,6 +21,7 @@ import { UsageError } from "../../core/errors";
 import { resolveMutationTarget } from "../../core/mutation-target";
 import { getRunLogDir } from "../../core/paths";
 import { redactSensitiveText } from "../../core/redaction";
+import { isTerminal, stderr } from "../../core/stdio";
 import { clearLogFile, setLogFile, warnOnce } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
 import { runJudge } from "../../judges/registry";
@@ -117,9 +118,7 @@ const improveJudgeCommand = defineJsonCommand({
       "Run reflect's quality judge on one revision, read as {source, candidate, feedback, ref} JSON from stdin (the same as `akm judge reflect.quality`). Writes nothing.",
   },
   async run() {
-    const input = process.stdin.isTTY
-      ? {}
-      : (JSON.parse((await readStdin()).toString("utf8")) as Record<string, unknown>);
+    const input = isTerminal(0) ? {} : (JSON.parse((await readStdin()).toString("utf8")) as Record<string, unknown>);
     const { source, candidate, feedback, ref } = input;
     if (typeof source !== "string" || typeof candidate !== "string") {
       throw new UsageError(
@@ -255,7 +254,7 @@ export const improveCommand = defineCommand({
       const scopeRef = scopeArg && isFullRefInput(scopeArg) ? parsePlacementRef(scopeArg) : undefined;
       // The host-wide switch (`akm setup --learning off`): nothing runs, scheduled or by hand, dry run or not.
       if (effectiveConfig.improve?.enabled === false) {
-        process.stderr.write(
+        stderr().write(
           "[improve] Background learning is off on this host, so nothing ran. Turn it on with `akm setup --learning on`.\n",
         );
         const scope = scopeRef
@@ -332,7 +331,7 @@ export const improveCommand = defineCommand({
             sensitiveValues,
           });
         } catch (err) {
-          process.stderr.write(
+          stderr().write(
             `warning: failed to persist terminated improve run ${runId}: ${err instanceof Error ? err.message : String(err)}\n`,
           );
         }
@@ -366,7 +365,7 @@ export const improveCommand = defineCommand({
             exit: process.exit,
             onTerminate: (reason) => persistTerminated(reason),
             ack: (message) =>
-              process.stderr.write(
+              stderr().write(
                 dryRun
                   ? `[improve] ${message}; dry-run state was not persisted\n`
                   : `[improve] ${message}; recorded terminated run ${runId}\n`,
@@ -392,19 +391,19 @@ export const improveCommand = defineCommand({
         try {
           recordImproveRunResult(primaryStashDir, runId, improveResult, startedAtIso, sensitiveValues);
         } catch (err) {
-          process.stderr.write(
+          stderr().write(
             `warning: failed to record improve run ${runId}: ${err instanceof Error ? err.message : String(err)}\n`,
           );
         }
       } else {
-        process.stderr.write(
+        stderr().write(
           `warning: no writable bundle directory resolved; improve result not persisted to state.db (use --json-to-stdout to capture)\n`,
         );
       }
 
       // The `akm improve report` table, on stderr, when there is anything to report (#944).
       if (improveResult.usageReport) {
-        process.stderr.write(`${formatUsageReportTable(improveResult.usageReport)}\n`);
+        stderr().write(`${formatUsageReportTable(improveResult.usageReport)}\n`);
       }
 
       if (jsonToStdout) output("improve", improveResult);

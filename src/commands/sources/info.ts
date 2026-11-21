@@ -239,7 +239,7 @@ function readIndexStats(resolvedPath: string): InfoResponse["indexStats"] {
   } catch (err) {
     // Surface the error so operators can diagnose mismatches between
     // `akm info` and `akm health` rather than silently returning zeros.
-    // Routed through core/warn's `error()` (not a raw process.stderr.write)
+    // Routed through core/warn's `error()` (not a raw stderr write)
     // so `--quiet`/`setQuiet()` actually gate this line (R-057).
     error(`[akm info] failed to read index stats from ${resolvedPath}: ${String(err)}`);
     return { ...EMPTY, unavailable: describeIndexReadFailure(err) };

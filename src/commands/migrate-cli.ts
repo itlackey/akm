@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { defineGroupCommand, defineJsonCommand, EXIT_CODES, outputWithExitCode } from "../cli/shared";
+import { stderr } from "../core/stdio";
 import { runMigrationTool } from "./migration-tool";
 
 export type RunMigrationTool = typeof runMigrationTool;
@@ -21,7 +22,7 @@ export async function runMigrateSubcommand(
   runTool: RunMigrationTool = runMigrationTool,
 ): Promise<void> {
   const result = await runTool(args);
-  if (result.stderr) process.stderr.write(result.stderr);
+  if (result.stderr) stderr().write(result.stderr);
   const line = result.stdout.trim();
   let plan: Record<string, unknown> | undefined;
   try {

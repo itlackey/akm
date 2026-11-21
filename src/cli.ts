@@ -39,10 +39,8 @@
 // A reader that closed early (`akm search … | head`) is not a failure of the work: the command keeps
 // running, its remaining output goes nowhere, and the process ends with the code the work earned.
 // Only our own stdio is forgiven: an EPIPE from a socket (an embedding or LLM call) is still a failure.
-const stdioStreams = [process.stdout, process.stderr];
-const stdioReaderGone = trackStdioReaderGone(stdioStreams);
 process.on("unhandledRejection", (reason) => {
-  if (stdioReaderGone.explains(reason)) return;
+  if (explainedByReaderGone(reason)) return;
   const err = reason instanceof Error ? reason : new Error(String(reason));
   console.error(
     JSON.stringify(
@@ -60,7 +58,7 @@ process.on("unhandledRejection", (reason) => {
   process.exit(EXIT_CODES.INTERNAL);
 });
 process.on("uncaughtException", (err) => {
-  if (stdioReaderGone.explains(err)) return;
+  if (explainedByReaderGone(err)) return;
   console.error(
     JSON.stringify(
       {
@@ -130,7 +128,7 @@ import { akmHealth } from "./commands/health";
 import { doctorMetricsCommand } from "./commands/metrics/usage-cli";
 import { akmTasksDoctor } from "./commands/tasks/tasks";
 import { closestMatch } from "./core/closest-match";
-import { trackStdioReaderGone } from "./core/stdio-reader-gone";
+import { explainedByReaderGone, isTerminal, stdout } from "./core/stdio";
 import "./commands/health/renderers";
 import "./commands/metrics/md-report";
 import { execCommand } from "./commands/exec-cli";
@@ -166,7 +164,6 @@ import { installLlmUsagePersistenceIfAbsent } from "./llm/usage-persist";
 import { EMBEDDED_HINTS, EMBEDDED_HINTS_FULL } from "./output/cli-hints";
 import { getOutputMode, initOutputMode, parseDetailLevel } from "./output/context";
 import { isFormatExemptCommand } from "./output/format-exempt";
-import { blockingStdio } from "./runtime";
 import { consumeSchedulerContextArg } from "./tasks/scheduler-invocation";
 import { pkgVersion } from "./version";
 
@@ -196,7 +193,7 @@ function printSetupTtyHint(result: {
   configPath?: string;
   runs?: { modelCalls: string; agentWork: string; embeddings: string };
 }): void {
-  if (!process.stderr.isTTY) return;
+  if (!isTerminal(2)) return;
   const mode = getOutputMode();
   if (mode.format !== "json" && mode.format !== "jsonl") return;
   if (isQuiet()) return;
@@ -365,7 +362,7 @@ const setupCommand = defineCommand({
         // from stdin, so a piped/redirected/CI invocation would render the
         // first prompt and then block forever instead of failing — and `akm
         // setup` is the first command users automate.
-        if (process.stdin.isTTY !== true) {
+        if (!isTerminal(0)) {
           throw new UsageError(
             "Interactive setup requires a TTY. Pass --yes to take the detected defaults (flags such as --endpoint answer questions), or --from <file> to configure from a file.",
             "NON_INTERACTIVE_REQUIRES_YES",
@@ -631,7 +628,7 @@ const hintsCommand = defineCommand({
   run({ args }) {
     return runWithJsonErrors(() => {
       const detail = parseDetailLevel(args.detail as string | undefined) ?? "brief";
-      process.stdout.write(detail === "brief" ? EMBEDDED_HINTS : EMBEDDED_HINTS_FULL);
+      stdout().write(detail === "brief" ? EMBEDDED_HINTS : EMBEDDED_HINTS_FULL);
     });
   },
 });
@@ -670,7 +667,7 @@ const completionsCommand = defineCommand({
         info(`Completions installed to ${dest}`);
         info(`Restart your shell or run:  source ${dest}`);
       } else {
-        process.stdout.write(script);
+        stdout().write(script);
       }
     });
   },
@@ -774,13 +771,13 @@ const helpCommand = defineGroupCommand({
               "Pass a version like `0.6.0`, `v0.6.0`, `0.6.0-rc1`, or `latest`.",
             );
           }
-          process.stdout.write(renderMigrationHelp(version));
+          stdout().write(renderMigrationHelp(version));
         });
       },
     }),
   },
   async defaultRun() {
-    process.stdout.write(`${await renderSectionedRootHelp()}\n`);
+    stdout().write(`${await renderSectionedRootHelp()}\n`);
   },
 });
 
@@ -1244,7 +1241,6 @@ export function insertBareListSubcommand(argv: string[]): string[] {
  * stop the rest of startup from running after a fatal early error.
  */
 export async function runCli(): Promise<void> {
-  process.once("exit", blockingStdio);
   const originalArgs = process.argv.slice(2);
   let schedulerError: unknown;
   try {
@@ -1422,7 +1418,7 @@ async function runCliInvocation(invocation: ParsedInvocation): Promise<void> {
     // Fire only on completely bare `akm` invocation. Any explicit flag or
     // subcommand means the user knows what they want.
     if (invocation.userArgs.length > 0) return;
-    if (!process.stderr.isTTY) return;
+    if (!isTerminal(2)) return;
     try {
       if (fs.existsSync(getConfigPath())) return;
     } catch {
@@ -1443,7 +1439,7 @@ async function runCliInvocation(invocation: ParsedInvocation): Promise<void> {
   const disposeLlmUsageSink = installLlmUsagePersistenceIfAbsent();
   try {
     if (invocation.userArgs.length === 0) {
-      process.stdout.write(`${await renderSectionedRootHelp()}\n`);
+      stdout().write(`${await renderSectionedRootHelp()}\n`);
       return;
     }
     // Mirrors citty's own builtin-flag short-circuit in `runMain` (main's own
@@ -1459,7 +1455,7 @@ async function runCliInvocation(invocation: ParsedInvocation): Promise<void> {
       if (resolved === (main as AnyCittyCommand)) {
         // Root `--help`: the sectioned overview, not citty's
         // flat COMMANDS dump.
-        process.stdout.write(`${await renderSectionedRootHelp()}\n`);
+        stdout().write(`${await renderSectionedRootHelp()}\n`);
       } else {
         const path = resolveCittyCommandPath(main, rawArgs);
         await showCommandUsage(resolved, path);

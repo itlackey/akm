@@ -9,6 +9,7 @@ import { defineJsonCommand } from "../cli/shared";
 import { loadConfig } from "../core/config/config";
 import { EXEC_CONFIG_KEY, isExecEnabled } from "../core/config/experimental";
 import { ConfigError, UsageError } from "../core/errors";
+import { stdout } from "../core/stdio";
 import { withRetries } from "../execution/retry";
 import { shellCommand } from "../tasks/run/run-native-task";
 import { akmAgentDispatch } from "./agent/agent-dispatch";
@@ -119,7 +120,7 @@ export const execCommand = defineJsonCommand({
         process.exitCode = 1;
         return;
       }
-      process.stdout.write(result.stdout);
+      stdout().write(result.stdout);
       return;
     }
     const argv =
