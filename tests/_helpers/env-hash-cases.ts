@@ -9,7 +9,7 @@ import path from "node:path";
 
 /**
  * Env file lines whose value holds a `#`, with the value a person reads in them. `bash` is false where bash's
- * `source` reads the line differently (a space outside quotes splits words; `A=#x` is the value `#x`), so only the
+ * `source` reads the line differently (a space outside quotes splits words), so only the
  * stated value is the reference, which is dotenv's and docker compose's.
  */
 export const ENV_HASH_CASES: { name: string; text: string; key: string; value: string; bash: boolean }[] = [

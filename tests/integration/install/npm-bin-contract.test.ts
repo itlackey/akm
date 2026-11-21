@@ -55,7 +55,7 @@ describe("npm bin contract", () => {
       scripts?: Record<string, string>;
     };
 
-    expect(pkg.engines).toEqual({ node: ">=22" });
+    expect(pkg.engines).toEqual({ node: ">=22.15" });
     // npm 12 blocks install scripts by default, so the floor is checked where akm starts (the launchers, the CLI).
     expect(pkg.scripts?.preinstall).toBeUndefined();
     expect(pkg.scripts?.install).toBeUndefined();
@@ -72,7 +72,7 @@ describe("npm bin contract", () => {
 
     const akmLauncher = fs.readFileSync(path.join(REPO_ROOT, "scripts", "node-runtime", "akm"), "utf8");
     expect(akmLauncher.startsWith("#!/usr/bin/env node")).toBe(true);
-    expect(akmLauncher).toContain("requires Node.js >= 22 to bootstrap");
+    expect(akmLauncher).toContain("requires Node.js >= 22.15 to bootstrap");
     expect(akmLauncher).toContain('new URL("./cli.js", import.meta.url)');
     expect(akmLauncher).toContain('await import("./cli-node.mjs")');
 
@@ -96,7 +96,7 @@ describe("npm bin contract", () => {
     }
   });
 
-  test("rejects Node 20 (below the 22 floor) before either published launcher can execute its payload", () => {
+  test("rejects Node 20 (below the floor) before either published launcher can execute its payload", () => {
     for (const bin of ["akm", "akm-migrate"] as const) {
       const fixture = launcherFixture(bin);
       try {
@@ -105,7 +105,9 @@ describe("npm bin contract", () => {
           `await import(${JSON.stringify(pathToFileURL(fixture.launcher).href)});`,
         );
         expect(result.status).toBe(1);
-        expect(result.stderr).toContain("requires Node.js >= 22 to bootstrap");
+        expect(result.stderr).toContain(
+          bin === "akm" ? "requires Node.js >= 22.15 to bootstrap" : "requires Node.js >= 22 to bootstrap",
+        );
         expect(result.stdout).not.toContain("NODE_22_LAUNCHER_RAN");
       } finally {
         fixture.cleanup();
