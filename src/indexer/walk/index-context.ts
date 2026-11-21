@@ -52,6 +52,29 @@ export interface SemanticSearchRecord {
   reason?: string;
 }
 
+/** A configured source `akm index` could not scan completely: its last-known-good rows were kept. */
+export interface IncompleteIndexSource {
+  /** The bundle's id. */
+  bundle: string;
+  /** The component's name in the bundle's config (`main` for the implicit one). */
+  component: string;
+  path: string;
+  /** The filesystem error that stopped the scan, or why the source could not be scanned. */
+  reason: string;
+}
+
+/** The `index_meta` key holding the {@link IncompleteIndexSource} list of the last index run. */
+export const INCOMPLETE_SOURCES_META_KEY = "incompleteSources";
+
+/**
+ * The sources the last index run could not scan, whose last-known-good rows the index still serves. Undefined when
+ * no run recorded the list (an index built before it was recorded).
+ */
+export function readIncompleteSources(db: Parameters<typeof getMeta>[0]): IncompleteIndexSource[] | undefined {
+  const raw = getMeta(db, INCOMPLETE_SOURCES_META_KEY);
+  return raw ? (JSON.parse(raw) as IncompleteIndexSource[]) : undefined;
+}
+
 /** The last index run's {@link SemanticSearchRecord} in an open index, or undefined when no run recorded one. */
 export function readSemanticSearchRecord(db: Parameters<typeof getMeta>[0]): SemanticSearchRecord | undefined {
   const raw = getMeta(db, SEMANTIC_SEARCH_META_KEY);
