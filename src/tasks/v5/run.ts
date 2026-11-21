@@ -584,11 +584,9 @@ async function runStep(
   const retries = option(document, step, "max-retries") ?? record.flags.maxRetries ?? 0;
   const lines: string[] = [];
   const dbLines: TaskLogLineInput[] = [];
-  let attempts = 0;
   const last = await withRetries(
     retries,
-    async (): Promise<StepOutcome> => {
-      attempts += 1;
+    async (attempts): Promise<StepOutcome> => {
       try {
         const remaining = limitOf(until, document, step) - Date.now();
         if (remaining <= 0) return { ok: false, reason: "timeout", attempts, lines, dbLines };
