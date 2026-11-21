@@ -122,6 +122,16 @@ the back, the end toward the viewer drawn larger, and Face front (or 0) turns th
 the zoom or the choice. Flatten draws the same points in one plane: every asset keeps its place left to right and up and
 down, depth, Flip and turning are off, and a drag moves the view.
 
+A point's size can stand for a figure too (Size, beside the depth controls): its reads or its declared links, drawn
+larger by the square root of the figure against the bundle's largest, an asset with none at the plain size. Use opens
+sized by reads and the other views at one size; the line in the map's corner says what size shows and the largest
+figure, and that a nearer point also draws larger, which Flatten removes.
+
+Three filters narrow either drawing, and the page says how many assets they keep: the words typed (name or tag), Type
+(an asset type family the bundle holds), and the key itself in Use and Problems, where choosing a class shows only its
+assets and choosing it again shows all. On the points the rest fade and stay in place; on the tags the map is redrawn
+from what is kept. Reset clears all three.
+
 When the lens, Flip or Flatten changes, every mark moves to its new place over 0.6 seconds, and a pick or Face front
 moves the view over 0.7; with reduced motion both happen at once and the view does not glide after a drag. With the map
 focused, the up and down arrow keys and Shift with left and right turn the view, + and − zoom, and 0 faces the front.
@@ -159,7 +169,7 @@ calling every asset unread.
 
 It reads `assets.graph`, `assets.searchMisses` and, on Closest, `assets.related`. The view model is
 `src/lib/library-overview.ts` (the lenses are `LENSES` and `placeBy` there); the Tags drawing is SVG
-(`src/lib/MindMap.svelte`), the depth controls are `src/lib/DepthControls.svelte`, and the page is `src/lib/LibraryMap.svelte`.
+(`src/lib/MindMap.svelte`), the depth controls are `src/lib/MapOptions.svelte`, and the page is `src/lib/LibraryMap.svelte`.
 
 | Limit | Why |
 | --- | --- |
@@ -169,6 +179,7 @@ It reads `assets.graph`, `assets.searchMisses` and, on Closest, `assets.related`
 | Closest needs stored embeddings | Without them `assets.related` says so, and the page shows its note. |
 | Depth bands are set inside each group | One group's back can be nearer the viewer than another group's front: depth compares assets of one group, not groups. |
 | Position inside a group is approximate | akm places a group's assets around its middle; Closest gives the measured similarity. |
+| Size is read roughly, and with depth | Area is compared less exactly than position, and perspective draws a nearer point larger; the labels give the figure, and Flatten leaves size alone to carry it. |
 | Flatten is not a second layout | It is the 3D place without its depth, so two assets far apart in depth can lie on top of each other. |
 | Old is the file's modification time | akm records no edit date; in a Git checkout the time is when the file was last written there. |
 | Use covers the retention window only | Usage events older than the window are deleted, so an asset last read before it reads as not read. |
@@ -191,7 +202,7 @@ An asset is ringed, for the next 0.75 seconds of playing at the speed chosen, wh
 each other and from the type colours by `tests/map-palette.test.mjs`); an asset the latest of several events touched in
 that moment takes the colour of the latest. A curate's results and other kinds of event light the asset as used without a
 ring. A key on the map names every mark. Depth is the library map's: the same lenses, Flip, Flatten, Face front, marker,
-keys and reduced-motion behaviour, opening on Meaning, with the line in the map's corner saying what depth shows. Hovering
+keys and reduced-motion behaviour, opening on Meaning, and Size can stand for the events on an asset over the whole period, with the line in the map's corner saying what depth shows. Hovering
 a point names its asset, its type and whether it has been used so far. An asset with no group by meaning has no place on the 3D map; its events still
 count in the figures, and the page says how many events so far touched assets with no place, and how many touched assets
 the index no longer lists. Without stored embeddings the 3D map cannot be drawn, and the page says so.

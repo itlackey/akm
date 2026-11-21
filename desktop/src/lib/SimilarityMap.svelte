@@ -27,6 +27,7 @@
     scope,
     groups,
     colourOf,
+    sizeOf,
     lit,
     lines = [],
     levels = [[], [], []],
@@ -52,6 +53,8 @@
     groups: Group[];
     /** The colour token of an asset in the view. */
     colourOf: (i: number) => string;
+    /** How many times its plain size an asset is drawn, from 1 up, when size stands for a figure. */
+    sizeOf?: (i: number) => number;
     /** The assets drawn in full; the rest fade. Null: all in full. */
     lit: Set<number> | null;
     /** Lines, each between two assets (by index) or two groups (by key), with a weight from 0 to 1. */
@@ -340,27 +343,39 @@
           ctx.fillStyle = g;
           ctx.fillRect(0, 0, 64, 64);
         });
+        // Each point's size is multiplied by its own `grow`, which the stock points shader has no place for.
+        // biome-ignore lint/suspicious/noExplicitAny: see above.
+        const grown = (material: any) => {
+          material.onBeforeCompile = (shader: { vertexShader: string }) => {
+            shader.vertexShader = `attribute float grow;\n${shader.vertexShader.replace("gl_PointSize = size;", "gl_PointSize = size * grow;")}`;
+          };
+          return material;
+        };
         const points = new THREE.Points(
           new THREE.BufferGeometry(),
-          new THREE.PointsMaterial({
-            size: SIZE.faded,
-            vertexColors: true,
-            map: dot,
-            alphaTest: 0.5,
-            sizeAttenuation: true,
-          }),
+          grown(
+            new THREE.PointsMaterial({
+              size: SIZE.faded,
+              vertexColors: true,
+              map: dot,
+              alphaTest: 0.5,
+              sizeAttenuation: true,
+            }),
+          ),
         );
         scene.add(points);
         // The lit points again, larger, over the faded rest.
         const bright = new THREE.Points(
           new THREE.BufferGeometry(),
-          new THREE.PointsMaterial({
-            size: SIZE.lit,
-            vertexColors: true,
-            map: dot,
-            alphaTest: 0.5,
-            sizeAttenuation: true,
-          }),
+          grown(
+            new THREE.PointsMaterial({
+              size: SIZE.lit,
+              vertexColors: true,
+              map: dot,
+              alphaTest: 0.5,
+              sizeAttenuation: true,
+            }),
+          ),
         );
         scene.add(bright);
         // Rings of a fixed size on screen, drawn over everything: the pick, what it is joined to, and the point under
@@ -480,7 +495,8 @@
             const sx = ((probe.x * p[0]!) / depth + 1) * (box.width / 2);
             const sy = (1 - (probe.y * p[5]!) / depth) * (box.height / 2);
             const faded = lit && !lit.has(world.order[k]);
-            const radius = ((faded ? SIZE.faded : SIZE.lit) * box.height) / 2 / depth / 2;
+            const grow = sizeOf?.(world.order[k]) ?? 1;
+            const radius = ((faded ? SIZE.faded : SIZE.lit) * grow * box.height) / 2 / depth / 2;
             const d = Math.hypot(sx - x, sy - y);
             if (d > Math.max(LEAST_REACH, radius + SLACK)) continue;
             const score = d - radius + (faded ? LEAST_REACH / 2 : 0);
@@ -662,7 +678,13 @@
       const f = faded ? 0.8 : 0;
       for (let d = 0; d < 3; d++) colour[k * 3 + d] = c[d]! * (1 - f) + bg[d]! * f;
     });
+    const grow = (list: number[]) =>
+      new THREE.BufferAttribute(
+        Float32Array.from(list, (i) => sizeOf?.(i) ?? 1),
+        1,
+      );
     const glow = placesOf(shining);
+    glow.setAttribute("grow", grow(shining));
     glow.setAttribute(
       "color",
       new THREE.BufferAttribute(Float32Array.from(shining.flatMap((i) => rgb(colourOf(i)))), 3),
@@ -670,6 +692,7 @@
     world.bright.geometry.dispose();
     world.bright.geometry = glow;
     const geometry = placesOf(order);
+    geometry.setAttribute("grow", grow(order));
     geometry.setAttribute("color", new THREE.BufferAttribute(colour, 3));
     world.points.geometry.dispose();
     world.points.geometry = geometry;

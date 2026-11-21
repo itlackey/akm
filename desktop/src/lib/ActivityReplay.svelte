@@ -17,7 +17,7 @@
   import { onDestroy } from "svelte";
   import { api } from "./client";
   import { FAMILIES } from "./graph-model";
-  import DepthControls from "./DepthControls.svelte";
+  import MapOptions from "./MapOptions.svelte";
   import {
     buildOverview,
     depthText,
@@ -147,6 +147,25 @@
   let flat = $state(false);
   const lens = $derived(o ? lensFor(o, chosenLens, "meaning") : null);
   const place = $derived(o && lens ? placeBy(o, lens, flip, flat) : new Float32Array(0));
+  /** A point's size can stand for the events on its asset over the whole period, so it does not change as it plays. */
+  const SIZES = [
+    { id: "same", label: "One size" },
+    { id: "events", label: "Events in the period" },
+  ];
+  let size = $state("same");
+  const eventsOn = $derived.by(() => {
+    const counts = new Map<number, number>();
+    for (const s of steps) if (s.node >= 0 && s.kind !== "hit") counts.set(s.node, (counts.get(s.node) ?? 0) + 1);
+    return counts;
+  });
+  const mostEvents = $derived(Math.max(0, ...eventsOn.values()));
+  const sizeOf = (i: number) =>
+    size === "events" && mostEvents ? 1 + 1.5 * Math.sqrt((eventsOn.get(i) ?? 0) / mostEvents) : 1;
+  const sizeText = $derived(
+    size === "events" && mostEvents
+      ? `Size: more events in the period, larger; the largest has ${mostEvents.toLocaleString()}.${flat ? "" : " A nearer point also draws larger."}`
+      : "",
+  );
   /** The type colour of an asset: one of the map's eight families. */
   const colourOf = (i: number) => `--map-${o!.family[i]! + 1}`;
   /** The assets used so far, the same set while no new asset is used, so the points are redrawn only when one is. */
@@ -379,7 +398,7 @@
     <div class="replay-body">
       <div class="replay-map">
         {#if depth === "3d"}<h3>Where the events landed, by meaning</h3>
-          {#if groups.length && lens}<DepthControls
+          {#if groups.length && lens}<MapOptions
               {o}
               {lens}
               flip={flip && lens.bands.length > 0}
@@ -391,14 +410,19 @@
               onFlip={() => (flip = !flip)}
               onFlat={() => (flat = !flat)}
               onFront={() => cloud?.faceFront()}
+              sizes={SIZES}
+              {size}
+              onSize={(id) => (size = id)}
             />
             <SimilarityMap
               bind:this={cloud}
               {o}
               {place}
               {flat}
-              depthNote={depthText(lens, flip, flat)}
-              describe={(i) => `${FAMILIES[o!.family[i]!]!.label}${lit.has(i) ? ", used so far" : ""}`}
+              depthNote={`${depthText(lens, flip, flat)} ${sizeText}`.trim()}
+              describe={(i) =>
+                `${FAMILIES[o!.family[i]!]!.label}${lit.has(i) ? ", used so far" : ""}${size === "events" ? ` · ${eventsText(eventsOn.get(i) ?? 0) || "no events"} in the period` : ""}`}
+              {sizeOf}
               scope={everyAsset}
               {groups}
               {colourOf}

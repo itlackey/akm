@@ -411,6 +411,66 @@ test("the 3D library map", { timeout: 150000 }, async (t) => {
     await context.close();
   });
 
+  await t.test("the key and the Type filter narrow the map, and say how many assets they keep", async () => {
+    const { page, errors } = await fresh(used);
+    await ready(page);
+    const kept = page.getByRole("status").filter({ hasText: "of 10 assets" });
+    await expect(kept).toHaveCount(0);
+    await page.getByRole("tab", { name: "Problems" }).click();
+    const outdated = page.getByRole("button", { name: "Superseded, contradicted or deprecated" });
+    await outdated.click();
+    await expect(outdated).toHaveAttribute("aria-pressed", "true");
+    await expect(kept).toHaveText("1 of 10 assets");
+    await page.getByRole("button", { name: "No problem recorded" }).click();
+    await expect(outdated).toHaveAttribute("aria-pressed", "false");
+    await expect(kept).toHaveText("9 of 10 assets");
+    // Choosing it again shows everything, and another view starts with nothing chosen.
+    await page.getByRole("button", { name: "No problem recorded" }).click();
+    await expect(kept).toHaveCount(0);
+    await outdated.click();
+    await page.getByRole("tab", { name: "Use" }).click();
+    await expect(kept).toHaveCount(0);
+    await page.getByRole("button", { name: "Read in the last 30 days" }).click();
+    await expect(kept).toHaveText("10 of 10 assets");
+    // Type lists only the families the bundle holds.
+    const type = page.getByRole("combobox", { name: "Type" });
+    await expect(type.locator("option")).toHaveText(["All types", "Knowledge"]);
+    await type.selectOption({ label: "Knowledge" });
+    await expect(kept).toHaveText("10 of 10 assets");
+    await page.getByRole("button", { name: "Reset" }).click();
+    await expect(type).toHaveValue("-1");
+    await expect(kept).toHaveCount(0);
+    assert.deepEqual(errors, []);
+    await page.close();
+  });
+
+  await t.test("size stands for a figure the user chooses, and the key and the labels say which", async () => {
+    const { page, errors } = await fresh(used);
+    await ready(page);
+    const size = page.getByRole("combobox", { name: "Size" });
+    await expect(size).toHaveValue("same");
+    await expect(depthNote(page)).not.toContainText("Size:");
+    // Use opens sized by reads.
+    await page.getByRole("tab", { name: "Use" }).click();
+    await expect(size).toHaveValue("reads");
+    await expect(depthNote(page)).toContainText(
+      "Size: more reads, larger; the largest has 3 reads. A nearer point also draws larger.",
+    );
+    await size.selectOption({ label: "Links" });
+    await expect(depthNote(page)).toContainText("Size: more links, larger; the largest has 2 links.");
+    await page.locator(".stage-3d").focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(page.locator(".stage-3d .pick-label .value")).toContainText(/ · \d links?$/);
+    // Flattened, nothing is nearer than anything else.
+    await page.getByRole("button", { name: "Flatten" }).click();
+    await expect(depthNote(page)).toContainText("the largest has 2 links.");
+    await expect(depthNote(page)).not.toContainText("nearer point");
+    await page.getByRole("tab", { name: "Contents" }).click();
+    await expect(size).toHaveValue("same");
+    assert.deepEqual(errors, []);
+    await page.close();
+  });
+
   await t.test(
     "Replay: Tags is the default, Points plays the same events on the 3D map, says what has no place, and is remembered",
     async () => {
@@ -477,6 +537,8 @@ test("the 3D library map", { timeout: 150000 }, async (t) => {
       await replay.getByRole("button", { name: "Flatten" }).click();
       await expect(depthNote).toContainText("Flattened");
       await replay.getByRole("button", { name: "Flatten" }).click();
+      await replay.getByRole("combobox", { name: "Size" }).selectOption({ label: "Events in the period" });
+      await expect(depthNote).toContainText("Size: more events in the period, larger; the largest has 1.");
       // The key names every mark, and what has no place is counted, not dropped.
       const key = replay.getByRole("list", { name: "Key to the 3D map" });
       for (const name of ["Used so far", "Not used yet", "Read, just now", "Returned by a search, just now"])

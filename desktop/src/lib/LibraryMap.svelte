@@ -10,6 +10,7 @@
   // group needs: how much of it is read, what is outdated, disliked or duplicated, what it connects to, which bundles
   // repeat it, what people searched for and did not find, and, for any asset, the content closest to it in meaning.
   import { api, apiState } from "./client";
+  import { FAMILIES } from "./graph-model";
   import {
     buildOverview,
     DAY,
@@ -38,7 +39,7 @@
   import { joinsOf, LEVEL_CAP, LEVEL_STYLES, reach } from "./link-levels";
   import { filesHref } from "./library-files-model";
   import { libraryRead, searchHref } from "./library-model";
-  import DepthControls from "./DepthControls.svelte";
+  import MapOptions from "./MapOptions.svelte";
   import MindMap, { type Segment } from "./MindMap.svelte";
   import SimilarityMap from "./SimilarityMap.svelte";
   import { workspace } from "./state/workspace.svelte";
@@ -77,10 +78,24 @@
   const lens = $derived(o ? lensFor(o, chosenLens, VIEW_LENS[view]) : null);
   const flip = $derived(!!lens?.bands.length && (chosenFlip ?? (view === "problems" && lens.id === "lifecycle")));
   const place = $derived(o && lens ? placeBy(o, lens, flip, flat) : new Float32Array(0));
+  /** What a point's size stands for: Use opens on reads, the other views on one size. A choice lasts as a lens does. */
+  const SIZES = [
+    { id: "same", label: "One size" },
+    { id: "reads", label: "Reads" },
+    { id: "links", label: "Links" },
+  ] as const;
+  type Sizing = (typeof SIZES)[number]["id"];
+  let chosenSize = $state<Sizing | null>(null);
+  const size = $derived(chosenSize ?? (view === "use" && o?.useKnown ? "reads" : "same"));
+  /** Only the assets of this type family (-1: any), and only those of this class of the view's key ("": any). */
+  let kind = $state(-1);
+  let only = $state("");
   function show(next: View) {
     view = next;
     chosenLens = null;
     chosenFlip = null;
+    chosenSize = null;
+    only = "";
   }
   /** In 3D, the asset chosen on the map, or -1. */
   let picked = $state(-1);
@@ -121,16 +136,27 @@
   /** The assets in the bundle chosen, or in all of them. */
   const bundleScope = $derived(o ? o.ref.map((_, i) => i).filter((i) => bundle < 0 || o!.bundle[i] === bundle) : []);
   const words = $derived(filter.toLowerCase().split(/\s+/).filter(Boolean));
-  /** The assets whose name or tags hold every word typed, or null when nothing is typed. */
+  /** The class of the view's key an asset is drawn in: its use in Use, its worst problem (or "none") in Problems. */
+  const classOf = (i: number) =>
+    view === "use" ? (o!.use[i] ?? "") : view === "problems" ? (firstProblem(o!, i) ?? "none") : "";
+  /** The assets every filter keeps (the words typed in name or tags, the type, the class chosen in the key), or null
+   * when nothing narrows the map. */
   const matching = $derived.by(() => {
-    if (!o || !words.length) return null;
+    if (!o || (!words.length && kind < 0 && !only)) return null;
     const found = new Set<number>();
     for (const i of bundleScope) {
+      if ((kind >= 0 && o.family[i] !== kind) || (only && classOf(i) !== only)) continue;
       const text = `${o.ref[i]} ${(o.tags[i] ?? []).map((t) => o!.tagNames[t]).join(" ")}`.toLowerCase();
       if (words.every((w) => text.includes(w))) found.add(i);
     }
     return found;
   });
+  /** The type families the bundle holds, for the Type filter. */
+  const kinds = $derived(
+    FAMILIES.map((family, k) => ({ k, label: family.label })).filter((f) =>
+      bundleScope.some((i) => o!.family[i] === f.k),
+    ),
+  );
   /** The assets in scope: those of the bundle that match what is typed. */
   const scope = $derived(matching ? bundleScope.filter((i) => matching.has(i)) : bundleScope);
   const readsOf = (members: readonly number[]) => members.reduce((sum, i) => sum + o!.shows[i]!, 0);
@@ -226,6 +252,7 @@
   function reset() {
     show("contents");
     flat = false;
+    kind = -1;
     bundle = -1;
     filter = "";
     chosenDepth = null;
@@ -364,7 +391,16 @@
       .filter((r) => groups.some((g) => g.key === r.key))
       .map((r) => ({ from: selected, to: r.key, weight: (r.links + r.duplicates) / strongest }));
   });
-  /** What an asset's colour and depth stand for, in akm's recorded figures: said after its name on the map. */
+  /** How much larger than plain a point is drawn: by the square root of its figure against the bundle's largest. */
+  const sized = $derived(size === "reads" ? (o?.shows ?? []) : size === "links" ? degree : null);
+  const largestSized = $derived(sized ? Math.max(0, ...bundleScope.map((i) => sized[i]!)) : 0);
+  const sizeOf = (i: number) => (sized && largestSized ? 1 + 1.5 * Math.sqrt(sized[i]! / largestSized) : 1);
+  const sizeText = $derived(
+    sized
+      ? `Size: more ${size}, larger; the largest has ${plural(largestSized, size === "reads" ? "read" : "link")}.${flat ? "" : " A nearer point also draws larger."}`
+      : "",
+  );
+  /** What an asset's colour, depth and size stand for, in akm's recorded figures: said after its name on the map. */
   const ago = (iso: string) => {
     const days = Math.floor((o!.at - Date.parse(iso)) / DAY);
     return days < 1 ? "today" : `${plural(days, "day")} ago`;
@@ -395,7 +431,8 @@
         edited(i) || "edit time unknown",
       ],
     };
-    return [...new Set([colour, ...(flat ? [] : byLens[lens!.id]())])].filter(Boolean).join(" · ");
+    const bySize = size === "reads" ? reads(i) : size === "links" ? plural(degree[i]!, "link") : "";
+    return [...new Set([colour, ...(flat ? [] : byLens[lens!.id]()), bySize])].filter(Boolean).join(" · ");
   }
 
   const filesLink = $derived(
@@ -492,6 +529,16 @@
     </section>{/if}
 {/snippet}
 
+{#snippet keyPick(id: string, label: string, token: string)}
+  <button
+    class="key-pick"
+    aria-pressed={only === id}
+    title="Show only these; choose it again to show all"
+    onclick={() => (only = only === id ? "" : id)}
+    ><span class="swatch" style={`background:var(${token})`}></span>{label}</button
+  >
+{/snippet}
+
 <svelte:window onkeydown={onKey} />
 <nav class="library-views" aria-label="Library views" data-sveltekit-reset="false">
   <a href="/library/search">Search</a>
@@ -526,6 +573,11 @@
           }}
           ><option value={-1}>All bundles</option>{#each o.bundles as name, b}<option value={b}>{name}</option
             >{/each}</select
+        ></label
+      >
+      <label class="map-filter"
+        >Type <select bind:value={kind}
+          ><option value={-1}>All types</option>{#each kinds as f}<option value={f.k}>{f.label}</option>{/each}</select
         ></label
       >
       <label class="map-filter"
@@ -567,22 +619,20 @@
                 {depth === "3d"
                   ? "Each point is an asset, coloured by when it was last read."
                   : "The tags read most; each shows its number of reads, and its bar splits its assets by when they were last read."}
+                Choose one below to show only it.
               </p>
               <ul>
-                {#each USE_CLASSES as u}<li>
-                    <span class="swatch" style={`background:var(${u.token})`}></span>{u.label}
-                  </li>{/each}
+                {#each USE_CLASSES as u}<li>{@render keyPick(u.id, u.label, u.token)}</li>{/each}
               </ul>{:else}<p class="muted small">No usage history is available, so use cannot be shown.</p>{/if}
           {:else}<p class="muted small">
               {depth === "3d"
                 ? "Each point is an asset, coloured by its worst problem; assets with none are faint."
                 : "The tags with the most problem assets; each bar splits its assets by their worst problem."}
+              Choose one below to show only it.
             </p>
             <ul>
-              {#each PROBLEMS as p}<li>
-                  <span class="swatch" style={`background:var(${p.token})`}></span>{p.label}
-                </li>{/each}
-              <li><span class="swatch" style="background:var(--use-0)"></span>No problem recorded</li>
+              {#each PROBLEMS as p}<li>{@render keyPick(p.id, p.label, p.token)}</li>{/each}
+              <li>{@render keyPick("none", "No problem recorded", "--use-0")}</li>
             </ul>
             {#if !o.feedbackKnown || !o.duplicatesKnown}<p class="muted small">
                 {o.feedbackKnown ? "" : "Disliked assets cannot be shown. "}{o.duplicatesKnown
@@ -591,7 +641,7 @@
               </p>{/if}{/if}
         </div>
         <div class="map-stage">
-          {#if depth === "3d"}{#if groups.length && lens}<DepthControls
+          {#if depth === "3d"}{#if groups.length && lens}<MapOptions
                 {o}
                 {lens}
                 {flip}
@@ -603,14 +653,18 @@
                 onFlip={() => (chosenFlip = !flip)}
                 onFlat={() => (flat = !flat)}
                 onFront={() => cloud?.faceFront()}
+                sizes={SIZES.filter((s) => s.id !== "reads" || o!.useKnown)}
+                {size}
+                onSize={(id) => (chosenSize = id as Sizing)}
               />
               <SimilarityMap
                 bind:this={cloud}
                 {o}
                 {place}
                 {flat}
-                depthNote={depthText(lens, flip, flat)}
+                depthNote={`${depthText(lens, flip, flat)} ${sizeText}`.trim()}
                 {describe}
+                {sizeOf}
                 scope={bundleScope}
                 {groups}
                 {colourOf}
@@ -967,6 +1021,26 @@
   }
   .map-legend {
     min-block-size: 24px;
+  }
+  .key-pick {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    padding: 1px 6px;
+    font: inherit;
+    color: inherit;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .key-pick:hover {
+    border-color: var(--border);
+  }
+  .key-pick[aria-pressed="true"] {
+    font-weight: 600;
+    background: var(--surface-2);
+    border-color: var(--text);
   }
   .map-legend ul {
     display: flex;
