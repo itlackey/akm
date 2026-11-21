@@ -16,7 +16,16 @@
     drawing: "tags" | "2d" | "3d" | null;
     selected: string;
     sideOpen: boolean;
-  } = { view: "contents", bundle: -1, chosenFinding: {}, drawing: null, selected: "", sideOpen: true };
+    groupBy: Grouping;
+  } = {
+    view: "contents",
+    bundle: -1,
+    chosenFinding: {},
+    drawing: null,
+    selected: "",
+    sideOpen: true,
+    groupBy: "meaning",
+  };
 </script>
 
 <script lang="ts">
@@ -33,7 +42,10 @@
     buildOverview,
     DAY,
     firstProblem,
-    flatPlace,
+    clusterPlace,
+    GROUPINGS,
+    type Grouping,
+    regroup,
     groupFacts,
     groupJoins,
     groupsOf,
@@ -78,12 +90,19 @@
   /** The panel beside the map folds away, to give the map the whole window. */
   let sideOpen = $state(remembered.sideOpen);
   $effect(() => {
-    Object.assign(remembered, { view, bundle, chosenFinding, drawing: chosenDrawing, selected, sideOpen });
+    Object.assign(remembered, { view, bundle, chosenFinding, drawing: chosenDrawing, selected, sideOpen, groupBy });
   });
   const drawing = $derived(chosenDrawing ?? (o?.groupCount ? "2d" : "tags"));
   const points = $derived(drawing !== "tags");
   const flat = $derived(drawing === "2d");
-  const place = $derived(o ? (flat ? flatPlace(o) : o.place) : new Float32Array(0));
+  /** What the points are gathered by. By meaning they are akm's groups; by a property, one group for each value. */
+  let groupBy = $state<Grouping>(remembered.groupBy);
+  const regrouped = $derived(o ? regroup(o, groupBy) : null);
+  /** The overview as the points read it: its groups are the grouping chosen. */
+  const og = $derived(regrouped?.o ?? null);
+  const groupWord = $derived(GROUPINGS.find((g) => g.id === groupBy)!.label.toLowerCase());
+  /** Each group is a cluster of its assets, a disc in the plane and a ball in space, and no cluster overlaps another. */
+  const place = $derived(og ? clusterPlace(og, flat ? 2 : 3) : new Float32Array(0));
   const DRAWINGS = [
     ["tags", "Tags", "The asset types and the tags their assets carry most"],
     ["2d", "2D", "Every asset as a point, placed by meaning, in one plane"],
@@ -141,8 +160,10 @@
   const branches = $derived(
     o ? mindMap(o, 44, scope, view === "use" ? readsOf : view === "problems" ? (m) => problemsOf(m) : undefined) : [],
   );
-  /** Groups by meaning, for the 3D map. */
-  const groups = $derived(o ? groupsOf(o, bundleScope) : []);
+  /** The groups the points are gathered in, named by their tags (by meaning) or by the property's value. */
+  const groups = $derived(
+    og ? groupsOf(og, bundleScope).map((g) => (regrouped!.names ? { ...g, label: regrouped!.names[g.id]! } : g)) : [],
+  );
   const parts = $derived(
     new Map<string, { name: string; type: string; tag: string; group: boolean; members: number[] }>([
       ...branches.flatMap((b) => [
@@ -249,7 +270,7 @@
     !o || !selected
       ? []
       : selected.startsWith("g:")
-        ? groupJoins(o, Number(selected.slice(2)), view === "problems" ? OUTDATED_LINKS : null)
+        ? groupJoins(og!, Number(selected.slice(2)), view === "problems" ? OUTDATED_LINKS : null)
         : relations(o, branches, selected, view === "problems" ? OUTDATED_LINKS : null),
   );
   const top = (list: readonly number[], by: (i: number) => number) =>
@@ -458,7 +479,7 @@
   const groupNote = (g: { key: string }) =>
     finding ? `${(perGroup.get(g.key) ?? 0).toLocaleString()} ${finding.unit}` : "";
   /** Assets in the bundle that are not points on the 3D map: akm's stored layout has no group for them. */
-  const offMap = $derived(o ? unplaced(o, bundleScope) : 0);
+  const offMap = $derived(og ? unplaced(og, bundleScope) : 0);
   const scopeName = $derived(bundle < 0 ? "All bundles" : (o?.bundles[bundle] ?? ""));
   const nameOf = (key: string) => {
     const p = parts.get(key);
@@ -708,6 +729,19 @@
               autocomplete="off"
             /></label
           >
+          {#if points}<select
+              class="group-by"
+              aria-label="Group by"
+              title="What the points are gathered by"
+              bind:value={groupBy}
+              onchange={() => {
+                selected = "";
+                picked = -1;
+              }}
+              >{#each GROUPINGS.filter((g) => (g.id !== "bundle" || o!.bundles.length > 1) && (g.id !== "use" || o!.useKnown)) as g}<option
+                  value={g.id}>By {g.label.toLowerCase()}</option
+                >{/each}</select
+            >{/if}
           {#if matching}<span class="muted small" role="status"
               >{matching.size.toLocaleString()} of {plural(bundleScope.length, "asset")}</span
             >{/if}
@@ -744,7 +778,7 @@
             >{/if}
         </div>
         {#if points}{#if groups.length}<SimilarityMap
-              {o}
+              o={og!}
               {place}
               {flat}
               {size}
@@ -764,7 +798,7 @@
               onPick={pick}
               onGroup={choose}
               onStep={step}
-              label={`${question} The ${plural(bundleScope.length - offMap, "asset")} of ${scopeName} that have a group by meaning, as points, in ${plural(groups.length, "group")} named by their tags, groups alike in meaning near each other.${offMap ? ` ${plural(offMap, "asset")} not shown.` : ""}`}
+              label={`${question} The ${plural(bundleScope.length - offMap, "asset")} of ${scopeName} that have a group by ${groupWord}, as points, in ${plural(groups.length, "group")} named by their tags, groups alike in meaning near each other.${offMap ? ` ${plural(offMap, "asset")} not shown.` : ""}`}
             >
               {#snippet legend()}
                 {#if view === "contents"}<ul class="colour-key types">
@@ -925,7 +959,7 @@
                 <div>
                   <h2>{part.name}</h2>
                   <p class="muted small">
-                    {part.group ? "Group by meaning" : part.type ? `Tag in ${part.type}` : "Asset type"} ·
+                    {part.group ? `Group by ${groupWord}` : part.type ? `Tag in ${part.type}` : "Asset type"} ·
                     {plural(facts.count, "asset")}
                   </p>
                 </div>
@@ -998,7 +1032,7 @@
                 </ul>
               </section>{/if}
             {#if points && !part && groups.length}<section>
-                <h3>{finding ? "By group" : "Groups by meaning"}<span>{finding ? "Matching" : "Assets"}</span></h3>
+                <h3>{finding ? "By group" : `Groups by ${groupWord}`}<span>{finding ? "Matching" : "Assets"}</span></h3>
                 <ul class="rows">
                   {#each [...groups]
                     .filter((g) => !finding || perGroup.get(g.key))
@@ -1125,6 +1159,7 @@
   }
   .stage-tools :global(button),
   .stage-tools input,
+  .stage-tools select,
   .stage-tools summary {
     block-size: 28px;
     min-block-size: 28px;
@@ -1139,6 +1174,11 @@
   .stage-tools .views button {
     min-inline-size: 40px;
     padding: 0 10px;
+  }
+  .group-by {
+    flex: none;
+    inline-size: 152px;
+    padding-inline-start: 8px;
   }
   .map-filter {
     flex: 0 1 176px;
@@ -1526,6 +1566,13 @@
     font-size: var(--text-s);
     background: var(--warn-bg);
     border-radius: 6px;
+  }
+  /* A long name inside a sentence wraps with it, instead of running out of the box on one line. */
+  .wrong button.link,
+  .wrong a {
+    display: inline;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
   .near {
     margin: 4px 0 6px 12px;
