@@ -9,6 +9,7 @@
  * coverage read from the proposals table.
  */
 
+import { toErrorMessage } from "../../core/common";
 import type { readEvents } from "../../core/events";
 import { decodeImproveResult } from "../../core/improve-result";
 import type { Database } from "../../storage/database";
@@ -41,7 +42,7 @@ export function decodeTaskRows(rows: readonly TaskHistoryRow[]): DecodedTaskRow[
     try {
       return { row, metadata: decodeTaskHistoryMetadata(row.metadata_json) };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = toErrorMessage(error);
       console.warn(
         `[akm] Skipping unparseable task_history row in health metrics (task_id=${row.task_id}, started_at=${row.started_at}): ${message}`,
       );

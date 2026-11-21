@@ -14,7 +14,7 @@ import * as childProcess from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { IS_WINDOWS, parseJsonc } from "../../core/common";
+import { IS_WINDOWS, parseJsonc, toErrorMessage } from "../../core/common";
 import { UsageError } from "../../core/errors";
 import { moveToTrash } from "../../core/trash";
 import {
@@ -310,7 +310,7 @@ export function codexMarketplaceEntry(): { entry: Record<string, unknown> | unde
     return { entry: codexMarketplace(file) };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return { entry: undefined };
-    return { error: `could not read ${file}: ${error instanceof Error ? error.message : String(error)}` };
+    return { error: `could not read ${file}: ${toErrorMessage(error)}` };
   }
 }
 
@@ -418,7 +418,7 @@ export function openCodeConfigSpec(flavor: OpenCodeFlavor): OpenCodeConfigSpec |
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code === "ENOENT" || code === "ENOTDIR") continue;
-      return { error: `could not read ${file}: ${error instanceof Error ? error.message : String(error)}` };
+      return { error: `could not read ${file}: ${toErrorMessage(error)}` };
     }
     let config: Record<string, unknown>;
     try {
@@ -426,7 +426,7 @@ export function openCodeConfigSpec(flavor: OpenCodeFlavor): OpenCodeConfigSpec |
       if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("not a JSON object");
       config = parsed as Record<string, unknown>;
     } catch (error) {
-      return { error: `could not parse ${file}: ${error instanceof Error ? error.message : String(error)}` };
+      return { error: `could not parse ${file}: ${toErrorMessage(error)}` };
     }
     let setsList = false;
     for (const key of flavor.configKeys) {

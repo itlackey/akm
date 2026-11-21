@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import { toErrorMessage } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { EXTRACT_INFRASTRUCTURE_SKIP_REASONS } from "../../core/improve-types";
 import { listPendingStateMigrations, type StateDatabaseMigrationReport } from "../../core/state-db";
@@ -128,14 +129,14 @@ export function proposalQueueState(config: AkmConfig, stashDir: string): Proposa
     extractEnabled = resolveProcessEnabled("extract", selected.config);
     strategy = { strategy: selected.name };
   } catch (error) {
-    strategy = { strategyError: error instanceof Error ? error.message : String(error) };
+    strategy = { strategyError: toErrorMessage(error) };
   }
   const base = { stashDir, learningOn: learningStatus(config).on, ...strategy, extractEnabled };
   try {
     resolveProposalQueueTarget(stashDir, config);
     return base;
   } catch (error) {
-    return { ...base, problem: error instanceof Error ? error.message : String(error) };
+    return { ...base, problem: toErrorMessage(error) };
   }
 }
 

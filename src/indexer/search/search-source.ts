@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { isWithin, relativeToRoot, resolveStashDir, safeRealpath } from "../../core/common";
+import { isWithin, relativeToRoot, resolveStashDir, safeRealpath, toErrorMessage } from "../../core/common";
 import type { AkmConfig, SourceConfigEntry } from "../../core/config/config";
 import {
   bundleComponentConfig,
@@ -228,16 +228,14 @@ function resolveEntryContent(entry: SourceConfigEntry): { dir: string } | { erro
   try {
     provider = factory(entry);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { error: message };
+    return { error: toErrorMessage(err) };
   }
 
   let dir: string;
   try {
     dir = provider.path();
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { error: message };
+    return { error: toErrorMessage(err) };
   }
 
   // Git providers expose the cloned repo root as their path. The akm content

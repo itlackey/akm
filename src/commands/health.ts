@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { daysToMs, resolveStashDir } from "../core/common";
+import { daysToMs, resolveStashDir, toErrorMessage } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { ConfigError, rethrowIfTestIsolationError, UsageError } from "../core/errors";
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
@@ -444,7 +444,7 @@ function gatherAncillaryAdvisories(
       confidence: "high",
       status: "unknown",
       reason: "blocked",
-      message: `Could not look for OpenCode 1 harnesses: ${error instanceof Error ? error.message : String(error)}`,
+      message: `Could not look for OpenCode 1 harnesses: ${toErrorMessage(error)}`,
     });
   }
 
