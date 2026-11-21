@@ -316,8 +316,8 @@ test("visualizations survive late responses, a changed library and a narrow wind
       await expect(mapButton(page, "deploy (Memories and facts): 2 reads")).toBeVisible();
       // Knowledge's auth asset was never read, so the tag is not among the most read.
       await expect(page.locator(".mind-map").getByRole("button", { name: /^auth \(Knowledge\)/ })).toHaveCount(0);
-      assert.deepEqual(await offered(), ["Never read, untouched 6+ months3", "Read but disliked0", "Most read3"]);
-      await expect(filters.getByRole("button", { pressed: true })).toHaveText("Never read, untouched 6+ months3");
+      assert.deepEqual(await offered(), ["Not read, untouched 6+ months3", "Read but disliked0", "Most read3"]);
+      await expect(filters.getByRole("button", { pressed: true })).toHaveText("Not read, untouched 6+ months3");
       // The one disliked asset is never read, so that filter finds nothing and cannot be chosen.
       await expect(filters.getByRole("button", { name: "Read but disliked" })).toBeDisabled();
       await expect(figures(page).locator(".read-row")).toHaveText([
@@ -462,15 +462,17 @@ test("visualizations survive late responses, a changed library and a narrow wind
     await tab(page, "Use").click();
     await page.getByRole("group", { name: "Drawing" }).getByRole("button", { name: "Tags" }).click();
     const filter = page.getByRole("searchbox", { name: "Filter" });
-    const retire = page.getByRole("group", { name: "Show on the map" }).getByRole("button", { name: /^Never read/ });
-    await expect(retire).toHaveText("Never read, untouched 6+ months3");
+    const retire = page
+      .getByRole("group", { name: "Show on the map" })
+      .getByRole("button", { name: /^Not read, untouched/ });
+    await expect(retire).toHaveText("Not read, untouched 6+ months3");
     await filter.fill("auth");
     await expect(page.getByText("3 of 7 assets")).toBeVisible();
-    await expect(retire).toHaveText("Never read, untouched 6+ months1");
+    await expect(retire).toHaveText("Not read, untouched 6+ months1");
     await expect(page.locator(".mind-map").getByRole("button", { name: /^deploy/ })).toHaveCount(0);
     await filter.fill("");
     await expect(page.getByText("3 of 7 assets")).toHaveCount(0);
-    await expect(retire).toHaveText("Never read, untouched 6+ months3");
+    await expect(retire).toHaveText("Not read, untouched 6+ months3");
     await page.close();
   });
 

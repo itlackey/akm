@@ -137,7 +137,7 @@
   const size = $derived.by(() => {
     const values = new Float32Array(o?.count ?? 0);
     for (const s of steps) if (s.node >= 0 && s.kind !== "hit") values[s.node]!++;
-    return { label: "events in the period", values, largest: Math.max(0, ...values) };
+    return { label: "events in the period", values, largest: values.reduce((most, v) => Math.max(most, v), 0) };
   });
   /** The asset chosen on the points, or -1; what is chosen replaces the lists beside the map with its own events. */
   let picked = $state(-1);

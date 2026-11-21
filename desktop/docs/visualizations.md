@@ -110,7 +110,7 @@ zoom, and 0 faces the front.
 | Question | Point colour | Point size | Filters |
 | --- | --- | --- | --- |
 | Contents: what is in the library? | its group by meaning | declared links | one per asset type; Not linked to anything; Repeated across bundles (with more than one bundle) |
-| Use: what is used, and what is dead weight? | when it was last read | reads | Never read, untouched 6+ months; Read but disliked; Most read |
+| Use: what is used, and what is dead weight? | when it was last read | reads | Not read, untouched 6+ months; Read but disliked; Most read |
 | Problems: what is wrong or duplicated? | its worst problem | reads | Outdated, still read; Near-identical pairs; Disliked; Outdated, unread |
 
 A key on the map names the colours and the sizes. Only what the chosen filter finds is drawn to size; the rest is
@@ -121,7 +121,9 @@ faint and at one size.
 Each question has its own filters, drawn on the map as buttons with how many assets (or pairs) each finds; one is on
 at a time, and choosing it again turns it off. Use and Problems open on their first filter that finds anything, which
 is the work the question is asked for; Contents opens with none. A filter akm has no figures for (use without usage
-history, feedback or near-duplicates when unavailable) is not offered. The chosen filter:
+history, feedback or near-duplicates when unavailable) is not offered. Without usage history Problems offers one
+Outdated filter, since whether an outdated asset is still read is not known. "Not read" means not read in the usage
+window akm reports. The chosen filter:
 
 - draws what it finds in full and fades the rest, which stay in place;
 - adds to each group's name how many of them it holds ("24 to retire");

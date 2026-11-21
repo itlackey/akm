@@ -108,6 +108,8 @@
         return;
       }
       o = buildOverview(payload);
+      // The bundle remembered may be gone since the map was last open.
+      if (bundle >= o.bundles.length) bundle = -1;
     } catch (cause) {
       error = (cause as Error).message;
     }
@@ -248,6 +250,10 @@
   );
   const top = (list: readonly number[], by: (i: number) => number) =>
     list.filter((i) => by(i) > 0).sort((a, b) => by(b) - by(a) || a - b);
+  /** The usage window in words: "the last 90 days". */
+  const windowText = $derived(
+    o?.useSince ? `the last ${Math.round((o.at - Date.parse(o.useSince)) / DAY)} days` : "the usage window",
+  );
   /** One of a view's filters: the assets (or pairs of assets) its question is asked to find, and what to say of each. */
   type Finding = {
     id: string;
@@ -266,13 +272,14 @@
     const f = groupFacts(o, pool);
     const readsOf = (i: number) => (o!.useKnown ? plural(o!.shows[i]!, "read") : "");
     const mostReadFirst = (list: readonly number[]) => [...list].sort((a, b) => o!.shows[b]! - o!.shows[a]! || a - b);
+    const byReads = o.useKnown ? "Most read first. " : "";
     const ofPairs = (pairs: Pair[]) => [...new Set(pairs.flatMap((d) => [d.a, d.b]))];
     if (view === "use") {
       if (!o.useKnown) return [];
       return [
         {
           id: "retire",
-          label: "Never read, untouched 6+ months",
+          label: "Not read, untouched 6+ months",
           unit: "to retire",
           hint: "Longest untouched first. Open one to retire it.",
           assets: pool
@@ -304,15 +311,30 @@
     }
     if (view === "problems") {
       const pairs = [...f.duplicatesInside, ...f.duplicatesOutside];
+      // Whether an outdated asset is still read is only known when akm reported the window's use.
+      const outdated: Finding[] = o.useKnown
+        ? [
+            {
+              id: "outdatedRead",
+              label: "Outdated, still read",
+              unit: "outdated, still read",
+              hint: "Agents are still given these. Most read first. Open one to retire it or fix its link.",
+              assets: top(f.outdated, (i) => o!.shows[i]!),
+              note: outdatedNote,
+            },
+          ]
+        : [
+            {
+              id: "outdated",
+              label: "Outdated",
+              unit: "outdated",
+              hint: "Open one to retire it or fix its link.",
+              assets: f.outdated,
+              note: outdatedNote,
+            },
+          ];
       return [
-        {
-          id: "outdatedRead",
-          label: "Outdated, still read",
-          unit: "outdated, still read",
-          hint: "Agents are still given these. Most read first. Open one to retire it or fix its link.",
-          assets: top(f.outdated, (i) => o!.shows[i]!),
-          note: outdatedNote,
-        },
+        ...outdated,
         ...(o.duplicatesKnown
           ? [
               {
@@ -332,21 +354,25 @@
                 id: "disliked",
                 label: "Disliked",
                 unit: "disliked",
-                hint: "More negative feedback than positive, most read first. Open one to fix it.",
+                hint: `More negative feedback than positive${o.useKnown ? ", most read first" : ""}. Open one to fix it.`,
                 assets: mostReadFirst(f.disliked),
                 note: (i: number) =>
                   `${o!.negative[i]} down, ${o!.positive[i]} up${readsOf(i) ? ` · ${readsOf(i)}` : ""}`,
               },
             ]
           : []),
-        {
-          id: "outdatedUnread",
-          label: "Outdated, unread",
-          unit: "outdated, unread",
-          hint: "Nobody is given these. Retire them when convenient.",
-          assets: f.outdated.filter((i) => !o!.shows[i]),
-          note: outdatedNote,
-        },
+        ...(o.useKnown
+          ? [
+              {
+                id: "outdatedUnread",
+                label: "Outdated, unread",
+                unit: "outdated, unread",
+                hint: `Not read in ${windowText}. Retire them when convenient.`,
+                assets: f.outdated.filter((i) => !o!.shows[i]),
+                note: outdatedNote,
+              },
+            ]
+          : []),
       ];
     }
     const across = [...f.duplicatesInside, ...f.duplicatesOutside].filter((d) => o!.bundle[d.a] !== o!.bundle[d.b]);
@@ -355,7 +381,7 @@
         id: `type:${k}`,
         label: family.label,
         unit: family.label.toLowerCase(),
-        hint: "Most read first.",
+        hint: byReads.trim(),
         assets: mostReadFirst(pool.filter((i) => o!.family[i] === k)),
         note: readsOf,
       })).filter((x) => x.assets.length),
@@ -363,7 +389,7 @@
         id: "unlinked",
         label: "Not linked to anything",
         unit: "unlinked",
-        hint: "Most read first. Open one to link it to what it belongs with.",
+        hint: `${byReads}Open one to link it to what it belongs with.`,
         assets: mostReadFirst(pool.filter((i) => !o!.degree[i])),
         note: readsOf,
       },
@@ -485,7 +511,7 @@
     return {
       label: view === "contents" ? "links" : "reads",
       values,
-      largest: Math.max(0, ...bundleScope.map((i) => values[i]!)),
+      largest: bundleScope.reduce((most, i) => Math.max(most, values[i]!), 0),
     };
   });
   /** What an asset's colour, depth and size stand for, in akm's recorded figures: said after its name on the map. */
@@ -493,10 +519,6 @@
     const days = Math.floor((o!.at - Date.parse(iso)) / DAY);
     return days < 1 ? "today" : `${plural(days, "day")} ago`;
   };
-  /** The usage window in words: "the last 90 days". */
-  const windowText = $derived(
-    o?.useSince ? `the last ${Math.round((o.at - Date.parse(o.useSince)) / DAY)} days` : "the usage window",
-  );
   const reads = (i: number) =>
     !o!.useKnown
       ? "reads unknown"
@@ -869,9 +891,11 @@
                 )}
               </section>{/if}
             {#if view === "use" && !o.useKnown}<section><p class="muted small">{o.note}</p></section>{/if}
-            {#if view === "problems" && (!o.feedbackKnown || !o.duplicatesKnown)}<section>
+            {#if view === "problems" && (!o.useKnown || !o.feedbackKnown || !o.duplicatesKnown)}<section>
                 <p class="muted small">
-                  {o.feedbackKnown ? "" : "Disliked assets cannot be shown. "}{o.duplicatesKnown
+                  {o.useKnown ? "" : "Whether an outdated asset is still read is not known. "}{o.feedbackKnown
+                    ? ""
+                    : "Disliked assets cannot be shown. "}{o.duplicatesKnown
                     ? ""
                     : "Near-identical pairs cannot be shown. "}{o.note}
                 </p>

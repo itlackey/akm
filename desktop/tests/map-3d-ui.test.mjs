@@ -262,21 +262,23 @@ test("the 3D library map", { timeout: 150000 }, async (t) => {
     // Use opens on what there is to act on: nothing is unread here, so the most read.
     await page.getByRole("tab", { name: "Use" }).click();
     await expect(filters(page).getByRole("button", { pressed: true })).toHaveText("Most read10");
-    await expect(filters(page).getByRole("button", { name: /^Never read/ })).toBeDisabled();
+    await expect(filters(page).getByRole("button", { name: /^Not read, untouched/ })).toBeDisabled();
     assert.deepEqual(errors, []);
     await page.close();
   });
 
   await t.test("without usage history Use offers no filter, and Problems only what it can tell", async () => {
-    const { page, errors } = await fresh();
+    // One deprecated asset, and no usage: whether it is still read is not known, so it is listed as outdated only.
+    const { page, errors } = await fresh({
+      ...chain,
+      beliefs: ["deprecated"],
+      nodes: { ...chain.nodes, belief: [0, ...new Array(N - 1).fill(-1)] },
+    });
     await ready(page);
     await page.getByRole("tab", { name: "Use" }).click();
     await expect(filters(page).getByRole("button")).toHaveCount(0);
     await page.getByRole("tab", { name: "Problems" }).click();
-    assert.deepEqual(await filters(page).getByRole("button").allTextContents(), [
-      "Outdated, still read0",
-      "Outdated, unread0",
-    ]);
+    assert.deepEqual(await filters(page).getByRole("button").allTextContents(), ["Outdated1"]);
     assert.deepEqual(errors, []);
     await page.close();
   });

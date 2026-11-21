@@ -148,6 +148,11 @@ export function buildOverview(payload: OverviewPayload, now = Date.now()): Overv
     outdated[payload.links.from[e]!] = 1;
     outdatedWhy[payload.links.from[e]!]!.push({ why: kind.replace("_by", ""), by: payload.links.to[e]! });
   }
+  const degree = new Array<number>(n).fill(0);
+  for (let e = 0; e < payload.links.from.length; e++) {
+    degree[payload.links.from[e]!]!++;
+    degree[payload.links.to[e]!]!++;
+  }
   const duplicates = (payload.duplicates?.a ?? []).map((a, k) => ({
     a,
     b: payload.duplicates!.b[k]!,
@@ -172,9 +177,7 @@ export function buildOverview(payload: OverviewPayload, now = Date.now()): Overv
     bundles: payload.bundles,
     bundle: payload.nodes.bundle,
     shows: payload.nodes.shows,
-    degree: payload.nodes.ref.map(
-      (_, i) => payload.links.from.filter((a) => a === i).length + payload.links.to.filter((b) => b === i).length,
-    ),
+    degree,
     lastShown: payload.nodes.lastShownAt ?? payload.nodes.ref.map(() => null),
     at: now,
     modified: payload.nodes.modifiedAt ?? payload.nodes.ref.map(() => null),
