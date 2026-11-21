@@ -3315,7 +3315,8 @@ A script runs by its ref only (`akm run scripts/<file> [arguments]`, or
 interpreter its extension selects, and its exit status is akm's. akm's flags
 (`--timeout`, `--max-retries`, `--cwd`, `--env`, `--secret`, `--clean`,
 `--inherit`) go before the ref; every token after the ref, `--` included, is
-passed to the script unchanged. `--inherit <VAR,...>` starts the run clean with
+passed to the script unchanged, and akm reads none of them (`--help`, `-h`, `-q`,
+`--verbose`, `--bundle` and `--format` among them). `--inherit <VAR,...>` starts the run clean with
 those variables; `--clean`, `--inherit`, `--max-retries` and `--cwd` also apply to
 agent and command runs, and a missing `--cwd` folder is made. A version 4 task
 keeps its own flag parsing. A version 5 task reads its start flags itself: a

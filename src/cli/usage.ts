@@ -49,15 +49,9 @@ const SAFE_VALUES: Record<string, readonly string[]> = {
   type: [...KNOWN_TYPES, "any", ...stashDirNames()],
 };
 
-/** Scan declared identities only. Unknown spellings can themselves contain secrets. */
-export function describeUsage(root: UsageCommand, raw: readonly string[]): InvocationUsage {
-  const boundary = raw.indexOf("--");
-  const own = boundary < 0 ? raw : raw.slice(0, boundary);
-  const result: InvocationUsage = {
-    command: [],
-    arguments: [],
-    childArgumentCount: boundary < 0 ? 0 : raw.length - boundary - 1,
-  };
+/** Scan declared identities only. Unknown spellings can themselves contain secrets. `own` is the invocation's own tokens. */
+export function describeUsage(root: UsageCommand, own: readonly string[], childArgumentCount = 0): InvocationUsage {
+  const result: InvocationUsage = { command: [], arguments: [], childArgumentCount };
   const definitions: Record<string, ArgDefinition> = {
     help: { type: "boolean", alias: "h" },
     version: { type: "boolean", alias: "v" },
@@ -281,15 +275,20 @@ function readOnlyRequested(usage: InvocationUsage): boolean {
 }
 
 /** Whether this invocation records no counts (`--read-only` or `usage.capture: false`), so there is nothing to report. */
-export function usageCaptureOff(root: UsageCommand, raw: readonly string[]): boolean {
+export function usageCaptureOff(root: UsageCommand, own: readonly string[]): boolean {
   try {
-    return readOnlyRequested(describeUsage(root, raw)) || captureDisabledByConfig();
+    return readOnlyRequested(describeUsage(root, own)) || captureDisabledByConfig();
   } catch {
     return true;
   }
 }
 
-export function startUsage(root: UsageCommand, raw: readonly string[], version: string): () => void {
+export function startUsage(
+  root: UsageCommand,
+  own: readonly string[],
+  childArgumentCount: number,
+  version: string,
+): () => void {
   const started = Date.now();
   const id = randomUUID();
   let done = false;
@@ -305,7 +304,7 @@ export function startUsage(root: UsageCommand, raw: readonly string[], version: 
   const harness = resolveAgentIdentity(process.env).harness;
   const harnessField = harness ? { harness } : {};
   try {
-    const usage = describeUsage(root, raw);
+    const usage = describeUsage(root, own, childArgumentCount);
     // `--read-only` promises no writes, and the config key turns capture off.
     // Either way nothing is opened, written or finalized.
     if (readOnlyRequested(usage)) return () => {};
@@ -347,7 +346,7 @@ export function startUsage(root: UsageCommand, raw: readonly string[], version: 
   const checkpoint = (db: Database): string => {
     if (resolvedAssetType === undefined) return key!;
     const usage = selectedExecutor
-      ? describeUsage({ ...root, subCommands: { ...root.subCommands, run: selectedExecutor } }, raw)
+      ? describeUsage({ ...root, subCommands: { ...root.subCommands, run: selectedExecutor } }, own, childArgumentCount)
       : undefined;
     const nextDimensions = usage ? { ...dimensions, ...usage } : dimensions;
     const nextData = usage ? { ...data, ...usage } : data;

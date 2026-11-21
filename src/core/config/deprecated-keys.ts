@@ -7,6 +7,7 @@
  * `extends` notice. The config is read exactly as before; a notice is not printed for akm's own runs
  * (the scheduler, a task, improve, audit) or with `--help`, and `--quiet` silences it (it goes through `warnOnce`).
  */
+import { getParsedInvocation } from "../../cli/invocation";
 import { warnOnce } from "../warn";
 import { isPlainObject } from "./deep-merge";
 
@@ -27,17 +28,8 @@ export function deprecationNoticesSuppressed(
   );
 }
 
-/** Whether this process was started with `flag` (or `flag=true`) among its own arguments. */
-function processHasFlag(flag: string): boolean {
-  for (const arg of process.argv.slice(2)) {
-    if (arg === "--") return false;
-    if (arg === flag || arg === `${flag}=true`) return true;
-  }
-  return false;
-}
-
 export function warnDeprecatedConfigKeys(raw: Dict, sourcePath?: string): void {
-  if (deprecationNoticesSuppressed(processHasFlag)) return;
+  if (deprecationNoticesSuppressed((flag) => getParsedInvocation().hasFlag(flag))) return;
   const where = sourcePath ? ` (${sourcePath})` : "";
   const improve = isPlainObject(raw.improve) ? raw.improve : {};
   if (improve.strategies !== undefined || improve.qualityGate !== undefined) {

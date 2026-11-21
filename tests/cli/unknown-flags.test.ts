@@ -17,11 +17,15 @@
 
 import { describe, expect, test } from "bun:test";
 import { main } from "../../src/cli";
+import { createParsedInvocation } from "../../src/cli/invocation";
 import { assertKnownFlags, assertNoStrayPositionals, type FlagScanCommand } from "../../src/cli/unknown-flags";
 import { UsageError } from "../../src/core/errors";
 
-const check = (args: string[]): void => assertKnownFlags(main as unknown as FlagScanCommand, args);
-const checkPositionals = (args: string[]): void => assertNoStrayPositionals(main as unknown as FlagScanCommand, args);
+const invocationOf = (args: string[]) => createParsedInvocation(["bun", "cli.ts", ...args]);
+const check = (args: string[]): void =>
+  assertKnownFlags(main as unknown as FlagScanCommand, invocationOf(args).ownArgs);
+const checkPositionals = (args: string[]): void =>
+  assertNoStrayPositionals(main as unknown as FlagScanCommand, invocationOf(args).cittyArgs);
 
 /** The UsageError a gate throws, for asserting code/hint. */
 const thrownBy = (gate: (args: string[]) => void, args: string[]): UsageError => {
