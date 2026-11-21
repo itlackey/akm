@@ -29,10 +29,6 @@ export type PreparableTaskDocument = TaskV3SourceDocument;
 
 export type TaskV3ScriptInterpreter =
   | "sh"
-  | "bash"
-  | "zsh"
-  | "ksh"
-  | "dash"
   | "bun"
   | "bun-standalone"
   | "node"

@@ -247,7 +247,7 @@ bundle.
   `akm run`'s flags.
 - A step is not exactly one command, or gives an option a value it does not take.
 - A `run:` value is not a ref, names nothing akm can run, or names an asset that
-  does not exist. A script's interpreter is found from its extension; a `.sh` script runs under the shell its first line names, and under `sh` when it names none.
+  does not exist. A script's interpreter is found from its extension.
 - A step has no name or an invalid one, two steps share a name, or a step has the
   name of an input.
 - A `${name}` in `prompt:`, `arguments:` or `args:` is neither an input nor an
@@ -373,7 +373,7 @@ Script refs use this closed table; any other extension fails before dispatch:
 
 | Extensions | Interpreter |
 |---|---|
-| `.sh` | the shell its first line names (`#!/usr/bin/env bash`: `bash`, also `zsh`, `ksh`, `dash`); `sh` when it names none |
+| `.sh` | `sh` |
 | `.ts`, `.js`, `.mjs` | Bun; JavaScript and TypeScript script targets require Bun (the standalone binary uses its embedded Bun runtime) |
 | `.ps1` | `powershell -NoProfile -NonInteractive -File` |
 | `.cmd`, `.bat` | `cmd /d /s /c` |

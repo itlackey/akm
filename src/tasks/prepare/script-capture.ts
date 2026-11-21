@@ -36,10 +36,8 @@ const SCRIPT_INTERPRETERS: Readonly<Record<string, TaskV3ScriptInterpreter>> = O
   ".kts": "kotlin",
 });
 
-/** The shells a script's first line may name. A shell script runs under the one it names. */
-const SHELLS = ["sh", "bash", "zsh", "ksh", "dash"] as const;
-
 const SHEBANG_INTERPRETERS: ReadonlyArray<readonly [RegExp, TaskV3ScriptInterpreter]> = [
+  [/^(bash|sh|zsh|dash|ksh)$/, "sh"],
   [/^python[0-9.]*$/, "python"],
   [/^ruby$/, "ruby"],
   [/^perl$/, "perl"],
@@ -56,8 +54,6 @@ function interpreterFromShebang(bytes: Uint8Array | undefined): TaskV3ScriptInte
   const [first, second] = tokens;
   const named = first?.split("/").pop() === "env" ? second : first?.split("/").pop();
   if (!named) return undefined;
-  const shell = SHELLS.find((name) => name === named);
-  if (shell) return shell;
   for (const [pattern, interpreter] of SHEBANG_INTERPRETERS) {
     if (pattern.test(named)) return interpreter;
   }
@@ -69,14 +65,8 @@ function nodeStripsTypeScript(): boolean {
   return Boolean(features?.typescript);
 }
 
-/**
- * The interpreter of a script, from its extension; an extensionless script's comes from its first line. A `.sh`
- * script runs under the shell its first line names (`#!/usr/bin/env bash`), and under `sh` when it names none.
- */
 export function scriptInterpreter(extension: string, ref: string, bytes?: Uint8Array): TaskV3ScriptInterpreter {
-  const named = extension === "" || extension === ".sh" ? interpreterFromShebang(bytes) : undefined;
-  const interpreter =
-    extension === ".sh" ? (SHELLS.find((shell) => shell === named) ?? "sh") : (SCRIPT_INTERPRETERS[extension] ?? named);
+  const interpreter = SCRIPT_INTERPRETERS[extension] ?? (extension === "" ? interpreterFromShebang(bytes) : undefined);
   if (!interpreter) {
     throw new UsageError(
       `Task v3 script target ${JSON.stringify(ref)} has no closed runtime interpreter for extension ${JSON.stringify(extension)}.`,
