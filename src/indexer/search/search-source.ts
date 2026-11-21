@@ -36,10 +36,8 @@ export interface SearchSource {
   type?: SourceConfigEntry["type"];
   /** Adapter selected for this bundle component. Index preflight fills and persists missing ownership. */
   adapterId?: string;
-  /** Configured source whose provider/path could not be resolved this run. */
-  unresolved?: boolean;
-  /** For an unresolved source: why, and its real directory when it has one. */
-  unresolvedDetail?: { reason: string; path?: string };
+  /** Set when the source's provider/path could not be resolved this run: why, and its real directory when it has one. */
+  unresolved?: { reason: string; path?: string };
 }
 
 // ── Resolution ──────────────────────────────────────────────────────────────
@@ -118,10 +116,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
         existing.writable = writable;
         existing.adapterId = adapterId;
       }
-      if (existing && unresolved) {
-        existing.unresolved = true;
-        existing.unresolvedDetail = unresolved;
-      }
+      if (existing && unresolved) existing.unresolved = unresolved;
       return;
     }
     seen.add(identity);
@@ -135,7 +130,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
       writable,
       type,
       ...(adapterId ? { adapterId } : {}),
-      ...(unresolved ? { unresolved: true, unresolvedDetail: unresolved } : {}),
+      ...(unresolved ? { unresolved } : {}),
     });
   };
 
@@ -148,7 +143,6 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
     const component = bundleComponentConfig(config.bundles?.[entry.name ?? ""]);
     const resolvedContent = resolveEntryContent(entry);
     if ("error" in resolvedContent) {
-      if (resolvedContent.warning) warn(resolvedContent.warning);
       const unresolvedPath = path.join(
         getUnresolvedSourcesDir(implicitStash ?? process.cwd()),
         entry.name ?? entry.type,
@@ -210,15 +204,11 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
  */
 export function resolveEntryContentDir(entry: SourceConfigEntry): string | undefined {
   const resolved = resolveEntryContent(entry);
-  if ("error" in resolved) {
-    if (resolved.warning) warn(resolved.warning);
-    return undefined;
-  }
-  return resolved.dir;
+  return "error" in resolved ? undefined : resolved.dir;
 }
 
 /** The entry's content directory, or the provider's own reason there is none. */
-function resolveEntryContent(entry: SourceConfigEntry): { dir: string } | { error: string; warning?: string } {
+function resolveEntryContent(entry: SourceConfigEntry): { dir: string } | { error: string } {
   // §10.2 (WI-8.5) desired/resolved split: a git/npm bundle's desired config
   // carries only the source LOCATOR, not the materialized cache root — the
   // resolved root lives in the lock (`localRoot`). Resolve from there first via
@@ -231,7 +221,6 @@ function resolveEntryContent(entry: SourceConfigEntry): { dir: string } | { erro
   const localRoot = lockContentRootFor(entry.name, entry.type);
   if (localRoot != null) return { dir: localRoot };
 
-  const label = entry.name ?? entry.url ?? entry.path;
   const factory = resolveSourceProviderFactory(entry.type);
   if (!factory) return { error: `no source provider is registered for type "${entry.type}"` };
 
@@ -240,10 +229,7 @@ function resolveEntryContent(entry: SourceConfigEntry): { dir: string } | { erro
     provider = factory(entry);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return {
-      error: message,
-      warning: `Warning: failed to construct ${entry.type} source provider for "${label}": ${message}`,
-    };
+    return { error: message };
   }
 
   let dir: string;
@@ -251,10 +237,7 @@ function resolveEntryContent(entry: SourceConfigEntry): { dir: string } | { erro
     dir = provider.path();
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return {
-      error: message,
-      warning: `Warning: failed to resolve ${entry.type} source path for "${label}": ${message}`,
-    };
+    return { error: message };
   }
 
   // Git providers expose the cloned repo root as their path. The akm content

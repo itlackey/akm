@@ -259,7 +259,10 @@ describe("resolveSourceEntries", () => {
       const sources = resolveSourceEntries();
       const unresolved = sources.find((source) => source.registryId === "escaping");
       expect(sources[0]?.path).toBe(stashDir);
-      expect(unresolved).toMatchObject({ unresolved: true, registryId: "escaping" });
+      expect(unresolved).toMatchObject({
+        unresolved: { reason: expect.stringContaining("escapes bundle") },
+        registryId: "escaping",
+      });
       // itlackey/akm#890: the placeholder lives under $CACHE, keyed by the
       // bundle root, never under the bundle root (or the escaped root) itself.
       expect(unresolved?.path.startsWith(`${getUnresolvedSourcesDir(bundleRoot)}${path.sep}`)).toBe(true);
@@ -270,7 +273,7 @@ describe("resolveSourceEntries", () => {
       expect(resolveSourceEntries(unresolved.path)[0]).toMatchObject({
         path: unresolved.path,
         registryId: "escaping",
-        unresolved: true,
+        unresolved: { reason: expect.stringContaining("escapes bundle") },
       });
     } finally {
       fs.rmSync(bundleRoot, { recursive: true, force: true });

@@ -153,6 +153,17 @@ describe("an unresolved source reports the provider's own error", () => {
   }, 60_000);
 });
 
+describe("a recorded but never-installed npm bundle on other commands", () => {
+  test("search prints no source-path warning", async () => {
+    saveConfig({ semanticSearchMode: "off", bundles: { pad: { npm: "npm:left-pad" } } });
+
+    const result = await runCliCapture(["search", "anything", "--format=json"]);
+
+    expect(result.code, result.stderr).toBe(0);
+    expect(result.stderr).not.toContain("failed to resolve");
+  }, 60_000);
+});
+
 describe("the adapter-skip warning", () => {
   function narrowAdapter(): void {
     const config = loadConfig();

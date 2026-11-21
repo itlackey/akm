@@ -1156,7 +1156,6 @@ function buildSourceScanPlans(
     const currentStashDir = sourceAdded.path;
     const component = componentBySource.get(currentStashDir) as BundleComponent;
     if (sourceAdded.unresolved) {
-      if (!sourceAdded.unresolvedDetail) throw new Error(`Unresolved source ${currentStashDir} carries no detail.`);
       return {
         currentStashDir,
         component,
@@ -1164,8 +1163,8 @@ function buildSourceScanPlans(
         dirGroups: new Map(),
         removals: [],
         walkComplete: false,
-        incompleteReason: sourceAdded.unresolvedDetail.reason,
-        incompletePath: sourceAdded.unresolvedDetail.path ?? "unknown",
+        incompleteReason: sourceAdded.unresolved.reason,
+        incompletePath: sourceAdded.unresolved.path ?? "unknown",
       };
     }
     const adapter = adapterForId(component.adapter);
