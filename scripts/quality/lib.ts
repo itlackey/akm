@@ -39,8 +39,8 @@ export function run(cmd: string[], cwd: string, env: Record<string, string> = {}
 }
 
 /** Print both streams of a failed tool run (some tools put the reason on stdout) and exit. */
-export function die(r: { out: string; err: string }, tail = 4000): never {
-  console.error(`${r.out}\n${r.err}`.trim().slice(-tail));
+export function die(r: { out: string; err: string }): never {
+  console.error(`${r.out}\n${r.err}`.trim().slice(-4000));
   process.exit(1);
 }
 
