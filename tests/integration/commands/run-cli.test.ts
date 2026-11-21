@@ -22,6 +22,16 @@ function write(ref: string, content: string, root = storage.stashDir): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, content);
 }
+// A real process: akm reports a child's status only while no exit code is set, and `bun test` cannot unset one.
+async function runCliProcess(args: string[]): Promise<{ code: number; stderr: string }> {
+  const child = Bun.spawn(["bun", path.resolve(import.meta.dir, "../../../src/cli.ts"), ...args], {
+    env: process.env,
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [code, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
+  return { code, stderr };
+}
 function stable(stdout: string) {
   const result = JSON.parse(stdout);
   delete result.durationMs;
@@ -470,13 +480,13 @@ describe("akm run scripts/<file>", () => {
 
   test("the script's exit status is akm's", async () => {
     write("scripts/seven.sh", "exit 7\n");
-    expect((await runCliCapture(["run", "scripts/seven.sh"])).code).toBe(7);
+    expect((await runCliProcess(["run", "scripts/seven.sh"])).code).toBe(7);
   });
 
   test("--timeout stops the script at the limit and the status says so", async () => {
     write("scripts/slow.sh", "exec sleep 30\n");
     const started = Date.now();
-    const result = await runCliCapture(["run", "--timeout", "500ms", "scripts/slow.sh"]);
+    const result = await runCliProcess(["run", "--timeout", "500ms", "scripts/slow.sh"]);
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("timed out after 500ms");
     expect(Date.now() - started).toBeLessThan(15_000);
@@ -484,12 +494,12 @@ describe("akm run scripts/<file>", () => {
 
   test("--max-retries runs a failing script exactly N more times and stops on success", async () => {
     write("scripts/fail.sh", 'echo x >> "$B5_OUT"; exit 3\n');
-    const failing = await runCliCapture(["run", "--max-retries", "2", "scripts/fail.sh"]);
+    const failing = await runCliProcess(["run", "--max-retries", "2", "scripts/fail.sh"]);
     expect(failing.code).toBe(3);
     expect(lines()).toHaveLength(3);
     fs.rmSync(out);
     write("scripts/flaky.sh", 'echo x >> "$B5_OUT"; [ "$(wc -l < "$B5_OUT")" -ge 2 ]\n');
-    const flaky = await runCliCapture(["run", "--max-retries", "5", "scripts/flaky.sh"]);
+    const flaky = await runCliProcess(["run", "--max-retries", "5", "scripts/flaky.sh"]);
     expect(flaky.code, flaky.stderr).toBe(0);
     expect(lines()).toHaveLength(2);
   });

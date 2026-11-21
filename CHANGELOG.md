@@ -62,6 +62,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `--clean` keeps akm's own location variables (`AKM_CONFIG_DIR`, `AKM_CONFIG_FILE`, `AKM_DATA_DIR`, `AKM_CACHE_DIR`, `AKM_STATE_DIR`), so an `akm` command inside a clean child uses the same installation. A lone `--inherit <VAR,...>` on `akm exec` starts the child clean with those variables; it did nothing without `--clean`.
 - `PAT` is a word akm treats as marking a secret in a variable name (`GH_PAT`), so its value is redacted from logs and task results.
 - The Codex harness is given its prompt on standard input, not on the command line, so a long prompt is not limited to the command line's size.
+- How a script runs, for `akm run <script>`, task script steps, frozen tasks and the task check, is one rule: the `#!` first line names the program and its one argument, then the file runs. A trailing carriage return is ignored, a bare program name is searched on `PATH`, and the words after `bun` are split. A `bun` first line runs on akm's own Bun. With no first line the extension decides (`.py` runs `python3`, `.r` runs `Rscript`); Windows always goes by the extension. A missing program is reported with the script's ref and its first line.
+- The run hint `akm show` and search give for a script is `akm run <ref>`, where it was `bash e.sh`, `python p3.py` and so on.
+- For `akm run <script>`, every token after the ref reaches the script unchanged: `--`, `-q`, `-h`, `--help`, `--bundle` and `--format` included. akm's flags go before the ref. For agents, commands, tasks and workflows the flags after the ref stay akm's, a trailing `--bundle` included.
+- `akm run tasks/<t> --name <value>` takes the next token as the value of a declared value input, even when it starts with `-`. The `INPUT_BINDING_INVALID` hint names the task's declared inputs (`akm show tasks/<name>`).
+- Without a controlling terminal (cron, systemd, CI, agent shells), the child of `akm run`, `akm exec`, `akm env run` and `akm secret run` gets its own process group. A timeout, or SIGINT, SIGQUIT, SIGTERM or SIGHUP to akm, stops the whole group: SIGINT, then SIGTERM, then SIGKILL. On a terminal the child stays in akm's group: akm forwards SIGTERM and SIGHUP, ignores SIGINT and SIGQUIT while the child runs, and exits with the child's status. `akm exec --timeout` stops the process group, where it stopped only the command. A host that owns a signal keeps the exit code its handler sets.
+- `akm env run` and `akm secret run` use the same runner as `akm run`. The spawn-failure hint no longer ends with "before invoking 'akm env run'".
+- In an unquoted env-file value, `#` starts a comment only at the start of the value or after a space or tab, so `URL=http://x/y#frag` keeps its fragment. `akm env create` no longer warns about `#`. A line with an unquoted `#` keeps its text exactly, whatever quotes the value holds. See the env section of the CLI reference.
+- `--cwd` naming a file is refused.
+- On the Node build, a program that cannot be started is reported as an error, and during `akm upgrade` the reindex child gets a piped stdin instead of the terminal.
 
 ### Removed
 
@@ -105,6 +114,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - AKM Desktop's Project assets page and Project overview say "Counts unknown" when akm reports no count for a bundle (it cannot be read, or nothing is indexed). The assets page read "0 eligible of 0 indexed" and blamed the project's filters; one presenter now serves both pages.
 - AKM Desktop's setup no longer decides that a plugin "was built for a different akm" by comparing its version with the engine's major and minor. The agent cards show what `akm upgrade --check` reports for that plugin (a tick for `current`, akm's own text for a pending, deferred or failed update, with its engine-skew message), and claim nothing until a check has run.
 - AKM Desktop's new-file editor says "That file name is already used" when akm's error code is `RESOURCE_ALREADY_EXISTS`, not when the message contains "already exists": a reworded message no longer shows akm's raw `--force` sentence, and an unrelated error that says "already exists" is no longer reported as a name collision.
+- A program run by akm, and a command that follows akm in the same pipe or socket, get all of their output when the reader is slow. akm no longer makes an inherited pipe non-blocking at startup, in the npm build and in the standalone binary (built with code splitting, so the prompt library is not loaded at startup). Commands that print through stdout can still leave Bun's after-exit residue on the pipe.
+- On the Node build, a command's output over 1 MB no longer fails with ENOBUFS.
+- The standalone binary passes arguments to a Bun script (`akm run scripts/t.ts a1`) and runs `.mjs` scripts; it failed with "Invalid internal frozen-script invocation."
+- A host that owns a termination signal keeps the exit code its handler sets: `akm run`, `exec`, `env run` and `secret run` report the child's status only when no exit code is set.
 
 ## [0.10.261129] - 2026-11-16
 

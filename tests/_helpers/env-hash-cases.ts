@@ -24,6 +24,14 @@ export const ENV_HASH_CASES: { name: string; text: string; key: string; value: s
   { name: "hash and comment", text: "A=v#a #b\n", key: "A", value: "v#a", bash: true },
   { name: "tab before comment", text: "A=v\t#c\n", key: "A", value: "v", bash: true },
   { name: "value with a quote", text: "A=it's#x\n", key: "A", value: "it's#x", bash: false },
+  {
+    name: "all three quotes then hash",
+    text: 'C=it\'s `q` "d"#tail\n',
+    key: "C",
+    value: 'it\'s `q` "d"#tail',
+    bash: false,
+  },
+  { name: "quoted assignment of the same key later", text: "A=x#y\nA='z#w'\n", key: "A", value: "z#w", bash: true },
 ];
 
 /** What bash gives `key` after `set -a; . file`. */

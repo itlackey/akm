@@ -2959,6 +2959,9 @@ akm env remove env/prod --yes                 # remove the whole env file
 akm does not manage individual keys — edit the `.env` file directly (`$EDITOR
 "$(akm env path <ref>)"`). `env remove <ref>` removes the whole file.
 
+In an unquoted value, `#` starts a comment only at the start of the value or after a space or tab, so
+`URL=http://x/y#frag` keeps its fragment and `A=v # note` is `v`. Quote a value to keep a `#` that follows a space.
+
 Every `<ref>` is a full akm ref, `[bundle//]env/<name>`; there is no bare-name
 form (`--env prod` is a usage error naming `env/<name>`). A value in the
 file can embed a `${ref}` token: `${secrets/name}` (or `${bundle//secrets/name}`)

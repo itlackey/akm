@@ -261,7 +261,7 @@ async function runEnvInjected(
   // `process.exitCode` and returning lets cleanup run while still exiting
   // with the child's exact status once the event loop drains, matching the
   // pattern `emitJsonError` (src/cli/shared.ts) already established.
-  process.exitCode = result.exitCode ?? 0;
+  process.exitCode ??= result.exitCode ?? 0;
   return;
 }
 

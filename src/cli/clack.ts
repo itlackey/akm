@@ -55,8 +55,9 @@ export function _setClackForTests(fake?: ClackFakeForTests): void {
 
 // `@clack/prompts` reads process.stdout and process.stderr when it is imported, which on Bun makes an
 // inherited pipe non-blocking. It loads on the first prompt call, so a command that never prompts never
-// touches them. The bare `require` is what lets `bun build --compile` bundle the package; Node's ESM
-// output has none and takes `createRequire`.
+// touches them. The bare `require` is what lets `bun build --compile` bundle the package, and the build's
+// code splitting (scripts/build-standalone.ts) is what keeps it out of startup; Node's ESM output has no
+// `require` and takes `createRequire`.
 const nodeRequire = createRequire(import.meta.url);
 let realClack: Clack | undefined;
 

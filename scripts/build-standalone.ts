@@ -25,6 +25,9 @@ if (!values.outfile) {
 
 const result = await Bun.build({
   entrypoints: ["./scripts/akm-standalone.ts"],
+  // Splitting keeps lazily loaded modules (the clack prompts) out of the startup chunk; a single bundle hoists
+  // their imports, and clack's `node:process` import would make an inherited pipe non-blocking at startup.
+  splitting: true,
   compile: { outfile: values.outfile, ...(values.target ? { target: values.target as never } : {}) },
   ...(values.version ? { define: { AKM_VERSION: JSON.stringify(values.version) } } : {}),
 });

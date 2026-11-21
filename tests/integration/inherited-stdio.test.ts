@@ -88,7 +88,11 @@ function lineCount(kind: "pipe" | "socket", command: string): number {
   return Number(result.stdout.trim());
 }
 
-const akm = (args: string): string => `bun ${CLI} ${args}`;
+// With AKM_STANDALONE_TEST_BIN set (the gated jobs), the cases run against that compiled binary.
+const STANDALONE_BIN = process.env.AKM_STANDALONE_TEST_BIN
+  ? path.resolve(process.env.AKM_STANDALONE_TEST_BIN)
+  : undefined;
+const akm = (args: string): string => (STANDALONE_BIN ? `${STANDALONE_BIN} ${args}` : `bun ${CLI} ${args}`);
 
 // Skipped only where python3 is missing: it reads the descriptor flags and drives the slow reader.
 describe.skipIf(!hasPython)("a slow reader of akm's stdout", () => {

@@ -212,7 +212,7 @@ const secretRunCommand = defineJsonCommand({
     // Setting `process.exitCode` and returning still exits with the child's
     // exact status once the event loop drains, but lets cleanup run first —
     // same pattern `emitJsonError` (src/cli/shared.ts) already established.
-    process.exitCode = result.exitCode ?? 0;
+    process.exitCode ??= result.exitCode ?? 0;
     return;
   },
 });

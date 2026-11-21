@@ -288,5 +288,5 @@ async function runScript(
     ...(flags.timeout !== undefined ? { timeoutMs: parseTimeoutValue(flags.timeout) } : {}),
   });
   if (result.timedOut) console.error(`akm run: timed out after ${flags.timeout}`);
-  process.exitCode = result.timedOut ? 1 : (result.exitCode ?? 1);
+  process.exitCode ??= result.timedOut ? 1 : (result.exitCode ?? 1);
 }
