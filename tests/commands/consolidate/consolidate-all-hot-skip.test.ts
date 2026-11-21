@@ -14,6 +14,7 @@ import path from "node:path";
 import { akmConsolidate } from "../../../src/commands/improve/consolidate";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { getStateDbPath } from "../../../src/core/state-db";
+import { _setWarnSinkForTests } from "../../../src/core/warn";
 import type { LoweringNotice } from "../../../src/execution/resolved-request";
 import {
   type Cleanup,
@@ -70,6 +71,30 @@ describe("akmConsolidate — all-hot chunk", () => {
 
     expect(result.warnings).toContain("No LLM configured for consolidation");
     expect(fs.existsSync(stateDbPath)).toBe(false);
+  });
+
+  test("progress lines are info, not warnings (B10-39)", async () => {
+    writeMemory("cold-a", { hot: false });
+    const config = {
+      configVersion: "0.9.0",
+      semanticSearchMode: "off",
+      bundles: { stash: { path: stashDir, writable: true } },
+      defaultBundle: "stash",
+      defaultWriteTarget: "stash",
+      improve: { strategy: "default", strategies: { default: { processes: { consolidate: { enabled: true } } } } },
+    } as AkmConfig;
+    const seen: { level: string; line: string }[] = [];
+    _setWarnSinkForTests((level, args) => seen.push({ level, line: args.map(String).join(" ") }));
+    try {
+      await akmConsolidate({ stashDir, config });
+    } finally {
+      _setWarnSinkForTests(undefined);
+    }
+    for (const progress of ["[consolidate] chunk 1/", "[consolidate] plan:"]) {
+      const lines = seen.filter((entry) => entry.line.includes(progress));
+      expect(lines.length).toBeGreaterThan(0);
+      expect(lines.every((entry) => entry.level === "info")).toBe(true);
+    }
   });
 
   test.each([

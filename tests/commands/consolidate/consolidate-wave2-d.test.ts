@@ -80,24 +80,12 @@ describe("error hint rendering (#8)", () => {
 describe("config-cli setConfigValue sources error message (#16)", () => {
   const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
 
-  test("unrecognized 'sources' warns naming 'sources', not 'stashes'", () => {
-    let result!: ReturnType<typeof setConfigValue>;
-    const warnings = captureWarnings(() => {
-      result = setConfigValue(base, "sources", "not-json");
-    });
-    expect((result as unknown as Record<string, unknown>).sources).toBe("not-json");
-    expect(warnings.some((w) => w.includes("sources"))).toBe(true);
-    expect(warnings.some((w) => w.includes("stashes"))).toBe(false);
+  test("unrecognized 'sources' is refused naming 'sources', not 'stashes'", () => {
+    expect(() => setConfigValue(base, "sources", "not-json")).toThrow("Unknown config key: sources");
   });
 
-  test("retired stashes path warns naming 'stashes', not aliased to sources", () => {
-    let result!: ReturnType<typeof setConfigValue>;
-    const warnings = captureWarnings(() => {
-      result = setConfigValue(base, "stashes", "not-json");
-    });
-    expect((result as unknown as Record<string, unknown>).stashes).toBe("not-json");
-    expect(warnings.some((w) => w.includes("stashes"))).toBe(true);
-    expect(warnings.some((w) => w.includes("Invalid JSON array for sources"))).toBe(false);
+  test("retired stashes path is refused naming 'stashes', not aliased to sources", () => {
+    expect(() => setConfigValue(base, "stashes", "not-json")).toThrow("Unknown config key: stashes");
   });
 
   test("invalid array element shows dotted zod indexing ('registries.0') — sources key retired (#37)", () => {
