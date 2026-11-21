@@ -584,11 +584,9 @@ async function runStep(
   const retries = option(document, step, "max-retries") ?? record.flags.maxRetries ?? 0;
   const lines: string[] = [];
   const dbLines: TaskLogLineInput[] = [];
-  let attempts = 0;
   const last = await withRetries(
     retries,
-    async (): Promise<StepOutcome> => {
-      attempts += 1;
+    async (attempts): Promise<StepOutcome> => {
       try {
         const remaining = limitOf(until, document, step) - Date.now();
         if (remaining <= 0) return { ok: false, reason: "timeout", attempts, lines, dbLines };
@@ -723,7 +721,6 @@ async function runAgentStep(
     model: option(document, step, "model"),
   });
   const runAgent = context.options.runAgentImpl;
-  let agent: Done["agent"];
   const dispatch = async (correction?: { text: string }) => {
     const extra = correction ? `\n\n${correction.text}` : "";
     const reply =
@@ -753,7 +750,10 @@ async function runAgentStep(
                 }
               : {},
           );
-    agent = { engine: reply.engine, ...(reply.ok || reply.reason === undefined ? {} : { reason: reply.reason }) };
+    const agent = {
+      engine: reply.engine,
+      ...(reply.ok || reply.reason === undefined ? {} : { reason: reply.reason }),
+    };
     sink.lines.push(`engine=${reply.engine} ok=${reply.ok} exit_code=${reply.exitCode ?? "null"}`);
     const stdout = scrub(context, reply.stdout) as string;
     const stderr = scrub(context, reply.stderr) as string;
@@ -769,19 +769,23 @@ async function runAgentStep(
       return {
         ok: false,
         failure: [reply.reason, reply.error].filter(Boolean).join(": ") || "dispatch failed",
+        agent,
       } as const;
     }
-    return { ok: true, raw: reply.stdout } as const;
+    return { ok: true, raw: reply.stdout, agent } as const;
   };
-  const withAgent = (done: Done): Done => (agent ? { ...done, agent } : done);
   if (!step.expect) {
     const reply = await dispatch();
-    return withAgent(reply.ok ? { ok: true, value: scrub(context, reply.raw) } : { ok: false, reason: reply.failure });
+    return {
+      ...(reply.ok ? { ok: true, value: scrub(context, reply.raw) } : { ok: false, reason: reply.failure }),
+      agent: reply.agent,
+    };
   }
-  const loop = await expectLoop(step.expect, dispatch);
-  if (loop.ok) return withAgent({ ok: true, value: scrub(context, loop.value) });
-  if ("errors" in loop) return withAgent({ ok: false, reason: `reply_check_failed: ${loop.errors.join("; ")}` });
-  return withAgent({ ok: false, reason: loop.failure });
+  const loop = await expectLoop<{ agent: NonNullable<Done["agent"]> }>(step.expect, dispatch);
+  const { agent } = loop;
+  if (loop.ok) return { ok: true, value: scrub(context, loop.value), agent };
+  if ("errors" in loop) return { ok: false, reason: `reply_check_failed: ${loop.errors.join("; ")}`, agent };
+  return { ok: false, reason: loop.failure, agent };
 }
 
 async function dispatchPromptAsset(

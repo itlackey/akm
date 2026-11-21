@@ -61,6 +61,13 @@ export interface FlagScanCommand {
   readonly subCommands?: Record<string, FlagScanCommand> | undefined;
 }
 
+/** The command a flag scan resolves `path` to, as the root of its tree. */
+export function scanRoot(path: readonly string[], command: FlagScanCommand): FlagScanCommand {
+  let root = command;
+  for (const part of [...path].reverse()) root = { subCommands: { [part]: root } };
+  return root;
+}
+
 /** Flags citty implements itself, which no command declares. */
 const IMPLICIT_FLAGS = ["help", "h", "version", "v"];
 

@@ -105,24 +105,21 @@ export const agentCommand = defineCommand({
 
       const stdinPrompt = promptStdin ? readPromptStdin() : undefined;
 
-      let attempts = 0;
       const result = await withRetries(
         parseNonNegativeIntFlag(getExactStringArg(args, "max-retries"), "--max-retries") ?? 0,
-        () => {
-          attempts += 1;
-          return akmAgentDispatch({
+        (n) =>
+          akmAgentDispatch({
             prompt: stdinPrompt ?? promptText,
             ...(agentRef === undefined ? {} : { agentRef }),
             agentConfig,
             ...(Object.keys(selection).length === 0 ? {} : { selection }),
             ...(cwd ? { cwd } : {}),
             ...(timeoutMs !== undefined && Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
-          });
-        },
+          }).then((dispatched) => (n > 1 ? { ...dispatched, attempts: n } : dispatched)),
         (attempt) => !attempt.ok,
       );
 
-      output("agent-result", attempts > 1 ? { ...result, attempts } : result);
+      output("agent-result", result);
 
       if (!result.ok) {
         // R-067-style fix: this used to call `process.exit(EXIT_GENERAL)`

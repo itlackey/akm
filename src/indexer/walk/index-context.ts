@@ -4,6 +4,7 @@
 
 /** Result types shared by `akmIndex()` and its callers. */
 
+import { toErrorMessage } from "../../core/common";
 import { closeDatabase, openReadonlyExistingDatabase } from "../../storage/repositories/index-connection";
 import { getMeta } from "../../storage/repositories/index-meta-repository";
 
@@ -12,7 +13,7 @@ import { getMeta } from "../../storage/repositories/index-meta-repository";
  * time. `ready-js` means every entry has a vector; the name is historical (the
  * sqlite-vec variant, `ready-vec`, is gone).
  */
-export type SemanticSearchRuntimeStatus = "pending" | "ready-js" | "blocked";
+type SemanticSearchRuntimeStatus = "pending" | "ready-js" | "blocked";
 
 /**
  * Verification of the post-index semantic-search state. Produced by the
@@ -108,7 +109,7 @@ export function readSemanticSearchState(
       closeDatabase(db);
     }
   } catch (error) {
-    return { status: "unknown", reason: error instanceof Error ? error.message : String(error) };
+    return { status: "unknown", reason: toErrorMessage(error) };
   }
 }
 

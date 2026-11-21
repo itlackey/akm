@@ -7,6 +7,7 @@
  * while a first build holds the rebuild lock reports `building` (the partial index is expected), not an error.
  */
 
+import { toErrorMessage } from "../../core/common";
 import { getDbPath } from "../../core/paths";
 import { heldRebuildLock } from "../../indexer/index-rebuild-lock";
 import {
@@ -17,7 +18,7 @@ import {
 
 type IndexDb = NonNullable<ReturnType<typeof openReadonlyExistingDatabase>>;
 
-export type HealthIndexRead<T> = { value: T } | { noIndex: true } | { building: true } | { error: string };
+type HealthIndexRead<T> = { value: T } | { noIndex: true } | { building: true } | { error: string };
 
 export function readHealthIndex<T>(read: (db: IndexDb) => T): HealthIndexRead<T> {
   try {
@@ -31,6 +32,6 @@ export function readHealthIndex<T>(read: (db: IndexDb) => T): HealthIndexRead<T>
     }
   } catch (error) {
     if (heldRebuildLock()) return { building: true };
-    return { error: error instanceof Error ? error.message : String(error) };
+    return { error: toErrorMessage(error) };
   }
 }

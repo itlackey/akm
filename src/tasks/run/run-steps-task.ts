@@ -24,7 +24,7 @@ import type { Parsed } from "../../core/structured";
 import { runManagedSubprocess } from "../../core/subprocess";
 import type { ExecutionJsonValue } from "../../execution/json";
 import { sortExecutionJson } from "../../execution/json";
-import { type Correction, isRefused, jsonParser, structuredLoop } from "../../llm/structured";
+import { type Correction, type Dispatched, isRefused, jsonParser, structuredLoop } from "../../llm/structured";
 import type { TaskHistoryStep } from "../../storage/repositories/task-history-repository";
 import type { ExecutionProvenanceContext } from "../model/invocation";
 import type { PreparedTaskStep, PreparedTaskV3Steps } from "../prepare/prepared-execution";
@@ -125,11 +125,11 @@ function replyCheck(expect: readonly string[]): (raw: string) => Parsed<Record<s
 }
 
 /** An agent's reply held to `expect:`: asked once more, with what failed the check, when it does. */
-export function expectLoop(
+export function expectLoop<S extends object = object>(
   expect: readonly string[],
-  dispatch: (correction?: Correction) => Promise<{ ok: true; raw: string } | { ok: false; failure: string }>,
+  dispatch: (correction?: Correction) => Promise<Dispatched<{ failure: string } & NoInfer<S>, NoInfer<S>>>,
 ) {
-  return structuredLoop<Record<string, unknown>, { failure: string }>({
+  return structuredLoop<Record<string, unknown>, { failure: string } & S, S>({
     dispatch,
     parse: replyCheck(expect),
     attempts: 2,

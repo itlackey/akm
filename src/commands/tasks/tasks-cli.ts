@@ -37,7 +37,7 @@ import {
   outputWithExitCode,
   runWithJsonErrors,
 } from "../../cli/shared";
-import { assertKnownFlags, type FlagScanCommand } from "../../cli/unknown-flags";
+import { assertKnownFlags, type FlagScanCommand, scanRoot } from "../../cli/unknown-flags";
 import { UsageError } from "../../core/errors";
 import type { InputFlag } from "../../execution/input-contract";
 import type { RunTaskOptions } from "../../tasks/run/task-result";
@@ -197,7 +197,7 @@ export function parseTaskInputFlags(rawArgs: readonly string[], id: string): Inp
  * {@link parseTaskInputFlags} cannot mistake for a flag. The unknown-flag scan and the binder both read the result,
  * so neither takes `-x` for a flag of its own.
  */
-export function inlineInputValues(tokens: readonly string[], valueInputs: ReadonlySet<string>): string[] {
+function inlineInputValues(tokens: readonly string[], valueInputs: ReadonlySet<string>): string[] {
   const joined: string[] = [];
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index] as string;
@@ -216,18 +216,6 @@ export function inlineInputValues(tokens: readonly string[], valueInputs: Readon
 function readV5Start(rawArgs: readonly string[], id: string): TaskV5Start {
   const { rest, ...start } = parseStartFlags(rawArgs);
   return { ...start, inputs: parseTaskInputFlags(rest, id) };
-}
-
-/** The task a command's tokens name: a start flag before it takes its value from the next token, which citty, not knowing the flag, reads as the task. */
-function taskRefOf(rawArgs: readonly string[], positional: string): string {
-  return taskIdInStart(rawArgs, TASK_RUN_VALUE_FLAGS) ?? positional;
-}
-
-/** The command a flag scan resolves `path` to, as the root of its tree. */
-function scanRoot(path: readonly string[], command: FlagScanCommand): FlagScanCommand {
-  let root = command;
-  for (const part of [...path].reverse()) root = { subCommands: { [part]: root } };
-  return root;
 }
 
 /**
@@ -341,7 +329,7 @@ export const tasksRunCommand = defineCommand({
   },
   async run({ args, rawArgs }) {
     await runWithJsonErrors(async () => {
-      const id = taskRefOf(rawArgs, args.id);
+      const id = taskIdInStart(rawArgs) ?? args.id;
       const envelope = await akmTasksRun(id, {
         scheduled: args.scheduled === true,
         ...(args.bundle !== undefined ? { target: args.bundle } : {}),
@@ -486,7 +474,7 @@ export async function runTaskExplain(
   // (silently skipped, never surfaced as unknown) rather than explain's,
   // since it has no way to know which command called it (F7 fix).
   rejectExplainScheduledFlag();
-  const ref = taskRefOf(rawArgs, args.ref);
+  const ref = taskIdInStart(rawArgs) ?? args.ref;
   const result = await akmTaskExplain(ref, {
     ...(args.bundle !== undefined ? { target: args.bundle } : {}),
     ...taskInputReaders(command, rawArgs, ref),

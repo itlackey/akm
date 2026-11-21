@@ -306,7 +306,7 @@ export interface CodexPlugin {
 }
 
 /** Codex's config exists and could not be read or parsed, so whether it registers the marketplace is unknown. */
-export interface CodexConfigUnreadable {
+interface CodexConfigUnreadable {
   configError: string;
 }
 

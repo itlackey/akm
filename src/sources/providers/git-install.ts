@@ -57,6 +57,11 @@ export function assertNoLocalWork(repoDir: string, subject: string, upstream?: s
   );
 }
 
+/** {@link assertNoLocalWork} for `dir` when it is a git checkout; a directory with no `.git` holds none. */
+export function assertCheckoutHasNoLocalWork(dir: string, subject: string): void {
+  if (fs.existsSync(path.join(dir, ".git"))) assertNoLocalWork(dir, subject);
+}
+
 function listShown(items: string[]): string {
   const more = items.length > DIRTY_PATHS_SHOWN ? ` (and ${items.length - DIRTY_PATHS_SHOWN} more)` : "";
   return `${items.slice(0, DIRTY_PATHS_SHOWN).join(", ")}${more}`;

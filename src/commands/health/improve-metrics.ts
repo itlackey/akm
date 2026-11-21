@@ -9,6 +9,7 @@
  * coverage read from the proposals table.
  */
 
+import { toErrorMessage } from "../../core/common";
 import type { readEvents } from "../../core/events";
 import { decodeImproveResult } from "../../core/improve-result";
 import type { Database } from "../../storage/database";
@@ -16,7 +17,7 @@ import { type ImproveRunSummaryRow, queryImproveRuns } from "../../storage/repos
 import { decodeTaskHistoryMetadata, type TaskHistoryRow } from "../../storage/repositories/task-history-repository";
 import type { ImproveHealthMetrics, ImproveRunSummary } from "./types";
 
-export function roundRate(value: number): number {
+function roundRate(value: number): number {
   return Number(value.toFixed(4));
 }
 
@@ -26,7 +27,7 @@ export function roundOrNull(value: number | null): number | null {
 }
 
 /** A history row with its metadata decoded; `metadata` is undefined when the row's `metadata_json` is corrupt. */
-export interface DecodedTaskRow {
+interface DecodedTaskRow {
   row: TaskHistoryRow;
   metadata: ReturnType<typeof decodeTaskHistoryMetadata> | undefined;
 }
@@ -41,7 +42,7 @@ export function decodeTaskRows(rows: readonly TaskHistoryRow[]): DecodedTaskRow[
     try {
       return { row, metadata: decodeTaskHistoryMetadata(row.metadata_json) };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = toErrorMessage(error);
       console.warn(
         `[akm] Skipping unparseable task_history row in health metrics (task_id=${row.task_id}, started_at=${row.started_at}): ${message}`,
       );
@@ -81,26 +82,22 @@ export function countTaskRuns(rows: readonly DecodedTaskRow[]): TaskRunCounts {
   return counts;
 }
 
-/** One agent dispatch recorded in task history; `reason` is set when it failed. */
-export interface AgentDispatch {
-  reason?: string;
-}
-
 /**
  * The agent dispatches `akm health` counts for `agentFailureRate`: every version 4 `command` row (the dispatch is the
  * row; it failed when `detail.reason` is set) and every version 5 step that recorded an `agent` fact (it failed when
  * `agent.reason` is set). A row written before the fact was recorded holds no dispatch: it is unknown, not a success.
+ * One entry per dispatch: its failure reason, or `undefined` when it succeeded.
  */
-export function agentDispatches(rows: readonly DecodedTaskRow[]): AgentDispatch[] {
-  const dispatches: AgentDispatch[] = [];
+export function agentDispatches(rows: readonly DecodedTaskRow[]): (string | undefined)[] {
+  const dispatches: (string | undefined)[] = [];
   for (const { row, metadata } of rows) {
     if (!metadata) continue;
     if (row.target_kind === "command") {
       const reason = metadata.detail?.reason;
-      dispatches.push(typeof reason === "string" && reason.length > 0 ? { reason } : {});
+      dispatches.push(typeof reason === "string" && reason.length > 0 ? reason : undefined);
     }
     for (const step of metadata.steps ?? []) {
-      if (step.agent) dispatches.push(step.agent.reason ? { reason: step.agent.reason } : {});
+      if (step.agent) dispatches.push(step.agent.reason || undefined);
     }
   }
   return dispatches;
@@ -111,9 +108,9 @@ export function agentDispatches(rows: readonly DecodedTaskRow[]): AgentDispatch[
  * `parse_error` etc., so `akm health`'s `task-fail-rate` advisory can say "timeout-dominant" from data rather than log
  * grep. The total equals the number of failed dispatches the rate counts.
  */
-export function countAgentFailureReasons(dispatches: readonly AgentDispatch[]): Record<string, number> {
+export function countAgentFailureReasons(dispatches: readonly (string | undefined)[]): Record<string, number> {
   const counts: Record<string, number> = {};
-  for (const { reason } of dispatches) {
+  for (const reason of dispatches) {
     if (reason === undefined) continue;
     counts[reason] = (counts[reason] ?? 0) + 1;
   }
@@ -122,7 +119,7 @@ export function countAgentFailureReasons(dispatches: readonly AgentDispatch[]): 
 
 /**
  * Decode one `improve_runs.result_json` envelope, warning once per row on
- * failure (mirrors {@link taskFailureDetail}'s handling of the analogous
+ * failure (mirrors {@link decodeTaskRows}'s handling of the analogous
  * `task_history` case) and returning `undefined` instead of throwing.
  * Callers count the `undefined` case themselves (`resultRows.skipped.invalid`
  * / `resultStatus: "invalid"`) so a decode failure is never silent — the
@@ -154,7 +151,7 @@ export function readImproveRows(db: Database, since: string, until?: string): De
   return queryImproveRuns(db, since, until).map((row) => ({ row, result: decodeImproveResultRow(row) }));
 }
 
-/** A zeroed accumulator — also what health reports when it could not read state.db at all (#791). */
+/** A zeroed accumulator. */
 export function emptyImproveMetrics(): ImproveHealthMetrics {
   return {
     invoked: 0,

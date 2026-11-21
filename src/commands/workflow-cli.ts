@@ -373,17 +373,11 @@ export function parseWorkflowParameterFlags(rawArgs: readonly string[], target: 
   return flags;
 }
 
-function parseIntegerFlag(
-  raw: string | undefined,
-  name: string,
-  minimum: number,
-  maximum?: number,
-): number | undefined {
+function parseIntegerFlag(raw: string | undefined, name: string, minimum: number): number | undefined {
   if (raw === undefined) return undefined;
   const value = Number.parseInt(raw, 10);
-  if (!/^\d+$/.test(raw) || value < minimum || (maximum !== undefined && value > maximum)) {
-    const range = maximum === undefined ? `at least ${minimum}` : `from ${minimum} through ${maximum}`;
-    throw new UsageError(`${name} must be an integer ${range}, got "${raw}".`, "INVALID_FLAG_VALUE");
+  if (!/^\d+$/.test(raw) || value < minimum) {
+    throw new UsageError(`${name} must be an integer at least ${minimum}, got "${raw}".`, "INVALID_FLAG_VALUE");
   }
   return value;
 }

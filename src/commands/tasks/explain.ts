@@ -71,6 +71,7 @@
 import fs from "node:fs";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
+import { toErrorMessage } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { ConfigError, NotFoundError } from "../../core/errors";
@@ -530,7 +531,7 @@ async function explainV5(
     try {
       await checkScheduleEntryV5(entry, where.conceptId, where.bundle);
     } catch (cause) {
-      refused.set(entry.ordinal, cause instanceof Error ? cause.message : String(cause));
+      refused.set(entry.ordinal, toErrorMessage(cause));
     }
   }
   return {

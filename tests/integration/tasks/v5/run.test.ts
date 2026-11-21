@@ -300,6 +300,22 @@ describe("a run has one state", () => {
     expect(prompts).toHaveLength(2);
     expect(prompts[1]).toContain("Write.");
     expect(prompts[1]).toContain("failed the check");
+    const { readTaskHistory } = await import("../../../../src/tasks/run/task-history");
+    const [row] = readTaskHistory({ id: "t", limit: 1 });
+    const agent = row?.steps?.[0]?.agent;
+    expect(agent?.engine).toEqual(expect.any(String));
+    expect(agent).not.toHaveProperty("reason");
+  });
+
+  test("expect: an agent whose two replies both fail the check has its agent fact recorded", async () => {
+    const w = world({
+      tasks: { "tasks/t": { prompt: "Write.", expect: ["title"] } },
+      agent: () => "no object here",
+    });
+    expect(await rule(w.start("tasks/t"))).toBe(RUN_FAILED);
+    const { readTaskHistory } = await import("../../../../src/tasks/run/task-history");
+    const [row] = readTaskHistory({ id: "t", limit: 1 });
+    expect(row?.steps?.[0]?.agent?.engine).toEqual(expect.any(String));
   });
 
   test("args: on a script are its arguments: each item is one argument as written, with no shell, and a ${name} item is that state entry", async () => {
@@ -1246,6 +1262,18 @@ describe("timeout: and max-retries:, as the flags", () => {
     expect(replies).toEqual([]);
     expect(await w.start("tasks/limited")).toBe("ok");
     expect(ran("limited")).toBe(2);
+  });
+
+  test("an expect: step records the agent fact of its last dispatch: the corrective dispatch that fails, not the refused reply before it", async () => {
+    const replies = ["no object here"];
+    const w = world({
+      tasks: { "tasks/t": { steps: [{ name: "write", prompt: "write", expect: ["title"], timeout: "300ms" }] } },
+      agent: () => (replies.length > 0 ? (replies.shift() as string) : new Promise<string>(() => {})),
+    });
+    expect(await message(w.start("tasks/t"))).toBe("step write: timeout: agent timed out");
+    const { readTaskHistory } = await import("../../../../src/tasks/run/task-history");
+    const [row] = readTaskHistory({ id: "t", limit: 1 });
+    expect(row?.steps?.[0]?.agent).toMatchObject({ reason: "timeout" });
   });
 
   test("a step with no timeout: has a limit of 30 minutes; the top of its task or the step sets another", async () => {

@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { daysToMs, resolveStashDir } from "../core/common";
+import { daysToMs, resolveStashDir, toErrorMessage } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { ConfigError, rethrowIfTestIsolationError, UsageError } from "../core/errors";
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
@@ -231,7 +231,6 @@ interface TaskHistoryPhase {
   probe: ReturnType<typeof probeStateDbRoundTrip>;
   stateDbIntegrity: ReturnType<typeof runStateDbIntegrityCheck>;
   stateDbFreelist: ReturnType<typeof getStateDbFreelistInfo>;
-  taskRowCount: number;
   stuckActiveRuns: number;
   stuckActiveTasks: { taskId: string; ageMs: number }[];
   unverifiedActiveTasks: { taskId: string; ageMs: number }[];
@@ -324,7 +323,6 @@ function gatherTaskHistoryPhase(
     probe,
     stateDbIntegrity,
     stateDbFreelist,
-    taskRowCount: taskRows.length,
     stuckActiveRuns: rates.stuckActiveRuns,
     stuckActiveTasks: dedupeStuckActiveTasks(rates.stuckActiveRows, now),
     unverifiedActiveTasks: dedupeStuckActiveTasks(rates.unverifiedActiveRows, now),
@@ -446,7 +444,7 @@ function gatherAncillaryAdvisories(
       confidence: "high",
       status: "unknown",
       reason: "blocked",
-      message: `Could not look for OpenCode 1 harnesses: ${error instanceof Error ? error.message : String(error)}`,
+      message: `Could not look for OpenCode 1 harnesses: ${toErrorMessage(error)}`,
     });
   }
 
@@ -828,7 +826,6 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
       stateDbIntegrity: taskHistory.stateDbIntegrity,
       stateDbFreelist: taskHistory.stateDbFreelist,
       stateDbMigrations: { applied: opened.applied, ...(opened.backupPath ? { backupPath: opened.backupPath } : {}) },
-      taskRowCount: taskHistory.taskRowCount,
       taskFailRate: taskHistory.taskFailRate,
       stuckActiveRuns: taskHistory.stuckActiveRuns,
       stuckActiveTasks: taskHistory.stuckActiveTasks,

@@ -196,7 +196,7 @@ function holderPidReused(holderPid: number, recorded: { bootId?: unknown; startT
   return current.bootId !== recorded.bootId || current.startTime !== recorded.startTime;
 }
 
-export function launcherPidFromEnv(): number | undefined {
+function launcherPidFromEnv(): number | undefined {
   const raw = process.env.AKM_LAUNCHER_PID;
   if (!raw) return undefined;
   const pid = Number.parseInt(raw, 10);

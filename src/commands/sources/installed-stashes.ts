@@ -40,7 +40,7 @@ import { readLockfile, upsertLockEntry } from "../../integrations/lockfile";
 import { parseRegistryRef, resolveRegistryArtifact } from "../../registry/resolve";
 import type { InstalledBundle, InstallKind } from "../../registry/types";
 import { getCachePaths, parseGitRepoUrl, runGit, syncMirroredRepo } from "../../sources/providers/git";
-import { assertNoLocalWork, LOCAL_WORK_HINT, replaceDirectory } from "../../sources/providers/git-install";
+import { assertCheckoutHasNoLocalWork, LOCAL_WORK_HINT, replaceDirectory } from "../../sources/providers/git-install";
 import type { SourceLockData } from "../../sources/providers/install-types";
 import { installRevisionDir, isDirectory } from "../../sources/providers/provider-utils";
 import { syncFromRef } from "../../sources/providers/sync-from-ref";
@@ -293,8 +293,7 @@ export async function akmListSources(input?: { stashDir?: string; kind?: SourceK
  * nowhere else. The person pushes, moves or discards it, then removes again.
  */
 function assertRemovableCheckout(repoDir: string | undefined): void {
-  if (!repoDir || !fs.existsSync(path.join(repoDir, ".git"))) return;
-  assertNoLocalWork(repoDir, `Git bundle checkout at ${repoDir}`);
+  if (repoDir) assertCheckoutHasNoLocalWork(repoDir, `Git bundle checkout at ${repoDir}`);
 }
 
 /** The git checkout holding a managed install's content, when it is one (a read-only snapshot keeps no `.git`). */
@@ -772,8 +771,8 @@ async function syncGitPlainSource(
   // A read-only refresh replaces the live directory; a checkout there is replaced only without local work.
   // Checked before the fetch, and again right before the replacement, since work can appear in between.
   const assertLiveCheckoutHasNoWork = () => {
-    if (!component.writable && fs.existsSync(path.join(livePaths.repoDir, ".git"))) {
-      assertNoLocalWork(livePaths.repoDir, `Git source checkout at ${livePaths.repoDir}`);
+    if (!component.writable) {
+      assertCheckoutHasNoLocalWork(livePaths.repoDir, `Git source checkout at ${livePaths.repoDir}`);
     }
   };
   assertLiveCheckoutHasNoWork();

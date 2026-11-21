@@ -114,6 +114,7 @@ import {
   assertNoStrayPositionals,
   consumeConfigFileFlag,
   type FlagScanCommand,
+  scanRoot,
 } from "./cli/unknown-flags";
 import { startUsage, type UsageCommand, usageCaptureOff } from "./cli/usage";
 import { reportUsageIfDue } from "./cli/usage-report";
@@ -570,7 +571,7 @@ const doctorCommand = defineCommand({
     const index = findCittyTopLevelCommandIndex(rawArgs, doctorScanArgs);
     const subcommand = index >= 0 ? rawArgs[index] : undefined;
     if (subcommand === undefined) {
-      assertKnownFlags({ subCommands: { doctor: healthCommand } } as FlagScanCommand, [
+      assertKnownFlags(scanRoot(["doctor"], healthCommand as FlagScanCommand), [
         "doctor",
         ...getParsedInvocation().ownArgsOf(rawArgs),
       ]);
@@ -608,7 +609,7 @@ const doctorCommand = defineCommand({
     // Validate the child without health's parent flags, so unsupported options
     // cannot be silently accepted merely because bare doctor declares them.
     assertKnownFlags(
-      { subCommands: { doctor: { subCommands: doctorSubCommands } } } as FlagScanCommand,
+      scanRoot(["doctor"], { subCommands: doctorSubCommands } as FlagScanCommand),
       ["doctor", subcommand, ...childArgs],
       { untilTarget: true },
     );

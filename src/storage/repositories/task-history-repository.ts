@@ -288,18 +288,11 @@ export function finalizeTaskHistoryAttempt(db: Database, row: TaskHistoryRow): b
  * `metadata_json` replaces the row's when given: the step the run was at, and why it ended.
  */
 export function markTaskHistoryAttemptInterrupted(db: Database, id: number, metadataJson?: string): boolean {
-  const result =
-    metadataJson === undefined
-      ? db
-          .prepare(
-            "UPDATE task_history SET status = 'interrupted' WHERE id = ? AND status = 'active' AND completed_at IS NULL",
-          )
-          .run(id)
-      : db
-          .prepare(
-            "UPDATE task_history SET status = 'interrupted', metadata_json = ? WHERE id = ? AND status = 'active' AND completed_at IS NULL",
-          )
-          .run(metadataJson, id);
+  const result = db
+    .prepare(
+      "UPDATE task_history SET status = 'interrupted', metadata_json = COALESCE(?, metadata_json) WHERE id = ? AND status = 'active' AND completed_at IS NULL",
+    )
+    .run(metadataJson ?? null, id);
   return Number(result.changes) === 1;
 }
 
@@ -336,35 +329,6 @@ export function upsertTaskHistory(db: Database, row: TaskHistoryRow): void {
     row.target_ref ?? null,
     row.metadata_json,
   );
-}
-
-/**
- * Look up a task history row by task_id. Returns undefined when not found.
- */
-/**
- * Return the most recent run for a given task_id, or undefined if no runs exist.
- */
-export function getTaskHistory(db: Database, taskId: string): TaskHistoryRow | undefined {
-  return db
-    .prepare(
-      `SELECT id, task_id, status, started_at, completed_at, failed_at, log_path,
-              target_kind, target_ref, metadata_json
-       FROM task_history WHERE task_id = ? ORDER BY started_at DESC, id DESC LIMIT 1`,
-    )
-    .get(taskId) as TaskHistoryRow | undefined;
-}
-
-/**
- * Return all runs for a given task_id, newest first.
- */
-export function getTaskHistoryRuns(db: Database, taskId: string, limit = 50): TaskHistoryRow[] {
-  return db
-    .prepare(
-      `SELECT id, task_id, status, started_at, completed_at, failed_at, log_path,
-              target_kind, target_ref, metadata_json
-       FROM task_history WHERE task_id = ? ORDER BY started_at DESC, id DESC LIMIT ?`,
-    )
-    .all(taskId, limit) as TaskHistoryRow[];
 }
 
 /**

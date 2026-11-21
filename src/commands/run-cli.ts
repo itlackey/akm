@@ -8,7 +8,7 @@ import { warnWorkflowUse } from "../cli/deprecations";
 import { createParsedInvocation, findCittyTopLevelCommandIndex, getParsedInvocation } from "../cli/invocation";
 import { parseNonNegativeIntFlag, parseTimeoutValue } from "../cli/parse-args";
 import { defineJsonCommand, GLOBAL_OUTPUT_ARGS, reportChildExit } from "../cli/shared";
-import { assertKnownFlags, type FlagScanCommand } from "../cli/unknown-flags";
+import { assertKnownFlags, type FlagScanCommand, scanRoot } from "../cli/unknown-flags";
 import { setResolvedUsageAssetType } from "../cli/usage";
 import { adapterForId } from "../core/adapter/registry";
 import { makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
@@ -223,8 +223,7 @@ export const runAssetCommand = defineJsonCommand({
     if (type === "workflow" && own.some((token) => /^--(?:no-)?new(?:=|$)/.test(token))) {
       throw new UsageError("akm run does not accept --new; a workflow ref always starts a new run.", "UNKNOWN_FLAG");
     }
-    let schema: FlagScanCommand = executor.command as FlagScanCommand;
-    for (const part of [...executor.path].reverse()) schema = { subCommands: { [part]: schema } };
+    const schema = scanRoot(executor.path, executor.command as FlagScanCommand);
     // A task reads and checks the tokens after its ref itself, once it knows the inputs it declares.
     if (type !== "task") assertKnownFlags(schema, [...executor.path, ...withoutRunFlags(retarget(own))]);
     if (type === "agent" || type === "command") {

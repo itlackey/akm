@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import { toErrorMessage } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { EXTRACT_INFRASTRUCTURE_SKIP_REASONS } from "../../core/improve-types";
 import { listPendingStateMigrations, type StateDatabaseMigrationReport } from "../../core/state-db";
@@ -41,8 +42,6 @@ export interface HealthCheckContext {
   stateDbFreelist: StateDbFreelistInfo;
   /** What this run's own state.db open applied (every open applies pending migrations). */
   stateDbMigrations: StateDatabaseMigrationReport;
-  /** Total task_history rows read in the window. */
-  taskRowCount: number;
   /** The window's runs by what started them, and how many tasks they belong to. */
   taskRuns: TaskRunCounts;
   /** Failed share of the window's runs; null when there were none. */
@@ -130,14 +129,14 @@ export function proposalQueueState(config: AkmConfig, stashDir: string): Proposa
     extractEnabled = resolveProcessEnabled("extract", selected.config);
     strategy = { strategy: selected.name };
   } catch (error) {
-    strategy = { strategyError: error instanceof Error ? error.message : String(error) };
+    strategy = { strategyError: toErrorMessage(error) };
   }
   const base = { stashDir, learningOn: learningStatus(config).on, ...strategy, extractEnabled };
   try {
     resolveProposalQueueTarget(stashDir, config);
     return base;
   } catch (error) {
-    return { ...base, problem: error instanceof Error ? error.message : String(error) };
+    return { ...base, problem: toErrorMessage(error) };
   }
 }
 
@@ -363,8 +362,8 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
       kind: "deterministic",
       status: "pass",
       confidence: "high",
-      message: `Read ${ctx.taskRowCount} task-history row(s) since ${ctx.since}.`,
-      evidence: { rows: ctx.taskRowCount, since: ctx.since },
+      message: `Read ${ctx.taskRuns.runs} task-history row(s) since ${ctx.since}.`,
+      evidence: { rows: ctx.taskRuns.runs, since: ctx.since },
     }),
   },
   {
@@ -490,7 +489,7 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
 
       const counted = describeTaskRuns(ctx.taskRuns);
       let message: string;
-      if (ctx.taskRowCount === 0) {
+      if (ctx.taskRuns.runs === 0) {
         message = `No task runs since ${ctx.since} — no task-fail-rate signal.`;
       } else if (warn) {
         const parts: string[] = [];
@@ -510,14 +509,14 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
         name: "task-fail-rate",
         kind: "deterministic",
         // No run in the window is no signal, not a pass.
-        ...(ctx.taskRowCount === 0
+        ...(ctx.taskRuns.runs === 0
           ? ({ status: "unknown", reason: "idle" } as const)
           : { status: warn ? ("warn" as const) : ("pass" as const) }),
         confidence: "high",
         message,
         evidence: {
           taskFailRate: ctx.taskFailRate,
-          taskRowCount: ctx.taskRowCount,
+          taskRowCount: ctx.taskRuns.runs,
           taskRuns: ctx.taskRuns,
           threshold: TASK_FAIL_RATE_WARN,
           worstTaskFailRate: worst,

@@ -169,8 +169,8 @@ export interface TaskWindowRates {
   /** Failed share of the window's agent dispatches; null when there were none. */
   agentFailureRate: number | null;
   agentFailureReasonCounts: Record<string, number>;
-  /** Active rows whose owner process is provably gone (`classifyAttempt`). */
   taskRuns: TaskRunCounts;
+  /** Active rows whose owner process is provably gone (`classifyAttempt`). */
   stuckActiveRuns: number;
   /** Rows behind `stuckActiveRuns` — the main health path (`health.ts`) names each one; window-compare only needs the count. */
   stuckActiveRows: TaskHistoryRow[];
@@ -199,7 +199,7 @@ export function computeTaskWindowRates(
   const unverifiedActiveRows = liveness.filter(({ state }) => state === "indeterminate").map(({ row }) => row);
   const decoded = decodeTaskRows(taskRows);
   const dispatches = agentDispatches(decoded);
-  const failedDispatches = dispatches.filter((dispatch) => dispatch.reason !== undefined);
+  const failedDispatches = dispatches.filter((reason) => reason !== undefined);
   return {
     taskRuns: countTaskRuns(decoded),
     taskFailRate: taskRows.length === 0 ? null : failedTaskRows.length / taskRows.length,

@@ -98,17 +98,16 @@ export const commandRunCommand = defineJsonCommand({
         })}`,
       );
     }
-    let attempts = 0;
     const result = await withRetries(
       parseNonNegativeIntFlag(getExactStringArg(args, "max-retries"), "--max-retries") ?? 0,
-      () => {
-        attempts += 1;
-        return dispatchPreparedCommandInvocation(prepared);
-      },
+      (n) =>
+        dispatchPreparedCommandInvocation(prepared).then((dispatched) =>
+          n > 1 ? { ...dispatched, attempts: n } : dispatched,
+        ),
       (attempt) => !attempt.ok,
     );
     for (const message of result.warnings ?? []) warn(message);
-    output("agent-result", attempts > 1 ? { ...result, attempts } : result);
+    output("agent-result", result);
     if (!result.ok) process.exitCode = EXIT_CODES.GENERAL;
   },
 });
