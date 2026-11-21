@@ -303,7 +303,7 @@ describe("writable Git checkout safety", () => {
     }
     expect(error?.message).toContain(fixture.contentRoot);
     expect(error?.message).toContain("content/lessons/seed.md");
-    expect(error?.hint?.()).toContain("akm bundle update");
+    expect(error?.hint?.()).toContain("run the command again");
     expect(error?.hint?.()).not.toContain("--help");
   });
 
