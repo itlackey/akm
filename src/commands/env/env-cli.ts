@@ -17,7 +17,6 @@
  * `vault` type (removed in 0.9.0).
  */
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { getParsedInvocation } from "../../cli/invocation";
@@ -32,10 +31,11 @@ import {
   sensitiveMarkerPath,
   withEnvSecretWrite,
 } from "../../core/env-secret-ref";
-import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
+import { NotFoundError, UsageError } from "../../core/errors";
 import { warn } from "../../core/warn";
 import { readStdin } from "../../runtime";
 import { buildChildEnv } from "./child-env";
+import { runProgram } from "./injection";
 
 const envListCommand = defineJsonCommand({
   meta: { name: "list", description: "List all env files across all bundles with their key names (no values)" },
@@ -258,31 +258,7 @@ async function runEnvInjected(
     mergedEnv[envKey] = envValue;
   }
 
-  const result = spawnSync(command[0] as string, command.slice(1), {
-    stdio: "inherit",
-    env: mergedEnv,
-  });
-  if (result.error) {
-    // Classify spawn failures (#483). Raw ErrnoException leaks a bare
-    // "spawn ENOENT" with no hint — wrap it so consumers get a usable
-    // code + hint in the standard JSON envelope.
-    const err = result.error as NodeJS.ErrnoException;
-    if (err.code === "ENOENT") {
-      throw new NotFoundError(
-        `Command not found: ${command[0]}`,
-        "FILE_NOT_FOUND",
-        `Install '${command[0]}' or add its directory to PATH before invoking 'akm env run'.`,
-      );
-    }
-    if (err.code === "EACCES") {
-      throw new ConfigError(
-        `Command not executable: ${command[0]}`,
-        "STASH_DIR_UNREADABLE",
-        `Add execute permission ('chmod +x ${command[0]}') or invoke via an interpreter.`,
-      );
-    }
-    throw err;
-  }
+  const result = await runProgram({ argv: command, env: mergedEnv, capture: false });
   // R-067: was `process.exit(result.status ?? 0)`, which terminates the
   // process synchronously and skips the `finally { disposeLlmUsageSink(); }`
   // block in src/cli.ts's `runCommand` — even
@@ -290,7 +266,7 @@ async function runEnvInjected(
   // `process.exitCode` and returning lets cleanup run while still exiting
   // with the child's exact status once the event loop drains, matching the
   // pattern `emitJsonError` (src/cli/shared.ts) already established.
-  process.exitCode = result.status ?? 0;
+  process.exitCode = result.exitCode ?? 0;
   return;
 }
 

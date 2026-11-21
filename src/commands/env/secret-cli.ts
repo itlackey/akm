@@ -23,7 +23,6 @@
  * only, and `--bundle` picks the bundle.
  */
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { getParsedInvocation } from "../../cli/invocation";
@@ -38,12 +37,13 @@ import {
   sensitiveMarkerPath,
   withEnvSecretWrite,
 } from "../../core/env-secret-ref";
-import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
+import { NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { isFileOrFileSymlink } from "../../indexer/walk/walker";
 import { readStdin } from "../../runtime";
 import { buildChildEnv } from "./child-env";
+import { runProgram } from "./injection";
 
 function parseKeyListFlag(raw: string | undefined): string[] | undefined {
   if (raw === undefined) return undefined;
@@ -204,35 +204,14 @@ const secretRunCommand = defineJsonCommand({
       metadata: { var: varName },
     });
 
-    const result = spawnSync(command[0] as string, command.slice(1), {
-      stdio: "inherit",
-      env: mergedEnv,
-    });
-    if (result.error) {
-      const err = result.error as NodeJS.ErrnoException;
-      if (err.code === "ENOENT") {
-        throw new NotFoundError(
-          `Command not found: ${command[0]}`,
-          "FILE_NOT_FOUND",
-          `Install '${command[0]}' or add its directory to PATH before invoking 'akm secret run'.`,
-        );
-      }
-      if (err.code === "EACCES") {
-        throw new ConfigError(
-          `Command not executable: ${command[0]}`,
-          "STASH_DIR_UNREADABLE",
-          `Add execute permission ('chmod +x ${command[0]}') or invoke via an interpreter.`,
-        );
-      }
-      throw err;
-    }
+    const result = await runProgram({ argv: command, env: mergedEnv, capture: false });
     // R-067: was `process.exit(result.status ?? 0)`, unconditional even on
     // the success path — it skipped the `finally { disposeLlmUsageSink(); }`
     // cleanup in src/cli.ts's `runCommand`.
     // Setting `process.exitCode` and returning still exits with the child's
     // exact status once the event loop drains, but lets cleanup run first —
     // same pattern `emitJsonError` (src/cli/shared.ts) already established.
-    process.exitCode = result.status ?? 0;
+    process.exitCode = result.exitCode ?? 0;
     return;
   },
 });
