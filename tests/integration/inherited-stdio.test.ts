@@ -21,6 +21,8 @@ import { type Cleanup, makeSandboxDir, sandboxStashDir, writeSandboxConfig } fro
 
 const CLI = path.resolve(import.meta.dir, "../../src/cli.ts");
 const LINES = 3_000_000;
+// Prints 1..LINES, one per line. Not `seq`: macOS seq prints one line too many for this range.
+const PRINT_LINES = `awk 'BEGIN { for (i = 1; i <= ${LINES}; i++) print i }'`;
 const { O_NONBLOCK } = fs.constants;
 const hasPython = process.platform !== "win32" && spawnSync("python3", ["--version"]).status === 0;
 
@@ -66,7 +68,7 @@ beforeEach(() => {
   fs.mkdirSync(path.join(stashDir, "scripts"), { recursive: true });
   fs.writeFileSync(
     path.join(stashDir, "scripts", "big.sh"),
-    `#!/bin/sh\npython3 -c 'import fcntl, sys; open(sys.argv[1], "w").write(str(fcntl.fcntl(1, fcntl.F_GETFL)))' "${flagsFile}"\nseq 1 ${LINES}\n`,
+    `#!/bin/sh\npython3 -c 'import fcntl, sys; open(sys.argv[1], "w").write(str(fcntl.fcntl(1, fcntl.F_GETFL)))' "${flagsFile}"\n${PRINT_LINES}\n`,
     { mode: 0o755 },
   );
   fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
@@ -104,16 +106,16 @@ describe.skipIf(!hasPython)("a slow reader of akm's stdout", () => {
     });
 
     test(`gets every line of a command run after akm in the same ${kind}`, () => {
-      expect(lineCount(kind, `${akm("--version")}; seq 1 ${LINES}`)).toBe(LINES + 1);
+      expect(lineCount(kind, `${akm("--version")}; ${PRINT_LINES}`)).toBe(LINES + 1);
     });
 
     test(`gets every line of a command run after akm run in the same ${kind}`, () => {
-      expect(lineCount(kind, `${akm("run scripts/big.sh")}; seq 1 ${LINES}`)).toBe(2 * LINES);
+      expect(lineCount(kind, `${akm("run scripts/big.sh")}; ${PRINT_LINES}`)).toBe(2 * LINES);
     });
 
     test(`gets every line from akm exec and akm env run (${kind})`, () => {
-      expect(lineCount(kind, akm(`exec -- seq 1 ${LINES}`))).toBe(LINES);
-      expect(lineCount(kind, akm(`env run env/e -- seq 1 ${LINES}`))).toBe(LINES);
+      expect(lineCount(kind, akm(`exec -- ${PRINT_LINES}`))).toBe(LINES);
+      expect(lineCount(kind, akm(`env run env/e -- ${PRINT_LINES}`))).toBe(LINES);
     });
   }
 });
