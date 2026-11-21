@@ -285,15 +285,17 @@ test("built desktop UI: each section's happy path and one refusal", { timeout: 2
       const map = page.locator(".mind-map");
       await expect(map).toBeVisible();
       const figures = page.getByRole("complementary", { name: "Figures" });
-      await expect(figures).toContainText("assets");
+      const filters = page.getByRole("group", { name: "Show on the map" });
+      await expect(filters.getByRole("button", { name: /^Knowledge/ })).toBeVisible();
       // Env and secret files are never on the map.
       await expect(map.getByRole("button", { name: /^(env|secrets?)\b/i })).toHaveCount(0);
-      await expect(figures).not.toContainText(/\b(env|secrets?)\b/i);
-      // Choosing a type fills the column beside the map, and its assets link to their pages.
+      await expect(filters).not.toContainText(/\b(env|secrets?)\b/i);
+      // Choosing a type fills the column beside the map, and what a filter finds links to its page.
       await map.getByRole("button", { name: /^Knowledge: / }).click();
       await expect(figures.getByRole("heading", { level: 2 })).toHaveText("Knowledge");
       await page.getByRole("tab", { name: "Use", exact: true }).click();
-      await figures.locator("section", { hasText: "Never read" }).locator(".read-row a").first().click();
+      await filters.getByRole("button", { name: "Most read" }).click();
+      await figures.locator(".read-row a").first().click();
       await expect(page).toHaveURL(/\/library\/search\?ref=/);
       await expect(page.locator(".markdown")).toBeVisible();
     },
@@ -311,7 +313,9 @@ test("built desktop UI: each section's happy path and one refusal", { timeout: 2
     // The fixture's four searches, one read and two feedback events are in the figures and the log.
     await expect(replay.locator(".figures")).toContainText(/4\s*searches/);
     await expect(replay.locator(".figures")).toContainText(/1\s*reads/);
-    await expect(replay.locator(".log").first()).toContainText("“missing restore steps”");
+    await expect(replay.locator("section", { hasText: "Latest events" }).locator(".log")).toContainText(
+      "“missing restore steps”",
+    );
     await expect(replay.getByRole("button", { name: "Play from start", exact: true })).toBeEnabled();
   });
 

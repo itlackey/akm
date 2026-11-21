@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   buildOverview,
   DAY,
+  flatPlace,
   groupFacts,
   groupJoins,
   groupsOf,
@@ -319,14 +320,20 @@ test("group joins: links and near-duplicates across groups, or only the given li
   assert.deepEqual(groupJoins(o, 1, OUTDATED_LINKS), []);
 });
 
-test("depth in a group: read lately in front, read earlier ahead of the middle, never read and outdated behind", () => {
+test("the overview keeps akm's place for each asset, and the same places in one plane", () => {
   const o = buildOverview(placed, now);
-  const z = (i) => o.place[i * 3 + 2];
-  // a read lately, c read earlier, b superseded.
-  assert.ok(z(0) > z(2) && z(2) > z(1));
-  // f read lately; d never read (edited lately); e contradicted.
-  assert.ok(z(5) > z(3) && z(3) > z(4));
-  assert.ok(z(3) < 10 && z(5) > 10);
-  // x and y stay akm's.
-  assert.deepEqual([o.place[3 * 3], o.place[3 * 3 + 1]], [50, 0]);
+  assert.deepEqual([...o.place.subarray(9, 12)], [50, 0, 10]);
+  const flat = flatPlace(o);
+  for (let i = 0; i < o.count; i++)
+    assert.deepEqual([...flat.subarray(i * 3, i * 3 + 3)], [o.place[i * 3], o.place[i * 3 + 1], 0]);
+});
+
+test("an outdated asset says why, and names what replaced or contradicts it; every asset has its link count", () => {
+  const o = buildOverview(payload, now);
+  // b is recorded as superseded; e declares that f contradicts it.
+  assert.deepEqual(o.outdatedWhy[1], [{ why: "superseded", by: -1 }]);
+  assert.deepEqual(o.outdatedWhy[4], [{ why: "contradicted", by: 5 }]);
+  assert.deepEqual(o.outdatedWhy[0], []);
+  // a→b, b→c, c→d, e→f; g has none.
+  assert.deepEqual(o.degree, [1, 2, 2, 1, 1, 1, 0]);
 });
