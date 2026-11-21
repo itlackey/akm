@@ -996,6 +996,19 @@ posixOnly("plugin state akm could not read is unknown or failed, with the reason
     expect(entry(run, "opencode").message).not.toContain("no cached");
   });
 
+  test("an unreadable opencode.json on a channel switch fails the entry with the read error, check and run", async () => {
+    writeCachedOpenCode("0.10.261130-beta", "next");
+    writeOpenCodeConfig("{ not json");
+    for (const args of [CHECK, UPGRADE]) {
+      const run = await withEnv(world.env, () =>
+        runUpgrade({ ...args, channel: "latest" }, "0.9.28", fakeDeps("0.9.28", "0.9.28")),
+      );
+      expect(entry(run, "opencode").outcome).toBe("failed");
+      expect(entry(run, "opencode").message).toContain("could not parse");
+      expect(entry(run, "opencode").message).not.toContain("disappeared");
+    }
+  });
+
   test("an unparseable codex config.toml: doctor row is unknown; upgrade --check fails the entry with no invented channel", async () => {
     stubCodex({ from: "0.10.261130-beta", to: "0.10.261130-beta" });
     const dir = path.join(world.root, "codex-home");
