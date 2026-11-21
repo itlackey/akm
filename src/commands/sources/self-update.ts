@@ -17,7 +17,7 @@ import { ConfigError } from "../../core/errors";
 import { isQuiet, warn } from "../../core/warn";
 import { githubHeaders } from "../../integrations/github";
 import { isPrerelease } from "../../registry/semver";
-import { getDirname, mainPath, semverOrder } from "../../runtime";
+import { getDirname, mainPath, semverOrder, spawnSync } from "../../runtime";
 import type { UpgradeChannel, UpgradeCheckResponse, UpgradeResponse } from "../../sources/types";
 import { resolveNpmGlobalRoot } from "../../tasks/resolve-akm-bin";
 import { runMigrationTool } from "../migration-tool";
@@ -538,24 +538,18 @@ function runPostUpgradeTasks(akmBin: string, opts: { skip: boolean }): NonNullab
     };
   }
   try {
-    const result = childProcess.spawnSync(akmBin, ["index", "--format", "json", ...(isQuiet() ? ["--quiet"] : [])], {
-      encoding: "utf8",
-      env: process.env,
-      stdio: ["pipe", "pipe", "inherit"],
+    const result = spawnSync([akmBin, "index", "--format", "json", ...(isQuiet() ? ["--quiet"] : [])], {
+      env: process.env as Record<string, string>,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "inherit",
     });
-    if (result.error) {
+    if (result.exitCode !== 0) {
+      const detail = result.stdout.toString("utf8").trim() || `exit code ${result.exitCode}`;
       return {
         ok: false,
         skipped: false,
-        message: `Upgrade completed. The index rebuild could not start: ${result.error.message}. Run \`akm index\` manually.`,
-      };
-    }
-    if (result.status !== 0) {
-      const detail = (result.stdout ?? "").trim() || `exit code ${result.status}`;
-      return {
-        ok: false,
-        skipped: false,
-        exitCode: result.status,
+        exitCode: result.exitCode,
         message: `Upgrade completed. Post-upgrade \`akm index\` failed (${detail}). Run \`akm index\` manually.`,
       };
     }

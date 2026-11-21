@@ -164,6 +164,7 @@ import { installLlmUsagePersistenceIfAbsent } from "./llm/usage-persist";
 import { EMBEDDED_HINTS, EMBEDDED_HINTS_FULL } from "./output/cli-hints";
 import { getOutputMode, initOutputMode, parseDetailLevel } from "./output/context";
 import { isFormatExemptCommand } from "./output/format-exempt";
+import { blockingStdio } from "./runtime";
 import { consumeSchedulerContextArg } from "./tasks/scheduler-invocation";
 import { pkgVersion } from "./version";
 
@@ -1242,6 +1243,7 @@ export function insertBareListSubcommand(argv: string[]): string[] {
  * stop the rest of startup from running after a fatal early error.
  */
 export async function runCli(): Promise<void> {
+  process.once("exit", blockingStdio);
   const originalArgs = process.argv.slice(2);
   let schedulerError: unknown;
   try {

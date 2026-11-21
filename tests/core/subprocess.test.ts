@@ -23,10 +23,10 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildSpawnOptions,
+  childGroup,
   runManagedSubprocess,
   type SpawnedSubprocess,
   type SpawnFn,
-  spawnsOwnProcessGroup,
 } from "../../src/core/subprocess";
 
 function asReadableStream(text: string): ReadableStream<Uint8Array> {
@@ -440,31 +440,31 @@ describe("runManagedSubprocess — capture and failure surfacing", () => {
     expect(result.stdout).toBe("");
   });
 
-  test("a captured spawn asks for its own process group only where that is what the flag means", async () => {
-    // On POSIX `detached` is setsid(), which is what makes killGroup's
-    // negative-pid kill reach the whole tree. On Windows the same flag is
-    // DETACHED_PROCESS — the child gets no console, a console host
-    // (powershell.exe/cmd.exe) allocates its own and thereby replaces the
-    // std handles it was handed, and every byte it writes goes to that
-    // phantom console instead of our pipe. That is how a scheduled
-    // `akm --version` logged exit_code=0 with both streams empty, while
-    // killGroup gains nothing there (process.kill(-pid) is POSIX-only).
-    expect(spawnsOwnProcessGroup("linux")).toBe(true);
-    expect(spawnsOwnProcessGroup("darwin")).toBe(true);
-    expect(spawnsOwnProcessGroup("win32")).toBe(false);
+  test("a child gets its own process group except on Windows and on a terminal without capture", () => {
+    // On POSIX `detached` is setsid(), which is what makes killGroup's negative-pid kill reach the whole tree,
+    // and what takes the controlling terminal away. On Windows the same flag is DETACHED_PROCESS: the child
+    // gets no console, a console host allocates its own and thereby replaces the std handles it was handed,
+    // and every byte it writes goes to that phantom console instead of our pipe.
+    for (const platform of ["linux", "darwin"] as const) {
+      expect(childGroup(true, platform, true)).toBe("own");
+      expect(childGroup(true, platform, false)).toBe("own");
+      expect(childGroup(false, platform, false)).toBe("own");
+      expect(childGroup(false, platform, true)).toBe("shared");
+    }
+    expect(childGroup(true, "win32", false)).toBe("shared");
+    expect(childGroup(false, "win32", false)).toBe("shared");
 
-    // The WIRING, not just the predicate — asserted for a platform this test
-    // host is not, which is the whole point: Windows is where it breaks and
-    // nothing runs the unit suite there.
-    expect(buildSpawnOptions({ capture: true }, "win32").detached).toBeUndefined();
-    expect(buildSpawnOptions({ capture: true }, "linux").detached).toBe(true);
-    expect(buildSpawnOptions({ capture: true }, "darwin").detached).toBe(true);
+    // The WIRING, asserted for a platform this test host is not.
+    expect(buildSpawnOptions({ capture: true }, childGroup(true, "win32", false)).detached).toBeUndefined();
+    expect(buildSpawnOptions({ capture: true }, "own").detached).toBe(true);
     // Captured Windows runs still pipe all three streams; only the group flag goes.
-    expect(buildSpawnOptions({ capture: true }, "win32").stdout).toBe("pipe");
-    expect(buildSpawnOptions({ capture: true }, "win32").stderr).toBe("pipe");
-    // Interactive never asked for a group on any platform.
-    expect(buildSpawnOptions({ capture: false }, "linux").detached).toBeUndefined();
+    expect(buildSpawnOptions({ capture: true }, "shared").stdout).toBe("pipe");
+    expect(buildSpawnOptions({ capture: true }, "shared").stderr).toBe("pipe");
+    expect(buildSpawnOptions({ capture: false }, "shared").detached).toBeUndefined();
+    expect(buildSpawnOptions({ capture: false }, "shared").stdout).toBe("inherit");
+  });
 
+  test("a captured managed run spawns detached on POSIX", async () => {
     let detached: unknown = "unset";
     const spawn: SpawnFn = (_cmd, opts) => {
       detached = opts.detached;
@@ -480,7 +480,7 @@ describe("runManagedSubprocess — capture and failure surfacing", () => {
     const result = await runManagedSubprocess(["echo"], { capture: true, timeoutMs: null, spawnFn: spawn });
     expect(result.stdout).toBe("out\n");
     // The live wiring must follow the helper on whichever platform runs this.
-    expect(detached).toBe(spawnsOwnProcessGroup() ? true : undefined);
+    expect(detached).toBe(process.platform === "win32" ? undefined : true);
   });
 
   test("interactive (capture: false) does not read streams", async () => {
@@ -505,11 +505,11 @@ describe("runManagedSubprocess — capture and failure surfacing", () => {
 describe("runManagedSubprocess — termination-signal guard", () => {
   // #1230: the guard used to go in only after the spawn returned, so a SIGTERM or SIGINT that landed in between met
   // the default disposition: akm died and the new process group was left running.
-  test.skipIf(!spawnsOwnProcessGroup())(
+  test.skipIf(process.platform === "win32")(
     "is in force before a captured child is spawned and gone once it exits",
     async () => {
       // The guard stands aside when anything else handles the signals, and the test preload does; lift its listeners.
-      const signals = ["SIGTERM", "SIGINT"] as const;
+      const signals = ["SIGTERM", "SIGINT", "SIGHUP"] as const;
       const saved = signals.map((signal) => [signal, process.listeners(signal)] as const);
       for (const signal of signals) process.removeAllListeners(signal);
       try {
@@ -523,8 +523,8 @@ describe("runManagedSubprocess — termination-signal guard", () => {
         ctl.closeStdout();
         ctl.exit(0);
         await run;
-        expect(atSpawn).toEqual([1, 1]);
-        expect(signals.map((signal) => process.listenerCount(signal))).toEqual([0, 0]);
+        expect(atSpawn).toEqual([1, 1, 1]);
+        expect(signals.map((signal) => process.listenerCount(signal))).toEqual([0, 0, 0]);
       } finally {
         for (const [signal, listeners] of saved) for (const listener of listeners) process.on(signal, listener);
       }

@@ -3324,6 +3324,20 @@ agent and command runs, and a missing `--cwd` folder is made. A version 4 task
 keeps its own flag parsing. A version 5 task reads its start flags itself: a
 held lock (`lock: true`) exits 75, or 0 with `--scheduled` or `--skip-if-locked`.
 
+`--timeout` and a signal to akm stop what a script started, in one of two ways. With
+no controlling terminal (cron, systemd, CI, an agent's shell tool) the script runs
+in its own session and process group: a timeout, or SIGINT, SIGTERM or SIGHUP to
+akm, sends the group SIGINT, then SIGTERM when the script has exited or 5 seconds
+have passed, then SIGKILL 5 seconds later if anything is left, so nothing is
+orphaned and the output pipe is released. A script's INT trap runs; a TERM-only trap runs only if the
+script survives SIGINT. On a terminal the script stays in akm's process group, so
+Ctrl-C, Ctrl-Z and reads from `/dev/tty` work as when it is run directly. SIGTERM
+and SIGHUP to akm are forwarded to the script, which runs its TERM trap, and akm
+ends by that signal once the script has exited; SIGINT, SIGQUIT and SIGTSTP are
+the terminal's to deliver. A timeout runs the same ladder on the script alone, so
+a process the script started that outlives it is left running, as it is when the
+script runs directly. `akm exec`, `akm env run` and `akm secret run` behave the same.
+
 Flags must apply to the selected executor or its declared inputs. Unsupported
 asset types, fragments, extra positional values and `--` tails (for an agent,
 command, task or workflow) fail before execution. Supply command text through `--arguments` and agent
@@ -3370,10 +3384,11 @@ akm exec --prompt "Summarize the failing tests" --harness claude
 One argument after `--` is a shell line, run by `sh -c` (`cmd /d /s /c` on
 Windows); several arguments are a program and its arguments, run directly. The
 command runs on this terminal and its output is not captured;
-`akm exec` exits with its status and is exempt from `--format`. A typed
-`--timeout` stops the command itself, not the processes it started; a step of a
-[version 5 task](tasks.md#task-source-v5-experimental) captures its output, and
-its timeout stops the whole process group. Env assets apply
+`akm exec` exits with its status and is exempt from `--format`. `--timeout` and a
+signal to akm reach the command as they reach a script run by
+[`akm run`](#run): without a controlling terminal the command runs in its own
+process group and the whole group is stopped; on a terminal it stays in akm's
+group and only the command itself is signalled. Env assets apply
 in the order given, then secrets over them, and a later flag wins over an
 earlier one for the same variable. A missing ref, or a `--secret` that is not
 `<ref>:<VAR>`, is an error and nothing runs. Each use records an `env_access` or
