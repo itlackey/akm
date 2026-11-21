@@ -88,8 +88,8 @@ findings, and belong with the clusters above:
 | Finding | Disposition | Evidence at HEAD |
 | --- | --- | --- |
 | DUP-01 | fixed | `tests/integration/commands/import.test.ts:93-171` is one `--target` block of five distinct scenarios; the duplicate block is gone; `a1262a68` |
-| DUP-02 | fixed | `tests/commands/remember.test.ts:77-163` keeps three target cases plus the distinct default-bundle case; the renamed-fixture copies are gone; `a1262a68` |
-| DUP-03 | **still open** | `tests/agent/agent-spawn.test.ts:103-132,166,220` and `tests/architecture/agent-spawn-seam.test.ts:113,155,179` still both cover captured success, non-zero exit, spawn failure, parse failure, and timeout |
+| DUP-02 | fixed | `tests/integration/commands/remember.test.ts:77-163` keeps three target cases plus the distinct default-bundle case; the renamed-fixture copies are gone; `a1262a68` |
+| DUP-03 | **still open** | `tests/integration/agent/agent-spawn.test.ts:103-132,166,220` and `tests/architecture/agent-spawn-seam.test.ts:113,155,179` still both cover captured success, non-zero exit, spawn failure, parse failure, and timeout |
 | DUP-04 | fixed | Two of four copies deleted with in-place markers at `tests/agent/agent-builders.test.ts:412-414,450-451`; three distinct surviving variants kept deliberately (`:316`, `:334`, `:609`); `e511ff6d` |
 | DUP-05 | fixed | The WS2 block is deleted, with the reason recorded at `tests/integration/agent-output.test.ts:233-237`; `e511ff6d` |
 | DUP-06 | fixed | No `detectTruncatedDescription` reference remains in `tests/integration/commands/consolidate/consolidate-pipeline-fixes.test.ts`; the 12 helper cases live only in `tests/core/text-truncation.test.ts`; `8cf96889` |
@@ -98,7 +98,7 @@ findings, and belong with the clusters above:
 | DUP-09 | fixed | `tests/integration/env-path-run.test.ts` no longer mentions `vault`; the check lives only in `tests/integration/env.test.ts:543` |
 | DUP-10 | **still open** | `tests/integration/registry-search.test.ts:565-571` and `:770-777` still assert the same three things through two paths |
 | DUP-11 | fixed | Three of four overlaps deleted (`0f7790e8`): the wave2-d exit-code block, the frontmatter block, and the `assembleInfo` existence check. The fourth (`shapeSearchHit` registry brief, now `tests/commands/consolidate/consolidate-wave2-e.test.ts:62-98`) was kept deliberately as the only `installRef`/`title→name` coverage |
-| DUP-12 | **still open** (grown) | The identical `runCli` wrapper + `beforeEach`/`afterEach` block now appears in **11** `*-cli-envelope.test.ts` files (e.g. `tests/commands/config-cli-envelope.test.ts:29-42` and `tests/integration/commands/env-cli-envelope.test.ts:25-41`), up from the five cited |
+| DUP-12 | **still open** (grown) | The identical `runCli` wrapper + `beforeEach`/`afterEach` block now appears in **11** `*-cli-envelope.test.ts` files (e.g. `tests/integration/commands/config-cli-envelope.test.ts:29-42` and `tests/integration/commands/env-cli-envelope.test.ts:25-41`), up from the five cited |
 
 ### Tests with little or misleading value
 
@@ -109,7 +109,7 @@ findings, and belong with the clusters above:
 | VALUE-03 | fixed | The signature-only test is deleted; `tests/integration/info-command.test.ts:289-299` asserts `sourceProviders` empty with no bundle and exact contents with one; `0f7790e8` |
 | VALUE-04 | fixed | The `Object.keys(out).length > 0` tautology is deleted with a marker at `tests/commands/consolidate/consolidate-wave2-e.test.ts:93-96`; a missing-field input was added at `:82-90`; `0f7790e8` |
 | VALUE-05 | fixed | `tests/integration/setup.test.ts:205-211` now injects through `_setDetectForTests` and asserts the concrete result; `d7594c6c` |
-| VALUE-06 | fixed | The data dir is isolated at `tests/commands/observability-cli-envelope.test.ts:40-46` (`d7594c6c`); the conditional `lessons` test went away with the command family in the 0.9.0 CLI overhaul |
+| VALUE-06 | fixed | The data dir is isolated at `tests/integration/commands/observability-cli-envelope.test.ts:40-46` (`d7594c6c`); the conditional `lessons` test went away with the command family in the 0.9.0 CLI overhaul |
 | VALUE-07 | fixed | `tests/integration/migration-help.test.ts:92-131` extracts the traversal literal from production source and applies it at the real `dist/` depth; `8cf96889` |
 | VALUE-08 | fixed | The four class-identity tests are deleted; `tests/commands/consolidate/consolidate-wave2-d.test.ts` no longer has an exit-code block; mapping stays in `tests/cli/exit-code-classification.test.ts`; `0f7790e8` |
 | VALUE-09 | fixed | `tests/integration/commands/ref-input-boundary.test.ts:47` has two distinct spellings and the docstring at `:5-22` names `tests/resolve-ref.test.ts:271-274` as the colon-grammar rejection site; `8cf96889` |
@@ -120,7 +120,7 @@ findings, and belong with the clusters above:
 | VALUE-14 | fixed | `tests/integration/workflows/params-validation.test.ts:178-185` asserts the run id and the tampered params verbatim; `8cf96889` |
 | VALUE-15 | fixed | The weak block is deleted (marker at `tests/commands/consolidate/consolidate-wave2-e.test.ts:107-115`); `tests/remember-unit.test.ts:65,79,101` cover newline injection, metacharacters, and the empty description; `0f7790e8` |
 | VALUE-16 | **still open** (reduced) | The redundant single-call smoke test is gone, but the survivor at `tests/integration/parallel-search.test.ts:140-145` still only asserts `not.toThrow()` — it does not prove cached values were discarded or recomputed |
-| VALUE-17 | fixed (residual) | All three cited sites pinned: `tests/config-cli-silent-layer.test.ts:131-139` (exit 2 / `INVALID_FLAG_VALUE`), `tests/commands/remember.test.ts:127` (exit 78 / `INVALID_CONFIG_FILE`), and the weaker `completions.test.ts` unsupported-shell test deleted (`a1262a68`). Residual: ~48 `not.toBe(0)` status-only assertions remain tree-wide |
+| VALUE-17 | fixed (residual) | All three cited sites pinned: `tests/integration/config-cli-silent-layer.test.ts:131-139` (exit 2 / `INVALID_FLAG_VALUE`), `tests/integration/commands/remember.test.ts:127` (exit 78 / `INVALID_CONFIG_FILE`), and the weaker `completions.test.ts` unsupported-shell test deleted (`a1262a68`). Residual: ~48 `not.toBe(0)` status-only assertions remain tree-wide |
 
 ### Runtime, flakiness, and test design
 
@@ -128,7 +128,7 @@ findings, and belong with the clusters above:
 | --- | --- | --- |
 | RUNTIME-01 | retired | The three-database cutover architecture and its 1000-seed property suite were deleted in the 0.9.2 convergence. The dedicated CI job was removed with it; `tests/contracts/ci-test-paths.test.ts` rejects future workflow references to missing test files. |
 | RUNTIME-02 | retired | Workflow plan v3 execution and its map-expansion suite were deleted in favor of the one durable-v4 engine. Current v4 source, freeze, scheduler, and durability suites run in the normal unit/integration targets. |
-| RUNTIME-03 | fixed | The real `npm pack`/`install --global` test moved to `tests/integration/package-install.test.ts`; `tests/package-install.test.ts:5-12` records that everything remaining is injected-fake logic; `6c92d96a` |
+| RUNTIME-03 | fixed | The real `npm pack`/`install --global` test moved to `tests/integration/package-install.test.ts`; `tests/integration/package-install.test.ts:5-12` records that everything remaining is injected-fake logic; `6c92d96a` |
 | RUNTIME-04 | fixed | The one call site of the spawning default path moved to `tests/integration/fixtures/stashes/load.test.ts`; the unit file at `tests/fixtures/stashes/load.test.ts:7-16` documents that it never spawns; `d37f6b5c` |
 | RUNTIME-05 | fixed | `tests/integration/source-source.test.ts:607-635` uses a mocked `ensureWebsiteMirror` and a `.test` host; the note at `:612-622` explains why `.invalid` never reached the path at all; `d7594c6c` |
 | RUNTIME-06 | fixed | Same change as VALUE-05 — no `ollama list` subprocess, no 10s fallback |

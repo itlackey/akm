@@ -39,7 +39,7 @@ afterEach(() => {
 
 /**
  * Garbles page bytes past the SQLite header (first 100 bytes), same recipe
- * as tests/index-corruption-recovery.test.ts: `openDatabase()` still succeeds
+ * as tests/integration/index-corruption-recovery.test.ts: `openDatabase()` still succeeds
  * (the header is intact), but any real page read trips SQLITE_CORRUPT —
  * matching what integrity_check is meant to catch.
  */
@@ -66,7 +66,7 @@ describe("runStateDbIntegrityCheck (R0)", () => {
 
     // WAL mode leaves real data in the `-wal` file, not state.db itself —
     // garbling only the main file would corrupt bytes SQLite never reads.
-    // Checkpoint first, matching tests/index-corruption-recovery.test.ts.
+    // Checkpoint first, matching tests/integration/index-corruption-recovery.test.ts.
     const checkpointDb = openDatabase(dbPath);
     checkpointDb.exec("PRAGMA wal_checkpoint(TRUNCATE)");
     checkpointDb.close();

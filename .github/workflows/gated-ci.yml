@@ -189,7 +189,7 @@ jobs:
       - name: Test inherited stdio and process groups on macOS
         if: matrix.runtime_platform == 'darwin'
         shell: bash
-        run: bun test --timeout=180000 tests/runtime-stdio.test.ts tests/integration/inherited-stdio.test.ts tests/integration/child-process-group.test.ts
+        run: bun test --timeout=180000 tests/integration/runtime-stdio.test.ts tests/integration/inherited-stdio.test.ts tests/integration/child-process-group.test.ts
 
       - name: Clean up the macOS launchd candidate
         if: always() && matrix.runtime_platform == 'darwin'

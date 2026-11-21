@@ -687,7 +687,7 @@ describe("RemoteEmbedder.embedBatch against a real server: bounded concurrency (
   // override the default in either direction. The real-server case that
   // matters is loopback, since a test server binds to localhost; the 2-wide
   // remote default is covered against a mocked fetch in
-  // tests/embedder-batching.test.ts (a real, unresolvable "remote" hostname
+  // tests/integration/embedder-batching.test.ts (a real, unresolvable "remote" hostname
   // would make this test flaky/offline-dependent for no added coverage).
   test("a loopback endpoint never overlaps requests against a real server", async () => {
     let inFlight = 0;

@@ -138,7 +138,7 @@ function statusWithFailedSteps(status: MigrationStatus, failedSteps: readonly Fa
  * helper covers sync and async actions alike, since every caller already
  * runs inside the async `runMigration`.
  */
-// Exported (only) so tests/migrate/run-migrate-poisoned-step.test.ts can pin
+// Exported (only) so tests/integration/migrate/run-migrate-poisoned-step.test.ts can pin
 // the isolation guarantee directly, against synthetic steps, instead of only
 // through `runMigration`'s own real steps.
 export async function migrationStep<T>(

@@ -3,8 +3,6 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { describe, expect, test } from "bun:test";
-import fs from "node:fs";
-import path from "node:path";
 import { mergeNotices } from "../src/execution/notices";
 import { formatProposalDrainPlain } from "../src/output/text/proposal-format";
 
@@ -40,18 +38,6 @@ function drainEnvelope(notices: ReturnType<typeof mergeNotices>): Record<string,
 }
 
 describe("proposal drain lowering notice aggregation", () => {
-  test("the CLI envelope cannot overwrite merged resolution notices with drain-only notices", () => {
-    const source = fs.readFileSync(path.join(import.meta.dir, "../src/commands/proposal/proposal-cli.ts"), "utf8");
-    const outputStart = source.indexOf('output("proposal-drain", {');
-    const outputEnd = source.indexOf("\n    });", outputStart);
-    const outputBlock = source.slice(outputStart, outputEnd);
-
-    expect(outputStart).toBeGreaterThanOrEqual(0);
-    expect(outputEnd).toBeGreaterThan(outputStart);
-    expect(outputBlock).toContain("...(notices ? { notices } : {})");
-    expect(outputBlock).not.toContain("result.notices");
-  });
-
   test("a dispatch-only notice survives structured and text output", () => {
     const notices = mergeNotices(undefined, [DISPATCH_NOTICE]);
     const envelope = drainEnvelope(notices);

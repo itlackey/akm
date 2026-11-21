@@ -87,7 +87,7 @@
  *     which recognizes the row from inside its own sentinel and reconciles
  *     it instead of treating it as absent and colliding with the
  *     still-present artifact. (The `--scheduler-context` rows themselves are
- *     covered in `tests/tasks-sync.test.ts` and the upgrade rehearsal.)
+ *     covered in `tests/integration/tasks-sync.test.ts` and the upgrade rehearsal.)
  */
 
 import { Database } from "bun:sqlite";

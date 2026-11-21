@@ -6,7 +6,7 @@
 // lock file naming a live FOREIGN pid — the lease probe liveness-checks that
 // pid with a signal-0 kill. Using process.pid instead would hit the
 // same-process reentrancy branch (covered by the unit tests in
-// tests/asset-mutation-lease.test.ts), not the cross-process contention path.
+// tests/integration/asset-mutation-lease.test.ts), not the cross-process contention path.
 // The spawned `sleep 5` exists purely to be that live foreign pid.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";

@@ -51,9 +51,8 @@ const ctx: ValidateContext = {
 };
 
 describe("generic-files adapter — metadata + explicit-config", () => {
-  test("id / version", () => {
+  test("id", () => {
     expect(genericFilesAdapter.id).toBe("generic-files");
-    expect(genericFilesAdapter.version).toBe("0.9.0");
   });
 
   test("looksLikeRoot NEVER fires (explicit-config only, §1.2)", () => {

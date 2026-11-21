@@ -2,7 +2,7 @@
 
 A small, conformant Open Knowledge Format (v0.1) bundle used as the frozen
 fixture for the `okf` adapter's unit and integration test suites
-(`tests/core/adapter/okf-adapter.test.ts`,
+(`tests/integration/core/adapter/okf-adapter.test.ts`,
 `tests/integration/okf-conformance.test.ts`) and the `okf`
 format-family goldens.
 

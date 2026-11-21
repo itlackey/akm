@@ -268,7 +268,7 @@ describe("generateEmbeddingsForDb: per-batch progress and final outcome line (#9
           // succeeds regardless of size, so this stays a deterministic,
           // fast wiring test rather than reproducing the field's exact
           // token-density math (that math is covered at the RemoteEmbedder
-          // level by tests/embedder-batching.test.ts).
+          // level by tests/integration/embedder-batching.test.ts).
           if (requestCount === 1) {
             return new Response(JSON.stringify({ error: { message: "context length exceeded" } }), {
               status: 413,

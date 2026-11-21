@@ -9,7 +9,7 @@
  * tests/fixtures/execution-contracts/tasks/v3-to-v4/ (deterministic|blocked
  * split, mirroring tests/tasks/migrate-v2-to-v3.test.ts and the tasks/v2
  * manifest.json shape). It runs only under `akm migrate apply`
- * (`scripts/akm-migrate/migrate/task-files.ts`, tests/migrate/task-files.test.ts):
+ * (`scripts/akm-migrate/migrate/task-files.ts`, tests/integration/migrate/task-files.test.ts):
  * the runtime reads only task source v4.
  */
 

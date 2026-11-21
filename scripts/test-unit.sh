@@ -40,7 +40,7 @@ bun run sweep:tmp >/dev/null 2>&1 || true
 # Deterministic file list; sort so every machine shards identically. (The
 # 0.9.0-refactor-era local slow-file skip-list was removed at refactor close
 # per its own charter; the full suite always runs, local and CI alike.)
-mapfile -t files < <(find tests -name '*.test.ts' -not -path 'tests/integration/*' | sort)
+mapfile -t files < <(find tests -name '*.test.ts' -not -path 'tests/integration/*' -not -path 'tests/fixtures/*' | sort)
 total="${#files[@]}"
 
 if [ "$total" -eq 0 ]; then
