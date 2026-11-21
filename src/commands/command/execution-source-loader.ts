@@ -216,7 +216,7 @@ export async function loadAdapterExecutionSource(
     throw new NotFoundError(
       `Execution source ${JSON.stringify(refInput)} was not found in the local index.`,
       "ASSET_NOT_FOUND",
-      `Run \`akm index --full\`, then retry, or check the ${expectedKind === "persona" ? "agent (--agent)" : "command"} ref ${JSON.stringify(refInput)}.`,
+      `Run \`akm index --full\`, then retry, or check the ${expectedKind === "persona" ? "agent" : "command"} ref ${JSON.stringify(refInput)}.`,
     );
   }
   const indexedType = expectedIndexedType(expectedKind);

@@ -153,11 +153,16 @@ function streamFailureMessage(label: string, stdout: StreamReadResult, stderr: S
   return failures === undefined ? undefined : `${label} output capture failed: ${failures}`;
 }
 
-/** A spawn error's message; an argument list the system refuses (`E2BIG`) names the prompt it is mostly made of. */
-function spawnFailure(error: Error, argv: readonly string[]): string {
+/**
+ * A spawn error's message. An argument list the system refuses (`E2BIG`) names the prompt only when the prompt is what
+ * the command line carries: a harness that reads it from stdin has another argument to blame.
+ */
+function spawnFailure(error: Error, stdin: string | undefined, prompt: string | undefined): string {
   if ((error as NodeJS.ErrnoException).code !== "E2BIG") return error.message;
-  const longest = Math.max(...argv.map((arg) => Buffer.byteLength(arg)));
-  return `the command line is longer than the system allows (${longest} bytes in the longest argument, the prompt); this harness takes the prompt on its command line`;
+  if (stdin === undefined && prompt !== undefined) {
+    return `the command line is longer than the system allows (${Buffer.byteLength(prompt)} bytes in the prompt argument); this harness takes the prompt on its command line`;
+  }
+  return "the command line is longer than the system allows";
 }
 
 function failed(reason: AgentFailureReason, error: string, rest: Partial<AgentRunResult> = {}): AgentRunResult {
@@ -236,8 +241,8 @@ export interface ReadyCommand {
 /** The longest line of a program's own failure message that an error carries. */
 const FAILURE_LINE_LIMIT = 300;
 
-/** The last non-empty line of `text`, terminal escapes stripped, cut to {@link FAILURE_LINE_LIMIT}; undefined when there is none. */
-function lastLine(text: string): string | undefined {
+/** The last non-empty line of `text`, terminal escapes stripped, cut to {@link FAILURE_LINE_LIMIT}; undefined when there is none. The one reader of a program's own failure line. */
+export function lastOutputLine(text: string): string | undefined {
   const lines = stripVTControlCharacters(text)
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -286,7 +291,8 @@ export async function runBuiltCommand(
   });
   const durationMs = Date.now() - start;
 
-  if (result.spawnError) return failed("spawn_failed", spawnFailure(result.spawnError, argv), { durationMs });
+  if (result.spawnError)
+    return failed("spawn_failed", spawnFailure(result.spawnError, stdin, options.dispatch?.prompt), { durationMs });
 
   const { exitCode, stdout, stderr } = result;
   const output = { exitCode, stdout, stderr, durationMs };
@@ -299,7 +305,7 @@ export async function runBuiltCommand(
   const captureFailure = streamFailureMessage(label, result.stdoutRead, result.stderrRead);
   if (captureFailure) return failed("spawn_failed", captureFailure, output);
   if (exitCode !== 0) {
-    const said = failureStream ? lastLine(failureStream === "stdout" ? stdout : stderr) : undefined;
+    const said = failureStream ? lastOutputLine(failureStream === "stdout" ? stdout : stderr) : undefined;
     return failed("non_zero_exit", `${label} exited with code ${exitCode}${said ? `: ${said}` : ""}`, output);
   }
   return { ok: true, ...output };

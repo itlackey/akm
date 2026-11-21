@@ -105,11 +105,11 @@ describe("the hint names what is wrong", () => {
     expect(hint).not.toContain("Refs use the form");
   });
 
-  test("a --agent ref that is not indexed is named as the agent ref, not the command ref", async () => {
+  test("an agent ref that is not indexed is named as the agent ref, not the command ref", async () => {
     const result = await akm(["run", "commands/review", "--agent", "agents/missing"]);
     expect(result.code).not.toBe(0);
     const { hint } = failure(result);
-    expect(hint).toContain("agent (--agent)");
+    expect(hint).toContain('agent ref "agents/missing"');
     expect(hint).toContain("agents/missing");
     expect(hint).not.toContain("retry the command ref");
   });
