@@ -127,6 +127,7 @@ export const indexCommand = defineCommand({
       process.once("SIGINT", abort);
       process.once("SIGTERM", abort);
       const verbose = isVerbose();
+      if (!verbose && outputMode.format === "text") await p.loadPrompts();
       const spin = !verbose && outputMode.format === "text" ? p.spinner() : null;
       // The log file and spinner start with the build, not while waiting for the lock: a skipped run leaves neither.
       let started = false;

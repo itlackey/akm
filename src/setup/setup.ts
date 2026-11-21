@@ -628,6 +628,7 @@ export async function runSetupWizard(opts?: {
   noProbe?: boolean;
 }): Promise<void> {
   assertSetupConfigPreflight();
+  await p.loadPrompts();
   p.intro("akm setup");
 
   const { current, configPath, resolvedStashDir } = resolveIsolatedSetupConfig(opts);

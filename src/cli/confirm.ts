@@ -76,6 +76,7 @@ export async function confirmDestructive(message: string, opts: ConfirmDestructi
   }
 
   // Interactive: prompt with default = NO (false)
+  await p.loadPrompts();
   const confirmed = await p.confirm({
     message,
     initialValue: false,
