@@ -90,7 +90,7 @@ describe("health reporting correctness", () => {
     // `stuck`'s akm process is gone; `recent` is owned by this live process. Age decides neither.
     const exited = spawnSync(process.execPath, ["-e", "0"]);
     const host = os.hostname();
-    const bootId = fs.readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+    const bootId = processIdentity(process.pid)?.bootId;
     task("stuck", now - 2 * DAY, "active", { pid: exited.pid, host, bootId, startTime: "1" });
     task("recent", now - 60_000, "active", {
       pid: process.pid,
@@ -112,6 +112,28 @@ describe("health reporting correctness", () => {
     expect(short.hardChecks.find((c) => c.name === "task-history-read")?.evidence?.rows).toBe(1);
     expect(short.metrics.taskFailRate).toBe(0);
     expect(short.status).toBe("warn");
+  });
+
+  test("a run started 2 days ago whose owner is alive is not stuck: age decides nothing", async () => {
+    const identity = processIdentity(process.pid);
+    task("long-run", now - 2 * DAY, "active", {
+      pid: process.pid,
+      host: os.hostname(),
+      bootId: identity?.bootId,
+      startTime: identity?.startTime,
+    });
+    const result = await health();
+    expect(result.hardChecks.find((c) => c.name === "active-runs")?.status).toBe("pass");
+    expect(result.metrics.stuckActiveRuns).toBe(0);
+  });
+
+  test("a run owned by another host is unknown, not pass", async () => {
+    task("elsewhere", now - 60_000, "active", { pid: 1, host: "other-host", bootId: "x", startTime: "1" });
+    const result = await health();
+    expect(result.hardChecks.find((c) => c.name === "active-runs")).toMatchObject({
+      status: "unknown",
+      reason: "blocked",
+    });
   });
 
   test.each(["auto", "off"] as const)("an unreadable index fails overall health in %s mode", async (mode) => {

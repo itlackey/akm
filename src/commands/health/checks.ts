@@ -60,7 +60,7 @@ export interface HealthCheckContext {
    */
   worstTaskFailRate: { taskId: string; rate: number; rows: number } | null;
   /**
-   * #943: `detail.reason` breakdown across the window's command-task
+   * #943: `detail.reason` breakdown across the window's agent dispatch
    * failures (see `HealthMetrics.agentFailureReasonCounts`'s doc comment).
    * Always present in `task-fail-rate`'s evidence; drives the
    * "<reason>-dominant" message suffix when the check is warn/fail.
@@ -107,8 +107,10 @@ export interface ProposalQueueState {
   stashDir: string;
   /** Background learning is on (`improve.enabled`). */
   learningOn: boolean;
-  /** The configured improve strategy's name. */
-  strategy: string;
+  /** The configured improve strategy's name, as the resolver reports it; absent when it did not resolve. */
+  strategy?: string;
+  /** The resolver's refusal of the configured strategy (a removed or unknown one); absent when it resolved. */
+  strategyError?: string;
   /** The configured improve strategy enables the extract process. */
   extractEnabled: boolean;
   /** The resolver's refusal; absent when the queue has a writable owner. */
@@ -117,18 +119,20 @@ export interface ProposalQueueState {
 
 /**
  * Resolve the proposal queue owner through the resolver extract and every other
- * proposal writer use. A config that cannot load or a strategy that cannot
- * resolve counts as extraction off: those are other checks' findings.
+ * proposal writer use. A strategy that does not resolve carries the resolver's error: extraction is then not known to
+ * be on or off.
  */
 export function proposalQueueState(config: AkmConfig, stashDir: string): ProposalQueueState {
   let extractEnabled = false;
-  const strategy = config.improve?.strategy ?? "default";
+  let strategy: { strategy: string } | { strategyError: string };
   try {
-    extractEnabled = resolveProcessEnabled("extract", resolveImproveStrategy(undefined, config).config);
-  } catch {
-    // reported by the config checks
+    const selected = resolveImproveStrategy(undefined, config);
+    extractEnabled = resolveProcessEnabled("extract", selected.config);
+    strategy = { strategy: selected.name };
+  } catch (error) {
+    strategy = { strategyError: error instanceof Error ? error.message : String(error) };
   }
-  const base = { stashDir, learningOn: learningStatus(config).on, strategy, extractEnabled };
+  const base = { stashDir, learningOn: learningStatus(config).on, ...strategy, extractEnabled };
   try {
     resolveProposalQueueTarget(stashDir, config);
     return base;
@@ -218,8 +222,8 @@ export function appliedStateMigrationsCheck(
 
 /**
  * #943: name the dominant `detail.reason` behind `task-fail-rate`'s warning
- * when one reason accounts for at least half of the window's command-task
- * failures — e.g. "(timeout-dominant: 9/12 command-task failures)" — so an
+ * when one reason accounts for at least half of the window's agent dispatch
+ * failures — e.g. "(timeout-dominant: 9/12 agent dispatch failures)" — so an
  * operator sees the shape of the failure from data instead of grepping task
  * logs. Ties break on reason name for determinism. `undefined` when there are
  * no counted failures or no single reason reaches the 50% floor.
@@ -243,6 +247,7 @@ function describeTaskRuns(counts: TaskRunCounts): string {
     counts.scheduled > 0 ? `${counts.scheduled} scheduled` : "",
     counts.manual > 0 ? `${counts.manual} manual` : "",
     counts.unrecorded > 0 ? `${counts.unrecorded} with no recorded trigger` : "",
+    counts.unreadable > 0 ? `${counts.unreadable} unreadable` : "",
   ].filter(Boolean);
   return `${noun(counts.runs, "run")} of ${noun(counts.tasks, "task")}${byTrigger.length > 0 ? ` (${byTrigger.join(", ")})` : ""}`;
 }
@@ -474,13 +479,13 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
       const worstWarn = worst !== null && worst.rate >= TASK_FAIL_RATE_WARN;
       const warn = aggregateWarn || worstWarn;
 
-      // #943: name the dominant command-task failure reason (timeout,
+      // #943: name the dominant agent dispatch failure reason (timeout,
       // non_zero_exit, spawn_failed, …) when the check is already warning, so
       // "timeout-dominant" is visible without grepping task logs.
       const agentFailureReasonCounts = ctx.agentFailureReasonCounts ?? {};
       const dominant = warn ? dominantAgentFailureReason(agentFailureReasonCounts) : undefined;
       const dominantSuffix = dominant
-        ? ` (${dominant.reason}-dominant: ${dominant.count}/${dominant.total} command-task failures)`
+        ? ` (${dominant.reason}-dominant: ${dominant.count}/${dominant.total} agent dispatch failures)`
         : "";
 
       const counted = describeTaskRuns(ctx.taskRuns);
@@ -544,7 +549,12 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
       const totalRows = rows.reduce((sum, row) => sum + row.count, 0);
       if (totalRows === 0) {
         // Extraction is off when the strategy does not enable it; with the config unreadable that is not known.
-        const reason = !ctx.proposalQueue ? "blocked" : ctx.proposalQueue.extractEnabled ? "idle" : "off";
+        const reason =
+          !ctx.proposalQueue || ctx.proposalQueue.strategyError
+            ? "blocked"
+            : ctx.proposalQueue.extractEnabled
+              ? "idle"
+              : "off";
         return { ...base, status: "unknown", reason, message: `No extraction recorded in the last ${days} days.` };
       }
 
@@ -622,7 +632,7 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
           message: "The primary stash or config could not be read; the proposal queue owner was not checked.",
         };
       }
-      const { stashDir, learningOn, strategy, extractEnabled, problem } = ctx.proposalQueue;
+      const { stashDir, learningOn, strategy, strategyError, extractEnabled, problem } = ctx.proposalQueue;
       const ranRecently = ctx.sessionExtractionLedger.rows.some((row) => row.count > 0);
       if (!learningOn) {
         return {
@@ -630,6 +640,14 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
           status: "unknown",
           reason: "off",
           message: "Learning is off, so the proposal queue owner was not checked.",
+        };
+      }
+      if (strategyError && !ranRecently) {
+        return {
+          ...base,
+          status: "unknown",
+          reason: "blocked",
+          message: `The configured improve strategy does not resolve, so the proposal queue owner was not checked: ${strategyError}`,
         };
       }
       if (!extractEnabled && !ranRecently) {

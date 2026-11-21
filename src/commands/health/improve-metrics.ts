@@ -20,21 +20,29 @@ export function roundRate(value: number): number {
   return Number(value.toFixed(4));
 }
 
+/** A history row with its metadata decoded; `metadata` is undefined when the row's `metadata_json` is corrupt. */
+export interface DecodedTaskRow {
+  row: TaskHistoryRow;
+  metadata: ReturnType<typeof decodeTaskHistoryMetadata> | undefined;
+}
+
 /**
- * `task_history.metadata_json`, decoded; a corrupt row is skipped with a warning (it degrades the metric, never aborts
+ * Decode each row's `metadata_json` once, warning once per corrupt row (it degrades the metrics, never aborts
  * `akm health`, mirrors `listStateProposals`). `decodeTaskHistoryMetadata` already tolerates legacy/additive shapes;
- * only genuine corruption reaches this catch.
+ * only genuine corruption reaches the catch.
  */
-function rowMetadata(row: TaskHistoryRow): ReturnType<typeof decodeTaskHistoryMetadata> | undefined {
-  try {
-    return decodeTaskHistoryMetadata(row.metadata_json);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.warn(
-      `[akm] Skipping unparseable task_history row in health metrics (task_id=${row.task_id}, started_at=${row.started_at}): ${message}`,
-    );
-    return undefined;
-  }
+export function decodeTaskRows(rows: readonly TaskHistoryRow[]): DecodedTaskRow[] {
+  return rows.map((row) => {
+    try {
+      return { row, metadata: decodeTaskHistoryMetadata(row.metadata_json) };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(
+        `[akm] Skipping unparseable task_history row in health metrics (task_id=${row.task_id}, started_at=${row.started_at}): ${message}`,
+      );
+      return { row, metadata: undefined };
+    }
+  });
 }
 
 /** The runs of `task-fail-rate`'s window, by what started them (`trigger` in the row's metadata). */
@@ -45,21 +53,24 @@ export interface TaskRunCounts {
   manual: number;
   /** Rows written before the trigger was recorded. */
   unrecorded: number;
+  /** Rows whose metadata could not be read. */
+  unreadable: number;
 }
 
 /** The runs of `rows` by what started them, and how many distinct tasks they belong to. */
-export function countTaskRuns(rows: readonly TaskHistoryRow[]): TaskRunCounts {
+export function countTaskRuns(rows: readonly DecodedTaskRow[]): TaskRunCounts {
   const counts: TaskRunCounts = {
     runs: rows.length,
-    tasks: new Set(rows.map((row) => row.task_id)).size,
+    tasks: new Set(rows.map(({ row }) => row.task_id)).size,
     scheduled: 0,
     manual: 0,
     unrecorded: 0,
+    unreadable: 0,
   };
-  for (const row of rows) {
-    const trigger = rowMetadata(row)?.trigger;
-    if (trigger === "schedule") counts.scheduled += 1;
-    else if (trigger === "manual") counts.manual += 1;
+  for (const { metadata } of rows) {
+    if (!metadata) counts.unreadable += 1;
+    else if (metadata.trigger === "schedule") counts.scheduled += 1;
+    else if (metadata.trigger === "manual") counts.manual += 1;
     else counts.unrecorded += 1;
   }
   return counts;
@@ -75,10 +86,9 @@ export interface AgentDispatch {
  * row; it failed when `detail.reason` is set) and every version 5 step that recorded an `agent` fact (it failed when
  * `agent.reason` is set). A row written before the fact was recorded holds no dispatch: it is unknown, not a success.
  */
-export function agentDispatches(rows: readonly TaskHistoryRow[]): AgentDispatch[] {
+export function agentDispatches(rows: readonly DecodedTaskRow[]): AgentDispatch[] {
   const dispatches: AgentDispatch[] = [];
-  for (const row of rows) {
-    const metadata = rowMetadata(row);
+  for (const { row, metadata } of rows) {
     if (!metadata) continue;
     if (row.target_kind === "command") {
       const reason = metadata.detail?.reason;

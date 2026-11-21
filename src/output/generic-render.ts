@@ -114,6 +114,11 @@ function markdownValue(value: unknown, depth: number): string[] {
   return [displayScalar(value) === "" ? "_(empty)_" : displayScalar(value)];
 }
 
+/** One top-level field of an envelope as a `## key` section; the lines `renderGenericMarkdown` prints for it. */
+export function markdownSection(key: string, value: unknown): string[] {
+  return [`## ${key}`, "", ...markdownValue(value, 3), ""];
+}
+
 /**
  * Render a shaped envelope as Markdown. `command` titles the document so a
  * rendered file identifies itself once detached from the invocation.
@@ -123,7 +128,7 @@ export function renderGenericMarkdown(command: string, value: unknown): string {
     value !== null && typeof value === "object" && !Array.isArray(value)
       ? Object.entries(value)
           .filter(([key]) => !ENVELOPE_META_KEYS.has(key)) // transport metadata, not a result
-          .flatMap(([key, nested]) => [`## ${key}`, "", ...markdownValue(nested, 3), ""])
+          .flatMap(([key, nested]) => markdownSection(key, nested))
       : markdownValue(value, 2);
   const lines = [`# ${command}`, "", ...body];
   const rendered = lines

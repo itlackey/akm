@@ -19,9 +19,12 @@ import {
   computeWallTimeStats,
   computeWindowProposalCoverage,
   countAgentFailureReasons,
+  countTaskRuns,
+  decodeTaskRows,
   type ImproveRunOutcomes,
   roundRate,
   summarizeImproveRuns,
+  type TaskRunCounts,
 } from "./improve-metrics";
 import { readLlmUsageAggregate } from "./llm-usage";
 import { buildPerRunSummaries } from "./task-runs";
@@ -157,6 +160,7 @@ export interface TaskWindowRates {
   agentFailureRate: number;
   agentFailureReasonCounts: Record<string, number>;
   /** Active rows whose owner process is provably gone (`classifyAttempt`). */
+  taskRuns: TaskRunCounts;
   stuckActiveRuns: number;
   /** Rows behind `stuckActiveRuns` — the main health path (`health.ts`) names each one; window-compare only needs the count. */
   stuckActiveRows: TaskHistoryRow[];
@@ -183,9 +187,11 @@ export function computeTaskWindowRates(
   const liveness = activeRows.map((row) => ({ row, state: classifyAttempt(row, here) }));
   const stuckActiveRows = liveness.filter(({ state }) => state === "interrupted").map(({ row }) => row);
   const unverifiedActiveRows = liveness.filter(({ state }) => state === "indeterminate").map(({ row }) => row);
-  const dispatches = agentDispatches(taskRows);
+  const decoded = decodeTaskRows(taskRows);
+  const dispatches = agentDispatches(decoded);
   const failedDispatches = dispatches.filter((dispatch) => dispatch.reason !== undefined);
   return {
+    taskRuns: countTaskRuns(decoded),
     taskFailRate: taskRows.length === 0 ? 0 : failedTaskRows.length / taskRows.length,
     agentFailureRate: dispatches.length === 0 ? 0 : failedDispatches.length / dispatches.length,
     agentFailureReasonCounts: countAgentFailureReasons(dispatches),

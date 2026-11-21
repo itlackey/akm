@@ -42,7 +42,7 @@ import { collectConfigSkewAdvisory } from "./health/config-skew";
 import { runConnectionsAndHarnessesCheck } from "./health/connections-and-harnesses-check";
 import { collectDataDirUsageAdvisory } from "./health/data-dir-usage";
 import { collectEgressAdvisory, type EgressConfigView } from "./health/egress";
-import { countTaskRuns, emptyImproveMetrics, roundRate, type TaskRunCounts } from "./health/improve-metrics";
+import { emptyImproveMetrics, roundRate, type TaskRunCounts } from "./health/improve-metrics";
 import { collectIndexSourcesCheck } from "./health/index-sources";
 import { emptyLlmUsageAggregate, readLlmUsageAggregate } from "./health/llm-usage";
 import { collectOpencodeMajorAdvisory } from "./health/opencode-major";
@@ -328,7 +328,7 @@ function gatherTaskHistoryPhase(
     stuckActiveRuns: rates.stuckActiveRuns,
     stuckActiveTasks: dedupeStuckActiveTasks(rates.stuckActiveRows, now),
     unverifiedActiveTasks: dedupeStuckActiveTasks(rates.unverifiedActiveRows, now),
-    taskRuns: countTaskRuns(taskRows),
+    taskRuns: rates.taskRuns,
     taskFailRate: rates.taskFailRate,
     worstTaskFailRate: computeWorstTaskFailRate(taskRows),
     agentFailureRate: rates.agentFailureRate,
@@ -437,7 +437,7 @@ function gatherAncillaryAdvisories(
   if (workflowFiles) advisories.push(workflowFiles);
 
   try {
-    const opencodeMajor = collectOpencodeMajorAdvisory();
+    const opencodeMajor = collectOpencodeMajorAdvisory(Boolean(options.probe));
     if (opencodeMajor) advisories.push(opencodeMajor);
   } catch (error) {
     advisories.push({

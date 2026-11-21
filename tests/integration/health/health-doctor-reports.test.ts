@@ -12,7 +12,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmHealth } from "../../../src/commands/health";
+import { collectOpencodeMajorAdvisory } from "../../../src/commands/health/opencode-major";
 import type { HealthCheckResult } from "../../../src/commands/health/types";
+import { recordImproveRunResult } from "../../../src/commands/improve/improve-result-file";
+import { createProposal } from "../../../src/commands/proposal/repository";
+import type { AkmImproveResult } from "../../../src/core/improve-types";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { _setOpencodeVersionProbeForTests } from "../../../src/integrations/harnesses/opencode/version";
 import { upsertTaskHistory } from "../../../src/storage/repositories/task-history-repository";
@@ -136,6 +140,39 @@ describe("task-fail-rate and auto-accept report what they counted (B10-36)", () 
   });
 });
 
+describe("a corrupt history row (B10-36)", () => {
+  test("warns once and is counted as unreadable, not as a run with no recorded trigger", async () => {
+    seed({ task: "ok", status: "completed", kind: "shell", metadata: { trigger: "manual" } });
+    const db = openStateDatabase();
+    try {
+      upsertTaskHistory(db, {
+        task_id: "broken",
+        status: "completed",
+        started_at: new Date().toISOString(),
+        completed_at: null,
+        failed_at: null,
+        log_path: null,
+        target_kind: "command",
+        target_ref: null,
+        metadata_json: "{not json",
+      });
+    } finally {
+      db.close();
+    }
+    const warnings: string[] = [];
+    const original = console.warn;
+    console.warn = (...args: unknown[]) => void warnings.push(args.join(" "));
+    try {
+      const result = await akmHealth({ since: "1h" });
+      expect(check(result, "task-fail-rate").message).toContain("1 unreadable");
+      expect(check(result, "task-fail-rate").message).not.toContain("no recorded trigger");
+    } finally {
+      console.warn = original;
+    }
+    expect(warnings.filter((line) => line.includes("task_id=broken"))).toHaveLength(1);
+  });
+});
+
 describe("proposal-queue names what is off (B10-47)", () => {
   test("learning on, extraction not enabled: names extraction and the strategy", async () => {
     writeSandboxConfig({
@@ -145,6 +182,16 @@ describe("proposal-queue names what is off (B10-47)", () => {
     const message = check(result, "proposal-queue").message;
     expect(message).toContain('Session extraction is not enabled in improve strategy "quiet"');
     expect(message).not.toContain("Learning is off");
+  });
+
+  test("a removed strategy is blocked with the resolver's message, not 'not enabled'", async () => {
+    writeSandboxConfig({ improve: { strategy: "thorough" } });
+    const result = await akmHealth({ since: "1h" });
+    const queue = check(result, "proposal-queue");
+    expect(queue).toMatchObject({ status: "unknown", reason: "blocked" });
+    expect(queue.message).toContain("was removed in 0.10");
+    expect(queue.message).not.toContain("Session extraction is not enabled");
+    expect(check(result, "session-extraction")).toMatchObject({ status: "unknown", reason: "blocked" });
   });
 
   test("improve.enabled false: learning is off", async () => {
@@ -169,6 +216,7 @@ describe("index-sources (B10-42)", () => {
     expect(warned.status).toBe("warn");
     expect(warned.message).toContain("notes");
     expect(warned.message).toContain("ENOENT");
+    expect(warned.message).not.toContain("serves");
 
     fs.renameSync(`${dir}.moved`, dir);
     expect((await runCliCapture(["index"])).code).toBe(0);
@@ -186,40 +234,106 @@ describe("index-sources (B10-42)", () => {
 });
 
 describe("opencode-major (R-01-DEP)", () => {
-  function configureHarness() {
-    const bin = path.join(storage.root, "bin", "opencode");
+  function binary(name: string): string {
+    const bin = path.join(storage.root, "bin", name);
     fs.mkdirSync(path.dirname(bin), { recursive: true });
     fs.writeFileSync(bin, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-    writeSandboxConfig({ harnesses: { opencode: { platform: "opencode", bin } } });
     return bin;
   }
+  function configure(...names: string[]) {
+    const harnesses = Object.fromEntries(names.map((name) => [name, { platform: "opencode", bin: binary(name) }]));
+    writeSandboxConfig({ harnesses });
+    return harnesses as Record<string, { bin: string }>;
+  }
 
-  test("advises on an OpenCode 1 harness, with the run notice's wording", async () => {
-    const bin = configureHarness();
+  test("advises on an OpenCode 1 harness, with the run notice's wording", () => {
+    const { opencode } = configure("opencode");
     _setOpencodeVersionProbeForTests(() => "1.18.25");
-    const advisory = check(await akmHealth({ since: "1h" }), "opencode-major");
-    expect(advisory.status).toBe("warn");
-    expect(advisory.message).toContain(`OpenCode 1 (${bin} 1.18.25) is deprecated and is removed in 0.11`);
+    const advisory = collectOpencodeMajorAdvisory(true);
+    expect(advisory?.status).toBe("warn");
+    expect(advisory?.message).toContain(`OpenCode 1 (${opencode?.bin} 1.18.25) is deprecated and is removed in 0.11`);
   });
 
-  test("is absent for OpenCode 2 and unknown when the version cannot be read", async () => {
-    configureHarness();
+  test("is absent for OpenCode 2", () => {
+    configure("opencode");
     _setOpencodeVersionProbeForTests(() => "2.0.26");
-    const two = await akmHealth({ since: "1h" });
-    expect(two.advisories.find((c) => c.name === "opencode-major")).toBeUndefined();
+    expect(collectOpencodeMajorAdvisory(true)).toBeUndefined();
+  });
+
+  test("--no-probe runs no binary and says it was not probed", async () => {
+    configure("opencode");
+    const probed: string[] = [];
+    _setOpencodeVersionProbeForTests((bin) => {
+      probed.push(bin);
+      return "1.18.25";
+    });
+    const advisory = check(await akmHealth({ since: "1h", probe: false }), "opencode-major");
+    expect(advisory).toMatchObject({ status: "unknown", reason: "not-probed" });
+    expect(advisory.message).toContain('harness "opencode"');
+    expect(probed).toEqual([]);
+  });
+
+  test("an unreadable harness is named beside an OpenCode 1 one", () => {
+    const harnesses = configure("old", "odd");
+    _setOpencodeVersionProbeForTests((bin) => (bin === harnesses.old?.bin ? "1.18.25" : "true (GNU coreutils) 9.7"));
+    const advisory = collectOpencodeMajorAdvisory(true);
+    expect(advisory?.status).toBe("warn");
+    expect(advisory?.message).toContain('Harness "old"');
+    expect(advisory?.message).toContain('harness "odd"');
+    expect(JSON.stringify(advisory?.evidence)).toContain("odd");
+  });
+
+  test("an unreadable harness says what the binary printed, or that it did not run", () => {
+    const harnesses = configure("odd");
+    _setOpencodeVersionProbeForTests(() => "true (GNU coreutils) 9.7");
+    const printed = collectOpencodeMajorAdvisory(true);
+    expect(printed).toMatchObject({ status: "unknown", reason: "blocked" });
+    expect(printed?.message).toContain("true (GNU coreutils) 9.7");
     _setOpencodeVersionProbeForTests(() => undefined);
-    const unreadable = check(await akmHealth({ since: "1h" }), "opencode-major");
-    expect(unreadable.status).toBe("unknown");
+    expect(collectOpencodeMajorAdvisory(true)?.message).toContain(`${harnesses.odd?.bin}) could not be run`);
   });
 });
 
 describe("the md report renders everything the result holds (B10-45)", () => {
-  test("checks, comparison, runs and the proposal queue", async () => {
+  const improved = (): AkmImproveResult => ({
+    schemaVersion: 2,
+    ok: true,
+    strategy: "default",
+    scope: { mode: "all" },
+    dryRun: false,
+    memorySummary: { eligible: 0, derived: 0 },
+    plannedRefs: [],
+    actions: [],
+  });
+
+  test("the status, checks, comparison, runs, the queue and every other field", async () => {
+    seed({ task: "flaky", status: "failed", kind: "shell", metadata: { trigger: "manual" } });
+    const first = new Date(Date.now() - 120_000).toISOString();
+    const second = new Date(Date.now() - 60_000).toISOString();
+    recordImproveRunResult(storage.stashDir, "run-a", improved(), first);
+    recordImproveRunResult(storage.stashDir, "run-b", improved(), second);
+    createProposal(storage.stashDir, {
+      ref: "knowledge/queued-note",
+      source: "extract",
+      sourceRun: "run-a",
+      target: { source: "stash", root: storage.stashDir },
+      payload: { content: "# note\n", frontmatter: { description: "queued" } },
+    });
+
     const result = await runCliCapture(["doctor", "--no-probe", "--report", "--format", "md"]);
-    expect(result.stdout).toContain("## Checks");
-    expect(result.stdout).toContain("task-fail-rate");
-    expect(result.stdout).toContain("## Window comparison");
-    expect(result.stdout).toContain("## Runs");
-    expect(result.stdout).toContain("## Pending proposals");
+    const out = result.stdout;
+    expect(out.indexOf("## status")).toBeLessThan(out.indexOf("## Checks"));
+    expect(out).toMatch(/task-fail-rate\s+warn/);
+    expect(out).toContain("## Window comparison");
+    expect(out).toContain(first);
+    expect(out).toContain(second);
+    expect(out).toContain("knowledge/queued-note");
+    for (const field of ["metrics", "improve", "scheduler", "report"]) expect(out).toContain(`## ${field}`);
+    expect(out).toContain("acceptRateBySource");
+  });
+
+  test("a plain doctor md keeps the status, metrics, improve and scheduler sections", async () => {
+    const out = (await runCliCapture(["doctor", "--no-probe", "--format", "md"])).stdout;
+    for (const field of ["status", "metrics", "improve", "scheduler"]) expect(out).toContain(`## ${field}`);
   });
 });
