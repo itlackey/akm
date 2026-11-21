@@ -1907,8 +1907,11 @@ plain check whose marketplace cannot be read reports `unknown`, with the reason 
 plugins.
 
 **The CLI does not wait for plugins.** The CLI target is the newest akm on the
-selected channel (`latest`, or `next` for `--next` and `--channel next`), whatever
-the plugins pin. Plugins update to their own channel's newest build; a plugin
+selected channel (`--channel`, `next` for `--next`, otherwise the channel the
+installed akm is on: `next` for a prerelease, `latest` for a stable release), whatever
+the plugins pin. It never moves the CLI to an older version without
+`--channel` and `--allow-downgrade`: when the channel offers nothing newer, akm
+stays and says so. Plugins update to their own channel's newest build; a plugin
 running an older bundled akm reports itself stale through `akm doctor` and
 updates with its own release.
 

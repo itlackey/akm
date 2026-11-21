@@ -1052,8 +1052,9 @@ export async function runUpgrade(
   if (args.allowDowngrade && !args.channel) throw new UsageError("--allow-downgrade requires --channel latest or next");
   const switchChannel = args.channel as UpgradeChannel | undefined;
   const next = switchChannel ? switchChannel === "next" : args.next === true;
-  const channel: UpgradeChannel = next ? "next" : "latest";
   const currentChannel: UpgradeChannel = isPrerelease(currentVersion) ? "next" : "latest";
+  // With no channel asked for, the CLI stays on the one it is on (release.yml publishes every prerelease to next).
+  const channel: UpgradeChannel = switchChannel ?? (next ? "next" : currentChannel);
   const openCode = resolveOpenCodeTargets(next, switchChannel);
   const check = {
     ...(await deps.checkForUpdate(currentVersion, channel, switchChannel !== undefined)),
@@ -1081,13 +1082,13 @@ export async function runUpgrade(
     };
   }
   let stayMessage: string | undefined;
+  // A channel whose newest akm is older than the installed one leaves akm where it is; an explicit switch still switches.
+  if (!args.allowDowngrade && check.latestVersion !== "" && semverOrder(check.latestVersion, currentVersion) < 0) {
+    stayMessage = `akm stays at ${currentVersion}; ${channel} has nothing newer`;
+    check.latestVersion = currentVersion;
+    check.updateAvailable = false;
+  }
   if (switchChannel && !args.allowDowngrade) {
-    // A channel whose newest akm is older than the installed one leaves akm where it is; the channel still switches.
-    if (semverOrder(check.latestVersion, currentVersion) < 0) {
-      stayMessage = `akm stays at ${currentVersion}; ${channel} has nothing newer`;
-      check.latestVersion = currentVersion;
-      check.updateAvailable = false;
-    }
     for (const target of openCode) {
       if (
         target.cache?.version &&
@@ -1104,8 +1105,11 @@ export async function runUpgrade(
     force: args.force,
     skipPostUpgrade: args.skipPostUpgrade,
     ...(args.skipChecksum ? { skipChecksum: true } : {}),
-    // A package manager install must name the version, or `@latest` goes past the prerelease that `--next` chose.
-    ...(switchChannel || (next && check.latestVersion) ? { targetVersion: check.latestVersion } : {}),
+    // A package manager install must name the version, or `@latest` goes past the prerelease the channel chose or
+    // below the akm that stays.
+    ...(switchChannel || stayMessage || (channel === "next" && check.latestVersion)
+      ? { targetVersion: check.latestVersion }
+      : {}),
   });
   if (
     switchChannel &&
