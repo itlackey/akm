@@ -122,7 +122,7 @@ export function countAgentFailureReasons(dispatches: readonly AgentDispatch[]): 
 
 /**
  * Decode one `improve_runs.result_json` envelope, warning once per row on
- * failure (mirrors {@link taskFailureDetail}'s handling of the analogous
+ * failure (mirrors {@link decodeTaskRows}'s handling of the analogous
  * `task_history` case) and returning `undefined` instead of throwing.
  * Callers count the `undefined` case themselves (`resultRows.skipped.invalid`
  * / `resultStatus: "invalid"`) so a decode failure is never silent — the
@@ -154,7 +154,7 @@ export function readImproveRows(db: Database, since: string, until?: string): De
   return queryImproveRuns(db, since, until).map((row) => ({ row, result: decodeImproveResultRow(row) }));
 }
 
-/** A zeroed accumulator — also what health reports when it could not read state.db at all (#791). */
+/** A zeroed accumulator. */
 export function emptyImproveMetrics(): ImproveHealthMetrics {
   return {
     invoked: 0,
