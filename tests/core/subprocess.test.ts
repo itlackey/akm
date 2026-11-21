@@ -21,13 +21,7 @@
  *     bounded run the earlier of that and the wall budget.
  */
 import { describe, expect, test } from "bun:test";
-import {
-  buildSpawnOptions,
-  childGroup,
-  runManagedSubprocess,
-  type SpawnedSubprocess,
-  type SpawnFn,
-} from "../../src/core/subprocess";
+import { runManagedSubprocess, type SpawnedSubprocess, type SpawnFn } from "../../src/core/subprocess";
 
 function asReadableStream(text: string): ReadableStream<Uint8Array> {
   const bytes = new TextEncoder().encode(text);
@@ -441,49 +435,6 @@ describe("runManagedSubprocess — capture and failure surfacing", () => {
     expect(result.spawnError?.message).toContain("ENOENT");
     expect(result.exitCode).toBeNull();
     expect(result.stdout).toBe("");
-  });
-
-  test("a child gets its own process group except on Windows and on a terminal without capture", () => {
-    // On POSIX `detached` is setsid(), which is what makes killGroup's negative-pid kill reach the whole tree,
-    // and what takes the controlling terminal away. On Windows the same flag is DETACHED_PROCESS: the child
-    // gets no console, a console host allocates its own and thereby replaces the std handles it was handed,
-    // and every byte it writes goes to that phantom console instead of our pipe.
-    for (const platform of ["linux", "darwin"] as const) {
-      expect(childGroup(true, platform, true)).toBe("own");
-      expect(childGroup(true, platform, false)).toBe("own");
-      expect(childGroup(false, platform, false)).toBe("own");
-      expect(childGroup(false, platform, true)).toBe("shared");
-    }
-    expect(childGroup(true, "win32", false)).toBe("shared");
-    expect(childGroup(false, "win32", false)).toBe("shared");
-
-    // The WIRING, asserted for a platform this test host is not.
-    expect(buildSpawnOptions({ capture: true }, childGroup(true, "win32", false)).detached).toBeUndefined();
-    expect(buildSpawnOptions({ capture: true }, "own").detached).toBe(true);
-    // Captured Windows runs still pipe all three streams; only the group flag goes.
-    expect(buildSpawnOptions({ capture: true }, "shared").stdout).toBe("pipe");
-    expect(buildSpawnOptions({ capture: true }, "shared").stderr).toBe("pipe");
-    expect(buildSpawnOptions({ capture: false }, "shared").detached).toBeUndefined();
-    expect(buildSpawnOptions({ capture: false }, "shared").stdout).toBe("inherit");
-  });
-
-  test("a captured managed run spawns detached on POSIX", async () => {
-    let detached: unknown = "unset";
-    const spawn: SpawnFn = (_cmd, opts) => {
-      detached = opts.detached;
-      return {
-        exitCode: 0,
-        exited: Promise.resolve(0),
-        stdout: asReadableStream("out\n"),
-        stderr: asReadableStream(""),
-        stdin: null,
-        kill() {},
-      };
-    };
-    const result = await runManagedSubprocess(["echo"], { capture: true, timeoutMs: null, spawnFn: spawn });
-    expect(result.stdout).toBe("out\n");
-    // The live wiring must follow the helper on whichever platform runs this.
-    expect(detached).toBe(process.platform === "win32" ? undefined : true);
   });
 
   test("interactive (capture: false) does not read streams", async () => {

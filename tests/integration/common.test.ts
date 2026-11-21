@@ -26,7 +26,9 @@ describe("fetchWithTimeout", () => {
     await expect(fetchWithTimeout("https://example.invalid", undefined, 1_000, controller.signal)).rejects.toBe(reason);
   });
 
-  test("disables Bun's independent socket-idle timer so long deadlines are not capped at five minutes", async () => {
+  // A pin of the Bun option, not a test of the behaviour: a real five-minute idle wait is too slow, so what Bun's idle
+  // timer does with `timeout: false` is not exercised here.
+  test("pin: every request carries Bun's `timeout: false`, which switches off its five-minute idle timer", async () => {
     let seen: (RequestInit & { timeout?: unknown }) | undefined;
     await withMockedFetch(
       () => fetchWithTimeout("https://example.invalid", { method: "POST" }, 600_000),

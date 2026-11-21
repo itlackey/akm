@@ -52,7 +52,8 @@ import {
 import { fakeOpencodeMajor } from "../_helpers/opencode-version";
 import { makeSandboxDir, type SandboxedDir } from "../_helpers/sandbox";
 
-beforeEach(() => fakeOpencodeMajor(1));
+// The stand-in programs print plain text, which OpenCode 2 reads as its answer; OpenCode 1 is read from an event stream they do not write.
+beforeEach(() => fakeOpencodeMajor(2));
 
 const PROVIDER_MESSAGE = "provider exploded: model stub-model not found";
 const REPLY = '{"verdict":"ok"}';
@@ -64,6 +65,7 @@ const CHAT_REPLIES: Record<string, (req: Request) => Response | Promise<Response
   "http-500": () => Response.json({ error: { message: PROVIDER_MESSAGE } }, { status: 500 }),
   // OpenRouter answers a provider that fails after the headers with HTTP 200
   // and a body that holds only an `error` object and no `choices`.
+  "http-429": () => Response.json({ error: { message: "slow down" } }, { status: 429 }),
   "http-200-error-body": () => Response.json({ error: { code: 502, message: PROVIDER_MESSAGE } }),
   reply: () =>
     Response.json({
@@ -89,6 +91,8 @@ const CLI_SCRIPTS: Record<string, string> = {
   reply: `#!${process.execPath}\nconst input = require("node:fs").readFileSync(0, "utf8");\nconsole.log(JSON.stringify([...process.argv.slice(2), ...(input ? [input] : [])]));\n`,
   // Prints what reached it: argv and working directory.
   probe: `#!${process.execPath}\nconsole.log(JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd() }));\n`,
+  // Prints the one variable the caller and the unit's own environment both name.
+  "print-env": `#!/bin/sh\nprintf '%s' "$PRECEDENCE_PROBE"\n`,
   // Records its pid beside itself, then outlives any timeout a row sets.
   hang: `#!/bin/sh\necho $$ > "$0.pid"\nexec sleep 30\n`,
   // Each counts its calls beside itself; repair answers prose first, then the reply.
@@ -338,6 +342,29 @@ describe("C4: failures and timeouts", () => {
     expect(result.reason).toBe("timeout");
   });
 
+  test("connection chat: a provider's 429 is reason llm_rate_limit, not a failure to start", async () => {
+    const result = await dispatch(CHAT, "http-429");
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("llm_rate_limit");
+  });
+
+  test.each(
+    CLI_HARNESSES.map((harness): [string, Transport] => [harness.name, harness]),
+  )("%s: a variable the caller names beats the one the unit's own environment names", async (_name, transport) => {
+    const { result } = await dispatchBuilt(transport, "print-env", { environment: { PRECEDENCE_PROBE: "unit" } });
+    expect(result.stdout.trim()).toBe("unit");
+    const resolved = resolveExecution({
+      content: "Reply with the single word: pong",
+      config: configFor(transport, "print-env"),
+      layers: [currentLayer({ ...transport.selects, environment: { PRECEDENCE_PROBE: "unit" } })],
+      modelWork: false,
+    });
+    const built = buildExecution(resolved.request, resolved.runner);
+    const called = await runExecution(built, { env: { PRECEDENCE_PROBE: "caller" } });
+    expect(called.stdout.trim()).toBe("caller");
+  });
+
   test.each(
     CLI_HARNESSES.map((harness): [string, Transport] => [harness.name, harness]),
   )("%s: a timed-out child is killed", async (_name, transport) => {
@@ -450,6 +477,28 @@ describe("C7: inference reaches the transport, or is reported as untranslated", 
 });
 
 describe("C6: usage", () => {
+  const failing: [string, Transport, string][] = [
+    [CHAT.name, CHAT, "http-500"],
+    ...CLI_HARNESSES.map((harness): [string, Transport, string] => [harness.name, harness, "exit-1"]),
+    [RUNTIME.name, RUNTIME, "assistant-error"],
+  ];
+
+  test.each(
+    failing,
+  )("%s: a failed dispatch leaves usage records that say it failed", async (_name, transport, scenario) => {
+    const records: LlmUsageRecord[] = [];
+    setLlmUsageSink((record) => records.push(record));
+    try {
+      const result = await dispatch(transport, scenario, { model: "stub-model" });
+      expect(result.ok).toBe(false);
+    } finally {
+      clearLlmUsageSink();
+    }
+
+    expect(records.length).toBeGreaterThan(0);
+    expect(records.map((record) => record.outcome)).toEqual(records.map(() => "error"));
+  });
+
   const reported = { promptTokens: 3, completionTokens: 5, totalTokens: 8 };
   // The chat path records each HTTP attempt; an agent or runtime path records the dispatch, with no tokens: the OpenCode process reports none.
   const rows: [string, Transport, Partial<LlmUsageRecord>][] = [
